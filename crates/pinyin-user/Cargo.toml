@@ -1,0 +1,13 @@
+[package]
+name = "pinyin-user"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "pinyin-rs internal crate — no stability promise; use pinyin-engine."
+
+[lints]
+workspace = true
+
+[dependencies]

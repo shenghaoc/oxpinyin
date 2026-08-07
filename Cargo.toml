@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/pinyin-core",
+  "crates/pinyin-data",
+  "crates/pinyin-user",
+  "crates/pinyin-engine",
+  "crates/pinyin-capi",
+  "crates/pinyin-oracle",
+  "crates/pinyin-dictool",
+  "crates/pinyin-migrate",
+]
+
+[workspace.package]
+# Lockstep 0.x while pre-1.0; milestones: 0.3=S1b, 0.4=S1c, 0.5=S1d, 0.6+=Stage 2.
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/shenghaoc/pinyin-rs"
+rust-version = "1.97.1"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }

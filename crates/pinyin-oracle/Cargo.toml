@@ -1,0 +1,18 @@
+[package]
+name = "pinyin-oracle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Differential harness against the source-built libpinyin pin. Never ships."
+
+[lints.rust]
+unsafe_code = "allow" # FFI to the real libpinyin; // SAFETY: on every block
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[dependencies]

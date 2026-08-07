@@ -1,0 +1,17 @@
+[package]
+name = "pinyin-migrate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "One-shot import of ibus-libpinyin settings and vocabulary."
+
+[lints.rust]
+unsafe_code = "allow" # FFI fallback only
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[dependencies]
