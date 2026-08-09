@@ -21,12 +21,16 @@ Consequences:
 ## Capture harness
 
 `tools/capture/` is a small C program compiled against the pin-built
-`pinyin.h`, emitting JSON. Protocol: fresh instance (or documented reset),
-learning and dynamic adjustment off, default flags unless stated otherwise,
-and the exact pin ref stamped into every fixture.
+`pinyin.h`, emitting NVR-stamped line-oriented text. Protocol: fresh instance
+(or documented reset), learning and dynamic adjustment off, default flags
+unless stated otherwise, and the exact pin ref stamped into every fixture.
 
-Fixture schema: `{ schema, pin_ref, api_sequence, input, flags, output }`.
-`schema` is present from the first capture.
+Each UTF-8 fixture record occupies one LF-terminated line. Fields are
+TAB-separated `key=value` pairs; backslash, TAB, CR, LF and control bytes in
+values use C-style escapes. Required semantic fields are `schema`, `nvr`,
+`family`, `case`, `api_sequence`, `input`, `flags` and output fields. The NVR
+contains the source revision, model digest and DBM backend. `schema` is present
+from the first capture.
 
 ## Fixture families
 
