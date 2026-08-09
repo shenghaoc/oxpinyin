@@ -143,21 +143,27 @@ uncapped count, so a highly ambiguous input cannot produce an unbounded line.
 
 ### Reason tokens
 
-Fixed, machine-readable, and independent of the taxonomy:
+Fixed, machine-readable, and independent of the taxonomy. A record carries the
+first applicable token in **this precedence order**, so triage buckets are
+stable rather than depending on the order checks happen to run:
 
-| Token | Meaning |
-|---|---|
-| `path-absent` | the oracle's segmentation is not in our path set |
-| `consumed-length` | consumed prefix lengths disagree |
-| `remainder` | remainders disagree |
-| `oracle-sentinel` | the oracle emitted a sentinel segment (F-E-01 shape) |
-| `oracle-inconsistent` | the oracle's own invariants failed |
-| `ours-error` | our parser returned `Err` |
-| `off-pin` | the observation's pin ref is not the frozen pin |
-| `position-overflow` | a position exceeds `u16` |
+| # | Token | Meaning |
+|---:|---|---|
+| 1 | `off-pin` | the observation's pin ref is not the frozen pin |
+| 2 | `oracle-inconsistent` | the oracle's own invariants failed |
+| 3 | `position-overflow` | a position does not fit `u16` |
+| 4 | `oracle-sentinel` | the oracle emitted a sentinel segment (F-E-01 shape) |
+| 5 | `ours-error` | our parser returned `Err` |
+| 6 | `consumed-length` | consumed prefix lengths disagree |
+| 7 | `remainder` | remainders disagree |
+| 8 | `path-absent` | the oracle's segmentation is not in our path set |
 
-A record carries the first applicable token in the order above, so triage
-buckets are stable rather than depending on check order.
+The order is not arbitrary. Validity of the subject and of the observation comes
+first, because a comparison against an off-pin or self-inconsistent oracle is
+meaningless. Our own failure comes next, since path membership cannot be
+evaluated without a path set. Only then do the three substantive comparisons
+run, narrowing from the coarsest disagreement (how much was consumed) to the
+finest (which segmentation was chosen).
 
 ## Summary report
 
