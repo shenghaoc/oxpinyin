@@ -232,7 +232,13 @@ fn enumerate_complete_paths(
         }
     }
 
-    debug_assert_eq!(results.len(), expected);
+    // Count/enumerate mismatch is an internal bug, not caller input; panicking
+    // here preserves R3.7 (never silently drop valid paths) in release builds.
+    assert_eq!(
+        results.len(),
+        expected,
+        "complete path enumeration under-counted or over-counted"
+    );
     results
 }
 
@@ -343,7 +349,13 @@ fn enumerate_fallback_paths(
         }
     }
 
-    debug_assert_eq!(results.len(), expected);
+    // Count/enumerate mismatch is an internal bug, not caller input; panicking
+    // here preserves R3.7 (never silently drop valid paths) in release builds.
+    assert_eq!(
+        results.len(),
+        expected,
+        "fallback path enumeration under-counted or over-counted"
+    );
     results
 }
 
