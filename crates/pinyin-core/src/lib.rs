@@ -4,6 +4,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod cost;
+pub mod fixture;
 mod parser;
 mod syllables;
 mod vocab;
