@@ -233,6 +233,9 @@ fn parse_segment(entry: &str) -> Result<OracleSegment, OracleError> {
         ("<missing-pinyin>@", |offset| {
             OracleSegment::MissingPinyinString { offset }
         }),
+        ("<no-key-columns>@", |parsed_len| {
+            OracleSegment::NoKeyColumns { parsed_len }
+        }),
     ] {
         if let Some(rest) = entry.strip_prefix(prefix) {
             let offset = rest.parse::<usize>().map_err(|_| malformed())?;
@@ -338,6 +341,7 @@ pub fn segment_to_wire(segment: &OracleSegment) -> String {
         OracleSegment::MissingKeyRest { offset } => format!("<missing-rest>@{offset}"),
         OracleSegment::MissingPosition { offset } => format!("<missing-position>@{offset}"),
         OracleSegment::MissingPinyinString { offset } => format!("<missing-pinyin>@{offset}"),
+        OracleSegment::NoKeyColumns { parsed_len } => format!("<no-key-columns>@{parsed_len}"),
     }
 }
 

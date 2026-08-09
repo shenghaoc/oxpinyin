@@ -55,7 +55,7 @@ pub use observation::{
 pub use pin::{EXPECTED_PIN_REF, OraclePrefix, PinManifest, VerifiedPin};
 
 #[cfg(feature = "oracle-ffi")]
-pub use live::{Oracle, Session};
+pub use live::{LiveSource, Oracle, Session};
 
 /// Whether this build can drive a live oracle.
 ///
