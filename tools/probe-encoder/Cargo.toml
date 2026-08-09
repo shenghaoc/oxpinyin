@@ -1,0 +1,14 @@
+[package]
+name = "probe-encoder"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Probe the pinned oracle to derive SyllableKey → TableKey mapping"
+
+[features]
+oracle-ffi = ["pinyin-oracle/oracle-ffi"]
+
+[dependencies]
+pinyin-core = { path = "../../crates/pinyin-core" }
+pinyin-oracle = { path = "../../crates/pinyin-oracle", features = ["oracle-ffi"] }
+pinyin-data = { path = "../../crates/pinyin-data" }
