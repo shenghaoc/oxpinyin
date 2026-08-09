@@ -8,10 +8,9 @@
 #include <string.h>
 
 #define CAPTURE_SCHEMA "pinyin-capture-v1"
-#define ORACLE_NVR                                                           \
-    "libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c+"          \
-    "model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+" \
-    "dbm-tkrzw"
+#define MAX_CAPTURED_CANDIDATES 10
+
+static const char *oracle_pin_ref;
 
 #define BASE_FLAGS ((pinyin_option_t)IS_PINYIN)
 #define DEFAULT_FLAGS                                                        \
@@ -22,6 +21,12 @@ struct capture_case {
     const char *id;
     const char *input;
     pinyin_option_t flags;
+};
+
+struct option_case {
+    const char *id;
+    const char *input;
+    pinyin_option_t flag;
 };
 
 static void print_escaped(const char *value) {
@@ -53,12 +58,31 @@ static void print_escaped(const char *value) {
     }
 }
 
+static void print_hex(const char *value) {
+    const unsigned char *cursor = (const unsigned char *)value;
+
+    while (*cursor != '\0') {
+        fprintf(stdout, "%02x", *cursor);
+        ++cursor;
+    }
+}
+
+static void free_candidate_strings(gchar **candidates, size_t count) {
+    for (size_t index = 0; index < count; ++index) {
+        g_free(candidates[index]);
+    }
+}
+
 static bool emit_case(pinyin_context_t *context, const char *family,
                       const struct capture_case *capture) {
     pinyin_instance_t *instance;
+    gchar *candidates[MAX_CAPTURED_CANDIDATES] = {NULL};
+    guint candidate_total = 0;
+    size_t captured_candidates = 0;
     size_t parse_return;
     size_t parsed_length;
     size_t input_length = strlen(capture->input);
+    bool candidates_available = false;
     bool first_segment = true;
 
     if ((capture->flags & DYNAMIC_ADJUST) != 0) {
@@ -86,17 +110,70 @@ static bool emit_case(pinyin_context_t *context, const char *family,
         return false;
     }
 
-    fputs("schema=" CAPTURE_SCHEMA "\tnvr=" ORACLE_NVR "\tfamily=", stdout);
+    if (parsed_length > 0 &&
+        pinyin_guess_candidates(
+            instance, 0,
+            SORT_BY_PHRASE_LENGTH_AND_PINYIN_LENGTH_AND_FREQUENCY)) {
+        if (!pinyin_get_n_candidate(instance, &candidate_total)) {
+            fprintf(stderr, "%s: pinyin_get_n_candidate failed\n", capture->id);
+            pinyin_free_instance(instance);
+            return false;
+        }
+        candidates_available = true;
+        captured_candidates = candidate_total < MAX_CAPTURED_CANDIDATES
+                                  ? candidate_total
+                                  : MAX_CAPTURED_CANDIDATES;
+        for (size_t index = 0; index < captured_candidates; ++index) {
+            lookup_candidate_t *candidate = NULL;
+            const gchar *candidate_string = NULL;
+
+            if (!pinyin_get_candidate(instance, (guint)index, &candidate) ||
+                candidate == NULL ||
+                !pinyin_get_candidate_string(instance, candidate,
+                                             &candidate_string) ||
+                candidate_string == NULL) {
+                fprintf(stderr, "%s: candidate %zu inspection failed\n",
+                        capture->id, index);
+                free_candidate_strings(candidates, index);
+                pinyin_free_instance(instance);
+                return false;
+            }
+            candidates[index] = g_strdup(candidate_string);
+            if (candidates[index] == NULL) {
+                fprintf(stderr, "%s: candidate %zu allocation failed\n",
+                        capture->id, index);
+                free_candidate_strings(candidates, index);
+                pinyin_free_instance(instance);
+                return false;
+            }
+        }
+    }
+
+    fputs("schema=" CAPTURE_SCHEMA "\tpin_ref=", stdout);
+    print_escaped(oracle_pin_ref);
+    fputs("\tfamily=", stdout);
     print_escaped(family);
     fputs("\tcase=", stdout);
     print_escaped(capture->id);
-    fputs("\tapi_sequence=pinyin_init,pinyin_set_options,"
-          "pinyin_alloc_instance,pinyin_parse_more_full_pinyins,"
-          "pinyin_get_parsed_input_length,pinyin_get_pinyin_key,"
-          "pinyin_get_pinyin_key_rest,pinyin_get_pinyin_key_rest_positions,"
-          "pinyin_get_pinyin_string,pinyin_get_pinyin_is_incomplete,"
-          "pinyin_free_instance,pinyin_fini\tinput=",
+    fputs("\tapi_sequence=pinyin_set_options,pinyin_alloc_instance,"
+          "pinyin_parse_more_full_pinyins,pinyin_get_parsed_input_length",
           stdout);
+    if (parsed_length > 0) {
+        fputs(",pinyin_guess_candidates", stdout);
+    }
+    if (candidates_available) {
+        fputs(",pinyin_get_n_candidate", stdout);
+    }
+    if (captured_candidates > 0) {
+        fputs(",pinyin_get_candidate,pinyin_get_candidate_string", stdout);
+    }
+    if (parsed_length > 0) {
+        fputs(",pinyin_get_pinyin_key,pinyin_get_pinyin_key_rest,"
+              "pinyin_get_pinyin_key_rest_positions,"
+              "pinyin_get_pinyin_string,pinyin_get_pinyin_is_incomplete",
+              stdout);
+    }
+    fputs(",pinyin_free_instance\tinput=", stdout);
     print_escaped(capture->input);
     fprintf(stdout,
             "\tflags=0x%08x\tparse_return=%zu\tparsed_input_length=%zu"
@@ -157,10 +234,22 @@ static bool emit_case(pinyin_context_t *context, const char *family,
     if (first_segment) {
         fputc('-', stdout);
     }
+    fprintf(stdout, "\tcandidate_total=%u\tcandidates_hex=", candidate_total);
+    if (captured_candidates == 0) {
+        fputc('-', stdout);
+    } else {
+        for (size_t index = 0; index < captured_candidates; ++index) {
+            if (index > 0) {
+                fputc(',', stdout);
+            }
+            print_hex(candidates[index]);
+        }
+    }
     fputs("\tremainder=", stdout);
     print_escaped(capture->input + parsed_length);
     fputc('\n', stdout);
 
+    free_candidate_strings(candidates, captured_candidates);
     pinyin_free_instance(instance);
     return true;
 }
@@ -206,35 +295,49 @@ static bool capture_fa(pinyin_context_t *context) {
 }
 
 static bool capture_fc(pinyin_context_t *context) {
-    static const struct capture_case cases[] = {
-        {"baseline", "xian", BASE_FLAGS},
-        {"pinyin-incomplete", "nih", BASE_FLAGS | PINYIN_INCOMPLETE},
-        {"use-tone", "ni3", BASE_FLAGS | USE_TONE},
-        {"force-tone", "ni", BASE_FLAGS | FORCE_TONE},
-        {"divided-table", "xian", BASE_FLAGS | USE_DIVIDED_TABLE},
-        {"resplit-table", "fangan", BASE_FLAGS | USE_RESPLIT_TABLE},
-        {"amb-c-ch", "cang", BASE_FLAGS | PINYIN_AMB_C_CH},
-        {"amb-s-sh", "sang", BASE_FLAGS | PINYIN_AMB_S_SH},
-        {"amb-z-zh", "zang", BASE_FLAGS | PINYIN_AMB_Z_ZH},
-        {"amb-f-h", "fang", BASE_FLAGS | PINYIN_AMB_F_H},
-        {"amb-g-k", "gang", BASE_FLAGS | PINYIN_AMB_G_K},
-        {"amb-l-n", "lan", BASE_FLAGS | PINYIN_AMB_L_N},
-        {"amb-l-r", "lan", BASE_FLAGS | PINYIN_AMB_L_R},
-        {"amb-an-ang", "lan", BASE_FLAGS | PINYIN_AMB_AN_ANG},
-        {"amb-en-eng", "sen", BASE_FLAGS | PINYIN_AMB_EN_ENG},
-        {"amb-in-ing", "lin", BASE_FLAGS | PINYIN_AMB_IN_ING},
-        {"correct-gn-ng", "zhegn", BASE_FLAGS | PINYIN_CORRECT_GN_NG},
-        {"correct-mg-ng", "zhemg", BASE_FLAGS | PINYIN_CORRECT_MG_NG},
-        {"correct-iou-iu", "liou", BASE_FLAGS | PINYIN_CORRECT_IOU_IU},
-        {"correct-uei-ui", "shuei", BASE_FLAGS | PINYIN_CORRECT_UEI_UI},
-        {"correct-uen-un", "luen", BASE_FLAGS | PINYIN_CORRECT_UEN_UN},
-        {"correct-ue-ve", "lue", BASE_FLAGS | PINYIN_CORRECT_UE_VE},
-        {"correct-v-u", "lv", BASE_FLAGS | PINYIN_CORRECT_V_U},
-        {"correct-on-ong", "don", BASE_FLAGS | PINYIN_CORRECT_ON_ONG},
+    static const struct option_case cases[] = {
+        {"pinyin-incomplete", "nih", PINYIN_INCOMPLETE},
+        {"use-tone", "ni3", USE_TONE},
+        {"force-tone", "ni", FORCE_TONE},
+        {"divided-table", "xian", USE_DIVIDED_TABLE},
+        {"resplit-table", "fangan", USE_RESPLIT_TABLE},
+        {"amb-c-ch", "cang", PINYIN_AMB_C_CH},
+        {"amb-s-sh", "sang", PINYIN_AMB_S_SH},
+        {"amb-z-zh", "zang", PINYIN_AMB_Z_ZH},
+        {"amb-f-h", "fang", PINYIN_AMB_F_H},
+        {"amb-g-k", "gang", PINYIN_AMB_G_K},
+        {"amb-l-n", "lan", PINYIN_AMB_L_N},
+        {"amb-l-r", "lan", PINYIN_AMB_L_R},
+        {"amb-an-ang", "lan", PINYIN_AMB_AN_ANG},
+        {"amb-en-eng", "sen", PINYIN_AMB_EN_ENG},
+        {"amb-in-ing", "lin", PINYIN_AMB_IN_ING},
+        {"correct-gn-ng", "zhegn", PINYIN_CORRECT_GN_NG},
+        {"correct-mg-ng", "zhemg", PINYIN_CORRECT_MG_NG},
+        {"correct-iou-iu", "liou", PINYIN_CORRECT_IOU_IU},
+        {"correct-uei-ui", "shuei", PINYIN_CORRECT_UEI_UI},
+        {"correct-uen-un", "luen", PINYIN_CORRECT_UEN_UN},
+        {"correct-ue-ve", "lue", PINYIN_CORRECT_UE_VE},
+        {"correct-v-u", "jv", PINYIN_CORRECT_V_U},
+        {"correct-on-ong", "don", PINYIN_CORRECT_ON_ONG},
     };
 
     for (size_t index = 0; index < sizeof(cases) / sizeof(cases[0]); ++index) {
-        if (!emit_case(context, "F-C", &cases[index])) {
+        char off_id[64];
+        char on_id[64];
+        int off_length = snprintf(off_id, sizeof(off_id), "%s-off", cases[index].id);
+        int on_length = snprintf(on_id, sizeof(on_id), "%s-on", cases[index].id);
+        if (off_length < 0 || (size_t)off_length >= sizeof(off_id) ||
+            on_length < 0 || (size_t)on_length >= sizeof(on_id)) {
+            fputs("F-C case identifier exceeds buffer\n", stderr);
+            return false;
+        }
+
+        const struct capture_case baseline = {
+            off_id, cases[index].input, BASE_FLAGS};
+        const struct capture_case enabled = {
+            on_id, cases[index].input, BASE_FLAGS | cases[index].flag};
+        if (!emit_case(context, "F-C", &baseline) ||
+            !emit_case(context, "F-C", &enabled)) {
             return false;
         }
     }
@@ -245,11 +348,17 @@ int main(int argc, char **argv) {
     pinyin_context_t *context;
     bool result;
 
-    if (argc != 4) {
-        fprintf(stderr, "usage: %s F-A|F-C SYSTEM_DATA_DIR FRESH_USER_DIR\n",
+    if (argc != 5) {
+        fprintf(stderr,
+                "usage: %s F-A|F-C SYSTEM_DATA_DIR FRESH_USER_DIR PIN_REF\n",
                 argv[0]);
         return 2;
     }
+    if (argv[4][0] == '\0') {
+        fputs("pin ref must not be empty\n", stderr);
+        return 2;
+    }
+    oracle_pin_ref = argv[4];
 
     context = pinyin_init(argv[2], argv[3]);
     if (context == NULL) {

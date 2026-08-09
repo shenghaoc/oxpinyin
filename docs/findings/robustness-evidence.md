@@ -8,7 +8,7 @@ artifact. A `registered` entry is evidence-ready but may not yet be executable
 because its owning crate or lane belongs to later work. It is not counted as a
 working exploit or a passing regression until the named artifact exists.
 
-Oracle-backed entries use the NVR frozen in
+Oracle-backed entries use the pin ref frozen in
 `docs/findings/capture-fixtures.md`. Claims stay scoped to the listed trigger;
 no entry supports a blanket claim that Rust code cannot crash.
 
@@ -39,7 +39,7 @@ no entry supports a blanket claim that Rust code cannot crash.
 - **Trigger:** fresh state; parse `nih`; expose candidates for the valid `ni`
   prefix; select one while the trailing `h` remains.
 - **Foundation artifact:** F-A case `incomplete-nih` records `ni@0:2:complete`
-  and `h@2:3:partial` at the pinned oracle NVR.
+  and `h@2:3:partial` at the frozen oracle pin.
 - **Passing artifact:** exact C API/oracle regression
   `f_e_01_null_key_rest` must validate a failed/missing key-rest before use,
   return the ABI error convention, and keep the process usable for a second
@@ -60,12 +60,14 @@ no entry supports a blanket claim that Rust code cannot crash.
 ### F-E-03 — historical save-path race
 
 - **Source evidence:** `reference/memory-safety-bugs.md` §1.3.
-- **Trigger:** alternate configuration updates and user-state writes; kill the
-  process at each persisted write boundary; reopen and replay the last input.
-- **Reproduction command:** `cargo test -p pinyin-user
-  f_e_03_hard_kill_replay -- --exact` in the user-store lane.
-- **Passing artifact:** reopen completes within the test timeout, committed
-  state is readable, and no partially committed generation is observed.
+- **Upstream-path trigger:** in the frontend compatibility lane, synchronize a
+  configuration callback with `pinyin_save` at a barrier and run the interleave
+  under TSAN. This is the scoped reproduction of the cited callback race.
+- **Replacement invariant:** separately kill the Rust user-store process at
+  each persisted write boundary, reopen, and replay the last input.
+- **Passing artifacts:** frontend test `f_e_03_config_save_race` reports no
+  race or invalid lifetime; user-store test `f_e_03_hard_kill_replay` reopens
+  within timeout and exposes no partially committed generation.
 
 ### F-E-04 — asynchronous cloud `user_data` lifetime leak
 
@@ -101,12 +103,13 @@ no entry supports a blanket claim that Rust code cannot crash.
 ### F-E-07 — high or unbounded memory growth
 
 - **Source evidence:** `reference/memory-safety-bugs.md` §2.4.
-- **Trigger:** process one million unique inputs and provider results through
-  every cache, then repeat the first fixed window.
-- **Reproduction command:** benchmark `f_e_07_bounded_cache` with the cache
-  capacity and peak RSS recorded on the bench page.
-- **Passing artifact:** entry count never exceeds the configured bound and
-  post-warm-up RSS remains within the published tolerance.
+- **Trigger:** configure a 4,096-entry cache; process one million unique
+  32-byte keys with 128-byte values, then repeat the first 4,096 keys.
+- **Reproduction command:** Linux benchmark `f_e_07_bounded_cache`, sampled
+  from `/proc/self/status` after warm-up and after each 10,000 operations.
+- **Passing artifact:** entry count never exceeds 4,096 and peak post-warm-up
+  RSS is at most baseline plus 64 MiB. The bench page records toolchain,
+  allocator, kernel and raw samples; other platforms are advisory.
 
 ### F-E-08 — English-mode use-after-free
 
@@ -122,6 +125,9 @@ no entry supports a blanket claim that Rust code cannot crash.
 
 - **Source evidence:** `reference/memory-safety-bugs.md` §4.1 and
   [libpinyin #120](https://github.com/libpinyin/libpinyin/issues/120).
+- **Scope:** the cited upstream failure occurs during binary generation. The
+  Rust lane does not reproduce that generator; it proves the replacement
+  loader invariant against the generated format.
 - **Trigger:** load the same frozen little-endian table fixture on x86_64 and
   i686 and compare decoded records and errors for truncated offsets.
 - **Reproduction command:** loader test `f_e_09_i686_cross_check` in the
@@ -133,6 +139,9 @@ no entry supports a blanket claim that Rust code cannot crash.
 
 - **Source evidence:** `reference/memory-safety-bugs.md` §4.2 and
   [libpinyin #170](https://github.com/libpinyin/libpinyin/issues/170).
+- **Scope:** the cited upstream bus error occurs in unigram generation. The
+  applicable Rust evidence is a checked replacement parser, not a claim that
+  the historical generator path was reproduced.
 - **Trigger:** decode fixtures whose multi-byte fields begin at every byte
   alignment, including truncation at each field boundary.
 - **Reproduction command:** loader test `f_e_10_unaligned_bytes` on the normal
@@ -156,11 +165,15 @@ no entry supports a blanket claim that Rust code cannot crash.
 
 - **Source evidence:** `reference/memory-safety-bugs.md` §6.1 and
   [ibus-libpinyin #542](https://github.com/libpinyin/ibus-libpinyin/issues/542).
-- **Trigger:** parse `zhuan` in fresh state and continue with a second parse.
+- **Foundation trigger:** parse `zhuan` in fresh state and continue with a
+  second parse. This proves only backend parser totality; it does not reproduce
+  the cited frontend/session assertion path.
 - **Foundation artifact:** F-A case `robustness-zhuan` records a complete
-  `zhuan@0:5:complete` parse at the pinned oracle NVR.
-- **Passing artifact:** parser unit/property test, retained cargo-fuzz seed and
-  Kani case all return normally; no assertion or panic is input-reachable.
+  `zhuan@0:5:complete` parse at the frozen oracle pin.
+- **Passing artifacts:** parser unit/property test, retained cargo-fuzz seed
+  and Kani case return normally. When the session lane exists,
+  `f_e_12_zhuan_session_replay` must exercise the full frontend-equivalent
+  sequence before making a session-level claim.
 
 ### F-E-13 — #518 cloud/proxy foreign-library crash
 

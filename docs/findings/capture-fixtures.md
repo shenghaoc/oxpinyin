@@ -2,6 +2,10 @@
 
 Date: 2026-08-09 · Status: frozen Foundation capture
 
+The Task 4 execution amendment selects line-oriented text rather than JSON.
+The authored Foundation spec files remain unchanged; this finding freezes the
+wire format used by the task output.
+
 ## Reference and reproduction
 
 Every record carries this name-version-revision stamp:
@@ -15,15 +19,18 @@ Reproduce from a clean ignored build directory:
 ```bash
 tools/oracle/build-oracle.sh --work-dir target/oracle --jobs 4
 tools/capture/run-capture.sh target/oracle/prefix fixtures/foundation
-sha256sum fixtures/foundation/f-a.nvr fixtures/foundation/f-c.nvr
+sha256sum fixtures/foundation/f-a.txt fixtures/foundation/f-c.txt
 ```
+
+The runner validates `oracle-pin.txt`, the public header, shared object, data
+manifest, and every generated data file before accepting the pin ref.
 
 Frozen outputs:
 
 | Family | Records | SHA-256 |
 |---|---:|---|
-| `fixtures/foundation/f-a.nvr` | 15 | `d9599903593cda62ae9f60b80ab3140e584592738ed770e1638fff03879ade9b` |
-| `fixtures/foundation/f-c.nvr` | 24 | `934761a605b33e775daff43a4c2cbdc42d1a09373c6679cf3535c181197dda5e` |
+| `fixtures/foundation/f-a.txt` | 15 | `8a82f2195b80e7596cb0d4069d096dbc5064eecea9e2dcd78b2fff144a81c858` |
+| `fixtures/foundation/f-c.txt` | 46 | `e24aa79f0beb60f99924606962eaeec0941c0335a29335806bed25533033bfb5` |
 
 The runner creates a new empty user directory for each family. The harness
 never calls training, remembering, choosing, or saving APIs. The
@@ -39,15 +46,22 @@ and other control bytes inside values are escaped as `\\\\`, `\\t`, `\\r`,
 `\\n` and `\\xNN`. Records contain:
 
 - `schema=pinyin-capture-v1`;
-- the full `nvr` above;
+- the full `pin_ref` above;
 - `family` and stable `case` identifiers;
-- the public `pinyin.h` `api_sequence` affecting the observation;
+- the per-record public `pinyin.h` `api_sequence` affecting the observation;
 - escaped `input` and hexadecimal `flags`;
-- `parse_return`, `parsed_input_length`, `segments`, and `remainder` outputs.
+- `parse_return`, `parsed_input_length`, `segments`, `candidate_total`,
+  `candidates_hex`, and `remainder` outputs.
+
+`pinyin_init` and `pinyin_fini` are family-scoped setup/teardown and are not
+misreported as per-record calls.
 
 A segment is `canonical@begin:end:complete|partial`. Byte positions are
 half-open offsets into `input`; apostrophe separator bytes therefore appear as
 gaps between adjacent segments. `segments=-` represents no parsed segment.
+Candidates are capped at the first ten deterministic results and encoded as
+comma-separated UTF-8 byte strings in lowercase hexadecimal; `candidate_total`
+retains the uncapped count.
 
 ## F-A coverage
 
@@ -70,10 +84,12 @@ implementation begins.
 
 ## F-C coverage
 
-F-C uses `IS_PINYIN` as the baseline and enables one additional full-pinyin
-parser bit per record. It covers incomplete parsing, tone handling, divided
-and resplit tables, all ten pinyin ambiguity bits, and all eight pinyin
-correction bits. Zhuyin-only bits are outside this full-pinyin family;
-`DYNAMIC_ADJUST` is excluded by the capture protocol. Flags whose effect is in
-candidate matching rather than segmentation may intentionally produce the
-same parser output as baseline.
+F-C uses `IS_PINYIN` as the baseline and captures an off/on pair with
+identical input for each additional full-pinyin parser bit. It covers
+incomplete parsing, tone handling, divided and resplit tables, all ten pinyin
+ambiguity bits, and all eight pinyin correction bits. Candidate totals and the
+first ten candidates expose matching/scoring effects even when the selected
+segmentation is unchanged. Zhuyin-only bits are outside this full-pinyin
+family; `DYNAMIC_ADJUST` is excluded by the capture protocol. The `force-tone`
+pair deliberately records no observed output change at this public API
+surface rather than inferring unobserved behavior.
