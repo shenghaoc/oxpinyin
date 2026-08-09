@@ -137,12 +137,33 @@ express, and it is represented by the single empty line at the head of
 `09-edge.txt`. Readers must therefore preserve an empty first line rather than
 skipping blanks.
 
+## Frozen output
+
+Generated 2026-08-09 with the committed generator. Running it twice produced
+byte-identical files, which is the W2-T2 acceptance criterion.
+
+| File | Inputs | SHA-256 |
+|---|---:|---|
+| `01-single-syllable.txt` | 405 | `30284a9f08317d99047430694dccc2d03c985b8cc0b8c3055cbb569542e14933` |
+| `02-syllable-pairs.txt` | 2,000 | `0231beff32cd75e7aa30efb18d4dad828af4568f63b835d9823038b929217486` |
+| `03-short-utterances.txt` | 2,500 | `1cce781f600113863262a7671de93219e47755daea495b2289a2819b155bbd69` |
+| `04-long-utterances.txt` | 1,500 | `aace505f39bc0c4fef48edaf76aeadf226459e4cf1ea9dfcac467f176319a186` |
+| `05-apostrophe.txt` | 1,200 | `92b9793e6f1b1abaad4b4c1f9585cae6fcde8c756657162abf011aa4dc2de414` |
+| `06-partial-tails.txt` | 1,200 | `fc33e25d2429b528bb838be53dee650d9a3d2d72ac431af4e2c38c3f4bfd79dc` |
+| `07-ambiguity.txt` | 800 | `8bae35d41a69fdadc23384f35ab8344b7ff3f575ad22249ddd045481fe280812` |
+| `08-junk.txt` | 800 | `5442ca37c553d4cfa92f1cf9ab743c2fd79f59542a98a63cd6ed87952fe82abb` |
+| `09-edge.txt` | 60 | `87e230fa2ba89f2b4b58f832214fd2ffa6d15db68b610eb0d1938783cf5a20ce` |
+| **Total** | **10,465** | |
+
 ## Reproducibility contract
 
 The acceptance criterion is that generating twice yields identical output. That
 is enforced as a test rather than a manual step: `tests/parity_corpus.rs`
 regenerates every stratum in memory and asserts byte equality against the
 committed files, so drift fails CI on the portable tier with no oracle present.
+It also checks that the directory holds exactly the generated strata, that the
+per-stratum counts match the table above, and that no line carries edge
+whitespace or a control byte.
 
 Regenerate with:
 
