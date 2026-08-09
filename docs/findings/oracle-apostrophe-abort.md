@@ -2,8 +2,10 @@
 
 Date: 2026-08-09 · Source tier: Architect observation from W2-T3.
 Status: **registered as F-E-14.** Harness guard accepted (maintainer decision
-2026-08-09). Upstream issue against the pinned tag is for the maintainer to
-file — do not open it from this finding.
+2026-08-09). Same root cause as
+[ibus-libpinyin #570](https://github.com/libpinyin/ibus-libpinyin/issues/570)
+(reported 2026-08-06 via the frontend path). Our API-level repro (lone
+apostrophe) is a simpler trigger.
 
 ## Summary
 
@@ -20,14 +22,19 @@ This is `assert()` reaching `abort()`, so it is not recoverable in-process. It
 is the same class as catalogue row F-E-12 (issue #542, assertion on user
 input), on a different code path and a different input shape. Registered as
 its own row **F-E-14** rather than folded into F-E-12, because the trigger
-and the upstream file differ.
+and the observed path differ.
 
 A lone apostrophe is ordinary user input. It is what a user sees mid-word while
-typing `xi'an`. The one-character repro for the upstream report is:
+typing `xi'an`. The one-character API-level repro is:
 
 ```text
 lone apostrophe "'"  →  assert()  →  abort()
 ```
+
+Same root cause as
+[ibus-libpinyin #570](https://github.com/libpinyin/ibus-libpinyin/issues/570)
+(reported 2026-08-06 via the frontend path). Our API-level repro (lone
+apostrophe) is a simpler trigger.
 
 ## Reproduction
 
@@ -125,20 +132,17 @@ It does not patch the oracle, and it must not. The oracle is the parity subject
 at a fixed pin; changing it would invalidate every fixture. The guard lives
 entirely in our harness.
 
-## Upstream report (maintainer action)
+## Upstream
 
-File upstream against the **pinned tag**
-(`2.11.91` / commit `0c5e80e1200f84fab185d1c5bde458b770a0636c`) with the
-one-character repro: lone apostrophe `'` → `assert()` → `abort()` via
-`pinyin_get_pinyin_key` after `pinyin_parse_more_full_pinyins`.
-
-**Do not file the upstream issue from agent work.** The maintainer will file
-it. This finding only records that the report is warranted and what the repro
-is.
+Same root cause as
+[ibus-libpinyin #570](https://github.com/libpinyin/ibus-libpinyin/issues/570)
+(reported 2026-08-06 via the frontend path). Our API-level repro (lone
+apostrophe) is a simpler trigger. No new upstream issue is required.
 
 ## Maintainer decisions (2026-08-09)
 
 1. **Register as F-E-14** (own row; not folded into F-E-12).
-2. **Upstream report** — yes, against the pinned tag; maintainer files it.
+2. **Upstream** — same root cause as ibus-libpinyin #570; our lone-apostrophe
+   API path is a simpler trigger of that report.
 3. **Guard in the harness** — accepted; keep apostrophe-only inputs in the
    corpus.

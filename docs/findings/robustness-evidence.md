@@ -30,7 +30,7 @@ no entry supports a blanket claim that Rust code cannot crash.
 | F-E-11 | stale Berkeley DB sidecar lock | user-store hard-kill gate | legacy trigger registered |
 | F-E-12 | `zhuan` user input | parser totality + fuzz | F-A seed; proptest + cargo-fuzz |
 | F-E-13 | cloud request through system proxy | provider/FFI ASan | registered |
-| F-E-14 | lone apostrophe `'` (oracle abort) | oracle harness guard + sentinel | registered; upstream TBD by maintainer |
+| F-E-14 | lone apostrophe `'` (oracle abort) | oracle harness guard + sentinel | registered; same root cause as #570 |
 
 ## Evidence entries
 
@@ -194,11 +194,14 @@ no entry supports a blanket claim that Rust code cannot crash.
 - **Source evidence:** W2-T3 live measurement;
   `docs/findings/oracle-apostrophe-abort.md`. Same class as F-E-12 (`assert()`
   on user input) on a different path; not a catalogue row in
-  `reference/memory-safety-bugs.md`.
+  `reference/memory-safety-bugs.md`. Same root cause as
+  [ibus-libpinyin #570](https://github.com/libpinyin/ibus-libpinyin/issues/570)
+  (reported 2026-08-06 via the frontend path). Our API-level repro (lone
+  apostrophe) is a simpler trigger.
 - **Trigger:** fresh pin-built oracle; parse lone `'` (also `''`, `'''`);
   call `pinyin_get_pinyin_key(instance, 0)`. Without the harness guard the
   process aborts.
-- **One-character repro (for upstream):** `'` → `assert()` → `abort()`.
+- **One-character API repro:** `'` → `assert()` → `abort()`.
 - **Harness guard (accepted):** skip the key walk when
   `parsed_input_length > 0` and the parsed prefix has no ASCII lowercase
   letter; emit `<no-key-columns>` sentinel. Differential runner reports
@@ -206,6 +209,3 @@ no entry supports a blanket claim that Rust code cannot crash.
 - **Passing artifact:** parity corpus run survives the three apostrophe-only
   inputs in `09-edge.txt`; each appears as an `oracle-sentinel` divergence
   rather than a process death.
-- **Upstream:** file against pinned tag `2.11.91`
-  (`0c5e80e1200f84fab185d1c5bde458b770a0636c`). Maintainer files the issue;
-  agents must not.
