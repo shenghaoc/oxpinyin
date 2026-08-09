@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "One-shot import of ibus-libpinyin settings and vocabulary."
+description = "Converter: Tkrzw HashDB → redb for pinyin data. Handles phrase_index specially."
 
 [lints.rust]
 unsafe_code = "allow" # FFI to libtkrzw
@@ -15,7 +15,13 @@ missing_docs = "warn"
 all = { level = "deny", priority = -1 }
 
 [dependencies]
+pinyin-oracle = { path = "../pinyin-oracle", optional = true }
 redb = { workspace = true }
+pinyin-core = { path = "../pinyin-core" }
+pinyin-data = { path = "../pinyin-data" }
+
+[features]
+oracle-ffi = ["dep:pinyin-oracle"]
 
 [build-dependencies]
 cc = "1"

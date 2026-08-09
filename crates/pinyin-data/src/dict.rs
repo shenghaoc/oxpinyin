@@ -199,7 +199,9 @@ mod tests {
         .unwrap();
         let key = SyllableKey::from_text("b").expect("b is an incomplete key");
         assert_eq!(key.completeness(), pinyin_core::Completeness::Partial);
-        let result = dict.lookup(&[key]).expect("incomplete maps to empty, not blocked");
+        let result = dict
+            .lookup(&[key])
+            .expect("incomplete maps to empty, not blocked");
         assert!(result.is_empty());
     }
 

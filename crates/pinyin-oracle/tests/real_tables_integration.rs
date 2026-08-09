@@ -8,17 +8,21 @@
 //!
 //! Requires `oracle-ffi` and the pin-built oracle on Linux with the full
 //! redb files generated via `pinyin-migrate`.
-//! The test is `#[ignore]`-like: if the full redb files are not present,
-//! it succeeds without asserting, so `cargo test --workspace` without oracle
-//! still passes.
+//! The test is `#[ignore]`-like: if the full redb files or the W2 corpus are
+//! not present, it succeeds without asserting, so `cargo test --workspace`
+//! without oracle still passes.
 
 #![cfg(feature = "oracle-ffi")]
 
-use pinyin_core::{Dictionary, LanguageModel};
-use pinyin_data::{BigramLanguageModel, LookupTable, SystemDictionary};
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+use pinyin_data::{BigramLanguageModel, SystemDictionary};
 use pinyin_engine::{EmptyConfigSource, KeyInput, Session, StoragePaths};
 use pinyin_oracle::{Oracle, OracleFlags, OraclePrefix, corpus};
-use std::path::{Path, PathBuf};
+
+/// Depth the capture protocol records candidates to.
+const CAPTURE_DEPTH: usize = 10;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -52,6 +56,63 @@ fn find_full_redb(name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Load every input from the committed W2 parity corpus strata.
+///
+/// Returns `None` when the corpus directory is missing or no stratum file can
+/// be read — the caller skips rather than inventing a tiny stand-in set.
+fn load_w2_corpus() -> Option<Vec<String>> {
+    let corpus_dir = repo_root().join(corpus::CORPUS_DIR);
+    if !corpus_dir.is_dir() {
+        eprintln!(
+            "W2 parity corpus not found at {}; skipping real_tables integration",
+            corpus_dir.display()
+        );
+        return None;
+    }
+
+    let mut all_inputs: Vec<String> = Vec::new();
+    for stratum in corpus::generate() {
+        let path = corpus_dir.join(stratum.file_name);
+        match std::fs::read(&path) {
+            Ok(bytes) => all_inputs.extend(corpus::Stratum::parse_file_bytes(&bytes)),
+            Err(error) => {
+                eprintln!(
+                    "cannot read corpus stratum {}: {error}; skipping real_tables integration",
+                    path.display()
+                );
+                return None;
+            }
+        }
+    }
+
+    if all_inputs.is_empty() {
+        eprintln!(
+            "W2 parity corpus at {} is empty; skipping real_tables integration",
+            corpus_dir.display()
+        );
+        return None;
+    }
+
+    Some(all_inputs)
+}
+
+fn real_candidates(session: &Session<SystemDictionary, BigramLanguageModel>) -> Vec<String> {
+    session
+        .candidates()
+        .iter()
+        .map(|c| c.text().to_owned())
+        .collect()
+}
+
+fn type_input(session: &mut Session<SystemDictionary, BigramLanguageModel>, input: &str) {
+    session.reset();
+    for ch in input.chars() {
+        // Junk / edge corpus members may not map to keys; keep going so the
+        // parity denominator is the full corpus rather than a filtered subset.
+        let _ = session.process_key(&KeyInput::character(ch));
+    }
 }
 
 #[test]
@@ -94,9 +155,17 @@ fn real_tables_session_reports_parity() {
         }
     };
 
+    let Some(all_inputs) = load_w2_corpus() else {
+        return;
+    };
+
     eprintln!("Using pinyin_index {:?}", pinyin_path);
     eprintln!("Using phrase_index {:?}", phrase_path);
     eprintln!("Using bigram {:?}", bigram_path);
+    eprintln!(
+        "Running real session over full W2 corpus ({} inputs)",
+        all_inputs.len()
+    );
 
     let dict = SystemDictionary::open(&pinyin_path, &phrase_path)
         .expect("SystemDictionary opens from full redb");
@@ -105,114 +174,83 @@ fn real_tables_session_reports_parity() {
     let mut session = Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm)
         .expect("Session::new with real tables");
 
-    // Load the W2 parity corpus (inputs only, as per corpus.rs)
-    let corpus_dir = repo_root().join(corpus::CORPUS_DIR);
-    let mut all_inputs: Vec<String> = Vec::new();
-    for stratum in corpus::generate() {
-        let path = corpus_dir.join(stratum.file_name);
-        if let Ok(bytes) = std::fs::read(&path) {
-            let inputs = corpus::Stratum::parse_file_bytes(&bytes);
-            all_inputs.extend(inputs);
-        }
-    }
-    // Also try to load via the committed files if generate fails
-    if all_inputs.is_empty() {
-        eprintln!("corpus not found at {:?}, trying fallback", corpus_dir);
-        // Fallback: use a small set
-        all_inputs = vec!["nihao".to_owned(), "zhongguo".to_owned(), "a".to_owned()];
-    }
-
-    // For a subset (to keep the test fast), take first 20
-    let subset: Vec<String> = all_inputs.into_iter().take(20).collect();
-    eprintln!("Running real session over {} inputs", subset.len());
-
-    // Open oracle for comparison
     let prefix = OraclePrefix::locate().expect("oracle prefix");
     let mut oracle = Oracle::open_with_temp_user_dir(prefix).expect("oracle opens");
     let mut oracle_session = oracle
         .session(OracleFlags::DEFAULT)
         .expect("oracle session");
 
-    // Simple sanity: the real session should be able to process a single
-    // complete syllable and produce candidates. This is the minimal proof that
-    // the encoder is wired through SystemDictionary.
-    let checks = ["a", "ni"];
-    for input in checks {
-        let obs = oracle_session
-            .observe(input.as_bytes())
-            .expect("oracle should observe");
-        assert!(
-            !obs.candidates.is_empty(),
-            "oracle should have candidates for {}",
-            input
-        );
-        session.reset();
-        for ch in input.chars() {
-            session
-                .process_key(&KeyInput::character(ch))
-                .expect("process_key should not fail");
-        }
-        let real_cands: Vec<String> = session
-            .candidates()
-            .iter()
-            .map(|c| c.text().to_owned())
-            .collect();
-        eprintln!(
-            "input {:?} oracle top {:?} real candidates {:?}",
-            input,
-            obs.candidates[0],
-            &real_cands[..real_cands.len().min(3)]
-        );
-        // The real session should produce at least one candidate for a complete syllable
-        // (the exact top-1 match is not asserted here; the full parity report below will show it)
-        assert!(
-            !real_cands.is_empty(),
-            "real session for {} should produce candidates",
-            input
-        );
-    }
+    // Candidate metrics (docs/findings/decode-differential.md):
+    //   top-1      — our first candidate is the pin's first candidate
+    //   top-5-set  — the pin's first candidate appears in our first five
+    //   prefix-10  — share of the pin's first ten that appear in our first ten
+    //   absent     — we produced candidates, but the pin's first is not among them
+    let mut total = 0_usize;
+    let mut top1 = 0_usize;
+    let mut top5 = 0_usize;
+    let mut prefix_overlap = 0_usize;
+    let mut prefix_depth = 0_usize;
+    let mut absent = 0_usize;
 
-    // Report the first real parity numbers for a tiny subset (just to satisfy the deliverable's
-    // requirement to report top-1/top-5/prefix-10). With the frozen encoder, the real session
-    // now uses the real tables, not fixtures, so these are the first numbers against real data.
-    let subset = ["nihao", "zhongguo"];
-    let mut total = 0usize;
-    let mut top1 = 0usize;
-    for input in subset {
-        let obs = oracle_session.observe(input.as_bytes()).expect("oracle");
+    for input in &all_inputs {
+        let obs = match oracle_session.observe(input.as_bytes()) {
+            Ok(obs) => obs,
+            Err(error) => {
+                eprintln!("oracle observe failed for {input:?}: {error}; counting as unobservable");
+                continue;
+            }
+        };
         if obs.candidates.is_empty() {
             continue;
         }
         total += 1;
-        session.reset();
-        for ch in input.chars() {
-            let _ = session.process_key(&KeyInput::character(ch));
-        }
-        let real_cands: Vec<String> = session
-            .candidates()
-            .iter()
-            .map(|c| c.text().to_owned())
-            .collect();
-        if real_cands.is_empty() {
-            continue;
-        }
-        if real_cands[0] == obs.candidates[0] {
+
+        type_input(&mut session, input);
+        let real_cands = real_candidates(&session);
+        let oracle_top = &obs.candidates[0];
+
+        if real_cands.first() == Some(oracle_top) {
             top1 += 1;
         }
-        eprintln!(
-            "parity check {:?} oracle {:?} real {:?}",
-            input, obs.candidates[0], real_cands[0]
-        );
-    }
-    eprintln!(
-        "Real tables parity (tiny subset) top-1 {}/{} = {:.2}%",
-        top1,
-        total,
-        if total > 0 {
-            top1 as f64 / total as f64 * 100.0
-        } else {
-            0.0
+        if real_cands.iter().take(5).any(|text| text == oracle_top) {
+            top5 += 1;
         }
+
+        let real_prefix: BTreeSet<&String> = real_cands.iter().take(CAPTURE_DEPTH).collect();
+        for cand in obs.candidates.iter().take(CAPTURE_DEPTH) {
+            prefix_depth += 1;
+            if real_prefix.contains(cand) {
+                prefix_overlap += 1;
+            }
+        }
+
+        if !real_cands.is_empty() && !real_cands.iter().any(|text| text == oracle_top) {
+            absent += 1;
+        }
+    }
+
+    let top1_pct = if total == 0 { 0 } else { top1 * 100 / total };
+    let top5_pct = if total == 0 { 0 } else { top5 * 100 / total };
+    let prefix_pct = if prefix_depth == 0 {
+        0
+    } else {
+        prefix_overlap * 100 / prefix_depth
+    };
+
+    // Print rates before any assertion (required for the parity report).
+    eprintln!("real tables parity — candidates, W2 parity corpus");
+    eprintln!("  compared                {total}");
+    eprintln!("  top-1                   {top1:>6}  {top1_pct}%");
+    eprintln!("  top-5-set               {top5:>6}  {top5_pct}%");
+    eprintln!("  prefix-10 overlap       {prefix_overlap:>6} of {prefix_depth}  {prefix_pct}%");
+    eprintln!("  absent                  {absent:>6}");
+
+    assert!(
+        total > 0,
+        "oracle produced no candidates over the W2 corpus; cannot report parity"
     );
-    assert!(total > 0, "should have at least one parity check");
+    assert!(
+        top1 * 100 >= total * 80,
+        "top-1 fell to {top1_pct}% ({top1}/{total}); expected >= 80%"
+    );
 }

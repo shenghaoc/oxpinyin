@@ -31,8 +31,6 @@ fn main() {
     }
     println!("cargo:rustc-link-lib=tkrzw");
     println!("cargo:rustc-link-lib=stdc++");
-<<<<<<< Updated upstream
-=======
 
     // When oracle-ffi is enabled, also link the pin-built libpinyin and glib
     // for the phrase_index conversion that uses pinyin_token_get_phrase.
@@ -75,5 +73,4 @@ fn main() {
             }
         }
     }
->>>>>>> Stashed changes
 }

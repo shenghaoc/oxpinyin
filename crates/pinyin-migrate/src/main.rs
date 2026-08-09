@@ -171,7 +171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             let mut all_tokens = std::collections::HashSet::new();
             let pinyin_c =
-                std::ffi::CString::new(pinyin_index_path.to_string_lossy().as_bytes()).ok();
+                std::ffi::CString::new(_pinyin_index_path.to_string_lossy().as_bytes()).ok();
             if let Some(pc) = pinyin_c {
                 if let Ok(p_reader) = TkrzwReader::open(&pc) {
                     if let Ok(p_entries) = p_reader.entries() {
