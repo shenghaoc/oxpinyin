@@ -106,6 +106,11 @@ pub enum OracleError {
         /// Raw value as it appeared in the record.
         value: String,
     },
+    /// A replay producer holds no observation for the requested input.
+    ReplayInputMissing {
+        /// Escaped input that had no recorded observation.
+        input: String,
+    },
     /// A capture record could not be decoded, with its position in the file.
     CaptureRecordInvalid {
         /// One-based line number within the fixture.
@@ -182,6 +187,9 @@ impl fmt::Display for OracleError {
             }
             Self::CaptureFieldMalformed { field, value } => {
                 write!(formatter, "capture field {field} is malformed: {value:?}")
+            }
+            Self::ReplayInputMissing { input } => {
+                write!(formatter, "replay source has no observation for {input:?}")
             }
             Self::CaptureRecordInvalid { line, source } => {
                 write!(formatter, "capture record at line {line}: {source}")

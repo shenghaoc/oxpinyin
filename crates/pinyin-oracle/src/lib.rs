@@ -35,6 +35,7 @@
 
 pub mod capture;
 pub mod corpus;
+pub mod differential;
 mod error;
 pub mod flags;
 pub mod observation;
