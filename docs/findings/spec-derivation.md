@@ -40,7 +40,7 @@ present from the first capture.
 | F-B | Conversion | corpus utterances → candidate lists to depth 10 | W4 acceptance; W2 corpus |
 | F-C | Flag matrix | each option bit singly against baseline | parser/scoring SPECs |
 | F-D | Session | guess → choose → re-guess remainder | engine API; capi templates |
-| F-E | Robustness | the 13 memory/access-safety rows below | scoped demonstrations and regression gates |
+| F-E | Robustness | the 14 memory/access-safety rows below | scoped demonstrations and regression gates |
 | F-F | Shuangpin/Bopomofo | parse behaviour captured while the harness exists | Stage 2 |
 
 ### F-E robustness tracker
@@ -64,6 +64,7 @@ gate; the language does not prevent every class.
 | F-E-11 | 5.1 #179 stale-lock hang | user-store hard-kill gate |
 | F-E-12 | 6.1 #542 assertion | `zhuan` totality fixture + proptest + fuzz seed |
 | F-E-13 | 6.2 cloud/proxy crash | ASan across remaining FFI |
+| F-E-14 | W2-T3 oracle abort on `'` | harness guard + `oracle-sentinel`; upstream TBD by maintainer |
 
 ## What still requires reading
 
