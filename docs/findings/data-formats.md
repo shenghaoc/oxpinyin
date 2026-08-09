@@ -1,8 +1,8 @@
 # Data formats — pinned oracle table files
 
 Date: 2026-08-12 · Status: recorded; human review required before freeze.
-Revision: record format corrected (flags 0-4, compact format, nested
-sub-records); secondary index documented; 11/12 addon files fully parsed.
+Revision: Tkrzw files converted to redb via pinyin-migrate (FFI bridge);
+direct Rust parsing replaced by redb loader; fixtures updated to .redb.
 
 Describes every binary table file installed by the pinned oracle under
 `$PREFIX/lib/libpinyin/data/`. This is a SPEC — no loader code may be
@@ -18,14 +18,14 @@ written before it is frozen.
 ## File inventory (23 files)
 
 ```
-File                        Size          Format family
-─────────────────────────────────────────────────────────────────
-bigram.db               20,016,880   Tkrzw Hash DB (v1.3)
-pinyin_index.bin         5,700,608   Tkrzw Hash DB (v1.7)
-phrase_index.bin         4,089,856   Tkrzw Hash DB (v1.7)
-addon_pinyin_index.bin   1,254,400   Tkrzw Hash DB (v1.7)
-addon_phrase_index.bin     963,584   Tkrzw Hash DB (v1.7)
-punct.bin                  534,528   Tkrzw Hash DB (v1.7)
+File                        Size          Format family       Loader format
+──────────────────────────────────────────────────────────────────────────
+bigram.db               20,016,880   Tkrzw Hash DB (v1.3)  → bigram.redb
+pinyin_index.bin         5,700,608   Tkrzw Hash DB (v1.7)  → pinyin_index.redb
+phrase_index.bin         4,089,856   Tkrzw Hash DB (v1.7)  → phrase_index.redb
+addon_pinyin_index.bin   1,254,400   Tkrzw Hash DB (v1.7)  → addon_pinyin_index.redb
+addon_phrase_index.bin     963,584   Tkrzw Hash DB (v1.7)  → addon_phrase_index.redb
+punct.bin                  534,528   Tkrzw Hash DB (v1.7)  → punct.redb
 
 gb_char.bin              2,972,097   Custom content (sys)
 gbk_char.bin               346,011   Custom content (sys)
@@ -50,48 +50,67 @@ table.conf                   1,229   Text configuration
 
 Three categories:
 
-1.  **Tkrzw Hash DB** (6 files) — key-value stores mapping pinyin
-    syllable hashes to phrase-token lists, and phrase texts to metadata.
+1.  **Tkrzw Hash DB** (6 files) — key-value stores.  Converted to
+    portable redb databases by `pinyin-migrate` before loading.
 2.  **Custom content files** (16 files) — phrase/character
     dictionaries with a common 28-byte header, an index table, and
-    variable-length records.
+    variable-length records.  Parsed directly by `pinyin-data`.
 3.  **table.conf** — text configuration mapping library indices to
     content-file paths.
 
 ---
 
-## 1. Tkrzw Hash DB format
+## 1. Tkrzw Hash DB → redb conversion
 
-All `*_index.bin`, `punct.bin`, and `bigram.db` files use the Tkrzw
-Hash Database Manager format (HashDBM class).
+All `*_index.bin`, `punct.bin`, and `bigram.db` files are Tkrzw
+Hash Database Manager format (HashDBM class, v1.x) in the oracle
+installation.  These are **not** parsed directly in Rust.  Instead,
+`pinyin-migrate` reads them via FFI to libtkrzw (Linux-only) and
+writes portable redb databases that `pinyin-data` loads on any
+platform.
 
-### 1.1 File header
+### 1.1 Conversion (pinyin-migrate)
 
-| Offset | Size  | Field                 | Value in oracle               |
-|--------|-------|-----------------------|-------------------------------|
-| 0      | 10    | Magic                 | `"TkrzwHDB\n"`                |
-| 10     | 1     | format_version_minor  | 7 (3 for bigram.db)            |
-| 11     | 1     | format_version_major  | 1                              |
-| 12     | 1     | opaque_metadata_size  | varies                         |
-| 13     | 1     | offset_width          | 4                              |
-| 14     | 1     | align_pow             | 10 (= 2^10 = 1024 byte align)  |
-| 15–22  | 8     | num_buckets           | varies per file (u64 LE)       |
-| 23+    | n     | opaque metadata       | size per byte 12               |
+```
+pinyin-migrate <input.tkh> -o <output.redb> [-n <limit>]
+```
 
-All multi-byte fields are **little-endian**.
+- Reads all key-value pairs from the Tkrzw file via the C++ bridge
+  (`crates/pinyin-migrate/src/bridge.cpp`).
+- Filters empty-key tombstone records.
+- Sorts entries lexicographically by key for deterministic output.
+- Writes a redb v4 database with a single table `"data"`.
 
-### 1.2 Record storage
+The resulting redb file is **byte-identical** across repeated runs of
+the same conversion command (verified SHA-256 on punct.bin,
+pinyin_index.bin).
 
-Internally Tkrzw HashDBM stores records with operation types (SET =
-0x80, REMOVE = 0x40, VOID = 0xC0) and CRC-32 checksums. Records are
-organised in a hash table with linked overflow chains. The exact
-on-disk layout is determined by the Tkrzw library.
+### 1.2 redb schema
 
-**Loader strategy**: pinyin-data will parse the Tkrzw Hash DB format
-directly in portable Rust, using the well-documented Tkrzw file layout.
-No FFI dependency on libtkrzw.
+| Aspect        | Value                                     |
+|---------------|-------------------------------------------|
+| Table name    | `"data"`                                  |
+| Key type      | `&[u8]` (raw bytes from Tkrzw key)        |
+| Value type    | `&[u8]` (raw bytes from Tkrzw value)      |
+| Key ordering  | Lexicographic (redb B-tree)               |
 
-### 1.3 Key-value semantics
+No additional metadata or indexes.  Key and value interpretation is
+the callers responsibility (see §1.3).
+
+### 1.3 Loader (pinyin-data)
+
+`pinyin_data::LookupTable` wraps a `redb::ReadOnlyDatabase`:
+
+```rust
+let table = LookupTable::open(path)?;
+let value: Option<Vec<u8>> = table.get(key)?;
+let count: u64 = table.len()?;
+let all: Vec<(Vec<u8>, Vec<u8>)> = table.iter()?;
+```
+
+Portable pure Rust — no glib, no Linux-only deps, no `unsafe`.
+
+### 1.4 Key-value semantics
 
 | File                    | Key encoding                | Value encoding                          |
 |-------------------------|-----------------------------|-----------------------------------------|
@@ -107,30 +126,28 @@ representation of the syllable's initial, final, and tone. The exact
 encoding is **pending detailed analysis** but can be cross-referenced
 against the oracle via the FFI at load time.
 
-### 1.4 Phrase token encoding
+### 1.5 Tkrzw header (reference only)
 
-`phrase_token_t` = `u32` (little-endian).
+The oracle's on-disk Tkrzw files use the following header layout
+(big-endian multi-byte integers), documented for completeness only.
+The converter uses libtkrzw, not direct parsing.
 
-```
-bits 31–28  bits 27–24     bits 23–0
-┌──────────┬──────────────┬──────────────────┐
-│ reserved │ library_idx  │ phrase_index     │
-│  (0)     │  (4 bits)    │  (24 bits)       │
-└──────────┴──────────────┴──────────────────┘
-```
-
-Constants (from upstream `novel_types.h`):
-
-```
-PHRASE_MASK                    = 0x00FFFFFF
-PHRASE_INDEX_LIBRARY_MASK      = 0x0F000000
-PHRASE_INDEX_LIBRARY_COUNT     = 16
-PHRASE_INDEX_LIBRARY_INDEX(t)  = (t >> 24) & 0x0F
-PHRASE_INDEX_MAKE_TOKEN(l, pi) = ((l << 24) & 0x0F000000) | (pi & 0x00FFFFFF)
-```
-
-A `phrase_token_t` with value `0x00000000` (library=0, phrase=0) is a
-**sentinel** marking the start of a token list.
+| Offset | Size  | Field                 | Notes                         |
+|--------|-------|-----------------------|-------------------------------|
+| 0      | 9     | Magic                 | `"TkrzwHDB\n"`                |
+| 9      | 1     | fmt_minor             | 7 (3 for bigram.db)           |
+| 10     | 1     | fmt_major             | 1                             |
+| 11     | 1     | opaque_sz             | varies                        |
+| 12     | 1     | offset_width          | 1 (hash fingerprints)         |
+| 13     | 1     | align_pow             | 4                             |
+| 14–15  | 2     | cyclic_magic          | varies                        |
+| 16–19  | 4     | static_flags          | 0                             |
+| 20–23  | 4     | num_buckets           | u32 BE                        |
+| 24–31  | 8     | num_records           | u64 BE                        |
+| 32–39  | 8     | eff_data_size         | u64 BE                        |
+| 40–47  | 8     | file_size             | u64 BE                        |
+| 48–55  | 8     | mod_time              | u64 BE (µs)                   |
+| 56–63  | 8     | db_type + padding     |                               |
 
 ---
 
