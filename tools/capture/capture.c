@@ -170,6 +170,7 @@ static bool capture_fa(pinyin_context_t *context) {
         {"valid-single", "ni", DEFAULT_FLAGS},
         {"valid-multiple", "nihao", DEFAULT_FLAGS},
         {"valid-phrase", "zhongguoren", DEFAULT_FLAGS},
+        {"robustness-zhuan", "zhuan", DEFAULT_FLAGS},
         {"ambiguous-xian", "xian", DEFAULT_FLAGS},
         {"ambiguous-fangan", "fangan", DEFAULT_FLAGS},
         {"apostrophe-xi-an", "xi'an", DEFAULT_FLAGS},
