@@ -40,3 +40,8 @@ path = "src/bin/oracle_paths.rs"
 # Internal workspace crate: the corpus is generated from the frozen syllable
 # inventory, and W2-T3 compares against this parser. Not an external dependency.
 pinyin-core = { path = "../pinyin-core" }
+
+[dev-dependencies]
+# The decode-level differential drives the supported session API, so the
+# candidate side of the report measures what a shell would actually see.
+pinyin-engine = { path = "../pinyin-engine" }
