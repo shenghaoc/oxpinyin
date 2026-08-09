@@ -46,6 +46,11 @@ pub enum OracleError {
         /// Path the harness expected to exist.
         path: PathBuf,
     },
+    /// No pin-verified oracle prefix could be located.
+    PrefixNotFound {
+        /// Candidate roots that were examined, in order.
+        tried: Vec<PathBuf>,
+    },
     /// A path or input string contained an interior NUL byte.
     InteriorNul {
         /// Which value carried the NUL.
@@ -120,6 +125,11 @@ impl fmt::Display for OracleError {
             Self::PrefixArtefactMissing { path } => {
                 write!(formatter, "oracle prefix is missing {path:?}")
             }
+            Self::PrefixNotFound { tried } => write!(
+                formatter,
+                "no pin-verified oracle prefix found (tried {tried:?}); \
+                 build one with tools/oracle/build-oracle.sh"
+            ),
             Self::InteriorNul { what } => {
                 write!(formatter, "{what} contains an interior NUL byte")
             }
