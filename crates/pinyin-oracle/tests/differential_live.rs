@@ -18,8 +18,10 @@ use std::sync::OnceLock;
 
 use pinyin_oracle::capture::segments_to_wire;
 use pinyin_oracle::corpus;
-use pinyin_oracle::differential::{self, Case, Reason, Unclassified};
-use pinyin_oracle::{LiveSource, Oracle, OracleFlags, OraclePrefix, OracleSegment};
+use pinyin_oracle::differential::{self, Case, Reason};
+use pinyin_oracle::{
+    LiveSource, Oracle, OracleFlags, OraclePrefix, OracleSegment, Taxonomy, taxonomy,
+};
 
 /// Total corpus size, frozen in `docs/findings/parity-corpus.md`.
 const CORPUS_SIZE: usize = 10_465;
@@ -58,7 +60,11 @@ fn execute_corpus() -> differential::RunOutput {
         .session(OracleFlags::DEFAULT)
         .expect("session allocates");
     let mut source = LiveSource::new(session);
-    differential::run(&mut source, &corpus_cases(), &Unclassified)
+    differential::run(
+        &mut source,
+        &corpus_cases(),
+        &Taxonomy::new(OracleFlags::DEFAULT),
+    )
 }
 
 /// One live corpus run shared by every assertion that inspects it.
@@ -248,4 +254,86 @@ fn a_live_run_is_deterministic() {
         "two live runs must produce identical logs"
     );
     assert_eq!(first.divergence_log_text(), second.divergence_log_text());
+}
+
+#[test]
+fn the_class_roll_up_matches_the_taxonomy_finding() {
+    // The table in docs/findings/divergence-taxonomy.md. Pinned here so the
+    // finding cannot drift from what the classifier actually produces.
+    let output = run_corpus();
+    let count = |class: &str| {
+        output
+            .report
+            .classes
+            .get(class)
+            .copied()
+            .unwrap_or_default()
+    };
+
+    assert_eq!(count("output-identical"), 9_506);
+    assert_eq!(count("tie-swap"), 468);
+    assert_eq!(count("path-set"), 485);
+    assert_eq!(count("theirs-bug"), 6);
+
+    // ours-bug at zero is the point of recording it: it is the class that must
+    // stay empty. The rest cannot arise under the parity profile on a pin-built
+    // oracle.
+    for empty in ["ours-bug", "flag-semantics", "data-version", "distro-delta"] {
+        assert_eq!(count(empty), 0, "expected no {empty} records");
+    }
+
+    let total: usize = output.report.classes.values().sum();
+    assert_eq!(total, CORPUS_SIZE, "classification must be total");
+}
+
+#[test]
+fn only_path_set_currently_gates_the_parity_goal() {
+    use pinyin_oracle::DivergenceClass;
+
+    let output = run_corpus();
+    let gating: usize = DivergenceClass::ALL
+        .iter()
+        .filter(|class| class.gates_parity())
+        .map(|class| {
+            output
+                .report
+                .classes
+                .get(class.as_wire())
+                .copied()
+                .unwrap_or_default()
+        })
+        .sum();
+
+    // 485 path-set and zero ours-bug. Every one of the 485 traces to the single
+    // frozen-SPEC contradiction in
+    // docs/findings/parser-spec-contradiction-incomplete-keys.md, so this number
+    // is the S1b gap and should collapse once that correction lands.
+    assert_eq!(gating, 485);
+}
+
+#[test]
+fn the_budget_verdict_is_computed_and_over_under_both_readings() {
+    let output = run_corpus();
+    let verdict = taxonomy::budget(output.report.total, &output.report.classes);
+
+    assert_eq!(verdict.corpus_size, CORPUS_SIZE);
+    assert_eq!(verdict.limit, 52, "0.5% of 10,465");
+    assert_eq!(verdict.output_identical, 9_506);
+    assert_eq!(verdict.tie_swap, 468);
+    assert_eq!(verdict.auto_accepted(), 9_974);
+
+    // Both readings are over. Recorded as a measurement, not enforced: see the
+    // budget section of docs/findings/divergence-taxonomy.md for why parse-level
+    // tie-swap cannot be reduced without a decoder.
+    assert!(!verdict.literal_pass());
+    assert!(!verdict.divergence_only_pass());
+}
+
+#[test]
+fn no_comparison_is_left_unclassified() {
+    let output = run_corpus();
+    for line in &output.comparison_log {
+        assert!(!line.contains("class=unclassified"), "{line}");
+        assert!(!line.contains("class=-"), "{line}");
+    }
 }
