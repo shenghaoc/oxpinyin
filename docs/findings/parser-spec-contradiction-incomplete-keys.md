@@ -1,16 +1,19 @@
 # Findings — frozen parser SPEC contradicts the pin on incomplete keys
 
 Date: 2026-08-09 · Source tier: Architect observation from the W2-T3 corpus run.
-Status: **resolved by oracle-driven SPEC correction** (maintainer decision
-2026-08-09). The field invariant in `docs/findings/parser-spec.md` now admits
-partial segments at any position, multiple times. Path-set enumeration,
-`MAX_PARSE_RESULTS` re-evaluation, and the parser implementation change are
-deferred to a separate branch. This finding remains as the measurement that
-justified the freeze edit.
+Status: **resolved-by-architecture** (maintainer decisions 2026-08-09).
 
-Originally this finding did not change `docs/findings/parser-spec.md`,
-`docs/findings/parser-path-set.md`, or any golden. The SPEC amendment that
-closed the STOP is recorded in the parser SPEC's Architect correction log.
+Two layers of resolution:
+
+1. **Oracle-driven SPEC correction** on the field invariant in
+   `docs/findings/parser-spec.md`: partial segments may appear at any
+   position, multiple times (evidence below). That freeze edit stands.
+2. **Architecture resolution** of the path-set / `MAX_PARSE_RESULTS`
+   follow-up: do **not** extend the foundation parser's explicit
+   `Vec<Parse>` enumeration to mid-position partials. That work belongs
+   to W4's `SegmentGraph` + decoder. See §Resolved by architecture.
+
+This finding remains as the measurement that justified both decisions.
 
 ## The contradiction
 
@@ -125,31 +128,63 @@ a path we enumerate, just not the one our greedy order puts first. That is the
 budget the W2-T5 card sets. See `docs/findings/divergence-taxonomy.md` for why
 that budget cannot be assessed until a decoder exists.
 
-## What is not being done (still true after the SPEC correction)
+## What is not being done
 
-- The parser is **not** changed on this stack. It still implements the
-  pre-correction path set; implementation is a separate branch.
-- Goldens and `parser-path-set.md` are **not** edited here. Only the field
-  invariant in `parser-spec.md` received the oracle-driven SPEC correction.
+- The foundation parser is **not** extended to mid-position partials. Its
+  `Vec<Parse>` contract stays complete-syllable segmentations with optional
+  trailing partial — the scope it can represent without exponential
+  materialisation.
+- Goldens and `parser-path-set.md` are **not** rewritten to claim mid-path
+  incomplete enumeration.
 - The comparison is **not** weakened to absorb these. All 491 appear in the
-  divergence log, and W2-T5 classifies the 483 as `path-set` until the
-  path-set/parser branch lands.
+  divergence log; W2-T5 classifies the 483 as `path-set`. That count is the
+  documented W2 baseline until W4.
 - The corpus is **not** trimmed to avoid the stratum that found this.
+
+## Resolved by architecture
+
+Explicit path enumeration is exponential under mid-position partials. No
+`MAX_PARSE_RESULTS` value and no retention rule repairs that: the foundation
+parser's `Vec<Parse>` contract is the wrong data structure for the problem.
+
+Upstream does not materialise a Cartesian path set either. It builds a key
+matrix (edges at each byte position); the decoder then selects via dynamic
+programming. The oracle's selected segmentation is a **decoder choice from a
+graph**, not one member of an exhaustively listed set.
+
+**W4's `SegmentGraph` is the answer.** Edges are
+`O(n × max_syllable_length × edge_types)` — polynomial. The decoder's `k`
+bounds output. Nobody enumerates all paths. Mid-position incomplete keys
+become valid graph edges; the 483 cases become selectable graph paths without
+explosion.
+
+Until then:
+
+- The foundation parser retains `Vec<Parse>` for **complete-syllable
+  segmentations with optional trailing partial** (its current, correct
+  scope).
+- `MAX_PARSE_RESULTS` stays at **4,096** for that foundation contract.
+- The decoder's `k` parameter bounds candidate output at the layer where
+  "too many" is meaningful.
+- The **483 `path-set` divergences are expected** until W4 lands. They are
+  documented in the W2 parity / divergence log and are not a foundation
+  parser defect relative to the retained scope.
+
+Next work after W2 merges: **W3** (data loading) and **W4** (`SegmentGraph`
++ decoder) in parallel.
 
 ## Maintainer decisions (2026-08-09)
 
-1. **Correct the incomplete-key rules — yes, match the pin.** Stage 1 parity
-   requires admitting initial-only keys at any position and repeatedly.
-   `parser-spec.md` has received an oracle-driven SPEC correction replacing
-   "at most one partial, last position" with the observed upstream policy.
-   `parser-path-set.md` partial-fallback and the W1 parser follow-up land on a
-   **separate branch**; until then the portable parser still implements the
-   pre-correction path set and the 483 remain `path-set` divergences.
-2. **Path-count consequence — deferred.** `MAX_PARSE_RESULTS` (4,096) must be
-   re-evaluated on the same separate branch that admits the new paths, not
-   before and not silently in this stack.
+1. **Field invariant — oracle-driven SPEC correction.** `parser-spec.md`
+   records that partials may appear at any position, multiple times, matching
+   the pin. That freeze edit stands as the description of pin policy.
+2. **Path-set / `MAX_PARSE_RESULTS` follow-up — resolved by architecture.**
+   Do not extend foundation `Vec<Parse>` enumeration to mid-position
+   partials. Represent mid-position incomplete edges on W4's `SegmentGraph`;
+   keep `MAX_PARSE_RESULTS = 4_096` for the foundation parser; treat the 483
+   as the W2 baseline until W4.
 3. **Apostrophe-tolerance pair** (`'ni`, `ni''hao`) — still open; decide
    separately.
-4. **Extend F-A / fixture family** for non-terminal and repeated partials —
-   still open; the corrected SPEC should be frozen against captured evidence
-   on the implementation branch.
+4. **F-A / fixture coverage** for non-terminal and repeated partials —
+   still open for W4 capture against the graph, not for a foundation
+   path-set rewrite.
