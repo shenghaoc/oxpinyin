@@ -1,9 +1,9 @@
 # Findings — W2-T5 divergence taxonomy
 
 Date: 2026-08-09 · Source tier: Architect derivation.
-Status: **proposed; human freeze required before any parity climb begins.**
-Two decisions are requested at the end and one of them changes what the
-auto-accept budget means.
+Status: **frozen** (maintainer decisions 2026-08-09 on budget meaning and
+when the budget gates). Class set and classification rules stand as proposed;
+the auto-accept budget section records the decisions rather than open asks.
 
 Every class below has a worked example, and every example is either measured on
 the pin or explicitly marked as constructed.
@@ -25,8 +25,8 @@ whose value space this finding defines.
 
 | Class | Whose problem | Auto-accepted | Gates S1b |
 |---|---|---|---|
-| `output-identical` | nobody | yes | n/a — this is success |
-| `tie-swap` | nobody | yes | no |
+| `output-identical` | nobody | n/a — agreement, not divergence | n/a — this is success |
+| `tie-swap` | nobody | yes (report only until W4) | no until decoder exists |
 | `path-set` | ours, by policy | no | yes |
 | `flag-semantics` | neither — different questions | no | no |
 | `ours-bug` | ours | no | yes |
@@ -38,7 +38,8 @@ whose value space this finding defines.
 
 The compared output is the same on both sides: the oracle's selected
 segmentation is our **first** path, consumed length agrees, remainder agrees.
-Nothing differs.
+Nothing differs. This class is **agreement**, not divergence. It is not inside
+the auto-accept budget and is not a triage population.
 
 *Worked example (measured).* Input `nihao`. Oracle selects
 `ni@0:2:complete,hao@2:5:complete`; that is our first path; both consume 5 bytes
@@ -48,9 +49,9 @@ with an empty remainder. Rank 0.
 
 ### `tie-swap`
 
-Agreement, but at a positive rank: the oracle selected a segmentation we do
-enumerate, just not the one our frozen order puts first. Both sides admit the
-same path set; they differ only in which member is chosen.
+Agreement on the path set, but at a positive rank: the oracle selected a
+segmentation we do enumerate, just not the one our frozen order puts first.
+Both sides admit the same path set; they differ only in which member is chosen.
 
 *Worked example (measured).* Input `fangan`. Our frozen order is
 `[fang, an]`, `[fan, gan]`, `[fa, ng, an]`. The oracle selects `[fan, gan]`, our
@@ -61,7 +62,9 @@ second path. Rank 1. Also pinned in `fixtures/foundation/f-a.txt` as
 
 Choice is not a parser concern. Our parser deliberately enumerates rather than
 ranks, so at this stage `tie-swap` measures the gap a future ranking policy must
-close. It is not a defect. See the budget section for why this matters.
+close. It is not a defect. The 468 is the **W4 baseline**: report it on every
+run; do **not** gate S1b or the W2 runner on it until a decoder exists and
+`tie-swap` means both sides chose differently among paths they both admit.
 
 ### `path-set`
 
@@ -78,14 +81,17 @@ ours    ying@0:4:complete, chon@4:8:partial
 ```
 
 Both consume all 8 bytes, so the disagreement is purely which segmentations
-exist. The pin admits an initial-only key at any position and repeatedly;
-`docs/findings/parser-spec.md` freezes at most one partial, in final position.
+exist. The pin admits an initial-only key at any position and repeatedly.
+`docs/findings/parser-spec.md` now matches that policy (oracle-driven SPEC
+correction); the portable parser and `parser-path-set.md` still implement the
+pre-correction path set until a separate branch lands.
 
 *Corpus count:* 485 of 10,465. This is currently the whole substantive parity
-gap, and it has **one** root cause, raised as a STOP in
-`docs/findings/parser-spec-contradiction-incomplete-keys.md`. `path-set` is
-attributed to us because the frozen SPEC is what disagrees with the measured
-subject — not because the parser deviates from its SPEC. It does not.
+gap, and it has **one** root cause, measured in
+`docs/findings/parser-spec-contradiction-incomplete-keys.md` (483 of 491
+divergences). `path-set` is attributed to us because our path set still
+disagrees with the pin — the SPEC field invariant is corrected; the
+implementation is not yet.
 
 ### `flag-semantics`
 
@@ -138,7 +144,7 @@ have crashed.
 
 1. Input `'`. The pin reports `parsed_input_length = 1` with no key-matrix
    column, and querying a key trips an `assert()` that reaches `abort()`. The
-   harness records `<no-key-columns>@1`. See
+   harness records `<no-key-columns>@1`. Registered as **F-E-14**; see
    `docs/findings/oracle-apostrophe-abort.md`.
 2. Input `ni'`. The pin yields a key column with no usable pinyin string, and
    the harness records `ni@0:2:complete,<missing-pinyin>@2`. This is catalogue
@@ -206,59 +212,43 @@ change does not require touching it.
 
 ## Auto-accept budget
 
-The W2-T5 card sets a hard budget: the auto-accepted classes, named as
-`tie-swap` and `output-identical`, must be at most **0.5% of the corpus**. For
-10,465 inputs that is 52 records.
+### Frozen meaning (maintainer decision 2026-08-09)
+
+The **0.5% auto-accept budget applies to auto-accepted divergence classes
+only.** Today that is `tie-swap` alone.
+
+`output-identical` is **agreement, not divergence.** It is outside the budget.
+It must not be summed with `tie-swap` to form a "literal" reading of the card;
+that reading inverted the goal (it would have required at most 52 of 10,465
+inputs to agree) and is rejected.
+
+For 10,465 inputs the budget limit is **52** auto-accepted divergence records.
 
 Measured:
 
-| Class | Count | Share |
-|---|---:|---:|
-| `output-identical` | 9,506 | 90.84% |
-| `tie-swap` | 468 | 4.47% |
-| **sum** | **9,974** | **95.31%** |
+| Class | Count | Share | In budget? |
+|---|---:|---:|---|
+| `output-identical` | 9,506 | 90.84% | no — agreement |
+| `tie-swap` | 468 | 4.47% | yes — sole auto-accepted divergence class |
 
-Both readings of the budget fail, and one of them cannot be intended:
+`tie-swap` is 468 against a limit of 52 (about 9× over). That number is the
+**W4 baseline**, not a W2 gate failure.
 
-- **Literal** (sum of both classes ≤ 0.5%): requires at most 52 of 10,465
-  inputs to agree. That inverts the goal — it would be satisfied by an engine
-  that agrees with the oracle almost never. Taken literally the gate is not
-  merely unmet, it is vacuous.
-- **Divergence-only** (`tie-swap` ≤ 0.5%, since `output-identical` is not a
-  divergence): 468 against a limit of 52. A meaningful measurement, currently
-  9× over.
-
-### Architect clarification requested
-
-`output-identical` describes the case where nothing differs, so it is the
-success population, not something to be budgeted. This finding therefore
-proposes the **divergence-only** reading: the budget constrains records that are
-accepted without human triage *despite a difference*, which today means
-`tie-swap` alone.
-
-Both numbers are computed and reported so the decision can be made on evidence,
-and neither is silently assumed.
-
-### Why the budget is reported, not enforced, at this stage
-
-Even under the divergence-only reading the gate is not enforceable yet, for a
-structural reason rather than a convenient one.
+### Report, do not gate, until the decoder exists
 
 `tie-swap` compares the oracle's *choice* against our *first enumerated path*.
 Our parser does not choose; `parser-path-set.md` has it enumerate every valid
 segmentation in a frozen greedy order, and selection is explicitly deferred to
-the decoder. So at parse level the 4.47% measures "how often does greedy order
+the decoder. At parse level the 4.47% measures "how often does greedy order
 disagree with the oracle's scoring", which no parser change can legitimately
 reduce — only a decoder can.
 
-The budget becomes meaningful at W4, when our engine makes a choice and
+The runner continues to compute and report the budget verdict. It must **not**
+fail a run on `tie-swap` until W4, when our engine makes a choice and
 `tie-swap` acquires its real sense: both sides chose differently among paths
-they both admit. Until then the runner computes the verdict and reports it, and
-does not fail a run on it. The 468 is the baseline W4 must improve on.
-
-Enforcing it now would mean either a permanently red gate or gaming the corpus,
-and `docs/findings/parity-corpus.md` already refuses to trim the stratum that
-exposes ambiguity.
+they both admit. Enforcing it now would mean either a permanently red gate or
+gaming the corpus, and `docs/findings/parity-corpus.md` already refuses to
+trim the stratum that exposes ambiguity.
 
 ## Corpus roll-up
 
@@ -281,15 +271,15 @@ flags `0x18a`, 10,465 inputs:
 `flag-semantics` is zero here because the corpus runs under the parity profile;
 it is 10 on the F-C family, which is what that family exists to vary.
 
-## Requested human decisions
+## Maintainer decisions (2026-08-09)
 
-1. **Freeze the budget's meaning.** Literal or divergence-only. This finding
-   proposes divergence-only, with `output-identical` excluded as the success
-   population.
-2. **Confirm the budget is reported and not gating until W4**, on the grounds
-   that parse-level `tie-swap` is not reducible without a decoder.
-3. **Confirm `path-set` attribution.** 485 records currently sit there because a
-   frozen SPEC disagrees with the pin, not because the parser deviates from its
-   SPEC. If the Architect correction in
-   `parser-spec-contradiction-incomplete-keys.md` lands, this population should
-   collapse, and its post-correction count is the real S1b parity gate.
+1. **Budget meaning — auto-accepted divergences only.** The 0.5% budget
+   constrains auto-accepted *divergence* classes (`tie-swap` today).
+   `output-identical` is agreement, not divergence, and is excluded.
+2. **Budget enforcement — report until W4.** Parse-level `tie-swap` (468) is
+   the W4 baseline. Report it; do not gate on it until a decoder exists.
+3. **`path-set` attribution.** Confirmed: the 485 sit there because our path
+   set disagrees with the pin. The SPEC field invariant is corrected
+   (oracle-driven); path-set enumeration and the parser follow-up are a
+   separate branch. Post-implementation `path-set` count is the real S1b
+   parity gate.
