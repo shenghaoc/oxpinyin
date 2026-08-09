@@ -7,7 +7,7 @@
 
 use core::slice;
 
-use pinyin_core::Cost;
+use pinyin_core::{Cost, PhraseToken};
 
 /// Where a candidate came from.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -29,6 +29,7 @@ pub struct Candidate {
     consumed_keys: usize,
     consumed_bytes: usize,
     cost: Cost,
+    token: Option<PhraseToken>,
 }
 
 impl Candidate {
@@ -38,6 +39,7 @@ impl Candidate {
         consumed_keys: usize,
         consumed_bytes: usize,
         cost: Cost,
+        token: Option<PhraseToken>,
     ) -> Self {
         Self {
             text,
@@ -45,6 +47,7 @@ impl Candidate {
             consumed_keys,
             consumed_bytes,
             cost,
+            token,
         }
     }
 
@@ -70,6 +73,16 @@ impl Candidate {
     #[must_use]
     pub const fn consumed_bytes(&self) -> usize {
         self.consumed_bytes
+    }
+
+    /// The scoring token behind this candidate, when it is one phrase.
+    ///
+    /// A shell never needs it; the session uses it as the bigram history for
+    /// whatever the user types next. A sentence built from several phrases
+    /// has no single token.
+    #[must_use]
+    pub const fn token(&self) -> Option<PhraseToken> {
+        self.token
     }
 
     /// The decoder cost that ranked this candidate.
@@ -129,6 +142,8 @@ impl<'a> IntoIterator for &'a CandidateList {
 
 #[cfg(test)]
 mod tests {
+    use pinyin_core::PhraseToken;
+
     use super::{Candidate, CandidateKind, CandidateList};
 
     fn list() -> CandidateList {
@@ -139,8 +154,16 @@ mod tests {
                 2,
                 5,
                 -12,
+                None,
             ),
-            Candidate::new("\u{4f60}".to_owned(), CandidateKind::Phrase, 1, 2, -7),
+            Candidate::new(
+                "\u{4f60}".to_owned(),
+                CandidateKind::Phrase,
+                1,
+                2,
+                -7,
+                Some(PhraseToken::new(3)),
+            ),
         ])
     }
 
@@ -172,6 +195,11 @@ mod tests {
         assert_eq!(first.consumed_keys(), 2);
         assert_eq!(first.consumed_bytes(), 5);
         assert_eq!(first.cost(), -12);
+        assert_eq!(first.token(), None, "a sentence has no single token");
+        assert_eq!(
+            candidates.get(1).expect("second").token(),
+            Some(PhraseToken::new(3))
+        );
         assert!(CandidateList::default().is_empty());
     }
 }
