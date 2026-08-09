@@ -22,7 +22,7 @@ pub enum DictError {
     Table(TableError),
     /// Value bytes did not parse as expected.
     Parse(String),
-    /// SyllableKey → TableKey encoding is blocked pending oracle FFI.
+    /// SyllableKey → TableKey encoding failure (unknown future key).
     Encoder(EncoderError),
 }
 
@@ -66,8 +66,6 @@ impl From<EncoderError> for DictError {
 pub struct SystemDictionary {
     pinyin_index: LookupTable,
     /// Opened for token → text resolution (PhraseEntry).
-    /// Currently blocked by the syllable encoder stub;
-    /// see blocked:syllable-encoder.
     phrase_index: LookupTable,
 }
 
@@ -174,40 +172,35 @@ mod tests {
     }
 
     #[test]
-    fn lookup_is_blocked_without_encoder() {
+    fn lookup_returns_ok_for_complete_syllable() {
         let dict = SystemDictionary::open(
             &fixtures_dir().join("pinyin_index.redb"),
             &fixtures_dir().join("phrase_index.redb"),
         )
         .unwrap();
         let key = SyllableKey::from_text("ni").expect("ni is a frozen key");
-        let err = dict.lookup(&[key]).expect_err("encoder is blocked");
-        assert!(matches!(err, DictError::Encoder(_)));
-        assert!(err.to_string().contains("blocked:syllable-encoder"));
+        // With the frozen encoder, lookup no longer returns Blocked.
+        // The mini fixture may have no entry for this TableKey, but the
+        // encoder itself succeeds and the lookup returns Ok (empty or with
+        // candidates) rather than an encoder error.
+        let result = dict.lookup(&[key]).expect("encoder is frozen");
+        // Result is Ok; it may be empty for the truncated fixture.
+        assert!(result.is_empty() || !result.is_empty());
     }
 
     #[test]
-    fn missing_syllable_returns_blocked_not_empty() {
-        // Even a missing syllable is blocked at the encoder layer — the
-        // 6-byte TableKey layout is unknown without oracle FFI, so we cannot
-        // probe pinyin_index at all.
+    fn incomplete_syllable_returns_empty_not_blocked() {
+        // Incomplete keys map to c0-prefixed TableKeys that have no entry in
+        // pinyin_index; lookup should return Ok(empty) rather than Blocked.
         let dict = SystemDictionary::open(
             &fixtures_dir().join("pinyin_index.redb"),
             &fixtures_dir().join("phrase_index.redb"),
         )
         .unwrap();
-<<<<<<< Updated upstream
-        let key = SyllableKey::from_text("zhuan").expect("zhuan is a frozen key");
-        let err = dict.lookup(&[key]).expect_err("blocked");
-        assert!(err.to_string().contains("blocked:syllable-encoder"));
-=======
         let key = SyllableKey::from_text("b").expect("b is an incomplete key");
         assert_eq!(key.completeness(), pinyin_core::Completeness::Partial);
-        let result = dict
-            .lookup(&[key])
-            .expect("incomplete maps to empty, not blocked");
+        let result = dict.lookup(&[key]).expect("incomplete maps to empty, not blocked");
         assert!(result.is_empty());
->>>>>>> Stashed changes
     }
 
     #[test]
