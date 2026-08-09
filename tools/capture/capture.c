@@ -90,9 +90,12 @@ static bool emit_case(pinyin_context_t *context, const char *family,
     print_escaped(family);
     fputs("\tcase=", stdout);
     print_escaped(capture->id);
-    fputs("\tapi=pinyin_set_options,pinyin_alloc_instance,"
-          "pinyin_parse_more_full_pinyins,pinyin_get_pinyin_key,"
-          "pinyin_get_pinyin_key_rest\tinput=",
+    fputs("\tapi_sequence=pinyin_init,pinyin_set_options,"
+          "pinyin_alloc_instance,pinyin_parse_more_full_pinyins,"
+          "pinyin_get_parsed_input_length,pinyin_get_pinyin_key,"
+          "pinyin_get_pinyin_key_rest,pinyin_get_pinyin_key_rest_positions,"
+          "pinyin_get_pinyin_string,pinyin_get_pinyin_is_incomplete,"
+          "pinyin_free_instance,pinyin_fini\tinput=",
           stdout);
     print_escaped(capture->input);
     fprintf(stdout,
