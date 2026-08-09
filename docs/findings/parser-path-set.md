@@ -76,7 +76,7 @@ partial. Paths appear below in required return order.
 | `xian` | `[xian@0:4:C]`; `[xi@0:2:C, an@2:4:C]` | empty |
 | `fangan` | `[fang@0:4:C, an@4:6:C]`; `[fan@0:3:C, gan@3:6:C]`; `[fa@0:2:C, ng@2:4:C, an@4:6:C]` | empty |
 | `xi'an` | `[xi@0:2:C, an@3:5:C]` | empty |
-| `chang'an` | `[chang@0:5:C, an@6:8:C]` | empty |
+| `chang'an` | `[chang@0:5:C, an@6:8:C]`; `[cha@0:3:C, ng@3:5:C, an@6:8:C]` | empty |
 | `nih` | `[ni@0:2:C, h@2:3:P]` | empty |
 | `zhongg` | `[zhong@0:5:C, g@5:6:P]` | empty |
 | `ni'h` | `[ni@0:2:C, h@3:4:P]` | empty |
@@ -101,3 +101,9 @@ Task 7 unit tests pin this ordered path set, including both `xian` paths and
 all three `fangan` paths. Task 8 maps each F-A record to a compatible portable
 path while separately asserting all alternatives. Oracle candidate ranking
 and its selected segmentation do not reorder or remove portable parser paths.
+
+## Architect correction log
+
+- 2026-08-09, Task 7: the `chang'an` example now includes the complete
+  `[cha, ng, an]` alternative. The original row omitted that table-valid path
+  even though the exhaustive rule above already required it.
