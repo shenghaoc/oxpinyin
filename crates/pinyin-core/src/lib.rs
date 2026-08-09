@@ -6,6 +6,7 @@
 
 pub mod cost;
 pub mod fixture;
+pub mod graph;
 mod parser;
 mod syllables;
 mod vocab;
@@ -15,7 +16,7 @@ pub use parser::{
 };
 pub use syllables::{
     FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
-    INCOMPLETE_PINYIN_KEYS,
+    INCOMPLETE_PINYIN_KEYS, MAX_SYLLABLE_LEN,
 };
 pub use vocab::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
 
