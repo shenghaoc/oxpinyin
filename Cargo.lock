@@ -78,6 +78,7 @@ dependencies = [
 name = "pinyin-data"
 version = "0.1.0"
 dependencies = [
+ "pinyin-core",
  "redb",
 ]
 
