@@ -12,3 +12,6 @@ description = "Supported pinyin-rs session API — the stable Rust surface."
 workspace = true
 
 [dependencies]
+# Internal workspace crate: the parser, decoder and vocabulary types this API
+# is a façade over. Not an external dependency.
+pinyin-core = { path = "../pinyin-core" }
