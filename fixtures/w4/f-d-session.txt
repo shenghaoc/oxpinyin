@@ -1,0 +1,82 @@
+# pinyin-session-replay-v1
+#
+# F-D stand-in.  The session family was never captured — only F-A and F-C
+# exist — so these scenarios are AUTHORED, not oracle output.  Their expected
+# candidates are taken from the candidate lists the pin really did emit in
+# fixtures/foundation/f-a.txt, restricted to what the mini vocabulary can
+# reach.  See docs/findings/session-replay.md.
+#
+# Steps run in order.  A scenario= line starts a new one.
+#   step=type            text=<ascii>     one process_key per character
+#   step=key             name=<logical>   enter | escape | space | backspace
+#   step=select          index=<n>        choose by index
+#   step=select-text     text=<phrase>    choose the candidate with this text
+#   step=expect-preedit  text=<text>      the whole preedit text
+#   step=expect-candidate index=<n>  text=<phrase>
+#   step=expect-absent   text=<phrase>
+#   step=expect-empty                     nothing is composing
+#   step=commit          text=<text>      commit and assert what came out
+
+scenario=guess-choose-commit
+step=type	text=nihao
+step=expect-preedit	text=nihao
+step=expect-candidate	index=0	text=你好
+step=select	index=0
+step=expect-preedit	text=你好
+step=commit	text=你好
+step=expect-empty
+
+scenario=guess-choose-reguess
+step=type	text=nihaozhongguo
+step=expect-candidate	index=0	text=你好中国
+step=select-text	text=你好
+step=expect-preedit	text=你好zhongguo
+step=expect-candidate	index=0	text=中国
+step=select	index=0
+step=expect-preedit	text=你好中国
+step=commit	text=你好中国
+
+scenario=cross-segmentation-choice
+step=type	text=xian
+step=expect-candidate	index=0	text=西安
+step=expect-candidate	index=1	text=西岸
+step=select	index=0
+step=commit	text=西安
+
+scenario=incomplete-tail
+step=type	text=nih
+step=expect-candidate	index=0	text=你好
+step=select	index=0
+step=commit	text=你好
+
+scenario=apostrophe-boundary
+step=type	text=chang'an
+step=expect-candidate	index=0	text=长安
+step=select	index=0
+step=commit	text=长安
+
+scenario=backspace-undoes-a-choice
+step=type	text=nihao
+step=select-text	text=你好
+step=expect-preedit	text=你好
+step=key	name=backspace
+step=expect-preedit	text=nihao
+step=key	name=escape
+step=expect-empty
+
+scenario=space-accepts-the-first-candidate
+step=type	text=nihao
+step=key	name=space
+step=expect-empty
+
+scenario=f-e-12-zhuan-totality
+step=type	text=zhuan
+step=expect-candidate	index=0	text=传
+step=select	index=0
+step=commit	text=传
+
+scenario=unknown-input-falls-back
+step=type	text=qqq
+step=expect-candidate	index=0	text=qqq
+step=expect-absent	text=你好
+step=commit	text=qqq
