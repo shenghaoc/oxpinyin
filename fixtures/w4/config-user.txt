@@ -1,0 +1,7 @@
+# A user layer, applied over the system drop-in.
+# It overrides one key the system layer set, one the system layer left alone,
+# and introduces a key the pinned schema does not have.
+key=lookup-table-page-size	type=i	value=7
+key=incomplete-pinyin	type=b	value=false
+key=network-dictionary-start-timestamp	type=x	value=1754697600
+key=future-key-this-engine-does-not-know	type=s	value=kept

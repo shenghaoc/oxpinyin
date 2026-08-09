@@ -1,0 +1,5 @@
+# A system drop-in layer.  Format: docs/findings/config-layering.md.
+# Type letters are the GSettings ones: b, i, x, s.
+key=lookup-table-page-size	type=i	value=9
+key=fuzzy-pinyin	type=b	value=true
+key=opencc-config	type=s	value=s2t.json
