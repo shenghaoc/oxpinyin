@@ -232,6 +232,55 @@ impl OraclePrefix {
     pub fn pin(&self) -> &VerifiedPin {
         &self.pin
     }
+
+    /// Locates a pin-verified prefix from the environment.
+    ///
+    /// Order, matching `build.rs` so link time and run time agree:
+    ///
+    /// 1. `PINYIN_ORACLE_PREFIX`;
+    /// 2. each `PKG_CONFIG_PATH` entry, walked up from `lib/pkgconfig` or
+    ///    `lib64/pkgconfig` to the prefix root;
+    /// 3. `$HOME/.local/opt/pinyin-oracle`.
+    ///
+    /// A candidate that is not the frozen pin is skipped rather than accepted,
+    /// so a stray libpinyin on the search path can never become the oracle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OracleError::PrefixNotFound`] when no candidate verifies.
+    pub fn locate() -> Result<Self, OracleError> {
+        let mut tried = Vec::new();
+
+        if let Some(raw) = std::env::var_os(crate::PREFIX_ENV) {
+            let candidate = PathBuf::from(raw);
+            if let Ok(prefix) = Self::open(candidate.clone()) {
+                return Ok(prefix);
+            }
+            tried.push(candidate);
+        }
+
+        if let Some(raw) = std::env::var_os("PKG_CONFIG_PATH") {
+            for entry in std::env::split_paths(&raw) {
+                let Some(candidate) = entry.parent().and_then(Path::parent) else {
+                    continue;
+                };
+                if let Ok(prefix) = Self::open(candidate.to_path_buf()) {
+                    return Ok(prefix);
+                }
+                tried.push(candidate.to_path_buf());
+            }
+        }
+
+        if let Some(home) = std::env::var_os("HOME") {
+            let candidate = PathBuf::from(home).join(crate::DEFAULT_PREFIX_SUFFIX);
+            if let Ok(prefix) = Self::open(candidate.clone()) {
+                return Ok(prefix);
+            }
+            tried.push(candidate);
+        }
+
+        Err(OracleError::PrefixNotFound { tried })
+    }
 }
 
 #[cfg(test)]
