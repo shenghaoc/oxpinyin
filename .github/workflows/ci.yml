@@ -15,7 +15,8 @@ env:
 
 # Three jobs:
 #   lint — rustfmt + clippy
-#   test — cargo test for the whole workspace
+#   test — cargo test for the whole workspace, and the portable crates on
+#          macOS and Windows
 #   fuzz — bounded parser fuzz smoke test on a pinned nightly/tool version
 
 jobs:
@@ -40,6 +41,31 @@ jobs:
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo test --locked --workspace
+
+  # The portable crates on the other two supported operating systems.
+  # structure.md marks core/data/user/engine portable; the oracle harness is
+  # portable too with its Linux-only `oracle-ffi` feature off, and it carries
+  # the graph and decode-level differentials. capi/oracle-ffi/migrate stay
+  # Linux-first and are covered by the job above.
+  test-portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: >
+          cargo test --locked
+          -p pinyin-core -p pinyin-data -p pinyin-user -p pinyin-engine
+      # Separately and with --no-default-features, so oracle-ffi stays off even
+      # if it ever became a default feature. It links the pin-built libpinyin
+      # and is Linux-only; on this runner it would not build at all.
+      - run: cargo test --locked -p pinyin-oracle --no-default-features
 
   fuzz:
     runs-on: ubuntu-latest
