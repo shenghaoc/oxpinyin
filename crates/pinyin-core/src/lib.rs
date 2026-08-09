@@ -4,8 +4,12 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod parser;
 mod syllables;
 
+pub use parser::{
+    Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
+};
 pub use syllables::{FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES};
 
 /// Deterministic signed cost used by scoring seams.
@@ -15,8 +19,8 @@ pub type Cost = i64;
 
 /// Read-only lookup seam for dictionaries.
 ///
-/// Implementations return entries in stable order and use an empty vector for
-/// a successful lookup with no entries.
+/// Implementations return entries in stable order, use an empty vector for a
+/// successful lookup with no entries, and do not panic on caller input.
 pub trait Dictionary {
     /// Syllable representation accepted by this dictionary.
     type Syllable;
@@ -32,6 +36,10 @@ pub trait Dictionary {
 }
 
 /// Scoring and observation seam for explicit user-learning state.
+///
+/// Implementations are deterministic for the same explicit input and state,
+/// do not consult hidden process-global state, and do not panic on caller
+/// input.
 pub trait UserModel {
     /// Token representation scored and observed by this model.
     type Token;
@@ -49,6 +57,10 @@ pub trait UserModel {
 }
 
 /// Deterministic language-model scoring seam.
+///
+/// Implementations do not panic on caller input. They may combine the supplied
+/// edge cost with their own cost and report arithmetic or backend failures
+/// through [`Result`].
 pub trait LanguageModel {
     /// Token representation scored by this model.
     type Token;
@@ -56,7 +68,8 @@ pub trait LanguageModel {
     /// Scoring failure reported by this model.
     type Error;
 
-    /// Returns the cost for `token` after `history`, including `edge_cost`.
+    /// Returns the model cost for `token` after `history` with `edge_cost`
+    /// available for deterministic composition.
     fn score(
         &self,
         history: &[Self::Token],
