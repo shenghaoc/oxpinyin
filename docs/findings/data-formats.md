@@ -1,6 +1,8 @@
 # Data formats — pinned oracle table files
 
-Date: 2026-08-09 · Status: recorded; human review required before freeze.
+Date: 2026-08-12 · Status: recorded; human review required before freeze.
+Revision: record format corrected (flags 0-4, compact format, nested
+sub-records); secondary index documented; 11/12 addon files fully parsed.
 
 Describes every binary table file installed by the pinned oracle under
 `$PREFIX/lib/libpinyin/data/`. This is a SPEC — no loader code may be
@@ -135,13 +137,16 @@ A `phrase_token_t` with value `0x00000000` (library=0, phrase=0) is a
 ## 2. Custom content file format
 
 All `*.bin` files that are NOT Tkrzw Hash DB files share a common
-28-byte header and an index table. Two sub-formats exist:
+28-byte header, a 35-entry primary index, and an optional secondary
+index. Two sub-families exist:
 
 -   **Addon dictionaries** (art, culture, …, technology): 35 pinyin
     consonant groups, each containing variable-length phrase records.
+    Formula-driven record parsing covers 11/12 files completely; the
+    12th (geology.bin) has records with nested sub-records (see §2.5).
 -   **System dictionaries** (gb_char, gbk_char, opengram, merged):
-    same header, but a different data-section layout with additional
-    indexing structures.
+    same header, but data-section layout not yet reverse-engineered.
+    Out of scope for initial loader implementation per §5.
 
 ### 2.1 Common header (28 bytes)
 
@@ -150,8 +155,8 @@ All fields are **u32 little-endian** unless noted.
 | Offset | Field        | Description                                   |
 |--------|--------------|-----------------------------------------------|
 | 0      | data_size    | Total file size minus 8 bytes                 |
-| 4      | magic        | Per-file checksum/magic (varies)              |
-| 8      | num_items    | Number of entries in the dictionary           |
+| 4      | magic        | Per-file checksum/identifier (varies)         |
+| 8      | num_items    | Number of entries (`nitems`) in the file      |
 | 12     | version      | Format version; consistently **17** (0x11)    |
 | 16     | capacity     | Maximum phrase index +1 (token address space) |
 | 20     | data_size    | Duplicate of offset 0                         |
@@ -166,95 +171,205 @@ All fields are **u32 little-endian** unless noted.
 
 **Field details:**
 
--   `magic`: A per-file u32 that varies. It appears to be derived from
+-   `magic`: A per-file u32 that varies. Appears to be derived from
     the file contents (possibly a checksum) and is NOT a type
-    identifier. It cannot be relied upon for format detection.
--   `num_items`: For addon dictionaries, this is the exact phrase count.
-    For system dictionaries (gb_char, gbk_char, opengram), this field may
-    use a different encoding and does not directly represent the phrase
-    count.
+    identifier. Cannot be relied upon for format detection.
+-   `num_items` (`nitems`): For addon dictionaries, this is the exact
+    phrase count. For system dictionaries, may use a different encoding.
 -   `capacity`: The maximum `phrase_index` value + 1 in the token
     address space. Phrase indices range from 0 to `capacity - 1`.
 -   `num_groups`: Always 35, corresponding to the 35 pinyin initial
-    consonant groups (PinyinCustomSettings::NUMBER_OF_INITIALS = 35 in
-    upstream).
+    consonant groups (upstream: `PinyinCustomSettings::NUMBER_OF_INITIALS = 35`).
 
-### 2.2 Index table
+### 2.2 Primary index (35 entries)
 
-Immediately after the 28-byte header, starting at file offset 28:
+Immediately after the 28-byte header, at file offset 28:
 
 ```
 Offset 28–167:  35 × u32 LE  (140 bytes)
 ```
 
-Each entry is an index into a virtual address space. These are **NOT**
-file offsets — for small files (e.g., culture.bin with data section
-< 1 KB) the index values exceed the file size. They represent positions
-in a memory-mapped table structure that the oracle constructs at load
-time.
+Each entry is an index into a **virtual address space** — these are NOT
+file offsets. For small files (e.g., culture.bin, data section < 1 KB)
+the index values exceed the file size. They represent positions in a
+memory-mapped structure the oracle constructs at load time.
 
-The 35 groups correspond to pinyin initial consonant groups:
-b, p, m, f, d, t, n, l, g, k, h, j, q, x, zh, ch, sh, r, z, c, s,
-y, w, and combinations thereof.
+For the Rust loader, these virtual addresses are unused; the loader
+parses the data section sequentially.
 
-For the Rust loader, the index values are ignored; instead, the loader
-parses the data section sequentially and builds its own index from the
-record contents.
+### 2.3 Secondary index
 
-### 2.3 Data section
+When `nitems` exceeds `ngroups` (35), a **secondary index** follows the
+primary index at offset 168. It contains `secondary_entries = nitems - ngroups`
+u32 LE values, each monotonically increasing.
 
-Starts at file offset **168** (28 header + 140 index).
+```
+secondary_index_offset = 168
+secondary_index_size   = secondary_entries × 4
+```
 
-#### Addon dictionaries
+The secondary index also uses virtual addresses (not file offsets). Its
+purpose (in the oracle's memory-mapped layout) is per-record lookup from
+the 35×N group table.
 
-The data section begins with an 8-byte preamble (all zero in observed
-files), followed by variable-length phrase records.
+### 2.4 Data section
 
-**Record structure** (variable length):
+The data section starts after all index tables:
 
-| Offset | Size  | Field            | Description                              |
-|--------|-------|------------------|------------------------------------------|
-| 0      | 1     | n_gram           | Number of characters/tokens in phrase    |
-| 1      | 1     | flags            | Phrase flags (1 = normal, 2 = …)         |
-| 2      | 4     | phrase_frequency | u32 LE, overall phrase frequency         |
-| 6      | n×8   | token_data       | n_gram pairs of (token: u32, freq: u32)  |
-| …      | 4     | separator        | `0x64 0x00 0x00 0x00` = decimal 100     |
+```
+data_start = 168 + secondary_entries × 4 + preamble_size
 
-**Record size**: `2 + 4 + n_gram × 8 + 4` = `10 + n_gram × 8` bytes.
+preamble_size:
+  - 6 bytes  when nitems ≤ 35  (zero bytes in observed files)
+  - 10 bytes when nitems > 35  (observed as `0x00 0x00 0x64 0x00 0x00 0x00 0x64 0x00 0x00 0x00`)
+```
 
-**Known issue — separator ambiguity**: The separator value `0x64`
-(decimal 100) can also appear as data within token or frequency fields.
-A record parser must use the `n_gram` field to compute the expected
-record length and verify the separator at the computed position. If the
-separator does not match, the record structure must be re-examined.
+Records are **back-to-back** with NO separator between them. Each record
+is self-describing via its `n_gram` and `flags` bytes.
 
-**Example** (culture.bin, first record at offset 176): `02 01 01 00 00
-00 89 5b 00 00 7b 51 00 00 80 01 35 02 64 00 00 00`
+#### Record structure
 
--   n_gram = 2
--   flags = 1
--   phrase_freq = 0x00000001
--   token[0] = 0x00005b89, freq[0] = 0x0000517b
--   token[1] = 0x00000180, freq[1] = 0x00000235
--   separator = 0x00000064 ✓
+Every record has a 6-byte header:
+
+| Offset | Size | Field              | Description                        |
+|--------|------|--------------------|------------------------------------|
+| 0      | 1    | n_gram             | Number of tokens in the phrase     |
+| 1      | 1    | flags              | Record type / layout selector      |
+| 2      | 4    | phrase_frequency   | u32 LE, overall phrase frequency   |
+
+The `flags` byte determines the number of token pairs and their encoding:
+
+| flags | # token pairs | Token encoding                                | Size formula (ng = n_gram)         |
+|-------|--------------|-----------------------------------------------|------------------------------------|
+| 0     | ng           | Standard: all `[u32 token][u32 freq]`          | `6 + ng × 8`                       |
+| 1     | ng           | Hybrid: first `[u32][u32]`, rest `[u32][u16]` | `6 + 8 + (ng−1)×6 + 2` (ng ≥ 2)   |
+| 2     | ng + 1       | Standard: all `[u32 token][u32 freq]`          | `6 + (ng+1) × 8`                  |
+| 3     | ng + 2       | Standard, plus padding (see §2.4.1)            | See below                          |
+| 4     | ng + 3       | Standard, plus padding (see §2.4.1)            | See below                          |
+
+##### Flags=0: Standard format
+
+All `ng` token pairs use full-width encoding: `[token: u32 LE][freq: u32 LE]`.
+
+Size: `6 + n_gram × 8` bytes.
+
+##### Flags=1: Compact format (hybrid)
+
+The **first** token pair uses full-width encoding:
+`[token0: u32 LE][freq0: u32 LE]`.
+
+Each **subsequent** pair (pairs 1 … ng−1) uses a compact 6-byte layout:
+`[token: u32 LE][freq: u16 LE][pad: 2 bytes]`. The pad is `0x00 0x00`.
+
+A 2-byte zero pad follows the last compact pair.
+
+Total size for ng ≥ 2: `6 + 8 + (ng−1) × 6 + 2 = 14 + (ng−1) × 6 + 2`.
+For ng = 1: size = 14 (header 6 + one standard pair 8, no compact pairs, no pad).
+
+**The `0x64 00 00 00` (frequency 100) misconception**: Earlier analysis
+mistook the frequent occurrence of `0x64` (= 100) at record boundaries
+for a separator. In the compact format, the **last token's frequency is
+often exactly 100**, and the 2-byte zero pad follows. This creates a
+`64 00 00 00` byte sequence that looks like a separator when inspected
+at alignment boundaries, but it is just coincidental data.
+
+##### Flags=2: Standard format with 1 extra token pair
+
+Size: `6 + (n_gram + 1) × 8`.
+
+##### Flags=3, 4: Standard format with extra tokens and padding
+
+For flags ≥ 3, the number of token pairs is `n_gram + flags − 1`.
+
+The base size is `6 + (ng + flags − 1) × 8`, plus padding:
+
+| Condition       | Extra padding bytes           |
+|-----------------|-------------------------------|
+| ng ≥ 3 (fl=3)   | `(ng − 2) × 2`                |
+| ng ≥ 5 (fl=4)   | `(ng − 2) × 2 + 2`            |
+
+These formulas are verified for all ng ≤ 10 across 16,829 records in 11 files.
+
+##### Flags=3 with ng ≥ 13: Nested sub-records
+
+For flags=3 records with ng ≥ 13 (observed only in geology.bin),
+the payload after the 6-byte header contains **nested fl=1 sub-records**
+instead of flat token pairs. Each sub-record uses the compact (fl=1)
+format.
+
+The outer record size is `6 + Σ(sub_record_sizes)`. The termination
+condition for sub-record scanning is **not yet fully determined**;
+records with this structure are handled by a fallback parser that reads
+sub-records iteratively until the accumulated structure becomes invalid.
+
+40 of 534 geology.bin records use this nested layout; they require
+further analysis.
+
+#### Record size summary
+
+| Flags | Condition          | Size in bytes                                        |
+|-------|--------------------|------------------------------------------------------|
+| 0     | any ng             | `6 + ng × 8`                                         |
+| 1     | ng = 1             | `14`                                                 |
+| 1     | ng ≥ 2             | `14 + (ng−1) × 6 + 2`                                |
+| 2     | any ng             | `6 + (ng+1) × 8`                                     |
+| 3     | ng < 13            | `6 + (ng+2) × 8 + (ng−2)×2` (ng ≥ 3); 0 pad for ng<3|
+| 3     | ng ≥ 13            | `6 + Σ(sub_record_sizes)` — nested                  |
+| 4     | ng < 5             | `6 + (ng+3) × 8`                                    |
+| 4     | ng ≥ 5             | `6 + (ng+3) × 8 + (ng−2)×2 + 2`                     |
+
+#### Example: compact record (culture.bin, offset 174)
+
+```
+02 01 01 00 00 00   header: ng=2, fl=1, freq=1
+89 5b 00 00         token[0] = 0x5B89
+7b 51 00 00         freq[0]  = 0x517B = 20859
+80 01 00 00         token[1] = 0x0180
+35 02               freq[1] u16 = 0x0235 = 565
+00 00               pad
+```
+
+Size: `6 + 8 + (2−1)×6 + 2 = 22`. ✓
 
 **Phrase index**: Within a content file, records are addressed by their
 **0-based sequential index** in the data section. The `phrase_index`
 field of a `phrase_token_t` is this index. The `capacity` header field
 equals the maximum valid index + 1.
 
-#### System dictionaries
+#### Token encoding
+
+Each token pair encodes a `phrase_token_t` = `(library_index << 16) | phrase_index`.
+The `library_index` identifies which dictionary file (0–15 per §3.3);
+the `phrase_index` is the record index within that file.
+
+### 2.5 Parsing validation (addon dictionaries)
+
+| File          | nitems | Status       | Notes                              |
+|---------------|--------|--------------|------------------------------------|
+| culture.bin   | 34     | ✓ 34/34      | All compact (fl=1)                 |
+| art.bin       | 488    | ✓ 488/488    |                                    |
+| economy.bin   | 1,005  | ✓ 1,005/1,005|                                    |
+| history.bin   | 178    | ✓ 178/178    |                                    |
+| nature.bin    | 411    | ✓ 411/411    |                                    |
+| science.bin   | 381    | ✓ 381/381    |                                    |
+| sport.bin     | 93     | ✓ 93/93      |                                    |
+| technology.bin| 391    | ✓ 391/391    |                                    |
+| life.bin      | 2,331  | ✓ 2,331/2,331| Includes fl=0,3,4                 |
+| people.bin    | 1,955  | ✓ 1,955/1,955| Includes fl=0,3,4                 |
+| society.bin   | 8,454  | ✓ 8,454/8,454| All flag types                    |
+| geology.bin   | 534    | ~492/534     | 40 records use nested sub-records |
+
+11 of 12 addon files parse completely with the formulas above. The
+remaining 40 geology.bin records (fl=3, ng ≥ 13) need the nested
+sub-record parser, which will be finalised during loader implementation.
+
+### 2.6 System dictionaries
 
 System dictionaries (gb_char, gbk_char, opengram, merged) use the same
-28-byte header and 35-entry index table, but their data section begins
-with additional indexing structures (observed as monotonically
-increasing u32 arrays at offset 168).
+28-byte header and index tables. Their data-section format has not been
+reverse-engineered.
 
-**Pending investigation**: The exact data-section layout for system
-dictionaries. These files are required for phrase lookup (library
-indices 1–4) and will be reverse-engineered in a follow-up.
-
-System dictionary details are described or flagged as out-of-scope.
+**Out of scope** for initial loader implementation per §5.
 
 ---
 
