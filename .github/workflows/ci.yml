@@ -13,9 +13,10 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
-# Two jobs:
+# Three jobs:
 #   lint — rustfmt + clippy
 #   test — cargo test for the whole workspace
+#   fuzz — bounded parser fuzz smoke test on a pinned nightly/tool version
 
 jobs:
   lint:
@@ -27,6 +28,7 @@ jobs:
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all --check
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
   test:
@@ -38,3 +40,18 @@ jobs:
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo test --locked --workspace
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned nightly with Rust sources
+        run: rustup toolchain install nightly-2026-08-01 --profile minimal --component rust-src
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Verify fuzz lockfile
+        run: cargo +nightly-2026-08-01 metadata --locked --manifest-path fuzz/Cargo.toml --format-version 1 --no-deps > /dev/null
+      - name: Run bounded parser fuzz pass
+        run: cargo +nightly-2026-08-01 fuzz run parser -- -max_total_time=10 -timeout=5 -max_len=4096
