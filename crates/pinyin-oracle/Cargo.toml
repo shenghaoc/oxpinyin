@@ -28,6 +28,10 @@ all = { level = "deny", priority = -1 }
 name = "parity-corpus"
 path = "src/bin/parity_corpus.rs"
 
+[[bin]]
+name = "parity-diff"
+path = "src/bin/parity_diff.rs"
+
 [dependencies]
 # Internal workspace crate: the corpus is generated from the frozen syllable
 # inventory, and W2-T3 compares against this parser. Not an external dependency.

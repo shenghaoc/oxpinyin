@@ -16,7 +16,9 @@ use core::ffi::{CStr, c_uint};
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
+use crate::differential::{ObservationSource, Source as DiffSource};
 use crate::flags::SORT_BY_PHRASE_LENGTH_AND_PINYIN_LENGTH_AND_FREQUENCY;
 use crate::observation::{
     MAX_CAPTURED_CANDIDATES, OracleCompleteness, OracleObservation, OracleSegment,
@@ -64,17 +66,36 @@ impl Drop for FreshUserDir {
     }
 }
 
+/// Serialises oracle contexts across the whole process.
+///
+/// The pinned libpinyin does not tolerate two live contexts being used
+/// concurrently in one process: doing so trips
+/// `pinyin.cpp:_check_offset: Assertion 'zero_key != key' failed`, which is an
+/// `abort()` and therefore unrecoverable. Measured directly — the full corpus
+/// run is stable single-threaded and aborts when several test threads each open
+/// a context.
+///
+/// Holding this lock for an [`Oracle`]'s whole lifetime makes concurrent use
+/// impossible by construction, rather than a rule callers have to remember or a
+/// `--test-threads=1` incantation that a plain `cargo test` would skip.
+static ORACLE_LOCK: Mutex<()> = Mutex::new(());
+
 /// A live oracle context over a pin-verified prefix.
 ///
 /// Holding this value implies the prefix matched the frozen pin: [`Oracle::open`]
 /// takes an [`OraclePrefix`], which can only be built by a successful
 /// verification.
+///
+/// At most one `Oracle` exists per process at a time; see [`ORACLE_LOCK`].
+/// Constructing a second one blocks until the first is dropped.
 #[derive(Debug)]
 pub struct Oracle {
     prefix: OraclePrefix,
     context: *mut ffi::PinyinContext,
     user_dir: FreshUserDir,
     flags: Option<OracleFlags>,
+    /// Released on drop, after `pinyin_fini`.
+    _lock: MutexGuard<'static, ()>,
 }
 
 impl Oracle {
@@ -86,6 +107,11 @@ impl Oracle {
     /// Returns an error if the user directory cannot be created, if either path
     /// cannot cross the C boundary, or if `pinyin_init` returns NULL.
     pub fn open(prefix: OraclePrefix, user_dir_parent: &Path) -> Result<Self, OracleError> {
+        // Poisoning only means an earlier holder panicked. The C library's state
+        // is per-context and this context has not been created yet, so taking
+        // the lock anyway is correct and avoids one panic disabling the harness.
+        let lock = ORACLE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+
         let user_dir = FreshUserDir::create(user_dir_parent)?;
         let system_c = path_to_cstring(prefix.data_dir())?;
         let user_c = path_to_cstring(&user_dir.path)?;
@@ -108,6 +134,7 @@ impl Oracle {
             context,
             user_dir,
             flags: None,
+            _lock: lock,
         })
     }
 
@@ -299,7 +326,7 @@ impl Session<'_> {
             (0, Vec::new())
         };
 
-        let segments = self.collect_segments(parsed_input_length)?;
+        let segments = self.collect_segments(parsed_input_length, input)?;
 
         Ok(OracleObservation {
             pin_ref: self.pin_ref.clone(),
@@ -406,7 +433,29 @@ impl Session<'_> {
     /// Offsets advance to each segment's end, or by one byte when the oracle
     /// yields nothing usable, which is what makes the walk terminate on the
     /// F-E-01 shape instead of spinning.
-    fn collect_segments(&mut self, parsed_len: usize) -> Result<Vec<OracleSegment>, OracleError> {
+    fn collect_segments(
+        &mut self,
+        parsed_len: usize,
+        input: &[u8],
+    ) -> Result<Vec<OracleSegment>, OracleError> {
+        // Abort guard, see docs/findings/oracle-apostrophe-abort.md. The pinned
+        // oracle reports a non-empty parsed prefix for apostrophe-only input
+        // while its key matrix has no columns, and a key query then trips an
+        // assert() that reaches abort(). A phonetic key is built from an initial
+        // and a final, both spelled with lowercase ASCII letters, so a parsed
+        // prefix with no letter cannot have produced a key: skipping the walk
+        // loses no information. The sentinel keeps the input visible as a
+        // divergence rather than silently smoothing the defect away.
+        if parsed_len > 0
+            && !input
+                .get(..parsed_len)
+                .unwrap_or(input)
+                .iter()
+                .any(u8::is_ascii_lowercase)
+        {
+            return Ok(vec![OracleSegment::NoKeyColumns { parsed_len }]);
+        }
+
         let mut segments = Vec::new();
         let mut offset = 0_usize;
 
@@ -514,6 +563,35 @@ impl Drop for Session<'_> {
         // exactly once here. The borrow on the `Oracle` guarantees the context
         // outlives this call.
         unsafe { ffi::pinyin_free_instance(self.instance) };
+    }
+}
+
+/// Adapts a [`Session`] to the differential runner's producer seam.
+///
+/// Reuses one instance across the corpus, clearing state with `pinyin_reset`
+/// between inputs. `session_reset_agrees_with_a_fresh_instance` pins that this
+/// is equivalent to the frozen fresh-instance protocol, so the cheap path cannot
+/// drift from the protocol the fixtures were captured under.
+#[derive(Debug)]
+pub struct LiveSource<'oracle> {
+    session: Session<'oracle>,
+}
+
+impl<'oracle> LiveSource<'oracle> {
+    /// Wraps `session`.
+    #[must_use]
+    pub const fn new(session: Session<'oracle>) -> Self {
+        Self { session }
+    }
+}
+
+impl ObservationSource for LiveSource<'_> {
+    fn observe(&mut self, input: &[u8]) -> Result<OracleObservation, OracleError> {
+        self.session.observe(input)
+    }
+
+    fn source(&self) -> DiffSource {
+        DiffSource::Live
     }
 }
 

@@ -66,6 +66,18 @@ pub enum OracleSegment {
         /// Offset at which the string was unavailable.
         offset: usize,
     },
+    /// The oracle reported a non-empty parsed prefix that cannot hold a key, so
+    /// the key walk was skipped to avoid a known abort.
+    ///
+    /// See `docs/findings/oracle-apostrophe-abort.md`. On the pinned oracle an
+    /// apostrophe-only input reports `parsed_input_length > 0` while its key
+    /// matrix has no columns, and any key query then trips an `assert()` that
+    /// reaches `abort()`. Recording this sentinel keeps the input visible as a
+    /// divergence instead of silently smoothing the defect away.
+    NoKeyColumns {
+        /// Parsed prefix length the oracle reported.
+        parsed_len: usize,
+    },
 }
 
 impl OracleSegment {
