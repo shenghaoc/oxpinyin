@@ -6,11 +6,16 @@
 
 mod parser;
 mod syllables;
+mod vocab;
 
 pub use parser::{
     Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
 };
-pub use syllables::{FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES};
+pub use syllables::{
+    FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
+    INCOMPLETE_PINYIN_KEYS,
+};
+pub use vocab::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
 
 /// Deterministic signed cost used by scoring seams.
 ///
