@@ -27,7 +27,7 @@ no entry supports a blanket claim that Rust code cannot crash.
 | F-E-09 | i686 table generation/load | loader cross-check | registered |
 | F-E-10 | strict-alignment table load | checked parser + advisory CI | registered |
 | F-E-11 | stale Berkeley DB sidecar lock | user-store hard-kill gate | legacy trigger registered |
-| F-E-12 | `zhuan` user input | parser totality + fuzz/Kani | captured seed; regression registered |
+| F-E-12 | `zhuan` user input | parser totality + fuzz | F-A seed; proptest + cargo-fuzz |
 | F-E-13 | cloud request through system proxy | provider/FFI ASan | registered |
 
 ## Evidence entries
@@ -170,10 +170,10 @@ no entry supports a blanket claim that Rust code cannot crash.
   the cited frontend/session assertion path.
 - **Foundation artifact:** F-A case `robustness-zhuan` records a complete
   `zhuan@0:5:complete` parse at the frozen oracle pin.
-- **Passing artifacts:** parser unit/property test, retained cargo-fuzz seed
-  and Kani case return normally. When the session lane exists,
-  `f_e_12_zhuan_session_replay` must exercise the full frontend-equivalent
-  sequence before making a session-level claim.
+- **Passing artifacts:** F-A case `robustness-zhuan`; proptest totality
+  property (`arbitrary_bytes_never_panic`) and cargo-fuzz determinism target.
+  When the session lane exists, `f_e_12_zhuan_session_replay` must exercise
+  the full frontend-equivalent sequence before making a session-level claim.
 
 ### F-E-13 — #518 cloud/proxy foreign-library crash
 
