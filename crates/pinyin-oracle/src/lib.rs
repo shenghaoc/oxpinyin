@@ -33,6 +33,7 @@
 //! ```
 #![warn(missing_docs)]
 
+pub mod capture;
 pub mod corpus;
 mod error;
 pub mod flags;

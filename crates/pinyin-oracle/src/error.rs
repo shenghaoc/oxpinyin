@@ -94,6 +94,25 @@ pub enum OracleError {
     },
     /// The harness was built without the `oracle-ffi` feature.
     FfiNotCompiled,
+    /// A capture record omitted a field the reader requires.
+    CaptureFieldMissing {
+        /// Field name that was absent.
+        field: &'static str,
+    },
+    /// A capture record carried a field the reader could not decode.
+    CaptureFieldMalformed {
+        /// Field name that failed to decode.
+        field: &'static str,
+        /// Raw value as it appeared in the record.
+        value: String,
+    },
+    /// A capture record could not be decoded, with its position in the file.
+    CaptureRecordInvalid {
+        /// One-based line number within the fixture.
+        line: usize,
+        /// Underlying decoding failure.
+        source: Box<OracleError>,
+    },
 }
 
 impl fmt::Display for OracleError {
@@ -158,6 +177,15 @@ impl fmt::Display for OracleError {
             ),
             Self::FfiNotCompiled => formatter
                 .write_str("pinyin-oracle was built without the `oracle-ffi` cargo feature"),
+            Self::CaptureFieldMissing { field } => {
+                write!(formatter, "capture record omits field {field}")
+            }
+            Self::CaptureFieldMalformed { field, value } => {
+                write!(formatter, "capture field {field} is malformed: {value:?}")
+            }
+            Self::CaptureRecordInvalid { line, source } => {
+                write!(formatter, "capture record at line {line}: {source}")
+            }
         }
     }
 }
