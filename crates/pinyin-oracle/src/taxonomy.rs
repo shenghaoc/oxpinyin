@@ -124,7 +124,11 @@ fn classify_off_pin(pin_ref: &str) -> DivergenceClass {
                 DivergenceClass::DistroDelta
             }
         }
-        _ => DivergenceClass::DistroDelta,
+        _ => {
+            #[cfg(test)]
+            eprintln!("classify_off_pin: unparseable pin_ref: {pin_ref:?}");
+            DivergenceClass::DistroDelta
+        }
     }
 }
 
@@ -548,34 +552,33 @@ mod tests {
 
     #[test]
     fn classification_is_total_over_every_reason() {
-        use crate::differential::Reason;
+        use crate::differential::{Outcome, Reason, Source, compare};
 
-        // Every reason must map to some class; a new reason without a rule would
-        // fail to compile rather than silently fall through.
-        for reason in [
-            Reason::OffPin,
-            Reason::OracleInconsistent,
-            Reason::PositionOverflow,
-            Reason::OracleSentinel,
-            Reason::OursError,
-            Reason::ConsumedLength,
-            Reason::Remainder,
-            Reason::PathAbsent,
+        // Every reason must map to the expected class.  Construct a minimal
+        // Comparison so `class_of` is exercised — a new reason without a rule
+        // in `class_of` would fail to compile rather than silently fall through.
+        let taxonomy = Taxonomy::default();
+        for (reason, expected) in [
+            (Reason::OffPin, DivergenceClass::DistroDelta),
+            (Reason::OracleInconsistent, DivergenceClass::TheirsBug),
+            (Reason::PositionOverflow, DivergenceClass::TheirsBug),
+            (Reason::OracleSentinel, DivergenceClass::TheirsBug),
+            (Reason::OursError, DivergenceClass::OursBug),
+            (Reason::ConsumedLength, DivergenceClass::PathSet),
+            (Reason::Remainder, DivergenceClass::PathSet),
+            (Reason::PathAbsent, DivergenceClass::PathSet),
         ] {
-            let expected = match reason {
-                Reason::OffPin => DivergenceClass::DistroDelta,
-                Reason::OracleInconsistent | Reason::PositionOverflow | Reason::OracleSentinel => {
-                    DivergenceClass::TheirsBug
-                }
-                Reason::OursError => DivergenceClass::OursBug,
-                Reason::ConsumedLength | Reason::Remainder | Reason::PathAbsent => {
-                    DivergenceClass::PathSet
-                }
-            };
-            assert!(
-                expected.as_wire().len() > 3,
+            let obs = observation("a", 1, vec![]);
+            let mut c = compare(obs, Source::Replay, "t", "t");
+            c.outcome = Outcome::Divergence(reason);
+            if matches!(reason, Reason::OffPin) {
+                c.observation.pin_ref = "distro-1.0.0".into();
+            }
+            assert_eq!(
+                taxonomy.class_of(&c),
+                expected,
                 "{} maps to {expected}",
-                reason.as_wire()
+                reason.as_wire(),
             );
         }
     }
