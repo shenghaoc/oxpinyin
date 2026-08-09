@@ -196,9 +196,18 @@ mod tests {
             &fixtures_dir().join("phrase_index.redb"),
         )
         .unwrap();
+<<<<<<< Updated upstream
         let key = SyllableKey::from_text("zhuan").expect("zhuan is a frozen key");
         let err = dict.lookup(&[key]).expect_err("blocked");
         assert!(err.to_string().contains("blocked:syllable-encoder"));
+=======
+        let key = SyllableKey::from_text("b").expect("b is an incomplete key");
+        assert_eq!(key.completeness(), pinyin_core::Completeness::Partial);
+        let result = dict
+            .lookup(&[key])
+            .expect("incomplete maps to empty, not blocked");
+        assert!(result.is_empty());
+>>>>>>> Stashed changes
     }
 
     #[test]

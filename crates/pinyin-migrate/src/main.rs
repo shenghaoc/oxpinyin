@@ -38,6 +38,22 @@ unsafe extern "C" {
     fn tkrzw_iter_value(it: *const TkrzwIter, len: *mut usize) -> *const u8;
 }
 
+#[cfg(feature = "oracle-ffi")]
+unsafe extern "C" {
+    fn pinyin_init(sys: *const c_char, user: *const c_char) -> *mut std::os::raw::c_void;
+    fn pinyin_fini(ctx: *mut std::os::raw::c_void);
+    fn pinyin_set_options(ctx: *mut std::os::raw::c_void, opts: u32) -> bool;
+    fn pinyin_alloc_instance(ctx: *mut std::os::raw::c_void) -> *mut std::os::raw::c_void;
+    fn pinyin_free_instance(inst: *mut std::os::raw::c_void);
+    fn pinyin_token_get_phrase(
+        inst: *mut std::os::raw::c_void,
+        token: u32,
+        len: *mut u32,
+        s: *mut *mut c_char,
+    ) -> bool;
+    fn g_free(p: *mut std::os::raw::c_void);
+}
+
 // ── safe wrapper ──────────────────────────────────────────────────────
 
 struct TkrzwReader {
@@ -45,61 +61,40 @@ struct TkrzwReader {
 }
 
 impl TkrzwReader {
-    /// Open a Tkrzw HashDB file for reading.
-    ///
-    /// # Safety
-    ///
-    /// `path` must point to a valid Tkrzw HashDB file readable by libtkrzw.
     fn open(path: &CStr) -> Result<Self, String> {
-        // SAFETY: path is a valid null-terminated C string.
         let db = unsafe { tkrzw_open(path.as_ptr()) };
         if db.is_null() {
             return Err("tkrzw_open returned null".into());
         }
-        // SAFETY: db is non-null and was just created.
         let err = unsafe { CStr::from_ptr(tkrzw_error(db)) };
         let err_str = err.to_string_lossy();
         if !err_str.is_empty() {
-            // SAFETY: db is valid.
             unsafe { tkrzw_close(db) };
             return Err(format!("failed to open: {err_str}"));
         }
         Ok(Self { db })
     }
 
-    /// Iterate over all (key, value) pairs.
     #[allow(clippy::type_complexity)]
     fn entries(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
         let mut result = Vec::new();
-
-        // SAFETY: db is valid and open.
         let it = unsafe { tkrzw_iter_make(self.db) };
         if it.is_null() {
             return Err("failed to create iterator".into());
         }
-
-        // SAFETY: it is non-null.
         let mut ok = unsafe { tkrzw_iter_first(it) };
         while ok != 0 {
             let mut klen: usize = 0;
             let mut vlen: usize = 0;
-
-            // SAFETY: it is valid, on a record.
             let kptr = unsafe { tkrzw_iter_key(it, &mut klen) };
             let vptr = unsafe { tkrzw_iter_value(it, &mut vlen) };
-
             if klen > 0 {
-                // SAFETY: kptr and vptr point to valid buffers of klen/vlen bytes.
                 let key = unsafe { std::slice::from_raw_parts(kptr, klen) }.to_vec();
                 let val = unsafe { std::slice::from_raw_parts(vptr, vlen) }.to_vec();
                 result.push((key, val));
             }
-
-            // SAFETY: it is valid.
             ok = unsafe { tkrzw_iter_next(it) };
         }
-
-        // SAFETY: it is valid.
         unsafe { tkrzw_iter_free(it) };
         Ok(result)
     }
@@ -107,7 +102,6 @@ impl TkrzwReader {
 
 impl Drop for TkrzwReader {
     fn drop(&mut self) {
-        // SAFETY: db was created by tkrzw_open and is valid.
         unsafe { tkrzw_close(self.db) };
     }
 }
@@ -159,21 +153,142 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         p
     });
 
-    // Read Tkrzw.
     let path_c = std::ffi::CString::new(input.to_string_lossy().as_bytes())
         .map_err(|_| "input path contains null byte")?;
     let reader = TkrzwReader::open(&path_c)?;
 
     let mut entries = reader.entries()?;
-    // Sort by key for deterministic output.
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // Apply record limit (for generating mini fixtures).
+    // Fix for phrase_index: redb must be keyed by 4-byte LE token, not 6-byte table key.
+    let input_str = input.to_string_lossy();
+    let is_phrase_index = input_str.contains("phrase_index");
+    if is_phrase_index {
+        let data_dir = input.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let _pinyin_index_path = data_dir.join("pinyin_index.bin");
+        let mut new_entries: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        #[cfg(feature = "oracle-ffi")]
+        {
+            let mut all_tokens = std::collections::HashSet::new();
+            let pinyin_c =
+                std::ffi::CString::new(pinyin_index_path.to_string_lossy().as_bytes()).ok();
+            if let Some(pc) = pinyin_c {
+                if let Ok(p_reader) = TkrzwReader::open(&pc) {
+                    if let Ok(p_entries) = p_reader.entries() {
+                        for (_, v) in p_entries {
+                            if v.len() < 4 {
+                                continue;
+                            }
+                            let words: Vec<u32> = v
+                                .chunks_exact(4)
+                                .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                                .collect();
+                            let start = if words.first() == Some(&0) { 1 } else { 0 };
+                            for &tok in &words[start..] {
+                                if tok != 0 {
+                                    all_tokens.insert(tok);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for entry in
+                std::fs::read_dir(&data_dir).unwrap_or_else(|_| std::fs::read_dir(".").unwrap())
+            {
+                let path = entry.unwrap().path();
+                if path.extension().and_then(|s| s.to_str()) != Some("bin") {
+                    continue;
+                }
+                let fname = path.file_name().unwrap().to_string_lossy();
+                if fname == "pinyin_index.bin"
+                    || fname == "phrase_index.bin"
+                    || fname == "addon_pinyin_index.bin"
+                    || fname == "addon_phrase_index.bin"
+                    || fname == "punct.bin"
+                    || fname == "bigram.db"
+                {
+                    continue;
+                }
+                if let Ok(data) = std::fs::read(&path) {
+                    if let Ok(table) = pinyin_data::content::ContentTable::load(&data) {
+                        for rec in table.iter() {
+                            for pair in &rec.tokens {
+                                all_tokens.insert(pair.token);
+                            }
+                        }
+                    }
+                }
+            }
+            let sys_dir = data_dir.to_string_lossy().to_string();
+            let tmp_user =
+                std::env::temp_dir().join(format!("pinyin-migrate-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&tmp_user);
+            let sys_c = std::ffi::CString::new(sys_dir.as_bytes()).ok();
+            let user_c = std::ffi::CString::new(tmp_user.to_string_lossy().as_bytes()).ok();
+            if let (Some(sc), Some(uc)) = (sys_c, user_c) {
+                unsafe {
+                    let ctx = pinyin_init(sc.as_ptr(), uc.as_ptr());
+                    if !ctx.is_null() {
+                        pinyin_set_options(ctx, 0x18a);
+                        let inst = pinyin_alloc_instance(ctx);
+                        if !inst.is_null() {
+                            for &tok in &all_tokens {
+                                let mut len: u32 = 0;
+                                let mut cstr: *mut c_char = std::ptr::null_mut();
+                                let ok = pinyin_token_get_phrase(
+                                    inst,
+                                    tok,
+                                    &mut len as *mut _,
+                                    &mut cstr as *mut _,
+                                );
+                                if ok && !cstr.is_null() {
+                                    let cstr_ref = std::ffi::CStr::from_ptr(cstr);
+                                    if let Ok(s) = cstr_ref.to_str() {
+                                        let key = tok.to_le_bytes().to_vec();
+                                        let val = s.as_bytes().to_vec();
+                                        new_entries.push((key, val));
+                                    }
+                                    g_free(cstr as *mut _);
+                                }
+                            }
+                            pinyin_free_instance(inst);
+                        }
+                        pinyin_fini(ctx);
+                    }
+                }
+                let _ = std::fs::remove_dir_all(&tmp_user);
+            }
+        }
+        if !new_entries.is_empty() {
+            new_entries.sort_by(|a, b| a.0.cmp(&b.0));
+            new_entries.dedup_by(|a, b| a.0 == b.0);
+            entries = new_entries;
+        } else {
+            let mut fallback: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+            for (k, v) in &entries {
+                if k.len() == 6 {
+                    let token_be = u32::from_be_bytes([k[2], k[3], k[4], k[5]]);
+                    if token_be > 0
+                        && token_be < 1000
+                        && v.len() < 100
+                        && std::str::from_utf8(v).is_ok()
+                    {
+                        let key4 = token_be.to_le_bytes().to_vec();
+                        fallback.push((key4, v.clone()));
+                    }
+                }
+            }
+            if !fallback.is_empty() {
+                entries = fallback;
+            }
+        }
+    }
+
     if let Some(n) = limit {
         entries.truncate(n);
     }
 
-    // Write redb.
     if output.exists() {
         fs::remove_file(&output)?;
     }
