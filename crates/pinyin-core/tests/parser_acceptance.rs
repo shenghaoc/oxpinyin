@@ -1,12 +1,158 @@
-//! Frozen F-A acceptance and arbitrary-byte parser properties.
+//! Frozen F-A acceptance, structured path-set cases, and arbitrary-byte properties.
 
 use pinyin_core::{
-    Completeness, FULL_PINYIN_SYLLABLES, FullPinyinParser, InputParser, MAX_PARSE_RESULTS,
-    ParseError, ParseResult, ParsedSyllable,
+    Completeness, FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, FullPinyinParser, InputParser,
+    MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
 };
 use proptest::prelude::*;
 
 const F_A: &str = include_str!("../../../fixtures/foundation/f-a.txt");
+
+// ---------------------------------------------------------------------------
+// Structured acceptance cases (path-set SPEC + R3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn empty_input_returns_one_empty_segmentation() {
+    assert_parse(b"", vec![result(vec![], b"")]);
+}
+
+#[test]
+fn single_valid_syllables_parse() {
+    for syllable in ["ma", "zhuang", "nv"] {
+        let paths = FullPinyinParser
+            .parse(syllable.as_bytes())
+            .expect("single table syllables stay below the path limit");
+        assert!(
+            !paths.is_empty(),
+            "syllable {syllable:?} must produce at least one path"
+        );
+        assert_eq!(
+            paths[0],
+            result(vec![complete(syllable, 0, syllable.len())], b""),
+            "greedy first path for {syllable:?}"
+        );
+        for path in &paths {
+            assert!(path.remainder.is_empty(), "syllable {syllable:?}");
+            assert!(
+                path.syllables
+                    .iter()
+                    .all(|segment| segment.completeness == Completeness::Complete),
+                "complete table syllable {syllable:?} must not emit partials"
+            );
+        }
+    }
+}
+
+#[test]
+fn ambiguous_xian_returns_both_complete_segmentations() {
+    assert_parse(
+        b"xian",
+        vec![
+            result(vec![complete("xian", 0, 4)], b""),
+            result(vec![complete("xi", 0, 2), complete("an", 2, 4)], b""),
+        ],
+    );
+}
+
+#[test]
+fn apostrophe_is_hard_boundary_for_xi_an() {
+    assert_parse(
+        b"xi'an",
+        vec![result(
+            vec![complete("xi", 0, 2), complete("an", 3, 5)],
+            b"",
+        )],
+    );
+}
+
+#[test]
+fn trailing_junk_after_valid_prefix_nihx() {
+    // Maximal complete+partial prefix is `ni` + `h`; unconsumable `x` is remainder.
+    assert_parse(
+        b"nihx",
+        vec![result(vec![complete("ni", 0, 2), partial("h", 2, 3)], b"x")],
+    );
+}
+
+#[test]
+fn pure_non_pinyin_input() {
+    // Leading lowercase letter that is only a partial prefix of some table syllable.
+    assert_parse(b"xyz", vec![result(vec![partial("x", 0, 1)], b"yz")]);
+    // Digits are unsupported and start the untouched remainder.
+    assert_parse(b"123", vec![result(vec![], b"123")]);
+    // Bytes above 0x7F are unsupported and start the untouched remainder.
+    assert_parse(&[0xff], vec![result(vec![], &[0xff])]);
+    assert_parse(
+        &[0x80, 0xc0, 0xff],
+        vec![result(vec![], &[0x80, 0xc0, 0xff])],
+    );
+}
+
+#[test]
+fn maximum_length_valid_syllable_zhuang() {
+    let paths = FullPinyinParser
+        .parse(b"zhuang")
+        .expect("zhuang stays below the path limit");
+    assert_eq!(
+        paths[0],
+        result(vec![complete("zhuang", 0, 6)], b""),
+        "max-length syllable must be the greedy first complete path"
+    );
+    assert!(
+        paths.iter().all(|path| {
+            path.remainder.is_empty()
+                && path
+                    .syllables
+                    .iter()
+                    .all(|segment| segment.completeness == Completeness::Complete)
+        }),
+        "zhuang must emit only complete segmentations"
+    );
+}
+
+#[test]
+fn every_table_syllable_round_trips_as_complete_identity() {
+    assert_eq!(FULL_PINYIN_SYLLABLES.len(), FULL_PINYIN_SYLLABLE_COUNT);
+    assert_eq!(
+        FULL_PINYIN_SYLLABLE_COUNT, 405,
+        "frozen inventory is exactly 405 complete syllables"
+    );
+
+    let parser = FullPinyinParser;
+    for syllable in FULL_PINYIN_SYLLABLES {
+        let paths = parser
+            .parse(syllable.as_bytes())
+            .unwrap_or_else(|error| panic!("syllable {syllable:?} failed: {error}"));
+
+        // Round-trip: the greedy first path is exactly one Complete segment
+        // covering the whole table entry (identity segmentation).
+        assert_eq!(
+            paths[0],
+            result(vec![complete(syllable, 0, syllable.len())], b""),
+            "identity complete path for {syllable:?}"
+        );
+
+        // Additional alternatives, if any, are complete segmentations only.
+        for path in &paths {
+            assert!(path.remainder.is_empty(), "syllable {syllable:?}");
+            assert!(
+                !path.syllables.is_empty(),
+                "non-empty syllable {syllable:?} must not produce empty segments"
+            );
+            assert!(
+                path.syllables
+                    .iter()
+                    .all(|segment| segment.completeness == Completeness::Complete),
+                "table syllable {syllable:?} must not emit partials"
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Frozen F-A: oracle-selected path is present in the portable path set
+// ---------------------------------------------------------------------------
 
 #[test]
 fn frozen_f_a_selected_paths_are_portable_paths() {
@@ -38,19 +184,21 @@ fn frozen_f_a_selected_paths_are_portable_paths() {
     assert_eq!(records, 15, "the frozen F-A family changed record count");
 }
 
+// ---------------------------------------------------------------------------
+// Property tests: totality and determinism over arbitrary bytes
+// ---------------------------------------------------------------------------
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(512))]
 
+    /// Totality: every byte sequence returns Ok or a defined ParseError.
+    /// The call must not panic and must not hit unreachable control flow.
     #[test]
-    fn arbitrary_bytes_are_total_and_deterministic(
+    fn arbitrary_bytes_never_panic(
         input in prop::collection::vec(any::<u8>(), 0..=4_096),
     ) {
         let parser = FullPinyinParser;
-        let first = parser.parse(&input);
-        let second = parser.parse(&input);
-        prop_assert_eq!(&first, &second);
-
-        match first {
+        match parser.parse(&input) {
             Ok(paths) => {
                 prop_assert!(!paths.is_empty());
                 prop_assert!(paths.len() <= MAX_PARSE_RESULTS);
@@ -69,6 +217,18 @@ proptest! {
         }
     }
 
+    /// Determinism: identical input always yields identical Result.
+    #[test]
+    fn arbitrary_bytes_are_deterministic(
+        input in prop::collection::vec(any::<u8>(), 0..=4_096),
+    ) {
+        let parser = FullPinyinParser;
+        let first = parser.parse(&input);
+        let second = parser.parse(&input);
+        prop_assert_eq!(first, second);
+    }
+
+    /// Over-limit Cartesian products surface the sole defined error variant.
     #[test]
     fn over_limit_ambiguity_is_total_and_deterministic(group_count in 13_usize..=32) {
         let input = std::iter::repeat_n("xian", group_count)
@@ -88,6 +248,10 @@ proptest! {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 fn assert_path_invariants(
     input: &[u8],
@@ -132,6 +296,38 @@ fn assert_path_invariants(
 
     prop_assert_eq!(previous_end, remainder_start);
     Ok(())
+}
+
+fn assert_parse(input: &[u8], expected: Vec<ParseResult>) {
+    let actual = FullPinyinParser
+        .parse(input)
+        .expect("structured acceptance cases stay below the path limit");
+    assert_eq!(actual, expected, "input: {input:?}");
+}
+
+fn complete(syllable: &str, start: usize, end: usize) -> ParsedSyllable {
+    ParsedSyllable {
+        syllable: syllable.to_owned(),
+        start,
+        end,
+        completeness: Completeness::Complete,
+    }
+}
+
+fn partial(syllable: &str, start: usize, end: usize) -> ParsedSyllable {
+    ParsedSyllable {
+        syllable: syllable.to_owned(),
+        start,
+        end,
+        completeness: Completeness::Partial,
+    }
+}
+
+fn result(syllables: Vec<ParsedSyllable>, remainder: &[u8]) -> ParseResult {
+    ParseResult {
+        syllables,
+        remainder: remainder.to_vec(),
+    }
 }
 
 fn field<'a>(line: &'a str, name: &str) -> &'a str {
