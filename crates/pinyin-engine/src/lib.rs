@@ -54,7 +54,10 @@ mod session;
 mod storage;
 
 pub use candidate::{Candidate, CandidateKind, CandidateList};
-pub use config::{ConfigSource, ConfigValue, EmptyConfigSource};
+pub use config::{
+    Config, ConfigError, ConfigLayer, ConfigSource, ConfigValue, EmptyConfigSource,
+    UPSTREAM_DEFAULT_COUNT, merge,
+};
 pub use error::EngineError;
 pub use key::{KeyInput, LogicalKey, Modifiers};
 pub use preedit::{Preedit, PreeditSpan, SpanStyle};
