@@ -8,6 +8,15 @@ rust-version.workspace = true
 publish = false
 description = "Differential harness against the source-built libpinyin pin. Never ships."
 
+# Link discovery only; does nothing unless `oracle-ffi` is enabled.
+build = "build.rs"
+
+[features]
+default = []
+# Links the pin-built libpinyin from tools/oracle/build-oracle.sh.
+# Linux-only, and requires the oracle prefix to be present and on-pin.
+oracle-ffi = []
+
 [lints.rust]
 unsafe_code = "allow" # FFI to the real libpinyin; // SAFETY: on every block
 missing_docs = "warn"
