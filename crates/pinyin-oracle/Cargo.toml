@@ -24,4 +24,11 @@ missing_docs = "warn"
 [lints.clippy]
 all = { level = "deny", priority = -1 }
 
+[[bin]]
+name = "parity-corpus"
+path = "src/bin/parity_corpus.rs"
+
 [dependencies]
+# Internal workspace crate: the corpus is generated from the frozen syllable
+# inventory, and W2-T3 compares against this parser. Not an external dependency.
+pinyin-core = { path = "../pinyin-core" }

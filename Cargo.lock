@@ -77,6 +77,9 @@ version = "0.1.0"
 [[package]]
 name = "pinyin-oracle"
 version = "0.1.0"
+dependencies = [
+ "pinyin-core",
+]
 
 [[package]]
 name = "pinyin-user"
