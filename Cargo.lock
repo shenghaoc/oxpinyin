@@ -82,6 +82,7 @@ name = "pinyin-oracle"
 version = "0.1.0"
 dependencies = [
  "pinyin-core",
+ "pinyin-engine",
 ]
 
 [[package]]
