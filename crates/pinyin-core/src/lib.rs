@@ -66,7 +66,7 @@ pub trait InputParser {
     /// One owned parse alternative.
     type Parse;
 
-    /// Parser backend failure.
+    /// Parser backend or resource-limit failure (for example too many alternatives).
     ///
     /// Malformed, junk, and partial caller input are represented in parse
     /// outputs rather than as this error.
