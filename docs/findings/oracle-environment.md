@@ -44,8 +44,10 @@ installation prefix is `WORK_DIR/prefix`, resolved after option parsing. The pre
 absent or empty so stale output cannot enter the oracle. The script resets
 `PKG_CONFIG_PATH` and `LD_LIBRARY_PATH` to prefix-local paths rather than
 inheriting caller search paths; explicit `CC`, `CXX`, `CFLAGS`, `CXXFLAGS` and
-`LDFLAGS` overrides remain supported. Run `tools/oracle/build-oracle.sh
---help` for flags.
+`LDFLAGS` overrides remain supported. A successful build writes
+`oracle-pin.txt` plus `oracle-data.sha256` into the prefix, binding the pin ref
+to checksums of the public header, shared object and every generated data
+file. Run `tools/oracle/build-oracle.sh --help` for flags.
 
 ## Oracle boundary
 

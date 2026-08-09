@@ -16,6 +16,7 @@ IBUS_LIBPINYIN_URL=https://codeload.github.com/libpinyin/ibus-libpinyin/tar.gz/r
 IBUS_LIBPINYIN_ARCHIVE_SHA256=ab6d6cc371e4ec0cda1471ef968e9545de69a404958ecfb4e68545ef4b328646
 MODEL_URL=https://downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz
 MODEL_SHA256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
+ORACLE_PIN_REF="libpinyin-$LIBPINYIN_TAG-$LIBPINYIN_SHA+model20-$MODEL_SHA256+dbm-tkrzw"
 
 work_dir=${TMPDIR:-/tmp}/pinyin-rs-oracle
 prefix=
@@ -73,7 +74,7 @@ case $jobs in
 	;;
 esac
 
-for command in curl sha256sum tar autoreconf make pkg-config find; do
+for command in curl sha256sum tar autoreconf make pkg-config find sort xargs; do
 	command -v "$command" >/dev/null 2>&1 || {
 		printf 'required command not found: %s\n' "$command" >&2
 		exit 1
@@ -148,6 +149,34 @@ shared_object=$(find "$prefix" -type f \( -name 'libpinyin.so' -o -name 'libpiny
 	printf '%s\n' 'built libpinyin shared object not found' >&2
 	exit 1
 }
+
+header=$prefix/include/libpinyin-$LIBPINYIN_TAG/pinyin.h
+data_dir=$prefix/lib/libpinyin/data
+data_manifest=$prefix/oracle-data.sha256
+[[ -f $header && -d $data_dir ]] || {
+	printf '%s\n' 'installed oracle header or data directory not found' >&2
+	exit 1
+}
+(
+	cd "$prefix"
+	find lib/libpinyin/data -type f -print0 | sort -z | xargs -0 sha256sum
+) >"$data_manifest"
+read -r header_sha256 _ < <(sha256sum "$header")
+read -r shared_object_sha256 _ < <(sha256sum "$shared_object")
+read -r data_manifest_sha256 _ < <(sha256sum "$data_manifest")
+cat >"$prefix/oracle-pin.txt" <<EOF
+schema=pinyin-oracle-v1
+pin_ref=$ORACLE_PIN_REF
+libpinyin_tag=$LIBPINYIN_TAG
+libpinyin_commit=$LIBPINYIN_SHA
+ibus_libpinyin_tag=$IBUS_LIBPINYIN_TAG
+ibus_libpinyin_commit=$IBUS_LIBPINYIN_SHA
+model_sha256=$MODEL_SHA256
+dbm=Tkrzw
+header_sha256=$header_sha256
+shared_object_sha256=$shared_object_sha256
+data_manifest_sha256=$data_manifest_sha256
+EOF
 
 printf 'libpinyin_tag=%s\nlibpinyin_commit=%s\n' "$LIBPINYIN_TAG" "$LIBPINYIN_SHA" >&2
 printf 'ibus_libpinyin_tag=%s\nibus_libpinyin_commit=%s\n' "$IBUS_LIBPINYIN_TAG" "$IBUS_LIBPINYIN_SHA" >&2
