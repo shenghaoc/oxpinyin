@@ -1,0 +1,175 @@
+# F-E cross-lane robustness evidence register
+
+Date: 2026-08-09 · Status: all 13 cases registered
+
+This register maps each scoped claim in
+`reference/memory-safety-bugs.md` to a reproducible trigger and a named passing
+artifact. A `registered` entry is evidence-ready but may not yet be executable
+because its owning crate or lane belongs to later work. It is not counted as a
+working exploit or a passing regression until the named artifact exists.
+
+Oracle-backed entries use the NVR frozen in
+`docs/findings/capture-fixtures.md`. Claims stay scoped to the listed trigger;
+no entry supports a blanket claim that Rust code cannot crash.
+
+## Summary
+
+| ID | Trigger or invariant | Owner | State at Foundation |
+|---|---|---|---|
+| F-E-01 | `nih`, then select valid `ni` prefix | C API oracle test | captured seed; regression registered |
+| F-E-02 | stale/invalid candidate access | engine replay + fuzz | registered |
+| F-E-03 | interruption during save/config change | user store hard-kill + replay | registered |
+| F-E-04 | cancelled/superseded async request | provider ownership tests | registered |
+| F-E-05 | table I/O early return | data/migrate RAII gate | registered |
+| F-E-06 | data-tool early return | dictool RAII gate | registered |
+| F-E-07 | prolonged unique workload | bounded-cache benchmark | registered |
+| F-E-08 | English-mode dangling lifetime | compile-time ownership | registered |
+| F-E-09 | i686 table generation/load | loader cross-check | registered |
+| F-E-10 | strict-alignment table load | checked parser + advisory CI | registered |
+| F-E-11 | stale Berkeley DB sidecar lock | user-store hard-kill gate | legacy trigger registered |
+| F-E-12 | `zhuan` user input | parser totality + fuzz/Kani | captured seed; regression registered |
+| F-E-13 | cloud request through system proxy | provider/FFI ASan | registered |
+
+## Evidence entries
+
+### F-E-01 — #566 NULL key-rest
+
+- **Source evidence:** `reference/memory-safety-bugs.md` §1.1 and
+  [ibus-libpinyin #566](https://github.com/libpinyin/ibus-libpinyin/issues/566).
+- **Trigger:** fresh state; parse `nih`; expose candidates for the valid `ni`
+  prefix; select one while the trailing `h` remains.
+- **Foundation artifact:** F-A case `incomplete-nih` records `ni@0:2:complete`
+  and `h@2:3:partial` at the pinned oracle NVR.
+- **Passing artifact:** exact C API/oracle regression
+  `f_e_01_null_key_rest` must validate a failed/missing key-rest before use,
+  return the ABI error convention, and keep the process usable for a second
+  request.
+
+### F-E-02 — candidate-processing invalid access
+
+- **Source evidence:** `reference/memory-safety-bugs.md` §1.2.
+- **Trigger:** create a candidate snapshot, regenerate candidates after a mode
+  or input change, then replay every index from the stale snapshot, including
+  `len` and `usize::MAX`.
+- **Reproduction command:** `cargo test -p pinyin-engine
+  f_e_02_candidate_replay -- --exact` when the session lane exists; seed the
+  same sequence into the session fuzz target.
+- **Passing artifact:** bounds-checked error for every stale/out-of-range
+  access, unchanged live session, and a retained fuzz corpus seed.
+
+### F-E-03 — historical save-path race
+
+- **Source evidence:** `reference/memory-safety-bugs.md` §1.3.
+- **Trigger:** alternate configuration updates and user-state writes; kill the
+  process at each persisted write boundary; reopen and replay the last input.
+- **Reproduction command:** `cargo test -p pinyin-user
+  f_e_03_hard_kill_replay -- --exact` in the user-store lane.
+- **Passing artifact:** reopen completes within the test timeout, committed
+  state is readable, and no partially committed generation is observed.
+
+### F-E-04 — asynchronous cloud `user_data` lifetime leak
+
+- **Source evidence:** `reference/memory-safety-bugs.md` §2.1.
+- **Trigger:** repeatedly supersede and cancel an in-flight provider request,
+  then drop the session before completion.
+- **Reproduction command:** provider test `f_e_04_owned_task_cancellation`
+  under the leak-checking job when an async provider exists.
+- **Passing artifact:** every task handle is owned and joined or aborted on
+  drop; completion and cancellation counters balance. Detached tasks are a
+  review failure.
+
+### F-E-05 — `FILE*`/path early-return leak
+
+- **Source evidence:** `reference/memory-safety-bugs.md` §2.2.
+- **Trigger:** import/export a missing, truncated, permission-denied, and
+  malformed table repeatedly while sampling open descriptors.
+- **Reproduction command:** data/migration test `f_e_05_table_io_raii`.
+- **Passing artifact:** each operation returns `Err`; descriptor count returns
+  to baseline after every iteration. Shipping paths use owned Rust files and
+  paths rather than raw `FILE*`.
+
+### F-E-06 — libpinyin data-tool leaks
+
+- **Source evidence:** `reference/memory-safety-bugs.md` §2.3.
+- **Trigger:** run every dictool conversion against valid, truncated, and
+  malformed input in a loop under the leak-checking job.
+- **Reproduction command:** dictool test `f_e_06_tool_raii` plus the same
+  corpus under ASan/LSan if any foreign parser remains.
+- **Passing artifact:** deterministic `Err` output and stable live allocation
+  and descriptor counts after warm-up.
+
+### F-E-07 — high or unbounded memory growth
+
+- **Source evidence:** `reference/memory-safety-bugs.md` §2.4.
+- **Trigger:** process one million unique inputs and provider results through
+  every cache, then repeat the first fixed window.
+- **Reproduction command:** benchmark `f_e_07_bounded_cache` with the cache
+  capacity and peak RSS recorded on the bench page.
+- **Passing artifact:** entry count never exceeds the configured bound and
+  post-warm-up RSS remains within the published tolerance.
+
+### F-E-08 — English-mode use-after-free
+
+- **Source evidence:** `reference/memory-safety-bugs.md` §3.1.
+- **Trigger:** construct a mode result, replace/drop the originating session
+  state, and retain the result for later rendering.
+- **Reproduction command:** compile-time ownership test
+  `f_e_08_owned_mode_result` plus normal mode-switch replay.
+- **Passing artifact:** the result owns its render data or is lifetime-bound to
+  the session; a dangling borrowing construction does not type-check.
+
+### F-E-09 — i686 binary-generation invalid access
+
+- **Source evidence:** `reference/memory-safety-bugs.md` §4.1 and
+  [libpinyin #120](https://github.com/libpinyin/libpinyin/issues/120).
+- **Trigger:** load the same frozen little-endian table fixture on x86_64 and
+  i686 and compare decoded records and errors for truncated offsets.
+- **Reproduction command:** loader test `f_e_09_i686_cross_check` in the
+  advisory 32-bit lane.
+- **Passing artifact:** identical logical output on both targets; malformed
+  offsets return a checked error without pointer casts or unchecked indexing.
+
+### F-E-10 — sparc64 unaligned access
+
+- **Source evidence:** `reference/memory-safety-bugs.md` §4.2 and
+  [libpinyin #170](https://github.com/libpinyin/libpinyin/issues/170).
+- **Trigger:** decode fixtures whose multi-byte fields begin at every byte
+  alignment, including truncation at each field boundary.
+- **Reproduction command:** loader test `f_e_10_unaligned_bytes` on the normal
+  lane and advisory strict-alignment/sparc64 lane when available.
+- **Passing artifact:** byte-wise checked decoding matches the aligned fixture
+  and every truncation returns `Err`; no reference is formed from packed data.
+
+### F-E-11 — #179 stale Berkeley DB lock
+
+- **Source evidence:** `reference/memory-safety-bugs.md` §5.1 and
+  [libpinyin #179](https://github.com/libpinyin/libpinyin/issues/179).
+- **Legacy trigger:** kill a Berkeley DB writer, retain its `__db.*` sidecars,
+  and reopen. This is an upstream demonstration only: the pinned oracle now
+  uses Tkrzw and shipping code must not introduce Berkeley DB.
+- **Reproduction command:** `cargo test -p pinyin-user
+  f_e_11_hard_kill_reopen -- --exact` for the replacement store.
+- **Passing artifact:** hard-kill/reopen completes within timeout with a valid
+  single-file store and no Berkeley DB sidecar files.
+
+### F-E-12 — #542 assertion on `zhuan`
+
+- **Source evidence:** `reference/memory-safety-bugs.md` §6.1 and
+  [ibus-libpinyin #542](https://github.com/libpinyin/ibus-libpinyin/issues/542).
+- **Trigger:** parse `zhuan` in fresh state and continue with a second parse.
+- **Foundation artifact:** F-A case `robustness-zhuan` records a complete
+  `zhuan@0:5:complete` parse at the pinned oracle NVR.
+- **Passing artifact:** parser unit/property test, retained cargo-fuzz seed and
+  Kani case all return normally; no assertion or panic is input-reachable.
+
+### F-E-13 — #518 cloud/proxy foreign-library crash
+
+- **Source evidence:** `reference/memory-safety-bugs.md` §6.2 and
+  [ibus-libpinyin #518](https://github.com/libpinyin/ibus-libpinyin/issues/518).
+- **Trigger:** cancel and replace cloud requests through a deterministic local
+  HTTP proxy while responses arrive before, during, and after session drop.
+- **Reproduction command:** provider test `f_e_13_proxy_lifetime` under ASan
+  for every remaining FFI boundary. The canonical Foundation oracle build has
+  cloud input disabled, so no cloud exploit is claimed here.
+- **Passing artifact:** all request/message/cancellation ownership is balanced,
+  the session remains usable, and ASan reports no boundary violation.
