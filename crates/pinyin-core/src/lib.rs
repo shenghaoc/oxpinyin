@@ -4,6 +4,10 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod syllables;
+
+pub use syllables::{FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES};
+
 /// Deterministic signed cost used by scoring seams.
 ///
 /// The concrete scale is defined by the decoder/scoring specification.
