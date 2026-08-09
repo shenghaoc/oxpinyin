@@ -25,3 +25,6 @@ missing_docs = "warn"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
+
+[workspace.dependencies]
+redb = "4"

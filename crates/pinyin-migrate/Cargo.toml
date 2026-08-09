@@ -8,10 +8,15 @@ rust-version.workspace = true
 description = "One-shot import of ibus-libpinyin settings and vocabulary."
 
 [lints.rust]
-unsafe_code = "allow" # FFI fallback only
+unsafe_code = "allow" # FFI to libtkrzw
 missing_docs = "warn"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
 
 [dependencies]
+redb = { workspace = true }
+
+[build-dependencies]
+cc = "1"
+pkg-config = "0.3"
