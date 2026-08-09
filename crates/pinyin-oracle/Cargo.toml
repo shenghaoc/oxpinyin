@@ -45,3 +45,4 @@ pinyin-core = { path = "../pinyin-core" }
 # The decode-level differential drives the supported session API, so the
 # candidate side of the report measures what a shell would actually see.
 pinyin-engine = { path = "../pinyin-engine" }
+pinyin-data = { path = "../pinyin-data" }

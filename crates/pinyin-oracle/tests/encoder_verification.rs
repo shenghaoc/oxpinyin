@@ -47,9 +47,7 @@ fn encoder_matches_oracle_for_every_syllable() {
     };
 
     let mut oracle = oracle();
-    let mut session = oracle
-        .session(OracleFlags::DEFAULT)
-        .expect("session allocates");
+    let mut session = oracle.session(OracleFlags::DEFAULT).expect("session allocates");
 
     for idx in 0..SYLLABLE_KEY_COUNT {
         let key = SyllableKey::from_index(idx).expect("in range");

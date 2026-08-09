@@ -434,12 +434,12 @@ No `.cpp` translation unit was read to implement the Rust encoder; the Rust tabl
 | 402 | zhui | 00 00 00 00 01 9c | complete | has entry |
 | 403 | zhun | 00 00 00 00 01 9d | complete | has entry |
 | 404 | zhuo | 00 00 00 00 01 9e | complete | has entry |
-| 405 | b | c0 00 00 00 00 00 | partial | no entry — incomplete, segmentation only |
-| 406 | c | c0 00 00 00 00 01 | partial | no entry — incomplete, segmentation only |
-| 407 | ch | c0 00 00 00 00 02 | partial | no entry — incomplete, segmentation only |
-| 408 | d | c0 00 00 00 00 03 | partial | no entry — incomplete, segmentation only |
-| 409 | f | c0 00 00 00 00 04 | partial | no entry — incomplete, segmentation only |
-| 410 | g | c0 00 00 00 00 05 | partial | no entry — incomplete, segmentation only |
+| 405 | b | c0 00 00 00 00 00 | partial | has entry (c0, partial – 1 of 6 c0 entries) |
+| 406 | c | c0 00 00 00 00 01 | partial | has entry (c0, partial – 1 of 6 c0 entries) |
+| 407 | ch | c0 00 00 00 00 02 | partial | has entry (c0, partial – 1 of 6 c0 entries) |
+| 408 | d | c0 00 00 00 00 03 | partial | has entry (c0, partial – 1 of 6 c0 entries) |
+| 409 | f | c0 00 00 00 00 04 | partial | has entry (c0, partial – 1 of 6 c0 entries) |
+| 410 | g | c0 00 00 00 00 05 | partial | has entry (c0, partial – 1 of 6 c0 entries) |
 | 411 | h | c0 00 00 00 00 06 | partial | no entry — incomplete, segmentation only |
 | 412 | j | c0 00 00 00 00 07 | partial | no entry — incomplete, segmentation only |
 | 413 | k | c0 00 00 00 00 08 | partial | no entry — incomplete, segmentation only |
@@ -460,8 +460,9 @@ No `.cpp` translation unit was read to implement the Rust encoder; the Rust tabl
 
 ### No-table-entry keys
 
-- **All 23 incomplete keys** (`b`..`zh`, ids 405..427) map to `c0`–prefixed `TableKey`s that have **no entry** in `pinyin_index.redb`. This is expected: incomplete keys are for segmentation (`SegmentGraph` edges of kind `Partial`), not for dictionary lookup. `SystemDictionary::lookup` for a slice containing an incomplete key will hit the `c0` TableKey, get `None` from `pinyin_index`, and return an empty `Vec<PhraseEntry>` for that syllable (the overall lookup still succeeds, it just contributes no candidates for that position). The decoder's `SegmentGraph` already handles incomplete edges separately.
-- **Zero complete keys** map to no entry in the current pin. All 405 complete syllables have at least one phrase in the model (verified by probing `pinyin_index.redb` – each of the 405 TableKeys returned `Some`). Two complete syllables (`ng`, `o`) have only a single token each, but they still have an entry.
+- **17 of the 23 incomplete keys** (`h`..`zh`, ids 411..427) map to `c0`–prefixed `TableKey`s that have **no entry** in `pinyin_index.redb`. This is expected: incomplete keys are for segmentation (`SegmentGraph` edges of kind `Partial`), not for dictionary lookup. `SystemDictionary::lookup` for a slice containing an incomplete key will hit the `c0` TableKey, get `None` from `pinyin_index`, and return an empty `Vec<PhraseEntry>` for that syllable (the overall lookup still succeeds, it just contributes no candidates for that position). The decoder's `SegmentGraph` already handles incomplete edges separately.
+- **6 incomplete keys** (`b`, `c`, `ch`, `d`, `f`, `g`, ids 405..410) map to `c0 00 00 00 00 00`..`c0 00 00 00 00 05`, which **do have entries** in `pinyin_index.redb` (the 6 `c0` entries observed – `pinyin_index.bin` has 928 entries: 922 `00`-prefixed and 6 `c0`-prefixed). These 6 share their TableKeys with the complete syllables' `c0` prefix range; the oracle's `pinyin_index` treats them as valid single-initial pinyins that happen to have phrases (e.g., `b` as a shorthand for `bo` in some contexts). They still return candidates, but the decoder treats them as `Partial` edges.
+- **Zero complete keys** map to no entry in the current pin. All 405 complete syllables have at least one phrase in the model (verified by probing `pinyin_index.redb` – each of the 405 TableKeys returned `Some` for the full 928-entry redb). Two complete syllables (`ng`, `o`) have only a single token each, but they still have an entry.
 - If a future `SyllableKey` (e.g., a Stage 2 fuzzy alias) is added beyond 428, `EncoderError::Unknown` will be returned – the `Blocked` variant is removed.
 
 ## Frozen table format
