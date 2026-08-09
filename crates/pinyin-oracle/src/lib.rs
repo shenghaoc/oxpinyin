@@ -41,6 +41,7 @@ pub mod flags;
 pub mod observation;
 pub mod pin;
 mod pin_ref;
+pub mod taxonomy;
 
 #[cfg(feature = "oracle-ffi")]
 mod ffi;
@@ -53,6 +54,7 @@ pub use observation::{
     MAX_CAPTURED_CANDIDATES, OracleCompleteness, OracleObservation, OracleSegment,
 };
 pub use pin::{EXPECTED_PIN_REF, OraclePrefix, PinManifest, VerifiedPin};
+pub use taxonomy::{BudgetVerdict, DivergenceClass, Taxonomy};
 
 #[cfg(feature = "oracle-ffi")]
 pub use live::{LiveSource, Oracle, Session};

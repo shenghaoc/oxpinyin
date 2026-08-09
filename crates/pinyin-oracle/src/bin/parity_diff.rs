@@ -31,9 +31,9 @@ fn run() -> ExitCode {
     use std::path::PathBuf;
 
     use pinyin_oracle::corpus;
-    use pinyin_oracle::differential::{self, Case, Unclassified};
+    use pinyin_oracle::differential::{self, Case};
     use pinyin_oracle::live::LiveSource;
-    use pinyin_oracle::{Oracle, OracleFlags, OraclePrefix};
+    use pinyin_oracle::{Oracle, OracleFlags, OraclePrefix, Taxonomy, taxonomy};
 
     let mut args = std::env::args_os().skip(1);
     let out_dir = args
@@ -86,16 +86,19 @@ fn run() -> ExitCode {
         }
     };
     let mut source = LiveSource::new(session);
-    let output = differential::run(&mut source, &cases, &Unclassified);
+    let classifier = Taxonomy::new(OracleFlags::DEFAULT);
+    let output = differential::run(&mut source, &cases, &classifier);
+    let verdict = taxonomy::budget(output.report.total, &output.report.classes);
 
     if let Err(error) = std::fs::create_dir_all(&out_dir) {
         eprintln!("cannot create {}: {error}", out_dir.display());
         return ExitCode::FAILURE;
     }
+    let summary = format!("{}\n{}", output.report.to_summary(), verdict.to_summary());
     for (name, text) in [
         ("comparisons.tsv", output.comparison_log_text()),
         ("divergences.tsv", output.divergence_log_text()),
-        ("summary.txt", output.report.to_summary()),
+        ("summary.txt", summary.clone()),
     ] {
         let path = out_dir.join(name);
         if let Err(error) = std::fs::write(&path, text) {
@@ -105,6 +108,6 @@ fn run() -> ExitCode {
         eprintln!("wrote   {}", path.display());
     }
 
-    print!("{}", output.report.to_summary());
+    print!("{summary}");
     ExitCode::SUCCESS
 }
