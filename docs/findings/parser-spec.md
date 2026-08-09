@@ -1,11 +1,13 @@
 # Full-pinyin parser SPEC
 
 Date: 2026-08-09 · Status: frozen for Foundation Tasks 6–9
+(amended 2026-08-09: oracle-driven SPEC correction on partial placement)
 
 This finding is the human-frozen parser contract required before the first
 parser implementation commit. It refines Foundation R3 and the signature in
 `docs/findings/core-trait-seam.md`; a behavior change requires an Architect
-correction before implementation resumes.
+correction before implementation resumes. One such correction has landed: see
+the Architect correction log at the end of this file.
 
 ## Scope and inventory
 
@@ -127,7 +129,9 @@ subset. At or below the limit, it returns every path. This preserves R3.5
   exactly equals `syllable.as_bytes()`.
 - Segment ranges are strictly increasing and non-overlapping. Apostrophe bytes
   may form one-byte gaps; no segment spans an apostrophe.
-- A result contains at most one partial segment, and it is the last segment.
+- Partial segments may appear at any position in a result, and a result may
+  contain multiple partial segments. There is no "at most one, and it is
+  last" restriction. (oracle-driven SPEC correction; see log below.)
 - `remainder` is an exact owned copy of an input suffix. Its start offset is
   `input.len() - remainder.len()`.
 - Every byte before the remainder start is accounted for by a segment or a
@@ -141,15 +145,22 @@ on fully consumed sides are combined as a Cartesian product. A leading,
 repeated, or trailing apostrophe is not a valid separator and starts the
 remainder. An apostrophe is consumed only when its left group is fully
 segmented and its right group consumes at least one byte as a complete or
-terminal partial segment. An empty result with unchanged remainder is not a
+partial segment. An empty result with unchanged remainder is not a
 right-side continuation.
 
-Complete segmentations take precedence. A terminal lowercase group emits
-partial-tail paths only when no complete segmentation consumes that whole
-group. Among partial paths, only those consuming the greatest byte prefix are
-returned. If a non-final group before an apostrophe cannot be completed, its
-maximal partial prefix is retained and parsing stops before the apostrophe;
-the apostrophe and following bytes are the remainder.
+Under the parity profile (`PINYIN_INCOMPLETE` set), an initial-only key is a
+first-class partial usable at any cursor, any number of times, freely
+interleaved with complete keys. This matches the pinned oracle. Complete
+segmentations of a group remain first-class paths; partial-bearing paths are
+not confined to a terminal fallback after every complete path has been
+rejected.
+
+Path-set enumeration for mid-path and repeated partials — which paths are
+retained, in what order, and how they interact with complete-path precedence
+— is normative in `docs/findings/parser-path-set.md` and is **not** restated
+here. That SPEC, and the parser that implements it, are updated on a separate
+branch. Until that branch lands, the portable parser still implements the
+pre-correction path set (at most one trailing partial).
 
 At the first unsupported or otherwise unconsumable byte, parsing stops. The
 already segmented prefix is retained and that byte plus every following byte
@@ -163,3 +174,39 @@ assume UTF-8 or a character boundary. Every byte sequence returns `Ok` or the
 bounded alternative error without a parser panic. Outputs own all variable
 data and do not borrow the input. Selection among returned paths belongs to
 the decoder and is outside Foundation.
+
+## Architect correction log
+
+### 2026-08-09 — oracle-driven SPEC correction: partial placement
+
+**Kind:** oracle-driven SPEC correction. A frozen field invariant was changed
+by differential evidence against the pin, not by design preference. Future
+readers should treat this as a legitimate freeze edit under the constitution's
+"edit frozen SPECs only with an explicit ask" rule: the ask is the maintainer
+decision recorded here.
+
+**Previous invariant.** A result contains at most one partial segment, and it
+is the last segment.
+
+**Corrected invariant.** Partial segments may appear at any position, multiple
+times, interleaved with complete segments.
+
+**Evidence.** W2-T3 live run over the 10,465-input parity corpus against the
+pin-built oracle at flags `0x18a`. Of 491 divergences, **483 (98.4%)** share
+this single root cause. Worked example, input `yingchon`:
+
+```text
+theirs  ying@0:4:complete, ch@4:6:partial, o@6:7:complete, n@7:8:partial
+ours    ying@0:4:complete, chon@4:8:partial
+        yi@0:2:complete, ng@2:4:complete, chon@4:8:partial
+```
+
+The pin's selected path has two non-final partials. Full accounting is in
+`docs/findings/parser-spec-contradiction-incomplete-keys.md`.
+
+**Deferred.** Admitting mid-path and repeated partials multiplies the path
+set. `MAX_PARSE_RESULTS` (4,096) and its interaction with the corpus must be
+re-evaluated once the parser admits these paths. That re-evaluation, the
+`parser-path-set.md` amendment, and the parser implementation change all
+belong on a **separate branch**. This commit changes only the frozen field
+invariant and the prose that states the observed upstream policy.
