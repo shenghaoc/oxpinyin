@@ -1,0 +1,20 @@
+# Fixtures in this repository are frozen artefacts, and three separate gates
+# depend on their exact bytes: the parity corpus is regenerated and compared
+# byte for byte, capture records are stamped with a SHA-256, and a golden line
+# is scanned for stray control bytes.
+#
+# Git on Windows rewrites LF to CRLF on checkout by default, which breaks all
+# three — a committed "a" arrives as "a\r". Normalise to LF everywhere, and
+# mark the byte-exact data as not text at all so nothing can translate it.
+* text=auto eol=lf
+
+fixtures/** -text
+tests/parity/** -text
+fuzz/corpus/** -text
+
+# proptest writes these itself and recommends committing them: the seeds are
+# re-run before any novel case, so a bug a property found stays found.
+# crates/pinyin-core/proptest-regressions/kbest.txt holds the shrunk inputs
+# from the per-node-ranking bug. Generated, not authored — collapse it in
+# diffs and keep it out of language stats.
+**/proptest-regressions/** linguist-generated
