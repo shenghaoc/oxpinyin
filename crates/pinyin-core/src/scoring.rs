@@ -170,33 +170,28 @@ where
         dictionary: &'a D,
         model: &'a L,
     ) -> Result<Self, ScoringError> {
-        let mut key_costs = Vec::with_capacity(SYLLABLE_KEY_COUNT);
-        for index in 0..SYLLABLE_KEY_COUNT {
-            let Some(key) = SyllableKey::from_index(index) else {
-                key_costs.push(UNKNOWN_COST);
-                continue;
-            };
+        let key_costs = key_cost_table(dictionary, model)?;
+        Ok(Self::with_key_costs(config, dictionary, model, key_costs))
+    }
 
-            let entries = dictionary
-                .lookup(&[key])
-                .map_err(|error| ScoringError::Dictionary(error.to_string()))?;
-
-            let mut best = UNKNOWN_COST;
-            for entry in &entries {
-                let cost = model
-                    .score(&[], &entry.token(), 0)
-                    .map_err(|error| ScoringError::LanguageModel(error.to_string()))?;
-                best = best.min(cost);
-            }
-            key_costs.push(best);
-        }
-
-        Ok(Self {
+    /// Builds a scorer over an already computed key-cost table.
+    ///
+    /// A caller that scores repeatedly — a session, once per keystroke —
+    /// computes the table once with [`key_cost_table`] and reuses it, rather
+    /// than making the backend answer 428 lookups on every key press.
+    #[must_use]
+    pub const fn with_key_costs(
+        config: ScoringConfig,
+        dictionary: &'a D,
+        model: &'a L,
+        key_costs: Vec<Cost>,
+    ) -> Self {
+        Self {
             config,
             dictionary,
             model,
             key_costs,
-        })
+        }
     }
 
     /// The weights in force.
@@ -297,6 +292,45 @@ impl<D, L> EdgeCost for Scorer<'_, D, L> {
             .unwrap_or(UNKNOWN_COST)
             .saturating_add(self.config.edge_penalty(edge.kind()))
     }
+}
+
+/// Cost of the cheapest phrase each frozen key spells on its own.
+///
+/// Indexed by [`SyllableKey::index`], so a scorer's per-edge cost is a slice
+/// lookup rather than a backend round trip.
+///
+/// # Errors
+///
+/// Returns [`ScoringError`] when a backend fails.
+pub fn key_cost_table<D, L>(dictionary: &D, model: &L) -> Result<Vec<Cost>, ScoringError>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: Display,
+{
+    let mut key_costs = Vec::with_capacity(SYLLABLE_KEY_COUNT);
+    for index in 0..SYLLABLE_KEY_COUNT {
+        let Some(key) = SyllableKey::from_index(index) else {
+            key_costs.push(UNKNOWN_COST);
+            continue;
+        };
+
+        let entries = dictionary
+            .lookup(&[key])
+            .map_err(|error| ScoringError::Dictionary(error.to_string()))?;
+
+        let mut best = UNKNOWN_COST;
+        for entry in &entries {
+            let cost = model
+                .score(&[], &entry.token(), 0)
+                .map_err(|error| ScoringError::LanguageModel(error.to_string()))?;
+            best = best.min(cost);
+        }
+        key_costs.push(best);
+    }
+
+    Ok(key_costs)
 }
 
 /// Every complete-key sequence `keys` can stand for.

@@ -4,13 +4,16 @@
 //! requirement, because the TSF, IMK and ArkTS models all want a
 //! main-thread-friendly, instance-per-context object.
 //!
-//! At W4-T0 the session is the input buffer and its presentation. The decoder
-//! is wired in at W4-T4 **behind these signatures**, which
-//! `docs/findings/session-api.md` freezes.
+//! The decoder behind it is parse -> graph -> k-best -> lookup, wired in at
+//! W4-T4 **behind the signatures** `docs/findings/session-api.md` froze at
+//! W4-T0. Not one of them changed.
 
 use core::fmt::Display;
 
-use pinyin_core::{Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
+use pinyin_core::graph::{EdgeKind, SegmentGraph};
+use pinyin_core::kbest::{DecodedPath, k_best};
+use pinyin_core::scoring::{Scorer, ScoringConfig, key_cost_table};
+use pinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
 
 use crate::candidate::{Candidate, CandidateKind, CandidateList};
 use crate::config::ConfigSource;
@@ -31,6 +34,26 @@ const KEY_PAGE_SIZE: &str = "lookup-table-page-size";
 
 /// Page size used when the configuration source does not carry the key.
 const DEFAULT_PAGE_SIZE: usize = 5;
+
+/// Configuration key for whether initial-only keys are admitted.
+const KEY_INCOMPLETE: &str = "incomplete-pinyin";
+
+/// How many segmentations the decoder keeps.
+///
+/// The pin's own candidate lists mix segmentations — `xian` opens with
+/// `西安` (`xi` + `an`) while its selected path is the single key `xian` — so
+/// one segmentation is not enough to reproduce a candidate list.
+const SEGMENTATION_K: usize = 8;
+
+/// Largest number of candidates a refresh keeps.
+///
+/// Comfortably above the capture protocol's depth of ten, so the differential
+/// can measure a prefix-10 overlap without the list being the thing that
+/// truncates it.
+const MAX_CANDIDATES: usize = 64;
+
+/// Longest phrase, in keys, the sentence builder will look back for.
+const MAX_PHRASE_KEYS: usize = 8;
 
 /// What a session did with a key.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -58,6 +81,7 @@ pub enum Selection {
 #[derive(Clone, Copy, Debug)]
 struct Settings {
     page_size: usize,
+    incomplete: bool,
 }
 
 impl Settings {
@@ -67,7 +91,14 @@ impl Settings {
             .and_then(|value| usize::try_from(value).ok())
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_PAGE_SIZE);
-        Self { page_size }
+        // The captured parity profile has PINYIN_INCOMPLETE set, and the
+        // upstream default this engine carries is true; a source that says
+        // nothing gets the parity behaviour.
+        let incomplete = config.get_bool(KEY_INCOMPLETE).unwrap_or(true);
+        Self {
+            page_size,
+            incomplete,
+        }
     }
 }
 
@@ -94,6 +125,9 @@ pub struct Session<D, L> {
     selected: String,
     consumed: usize,
     candidates: CandidateList,
+    history: Vec<PhraseToken>,
+    scoring: ScoringConfig,
+    key_costs: Vec<Cost>,
 }
 
 impl<D, L> Session<D, L>
@@ -119,6 +153,7 @@ where
         dictionary: D,
         model: L,
     ) -> Result<Self, EngineError> {
+        let key_costs = key_cost_table(&dictionary, &model).map_err(EngineError::Scoring)?;
         Ok(Self {
             dictionary,
             model,
@@ -128,6 +163,9 @@ where
             selected: String::new(),
             consumed: 0,
             candidates: CandidateList::default(),
+            history: Vec::new(),
+            scoring: ScoringConfig::default(),
+            key_costs,
         })
     }
 
@@ -189,7 +227,11 @@ where
 
         let text = candidate.text().to_owned();
         let advance = candidate.consumed_bytes();
+        let token = candidate.token();
         self.selected.push_str(&text);
+        if let Some(token) = token {
+            self.history.push(token);
+        }
         self.consumed = self.next_boundary(self.consumed.saturating_add(advance));
         self.refresh()?;
 
@@ -220,6 +262,7 @@ where
         self.selected.clear();
         self.consumed = 0;
         self.candidates = CandidateList::default();
+        self.history.clear();
     }
 
     /// What the shell should display.
@@ -318,6 +361,7 @@ where
         if !self.selected.is_empty() {
             self.selected.clear();
             self.consumed = 0;
+            self.history.clear();
             self.refresh()?;
             return Ok(KeyOutcome::Consumed);
         }
@@ -353,23 +397,176 @@ where
 
     /// Recomputes the candidate list for the current state.
     ///
-    /// W4-T4 puts parse, graph, k-best and dictionary lookup here. Until then
-    /// the only candidate a session can honestly offer is the input itself,
-    /// which is what [`CandidateKind::Fallback`] means.
+    /// Parse into a graph, take the `k` best segmentations, and offer every
+    /// phrase that spells a prefix of any of them, plus the best sentence over
+    /// each whole segmentation.
+    ///
+    /// Candidates are collected across segmentations on purpose. The pin does
+    /// the same: its list for `xian` opens with `西安` (`xi` + `an`) while its
+    /// *selected* path is the single key `xian`, and its list for `fangan`
+    /// mixes `方案` (`fang` + `an`) with `反感` (`fan` + `gan`).
     fn refresh(&mut self) -> Result<(), EngineError> {
-        let remaining = &self.raw[self.consumed..];
-        self.candidates = if remaining.is_empty() {
-            CandidateList::default()
-        } else {
-            CandidateList::from_vec(vec![Candidate::new(
-                remaining.to_owned(),
+        let remaining = self.raw[self.consumed..].to_owned();
+        if remaining.is_empty() {
+            self.candidates = CandidateList::default();
+            return Ok(());
+        }
+
+        let graph = SegmentGraph::build(remaining.as_bytes()).map_err(EngineError::Graph)?;
+        let scorer = Scorer::with_key_costs(
+            self.scoring,
+            &self.dictionary,
+            &self.model,
+            self.key_costs.clone(),
+        );
+        let paths = k_best(&graph, &scorer, SEGMENTATION_K).map_err(EngineError::Decode)?;
+
+        let mut collected: Vec<Candidate> = Vec::new();
+        for path in &paths {
+            self.collect_prefix_phrases(&graph, &scorer, path, &mut collected)?;
+            self.collect_sentence(&graph, &scorer, path, &mut collected)?;
+        }
+
+        collected.sort_by_key(Candidate::cost);
+        collected.dedup_by(|left, right| left.text() == right.text());
+        collected.truncate(MAX_CANDIDATES);
+
+        if collected.is_empty() {
+            collected.push(Candidate::new(
+                remaining.clone(),
                 CandidateKind::Fallback,
                 0,
                 remaining.len(),
                 0,
-            )])
-        };
+                None,
+            ));
+        }
+
+        self.candidates = CandidateList::from_vec(collected);
         Ok(())
+    }
+
+    /// Offers every phrase spelling a prefix of `path`.
+    fn collect_prefix_phrases(
+        &self,
+        graph: &SegmentGraph,
+        scorer: &Scorer<'_, D, L>,
+        path: &DecodedPath,
+        into: &mut Vec<Candidate>,
+    ) -> Result<(), EngineError> {
+        let (keys, kinds, ends) = self.walk(graph, path);
+
+        // A dictionary phrase never spans more than MAX_PHRASE_KEYS keys, so
+        // looking further is both pointless and quadratic in the input.
+        for length in 1..=keys.len().min(MAX_PHRASE_KEYS) {
+            let ranked = scorer
+                .rank_phrases(&self.history, &keys[..length], &kinds[..length])
+                .map_err(EngineError::Scoring)?;
+            for (entry, cost) in ranked {
+                into.push(Candidate::new(
+                    entry.text().to_owned(),
+                    CandidateKind::Phrase,
+                    length,
+                    ends[length - 1],
+                    cost,
+                    Some(entry.token()),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Offers the cheapest sequence of phrases covering the whole of `path`.
+    ///
+    /// A single phrase covering everything is already offered by
+    /// [`Session::collect_prefix_phrases`]; this adds the multi-phrase
+    /// composition, which is what makes a sentence longer than one dictionary
+    /// entry possible.
+    fn collect_sentence(
+        &self,
+        graph: &SegmentGraph,
+        scorer: &Scorer<'_, D, L>,
+        path: &DecodedPath,
+        into: &mut Vec<Candidate>,
+    ) -> Result<(), EngineError> {
+        let (keys, kinds, ends) = self.walk(graph, path);
+        if keys.is_empty() {
+            return Ok(());
+        }
+
+        // best[i] is the cheapest way to spell keys[..i].
+        let mut best: Vec<Option<(Cost, String, Vec<PhraseToken>)>> = vec![None; keys.len() + 1];
+        best[0] = Some((0, String::new(), self.history.clone()));
+
+        for end in 1..=keys.len() {
+            let first = end.saturating_sub(MAX_PHRASE_KEYS);
+            for start in first..end {
+                // TODO: avoid cloning — bounded by MAX_PHRASE_KEYS × input.
+                // The clone is here because the loop writes back into `best`
+                // while reading this entry; splitting the read and the write,
+                // or holding an index instead of the text, would remove it.
+                let Some((prefix_cost, prefix_text, prefix_history)) = best[start].clone() else {
+                    continue;
+                };
+                let ranked = scorer
+                    .rank_phrases(&prefix_history, &keys[start..end], &kinds[start..end])
+                    .map_err(EngineError::Scoring)?;
+                let Some((entry, cost)) = ranked.first() else {
+                    continue;
+                };
+
+                let total = prefix_cost.saturating_add(*cost);
+                if best[end].as_ref().is_none_or(|(seen, ..)| total < *seen) {
+                    let mut text = prefix_text.clone();
+                    text.push_str(entry.text());
+                    let mut history = prefix_history.clone();
+                    history.push(entry.token());
+                    best[end] = Some((total, text, history));
+                }
+            }
+        }
+
+        if let Some((cost, text, _)) = best[keys.len()].clone()
+            && !text.is_empty()
+        {
+            into.push(Candidate::new(
+                text,
+                CandidateKind::Sentence,
+                keys.len(),
+                ends[keys.len() - 1],
+                cost,
+                None,
+            ));
+        }
+        Ok(())
+    }
+
+    /// The keys, edge kinds and end offsets along one decoded path.
+    ///
+    /// An `Incomplete` edge is dropped when the configuration turns
+    /// initial-only keys off, which is the `PINYIN_INCOMPLETE` bit the parity
+    /// profile sets.
+    fn walk(
+        &self,
+        graph: &SegmentGraph,
+        path: &DecodedPath,
+    ) -> (Vec<SyllableKey>, Vec<EdgeKind>, Vec<usize>) {
+        let mut keys = Vec::with_capacity(path.len());
+        let mut kinds = Vec::with_capacity(path.len());
+        let mut ends = Vec::with_capacity(path.len());
+
+        for id in path.edges() {
+            let Some(edge) = graph.edge(*id) else {
+                continue;
+            };
+            if !self.settings.incomplete && edge.kind() == EdgeKind::Incomplete {
+                break;
+            }
+            keys.push(edge.key());
+            kinds.push(edge.kind());
+            ends.push(edge.to());
+        }
+        (keys, kinds, ends)
     }
 }
 
@@ -640,16 +837,18 @@ mod tests {
 
     #[test]
     fn a_full_buffer_ignores_further_input() {
+        // Apostrophes on purpose: they fill the buffer without building a
+        // decodable graph, so this measures the bound and not the decoder.
         let mut session = session();
         for _ in 0..MAX_INPUT_BYTES {
             session
-                .process_key(&KeyInput::character('a'))
+                .process_key(&KeyInput::character('\''))
                 .expect("no failure");
         }
         assert_eq!(session.raw_input().len(), MAX_INPUT_BYTES);
         assert_eq!(
             session
-                .process_key(&KeyInput::character('a'))
+                .process_key(&KeyInput::character('\''))
                 .expect("no failure"),
             KeyOutcome::Ignored
         );

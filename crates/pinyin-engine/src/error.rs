@@ -2,6 +2,10 @@
 
 use core::fmt;
 
+use pinyin_core::graph::GraphError;
+use pinyin_core::kbest::DecodeError;
+use pinyin_core::scoring::ScoringError;
+
 /// Anything a session can fail at.
 ///
 /// `#[non_exhaustive]`, so later tasks add variants without breaking callers.
@@ -23,6 +27,12 @@ pub enum EngineError {
     Dictionary(String),
     /// The language model backend failed.
     LanguageModel(String),
+    /// The input could not be represented as a segment graph.
+    Graph(GraphError),
+    /// The k-best search refused its parameters.
+    Decode(DecodeError),
+    /// Scoring failed.
+    Scoring(ScoringError),
 }
 
 impl fmt::Display for EngineError {
@@ -36,6 +46,9 @@ impl fmt::Display for EngineError {
             }
             Self::Dictionary(message) => write!(formatter, "dictionary error: {message}"),
             Self::LanguageModel(message) => write!(formatter, "language model error: {message}"),
+            Self::Graph(error) => write!(formatter, "graph error: {error}"),
+            Self::Decode(error) => write!(formatter, "decode error: {error}"),
+            Self::Scoring(error) => write!(formatter, "scoring error: {error}"),
         }
     }
 }
