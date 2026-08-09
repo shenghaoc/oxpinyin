@@ -7,6 +7,7 @@
 pub mod cost;
 pub mod fixture;
 pub mod graph;
+pub mod kbest;
 mod parser;
 mod syllables;
 mod vocab;
