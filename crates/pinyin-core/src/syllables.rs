@@ -42,11 +42,41 @@ pub static FULL_PINYIN_SYLLABLES: [&str; FULL_PINYIN_SYLLABLE_COUNT] = [
     "zhuai", "zhuan", "zhuang", "zhui", "zhun", "zhuo",
 ];
 
+/// Number of initial-only keys in [`INCOMPLETE_PINYIN_KEYS`].
+pub const INCOMPLETE_PINYIN_KEY_COUNT: usize = 23;
+
+/// Initial-only pinyin keys, in ascending byte order.
+///
+/// An initial-only key is a non-empty proper prefix of a complete syllable
+/// that contains no vowel byte (`a`, `e`, `i`, `o`, `u`, `v`) and is not itself
+/// a complete syllable. Applied to [`FULL_PINYIN_SYLLABLES`] that rule yields
+/// exactly these 23 keys, which `incomplete_keys_follow_the_frozen_rule`
+/// asserts.
+///
+/// These are the keys the pinned oracle admits at any cursor position when
+/// `PINYIN_INCOMPLETE` is set. `docs/findings/segment-graph.md` records the
+/// measured evidence and makes them graph edges.
+pub static INCOMPLETE_PINYIN_KEYS: [&str; INCOMPLETE_PINYIN_KEY_COUNT] = [
+    "b", "c", "ch", "d", "f", "g", "h", "j", "k", "l", "m", "n", "p", "q", "r", "s", "sh", "t",
+    "w", "x", "y", "z", "zh",
+];
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
 
-    use super::{FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES};
+    use super::{
+        FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
+        INCOMPLETE_PINYIN_KEYS,
+    };
+
+    /// Whether `byte` is a vowel for the initial-only key rule.
+    ///
+    /// `v` counts as a vowel because it spells `ü` in `lv`, `lve`, `nv` and
+    /// `nve`, so `lv` is not an initial.
+    const fn is_vowel(byte: u8) -> bool {
+        matches!(byte, b'a' | b'e' | b'i' | b'o' | b'u' | b'v')
+    }
 
     #[test]
     fn frozen_inventory_has_expected_shape() {
@@ -75,6 +105,39 @@ mod tests {
         }
         for excluded in ["b", "zh", "den", "kei", "lue", "nue", "tei", "eng"] {
             assert!(!FULL_PINYIN_SYLLABLES.contains(&excluded));
+        }
+    }
+
+    #[test]
+    fn incomplete_keys_follow_the_frozen_rule() {
+        let complete: HashSet<&str> = FULL_PINYIN_SYLLABLES.into_iter().collect();
+        let mut derived: Vec<&str> = Vec::new();
+
+        for syllable in FULL_PINYIN_SYLLABLES {
+            for length in 1..syllable.len() {
+                let prefix = &syllable[..length];
+                if prefix.bytes().any(is_vowel)
+                    || complete.contains(prefix)
+                    || derived.contains(&prefix)
+                {
+                    continue;
+                }
+                derived.push(prefix);
+            }
+        }
+        derived.sort_unstable();
+
+        assert_eq!(derived, INCOMPLETE_PINYIN_KEYS);
+        assert_eq!(INCOMPLETE_PINYIN_KEYS.len(), INCOMPLETE_PINYIN_KEY_COUNT);
+    }
+
+    #[test]
+    fn incomplete_keys_are_sorted_and_disjoint_from_complete_keys() {
+        let mut previous = "";
+        for key in INCOMPLETE_PINYIN_KEYS {
+            assert!(previous < key, "{key:?} is out of ascending order");
+            assert!(!FULL_PINYIN_SYLLABLES.contains(&key));
+            previous = key;
         }
     }
 }
