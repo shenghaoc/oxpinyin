@@ -24,6 +24,11 @@ secondary tie-break is normally needed. If the inventory ever changes to
 permit a tie, compare syllable bytes ascending. Remove duplicate paths while
 preserving first occurrence.
 
+Under this exhaustive rule, 164 of the 405 complete table entries admit more
+than one complete segmentation of the entry alone; round-trip tests assert
+that the greedy identity path is present as the first path, not that it is
+the only path.
+
 For multiple apostrophe-separated groups, preserve each group’s order and
 form the Cartesian product left-to-right: for each left path in order, append
 each right path in order. Apostrophes are consumed separators and never
