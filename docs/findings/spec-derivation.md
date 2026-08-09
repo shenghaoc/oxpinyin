@@ -62,7 +62,7 @@ gate; the language does not prevent every class.
 | F-E-09 | 4.1 i686 invalid access | loader fixture cross-check |
 | F-E-10 | 4.2 sparc64 unaligned access | checked parsing + advisory-target CI |
 | F-E-11 | 5.1 #179 stale-lock hang | user-store hard-kill gate |
-| F-E-12 | 6.1 #542 assertion | `zhuan` totality fixture + fuzz/Kani |
+| F-E-12 | 6.1 #542 assertion | `zhuan` totality fixture + proptest + fuzz seed |
 | F-E-13 | 6.2 cloud/proxy crash | ASan across remaining FFI |
 
 ## What still requires reading
