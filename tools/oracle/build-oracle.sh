@@ -4,7 +4,7 @@ set -euo pipefail
 # Build dependencies: autotools (autoconf, automake, autopoint, libtool),
 # a C/C++ toolchain and make, pkg-config, gettext, gnome-common, curl,
 # tar, python3, and development headers for GLib 2.0, IBus 1.0,
-# Berkeley DB and SQLite 3.
+# Tkrzw and SQLite 3.
 
 LIBPINYIN_TAG=2.11.91
 LIBPINYIN_SHA=0c5e80e1200f84fab185d1c5bde458b770a0636c
@@ -125,7 +125,7 @@ ibus_src=$work_dir/src/ibus-libpinyin-$IBUS_LIBPINYIN_TAG
 (
 	cd "$lib_src"
 	autoreconf --force --install --verbose
-	./configure --prefix="$prefix" --disable-static --with-dbm=BerkeleyDB
+	./configure --prefix="$prefix" --disable-static --with-dbm=Tkrzw
 	make -j"$jobs"
 	make install
 )

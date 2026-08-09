@@ -38,8 +38,9 @@ the build dependencies a host needs.
 
 The script verifies every SHA-256 before extraction, builds both components
 from their pinned source archives with autotools, and prints the absolute
-path to the resulting `libpinyin` shared object. Its default installation
-prefix is `WORK_DIR/prefix`, resolved after option parsing. The prefix must be
+path to the resulting `libpinyin` shared object. The libpinyin DBM backend is
+pinned to Tkrzw; the deprecated Berkeley DB backend is not used. Its default
+installation prefix is `WORK_DIR/prefix`, resolved after option parsing. The prefix must be
 absent or empty so stale output cannot enter the oracle. The script resets
 `PKG_CONFIG_PATH` and `LD_LIBRARY_PATH` to prefix-local paths rather than
 inheriting caller search paths; explicit `CC`, `CXX`, `CFLAGS`, `CXXFLAGS` and
