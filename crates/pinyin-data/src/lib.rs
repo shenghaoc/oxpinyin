@@ -5,5 +5,7 @@
 #![warn(missing_docs)]
 
 pub mod content;
+pub mod table;
 
 pub use content::{ContentTable, LoadError, Record, TokenPair};
+pub use table::LookupTable;
