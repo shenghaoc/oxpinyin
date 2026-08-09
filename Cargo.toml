@@ -27,4 +27,5 @@ missing_docs = "warn"
 all = { level = "deny", priority = -1 }
 
 [workspace.dependencies]
+pinyin-core = { path = "crates/pinyin-core" }
 redb = "4"
