@@ -42,6 +42,21 @@ pub static FULL_PINYIN_SYLLABLES: [&str; FULL_PINYIN_SYLLABLE_COUNT] = [
     "zhuai", "zhuan", "zhuang", "zhui", "zhun", "zhuo",
 ];
 
+/// Longest complete syllable, in bytes.
+///
+/// A property of [`FULL_PINYIN_SYLLABLES`], asserted by
+/// `frozen_inventory_has_expected_shape`. Both the parser and the segment
+/// graph bound their match length by it.
+///
+/// **Not constant across stages.** Six is the Stage 1 inventory's answer
+/// (`chuang`, `shuang`, `zhuang`). A Stage 2 inventory — fuzzy spellings,
+/// correction aliases, a second input scheme — may raise it, and the graph's
+/// edge count is `O(n × MAX_SYLLABLE_LEN × kinds)`, so raising it costs
+/// linearly. Read it; do not hard-code 6. The same warning applies to
+/// [`crate::SYLLABLE_KEY_COUNT`], whose ids Stage 2 extends rather than
+/// renumbers.
+pub const MAX_SYLLABLE_LEN: usize = 6;
+
 /// Number of initial-only keys in [`INCOMPLETE_PINYIN_KEYS`].
 pub const INCOMPLETE_PINYIN_KEY_COUNT: usize = 23;
 
@@ -67,7 +82,7 @@ mod tests {
 
     use super::{
         FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
-        INCOMPLETE_PINYIN_KEYS,
+        INCOMPLETE_PINYIN_KEYS, MAX_SYLLABLE_LEN,
     };
 
     /// Whether `byte` is a vowel for the initial-only key rule.
@@ -97,7 +112,7 @@ mod tests {
                 .iter()
                 .map(|syllable| syllable.len())
                 .max(),
-            Some(6)
+            Some(MAX_SYLLABLE_LEN)
         );
 
         for required in ["ng", "lv", "lve", "nv", "nve", "zhuan"] {

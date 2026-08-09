@@ -2,9 +2,8 @@
 
 use core::fmt;
 
-use crate::{FULL_PINYIN_SYLLABLES, InputParser};
+use crate::{FULL_PINYIN_SYLLABLES, InputParser, MAX_SYLLABLE_LEN};
 
-const MAX_SYLLABLE_LEN: usize = 6;
 const OVER_LIMIT: usize = MAX_PARSE_RESULTS + 1;
 
 /// Maximum number of parse alternatives materialized by one call.
