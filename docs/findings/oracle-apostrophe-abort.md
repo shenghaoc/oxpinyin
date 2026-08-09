@@ -1,8 +1,9 @@
 # Findings — pinned oracle aborts on apostrophe-only input
 
 Date: 2026-08-09 · Source tier: Architect observation from W2-T3.
-Status: **needs human triage.** Proposed as a new F-E robustness row; this
-finding does not edit the frozen register in `docs/findings/spec-derivation.md`.
+Status: **registered as F-E-14.** Harness guard accepted (maintainer decision
+2026-08-09). Upstream issue against the pinned tag is for the maintainer to
+file — do not open it from this finding.
 
 ## Summary
 
@@ -17,10 +18,16 @@ size_t pinyin::PhoneticTable<Item>::get_column_size(size_t) const
 
 This is `assert()` reaching `abort()`, so it is not recoverable in-process. It
 is the same class as catalogue row F-E-12 (issue #542, assertion on user
-input), on a different code path and a different input shape.
+input), on a different code path and a different input shape. Registered as
+its own row **F-E-14** rather than folded into F-E-12, because the trigger
+and the upstream file differ.
 
 A lone apostrophe is ordinary user input. It is what a user sees mid-word while
-typing `xi'an`.
+typing `xi'an`. The one-character repro for the upstream report is:
+
+```text
+lone apostrophe "'"  →  assert()  →  abort()
+```
 
 ## Reproduction
 
@@ -86,7 +93,7 @@ Two side observations worth registering separately:
   difference, not a bug on either side, and it is what the divergence taxonomy
   should classify.
 
-## Guard adopted in W2-T3
+## Guard adopted in W2-T3 — accepted
 
 The harness must survive the corpus, and an `abort()` cannot be caught, so the
 key walk is skipped exactly when it would be unsafe:
@@ -108,18 +115,30 @@ inputs appear in the divergence log rather than silently passing.
 Under the parity corpus the guard fires on exactly the three apostrophe-only
 inputs in `09-edge.txt`.
 
+**Maintainer decision:** the guard's placement in the harness is accepted. The
+alternative — excluding apostrophe-only inputs from the corpus — would hide a
+real robustness defect and is rejected.
+
 ## What this does not do
 
 It does not patch the oracle, and it must not. The oracle is the parity subject
 at a fixed pin; changing it would invalidate every fixture. The guard lives
 entirely in our harness.
 
-## Requested human decisions
+## Upstream report (maintainer action)
 
-1. Register this as an F-E row (proposed `F-E-14`), or fold it into F-E-12 as a
-   second code path.
-2. Decide whether the abort should be reported upstream. It is reachable from
-   ordinary typing, and the pin is a released tag.
-3. Confirm the guard's placement in the harness rather than in the corpus. The
-   alternative — excluding apostrophe-only inputs from the corpus — would hide a
-   real robustness defect and is not recommended.
+File upstream against the **pinned tag**
+(`2.11.91` / commit `0c5e80e1200f84fab185d1c5bde458b770a0636c`) with the
+one-character repro: lone apostrophe `'` → `assert()` → `abort()` via
+`pinyin_get_pinyin_key` after `pinyin_parse_more_full_pinyins`.
+
+**Do not file the upstream issue from agent work.** The maintainer will file
+it. This finding only records that the report is warranted and what the repro
+is.
+
+## Maintainer decisions (2026-08-09)
+
+1. **Register as F-E-14** (own row; not folded into F-E-12).
+2. **Upstream report** — yes, against the pinned tag; maintainer files it.
+3. **Guard in the harness** — accepted; keep apostrophe-only inputs in the
+   corpus.

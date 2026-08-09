@@ -1,12 +1,13 @@
 # F-E cross-lane robustness evidence register
 
-Date: 2026-08-09 · Status: all 13 cases registered
+Date: 2026-08-09 · Status: all 14 cases registered
 
 This register maps each scoped claim in
-`reference/memory-safety-bugs.md` to a reproducible trigger and a named passing
-artifact. A `registered` entry is evidence-ready but may not yet be executable
-because its owning crate or lane belongs to later work. It is not counted as a
-working exploit or a passing regression until the named artifact exists.
+`reference/memory-safety-bugs.md` (rows F-E-01–F-E-13) plus the W2-T3 oracle
+abort row F-E-14 to a reproducible trigger and a named passing artifact. A
+`registered` entry is evidence-ready but may not yet be executable because its
+owning crate or lane belongs to later work. It is not counted as a working
+exploit or a passing regression until the named artifact exists.
 
 Oracle-backed entries use the pin ref frozen in
 `docs/findings/capture-fixtures.md`. Claims stay scoped to the listed trigger;
@@ -29,6 +30,7 @@ no entry supports a blanket claim that Rust code cannot crash.
 | F-E-11 | stale Berkeley DB sidecar lock | user-store hard-kill gate | legacy trigger registered |
 | F-E-12 | `zhuan` user input | parser totality + fuzz | F-A seed; proptest + cargo-fuzz |
 | F-E-13 | cloud request through system proxy | provider/FFI ASan | registered |
+| F-E-14 | lone apostrophe `'` (oracle abort) | oracle harness guard + sentinel | registered; upstream TBD by maintainer |
 
 ## Evidence entries
 
@@ -186,3 +188,24 @@ no entry supports a blanket claim that Rust code cannot crash.
   cloud input disabled, so no cloud exploit is claimed here.
 - **Passing artifact:** all request/message/cancellation ownership is balanced,
   the session remains usable, and ASan reports no boundary violation.
+
+### F-E-14 — pinned oracle aborts on apostrophe-only input
+
+- **Source evidence:** W2-T3 live measurement;
+  `docs/findings/oracle-apostrophe-abort.md`. Same class as F-E-12 (`assert()`
+  on user input) on a different path; not a catalogue row in
+  `reference/memory-safety-bugs.md`.
+- **Trigger:** fresh pin-built oracle; parse lone `'` (also `''`, `'''`);
+  call `pinyin_get_pinyin_key(instance, 0)`. Without the harness guard the
+  process aborts.
+- **One-character repro (for upstream):** `'` → `assert()` → `abort()`.
+- **Harness guard (accepted):** skip the key walk when
+  `parsed_input_length > 0` and the parsed prefix has no ASCII lowercase
+  letter; emit `<no-key-columns>` sentinel. Differential runner reports
+  `oracle-sentinel` / class `theirs-bug`.
+- **Passing artifact:** parity corpus run survives the three apostrophe-only
+  inputs in `09-edge.txt`; each appears as an `oracle-sentinel` divergence
+  rather than a process death.
+- **Upstream:** file against pinned tag `2.11.91`
+  (`0c5e80e1200f84fab185d1c5bde458b770a0636c`). Maintainer files the issue;
+  agents must not.
