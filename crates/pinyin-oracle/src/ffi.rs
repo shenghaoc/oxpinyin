@@ -21,7 +21,7 @@
 //! marker making it neither `Send`, `Sync`, nor `Unpin`, so a handle cannot be
 //! moved across threads by accident.
 
-use core::ffi::{c_char, c_uint, c_void};
+use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
 /// Emulates an `extern type`: unsized-ish, never constructed, never read.
@@ -55,6 +55,24 @@ opaque_handle! {
 opaque_handle! {
     /// `ChewingKeyRest` — byte positions for a key, borrowed from an instance.
     ChewingKeyRest
+}
+opaque_handle! {
+    /// `export_iterator_t` — one phrase-library export walk, owned until
+    /// `pinyin_end_get_phrases`.
+    ExportIterator
+}
+
+/// GLib's `GArray`, by its documented public layout (`data` + `len`).
+///
+/// Only these two fields are public GLib API; the allocation is managed
+/// entirely by `g_array_new`/`g_array_free` and never touched from Rust
+/// beyond reading `len` elements out of `data`.
+#[repr(C)]
+pub(crate) struct GArray {
+    /// Element storage, `len * element_size` bytes.
+    pub(crate) data: *mut u8,
+    /// Number of elements.
+    pub(crate) len: c_uint,
 }
 
 /// `pinyin_option_t`, defined as `guint32` in the pinned `novel_types.h`.
@@ -152,4 +170,56 @@ unsafe extern "C" {
 
     /// GLib deallocator, for the owned strings libpinyin hands back.
     pub(crate) fn g_free(mem: *mut c_void);
+}
+
+// Export/token functions, the extension frozen in
+// `docs/findings/data-layer-export.md`. Same header, same `bool` return
+// convention as the subset above.
+unsafe extern "C" {
+    /// Begins exporting phrase library `index`. Returns NULL on failure.
+    pub(crate) fn pinyin_begin_get_phrases(
+        context: *mut PinyinContext,
+        index: c_uint,
+    ) -> *mut ExportIterator;
+
+    /// Whether the export iterator has another phrase.
+    pub(crate) fn pinyin_iterator_has_next_phrase(iter: *mut ExportIterator) -> bool;
+
+    /// Writes newly allocated phrase and pinyin strings plus the count.
+    /// Both strings transfer ownership; release with [`g_free`].
+    pub(crate) fn pinyin_iterator_get_next_phrase(
+        iter: *mut ExportIterator,
+        phrase: *mut *mut c_char,
+        pinyin: *mut *mut c_char,
+        count: *mut c_int,
+    ) -> bool;
+
+    /// Ends the export walk and frees the iterator.
+    pub(crate) fn pinyin_end_get_phrases(iter: *mut ExportIterator);
+
+    /// Appends the tokens spelling `phrase` to `tokenarray` (`guint32`s).
+    pub(crate) fn pinyin_lookup_tokens(
+        instance: *mut PinyinInstance,
+        phrase: *const c_char,
+        tokenarray: *mut GArray,
+    ) -> bool;
+
+    /// Writes a newly allocated UTF-8 phrase for `token`. Release with
+    /// [`g_free`].
+    pub(crate) fn pinyin_token_get_phrase(
+        instance: *mut PinyinInstance,
+        token: u32,
+        len: *mut c_uint,
+        utf8_str: *mut *mut c_char,
+    ) -> bool;
+
+    /// GLib array constructor; elements are `element_size` bytes each.
+    pub(crate) fn g_array_new(
+        zero_terminated: c_int,
+        clear: c_int,
+        element_size: c_uint,
+    ) -> *mut GArray;
+
+    /// GLib array destructor; `free_segment != 0` releases the storage.
+    pub(crate) fn g_array_free(array: *mut GArray, free_segment: c_int) -> *mut c_char;
 }

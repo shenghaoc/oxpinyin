@@ -239,6 +239,114 @@ impl Oracle {
     }
 }
 
+/// One `(phrase, pinyin, count)` tuple from a phrase-library export.
+///
+/// `pinyin` is the oracle's own spelling: syllables joined by `'`
+/// (e.g. `ni'hao`), the exact form `docs/findings/data-layer-export.md`
+/// freezes as the index key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportedPhrase {
+    /// Phrase text, UTF-8.
+    pub phrase: String,
+    /// Apostrophe-separated pinyin spelling.
+    pub pinyin: String,
+    /// Count as reported by the export iterator; `-1` means default.
+    pub count: i32,
+}
+
+impl Oracle {
+    /// Exports every `(phrase, pinyin, count)` tuple of phrase library
+    /// `library` via the public export iterator.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the iterator cannot be created, a step reports
+    /// failure, or a string is not UTF-8.
+    pub fn export_phrases(&mut self, library: u8) -> Result<Vec<ExportedPhrase>, OracleError> {
+        // SAFETY: `self.context` is non-null and owned by `self` for the whole
+        // call. A NULL iterator is checked below.
+        let iter = unsafe { ffi::pinyin_begin_get_phrases(self.context, c_uint::from(library)) };
+
+        if iter.is_null() {
+            return Err(OracleError::Call {
+                function: "pinyin_begin_get_phrases",
+            });
+        }
+
+        let mut tuples = Vec::new();
+        let result = loop {
+            // SAFETY: `iter` is non-null (checked above) and stays owned by
+            // this call until `pinyin_end_get_phrases` below.
+            let has_next = unsafe { ffi::pinyin_iterator_has_next_phrase(iter) };
+            if !has_next {
+                break Ok(());
+            }
+
+            let mut phrase: *mut core::ffi::c_char = core::ptr::null_mut();
+            let mut pinyin: *mut core::ffi::c_char = core::ptr::null_mut();
+            let mut count: core::ffi::c_int = -1;
+            // SAFETY: `iter` is non-null; the out-pointers are valid, aligned
+            // and writable. On success libpinyin transfers ownership of both
+            // strings, released with `g_free` below exactly once each.
+            let ok = unsafe {
+                ffi::pinyin_iterator_get_next_phrase(
+                    iter,
+                    &raw mut phrase,
+                    &raw mut pinyin,
+                    &raw mut count,
+                )
+            };
+
+            if !ok {
+                break Err(OracleError::Call {
+                    function: "pinyin_iterator_get_next_phrase",
+                });
+            }
+
+            let copy = |ptr: *mut core::ffi::c_char| -> Result<String, OracleError> {
+                if ptr.is_null() {
+                    return Err(OracleError::Call {
+                        function: "pinyin_iterator_get_next_phrase",
+                    });
+                }
+                // SAFETY: `ptr` is a non-null NUL-terminated GLib string we
+                // now own; copied before the `g_free` below.
+                let borrowed = unsafe { CStr::from_ptr(ptr) };
+                borrowed
+                    .to_str()
+                    .map(str::to_owned)
+                    .map_err(|_| OracleError::NonUtf8 {
+                        function: "pinyin_iterator_get_next_phrase",
+                    })
+            };
+            let phrase_copy = copy(phrase);
+            let pinyin_copy = copy(pinyin);
+            // SAFETY: both pointers came from an ownership-transferring out
+            // param of the call above; freed exactly once, never used after.
+            // NULL is tolerated by g_free.
+            unsafe {
+                ffi::g_free(phrase.cast());
+                ffi::g_free(pinyin.cast());
+            }
+
+            match (phrase_copy, pinyin_copy) {
+                (Ok(phrase), Ok(pinyin)) => tuples.push(ExportedPhrase {
+                    phrase,
+                    pinyin,
+                    count,
+                }),
+                (Err(error), _) | (_, Err(error)) => break Err(error),
+            }
+        };
+
+        // SAFETY: `iter` is non-null and owned by this call; ended exactly
+        // once on every path, and never used after.
+        unsafe { ffi::pinyin_end_get_phrases(iter) };
+
+        result.map(|()| tuples)
+    }
+}
+
 impl Drop for Oracle {
     fn drop(&mut self) {
         // SAFETY: `self.context` was returned non-null by `pinyin_init`, has not
@@ -340,6 +448,96 @@ impl Session<'_> {
             candidate_total,
             candidates,
             remainder: input[parsed_input_length..].to_vec(),
+        })
+    }
+
+    /// The oracle's own `phrase text → phrase_token_t` mapping.
+    ///
+    /// Returns every token spelling `phrase`, across all loaded libraries
+    /// (the token's top byte identifies the library).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `phrase` carries an interior NUL, if the GLib
+    /// array cannot be allocated, or if the call reports failure.
+    pub fn lookup_tokens(&mut self, phrase: &str) -> Result<Vec<u32>, OracleError> {
+        let phrase_c = CString::new(phrase).map_err(|_| OracleError::InteriorNul {
+            what: "phrase for token lookup",
+        })?;
+
+        // SAFETY: plain constructor call; element size is `u32`. NULL is
+        // checked below.
+        let array = unsafe { ffi::g_array_new(0, 0, 4) };
+        if array.is_null() {
+            return Err(OracleError::Call {
+                function: "g_array_new",
+            });
+        }
+
+        // SAFETY: instance is non-null and owned by `self`; `phrase_c` is a
+        // live NUL-terminated C string; `array` is a live GArray of `u32`
+        // elements that only this call appends to.
+        let ok = unsafe { ffi::pinyin_lookup_tokens(self.instance, phrase_c.as_ptr(), array) };
+
+        let tokens = if ok {
+            // SAFETY: `array` is non-null and its documented public fields
+            // describe `len` elements of 4 bytes each at `data`; the slice is
+            // copied before `g_array_free` releases the storage.
+            let raw = unsafe {
+                let len = (*array).len as usize;
+                core::slice::from_raw_parts((*array).data.cast::<u8>(), len * 4).to_vec()
+            };
+            raw.chunks_exact(4)
+                .map(|chunk| u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // SAFETY: `array` is non-null and owned by this call; freed exactly
+        // once with its storage, and never used after.
+        unsafe { ffi::g_array_free(array, 1) };
+
+        if ok {
+            Ok(tokens)
+        } else {
+            Err(OracleError::Call {
+                function: "pinyin_lookup_tokens",
+            })
+        }
+    }
+
+    /// The oracle's own `phrase_token_t → phrase text` mapping.
+    ///
+    /// Returns `None` when the oracle reports no phrase for `token`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the returned string is not UTF-8.
+    pub fn token_text(&mut self, token: u32) -> Result<Option<String>, OracleError> {
+        let mut len: c_uint = 0;
+        let mut text: *mut core::ffi::c_char = core::ptr::null_mut();
+        // SAFETY: instance is non-null and owned by `self`; the out-pointers
+        // are valid, aligned and writable. On success libpinyin transfers
+        // ownership of the string, freed below exactly once.
+        let ok = unsafe {
+            ffi::pinyin_token_get_phrase(self.instance, token, &raw mut len, &raw mut text)
+        };
+
+        if !ok || text.is_null() {
+            return Ok(None);
+        }
+
+        // SAFETY: `text` is a non-null NUL-terminated GLib string we now own;
+        // copied before freeing, and the pointer is not used after.
+        let borrowed = unsafe { CStr::from_ptr(text) };
+        let copied = borrowed.to_str().map(str::to_owned);
+        // SAFETY: `text` came from an ownership-transferring out param; freed
+        // exactly once here.
+        unsafe { ffi::g_free(text.cast()) };
+
+        copied.map(Some).map_err(|_| OracleError::NonUtf8 {
+            function: "pinyin_token_get_phrase",
         })
     }
 
