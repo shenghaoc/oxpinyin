@@ -1,200 +1,150 @@
-//! Converter: reads oracle Tkrzw HashDB files via FFI and writes redb tables.
+//! Converter and exporter: oracle data → portable redb tables.
 //!
-//! Usage:
-//!   pinyin-migrate <input.tkh> -o <output.redb>
+//! Two commands, per `docs/findings/data-layer-export.md`:
 //!
-//! The input is a Tkrzw HashDB file (e.g. pinyin_index.bin).
-//! The output is a redb database with a single `data` table mapping
-//! raw key bytes → raw value bytes.
+//! - `convert <input.tkh> [-o <output.redb>] [-n <limit>]` — verbatim
+//!   record-for-record copy of a Tkrzw HashDBM into a redb `data` table.
+//!   Used for the system bigram and for ad-hoc inspection.
+//! - `export --out-dir <dir> [--mini]` — full public-ABI export of the
+//!   four system phrase libraries plus the bigram copy. Requires the
+//!   `oracle-ffi` feature and the pin-built oracle (Linux-first).
 
 #![warn(missing_docs)]
 
-use std::ffi::{CStr, c_char, c_int};
+mod tkrzw;
+
+#[cfg(feature = "oracle-ffi")]
+mod export;
+
 use std::fs;
-use std::path::PathBuf;
-
-// ── FFI declarations ──────────────────────────────────────────────────
-
-#[repr(C)]
-struct TkrzwDB {
-    _private: [u8; 0],
-}
-
-#[repr(C)]
-struct TkrzwIter {
-    _private: [u8; 0],
-}
-
-unsafe extern "C" {
-    fn tkrzw_open(path: *const c_char) -> *mut TkrzwDB;
-    fn tkrzw_close(db: *mut TkrzwDB);
-    fn tkrzw_error(db: *const TkrzwDB) -> *const c_char;
-
-    fn tkrzw_iter_make(db: *mut TkrzwDB) -> *mut TkrzwIter;
-    fn tkrzw_iter_free(it: *mut TkrzwIter);
-    fn tkrzw_iter_first(it: *mut TkrzwIter) -> c_int;
-    fn tkrzw_iter_next(it: *mut TkrzwIter) -> c_int;
-    fn tkrzw_iter_key(it: *const TkrzwIter, len: *mut usize) -> *const u8;
-    fn tkrzw_iter_value(it: *const TkrzwIter, len: *mut usize) -> *const u8;
-}
-
-// ── safe wrapper ──────────────────────────────────────────────────────
-
-struct TkrzwReader {
-    db: *mut TkrzwDB,
-}
-
-impl TkrzwReader {
-    /// Open a Tkrzw HashDB file for reading.
-    ///
-    /// # Safety
-    ///
-    /// `path` must point to a valid Tkrzw HashDB file readable by libtkrzw.
-    fn open(path: &CStr) -> Result<Self, String> {
-        // SAFETY: path is a valid null-terminated C string.
-        let db = unsafe { tkrzw_open(path.as_ptr()) };
-        if db.is_null() {
-            return Err("tkrzw_open returned null".into());
-        }
-        // SAFETY: db is non-null and was just created.
-        let err = unsafe { CStr::from_ptr(tkrzw_error(db)) };
-        let err_str = err.to_string_lossy();
-        if !err_str.is_empty() {
-            // SAFETY: db is valid.
-            unsafe { tkrzw_close(db) };
-            return Err(format!("failed to open: {err_str}"));
-        }
-        Ok(Self { db })
-    }
-
-    /// Iterate over all (key, value) pairs.
-    #[allow(clippy::type_complexity)]
-    fn entries(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
-        let mut result = Vec::new();
-
-        // SAFETY: db is valid and open.
-        let it = unsafe { tkrzw_iter_make(self.db) };
-        if it.is_null() {
-            return Err("failed to create iterator".into());
-        }
-
-        // SAFETY: it is non-null.
-        let mut ok = unsafe { tkrzw_iter_first(it) };
-        while ok != 0 {
-            let mut klen: usize = 0;
-            let mut vlen: usize = 0;
-
-            // SAFETY: it is valid, on a record.
-            let kptr = unsafe { tkrzw_iter_key(it, &mut klen) };
-            let vptr = unsafe { tkrzw_iter_value(it, &mut vlen) };
-
-            if klen > 0 {
-                // SAFETY: kptr and vptr point to valid buffers of klen/vlen bytes.
-                let key = unsafe { std::slice::from_raw_parts(kptr, klen) }.to_vec();
-                let val = unsafe { std::slice::from_raw_parts(vptr, vlen) }.to_vec();
-                result.push((key, val));
-            }
-
-            // SAFETY: it is valid.
-            ok = unsafe { tkrzw_iter_next(it) };
-        }
-
-        // SAFETY: it is valid.
-        unsafe { tkrzw_iter_free(it) };
-        Ok(result)
-    }
-}
-
-impl Drop for TkrzwReader {
-    fn drop(&mut self) {
-        // SAFETY: db was created by tkrzw_open and is valid.
-        unsafe { tkrzw_close(self.db) };
-    }
-}
-
-// ── main ──────────────────────────────────────────────────────────────
+use std::path::{Path, PathBuf};
 
 const REDB_TABLE: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("data");
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
-    let mut input: Option<PathBuf> = None;
-    let mut output: Option<PathBuf> = None;
-    let mut limit: Option<usize> = None;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-o" => {
-                i += 1;
-                if i < args.len() {
-                    output = Some(PathBuf::from(&args[i]));
-                }
-            }
-            "-n" => {
-                i += 1;
-                if i < args.len() {
-                    limit = Some(args[i].parse().map_err(|_| "invalid -n value")?);
-                }
-            }
-            arg if !arg.starts_with('-') => {
-                input = Some(PathBuf::from(arg));
-            }
-            _ => {
-                eprintln!("Usage: pinyin-migrate <input.tkh> [-o <output.redb>] [-n <limit>]");
-                std::process::exit(1);
-            }
-        }
-        i += 1;
+/// Writes `entries` (already ordered) into a fresh redb at `path`.
+fn write_redb(
+    path: &Path,
+    entries: &[(Vec<u8>, Vec<u8>)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    if path.exists() {
+        fs::remove_file(path)?;
     }
-
-    let input = input.ok_or_else(|| {
-        eprintln!("Usage: pinyin-migrate <input.tkh> [-o <output.redb>] [-n <limit>]");
-        "missing input path"
-    })?;
-
-    let output = output.unwrap_or_else(|| {
-        let mut p = input.clone();
-        p.set_extension("redb");
-        p
-    });
-
-    // Read Tkrzw.
-    let path_c = std::ffi::CString::new(input.to_string_lossy().as_bytes())
-        .map_err(|_| "input path contains null byte")?;
-    let reader = TkrzwReader::open(&path_c)?;
-
-    let mut entries = reader.entries()?;
-    // Sort by key for deterministic output.
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
-
-    // Apply record limit (for generating mini fixtures).
-    if let Some(n) = limit {
-        entries.truncate(n);
-    }
-
-    // Write redb.
-    if output.exists() {
-        fs::remove_file(&output)?;
-    }
-
-    let db = redb::Database::create(&output)?;
+    let db = redb::Database::create(path)?;
     {
         let txn = db.begin_write()?;
         {
             let mut table = txn.open_table(REDB_TABLE)?;
-            for (key, value) in &entries {
+            for (key, value) in entries {
                 table.insert(key.as_slice(), value.as_slice())?;
             }
         }
         txn.commit()?;
     }
-
-    let out_size = fs::metadata(&output)?.len();
+    let out_size = fs::metadata(path)?.len();
     eprintln!(
-        "Wrote {} records ({out_size} bytes) → {}",
+        "wrote {} records ({out_size} bytes) → {}",
         entries.len(),
-        output.display()
+        path.display()
     );
     Ok(())
+}
+
+fn usage() -> ! {
+    eprintln!(
+        "Usage:\n  pinyin-migrate convert <input.tkh> [-o <output.redb>] [-n <limit>]\n  \
+         pinyin-migrate export --out-dir <dir> [--mini]   (requires --features oracle-ffi)"
+    );
+    std::process::exit(2);
+}
+
+fn convert(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut input: Option<PathBuf> = None;
+    let mut output: Option<PathBuf> = None;
+    let mut limit: Option<usize> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" => {
+                i += 1;
+                output = Some(PathBuf::from(args.get(i).unwrap_or_else(|| usage())));
+            }
+            "-n" => {
+                i += 1;
+                limit = Some(
+                    args.get(i)
+                        .unwrap_or_else(|| usage())
+                        .parse()
+                        .map_err(|_| "invalid -n value")?,
+                );
+            }
+            arg if !arg.starts_with('-') => {
+                input = Some(PathBuf::from(arg));
+            }
+            _ => usage(),
+        }
+        i += 1;
+    }
+
+    let input = input.unwrap_or_else(|| usage());
+    let output = output.unwrap_or_else(|| {
+        let mut path = input.clone();
+        path.set_extension("redb");
+        path
+    });
+
+    let path_c = std::ffi::CString::new(input.to_string_lossy().as_bytes())
+        .map_err(|_| "input path contains a NUL byte")?;
+    let reader = tkrzw::TkrzwReader::open(&path_c)?;
+
+    let mut entries = reader.entries()?;
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    if let Some(n) = limit {
+        entries.truncate(n);
+    }
+
+    write_redb(&output, &entries)
+}
+
+#[cfg(feature = "oracle-ffi")]
+fn export(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut out_dir: Option<PathBuf> = None;
+    let mut mini = false;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--out-dir" => {
+                i += 1;
+                out_dir = Some(PathBuf::from(args.get(i).unwrap_or_else(|| usage())));
+            }
+            "--mini" => mini = true,
+            _ => usage(),
+        }
+        i += 1;
+    }
+
+    export::run(&out_dir.unwrap_or_else(|| usage()), mini)
+}
+
+#[cfg(not(feature = "oracle-ffi"))]
+fn export(_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    Err(
+        "`export` requires building with `--features oracle-ffi` on Linux \
+         with the pin-built oracle installed"
+            .into(),
+    )
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
+        Some("convert") => convert(&args[2..]),
+        Some("export") => export(&args[2..]),
+        // The bare form `pinyin-migrate <input.tkh> [-o …] [-n …]` is the
+        // invocation frozen in docs/findings/data-formats.md §1.1; keep it
+        // as an alias for `convert`.
+        Some(first) if !first.starts_with('-') => convert(&args[1..]),
+        _ => usage(),
+    }
 }

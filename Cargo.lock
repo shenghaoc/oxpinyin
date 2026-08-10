@@ -98,6 +98,7 @@ name = "pinyin-migrate"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "pinyin-oracle",
  "pkg-config",
  "redb",
 ]
