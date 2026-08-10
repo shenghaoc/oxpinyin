@@ -229,8 +229,11 @@ fn real_tables_session_reports_parity() {
         &dir.join("phrase_index.redb"),
     )
     .expect("SystemDictionary opens from the export");
-    let lm =
+    let mut lm =
         BigramLanguageModel::open(&dir.join("bigram.redb")).expect("BigramLanguageModel opens");
+    // Wire dictionary frequencies into the LM so score() can interpolate
+    // unigram + bigram per docs/findings/scoring-spec.md.
+    lm.set_unigrams_from_dict(&dict);
 
     let mut session = Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm)
         .expect("Session::new with exported tables");

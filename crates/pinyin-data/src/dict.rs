@@ -8,6 +8,7 @@
 //! binary encoder and no compound binary key. Entries come back in the
 //! stored order, which the exporter froze as frequency-descending.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
@@ -53,20 +54,46 @@ impl From<TableError> for DictError {
 pub struct SystemDictionary {
     pinyin_index: LookupTable,
     phrase_index: LookupTable,
+    /// Aggregated phrase frequencies across all pinyin keys, for unigram LM.
+    unigrams: BTreeMap<u32, u64>,
+    unigram_total: u64,
 }
 
 impl SystemDictionary {
     /// Opens the system dictionary from the two exported table files.
     pub fn open(pinyin_index_path: &Path, phrase_index_path: &Path) -> Result<Self, DictError> {
+        let pinyin_index = LookupTable::open(pinyin_index_path)?;
+        let phrase_index = LookupTable::open(phrase_index_path)?;
+        let (unigrams, unigram_total) = build_unigram_map(&pinyin_index)?;
         Ok(Self {
-            pinyin_index: LookupTable::open(pinyin_index_path)?,
-            phrase_index: LookupTable::open(phrase_index_path)?,
+            pinyin_index,
+            phrase_index,
+            unigrams,
+            unigram_total,
         })
     }
 
     /// Number of pinyin keys in the index.
     pub fn key_count(&self) -> Result<u64, DictError> {
         Ok(self.pinyin_index.len()?)
+    }
+
+    /// Total of all phrase frequencies observed in the pinyin index.
+    #[must_use]
+    pub const fn unigram_total(&self) -> u64 {
+        self.unigram_total
+    }
+
+    /// Frequency of `token` aggregated across all pinyin keys.
+    #[must_use]
+    pub fn unigram_count(&self, token: u32) -> Option<u64> {
+        self.unigrams.get(&token).copied()
+    }
+
+    /// Unigram map for wiring into a [`crate::BigramLanguageModel`].
+    #[must_use]
+    pub const fn unigram_map(&self) -> &BTreeMap<u32, u64> {
+        &self.unigrams
     }
 
     /// The frozen index key for a syllable sequence: texts joined by `'`.
@@ -132,6 +159,19 @@ fn parse_index_records(data: &[u8]) -> Result<Vec<(u32, u32)>, DictError> {
         .collect())
 }
 
+/// Aggregates `{token → Σ freq}` over every pinyin-index value.
+fn build_unigram_map(pinyin_index: &LookupTable) -> Result<(BTreeMap<u32, u64>, u64), DictError> {
+    let mut map: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut total: u64 = 0;
+    for (_, value) in pinyin_index.iter()? {
+        for (token, freq) in parse_index_records(&value)? {
+            *map.entry(token).or_default() += u64::from(freq);
+            total = total.saturating_add(u64::from(freq));
+        }
+    }
+    Ok((map, total))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +232,33 @@ mod tests {
         let xi_an = dict().lookup(&[key("xi"), key("an")]).unwrap();
         assert!(xi_an.iter().any(|entry| entry.text() == "西安"));
         assert!(!xi_an.iter().any(|entry| entry.text() == "现"));
+    }
+
+    #[test]
+    fn every_phrase_token_is_reachable_from_the_pinyin_index() {
+        // Export invariant: a token in phrase_index but referenced by no
+        // pinyin_index entry is unreachable by lookup, and its frequency never
+        // enters the aggregated unigram map — so its unigram silently costs
+        // UNKNOWN_COST. Every phrase token must appear in at least one
+        // pinyin_index record.
+        use std::collections::BTreeSet;
+
+        let dict = dict();
+        let mut reachable: BTreeSet<u32> = BTreeSet::new();
+        for (_key, value) in dict.pinyin_index.iter().unwrap() {
+            for (token, _freq) in parse_index_records(&value).unwrap() {
+                reachable.insert(token);
+            }
+        }
+
+        for (key, _text) in dict.phrase_index.iter().unwrap() {
+            assert_eq!(key.len(), 4, "phrase_index keys are 4-byte tokens");
+            let token = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
+            assert!(
+                reachable.contains(&token),
+                "phrase token {token:#010x} is in phrase_index but no pinyin_index entry references it"
+            );
+        }
     }
 
     #[test]
