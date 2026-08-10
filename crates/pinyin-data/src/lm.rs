@@ -4,14 +4,25 @@
 //! `docs/findings/data-layer-export.md`: each key is the previous
 //! `phrase_token_t` as 4 bytes little-endian; each value is a `total: u32`
 //! followed by 8-byte `{next_token: u32, count: u32}` records, with
-//! `total == Σ count`. The transition cost is the W4 surprisal of the
-//! observed count within the entry's total, on the frozen
-//! [`pinyin_core::cost`] scale.
+//! `total == Σ count`.
+//!
+//! Scoring follows the interpolated form frozen in
+//! `docs/findings/scoring-spec.md`:
+//!
+//! ```text
+//! P(w_n | w_n-1) = λ · P_bigram(w_n | w_n-1) + (1 − λ) · P_unigram(w_n)
+//! ```
+//!
+//! with provisional λ = 1/2. Unigram counts are installed from a
+//! [`crate::SystemDictionary`]'s aggregated export frequencies. Without
+//! unigrams the model falls back to pure bigram-or-floor behaviour so the
+//! mini-fixture unit tests stay self-contained.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
-use pinyin_core::cost::{UNKNOWN_COST, surprisal};
+use pinyin_core::cost::{UNKNOWN_COST, reduce_ratio, surprisal};
 use pinyin_core::{Cost, LanguageModel, PhraseToken};
 
 use crate::table::{LookupTable, TableError};
@@ -49,9 +60,29 @@ impl From<TableError> for LmError {
     }
 }
 
+/// Weight of the bigram term in the interpolated estimate (λ = 1/2).
+///
+/// Authored and deliberately neutral; same provisional value as
+/// `pinyin_core::fixture` and `docs/findings/scoring-spec.md`.
+const LAMBDA_NUMERATOR: u128 = 1;
+/// Denominator of [`LAMBDA_NUMERATOR`].
+const LAMBDA_DENOMINATOR: u128 = 2;
+
+/// Divides empty-history unigram surprisal so it ranks by frequency without
+/// overpowering `phrase_key_bonus`.
+///
+/// Measured on the pin export: 你 vs 你好 differ by ~11,615 cost units of
+/// raw unigram surprisal; `phrase_key_bonus` is 20,000 and the incomplete
+/// path still has to clear an incomplete penalty. A factor of 16 leaves a
+/// ~700-unit frequency signal — enough to order same-length phrases, small
+/// enough that a two-key phrase still wins.
+const UNIGRAM_TIEBREAK_SCALE: i64 = 16;
+
 /// Bigram language model backed by `bigram.redb`.
 pub struct BigramLanguageModel {
     bigram: LookupTable,
+    unigrams: BTreeMap<u32, u64>,
+    unigram_total: u64,
 }
 
 impl BigramLanguageModel {
@@ -59,12 +90,36 @@ impl BigramLanguageModel {
     pub fn open(path: &Path) -> Result<Self, LmError> {
         Ok(Self {
             bigram: LookupTable::open(path).map_err(LmError::Table)?,
+            unigrams: BTreeMap::new(),
+            unigram_total: 0,
         })
+    }
+
+    /// Installs unigram counts aggregated from a [`crate::SystemDictionary`].
+    ///
+    /// Call after opening both tables and before constructing a
+    /// [`pinyin_core::scoring::Scorer`]. Scoring falls back to pure
+    /// bigram-or-floor behaviour when no unigrams have been installed, so the
+    /// fixture-only unit tests remain self-contained.
+    pub fn set_unigrams(&mut self, unigrams: BTreeMap<u32, u64>, total: u64) {
+        self.unigrams = unigrams;
+        self.unigram_total = total;
+    }
+
+    /// Convenience: installs unigrams from a dictionary's aggregated map.
+    pub fn set_unigrams_from_dict(&mut self, dict: &crate::SystemDictionary) {
+        self.set_unigrams(dict.unigram_map().clone(), dict.unigram_total());
     }
 
     /// Number of previous-token entries.
     pub fn entry_count(&self) -> Result<u64, LmError> {
         self.bigram.len().map_err(LmError::Table)
+    }
+
+    /// Whether unigram counts have been installed for interpolation.
+    #[must_use]
+    pub fn has_unigrams(&self) -> bool {
+        self.unigram_total > 0 && !self.unigrams.is_empty()
     }
 
     /// Returns `(count, total)` for the `prev → next` transition, or `None`
@@ -85,6 +140,71 @@ impl BigramLanguageModel {
             .unwrap_or(0);
         Ok(Some((count, total)))
     }
+
+    /// Interpolated model cost of `token` after `history`, without `edge_cost`.
+    ///
+    /// Empty-history ranking: a *scaled-down* unigram surprisal acts as a
+    /// tie-break within the same structural cost. Full unigram surprisal
+    /// (~8–20k on the export) drowns the provisional `phrase_key_bonus` and
+    /// makes longer phrases lose to their first syllable; dividing by
+    /// [`UNIGRAM_TIEBREAK_SCALE`] keeps the order of frequencies without
+    /// undoing coverage credit. Bigram transitions keep full scale — that is
+    /// the term that should move multi-phrase sentences. A history whose
+    /// previous token has no bigram entry floors at [`UNKNOWN_COST`], like a
+    /// count-0 next-token, so an unseen transition never undercuts a rare but
+    /// observed one.
+    fn model_cost(&self, history: &[PhraseToken], token: &PhraseToken) -> Result<Cost, LmError> {
+        if !self.has_unigrams() {
+            return self.pure_bigram_cost(history, token);
+        }
+
+        let unigram = self.unigrams.get(&token.value()).copied().unwrap_or(0);
+        if unigram == 0 || self.unigram_total == 0 {
+            return Ok(UNKNOWN_COST);
+        }
+
+        let unigram_cost = surprisal(unigram, self.unigram_total);
+
+        let Some(prev) = history.last() else {
+            return Ok(unigram_cost / UNIGRAM_TIEBREAK_SCALE);
+        };
+
+        match self.transition(prev.value(), token.value())? {
+            Some((bigram_count, bigram_total)) if bigram_total > 0 => {
+                // λ·b/bt + (1 − λ)·u/ut over a common denominator.
+                let unigram_128 = u128::from(unigram);
+                let unigram_total = u128::from(self.unigram_total);
+                let bigram_count = u128::from(bigram_count);
+                let bigram_total = u128::from(bigram_total);
+                let numerator = LAMBDA_NUMERATOR * bigram_count * unigram_total
+                    + (LAMBDA_DENOMINATOR - LAMBDA_NUMERATOR) * unigram_128 * bigram_total;
+                let denominator = LAMBDA_DENOMINATOR * bigram_total * unigram_total;
+                let (numerator, denominator) = reduce_ratio(numerator, denominator);
+                Ok(surprisal(numerator, denominator))
+            }
+            // Previous token absent from the bigram (no evidence of this
+            // transition at all), or a degenerate zero-total entry: floor at
+            // UNKNOWN_COST — the same floor a count-0 next-token gets — so an
+            // unseen transition never scores cheaper than a rare observed one.
+            _ => Ok(UNKNOWN_COST),
+        }
+    }
+
+    /// Pre-interpolation behaviour: pure bigram when history exists, else
+    /// pass-through (dictionary order carries unigram ranking).
+    fn pure_bigram_cost(
+        &self,
+        history: &[PhraseToken],
+        token: &PhraseToken,
+    ) -> Result<Cost, LmError> {
+        let Some(prev) = history.last() else {
+            return Ok(0);
+        };
+        match self.transition(prev.value(), token.value())? {
+            Some((count, total)) => Ok(surprisal(u64::from(count), u64::from(total))),
+            None => Ok(UNKNOWN_COST),
+        }
+    }
 }
 
 impl LanguageModel for BigramLanguageModel {
@@ -97,21 +217,7 @@ impl LanguageModel for BigramLanguageModel {
         token: &Self::Token,
         edge_cost: Cost,
     ) -> Result<Cost, Self::Error> {
-        let Some(prev) = history.last() else {
-            // No context: the dictionary's frequency order carries unigram
-            // ranking; the model adds nothing.
-            return Ok(edge_cost);
-        };
-
-        let transition_cost = match self.transition(prev.value(), token.value())? {
-            // surprisal(0, total) is the finite UNKNOWN_COST floor, so a
-            // novel transition after a known token costs the floor, not ∞.
-            Some((count, total)) => surprisal(u64::from(count), u64::from(total)),
-            // Previous token entirely absent from the bigram: same floor.
-            None => UNKNOWN_COST,
-        };
-
-        Ok(edge_cost.saturating_add(transition_cost))
+        Ok(edge_cost.saturating_add(self.model_cost(history, token)?))
     }
 }
 
@@ -182,9 +288,81 @@ mod tests {
     }
 
     #[test]
-    fn empty_history_returns_edge_cost() {
+    fn empty_history_returns_edge_cost_without_unigrams() {
         let cost = model().score(&[], &PhraseToken::new(DE), 1234).unwrap();
         assert_eq!(cost, 1234);
+    }
+
+    #[test]
+    fn empty_history_uses_scaled_unigram_when_installed() {
+        let mut model = model();
+        let mut unigrams = BTreeMap::new();
+        unigrams.insert(DE, 100);
+        unigrams.insert(NI, 10);
+        model.set_unigrams(unigrams, 110);
+
+        let de = model.score(&[], &PhraseToken::new(DE), 0).unwrap();
+        let ni = model.score(&[], &PhraseToken::new(NI), 0).unwrap();
+        assert!(
+            de < ni,
+            "higher unigram count must cost less: de={de} ni={ni}"
+        );
+        // Scaled, not the raw surprisal floor for a known token.
+        let raw = surprisal(100, 110);
+        assert_eq!(de, raw / UNIGRAM_TIEBREAK_SCALE);
+        assert_eq!(
+            model.score(&[], &PhraseToken::new(0x0100_0001), 0).unwrap(),
+            UNKNOWN_COST
+        );
+    }
+
+    #[test]
+    fn interpolation_prefers_observed_bigram() {
+        let mut model = model();
+        let mut unigrams = BTreeMap::new();
+        // Equal unigrams so only the bigram term can separate them.
+        unigrams.insert(DE, 50);
+        unigrams.insert(0x0100_0001, 50);
+        model.set_unigrams(unigrams, 100);
+
+        let history = [PhraseToken::new(NI)];
+        let observed = model
+            .score(&history, &PhraseToken::new(DE), 0)
+            .expect("你 → 的");
+        let novel = model
+            .score(&history, &PhraseToken::new(0x0100_0001), 0)
+            .expect("你 → rare");
+        assert!(
+            observed < novel,
+            "interpolated 你 → 的 ({observed}) must undercut a novel pair ({novel})"
+        );
+    }
+
+    #[test]
+    fn a_no_entry_history_floors_instead_of_discounting() {
+        // Regression: when the previous token has no bigram entry at all, the
+        // transition is *unseen*, not merely rare. It must floor at
+        // UNKNOWN_COST — the same floor a count-0 next-token gets — never a
+        // discounted unigram, which used to rank an unseen transition below a
+        // rare but observed one.
+        let mut model = model();
+        let mut unigrams = BTreeMap::new();
+        unigrams.insert(DE, 100);
+        model.set_unigrams(unigrams, 110);
+
+        const NO_ENTRY_PREV: u32 = 0xFFFF_FFFF;
+        assert!(
+            matches!(model.transition(NO_ENTRY_PREV, DE), Ok(None)),
+            "precondition: the previous token must be absent from the bigram"
+        );
+
+        let unseen = model
+            .score(&[PhraseToken::new(NO_ENTRY_PREV)], &PhraseToken::new(DE), 0)
+            .expect("scoring an unseen transition");
+        assert_eq!(
+            unseen, UNKNOWN_COST,
+            "a no-entry history must floor at UNKNOWN_COST, not discount"
+        );
     }
 
     #[test]

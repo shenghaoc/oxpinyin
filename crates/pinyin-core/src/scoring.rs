@@ -100,8 +100,8 @@ pub struct ScoringConfig {
 ///   for `nih`.
 ///
 /// These values are one point in the space those allow. Settling them needs
-/// a cross-check against W3's real tables; until then, do not quote a number
-/// from here as upstream's.
+/// a cross-check against real tables (parity-climb constant sweep); until
+/// then, do not quote a number from here as upstream's.
 impl Default for ScoringConfig {
     fn default() -> Self {
         Self {
