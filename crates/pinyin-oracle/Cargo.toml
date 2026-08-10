@@ -42,6 +42,8 @@ path = "src/bin/oracle_paths.rs"
 pinyin-core = { path = "../pinyin-core" }
 
 [dev-dependencies]
-# The decode-level differential drives the supported session API, so the
-# candidate side of the report measures what a shell would actually see.
+# The decode-level differential and export verification drive the supported
+# session API and read the exported tables; internal workspace crates, not
+# external dependencies.
+pinyin-data = { path = "../pinyin-data" }
 pinyin-engine = { path = "../pinyin-engine" }
