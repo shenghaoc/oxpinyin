@@ -1,18 +1,18 @@
-//! System dictionary backed by the oracle's pinyin index and phrase index tables.
+//! System dictionary backed by the exported pinyin index and phrase index.
 //!
-//! Implements [`pinyin_core::Dictionary`] for the libpinyin system dictionary
-//! loaded from redb tables. Syllables are identified by [`pinyin_core::SyllableKey`]
-//! (the decoder's u16 ids); the `SyllableKey → TableKey` encoding is handled
-//! internally via [`crate::encoder`]. Phrase entries are resolved via
-//! `phrase_index` (token → text), so `Dictionary::Entry` is [`pinyin_core::PhraseEntry`]
-//! as W4's `Session` expects.
+//! Implements [`pinyin_core::Dictionary`] over the tables that
+//! `pinyin-migrate export` derives from the pinned oracle's public ABI
+//! (`docs/findings/data-layer-export.md`). The index is keyed by the
+//! pinyin spelling itself — syllables joined by `'` — so a lookup for
+//! `[ni, hao]` is a single get on `ni'hao`; there is no per-syllable
+//! binary encoder and no compound binary key. Entries come back in the
+//! stored order, which the exporter froze as frequency-descending.
 
 use std::fmt;
 use std::path::Path;
 
 use pinyin_core::{Dictionary, PhraseEntry, PhraseToken, SyllableKey};
 
-use crate::encoder::{EncoderError, encode};
 use crate::table::{LookupTable, TableError};
 
 /// Error conditions for system dictionary lookups.
@@ -20,10 +20,8 @@ use crate::table::{LookupTable, TableError};
 pub enum DictError {
     /// A table-level error (I/O, redb, etc.).
     Table(TableError),
-    /// Value bytes did not parse as expected.
+    /// Value bytes did not parse as `{token, freq}` records.
     Parse(String),
-    /// SyllableKey → TableKey encoding is blocked pending oracle FFI.
-    Encoder(EncoderError),
 }
 
 impl fmt::Display for DictError {
@@ -31,7 +29,6 @@ impl fmt::Display for DictError {
         match self {
             Self::Table(e) => write!(f, "table error: {e}"),
             Self::Parse(msg) => write!(f, "parse error: {msg}"),
-            Self::Encoder(e) => write!(f, "{e}"),
         }
     }
 }
@@ -41,7 +38,6 @@ impl std::error::Error for DictError {
         match self {
             Self::Table(e) => Some(e),
             Self::Parse(_) => None,
-            Self::Encoder(e) => Some(e),
         }
     }
 }
@@ -52,42 +48,37 @@ impl From<TableError> for DictError {
     }
 }
 
-impl From<EncoderError> for DictError {
-    fn from(e: EncoderError) -> Self {
-        Self::Encoder(e)
-    }
-}
-
-/// The system dictionary, backed by `pinyin_index.redb` and `phrase_index.redb`.
-///
-/// Each syllable key maps to an array of `phrase_token_t` values (u32 LE).
-/// The dictionary returns [`PhraseEntry`] (token + text) by resolving each
-/// token through `phrase_index`.
+/// The system dictionary, backed by `pinyin_index.redb` and
+/// `phrase_index.redb` from `pinyin-migrate export`.
 pub struct SystemDictionary {
     pinyin_index: LookupTable,
-    /// Opened for token → text resolution (PhraseEntry).
-    /// Currently blocked by the syllable encoder stub;
-    /// see blocked:syllable-encoder.
     phrase_index: LookupTable,
 }
 
 impl SystemDictionary {
-    /// Open the system dictionary from redb table files.
-    ///
-    /// `pinyin_index_path` should point to `pinyin_index.redb`.
-    /// `phrase_index_path` should point to `phrase_index.redb`.
+    /// Opens the system dictionary from the two exported table files.
     pub fn open(pinyin_index_path: &Path, phrase_index_path: &Path) -> Result<Self, DictError> {
-        let pinyin_index = LookupTable::open(pinyin_index_path)?;
-        let phrase_index = LookupTable::open(phrase_index_path)?;
         Ok(Self {
-            pinyin_index,
-            phrase_index,
+            pinyin_index: LookupTable::open(pinyin_index_path)?,
+            phrase_index: LookupTable::open(phrase_index_path)?,
         })
     }
 
-    /// Return the number of syllable entries in the pinyin index.
-    pub fn syllable_count(&self) -> Result<u64, DictError> {
+    /// Number of pinyin keys in the index.
+    pub fn key_count(&self) -> Result<u64, DictError> {
         Ok(self.pinyin_index.len()?)
+    }
+
+    /// The frozen index key for a syllable sequence: texts joined by `'`.
+    fn index_key(syllables: &[SyllableKey]) -> String {
+        let mut key = String::new();
+        for (position, syllable) in syllables.iter().enumerate() {
+            if position > 0 {
+                key.push('\'');
+            }
+            key.push_str(syllable.text());
+        }
+        key
     }
 }
 
@@ -97,59 +88,53 @@ impl Dictionary for SystemDictionary {
     type Error = DictError;
 
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+        if syllables.is_empty() {
+            return Ok(Vec::new());
+        }
+        let key = Self::index_key(syllables);
+        let Some(raw) = self.pinyin_index.get(key.as_bytes())? else {
+            return Ok(Vec::new());
+        };
+
         let mut entries = Vec::new();
-        for syllable in syllables {
-            let table_key = encode(*syllable)?;
-            if let Some(raw) = self.pinyin_index.get(&table_key)? {
-                let tokens = parse_phrase_tokens(&raw);
-                for token in tokens {
-                    // Resolve token → text via phrase_index.
-                    // Key is token value as 4-byte LE; value is UTF-8 phrase text.
-                    let key_bytes = token.value().to_le_bytes();
-                    if let Some(text_bytes) = self.phrase_index.get(&key_bytes)? {
-                        // Oracle stores phrase text as UTF-8; lossy fallback is safe
-                        // for the redb dump which is already validated by oracle cross-check.
-                        let text = String::from_utf8(text_bytes)
-                            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
-                        entries.push(PhraseEntry::new(token, text));
-                    } else {
-                        // Token without a phrase_index entry is skipped — the tables
-                        // are truncated fixtures (50 records) and not every token
-                        // is present in the mini dump.
-                    }
-                }
+        for (token, _freq) in parse_index_records(&raw)? {
+            // Token → text through phrase_index. The full export resolves
+            // every token; a mini fixture may omit some, and those records
+            // contribute no candidate rather than failing the lookup.
+            let key_bytes = token.to_le_bytes();
+            if let Some(text_bytes) = self.phrase_index.get(&key_bytes)? {
+                let text = String::from_utf8(text_bytes).map_err(|_| {
+                    DictError::Parse(format!("phrase text for token {token:#010x} is not UTF-8"))
+                })?;
+                entries.push(PhraseEntry::new(PhraseToken::new(token), text));
             }
         }
         Ok(entries)
     }
 }
 
-/// Parse a value blob as an array of u32 LE phrase tokens.
-///
-/// The value from `pinyin_index` is a contiguous array of `phrase_token_t`
-/// (u32 LE). The first word is typically zero (sentinel/header) and is
-/// skipped.
-fn parse_phrase_tokens(data: &[u8]) -> Vec<PhraseToken> {
-    if data.len() < 4 {
-        return Vec::new();
+/// Parses an index value as `{token: u32 LE, freq: u32 LE}` records.
+fn parse_index_records(data: &[u8]) -> Result<Vec<(u32, u32)>, DictError> {
+    if !data.len().is_multiple_of(8) {
+        return Err(DictError::Parse(format!(
+            "index value length {} is not a multiple of 8",
+            data.len()
+        )));
     }
-    let words: Vec<u32> = data
-        .chunks_exact(4)
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect();
-    // Skip the leading zero sentinel.
-    let start = if words.first() == Some(&0) { 1 } else { 0 };
-    words[start..]
-        .iter()
-        .filter(|&&w| w != 0)
-        .map(|&w| PhraseToken::new(w))
-        .collect()
+    Ok(data
+        .chunks_exact(8)
+        .map(|chunk| {
+            (
+                u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
+                u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
+            )
+        })
+        .collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinyin_core::SyllableKey;
 
     fn fixtures_dir() -> std::path::PathBuf {
         let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -162,54 +147,58 @@ mod tests {
             .join("w3")
     }
 
-    #[test]
-    fn system_dict_opens_from_fixtures() {
-        let dict = SystemDictionary::open(
+    fn dict() -> SystemDictionary {
+        SystemDictionary::open(
             &fixtures_dir().join("pinyin_index.redb"),
             &fixtures_dir().join("phrase_index.redb"),
         )
-        .unwrap();
-        // 50 records in the mini fixture.
-        assert_eq!(dict.syllable_count().unwrap(), 50);
+        .unwrap()
+    }
+
+    fn key(text: &str) -> SyllableKey {
+        SyllableKey::from_text(text).expect("frozen syllable")
     }
 
     #[test]
-    fn lookup_is_blocked_without_encoder() {
-        let dict = SystemDictionary::open(
-            &fixtures_dir().join("pinyin_index.redb"),
-            &fixtures_dir().join("phrase_index.redb"),
-        )
-        .unwrap();
-        let key = SyllableKey::from_text("ni").expect("ni is a frozen key");
-        let err = dict.lookup(&[key]).expect_err("encoder is blocked");
-        assert!(matches!(err, DictError::Encoder(_)));
-        assert!(err.to_string().contains("blocked:syllable-encoder"));
+    fn mini_fixture_opens() {
+        assert_eq!(dict().key_count().unwrap(), 10);
     }
 
     #[test]
-    fn missing_syllable_returns_blocked_not_empty() {
-        // Even a missing syllable is blocked at the encoder layer — the
-        // 6-byte TableKey layout is unknown without oracle FFI, so we cannot
-        // probe pinyin_index at all.
-        let dict = SystemDictionary::open(
-            &fixtures_dir().join("pinyin_index.redb"),
-            &fixtures_dir().join("phrase_index.redb"),
-        )
-        .unwrap();
-        let key = SyllableKey::from_text("zhuan").expect("zhuan is a frozen key");
-        let err = dict.lookup(&[key]).expect_err("blocked");
-        assert!(err.to_string().contains("blocked:syllable-encoder"));
+    fn single_syllable_is_frequency_ranked() {
+        let entries = dict().lookup(&[key("ni")]).unwrap();
+        assert!(!entries.is_empty());
+        // 你 dominates the pin's ni column; the exporter froze
+        // frequency-descending order.
+        assert_eq!(entries[0].text(), "你");
     }
 
     #[test]
-    fn parse_phrase_tokens_skips_sentinel() {
-        let data: Vec<u8> = [0u32, 42, 0, 7]
-            .iter()
-            .flat_map(|w| w.to_le_bytes())
-            .collect();
-        let tokens = parse_phrase_tokens(&data);
-        assert_eq!(tokens.len(), 2);
-        assert_eq!(tokens[0].value(), 42);
-        assert_eq!(tokens[1].value(), 7);
+    fn multi_syllable_lookup_is_one_string_key() {
+        let entries = dict().lookup(&[key("ni"), key("hao")]).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text(), "你好");
+
+        let entries = dict().lookup(&[key("zhong"), key("guo")]).unwrap();
+        assert!(entries.iter().any(|entry| entry.text() == "中国"));
+    }
+
+    #[test]
+    fn apostrophe_keeps_xian_and_xi_an_apart() {
+        let xian = dict().lookup(&[key("xian")]).unwrap();
+        assert!(xian.iter().any(|entry| entry.text() == "现"));
+        assert!(!xian.iter().any(|entry| entry.text() == "西安"));
+
+        let xi_an = dict().lookup(&[key("xi"), key("an")]).unwrap();
+        assert!(xi_an.iter().any(|entry| entry.text() == "西安"));
+        assert!(!xi_an.iter().any(|entry| entry.text() == "现"));
+    }
+
+    #[test]
+    fn unknown_sequence_is_empty_not_an_error() {
+        let entries = dict().lookup(&[key("zhuang"), key("zhuang")]).unwrap();
+        assert!(entries.is_empty());
+        let entries = dict().lookup(&[]).unwrap();
+        assert!(entries.is_empty());
     }
 }

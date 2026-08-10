@@ -1,28 +1,35 @@
-//! Bigram language model backed by `bigram.redb`.
+//! Bigram language model over the verbatim-copied system bigram.
 //!
-//! Implements [`pinyin_core::LanguageModel`] using the oracle's bigram
-//! frequency table. Each key is a 4-byte `(prev: u16, next: u16)` pair;
-//! each value is an array of 8-byte `(frequency: u32, packed_next: u32)`
-//! entries.
+//! Implements [`pinyin_core::LanguageModel`] on the byte format frozen in
+//! `docs/findings/data-layer-export.md`: each key is the previous
+//! `phrase_token_t` as 4 bytes little-endian; each value is a `total: u32`
+//! followed by 8-byte `{next_token: u32, count: u32}` records, with
+//! `total == Σ count`. The transition cost is the W4 surprisal of the
+//! observed count within the entry's total, on the frozen
+//! [`pinyin_core::cost`] scale.
 
+use std::fmt;
 use std::path::Path;
 
+use pinyin_core::cost::{UNKNOWN_COST, surprisal};
 use pinyin_core::{Cost, LanguageModel, PhraseToken};
 
 use crate::table::{LookupTable, TableError};
-use crate::types::{BigramEntry, BigramKey};
 
-/// Error conditions for bigram language model lookups.
+/// Error conditions for bigram lookups.
 #[derive(Debug)]
 pub enum LmError {
     /// A table-level error (I/O, redb, etc.).
     Table(TableError),
+    /// Value bytes did not parse under the frozen bigram schema.
+    Parse(String),
 }
 
-impl std::fmt::Display for LmError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for LmError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Table(e) => write!(f, "table error: {e}"),
+            Self::Parse(msg) => write!(f, "parse error: {msg}"),
         }
     }
 }
@@ -31,6 +38,7 @@ impl std::error::Error for LmError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Table(e) => Some(e),
+            Self::Parse(_) => None,
         }
     }
 }
@@ -41,35 +49,41 @@ impl From<TableError> for LmError {
     }
 }
 
-/// Bigram language model backed by the oracle's bigram table.
-///
-/// Scores transitions from one phrase token to another using the
-/// frequency data in `bigram.redb`.
+/// Bigram language model backed by `bigram.redb`.
 pub struct BigramLanguageModel {
     bigram: LookupTable,
 }
 
 impl BigramLanguageModel {
-    /// Open the bigram language model from a redb table file.
-    ///
-    /// `path` should point to `bigram.redb`.
+    /// Opens the bigram model from a redb table file.
     pub fn open(path: &Path) -> Result<Self, LmError> {
-        let bigram = LookupTable::open(path)?;
-        Ok(Self { bigram })
+        Ok(Self {
+            bigram: LookupTable::open(path).map_err(LmError::Table)?,
+        })
     }
 
-    /// Return the number of bigram entries.
+    /// Number of previous-token entries.
     pub fn entry_count(&self) -> Result<u64, LmError> {
-        Ok(self.bigram.len()?)
+        self.bigram.len().map_err(LmError::Table)
     }
 
-    /// Extract the u16 token index from a PhraseToken for bigram lookup.
-    ///
-    /// The oracle's bigram keys use the lower 16 bits of the phrase token
-    /// reference as the token index. This mirrors libpinyin's
-    /// `PHRASE_INDEX_MASK`.
-    fn token_index(token: &PhraseToken) -> u16 {
-        (token.value() & 0xFFFF) as u16
+    /// Returns `(count, total)` for the `prev → next` transition, or `None`
+    /// when `prev` has no bigram entry.
+    fn transition(&self, prev: u32, next: u32) -> Result<Option<(u32, u32)>, LmError> {
+        let Some(raw) = self
+            .bigram
+            .get(&prev.to_le_bytes())
+            .map_err(LmError::Table)?
+        else {
+            return Ok(None);
+        };
+        let (total, records) = parse_bigram_value(&raw)?;
+        let count = records
+            .iter()
+            .find(|(next_token, _)| *next_token == next)
+            .map(|(_, count)| *count)
+            .unwrap_or(0);
+        Ok(Some((count, total)))
     }
 }
 
@@ -83,87 +97,53 @@ impl LanguageModel for BigramLanguageModel {
         token: &Self::Token,
         edge_cost: Cost,
     ) -> Result<Cost, Self::Error> {
-        // Bigram scoring: if history is non-empty, look up the last token
-        // and compute the transition cost from the frequency data.
-        if history.is_empty() {
-            // Unigram: no bigram context; return edge_cost unchanged.
+        let Some(prev) = history.last() else {
+            // No context: the dictionary's frequency order carries unigram
+            // ranking; the model adds nothing.
             return Ok(edge_cost);
-        }
-
-        let prev = history.last().unwrap();
-        let key = BigramKey::new(Self::token_index(prev), Self::token_index(token));
-
-        let entries = self.lookup_bigram_entries(&key)?;
-
-        // Find the entry whose packed_next matches token.value() and use
-        // its frequency to compute the cost.
-        //
-        // In the oracle, higher frequency = lower cost (more likely).
-        // We map frequency → cost using a log-like scale:
-        //   cost = edge_cost - log2(1 + frequency) * COST_PER_BIT
-        //
-        // If no matching entry is found, the transition is novel (low probability).
-        let token_raw = token.value();
-        let freq = entries
-            .iter()
-            .find(|e| e.packed_next == token_raw)
-            .map(|e| e.frequency)
-            .unwrap_or(0);
-
-        // Convert frequency to a cost adjustment using integer-approximation
-        // log2 (no f64). Constitution rule 6 requires determinism; f64::log2
-        // is not bit-identical across platforms/libm. This matches W4's
-        // cost.rs approach (COST_PER_BIT = 1000, integer arithmetic via
-        // leading zeros / fixed-point squaring).
-        let adjustment = if freq > 0 {
-            log2_cost(freq as u64 + 1)
-        } else {
-            0
         };
 
-        Ok(edge_cost.saturating_sub(adjustment))
-    }
-}
-
-impl BigramLanguageModel {
-    /// Look up the bigram entries for a given key.
-    fn lookup_bigram_entries(&self, key: &BigramKey) -> Result<Vec<BigramEntry>, LmError> {
-        let key_bytes = key.to_bytes();
-        let raw = match self.bigram.get(&key_bytes)? {
-            Some(v) => v,
-            None => return Ok(Vec::new()),
+        let transition_cost = match self.transition(prev.value(), token.value())? {
+            // surprisal(0, total) is the finite UNKNOWN_COST floor, so a
+            // novel transition after a known token costs the floor, not ∞.
+            Some((count, total)) => surprisal(u64::from(count), u64::from(total)),
+            // Previous token entirely absent from the bigram: same floor.
+            None => UNKNOWN_COST,
         };
-        Ok(parse_bigram_entries(&raw))
+
+        Ok(edge_cost.saturating_add(transition_cost))
     }
 }
 
-/// Parse a bigram value blob as an array of BigramEntry.
-///
-/// Each entry is 8 bytes: `(frequency: u32 LE, packed_next: u32 LE)`.
-fn parse_bigram_entries(data: &[u8]) -> Vec<BigramEntry> {
-    data.chunks_exact(8)
-        .filter_map(BigramEntry::from_bytes)
-        .collect()
-}
-
-fn log2_cost(value: u64) -> Cost {
-    if value <= 1 {
-        return 0;
+/// Parses a bigram value as `(total, [{next_token, count}])`.
+fn parse_bigram_value(data: &[u8]) -> Result<(u32, Vec<(u32, u32)>), LmError> {
+    if data.len() < 4 || !(data.len() - 4).is_multiple_of(8) {
+        return Err(LmError::Parse(format!(
+            "bigram value length {} is not 4 + 8n",
+            data.len()
+        )));
     }
-    let bits = log2_fixed(value);
-    (bits / 1000) as Cost
-}
-
-fn log2_fixed(value: u64) -> u64 {
-    let integer = value.ilog2();
-    let remainder = value >> integer.saturating_sub(10);
-    let frac = remainder & 0x3FF;
-    (integer as u64) * 1000 + (frac * 1000) / 1024
+    let total = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+    let records = data[4..]
+        .chunks_exact(8)
+        .map(|chunk| {
+            (
+                u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
+                u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
+            )
+        })
+        .collect();
+    Ok((total, records))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 你's gb_char token in the pinned model.
+    const NI: u32 = 0x0100_1225;
+    /// 的's gb_char token in the pinned model.
+    const DE: u32 = 0x0100_05db;
 
     fn fixtures_dir() -> std::path::PathBuf {
         let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -176,74 +156,45 @@ mod tests {
             .join("w3")
     }
 
-    #[test]
-    fn bigram_lm_opens_from_fixtures() {
-        let lm = BigramLanguageModel::open(&fixtures_dir().join("bigram.redb")).unwrap();
-        // 50 records in the mini fixture.
-        assert_eq!(lm.entry_count().unwrap(), 50);
+    fn model() -> BigramLanguageModel {
+        BigramLanguageModel::open(&fixtures_dir().join("bigram.redb")).unwrap()
     }
 
     #[test]
-    fn score_with_empty_history_returns_edge_cost() {
-        let lm = BigramLanguageModel::open(&fixtures_dir().join("bigram.redb")).unwrap();
-        let token = PhraseToken::new(0);
-        let cost = lm.score(&[], &token, 100).unwrap();
-        assert_eq!(cost, 100);
+    fn mini_fixture_opens() {
+        assert!(model().entry_count().unwrap() > 0);
     }
 
     #[test]
-    fn score_with_known_bigram() {
-        let lm = BigramLanguageModel::open(&fixtures_dir().join("bigram.redb")).unwrap();
-        let _entry = BigramEntry {
-            frequency: 70,
-            packed_next: 42,
-        };
-        let bytes: Vec<u8> = [&70u32.to_le_bytes()[..], &42u32.to_le_bytes()[..]].concat();
-        let parsed = BigramEntry::from_bytes(&bytes).unwrap();
-        assert_eq!(parsed.frequency, 70);
-        assert_eq!(parsed.packed_next, 42);
-
-        // Verify that scoring with the actual bigram data works for a
-        // known key: key (0, 257) exists and has 1 entry.
-        // Full encoding verification is tracked as a known W3 integration gap (blocked:syllable-encoder).
-        let key = BigramKey::new(0, 257);
-        let entries = lm.lookup_bigram_entries(&key).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].frequency, 70);
+    fn observed_transition_is_cheaper_than_novel() {
+        let model = model();
+        let history = [PhraseToken::new(NI)];
+        let observed = model
+            .score(&history, &PhraseToken::new(DE), 0)
+            .expect("你 → 的 scores");
+        let novel = model
+            .score(&history, &PhraseToken::new(0x0100_0001), 0)
+            .expect("你 → rare scores");
+        assert!(
+            observed < novel,
+            "你 → 的 ({observed}) must undercut a novel transition ({novel})"
+        );
     }
 
     #[test]
-    fn score_with_novel_bigram() {
-        let lm = BigramLanguageModel::open(&fixtures_dir().join("bigram.redb")).unwrap();
-        let prev = PhraseToken::new(0xFFFF);
-        let next = PhraseToken::new(0xEEEE);
-        let cost = lm.score(&[prev], &next, 500).unwrap();
-        assert_eq!(cost, 500, "novel bigram should return edge_cost unchanged");
+    fn empty_history_returns_edge_cost() {
+        let cost = model().score(&[], &PhraseToken::new(DE), 1234).unwrap();
+        assert_eq!(cost, 1234);
     }
 
     #[test]
-    fn bigram_key_round_trip() {
-        let key = BigramKey::new(0x1234, 0x5678);
-        let bytes = key.to_bytes();
-        let restored = BigramKey::from_bytes(&bytes).unwrap();
-        assert_eq!(key, restored);
-    }
-
-    #[test]
-    fn log2_cost_is_deterministic_and_monotonic() {
-        // No f64: compare integer log2_cost across values.
-        let c1 = log2_cost(1);
-        let c2 = log2_cost(2);
-        let c4 = log2_cost(4);
-        assert_eq!(c1, 0);
-        assert_eq!(c2, 1);
-        assert_eq!(c4, 2);
-        // Monotonic.
-        let mut prev = c1;
-        for v in [3, 5, 10, 70, 100, 1000] {
-            let cur = log2_cost(v);
-            assert!(cur >= prev, "log2_cost fell at {v}");
-            prev = cur;
+    fn invariant_holds_for_every_fixture_entry() {
+        let model = model();
+        for (key, value) in model.bigram.iter().unwrap() {
+            assert_eq!(key.len(), 4, "bigram keys are 4-byte prev tokens");
+            let (total, records) = parse_bigram_value(&value).expect("schema parses");
+            let sum: u64 = records.iter().map(|(_, count)| u64::from(*count)).sum();
+            assert_eq!(u64::from(total), sum, "total == Σ count for {key:02x?}");
         }
     }
 }
