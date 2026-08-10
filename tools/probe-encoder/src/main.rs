@@ -17,14 +17,32 @@
 //!       PKG_CONFIG_PATH=$HOME/.local/opt/pinyin-oracle/lib/pkgconfig:$PKG_CONFIG_PATH \
 //!       cargo run -p probe-encoder --features oracle-ffi`
 
+#[cfg(feature = "oracle-ffi")]
 use pinyin_core::{FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEYS, SYLLABLE_KEY_COUNT, SyllableKey};
+#[cfg(feature = "oracle-ffi")]
 use pinyin_data::LookupTable;
+#[cfg(feature = "oracle-ffi")]
 use pinyin_oracle::{Oracle, OracleFlags, OraclePrefix};
+#[cfg(feature = "oracle-ffi")]
 use std::path::Path;
 
+#[cfg(not(feature = "oracle-ffi"))]
+fn main() {
+    eprintln!(
+        "probe-encoder requires `--features oracle-ffi` and the pin-built oracle; \
+         see docs/findings/syllable-encoder.md"
+    );
+    std::process::exit(2);
+}
+
+#[cfg(feature = "oracle-ffi")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let prefix = OraclePrefix::locate()?;
-    println!("Probing oracle at {:?} (pin {})", prefix.root(), prefix.pin().pin_ref());
+    println!(
+        "Probing oracle at {:?} (pin {})",
+        prefix.root(),
+        prefix.pin().pin_ref()
+    );
     let mut oracle = Oracle::open_with_temp_user_dir(prefix.clone())?;
     let mut session = oracle.session(OracleFlags::DEFAULT)?;
 
@@ -66,14 +84,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(table) = LookupTable::open(redb_path) {
                 let found = table.get(&table_key)?.is_some();
                 if idx < FULL_PINYIN_SYLLABLES.len() {
-                    assert!(found, "complete syllable {} TableKey {:02x?} should have entry", text, table_key);
+                    assert!(
+                        found,
+                        "complete syllable {} TableKey {:02x?} should have entry",
+                        text, table_key
+                    );
                 } else {
-                    assert!(!found, "incomplete syllable {} TableKey {:02x?} should have no entry", text, table_key);
+                    assert!(
+                        !found,
+                        "incomplete syllable {} TableKey {:02x?} should have no entry",
+                        text, table_key
+                    );
                 }
             }
         }
         // Also verify via oracle's own parsing
-        assert_eq!(obs.parsed_input_length, text.len(), "oracle should parse full syllable {}", text);
+        assert_eq!(
+            obs.parsed_input_length,
+            text.len(),
+            "oracle should parse full syllable {}",
+            text
+        );
         table_keys.push(table_key);
         if idx % 50 == 0 {
             println!("  {}: {} -> {:02x?}", idx, text, table_key);
@@ -85,10 +116,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("const TABLE_KEYS: [[u8; 6]; {}] = [", SYLLABLE_KEY_COUNT);
     for (idx, tk) in table_keys.iter().enumerate() {
         let text = syllables[idx];
-        println!("    [{}, {}, {}, {}, {}, {}], // {} {}", tk[0], tk[1], tk[2], tk[3], tk[4], tk[5], idx, text);
+        println!(
+            "    [{}, {}, {}, {}, {}, {}], // {} {}",
+            tk[0], tk[1], tk[2], tk[3], tk[4], tk[5], idx, text
+        );
     }
     println!("];");
 
-    println!("\nProbe completed: {} TableKeys derived and verified.", table_keys.len());
+    println!(
+        "\nProbe completed: {} TableKeys derived and verified.",
+        table_keys.len()
+    );
     Ok(())
 }

@@ -31,14 +31,16 @@ fn repo_root() -> PathBuf {
 }
 
 fn find_full_redb(name: &str) -> Option<PathBuf> {
-    // Try /tmp first (where we generated via pinyin-migrate), then the prefix's data dir
+    // Prefer the `*_full.redb` spelling: a bare `/tmp/<name>.redb` may be a
+    // 50-record mini fixture left over from other runs, and silently loading
+    // it would make the parity numbers meaningless.
     let candidates = [
-        Path::new("/tmp").join(name),
         Path::new(&format!(
             "/tmp/{}_full.redb",
             name.trim_end_matches(".redb")
         ))
         .to_path_buf(),
+        Path::new("/tmp").join(name),
     ];
     for p in candidates {
         if p.exists() {

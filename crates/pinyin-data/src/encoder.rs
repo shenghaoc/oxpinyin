@@ -503,30 +503,55 @@ mod tests {
     fn every_frozen_key_encodes() {
         for idx in 0..SYLLABLE_KEY_COUNT {
             let key = SyllableKey::from_index(idx).expect("in range");
-            let table_key = encode(key).expect("frozen");
-            assert_eq!(table_key.len(), 6);
+            encode(key).expect("all 428 frozen keys must encode");
         }
-        assert!(
-            encode(SyllableKey::from_index(428).unwrap_or(SyllableKey::from_index(0).unwrap()))
-                .is_ok()
-                || true
-        );
     }
 
     #[test]
-    fn unknown_key_is_error() {
-        // Index 500 is beyond the frozen 428
-        let bogus = SyllableKey::from_index(500);
-        assert!(bogus.is_none());
+    fn encode_is_deterministic() {
+        for idx in 0..SYLLABLE_KEY_COUNT {
+            let key = SyllableKey::from_index(idx).expect("in range");
+            assert_eq!(
+                encode(key).expect("frozen"),
+                encode(key).expect("frozen"),
+                "encode must be a pure function of the key ({})",
+                key.text()
+            );
+        }
     }
 
     #[test]
-    fn complete_and_incomplete_have_distinct_prefixes() {
-        let a = SyllableKey::from_text("a").unwrap();
-        let b = SyllableKey::from_text("b").unwrap();
-        let tk_a = encode(a).unwrap();
-        let tk_b = encode(b).unwrap();
-        assert_eq!(tk_a[0], 0x00);
-        assert_eq!(tk_b[0], 0xc0);
+    fn prefix_matches_completeness_for_all_keys() {
+        // Complete syllables encode with a 00 lead byte, incomplete keys with
+        // c0; the four bytes in between are always zero. This is a property
+        // of every entry, not a spot check of two.
+        for idx in 0..SYLLABLE_KEY_COUNT {
+            let key = SyllableKey::from_index(idx).expect("in range");
+            let tk = encode(key).expect("frozen");
+            let expected_lead = match key.completeness() {
+                pinyin_core::Completeness::Complete => 0x00,
+                pinyin_core::Completeness::Partial => 0xc0,
+            };
+            assert_eq!(
+                tk[0],
+                expected_lead,
+                "lead byte must track completeness for {}",
+                key.text()
+            );
+            assert_eq!(
+                &tk[1..4],
+                &[0, 0, 0],
+                "bytes 1..4 are zero for {}",
+                key.text()
+            );
+        }
+    }
+
+    #[test]
+    fn table_keys_are_unique() {
+        let mut seen = std::collections::BTreeSet::new();
+        for tk in TABLE_KEYS {
+            assert!(seen.insert(tk), "duplicate TableKey {tk:02x?}");
+        }
     }
 }

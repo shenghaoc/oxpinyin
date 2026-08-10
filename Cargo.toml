@@ -9,6 +9,9 @@ members = [
   "crates/pinyin-oracle",
   "crates/pinyin-dictool",
   "crates/pinyin-migrate",
+  # Derivation tool; probing needs `--features oracle-ffi` and the pin-built
+  # oracle, but the crate itself builds featureless so --workspace covers it.
+  "tools/probe-encoder",
 ]
 
 [workspace.package]

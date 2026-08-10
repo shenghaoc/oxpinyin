@@ -6,9 +6,14 @@ publish = false
 description = "Probe the pinned oracle to derive SyllableKey → TableKey mapping"
 
 [features]
-oracle-ffi = ["pinyin-oracle/oracle-ffi"]
+# Probing drives the pin-built libpinyin; without this feature the binary is a
+# stub so that plain `cargo check --workspace` covers the crate everywhere.
+oracle-ffi = ["dep:pinyin-oracle", "pinyin-oracle/oracle-ffi"]
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
 
 [dependencies]
 pinyin-core = { path = "../../crates/pinyin-core" }
-pinyin-oracle = { path = "../../crates/pinyin-oracle", features = ["oracle-ffi"] }
+pinyin-oracle = { path = "../../crates/pinyin-oracle", optional = true }
 pinyin-data = { path = "../../crates/pinyin-data" }
