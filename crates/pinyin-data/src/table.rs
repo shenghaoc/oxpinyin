@@ -1,8 +1,10 @@
-//! Loader for redb-backed lookup tables (converted from oracle Tkrzw files).
+//! Loader for redb-backed lookup tables.
 //!
 //! Each table is a redb database with a single `data` table mapping raw
 //! `&[u8]` keys to raw `&[u8]` values.  These are produced by
-//! `pinyin-migrate` from the oracle's installed Tkrzw HashDB files.
+//! `pinyin-migrate` per `docs/findings/data-layer-export.md`: the phrase
+//! tables via the oracle's public export ABI, the bigram as a verbatim
+//! copy of the oracle's Tkrzw file.
 //!
 //! # Portability
 //!
@@ -163,69 +165,27 @@ mod tests {
     }
 
     #[test]
-    fn open_punct_fixture() {
-        let table = LookupTable::open(&fixtures_dir().join("punct.redb")).unwrap();
-        assert_eq!(table.len().unwrap(), 1);
+    fn open_mini_index_fixture() {
+        let table = LookupTable::open(&fixtures_dir().join("pinyin_index.redb")).unwrap();
+        // The --mini export keeps the ten allowlisted pinyin keys.
+        assert_eq!(table.len().unwrap(), 10);
         assert!(!table.is_empty().unwrap());
     }
 
     #[test]
-    fn punct_key_matches_oracle() {
-        // The oracle's punct.bin has exactly one record with the key
-        // [0x00, 0x00, 0x00, 0x00, 0x00, 0x01], verified via C++ API.
-        let table = LookupTable::open(&fixtures_dir().join("punct.redb")).unwrap();
-        let val = table.get(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x01]).unwrap();
-        assert!(
-            val.is_some(),
-            "expected key [00 00 00 00 00 01] to be present"
-        );
-        let val = val.unwrap();
-        // Value should be non-empty (4604 bytes in the full oracle file).
-        assert!(!val.is_empty());
-        // Check the first 8 bytes: all zeros in the oracle data.
-        assert_eq!(&val[..8], &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    fn keys_are_pinyin_strings() {
+        let table = LookupTable::open(&fixtures_dir().join("pinyin_index.redb")).unwrap();
+        let val = table.get(b"ni'hao").unwrap();
+        assert!(val.is_some(), "ni'hao is in the mini allowlist");
+        // Records are 8-byte {token, freq} pairs.
+        assert_eq!(val.unwrap().len() % 8, 0);
     }
 
     #[test]
     fn missing_key_returns_none() {
-        let table = LookupTable::open(&fixtures_dir().join("punct.redb")).unwrap();
+        let table = LookupTable::open(&fixtures_dir().join("pinyin_index.redb")).unwrap();
         let val = table.get(b"nonexistent").unwrap();
         assert!(val.is_none());
-    }
-
-    #[test]
-    fn pinyin_index_fixture_record_count() {
-        let table = LookupTable::open(&fixtures_dir().join("pinyin_index.redb")).unwrap();
-        // Mini fixture: 50 records truncated from 928.
-        assert_eq!(table.len().unwrap(), 50);
-    }
-
-    #[test]
-    fn phrase_index_fixture_record_count() {
-        let table = LookupTable::open(&fixtures_dir().join("phrase_index.redb")).unwrap();
-        // Mini fixture: 50 records truncated from 590.
-        assert_eq!(table.len().unwrap(), 50);
-    }
-
-    #[test]
-    fn addon_phrase_index_full_fixture() {
-        let table = LookupTable::open(&fixtures_dir().join("addon_phrase_index.redb")).unwrap();
-        // Full fixture: 68 records.
-        assert_eq!(table.len().unwrap(), 68);
-    }
-
-    #[test]
-    fn addon_pinyin_index_full_fixture() {
-        let table = LookupTable::open(&fixtures_dir().join("addon_pinyin_index.redb")).unwrap();
-        // Full fixture: 117 records.
-        assert_eq!(table.len().unwrap(), 117);
-    }
-
-    #[test]
-    fn bigram_fixture_record_count() {
-        let table = LookupTable::open(&fixtures_dir().join("bigram.redb")).unwrap();
-        // Mini fixture: 50 records truncated from 56359.
-        assert_eq!(table.len().unwrap(), 50);
     }
 
     #[test]
