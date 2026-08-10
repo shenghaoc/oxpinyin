@@ -72,8 +72,8 @@ const LAMBDA_DENOMINATOR: u128 = 2;
 /// overpowering `phrase_key_bonus`.
 ///
 /// Measured on the pin export: 你 vs 你好 differ by ~11,615 cost units of
-/// raw unigram surprisal; `phrase_key_bonus` is 20,000 and the incomplete
-/// path still has to clear an incomplete penalty. A factor of 16 leaves a
+/// raw unigram surprisal. With `phrase_key_bonus` at its swept value of
+/// 1,000, full unigram would still drown coverage; a factor of 16 leaves a
 /// ~700-unit frequency signal — enough to order same-length phrases, small
 /// enough that a two-key phrase still wins.
 const UNIGRAM_TIEBREAK_SCALE: i64 = 16;

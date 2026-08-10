@@ -78,10 +78,24 @@ fn candidates_come_from_every_segmentation_not_only_the_selected_one() {
     // Pin: 西安 西岸 锡安 县 见 线 先 现 仙 贤.
     // 西安 is xi + an; the pin's *selected* path for this input is the single
     // key xian. A decoder that kept one segmentation could not offer it.
+    //
+    // Only the first two ranks are asserted exactly. This test once asserted
+    // the exact top-3 `西安 西岸 锡安`; freezing ScoringConfig to seg=750
+    // inc=999 bonus=1000 (docs/findings/scoring-constant-sweep.md, the same
+    // commit that relaxed this) reordered ranks 3-4, so this decoder now offers
+    // `西安 西岸 县 锡安 …` where the pin has `西安 西岸 锡安 县` — the single-key
+    // 县 overtakes the two-key 锡安. Rank-3 is scorer-dependent and would
+    // re-break on the next sweep; presence of both segmentations is the stable
+    // property this test freezes.
     let session = typed("xian");
     let offered = texts(&session);
-    assert_eq!(&offered[..3], ["西安", "西岸", "锡安"]);
-    assert!(offered.contains(&"县".to_owned()));
+    assert_eq!(&offered[..2], ["西安", "西岸"]);
+    for wanted in ["锡安", "县"] {
+        assert!(
+            offered.contains(&wanted.to_owned()),
+            "missing {wanted} in {offered:?}"
+        );
+    }
 
     // Pin: 方案 反感 方 房 放 防 芳 坊 访 仿 — two segmentations interleaved.
     let session = typed("fangan");

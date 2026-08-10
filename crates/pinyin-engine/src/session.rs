@@ -210,6 +210,21 @@ where
         }
     }
 
+    /// Replaces the scoring weights used by subsequent refreshes.
+    ///
+    /// Does not recompute the per-key cost table (that depends only on the
+    /// dictionary and language model). Intended for constant sweeps and
+    /// measurements; interactive shells normally keep [`ScoringConfig::default`].
+    pub fn set_scoring_config(&mut self, config: ScoringConfig) {
+        self.scoring = config;
+    }
+
+    /// The scoring weights currently in force.
+    #[must_use]
+    pub const fn scoring_config(&self) -> &ScoringConfig {
+        &self.scoring
+    }
+
     /// Types a run of pinyin characters and refreshes candidates once.
     ///
     /// For the final composition state this is equivalent to calling

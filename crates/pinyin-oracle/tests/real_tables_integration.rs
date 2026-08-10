@@ -309,21 +309,21 @@ fn real_tables_session_reports_parity() {
         total > 0,
         "fixture produced no candidates over the W2 corpus; cannot report parity"
     );
-    // Regression floors under the measured Stage-1 baseline for this pin
-    // (2026-08-10, full corpus): top-1 39%, top-5-set 63%, prefix-10 44%,
-    // absent 388 of 10,190. The floors sit below the measurement so noise
-    // cannot flake the suite, while a ranking or data regression trips them.
+    // Regression floors under the post-sweep measurement for this pin
+    // (2026-08-10, full corpus): top-1 63%, top-5-set 89%, prefix-10 65%,
+    // absent 177 of 10,190. Floors sit below the measurement so noise cannot
+    // flake the suite, while a ranking or data regression trips them.
     assert!(
-        top1 * 100 >= total * 35,
-        "top-1 fell to {top1_pct}% ({top1}/{total}); expected >= 35%"
+        top1 * 100 >= total * 55,
+        "top-1 fell to {top1_pct}% ({top1}/{total}); expected >= 55%"
     );
     assert!(
-        top5 * 100 >= total * 55,
-        "top-5-set fell to {top5_pct}% ({top5}/{total}); expected >= 55%"
+        top5 * 100 >= total * 80,
+        "top-5-set fell to {top5_pct}% ({top5}/{total}); expected >= 80%"
     );
     assert!(
-        absent * 100 <= total * 6,
-        "absent rose to {absent}/{total}; expected <= 6%"
+        absent * 100 <= total * 4,
+        "absent rose to {absent}/{total}; expected <= 4%"
     );
 }
 

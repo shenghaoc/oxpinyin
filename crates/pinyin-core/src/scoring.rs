@@ -99,17 +99,22 @@ pub struct ScoringConfig {
 /// - `incomplete_penalty < phrase_key_bonus` — it lists `你好` before `你`
 ///   for `nih`.
 ///
-/// These values are one point in the space those allow. Settling them needs
-/// a cross-check against real tables (parity-climb constant sweep); until
-/// then, do not quote a number from here as upstream's.
+/// Settled against the full W2 corpus + exported tables by the parity-climb
+/// constant sweep (`docs/findings/scoring-constant-sweep.md`). Magnitudes
+/// are still not upstream's; they maximise measured top-1 under the frozen
+/// functional form.
 impl Default for ScoringConfig {
     fn default() -> Self {
         Self {
             lm_weight: WEIGHT_SCALE,
             exact_penalty: 0,
-            segmentation_penalty: 500,
-            incomplete_penalty: 1_000,
-            phrase_key_bonus: 2_000,
+            // Higher than the first provisional 500: favours exact splits.
+            segmentation_penalty: 750,
+            // Just below phrase_key_bonus so nih still prefers 你好 over 你.
+            incomplete_penalty: 999,
+            // Lower than the first provisional 2_000: less over-reward of
+            // long phrases relative to the pin's first candidate.
+            phrase_key_bonus: 1_000,
             expansion_limit: 64,
         }
     }
@@ -430,16 +435,18 @@ mod tests {
     }
 
     #[test]
-    fn the_default_weights_are_the_frozen_provisional_ones() {
+    fn the_default_weights_are_the_swept_ones() {
         let config = ScoringConfig::default();
         assert_eq!(config.lm_weight, WEIGHT_SCALE);
         assert_eq!(config.edge_penalty(EdgeKind::Exact), 0);
-        assert_eq!(config.edge_penalty(EdgeKind::Segmentation), 500);
-        assert_eq!(config.edge_penalty(EdgeKind::Incomplete), 1_000);
+        assert_eq!(config.edge_penalty(EdgeKind::Segmentation), 750);
+        assert_eq!(config.edge_penalty(EdgeKind::Incomplete), 999);
         assert_eq!(config.coverage_bonus(1), 0);
-        assert_eq!(config.coverage_bonus(2), 2_000);
-        assert_eq!(config.coverage_bonus(3), 4_000);
+        assert_eq!(config.coverage_bonus(2), 1_000);
+        assert_eq!(config.coverage_bonus(3), 2_000);
         assert_eq!(config.coverage_bonus(0), 0);
+        // Capture inequality 3: incomplete must stay strictly below the bonus.
+        assert!(config.incomplete_penalty < config.phrase_key_bonus);
     }
 
     #[test]
@@ -497,7 +504,7 @@ mod tests {
         assert_eq!(split.1, EdgeKind::Segmentation);
         assert_eq!(
             split.2 - scorer.key_cost(keys("xi")[0]),
-            500,
+            ScoringConfig::default().segmentation_penalty,
             "a segmentation edge carries its penalty"
         );
         assert_eq!(exact.2, scorer.key_cost(keys("xian")[0]));
