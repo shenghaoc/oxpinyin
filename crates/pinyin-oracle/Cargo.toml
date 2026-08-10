@@ -36,6 +36,10 @@ path = "src/bin/parity_diff.rs"
 name = "oracle-paths"
 path = "src/bin/oracle_paths.rs"
 
+[[bin]]
+name = "oracle-candidates"
+path = "src/bin/oracle_candidates.rs"
+
 [dependencies]
 # Internal workspace crate: the corpus is generated from the frozen syllable
 # inventory, and W2-T3 compares against this parser. Not an external dependency.
