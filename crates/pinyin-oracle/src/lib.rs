@@ -57,7 +57,7 @@ pub use pin::{EXPECTED_PIN_REF, OraclePrefix, PinManifest, VerifiedPin};
 pub use taxonomy::{BudgetVerdict, DivergenceClass, Taxonomy};
 
 #[cfg(feature = "oracle-ffi")]
-pub use live::{LiveSource, Oracle, Session};
+pub use live::{ExportedPhrase, LiveSource, Oracle, Session};
 
 /// Whether this build can drive a live oracle.
 ///
