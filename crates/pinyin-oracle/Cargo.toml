@@ -40,14 +40,17 @@ path = "src/bin/oracle_paths.rs"
 name = "oracle-candidates"
 path = "src/bin/oracle_candidates.rs"
 
+[[bin]]
+name = "parity-sweep"
+path = "src/bin/parity_sweep.rs"
+
 [dependencies]
 # Internal workspace crate: the corpus is generated from the frozen syllable
 # inventory, and W2-T3 compares against this parser. Not an external dependency.
 pinyin-core = { path = "../pinyin-core" }
-
-[dev-dependencies]
-# The decode-level differential and export verification drive the supported
-# session API and read the exported tables; internal workspace crates, not
-# external dependencies.
+# Session + exported tables for portable parity tooling (never ships).
 pinyin-data = { path = "../pinyin-data" }
 pinyin-engine = { path = "../pinyin-engine" }
+
+[dev-dependencies]
+# Integration tests share the same internal crates as the parity tooling.

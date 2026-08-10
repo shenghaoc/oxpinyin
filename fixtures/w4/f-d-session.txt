@@ -28,7 +28,9 @@ step=expect-empty
 
 scenario=guess-choose-reguess
 step=type	text=nihaozhongguo
-step=expect-candidate	index=0	text=你好中国
+# Prefix phrase leads; the multi-phrase sentence 你好中国 is still offered
+# (select-text below). Exact ranks move with ScoringConfig.
+step=expect-candidate	index=0	text=你好
 step=select-text	text=你好
 step=expect-preedit	text=你好zhongguo
 step=expect-candidate	index=0	text=中国
