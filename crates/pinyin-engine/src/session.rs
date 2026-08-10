@@ -210,6 +210,39 @@ where
         }
     }
 
+    /// Types a run of pinyin characters and refreshes candidates once.
+    ///
+    /// For the final composition state this is equivalent to calling
+    /// [`Session::process_key`] once per character when no selection
+    /// intervenes, but without recomputing candidates after every keystroke.
+    /// Batch differential runs use this; interactive shells should keep
+    /// calling [`Session::process_key`] so intermediate candidate lists update.
+    ///
+    /// Characters the parser has no syntax for are skipped. Typing past
+    /// [`MAX_INPUT_BYTES`] stops accepting further characters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when refreshing candidates hits a backend
+    /// failure.
+    pub fn type_pinyin(&mut self, text: &str) -> Result<KeyOutcome, EngineError> {
+        let before = self.raw.len();
+        for character in text.chars() {
+            if !is_input_character(character) {
+                continue;
+            }
+            if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
+                break;
+            }
+            self.raw.push(character);
+        }
+        if self.raw.len() == before {
+            return Ok(KeyOutcome::Ignored);
+        }
+        self.refresh()?;
+        Ok(KeyOutcome::Consumed)
+    }
+
     /// Chooses the candidate at `index`.
     ///
     /// # Errors

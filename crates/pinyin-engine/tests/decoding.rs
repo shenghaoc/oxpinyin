@@ -244,6 +244,27 @@ fn decoding_is_deterministic() {
 }
 
 #[test]
+fn batch_typing_matches_key_by_key() {
+    // `type_pinyin` refreshes once for the whole string; a real shell calls
+    // `process_key` per character. With no selection mid-composition the two
+    // must produce identical candidate lists — `real_tables_integration` types
+    // the corpus in one refresh per input on exactly that promise. The `#` in
+    // "b#ing" also checks that a non-syntax key is dropped the same way on both
+    // paths (skipped in the batch, ignored key-by-key).
+    for input in ["nihao", "zhongguo", "b#ing", "xian", "chang'an"] {
+        let batch = {
+            let mut session = session();
+            session
+                .type_pinyin(input)
+                .expect("batch typing cannot fail");
+            texts(&session)
+        };
+        let keyed = texts(&typed(input));
+        assert_eq!(batch, keyed, "batch vs key-by-key diverged for {input:?}");
+    }
+}
+
+#[test]
 fn every_candidate_reports_a_span_it_could_really_absorb() {
     for input in [
         "nihao",

@@ -11,10 +11,11 @@
 //! redb is a pure-Rust embedded database.  Tables produced on Linux by
 //! the migrator can be read on any platform redb supports.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
-use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata};
+use redb::{ReadableDatabase, ReadableTable};
 
 const DATA_TABLE: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("data");
 
@@ -85,8 +86,13 @@ impl From<redb::StorageError> for TableError {
 ///
 /// Keys and values are opaque byte slices.  Interpretation (e.g. as
 /// `phrase_token_t[]` arrays or UTF-8 text) is the caller's responsibility.
+///
+/// On open the whole table is loaded into an in-memory map. The decoder
+/// issues millions of lookups over a session (every keystroke × every
+/// prefix × every path), and a redb begin_read + get per call cannot keep
+/// up; the portable tables are tens of megabytes, so the cache fits.
 pub struct LookupTable {
-    db: redb::ReadOnlyDatabase,
+    entries: BTreeMap<Vec<u8>, Vec<u8>>,
 }
 
 impl LookupTable {
@@ -98,50 +104,48 @@ impl LookupTable {
                 redb::DatabaseError::Storage(redb::StorageError::Io(io)) => TableError::Io(io),
                 other => TableError::Db(other),
             })?;
-        Ok(Self { db })
+        let txn = db.begin_read()?;
+        let table = txn.open_table(DATA_TABLE)?;
+        let mut entries = BTreeMap::new();
+        for item in table.iter()? {
+            let (k, v) = item?;
+            entries.insert(k.value().to_vec(), v.value().to_vec());
+        }
+        Ok(Self { entries })
     }
 
     /// Look up a key in the table.
     ///
     /// Returns `None` if the key is not present.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, TableError> {
-        let txn = self.db.begin_read()?;
-        let table = txn.open_table(DATA_TABLE)?;
-        let val = table.get(key)?;
-        let result = val.map(|v| v.value().to_vec());
-        Ok(result)
+        Ok(self.entries.get(key).cloned())
     }
 
     /// Return the number of entries in the table.
     pub fn len(&self) -> Result<u64, TableError> {
-        let txn = self.db.begin_read()?;
-        let table = txn.open_table(DATA_TABLE)?;
-        Ok(table.len()?)
+        Ok(self.entries.len() as u64)
     }
 
     /// Returns `true` if the table is empty.
     pub fn is_empty(&self) -> Result<bool, TableError> {
-        Ok(self.len()? == 0)
+        Ok(self.entries.is_empty())
     }
 
     /// Iterate over all (key, value) pairs.
     #[allow(clippy::type_complexity)]
     pub fn iter(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, TableError> {
-        let txn = self.db.begin_read()?;
-        let table = txn.open_table(DATA_TABLE)?;
-        let mut entries = Vec::new();
-        for item in table.iter()? {
-            let (k, v) = item?;
-            entries.push((k.value().to_vec(), v.value().to_vec()));
-        }
-        Ok(entries)
+        Ok(self
+            .entries
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect())
     }
 }
 
 impl fmt::Debug for LookupTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LookupTable")
-            .field("len", &self.len().unwrap_or(0))
+            .field("len", &self.entries.len())
             .finish()
     }
 }
