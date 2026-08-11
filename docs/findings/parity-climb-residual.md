@@ -75,12 +75,12 @@ in priority order for follow-up:
 
 ## Proposed fixes (each a separate commit with before/after rates)
 
-| # | Fix | Targets | Risk |
-|---|---|---|---|
-| F1 | **Junk-aware parse:** map non `a-z`/`'` to a hard boundary (or drop with a zero-width break) matching the pin's observe behaviour on the noise strata | absent + worst-50 | Needs a small SPEC of observed junk rules; no upstream read |
-| F2 | **Stronger empty-history unigram** (lower `UNIGRAM_TIEBREAK_SCALE`, or secondary stable key by raw frequency after cost) | rank 2–5 | Must re-check multi-key vs first-syllable inequalities |
-| F3 | **Path-aware phrase bonus:** charge coverage only on the winning segmentation, or fold bigram into path cost for multi-key paths | rank 2–5 / 6–9 | Touches k-best cost seam; keep trait signatures |
-| F4 | **Prefix-query dictionary** for multi-initial incomplete sequences (closes the `expand_keys` empty-product gap) | prefix-only / long incomplete | Data API extension (defaulted method only) |
+| # | Fix | Targets | Risk | Landed |
+|---|---|---|---|---|
+| F1 | **Junk-aware parse:** map non `a-z`/`'` to a hard boundary (or drop with a zero-width break) matching the pin's observe behaviour on the noise strata | absent + worst-50 | Needs a small SPEC of observed junk rules; no upstream read | landed (`eb00eff`) — top-1 63%→64%, absent 177→70 |
+| F2 | **Stronger empty-history unigram** (lower `UNIGRAM_TIEBREAK_SCALE`, or secondary stable key by raw frequency after cost) | rank 2–5 | Must re-check multi-key vs first-syllable inequalities | measured negative (`750bd6c`) — scale 16 remains optimal |
+| F3 | **Path-aware phrase bonus:** charge coverage only on the winning segmentation, or fold bigram into path cost for multi-key paths | rank 2–5 / 6–9 | Touches k-best cost seam; keep trait signatures | attempted negative (`ab657a8`) — single-key token proxy too noisy; see f3-bigram-kbest.md |
+| F4 | **Prefix-query dictionary** for multi-initial incomplete sequences (closes the `expand_keys` empty-product gap) | prefix-only / long incomplete | Data API extension (defaulted method only) | skipped — trigger absent > 100 not met (absent = 70 after F1) |
 
 F1 is the largest absent win. F2 is the largest top-1 win. F3/F4 are
 structural and should wait until F1–F2 are measured.
