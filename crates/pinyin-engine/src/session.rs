@@ -225,16 +225,21 @@ where
         &self.scoring
     }
 
-    /// Types a run of pinyin characters and refreshes candidates once.
+    /// Types a run of characters and refreshes candidates once.
     ///
     /// For the final composition state this is equivalent to calling
     /// [`Session::process_key`] once per character when no selection
-    /// intervenes, but without recomputing candidates after every keystroke.
-    /// Batch differential runs use this; interactive shells should keep
-    /// calling [`Session::process_key`] so intermediate candidate lists update.
+    /// intervenes **and** every character is parser syntax (`a`–`z` / `'`),
+    /// but without recomputing candidates after every keystroke. Batch
+    /// differential runs use this; interactive shells should keep calling
+    /// [`Session::process_key`] so intermediate candidate lists update.
     ///
-    /// Characters the parser has no syntax for are skipped. Typing past
-    /// [`MAX_INPUT_BYTES`] stops accepting further characters.
+    /// Unlike [`Session::process_key`], this accepts every printable ASCII
+    /// character (`0x21..=0x7E`). Non-`a-z`/`'` bytes stay in the raw buffer so
+    /// the decoder sees the same junk-bearing strings the oracle fixture
+    /// carries; the segment graph stops at those bytes as hard boundaries.
+    /// Space and non-ASCII are skipped. Typing past [`MAX_INPUT_BYTES`] stops
+    /// accepting further characters.
     ///
     /// # Errors
     ///
@@ -243,7 +248,7 @@ where
     pub fn type_pinyin(&mut self, text: &str) -> Result<KeyOutcome, EngineError> {
         let before = self.raw.len();
         for character in text.chars() {
-            if !is_input_character(character) {
+            if !is_batch_input_character(character) {
                 continue;
             }
             if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
@@ -618,12 +623,23 @@ where
     }
 }
 
-/// Whether the parser has syntax for `character`.
+/// Whether the interactive key path accepts `character`.
 ///
-/// `docs/findings/parser-spec.md`: only lowercase ASCII `a`–`z` and the ASCII
-/// apostrophe. Everything else belongs to the shell.
+/// `docs/findings/session-api.md` / `docs/findings/parser-spec.md`: only
+/// lowercase ASCII `a`–`z` and the ASCII apostrophe. Everything else belongs
+/// to the shell (`KeyOutcome::Ignored`).
 const fn is_input_character(character: char) -> bool {
     character.is_ascii_lowercase() || character == '\''
+}
+
+/// Whether the batch path ([`Session::type_pinyin`]) accepts `character`.
+///
+/// Printable ASCII (`0x21..=0x7E`), including junk the parity corpus embeds in
+/// inputs. The decoder (`SegmentGraph`) treats non-`a-z`/`'` bytes as hard
+/// boundaries; see `docs/findings/f1-junk-aware-parse.md`. Space and controls
+/// are excluded so they cannot bypass `LogicalKey::Space` / `Tab` / `Enter`.
+const fn is_batch_input_character(character: char) -> bool {
+    character.is_ascii_graphic()
 }
 
 #[cfg(test)]
@@ -700,6 +716,17 @@ mod tests {
             );
         }
         assert_eq!(session.raw_input(), "ni'hao");
+    }
+
+    #[test]
+    fn type_pinyin_keeps_printable_junk_in_the_raw_buffer() {
+        // Batch path (parity harness): printable ASCII including junk is kept
+        // so the decoder sees the fixture string; process_key still ignores it.
+        let mut session = session();
+        session
+            .type_pinyin("b#ing")
+            .expect("batch typing cannot fail");
+        assert_eq!(session.raw_input(), "b#ing");
     }
 
     #[test]

@@ -258,14 +258,11 @@ fn decoding_is_deterministic() {
 }
 
 #[test]
-fn batch_typing_matches_key_by_key() {
-    // `type_pinyin` refreshes once for the whole string; a real shell calls
-    // `process_key` per character. With no selection mid-composition the two
-    // must produce identical candidate lists — `real_tables_integration` types
-    // the corpus in one refresh per input on exactly that promise. The `#` in
-    // "b#ing" also checks that a non-syntax key is dropped the same way on both
-    // paths (skipped in the batch, ignored key-by-key).
-    for input in ["nihao", "zhongguo", "b#ing", "xian", "chang'an"] {
+fn batch_and_key_by_key_agree_on_composing_inputs() {
+    // Pure a-z/`'` only: `type_pinyin` and per-key `process_key` must agree
+    // when no mid-composition selection intervenes. The parity harness relies
+    // on one refresh per input matching that final state.
+    for input in ["nihao", "zhongguo", "xian", "chang'an"] {
         let batch = {
             let mut session = session();
             session
@@ -276,6 +273,86 @@ fn batch_typing_matches_key_by_key() {
         let keyed = texts(&typed(input));
         assert_eq!(batch, keyed, "batch vs key-by-key diverged for {input:?}");
     }
+}
+
+#[test]
+fn batch_accepts_junk_key_by_key_ignores_it() {
+    // F1: intentional interactive-vs-batch divergence on junk-bearing inputs.
+    // type_pinyin keeps printable junk; process_key ignores non-a-z/`'`.
+    let mut batch = session();
+    batch
+        .type_pinyin("b#ing")
+        .expect("batch typing cannot fail");
+    assert_eq!(batch.raw_input(), "b#ing");
+
+    let mut keyed = session();
+    for character in "b#ing".chars() {
+        keyed
+            .process_key(&KeyInput::character(character))
+            .expect("typing cannot fail");
+    }
+    assert_eq!(keyed.raw_input(), "bing");
+    assert_ne!(
+        texts(&batch),
+        texts(&keyed),
+        "junk must make batch and key-by-key candidate lists diverge"
+    );
+}
+
+/// Authored mini-vocab so hard-stop-at-`b` and full `bing` can be told apart.
+///
+/// Incomplete `b` expands to complete keys (`bu`, `bing`, …). `不` rides on
+/// `bu` (cheaper unigram) and `并` on `bing`. Fixture justification:
+/// `fixtures/w4/oracle-candidates.txt` has `b#ing\t1\t不` and `bing\t1\t并`.
+const JUNK_VOCAB: &str = "\
+token=1\tkeys=bu\ttext=不\tunigram=1000
+token=2\tkeys=bing\ttext=并\tunigram=100
+";
+
+#[test]
+fn type_pinyin_b_hash_ing_prefers_bu_family_not_bing() {
+    // Oracle fixture rank-1 for b#ing is 不 (b-family), not 并 (bing).
+    // Re-filtering junk in type_pinyin would collapse to bing and regress.
+    let mut session = Session::new(
+        &EmptyConfigSource,
+        StoragePaths::new("user"),
+        FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
+        FixtureLanguageModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
+    )
+    .expect("session opens");
+
+    session
+        .type_pinyin("b#ing")
+        .expect("batch typing cannot fail");
+    assert_eq!(session.raw_input(), "b#ing");
+
+    let top = session
+        .candidates()
+        .get(0)
+        .map(Candidate::text)
+        .expect("at least one candidate");
+    assert_eq!(
+        top, "不",
+        "fixture: b#ing rank-1 is 不, not 并; got {top:?}"
+    );
+
+    // Contrast: filtered collapse would type as bing and prefer 并.
+    let mut collapsed = Session::new(
+        &EmptyConfigSource,
+        StoragePaths::new("user"),
+        FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
+        FixtureLanguageModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
+    )
+    .expect("session opens");
+    collapsed
+        .type_pinyin("bing")
+        .expect("batch typing cannot fail");
+    let collapsed_top = collapsed
+        .candidates()
+        .get(0)
+        .map(Candidate::text)
+        .expect("at least one candidate");
+    assert_eq!(collapsed_top, "并", "clean bing must still rank 并 first");
 }
 
 #[test]

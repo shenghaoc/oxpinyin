@@ -13,6 +13,8 @@ prefix-10  65%
 absent     177   (1.7%)
 ```
 
+**Post-F1 (see docs/findings/f1-junk-aware-parse.md):** top-1 64% (6525/10190), absent 70 on fixtures/w4/oracle-candidates.txt. The tables and residual bucket counts below are the pre-F1 snapshot that generated the F-task plan.
+
 Top-1 is still below 80%. This finding classifies the residual top-1
 misses and proposes targeted fixes. Re-run with:
 
