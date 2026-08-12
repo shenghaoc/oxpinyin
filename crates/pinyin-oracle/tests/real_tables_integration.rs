@@ -19,12 +19,14 @@
 //!   `cargo run -p pinyin-oracle --features oracle-ffi --bin oracle_candidates`
 //!   when the pin changes.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use pinyin_data::{BigramLanguageModel, SystemDictionary};
 use pinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use pinyin_oracle::corpus;
+
+fn assert_sync_send<T: Sync + Send>() {}
 
 /// Depth the capture protocol records candidates to.
 const CAPTURE_DEPTH: usize = 10;
@@ -179,7 +181,7 @@ fn load_candidate_fixture() -> Option<CandidateFixture> {
     })
 }
 
-fn real_candidates(session: &Session<SystemDictionary, BigramLanguageModel>) -> Vec<String> {
+fn real_candidates(session: &Session<&SystemDictionary, &BigramLanguageModel>) -> Vec<String> {
     session
         .candidates()
         .iter()
@@ -187,12 +189,35 @@ fn real_candidates(session: &Session<SystemDictionary, BigramLanguageModel>) -> 
         .collect()
 }
 
-fn type_input(session: &mut Session<SystemDictionary, BigramLanguageModel>, input: &str) {
+fn type_input(session: &mut Session<&SystemDictionary, &BigramLanguageModel>, input: &str) {
     session.reset();
     // One refresh for the whole string: final candidates match per-keystroke
     // typing when nothing is selected mid-composition, and the full corpus
     // finishes in seconds rather than tens of minutes.
     let _ = session.type_pinyin(input);
+}
+
+#[derive(Default, Clone, Copy)]
+struct Counts {
+    total: usize,
+    top1: usize,
+    top5: usize,
+    absent: usize,
+    prefix_overlap: usize,
+    prefix_depth: usize,
+}
+
+impl Counts {
+    fn merge(a: Self, b: Self) -> Self {
+        Self {
+            total: a.total + b.total,
+            top1: a.top1 + b.top1,
+            top5: a.top5 + b.top5,
+            absent: a.absent + b.absent,
+            prefix_overlap: a.prefix_overlap + b.prefix_overlap,
+            prefix_depth: a.prefix_depth + b.prefix_depth,
+        }
+    }
 }
 
 #[test]
@@ -205,9 +230,6 @@ fn real_tables_session_reports_parity() {
         return;
     };
 
-    // Pin sanity — the fixture is off-pin if this trips, but don't fail the
-    // parity suite hard; the freshness test will catch it and the parity
-    // numbers would be meaningless anyway.
     if fixture.pin_ref != pinyin_oracle::EXPECTED_PIN_REF {
         eprintln!(
             "candidate fixture pin_ref {} does not match expected {}; \
@@ -224,6 +246,9 @@ fn real_tables_session_reports_parity() {
         Path::new(CANDIDATES_FIXTURE).display()
     );
 
+    // Shared read-only tables: open and prime once, borrow from every worker.
+    assert_sync_send::<SystemDictionary>();
+    assert_sync_send::<BigramLanguageModel>();
     let dict = SystemDictionary::open(
         &dir.join("pinyin_index.redb"),
         &dir.join("phrase_index.redb"),
@@ -231,64 +256,85 @@ fn real_tables_session_reports_parity() {
     .expect("SystemDictionary opens from the export");
     let mut lm =
         BigramLanguageModel::open(&dir.join("bigram.redb")).expect("BigramLanguageModel opens");
-    // Wire dictionary frequencies into the LM so score() can interpolate
-    // unigram + bigram per docs/findings/scoring-spec.md.
     lm.set_unigrams_from_dict(&dict);
+    let lm = lm; // freeze: init phase over, read-only from here
+    let dict = &dict;
+    let lm = &lm;
 
-    let mut session = Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm)
-        .expect("Session::new with exported tables");
-
-    // Candidate metrics (docs/findings/decode-differential.md):
-    //   top-1      — our first candidate is the pin's first candidate
-    //   top-5-set  — the pin's first candidate appears in our first five
-    //   prefix-10  — share of the pin's first ten that appear in our first ten
-    //   absent     — we produced candidates, but the pin's first is not among them
-    let mut total = 0_usize;
-    let mut top1 = 0_usize;
-    let mut top5 = 0_usize;
-    let mut prefix_overlap = 0_usize;
-    let mut prefix_depth = 0_usize;
-    let mut absent = 0_usize;
     let started = std::time::Instant::now();
+    // Split the corpus across scoped threads: one Session per thread over the
+    // shared tables, then fold the per-thread Counts with the
+    // associative-commutative merge.
+    // PARITY_SERIAL=1 forces a single worker so a pin mismatch can be
+    // reproduced without the thread machinery in the picture.
+    let n_threads = if std::env::var_os("PARITY_SERIAL").is_some() {
+        1
+    } else {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(all_inputs.len().max(1))
+    };
+    let chunk_size = all_inputs.len().div_ceil(n_threads);
+    let fixture = &fixture;
+    let Counts {
+        total,
+        top1,
+        top5,
+        absent,
+        prefix_overlap,
+        prefix_depth,
+    } = std::thread::scope(|scope| {
+        let handles: Vec<_> = all_inputs
+            .chunks(chunk_size)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    let mut session =
+                        Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm)
+                            .expect("Session::new with shared tables");
 
-    for input in &all_inputs {
-        let oracle_cands = match fixture.by_input.get(input) {
-            Some(list) if !list.is_empty() => list,
-            _ => continue,
-        };
-        total += 1;
-
-        type_input(&mut session, input);
-        let real_cands = real_candidates(&session);
-        let oracle_top = &oracle_cands[0];
-
-        if real_cands.first() == Some(oracle_top) {
-            top1 += 1;
-        }
-        if real_cands.iter().take(5).any(|text| text == oracle_top) {
-            top5 += 1;
-        }
-
-        let real_prefix: BTreeSet<&String> = real_cands.iter().take(CAPTURE_DEPTH).collect();
-        for cand in oracle_cands.iter().take(CAPTURE_DEPTH) {
-            prefix_depth += 1;
-            if real_prefix.contains(cand) {
-                prefix_overlap += 1;
-            }
-        }
-
-        if !real_cands.is_empty() && !real_cands.iter().any(|text| text == oracle_top) {
-            absent += 1;
-        }
-
-        if total.is_multiple_of(1_000) {
-            eprintln!(
-                "  … {total} compared in {:?} (top-1 so far {}%)",
-                started.elapsed(),
-                (top1 * 100).checked_div(total).unwrap_or(0)
-            );
-        }
-    }
+                    let mut acc = Counts::default();
+                    for input in chunk {
+                        let Some(oracle_cands) =
+                            fixture.by_input.get(input).filter(|l| !l.is_empty())
+                        else {
+                            continue;
+                        };
+                        type_input(&mut session, input);
+                        let real_cands = real_candidates(&session);
+                        let oracle_top = &oracle_cands[0];
+                        let mut c = Counts {
+                            total: 1,
+                            ..Counts::default()
+                        };
+                        if real_cands.first() == Some(oracle_top) {
+                            c.top1 = 1;
+                        }
+                        if real_cands.iter().take(5).any(|t| t == oracle_top) {
+                            c.top5 = 1;
+                        }
+                        let real_prefix = &real_cands[..real_cands.len().min(CAPTURE_DEPTH)];
+                        for cand in oracle_cands.iter().take(CAPTURE_DEPTH) {
+                            c.prefix_depth += 1;
+                            if real_prefix.contains(cand) {
+                                c.prefix_overlap += 1;
+                            }
+                        }
+                        if !real_cands.is_empty() && !real_cands.iter().any(|t| t == oracle_top) {
+                            c.absent = 1;
+                        }
+                        acc = Counts::merge(acc, c);
+                    }
+                    acc
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("worker thread panicked"))
+            .fold(Counts::default(), Counts::merge)
+    });
+    eprintln!("parallel decode wall-clock: {:?}", started.elapsed());
 
     let top1_pct = (top1 * 100).checked_div(total).unwrap_or(0);
     let top5_pct = (top5 * 100).checked_div(total).unwrap_or(0);
@@ -296,7 +342,6 @@ fn real_tables_session_reports_parity() {
         .checked_div(prefix_depth)
         .unwrap_or(0);
 
-    // Print rates before any assertion (required for the parity report).
     eprintln!("real tables parity — candidates, W2 parity corpus (fixture)");
     eprintln!("  fixture pin_ref         {}", fixture.pin_ref);
     eprintln!("  compared                {total}");
@@ -309,10 +354,26 @@ fn real_tables_session_reports_parity() {
         total > 0,
         "fixture produced no candidates over the W2 corpus; cannot report parity"
     );
-    // Regression floors under the post-sweep measurement for this pin
-    // (2026-08-10, full corpus): top-1 63%, top-5-set 89%, prefix-10 65%,
-    // absent 177 of 10,190. Floors sit below the measurement so noise cannot
-    // flake the suite, while a ranking or data regression trips them.
+    assert_eq!(
+        top1, 6525,
+        "top-1 must be bit-identical to the serial baseline"
+    );
+    assert_eq!(
+        absent, 70,
+        "absent must be bit-identical to the serial baseline"
+    );
+    assert_eq!(
+        top5, 9232,
+        "top-5-set must be bit-identical to the serial baseline"
+    );
+    assert_eq!(
+        prefix_overlap, 65505,
+        "prefix-10 overlap numerator must match"
+    );
+    assert_eq!(
+        prefix_depth, 98930,
+        "prefix-10 overlap denominator must match"
+    );
     assert!(
         top1 * 100 >= total * 55,
         "top-1 fell to {top1_pct}% ({top1}/{total}); expected >= 55%"
