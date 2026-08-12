@@ -45,6 +45,16 @@ pub trait Dictionary {
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error>;
 }
 
+impl<D: Dictionary + ?Sized> Dictionary for &D {
+    type Syllable = D::Syllable;
+    type Entry = D::Entry;
+    type Error = D::Error;
+
+    fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+        (**self).lookup(syllables)
+    }
+}
+
 /// Scoring and observation seam for explicit user-learning state.
 ///
 /// Implementations are deterministic for the same explicit input and state,
@@ -86,6 +96,20 @@ pub trait LanguageModel {
         token: &Self::Token,
         edge_cost: Cost,
     ) -> Result<Cost, Self::Error>;
+}
+
+impl<L: LanguageModel + ?Sized> LanguageModel for &L {
+    type Token = L::Token;
+    type Error = L::Error;
+
+    fn score(
+        &self,
+        history: &[Self::Token],
+        token: &Self::Token,
+        edge_cost: Cost,
+    ) -> Result<Cost, Self::Error> {
+        (**self).score(history, token, edge_cost)
+    }
 }
 
 /// Total byte-input parsing seam.
