@@ -30,7 +30,8 @@ entries (`den`, `kei`, `lue`, `nue`, `tei` and the commented “weird pinyins”
 the 23 incomplete initial-only entries, correction spellings, fuzzy aliases,
 tones, and Zhuyin. The source file is GPL-2.0-or-later; this GPL-3.0-or-later
 project records the source and transformation rather than treating the
-inventory as model-archive data covered by the Branch B restriction.
+inventory as model-archive data covered by the model-archive no-vendor rule
+(see `model-provenance.md`).
 
 A **partial syllable** is a non-empty proper byte prefix of at least one of the
 405 complete syllables. Initial-only strings such as `h`, `zh`, and `w` are

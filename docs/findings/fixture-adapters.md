@@ -16,11 +16,10 @@ Three separate reasons, and each one alone would be enough:
 2. **The oracle is Linux-only and must be built.** A decoder test that needs
    `tools/oracle/build-oracle.sh` cannot run in portable CI, which is where
    most of these tests have to run.
-3. **The model archive is not redistributable.** `model-provenance.md`
-   selects Branch B: `interpolation2.text`, the eighteen `.table` files, and
-   **converted or compiled derivatives of either** must not appear in this
-   repository. A committed probability table would be exactly such a
-   derivative.
+3. **The model archive is not vendored.** `model-provenance.md`'s no-vendor
+   rule: `interpolation2.text`, the eighteen `.table` files, and **converted
+   or compiled derivatives of either** must not appear in this repository. A
+   committed probability table would be exactly such a derivative.
 
 ## What F-B would have been, and why this is not it
 
