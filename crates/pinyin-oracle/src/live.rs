@@ -21,7 +21,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use crate::differential::{ObservationSource, Source as DiffSource};
 use crate::flags::SORT_BY_PHRASE_LENGTH_AND_PINYIN_LENGTH_AND_FREQUENCY;
 use crate::observation::{
-    MAX_CAPTURED_CANDIDATES, OracleCompleteness, OracleObservation, OracleSegment,
+    CandidateInfo, MAX_CAPTURED_CANDIDATES, OracleCandidateType, OracleCompleteness,
+    OracleObservation, OracleSegment,
 };
 use crate::{OracleError, OracleFlags, OraclePrefix, ffi};
 
@@ -408,6 +409,41 @@ impl Session<'_> {
     }
 
     fn observe_without_reset(&mut self, input: &[u8]) -> Result<OracleObservation, OracleError> {
+        let (parse_return, parsed_input_length) = self.parse_input(input)?;
+
+        let (candidate_total, infos) = if parsed_input_length > 0 {
+            self.collect_candidates()?
+        } else {
+            (0, Vec::new())
+        };
+        // Per-candidate type and n-best index live on the W2-CAND path (`observe_candidate_infos`).
+        let candidates = infos.into_iter().map(|info| info.text).collect();
+
+        let segments = self.collect_segments(parsed_input_length, input)?;
+
+        Ok(OracleObservation {
+            pin_ref: self.pin_ref.clone(),
+            family: None,
+            case: None,
+            input: input.to_vec(),
+            flags: self.flags,
+            parse_return,
+            parsed_input_length,
+            segments,
+            candidate_total,
+            candidates,
+            remainder: input[parsed_input_length..].to_vec(),
+        })
+    }
+
+    /// Parses `input` into the instance and returns
+    /// `(parse_return, parsed_input_length)`, erroring if the oracle reports a
+    /// parsed prefix longer than the input it was given.
+    ///
+    /// Shared by [`Self::observe_without_reset`] and
+    /// [`Self::observe_candidate_infos`] so both enumerate candidates over the
+    /// identical parse state.
+    fn parse_input(&mut self, input: &[u8]) -> Result<(usize, usize), OracleError> {
         let input_c = CString::new(input).map_err(|_| OracleError::InteriorNul {
             what: "oracle input",
         })?;
@@ -428,27 +464,37 @@ impl Session<'_> {
             });
         }
 
-        let (candidate_total, candidates) = if parsed_input_length > 0 {
-            self.collect_candidates()?
-        } else {
-            (0, Vec::new())
-        };
+        Ok((parse_return, parsed_input_length))
+    }
 
-        let segments = self.collect_segments(parsed_input_length, input)?;
-
-        Ok(OracleObservation {
-            pin_ref: self.pin_ref.clone(),
-            family: None,
-            case: None,
-            input: input.to_vec(),
-            flags: self.flags,
-            parse_return,
-            parsed_input_length,
-            segments,
-            candidate_total,
-            candidates,
-            remainder: input[parsed_input_length..].to_vec(),
-        })
+    /// Resets, parses `input`, and returns each candidate's string, public
+    /// type, and n-best index — the W2-CAND capture surface.
+    ///
+    /// The candidate stage is exactly [`Self::observe`]'s: the same
+    /// `pinyin_guess_candidates` sort word and the same depth cap via
+    /// [`Self::collect_candidates`], so the returned `text`s are identical, and
+    /// in the same order, to `observe(input)?.candidates`. Only the two extra
+    /// public accessors (`pinyin_get_candidate_type`,
+    /// `pinyin_get_candidate_nbest_index`) are read; nothing else about a
+    /// candidate is reachable from the pinned public header
+    /// (`docs/findings/candidate-construction.md` §1.6).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::observe`], plus [`OracleError::UnknownCandidateType`] if the
+    /// oracle reports a `lookup_candidate_type_t` outside the eight the pinned
+    /// header declares.
+    pub fn observe_candidate_infos(
+        &mut self,
+        input: &[u8],
+    ) -> Result<Vec<CandidateInfo>, OracleError> {
+        self.reset()?;
+        let (_parse_return, parsed_input_length) = self.parse_input(input)?;
+        if parsed_input_length == 0 {
+            return Ok(Vec::new());
+        }
+        let (_total, infos) = self.collect_candidates()?;
+        Ok(infos)
     }
 
     /// The oracle's own `phrase text → phrase_token_t` mapping.
@@ -542,8 +588,10 @@ impl Session<'_> {
     }
 
     /// Builds the candidate list and copies the first
-    /// [`MAX_CAPTURED_CANDIDATES`] strings.
-    fn collect_candidates(&mut self) -> Result<(u32, Vec<String>), OracleError> {
+    /// [`MAX_CAPTURED_CANDIDATES`] candidates, each with its string and the two
+    /// public fields W2-CAND records (`pinyin_get_candidate_type`,
+    /// `pinyin_get_candidate_nbest_index`).
+    fn collect_candidates(&mut self) -> Result<(u32, Vec<CandidateInfo>), OracleError> {
         // SAFETY: instance is non-null and owned by `self`. A false return means
         // no candidate list was built, which is a normal outcome rather than an
         // error, so we report zero candidates instead of failing.
@@ -619,7 +667,57 @@ impl Session<'_> {
                     function: "pinyin_get_candidate_string",
                 })?
                 .to_owned();
-            candidates.push(owned);
+
+            // The two extra public accessors. `candidate` is still the pointer
+            // borrowed above and none of these reads mutates the instance, so it
+            // stays valid across all three.
+            let mut raw_type: core::ffi::c_int = 0;
+            // SAFETY: `candidate` is non-null and borrowed from this unmutated
+            // instance; the out-pointer is a valid, writable `c_int`.
+            let ok = unsafe {
+                ffi::pinyin_get_candidate_type(self.instance, candidate, &raw mut raw_type)
+            };
+            if !ok {
+                return Err(OracleError::Call {
+                    function: "pinyin_get_candidate_type",
+                });
+            }
+            let candidate_type = OracleCandidateType::from_raw(raw_type)
+                .ok_or(OracleError::UnknownCandidateType { value: raw_type })?;
+
+            // `pinyin_get_candidate_nbest_index` asserts internally that the
+            // candidate is an NBEST_MATCH_CANDIDATE and aborts otherwise —
+            // observed at runtime as
+            //   Assertion `NBEST_MATCH_CANDIDATE == candidate->m_candidate_type' failed
+            // which reaches abort(), the same uncatchable class as
+            // docs/findings/oracle-apostrophe-abort.md. The index therefore
+            // exists only for n-best candidates; for every other type it is
+            // `None` (written `-`) and the accessor is not called. This guard is
+            // derived from the observed abort, not from reading upstream source.
+            let nbest_index = if matches!(candidate_type, OracleCandidateType::NbestMatch) {
+                let mut raw_index: u8 = 0;
+                // SAFETY: `candidate` is a non-null NBEST_MATCH candidate borrowed
+                // from this unmutated instance, which satisfies the accessor's
+                // asserted precondition; the out-pointer is a valid, writable
+                // `u8`. A false return means no index, recorded as `None`, never
+                // a fabricated `0`.
+                let has_index = unsafe {
+                    ffi::pinyin_get_candidate_nbest_index(
+                        self.instance,
+                        candidate,
+                        &raw mut raw_index,
+                    )
+                };
+                has_index.then_some(raw_index)
+            } else {
+                None
+            };
+
+            candidates.push(CandidateInfo {
+                text: owned,
+                candidate_type,
+                nbest_index,
+            });
         }
 
         Ok((total, candidates))

@@ -31,6 +31,106 @@ impl OracleCompleteness {
     }
 }
 
+/// The public `lookup_candidate_type_t` a candidate was reported under.
+///
+/// These are the eight values the pinned header
+/// (`include/libpinyin-2.11.91/pinyin.h`) declares for
+/// `_lookup_candidate_type_t`, in its declared order (discriminants 1..=8). The
+/// enum exists so the W2-CAND capture records the frozen public **name** rather
+/// than a bare integer, and so an out-of-range value from the oracle is a
+/// reported error ([`crate::OracleError::UnknownCandidateType`]) instead of a
+/// silent transmute. See `docs/findings/candidate-construction.md` §1.6.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum OracleCandidateType {
+    /// `NBEST_MATCH_CANDIDATE` — a sentence-decode (n-best) candidate.
+    NbestMatch,
+    /// `NORMAL_CANDIDATE` — a phrase-lookup candidate.
+    Normal,
+    /// `ZOMBIE_CANDIDATE`.
+    Zombie,
+    /// `PREDICTED_BIGRAM_CANDIDATE`.
+    PredictedBigram,
+    /// `PREDICTED_PREFIX_CANDIDATE`.
+    PredictedPrefix,
+    /// `ADDON_CANDIDATE`.
+    Addon,
+    /// `LONGER_CANDIDATE`.
+    Longer,
+    /// `PREDICTED_PUNCTUATION_CANDIDATE`.
+    PredictedPunctuation,
+}
+
+impl OracleCandidateType {
+    /// Maps the C enum discriminant to a variant, or `None` if it is not one of
+    /// the eight the pinned header declares.
+    #[must_use]
+    pub const fn from_raw(value: i32) -> Option<Self> {
+        match value {
+            1 => Some(Self::NbestMatch),
+            2 => Some(Self::Normal),
+            3 => Some(Self::Zombie),
+            4 => Some(Self::PredictedBigram),
+            5 => Some(Self::PredictedPrefix),
+            6 => Some(Self::Addon),
+            7 => Some(Self::Longer),
+            8 => Some(Self::PredictedPunctuation),
+            _ => None,
+        }
+    }
+
+    /// The frozen public enum **name**, as written to the fixture's `type`
+    /// column.
+    #[must_use]
+    pub const fn as_wire(self) -> &'static str {
+        match self {
+            Self::NbestMatch => "NBEST_MATCH_CANDIDATE",
+            Self::Normal => "NORMAL_CANDIDATE",
+            Self::Zombie => "ZOMBIE_CANDIDATE",
+            Self::PredictedBigram => "PREDICTED_BIGRAM_CANDIDATE",
+            Self::PredictedPrefix => "PREDICTED_PREFIX_CANDIDATE",
+            Self::Addon => "ADDON_CANDIDATE",
+            Self::Longer => "LONGER_CANDIDATE",
+            Self::PredictedPunctuation => "PREDICTED_PUNCTUATION_CANDIDATE",
+        }
+    }
+
+    /// Parses a frozen public enum name back to a variant, for fixture readers.
+    #[must_use]
+    pub fn from_wire(text: &str) -> Option<Self> {
+        Some(match text {
+            "NBEST_MATCH_CANDIDATE" => Self::NbestMatch,
+            "NORMAL_CANDIDATE" => Self::Normal,
+            "ZOMBIE_CANDIDATE" => Self::Zombie,
+            "PREDICTED_BIGRAM_CANDIDATE" => Self::PredictedBigram,
+            "PREDICTED_PREFIX_CANDIDATE" => Self::PredictedPrefix,
+            "ADDON_CANDIDATE" => Self::Addon,
+            "LONGER_CANDIDATE" => Self::Longer,
+            "PREDICTED_PUNCTUATION_CANDIDATE" => Self::PredictedPunctuation,
+            _ => return None,
+        })
+    }
+}
+
+/// One candidate as W2-CAND captures it: the string plus the two fields the
+/// pinned public API exports.
+///
+/// `nbest_index` is `Some` only for [`OracleCandidateType::NbestMatch`]
+/// candidates: `pinyin_get_candidate_nbest_index` asserts that type internally
+/// and aborts on any other, so it is called only for n-best candidates and is
+/// `None` (written `-`) for every other type. It is never synthesised. There is
+/// deliberately no `begin`/`end`/`tokens` field: `lookup_candidate_t` is opaque
+/// and the public header exposes no accessor for them
+/// (`docs/findings/candidate-construction.md` §1.6).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CandidateInfo {
+    /// The candidate's UTF-8 string, identical to the sister fixture's `text`.
+    pub text: String,
+    /// The candidate's public type.
+    pub candidate_type: OracleCandidateType,
+    /// The candidate's n-best index, or `None` when the accessor reports none.
+    pub nbest_index: Option<u8>,
+}
+
 /// One entry of the oracle's `segments` field.
 ///
 /// The sentinel variants are not defensive padding: `tools/capture/capture.c`
@@ -192,7 +292,7 @@ impl OracleObservation {
 
 #[cfg(test)]
 mod tests {
-    use super::{OracleCompleteness, OracleObservation, OracleSegment};
+    use super::{OracleCandidateType, OracleCompleteness, OracleObservation, OracleSegment};
     use crate::{OracleError, OracleFlags};
 
     fn observation(segments: Vec<OracleSegment>, parsed: usize, input: &str) -> OracleObservation {
@@ -265,5 +365,43 @@ mod tests {
     fn completeness_wire_tokens_match_the_capture_format() {
         assert_eq!(OracleCompleteness::Complete.as_wire(), "complete");
         assert_eq!(OracleCompleteness::Partial.as_wire(), "partial");
+    }
+
+    #[test]
+    fn candidate_type_discriminants_match_the_pinned_header() {
+        // `_lookup_candidate_type_t` in include/libpinyin-2.11.91/pinyin.h,
+        // discriminants 1..=8 in declared order.
+        let ordered = [
+            (1, OracleCandidateType::NbestMatch, "NBEST_MATCH_CANDIDATE"),
+            (2, OracleCandidateType::Normal, "NORMAL_CANDIDATE"),
+            (3, OracleCandidateType::Zombie, "ZOMBIE_CANDIDATE"),
+            (
+                4,
+                OracleCandidateType::PredictedBigram,
+                "PREDICTED_BIGRAM_CANDIDATE",
+            ),
+            (
+                5,
+                OracleCandidateType::PredictedPrefix,
+                "PREDICTED_PREFIX_CANDIDATE",
+            ),
+            (6, OracleCandidateType::Addon, "ADDON_CANDIDATE"),
+            (7, OracleCandidateType::Longer, "LONGER_CANDIDATE"),
+            (
+                8,
+                OracleCandidateType::PredictedPunctuation,
+                "PREDICTED_PUNCTUATION_CANDIDATE",
+            ),
+        ];
+        for (raw, variant, wire) in ordered {
+            assert_eq!(OracleCandidateType::from_raw(raw), Some(variant));
+            assert_eq!(variant.as_wire(), wire);
+            assert_eq!(OracleCandidateType::from_wire(wire), Some(variant));
+        }
+        // Values outside the declared set are rejected, not transmuted.
+        assert_eq!(OracleCandidateType::from_raw(0), None);
+        assert_eq!(OracleCandidateType::from_raw(9), None);
+        assert_eq!(OracleCandidateType::from_raw(-1), None);
+        assert_eq!(OracleCandidateType::from_wire("SOMETHING_ELSE"), None);
     }
 }

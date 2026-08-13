@@ -41,6 +41,10 @@ name = "oracle-candidates"
 path = "src/bin/oracle_candidates.rs"
 
 [[bin]]
+name = "oracle-candidate-structure"
+path = "src/bin/oracle_candidate_structure.rs"
+
+[[bin]]
 name = "parity-sweep"
 path = "src/bin/parity_sweep.rs"
 

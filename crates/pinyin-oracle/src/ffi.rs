@@ -133,6 +133,25 @@ unsafe extern "C" {
         utf8_str: *mut *const c_char,
     ) -> bool;
 
+    /// Writes a candidate's `lookup_candidate_type_t`.
+    ///
+    /// The C enum has all-positive discriminants (1..=8) that fit in `int`, so
+    /// it is returned through `int` on the SysV AMD64 ABI; `c_int` is the
+    /// matching out-pointer type. The Rust side reads it into a checked enum
+    /// (`OracleCandidateType::from_raw`) and never transmutes.
+    pub(crate) fn pinyin_get_candidate_type(
+        instance: *mut PinyinInstance,
+        candidate: *mut LookupCandidate,
+        candidate_type: *mut c_int,
+    ) -> bool;
+
+    /// Writes a candidate's n-best index (`guint8`).
+    pub(crate) fn pinyin_get_candidate_nbest_index(
+        instance: *mut PinyinInstance,
+        candidate: *mut LookupCandidate,
+        index: *mut u8,
+    ) -> bool;
+
     /// Borrows the parsed key covering `offset`.
     pub(crate) fn pinyin_get_pinyin_key(
         instance: *mut PinyinInstance,

@@ -51,7 +51,8 @@ pub mod live;
 pub use error::OracleError;
 pub use flags::OracleFlags;
 pub use observation::{
-    MAX_CAPTURED_CANDIDATES, OracleCompleteness, OracleObservation, OracleSegment,
+    CandidateInfo, MAX_CAPTURED_CANDIDATES, OracleCandidateType, OracleCompleteness,
+    OracleObservation, OracleSegment,
 };
 pub use pin::{EXPECTED_PIN_REF, OraclePrefix, PinManifest, VerifiedPin};
 pub use taxonomy::{BudgetVerdict, DivergenceClass, Taxonomy};
