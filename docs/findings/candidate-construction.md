@@ -369,8 +369,8 @@ does not populate them.
   graph admits but top-8 k-best drops), not from W2-CAND, which cannot see
   consumed length.
 
-Until W2-CAND lands and is analysed, no lattice or two-pass code is written
-(§6).
+W2-CAND has landed and is analysed in §7; no lattice or two-pass code is
+written until the construction-contract PR (§6 step 3).
 
 ## 2. Target behaviour (candidate strategies)
 
