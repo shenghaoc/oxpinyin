@@ -1,19 +1,21 @@
 # Candidate-construction SPEC (Discrepancy 2)
 
-Date: 2026-08-13 · Status: **characterisation frozen; W2-CAND captured and
-analysed (§7); construction contract still NOT frozen — next step is §6 step 3
-(the contract PR).**
+Date: 2026-08-13 · Status: **characterisation and W2-CAND complete; construction
+contract frozen (§8) — no construction change selected for the current
+residual.**
 
 This document characterises the candidate-construction gap between our decoder
-and the pinned oracle, and it decides one thing deliberately: it does **not**
-freeze a construction contract. The evidence needed to freeze one is not in the
-fixture the parity test measures on, and guessing the missing half is the exact
-failure this project has STOPped for twice — the fabricated `pinyin_index`
-encoder mapping (PR #28, refuted) and the `[b, ing]` skip-and-continue claim.
-The deliverable here is therefore the residual
-characterisation, the narrow invariant the fixture *can* prove, and the
-**capture extension** that must land before any lattice or two-pass code is
-written.
+and the pinned oracle (§1), records the W2-CAND capture that closed the
+load-bearing inference (§7), and freezes the construction contract (§8). The
+contract freezes the *absence* of a construction change for the current
+residual: the W2-CAND evidence shows the oracle surfaces no `NBEST_MATCH` /
+sentence-level candidates under the pinned observation surface, so the residual
+is unigram phrase-cost / coverage calibration, not a missing lattice or two-pass
+pass. Guessing the missing half was the exact failure this project has STOPped
+for twice — the fabricated `pinyin_index` encoder mapping (PR #28, refuted) and
+the `[b, ing]` skip-and-continue claim. The deliverable is therefore the
+residual characterisation, the narrow invariants the fixtures prove, and the
+frozen contract §8 records.
 
 Baselines and neighbours: `docs/findings/parity-climb-residual.md`,
 `docs/findings/f3-bigram-kbest.md`, `docs/findings/f2-unigram-tiebreak-sweep.md`,
@@ -213,8 +215,10 @@ Refining the hypothesis's "ours" against `session.rs`:
    two-pass bigram re-rank is the operative lever — the lever is unigram
    phrase-cost / coverage calibration, and `f2-unigram-tiebreak-sweep.md`
    already reports the unigram tiebreak scale optimal at 16 (negative). We
-   cannot tell which regime we are in from this fixture. This is the load-bearing
-   inference, and it is unresolved.
+   cannot tell which regime we are in from this fixture alone. This was the
+   load-bearing inference W2-CAND exists to answer; §7 resolves the n-best half
+   in the negative — every candidate is `NORMAL`, none is `NBEST_MATCH` — and
+   leaves only the single-vs-multi-token half open (§7.5).
 
 4. **Bigrams "participating in path selection."** **INFERRED.** For a fresh
    single `observe` (how both the oracle capture and our parity harness run:
@@ -260,8 +264,10 @@ correction — "we *do* pool across segmentations" — is **§1.2**, a distinct 
 The two OUR-side limbs are descriptions of our own code, readable from the tree,
 and neither is discarded. What stays **INFERRED** is not any of these limbs, but
 whether replacing the second and third with a global phrase-lattice DP
-(Strategy A, §2) would move parity — the §1.4.3 question W2-CAND exists to
-answer.
+(Strategy A, §2) would move parity — the §1.4.3 question W2-CAND was scoped to
+answer. §7 answers its n-best half in the negative (all `NORMAL`, no
+`NBEST_MATCH`); the single-vs-multi-token half stays open (§7.5), and §8 freezes
+the contract on that evidence.
 
 ### 1.5 Residual buckets, and why the fixture caps the analysis
 
@@ -290,6 +296,12 @@ adds (§1.6) is orthogonal to that split: whether the oracle's rank-1 is a
 decides whether a bigram/sentence lever is in play at all.
 
 ### 1.6 Verdict of §1 and the capture extension (W2-CAND)
+
+> **Pre-capture verdict — superseded by §7–§8.** This section records the
+> characterisation's original refusal to freeze a construction contract, which
+> was correct *before the capture existed*. W2-CAND has since landed and the
+> contract is frozen in §8; the "NOT sufficient to freeze" below is that
+> pre-capture position, not the document's current stance.
 
 **The candidate fixture is sufficient to prove cross-segmentation pooling
 (§1.2) and that rank-1 is a pooled re-rank rather than the selected *syllable*
@@ -369,13 +381,14 @@ does not populate them.
   graph admits but top-8 k-best drops), not from W2-CAND, which cannot see
   consumed length.
 
-W2-CAND has landed and is analysed in §7; no lattice or two-pass code is
-written until the construction-contract PR (§6 step 3).
+W2-CAND has landed and is analysed in §7; the construction contract is frozen
+in §8, and no lattice or two-pass code is written under it.
 
 ## 2. Target behaviour (candidate strategies)
 
-Two constructions are on the table. Neither is frozen here; W2-CAND decides
-between them. Both must preserve every invariant in §3 and pass the gates in §4.
+Two constructions are on the table. **Neither is selected** (§8). Both are
+described here so the conditions under which either would be re-opened are
+explicit. Both must preserve every invariant in §3 and pass the gates in §4.
 
 ### Strategy A — phrase-level lattice edges
 
@@ -399,7 +412,7 @@ alternatives" is then one candidate-emission rule layered on top.
   W2-CAND's type / n-best-index evidence, not assumed. Largest architectural
   change, and the RSS risk of §4.
 
-### Strategy B — two-pass re-rank over the existing graph (primary)
+### Strategy B — two-pass re-rank over the existing graph
 
 Keep `SegmentGraph` + syllable k-best exactly as frozen. After phrase
 collection, run a **second, sentence-level pass** that materialises the induced
@@ -418,13 +431,21 @@ under the **unchanged** contract of §3.
   (§1.4.2). Whether that limit matters is exactly the §1.4.3 question W2-CAND
   answers.
 
-**Primary: Strategy B**, as the minimal change that keeps the frozen seams and is
-honestly measurable. **Strategy A is the measured alternative**, escalated to only
-if analysis of the **absent** bucket — the only place §1.4.1 starvation can live,
-the near-miss residual being ruled out by §1.5 — shows a starved-segmentation
-population large enough to move the §0 pins. A must never be justified by the
-dominant near-miss residual, which is a ranking/calibration problem A does not
-touch. This is an evidence-gated decision, not a taste one.
+**Neither strategy is selected for the current residual (§8).** W2-CAND's
+negative result (§7.4) removes the sentence-level lever both strategies lean on:
+every candidate is `NORMAL_CANDIDATE`, so Strategy B's bigram pass is inert over
+the near-miss buckets and Strategy A's phrase-lattice emission rule is a
+construction change the data does not justify. The correct next action is
+calibration of phrase unigram costs / coverage, not either strategy. **Strategy
+A** would be re-opened only if the **absent** bucket — the only place §1.4.1
+starvation can live, the near-miss residual being ruled out by §1.5 — shows a
+starved-segmentation population large enough to move the §0 pins, or if a future
+capture under different flags actually produces `NBEST_MATCH` candidates.
+**Strategy B** would be re-opened only if such a future capture produces
+`NBEST_MATCH` candidates the current `0x18a` / `0x1e` surface does not. A must
+never be justified by the dominant near-miss residual, which is a
+ranking/calibration problem A does not touch. This is an evidence-gated decision,
+not a taste one.
 
 ### 2.1 Reachability via defaulted trait methods
 
@@ -537,18 +558,24 @@ Out of scope for this SPEC and any construction change it gates:
 2. **Capture** — land W2-CAND (§1.6) and analyse
    `fixtures/w4/oracle-candidate-structure.txt`: how many oracle rank-1s are
    `NORMAL` phrase candidates vs `NBEST_MATCH` sentence candidates (§1.4.3).
-   Separately, from *existing* fixtures, measure how often an **absent** oracle
-   rank-1 needs a segmentation our top-8 k-best starves (§1.4.1). **This is the
-   gate.**
-3. **Freeze** — only then extend this SPEC with the frozen construction contract
-   (Strategy A or B) and its re-pinned §4 numbers.
-4. **Implement** — only from the frozen document.
+   **Done (§7).** Separately, from *existing* fixtures (not W2-CAND), measure
+   how often an **absent** oracle rank-1 needs a segmentation our top-8 k-best
+   starves (§1.4.1) — an *absent-bucket* question answered from the existing
+   fixtures (§1.6, §7.5), not by §7.
+3. **Freeze** — extend this SPEC with the frozen construction contract. **Done
+   (§8):** the contract freezes the *absence* of a construction change for the
+   current residual; Strategy A and Strategy B are both **not selected**.
+4. **Implement** — only from the frozen document, and only after a *different*
+   future decision: either a calibration change to phrase unigram costs /
+   coverage (not a construction change, and therefore outside this SPEC's §4
+   gates), or a re-opened Strategy A / B gated on the conditions in §8.
 
-No agent writes lattice or two-pass code before step 3. If step 2 shows the
-residual is dominated by unigram calibration rather than construction (the
-§1.4.3 single-phrase regime), the correct outcome is to record that as a second
-negative result alongside `f2-unigram-tiebreak-sweep.md` and
-`f3-bigram-kbest.md` — not to build a lattice that cannot move the number.
+No agent writes lattice or two-pass code without re-opening §8 first. Step 2
+showed the residual is dominated by unigram calibration rather than construction
+(the §1.4.3 phrase-lookup result): every candidate is `NORMAL_CANDIDATE`, so
+this is recorded as a third negative result alongside
+`f2-unigram-tiebreak-sweep.md` and `f3-bigram-kbest.md` — not as a lattice that
+cannot move the number.
 
 STOP and report rather than inventing evidence.
 
@@ -556,8 +583,8 @@ STOP and report rather than inventing evidence.
 
 Date: 2026-08-13 · Status: **captured and analysed. §1.4.3 answered for the W2
 corpus; the token-count sub-question stays open, unreachable from the public
-API.** This section records step 2 of §6; it does not freeze a construction
-contract (step 3), which remains a later PR.
+API.** This section records step 2 of §6; the construction contract it enabled
+is frozen in §8.
 
 ### 7.1 What was captured
 
@@ -683,5 +710,71 @@ and no score, so:
   does not claim the oracle never emits `NBEST_MATCH` on other inputs or
   profiles; it claims none appears here.
 
-These open sub-questions are for the construction-contract PR (§6 step 3), not
-this one. STOP and report rather than inventing evidence.
+These open sub-questions are carried into §8 (the frozen contract), not resolved
+here. STOP and report rather than inventing evidence.
+
+## 8. The frozen construction contract
+
+Date: 2026-08-13 · Status: **frozen.** This is the construction contract §1.6
+refused to write pre-capture and §6 step 3 gated on W2-CAND. It freezes the
+*absence* of a construction change for the current residual, on the evidence of
+§7.
+
+### 8.1 The contract
+
+1. **Candidate construction is unchanged.** The frozen `Session::refresh`
+   construction stands: collect the `SEGMENTATION_K = 8` syllable paths,
+   `collect_prefix_phrases` + `collect_sentence` on each, pool, stable-sort by
+   `Candidate::cost`, dedup by text, truncate to `MAX_CANDIDATES = 64` (§1.2).
+   This preserves the cross-segmentation pooling invariant (§1.2) and the
+   rank-1 ≠ first-phrase-of-selected-syllable-path fact (§1.3).
+2. **No phrase-lattice edges (Strategy A) and no two-pass sentence re-rank
+   (Strategy B).** Neither is justified by the residual that remains (§8.2).
+   The compatibility invariants (§3) and measurement gates (§4) are therefore
+   not exercised by any change here — they remain normative for any future
+   re-opening.
+3. **The public API surface and frozen traits are unchanged.** No new
+   observable is introduced; §3.2 (`session-api.md`), §3.3
+   (`parser-spec.md`), and the `Dictionary` / `LanguageModel` / `UserModel`
+   seams (§2.1) are untouched.
+
+### 8.2 The negative result this freezes
+
+Under the pinned observation surface (W2 corpus, flags `0x18a`, sort `0x1e`),
+the oracle surfaces **zero** `NBEST_MATCH_CANDIDATE` / sentence-level candidates:
+100% of candidates — including every rank-1 — are `NORMAL_CANDIDATE`, and the
+`nbest_index` column is always `-` (§7.3, §7.4). The `0x1e` sort does not set
+`SORT_WITHOUT_SENTENCE_CANDIDATE`, so this is an absence, not a suppression.
+
+This removes the "n-best sentence candidate / phrase-lattice emission"
+explanation for the residual near-misses. The residual is therefore attributed
+to unigram phrase-cost / coverage calibration inside the existing phrase-lookup
+path — the lever `f2-unigram-tiebreak-sweep.md` measured (16 optimal) and
+`f3-bigram-kbest.md` warned against chasing at the segment level. The correct
+next action on the residual is calibration work, **not** a construction change.
+
+### 8.3 What remains open, and what would re-open a strategy
+
+- **`NORMAL` ≠ "exactly one dictionary phrase"** (§7.5). The token
+  decomposition is unreachable from the public API, so the positive half of
+  §1.4.3 stays open. This is a calibration question, not a construction one; it
+  does not re-open either strategy.
+- **Starvation** (§1.4.1) remains an **absent-bucket** question answered from
+  existing fixtures (§1.6, §7.5). It is the only lever that could justify
+  Strategy A.
+- **Re-open conditions.** Either strategy is re-opened only on new evidence,
+  never on the current fixture: (a) a future capture under different flags / a
+  different profile that actually produces `NBEST_MATCH` candidates (re-opens
+  Strategy B, and re-opens the sentence-level half of the hypothesis for
+  Strategy A); or (b) a measured starvation population in the **absent** bucket
+  large enough to move the §0 pins (re-opens Strategy A).
+
+### 8.4 What this contract does not change
+
+The five `assert_eq!` parity pins (§0) are unchanged: 6525 / 9232 / 70 /
+65505 of 98930. The compatibility invariants (§3) and the measurement gates (§4)
+are unchanged and still normative. No implementation follows from this contract;
+any future calibration or construction change is a separate, evidence-gated
+decision (§6 step 4).
+
+STOP and report rather than inventing evidence.
