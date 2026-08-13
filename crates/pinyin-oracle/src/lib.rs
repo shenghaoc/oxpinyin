@@ -15,6 +15,8 @@
 //! - [`pin`] decides whether a prefix is the frozen oracle;
 //! - [`flags`] holds the option words and rejects `DYNAMIC_ADJUST`;
 //! - [`observation`] is what the oracle reported for one input;
+//! - [`model_cache`] locates the checksum-pinned model20 text export after
+//!   `tools/model/fetch-model.sh` has populated the build cache;
 //! - [`live`] is the FFI producer, behind the non-default `oracle-ffi` feature.
 //!
 //! Because a replayed capture fixture and a live FFI run both yield an
@@ -38,6 +40,7 @@ pub mod corpus;
 pub mod differential;
 mod error;
 pub mod flags;
+pub mod model_cache;
 pub mod observation;
 pub mod pin;
 mod pin_ref;
@@ -50,6 +53,11 @@ pub mod live;
 
 pub use error::OracleError;
 pub use flags::OracleFlags;
+pub use model_cache::{
+    EXPECTED_MODEL_FILES, MODEL_CACHE_ENV, MODEL_DIR_ENV, MODEL20_SHA256, MODEL20_URL,
+    ModelDirError, default_extracted_dir, locate_model_dir, model_dir_is_complete,
+    verified_model_dir,
+};
 pub use observation::{
     CandidateInfo, MAX_CAPTURED_CANDIDATES, OracleCandidateType, OracleCompleteness,
     OracleObservation, OracleSegment,
