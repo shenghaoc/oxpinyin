@@ -25,6 +25,7 @@ use std::path::Path;
 use pinyin_core::cost::{UNKNOWN_COST, reduce_ratio, surprisal};
 use pinyin_core::{Cost, LanguageModel, PhraseToken};
 
+use crate::interp::{self, InterpolationError, UnigramTable};
 use crate::table::{LookupTable, TableError};
 
 /// Error conditions for bigram lookups.
@@ -81,8 +82,13 @@ const UNIGRAM_TIEBREAK_SCALE: i64 = 16;
 /// Bigram language model backed by `bigram.redb`.
 pub struct BigramLanguageModel {
     bigram: LookupTable,
-    unigrams: BTreeMap<u32, u64>,
+    unigrams: Option<UnigramTable>,
     unigram_total: u64,
+    /// Whether `unigrams` came from `interpolation2.text`: only the phrase
+    /// index's real counts switch the engine to its pinned construction. The
+    /// export-ABI map (flat 100s) keeps feeding the interpolated cost but is
+    /// never mistaken for real frequencies.
+    real_unigrams: bool,
 }
 
 impl BigramLanguageModel {
@@ -90,8 +96,9 @@ impl BigramLanguageModel {
     pub fn open(path: &Path) -> Result<Self, LmError> {
         Ok(Self {
             bigram: LookupTable::open(path).map_err(LmError::Table)?,
-            unigrams: BTreeMap::new(),
+            unigrams: None,
             unigram_total: 0,
+            real_unigrams: false,
         })
     }
 
@@ -100,10 +107,39 @@ impl BigramLanguageModel {
     /// Call after opening both tables and before constructing a
     /// [`pinyin_core::scoring::Scorer`]. Scoring falls back to pure
     /// bigram-or-floor behaviour when no unigrams have been installed, so the
-    /// fixture-only unit tests remain self-contained.
+    /// fixture-only unit tests remain self-contained. These counts are the
+    /// export ABI's — not the phrase index's real frequencies — and are never
+    /// reported through [`pinyin_core::LanguageModel::unigram_freq`].
     pub fn set_unigrams(&mut self, unigrams: BTreeMap<u32, u64>, total: u64) {
-        self.unigrams = unigrams;
+        self.unigrams = Some(UnigramTable::from_map(unigrams));
         self.unigram_total = total;
+        self.real_unigrams = false;
+    }
+
+    /// Installs the phrase index's **real** unigram counts from an
+    /// `interpolation2.text` model export in the fetched model cache.
+    ///
+    /// This replaces the export-ABI counts ([`Self::set_unigrams`],
+    /// [`Self::set_unigrams_from_dict`]), which report a flat `100` for every
+    /// multi-character phrase. The real counts are what the pinned oracle
+    /// ranks candidates by, so parity with its candidate construction requires
+    /// them; without them the model keeps behaving as it did before.
+    ///
+    /// The caller resolves the cache path (`PINYIN_MODEL_DIR` /
+    /// `tools/model/fetch-model.sh`); this crate discovers nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InterpolationError`] when the file cannot be read or parsed.
+    pub fn set_unigrams_from_interpolation2(
+        &mut self,
+        path: &Path,
+    ) -> Result<(), InterpolationError> {
+        let table = interp::parse_interpolation2(path)?;
+        self.unigram_total = table.total();
+        self.unigrams = Some(table);
+        self.real_unigrams = true;
+        Ok(())
     }
 
     /// Convenience: installs unigrams from a dictionary's aggregated map.
@@ -119,7 +155,31 @@ impl BigramLanguageModel {
     /// Whether unigram counts have been installed for interpolation.
     #[must_use]
     pub fn has_unigrams(&self) -> bool {
-        self.unigram_total > 0 && !self.unigrams.is_empty()
+        self.unigram_total > 0
+            && self
+                .unigrams
+                .as_ref()
+                .is_some_and(|table| !table.is_empty())
+    }
+
+    /// The installed unigram count of `token`.
+    ///
+    /// `None` when no unigram table is installed at all; `Some(0)` when a
+    /// table is installed but the phrase index has no such token. A real
+    /// table counts phrases the n-gram corpus never saw as zero rather than
+    /// absent, which is what lets candidate ranking put them last among equal
+    /// keys.
+    #[must_use]
+    pub fn unigram_count(&self, token: u32) -> Option<u64> {
+        self.unigrams
+            .as_ref()
+            .map(|table| table.count(token).unwrap_or(0))
+    }
+
+    /// The sum of the installed unigram counts, `0` when none are installed.
+    #[must_use]
+    pub const fn unigram_total(&self) -> u64 {
+        self.unigram_total
     }
 
     /// Returns `(count, total)` for the `prev → next` transition, or `None`
@@ -158,7 +218,7 @@ impl BigramLanguageModel {
             return self.pure_bigram_cost(history, token);
         }
 
-        let unigram = self.unigrams.get(&token.value()).copied().unwrap_or(0);
+        let unigram = self.unigram_count(token.value()).unwrap_or(0);
         if unigram == 0 || self.unigram_total == 0 {
             return Ok(UNKNOWN_COST);
         }
@@ -218,6 +278,14 @@ impl LanguageModel for BigramLanguageModel {
         edge_cost: Cost,
     ) -> Result<Cost, Self::Error> {
         Ok(edge_cost.saturating_add(self.model_cost(history, token)?))
+    }
+
+    fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+        // Only the interpolation2 table is a real frequency table; the
+        // export-ABI map is a scoring input, not candidate-ranking data.
+        Ok(self
+            .real_unigrams
+            .then(|| self.unigram_count(token.value()).unwrap_or(0)))
     }
 }
 

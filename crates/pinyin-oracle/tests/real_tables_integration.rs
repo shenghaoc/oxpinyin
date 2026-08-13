@@ -41,7 +41,12 @@ fn repo_root() -> PathBuf {
 }
 
 fn export_dir() -> Option<PathBuf> {
-    let dir = Path::new("/tmp/pinyin-rs-export").to_path_buf();
+    // `PINYIN_EXPORT_DIR` overrides the default so sandboxed runners can keep
+    // the export inside a writable, persistent directory; the default matches
+    // the documented `pinyin-migrate export` target.
+    let dir = std::env::var_os("PINYIN_EXPORT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new("/tmp/pinyin-rs-export").to_path_buf());
     if ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"]
         .iter()
         .all(|name| dir.join(name).exists())
@@ -205,6 +210,15 @@ struct Counts {
     absent: usize,
     prefix_overlap: usize,
     prefix_depth: usize,
+    /// Inputs whose emitted list contains at least one adjacent pair that ties
+    /// on all three sort keys (the tie budget the stable sort absorbs).
+    tie_inputs: usize,
+    /// Total adjacent fully-tied pairs across all inputs.
+    tie_pairs: usize,
+    /// Inputs whose depth-10 candidate *set* equals the oracle's but whose
+    /// order differs — the observable tie-swaps, where collection order (not
+    /// the sort keys) decided the ranking.
+    order_only: usize,
 }
 
 impl Counts {
@@ -216,8 +230,44 @@ impl Counts {
             absent: a.absent + b.absent,
             prefix_overlap: a.prefix_overlap + b.prefix_overlap,
             prefix_depth: a.prefix_depth + b.prefix_depth,
+            tie_inputs: a.tie_inputs + b.tie_inputs,
+            tie_pairs: a.tie_pairs + b.tie_pairs,
+            order_only: a.order_only + b.order_only,
         }
     }
+}
+
+/// Counts how often the three-key sort had to fall back on collection order.
+///
+/// After the sort and dedup, two adjacent candidates tie on all three keys
+/// exactly where the stable sort's collection-order rule decided their order.
+/// `tie_pairs` counts those positions; `tie_inputs` counts inputs with at
+/// least one. This is the measurable stand-in for the comparator-equal events
+/// the construction's stable sort absorbs.
+fn count_ties(
+    session: &Session<&SystemDictionary, &BigramLanguageModel>,
+    lm: &BigramLanguageModel,
+) -> (bool, usize) {
+    let candidates = session.candidates();
+    let mut pairs = 0_usize;
+    let keys: Vec<(usize, usize, u64)> = candidates
+        .iter()
+        .map(|candidate| {
+            let length = candidate.text().chars().count();
+            let span = candidate.consumed_bytes();
+            let frequency = candidate
+                .token()
+                .and_then(|token| lm.unigram_count(token.value()))
+                .unwrap_or(0);
+            (length, span, frequency)
+        })
+        .collect();
+    for pair in keys.windows(2) {
+        if pair[0] == pair[1] {
+            pairs += 1;
+        }
+    }
+    (pairs > 0, pairs)
 }
 
 #[test]
@@ -256,7 +306,37 @@ fn real_tables_session_reports_parity() {
     .expect("SystemDictionary opens from the export");
     let mut lm =
         BigramLanguageModel::open(&dir.join("bigram.redb")).expect("BigramLanguageModel opens");
-    lm.set_unigrams_from_dict(&dict);
+
+    // The pinned construction ranks candidates by the phrase index's *real*
+    // unigram counts, which the export ABI does not carry (it reports a flat
+    // 100 for every multi-character phrase). They live in interpolation2.text
+    // in the fetched model cache. Without the cache there is nothing faithful
+    // to measure against the real-frequency pins, so the test skips with a
+    // diagnostic rather than fabricating numbers — the session itself keeps
+    // working unchanged on the export-ABI counts, which is what the engine
+    // tests cover.
+    let model_dir = match pinyin_oracle::model_cache::locate_model_dir() {
+        Ok(Some(model_dir)) => model_dir,
+        Ok(None) => {
+            eprintln!(
+                "model cache absent: no interpolation2.text; skipping the \
+                 real-frequency parity measurement (run tools/model/fetch-model.sh)"
+            );
+            return;
+        }
+        Err(error) => {
+            panic!(
+                "PINYIN_MODEL_DIR is set but unusable: {error}; \
+                 run tools/model/fetch-model.sh"
+            );
+        }
+    };
+    {
+        let interp = model_dir.join("interpolation2.text");
+        lm.set_unigrams_from_interpolation2(&interp)
+            .expect("interpolation2.text in the verified model cache parses");
+        eprintln!("real unigram frequencies loaded from {}", interp.display());
+    }
     let lm = lm; // freeze: init phase over, read-only from here
     let dict = &dict;
     let lm = &lm;
@@ -284,6 +364,9 @@ fn real_tables_session_reports_parity() {
         absent,
         prefix_overlap,
         prefix_depth,
+        tie_inputs,
+        tie_pairs,
+        order_only,
     } = std::thread::scope(|scope| {
         let handles: Vec<_> = all_inputs
             .chunks(chunk_size)
@@ -314,15 +397,30 @@ fn real_tables_session_reports_parity() {
                             c.top5 = 1;
                         }
                         let real_prefix = &real_cands[..real_cands.len().min(CAPTURE_DEPTH)];
-                        for cand in oracle_cands.iter().take(CAPTURE_DEPTH) {
+                        let oracle_prefix = &oracle_cands[..oracle_cands.len().min(CAPTURE_DEPTH)];
+                        for cand in oracle_prefix {
                             c.prefix_depth += 1;
                             if real_prefix.contains(cand) {
                                 c.prefix_overlap += 1;
                             }
                         }
+                        // Same set, different order: the ranking difference is
+                        // entirely a collection-order tie resolution.
+                        let real_set: std::collections::HashSet<&str> =
+                            real_prefix.iter().map(String::as_str).collect();
+                        let oracle_set: std::collections::HashSet<&str> =
+                            oracle_prefix.iter().map(String::as_str).collect();
+                        if real_set == oracle_set && real_prefix != oracle_prefix {
+                            c.order_only = 1;
+                        }
                         if !real_cands.is_empty() && !real_cands.iter().any(|t| t == oracle_top) {
                             c.absent = 1;
                         }
+                        let (tied_input, tied_pairs) = count_ties(&session, lm);
+                        if tied_input {
+                            c.tie_inputs = 1;
+                        }
+                        c.tie_pairs = tied_pairs;
                         acc = Counts::merge(acc, c);
                     }
                     acc
@@ -349,25 +447,31 @@ fn real_tables_session_reports_parity() {
     eprintln!("  top-5-set               {top5:>6}  {top5_pct}%");
     eprintln!("  prefix-10 overlap       {prefix_overlap:>6} of {prefix_depth}  {prefix_pct}%");
     eprintln!("  absent                  {absent:>6}");
+    eprintln!("  three-key ties          {tie_pairs:>6} pairs across {tie_inputs} inputs");
+    eprintln!("  tie-swaps (order-only) {order_only:>6} inputs of the depth-10 set");
 
     assert!(
         total > 0,
         "fixture produced no candidates over the W2 corpus; cannot report parity"
     );
+    // Pinned to the real-frequency candidate construction: pooled phrase
+    // candidates under the three-key order (text length, pinyin span, real
+    // unigram count) with keep-first dedup. Measured release and debug,
+    // serial and parallel — all bit-identical.
     assert_eq!(
-        top1, 6525,
+        top1, 8735,
         "top-1 must be bit-identical to the serial baseline"
     );
     assert_eq!(
-        absent, 70,
+        absent, 166,
         "absent must be bit-identical to the serial baseline"
     );
     assert_eq!(
-        top5, 9232,
+        top5, 9827,
         "top-5-set must be bit-identical to the serial baseline"
     );
     assert_eq!(
-        prefix_overlap, 65505,
+        prefix_overlap, 89472,
         "prefix-10 overlap numerator must match"
     );
     assert_eq!(

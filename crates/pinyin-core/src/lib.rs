@@ -96,6 +96,20 @@ pub trait LanguageModel {
         token: &Self::Token,
         edge_cost: Cost,
     ) -> Result<Cost, Self::Error>;
+
+    /// The model's real unigram frequency of `token`, when the model carries
+    /// one.
+    ///
+    /// `None` means the model exposes no frequency table at all; the engine
+    /// then keeps its pre-frequency behaviour. `Some(0)` is a real table miss
+    /// — the phrase has no frequency — and ranks below every counted phrase.
+    ///
+    /// Defaulted so the frozen implementors and any third-party model keep
+    /// compiling unchanged (`docs/findings/core-trait-seam.md`: the seam grows
+    /// by defaulted methods only).
+    fn unigram_freq(&self, _token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+        Ok(None)
+    }
 }
 
 impl<L: LanguageModel + ?Sized> LanguageModel for &L {
@@ -109,6 +123,10 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
         edge_cost: Cost,
     ) -> Result<Cost, Self::Error> {
         (**self).score(history, token, edge_cost)
+    }
+
+    fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+        (**self).unigram_freq(token)
     }
 }
 

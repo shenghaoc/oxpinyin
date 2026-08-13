@@ -9,11 +9,14 @@
 //! W4-T0. Not one of them changed.
 
 use core::fmt::Display;
+use std::collections::HashSet;
 
 use pinyin_core::graph::{EdgeKind, SegmentGraph};
 use pinyin_core::kbest::{DecodedPath, k_best};
-use pinyin_core::scoring::{Scorer, ScoringConfig, key_cost_table};
-use pinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
+use pinyin_core::scoring::{Scorer, ScoringConfig, ScoringError, key_cost_table};
+use pinyin_core::{
+    Completeness, Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey,
+};
 
 use crate::candidate::{Candidate, CandidateKind, CandidateList};
 use crate::config::ConfigSource;
@@ -451,13 +454,18 @@ where
     /// Recomputes the candidate list for the current state.
     ///
     /// Parse into a graph, take the `k` best segmentations, and offer every
-    /// phrase that spells a prefix of any of them, plus the best sentence over
-    /// each whole segmentation.
+    /// phrase that spells a prefix of any of them.
     ///
     /// Candidates are collected across segmentations on purpose. The pin does
     /// the same: its list for `xian` opens with `西安` (`xi` + `an`) while its
     /// *selected* path is the single key `xian`, and its list for `fangan`
     /// mixes `方案` (`fang` + `an`) with `反感` (`fan` + `gan`).
+    ///
+    /// Under the pinned observation surface the pin emits no sentence-level
+    /// candidates at all — its `nihaoshi` list never contains `你好是`, the
+    /// best sentence the DP over the segment lattice would produce — so the
+    /// pooled phrase candidates are ranked by the three-key order and
+    /// deduplicated directly, with no sentence prepend.
     fn refresh(&mut self) -> Result<(), EngineError> {
         let remaining = self.raw[self.consumed..].to_owned();
         if remaining.is_empty() {
@@ -474,14 +482,50 @@ where
         );
         let paths = k_best(&graph, &scorer, SEGMENTATION_K).map_err(EngineError::Decode)?;
 
+        // The pinned construction only activates when the model carries the
+        // phrase index's real unigram frequencies, so collect its span set
+        // first and probe the model through the tokens it produced. When real
+        // frequencies exist, candidates rank by the pinned three-key order
+        // (text length, pinyin span, frequency) and duplicates collapse
+        // keep-first. Without them the session reproduces its pre-frequency
+        // behaviour exactly — unpinned spans, sentence candidates, cost order,
+        // adjacent dedup — so a missing model cache changes nothing.
         let mut collected: Vec<Candidate> = Vec::new();
         for path in &paths {
-            self.collect_prefix_phrases(&graph, &scorer, path, &mut collected)?;
-            self.collect_sentence(&graph, &scorer, path, &mut collected)?;
+            self.collect_prefix_phrases(&graph, &scorer, path, &mut collected, true)?;
         }
 
-        collected.sort_by_key(Candidate::cost);
-        collected.dedup_by(|left, right| left.text() == right.text());
+        if let Some(frequencies) = self.candidate_frequencies(&collected)? {
+            let mut keyed: Vec<(RankKey, Candidate)> = collected
+                .into_iter()
+                .zip(frequencies)
+                .map(|(candidate, frequency)| {
+                    let key = RankKey {
+                        phrase_length: candidate.text().chars().count(),
+                        pinyin_span: candidate.consumed_bytes(),
+                        frequency,
+                    };
+                    (key, candidate)
+                })
+                .collect();
+
+            // Stable sort, all three keys descending: an all-equal tie keeps
+            // the collection order, which is the deterministic stand-in for
+            // the pin's internal collection order.
+            keyed.sort_by_key(|(key, _)| core::cmp::Reverse(*key));
+            collected = keyed.into_iter().map(|(_, candidate)| candidate).collect();
+
+            dedup_by_text_keep_first(&mut collected);
+        } else {
+            collected.clear();
+            for path in &paths {
+                self.collect_prefix_phrases(&graph, &scorer, path, &mut collected, false)?;
+                self.collect_sentence(&graph, &scorer, path, &mut collected)?;
+            }
+            collected.sort_by_key(Candidate::cost);
+            collected.dedup_by(|left, right| left.text() == right.text());
+        }
+
         collected.truncate(MAX_CANDIDATES);
 
         if collected.is_empty() {
@@ -499,19 +543,75 @@ where
         Ok(())
     }
 
+    /// Per-candidate real unigram frequencies, or `None` when the model
+    /// carries no real frequency table at all.
+    ///
+    /// `Some(0)` marks a phrase the n-gram corpus never saw: it still sorts,
+    /// last among its equal-length, equal-span peers. Only the first `Some`
+    /// switches the construction on, so a model that mixes per-token answers
+    /// degrades deterministically (missing tokens rank as zero).
+    fn candidate_frequencies(
+        &self,
+        collected: &[Candidate],
+    ) -> Result<Option<Vec<u64>>, EngineError> {
+        let mut frequencies: Option<Vec<u64>> = None;
+        for (index, candidate) in collected.iter().enumerate() {
+            let Some(token) = candidate.token() else {
+                continue;
+            };
+            let count = self.model.unigram_freq(&token).map_err(|error| {
+                EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
+            })?;
+            if let Some(count) = count {
+                let table = frequencies.get_or_insert_with(|| vec![0; collected.len()]);
+                table[index] = count;
+            }
+        }
+        Ok(frequencies)
+    }
+
     /// Offers every phrase spelling a prefix of `path`.
+    ///
+    /// `pin_spans` selects the span policy the pinned construction measured:
+    /// absorbed initial-only keys ([`absorb_initial_keys`]) and standing ones
+    /// that expand only in the final span. The pre-frequency fallback passes
+    /// `false` and gets every span, exactly as before the construction
+    /// changed.
     fn collect_prefix_phrases(
         &self,
         graph: &SegmentGraph,
         scorer: &Scorer<'_, D, L>,
         path: &DecodedPath,
         into: &mut Vec<Candidate>,
+        pin_spans: bool,
     ) -> Result<(), EngineError> {
         let (keys, kinds, ends) = self.walk(graph, path);
+        let (keys, kinds, ends) = if pin_spans {
+            absorb_initial_keys(keys, kinds, ends)
+        } else {
+            (keys, kinds, ends)
+        };
 
         // A dictionary phrase never spans more than MAX_PHRASE_KEYS keys, so
         // looking further is both pointless and quadratic in the input.
         for length in 1..=keys.len().min(MAX_PHRASE_KEYS) {
+            if pin_spans {
+                // A standing initial-only key expands only in the final span
+                // of a path, and only when the span holds at most one of
+                // them: the pin's `chongke` list carries no `重刻` from a
+                // `chong|k` span, its `be` list does carry `匾额` from the
+                // final `b|e` span, and its `ch` list carries only single
+                // characters — no `称号`-class product from the final
+                // two-initial `c|h` span. Initial-only keys the absorb pass
+                // left in non-final spans therefore contribute nothing.
+                let partial_count = kinds[..length]
+                    .iter()
+                    .filter(|kind| **kind == EdgeKind::Incomplete)
+                    .count();
+                if partial_count > 0 && (length != keys.len() || partial_count > 1) {
+                    continue;
+                }
+            }
             let ranked = scorer
                 .rank_phrases(&self.history, &keys[..length], &kinds[..length])
                 .map_err(EngineError::Scoring)?;
@@ -531,10 +631,12 @@ where
 
     /// Offers the cheapest sequence of phrases covering the whole of `path`.
     ///
-    /// A single phrase covering everything is already offered by
-    /// [`Session::collect_prefix_phrases`]; this adds the multi-phrase
-    /// composition, which is what makes a sentence longer than one dictionary
-    /// entry possible.
+    /// Only the pre-frequency fallback uses this: when the model carries no
+    /// real unigram table the session reproduces its prior behaviour exactly,
+    /// sentence candidates included. The real-frequency construction emits
+    /// pooled phrase candidates only — the pin surfaces no sentence-level
+    /// candidates under the pinned observation (`nihaoshi` never lists
+    /// `你好是`).
     fn collect_sentence(
         &self,
         graph: &SegmentGraph,
@@ -621,6 +723,77 @@ where
         }
         (keys, kinds, ends)
     }
+}
+
+/// Absorbs an initial-only key into the key after it when the two together
+/// spell a complete syllable.
+///
+/// Measured against the pinned oracle: `nihao` parses as `ni|h|ao` at the
+/// graph level, but the pin offers no `ni|h`-span candidates — `泥孩` is in
+/// its `nih` list, not its `nihao` list — because `h`+`ao` rejoin into the
+/// complete syllable `hao`. Where no complete syllable results (`caisho`'s
+/// `sh|o`, `chua`'s `c|hua`), the initial-only key stands and later expands
+/// under the pinned span policy — `be` offers `匾额` from the final `b|e`
+/// span and `caisho` offers `财神` from `cai`+`sh*`.
+fn absorb_initial_keys(
+    mut keys: Vec<SyllableKey>,
+    mut kinds: Vec<EdgeKind>,
+    mut ends: Vec<usize>,
+) -> (Vec<SyllableKey>, Vec<EdgeKind>, Vec<usize>) {
+    let mut index = 0;
+    while index + 1 < keys.len() {
+        if kinds[index] == EdgeKind::Incomplete {
+            let mut combined = String::from(keys[index].text());
+            combined.push_str(keys[index + 1].text());
+            if let Some(key) = SyllableKey::from_text(&combined)
+                && key.completeness() == Completeness::Complete
+            {
+                keys[index] = key;
+                kinds[index] = EdgeKind::Exact;
+                ends[index] = ends[index + 1];
+                keys.remove(index + 1);
+                kinds.remove(index + 1);
+                ends.remove(index + 1);
+                continue;
+            }
+        }
+        index += 1;
+    }
+    (keys, kinds, ends)
+}
+
+/// The three sort keys of the pinned candidate construction.
+///
+/// `Ord` derives the pinned precedence: phrase length first, then pinyin
+/// span, then frequency. All comparisons run descending, so the stable sort
+/// keeps collection order exactly when all three tie.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct RankKey {
+    /// Unicode scalar count of the candidate text.
+    phrase_length: usize,
+    /// Bytes of the raw input the candidate covers.
+    pinyin_span: usize,
+    /// Real unigram count from the model's frequency table.
+    frequency: u64,
+}
+
+/// Keeps the first occurrence of every distinct candidate text, in order.
+///
+/// Full dedup rather than the adjacent-only `Vec::dedup_by`: the same text can
+/// be reached through different spans or segmentations, and after the
+/// three-key sort two copies need not be adjacent. One heap allocation per
+/// kept text; the candidate count per refresh is a few hundred at most.
+fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
+    let mut seen: HashSet<String> = HashSet::with_capacity(candidates.len());
+    candidates.retain(|candidate| {
+        let text = candidate.text();
+        if seen.contains(text) {
+            false
+        } else {
+            seen.insert(text.to_owned());
+            true
+        }
+    });
 }
 
 /// Whether the interactive key path accepts `character`.

@@ -115,7 +115,13 @@ impl Default for ScoringConfig {
             // Lower than the first provisional 2_000: less over-reward of
             // long phrases relative to the pin's first candidate.
             phrase_key_bonus: 1_000,
-            expansion_limit: 64,
+            // The pin expands spans with two standing initial-only keys: `be`
+            // offers `匾额` from `b*`+`e`, a 16 × 5 = 80-way product that the
+            // old 64 limit made yield nothing. The largest two-initial
+            // product in the frozen inventory is `l`(26) × `n`(23) = 598, so
+            // 1_024 covers every two-initial span; larger spans keep the
+            // yield-nothing bound.
+            expansion_limit: 1_024,
         }
     }
 }
