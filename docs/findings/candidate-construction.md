@@ -1,7 +1,8 @@
 # Candidate-construction SPEC (Discrepancy 2)
 
-Date: 2026-08-13 · Status: **characterisation frozen; construction contract
-NOT frozen — blocked on a capture extension (§1.6, W2-CAND).**
+Date: 2026-08-13 · Status: **characterisation frozen; W2-CAND captured and
+analysed (§7); construction contract still NOT frozen — next step is §6 step 3
+(the contract PR).**
 
 This document characterises the candidate-construction gap between our decoder
 and the pinned oracle, and it decides one thing deliberately: it does **not**
@@ -550,3 +551,137 @@ negative result alongside `f2-unigram-tiebreak-sweep.md` and
 `f3-bigram-kbest.md` — not to build a lattice that cannot move the number.
 
 STOP and report rather than inventing evidence.
+
+## 7. W2-CAND: the captured data and the §1.4.3 answer
+
+Date: 2026-08-13 · Status: **captured and analysed. §1.4.3 answered for the W2
+corpus; the token-count sub-question stays open, unreachable from the public
+API.** This section records step 2 of §6; it does not freeze a construction
+contract (step 3), which remains a later PR.
+
+### 7.1 What was captured
+
+`fixtures/w4/oracle-candidate-structure.txt`, produced by
+`cargo run -p pinyin-oracle --features oracle-ffi --bin oracle-candidate-structure`
+over the pinned oracle (`Session::observe_candidate_infos`, the same
+`pinyin_guess_candidates(_, 0, 0x1e)` stage as `oracle-candidates.txt`). Wall
+clock: **3.6 s** for the whole corpus — the observe path is fast; the "~3h"
+note on the older freshness test is not representative of a single capture pass.
+
+Provenance matches the sister fixture exactly: `total_inputs=10465 (distinct
+10312)`, `total_triples=97442 (distinct inputs with candidates 10037)`. The
+portable test `structure_fixture_matches_sister_triples`
+(`crates/pinyin-oracle/tests/candidate_structure.rs`) asserts the two files'
+`(input, rank, candidate_text)` columns are byte-identical, so the type /
+n-best columns are read against the *same* candidates the pinned metrics use.
+
+### 7.2 A capture constraint discovered at runtime
+
+`pinyin_get_candidate_nbest_index` **asserts** its candidate is an
+`NBEST_MATCH_CANDIDATE` and `abort()`s otherwise. Observed directly, not read
+from source:
+
+```text
+pinyin.cpp:2881: bool pinyin_get_candidate_nbest_index(...):
+  Assertion `NBEST_MATCH_CANDIDATE == candidate->m_candidate_type' failed.
+```
+
+This is the same uncatchable-`abort()` class as
+`docs/findings/oracle-apostrophe-abort.md` (F-E-14), and it is handled the same
+way: a guard derived from the *observed* abort, not from upstream layout. The
+capture calls the accessor **only** for `NBEST_MATCH_CANDIDATE`; for every other
+type the n-best index is absent and written `-`. So `nbest_index` is present iff
+the type is `NBEST_MATCH_CANDIDATE`. Refining §1.6's "record
+`pinyin_get_candidate_nbest_index` → the n-best index": the field is defined only
+for n-best candidates, and the frozen `type` column already tells you which
+those are.
+
+### 7.3 The distribution (worked from the fixture)
+
+Over all 97,442 triples and all 10,037 rank-1 rows, **every candidate is
+`NORMAL_CANDIDATE`**. The `type` column has exactly one distinct value across
+the file, and the `nbest_index` column has exactly one distinct value (`-`).
+There are **zero** `NBEST_MATCH_CANDIDATE`, and none of `ZOMBIE` / `ADDON` /
+`LONGER` / any `PREDICTED_*` either.
+
+| Slice | `NORMAL_CANDIDATE` | `NBEST_MATCH_CANDIDATE` | other types | rows with `nbest_index` ≠ `-` |
+|---|---:|---:|---:|---:|
+| all triples | 97,442 (100%) | 0 | 0 | 0 |
+| rank-1 only | 10,037 (100%) | 0 | 0 | 0 |
+
+Verbatim, the cross-segmentation cases §1.2–§1.3 turn on — both segmentations,
+every rank, are `NORMAL`:
+
+```text
+xian	1	西安	NORMAL_CANDIDATE	-
+xian	4	县	NORMAL_CANDIDATE	-
+fangan	1	方案	NORMAL_CANDIDATE	-
+fangan	2	反感	NORMAL_CANDIDATE	-
+```
+
+The coverage cases §1.2 cites, including the 3-syllable `中国人`:
+
+```text
+nihao	1	你好	NORMAL_CANDIDATE	-
+zhongguoren	1	中国人	NORMAL_CANDIDATE	-
+zhongguoren	2	中国	NORMAL_CANDIDATE	-
+```
+
+Even the longest corpus input (eight apostrophe-separated syllable groups) is
+`NORMAL` at every rank:
+
+```text
+bengqiu'nangcha'gongwei'mianduan'meiban'nengna'dangdong'sheng	1	崩	NORMAL_CANDIDATE	-
+```
+
+### 7.4 The §1.4.3 answer
+
+The §1.4.3 discriminator was `NORMAL_CANDIDATE` (a phrase-lookup candidate) vs
+`NBEST_MATCH_CANDIDATE` (a sentence-decode candidate). Over the W2 corpus it
+resolves **entirely to `NORMAL`**:
+
+1. **Type across the corpus, and at rank-1.** 100% `NORMAL_CANDIDATE` (§7.3).
+   The oracle's candidate list, under the frozen `0x18a` flags and the `0x1e`
+   sort — which does **not** set `SORT_WITHOUT_SENTENCE_CANDIDATE`, so n-best
+   candidates are *not* being suppressed — contains no sentence-decode candidate
+   anywhere in this corpus.
+2. **n-best index at rank-1.** No rank-1 (indeed no candidate at any rank)
+   carries an n-best index; all are `-`. The question "is rank-1 systematically
+   `nbest_index == 0`" is therefore **moot**: no candidate is an n-best
+   candidate, so the index never exists. That absence *is* the answer.
+3. **Bearing on the construction hypothesis.** The oracle's rank-1 is never a
+   bigram-linked n-best *sentence* candidate over this corpus; it is always a
+   phrase-lookup candidate. This is the evidence §1.4.3 was after: it removes
+   the "n-best sentence candidate" explanation for the near-miss residual and
+   points the residual at the ranking of phrase-lookup candidates — unigram
+   phrase-cost / coverage calibration — consistent with the negative results in
+   `f2-unigram-tiebreak-sweep.md` and `f3-bigram-kbest.md`. For Stage-1 parity
+   against this pinned fixture no sentence-level lever is needed; whether the
+   oracle's production configuration (which does run the sentence pass) would
+   emit `NBEST_MATCH` candidates is a separate question this capture does not
+   settle.
+
+### 7.5 What this capture cannot determine (open sub-questions)
+
+Per §1.6, the public API yields no segmentation, no token sequence, no offsets,
+and no score, so:
+
+- **`NORMAL` is not "exactly one dictionary phrase."** The type says a candidate
+  is a phrase-lookup candidate, not that it decomposes into a single token. `中
+  国人` at `zhongguoren` rank-1 is `NORMAL`, but whether it is one 3-syllable
+  dictionary phrase or a shorter phrase plus a continuation is **not**
+  determinable from the type; it would need the token decomposition, which
+  `lookup_candidate_t` does not expose. The half of §1.4.3 that asks "single
+  phrase vs bigram-linked two-phrase sentence" is answered only in the
+  **negative** (not an n-best sentence candidate); the **positive** half (one
+  token vs several) stays open.
+- **Segmentation and consumed length remain unknowable** from this capture, so
+  §1.4.1 starvation stays an *absent-bucket* question answered from existing
+  fixtures (§1.6), not from W2-CAND.
+- **Scope.** All of §7 is scoped to `fixtures/w4/oracle-candidate-structure.txt`
+  (the W2 parity corpus, 10,465 inputs) under flags `0x18a` / sort `0x1e`. It
+  does not claim the oracle never emits `NBEST_MATCH` on other inputs or
+  profiles; it claims none appears here.
+
+These open sub-questions are for the construction-contract PR (§6 step 3), not
+this one. STOP and report rather than inventing evidence.

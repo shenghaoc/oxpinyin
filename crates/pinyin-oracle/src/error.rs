@@ -85,6 +85,12 @@ pub enum OracleError {
         /// Name of the C function that produced the bytes.
         function: &'static str,
     },
+    /// `pinyin_get_candidate_type` returned a value outside the eight the pinned
+    /// header declares for `lookup_candidate_type_t`.
+    UnknownCandidateType {
+        /// Raw discriminant the oracle reported.
+        value: i32,
+    },
     /// The oracle reported a parsed prefix longer than the input it was given.
     ParsedLengthOutOfRange {
         /// Length the oracle reported.
@@ -173,6 +179,10 @@ impl fmt::Display for OracleError {
                 "flag word {flags:#010x} sets DYNAMIC_ADJUST, which the parity protocol rejects"
             ),
             Self::Call { function } => write!(formatter, "{function} reported failure"),
+            Self::UnknownCandidateType { value } => write!(
+                formatter,
+                "pinyin_get_candidate_type reported unknown lookup_candidate_type_t value {value}"
+            ),
             Self::NonUtf8 { function } => {
                 write!(formatter, "{function} returned a non-UTF-8 string")
             }
