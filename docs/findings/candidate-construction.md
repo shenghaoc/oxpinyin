@@ -18,6 +18,7 @@ residual characterisation, the narrow invariants the fixtures prove, and the
 frozen contract §8 records.
 
 Baselines and neighbours: `docs/findings/parity-climb-residual.md`,
+`docs/findings/residual-after-construction-freeze.md`,
 `docs/findings/f3-bigram-kbest.md`, `docs/findings/f2-unigram-tiebreak-sweep.md`,
 `docs/findings/scoring-spec.md`, `docs/findings/segment-graph.md`,
 `docs/findings/kbest-search.md`, `docs/findings/session-api.md`.
@@ -565,10 +566,17 @@ Out of scope for this SPEC and any construction change it gates:
 3. **Freeze** — extend this SPEC with the frozen construction contract. **Done
    (§8):** the contract freezes the *absence* of a construction change for the
    current residual; Strategy A and Strategy B are both **not selected**.
-4. **Implement** — only from the frozen document, and only after a *different*
-   future decision: either a calibration change to phrase unigram costs /
-   coverage (not a construction change, and therefore outside this SPEC's §4
-   gates), or a re-opened Strategy A / B gated on the conditions in §8.
+4. **Calibrate** — the residual characterisation that names the levers is
+   `docs/findings/residual-after-construction-freeze.md` (post-§8 measurement:
+   3,665 post-F1 misses = rank 2–5 2,707 / rank 6–9 337 / rank 10+ 551 /
+   absent 70; the near-miss bucket is 92% same-length inversions, and §8
+   there lists the constants-only experiments legal under this contract).
+   Any calibration change to phrase unigram costs / coverage is not a
+   construction change and is therefore outside this SPEC's §4 construction
+   gates, but it is still measured through `real_tables_integration` +
+   `parity-worst` before any pin is re-pinned (the residual finding's §8).
+   A re-opened Strategy A / B remains gated on the conditions in §8 only;
+   this step reopens neither strategy and writes no lattice or two-pass code.
 
 No agent writes lattice or two-pass code without re-opening §8 first. Step 2
 showed the residual is dominated by unigram calibration rather than construction
