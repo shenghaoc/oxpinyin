@@ -66,6 +66,7 @@ pub extern "C" fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
         inst.session.reset();
+        inst.candidates.clear();
         true
     })
 }

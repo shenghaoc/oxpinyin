@@ -89,6 +89,9 @@ pub(crate) struct CapiCandidate {
     pub(crate) text: CString,
     pub(crate) kind: CandidateKind,
     pub(crate) nbest_index: u8,
+    /// Bytes of raw input this candidate consumed, snapshotted at guess time
+    /// so `pinyin_choose_candidate` can report the new cursor position.
+    pub(crate) consumed_bytes: usize,
 }
 
 /// State behind `pinyin_instance_t *`.
@@ -174,8 +177,8 @@ pub(crate) fn box_instance(inst: CapiInstance) -> *mut PinyinInstance {
 ///
 /// `ptr` must be non-null and point into an active `CapiInstance::candidates`
 /// vec (produced by [`candidate_ptr`]).
-pub(crate) unsafe fn candidate_ref(ptr: *mut LookupCandidate) -> &'static CapiCandidate {
-    // SAFETY: Caller guarantees the pointer is valid.
+pub(crate) unsafe fn candidate_ref<'a>(ptr: *mut LookupCandidate) -> &'a CapiCandidate {
+    // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
     unsafe { &*(ptr.cast::<CapiCandidate>()) }
 }
 

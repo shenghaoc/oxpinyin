@@ -5,7 +5,7 @@ use std::os::raw::c_int;
 use pinyin_engine::CandidateKind;
 
 use crate::ffi::ffi_catch;
-use crate::state::{candidate_ptr, candidate_ref, instance_mut, instance_ref};
+use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
 use crate::types::{GChar, GUint, LookupCandidate, PinyinInstance, lookup_candidate_type_t};
 
 /// Get the number of candidates.
@@ -234,8 +234,8 @@ pub extern "C" fn pinyin_remove_user_candidate(
 /// ```
 ///
 /// Returns -1 on failure (consistent with the `int` return type).
-/// Provisional: computes candidate index from the pointer offset into the
-/// instance's candidate vec and calls `Session::select`.
+/// Provisional: resolves the candidate by pointer identity over the
+/// instance's snapshot and calls `Session::select`.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_choose_candidate(
     instance: *mut PinyinInstance,
@@ -249,27 +249,17 @@ pub extern "C" fn pinyin_choose_candidate(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
-        if inst.candidates.is_empty() {
+        // Identify the candidate by pointer equality over the current
+        // snapshot. `offset_from` would be UB unless `candidate` points
+        // into `inst.candidates`, which cannot be assumed across C calls.
+        let Some(index) = inst
+            .candidates
+            .iter()
+            .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
+        else {
             return -1;
-        }
-        let base = inst.candidates.as_ptr();
-        // SAFETY: `candidate` was produced by `pinyin_get_candidate` and
-        // points into `inst.candidates`.
-        let index = unsafe {
-            candidate
-                .cast::<crate::state::CapiCandidate>()
-                .offset_from(base)
         };
-        if index < 0 || index as usize >= inst.candidates.len() {
-            return -1;
-        }
-        let index = index as usize;
-        let consumed_bytes = inst
-            .session
-            .candidates()
-            .get(index)
-            .map(|c| c.consumed_bytes())
-            .unwrap_or(0);
+        let consumed_bytes = inst.candidates[index].consumed_bytes;
         match inst.session.select(index) {
             Ok(_) => (offset + consumed_bytes) as c_int,
             Err(_) => -1,
