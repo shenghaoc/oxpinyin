@@ -3,6 +3,8 @@
 use std::os::raw::c_char;
 use std::ptr;
 
+use crate::ffi::{cstr_to_string, ffi_catch};
+use crate::state::{CapiContext, box_context};
 use crate::types::PinyinContext;
 
 /// Create a new pinyin context.
@@ -15,11 +17,16 @@ use crate::types::PinyinContext;
 /// Returns NULL on failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_init(
-    _systemdir: *const c_char,
-    _userdir: *const c_char,
+    systemdir: *const c_char,
+    userdir: *const c_char,
 ) -> *mut PinyinContext {
-    // STUB: T2 will wire to real Session construction.
-    ptr::null_mut()
+    ffi_catch(ptr::null_mut(), || {
+        // SAFETY: Both pointers are C strings from the caller (null OK).
+        let system_dir = unsafe { cstr_to_string(systemdir) };
+        let user_dir = unsafe { cstr_to_string(userdir) };
+        let ctx = CapiContext::new(&system_dir, &user_dir);
+        box_context(ctx)
+    })
 }
 
 /// Finalize and free a pinyin context.
@@ -33,14 +40,13 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     if context.is_null() {
         return;
     }
-    // SAFETY: `context` is non-null (guarded above). `pinyin_init` currently
-    // always returns NULL (T1 stub), so this branch is unreachable until T2
-    // makes the constructor return `Box::into_raw(..)`. At that point the
-    // caller transfers ownership back here and only here, so reconstructing
-    // and dropping the Box is sound.
-    unsafe {
-        drop(Box::from_raw(context));
-    }
+    ffi_catch((), || {
+        // SAFETY: `context` was created by `pinyin_init` via `box_context`
+        // (= `Box::into_raw`). The caller transfers ownership back.
+        unsafe {
+            drop(Box::from_raw(context.cast::<CapiContext>()));
+        }
+    });
 }
 
 /// Save user data.
@@ -54,6 +60,9 @@ pub extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
     if context.is_null() {
         return false;
     }
-    // STUB: T4 will implement periodic save.
-    false
+    ffi_catch(false, || {
+        // STUB: T4 will implement periodic save.
+        let _ctx = unsafe { crate::state::context_ref(context) };
+        true
+    })
 }

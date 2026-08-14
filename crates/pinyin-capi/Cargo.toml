@@ -19,3 +19,5 @@ missing_docs = "warn"
 all = { level = "deny", priority = -1 }
 
 [dependencies]
+pinyin-core.workspace = true
+pinyin-engine.workspace = true
