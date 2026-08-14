@@ -22,7 +22,7 @@ cargo test --locked --workspace
 
 | Path | What |
 |---|---|
-| `crates/*` | Eight-crate workspace (stubs today) |
+| `crates/*` | Nine-crate workspace (stubs today) |
 | `ROADMAP.md` | Stages, pin, workstream names |
 | `AGENTS.md` | Agent/collaborator contract |
 | `docs/findings/` | Pin, ABI, schema, SPEC inputs |

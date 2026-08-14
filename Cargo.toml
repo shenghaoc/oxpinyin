@@ -9,6 +9,7 @@ members = [
   "crates/pinyin-oracle",
   "crates/pinyin-dictool",
   "crates/pinyin-migrate",
+  "crates/pinyin-segment",
 ]
 
 [workspace.package]

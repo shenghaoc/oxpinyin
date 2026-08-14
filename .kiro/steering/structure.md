@@ -13,6 +13,7 @@ inclusion: always
 | pinyin-oracle | differential harness vs pinned libpinyin | allow | Linux | never |
 | pinyin-dictool | conversions; standalone vocab exporter | deny | yes | yes |
 | pinyin-migrate | settings + vocab import; FFI fallback | allow | Linux | yes |
+| pinyin-segment | training segmenter (`ngseg` reproduction) | deny | yes | never |
 
 **Portability seam:** `pinyin-engine`'s session API is framework-neutral —
 abstract `KeyInput`, preedit spans + style enum, candidate iteration;
