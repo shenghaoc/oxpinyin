@@ -25,5 +25,8 @@ rustc-ice-*.txt
 /.kiro/settings/cli.json
 /.kiro/settings/lsp.json
 
+# Bisection harness compiled binary
+/tools/bisection/bisect
+
 # macOS
 .DS_Store
