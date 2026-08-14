@@ -8,57 +8,39 @@ use std::os::raw::{c_char, c_int, c_uint};
 
 // ── Opaque handle types ──────────────────────────────────────────────
 //
-// Each crosses the FFI boundary as `*mut T`.
-// Constructor: `Box::into_raw(Box::new(..))`.
-// Destructor:  `drop(unsafe { Box::from_raw(ptr) })`.
+// Each crosses the FFI boundary as `*mut T` only — never by value and never
+// dereferenced on the Rust side. The concrete backing allocation is the
+// crate-private `CapiContext`/`CapiInstance` (see `context.rs`/`instance.rs`):
+// constructors `Box::into_raw` those and cast to these marker types; the
+// matching destructor casts back and `Box::from_raw`s.
+//
+// These are declared as unit structs (no `#[repr(C)]`, no fields) so cbindgen
+// emits `pinyin.h`-style *incomplete* handles (`typedef struct pinyin_context_t
+// pinyin_context_t;`) rather than a complete `[u8; 0]` body.
 
 /// Opaque pinyin context (one per input mode).
-#[repr(C)]
-pub struct PinyinContext {
-    _opaque: [u8; 0],
-}
+pub struct PinyinContext;
 
 /// Opaque pinyin instance (one per active editor).
-#[repr(C)]
-pub struct PinyinInstance {
-    _opaque: [u8; 0],
-}
+pub struct PinyinInstance;
 
 /// Opaque lookup candidate (instance-borrowed, transient).
-#[repr(C)]
-pub struct LookupCandidate {
-    _opaque: [u8; 0],
-}
+pub struct LookupCandidate;
 
 /// Opaque chewing key.
-#[repr(C)]
-pub struct ChewingKey {
-    _opaque: [u8; 0],
-}
+pub struct ChewingKey;
 
 /// Opaque chewing key rest (position span).
-#[repr(C)]
-pub struct ChewingKeyRest {
-    _opaque: [u8; 0],
-}
+pub struct ChewingKeyRest;
 
 /// Opaque import iterator.
-#[repr(C)]
-pub struct ImportIterator {
-    _opaque: [u8; 0],
-}
+pub struct ImportIterator;
 
 /// Opaque export iterator.
-#[repr(C)]
-pub struct ExportIterator {
-    _opaque: [u8; 0],
-}
+pub struct ExportIterator;
 
 /// Opaque bigram export iterator.
-#[repr(C)]
-pub struct BigramExportIterator {
-    _opaque: [u8; 0],
-}
+pub struct BigramExportIterator;
 
 // ── Enums ────────────────────────────────────────────────────────────
 
@@ -103,45 +85,59 @@ pub enum sort_option_t {
 }
 
 /// `DoublePinyinScheme` from `pinyin_custom2.h`.
+///
+/// FFI parameters carrying a scheme take `c_int`, not this enum: callers
+/// may pass any `int`, and forming a `#[repr(C)]` enum from a discriminant
+/// that is not a variant is UB. This enum exists only so cbindgen emits the
+/// named constants and values.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
 pub enum DoublePinyinScheme {
     /// Ziran码 scheme.
-    Zrm = 1,
+    DOUBLE_PINYIN_ZRM = 1,
     /// Microsoft scheme.
-    Ms = 2,
+    DOUBLE_PINYIN_MS = 2,
     /// Ziguang scheme.
-    Ziguang = 3,
+    DOUBLE_PINYIN_ZIGUANG = 3,
     /// ABC scheme.
-    Abc = 4,
+    DOUBLE_PINYIN_ABC = 4,
     /// PYJJ scheme.
-    Pyjj = 5,
+    DOUBLE_PINYIN_PYJJ = 5,
     /// Xiaohe scheme.
-    Xhe = 6,
+    DOUBLE_PINYIN_XHE = 6,
+    /// User's keyboard.
+    DOUBLE_PINYIN_CUSTOMIZED = 30,
 }
 
 /// `ZhuyinScheme` from `pinyin_custom2.h`.
+///
+/// FFI parameters carrying a scheme take `c_int`, not this enum: callers
+/// may pass any `int`, and forming a `#[repr(C)]` enum from a discriminant
+/// that is not a variant is UB. This enum exists only so cbindgen emits the
+/// named constants and values.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
 pub enum ZhuyinScheme {
     /// Standard layout.
-    Standard = 1,
+    ZHUYIN_STANDARD = 1,
     /// Hsu layout.
-    Hsu = 2,
+    ZHUYIN_HSU = 2,
     /// IBM layout.
-    Ibm = 3,
+    ZHUYIN_IBM = 3,
     /// GinYieh layout.
-    Ginyieh = 4,
+    ZHUYIN_GINYIEH = 4,
     /// Eten layout.
-    Eten = 5,
+    ZHUYIN_ETEN = 5,
     /// Eten26 layout.
-    Eten26 = 6,
+    ZHUYIN_ETEN26 = 6,
     /// Standard Dvorak layout.
-    StandardDvorak = 7,
+    ZHUYIN_STANDARD_DVORAK = 7,
     /// Hsu Dvorak layout.
-    HsuDvorak = 8,
+    ZHUYIN_HSU_DVORAK = 8,
     /// Dachen CP26 layout.
-    DachenCp26 = 9,
+    ZHUYIN_DACHEN_CP26 = 9,
 }
 
 // ── Type aliases matching glib/pinyin.h scalar types ─────────────────

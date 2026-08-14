@@ -66,8 +66,11 @@ pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
     if iter.is_null() {
         return;
     }
-    // SAFETY: `iter` was created by `pinyin_begin_add_phrases` via
-    // `Box::into_raw`. The caller transfers ownership back.
+    // SAFETY: `iter` is non-null (guarded above). `pinyin_begin_add_phrases`
+    // currently always returns NULL (T1 stub), so this branch is unreachable
+    // until T4 makes the constructor return `Box::into_raw(..)`. At that point
+    // the caller transfers ownership back here and only here, so reconstructing
+    // and dropping the Box is sound.
     unsafe {
         drop(Box::from_raw(iter));
     }
@@ -165,8 +168,11 @@ pub extern "C" fn pinyin_end_get_phrases(iter: *mut ExportIterator) {
     if iter.is_null() {
         return;
     }
-    // SAFETY: `iter` was created by `pinyin_begin_get_phrases` via
-    // `Box::into_raw`. The caller transfers ownership back.
+    // SAFETY: `iter` is non-null (guarded above). `pinyin_begin_get_phrases`
+    // currently always returns NULL (T1 stub), so this branch is unreachable
+    // until T4 makes the constructor return `Box::into_raw(..)`. At that point
+    // the caller transfers ownership back here and only here, so reconstructing
+    // and dropping the Box is sound.
     unsafe {
         drop(Box::from_raw(iter));
     }
@@ -263,8 +269,11 @@ pub extern "C" fn pinyin_end_get_bigram_phrases(iter: *mut BigramExportIterator)
     if iter.is_null() {
         return;
     }
-    // SAFETY: `iter` was created by `pinyin_begin_get_bigram_phrases` via
-    // `Box::into_raw`. The caller transfers ownership back.
+    // SAFETY: `iter` is non-null (guarded above). `pinyin_begin_get_bigram_phrases`
+    // currently always returns NULL (T1 stub), so this branch is unreachable
+    // until T4 makes the constructor return `Box::into_raw(..)`. At that point
+    // the caller transfers ownership back here and only here, so reconstructing
+    // and dropping the Box is sound.
     unsafe {
         drop(Box::from_raw(iter));
     }

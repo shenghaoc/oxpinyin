@@ -1,5 +1,10 @@
 # cbindgen configuration for pinyin-capi.
 # Generates a C header matching libpinyin's pinyin.h ABI.
+#
+# The generated header is checked in at crates/pinyin-capi/pinyin.h.
+# Regenerate it after changing any exported signature/enum/alias with:
+#   cbindgen --config cbindgen.toml --crate pinyin-capi . > pinyin.h
+# (run from crates/pinyin-capi).
 
 language = "C"
 include_guard = "PINYIN_CAPI_H"
@@ -38,11 +43,9 @@ include = [
 "ImportIterator" = "import_iterator_t"
 "ExportIterator" = "export_iterator_t"
 "BigramExportIterator" = "bigram_export_iterator_t"
-
-# Type aliases for glib scalar types.
-[export.body]
-"PinyinOptionT" = ""
-"PhraseTokenT" = ""
-"GUint" = ""
-"GInt" = ""
-"GChar" = ""
+# GLib scalar aliases, spelled as the catalogue / pinyin.h does.
+"PinyinOptionT" = "pinyin_option_t"
+"PhraseTokenT" = "phrase_token_t"
+"GUint" = "guint"
+"GInt" = "gint"
+"GChar" = "gchar"
