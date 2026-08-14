@@ -11,10 +11,12 @@
 
 pub mod content;
 pub mod dict;
+pub mod interp;
 pub mod lm;
 pub mod table;
 
 pub use content::{ContentTable, LoadError, Record, TokenPair};
 pub use dict::{DictError, SystemDictionary};
+pub use interp::{InterpolationError, UnigramTable, parse_interpolation2};
 pub use lm::{BigramLanguageModel, LmError};
 pub use table::{LookupTable, TableError};

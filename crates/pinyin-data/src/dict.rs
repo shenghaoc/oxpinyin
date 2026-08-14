@@ -12,7 +12,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
-use pinyin_core::{Dictionary, PhraseEntry, PhraseToken, SyllableKey};
+use pinyin_core::{
+    Completeness, Dictionary, INCOMPLETE_PINYIN_KEYS, PhraseEntry, PhraseToken, SyllableKey,
+};
 
 use crate::table::{LookupTable, TableError};
 
@@ -57,6 +59,13 @@ pub struct SystemDictionary {
     /// Aggregated phrase frequencies across all pinyin keys, for unigram LM.
     unigrams: BTreeMap<u32, u64>,
     unigram_total: u64,
+    /// Every pinyin-index key, sorted: the `SEARCH_CONTINUED` prefix probe
+    /// binary-searches this.
+    pinyin_keys: Box<[String]>,
+    /// Every pinyin-index key projected to its initial sequence, sorted:
+    /// the probe the pin uses when the searched sequence holds an
+    /// initial-only key. Vowel-initial syllables project to a `0` sentinel.
+    initial_keys: Box<[String]>,
 }
 
 impl SystemDictionary {
@@ -65,11 +74,14 @@ impl SystemDictionary {
         let pinyin_index = LookupTable::open(pinyin_index_path)?;
         let phrase_index = LookupTable::open(phrase_index_path)?;
         let (unigrams, unigram_total) = build_unigram_map(&pinyin_index)?;
+        let (pinyin_keys, initial_keys) = build_prefix_tables(&pinyin_index)?;
         Ok(Self {
             pinyin_index,
             phrase_index,
             unigrams,
             unigram_total,
+            pinyin_keys,
+            initial_keys,
         })
     }
 
@@ -107,6 +119,23 @@ impl SystemDictionary {
         }
         key
     }
+
+    /// Projects a sequence to the initial form the pin's incomplete-index
+    /// probe uses: a complete key contributes its initial, an initial-only
+    /// key its own spelling, joined by `'` with `0` for vowel-initial keys.
+    fn initial_key(syllables: &[SyllableKey]) -> String {
+        let mut key = String::new();
+        for (position, syllable) in syllables.iter().enumerate() {
+            if position > 0 {
+                key.push('\'');
+            }
+            match syllable_initial(syllable.text()) {
+                Some(initial) => key.push_str(initial),
+                None => key.push('0'),
+            }
+        }
+        key
+    }
 }
 
 impl Dictionary for SystemDictionary {
@@ -138,6 +167,83 @@ impl Dictionary for SystemDictionary {
         }
         Ok(entries)
     }
+
+    fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
+        if syllables.is_empty() {
+            return Ok(true);
+        }
+        if syllables
+            .iter()
+            .any(|key| key.completeness() == Completeness::Partial)
+        {
+            Ok(prefix_probe(
+                &self.initial_keys,
+                &Self::initial_key(syllables),
+            ))
+        } else {
+            Ok(prefix_probe(&self.pinyin_keys, &Self::index_key(syllables)))
+        }
+    }
+}
+
+/// The `SEARCH_CONTINUED` probe over a sorted key list: does any stored key
+/// equal `joined`, or extend it at a syllable boundary (`joined` + `'`)?
+fn prefix_probe(sorted: &[String], joined: &str) -> bool {
+    match sorted.binary_search_by(|candidate| candidate.as_str().cmp(joined)) {
+        Ok(_) => true,
+        Err(index) => {
+            sorted
+                .get(index)
+                .is_some_and(|candidate| candidate.starts_with(joined))
+                && sorted[index].as_bytes().get(joined.len()) == Some(&b'\'')
+        }
+    }
+}
+
+/// The initial of a syllable spelling: the longest initial-only key that is
+/// a prefix of it, or `None` for a vowel-initial syllable.
+fn syllable_initial(text: &str) -> Option<&'static str> {
+    INCOMPLETE_PINYIN_KEYS
+        .iter()
+        .filter(|key| text.starts_with(**key))
+        .max_by_key(|key| key.len())
+        .copied()
+}
+
+/// The two sorted key lists the prefix probes binary-search: every
+/// pinyin-index key, and every key projected to its initial sequence.
+type PrefixTables = (Box<[String]>, Box<[String]>);
+
+/// Builds the two sorted key lists the prefix probes binary-search.
+fn build_prefix_tables(index: &LookupTable) -> Result<PrefixTables, DictError> {
+    let mut pinyin_keys: Vec<String> = Vec::new();
+    let mut initial_keys: Vec<String> = Vec::new();
+
+    for (key, _value) in index.iter()? {
+        let pinyin = String::from_utf8(key)
+            .map_err(|_| DictError::Parse("pinyin index key is not UTF-8".to_owned()))?;
+        let mut initial = String::new();
+        for (position, syllable) in pinyin.split('\'').enumerate() {
+            if position > 0 {
+                initial.push('\'');
+            }
+            match syllable_initial(syllable) {
+                Some(prefix) => initial.push_str(prefix),
+                None => initial.push('0'),
+            }
+        }
+        pinyin_keys.push(pinyin);
+        initial_keys.push(initial);
+    }
+
+    pinyin_keys.sort_unstable();
+    pinyin_keys.dedup();
+    initial_keys.sort_unstable();
+    initial_keys.dedup();
+    Ok((
+        pinyin_keys.into_boxed_slice(),
+        initial_keys.into_boxed_slice(),
+    ))
 }
 
 /// Parses an index value as `{token: u32 LE, freq: u32 LE}` records.

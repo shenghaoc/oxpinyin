@@ -43,6 +43,26 @@ pub trait Dictionary {
 
     /// Looks up entries matching `syllables`.
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error>;
+
+    /// Whether a stored phrase's pinyin can extend `syllables`.
+    ///
+    /// This is libpinyin's `SEARCH_CONTINUED` probe: the phrase index reports
+    /// the bit when the key sequence is a prefix of some stored phrase's
+    /// pinyin, which is what lets the candidate window scan stop widening.
+    /// When `syllables` contains an initial-only key the probe runs on the
+    /// initial sequence instead — the index the pin uses for incomplete
+    /// spellings — where a complete key contributes its own initial and an
+    /// initial-only key stands for every syllable that shares it.
+    ///
+    /// Defaulted to `true` so the frozen implementors keep compiling: always
+    /// continuing the scan yields the same candidate set (the probe only
+    /// stops windows that would return nothing), at the cost of searching
+    /// every window to the end of the input
+    /// (`docs/findings/core-trait-seam.md`: the seam grows by defaulted
+    /// methods only).
+    fn phrase_prefix_exists(&self, _syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
 }
 
 impl<D: Dictionary + ?Sized> Dictionary for &D {
@@ -52,6 +72,10 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
 
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
         (**self).lookup(syllables)
+    }
+
+    fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
+        (**self).phrase_prefix_exists(syllables)
     }
 }
 
@@ -96,6 +120,20 @@ pub trait LanguageModel {
         token: &Self::Token,
         edge_cost: Cost,
     ) -> Result<Cost, Self::Error>;
+
+    /// The model's real unigram frequency of `token`, when the model carries
+    /// one.
+    ///
+    /// `None` means the model exposes no frequency table at all; the engine
+    /// then keeps its pre-frequency behaviour. `Some(0)` is a real table miss
+    /// — the phrase has no frequency — and ranks below every counted phrase.
+    ///
+    /// Defaulted so the frozen implementors and any third-party model keep
+    /// compiling unchanged (`docs/findings/core-trait-seam.md`: the seam grows
+    /// by defaulted methods only).
+    fn unigram_freq(&self, _token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+        Ok(None)
+    }
 }
 
 impl<L: LanguageModel + ?Sized> LanguageModel for &L {
@@ -109,6 +147,10 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
         edge_cost: Cost,
     ) -> Result<Cost, Self::Error> {
         (**self).score(history, token, edge_cost)
+    }
+
+    fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+        (**self).unigram_freq(token)
     }
 }
 
