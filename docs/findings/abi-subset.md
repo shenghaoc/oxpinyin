@@ -17,7 +17,10 @@ Date: 2026-08-14 · Source tier: Manual source read; human freeze pending.
 
 1. Cloned both repos at their pinned tags.
 2. Read every `.cc` file under `ibus-libpinyin/src/` and extracted unique
-   `pinyin_*` call-site identifiers from live (non-`#if 0`) code.
+   `pinyin_*` call-site identifiers from live (non-`#if 0`) code. (Correction:
+   the first pass included some `#if 0` dead-code hits — chiefly the
+   `PYPPhoneticEditor.cc:467–514` `selectCandidate`/`selectCandidateInPage`
+   block — which §1 drops; see the note after §1l.)
 3. Intersected against the 79 declared exports in `libpinyin.ver`.
 4. Per-symbol signatures copied from `pinyin.h`; ownership inferred from
    header declarations, consumer usage (free patterns), and doc comments.
@@ -41,7 +44,7 @@ The corrected count: **50 live symbols**.
 
 | Symbol | Call sites |
 |--------|-----------|
-| `pinyin_init` | `PYLibPinyin.cc:186` |
+| `pinyin_init` | `PYLibPinyin.cc:69,127` |
 | `pinyin_fini` | `PYLibPinyin.cc:224` |
 | `pinyin_alloc_instance` | `PYLibPinyin.cc:234,258` |
 | `pinyin_free_instance` | `PYLibPinyin.cc:281,296` |
@@ -69,7 +72,7 @@ The corrected count: **50 live symbols**.
 
 | Symbol | Call sites |
 |--------|-----------|
-| `pinyin_guess_sentence` | `PYPFullPinyinEditor.cc:39`, `PYPDoublePinyinEditor.cc:39`, `PYPBopomofoEditor.cc:306,312`, `PYPPhoneticEditor.cc:497` |
+| `pinyin_guess_sentence` | `PYPFullPinyinEditor.cc:39`, `PYPDoublePinyinEditor.cc:39`, `PYPBopomofoEditor.cc:306,312` |
 | `pinyin_guess_candidates` | `PYPPhoneticEditor.cc:386` |
 | `pinyin_guess_predicted_candidates_with_punctuations` | `PYPSuggestionEditor.cc:277` |
 | `pinyin_reset` | `PYPPhoneticEditor.cc:380` |
@@ -79,10 +82,10 @@ The corrected count: **50 live symbols**.
 | Symbol | Call sites |
 |--------|-----------|
 | `pinyin_get_n_candidate` | `PYPPhoneticEditor.cc:392`, `PYPPinyinEditor.cc:252`, `PYPBopomofoEditor.cc:358`, `PYPSuggestionCandidates.cc:34`, `PYPLibPinyinCandidates.cc:80` |
-| `pinyin_get_candidate` | `PYPPhoneticEditor.cc:459,480`, `PYPPinyinEditor.cc:271`, `PYPBopomofoEditor.cc:371`, `PYPSuggestionCandidates.cc:38,86`, `PYPLibPinyinCandidates.cc:95,105,128` |
-| `pinyin_get_candidate_type` | `PYPPhoneticEditor.cc:463,483`, `PYPPinyinEditor.cc:272`, `PYPBopomofoEditor.cc:372`, `PYPSuggestionCandidates.cc:41`, `PYPLibPinyinCandidates.cc:97` |
-| `pinyin_get_candidate_string` | `PYPPhoneticEditor.cc:474`, `PYPSuggestionCandidates.cc:58`, `PYPLibPinyinCandidates.cc:56,77` |
-| `pinyin_get_candidate_nbest_index` | `PYPPhoneticEditor.cc:489`, `PYPLibPinyinCandidates.cc:113` |
+| `pinyin_get_candidate` | `PYPPhoneticEditor.cc:459`, `PYPPinyinEditor.cc:271`, `PYPBopomofoEditor.cc:371`, `PYPSuggestionCandidates.cc:38,86`, `PYPLibPinyinCandidates.cc:95,105,128` |
+| `pinyin_get_candidate_type` | `PYPPhoneticEditor.cc:463`, `PYPPinyinEditor.cc:272`, `PYPBopomofoEditor.cc:372`, `PYPSuggestionCandidates.cc:41`, `PYPLibPinyinCandidates.cc:97` |
+| `pinyin_get_candidate_string` | `PYPSuggestionCandidates.cc:58`, `PYPLibPinyinCandidates.cc:56,77` |
+| `pinyin_get_candidate_nbest_index` | `PYPLibPinyinCandidates.cc:113` |
 | `pinyin_is_user_candidate` | `PYPLibPinyinCandidates.cc:63` |
 | `pinyin_remove_user_candidate` | `PYPLibPinyinCandidates.cc:69` |
 
@@ -90,7 +93,7 @@ The corrected count: **50 live symbols**.
 
 | Symbol | Call sites |
 |--------|-----------|
-| `pinyin_choose_candidate` | `PYPPhoneticEditor.cc:487,494`, `PYPLibPinyinCandidates.cc:111,132,140,147` |
+| `pinyin_choose_candidate` | `PYPLibPinyinCandidates.cc:111,132,140,147` |
 | `pinyin_choose_predicted_candidate` | `PYPSuggestionCandidates.cc:87` |
 | `pinyin_train` | `PYPLibPinyinCandidates.cc:117,155` |
 
@@ -105,8 +108,8 @@ The corrected count: **50 live symbols**.
 
 | Symbol | Call sites |
 |--------|-----------|
-| `pinyin_get_pinyin_key_rest` | `PYPPhoneticEditor.cc:504`, `PYPLibPinyinCandidates.cc:150` |
-| `pinyin_get_pinyin_key_rest_positions` | `PYPPhoneticEditor.cc:508`, `PYPLibPinyinCandidates.cc:153` |
+| `pinyin_get_pinyin_key_rest` | `PYPLibPinyinCandidates.cc:150` |
+| `pinyin_get_pinyin_key_rest_positions` | `PYPLibPinyinCandidates.cc:153` |
 | `pinyin_get_pinyin_offset` | `PYPPhoneticEditor.cc:395` |
 | `pinyin_get_left_pinyin_offset` | `PYPPhoneticEditor.cc:414` |
 | `pinyin_get_right_pinyin_offset` | `PYPPhoneticEditor.cc:430` |
@@ -152,6 +155,15 @@ Note: `pinyin_end_get_bigram_phrases` is also called; see below.
 
 **Total: 50 unique live symbols** (some appear in multiple categories via
 `pinyin_save`; de-duplicated the count is 50).
+
+> **`#if 0` caveat.** The `PYPPhoneticEditor.cc:467–514`
+> `selectCandidate`/`selectCandidateInPage` block is inside `#if 0`; any
+> citation from that range (originally recorded for `pinyin_guess_sentence`,
+> `pinyin_get_candidate`, `pinyin_get_candidate_type`,
+> `pinyin_get_candidate_string`, `pinyin_get_candidate_nbest_index`,
+> `pinyin_choose_candidate`, `pinyin_get_pinyin_key_rest`, and
+> `pinyin_get_pinyin_key_rest_positions`) has been dropped above. The live
+> n-best path is `PYPLibPinyinCandidates.cc` (see §5).
 
 ---
 
@@ -255,7 +267,9 @@ Returns: **N/A** (bool). Out-param `symbols`: **Caller-owned (g_strfreev)**.
 bool pinyin_guess_sentence(pinyin_instance_t * instance);
 ```
 Returns: **N/A** (bool success). Populates the instance's internal sentence
-buffer. Must be called after parsing and after `pinyin_choose_candidate`.
+buffer. Called after parsing and, for partial selection, after
+`pinyin_choose_candidate`; the n-best path (§5) calls `pinyin_get_sentence`
+directly without a fresh `pinyin_guess_sentence`.
 
 ```
 bool pinyin_guess_candidates(pinyin_instance_t * instance,
@@ -290,7 +304,10 @@ bool pinyin_get_candidate(pinyin_instance_t * instance,
 ```
 Returns: **N/A** (bool success). Out-param `candidate`:
 **Instance-borrowed** — pointer into the instance's candidate array; valid
-until the next `pinyin_guess_candidates`/`pinyin_choose_candidate` call.
+until the next `pinyin_guess_candidates`/parse/reset/free.
+`pinyin_choose_candidate` mutates sentence/cursor state but does **not**
+invalidate the candidate passed as its argument — the n-best path calls
+`pinyin_get_candidate_nbest_index` after it (see §5).
 
 ```
 bool pinyin_get_candidate_type(pinyin_instance_t * instance,
@@ -323,14 +340,12 @@ Only meaningful for `NBEST_MATCH_CANDIDATE` type.
 
 ```
 bool pinyin_is_user_candidate(pinyin_instance_t * instance,
-                               lookup_candidate_t * candidate,
-                               gboolean * is_user);
+                               lookup_candidate_t * candidate);
 ```
-Returns: **N/A** (bool). Out-param `is_user`: **Out-param (scalar)**.
+Returns: **N/A** (bool success).
 
 ```
 bool pinyin_remove_user_candidate(pinyin_instance_t * instance,
-                                   guint index,
                                    lookup_candidate_t * candidate);
 ```
 Returns: **N/A** (bool success).
@@ -338,11 +353,11 @@ Returns: **N/A** (bool success).
 ### Candidate selection and training
 
 ```
-guint pinyin_choose_candidate(pinyin_instance_t * instance,
-                               size_t offset,
-                               lookup_candidate_t * candidate);
+int pinyin_choose_candidate(pinyin_instance_t * instance,
+                             size_t offset,
+                             lookup_candidate_t * candidate);
 ```
-Returns: `guint` — the new lookup cursor position (byte offset into input
+Returns: `int` — the new lookup cursor position (byte offset into input
 after the chosen candidate's pinyin span). The instance's internal state is
 mutated: the candidate is committed at the given offset.
 
@@ -384,15 +399,15 @@ Converts a pinyin byte offset to a character offset within the sentence
 
 ```
 bool pinyin_get_pinyin_key_rest(pinyin_instance_t * instance,
-                                 guint index,
-                                 PinyinKeyPos ** key_rest);
+                                 size_t offset,
+                                 ChewingKeyRest ** key_rest);
 ```
 Returns: **N/A** (bool). Out-param `key_rest`: **Instance-borrowed** —
 pointer into the instance's key-rest array.
 
 ```
 bool pinyin_get_pinyin_key_rest_positions(pinyin_instance_t * instance,
-                                           PinyinKeyPos * key_rest,
+                                           ChewingKeyRest * key_rest,
                                            guint16 * begin,
                                            guint16 * end);
 ```
@@ -456,11 +471,11 @@ pattern before re-import.
 
 ```
 bool pinyin_remember_user_input(pinyin_instance_t * instance,
-                                 const char * pinyins,
-                                 const char * phrase);
+                                 const char * phrase,
+                                 gint count);
 ```
-Returns: **N/A** (bool success). Records a user-provided phrase with its
-pinyin spelling.
+Returns: **N/A** (bool success). Records a user-provided phrase (with `count`
+occurrences, typically 1).
 
 ```
 import_iterator_t * pinyin_begin_add_phrases(pinyin_context_t * context,
@@ -471,7 +486,8 @@ Returns: **Handle (caller-managed)** — freed by `pinyin_end_add_phrases`.
 ```
 bool pinyin_iterator_add_phrase(import_iterator_t * iter,
                                  const char * phrase,
-                                 const char * pinyin);
+                                 const char * pinyin,
+                                 gint count);
 ```
 Returns: **N/A** (bool success).
 
@@ -484,7 +500,7 @@ Returns: **N/A** — releases the import iterator handle.
 
 ```
 export_iterator_t * pinyin_begin_get_phrases(pinyin_context_t * context,
-                                              guint8 index);
+                                              guint index);
 ```
 Returns: **Handle (caller-managed)** — freed by `pinyin_end_get_phrases`.
 
@@ -512,7 +528,7 @@ Returns: **N/A** — releases the export iterator handle.
 
 ```
 bigram_export_iterator_t * pinyin_begin_get_bigram_phrases
-    (pinyin_context_t * context, guint8 index);
+    (pinyin_context_t * context);
 ```
 Returns: **Handle (caller-managed)** — freed by
 `pinyin_end_get_bigram_phrases`.
@@ -547,8 +563,8 @@ Returns: **N/A** — releases the bigram export iterator handle.
 |------|-----------|-------------|-------------|
 | `pinyin_context_t` | `pinyin_init` | `pinyin_fini` | One per input mode (pinyin, bopomofo) |
 | `pinyin_instance_t` | `pinyin_alloc_instance` | `pinyin_free_instance` | One per active editor |
-| `lookup_candidate_t` | `pinyin_get_candidate` (borrow) | Invalidated by next guess/choose | Transient |
-| `PinyinKeyPos` (`ChewingKeyRest`) | `pinyin_get_pinyin_key_rest` (borrow) | Invalidated by next parse | Transient |
+| `lookup_candidate_t` | `pinyin_get_candidate` (borrow) | Invalidated by next guess/parse/reset/free; not freed by caller | Transient |
+| `ChewingKeyRest` | `pinyin_get_pinyin_key_rest` (borrow) | Invalidated by next guess/parse/reset/free | Transient |
 | `import_iterator_t` | `pinyin_begin_add_phrases` | `pinyin_end_add_phrases` | One at a time per context |
 | `export_iterator_t` | `pinyin_begin_get_phrases` | `pinyin_end_get_phrases` | One at a time per context |
 | `bigram_export_iterator_t` | `pinyin_begin_get_bigram_phrases` | `pinyin_end_get_bigram_phrases` | One at a time per context |
@@ -666,7 +682,8 @@ pinyin_save(context)
 ```
 
 The consumer runs this on a `LIBPINYIN_SAVE_TIMEOUT = 5 * 60` (300s)
-GLib timer in `PYLibPinyin.cc`. Also called at shutdown before `pinyin_fini`.
+GLib timer in `PYLibPinyin.cc`, and on the import path (Phase 9). It is
+**not** called from the shutdown destructor.
 
 **Phase 9 — User data import/export (settings UI)**
 
@@ -674,7 +691,7 @@ GLib timer in `PYLibPinyin.cc`. Also called at shutdown before `pinyin_fini`.
 // Import
 pinyin_mask_out(context, mask, value)
 iter = pinyin_begin_add_phrases(context, index)
-pinyin_iterator_add_phrase(iter, phrase, pinyin)
+pinyin_iterator_add_phrase(iter, phrase, pinyin, count)
 pinyin_end_add_phrases(iter)
 pinyin_save(context)
 
@@ -687,7 +704,7 @@ while (pinyin_iterator_has_next_phrase(iter)) {
 pinyin_end_get_phrases(iter)
 
 // Export bigrams
-iter = pinyin_begin_get_bigram_phrases(context, index)
+iter = pinyin_begin_get_bigram_phrases(context)
 while (pinyin_bigram_iterator_has_next_phrase(iter)) {
     pinyin_bigram_iterator_get_next_phrase(iter, &phrase, &pinyin, &count)
     g_free(phrase); g_free(pinyin);
@@ -699,9 +716,11 @@ pinyin_end_get_bigram_phrases(iter)
 
 ```
 pinyin_free_instance(instance)   // for each instance
-pinyin_save(context)
 pinyin_fini(context)
 ```
+
+Note: the destructor does **not** call `pinyin_save`; unsaved user data is
+flushed only by the 300s timer (Phase 8) or the import path (Phase 9).
 
 ### Cloud input special case
 
@@ -721,8 +740,11 @@ flags. The consumer constructs these from GSettings keys in `PYPConfig.cc`.
 ### pinyin_option_t flags
 
 **Incomplete pinyin (consumer default: ON):**
-- `PINYIN_INCOMPLETE` (0x01000000)
-- `ZHUYIN_INCOMPLETE` (0x02000000)
+- `PINYIN_INCOMPLETE` (`1 << 3` = 0x8)
+- `ZHUYIN_INCOMPLETE` (`1 << 4` = 0x10)
+
+Note: `0x01000000` is `PINYIN_CORRECT_UEI_UI` (a correction bit), not an
+incomplete-pinyin flag.
 
 **Correction flags (consumer default: all ON via `PINYIN_CORRECT_ALL`):**
 - `PINYIN_CORRECT_GN_NG`, `PINYIN_CORRECT_MG_NG`, `PINYIN_CORRECT_IOU_IU`,
@@ -735,40 +757,71 @@ flags. The consumer constructs these from GSettings keys in `PYPConfig.cc`.
   `PINYIN_AMB_L_R`, `PINYIN_AMB_AN_ANG`, `PINYIN_AMB_EN_ENG`,
   `PINYIN_AMB_IN_ING`
 
-**Always added by `setPinyinOptions` (hard-coded in consumer):**
-- `USE_RESPLIT_TABLE`
-- `USE_DIVIDED_TABLE`
+**Hard-coded consumer additions (per input mode):**
+- Pinyin path (`setPinyinOptions`): `USE_RESPLIT_TABLE`, `USE_DIVIDED_TABLE`
+- Bopomofo path (`setChewingOptions`): `USE_TONE` (the resplit/divided-table
+  flags are pinyin-only)
 
 **Dynamic adjustment (configurable):**
 - `DYNAMIC_ADJUST` — enabled by default; user-togglable via GSettings key
-  `dynamic-adjust`.
+  `dynamic-adjust`. Because it defaults on, `readDefaultValues` sets it, so
+  it is part of both default words below.
 
-Consumer default formula:
+Consumer default formula (pinyin):
 ```
-PINYIN_DEFAULT_OPTION = PINYIN_INCOMPLETE | ZHUYIN_INCOMPLETE | PINYIN_CORRECT_ALL
-final_options = user_toggled_flags | USE_RESPLIT_TABLE | USE_DIVIDED_TABLE
+PINYIN_DEFAULT_OPTION =
+    PINYIN_INCOMPLETE | ZHUYIN_INCOMPLETE | PINYIN_CORRECT_ALL
+    | DYNAMIC_ADJUST | USE_RESPLIT_TABLE | USE_DIVIDED_TABLE
+final_options = user_toggled_flags | PINYIN_DEFAULT_OPTION
 ```
+
+(Bopomofo substitutes `USE_TONE` for the resplit/divided-table flags and
+omits `PINYIN_INCOMPLETE`.)
 
 ### sort_option_t
 
-Three presets selectable via GSettings `sort-option`:
+Header `sort_option_t` values (`pinyin.h`):
 
-| Value | Constant | Meaning |
-|-------|----------|---------|
-| 0 | `SORT_BY_PHRASE_LENGTH \| SORT_BY_PINYIN_LENGTH \| SORT_BY_FREQUENCY` | Default |
-| 1 | `SORT_BY_PHRASE_LENGTH \| SORT_BY_PINYIN_LENGTH \| SORT_BY_FREQUENCY \| SORT_WITHOUT_SENTENCE_CANDIDATE` | No sentence candidate (legacy) |
-| 2 | `SORT_BY_PHRASE_LENGTH \| SORT_BY_PINYIN_LENGTH \| SORT_BY_FREQUENCY \| SORT_WITHOUT_SENTENCE_CANDIDATE \| SORT_WITHOUT_LONGER_CANDIDATE` | Short candidates only |
+| Constant | Value |
+|----------|-------|
+| `SORT_WITHOUT_SENTENCE_CANDIDATE` | 0x1 |
+| `SORT_WITHOUT_LONGER_CANDIDATE` | 0x2 |
+| `SORT_BY_PHRASE_LENGTH` | 0x4 |
+| `SORT_BY_PINYIN_LENGTH` | 0x8 |
+| `SORT_BY_FREQUENCY` | 0x10 |
+| `SORT_BY_PHRASE_LENGTH_AND_FREQUENCY` | `SORT_WITHOUT_LONGER_CANDIDATE \| SORT_BY_PHRASE_LENGTH \| SORT_BY_FREQUENCY` (0x16) |
+| `SORT_BY_PHRASE_LENGTH_AND_PINYIN_LENGTH_AND_FREQUENCY` | `SORT_WITHOUT_LONGER_CANDIDATE \| SORT_BY_PHRASE_LENGTH \| SORT_BY_PINYIN_LENGTH \| SORT_BY_FREQUENCY` (0x1e) |
 
-### Double-pinyin schemes (6)
+Consumer presets via GSettings `sort-candidate-option` (default `1`):
 
-`DoublePinyinScheme` enum: `DOUBLE_PINYIN_MS` (0), `DOUBLE_PINYIN_ZRM` (1),
-`DOUBLE_PINYIN_ABC` (2), `DOUBLE_PINYIN_ZIGUANG` (3),
-`DOUBLE_PINYIN_PYJJ` (4), `DOUBLE_PINYIN_XHE` (5).
+| GSettings | Flags actually passed to `pinyin_guess_candidates` |
+|-----------|----------------------------------------------------|
+| 0 | `SORT_BY_PHRASE_LENGTH \| SORT_BY_FREQUENCY` (0x14) |
+| 1 (default) | `SORT_BY_PHRASE_LENGTH \| SORT_BY_PINYIN_LENGTH \| SORT_BY_FREQUENCY` (0x1c) |
+| 2 | preset 1 plus `SORT_WITHOUT_SENTENCE_CANDIDATE \| SORT_WITHOUT_LONGER_CANDIDATE` (0x1f) |
 
-### Zhuyin/Bopomofo schemes (4)
+Note the consumer preset 1 (`0x1c`) and the header composite
+`SORT_BY_PHRASE_LENGTH_AND_PINYIN_LENGTH_AND_FREQUENCY` (`0x1e`) are distinct
+words: the composite folds in `SORT_WITHOUT_LONGER_CANDIDATE`.
 
-`ZhuyinScheme` enum: `ZHUYIN_STANDARD` (0), `ZHUYIN_HSU` (1),
-`ZHUYIN_IBM` (2), `ZHUYIN_ETEN` (3).
+### Double-pinyin schemes
+
+Header `DoublePinyinScheme` values (`pinyin_custom2.h`):
+`DOUBLE_PINYIN_ZRM` (1), `DOUBLE_PINYIN_MS` (2), `DOUBLE_PINYIN_ZIGUANG` (3),
+`DOUBLE_PINYIN_ABC` (4), `DOUBLE_PINYIN_PYJJ` (5), `DOUBLE_PINYIN_XHE` (6),
+`DOUBLE_PINYIN_CUSTOMIZED` (30). `DOUBLE_PINYIN_DEFAULT = DOUBLE_PINYIN_MS`.
+
+The value passed to `pinyin_set_double_pinyin_scheme` is the header
+discriminant, **not** the GSettings `double-pinyin-scheme` index (which is a
+different 0-based map in `PYPConfig.cc`).
+
+### Zhuyin/Bopomofo schemes
+
+Header `ZhuyinScheme` values (`pinyin_custom2.h`):
+`ZHUYIN_STANDARD` (1), `ZHUYIN_HSU` (2), `ZHUYIN_IBM` (3), `ZHUYIN_GINYIEH` (4),
+`ZHUYIN_ETEN` (5), `ZHUYIN_ETEN26` (6), `ZHUYIN_STANDARD_DVORAK` (7),
+`ZHUYIN_HSU_DVORAK` (8), `ZHUYIN_DACHEN_CP26` (9).
+`ZHUYIN_DEFAULT = ZHUYIN_STANDARD`.
 
 ### Display styles
 
@@ -785,97 +838,89 @@ change which libpinyin symbols are called.
 
 **Finding: YES, ibus-libpinyin fully exercises the sentence/n-best path.**
 
-The consumer uses the n-best sentence mechanism in two files:
+The live n-best path is `PYPLibPinyinCandidates.cc:108–125`
+(`selectCandidate`). (The `PYPPhoneticEditor.cc:467–514`
+`selectCandidate`/`selectCandidateInPage` block is inside `#if 0` and is not
+a live caller.)
 
-### PYPPhoneticEditor.cc (selectCandidateInPage)
-
-At `PYPPhoneticEditor.cc:485–491`:
-```c
-if (NBEST_MATCH_CANDIDATE == type) {
-    pinyin_choose_candidate (m_instance, 0, candidate);
-    guint8 index = 0;
-    pinyin_get_candidate_nbest_index(m_instance, candidate, &index);
-    commit (index);
-    return TRUE;
-}
-```
-
-The `commit(index)` path calls `pinyin_get_sentence(instance, index, &sentence)`
-and `pinyin_train(instance, index)`.
-
-### PYPLibPinyinCandidates.cc (selectCandidate)
-
-At `PYPLibPinyinCandidates.cc:105–117`:
+Order:
 ```c
 if (NBEST_MATCH_CANDIDATE == type) {
     pinyin_choose_candidate (instance, 0, candidate);
     guint8 index = 0;
     pinyin_get_candidate_nbest_index (instance, candidate, &index);
 
+    if (index != 0)
+        pinyin_train (instance, index);   // train only on a non-zero index
+
     pinyin_get_sentence (instance, index, &sentence);
-    pinyin_train (instance, index);
     // ... commit sentence
 }
 ```
+
+The `lookup_candidate_t` from `pinyin_get_candidate` stays valid through
+`pinyin_choose_candidate` for the following `pinyin_get_candidate_nbest_index`
+call (see §3 ownership).
 
 ### Implication for pinyin-capi
 
 The `pinyin_get_sentence` and `pinyin_train` functions must support a
 non-zero n-best index parameter. The n-best index is obtained from
 `pinyin_get_candidate_nbest_index` and passed through to both sentence
-retrieval and training. A `pinyin-capi` implementation cannot simplify
-these to index-0-only.
+retrieval and training; `pinyin_train` is called only when that index is
+non-zero. A `pinyin-capi` implementation cannot simplify these to
+index-0-only.
 
 ---
 
 ## 6. Out-of-subset symbols (29 not called by ibus-libpinyin)
 
-The following 29 symbols are exported by `libpinyin.ver` but never called
-by ibus-libpinyin at tag 1.16.5:
+The following 29 symbols are the exact complement: the sorted 79 names from
+`libpinyin.ver` minus the 50 live call-site symbols in §1. They are exported
+by libpinyin but never called by ibus-libpinyin at tag 1.16.5:
 
 ```text
-pinyin_convert_full_pinyin_to_double_pinyin
-pinyin_convert_full_pinyin_to_zhuyin
-pinyin_end_get_bigram_phrases_by_phrase_string
-pinyin_begin_get_bigram_phrases_by_phrase_string
-pinyin_bigram_string_iterator_has_next_phrase
-pinyin_bigram_string_iterator_get_next_phrase
-pinyin_get_bopomofo_string
-pinyin_get_chewing_key
-pinyin_get_full_pinyin_string
+pinyin_clear_constraint
+pinyin_get_context
 pinyin_get_luoma_pinyin_string
-pinyin_get_n_pinyin
+pinyin_get_n_phrase
 pinyin_get_parsed_input_length
+pinyin_get_phrase_token
+pinyin_get_pinyin_is_incomplete
 pinyin_get_pinyin_key
+pinyin_get_pinyin_key_rest_length
 pinyin_get_pinyin_string
-pinyin_get_pinyin_strings_of_key
-pinyin_get_predicted_candidates
+pinyin_get_pinyin_strings
 pinyin_get_secondary_zhuyin_string
-pinyin_get_zhuyin_key
 pinyin_get_zhuyin_string
 pinyin_guess_predicted_candidates
-pinyin_has_unparsed_tail
-pinyin_lookup_candidates
-pinyin_lookup_pinyin_candidates
+pinyin_guess_sentence_with_prefix
+pinyin_load_phrase_library
+pinyin_lookup_tokens
+pinyin_parse_chewing
+pinyin_parse_double_pinyin
 pinyin_parse_full_pinyin
-pinyin_parse_more_full_pinyins_with_options
 pinyin_phrase_segment
+pinyin_set_full_pinyin_scheme
+pinyin_token_add_unigram_frequency
 pinyin_token_get_n_pronunciation
+pinyin_token_get_nth_pronunciation
 pinyin_token_get_phrase
-pinyin_token_get_pronunciation
+pinyin_token_get_unigram_frequency
+pinyin_unload_addon_phrase_library
+pinyin_unload_phrase_library
 ```
 
 Notes:
-- `pinyin_get_n_pinyin`, `pinyin_get_pinyin_key`, `pinyin_get_pinyin_string`
-  appear only in `#if 0` dead code at `PYPPinyinEditor.cc:296–333` and are
-  therefore excluded from the live subset.
-- `pinyin_get_predicted_candidates` and `pinyin_guess_predicted_candidates`
-  are older variants superseded by
+- `pinyin_get_n_pinyin`, `pinyin_get_pinyin_key`, and `pinyin_get_pinyin_string`
+  appear only in `#if 0` dead code at `PYPPinyinEditor.cc:296–333`; they are
+  in the complement because they are **not** live call sites (they remain
+  exports in `libpinyin.ver`).
+- `pinyin_guess_predicted_candidates` is an older variant superseded by
   `pinyin_guess_predicted_candidates_with_punctuations`.
-- `pinyin_parse_full_pinyin` is the single-syllable parser; ibus-libpinyin
+- `pinyin_parse_full_pinyin` / `pinyin_parse_double_pinyin` /
+  `pinyin_parse_chewing` are the single-syllable parsers; ibus-libpinyin
   uses only the `parse_more_*` (multi-syllable) variants.
-- `pinyin_lookup_candidates` and `pinyin_lookup_pinyin_candidates` are
-  lower-level lookup functions not used by the consumer.
 
 ---
 
