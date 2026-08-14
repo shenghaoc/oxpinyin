@@ -1,6 +1,8 @@
 //! Configuration symbols: options, schemes, phrase library loading.
 
-use crate::types::{DoublePinyinScheme, PinyinContext, PinyinOptionT, ZhuyinScheme};
+use std::os::raw::c_int;
+
+use crate::types::{PinyinContext, PinyinOptionT};
 
 /// Set pinyin options on the context.
 ///
@@ -24,10 +26,13 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, _options: Piny
 /// bool pinyin_set_double_pinyin_scheme(pinyin_context_t * context,
 ///                                      DoublePinyinScheme scheme);
 /// ```
+///
+/// The Rust parameter is `c_int`: callers may pass any `int`, and a closed
+/// `#[repr(C)]` enum would be UB for an unknown discriminant.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_double_pinyin_scheme(
     context: *mut PinyinContext,
-    _scheme: DoublePinyinScheme,
+    _scheme: c_int,
 ) -> bool {
     if context.is_null() {
         return false;
@@ -43,11 +48,11 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
 /// bool pinyin_set_zhuyin_scheme(pinyin_context_t * context,
 ///                                ZhuyinScheme scheme);
 /// ```
+///
+/// The Rust parameter is `c_int`: callers may pass any `int`, and a closed
+/// `#[repr(C)]` enum would be UB for an unknown discriminant.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_set_zhuyin_scheme(
-    context: *mut PinyinContext,
-    _scheme: ZhuyinScheme,
-) -> bool {
+pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, _scheme: c_int) -> bool {
     if context.is_null() {
         return false;
     }

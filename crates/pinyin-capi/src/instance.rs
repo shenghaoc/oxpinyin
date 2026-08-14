@@ -33,8 +33,11 @@ pub extern "C" fn pinyin_free_instance(instance: *mut PinyinInstance) {
     if instance.is_null() {
         return;
     }
-    // SAFETY: `instance` was created by `pinyin_alloc_instance` via
-    // `Box::into_raw`. The caller transfers ownership back.
+    // SAFETY: `instance` is non-null (guarded above). `pinyin_alloc_instance`
+    // currently always returns NULL (T1 stub), so this branch is unreachable
+    // until T2 makes the constructor return `Box::into_raw(..)`. At that point
+    // the caller transfers ownership back here and only here, so reconstructing
+    // and dropping the Box is sound.
     unsafe {
         drop(Box::from_raw(instance));
     }

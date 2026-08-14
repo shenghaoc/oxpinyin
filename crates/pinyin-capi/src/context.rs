@@ -33,8 +33,11 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     if context.is_null() {
         return;
     }
-    // SAFETY: `context` was created by `pinyin_init` via `Box::into_raw`.
-    // The caller transfers ownership back; we reconstruct the Box and drop it.
+    // SAFETY: `context` is non-null (guarded above). `pinyin_init` currently
+    // always returns NULL (T1 stub), so this branch is unreachable until T2
+    // makes the constructor return `Box::into_raw(..)`. At that point the
+    // caller transfers ownership back here and only here, so reconstructing
+    // and dropping the Box is sound.
     unsafe {
         drop(Box::from_raw(context));
     }
