@@ -104,6 +104,17 @@ fn interpolate_ratio(
     Some((numerator, denominator))
 }
 
+/// One previous-token row of the system bigram.
+///
+/// `total` is the stored row total and equals `Σ count` over [`records`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BigramRow {
+    /// Sum of the successor counts.
+    pub total: u32,
+    /// `(next_token, count)` records, stored order.
+    pub records: Vec<(u32, u32)>,
+}
+
 /// Bigram language model backed by `bigram.redb`.
 pub struct BigramLanguageModel {
     bigram: LookupTable,
@@ -246,9 +257,18 @@ impl BigramLanguageModel {
         self.unigram_total
     }
 
-    /// Returns `(count, total)` for the `prev → next` transition, or `None`
-    /// when `prev` has no bigram entry.
-    fn transition(&self, prev: u32, next: u32) -> Result<Option<(u32, u32)>, LmError> {
+    /// Loads the system-bigram row for `prev`.
+    ///
+    /// `None` means `prev` has no entry: the same miss
+    /// `PhraseLookup::search_bigram2` treats as "skip this node" (no merged
+    /// single-gram). A next-token that is not in the row is a `get_freq`
+    /// miss, not a zero-count hit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LmError`] when the table cannot be read or a value does not
+    /// parse under the frozen schema.
+    pub fn load_successors(&self, prev: u32) -> Result<Option<BigramRow>, LmError> {
         let Some(raw) = self
             .bigram
             .get(&prev.to_le_bytes())
@@ -257,12 +277,22 @@ impl BigramLanguageModel {
             return Ok(None);
         };
         let (total, records) = parse_bigram_value(&raw)?;
-        let count = records
+        Ok(Some(BigramRow { total, records }))
+    }
+
+    /// Returns `(count, total)` for the `prev → next` transition, or `None`
+    /// when `prev` has no bigram entry.
+    fn transition(&self, prev: u32, next: u32) -> Result<Option<(u32, u32)>, LmError> {
+        let Some(row) = self.load_successors(prev)? else {
+            return Ok(None);
+        };
+        let count = row
+            .records
             .iter()
             .find(|(next_token, _)| *next_token == next)
             .map(|(_, count)| *count)
             .unwrap_or(0);
-        Ok(Some((count, total)))
+        Ok(Some((count, row.total)))
     }
 
     /// Interpolated model cost of `token` after `history`, without `edge_cost`.

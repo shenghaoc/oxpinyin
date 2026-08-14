@@ -494,6 +494,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinyin-segment"
+version = "0.1.0"
+dependencies = [
+ "pinyin-data",
+]
+
+[[package]]
 name = "pinyin-user"
 version = "0.1.0"
 
