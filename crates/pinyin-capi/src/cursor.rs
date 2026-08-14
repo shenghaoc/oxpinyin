@@ -151,7 +151,7 @@ pub extern "C" fn pinyin_get_left_pinyin_offset(
 ///                                     size_t * right);
 /// ```
 ///
-/// Provisional: returns `min(offset + 1, raw_input.len())`.
+/// Provisional: returns `min(offset.saturating_add(1), raw_input.len())`.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_right_pinyin_offset(
     instance: *mut PinyinInstance,
@@ -169,7 +169,7 @@ pub extern "C" fn pinyin_get_right_pinyin_offset(
         if !right.is_null() {
             // SAFETY: Null-checked above.
             unsafe {
-                *right = (offset + 1).min(len);
+                *right = offset.saturating_add(1).min(len);
             }
         }
         true

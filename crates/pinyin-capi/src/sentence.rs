@@ -3,7 +3,7 @@
 use std::ffi::CString;
 use std::os::raw::c_char;
 
-use crate::ffi::{cstr_to_string, ffi_catch};
+use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance};
 
@@ -58,9 +58,8 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
 ///                          char ** sentence);
 /// ```
 ///
-/// Out-param `sentence` is caller-owned (`g_free`).
-/// On Linux the default Rust allocator uses libc malloc, so `g_free`
-/// (which calls `free`) can deallocate the returned pointer.
+/// Out-param `sentence` is caller-owned (`g_free`). The returned buffer is
+/// allocated with libc `malloc`, which `g_free` releases on every platform.
 ///
 /// Provisional: ignores the n-best `index` and returns the preedit text.
 #[unsafe(no_mangle)]
@@ -86,14 +85,17 @@ pub extern "C" fn pinyin_get_sentence(
             return false;
         }
         let preedit = inst.session.preedit();
-        let cstr = match CString::new(preedit.text().to_owned()) {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
         if !sentence.is_null() {
-            // SAFETY: Null-checked above. Transfers ownership to caller.
+            // SAFETY: Null-checked above. `owned_cstr` returns null on an
+            // interior NUL or allocation failure; otherwise ownership
+            // transfers to the caller, which frees it with `g_free`.
+            let owned = owned_cstr(preedit.text());
+            // SAFETY: Null-checked above.
             unsafe {
-                *sentence = cstr.into_raw();
+                *sentence = owned;
+            }
+            if owned.is_null() {
+                return false;
             }
         }
         true
@@ -122,7 +124,11 @@ pub extern "C" fn pinyin_get_character_offset(
     ffi_catch(false, || {
         // SAFETY: `phrase` is a C string from the caller (null OK).
         let text = unsafe { cstr_to_string(phrase) };
-        let clamped = offset.min(text.len());
+        let mut clamped = offset.min(text.len());
+        // Floor to a UTF-8 char boundary so the slice never panics.
+        while !text.is_char_boundary(clamped) {
+            clamped -= 1;
+        }
         let char_count = text[..clamped].chars().count();
         if !length.is_null() {
             // SAFETY: Null-checked above.
@@ -143,8 +149,10 @@ pub extern "C" fn pinyin_get_character_offset(
 ///                              guint sort_option);
 /// ```
 ///
-/// Snapshots the session's current candidates into the instance's
-/// `CapiCandidate` vec. With StubDict the candidate list is empty.
+/// Provisional: `offset` and `sort_option` are ignored — the engine has no
+/// positional or sort backends yet. Snapshots the session's current
+/// candidates into the instance's `CapiCandidate` vec. With StubDict the
+/// candidate list is empty.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_guess_candidates(
     instance: *mut PinyinInstance,
@@ -168,6 +176,7 @@ pub extern "C" fn pinyin_guess_candidates(
                 text,
                 kind: cand.kind(),
                 nbest_index: 0,
+                consumed_bytes: cand.consumed_bytes(),
             });
         }
         true

@@ -3,9 +3,34 @@
 use std::os::raw::c_char;
 use std::ptr;
 
+use pinyin_core::graph::SegmentGraph;
+
 use crate::ffi::{cstr_to_string, ffi_catch};
 use crate::state::instance_mut;
 use crate::types::{GChar, PinyinInstance};
+
+/// Shared batch-parse path: reset the instance, type `text`, and return the
+/// parsed prefix length — the segment graph's answer to
+/// `pinyin_get_parsed_input_length` — rather than the raw buffer length.
+///
+/// Resets and clears the candidate snapshot even for empty input, so a
+/// prior composition is discarded.
+fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    inst.session.reset();
+    inst.candidates.clear();
+    if text.is_empty() {
+        return 0;
+    }
+    match inst.session.type_pinyin(text) {
+        Ok(_) => SegmentGraph::build(inst.session.raw_input().as_bytes())
+            .map(|graph| graph.consumed())
+            .unwrap_or(0),
+        Err(_) => 0,
+    }
+}
 
 /// Parse multiple full pinyins.
 ///
@@ -25,19 +50,9 @@ pub extern "C" fn pinyin_parse_more_full_pinyins(
         return 0;
     }
     ffi_catch(0, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
         // SAFETY: `pinyins` is a C string from the caller (null OK).
         let text = unsafe { cstr_to_string(pinyins) };
-        if text.is_empty() {
-            return 0;
-        }
-        inst.session.reset();
-        match inst.session.type_pinyin(&text) {
-            Ok(_) => inst.session.raw_input().len(),
-            Err(_) => 0,
-        }
+        parse_more(instance, &text)
     })
 }
 
@@ -60,19 +75,9 @@ pub extern "C" fn pinyin_parse_more_double_pinyins(
         return 0;
     }
     ffi_catch(0, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
         // SAFETY: `pinyins` is a C string from the caller (null OK).
         let text = unsafe { cstr_to_string(pinyins) };
-        if text.is_empty() {
-            return 0;
-        }
-        inst.session.reset();
-        match inst.session.type_pinyin(&text) {
-            Ok(_) => inst.session.raw_input().len(),
-            Err(_) => 0,
-        }
+        parse_more(instance, &text)
     })
 }
 
@@ -95,19 +100,9 @@ pub extern "C" fn pinyin_parse_more_chewings(
         return 0;
     }
     ffi_catch(0, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
         // SAFETY: `chewings` is a C string from the caller (null OK).
         let text = unsafe { cstr_to_string(chewings) };
-        if text.is_empty() {
-            return 0;
-        }
-        inst.session.reset();
-        match inst.session.type_pinyin(&text) {
-            Ok(_) => inst.session.raw_input().len(),
-            Err(_) => 0,
-        }
+        parse_more(instance, &text)
     })
 }
 
