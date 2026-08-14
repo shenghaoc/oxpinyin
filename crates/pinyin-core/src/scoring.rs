@@ -115,15 +115,11 @@ impl Default for ScoringConfig {
             // Lower than the first provisional 2_000: less over-reward of
             // long phrases relative to the pin's first candidate.
             phrase_key_bonus: 1_000,
-            // The window scan expands every key-path that holds an
-            // initial-only key, upstream's initial-index wildcard search.
-            // Measured over the W2 corpus the largest expansion that hits
-            // real phrases is a three-initial `q|q|q` span (14^3 = 2_744 —
-            // the pin's `qqq…` offers `请求权`); 4_096 covers it with
-            // headroom. Larger products keep the yield-nothing bound: no
-            // stored phrase matches a longer all-initial span, so upstream
-            // finds nothing there either.
-            expansion_limit: 4_096,
+            // Yield-nothing bound for the pre-frequency rank_phrases path.
+            // The window scan has its own, larger bound
+            // (`SCAN_EXPANSION_LIMIT` in pinyin-engine) and does not read
+            // this value.
+            expansion_limit: 64,
         }
     }
 }

@@ -287,6 +287,10 @@ impl LanguageModel for BigramLanguageModel {
             .real_unigrams
             .then(|| self.unigram_count(token.value()).unwrap_or(0)))
     }
+
+    fn has_real_unigrams(&self) -> bool {
+        self.real_unigrams
+    }
 }
 
 /// Parses a bigram value as `(total, [{next_token, count}])`.

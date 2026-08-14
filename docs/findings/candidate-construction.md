@@ -1,21 +1,17 @@
 # Candidate-construction SPEC (Discrepancy 2)
 
-Date: 2026-08-13 · Status: **characterisation and W2-CAND complete; construction
-contract frozen (§8) — no construction change selected for the current
-residual.**
+Date: 2026-08-14 · Status: **construction reproduced — the window scan is the
+frozen contract (§8).** §1–§7 keep their characterisation value; §8 was
+re-opened on the maintainer's source-verified scan specification and the
+measured W2 result, and now freezes the reproduced construction.
 
 This document characterises the candidate-construction gap between our decoder
 and the pinned oracle (§1), records the W2-CAND capture that closed the
 load-bearing inference (§7), and freezes the construction contract (§8). The
-contract freezes the *absence* of a construction change for the current
-residual: the W2-CAND evidence shows the oracle surfaces no `NBEST_MATCH` /
-sentence-level candidates under the pinned observation surface, so the residual
-is unigram phrase-cost / coverage calibration, not a missing lattice or two-pass
-pass. Guessing the missing half was the exact failure this project has STOPped
-for twice — the fabricated `pinyin_index` encoder mapping (PR #28, refuted) and
-the `[b, ing]` skip-and-continue claim. The deliverable is therefore the
-residual characterisation, the narrow invariants the fixtures prove, and the
-frozen contract §8 records.
+2026-08-13 contract froze the *absence* of a construction change; on
+2026-08-14 the contract was re-opened and replaced by the reproduced
+construction: the expanding-window scan, the three-key order, and keep-first
+dedup, measured at top-1 99% / absent 1 (§8).
 
 Baselines and neighbours: `docs/findings/parity-climb-residual.md`,
 `docs/findings/f3-bigram-kbest.md`, `docs/findings/f2-unigram-tiebreak-sweep.md`,
@@ -30,16 +26,17 @@ The frozen number every change in this area is measured against, pinned in
 
 ```text
 compared            10190
-top-1                6525   64%     assert_eq! pin
-top-5-set            9232   90%     assert_eq! pin
-prefix-10 overlap   65505 of 98930  66%   assert_eq! pins (numerator + denominator)
-absent                 70          assert_eq! pin
+top-1               10136   99%     assert_eq! pin
+top-5-set           10182   99%     assert_eq! pin
+prefix-10 overlap   94456 of 98930  95%   assert_eq! pins (numerator + denominator)
+absent                  1           assert_eq! pin
 ```
 
-These five `assert_eq!` are bit-exact pins; the tolerant floors beneath them
-(top-1 ≥ 55%, top-5 ≥ 80%, absent ≤ 4%) are the regression envelope. This is
-the post-F1 floor (`docs/findings/f1-junk-aware-parse.md`); the pre-F1 snapshot
-in `parity-climb-residual.md` is 63% / 177 absent.
+These five `assert_eq!` are bit-exact pins for the reproduced window-scan
+construction (§8); the tolerant floors beneath them (top-1 ≥ 55%, top-5 ≥ 80%,
+absent ≤ 4%) are the regression envelope. The 2026-08-13 pre-construction floor
+was 6525 (64%) / 9232 / 70 / 65505 of 98930; the pre-F1 snapshot in
+`parity-climb-residual.md` was 63% / 177 absent.
 
 ## 1. Residual characterisation
 
@@ -468,9 +465,13 @@ Stage-1 call sites must stay valid. The `Dictionary`, `LanguageModel` (and
 
 1. **Syllable path-set is a lower bound.** The candidate set must remain a
    superset of what the frozen `SegmentGraph` + k-best admit today
-   (`segment-graph.md`, `kbest-search.md`). The only accepted exceptions are the
-   already-frozen apostrophe residuals: the leading (`'ni`) and doubled
-   (`ni''hao`) apostrophe path disagreements (`segment-graph.md`), and the
+   (`segment-graph.md`, `kbest-search.md`). The reproduced construction (§8)
+   replaces the k-best *collection* with the window scan over the
+   parser-shaped key set; the graph and the k-best stage themselves are
+   untouched, and the scan's key set is exactly what the pinned oracle's
+   matrix admits. The only accepted exceptions are the already-frozen
+   apostrophe residuals: the leading (`'ni`) and doubled (`ni''hao`)
+   apostrophe path disagreements (`segment-graph.md`), and the
    apostrophe-only abort guard (`docs/findings/oracle-apostrophe-abort.md`,
    F-E-14). No new exception is introduced.
 2. **Public session API unchanged.** `session-api.md` is frozen: `Candidate`
@@ -485,12 +486,14 @@ Stage-1 call sites must stay valid. The `Dictionary`, `LanguageModel` (and
    `UNKNOWN_COST = 40000`), saturating, **no floats anywhere** (constitution
    item 6; determinism across OSes).
 5. **Determinism.** Output stays a pure function of (input, user state, config).
-   The **pooled candidate list** is a stable sort by `Candidate::cost`; equal-cost
-   candidates keep **insertion order from the collection loops** (path × prefix
-   length × `rank_phrases` order), which is what `Session::refresh` does today.
-   `kbest-search.md`'s total order governs the **syllable-path** stage only, not
-   the pooled list — `Candidate` carries no edge id to tie-break on. No clock,
-   locale, or environment read enters.
+   The **pooled candidate list** under the reproduced construction is a stable
+   sort by the three-key order (phrase length, pinyin span, real unigram count,
+   all descending); fully-tied candidates keep **insertion order from the
+   collection loops** (window end × matrix key-path × lookup order). The
+   pre-frequency fallback keeps its cost sort as before.
+   `kbest-search.md`'s total order governs the **syllable-path** stage only,
+   not the pooled list — `Candidate` carries no edge id to tie-break on. No
+   clock, locale, or environment read enters.
 6. **k-bound family respected.** `SEGMENTATION_K = 8`, `MAX_CANDIDATES = 64`,
    `MAX_PHRASE_KEYS = 8`, `MAX_K = 4096`. Any growth is justified against wall
    and RSS in §4 and re-pinned deliberately.
@@ -500,7 +503,7 @@ Stage-1 call sites must stay valid. The `Dictionary`, `LanguageModel` (and
 Any construction change is gated on all of the following. Because the five
 `assert_eq!` pins in §0 are bit-exact, **they will trip by design on any ranking
 change** — re-pinning them is a deliberate, reviewed step (state Δ against
-6525 / 9232 / 70 / 65505–98930 in the commit that re-pins), never a silent
+10136 / 10182 / 1 / 94456–98930 in the commit that re-pins), never a silent
 edit. The tolerant floors (top-1 ≥ 55%, top-5 ≥ 80%, absent ≤ 4%) are the
 regression envelope that must hold regardless.
 
@@ -510,9 +513,12 @@ regression envelope that must hold regardless.
        --test real_tables_integration -- --nocapture
    ```
    Report Δ top-1, Δ top-5-set, Δ absent, Δ prefix-10 overlap against
-   6525 / 9232 / 70 / 65505 of 98930. Requires the exported tables at
-   `/tmp/pinyin-rs-export` (`pinyin-migrate export`); the test skips without
-   them and is measured under `--release`, per
+   10136 / 10182 / 1 / 94456 of 98930. Requires the exported tables at
+   `/tmp/pinyin-rs-export` (`pinyin-migrate export`) **and** the fetched
+   model cache (`tools/model/fetch-model.sh`; the real unigram counts in
+   `interpolation2.text` are what the reproduced construction ranks by);
+   the test skips with a diagnostic without them and is measured under
+   `--release`, per
    `crates/pinyin-oracle/tests/real_tables_integration.rs`.
 2. **Thread-order independence.**
    ```bash
@@ -715,66 +721,82 @@ here. STOP and report rather than inventing evidence.
 
 ## 8. The frozen construction contract
 
-Date: 2026-08-13 · Status: **frozen.** This is the construction contract §1.6
-refused to write pre-capture and §6 step 3 gated on W2-CAND. It freezes the
-*absence* of a construction change for the current residual, on the evidence of
-§7.
+Date: 2026-08-14 · Status: **frozen — the reproduced construction.** Re-opened
+from the 2026-08-13 absence contract on the maintainer's source-verified scan
+specification (the expanding-window collection read from the pinned libpinyin
+2.11.91 sources) and the measured W2 result below. The 2026-08-13 §8.3
+re-open conditions are satisfied by this evidence: the measured absent bucket
+collapsed from 70 to 1, which is the starvation population disappearing, not
+appearing.
 
 ### 8.1 The contract
 
-1. **Candidate construction is unchanged.** The frozen `Session::refresh`
-   construction stands: collect the `SEGMENTATION_K = 8` syllable paths,
-   `collect_prefix_phrases` + `collect_sentence` on each, pool, stable-sort by
-   `Candidate::cost`, dedup by text, truncate to `MAX_CANDIDATES = 64` (§1.2).
-   This preserves the cross-segmentation pooling invariant (§1.2) and the
-   rank-1 ≠ first-phrase-of-selected-syllable-path fact (§1.3).
-2. **No phrase-lattice edges (Strategy A) and no two-pass sentence re-rank
-   (Strategy B).** Neither is justified by the residual that remains (§8.2).
-   The compatibility invariants (§3) and measurement gates (§4) are therefore
-   not exercised by any change here — they remain normative for any future
-   re-opening.
-3. **The public API surface and frozen traits are unchanged.** No new
-   observable is introduced; §3.2 (`session-api.md`), §3.3
-   (`parser-spec.md`), and the `Dictionary` / `LanguageModel` / `UserModel`
-   seams (§2.1) are untouched.
+1. **Candidate construction is the expanding-window scan.** `Session::refresh`
+   fixes the start at the composition offset, walks the window end outward over
+   every byte position, enumerates every key-path through the scan matrix, and
+   searches the phrase table on each complete path. The scan matrix is the
+   selected parse (fewest keys, first-found tie) plus the frozen resplit and
+   divided additions (`docs/findings/matrix-split-tables.md`). Initial-only
+   keys expand through the table's wildcard search (`expand_keys`); widening is
+   prefix-driven (`SEARCH_CONTINUED` = a stored phrase can extend the
+   sequence); consecutive apostrophe bytes are skipped; the key sequence is
+   capped at 16 keys. Cross-segmentation pooling falls out of the scan
+   (§1.2, §1.3) — there is no separate pooling step and no span policy.
+2. **The ranking is the three-key order.** Phrase length (Unicode scalar
+   count) descending, pinyin span (window end − start) descending, real
+   unigram count descending — the phrase index's counts read from
+   `interpolation2.text` in the fetched model cache, integer comparisons only.
+   Fully-tied candidates keep collection order (window × key-path × lookup).
+   The list is then deduplicated by text keep-first and truncated to
+   `MAX_CANDIDATES = 64`.
+3. **No sentence candidates, no longer candidates.** Under the pinned
+   observation surface the pin emits no `NBEST_MATCH` candidates (§7.3, §7.4),
+   so no sentence prepend runs; `SORT_WITHOUT_LONGER` clears the
+   longer-candidate prepend. A future capture that actually produces
+   `NBEST_MATCH` candidates re-opens the sentence stage on that evidence.
+4. **Without real unigram frequencies the pre-frequency behaviour runs
+   unchanged.** A model that reports no real frequency table (no fetched
+   cache) keeps the prior k-best prefix + sentence collection, cost order,
+   and adjacent dedup — the fallback the 2026-08-13 contract described.
+5. **The public API surface and frozen traits are unchanged.** §3.2
+   (`session-api.md`) and §3.3 (`parser-spec.md`) are untouched; the
+   `Dictionary` / `LanguageModel` seams grew by defaulted methods only
+   (`phrase_prefix_exists`, `unigram_freq`, `has_real_unigrams`), per §2.1.
 
-### 8.2 The negative result this freezes
+### 8.2 The measured result this freezes
 
-Under the pinned observation surface (W2 corpus, flags `0x18a`, sort `0x1e`),
-the oracle surfaces **zero** `NBEST_MATCH_CANDIDATE` / sentence-level candidates:
-100% of candidates — including every rank-1 — are `NORMAL_CANDIDATE`, and the
-`nbest_index` column is always `-` (§7.3, §7.4). The `0x1e` sort does not set
-`SORT_WITHOUT_SENTENCE_CANDIDATE`, so this is an absence, not a suppression.
+Under the pinned observation surface (W2 corpus, flags `0x18a`, sort `0x1e`):
 
-This removes the "n-best sentence candidate / phrase-lattice emission"
-explanation for the residual near-misses. The residual is therefore attributed
-to unigram phrase-cost / coverage calibration inside the existing phrase-lookup
-path — the lever `f2-unigram-tiebreak-sweep.md` measured (16 optimal) and
-`f3-bigram-kbest.md` warned against chasing at the segment level. The correct
-next action on the residual is calibration work, **not** a construction change.
+```text
+top-1               10136   99%     (2026-08-13 contract: 6525, 64%)
+top-5-set           10182   99%     (9232, 90%)
+prefix-10 overlap   94456 of 98930  95%   (65505, 66%)
+absent                  1           (70)
+```
 
-### 8.3 What remains open, and what would re-open a strategy
+Serial == parallel and debug == release, bit-identical. The single remaining
+absent is `ni''hao`, the frozen doubled-apostrophe path disagreement
+(`segment-graph.md`, §3.1) — absent under every construction, not a scan
+residual. The tie budget: ~279k adjacent fully-tied pairs across ~9.8k inputs
+absorbed by the stable sort; ~1.0k depth-10 order-only tie-swaps.
+
+### 8.3 What remains open, and what would re-open a stage
 
 - **`NORMAL` ≠ "exactly one dictionary phrase"** (§7.5). The token
-  decomposition is unreachable from the public API, so the positive half of
-  §1.4.3 stays open. This is a calibration question, not a construction one; it
-  does not re-open either strategy.
-- **Starvation** (§1.4.1) remains an **absent-bucket** question answered from
-  existing fixtures (§1.6, §7.5). It is the only lever that could justify
-  Strategy A.
-- **Re-open conditions.** Either strategy is re-opened only on new evidence,
-  never on the current fixture: (a) a future capture under different flags / a
-  different profile that actually produces `NBEST_MATCH` candidates (re-opens
-  Strategy B, and re-opens the sentence-level half of the hypothesis for
-  Strategy A); or (b) a measured starvation population in the **absent** bucket
-  large enough to move the §0 pins (re-opens Strategy A).
+  decomposition is unreachable from the public API; the scan reproduces the
+  emitted text without claiming the token split.
+- **Fuzzy/correction spellings** (the pin's fuzzy step under ambiguity
+  options not set by `0x18a`) are Stage 2, outside this contract.
+- **The sentence stage** re-opens only on a future capture that actually
+  produces `NBEST_MATCH` candidates (a different profile), per the
+  2026-08-13 §8.3 condition (a).
 
 ### 8.4 What this contract does not change
 
-The five `assert_eq!` parity pins (§0) are unchanged: 6525 / 9232 / 70 /
-65505 of 98930. The compatibility invariants (§3) and the measurement gates (§4)
-are unchanged and still normative. No implementation follows from this contract;
-any future calibration or construction change is a separate, evidence-gated
-decision (§6 step 4).
+The five `assert_eq!` parity pins (§0) are the reproduced values re-pinned in
+this commit. The compatibility invariants (§3) and the measurement gates (§4)
+are unchanged and still normative, now measured against 10136 / 10182 / 1 /
+94456 of 98930. The parser, the graph, and the k-best machinery are untouched;
+only the collection that consumed them changed.
 
 STOP and report rather than inventing evidence.

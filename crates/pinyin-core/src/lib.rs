@@ -134,6 +134,17 @@ pub trait LanguageModel {
     fn unigram_freq(&self, _token: &Self::Token) -> Result<Option<u64>, Self::Error> {
         Ok(None)
     }
+
+    /// Whether the model carries a real unigram frequency table.
+    ///
+    /// This is the construction switch: when it returns `true` the engine
+    /// collects and ranks candidates by the pinned construction, and when it
+    /// returns `false` the pre-frequency behaviour runs. Defaulted to `false`
+    /// so the frozen implementors and any third-party model keep compiling
+    /// unchanged.
+    fn has_real_unigrams(&self) -> bool {
+        false
+    }
 }
 
 impl<L: LanguageModel + ?Sized> LanguageModel for &L {
@@ -151,6 +162,10 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
         (**self).unigram_freq(token)
+    }
+
+    fn has_real_unigrams(&self) -> bool {
+        (**self).has_real_unigrams()
     }
 }
 
