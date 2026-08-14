@@ -1,0 +1,48 @@
+# cbindgen configuration for pinyin-capi.
+# Generates a C header matching libpinyin's pinyin.h ABI.
+
+language = "C"
+include_guard = "PINYIN_CAPI_H"
+no_includes = true
+sys_includes = ["stddef.h", "stdbool.h", "stdint.h"]
+
+# Keep doc comments as C comments in the header.
+documentation = true
+documentation_style = "c99"
+documentation_length = "short"
+
+# Style matching libpinyin's pinyin.h conventions.
+style = "both"
+usize_is_size_t = true
+
+[export]
+include = [
+    "PinyinContext",
+    "PinyinInstance",
+    "LookupCandidate",
+    "ChewingKey",
+    "ChewingKeyRest",
+    "ImportIterator",
+    "ExportIterator",
+    "BigramExportIterator",
+    "lookup_candidate_type_t",
+    "sort_option_t",
+    "DoublePinyinScheme",
+    "ZhuyinScheme",
+]
+
+[export.rename]
+"PinyinContext" = "pinyin_context_t"
+"PinyinInstance" = "pinyin_instance_t"
+"LookupCandidate" = "lookup_candidate_t"
+"ImportIterator" = "import_iterator_t"
+"ExportIterator" = "export_iterator_t"
+"BigramExportIterator" = "bigram_export_iterator_t"
+
+# Type aliases for glib scalar types.
+[export.body]
+"PinyinOptionT" = ""
+"PhraseTokenT" = ""
+"GUint" = ""
+"GInt" = ""
+"GChar" = ""
