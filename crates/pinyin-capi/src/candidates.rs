@@ -1,8 +1,11 @@
 //! Candidate access, selection, and training.
 
 use std::os::raw::c_int;
-use std::ptr;
 
+use pinyin_engine::CandidateKind;
+
+use crate::ffi::ffi_catch;
+use crate::state::{candidate_ptr, candidate_ref, instance_mut, instance_ref};
 use crate::types::{GChar, GUint, LookupCandidate, PinyinInstance, lookup_candidate_type_t};
 
 /// Get the number of candidates.
@@ -16,14 +19,18 @@ pub extern "C" fn pinyin_get_n_candidate(instance: *mut PinyinInstance, num: *mu
     if instance.is_null() {
         return false;
     }
-    if !num.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *num = 0;
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_ref(instance) };
+        if !num.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *num = inst.candidates.len() as GUint;
+            }
         }
-    }
-    // STUB: T3 will implement.
-    false
+        true
+    })
 }
 
 /// Get a candidate by index.
@@ -36,23 +43,42 @@ pub extern "C" fn pinyin_get_n_candidate(instance: *mut PinyinInstance, num: *mu
 /// ```
 ///
 /// Out-param `candidate` is instance-borrowed (never freed by caller).
+/// Valid until the next `pinyin_guess_candidates` call.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_candidate(
     instance: *mut PinyinInstance,
-    _index: GUint,
+    index: GUint,
     candidate: *mut *mut LookupCandidate,
 ) -> bool {
     if instance.is_null() {
         return false;
     }
-    if !candidate.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *candidate = ptr::null_mut();
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_ref(instance) };
+        let idx = index as usize;
+        match inst.candidates.get(idx) {
+            Some(cand) => {
+                if !candidate.is_null() {
+                    // SAFETY: Null-checked above.
+                    unsafe {
+                        *candidate = candidate_ptr(cand);
+                    }
+                }
+                true
+            }
+            None => {
+                if !candidate.is_null() {
+                    // SAFETY: Null-checked above.
+                    unsafe {
+                        *candidate = std::ptr::null_mut();
+                    }
+                }
+                false
+            }
         }
-    }
-    // STUB: T3 will implement.
-    false
+    })
 }
 
 /// Get the type of a lookup candidate.
@@ -72,14 +98,23 @@ pub extern "C" fn pinyin_get_candidate_type(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    if !candidate_type.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *candidate_type = lookup_candidate_type_t::NORMAL_CANDIDATE;
+    ffi_catch(false, || {
+        // SAFETY: `candidate` is non-null and was produced by
+        // `pinyin_get_candidate`.
+        let cand = unsafe { candidate_ref(candidate) };
+        let ctype = match cand.kind {
+            CandidateKind::Sentence => lookup_candidate_type_t::NBEST_MATCH_CANDIDATE,
+            CandidateKind::Phrase => lookup_candidate_type_t::NORMAL_CANDIDATE,
+            CandidateKind::Fallback | _ => lookup_candidate_type_t::NORMAL_CANDIDATE,
+        };
+        if !candidate_type.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *candidate_type = ctype;
+            }
         }
-    }
-    // STUB: T3 will implement.
-    false
+        true
+    })
 }
 
 /// Get the display string of a candidate.
@@ -101,14 +136,19 @@ pub extern "C" fn pinyin_get_candidate_string(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    if !utf8_str.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *utf8_str = ptr::null();
+    ffi_catch(false, || {
+        // SAFETY: `candidate` is non-null and was produced by
+        // `pinyin_get_candidate`.
+        let cand = unsafe { candidate_ref(candidate) };
+        if !utf8_str.is_null() {
+            // SAFETY: Null-checked above. Pointer borrows into the
+            // CapiCandidate's CString, valid until candidates are rebuilt.
+            unsafe {
+                *utf8_str = cand.text.as_ptr();
+            }
         }
-    }
-    // STUB: T3 will implement.
-    false
+        true
+    })
 }
 
 /// Get the n-best index of a candidate.
@@ -119,6 +159,8 @@ pub extern "C" fn pinyin_get_candidate_string(
 ///                                       lookup_candidate_t * candidate,
 ///                                       guint8 * index);
 /// ```
+///
+/// Provisional: returns the stored nbest_index (always 0 with StubLm).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_candidate_nbest_index(
     instance: *mut PinyinInstance,
@@ -128,14 +170,18 @@ pub extern "C" fn pinyin_get_candidate_nbest_index(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    if !index.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *index = 0;
+    ffi_catch(false, || {
+        // SAFETY: `candidate` is non-null and was produced by
+        // `pinyin_get_candidate`.
+        let cand = unsafe { candidate_ref(candidate) };
+        if !index.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *index = cand.nbest_index;
+            }
         }
-    }
-    // STUB: T3 will implement.
-    false
+        true
+    })
 }
 
 /// Check whether a candidate is a user candidate.
@@ -145,6 +191,8 @@ pub extern "C" fn pinyin_get_candidate_nbest_index(
 /// bool pinyin_is_user_candidate(pinyin_instance_t * instance,
 ///                               lookup_candidate_t * candidate);
 /// ```
+///
+/// Provisional: always returns false (no user dictionary yet).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_is_user_candidate(
     instance: *mut PinyinInstance,
@@ -153,7 +201,6 @@ pub extern "C" fn pinyin_is_user_candidate(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    // STUB: T4 will implement.
     false
 }
 
@@ -164,6 +211,8 @@ pub extern "C" fn pinyin_is_user_candidate(
 /// bool pinyin_remove_user_candidate(pinyin_instance_t * instance,
 ///                                   lookup_candidate_t * candidate);
 /// ```
+///
+/// Provisional: always returns false (no user dictionary yet).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_remove_user_candidate(
     instance: *mut PinyinInstance,
@@ -172,7 +221,6 @@ pub extern "C" fn pinyin_remove_user_candidate(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    // STUB: T4 will implement.
     false
 }
 
@@ -186,17 +234,47 @@ pub extern "C" fn pinyin_remove_user_candidate(
 /// ```
 ///
 /// Returns -1 on failure (consistent with the `int` return type).
+/// Provisional: computes candidate index from the pointer offset into the
+/// instance's candidate vec and calls `Session::select`.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_choose_candidate(
     instance: *mut PinyinInstance,
-    _offset: usize,
+    offset: usize,
     candidate: *mut LookupCandidate,
 ) -> c_int {
     if instance.is_null() || candidate.is_null() {
         return -1;
     }
-    // STUB: T4 will implement.
-    -1
+    ffi_catch(-1, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_mut(instance) };
+        if inst.candidates.is_empty() {
+            return -1;
+        }
+        let base = inst.candidates.as_ptr();
+        // SAFETY: `candidate` was produced by `pinyin_get_candidate` and
+        // points into `inst.candidates`.
+        let index = unsafe {
+            candidate
+                .cast::<crate::state::CapiCandidate>()
+                .offset_from(base)
+        };
+        if index < 0 || index as usize >= inst.candidates.len() {
+            return -1;
+        }
+        let index = index as usize;
+        let consumed_bytes = inst
+            .session
+            .candidates()
+            .get(index)
+            .map(|c| c.consumed_bytes())
+            .unwrap_or(0);
+        match inst.session.select(index) {
+            Ok(_) => (offset + consumed_bytes) as c_int,
+            Err(_) => -1,
+        }
+    })
 }
 
 /// Choose a predicted candidate.
@@ -206,6 +284,8 @@ pub extern "C" fn pinyin_choose_candidate(
 /// bool pinyin_choose_predicted_candidate(pinyin_instance_t * instance,
 ///                                        lookup_candidate_t * candidate);
 /// ```
+///
+/// Provisional: always returns false (prediction requires a real LM).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_choose_predicted_candidate(
     instance: *mut PinyinInstance,
@@ -214,7 +294,6 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    // STUB: T4 will implement.
     false
 }
 
@@ -224,11 +303,12 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
 /// ```c
 /// bool pinyin_train(pinyin_instance_t * instance, guint8 index);
 /// ```
+///
+/// Provisional: always returns true (no training with StubLm).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, _index: u8) -> bool {
     if instance.is_null() {
         return false;
     }
-    // STUB: T4 will implement.
-    false
+    true
 }

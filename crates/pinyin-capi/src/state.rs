@@ -9,11 +9,12 @@
 #![allow(dead_code)]
 
 use std::convert::Infallible;
+use std::ffi::CString;
 
 use pinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
-use pinyin_engine::{EmptyConfigSource, Session, StoragePaths};
+use pinyin_engine::{CandidateKind, EmptyConfigSource, Session, StoragePaths};
 
-use crate::types::{PinyinContext, PinyinInstance};
+use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
 // ── Stub backends (T2) ─────────────────────────────────────────────────
 //
@@ -73,15 +74,29 @@ impl CapiContext {
     pub(crate) fn alloc_instance(&self) -> Option<CapiInstance> {
         let session =
             Session::new(&EmptyConfigSource, self.paths.clone(), StubDict, StubLm).ok()?;
-        Some(CapiInstance { session })
+        Some(CapiInstance {
+            session,
+            candidates: Vec::new(),
+        })
     }
 }
 
 // ── Instance ────────────────────────────────────────────────────────────
 
+/// One snapshotted candidate, stored inside `CapiInstance` so that
+/// `lookup_candidate_t *` can borrow into it across C calls.
+pub(crate) struct CapiCandidate {
+    pub(crate) text: CString,
+    pub(crate) kind: CandidateKind,
+    pub(crate) nbest_index: u8,
+}
+
 /// State behind `pinyin_instance_t *`.
 pub(crate) struct CapiInstance {
     pub(crate) session: CapiSession,
+    /// Snapshotted candidates, rebuilt by `pinyin_guess_candidates`.
+    /// `lookup_candidate_t *` pointers borrow into this vec.
+    pub(crate) candidates: Vec<CapiCandidate>,
 }
 
 // ── Pointer casts ───────────────────────────────────────────────────────
@@ -151,4 +166,20 @@ pub(crate) fn box_context(ctx: CapiContext) -> *mut PinyinContext {
 /// Converts a `CapiInstance` into a `*mut PinyinInstance` for return to C.
 pub(crate) fn box_instance(inst: CapiInstance) -> *mut PinyinInstance {
     Box::into_raw(Box::new(inst)).cast()
+}
+
+/// Casts a `*mut LookupCandidate` back to `&CapiCandidate`.
+///
+/// # Safety
+///
+/// `ptr` must be non-null and point into an active `CapiInstance::candidates`
+/// vec (produced by [`candidate_ptr`]).
+pub(crate) unsafe fn candidate_ref(ptr: *mut LookupCandidate) -> &'static CapiCandidate {
+    // SAFETY: Caller guarantees the pointer is valid.
+    unsafe { &*(ptr.cast::<CapiCandidate>()) }
+}
+
+/// Returns a `*mut LookupCandidate` pointing to a `CapiCandidate`.
+pub(crate) fn candidate_ptr(cand: &CapiCandidate) -> *mut LookupCandidate {
+    (cand as *const CapiCandidate as *mut CapiCandidate).cast()
 }
