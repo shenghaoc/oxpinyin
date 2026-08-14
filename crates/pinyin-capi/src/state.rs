@@ -96,8 +96,11 @@ pub(crate) struct CapiInstance {
 /// # Safety
 ///
 /// `ptr` must be non-null and produced by `Box::into_raw(Box::new(CapiContext { .. }))`.
-pub(crate) unsafe fn context_ref(ptr: *mut PinyinContext) -> &'static CapiContext {
-    // SAFETY: Caller guarantees the pointer is valid.
+/// The returned reference must not outlive the `Box` (i.e. must not be used
+/// after `pinyin_fini` reconstructs and drops it), and must not be stored in
+/// a `CapiInstance` or any other longer-lived location.
+pub(crate) unsafe fn context_ref<'a>(ptr: *mut PinyinContext) -> &'a CapiContext {
+    // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
     unsafe { &*(ptr.cast::<CapiContext>()) }
 }
 
@@ -106,9 +109,11 @@ pub(crate) unsafe fn context_ref(ptr: *mut PinyinContext) -> &'static CapiContex
 /// # Safety
 ///
 /// `ptr` must be non-null and produced by `Box::into_raw(Box::new(CapiContext { .. }))`.
-/// No other reference to the same context may exist.
-pub(crate) unsafe fn context_mut(ptr: *mut PinyinContext) -> &'static mut CapiContext {
-    // SAFETY: Caller guarantees the pointer is valid and unique.
+/// No other reference to the same context may exist, and the returned
+/// reference must not outlive the `Box` (i.e. must not be used after
+/// `pinyin_fini` reconstructs and drops it) or be stored in a `CapiInstance`.
+pub(crate) unsafe fn context_mut<'a>(ptr: *mut PinyinContext) -> &'a mut CapiContext {
+    // SAFETY: Caller guarantees the pointer is valid and unique for the chosen lifetime.
     unsafe { &mut *(ptr.cast::<CapiContext>()) }
 }
 
@@ -117,8 +122,11 @@ pub(crate) unsafe fn context_mut(ptr: *mut PinyinContext) -> &'static mut CapiCo
 /// # Safety
 ///
 /// `ptr` must be non-null and produced by `Box::into_raw(Box::new(CapiInstance { .. }))`.
-pub(crate) unsafe fn instance_ref(ptr: *mut PinyinInstance) -> &'static CapiInstance {
-    // SAFETY: Caller guarantees the pointer is valid.
+/// The returned reference must not outlive the `Box` (i.e. must not be used
+/// after `pinyin_free_instance` reconstructs and drops it), and must not be
+/// stored in any longer-lived location.
+pub(crate) unsafe fn instance_ref<'a>(ptr: *mut PinyinInstance) -> &'a CapiInstance {
+    // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
     unsafe { &*(ptr.cast::<CapiInstance>()) }
 }
 
@@ -127,9 +135,11 @@ pub(crate) unsafe fn instance_ref(ptr: *mut PinyinInstance) -> &'static CapiInst
 /// # Safety
 ///
 /// `ptr` must be non-null and produced by `Box::into_raw(Box::new(CapiInstance { .. }))`.
-/// No other reference to the same instance may exist.
-pub(crate) unsafe fn instance_mut(ptr: *mut PinyinInstance) -> &'static mut CapiInstance {
-    // SAFETY: Caller guarantees the pointer is valid and unique.
+/// No other reference to the same instance may exist, and the returned
+/// reference must not outlive the `Box` (i.e. must not be used after
+/// `pinyin_free_instance` reconstructs and drops it) or be stored elsewhere.
+pub(crate) unsafe fn instance_mut<'a>(ptr: *mut PinyinInstance) -> &'a mut CapiInstance {
+    // SAFETY: Caller guarantees the pointer is valid and unique for the chosen lifetime.
     unsafe { &mut *(ptr.cast::<CapiInstance>()) }
 }
 
