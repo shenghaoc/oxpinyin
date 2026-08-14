@@ -62,3 +62,13 @@ pinyin-engine = { path = "../pinyin-engine" }
 
 [dev-dependencies]
 # Integration tests share the same internal crates as the parity tooling.
+criterion = "0.5"
+dhat = "0.3"
+
+[[bench]]
+name = "scan_perf"
+harness = false
+
+[[bench]]
+name = "alloc_profile"
+harness = false
