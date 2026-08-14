@@ -58,10 +58,18 @@ const MAX_CANDIDATES: usize = 64;
 /// Longest phrase, in keys, the sentence builder will look back for.
 const MAX_PHRASE_KEYS: usize = 8;
 
-/// Longest key sequence the window scan searches, from libpinyin's
-/// `MAX_PHRASE_LENGTH` in `novel_types.h`. Paths beyond it return
-/// `SEARCH_NONE` without a table lookup, exactly as upstream.
+/// Longest key sequence the window scan searches: the pin's phrase-length
+/// cap. Paths beyond it are not searched.
 const MAX_PHRASE_LENGTH: usize = 16;
+
+/// The window scan's own expansion bound, separate from
+/// [`pinyin_core::scoring::ScoringConfig::expansion_limit`] which the
+/// pre-frequency fallback shares. Measured over the W2 corpus, the largest
+/// expansion that hits real phrases is a three-initial `q|q|q` span
+/// (14^3 = 2_744 — the pin's `qqq…` offers `请求权`); 4_096 covers it with
+/// headroom. Larger products yield nothing: no stored phrase matches a
+/// longer all-initial span.
+const SCAN_EXPANSION_LIMIT: usize = 4_096;
 
 /// What a session did with a key.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -486,27 +494,22 @@ where
         );
         let paths = k_best(&graph, &scorer, SEGMENTATION_K).map_err(EngineError::Decode)?;
 
-        // The pinned construction only activates when the model carries the
-        // phrase index's real unigram frequencies, so collect its span set
-        // first and probe the model through the tokens it produced. When real
-        // frequencies exist, candidates rank by the pinned three-key order
-        // (text length, pinyin span, frequency) and duplicates collapse
-        // keep-first. Without them the session reproduces its pre-frequency
-        // behaviour exactly — unpinned spans, sentence candidates, cost order,
-        // adjacent dedup — so a missing model cache changes nothing.
-        // The pinned construction: the expanding-window scan over the
-        // parser-shaped key set (libpinyin's pinyin_guess_candidates →
-        // search_matrix → search_matrix_recur). When the model carries the
-        // phrase index's real unigram frequencies, the pooled candidates rank
-        // by the pinned three-key order (text length, pinyin span, frequency)
-        // and duplicates collapse keep-first. Without real frequencies the
-        // session reproduces its pre-frequency behaviour exactly — sentence
-        // candidates, cost order, adjacent dedup — so a missing model cache
-        // changes nothing.
+        // When the model carries the phrase index's real unigram
+        // frequencies, the pinned construction runs — the expanding-window
+        // scan, the three-key order (text length, pinyin span, frequency),
+        // keep-first dedup, and only the raw-input fallback after an empty
+        // result. Without real frequencies the session reproduces its
+        // pre-frequency behaviour exactly: k-best prefixes, sentence
+        // candidates, cost order, adjacent dedup.
         let mut collected: Vec<Candidate> = Vec::new();
-        self.collect_window_scan(&graph, remaining.as_bytes(), &mut collected)?;
+        if self.model.has_real_unigrams() {
+            self.collect_window_scan(&graph, remaining.as_bytes(), &mut collected)?;
 
-        if let Some(frequencies) = self.candidate_frequencies(&collected)? {
+            // The scan's result stands even when it found nothing. Tokens the
+            // table lacks rank as zero rather than falling back.
+            let frequencies = self
+                .candidate_frequencies(&collected)?
+                .unwrap_or_else(|| vec![0; collected.len()]);
             let mut keyed: Vec<(RankKey, Candidate)> = collected
                 .into_iter()
                 .zip(frequencies)
@@ -528,7 +531,6 @@ where
 
             dedup_by_text_keep_first(&mut collected);
         } else {
-            collected.clear();
             for path in &paths {
                 self.collect_prefix_phrases(&graph, &scorer, path, &mut collected)?;
                 self.collect_sentence(&graph, &scorer, path, &mut collected)?;
@@ -710,30 +712,29 @@ where
         (keys, kinds, ends)
     }
 
-    /// The expanding-window scan of libpinyin's candidate collection.
+    /// The expanding-window scan of the pinned candidate collection.
     ///
-    /// Port of `pinyin_guess_candidates` → `search_matrix` → `search_matrix_recur`
-    /// onto the segment graph. Start is fixed at the composition offset (byte 0 of
-    /// the remaining input); `end` walks outward over every byte position the
-    /// graph reaches. At each `[start, end)` window every key-path through the
-    /// scan matrix — the selected parse plus the resplit/divided additions — is
-    /// enumerated and the phrase table is searched on the accumulated sequence;
-    /// initial-only keys expand through `expand_keys`, the pin's initial-index
-    /// wildcard search. Every phrase found is appended with its `[start, end)`
-    /// span.
+    /// Start is fixed at the composition offset (byte 0 of the remaining
+    /// input); `end` walks outward over every byte position the graph
+    /// reaches. At each `[start, end)` window every key-path through the scan
+    /// matrix — the selected parse plus the resplit/divided additions,
+    /// `docs/findings/matrix-split-tables.md` — is enumerated and the phrase
+    /// table is searched on the accumulated sequence; initial-only keys expand
+    /// through [`expand_keys`]. Every phrase found is appended with its
+    /// `[start, end)` span.
     ///
-    /// Widening is prefix-driven: a window whose sequences cannot extend to any
-    /// stored phrase stops the scan (`SEARCH_CONTINUED` cleared), exactly the DBM
-    /// index probe upstream uses. Consecutive apostrophe bytes after a searched
-    /// window are skipped so the next window does not repeat the same key
-    /// sequence (upstream's zero-ChewingKey skip).
+    /// Widening is prefix-driven: a window whose sequences cannot extend to
+    /// any stored phrase stops the scan (the pin's continued-search probe,
+    /// [`crate::Dictionary::phrase_prefix_exists`]). Consecutive apostrophe
+    /// bytes after a searched window are skipped so the next window does not
+    /// repeat the same key sequence.
     fn collect_window_scan(
         &self,
         graph: &SegmentGraph,
         input: &[u8],
         into: &mut Vec<Candidate>,
     ) -> Result<(), EngineError> {
-        let matrix = build_scan_matrix(graph);
+        let matrix = build_scan_matrix(graph, self.settings.incomplete);
         let bound = graph.consumed();
         let mut end = 1usize;
         while end <= bound {
@@ -816,7 +817,7 @@ where
 
         let mut sequences: Vec<Vec<SyllableKey>> = Vec::new();
         if has_incomplete {
-            sequences = expand_keys(path, self.scoring.expansion_limit);
+            sequences = expand_keys(path, SCAN_EXPANSION_LIMIT);
         } else {
             sequences.push(path.to_vec());
         }
@@ -855,13 +856,11 @@ fn append_scan_entries(
     }
 }
 
-/// One resplit pair from the pinned parser's generated `special_table.h`:
-/// a segmentation the matrix admits alongside the selected parse.
+/// One resplit pair the scan matrix admits alongside the selected parse,
+/// frozen in `docs/findings/matrix-split-tables.md`.
+///
 /// `(first, second) -> (left, right)`; `left` occupies the start of `first`
 /// and `right` runs from its end to `second`'s end.
-///
-/// Ported as data (not code) from libpinyin 2.11.91 `resplit_table`; the
-/// collection scan is its only consumer.
 const RESPLIT_TABLE: &[(&str, &str, &str, &str)] = &[
     ("a", "nan", "an", "an"),
     ("an", "gang", "ang", "ang"),
@@ -950,11 +949,10 @@ const RESPLIT_TABLE: &[(&str, &str, &str, &str)] = &[
     ("zhua", "nan", "zhuan", "an"),
 ];
 
-/// One divided syllable from the pinned parser's generated `special_table.h`:
-/// `syllable -> (left, right)`, where `left` ends inside the syllable.
+/// One divided syllable the scan matrix splits, frozen in
+/// `docs/findings/matrix-split-tables.md`.
 ///
-/// Ported as data (not code) from libpinyin 2.11.91 `divided_table`; the
-/// collection scan is its only consumer.
+/// `syllable -> (left, right)`, where `left` ends inside the syllable.
 const DIVIDED_TABLE: &[(&str, &str, &str)] = &[
     ("bian", "bi", "an"),
     ("bie", "bi", "e"),
@@ -978,47 +976,51 @@ const DIVIDED_TABLE: &[(&str, &str, &str)] = &[
     ("zuan", "zu", "an"),
 ];
 
-/// One key of the scan matrix at its byte position, with the byte position it
-/// ends at (which differs from `from + len` only across an apostrophe).
+/// One key of the scan matrix at its byte position, with the byte position
+/// it ends at and where its own text starts — the two differ from
+/// `from + len` exactly when the key rides over an apostrophe separator.
 #[derive(Clone, Copy)]
 struct ScanKey {
     key: SyllableKey,
     from: usize,
     to: usize,
+    syllable_start: usize,
+    crosses_separator: bool,
+}
+
+impl ScanKey {
+    fn from_edge(edge: &Edge) -> Self {
+        Self {
+            key: edge.key(),
+            from: edge.from(),
+            to: edge.to(),
+            syllable_start: edge.syllable_start(),
+            crosses_separator: edge.crosses_separator(),
+        }
+    }
 }
 
 /// The keys the pin's matrix holds per byte position: the selected parse's
-/// keys, plus the resplit and divided additions — the exact construction of
-/// `pinyin_parse_more_full_pinyins` → `fill_matrix` → `resplit_step` →
-/// `inner_split_step`.
-fn build_scan_matrix(graph: &SegmentGraph) -> Vec<Vec<ScanKey>> {
+/// keys, plus the resplit and divided additions. See
+/// `docs/findings/matrix-split-tables.md` for the frozen pair lists and the
+/// construction they reproduce.
+fn build_scan_matrix(graph: &SegmentGraph, allow_incomplete: bool) -> Vec<Vec<ScanKey>> {
     let bound = graph.consumed();
     let mut columns: Vec<Vec<ScanKey>> = vec![Vec::new(); bound + 1];
 
     // 1. The selected parse.
-    for edge in selected_path(graph) {
-        columns[edge.from()].push(ScanKey {
-            key: edge.key(),
-            from: edge.from(),
-            to: edge.to(),
-        });
+    let selected_edges = selected_path(graph, allow_incomplete);
+    let selected: Vec<ScanKey> = selected_edges.iter().map(ScanKey::from_edge).collect();
+    for scan_key in &selected {
+        columns[scan_key.from].push(*scan_key);
     }
 
-    // 2. Resplit pairs along the selected path.
-    let selected: Vec<ScanKey> = columns
-        .iter()
-        .enumerate()
-        .flat_map(|(position, keys)| keys.iter().map(move |key| (position, *key)))
-        .map(|(position, key)| ScanKey {
-            key: key.key,
-            from: position,
-            to: key.to,
-        })
-        .collect();
+    // 2. Resplit pairs along the selected path. A pair only resplits when
+    // the two keys share a boundary with no apostrophe between them: the
+    // pin fills a zero key at a separator, so its pairs never span one.
     let mut additions: Vec<ScanKey> = Vec::new();
     for pair in selected.windows(2) {
-        // The pair must share a boundary: no resplit across an apostrophe.
-        if pair[1].from != pair[0].to {
+        if pair[1].from != pair[0].to || pair[0].crosses_separator || pair[1].crosses_separator {
             continue;
         }
         let Some((_, _, left, right)) = RESPLIT_TABLE.iter().find(|(first, second, _, _)| {
@@ -1037,18 +1039,25 @@ fn build_scan_matrix(graph: &SegmentGraph) -> Vec<Vec<ScanKey>> {
             key: left_key,
             from: pair[0].from,
             to: split,
+            syllable_start: pair[0].from,
+            crosses_separator: false,
         });
         additions.push(ScanKey {
             key: right_key,
             from: split,
             to: pair[1].to,
+            syllable_start: split,
+            crosses_separator: false,
         });
     }
     for addition in &additions {
         columns[addition.from].push(*addition);
     }
 
-    // 3. Divided syllables over every key collected so far.
+    // 3. Divided syllables over every key collected so far. The split parts
+    // are measured from the syllable text itself, so a key that rides over
+    // an apostrophe still divides (`bu'tian` offers `补体` from the divided
+    // `ti`, whose span covers the apostrophe plus `t` + `i`).
     let snapshot: Vec<ScanKey> = columns
         .iter()
         .enumerate()
@@ -1057,13 +1066,12 @@ fn build_scan_matrix(graph: &SegmentGraph) -> Vec<Vec<ScanKey>> {
             key: key.key,
             from: position,
             to: key.to,
+            syllable_start: key.syllable_start,
+            crosses_separator: key.crosses_separator,
         })
         .collect();
     let mut additions: Vec<ScanKey> = Vec::new();
     for scan_key in &snapshot {
-        // The split parts run from the key's start; a key that rides over an
-        // apostrophe still divides (`bu'tian` offers `补体` from the divided
-        // `ti`).
         let Some((_, left, right)) = DIVIDED_TABLE
             .iter()
             .find(|(syllable, _, _)| *syllable == scan_key.key.text())
@@ -1076,16 +1084,20 @@ fn build_scan_matrix(graph: &SegmentGraph) -> Vec<Vec<ScanKey>> {
         let Some(right_key) = SyllableKey::from_text(right) else {
             continue;
         };
-        let split = scan_key.from + left.len();
+        let split = scan_key.syllable_start + left.len();
         additions.push(ScanKey {
             key: left_key,
             from: scan_key.from,
             to: split,
+            syllable_start: scan_key.syllable_start,
+            crosses_separator: scan_key.crosses_separator,
         });
         additions.push(ScanKey {
             key: right_key,
             from: split,
             to: scan_key.to,
+            syllable_start: split,
+            crosses_separator: false,
         });
     }
     for addition in &additions {
@@ -1110,12 +1122,13 @@ fn build_scan_matrix(graph: &SegmentGraph) -> Vec<Vec<ScanKey>> {
     columns
 }
 
-/// The parse the pin selects for the matrix: the fewest-keys segmentation of
+/// The parse the scan matrix is built from: the fewest-keys segmentation of
 /// the reachable input, ties broken by first-found in left-to-right,
-/// shortest-key-first order — upstream's `FullPinyinParser2` DP (prefer
-/// longest parsed length, then fewest keys; every admitted key carries
-/// distance zero under the pinned options, so the first candidate wins ties).
-fn selected_path(graph: &SegmentGraph) -> Vec<Edge> {
+/// shortest-key-first order — the selection `candidate-construction.md` §8.1
+/// freezes (prefer the longest parsed length, then fewest keys; every
+/// admitted key carries distance zero under the pinned options, so the first
+/// candidate wins ties).
+fn selected_path(graph: &SegmentGraph, allow_incomplete: bool) -> Vec<Edge> {
     let bound = graph.consumed();
     // steps[node] = (key count, incoming edge, previous node); node 0 is the
     // root with count zero.
@@ -1130,7 +1143,12 @@ fn selected_path(graph: &SegmentGraph) -> Vec<Edge> {
                 None => continue,
             }
         };
-        let mut edges: Vec<Edge> = graph.outgoing(node).to_vec();
+        let mut edges: Vec<Edge> = graph
+            .outgoing(node)
+            .iter()
+            .filter(|edge| allow_incomplete || edge.kind() != EdgeKind::Incomplete)
+            .copied()
+            .collect();
         // Upstream tries key lengths ascending at each position.
         edges.sort_by_key(|edge| (edge.to() - edge.from(), edge.key().index()));
         for edge in edges {

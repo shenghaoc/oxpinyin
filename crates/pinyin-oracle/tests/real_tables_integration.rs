@@ -2,9 +2,13 @@
 //! W2 parity corpus.
 //!
 //! Constructs `Session<SystemDictionary, BigramLanguageModel>` from the
-//! tables `pinyin-migrate export` writes to `/tmp/pinyin-rs-export` and
-//! compares candidates with the oracle's **frozen** candidate lists at
-//! `fixtures/w4/oracle-candidates.txt`.
+//! tables `pinyin-migrate export` writes to `/tmp/pinyin-rs-export`, loads the
+//! real unigram counts from `interpolation2.text` in the fetched model cache
+//! (`tools/model/fetch-model.sh`), and compares candidates with the oracle's
+//! **frozen** candidate lists at `fixtures/w4/oracle-candidates.txt`. Without
+//! the model cache the parity measurement skips with a diagnostic — the
+//! reproduced construction ranks by the real counts, so there is nothing
+//! faithful to measure without them.
 //!
 //! Two tiers:
 //!
@@ -491,6 +495,53 @@ fn real_tables_session_reports_parity() {
         absent * 100 <= total * 4,
         "absent rose to {absent}/{total}; expected <= 4%"
     );
+}
+
+/// The scan's split parts are measured from the syllable text, not from the
+/// byte the apostrophe rides on: `bu'tian` divides `tian` into `ti` + `an`,
+/// so `补体` must consume exactly `bu'ti` (5 bytes) and leave `an`.
+#[test]
+fn scan_divided_key_consumes_the_apostrophe_span() {
+    use pinyin_engine::Selection;
+
+    let Some(dir) = export_dir() else {
+        return;
+    };
+    let Ok(Some(model_dir)) = pinyin_oracle::model_cache::locate_model_dir() else {
+        return;
+    };
+
+    let dict = SystemDictionary::open(
+        &dir.join("pinyin_index.redb"),
+        &dir.join("phrase_index.redb"),
+    )
+    .expect("SystemDictionary opens");
+    let mut lm =
+        BigramLanguageModel::open(&dir.join("bigram.redb")).expect("BigramLanguageModel opens");
+    lm.set_unigrams_from_interpolation2(&model_dir.join("interpolation2.text"))
+        .expect("interpolation2 parses");
+
+    let mut session = Session::new(&EmptyConfigSource, StoragePaths::new("user"), &dict, &lm)
+        .expect("Session::new");
+    let _ = session.type_pinyin("bu'tian");
+
+    let candidate = session
+        .candidates()
+        .iter()
+        .find(|candidate| candidate.text() == "\u{8865}\u{4f53}")
+        .expect("the divided `ti` offers `补体`");
+    assert_eq!(candidate.consumed_bytes(), "bu'ti".len());
+
+    let position = session
+        .candidates()
+        .iter()
+        .position(|candidate| candidate.text() == "\u{8865}\u{4f53}")
+        .expect("补体 is in the list");
+    assert_eq!(
+        session.select(position).expect("the index is live"),
+        Selection::Continued
+    );
+    assert_eq!(session.preedit().text(), "\u{8865}\u{4f53}an");
 }
 
 /// Live-oracle freshness check for `fixtures/w4/oracle-candidates.txt`.
