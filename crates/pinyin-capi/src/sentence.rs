@@ -1,8 +1,10 @@
 //! Sentence guessing and retrieval.
 
+use std::ffi::CString;
 use std::os::raw::c_char;
-use std::ptr;
 
+use crate::ffi::{cstr_to_string, ffi_catch};
+use crate::state::{CapiCandidate, instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance};
 
 /// Guess a sentence from saved pinyin keys.
@@ -11,13 +13,20 @@ use crate::types::{GUint, PinyinInstance};
 /// ```c
 /// bool pinyin_guess_sentence(pinyin_instance_t * instance);
 /// ```
+///
+/// With StubDict the sentence is the raw input itself; real sentence
+/// decoding arrives with T4 backends.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     if instance.is_null() {
         return false;
     }
-    // STUB: T3 will implement.
-    false
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_ref(instance) };
+        inst.session.is_composing()
+    })
 }
 
 /// Guess predicted candidates with punctuations after a prefix.
@@ -27,6 +36,8 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
 /// bool pinyin_guess_predicted_candidates_with_punctuations(
 ///     pinyin_instance_t * instance, const char * prefix);
 /// ```
+///
+/// Provisional: always returns false (prediction requires a real LM).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     instance: *mut PinyinInstance,
@@ -35,7 +46,6 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     if instance.is_null() {
         return false;
     }
-    // STUB: T3 will implement.
     false
 }
 
@@ -49,6 +59,10 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
 /// ```
 ///
 /// Out-param `sentence` is caller-owned (`g_free`).
+/// On Linux the default Rust allocator uses libc malloc, so `g_free`
+/// (which calls `free`) can deallocate the returned pointer.
+///
+/// Provisional: ignores the n-best `index` and returns the preedit text.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_sentence(
     instance: *mut PinyinInstance,
@@ -58,14 +72,32 @@ pub extern "C" fn pinyin_get_sentence(
     if instance.is_null() {
         return false;
     }
-    if !sentence.is_null() {
-        // SAFETY: Null-checked above. Write NULL to indicate no result.
-        unsafe {
-            *sentence = ptr::null_mut();
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_ref(instance) };
+        if !inst.session.is_composing() {
+            if !sentence.is_null() {
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *sentence = std::ptr::null_mut();
+                }
+            }
+            return false;
         }
-    }
-    // STUB: T3 will implement.
-    false
+        let preedit = inst.session.preedit();
+        let cstr = match CString::new(preedit.text().to_owned()) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        if !sentence.is_null() {
+            // SAFETY: Null-checked above. Transfers ownership to caller.
+            unsafe {
+                *sentence = cstr.into_raw();
+            }
+        }
+        true
+    })
 }
 
 /// Get character offset from a lookup byte offset within a sentence.
@@ -80,21 +112,26 @@ pub extern "C" fn pinyin_get_sentence(
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_character_offset(
     instance: *mut PinyinInstance,
-    _phrase: *const c_char,
-    _offset: usize,
+    phrase: *const c_char,
+    offset: usize,
     length: *mut usize,
 ) -> bool {
     if instance.is_null() {
         return false;
     }
-    if !length.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *length = 0;
+    ffi_catch(false, || {
+        // SAFETY: `phrase` is a C string from the caller (null OK).
+        let text = unsafe { cstr_to_string(phrase) };
+        let clamped = offset.min(text.len());
+        let char_count = text[..clamped].chars().count();
+        if !length.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *length = char_count;
+            }
         }
-    }
-    // STUB: T3 will implement.
-    false
+        true
+    })
 }
 
 /// Guess candidates at the given offset with sort option.
@@ -105,6 +142,9 @@ pub extern "C" fn pinyin_get_character_offset(
 ///                              size_t offset,
 ///                              guint sort_option);
 /// ```
+///
+/// Snapshots the session's current candidates into the instance's
+/// `CapiCandidate` vec. With StubDict the candidate list is empty.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_guess_candidates(
     instance: *mut PinyinInstance,
@@ -114,6 +154,22 @@ pub extern "C" fn pinyin_guess_candidates(
     if instance.is_null() {
         return false;
     }
-    // STUB: T3 will implement.
-    false
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_mut(instance) };
+        inst.candidates.clear();
+        for cand in inst.session.candidates().iter() {
+            let text = match CString::new(cand.text().to_owned()) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            inst.candidates.push(CapiCandidate {
+                text,
+                kind: cand.kind(),
+                nbest_index: 0,
+            });
+        }
+        true
+    })
 }

@@ -1,7 +1,12 @@
 //! Auxiliary text retrieval.
+//!
+//! Provisional: all three input modes return the session's preedit text
+//! until the engine has dedicated formatting per scheme.
 
-use std::ptr;
+use std::ffi::CString;
 
+use crate::ffi::ffi_catch;
+use crate::state::instance_ref;
 use crate::types::{GChar, PinyinInstance};
 
 /// Get auxiliary text for full pinyin display.
@@ -14,6 +19,8 @@ use crate::types::{GChar, PinyinInstance};
 /// ```
 ///
 /// Out-param `aux_text` is caller-owned (`g_free`).
+/// On Linux the default Rust allocator uses libc malloc, so `g_free`
+/// (which calls `free`) can deallocate the returned pointer.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
     instance: *mut PinyinInstance,
@@ -23,14 +30,23 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
     if instance.is_null() {
         return false;
     }
-    if !aux_text.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *aux_text = ptr::null_mut();
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_ref(instance) };
+        let preedit = inst.session.preedit();
+        let cstr = match CString::new(preedit.text().to_owned()) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        if !aux_text.is_null() {
+            // SAFETY: Null-checked above. Transfers ownership to caller.
+            unsafe {
+                *aux_text = cstr.into_raw();
+            }
         }
-    }
-    // STUB: T3 will implement.
-    false
+        true
+    })
 }
 
 /// Get auxiliary text for double pinyin display.
@@ -43,6 +59,8 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
 /// ```
 ///
 /// Out-param `aux_text` is caller-owned (`g_free`).
+///
+/// Provisional: returns the same preedit text as full pinyin.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
     instance: *mut PinyinInstance,
@@ -52,14 +70,23 @@ pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
     if instance.is_null() {
         return false;
     }
-    if !aux_text.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *aux_text = ptr::null_mut();
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_ref(instance) };
+        let preedit = inst.session.preedit();
+        let cstr = match CString::new(preedit.text().to_owned()) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        if !aux_text.is_null() {
+            // SAFETY: Null-checked above. Transfers ownership to caller.
+            unsafe {
+                *aux_text = cstr.into_raw();
+            }
         }
-    }
-    // STUB: T3 will implement.
-    false
+        true
+    })
 }
 
 /// Get auxiliary text for chewing (bopomofo) display.
@@ -72,6 +99,8 @@ pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
 /// ```
 ///
 /// Out-param `aux_text` is caller-owned (`g_free`).
+///
+/// Provisional: returns the same preedit text as full pinyin.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_chewing_auxiliary_text(
     instance: *mut PinyinInstance,
@@ -81,12 +110,21 @@ pub extern "C" fn pinyin_get_chewing_auxiliary_text(
     if instance.is_null() {
         return false;
     }
-    if !aux_text.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *aux_text = ptr::null_mut();
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_ref(instance) };
+        let preedit = inst.session.preedit();
+        let cstr = match CString::new(preedit.text().to_owned()) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        if !aux_text.is_null() {
+            // SAFETY: Null-checked above. Transfers ownership to caller.
+            unsafe {
+                *aux_text = cstr.into_raw();
+            }
         }
-    }
-    // STUB: T3 will implement.
-    false
+        true
+    })
 }
