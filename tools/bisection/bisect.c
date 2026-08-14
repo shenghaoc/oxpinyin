@@ -2,9 +2,9 @@
  * bisect.c — three-subject ABI bisection fixture.
  *
  * Loads a pinyin shared object (libpinyin.so or libpinyin_capi.so) via
- * dlopen, drives the ibus-libpinyin 1.16.5 call sequence through it, and
- * prints a deterministic log.  Run twice (once per .so) and diff the logs
- * to find behavioural divergence.
+ * dlopen, resolves all 50 ABI-subset symbols, drives the full-pinyin
+ * keystroke cycle through it, and prints a deterministic log.  Run twice
+ * (once per .so) and diff the logs to find behavioural divergence.
  *
  * Usage:
  *   ./bisect <path-to-so> <systemdir>
@@ -19,6 +19,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 #include <dlfcn.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +35,7 @@ typedef void lookup_candidate_t;
 typedef void ChewingKeyRest;
 typedef void import_iterator_t;
 typedef void export_iterator_t;
+typedef void bigram_export_iterator_t;
 
 /* ── Scalar types (match pinyin.h / glib) ─────────────────────────────── */
 
@@ -41,8 +43,23 @@ typedef uint32_t pinyin_option_t;
 typedef uint32_t guint;
 typedef int32_t  gint;
 typedef char     gchar;
-typedef int      gboolean;
 typedef uint32_t phrase_token_t;
+
+/* ── Frontend call profile (matches tools/capture/capture.c) ──────────── */
+
+#define IS_PINYIN         (1u << 1)
+#define PINYIN_INCOMPLETE (1u << 3)
+#define USE_DIVIDED_TABLE (1u << 7)
+#define USE_RESPLIT_TABLE (1u << 8)
+
+/* F-A capture profile: IS_PINYIN | PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
+ * USE_RESPLIT_TABLE == 0x0000018a. */
+#define DEFAULT_FLAGS \
+    ((pinyin_option_t)(IS_PINYIN | PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | \
+                       USE_RESPLIT_TABLE))
+
+/* SORT_BY_PHRASE_LENGTH_AND_PINYIN_LENGTH_AND_FREQUENCY. */
+#define DEFAULT_SORT ((guint)0x1e)
 
 /* ── Candidate type enum ──────────────────────────────────────────────── */
 
@@ -66,70 +83,70 @@ typedef pinyin_instance_t * (*fn_pinyin_alloc_instance)(pinyin_context_t *);
 typedef void                (*fn_pinyin_free_instance)(pinyin_instance_t *);
 
 /* 1b. Configuration */
-typedef gboolean (*fn_pinyin_set_options)(pinyin_context_t *, pinyin_option_t);
-typedef gboolean (*fn_pinyin_set_double_pinyin_scheme)(pinyin_context_t *, int);
-typedef gboolean (*fn_pinyin_set_zhuyin_scheme)(pinyin_context_t *, int);
-typedef gboolean (*fn_pinyin_load_addon_phrase_library)(pinyin_context_t *, uint8_t);
-typedef gboolean (*fn_pinyin_save)(pinyin_context_t *);
+typedef bool (*fn_pinyin_set_options)(pinyin_context_t *, pinyin_option_t);
+typedef bool (*fn_pinyin_set_double_pinyin_scheme)(pinyin_context_t *, int);
+typedef bool (*fn_pinyin_set_zhuyin_scheme)(pinyin_context_t *, int);
+typedef bool (*fn_pinyin_load_addon_phrase_library)(pinyin_context_t *, uint8_t);
+typedef bool (*fn_pinyin_save)(pinyin_context_t *);
 
 /* 1c. Parsing */
 typedef size_t   (*fn_pinyin_parse_more_full_pinyins)(pinyin_instance_t *, const char *);
 typedef size_t   (*fn_pinyin_parse_more_double_pinyins)(pinyin_instance_t *, const char *);
 typedef size_t   (*fn_pinyin_parse_more_chewings)(pinyin_instance_t *, const char *);
-typedef gboolean (*fn_pinyin_in_chewing_keyboard)(pinyin_instance_t *, char, gchar ***);
+typedef bool (*fn_pinyin_in_chewing_keyboard)(pinyin_instance_t *, char, gchar ***);
 
 /* 1d. Sentence / guess */
-typedef gboolean (*fn_pinyin_guess_sentence)(pinyin_instance_t *);
-typedef gboolean (*fn_pinyin_guess_candidates)(pinyin_instance_t *, size_t, guint);
-typedef gboolean (*fn_pinyin_guess_predicted)(pinyin_instance_t *, const char *);
-typedef gboolean (*fn_pinyin_reset)(pinyin_instance_t *);
+typedef bool (*fn_pinyin_guess_sentence)(pinyin_instance_t *);
+typedef bool (*fn_pinyin_guess_candidates)(pinyin_instance_t *, size_t, guint);
+typedef bool (*fn_pinyin_guess_predicted)(pinyin_instance_t *, const char *);
+typedef bool (*fn_pinyin_reset)(pinyin_instance_t *);
 
 /* 1e. Candidate access */
-typedef gboolean (*fn_pinyin_get_n_candidate)(pinyin_instance_t *, guint *);
-typedef gboolean (*fn_pinyin_get_candidate)(pinyin_instance_t *, guint, lookup_candidate_t **);
-typedef gboolean (*fn_pinyin_get_candidate_type)(pinyin_instance_t *, lookup_candidate_t *, lookup_candidate_type_t *);
-typedef gboolean (*fn_pinyin_get_candidate_string)(pinyin_instance_t *, lookup_candidate_t *, const gchar **);
-typedef gboolean (*fn_pinyin_get_candidate_nbest_index)(pinyin_instance_t *, lookup_candidate_t *, uint8_t *);
-typedef gboolean (*fn_pinyin_is_user_candidate)(pinyin_instance_t *, lookup_candidate_t *);
-typedef gboolean (*fn_pinyin_remove_user_candidate)(pinyin_instance_t *, lookup_candidate_t *);
+typedef bool (*fn_pinyin_get_n_candidate)(pinyin_instance_t *, guint *);
+typedef bool (*fn_pinyin_get_candidate)(pinyin_instance_t *, guint, lookup_candidate_t **);
+typedef bool (*fn_pinyin_get_candidate_type)(pinyin_instance_t *, lookup_candidate_t *, lookup_candidate_type_t *);
+typedef bool (*fn_pinyin_get_candidate_string)(pinyin_instance_t *, lookup_candidate_t *, const gchar **);
+typedef bool (*fn_pinyin_get_candidate_nbest_index)(pinyin_instance_t *, lookup_candidate_t *, uint8_t *);
+typedef bool (*fn_pinyin_is_user_candidate)(pinyin_instance_t *, lookup_candidate_t *);
+typedef bool (*fn_pinyin_remove_user_candidate)(pinyin_instance_t *, lookup_candidate_t *);
 
 /* 1f. Selection / training */
 typedef gint     (*fn_pinyin_choose_candidate)(pinyin_instance_t *, size_t, lookup_candidate_t *);
-typedef gboolean (*fn_pinyin_choose_predicted_candidate)(pinyin_instance_t *, lookup_candidate_t *);
-typedef gboolean (*fn_pinyin_train)(pinyin_instance_t *, uint8_t);
+typedef bool (*fn_pinyin_choose_predicted_candidate)(pinyin_instance_t *, lookup_candidate_t *);
+typedef bool (*fn_pinyin_train)(pinyin_instance_t *, uint8_t);
 
 /* 1g. Sentence retrieval */
-typedef gboolean (*fn_pinyin_get_sentence)(pinyin_instance_t *, uint8_t, char **);
-typedef gboolean (*fn_pinyin_get_character_offset)(pinyin_instance_t *, const char *, size_t, size_t *);
+typedef bool (*fn_pinyin_get_sentence)(pinyin_instance_t *, uint8_t, char **);
+typedef bool (*fn_pinyin_get_character_offset)(pinyin_instance_t *, const char *, size_t, size_t *);
 
 /* 1h. Cursor / key rest */
-typedef gboolean (*fn_pinyin_get_pinyin_key_rest)(pinyin_instance_t *, size_t, ChewingKeyRest **);
-typedef gboolean (*fn_pinyin_get_pinyin_key_rest_positions)(pinyin_instance_t *, ChewingKeyRest *, uint16_t *, uint16_t *);
-typedef gboolean (*fn_pinyin_get_pinyin_offset)(pinyin_instance_t *, size_t, size_t *);
-typedef gboolean (*fn_pinyin_get_left_pinyin_offset)(pinyin_instance_t *, size_t, size_t *);
-typedef gboolean (*fn_pinyin_get_right_pinyin_offset)(pinyin_instance_t *, size_t, size_t *);
+typedef bool (*fn_pinyin_get_pinyin_key_rest)(pinyin_instance_t *, size_t, ChewingKeyRest **);
+typedef bool (*fn_pinyin_get_pinyin_key_rest_positions)(pinyin_instance_t *, ChewingKeyRest *, uint16_t *, uint16_t *);
+typedef bool (*fn_pinyin_get_pinyin_offset)(pinyin_instance_t *, size_t, size_t *);
+typedef bool (*fn_pinyin_get_left_pinyin_offset)(pinyin_instance_t *, size_t, size_t *);
+typedef bool (*fn_pinyin_get_right_pinyin_offset)(pinyin_instance_t *, size_t, size_t *);
 
 /* 1i. Auxiliary text */
-typedef gboolean (*fn_pinyin_get_full_pinyin_auxiliary_text)(pinyin_instance_t *, size_t, gchar **);
-typedef gboolean (*fn_pinyin_get_double_pinyin_auxiliary_text)(pinyin_instance_t *, size_t, gchar **);
-typedef gboolean (*fn_pinyin_get_chewing_auxiliary_text)(pinyin_instance_t *, size_t, gchar **);
+typedef bool (*fn_pinyin_get_full_pinyin_auxiliary_text)(pinyin_instance_t *, size_t, gchar **);
+typedef bool (*fn_pinyin_get_double_pinyin_auxiliary_text)(pinyin_instance_t *, size_t, gchar **);
+typedef bool (*fn_pinyin_get_chewing_auxiliary_text)(pinyin_instance_t *, size_t, gchar **);
 
 /* 1j. User data */
-typedef gboolean           (*fn_pinyin_mask_out)(pinyin_context_t *, phrase_token_t, phrase_token_t);
-typedef gboolean           (*fn_pinyin_remember_user_input)(pinyin_instance_t *, const char *, const char *);
+typedef bool           (*fn_pinyin_mask_out)(pinyin_context_t *, phrase_token_t, phrase_token_t);
+typedef bool           (*fn_pinyin_remember_user_input)(pinyin_instance_t *, const char *, gint);
 typedef import_iterator_t *(*fn_pinyin_begin_add_phrases)(pinyin_context_t *, uint8_t);
-typedef gboolean           (*fn_pinyin_iterator_add_phrase)(import_iterator_t *, const char *, const char *);
+typedef bool           (*fn_pinyin_iterator_add_phrase)(import_iterator_t *, const char *, const char *, gint);
 typedef void               (*fn_pinyin_end_add_phrases)(import_iterator_t *);
 
 /* 1k. Phrase / bigram export */
 typedef export_iterator_t *(*fn_pinyin_begin_get_phrases)(pinyin_context_t *, uint8_t);
-typedef gboolean           (*fn_pinyin_iterator_has_next_phrase)(export_iterator_t *);
-typedef gboolean           (*fn_pinyin_iterator_get_next_phrase)(export_iterator_t *, gchar **, gchar **, phrase_token_t *);
+typedef bool           (*fn_pinyin_iterator_has_next_phrase)(export_iterator_t *);
+typedef bool           (*fn_pinyin_iterator_get_next_phrase)(export_iterator_t *, gchar **, gchar **, gint *);
 typedef void               (*fn_pinyin_end_get_phrases)(export_iterator_t *);
-typedef export_iterator_t *(*fn_pinyin_begin_get_bigram_phrases)(pinyin_context_t *, uint8_t);
-typedef gboolean           (*fn_pinyin_bigram_iterator_has_next_phrase)(export_iterator_t *);
-typedef gboolean           (*fn_pinyin_bigram_iterator_get_next_phrase)(export_iterator_t *, gchar **, gchar **, phrase_token_t *);
-typedef void               (*fn_pinyin_end_get_bigram_phrases)(export_iterator_t *);
+typedef bigram_export_iterator_t *(*fn_pinyin_begin_get_bigram_phrases)(pinyin_context_t *);
+typedef bool           (*fn_pinyin_bigram_iterator_has_next_phrase)(bigram_export_iterator_t *);
+typedef bool           (*fn_pinyin_bigram_iterator_get_next_phrase)(bigram_export_iterator_t *, gchar **, gchar **, gint *);
+typedef void               (*fn_pinyin_end_get_bigram_phrases)(bigram_export_iterator_t *);
 
 /* ── Symbol table ─────────────────────────────────────────────────────── */
 
@@ -276,6 +293,27 @@ static int resolve_all(void *handle, struct symbols *s) {
     return missing;
 }
 
+/* ── Caller-owned string release ──────────────────────────────────────── */
+/* pinyin.h / T0 freeze: strings returned by pinyin_get_sentence and the
+ * *_auxiliary_text getters are caller-owned and must be released with
+ * g_free().  GLib is not linked here, so resolve g_free from libglib and
+ * fall back to free() (correct on Linux, where GLib uses the system
+ * allocator). */
+
+typedef void (*fn_g_free)(void *);
+
+static fn_g_free g_free_fn;
+
+static void resolve_g_free(void) {
+    g_free_fn = (fn_g_free)free;
+    void *glib = dlopen("libglib-2.0.so.0", RTLD_NOW);
+    if (glib) {
+        fn_g_free sym = (fn_g_free)dlsym(glib, "g_free");
+        if (sym)
+            g_free_fn = sym;
+    }
+}
+
 /* ── Candidate-type name ──────────────────────────────────────────────── */
 
 static const char *ctype_name(lookup_candidate_type_t t) {
@@ -317,39 +355,37 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
     printf("parse_full: consumed=%zu\n", consumed);
 
     /* Guess sentence */
-    gboolean gs = s->guess_sentence(inst);
+    bool gs = s->guess_sentence(inst);
     printf("guess_sentence: %s\n", gs ? "true" : "false");
 
-    /* Get sentence (caller-owned string — exercises free contract) */
+    /* Get sentence (caller-owned; release with g_free) */
     if (s->get_sentence) {
         char *sentence = NULL;
-        gboolean ok = s->get_sentence(inst, 0, &sentence);
+        bool ok = s->get_sentence(inst, 0, &sentence);
         printf("get_sentence: %s text=\"%s\"\n",
                ok ? "true" : "false",
                sentence ? sentence : "(null)");
         if (sentence) {
-            /* Exercise the free contract. CString::into_raw uses malloc on
-             * Linux; upstream uses g_strdup so g_free (= free) works. */
-            free(sentence);
+            g_free_fn(sentence);
             printf("get_sentence: free OK\n");
         }
     }
 
-    /* Auxiliary text (caller-owned) */
+    /* Auxiliary text (caller-owned; release with g_free) */
     if (s->get_full_aux) {
         gchar *aux = NULL;
-        gboolean ok = s->get_full_aux(inst, 0, &aux);
+        bool ok = s->get_full_aux(inst, 0, &aux);
         printf("get_full_aux: %s text=\"%s\"\n",
                ok ? "true" : "false",
                aux ? aux : "(null)");
         if (aux) {
-            free(aux);
+            g_free_fn(aux);
             printf("get_full_aux: free OK\n");
         }
     }
 
     /* Guess candidates */
-    gboolean gc = s->guess_candidates(inst, 0, 0);
+    bool gc = s->guess_candidates(inst, 0, DEFAULT_SORT);
     printf("guess_candidates: %s\n", gc ? "true" : "false");
 
     /* Enumerate candidates */
@@ -415,14 +451,14 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
 
             /* Train after selection */
             if (s->train) {
-                gboolean trained = s->train(inst, 0);
+                bool trained = s->train(inst, 0);
                 printf("train: %s\n", trained ? "true" : "false");
             }
         }
     }
 
     /* Reset for next input */
-    gboolean r = s->reset(inst);
+    bool r = s->reset(inst);
     printf("reset: %s\n", r ? "true" : "false");
     printf("\n");
 }
@@ -449,6 +485,8 @@ int main(int argc, char **argv) {
     printf("# so: %s\n", so_path);
     printf("# systemdir: %s\n", system_dir);
     printf("# userdir: %s\n", user_dir);
+    printf("# flags: 0x%08x\n", (unsigned)DEFAULT_FLAGS);
+    printf("# sort: 0x%08x\n", (unsigned)DEFAULT_SORT);
     printf("\n");
 
     /* Load the shared object. */
@@ -475,6 +513,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* Resolve g_free for caller-owned strings before the first drive. */
+    resolve_g_free();
+
     /* Phase 1 — Initialization. */
     printf("=== init ===\n");
     pinyin_context_t *ctx = sym.init(system_dir, user_dir);
@@ -486,8 +527,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    gboolean opt = sym.set_options(ctx, 0);
-    printf("set_options(0): %s\n", opt ? "true" : "false");
+    bool opt = sym.set_options(ctx, DEFAULT_FLAGS);
+    printf("set_options(0x%08x): %s\n", (unsigned)DEFAULT_FLAGS,
+           opt ? "true" : "false");
 
     pinyin_instance_t *inst = sym.alloc_instance(ctx);
     printf("alloc_instance: %s\n", inst ? "ok" : "NULL");
@@ -505,21 +547,12 @@ int main(int argc, char **argv) {
         drive_input(&sym, inst, TEST_INPUTS[i]);
     }
 
-    /* Phase 3 — Null-safety checks. */
-    printf("=== null safety ===\n");
-    printf("parse_full(NULL,\"a\"): %zu\n", sym.parse_full(NULL, "a"));
-    printf("guess_sentence(NULL): %s\n",
-           sym.guess_sentence(NULL) ? "true" : "false");
-    printf("reset(NULL): %s\n", sym.reset(NULL) ? "true" : "false");
-    printf("save(NULL): %s\n", sym.save(NULL) ? "true" : "false");
-    printf("\n");
-
-    /* Phase 4 — Teardown. */
+    /* Phase 3 — Teardown. */
     printf("=== teardown ===\n");
     sym.free_instance(inst);
     printf("free_instance: ok\n");
 
-    gboolean saved = sym.save(ctx);
+    bool saved = sym.save(ctx);
     printf("save: %s\n", saved ? "true" : "false");
 
     sym.fini(ctx);

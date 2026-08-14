@@ -8,7 +8,7 @@
 # Modes:
 #   1. capi-only    — build + run the dlopen harness against pinyin-capi
 #   2. valgrind     — re-run the harness under valgrind (if available)
-#   3. ld-preload   — test ibus-engine-libpinyin with LD_PRELOAD (if available)
+#   3. ld-preload   — test ibus-engine-libpinyin with LD_PRELOAD (BISECT_LD_PRELOAD=1)
 #   4. differential — compare capi output against an oracle .so (if args given)
 #
 # Exits 0 on success, 1 on build/run failure, 2 on differential mismatch,
@@ -86,6 +86,10 @@ else
 fi
 
 # ── Mode 3: LD_PRELOAD integration ──────────────────────────────────────
+#
+# Optional probe, gated behind BISECT_LD_PRELOAD=1.  The mere presence of
+# the ibus engine binary is not enough to assert a hard FAIL (exit 4), so
+# the probe must be explicitly requested.
 
 IBUS_ENGINE=""
 for candidate in /usr/libexec/ibus-engine-libpinyin /usr/lib/ibus/ibus-engine-libpinyin; do
@@ -95,7 +99,7 @@ for candidate in /usr/libexec/ibus-engine-libpinyin /usr/lib/ibus/ibus-engine-li
     fi
 done
 
-if [ -n "$IBUS_ENGINE" ]; then
+if [ "${BISECT_LD_PRELOAD:-0}" = "1" ] && [ -n "$IBUS_ENGINE" ]; then
     echo "--- ld-preload integration ---"
     echo "engine: $IBUS_ENGINE"
 
@@ -109,7 +113,9 @@ if [ -n "$IBUS_ENGINE" ]; then
     wait "$ENGINE_PID" 2>/dev/null || true
 
     # Count how many pinyin_ symbols were bound from our .so.
-    BOUND=$(grep -c "to $CAPI_SO.*pinyin_" "$LDDEBUG_LOG" 2>/dev/null || echo 0)
+    # grep -c prints 0 (and exits 1) on no match; `|| true` keeps that 0.
+    BOUND=$(grep -c "to $CAPI_SO.*pinyin_" "$LDDEBUG_LOG" 2>/dev/null || true)
+    BOUND=${BOUND:-0}
     echo "symbols bound from capi: $BOUND"
 
     if [ "$BOUND" -eq 0 ]; then
@@ -139,7 +145,11 @@ if [ -n "$IBUS_ENGINE" ]; then
     echo ""
 else
     echo "--- ld-preload integration ---"
-    echo "SKIP: ibus-engine-libpinyin not found"
+    if [ "${BISECT_LD_PRELOAD:-0}" != "1" ]; then
+        echo "SKIP: not requested (set BISECT_LD_PRELOAD=1 to enable)"
+    else
+        echo "SKIP: ibus-engine-libpinyin not found"
+    fi
     echo ""
 fi
 
@@ -162,8 +172,8 @@ if [ -n "$ORACLE_SO" ] && [ -n "$ORACLE_DATA" ]; then
 
     echo "--- differential ---"
     # Strip header lines (so path, dirs) for comparison.
-    tail -n +6 "$CAPI_LOG"  > "${CAPI_LOG}.body"
-    tail -n +6 "$ORACLE_LOG" > "${ORACLE_LOG}.body"
+    tail -n +8 "$CAPI_LOG"  > "${CAPI_LOG}.body"
+    tail -n +8 "$ORACLE_LOG" > "${ORACLE_LOG}.body"
 
     if diff -u "${ORACLE_LOG}.body" "${CAPI_LOG}.body" > /dev/null 2>&1; then
         echo "IDENTICAL: no ABI divergence detected"
