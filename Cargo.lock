@@ -442,6 +442,7 @@ name = "pinyin-capi"
 version = "0.1.0"
 dependencies = [
  "pinyin-core",
+ "pinyin-data",
  "pinyin-engine",
 ]
 

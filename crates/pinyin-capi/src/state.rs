@@ -3,77 +3,57 @@
 //! `CapiContext` lives behind `pinyin_context_t *` and `CapiInstance`
 //! behind `pinyin_instance_t *`. The opaque `#[repr(C)]` types in
 //! [`crate::types`] exist only for the generated C header.
-//!
-//! The cast helpers are consumed incrementally across T2–T4; unused ones
-//! are intentional (the full set exists so each task adds calls, not casts).
 #![allow(dead_code)]
 
-use std::convert::Infallible;
 use std::ffi::CString;
+use std::path::Path;
 
-use pinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
-use pinyin_engine::{CandidateKind, EmptyConfigSource, Session, StoragePaths};
+use pinyin_data::{BigramLanguageModel, SystemDictionary};
+use pinyin_engine::{CandidateKind, Config, Session, StoragePaths};
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
-// ── Stub backends (T2) ─────────────────────────────────────────────────
-//
-// Zero-sized types that satisfy the Session's trait bounds. Real backends
-// (pinyin-data tables) arrive at T4; until then every lookup returns an
-// empty result and every score passes through.
-
-#[derive(Clone, Copy)]
-pub(crate) struct StubDict;
-
-impl Dictionary for StubDict {
-    type Syllable = SyllableKey;
-    type Entry = PhraseEntry;
-    type Error = Infallible;
-
-    fn lookup(&self, _syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Infallible> {
-        Ok(Vec::new())
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct StubLm;
-
-impl LanguageModel for StubLm {
-    type Token = PhraseToken;
-    type Error = Infallible;
-
-    fn score(
-        &self,
-        _history: &[PhraseToken],
-        _token: &PhraseToken,
-        edge_cost: Cost,
-    ) -> Result<Cost, Infallible> {
-        Ok(edge_cost)
-    }
-}
-
 // ── Context ─────────────────────────────────────────────────────────────
 
-pub(crate) type CapiSession = Session<StubDict, StubLm>;
+pub(crate) type CapiSession = Session<&'static SystemDictionary, &'static BigramLanguageModel>;
 
 /// State behind `pinyin_context_t *`.
+///
+/// Owns the dictionary and language model; instances borrow them via
+/// `&'static` references obtained through the `context_ref` cast.
 pub(crate) struct CapiContext {
     pub(crate) paths: StoragePaths,
+    pub(crate) config: Config,
+    dict: SystemDictionary,
+    lm: BigramLanguageModel,
 }
 
 impl CapiContext {
-    pub(crate) fn new(system_dir: &str, user_dir: &str) -> Self {
-        let paths = if system_dir.is_empty() {
-            StoragePaths::new(user_dir)
-        } else {
-            StoragePaths::new(user_dir).with_system_dirs([system_dir])
-        };
-        Self { paths }
+    pub(crate) fn new(system_dir: &str, user_dir: &str) -> Option<Self> {
+        if system_dir.is_empty() {
+            return None;
+        }
+        let paths = StoragePaths::new(user_dir).with_system_dirs([system_dir]);
+
+        let sys = Path::new(system_dir);
+        let dict = SystemDictionary::open(
+            &sys.join("pinyin_index.redb"),
+            &sys.join("phrase_index.redb"),
+        )
+        .ok()?;
+        let mut lm = BigramLanguageModel::open(&sys.join("bigram.redb")).ok()?;
+        lm.set_unigrams_from_dict(&dict);
+
+        Some(Self {
+            paths,
+            config: Config::default(),
+            dict,
+            lm,
+        })
     }
 
-    pub(crate) fn alloc_instance(&self) -> Option<CapiInstance> {
-        let session =
-            Session::new(&EmptyConfigSource, self.paths.clone(), StubDict, StubLm).ok()?;
+    pub(crate) fn alloc_instance(&'static self) -> Option<CapiInstance> {
+        let session = Session::new(&self.config, self.paths.clone(), &self.dict, &self.lm).ok()?;
         Some(CapiInstance {
             session,
             candidates: Vec::new(),
