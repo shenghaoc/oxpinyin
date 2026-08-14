@@ -241,15 +241,25 @@ pub fn prefix_probe(sorted: &[String], joined: &str) -> bool {
 }
 
 /// W2 parity inputs from the committed corpus.
+///
+/// Reads the committed stratum files directly instead of running
+/// `corpus::generate()`: the generator re-parses the syllable inventory to
+/// discover file names, and those allocations must not land in a profile
+/// that wraps the decode loop.
 pub fn load_w2_inputs() -> Vec<String> {
     use pinyin_oracle::corpus;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..");
     let corpus_dir = root.join(corpus::CORPUS_DIR);
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&corpus_dir)
+        .expect("corpus directory")
+        .map(|entry| entry.expect("corpus entry").path())
+        .collect();
+    files.sort();
     let mut inputs = Vec::new();
-    for stratum in corpus::generate() {
-        let bytes = std::fs::read(corpus_dir.join(stratum.file_name)).expect("stratum");
+    for file in files {
+        let bytes = std::fs::read(&file).expect("stratum");
         inputs.extend(corpus::Stratum::parse_file_bytes(&bytes));
     }
     assert!(!inputs.is_empty(), "W2 corpus is empty");

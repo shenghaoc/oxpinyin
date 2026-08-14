@@ -82,15 +82,17 @@ common case on the stack.
   stops recursing at 16). **Spill rate past 16 is 0 by construction.**
 - `walk` (`session.rs` ~697) runs only on the *pre-frequency* path. With
   real unigrams it is not on the pinned construction.
-- dhat, one W2 batch: 12 242 977 blocks / 1.41 GB lifetime. Sites whose
-  average size is 32 bytes (16 × `size_of::<SyllableKey>()`) attributed to
-  `type_pinyin` / `scan_paths` sum to about **6.8e4 blocks / 2.2 MB**. That
-  is **0.6% of blocks**, not in the top 20 by count. Top-by-count is
+- dhat, one W2 batch (decode-only; load happens before the profiler,
+  see the Allocation-profile section): 6 126 099 blocks / 1.06 GB
+  total bytes. The scan-path `Vec<SyllableKey>` window sites (16 ×
+  `size_of::<SyllableKey>()` = 32-byte allocs, inlined `expand_keys`
+  sites) sum to about **1.1e4 blocks / 0.21 MB**. That is **0.18% of
+  blocks**, not in the top 20 by count. Top-by-count is
   `append_scan_entries` / `LookupTable::get` at **1.33 M blocks each**.
 
 **Recommendation: skip.** Zero spill, and the site is not an allocation
-hotspot. A `smallvec` runtime dep would buy tens of thousands of 32-byte
-allocs on a run that already does 12 M allocations elsewhere.
+hotspot. A `smallvec` runtime dep would buy ~11 thousand 32-byte
+allocs on a run that already does 6.1 M allocations elsewhere.
 
 ## C. `Cow<'a, str>` for candidate text
 
@@ -104,14 +106,18 @@ lifetime story cheap.
 - One W2 batch: **72 186** lookups, **1 373 330** returned entries.
 - dhat: `append_scan_entries` clones each text (**1 332 549** blocks,
   4.0 MB — mean ~3 bytes, i.e. one CJK scalar). `LookupTable::get`
-  produces the same 1.33 M block count (redb value copy + `from_utf8`).
-  Growing `Vec<PhraseEntry>` is 119 MB lifetime; growing `Vec<Candidate>`
-  is 245 MB lifetime. Those two *vectors* dominate bytes, not the
-  three-byte string buffers.
-- `LookupTable::get` returns an **owned `Vec<u8>`** because the redb read
-  transaction ends inside the call. There is no long-lived `Box<str>` to
-  borrow today. `Cow::Borrowed` therefore requires a new phrase-text cache
-  (or a session-scoped redb txn), not just a type change on `Candidate`.
+  produces the same 1.33 M block count (value clone from the in-memory
+  map + `from_utf8`). Growing `Vec<PhraseEntry>` allocates 119.0 MB
+  total at that site; growing `Vec<Candidate>` allocates 244.9 MB.
+  Those two *vectors* dominate bytes, not the three-byte string buffers.
+- `LookupTable::open` slurps the whole table into an in-memory
+  `BTreeMap<Vec<u8>, Vec<u8>>` and drops the redb transaction there;
+  `LookupTable::get` then clones from that map, so the returned bytes
+  already outlive `SystemDictionary`. There is still no long-lived
+  `Box<str>` to borrow: `PhraseEntry`/`Candidate` own `String`s
+  today. `Cow::Borrowed` would therefore need a phrase-text cache (or a
+  session-scoped borrow of the map), not just a type change on
+  `Candidate`.
 - API churn: `PhraseEntry.text: String` is in `pinyin-core`;
   `Dictionary::Entry` is an associated type; `Candidate`, `CandidateList`,
   `Session::select` (already `to_owned`s the text into `selected`), and
@@ -120,8 +126,12 @@ lifetime story cheap.
   borrow phrase bytes from.
 
 **Recommendation: skip** as specified (a `Cow` on top of today's
-`LookupTable`). A later intern/cache of phrase text could cut 1.3 M
-allocator hits; that is a different PR and a different hypothesis.
+`LookupTable`). The blocker is not copy-lifetime management — the map
+is already in memory — but API churn (`PhraseEntry`/`Candidate` own
+`String`s, plus the `&D` blanket already makes the call-site lifetime
+cheap) and the `Vec<Candidate>` growth that dominates bytes. A later
+intern/cache of phrase text could cut 1.3 M allocator hits; that is a
+different PR and a different hypothesis.
 
 ## D. `bstr` + `memchr` + `memmap2` for `parse_interpolation2`
 
@@ -181,28 +191,31 @@ the prefix tables, the path `Vec`, or the interp parser.
 ## Allocation profile (dhat, one serial W2 batch)
 
 Tool: `dhat` 0.3, `cargo bench -p pinyin-oracle --bench alloc_profile -- --dhat`.
-Totals: **1 414 276 456 bytes in 12 242 977 blocks**; peak 78.8 MB /
-787 298 blocks; 0 at exit.
+The profiler now wraps only the decode loop: table load and corpus
+parsing happen first, so the previous run's corpus-parse rows are gone
+and the totals are decode-only. Totals: **1 059 752 541 bytes in
+6 126 099 blocks**; peak 606 463 bytes / 3 347 blocks; 298 112
+bytes / 66 blocks at exit.
 
 Top 5 by **block count**:
 
 | Blocks | Bytes | Site |
 |---|---|---|
 | 1 332 549 | 4.0 MB | `append_scan_entries` (candidate `String`) |
-| 1 332 549 | 4.0 MB | `LookupTable::get` (value copy) |
-| 1 145 722 | 2.9 MB | corpus `FullPinyinParser::parse` (input load, not decode) |
-| 1 018 337 | 2.6 MB | corpus parse clone |
-| 1 018 337 | 2.6 MB | corpus parse clone |
+| 1 332 549 | 4.0 MB | `LookupTable::get` (value clone) |
+| 1 319 952 | 3.9 MB | `dedup_by_text_keep_first` (`Candidate::retain`, two sites) |
+| 450 339 | 15.6 MB | `k_best_to` (`Vec<EdgeId>` growth) |
+| 220 660 | 4.2 MB | `k_best_to` (path vecs) |
 
-Top 5 by **lifetime bytes**:
+Top 5 by **total bytes at site** (dhat per-site `tb`):
 
 | Bytes | Blocks | Site |
 |---|---|---|
-| 245 MB | 56 156 | `Vec<Candidate>` growth in `append_scan_entries` |
-| 215 MB | 18 682 | `Vec<(RankKey, Candidate)>` in `refresh` |
-| 135 MB | 67 795 | `k_best_to` (still invoked before the scan) |
-| 119 MB | 8 843 | stable sort scratch for the three-key order |
-| 119 MB | 77 111 | `Vec<PhraseEntry>` growth in `lookup` |
+| 244.9 MB | 56 156 | `Vec<Candidate>` growth in `append_scan_entries` |
+| 214.9 MB | 18 682 | `Vec<(RankKey, Candidate)>` in `refresh` |
+| 134.7 MB | 67 795 | `k_best_to` (still invoked before the scan) |
+| 119.2 MB | 8 843 | stable sort scratch for the three-key order |
+| 119.0 MB | 77 111 | `Vec<PhraseEntry>` growth in `lookup` |
 
 The path `Vec<SyllableKey>` (candidate B) is not in either top-5.
 
@@ -214,16 +227,18 @@ None of A–E is worth a follow-up PR on this evidence.
 2. If a later PR hunts allocator traffic, the first real lead is **not**
    in the five: `LookupTable::get` + `append_scan_entries` (1.3 M tiny
    strings) and `Vec<Candidate>` growth. That is a phrase-text cache /
-   reuse-the-output-vec design, not `Cow` on today's redb copies.
+   reuse-the-output-vec design, not `Cow` on today's in-memory map
+   clones.
 3. A second, independent lead — also outside the five — is that
-   `refresh` still runs `k_best` on the real-unigram path (135 MB
-   lifetime, 0.14% `Ir`). Dropping that call is a construction-adjacent
-   change and needs its own SPEC note; it is not started here.
+   `refresh` still runs `k_best` on the real-unigram path (134.7 MB
+   total at site, 0.14% `Ir`). Dropping that call is a
+   construction-adjacent change and needs its own SPEC note; it is not
+   started here.
 
 The current implementation is already fast enough that A–E are not worth
 the complexity: serial W2 is ~2 s on one core, prefix probes are 0.23% of
 that, interp parse is 19 ms once, and the path `Vec` is a rounding error
-in a 12 M-block allocation profile.
+in a 6.1 M-block allocation profile.
 
 ## Harness
 
@@ -231,6 +246,10 @@ in a 12 M-block allocation profile.
   `keystroke_cycle_20_inputs`, `prefix_probe_12_needles`,
   `parse_interpolation2`. `cargo bench -p pinyin-oracle --bench scan_perf`.
 - `crates/pinyin-oracle/benches/alloc_profile.rs` — one-shot counts,
-  `--dhat` heap dump, `--keystroke-only --repeats N` for Callgrind.
-- `crates/pinyin-oracle/benches/harness.rs` — shared loaders. Refuses to
-  start without the export dir and the fetched model.
+  `--dhat` heap dump (written to `/tmp/dhat-heap-parity.json`),
+  `--keystroke-only --repeats N` for Callgrind. The profiler wraps only
+  the decode loop: tables and corpus inputs are loaded first, so load
+  allocations are not in the profile.
+- `crates/pinyin-oracle/benches/support/mod.rs` — shared loaders (corpus
+  files via `read_dir` + `parse_file_bytes`, table/model load). Refuses
+  to start without the export dir and the fetched model.

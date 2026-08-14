@@ -1,8 +1,11 @@
 //! One-shot profiles used by `docs/findings/perf-exploration.md`.
 //!
 //! `cargo bench -p pinyin-oracle --bench alloc_profile -- --dhat` writes
-//! `dhat-heap.json` for a full W2 parity `type_pinyin` run. Without `--dhat`
-//! the same loop prints probe counts, table sizes, and load timings.
+//! `/tmp/dhat-heap-parity.json` for a full W2 parity `type_pinyin` run. The
+//! profiler wraps only the decode loop: tables and inputs are loaded before
+//! it starts, so setup allocations do not land in the dump. Without
+//! `--dhat` the same loop prints probe counts, table sizes, and load
+//! timings.
 //!
 //! This is a custom bench harness, not a Criterion group.
 
@@ -28,11 +31,19 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.iter().any(|arg| arg == "--dhat") {
+        // Load everything the profile should not attribute to the decoder
+        // before the profiler starts: table slurp, prefix-table build,
+        // interpolation2 parse, corpus file reading.
+        let (dict, lm) = load_real_tables();
+        let inputs = load_w2_inputs();
+        let mut session = real_session(&dict, &lm);
         let _profiler = dhat::Profiler::builder()
             .file_name("/tmp/dhat-heap-parity.json")
             .trim_backtraces(Some(12))
             .build();
-        run_parity_batch();
+        for input in &inputs {
+            type_batch(&mut session, input);
+        }
         return;
     }
     if args.iter().any(|arg| arg == "--parity-timed") {
@@ -202,13 +213,4 @@ fn timed_parity() {
         "keystroke_20_ms           {:.3}",
         started.elapsed().as_secs_f64() * 1_000.0
     );
-}
-
-fn run_parity_batch() {
-    let (dict, lm) = load_real_tables();
-    let mut session = real_session(&dict, &lm);
-    let inputs = load_w2_inputs();
-    for input in &inputs {
-        type_batch(&mut session, input);
-    }
 }
