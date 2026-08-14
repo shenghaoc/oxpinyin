@@ -3,6 +3,8 @@
 
 use std::ptr;
 
+use crate::ffi::ffi_catch;
+use crate::state::{CapiInstance, box_instance, context_ref, instance_mut};
 use crate::types::{PinyinContext, PinyinInstance};
 
 /// Allocate a new pinyin instance from a context.
@@ -18,8 +20,14 @@ pub extern "C" fn pinyin_alloc_instance(context: *mut PinyinContext) -> *mut Pin
     if context.is_null() {
         return ptr::null_mut();
     }
-    // STUB: T2 will wire to real instance construction.
-    ptr::null_mut()
+    ffi_catch(ptr::null_mut(), || {
+        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+        let ctx = unsafe { context_ref(context) };
+        match ctx.alloc_instance() {
+            Some(inst) => box_instance(inst),
+            None => ptr::null_mut(),
+        }
+    })
 }
 
 /// Free a pinyin instance.
@@ -33,14 +41,13 @@ pub extern "C" fn pinyin_free_instance(instance: *mut PinyinInstance) {
     if instance.is_null() {
         return;
     }
-    // SAFETY: `instance` is non-null (guarded above). `pinyin_alloc_instance`
-    // currently always returns NULL (T1 stub), so this branch is unreachable
-    // until T2 makes the constructor return `Box::into_raw(..)`. At that point
-    // the caller transfers ownership back here and only here, so reconstructing
-    // and dropping the Box is sound.
-    unsafe {
-        drop(Box::from_raw(instance));
-    }
+    ffi_catch((), || {
+        // SAFETY: `instance` was created by `pinyin_alloc_instance` via
+        // `box_instance` (= `Box::into_raw`). The caller transfers ownership.
+        unsafe {
+            drop(Box::from_raw(instance.cast::<CapiInstance>()));
+        }
+    });
 }
 
 /// Reset the pinyin instance (clear parsing and sentence state).
@@ -54,6 +61,11 @@ pub extern "C" fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
     if instance.is_null() {
         return false;
     }
-    // STUB: T3 will implement.
-    false
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_mut(instance) };
+        inst.session.reset();
+        true
+    })
 }
