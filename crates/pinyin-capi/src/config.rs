@@ -2,6 +2,8 @@
 
 use std::os::raw::c_int;
 
+use crate::ffi::ffi_catch;
+use crate::state::context_ref;
 use crate::types::{PinyinContext, PinyinOptionT};
 
 /// Set pinyin options on the context.
@@ -10,13 +12,19 @@ use crate::types::{PinyinContext, PinyinOptionT};
 /// ```c
 /// bool pinyin_set_options(pinyin_context_t * context, pinyin_option_t options);
 /// ```
+///
+/// Provisional: accepts the call but does not yet decode the bitmask into
+/// individual config keys.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, _options: PinyinOptionT) -> bool {
     if context.is_null() {
         return false;
     }
-    // STUB: T4 will wire to Config.
-    false
+    ffi_catch(false, || {
+        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+        let _ctx = unsafe { context_ref(context) };
+        true
+    })
 }
 
 /// Set the double pinyin scheme.
@@ -29,6 +37,9 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, _options: Piny
 ///
 /// The Rust parameter is `c_int`: callers may pass any `int`, and a closed
 /// `#[repr(C)]` enum would be UB for an unknown discriminant.
+///
+/// Provisional: accepts the call; scheme routing arrives with a dedicated
+/// double-pinyin parser.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_double_pinyin_scheme(
     context: *mut PinyinContext,
@@ -37,8 +48,11 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
     if context.is_null() {
         return false;
     }
-    // STUB: T4 will wire to Config.
-    false
+    ffi_catch(false, || {
+        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+        let _ctx = unsafe { context_ref(context) };
+        true
+    })
 }
 
 /// Set the zhuyin scheme.
@@ -51,13 +65,19 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
 ///
 /// The Rust parameter is `c_int`: callers may pass any `int`, and a closed
 /// `#[repr(C)]` enum would be UB for an unknown discriminant.
+///
+/// Provisional: accepts the call; scheme routing arrives with a dedicated
+/// chewing parser.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, _scheme: c_int) -> bool {
     if context.is_null() {
         return false;
     }
-    // STUB: T4 will wire to Config.
-    false
+    ffi_catch(false, || {
+        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+        let _ctx = unsafe { context_ref(context) };
+        true
+    })
 }
 
 /// Load an addon phrase library by index.
@@ -67,6 +87,8 @@ pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, _scheme:
 /// bool pinyin_load_addon_phrase_library(pinyin_context_t * context,
 ///                                       guint8 index);
 /// ```
+///
+/// Provisional: always returns false (no addon phrase system yet).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_load_addon_phrase_library(
     context: *mut PinyinContext,
@@ -75,7 +97,6 @@ pub extern "C" fn pinyin_load_addon_phrase_library(
     if context.is_null() {
         return false;
     }
-    // STUB: T4 will wire to data loading.
     false
 }
 
@@ -87,11 +108,12 @@ pub extern "C" fn pinyin_load_addon_phrase_library(
 ///                      phrase_token_t mask,
 ///                      phrase_token_t value);
 /// ```
+///
+/// Provisional: always returns false (no token masking yet).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, _mask: u32, _value: u32) -> bool {
     if context.is_null() {
         return false;
     }
-    // STUB: T4 will implement.
     false
 }

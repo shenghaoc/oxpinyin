@@ -4,7 +4,7 @@ use std::os::raw::c_char;
 use std::ptr;
 
 use crate::ffi::{cstr_to_string, ffi_catch};
-use crate::state::{CapiContext, box_context};
+use crate::state::{CapiContext, box_context, context_ref};
 use crate::types::PinyinContext;
 
 /// Create a new pinyin context.
@@ -14,7 +14,8 @@ use crate::types::PinyinContext;
 /// pinyin_context_t * pinyin_init(const char * systemdir, const char * userdir);
 /// ```
 ///
-/// Returns NULL on failure.
+/// Opens the system dictionary and language model tables from `systemdir`.
+/// Returns NULL when `systemdir` is empty or any table fails to open.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_init(
     systemdir: *const c_char,
@@ -24,8 +25,10 @@ pub extern "C" fn pinyin_init(
         // SAFETY: Both pointers are C strings from the caller (null OK).
         let system_dir = unsafe { cstr_to_string(systemdir) };
         let user_dir = unsafe { cstr_to_string(userdir) };
-        let ctx = CapiContext::new(&system_dir, &user_dir);
-        box_context(ctx)
+        match CapiContext::new(&system_dir, &user_dir) {
+            Some(ctx) => box_context(ctx),
+            None => ptr::null_mut(),
+        }
     })
 }
 
@@ -55,14 +58,16 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
 /// ```c
 /// bool pinyin_save(pinyin_context_t * context);
 /// ```
+///
+/// Provisional: no-op (pinyin-user has no persistence implementation yet).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
     if context.is_null() {
         return false;
     }
     ffi_catch(false, || {
-        // STUB: T4 will implement periodic save.
-        let _ctx = unsafe { crate::state::context_ref(context) };
+        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+        let _ctx = unsafe { context_ref(context) };
         true
     })
 }
