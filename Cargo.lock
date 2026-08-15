@@ -537,6 +537,10 @@ dependencies = [
 [[package]]
 name = "pinyin-user"
 version = "0.1.0"
+dependencies = [
+ "pinyin-core",
+ "redb",
+]
 
 [[package]]
 name = "pkg-config"
