@@ -18,7 +18,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use pinyin_core::UserCountDelta;
+use pinyin_core::{SyllableKey, UserCountDelta};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
 use crate::phrase::{
@@ -29,6 +29,20 @@ use crate::seed;
 
 /// Token type — libpinyin's 32-bit `phrase_token_t`.
 pub type Token = u32;
+
+/// One §9 export row for a user phrase: the phrase text, one pronunciation's
+/// `'`-joined pinyin spelling, and that pronunciation's stored count — the
+/// `(phrase, pinyin, count)` triple `pinyin_iterator_get_next_phrase` yields
+/// upstream (`docs/findings/user-store.md` §9).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExportedPhrase {
+    /// Phrase text (UTF-8).
+    pub text: String,
+    /// One pronunciation, syllables joined by `'` (e.g. `ni'hao`).
+    pub pinyin: String,
+    /// The pronunciation's stored count.
+    pub count: u64,
+}
 
 /// `sentence_start` sentinel: the predecessor of the first phrase in a
 /// sentence (`docs/findings/user-store.md` §2; `novel_types.h:122`).
@@ -491,6 +505,66 @@ impl UserStore {
         self.dirty.load(Ordering::Relaxed)
     }
 
+    /// Every user phrase as §9 export rows, in token order then stored
+    /// pronunciation order: one row per (phrase, pronunciation), the pinyin
+    /// rendered as `'`-joined syllable spellings and the count the stored
+    /// pronunciation count — the same shape `pinyin_iterator_get_next_phrase`
+    /// yields upstream.
+    ///
+    /// Keys were written from [`pinyin_core::SyllableKey`] ids (T3), so every
+    /// stored key renders; a row whose keys do not is skipped rather than
+    /// fabricated.
+    pub fn export_phrases(&self) -> Result<Vec<ExportedPhrase>, UserStoreError> {
+        let db = self.database();
+        let txn = db.begin_read()?;
+        let phrases = txn.open_table(PHRASE)?;
+        let prons = txn.open_table(PRONUNCIATION)?;
+        let mut rows = Vec::new();
+        for item in phrases.iter()? {
+            let (token, text) = item?;
+            for pronunciation in collect_pronunciations(&prons, token.value())? {
+                let mut parts = Vec::with_capacity(pronunciation.keys().len());
+                let mut renderable = true;
+                for key in pronunciation.keys() {
+                    match SyllableKey::from_index(usize::from(*key)) {
+                        Some(syllable) => parts.push(syllable.text()),
+                        None => {
+                            renderable = false;
+                            break;
+                        }
+                    }
+                }
+                if !renderable {
+                    continue;
+                }
+                rows.push(ExportedPhrase {
+                    text: text.value().to_owned(),
+                    pinyin: parts.join("'"),
+                    count: pronunciation.count(),
+                });
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Every stored user-bigram row as `(prev, cur, count)`, raw — the
+    /// §9 bigram export filters and renders these (upstream skips
+    /// `sentence_start` predecessors and counts below the first-seed
+    /// threshold, and resolves phrase text through the system phrase
+    /// index, which this crate does not hold).
+    pub fn export_bigrams(&self) -> Result<Vec<(Token, Token, u64)>, UserStoreError> {
+        let db = self.database();
+        let txn = db.begin_read()?;
+        let bigrams = txn.open_table(BIGRAM)?;
+        let mut rows = Vec::new();
+        for item in bigrams.iter()? {
+            let (key, count) = item?;
+            let (prev, cur) = key.value();
+            rows.push((prev, cur, count.value()));
+        }
+        Ok(rows)
+    }
+
     /// The `pinyin_save` write side (§4).
     ///
     /// `Ok(false)` is the unmodified deliberate no-op — upstream's
@@ -920,6 +994,56 @@ mod tests {
         let store = UserStore::open(&path).unwrap();
         assert!(store.phrase(FIRST_USER_TOKEN).unwrap().is_none());
         assert!(store.phrase(0x0100_0001).unwrap().is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn export_phrases_render_the_pinned_triples() {
+        let path = temp_path("export-phrases");
+        let mut store = UserStore::open(&path).unwrap();
+        let ni = SyllableKey::from_text("ni").expect("frozen key").index() as u16;
+        let hao = SyllableKey::from_text("hao").expect("frozen key").index() as u16;
+        let shi = SyllableKey::from_text("shi").expect("frozen key").index() as u16;
+        let jie = SyllableKey::from_text("jie").expect("frozen key").index() as u16;
+
+        // Two remembers of the same reading merge into one pronunciation
+        // row (upstream's add_pronunciation merges exact-match keys).
+        store.add_phrase("你好", &[ni, hao], None).unwrap();
+        store.add_phrase("你好", &[ni, hao], Some(7)).unwrap();
+        store.add_phrase("世界", &[shi, jie], Some(3)).unwrap();
+
+        // Token order, then pronunciation order; pinyin is `'`-joined (§9).
+        assert_eq!(
+            store.export_phrases().unwrap(),
+            vec![
+                ExportedPhrase {
+                    text: "你好".to_owned(),
+                    pinyin: "ni'hao".to_owned(),
+                    count: 12,
+                },
+                ExportedPhrase {
+                    text: "世界".to_owned(),
+                    pinyin: "shi'jie".to_owned(),
+                    count: 3,
+                },
+            ]
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn export_bigrams_lists_every_stored_row_raw() {
+        let path = temp_path("export-bigrams");
+        let mut store = UserStore::open(&path).unwrap();
+        store.observe_selection(SENTENCE_START, 10).unwrap();
+        store.observe_selection(10, 20).unwrap();
+        store.observe_selection(10, 20).unwrap();
+
+        let mut rows = store.export_bigrams().unwrap();
+        rows.sort();
+        // Raw rows: sentence_start rows included (the §9 filters live at the
+        // C ABI layer, mirroring upstream's iterator).
+        assert_eq!(rows, vec![(SENTENCE_START, 10, 69), (10, 20, 207)]);
         let _ = std::fs::remove_file(&path);
     }
 }

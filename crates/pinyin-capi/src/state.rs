@@ -14,7 +14,7 @@ use pinyin_core::{
 };
 use pinyin_data::{BigramLanguageModel, DictError, LmError, SystemDictionary};
 use pinyin_engine::{CandidateKind, Config, Session, StoragePaths};
-use pinyin_user::UserStore;
+use pinyin_user::{ExportedPhrase, SENTENCE_START, USER_DICTIONARY, UserStore, is_user_token};
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
@@ -197,6 +197,108 @@ impl CapiContext {
             Some(store) => store.save().unwrap_or(false),
         }
     }
+
+    /// §9 phrase-export materialization: every user phrase as
+    /// `(phrase, pinyin, count)` rows. Only [`USER_DICTIONARY`] exports
+    /// anything — the system sub-indexes are the system dictionary's data,
+    /// not this store's; any other index exports an empty list.
+    pub(crate) fn export_phrases(&self, index: u32) -> Option<Vec<ExportedPhrase>> {
+        if index != u32::from(USER_DICTIONARY) {
+            return Some(Vec::new());
+        }
+        self.user.as_ref()?.export_phrases().ok()
+    }
+
+    /// §9 bigram-export materialization with upstream's filters and
+    /// rendering (`pinyin_begin_get_bigram_phrases` in `pinyin.cpp`):
+    /// skip `sentence_start` predecessors and counts at or below the
+    /// first-seed threshold (`initial_seed − 1` = 68); phrase = prev text +
+    /// next text; pinyin = prev pinyin + `'` + next pinyin (one row per
+    /// pronunciation combination); count = stored × 2 (upstream's local
+    /// `unigram_factor`).
+    pub(crate) fn export_bigram_rows(&self) -> Option<Vec<ExportedBigramRow>> {
+        const INITIAL_SEED: u64 = 23 * 3;
+        let store = self.user.as_ref()?;
+        let raw = store.export_bigrams().ok()?;
+        let mut rows = Vec::new();
+        for (prev, cur, count) in raw {
+            if prev == SENTENCE_START {
+                continue;
+            }
+            // Upstream's threshold is `initial_seed - 1` = 68.
+            if count < INITIAL_SEED {
+                continue;
+            }
+            let Some((prev_text, prev_pinyins)) = self.render_token(prev) else {
+                continue;
+            };
+            let Some((cur_text, cur_pinyins)) = self.render_token(cur) else {
+                continue;
+            };
+            let phrase = format!("{prev_text}{cur_text}");
+            for first in &prev_pinyins {
+                for second in &cur_pinyins {
+                    rows.push(ExportedBigramRow {
+                        phrase: phrase.clone(),
+                        pinyin: format!("{first}'{second}"),
+                        count: i64::try_from(count.saturating_mul(2)).unwrap_or(i64::MAX),
+                    });
+                }
+            }
+        }
+        Some(rows)
+    }
+
+    /// `(text, pinyin spellings)` for a token: user tokens render from the
+    /// user store's phrase/pronunciation tables, system tokens from the
+    /// system phrase index and the pinyin index (reverse-scanned).
+    fn render_token(&self, token: u32) -> Option<(String, Vec<String>)> {
+        if is_user_token(token) {
+            let store = self.user.as_ref()?;
+            let phrase = store.phrase(token).ok().flatten()?;
+            let mut pinyins = Vec::new();
+            for pronunciation in phrase.pronunciations() {
+                let mut parts = Vec::with_capacity(pronunciation.keys().len());
+                let mut renderable = true;
+                for key in pronunciation.keys() {
+                    match SyllableKey::from_index(usize::from(*key)) {
+                        Some(syllable) => parts.push(syllable.text()),
+                        None => {
+                            renderable = false;
+                            break;
+                        }
+                    }
+                }
+                if !renderable {
+                    return None;
+                }
+                pinyins.push(parts.join("'"));
+            }
+            Some((phrase.text().to_owned(), pinyins))
+        } else {
+            let text = self.dict.0.phrase_text(token).ok().flatten()?;
+            let pinyins: Vec<String> = self
+                .dict
+                .0
+                .pronunciations(token)
+                .ok()?
+                .into_iter()
+                .map(|(pinyin, _freq)| pinyin)
+                .collect();
+            if pinyins.is_empty() {
+                return None;
+            }
+            Some((text, pinyins))
+        }
+    }
+}
+
+/// One rendered §9 bigram-export row: concatenated phrase text, the
+/// `'`-joined pronunciation of the pair, and the scaled count.
+pub(crate) struct ExportedBigramRow {
+    pub(crate) phrase: String,
+    pub(crate) pinyin: String,
+    pub(crate) count: i64,
 }
 
 // ── Instance ────────────────────────────────────────────────────────────

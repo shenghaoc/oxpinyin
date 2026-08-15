@@ -108,6 +108,42 @@ impl SystemDictionary {
         &self.unigrams
     }
 
+    /// Phrase text for `token` from the exported phrase index, if present.
+    ///
+    /// This is the reverse half of [`SystemDictionary::lookup`] and backs the
+    /// W6-T7 bigram export's text rendering for system tokens
+    /// (`docs/findings/user-store.md` §9).
+    pub fn phrase_text(&self, token: u32) -> Result<Option<String>, DictError> {
+        let key_bytes = token.to_le_bytes();
+        let Some(text) = self.phrase_index.get(&key_bytes)? else {
+            return Ok(None);
+        };
+        String::from_utf8(text).map(Some).map_err(|_| {
+            DictError::Parse(format!("phrase text for token {token:#010x} is not UTF-8"))
+        })
+    }
+
+    /// Every pinyin-index spelling recorded for `token`, with its frequency,
+    /// in pinyin-index key order.
+    ///
+    /// These are the phrase item's pronunciations in the upstream model (the
+    /// pinyin table holds one key sequence per pronunciation), so this is the
+    /// rendering surface the W6-T7 bigram export needs for system tokens.
+    /// The scan is O(index) — an export-time cost, not a decode-path cost.
+    pub fn pronunciations(&self, token: u32) -> Result<Vec<(String, u64)>, DictError> {
+        let mut out = Vec::new();
+        for (key, value) in self.pinyin_index.iter()? {
+            let pinyin = String::from_utf8(key)
+                .map_err(|_| DictError::Parse("pinyin index key is not UTF-8".to_owned()))?;
+            for (candidate, freq) in parse_index_records(&value)? {
+                if candidate == token {
+                    out.push((pinyin.clone(), u64::from(freq)));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// The frozen index key for a syllable sequence: texts joined by `'`.
     fn index_key(syllables: &[SyllableKey]) -> String {
         let mut key = String::new();
@@ -373,5 +409,25 @@ mod tests {
         assert!(entries.is_empty());
         let entries = dict().lookup(&[]).unwrap();
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn phrase_text_and_pronunciations_reverse_the_index() {
+        let dict = dict();
+        let entries = dict.lookup(&[key("ni")]).unwrap();
+        let lead = &entries[0];
+        assert_eq!(
+            dict.phrase_text(lead.token().value()).unwrap().as_deref(),
+            Some(lead.text())
+        );
+        // The lead's pronunciation list contains the lookup key itself.
+        let pronunciations = dict.pronunciations(lead.token().value()).unwrap();
+        assert!(
+            pronunciations.iter().any(|(pinyin, _)| pinyin == "ni"),
+            "lead token must carry the ni reading"
+        );
+        // Unknown tokens reverse to nothing, not to an error.
+        assert!(dict.phrase_text(u32::MAX).unwrap().is_none());
+        assert!(dict.pronunciations(u32::MAX).unwrap().is_empty());
     }
 }

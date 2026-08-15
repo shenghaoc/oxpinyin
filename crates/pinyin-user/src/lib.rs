@@ -13,7 +13,10 @@
 //! the system model. W6-T5 adds the save cycle behind `pinyin_save`: the §4
 //! `m_modified` gate ([`UserStore::is_modified`] / [`UserStore::save`]) over
 //! redb's per-commit durability — there is no serialization step, because
-//! every training update is already committed atomically to disk.
+//! every training update is already committed atomically to disk. W6-T7 adds
+//! the §9 export surface ([`UserStore::export_phrases`] /
+//! [`UserStore::export_bigrams`]) that backs the C ABI's export iterators and
+//! the W6 differential.
 #![warn(missing_docs)]
 
 pub mod phrase;
@@ -27,4 +30,4 @@ pub use phrase::{
     PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PinyinKey, USER_DICTIONARY, UserPhrase,
     UserPronunciation, is_user_token, phrase_index_library_index, phrase_index_make_token,
 };
-pub use store::{SENTENCE_START, Token, UserStore, UserStoreError};
+pub use store::{ExportedPhrase, SENTENCE_START, Token, UserStore, UserStoreError};

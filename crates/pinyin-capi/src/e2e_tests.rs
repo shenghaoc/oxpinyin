@@ -499,3 +499,185 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
     crate::instance::pinyin_free_instance(instance2);
     crate::context::pinyin_fini(context2);
 }
+
+// The matching deallocator for buffers the export iterators hand out
+// (`ffi::owned_cstr` allocates with libc `malloc`, which `g_free` and
+// `free` both release on Linux).
+unsafe extern "C" {
+    fn free(ptr: *mut std::ffi::c_void);
+}
+
+/// Frees a caller-owned buffer the export iterators hand out.
+fn free_exported(ptr: *mut std::ffi::c_char) {
+    if !ptr.is_null() {
+        // SAFETY: the iterator allocates with libc `malloc` (see
+        // `owned_cstr`); `free` is the matching deallocator for the test.
+        unsafe {
+            free(ptr.cast());
+        }
+    }
+}
+
+/// Reads a caller-owned, NUL-terminated export string and frees it.
+fn take_exported(ptr: *mut std::ffi::c_char) -> String {
+    // SAFETY: the iterator hands out NUL-terminated, valid UTF-8 text.
+    let text = unsafe { std::ffi::CStr::from_ptr(ptr) }
+        .to_str()
+        .expect("UTF-8 export string")
+        .to_owned();
+    free_exported(ptr);
+    text
+}
+
+/// Drains an export iterator into owned `(phrase, pinyin, count)` triples,
+/// freeing each caller-owned buffer as it goes.
+fn drain_phrases(iter: *mut crate::types::ExportIterator) -> Vec<(String, String, i32)> {
+    let mut rows = Vec::new();
+    while crate::iterators::pinyin_iterator_has_next_phrase(iter) {
+        let mut phrase: *mut crate::types::GChar = ptr::null_mut();
+        let mut pinyin: *mut crate::types::GChar = ptr::null_mut();
+        let mut count: std::os::raw::c_int = 0;
+        assert!(crate::iterators::pinyin_iterator_get_next_phrase(
+            iter,
+            &mut phrase,
+            &mut pinyin,
+            &mut count,
+        ));
+        rows.push((take_exported(phrase), take_exported(pinyin), count));
+    }
+    rows
+}
+
+/// Drains a bigram export iterator the same way.
+fn drain_bigrams(iter: *mut crate::types::BigramExportIterator) -> Vec<(String, String, i32)> {
+    let mut rows = Vec::new();
+    while crate::iterators::pinyin_bigram_iterator_has_next_phrase(iter) {
+        let mut phrase: *mut crate::types::GChar = ptr::null_mut();
+        let mut pinyin: *mut crate::types::GChar = ptr::null_mut();
+        let mut count: std::os::raw::c_int = 0;
+        assert!(crate::iterators::pinyin_bigram_iterator_get_next_phrase(
+            iter,
+            &mut phrase,
+            &mut pinyin,
+            &mut count,
+        ));
+        rows.push((take_exported(phrase), take_exported(pinyin), count));
+    }
+    rows
+}
+
+#[test]
+fn export_iterators_walk_the_stored_triples() {
+    let user_dir = TempUserDir::new("export");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    // Null-safety and the empty-store shape first.
+    assert!(crate::iterators::pinyin_begin_get_phrases(ptr::null_mut(), 7).is_null());
+    assert!(crate::iterators::pinyin_begin_get_bigram_phrases(ptr::null_mut()).is_null());
+    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(
+        ptr::null_mut()
+    ));
+    assert!(!crate::iterators::pinyin_bigram_iterator_has_next_phrase(
+        ptr::null_mut()
+    ));
+
+    // Remember two phrases; the second reading merges into the first.
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+        5
+    );
+    assert!(pinyin_remember_user_input(
+        instance,
+        cstr("你好").as_ptr(),
+        -1
+    ));
+    assert!(pinyin_remember_user_input(
+        instance,
+        cstr("你好").as_ptr(),
+        7
+    ));
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("shijie").as_ptr()),
+        6
+    );
+    assert!(pinyin_remember_user_input(
+        instance,
+        cstr("世界").as_ptr(),
+        3
+    ));
+
+    // §9 phrase export: (phrase, `'`-joined pinyin, pronunciation count),
+    // token order.
+    let iter = crate::iterators::pinyin_begin_get_phrases(context, 7);
+    assert!(!iter.is_null());
+    assert_eq!(
+        drain_phrases(iter),
+        vec![
+            ("你好".to_owned(), "ni'hao".to_owned(), 12),
+            ("世界".to_owned(), "shi'jie".to_owned(), 3),
+        ]
+    );
+    // Exhaustion: has_next false, get_next false.
+    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(iter));
+    assert!(!crate::iterators::pinyin_iterator_get_next_phrase(
+        iter,
+        ptr::null_mut(),
+        ptr::null_mut(),
+        ptr::null_mut(),
+    ));
+    crate::iterators::pinyin_end_get_phrases(iter);
+
+    // A non-user index exports nothing (system sub-indexes are not this
+    // store's data).
+    let system = crate::iterators::pinyin_begin_get_phrases(context, 1);
+    assert!(!system.is_null());
+    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(system));
+    crate::iterators::pinyin_end_get_phrases(system);
+
+    // Train one multi-phrase sentence: (你 → 好) = 69.
+    let _ = candidate(instance, "nihao", 0);
+    let (_, ni_ptr) = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        let index = inst
+            .candidates
+            .iter()
+            .position(|c| c.text.as_bytes() == "你".as_bytes())
+            .expect("你 is offered for ni");
+        let mut cand: *mut LookupCandidate = ptr::null_mut();
+        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        (index, cand)
+    };
+    assert!(pinyin_choose_candidate(instance, 0, ni_ptr) > 0);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let hao_ptr = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        let index = inst
+            .candidates
+            .iter()
+            .position(|c| c.text.as_bytes() == "好".as_bytes())
+            .expect("好 is offered for hao");
+        let mut cand: *mut LookupCandidate = ptr::null_mut();
+        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        cand
+    };
+    assert!(pinyin_choose_candidate(instance, 2, hao_ptr) > 0);
+    assert!(pinyin_train(instance, 0));
+
+    // §9 bigram export: sentence_start rows skipped; phrase = prev+next
+    // text; pinyin = prev'next; count = stored × 2.
+    let bigram = crate::iterators::pinyin_begin_get_bigram_phrases(context);
+    assert!(!bigram.is_null());
+    assert_eq!(
+        drain_bigrams(bigram),
+        vec![("你好".to_owned(), "ni'hao".to_owned(), 138)]
+    );
+    assert!(!crate::iterators::pinyin_bigram_iterator_has_next_phrase(
+        bigram
+    ));
+    crate::iterators::pinyin_end_get_bigram_phrases(bigram);
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
