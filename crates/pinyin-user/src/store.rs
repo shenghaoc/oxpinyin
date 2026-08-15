@@ -13,10 +13,11 @@
 //! additive merge. T5 adds the save cycle: the §4 `m_modified` gate and the
 //! redb-backed persistence point behind `pinyin_save`.
 
+use std::collections::HashMap;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
 use pinyin_core::UserCountDelta;
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
@@ -216,6 +217,33 @@ impl fmt::Debug for UserStore {
     }
 }
 
+/// Process-global registry of the live user stores, keyed by canonical path.
+///
+/// redb refuses a second write handle to a file already open in this process,
+/// so a second [`UserStore::open`] of the same user directory (e.g. a second
+/// `pinyin_init`) would otherwise fail — and the C ABI's degrade-to-`None`
+/// would then silently disable all learning for that context. Instead the
+/// second open hands back a clone of the already-open handle, so every context
+/// on one user dir shares the same counts and the same §4 dirty flag. Entries
+/// are `Weak`, so a path drops out once its last [`UserStore`] is gone.
+type StoreRegistry = HashMap<PathBuf, (Weak<Mutex<Database>>, Weak<AtomicBool>)>;
+static OPEN_STORES: OnceLock<Mutex<StoreRegistry>> = OnceLock::new();
+
+/// Canonical registry key for `path`: the canonicalized parent joined with the
+/// file name, so distinct spellings of one user dir collapse to one entry. The
+/// file itself need not exist yet (redb creates it); only the parent must, and
+/// it does whenever [`Database::create`] can succeed. Falls back to the raw
+/// path when the parent cannot be canonicalized.
+fn registry_key(path: &Path) -> PathBuf {
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => match parent.canonicalize() {
+            Ok(base) => base.join(name),
+            Err(_) => path.to_path_buf(),
+        },
+        _ => path.to_path_buf(),
+    }
+}
+
 impl UserStore {
     /// Locks the shared database handle, recovering from a poisoned lock
     /// (constitution §4: nothing here panics, so a poisoned mutex must not
@@ -233,7 +261,27 @@ impl UserStore {
     /// "table does not exist" error. A missing allocation cursor is
     /// initialised to [`FIRST_USER_TOKEN`]. A freshly opened store is clean:
     /// [`Self::save`] is a no-op until a training update records a change.
+    ///
+    /// Opening a path that is already open in this process returns a clone of
+    /// the live handle (shared counts and shared §4 dirty flag) rather than a
+    /// second database handle, which redb refuses; see [`OPEN_STORES`].
     pub fn open(path: &Path) -> Result<Self, UserStoreError> {
+        // Reuse a live handle for a path already open in this process (redb
+        // refuses a second write handle); see [`OPEN_STORES`]. The registry
+        // lock is held across create + insert so two racing opens of a fresh
+        // path cannot both create.
+        let key = registry_key(path);
+        let registry = OPEN_STORES.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut reg = registry.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(store) = reg.get(&key).and_then(|(db, dirty)| {
+            Some(Self {
+                db: db.upgrade()?,
+                dirty: dirty.upgrade()?,
+            })
+        }) {
+            return Ok(store);
+        }
+
         let db = Database::create(path).map_err(|e| match e {
             redb::DatabaseError::Storage(redb::StorageError::Io(io)) => UserStoreError::Io(io),
             other => UserStoreError::Db(other),
@@ -265,10 +313,15 @@ impl UserStore {
             }
         }
         txn.commit()?;
-        Ok(Self {
+        let store = Self {
             db: Arc::new(Mutex::new(db)),
             dirty: Arc::new(AtomicBool::new(false)),
-        })
+        };
+        reg.insert(
+            key,
+            (Arc::downgrade(&store.db), Arc::downgrade(&store.dirty)),
+        );
+        Ok(store)
     }
 
     /// Stored bigram count for `(prev, cur)`; `0` if unrecorded.
@@ -837,6 +890,30 @@ mod tests {
         assert_eq!(store.unigram_total().unwrap(), 0);
         assert_eq!(store.count_delta(Some(1), 2).unwrap(), UserCountDelta::ZERO);
         assert_eq!(store.count_delta(None, 2).unwrap(), UserCountDelta::ZERO);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn second_open_of_same_path_shares_the_handle() {
+        // redb refuses a second write handle to an open file; `open` must hand
+        // back a clone of the live one instead, so a second context on the same
+        // user dir keeps learning (rather than silently degrading to `None`).
+        let path = temp_path("shared-handle");
+        let mut first = UserStore::open(&path).unwrap();
+        let mut second = UserStore::open(&path).unwrap();
+
+        // A write through one handle is visible through the other: one db.
+        assert_eq!(first.observe_selection(1, 100).unwrap(), 69);
+        assert_eq!(second.bigram_count(1, 100).unwrap(), 69);
+
+        // The §4 dirty flag is shared: the write through `first` arms `second`'s
+        // save gate, so `second` performs the (single, shared) save and both
+        // handles are clean afterward.
+        assert!(second.save().unwrap());
+        assert!(!first.save().unwrap());
+
+        drop(first);
+        drop(second);
         let _ = std::fs::remove_file(&path);
     }
 
