@@ -3,6 +3,8 @@
 
 use std::ptr;
 
+use pinyin_user::UserStore;
+
 use crate::ffi::ffi_catch;
 use crate::state::{CapiInstance, box_instance, context_ref, instance_mut};
 use crate::types::{PinyinContext, PinyinInstance};
@@ -47,6 +49,10 @@ pub extern "C" fn pinyin_free_instance(instance: *mut PinyinInstance) {
         unsafe {
             drop(Box::from_raw(instance.cast::<CapiInstance>()));
         }
+        // Same registry drain as pinyin_fini: an instance owns a UserStore
+        // clone, so its teardown is another point where the last strong
+        // handle can disappear.
+        UserStore::drain_registry();
     });
 }
 
