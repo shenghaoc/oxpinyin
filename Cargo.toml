@@ -11,6 +11,7 @@ members = [
   "crates/pinyin-migrate",
   "crates/pinyin-segment",
   "crates/pinyin-counter",
+  "crates/pinyin-lambda",
 ]
 
 [workspace.package]

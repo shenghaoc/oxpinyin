@@ -480,6 +480,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinyin-lambda"
+version = "0.1.0"
+dependencies = [
+ "pinyin-counter",
+ "pinyin-segment",
+]
+
+[[package]]
 name = "pinyin-migrate"
 version = "0.1.0"
 dependencies = [

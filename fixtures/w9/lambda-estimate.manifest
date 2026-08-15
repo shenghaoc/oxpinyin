@@ -1,0 +1,26 @@
+# W9-T3 λ-estimator differential golden (deleted-interpolation EM parity
+# with gen_deleted_ngram + estimate_interpolation).
+#
+# Configuration "X" (see docs/findings/lambda-port.md):
+#   SYSTEM_BIGRAM + floored unigram  ← gen_ngram over fold A (first ⌊N/2⌋ =
+#                                       116 lines of segmenter-ngseg.txt)
+#   DELETED_BIGRAM (held-out)        ← gen_deleted_ngram over the full corpus
+#   λ                                ← estimate_interpolation (seed 0.6,
+#                                       ε 0.001, per-context EM, mean)
+#
+# The Rust estimator is fed the same integer counts (T2's counter over fold A
+# for the system model, this crate's held-out counter over the full corpus)
+# and reproduces λ bit-for-bit. `average_bits` is the IEEE-754 f64 bit
+# pattern of the mean λ (a deterministic function of integer counts, so
+# exact, not toleranced); `dump_fnv1a64` hashes the `token:%d lambda:%f` /
+# `average lambda:%f` dump at six decimals — estimate_interpolation's own
+# stdout shape. Against the live pin binaries the per-context λ are
+# byte-identical at that six-decimal precision and the DELETED_BIGRAM counts
+# are integer bit-exact; see the differential test.
+contexts 153
+system_bigrams 97
+deleted_bigrams 199
+uni_total 138202
+average_bits 3fdc8629278cd1c5
+average_decimal 0.44568852293312161
+dump_fnv1a64 502672fce58909ae
