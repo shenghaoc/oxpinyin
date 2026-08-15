@@ -27,6 +27,8 @@ pub enum EngineError {
     Dictionary(String),
     /// The language model backend failed.
     LanguageModel(String),
+    /// The user-model backend failed (the learning/observation seam).
+    UserModel(String),
     /// The input could not be represented as a segment graph.
     Graph(GraphError),
     /// The k-best search refused its parameters.
@@ -46,6 +48,7 @@ impl fmt::Display for EngineError {
             }
             Self::Dictionary(message) => write!(formatter, "dictionary error: {message}"),
             Self::LanguageModel(message) => write!(formatter, "language model error: {message}"),
+            Self::UserModel(message) => write!(formatter, "user model error: {message}"),
             Self::Graph(error) => write!(formatter, "graph error: {error}"),
             Self::Decode(error) => write!(formatter, "decode error: {error}"),
             Self::Scoring(error) => write!(formatter, "scoring error: {error}"),

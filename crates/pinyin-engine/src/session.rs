@@ -15,7 +15,7 @@ use pinyin_core::graph::{Edge, EdgeKind, SegmentGraph};
 use pinyin_core::kbest::{DecodedPath, k_best};
 use pinyin_core::scoring::{Scorer, ScoringConfig, ScoringError, expand_keys, key_cost_table};
 use pinyin_core::{
-    Completeness, Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey,
+    Completeness, Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey, UserModel,
 };
 
 use crate::candidate::{Candidate, CandidateKind, CandidateList};
@@ -309,6 +309,73 @@ where
         } else {
             Ok(Selection::Continued)
         }
+    }
+
+    /// Trains the recorded selection through the user-model seam.
+    ///
+    /// Walks the sentence recorded so far — the tokens of every phrase the
+    /// user pinned through [`Session::select`], in order — and calls
+    /// [`UserModel::observe`] once per token with the preceding tokens as
+    /// history. The first token therefore observes against an empty history,
+    /// which the pinned store maps to `sentence_start`
+    /// (`docs/findings/user-store.md` §2.1). The C ABI's `pinyin_train` is
+    /// this call: per-candidate selection ([`Session::select`]) only records
+    /// the constraint, and the bigram update is deferred to here (§2.2).
+    /// Learning-off callers omit it entirely.
+    ///
+    /// Re-calling without new selections re-observes the same sentence, which
+    /// is the upstream behaviour (a second `pinyin_train` doubles the counts —
+    /// there is no guard upstream either).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::UserModel`] when the user model rejects an
+    /// observation. Tokens observed before the failure stay observed: the
+    /// sentence is trained prefix-wise, like the upstream loop.
+    pub fn train<U>(&self, user: &mut U) -> Result<(), EngineError>
+    where
+        U: UserModel<Token = PhraseToken>,
+        U::Error: Display,
+    {
+        for (index, token) in self.history.iter().enumerate() {
+            user.observe(&self.history[..index], token)
+                .map_err(|error| EngineError::UserModel(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// The sentence recorded so far: the token of every phrase the user
+    /// pinned in this composition, in selection order.
+    ///
+    /// Sentence-level candidates carry no token and are not part of the
+    /// record — exactly the phrases a `pinyin_train` call would train
+    /// (`docs/findings/user-store.md` §2.1). The C ABI uses the tail of this
+    /// slice as the predecessor for predicted-candidate training (§2.3).
+    #[must_use]
+    pub fn selected_tokens(&self) -> &[PhraseToken] {
+        &self.history
+    }
+
+    /// The current composition's syllable keys, in the engine's selected
+    /// parse order.
+    ///
+    /// This is the fewest-keys segmentation the scan matrix is built from
+    /// (`selected_path`, `docs/findings/candidate-construction.md` §8.1) over
+    /// the whole raw buffer — the standing-in for libpinyin's saved keys,
+    /// which `pinyin_remember_user_input` walks to store a phrase with its
+    /// pinyin (`docs/findings/user-store.md` §3.1).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::Graph`] when the raw buffer cannot be built
+    /// into a segment graph (an over-long input; the buffer is capped by
+    /// [`MAX_INPUT_BYTES`]).
+    pub fn composition_keys(&self) -> Result<Vec<SyllableKey>, EngineError> {
+        let graph = SegmentGraph::build(self.raw.as_bytes()).map_err(EngineError::Graph)?;
+        Ok(selected_path(&graph, self.settings.incomplete)
+            .into_iter()
+            .map(|edge| edge.key())
+            .collect())
     }
 
     /// Finishes the composition and returns its text.
@@ -1234,7 +1301,10 @@ const fn is_batch_input_character(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use pinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
+    use pinyin_core::fixture::{FixtureDictionary, FixtureLanguageModel};
+    use pinyin_core::{
+        Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey, UserModel,
+    };
 
     use super::{KeyOutcome, MAX_INPUT_BYTES, Selection, Session};
     use crate::config::EmptyConfigSource;
@@ -1531,5 +1601,151 @@ mod tests {
     fn commit_on_an_empty_session_is_empty_text() {
         let mut session = session();
         assert_eq!(session.commit().expect("no failure"), "");
+    }
+
+    /// Authored mini vocabulary for the training tests: two single-key
+    /// phrases, no model bytes (`docs/findings/fixture-adapters.md`).
+    const TRAIN_VOCAB: &str =
+        "token=1\tkeys=ni\ttext=你\tunigram=1000\ntoken=2\tkeys=hao\ttext=好\tunigram=900\n";
+
+    /// A [`UserModel`] that records every `observe` call instead of storing.
+    struct Recorder {
+        observed: Vec<(Vec<PhraseToken>, PhraseToken)>,
+    }
+
+    impl UserModel for Recorder {
+        type Token = PhraseToken;
+        type Error = EngineError;
+
+        fn score(
+            &self,
+            _history: &[Self::Token],
+            _token: &Self::Token,
+        ) -> Result<Cost, Self::Error> {
+            Ok(0)
+        }
+
+        fn observe(
+            &mut self,
+            history: &[Self::Token],
+            token: &Self::Token,
+        ) -> Result<(), Self::Error> {
+            self.observed.push((history.to_vec(), *token));
+            Ok(())
+        }
+    }
+
+    fn train_session() -> Session<FixtureDictionary, FixtureLanguageModel> {
+        Session::new(
+            &EmptyConfigSource,
+            StoragePaths::new("user"),
+            FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
+            FixtureLanguageModel::parse(TRAIN_VOCAB, "").expect("authored fixture"),
+        )
+        .expect("the fixtures open")
+    }
+
+    /// Selects the candidate carrying `token` after typing `text` (the
+    /// selection must exist: this is the sentence record the training path
+    /// walks).
+    fn type_and_select(
+        session: &mut Session<FixtureDictionary, FixtureLanguageModel>,
+        text: &str,
+        token: u32,
+    ) {
+        for character in text.chars() {
+            session
+                .process_key(&KeyInput::character(character))
+                .expect("typing cannot fail");
+        }
+        let index = session
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
+            .expect("the fixture candidate is offered");
+        session.select(index).expect("selection cannot fail");
+    }
+
+    #[test]
+    fn train_observes_each_recorded_token_after_its_prefix() {
+        let mut session = train_session();
+        type_and_select(&mut session, "ni", 1);
+        type_and_select(&mut session, "hao", 2);
+        assert_eq!(
+            session.selected_tokens(),
+            [PhraseToken::new(1), PhraseToken::new(2)]
+        );
+
+        let mut recorder = Recorder {
+            observed: Vec::new(),
+        };
+        session.train(&mut recorder).expect("training cannot fail");
+        // First token observes against an empty history (the store maps that
+        // to sentence_start); the second observes after the first.
+        assert_eq!(
+            recorder.observed,
+            vec![
+                (Vec::new(), PhraseToken::new(1)),
+                (vec![PhraseToken::new(1)], PhraseToken::new(2)),
+            ]
+        );
+
+        // Re-training re-observes the same sentence: upstream has no guard
+        // (a second pinyin_train doubles the counts), and neither does this.
+        session.train(&mut recorder).expect("training cannot fail");
+        assert_eq!(recorder.observed.len(), 4);
+    }
+
+    #[test]
+    fn train_reports_a_failing_user_model() {
+        struct Failing;
+        impl UserModel for Failing {
+            type Token = PhraseToken;
+            type Error = EngineError;
+
+            fn score(
+                &self,
+                _history: &[Self::Token],
+                _token: &Self::Token,
+            ) -> Result<Cost, Self::Error> {
+                Ok(0)
+            }
+
+            fn observe(
+                &mut self,
+                _history: &[Self::Token],
+                _token: &Self::Token,
+            ) -> Result<(), Self::Error> {
+                Err(EngineError::UserModel("closed".to_owned()))
+            }
+        }
+
+        let mut session = train_session();
+        type_and_select(&mut session, "ni", 1);
+        // The engine renders the model's error at the boundary: the failing
+        // model reports an `EngineError::UserModel`, so the wrap doubles the
+        // prefix — the point is that the failure surfaces, not that the text
+        // is pretty.
+        let error = session.train(&mut Failing).expect_err("the model fails");
+        assert_eq!(
+            error.to_string(),
+            "user model error: user model error: closed"
+        );
+    }
+
+    #[test]
+    fn composition_keys_report_the_selected_parse() {
+        let mut plain = session();
+        type_text(&mut plain, "nihao");
+        let keys = plain.composition_keys().expect("the graph builds");
+        let texts: Vec<&str> = keys.iter().map(|key| key.text()).collect();
+        assert_eq!(texts, ["ni", "hao"]);
+
+        // The apostrophe keeps xi'an from collapsing into xian.
+        let mut split = session();
+        type_text(&mut split, "xi'an");
+        let keys = split.composition_keys().expect("the graph builds");
+        let texts: Vec<&str> = keys.iter().map(|key| key.text()).collect();
+        assert_eq!(texts, ["xi", "an"]);
     }
 }

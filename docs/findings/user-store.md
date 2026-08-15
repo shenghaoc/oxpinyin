@@ -215,6 +215,19 @@ bumped past the reserved zero id). User tokens are distinguished from system
 tokens purely by the library nibble: `PHRASE_INDEX_LIBRARY_INDEX(token) == 7`
 (see `pinyin_is_user_candidate`, `src/pinyin.cpp:3710-3722`).
 
+**Unigram-factor reconciliation (W6-T3).** The `unigram_factor = 3` above and
+the training path's `unigram_factor = 7` (`src/lookup/phonetic_lookup.h:849`,
+§2) are **two distinct constants in two distinct functions for two distinct
+operations**, both **SHOWN**: `7` scales the *training* seed into the
+phrase-index unigram (§2.1–2.3 — `train_result3`,
+`pinyin_choose_candidate`'s special types, `pinyin_choose_predicted_candidate`),
+while `3` scales the *new-phrase* seeding count at allocation (§3.2 —
+`_add_phrase`, `pinyin.cpp:522`). There is no discrepancy: a phrase added by
+`pinyin_remember_user_input` seeds its unigram with `count * 3`, and later
+*selections* of it train with `seed * 7`. pinyin-rs reproduces both as
+separate constants (`pinyin_user::seed::UNIGRAM_FACTOR` = 7,
+`pinyin_user::phrase::ADD_PHRASE_UNIGRAM_FACTOR` = 3).
+
 ### 3.3 Importing a phrase list
 
 `pinyin_begin_add_phrases(context, index)` (`src/pinyin.cpp:506-512`) opens an

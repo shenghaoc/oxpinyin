@@ -177,6 +177,7 @@ pub extern "C" fn pinyin_guess_candidates(
                 kind: cand.kind(),
                 nbest_index: 0,
                 consumed_bytes: cand.consumed_bytes(),
+                token: cand.token(),
             });
         }
         true

@@ -444,6 +444,7 @@ dependencies = [
  "pinyin-core",
  "pinyin-data",
  "pinyin-engine",
+ "pinyin-user",
 ]
 
 [[package]]

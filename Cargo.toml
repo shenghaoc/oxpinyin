@@ -34,4 +34,5 @@ all = { level = "deny", priority = -1 }
 [workspace.dependencies]
 pinyin-core = { path = "crates/pinyin-core" }
 pinyin-engine = { path = "crates/pinyin-engine" }
+pinyin-user = { path = "crates/pinyin-user" }
 redb = "4"

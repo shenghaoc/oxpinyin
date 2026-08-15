@@ -6,8 +6,10 @@
 //! `docs/findings/user-store.md` §2, the redb count tables, and the first
 //! [`pinyin_core::UserModel`] implementor. W6-T2: the user phrase index and
 //! `USER_DICTIONARY` token allocation (§3), as additional tables in the same
-//! database. Persistence semantics (T5), Session/capi training wiring (T3)
-//! and the decode-time additive merge (T4) are out of scope.
+//! database. W6-T3 wires the store through [`pinyin_core::UserModel`] (typed
+//! with the engine's [`pinyin_core::PhraseToken`]) into the engine session and
+//! the C ABI. Persistence semantics (T5) and the decode-time additive merge
+//! (T4) are out of scope.
 #![warn(missing_docs)]
 
 pub mod phrase;
