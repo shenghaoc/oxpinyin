@@ -86,3 +86,51 @@ expansion_limit       = 64    (unchanged)
 
 Re-run the sweep with `cargo run -p pinyin-oracle --release --bin parity-sweep`
 if the scorer form or the data tables change.
+
+## λ read from config (2026-08-15)
+
+The interpolation weight λ was an authored, deliberately-neutral `1/2`. It is
+now **read from the model's `table.conf`** instead of hardcoded. The pinned
+value is `0.312699` (recorded in `data-formats.md` §3, verified against the
+oracle's installed copy). The decode LM (`pinyin_data::lm`) defaults to
+`Lambda::PINNED` (`0.312699`) and overrides it from an install's `table.conf`;
+the fetched cache ships none (`table.conf` is a config artifact, not part of
+`model20.text.tar.gz`), so the default stands there.
+
+**Representation.** λ is held as the exact decimal rational the file denotes,
+reduced to lowest terms (`0.312699` → `312699 / 1_000_000`), so the
+interpolation stays in the deterministic u128 ratio (no float in the hot
+path — constitution §6). `from_decimal` rejects a value `> 1` (λ is a weight in
+`[0, 1]`) and `model_cost` uses checked arithmetic, so a malformed `table.conf`
+floors at `UNKNOWN_COST` rather than overflowing.
+
+**Ranking impact is path-specific.** Candidate ordering has two paths
+(`Session::refresh`, gated on `LanguageModel::has_real_unigrams`):
+
+- **Real-unigram path** (`set_unigrams_from_interpolation2`, used by
+  `real_tables_session_reports_parity`): candidates rank by the three-key order
+  (text length, pinyin span, real unigram count), which does *not* read the
+  interpolated `model_cost`. This path is **λ-insensitive** — re-running the
+  release parity test with λ = `0.312699` reproduces the frozen pins
+  bit-identically:
+
+  ```
+  compared            10190
+  top-1               10136   (unchanged)
+  top-5-set           10182   (unchanged)
+  prefix-10 overlap   94456 of 98930 (unchanged)
+  absent                  1   (unchanged)
+  ```
+
+- **Export-ABI path** (`set_unigrams_from_dict`, `real_unigrams == false`):
+  candidates sort by `Candidate::cost`, which includes the interpolated
+  `model_cost`, so λ **does** reorder them. This path is what the shipping C
+  ABI (`CapiContext::new`) and the `parity-sweep` / `parity-worst` tools use.
+  No pin covers it — the parity fixture is measured through the real-unigram
+  path — so those lists reorder unmeasured with the λ change.
+
+The change is correct regardless: it makes the decoder use the model's actual λ
+instead of an arbitrary `1/2`. Its effect surfaces in the full-sentence Viterbi
+decode and in the export-ABI candidate order; no real-model differential covers
+either on `main` yet (the sentence/segmentation `decode_differential` runs on
+the mini-fixture LM). No re-pin was required for the real-unigram pins.

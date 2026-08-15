@@ -13,10 +13,13 @@
 //! P(w_n | w_n-1) = λ · P_bigram(w_n | w_n-1) + (1 − λ) · P_unigram(w_n)
 //! ```
 //!
-//! with provisional λ = 1/2. Unigram counts are installed from a
-//! [`crate::SystemDictionary`]'s aggregated export frequencies. Without
-//! unigrams the model falls back to pure bigram-or-floor behaviour so the
-//! mini-fixture unit tests stay self-contained.
+//! λ is read from the model's `table.conf` ([`crate::table_conf`]); it
+//! defaults to [`crate::table_conf::Lambda::PINNED`] (`0.312699`,
+//! `data-formats.md` §3) when no `table.conf` is available. Unigram counts are
+//! installed from a [`crate::SystemDictionary`]'s aggregated export
+//! frequencies. Without unigrams the model falls back to pure
+//! bigram-or-floor behaviour so the mini-fixture unit tests stay
+//! self-contained.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -27,6 +30,7 @@ use pinyin_core::{Cost, LanguageModel, PhraseToken};
 
 use crate::interp::{self, InterpolationError, UnigramTable};
 use crate::table::{LookupTable, TableError};
+use crate::table_conf::Lambda;
 
 /// Error conditions for bigram lookups.
 #[derive(Debug)]
@@ -61,14 +65,6 @@ impl From<TableError> for LmError {
     }
 }
 
-/// Weight of the bigram term in the interpolated estimate (λ = 1/2).
-///
-/// Authored and deliberately neutral; same provisional value as
-/// `pinyin_core::fixture` and `docs/findings/scoring-spec.md`.
-const LAMBDA_NUMERATOR: u128 = 1;
-/// Denominator of [`LAMBDA_NUMERATOR`].
-const LAMBDA_DENOMINATOR: u128 = 2;
-
 /// Divides empty-history unigram surprisal so it ranks by frequency without
 /// overpowering `phrase_key_bonus`.
 ///
@@ -78,6 +74,35 @@ const LAMBDA_DENOMINATOR: u128 = 2;
 /// ~700-unit frequency signal — enough to order same-length phrases, small
 /// enough that a two-key phrase still wins.
 const UNIGRAM_TIEBREAK_SCALE: i64 = 16;
+
+/// Interpolated `(numerator, denominator)` for `λ·b/bt + (1 − λ)·u/ut` over a
+/// common denominator, where `λ = lambda_num / lambda_den`.
+///
+/// Returns `None` if any `u128` product overflows — reachable only for a
+/// pathological λ denominator, which the caller floors at `UNKNOWN_COST`
+/// rather than panicking (constitution §4). [`Lambda`] keeps
+/// `lambda_num ≤ lambda_den`, so the `(1 − λ)` weight never underflows.
+fn interpolate_ratio(
+    lambda_num: u128,
+    lambda_den: u128,
+    bigram_count: u128,
+    bigram_total: u128,
+    unigram: u128,
+    unigram_total: u128,
+) -> Option<(u128, u128)> {
+    let one_minus_lambda = lambda_den.saturating_sub(lambda_num);
+    let bigram_term = lambda_num
+        .checked_mul(bigram_count)?
+        .checked_mul(unigram_total)?;
+    let unigram_term = one_minus_lambda
+        .checked_mul(unigram)?
+        .checked_mul(bigram_total)?;
+    let numerator = bigram_term.checked_add(unigram_term)?;
+    let denominator = lambda_den
+        .checked_mul(bigram_total)?
+        .checked_mul(unigram_total)?;
+    Some((numerator, denominator))
+}
 
 /// Bigram language model backed by `bigram.redb`.
 pub struct BigramLanguageModel {
@@ -89,17 +114,56 @@ pub struct BigramLanguageModel {
     /// export-ABI map (flat 100s) keeps feeding the interpolated cost but is
     /// never mistaken for real frequencies.
     real_unigrams: bool,
+    /// Bigram/unigram interpolation weight λ, read from the model's
+    /// `table.conf` when available and [`Lambda::PINNED`] (`0.312699`,
+    /// `data-formats.md` §3) otherwise. Read from config rather than
+    /// hardcoded.
+    lambda: Lambda,
 }
 
 impl BigramLanguageModel {
     /// Opens the bigram model from a redb table file.
+    ///
+    /// λ defaults to [`Lambda::PINNED`] (`0.312699`, `data-formats.md` §3);
+    /// override it from a real install's config with
+    /// [`Self::set_lambda_from_table_conf`] or [`Self::set_lambda`].
     pub fn open(path: &Path) -> Result<Self, LmError> {
         Ok(Self {
             bigram: LookupTable::open(path).map_err(LmError::Table)?,
             unigrams: None,
             unigram_total: 0,
             real_unigrams: false,
+            lambda: Lambda::PINNED,
         })
+    }
+
+    /// The interpolation weight λ currently in effect.
+    #[must_use]
+    pub const fn lambda(&self) -> Lambda {
+        self.lambda
+    }
+
+    /// Sets the interpolation weight λ directly.
+    pub fn set_lambda(&mut self, lambda: Lambda) {
+        self.lambda = lambda;
+    }
+
+    /// Reads λ from a model's `table.conf` and installs it (`data-formats.md`
+    /// §3).
+    ///
+    /// Returns `true` when a `table.conf` with a parsable `lambda parameter:`
+    /// line was found and applied; `false` when the file is absent or carries
+    /// no such line, in which case λ is left unchanged (so the
+    /// [`Lambda::PINNED`] default stands for the fetched cache, which ships no
+    /// `table.conf`). Never errors: a missing config is the normal case.
+    pub fn set_lambda_from_table_conf(&mut self, table_conf_path: &Path) -> bool {
+        match crate::table_conf::read_table_conf_lambda(table_conf_path) {
+            Some(lambda) => {
+                self.lambda = lambda;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Installs unigram counts aggregated from a [`crate::SystemDictionary`].
@@ -231,16 +295,24 @@ impl BigramLanguageModel {
 
         match self.transition(prev.value(), token.value())? {
             Some((bigram_count, bigram_total)) if bigram_total > 0 => {
-                // λ·b/bt + (1 − λ)·u/ut over a common denominator.
-                let unigram_128 = u128::from(unigram);
-                let unigram_total = u128::from(self.unigram_total);
-                let bigram_count = u128::from(bigram_count);
-                let bigram_total = u128::from(bigram_total);
-                let numerator = LAMBDA_NUMERATOR * bigram_count * unigram_total
-                    + (LAMBDA_DENOMINATOR - LAMBDA_NUMERATOR) * unigram_128 * bigram_total;
-                let denominator = LAMBDA_DENOMINATOR * bigram_total * unigram_total;
-                let (numerator, denominator) = reduce_ratio(numerator, denominator);
-                Ok(surprisal(numerator, denominator))
+                // λ·b/bt + (1 − λ)·u/ut over a common denominator, with λ =
+                // lambda_num / lambda_den from the model config. Checked
+                // arithmetic: a pathological λ denominator floors at
+                // UNKNOWN_COST rather than overflowing (constitution §4).
+                match interpolate_ratio(
+                    self.lambda.numerator(),
+                    self.lambda.denominator(),
+                    u128::from(bigram_count),
+                    u128::from(bigram_total),
+                    u128::from(unigram),
+                    u128::from(self.unigram_total),
+                ) {
+                    Some((numerator, denominator)) => {
+                        let (numerator, denominator) = reduce_ratio(numerator, denominator);
+                        Ok(surprisal(numerator, denominator))
+                    }
+                    None => Ok(UNKNOWN_COST),
+                }
             }
             // Previous token absent from the bigram (no evidence of this
             // transition at all), or a degenerate zero-total entry: floor at
@@ -446,5 +518,85 @@ mod tests {
             let sum: u64 = records.iter().map(|(_, count)| u64::from(*count)).sum();
             assert_eq!(u64::from(total), sum, "total == Σ count for {key:02x?}");
         }
+    }
+
+    #[test]
+    fn default_lambda_is_the_pinned_config_value() {
+        // Not the old authored 1/2: the LM defaults to the pinned 0.312699.
+        assert_eq!(model().lambda(), Lambda::PINNED);
+    }
+
+    #[test]
+    fn set_lambda_from_table_conf_reads_the_config() {
+        let dir = std::env::temp_dir().join(format!("pinyin-lm-tableconf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("table.conf");
+        std::fs::write(
+            &path,
+            "binary format version:7\nlambda parameter:0.312699\n",
+        )
+        .unwrap();
+
+        let mut model = model();
+        assert!(
+            model.set_lambda_from_table_conf(&path),
+            "a present config is read"
+        );
+        assert_eq!(model.lambda(), Lambda::PINNED);
+
+        // Absent config: returns false and leaves λ unchanged (the default
+        // stands for the fetched cache, which ships no table.conf).
+        assert!(!model.set_lambda_from_table_conf(&dir.join("does-not-exist.conf")));
+        assert_eq!(model.lambda(), Lambda::PINNED);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn interpolate_ratio_floors_instead_of_overflowing() {
+        // A pathological λ denominator whose products exceed u128 returns
+        // None (the caller floors at UNKNOWN_COST) rather than panicking.
+        assert_eq!(
+            interpolate_ratio(1, 2, u128::MAX, u128::MAX, 1, u128::MAX),
+            None
+        );
+        // Ordinary values interpolate fine.
+        assert_eq!(
+            interpolate_ratio(312_699, 1_000_000, 3, 10, 4, 100),
+            Some((312_699 * 3 * 100 + 687_301 * 4 * 10, 1_000_000 * 10 * 100))
+        );
+    }
+
+    #[test]
+    fn lambda_is_live_in_the_interpolated_cost() {
+        // The bigram term is weighted by λ, so a different λ yields a
+        // different interpolated cost for an observed transition — proof the
+        // config value reaches the hot path rather than a stale constant.
+        let mut model = model();
+        let mut unigrams = BTreeMap::new();
+        unigrams.insert(DE, 50);
+        unigrams.insert(NI, 50);
+        model.set_unigrams(unigrams, 100);
+        let history = [PhraseToken::new(NI)];
+
+        model.set_lambda(Lambda::PINNED);
+        let at_pinned = model.score(&history, &PhraseToken::new(DE), 0).unwrap();
+
+        // λ = 1/2, the old hardcoded value, via a synthetic table.conf.
+        assert!(model.set_lambda_from_table_conf(&write_temp_conf("0.5")));
+        let at_half = model.score(&history, &PhraseToken::new(DE), 0).unwrap();
+
+        assert_ne!(
+            at_pinned, at_half,
+            "λ must change the interpolated bigram cost (0.312699 vs 0.5)"
+        );
+    }
+
+    fn write_temp_conf(value: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "pinyin-lm-conf-{}-{value}.conf",
+            std::process::id()
+        ));
+        std::fs::write(&path, format!("lambda parameter:{value}\n")).unwrap();
+        path
     }
 }
