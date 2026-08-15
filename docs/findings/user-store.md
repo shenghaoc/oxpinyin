@@ -330,6 +330,13 @@ bigram against the unigram. A user selection therefore raises the merged
 that continuation's decode score. The magnitude of the nudge is exactly the
 `seed` arithmetic of §2 flowing through this additive merge.
 
+**Seam note (W6-T4).** The merge sits in pinyin-rs's language model
+(`BigramLanguageModel::score`, count addition before the λ blend), **not** in
+`UserModel::score`, which stays `Ok(0)`: a `Cost` added after the λ blend
+would be a new weighting scheme — exactly what this section forbids — so the
+count-level merge must live in the language model. The `UserModel` seam is
+therefore observe-only.
+
 ---
 
 ## 6. What the pinned frontend calls, and when
@@ -364,10 +371,22 @@ since the last modification; `saveUserDB()` (`:423-431`) calls
 also called immediately after a phrase-list import (`src/PYLibPinyin.cc:275`).
 `focusOut` (`src/PYPPinyinEngine.cc:496`) does **not** save (**SHOWN**: no save
 call in the override), and the backend destructor removes the timer without a
-final flush (`src/PYLibPinyin.cc:45-48`) — so modifications newer than the last
-timer tick can be lost on abrupt shutdown (**INFERRED** from the absence of a
-flush path; a `pinyin_save` on the disconnect/exit path elsewhere would settle
-it).
+final flush (**SHOWN**, settled by W6-T5: `LibPinyinBackEnd::~LibPinyinBackEnd`
+(`src/PYLibPinyin.cc:43-50`) destroys the timer, removes the timeout source,
+and calls only `pinyin_fini`; `saveUserDB`'s only callers are the timer
+callback and `importPinyinDictionary`). Upstream therefore **has no
+flush-on-shutdown**: modifications younger than the last timer tick are lost
+on abrupt exit.
+
+**W6-T5 decision: reproduce the call pattern, not the loss window.**
+pinyin-rs's `pinyin_fini` does not save, matching upstream — and the
+data-loss window does not exist here: every training update is a redb
+transaction committed with Immediate durability (fsync before `commit`
+returns), so sub-timer changes are already on disk. `pinyin_save` reproduces
+the §4 gate (`false` when unmodified or without a user dir) and its write
+side is a redb compaction; the flag clears only on a successful save, where
+upstream clears it unconditionally (`pinyin.cpp:1145`) — a deliberate,
+documented deviation that keeps a failed save retryable.
 
 **Import** — `LibPinyinBackEnd::importPinyinDictionary`
 (`src/PYLibPinyin.cc:230`) uses `pinyin_begin_add_phrases(context, …)` /
@@ -549,11 +568,16 @@ project memory).
 ## Appendix — open items marked INFERRED
 
 - The mapping of libpinyin's system-token unigram **diff-logger** (§4) onto a
-  redb representation is a design choice, not an upstream fact; W6-T5 settles
-  it.
-- Whether any shutdown/disconnect path flushes the store before the 5-minute
+  redb representation is a design choice, not an upstream fact; **settled by
+  W6-T1/T5**: pinyin-rs keeps system-token unigram increments in the same
+  `user_unigram` delta table as user tokens — the T4 merge adds them onto the
+  system counts at decode time, and T5's save persists that single table
+  inside `user_store.redb`, so there is no separate diff-log file.
+- ~~Whether any shutdown/disconnect path flushes the store before the 5-minute
   timer (§6) is not visible in the files read; a `pinyin_save` on engine
-  teardown elsewhere in the frontend would settle it.
+  teardown elsewhere in the frontend would settle it.~~ **Settled by W6-T5**
+  (§6): upstream has no flush-on-shutdown; pinyin-rs reproduces the call
+  pattern, and its durable per-commit redb writes remove the loss window.
 - The exact numeric value of `lambda` is intentionally not restated here; it is
   frozen in `docs/findings/scoring-spec.md` / `docs/findings/lambda-port.md`.
   §5 depends only on the *structure* (λ blends bigram-vs-unigram; user/system

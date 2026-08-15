@@ -20,9 +20,11 @@ use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
 /// File name of the redb user store under the user data directory.
 ///
-/// T3 opens it (the training entry points need somewhere to write); the
-/// save-cycle semantics (atomic rename, `m_modified` no-op) are W6-T5, which
-/// owns the on-disk contract of this file.
+/// T3 opens it (the training entry points need somewhere to write); T5 owns
+/// the save cycle behind it: `pinyin_save` gates on the §4 `m_modified`
+/// flag and compacts, while durability is redb's per-commit guarantee —
+/// there is no `.tmp`/rename dance, so this single file is the whole
+/// on-disk contract.
 pub(crate) const USER_STORE_FILE: &str = "user_store.redb";
 
 // ── Shared backends ─────────────────────────────────────────────────────
@@ -184,6 +186,16 @@ impl CapiContext {
             candidates: Vec::new(),
             user: self.user.clone(),
         })
+    }
+
+    /// `pinyin_save`'s body (§4): `false` without a user dir (upstream
+    /// `pinyin.cpp:1133`), otherwise the store's gated save — `false` when
+    /// unmodified (`:1136`), `true` after a dirty save.
+    pub(crate) fn save_user(&mut self) -> bool {
+        match self.user.as_mut() {
+            None => false,
+            Some(store) => store.save().unwrap_or(false),
+        }
     }
 }
 

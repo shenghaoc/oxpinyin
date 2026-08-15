@@ -10,11 +10,13 @@
 //! `USER_DICTIONARY` token allocation. T3 wires the store into the engine
 //! session and the C ABI (in `pinyin-engine` / `pinyin-capi`). T4 exposes
 //! the counts as a [`pinyin_core::UserCountDelta`] for the decode-time
-//! additive merge. The save cycle (T5) is out of scope.
+//! additive merge. T5 adds the save cycle: the §4 `m_modified` gate and the
+//! redb-backed persistence point behind `pinyin_save`.
 
 use std::fmt;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use pinyin_core::UserCountDelta;
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
@@ -87,6 +89,8 @@ pub enum UserStoreError {
     Commit(redb::CommitError),
     /// redb reported a storage-level error.
     Storage(redb::StorageError),
+    /// redb reported a compaction error.
+    Compaction(redb::CompactionError),
     /// Phrase text is empty, too long, or its key count does not match its
     /// Unicode scalar length (`docs/findings/user-store.md` §3.1–3.2).
     InvalidPhrase,
@@ -103,6 +107,7 @@ impl fmt::Display for UserStoreError {
             Self::Transaction(e) => write!(f, "transaction error: {e}"),
             Self::Commit(e) => write!(f, "commit error: {e}"),
             Self::Storage(e) => write!(f, "storage error: {e}"),
+            Self::Compaction(e) => write!(f, "compaction error: {e}"),
             Self::InvalidPhrase => {
                 write!(f, "invalid phrase (empty, too long, or key count mismatch)")
             }
@@ -122,6 +127,7 @@ impl std::error::Error for UserStoreError {
             Self::Transaction(e) => Some(e),
             Self::Commit(e) => Some(e),
             Self::Storage(e) => Some(e),
+            Self::Compaction(e) => Some(e),
             Self::InvalidPhrase | Self::TokenSpaceExhausted => None,
         }
     }
@@ -157,20 +163,35 @@ impl From<redb::StorageError> for UserStoreError {
     }
 }
 
+impl From<redb::CompactionError> for UserStoreError {
+    fn from(e: redb::CompactionError) -> Self {
+        Self::Compaction(e)
+    }
+}
+
 /// A redb-backed store of user-learning counts.
 ///
 /// `Clone` shares the underlying database handle (cheap): the C ABI context
 /// keeps the canonical store and hands each instance a clone, exactly like
 /// the dictionary and language model handles. `redb`'s `Database` handle is
-/// not itself `Clone` (redb 4.1.0), so it lives behind an `Arc`.
+/// not itself `Clone` (redb 4.1.0), so it lives behind an `Arc`; the `Mutex`
+/// serializes the handle because [`Database::compact`] (the `pinyin_save`
+/// write side) demands `&mut self`.
+///
+/// The §4 `m_modified` flag is also shared, as an [`AtomicBool`]: clones
+/// record dirtiness through their own `&mut self` updates and the context's
+/// `pinyin_save` observes it. The C ABI contract is main-thread-only, so the
+/// flag uses relaxed ordering.
 pub struct UserStore {
-    db: Arc<Database>,
+    db: Arc<Mutex<Database>>,
+    dirty: Arc<AtomicBool>,
 }
 
 impl Clone for UserStore {
     fn clone(&self) -> Self {
         Self {
             db: Arc::clone(&self.db),
+            dirty: Arc::clone(&self.dirty),
         }
     }
 }
@@ -182,12 +203,22 @@ impl fmt::Debug for UserStore {
 }
 
 impl UserStore {
+    /// Locks the shared database handle, recovering from a poisoned lock
+    /// (constitution §4: nothing here panics, so a poisoned mutex must not
+    /// brick the store either).
+    fn database(&self) -> MutexGuard<'_, Database> {
+        self.db
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Open the user store at `path`, creating an empty database if absent.
     ///
     /// Count tables and phrase-index tables are created eagerly so that reads
     /// issued before any write succeed with zero / `None` rather than a
     /// "table does not exist" error. A missing allocation cursor is
-    /// initialised to [`FIRST_USER_TOKEN`].
+    /// initialised to [`FIRST_USER_TOKEN`]. A freshly opened store is clean:
+    /// [`Self::save`] is a no-op until a training update records a change.
     pub fn open(path: &Path) -> Result<Self, UserStoreError> {
         let db = Database::create(path).map_err(|e| match e {
             redb::DatabaseError::Storage(redb::StorageError::Io(io)) => UserStoreError::Io(io),
@@ -220,33 +251,40 @@ impl UserStore {
             }
         }
         txn.commit()?;
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(Mutex::new(db)),
+            dirty: Arc::new(AtomicBool::new(false)),
+        })
     }
 
     /// Stored bigram count for `(prev, cur)`; `0` if unrecorded.
     pub fn bigram_count(&self, prev: Token, cur: Token) -> Result<u64, UserStoreError> {
-        let txn = self.db.begin_read()?;
+        let db = self.database();
+        let txn = db.begin_read()?;
         let table = txn.open_table(BIGRAM)?;
         Ok(table.get((prev, cur))?.map_or(0, |g| g.value()))
     }
 
     /// Total bigram mass recorded after `prev`; `0` if none.
     pub fn bigram_total(&self, prev: Token) -> Result<u64, UserStoreError> {
-        let txn = self.db.begin_read()?;
+        let db = self.database();
+        let txn = db.begin_read()?;
         let table = txn.open_table(BIGRAM_TOTAL)?;
         Ok(table.get(prev)?.map_or(0, |g| g.value()))
     }
 
     /// Accumulated phrase-index unigram delta for `token`; `0` if none.
     pub fn unigram_delta(&self, token: Token) -> Result<u64, UserStoreError> {
-        let txn = self.db.begin_read()?;
+        let db = self.database();
+        let txn = db.begin_read()?;
         let table = txn.open_table(UNIGRAM)?;
         Ok(table.get(token)?.map_or(0, |g| g.value()))
     }
 
     /// Sum of every stored unigram delta; `0` if the store is empty.
     pub fn unigram_total(&self) -> Result<u64, UserStoreError> {
-        let txn = self.db.begin_read()?;
+        let db = self.database();
+        let txn = db.begin_read()?;
         let table = txn.open_table(UNIGRAM_TOTAL)?;
         Ok(table.get(UNIGRAM_TOTAL_KEY)?.map_or(0, |g| g.value()))
     }
@@ -260,7 +298,8 @@ impl UserStore {
         prev: Option<Token>,
         token: Token,
     ) -> Result<UserCountDelta, UserStoreError> {
-        let txn = self.db.begin_read()?;
+        let db = self.database();
+        let txn = db.begin_read()?;
         let unigrams = txn.open_table(UNIGRAM)?;
         let uni_total = txn.open_table(UNIGRAM_TOTAL)?;
         let unigram_delta = unigrams.get(token)?.map_or(0, |g| g.value());
@@ -285,8 +324,16 @@ impl UserStore {
 
     /// Record a training selection of `cur` after `last` (the `pinyin_train`
     /// path, §2). Returns the seed applied.
+    ///
+    /// This is the one mutation that sets the §4 `m_modified` flag — the
+    /// upstream set-sites are `pinyin_train` (`pinyin.cpp:2679`) and
+    /// `pinyin_end_add_phrases` (`:658`); the predicted path and
+    /// `pinyin_remember_user_input` deliberately do not, so a save after
+    /// only those stays an upstream-faithful no-op.
     pub fn observe_selection(&mut self, last: Token, cur: Token) -> Result<u64, UserStoreError> {
-        self.update(last, cur, SeedPolicy::Training)
+        let seed = self.update(last, cur, SeedPolicy::Training)?;
+        self.dirty.store(true, Ordering::Relaxed);
+        Ok(seed)
     }
 
     /// Record an accepted *predicted* candidate `cur` after `last` (the
@@ -306,7 +353,8 @@ impl UserStore {
         cur: Token,
         policy: SeedPolicy,
     ) -> Result<u64, UserStoreError> {
-        let txn = self.db.begin_write()?;
+        let db = self.database();
+        let txn = db.begin_write()?;
         let seed = {
             let mut bigram = txn.open_table(BIGRAM)?;
             let prev = bigram.get((last, cur))?.map_or(0, |g| g.value());
@@ -359,7 +407,8 @@ impl UserStore {
         let count = count.unwrap_or(DEFAULT_PHRASE_COUNT);
         let key_bytes = phrase::encode_keys(keys);
 
-        let txn = self.db.begin_write()?;
+        let db = self.database();
+        let txn = db.begin_write()?;
         let token = {
             let mut by_text = txn.open_table(PHRASE_BY_TEXT)?;
             if let Some(existing) = by_text.get(phrase)? {
@@ -404,7 +453,8 @@ impl UserStore {
 
     /// Phrase text and pronunciations for `token`, if this store owns it.
     pub fn phrase(&self, token: Token) -> Result<Option<UserPhrase>, UserStoreError> {
-        let txn = self.db.begin_read()?;
+        let db = self.database();
+        let txn = db.begin_read()?;
         let phrases = txn.open_table(PHRASE)?;
         let Some(text) = phrases.get(token)?.map(|g| g.value().to_owned()) else {
             return Ok(None);
@@ -416,7 +466,8 @@ impl UserStore {
 
     /// Token already allocated for `phrase` in the user sub-index, if any.
     pub fn token_for_phrase(&self, phrase: &str) -> Result<Option<Token>, UserStoreError> {
-        let txn = self.db.begin_read()?;
+        let db = self.database();
+        let txn = db.begin_read()?;
         let by_text = txn.open_table(PHRASE_BY_TEXT)?;
         Ok(by_text.get(phrase)?.map(|g| g.value()))
     }
@@ -424,11 +475,49 @@ impl UserStore {
     /// Next token the store will allocate. Persisted; a reopen continues
     /// from this value (no reuse, no gap).
     pub fn next_user_token(&self) -> Result<Token, UserStoreError> {
-        let txn = self.db.begin_read()?;
+        let db = self.database();
+        let txn = db.begin_read()?;
         let alloc = txn.open_table(ALLOC)?;
         Ok(alloc
             .get(ALLOC_CURSOR)?
             .map_or(FIRST_USER_TOKEN, |g| g.value()))
+    }
+
+    /// `m_modified` (§4): a training update has been recorded since the
+    /// last successful [`Self::save`]. Shared with every clone, so the
+    /// context's `pinyin_save` sees dirtiness recorded through instances.
+    #[must_use]
+    pub fn is_modified(&self) -> bool {
+        self.dirty.load(Ordering::Relaxed)
+    }
+
+    /// The `pinyin_save` write side (§4).
+    ///
+    /// `Ok(false)` is the unmodified deliberate no-op — upstream's
+    /// `pinyin_save` returns `false` when `m_modified` is clear
+    /// (`pinyin.cpp:1136`). A dirty save compacts the database
+    /// ([`Database::compact`], upstream's `m_phrase_index->compact()` at
+    /// `:1139`): every training update was already committed atomically and
+    /// durably (redb's Immediate durability fsyncs before `commit` returns),
+    /// so there is no serialization step to write — compaction plus the
+    /// flag clear is the whole save.
+    ///
+    /// The flag clears only on success. Upstream clears it unconditionally
+    /// (`pinyin.cpp:1145`), which drops data after a failed write; the
+    /// deviation keeps a failed save retryable and is noted in §4's
+    /// reproduction notes.
+    pub fn save(&mut self) -> Result<bool, UserStoreError> {
+        if !self.is_modified() {
+            return Ok(false);
+        }
+        let mut db = self.database();
+        // `performed` is false when nothing further could be compacted; the
+        // save still succeeded (upstream returns the write+rename result,
+        // which is success even when the phrase index had nothing to move).
+        let _performed = db.compact()?;
+        drop(db);
+        self.dirty.store(false, Ordering::Relaxed);
+        Ok(true)
     }
 }
 
@@ -576,6 +665,100 @@ mod tests {
         assert_eq!(store.bigram_total(10).unwrap(), 207);
         assert_eq!(store.unigram_delta(10).unwrap(), 483);
         assert_eq!(store.unigram_delta(20).unwrap(), 1449); // 483 + 966
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn dirty_gate_matches_m_modified_semantics() {
+        let path = temp_path("dirty");
+        let mut store = UserStore::open(&path).unwrap();
+
+        // Fresh open is clean: save is the §4 unmodified no-op (upstream
+        // pinyin_save returns false when m_modified is clear, :1136).
+        assert!(!store.is_modified());
+        assert!(!store.save().unwrap());
+        assert!(!store.save().unwrap());
+
+        // pinyin_train (observe_selection) is an m_modified set-site
+        // (upstream pinyin.cpp:2679): save now writes and clears.
+        store.observe_selection(SENTENCE_START, 10).unwrap();
+        assert!(store.is_modified());
+        assert!(store.save().unwrap());
+        assert!(!store.is_modified());
+        assert!(!store.save().unwrap());
+
+        // The predicted path and add_phrase deliberately do NOT set
+        // m_modified (upstream's set-sites are train and end_add_phrases
+        // only): their data is committed durably regardless, but a save
+        // after only those stays an upstream-faithful no-op.
+        store.observe_predicted(10, 20).unwrap();
+        assert!(!store.is_modified());
+        assert!(!store.save().unwrap());
+        store.add_phrase("你好", &[1, 2], None).unwrap();
+        assert!(!store.is_modified());
+        assert!(!store.save().unwrap());
+
+        // The next training selection re-arms the gate.
+        store.observe_selection(SENTENCE_START, 10).unwrap();
+        assert!(store.is_modified());
+        assert!(store.save().unwrap());
+        assert!(!store.is_modified());
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_reopen_roundtrip_preserves_counts_cursor_and_total() {
+        let path = temp_path("save-rt");
+        {
+            let mut store = UserStore::open(&path).unwrap();
+            store.observe_selection(SENTENCE_START, 10).unwrap();
+            store.observe_selection(10, 20).unwrap();
+            store.observe_selection(10, 20).unwrap();
+            let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+            assert_eq!(token, FIRST_USER_TOKEN);
+            // The dirty save writes (compacts) and clears the flag.
+            assert!(store.is_modified());
+            assert!(store.save().unwrap());
+            assert!(!store.is_modified());
+        } // drop closes the database
+
+        let mut store = UserStore::open(&path).unwrap();
+        assert!(!store.is_modified());
+        assert!(!store.save().unwrap(), "a reopen starts clean");
+
+        // Counts, allocation cursor and running unigram total all survive.
+        assert_eq!(store.bigram_count(SENTENCE_START, 10).unwrap(), 69);
+        assert_eq!(store.bigram_count(10, 20).unwrap(), 207); // 69 + 138
+        assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
+        assert_eq!(store.bigram_total(10).unwrap(), 207);
+        assert_eq!(store.unigram_delta(10).unwrap(), 483);
+        assert_eq!(store.unigram_delta(20).unwrap(), 1449); // 483 + 966
+        assert_eq!(store.unigram_total().unwrap(), 483 + 1449 + 15); // + phrase 5*3
+        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
+        assert_eq!(
+            store.token_for_phrase("你好").unwrap(),
+            Some(FIRST_USER_TOKEN)
+        );
+        let phrase = store
+            .phrase(FIRST_USER_TOKEN)
+            .unwrap()
+            .expect("phrase stored");
+        assert_eq!(phrase.text(), "你好");
+        assert_eq!(phrase.pronunciations()[0].keys(), &[10, 20]);
+        assert_eq!(phrase.pronunciations()[0].count(), 5);
+
+        // The §5 overlay reads the persisted counts.
+        assert_eq!(
+            store.count_delta(Some(10), 20).unwrap(),
+            UserCountDelta {
+                bigram_count: 207,
+                bigram_total: 207,
+                unigram_delta: 1449,
+                unigram_total_delta: 483 + 1449 + 15,
+            }
+        );
+        assert_eq!(store.count_delta(None, 20).unwrap().bigram_count, 0);
         let _ = std::fs::remove_file(&path);
     }
 

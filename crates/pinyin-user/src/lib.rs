@@ -10,7 +10,10 @@
 //! with the engine's [`pinyin_core::PhraseToken`]) into the engine session and
 //! the C ABI. W6-T4 exposes the stored counts as a
 //! [`pinyin_core::UserCountDelta`] so decode can merge them additively with
-//! the system model. Persistence semantics (T5) are out of scope.
+//! the system model. W6-T5 adds the save cycle behind `pinyin_save`: the §4
+//! `m_modified` gate ([`UserStore::is_modified`] / [`UserStore::save`]) over
+//! redb's per-commit durability — there is no serialization step, because
+//! every training update is already committed atomically to disk.
 #![warn(missing_docs)]
 
 pub mod phrase;

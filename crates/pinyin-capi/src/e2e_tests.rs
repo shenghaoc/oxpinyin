@@ -26,11 +26,11 @@ use crate::candidates::{
     pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_get_candidate,
     pinyin_is_user_candidate, pinyin_train,
 };
-use crate::context::pinyin_init;
+use crate::context::{pinyin_init, pinyin_save};
 use crate::instance::{pinyin_alloc_instance, pinyin_reset};
 use crate::parse::pinyin_parse_more_full_pinyins;
 use crate::sentence::pinyin_guess_candidates;
-use crate::state::instance_ref;
+use crate::state::{USER_STORE_FILE, instance_ref};
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 use crate::user_data::pinyin_remember_user_input;
 
@@ -314,6 +314,8 @@ fn training_entry_points_refuse_without_a_user_store() {
     // Upstream pinyin_train refuses without a user dir (pinyin.cpp:2669);
     // the other training entry points degrade the same way.
     assert!(!pinyin_train(instance, 0));
+    // pinyin_save refuses without a user dir too (pinyin.cpp:1133).
+    assert!(!pinyin_save(context));
 
     let cand = candidate(instance, "nihao", 0);
     assert!(!pinyin_choose_predicted_candidate(instance, cand));
@@ -422,4 +424,78 @@ fn an_instance_without_a_selection_has_nothing_to_train() {
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
+    let user_dir = TempUserDir::new("save");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let store_file = user_dir.path.join(USER_STORE_FILE);
+
+    // A clean context: pinyin_save is the §4 unmodified no-op (upstream
+    // returns false, pinyin.cpp:1136) and leaves the file untouched.
+    let before = std::fs::metadata(&store_file)
+        .expect("store file exists")
+        .modified()
+        .expect("mtime");
+    assert!(!pinyin_save(context));
+    let after = std::fs::metadata(&store_file)
+        .expect("store file exists")
+        .modified()
+        .expect("mtime");
+    assert_eq!(before, after, "a clean save must not touch the file");
+    assert!(!pinyin_save(context));
+
+    // Train once: the save gate arms, a dirty save returns true and clears.
+    let first = candidate(instance, "nihao", 0);
+    let t1 = token_of(instance, first);
+    assert!(pinyin_choose_candidate(instance, 0, first) > 0);
+    assert!(pinyin_train(instance, 0));
+    assert!(pinyin_save(context));
+    assert!(!pinyin_save(context), "the save cleared m_modified");
+
+    // Decode against the populated store (T4's merge) — the state the
+    // reopened store must reproduce.
+    assert!(pinyin_reset(instance));
+    let _ = candidate(instance, "nihao", 0);
+    let decode_before = phrase_snapshot(instance);
+    let counts = {
+        let store = store_of(instance);
+        (
+            store.bigram_count(SENTENCE_START, t1).unwrap(),
+            store.bigram_total(SENTENCE_START).unwrap(),
+            store.unigram_delta(t1).unwrap(),
+            store.unigram_total().unwrap(),
+        )
+    };
+
+    // Teardown does NOT save (the §6 shutdown decision: upstream has no
+    // flush) — the counts survive anyway because every training update is
+    // a durable redb commit.
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+
+    // Reopen: counts, allocation state, and decode all resume.
+    let (context2, instance2) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let _ = candidate(instance2, "nihao", 0);
+    assert_eq!(
+        phrase_snapshot(instance2),
+        decode_before,
+        "decode-after-reopen must match the pre-save populated-store decode"
+    );
+    {
+        let store = store_of(instance2);
+        assert!(!store.is_modified(), "a reopen starts clean");
+        assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), counts.0);
+        assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), counts.1);
+        assert_eq!(store.unigram_delta(t1).unwrap(), counts.2);
+        assert_eq!(store.unigram_total().unwrap(), counts.3);
+    }
+    assert!(
+        !pinyin_save(context2),
+        "the reopened store saves as a no-op"
+    );
+
+    crate::instance::pinyin_free_instance(instance2);
+    crate::context::pinyin_fini(context2);
 }
