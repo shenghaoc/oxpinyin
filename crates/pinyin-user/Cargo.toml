@@ -11,3 +11,5 @@ description = "pinyin-rs internal crate — no stability promise; use pinyin-eng
 workspace = true
 
 [dependencies]
+pinyin-core = { workspace = true }
+redb = { workspace = true }
