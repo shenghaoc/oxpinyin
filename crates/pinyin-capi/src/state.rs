@@ -198,6 +198,15 @@ impl CapiContext {
         }
     }
 
+    /// `pinyin_mask_out`'s body: the store-level deletion, or `false`
+    /// without a user store.
+    pub(crate) fn mask_out(&mut self, mask: u32, value: u32) -> bool {
+        match self.user.as_mut() {
+            None => false,
+            Some(store) => store.mask_out(mask, value).is_ok(),
+        }
+    }
+
     /// §9 phrase-export materialization: every user phrase as
     /// `(phrase, pinyin, count)` rows. Only [`USER_DICTIONARY`] exports
     /// anything — the system sub-indexes are the system dictionary's data,

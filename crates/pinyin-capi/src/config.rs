@@ -3,7 +3,7 @@
 use std::os::raw::c_int;
 
 use crate::ffi::ffi_catch;
-use crate::state::context_ref;
+use crate::state::{context_mut, context_ref};
 use crate::types::{PinyinContext, PinyinOptionT};
 
 /// Set pinyin options on the context.
@@ -109,11 +109,25 @@ pub extern "C" fn pinyin_load_addon_phrase_library(
 ///                      phrase_token_t value);
 /// ```
 ///
-/// Provisional: always returns false (no token masking yet).
+/// The upstream predicate (`pinyin.cpp:1224`, `ngram_kyotodb.cpp:199`,
+/// `phrase_index.cpp:689`): every entry whose token satisfies
+/// `(token & mask) == value` is deleted — bigram rows (a matching
+/// predecessor drops its whole gram), unigram deltas, and user phrases.
+/// Immediate and durable (upstream writes the masked chunks/diff logs
+/// directly); it does **not** arm `m_modified`, matching upstream's
+/// set-sites (`pinyin_train` and `pinyin_end_add_phrases` only).
+///
+/// Returns `false` for a null context, a context without a user store, or
+/// a store failure.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, _mask: u32, _value: u32) -> bool {
+pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value: u32) -> bool {
     if context.is_null() {
         return false;
     }
-    false
+    ffi_catch(false, || {
+        // SAFETY: `context` is non-null and was produced by `pinyin_init`;
+        // the unique borrow lasts only for the mask call.
+        let ctx = unsafe { context_mut(context) };
+        ctx.mask_out(mask, value)
+    })
 }
