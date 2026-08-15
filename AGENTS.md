@@ -35,6 +35,22 @@ Assisted-by: AGENT_NAME:MODEL_VERSION
 Nothing after the model. Trailers are a **set** (no duplicates). Never use
 `Co-Authored-By` for agents.
 
+The commit-message linter (`.github/scripts/lint-commits.sh`) enforces this on
+every PR commit (R1–R4) and at commit time via `.githooks/commit-msg`
+(R1–R3):
+
+- **R1** — no AI agent identity in `Co-authored-by:` (email match, never name
+  match).
+- **R2** — `Assisted-by:` house form: `AGENT:MODEL` shape with nothing after
+  the model; the `MODEL` token must contain at least one ASCII letter (a bare
+  version number names no model — `Grok:4.6` fails, `Grok:grok-4.6` passes);
+  no placeholder text; no duplicate lines (set semantics).
+- **R3** — `AI-session: true` (exact value) promotes `Assisted-by:` to
+  required; any other value is rejected.
+- **R4** — no AI agent identity as git author or committer (CI-only: the
+  commit-msg hook runs before the commit exists, so there is no identity to
+  inspect).
+
 ## STOP → do not improvise
 
 Ambiguous task · needs interface/ABI/dep change · test cannot pass without
