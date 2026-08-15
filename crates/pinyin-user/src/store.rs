@@ -1,20 +1,24 @@
-//! redb-backed integer store for user-learning counts.
+//! redb-backed integer store for user-learning counts and the user phrase
+//! index.
 //!
-//! Models the *values* libpinyin records on candidate selection — the user
-//! bigram counts (and per-predecessor totals) and the phrase-index unigram
-//! deltas — not its MemoryChunk / DBM byte layout
-//! (`docs/findings/user-store.md` §4, §10: the same value-not-format bypass as
-//! the system store). All counts are `u64` integers.
+//! Models the *values* libpinyin records — user bigram counts, phrase-index
+//! unigram deltas, and user-phrase text/pronunciations — not its MemoryChunk
+//! / DBM byte layout (`docs/findings/user-store.md` §4, §10). All counts are
+//! `u64` integers.
 //!
-//! T1 scope: the schema, the seed-driven update, and value read-back. The save
-//! cycle (T5), the user phrase index and token allocation (T2), Session/capi
-//! wiring (T3) and the decode-time merge (T4) are out of scope.
+//! T1: count schema and seed-driven update. T2: user phrase-index tables and
+//! `USER_DICTIONARY` token allocation. The save cycle (T5), Session/capi
+//! training wiring (T3) and the decode-time merge (T4) are out of scope.
 
 use std::fmt;
 use std::path::Path;
 
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
+use crate::phrase::{
+    self, ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, FIRST_USER_TOKEN, PinyinKey, UserPhrase,
+    UserPronunciation,
+};
 use crate::seed;
 
 /// Token type — libpinyin's 32-bit `phrase_token_t`.
@@ -32,6 +36,22 @@ const BIGRAM_TOTAL: TableDefinition<Token, u64> = TableDefinition::new("user_big
 
 /// Phrase-index unigram deltas: `token -> delta`.
 const UNIGRAM: TableDefinition<Token, u64> = TableDefinition::new("user_unigram");
+
+/// User phrase text: `token -> phrase`.
+const PHRASE: TableDefinition<Token, &str> = TableDefinition::new("user_phrase");
+
+/// Reverse lookup used by the §3.2 "already in this sub-index" merge.
+const PHRASE_BY_TEXT: TableDefinition<&str, Token> = TableDefinition::new("user_phrase_by_text");
+
+/// Pronunciations: `(token, encoded key sequence) -> count`.
+const PRONUNCIATION: TableDefinition<(Token, &[u8]), u64> =
+    TableDefinition::new("user_pronunciation");
+
+/// Persistent allocation cursor: singleton key [`ALLOC_CURSOR`] → next token.
+const ALLOC: TableDefinition<u8, Token> = TableDefinition::new("user_phrase_alloc");
+
+/// Sole key in [`ALLOC`].
+const ALLOC_CURSOR: u8 = 0;
 
 /// Which seed rule an update applies.
 #[derive(Clone, Copy)]
@@ -57,6 +77,11 @@ pub enum UserStoreError {
     Commit(redb::CommitError),
     /// redb reported a storage-level error.
     Storage(redb::StorageError),
+    /// Phrase text is empty, too long, or its key count does not match its
+    /// Unicode scalar length (`docs/findings/user-store.md` §3.1–3.2).
+    InvalidPhrase,
+    /// No remaining token in the [`crate::USER_DICTIONARY`] 24-bit id space.
+    TokenSpaceExhausted,
 }
 
 impl fmt::Display for UserStoreError {
@@ -68,6 +93,12 @@ impl fmt::Display for UserStoreError {
             Self::Transaction(e) => write!(f, "transaction error: {e}"),
             Self::Commit(e) => write!(f, "commit error: {e}"),
             Self::Storage(e) => write!(f, "storage error: {e}"),
+            Self::InvalidPhrase => {
+                write!(f, "invalid phrase (empty, too long, or key count mismatch)")
+            }
+            Self::TokenSpaceExhausted => {
+                write!(f, "USER_DICTIONARY token space exhausted")
+            }
         }
     }
 }
@@ -81,6 +112,7 @@ impl std::error::Error for UserStoreError {
             Self::Transaction(e) => Some(e),
             Self::Commit(e) => Some(e),
             Self::Storage(e) => Some(e),
+            Self::InvalidPhrase | Self::TokenSpaceExhausted => None,
         }
     }
 }
@@ -129,9 +161,10 @@ impl fmt::Debug for UserStore {
 impl UserStore {
     /// Open the user store at `path`, creating an empty database if absent.
     ///
-    /// The three tables are created eagerly so that reads issued before any
-    /// write succeed with zero counts rather than a "table does not exist"
-    /// error.
+    /// Count tables and phrase-index tables are created eagerly so that reads
+    /// issued before any write succeed with zero / `None` rather than a
+    /// "table does not exist" error. A missing allocation cursor is
+    /// initialised to [`FIRST_USER_TOKEN`].
     pub fn open(path: &Path) -> Result<Self, UserStoreError> {
         let db = Database::create(path).map_err(|e| match e {
             redb::DatabaseError::Storage(redb::StorageError::Io(io)) => UserStoreError::Io(io),
@@ -142,6 +175,13 @@ impl UserStore {
             txn.open_table(BIGRAM)?;
             txn.open_table(BIGRAM_TOTAL)?;
             txn.open_table(UNIGRAM)?;
+            txn.open_table(PHRASE)?;
+            txn.open_table(PHRASE_BY_TEXT)?;
+            txn.open_table(PRONUNCIATION)?;
+            let mut alloc = txn.open_table(ALLOC)?;
+            if alloc.get(ALLOC_CURSOR)?.is_none() {
+                alloc.insert(ALLOC_CURSOR, FIRST_USER_TOKEN)?;
+            }
         }
         txn.commit()?;
         Ok(Self { db })
@@ -214,6 +254,135 @@ impl UserStore {
         txn.commit()?;
         Ok(seed)
     }
+
+    /// Add a user phrase under [`crate::USER_DICTIONARY`] (`_add_phrase`, §3.2).
+    ///
+    /// `count` of `None` means [`DEFAULT_PHRASE_COUNT`] (the C ABI's `-1`).
+    /// If `phrase` is already in the user sub-index, a new reading is merged
+    /// onto the existing token and the unigram is left unchanged. A new
+    /// phrase allocates `max token + 1`, seeds the unigram with
+    /// `count * 3`, and advances the allocation cursor — all in one write
+    /// transaction.
+    ///
+    /// # Errors
+    ///
+    /// [`UserStoreError::InvalidPhrase`] when the text is empty, too long, or
+    /// the key count does not match the Unicode scalar length.
+    /// [`UserStoreError::TokenSpaceExhausted`] when the 24-bit user id space
+    /// is full.
+    pub fn add_phrase(
+        &mut self,
+        phrase: &str,
+        keys: &[PinyinKey],
+        count: Option<u64>,
+    ) -> Result<Token, UserStoreError> {
+        if !phrase::phrase_and_keys_valid(phrase, keys) {
+            return Err(UserStoreError::InvalidPhrase);
+        }
+        let count = count.unwrap_or(DEFAULT_PHRASE_COUNT);
+        let key_bytes = phrase::encode_keys(keys);
+
+        let txn = self.db.begin_write()?;
+        let token = {
+            let mut by_text = txn.open_table(PHRASE_BY_TEXT)?;
+            if let Some(existing) = by_text.get(phrase)? {
+                let token = existing.value();
+                drop(existing);
+                let mut prons = txn.open_table(PRONUNCIATION)?;
+                let prev = prons
+                    .get((token, key_bytes.as_slice()))?
+                    .map_or(0, |g| g.value());
+                prons.insert((token, key_bytes.as_slice()), prev.saturating_add(count))?;
+                token
+            } else {
+                let mut alloc = txn.open_table(ALLOC)?;
+                let raw = alloc
+                    .get(ALLOC_CURSOR)?
+                    .map_or(FIRST_USER_TOKEN, |g| g.value());
+                let token = phrase::canonicalize_user_token(raw)
+                    .ok_or(UserStoreError::TokenSpaceExhausted)?;
+                let next = phrase::next_user_token_after(token)
+                    .ok_or(UserStoreError::TokenSpaceExhausted)?;
+                alloc.insert(ALLOC_CURSOR, next)?;
+                drop(alloc);
+
+                let mut phrases = txn.open_table(PHRASE)?;
+                phrases.insert(token, phrase)?;
+                by_text.insert(phrase, token)?;
+
+                let mut prons = txn.open_table(PRONUNCIATION)?;
+                prons.insert((token, key_bytes.as_slice()), count)?;
+
+                let mut unigram = txn.open_table(UNIGRAM)?;
+                let prev = unigram.get(token)?.map_or(0, |g| g.value());
+                unigram.insert(
+                    token,
+                    prev.saturating_add(count.saturating_mul(ADD_PHRASE_UNIGRAM_FACTOR)),
+                )?;
+                token
+            }
+        };
+        txn.commit()?;
+        Ok(token)
+    }
+
+    /// Phrase text and pronunciations for `token`, if this store owns it.
+    pub fn phrase(&self, token: Token) -> Result<Option<UserPhrase>, UserStoreError> {
+        let txn = self.db.begin_read()?;
+        let phrases = txn.open_table(PHRASE)?;
+        let Some(text) = phrases.get(token)?.map(|g| g.value().to_owned()) else {
+            return Ok(None);
+        };
+        let prons = txn.open_table(PRONUNCIATION)?;
+        let pronunciations = collect_pronunciations(&prons, token)?;
+        Ok(Some(UserPhrase::new(token, text, pronunciations)))
+    }
+
+    /// Token already allocated for `phrase` in the user sub-index, if any.
+    pub fn token_for_phrase(&self, phrase: &str) -> Result<Option<Token>, UserStoreError> {
+        let txn = self.db.begin_read()?;
+        let by_text = txn.open_table(PHRASE_BY_TEXT)?;
+        Ok(by_text.get(phrase)?.map(|g| g.value()))
+    }
+
+    /// Next token the store will allocate. Persisted; a reopen continues
+    /// from this value (no reuse, no gap).
+    pub fn next_user_token(&self) -> Result<Token, UserStoreError> {
+        let txn = self.db.begin_read()?;
+        let alloc = txn.open_table(ALLOC)?;
+        Ok(alloc
+            .get(ALLOC_CURSOR)?
+            .map_or(FIRST_USER_TOKEN, |g| g.value()))
+    }
+}
+
+fn collect_pronunciations(
+    prons: &redb::ReadOnlyTable<(Token, &[u8]), u64>,
+    token: Token,
+) -> Result<Vec<UserPronunciation>, UserStoreError> {
+    let start: (Token, &[u8]) = (token, &[]);
+    let mut out = Vec::new();
+    if token < Token::MAX {
+        let end: (Token, &[u8]) = (token + 1, &[]);
+        for item in prons.range(start..end)? {
+            let (key, value) = item?;
+            let (_tok, key_bytes) = key.value();
+            out.push(UserPronunciation::new(
+                phrase::decode_keys(key_bytes),
+                value.value(),
+            ));
+        }
+    } else {
+        for item in prons.range(start..)? {
+            let (key, value) = item?;
+            let (_tok, key_bytes) = key.value();
+            out.push(UserPronunciation::new(
+                phrase::decode_keys(key_bytes),
+                value.value(),
+            ));
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -300,6 +469,166 @@ mod tests {
         assert_eq!(store.bigram_total(10).unwrap(), 207);
         assert_eq!(store.unigram_delta(10).unwrap(), 483);
         assert_eq!(store.unigram_delta(20).unwrap(), 1449); // 483 + 966
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn first_allocation_is_first_user_token() {
+        let path = temp_path("first-tok");
+        let mut store = UserStore::open(&path).unwrap();
+        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
+        let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+        assert_eq!(token, FIRST_USER_TOKEN);
+        assert_eq!(token, 0x0700_0001);
+        assert!(phrase::is_user_token(token));
+        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn allocation_increments_by_one_without_gap() {
+        let path = temp_path("incr");
+        let mut store = UserStore::open(&path).unwrap();
+        let a = store.add_phrase("甲", &[1], None).unwrap();
+        let b = store.add_phrase("乙", &[2], None).unwrap();
+        let c = store.add_phrase("丙", &[3], None).unwrap();
+        assert_eq!(a, FIRST_USER_TOKEN);
+        assert_eq!(b, a + 1);
+        assert_eq!(c, a + 2);
+        assert_eq!(store.next_user_token().unwrap(), a + 3);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn user_token_is_distinguishable_from_system_token() {
+        let path = temp_path("nibble");
+        let mut store = UserStore::open(&path).unwrap();
+        let user = store.add_phrase("词", &[7], None).unwrap();
+        // GB_DICTIONARY = 1; a typical system token is not a user token.
+        const SYSTEM: Token = 0x0100_0001;
+        assert!(phrase::is_user_token(user));
+        assert!(!phrase::is_user_token(SYSTEM));
+        assert_ne!(
+            phrase::phrase_index_library_index(user),
+            phrase::phrase_index_library_index(SYSTEM)
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn add_phrase_seeds_unigram_with_count_times_three() {
+        let path = temp_path("uni");
+        let mut store = UserStore::open(&path).unwrap();
+        let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+        // default_count 5 * add-phrase unigram_factor 3.
+        assert_eq!(store.unigram_delta(token).unwrap(), 15);
+        assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 0);
+
+        let token2 = store.add_phrase("世界", &[30, 40], Some(10)).unwrap();
+        assert_eq!(store.unigram_delta(token2).unwrap(), 30);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn existing_phrase_merges_a_new_reading() {
+        let path = temp_path("merge");
+        let mut store = UserStore::open(&path).unwrap();
+        let first = store.add_phrase("你好", &[10, 20], None).unwrap();
+        let again = store.add_phrase("你好", &[11, 20], Some(8)).unwrap();
+        assert_eq!(first, again);
+        // Merge does not allocate and does not raise the unigram (§3.2).
+        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
+        assert_eq!(store.unigram_delta(first).unwrap(), 15);
+
+        let got = store.phrase(first).unwrap().unwrap();
+        assert_eq!(got.text(), "你好");
+        assert_eq!(got.pronunciations().len(), 2);
+        assert_eq!(got.pronunciations()[0].keys(), &[10, 20]);
+        assert_eq!(got.pronunciations()[0].count(), 5);
+        assert_eq!(got.pronunciations()[1].keys(), &[11, 20]);
+        assert_eq!(got.pronunciations()[1].count(), 8);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn same_reading_accumulates_pronunciation_count() {
+        let path = temp_path("same-read");
+        let mut store = UserStore::open(&path).unwrap();
+        let token = store.add_phrase("词", &[7], Some(5)).unwrap();
+        let again = store.add_phrase("词", &[7], Some(5)).unwrap();
+        assert_eq!(token, again);
+        assert_eq!(store.unigram_delta(token).unwrap(), 15); // seeded once
+        let got = store.phrase(token).unwrap().unwrap();
+        assert_eq!(got.pronunciations().len(), 1);
+        assert_eq!(got.pronunciations()[0].count(), 10);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn phrase_roundtrip_reopen_preserves_cursor() {
+        let path = temp_path("phrase-rt");
+        let (t1, t2, next) = {
+            let mut store = UserStore::open(&path).unwrap();
+            let t1 = store.add_phrase("你好", &[10, 20], None).unwrap();
+            let t2 = store.add_phrase("世界", &[30, 40], Some(9)).unwrap();
+            store.add_phrase("你好", &[11, 20], Some(2)).unwrap();
+            (t1, t2, store.next_user_token().unwrap())
+        };
+
+        let store = UserStore::open(&path).unwrap();
+        assert_eq!(store.next_user_token().unwrap(), next);
+        assert_eq!(next, FIRST_USER_TOKEN + 2);
+
+        let p1 = store.phrase(t1).unwrap().unwrap();
+        assert_eq!(p1.text(), "你好");
+        assert_eq!(p1.pronunciations().len(), 2);
+        assert_eq!(p1.pronunciations()[0].keys(), &[10, 20]);
+        assert_eq!(p1.pronunciations()[0].count(), 5);
+        assert_eq!(p1.pronunciations()[1].keys(), &[11, 20]);
+        assert_eq!(p1.pronunciations()[1].count(), 2);
+        assert_eq!(store.unigram_delta(t1).unwrap(), 15);
+
+        let p2 = store.phrase(t2).unwrap().unwrap();
+        assert_eq!(p2.text(), "世界");
+        assert_eq!(p2.pronunciations()[0].keys(), &[30, 40]);
+        assert_eq!(p2.pronunciations()[0].count(), 9);
+        assert_eq!(store.unigram_delta(t2).unwrap(), 27);
+
+        // Reopened cursor allocates the next id — no reuse, no gap.
+        let mut store = store;
+        let t3 = store.add_phrase("中国", &[50, 60], None).unwrap();
+        assert_eq!(t3, t2 + 1);
+        assert_eq!(t3, FIRST_USER_TOKEN + 2);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn invalid_phrase_is_rejected_without_allocation() {
+        let path = temp_path("invalid");
+        let mut store = UserStore::open(&path).unwrap();
+        assert!(matches!(
+            store.add_phrase("", &[], None),
+            Err(UserStoreError::InvalidPhrase)
+        ));
+        assert!(matches!(
+            store.add_phrase("你好", &[10], None),
+            Err(UserStoreError::InvalidPhrase)
+        ));
+        assert!(matches!(
+            store.add_phrase(&"啊".repeat(16), &[0; 16], None),
+            Err(UserStoreError::InvalidPhrase)
+        ));
+        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
+        assert!(store.token_for_phrase("你好").unwrap().is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn lookup_of_unknown_token_is_none() {
+        let path = temp_path("miss");
+        let store = UserStore::open(&path).unwrap();
+        assert!(store.phrase(FIRST_USER_TOKEN).unwrap().is_none());
+        assert!(store.phrase(0x0100_0001).unwrap().is_none());
         let _ = std::fs::remove_file(&path);
     }
 }
