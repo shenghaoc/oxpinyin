@@ -454,6 +454,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinyin-corpus"
+version = "0.1.0"
+dependencies = [
+ "pinyin-counter",
+ "pinyin-emitter",
+ "pinyin-lambda",
+ "pinyin-segment",
+]
+
+[[package]]
 name = "pinyin-counter"
 version = "0.1.0"
 dependencies = [

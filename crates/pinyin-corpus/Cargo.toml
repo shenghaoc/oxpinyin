@@ -1,0 +1,22 @@
+[package]
+name = "pinyin-corpus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Training-only corpus front-end: zhwiki dump -> raw Han text for pinyin-segment. Never ships."
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "pinyin-corpus"
+path = "src/bin/pinyin-corpus.rs"
+
+[dev-dependencies]
+pinyin-segment = { path = "../pinyin-segment" }
+pinyin-counter = { path = "../pinyin-counter" }
+pinyin-lambda = { path = "../pinyin-lambda" }
+pinyin-emitter = { path = "../pinyin-emitter" }
