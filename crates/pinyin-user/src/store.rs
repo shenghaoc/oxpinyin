@@ -603,6 +603,14 @@ impl UserStore {
         self.inner.dirty.load(Ordering::Relaxed)
     }
 
+    /// Arm `m_modified` without a data write — `pinyin_end_add_phrases`
+    /// (`pinyin.cpp:658`), the import trio's set-site. The phrase adds
+    /// themselves were already durable per-add commits; this flag makes the
+    /// next [`Self::save`] perform its compaction and clear cycle.
+    pub fn mark_modified(&mut self) {
+        self.inner.dirty.store(true, Ordering::Relaxed);
+    }
+
     /// Every user phrase as §9 export rows, in token order then stored
     /// pronunciation order: one row per (phrase, pronunciation), the pinyin
     /// rendered as `'`-joined syllable spellings and the count the stored

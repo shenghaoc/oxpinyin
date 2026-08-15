@@ -3,7 +3,7 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use crate::ffi::{cstr_to_string, ffi_catch};
+use crate::ffi::{cstr_to_owned_lossy, ffi_catch};
 use crate::state::{CapiContext, box_context, context_mut};
 use crate::types::PinyinContext;
 
@@ -23,8 +23,8 @@ pub extern "C" fn pinyin_init(
 ) -> *mut PinyinContext {
     ffi_catch(ptr::null_mut(), || {
         // SAFETY: Both pointers are C strings from the caller (null OK).
-        let system_dir = unsafe { cstr_to_string(systemdir) };
-        let user_dir = unsafe { cstr_to_string(userdir) };
+        let system_dir = cstr_to_owned_lossy(systemdir);
+        let user_dir = cstr_to_owned_lossy(userdir);
         match CapiContext::new(&system_dir, &user_dir) {
             Some(ctx) => box_context(ctx),
             None => ptr::null_mut(),
@@ -73,8 +73,7 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
 /// compacts the redb store and clears `m_modified`; durability itself is
 /// redb's per-commit guarantee, so training writes are crash-safe before
 /// any save is issued (`docs/findings/user-store.md` §4).
-#[unsafe(no_mangle)]
-pub extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
+pub(crate) fn save_context(context: *mut PinyinContext) -> bool {
     if context.is_null() {
         return false;
     }
@@ -84,4 +83,17 @@ pub extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
         let ctx = unsafe { context_mut(context) };
         ctx.save_user()
     })
+}
+
+/// Save user data.
+///
+/// # C signature
+/// ```c
+/// bool pinyin_save(pinyin_context_t * context);
+/// ```
+///
+/// Body and §4 semantics: [`save_context`].
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
+    save_context(context)
 }

@@ -483,6 +483,9 @@ dependencies = [
 [[package]]
 name = "pinyin-dictool"
 version = "0.1.0"
+dependencies = [
+ "pinyin-capi",
+]
 
 [[package]]
 name = "pinyin-emitter"

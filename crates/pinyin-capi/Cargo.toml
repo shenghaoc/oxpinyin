@@ -9,7 +9,7 @@ description = "C ABI subset of libpinyin's public API, for the borrowed frontend
 
 # Supported C ABI (Linux); soname/versioning freezes with the first public release.
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"] # cdylib is the ABI; rlib lets pinyin-dictool call the same symbols in-process.
 
 [lints.rust]
 unsafe_code = "allow" # FFI + glib marshalling only; // SAFETY: on every block
