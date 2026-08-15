@@ -27,6 +27,16 @@ pub unsafe fn cstr_to_string(ptr: *const c_char) -> String {
         .to_owned()
 }
 
+/// Safe wrapper for C ABI entry points, which own the null/invalid-UTF-8
+/// contract at the boundary and never let those inputs unwind.
+pub(crate) fn cstr_to_owned_lossy(ptr: *const c_char) -> String {
+    // SAFETY: `cstr_to_string` requires a null-terminated pointer when
+    // non-null. The only callers are `extern "C"` entry points, whose
+    // contract to C is exactly that; a violation is the caller's C-level
+    // memory error, not a Rust lifetime escape.
+    unsafe { cstr_to_string(ptr) }
+}
+
 // `void *malloc(size_t)` from the host's libc. The C consumer links GLib,
 // which itself links libc, so this symbol is already resolvable at runtime
 // without adding a dependency.

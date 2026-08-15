@@ -29,6 +29,10 @@ use crate::candidates::{
 use crate::config::pinyin_mask_out;
 use crate::context::{pinyin_init, pinyin_save};
 use crate::instance::{pinyin_alloc_instance, pinyin_reset};
+use crate::iterators::{
+    pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
+    pinyin_end_get_phrases, pinyin_iterator_add_phrase, pinyin_iterator_has_next_phrase,
+};
 use crate::parse::pinyin_parse_more_full_pinyins;
 use crate::sentence::pinyin_guess_candidates;
 use crate::state::{USER_STORE_FILE, instance_ref};
@@ -628,6 +632,131 @@ fn drain_bigrams(iter: *mut crate::types::BigramExportIterator) -> Vec<(String, 
         rows.push((take_exported(phrase), take_exported(pinyin), count));
     }
     rows
+}
+
+#[test]
+fn import_iterators_add_per_phrase_and_arm_modified_at_end() {
+    let user_dir = TempUserDir::new("import");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    // Null-safety first: begin/add/end all tolerate null exactly like the
+    // export quartet.
+    assert!(pinyin_begin_add_phrases(ptr::null_mut(), 7).is_null());
+    assert!(!pinyin_iterator_add_phrase(
+        ptr::null_mut(),
+        cstr("你好").as_ptr(),
+        cstr("nihao").as_ptr(),
+        1,
+    ));
+    pinyin_end_add_phrases(ptr::null_mut());
+
+    let iter = pinyin_begin_add_phrases(context, 7);
+    assert!(!iter.is_null());
+
+    // Default count -1 is 5; a same-reading re-add accumulates 5+7=12 —
+    // upstream `_add_phrase` / `PhraseItem::add_pronunciation`, not an
+    // add-or-update. Trailing unparsed pinyin bytes are ignored, exactly
+    // like `FullPinyinParser2`'s longest-prefix final step.
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("你好").as_ptr(),
+        cstr("nihao").as_ptr(),
+        -1,
+    ));
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("你好").as_ptr(),
+        cstr("nihao").as_ptr(),
+        7,
+    ));
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("世界").as_ptr(),
+        cstr("shijieXYZ").as_ptr(),
+        3,
+    ));
+
+    // Bad pinyin (no complete keys, incomplete-only, empty) reports false
+    // and writes nothing for that call.
+    assert!(!pinyin_iterator_add_phrase(
+        iter,
+        cstr("你好").as_ptr(),
+        cstr("n").as_ptr(),
+        1,
+    ));
+    assert!(!pinyin_iterator_add_phrase(
+        iter,
+        cstr("你好").as_ptr(),
+        cstr("!!!").as_ptr(),
+        1,
+    ));
+    assert!(!pinyin_iterator_add_phrase(
+        iter,
+        cstr("你好").as_ptr(),
+        cstr("").as_ptr(),
+        1,
+    ));
+
+    // Adds are per-phrase durable commits, but upstream's m_modified
+    // set-site is _end_add_phrases (pinyin.cpp:658) — a save before end is
+    // the unmodified no-op.
+    assert!(!pinyin_save(context));
+    assert!(!store_of(instance).is_modified());
+
+    pinyin_end_add_phrases(iter);
+
+    // End armed the shared dirty flag; the next save compacts and clears it.
+    assert!(store_of(instance).is_modified());
+    assert!(pinyin_save(context));
+    assert!(!store_of(instance).is_modified());
+
+    let export = pinyin_begin_get_phrases(context, 7);
+    assert_eq!(
+        drain_phrases(export),
+        vec![
+            ("你好".to_owned(), "ni'hao".to_owned(), 12),
+            ("世界".to_owned(), "shi'jie".to_owned(), 3),
+        ]
+    );
+    pinyin_end_get_phrases(export);
+
+    // A non-user index returns a live handle but has no writable store:
+    // add reports false, end is still a valid release.
+    let system = pinyin_begin_add_phrases(context, 1);
+    assert!(!system.is_null());
+    assert!(!pinyin_iterator_add_phrase(
+        system,
+        cstr("测试").as_ptr(),
+        cstr("ce'shi").as_ptr(),
+        1,
+    ));
+    pinyin_end_add_phrases(system);
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn empty_import_batch_arms_modified_and_saves() {
+    let user_dir = TempUserDir::new("import-empty");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let iter = pinyin_begin_add_phrases(context, 7);
+    assert!(!iter.is_null());
+    pinyin_end_add_phrases(iter);
+
+    // Upstream sets m_modified unconditionally at end (:657-658), even with
+    // no add calls, so the next save is a write cycle, not a no-op.
+    assert!(store_of(instance).is_modified());
+    assert!(pinyin_save(context));
+    assert!(!store_of(instance).is_modified());
+
+    let export = pinyin_begin_get_phrases(context, 7);
+    assert!(!pinyin_iterator_has_next_phrase(export));
+    pinyin_end_get_phrases(export);
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
 }
 
 #[test]

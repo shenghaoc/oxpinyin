@@ -124,8 +124,8 @@ pub(crate) type CapiSession = Session<SharedDict, SharedLm>;
 pub(crate) struct CapiContext {
     pub(crate) paths: StoragePaths,
     pub(crate) config: Config,
-    dict: SharedDict,
-    lm: SharedLm,
+    dict: Option<SharedDict>,
+    lm: Option<SharedLm>,
     /// The user-learning store, shared by value-clone with every instance.
     ///
     /// `None` when the caller passed an empty user directory — the
@@ -164,12 +164,32 @@ impl CapiContext {
         Some(Self {
             paths,
             config: Config::default(),
-            dict: SharedDict(Arc::new(dict)),
-            lm: SharedLm {
+            dict: Some(SharedDict(Arc::new(dict))),
+            lm: Some(SharedLm {
                 inner: Arc::new(lm),
                 user: user.clone(),
-            },
+            }),
             user,
+        })
+    }
+
+    /// User-store-only context for standalone migration tools
+    /// (`pinyin-dictool import`). The C ABI `pinyin_init` still requires
+    /// system tables — its contract is a decoder context — while this
+    /// Rust-only constructor lets a tool drive the import/export/save trio
+    /// without carrying a system dictionary. `pinyin_alloc_instance` reports
+    /// `None` for such a context because there is nothing to decode with.
+    pub(crate) fn new_user_only(user_dir: &str) -> Option<Self> {
+        if user_dir.is_empty() {
+            return None;
+        }
+        let user = UserStore::open(&Path::new(user_dir).join(USER_STORE_FILE)).ok()?;
+        Some(Self {
+            paths: StoragePaths::new(user_dir),
+            config: Config::default(),
+            dict: None,
+            lm: None,
+            user: Some(user),
         })
     }
 
@@ -177,8 +197,8 @@ impl CapiContext {
         let session = Session::new(
             &self.config,
             self.paths.clone(),
-            self.dict.clone(),
-            self.lm.clone(),
+            self.dict.clone()?,
+            self.lm.clone()?,
         )
         .ok()?;
         Some(CapiInstance {
@@ -186,6 +206,15 @@ impl CapiContext {
             candidates: Vec::new(),
             user: self.user.clone(),
         })
+    }
+
+    /// Clone of the context's user store, if this context has one.
+    ///
+    /// The import iterator owns this clone; because the store's §4 dirty flag
+    /// is shared by every clone, `pinyin_end_add_phrases` can arm
+    /// `m_modified` through it without retaining a context pointer.
+    pub(crate) fn user_store(&self) -> Option<UserStore> {
+        self.user.clone()
     }
 
     /// `pinyin_save`'s body (§4): `false` without a user dir (upstream
@@ -292,9 +321,9 @@ impl CapiContext {
             }
             Some((phrase.text().to_owned(), pinyins))
         } else {
-            let text = self.dict.0.phrase_text(token).ok().flatten()?;
-            let pinyins: Vec<String> = self
-                .dict
+            let dict = self.dict.as_ref()?;
+            let text = dict.0.phrase_text(token).ok().flatten()?;
+            let pinyins: Vec<String> = dict
                 .0
                 .pronunciations(token)
                 .ok()?
@@ -315,6 +344,19 @@ pub(crate) struct ExportedBigramRow {
     pub(crate) phrase: String,
     pub(crate) pinyin: String,
     pub(crate) count: i64,
+}
+
+/// Safe state-side snapshot for [`crate::user_phrase_rows`].
+pub(crate) fn export_user_phrase_rows(context: *mut PinyinContext) -> Option<Vec<ExportedPhrase>> {
+    if context.is_null() {
+        return None;
+    }
+    crate::ffi::ffi_catch(None, || {
+        // SAFETY: `context` is non-null and was produced by `pinyin_init` or
+        // `CapiContext::new_user_only`; the borrow lasts only for this read.
+        let ctx = unsafe { context_ref(context) };
+        ctx.export_phrases(u32::from(USER_DICTIONARY))
+    })
 }
 
 // ── Instance ────────────────────────────────────────────────────────────

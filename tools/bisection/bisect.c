@@ -593,9 +593,11 @@ static void probe_remaining(const struct symbols *s, pinyin_context_t *ctx,
         }
     }
 
-    /* Import / unigram export / bigram export. End any non-NULL iterator. */
+    /* Import / unigram export / bigram export. Drive the import trio on
+     * USER_DICTIONARY (7) so every symbol has a live handle; the phrase
+     * export below reads that same user sub-index. */
     if (s->begin_add_phrases) {
-        import_iterator_t *it = s->begin_add_phrases(ctx, 1);
+        import_iterator_t *it = s->begin_add_phrases(ctx, 7);
         printf("begin_add_phrases: %s\n", it ? "ok" : "NULL");
         if (it) {
             if (s->iterator_add_phrase) {
@@ -608,7 +610,7 @@ static void probe_remaining(const struct symbols *s, pinyin_context_t *ctx,
         }
     }
     if (s->begin_get_phrases) {
-        export_iterator_t *it = s->begin_get_phrases(ctx, 1);
+        export_iterator_t *it = s->begin_get_phrases(ctx, 7);
         printf("begin_get_phrases: %s\n", it ? "ok" : "NULL");
         if (it) {
             bool has = s->iterator_has_next ? s->iterator_has_next(it) : false;
