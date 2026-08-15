@@ -15,6 +15,7 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 LINTER="$REPO_ROOT/.github/scripts/lint-commits.sh"
+HOOK="$REPO_ROOT/.githooks/commit-msg"
 
 # The linter writes its step summary to $GITHUB_STEP_SUMMARY when set; in the
 # harness we want it on stdout instead.
@@ -89,8 +90,7 @@ commit() {
     git rev-parse HEAD
 }
 
-# human_commit <message-args...> — commit with the human identity, reading the
-# message from the remaining args printed one per line.
+# human — commit with the human identity, reading the message from stdin.
 human() {
     commit "$HUMAN_NAME" "$HUMAN_EMAIL" "$HUMAN_NAME" "$HUMAN_EMAIL"
 }
@@ -107,104 +107,137 @@ git config user.email "$HUMAN_EMAIL"
 git config commit.gpgsign false
 
 # Root baseline commit: a parent for the fixtures, never linted directly.
-msg 'baseline' '' "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" | human >/dev/null
+msg 'baseline' '' | human >/dev/null
 
-# 1. Valid: SOB + kernel-form Assisted-by + valid Fixes.
-c1=$(msg 'valid commit' \
+# --- case 1: valid -------------------------------------------------------------
+# Valid: `Assisted-by: Claude:claude-opus-5` (verbatim from inventory) passes;
+# a plain human commit with no trailers also passes.
+c1a=$(msg 'valid assisted-by' \
     '' \
-    "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" \
-    'Assisted-by: Claude:claude-opus-4 coccinelle sparse' \
-    'Fixes: deadbeefdeadbeef ("fix the bug")' | human)
+    'Assisted-by: Claude:claude-opus-5' | human)
+c1b=$(msg 'plain human commit' | human)
 
-# 2. Missing SOB.
-c2=$(msg 'missing sob' | human)
-
-# 3. SOB carrying an AI assistant name.
-c3=$(msg 'ai signed-off-by' \
+# --- case 2: regression pinyin-rs PR#41, 7b504d0 ------------------------------
+c2=$(msg 'copilot co-authored-by' \
     '' \
-    'Signed-off-by: Claude <noreply@anthropic.com>' | human)
-
-# 4. Assisted-by in Fedora lax form — MUST fail (intersection semantics).
-c4=$(msg 'fedora generic assisted-by' \
-    '' \
-    "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" \
-    'Assisted-by: generic LLM chatbot' | human)
-
-# 5. Assisted-by with no colon-separated version.
-c5=$(msg 'assisted-by no version' \
-    '' \
-    "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" \
-    'Assisted-by: ChatGPTv5' | human)
-
-# 6. Malformed Fixes (short hash / unquoted subject).
-c6=$(msg 'bad fixes' \
-    '' \
-    "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" \
-    'Fixes: deadbeef (bad)' | human)
-
-# 7. AI-session: true without Assisted-by.
-c7=$(msg 'ai session no assisted-by' \
-    '' \
-    "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" \
-    'AI-session: true' | human)
-
-# 9. Bot-author commit without SOB (R1 exempted when toggle on).
-c9=$(msg 'bot bump' | commit 'dependabot[bot]' "$BOT_EMAIL" 'dependabot[bot]' "$BOT_EMAIL")
-
-# 11. Regression (pinyin-rs PR#41, 7b504d0): human SOB + Co-authored-by by an
-#     AI agent. Certification trailers beyond Signed-off-by must be checked;
-#     disclosure via Co-authored-by is the wrong mechanism (authorship vs
-#     assistance).
-c11=$(msg 'copilot co-authored-by' \
-    '' \
-    "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" \
     'Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>' | human)
 
-# 12a. Regression (pinyin-rs PR#41, ba25ff7): shape-valid but model-name-empty
-#      Assisted-by. Shape-valid but model-name-empty strings must fail; do not
-#      "fix" the letter heuristic away.
-c12a=$(msg 'grok bare version' \
+# --- case 3: observed-identity coverage (all verbatim from inventory) ----------
+# Fail R1:
+c3a=$(msg 'claude co-authored-by' \
     '' \
-    "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" \
-    'Assisted-by: Grok:4.6' | human)
+    'Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>' | human)
+c3b=$(msg 'cursor co-authored-by' \
+    '' \
+    'Co-authored-by: Cursor <cursoragent@cursor.com>' | human)
+c3c=$(msg 'jules bot co-authored-by' \
+    '' \
+    'Co-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>' | human)
+c3d=$(msg 'copilot github co-authored-by' \
+    '' \
+    'Co-authored-by: Copilot <copilot@github.com>' | human)
+# Pass R1 (human / non-agent bot identities must NOT match):
+c3e=$(msg 'human co-authored-by' \
+    '' \
+    'Co-authored-by: shenghaoc <34920365+shenghaoc@users.noreply.github.com>' | human)
+c3f=$(msg 'dependabot co-authored-by' \
+    '' \
+    'Co-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>' | human)
 
-# 12b. Companion: identical commit with a model string — passes.
-c12b=$(msg 'grok model string' \
+# --- case 4: human-namespace pass guards --------------------------------------
+# Claude, Mistral, and Kiro are human names; matching is by machine identity,
+# never by name.
+c4a=$(msg 'claude martin co-authored-by' \
     '' \
-    "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" \
+    'Co-authored-by: Claude Martin <claude.martin@example.fr>' | human)
+c4b=$(msg 'claude martin author' '' \
+    | commit 'Claude Martin' 'claude.martin@example.fr' \
+             'Claude Martin' 'claude.martin@example.fr')
+
+# --- case 5: regression pinyin-rs PR#41, ba25ff7 ------------------------------
+# `Grok:4.6` fails the letter heuristic (31 such trailers observed); the
+# model-string companion passes.
+c5a=$(msg 'grok bare version' \
+    '' \
+    'Assisted-by: Grok:4.6' | human)
+c5b=$(msg 'grok model string' \
+    '' \
     'Assisted-by: Grok:grok-4.6' | human)
 
-# 13. Git author is an AI agent; clean (human-SOB) message.
-c13=$(msg 'clean message ai author' \
+# --- case 6: malformed Assisted-by --------------------------------------------
+c6a=$(msg 'generic llm chatbot' \
     '' \
-    "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" \
-    | commit 'Copilot' '223556219+Copilot@users.noreply.github.com' \
-             'Copilot' '223556219+Copilot@users.noreply.github.com')
+    'Assisted-by: generic LLM chatbot' | human)
+c6b=$(msg 'chatgptv5 no colon' \
+    '' \
+    'Assisted-by: ChatGPTv5' | human)
+c6c=$(msg 'placeholder assisted-by' \
+    '' \
+    'Assisted-by: AGENT_NAME:MODEL_VERSION' | human)
+c6d=$(msg 'duplicate assisted-by' \
+    '' \
+    'Assisted-by: Claude:claude-opus-4' \
+    'Assisted-by: Claude:claude-opus-4' | human)
+c6e=$(msg 'trailing token assisted-by' \
+    '' \
+    'Assisted-by: Claude:claude-opus-4 coccinelle' | human)
 
-# 10. Multi-commit range with one bad commit among good ones.
-pre10=$(git rev-parse HEAD)
-good_a=$(msg 'good a' '' "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" | human)
-bad=$(msg 'bad middle' | human)
-good_b=$(msg 'good b' '' "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" | human)
+# --- case 7: AI-session promotion ---------------------------------------------
+c7a=$(msg 'ai session no assisted-by' \
+    '' \
+    'AI-session: true' | human)
+c7b=$(msg 'ai session typo' \
+    '' \
+    'AI-session: yes' | human)
+
+# --- case 8: no AI agent as git author/committer ------------------------------
+c8a=$(msg 'kiro agent author' '' \
+    | commit 'Kiro Agent' '244629292+kiro-agent@users.noreply.github.com' \
+             'Kiro Agent' '244629292+kiro-agent@users.noreply.github.com')
+c8b=$(msg 'claude bot author' '' \
+    | commit 'claude[bot]' '12345+claude[bot]@users.noreply.github.com' \
+             'claude[bot]' '12345+claude[bot]@users.noreply.github.com')
+c8c=$(msg 'dependabot author' '' \
+    | commit 'dependabot[bot]' "$BOT_EMAIL" \
+             'dependabot[bot]' "$BOT_EMAIL")
+c8d=$(msg 'web merge committer' '' \
+    | commit "$HUMAN_NAME" "$HUMAN_EMAIL" \
+             'GitHub' 'noreply@github.com')
 
 # --- run the single-commit cases ----------------------------------------------
 
-expect_pass 'valid commit passes' "$c1~1" "$c1"
-expect_fail 1 'missing SOB fails R1' "$c2~1" "$c2"
-expect_fail 2 'AI name in Signed-off-by fails R2' "$c3~1" "$c3"
-# Intentional intersection semantics, not a bug: Fedora's own lax examples
-# (`Assisted-by: generic LLM chatbot`, `Assisted-by: ChatGPTv5`) fail here.
-expect_fail 3 'generic LLM chatbot fails R3' "$c4~1" "$c4"
-expect_fail 3 'ChatGPTv5 (no version) fails R3' "$c5~1" "$c5"
-expect_fail 4 'bad Fixes fails R4' "$c6~1" "$c6"
-expect_fail 5 'AI-session without Assisted-by fails R5' "$c7~1" "$c7"
-expect_pass 'bot author exempts R1' "$c9~1" "$c9"
-expect_fail 2 'Co-authored-by Copilot App fails R2 (regression 7b504d0)' "$c11~1" "$c11"
-expect_fail 3 'Assisted-by Grok:4.6 fails R3 (regression ba25ff7)' "$c12a~1" "$c12a"
-expect_pass 'Assisted-by Grok:grok-4.6 passes R3' "$c12b~1" "$c12b"
-expect_fail 6 'AI git author fails R6' "$c13~1" "$c13"
+expect_pass 'valid Assisted-by passes' "$c1a~1" "$c1a"
+expect_pass 'plain human commit passes' "$c1b~1" "$c1b"
+expect_fail 1 'Copilot App co-author fails R1 (regression 7b504d0)' "$c2~1" "$c2"
+expect_fail 1 'Claude Opus co-author fails R1' "$c3a~1" "$c3a"
+expect_fail 1 'Cursor co-author fails R1' "$c3b~1" "$c3b"
+expect_fail 1 'google-labs-jules[bot] co-author fails R1' "$c3c~1" "$c3c"
+expect_fail 1 'Copilot <copilot@github.com> co-author fails R1' "$c3d~1" "$c3d"
+expect_pass 'shenghaoc co-author passes R1' "$c3e~1" "$c3e"
+expect_pass 'dependabot[bot] co-author passes R1' "$c3f~1" "$c3f"
+expect_pass 'Claude Martin co-author passes R1 (human name)' "$c4a~1" "$c4a"
+expect_pass 'Claude Martin author passes R4 (human name)' "$c4b~1" "$c4b"
+expect_fail 2 'Assisted-by Grok:4.6 fails R2 (regression ba25ff7)' "$c5a~1" "$c5a"
+expect_pass 'Assisted-by Grok:grok-4.6 passes R2' "$c5b~1" "$c5b"
+expect_fail 2 'generic LLM chatbot fails R2' "$c6a~1" "$c6a"
+expect_fail 2 'ChatGPTv5 (no colon) fails R2' "$c6b~1" "$c6b"
+expect_fail 2 'placeholder Assisted-by fails R2 (condition 3)' "$c6c~1" "$c6c"
+expect_fail 2 'duplicate Assisted-by fails R2 (condition 4)' "$c6d~1" "$c6d"
+expect_fail 2 'trailing token Assisted-by fails R2 (condition 1)' "$c6e~1" "$c6e"
+expect_fail 3 'AI-session: true without Assisted-by fails R3' "$c7a~1" "$c7a"
+expect_fail 3 'AI-session: yes fails R3 (typo guard)' "$c7b~1" "$c7b"
+expect_fail 4 'Kiro Agent author fails R4' "$c8a~1" "$c8a"
+expect_fail 4 'claude[bot] author fails R4' "$c8b~1" "$c8b"
+expect_pass 'dependabot[bot] author passes R4' "$c8c~1" "$c8c"
+expect_pass 'GitHub <noreply@github.com> committer passes R4' "$c8d~1" "$c8d"
 
 # --- case 10: multi-commit range, one bad commit ------------------------------
+
+pre10=$(git rev-parse HEAD)
+good_a=$(msg 'good a' '' | human)
+bad=$(msg 'bad middle' '' \
+    'Co-authored-by: Copilot <copilot@github.com>' | human)
+good_b=$(msg 'good b' '' | human)
 
 tests_run=$((tests_run + 1))
 run_lint "$pre10" "$good_b"
@@ -221,19 +254,78 @@ else
     fail_test 'multi-commit range with bad commit' "expected R1 in output, got: $(printf '%s' "$out" | head -n 5)"
 fi
 
-# --- case 8: merge commit without SOB is skipped ------------------------------
+# --- case 9: merge commit with agent co-author trailer is skipped -------------
 
-# Fork a side branch from the current HEAD, commit with SOB, then merge with
-# --no-ff so the merge commit itself has no Signed-off-by.
 git checkout -q -b merge-side
-msg 'side commit' '' "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" | human >/dev/null
+msg 'side commit' '' | human >/dev/null
 git checkout -q main
 main_before=$(git rev-parse HEAD)
-msg 'main commit' '' "Signed-off-by: $HUMAN_NAME <$HUMAN_EMAIL>" | human >/dev/null
-git merge -q --no-ff -m 'merge side branch' merge-side >/dev/null 2>&1
+msg 'main commit' '' | human >/dev/null
+merge_msg="$TMPDIR/merge-msg.txt"
+printf 'merge side branch\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>\n' >"$merge_msg"
+git merge -q --no-ff -F "$merge_msg" merge-side >/dev/null 2>&1
 merge_sha=$(git rev-parse HEAD)
 
-expect_pass 'merge commit without SOB is skipped' "$main_before" "$merge_sha"
+expect_pass 'merge commit with agent co-author is skipped' "$main_before" "$merge_sha"
+
+# --- case 11: hook parity (delegator = single source of truth) -----------------
+
+# run_hook <message-file> — run the commit-msg delegator from the real repo
+# root (where it can resolve the linter via `git rev-parse --show-toplevel`).
+run_hook() {
+    set +e
+    out=$( (cd "$REPO_ROOT" && "$HOOK" "$1") 2>&1 )
+    rc=$?
+    set -e
+}
+
+# parity <name> <message-args...> — write the message to a file, run BOTH the
+# hook (on the file) and the CI script (on a commit carrying the identical
+# message), and assert the two verdicts agree (same exit code, and when
+# failing, the same rule ID). This is the "hook and CI can never disagree"
+# guarantee from Deliverable 6.
+parity() {
+    name=$1
+    shift
+    tests_run=$((tests_run + 1))
+    f="$TMPDIR/parity.txt"
+    msg "$@" >"$f"
+
+    run_hook "$f"
+    hook_rc=$rc
+    hook_out=$out
+
+    sha=$(commit "$HUMAN_NAME" "$HUMAN_EMAIL" "$HUMAN_NAME" "$HUMAN_EMAIL" <"$f")
+    run_lint "$sha~1" "$sha"
+    ci_rc=$rc
+    ci_out=$out
+
+    if [ "$hook_rc" -ne "$ci_rc" ]; then
+        fail_test "$name" "hook exit $hook_rc vs CI exit $ci_rc; hook: $(printf '%s' "$hook_out" | head -n 2); ci: $(printf '%s' "$ci_out" | head -n 2)"
+        return
+    fi
+    if [ "$hook_rc" -eq 0 ]; then
+        ok "$name"
+        return
+    fi
+    hook_rule=$(printf '%s' "$hook_out" | grep -oE 'R[0-9]' | head -n 1)
+    ci_rule=$(printf '%s' "$ci_out" | grep -oE 'R[0-9]' | head -n 1)
+    if [ "$hook_rule" = "$ci_rule" ] && [ -n "$hook_rule" ]; then
+        ok "$name (both report $hook_rule)"
+    else
+        fail_test "$name" "rule mismatch: hook=$hook_rule ci=$ci_rule"
+    fi
+}
+
+parity 'hook/CI agree: agent co-author (R1)' 'parity r1' '' \
+    'Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>'
+parity 'hook/CI agree: Grok:4.6 (R2)' 'parity r2' '' \
+    'Assisted-by: Grok:4.6'
+parity 'hook/CI agree: AI-session no Assisted-by (R3)' 'parity r3' '' \
+    'AI-session: true'
+parity 'hook/CI agree: valid Assisted-by' 'parity ok' '' \
+    'Assisted-by: Claude:claude-opus-5'
+parity 'hook/CI agree: [human] subject is inert' '[human] fix typo'
 
 # --- summary -------------------------------------------------------------------
 

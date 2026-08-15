@@ -11,4 +11,4 @@ Implement from frozen SPECs/fixtures only. Assisted-by:
 
     Assisted-by: Kiro:MODEL_VERSION
 
-Nothing after the model. Set semantics and the `[human]` exception: `/AGENTS.md`.
+Nothing after the model. Set semantics: `/AGENTS.md`.

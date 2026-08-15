@@ -1,16 +1,21 @@
 #!/bin/sh
-# lint-commits.sh — lint every commit in a range against commit-message
-# trailer rules. Single source of truth for the rule logic; the workflow
-# (`.github/workflows/commit-trailers.yml`) only invokes this script.
+# lint-commits.sh — lint commit messages against the settled trailer rules.
+# Single source of truth for all rule logic; both the CI workflow and the
+# commit-msg hook delegate to this script so they can never disagree.
 #
-# Usage: lint-commits.sh <base-sha> <head-sha>
+# Usage:
+#   lint-commits.sh <base-sha> <head-sha>     CI mode: lint the non-merge
+#                                             commits in the range (R1–R4).
+#   lint-commits.sh --hook <message-file>     Hook mode: lint a single commit
+#                                             message for R1–R3 only.
 #
-# The caller is responsible for computing the merge-base; this script lints
-# the non-merge commits in `<base-sha>..<head-sha>`.
+# CI mode: the caller is responsible for computing the merge-base; this script
+# lints the non-merge commits in `<base-sha>..<head-sha>`.
 #
-# The rule set below is the settled interpretation of the Linux kernel
-# "AI Coding Assistants" policy and the Fedora "AI-Assisted Contributions
-# Policy" v1.0. Do not re-derive rules from the source texts.
+# House principles the rules mechanize: the human contributor is the author of
+# and accountable for every commit; AI assistance is attributed through the
+# `Assisted-by:` trailer and nowhere else; AI agents never appear as authors,
+# committers, or co-authors.
 #
 # Requires git >= 2.32 (for %(trailers:only,unfold)). POSIX sh + git only.
 
@@ -20,65 +25,142 @@ set -eu
 # Tunables — single shell variables, for easy extension.
 # ---------------------------------------------------------------------------
 
-# Certification/authorship trailers. Both source policies reserve these to
-# humans: they certify origin, authorship, review, approval, or testing.
-# Reported-by / Suggested-by are deliberately NOT checked — kernel practice
-# already accepts automated reporters there (syzbot precedent), and the
-# policies prohibit AI certification, not AI credit for finding.
-CERT_TRAILERS='Signed-off-by: Co-authored-by: Co-developed-by: Reviewed-by: Acked-by: Tested-by:'
+# AGENT_IDENTITIES — one case-insensitive POSIX ERE alternation matching the
+# machine email identities that AI agents actually emit. Seeded from the
+# owner's 2026-08-15 identity inventory; extend as new agents are observed.
+# Identity matching, never name matching: model names collide with the human
+# namespace (Claude, Mistral, Kiro are human names), so this must stay email
+# based. Verified non-matches: shenghaoc@outlook.com,
+# shenghaoc@users.noreply.github.com, 34920365+shenghaoc@users.noreply.github.com,
+# dependabot[bot], github-actions[bot], GitHub <noreply@github.com>.
+AGENT_IDENTITIES='noreply@anthropic\.com|[0-9]+\+copilot@users\.noreply\.github\.com|copilot@github\.com|cursoragent@cursor\.com|codex@openai\.com|[0-9]+\+kiro-agent@users\.noreply\.github\.com|[0-9]+\+(claude|copilot-swe-agent|cursor[a-z-]*|devin[a-z-]*|codex|google-labs-jules|jules[a-z-]*|kiro[a-z-]*|gemini-code-assist|sweep[a-z-]*)\[bot\]@users\.noreply\.github\.com'
 
-# AI-assistant denylist, matched case-insensitively as a substring against
-# the whole line (so emails like <223556219+Copilot@users.noreply.github.com>
-# are caught). "muse spark" is a single entry. This is a tripwire for honest
-# labeling, not an adversarial control — it cannot detect undisclosed AI
-# authorship — and substring matching can false-positive on human names; the
-# list is tunable.
-AI_DENYLIST='claude|gpt|chatgpt|codex|copilot|gemini|grok|deepseek|llama|mistral|qwen|cursor|kiro|musecode|muse spark|openai|anthropic|xai'
-
-# Bot exemption (default ON) — single toggle variable. Commits whose author
-# email matches *[bot]@users.noreply.github.com (e.g. dependabot) skip R1
-# (DCO) only; R2–R6 still apply. Non-AI automation (e.g. dependabot) passes
-# R6 because it is not on the denylist; AI agents are never exempted. Set
-# BOT_EXEMPT=0 to disable the exemption.
-BOT_EXEMPT=1
-
-# R1 — DCO. Every non-merge, non-exempt commit must carry at least one
-# Signed-off-by with an email address.
-SOB_RE='^Signed-off-by: .+ <.+@.+>$'
-
-# R3 — Assisted-by, kernel form. AGENT_NAME:MODEL_VERSION [tool1] [tool2],
-# where MODEL_VERSION must contain at least one ASCII letter.
-#
-# House style — both source policies make the tag itself a
-# SHOULD/recommendation; hard-failing the format is a deliberate local
-# escalation ("intersection semantics": kernel-form strings are the subset
-# valid under both policies). Fedora's own examples
-# (`Assisted-by: generic LLM chatbot`, `Assisted-by: ChatGPTv5`) intentionally
-# FAIL this check. To relax to Fedora laxity, replace the regex with a
-# non-empty check: `^Assisted-by:[[:space:]]*[^[:space:]].*$`.
-ASSISTED_RE='^Assisted-by:[[:space:]]*[^:[:space:]]+:[^[:space:]]*[A-Za-z][^[:space:]]*([[:space:]]+[^[:space:]]+)*[[:space:]]*$'
-
-# R4 — Fixes format. 12–40 hex chars plus a quoted subject.
-FIXES_RE='^Fixes:[[:space:]]+[0-9a-fA-F]{12,40} \(".+"\)[[:space:]]*$'
+# R2 — Assisted-by house form when present. Four conditions:
+#   1. shape (POSIX ERE; NOTHING after the model),
+#   2. MODEL token (after the colon) contains >=1 ASCII letter,
+#   3. no placeholder text,
+#   4. set semantics (no duplicate identical lines).
+# Conditions 1, 3, 4 are lifted verbatim from the repo's former
+# `.githooks/commit-msg`. See check_message() for provenance notes.
+ASSISTED_SHAPE_RE='^Assisted-by: [[:alnum:]][[:alnum:]._-]*:[[:alnum:]][[:alnum:].+_-]*$'
+ASSISTED_PLACEHOLDER_RE='^Assisted-by: (AGENT|AGENT_NAME):|:(MODEL|MODEL_VERSION)([[:space:]]|$)|\[|\]'
 
 # ---------------------------------------------------------------------------
 
 # Exit codes: 0 = pass, 1 = lint failure, 2 = usage/environment error.
 usage() {
-    printf '%s\n' 'usage: lint-commits.sh <base-sha> <head-sha>' >&2
+    printf '%s\n' 'usage: lint-commits.sh <base-sha> <head-sha>' \
+        '       lint-commits.sh --hook <message-file>' >&2
     exit 2
 }
 
-# R1 comment — the kernel permits Signed-off-by-less *intermediate* commits
-# during an AI session (procedure step 6 says the agent must not sign off);
-# the DCO requirement applies at PR/submission state, which is what this
-# lints. This linter is therefore only valid on PR ranges, not on arbitrary
-# working-branch pushes.
-
 fail() {
-    # $1 = rule id, $2 = short sha, $3 = subject, $4 = detail
+    # $1 = rule id, $2 = short sha (may be empty in hook mode),
+    # $3 = subject, $4 = detail.
     fails=$((fails + 1))
-    printf '::error::%s %s: R%s — %s\n' "$2" "$3" "$1" "$4"
+    if [ -n "$2" ]; then
+        printf '::error::%s %s: R%s — %s\n' "$2" "$3" "$1" "$4"
+    else
+        printf '::error::%s: R%s — %s\n' "$3" "$1" "$4"
+    fi
+}
+
+# check_message — the message-level rules (R1–R3) shared by CI mode and the
+# commit-msg hook. Operates on the globals $short, $subject, $trailers;
+# sets r1..r3 and increments $fails, emitting ::error:: lines per violation.
+#
+# R4 (author/committer identity) is an identity rule and is deliberately NOT
+# here — it is CI-only (the hook runs before the commit exists, so there is no
+# SHA to inspect, and the author identity is not a property of the message).
+check_message() {
+    r1=pass
+    r2=pass
+    r3=pass
+
+    # R1 — no AI agent identity in Co-authored-by:. Key match is
+    # case-insensitive (Claude Code emits Co-Authored-By:, GitHub emits
+    # Co-authored-by:). Lines with no <email> portion are skipped. Matching is
+    # by email, never by name — co-authorship is an authorship credit, and
+    # authorship belongs to humans.
+    coauth=$(printf '%s\n' "$trailers" | grep -iE '^co-authored-by:' || true)
+    if [ -n "$coauth" ]; then
+        oldIFS=$IFS
+        IFS='
+'
+        set -f
+        # shellcheck disable=SC2086  # intentional word-splitting into lines
+        for line in $coauth; do
+            [ -n "$line" ] || continue
+            email=$(printf '%s\n' "$line" | sed -n 's/^[^<]*<\([^>]*\)>.*$/\1/p')
+            [ -n "$email" ] || continue
+            if printf '%s\n' "$email" | grep -Eiq "^($AGENT_IDENTITIES)$"; then
+                r1=fail
+                fail 1 "$short" "$subject" \
+                    "AI agent identity in Co-authored-by trailer (authorship belongs to humans; AI attribution goes in Assisted-by only): $line"
+                break
+            fi
+        done
+        set +f
+        IFS=$oldIFS
+    fi
+
+    # R2 — Assisted-by house form when present.
+    #
+    # Condition 2 is a semantic heuristic: the MODEL token names the specific
+    # model used, and a bare version number names no model (`Grok:4.6` fails;
+    # `Grok:grok-4.6` passes). Semantics beyond shape remain human attestation.
+    assisted_lines=$(printf '%s\n' "$trailers" | grep '^Assisted-by:' || true)
+    if [ -n "$assisted_lines" ]; then
+        # Condition 4 — set semantics: identical lines must not repeat.
+        dup=$(printf '%s\n' "$assisted_lines" | sort | uniq -d)
+        if [ -n "$dup" ]; then
+            r2=fail
+            fail 2 "$short" "$subject" "duplicate Assisted-by trailer (set semantics): $(printf '%s' "$dup" | tr '\n' ' ')"
+        fi
+
+        # Conditions 1–3 — per line.
+        oldIFS=$IFS
+        IFS='
+'
+        set -f
+        # shellcheck disable=SC2086  # intentional word-splitting into lines
+        for line in $assisted_lines; do
+            [ -n "$line" ] || continue
+            if ! printf '%s\n' "$line" | grep -Eq "$ASSISTED_SHAPE_RE"; then
+                r2=fail
+                fail 2 "$short" "$subject" "Assisted-by violates house form (condition 1, nothing after the model): $line"
+            elif printf '%s\n' "$line" | grep -Eq "$ASSISTED_PLACEHOLDER_RE"; then
+                r2=fail
+                fail 2 "$short" "$subject" "Assisted-by placeholder text (condition 3): $line"
+            else
+                # Condition 2 — MODEL token must contain >=1 ASCII letter.
+                rest=${line#Assisted-by: }
+                model=${rest#*:}
+                if ! printf '%s\n' "$model" | grep -Eq '[A-Za-z]'; then
+                    r2=fail
+                    fail 2 "$short" "$subject" "Assisted-by model has no ASCII letter (condition 2): $line"
+                fi
+            fi
+        done
+        set +f
+        IFS=$oldIFS
+    fi
+
+    # R3 — AI-session promotion. "AI-session: true" (exact value) requires at
+    # least one Assisted-by trailer (which R2 then validates). Any other value
+    # is a hard fail (typo guard). Inert until agents are configured to emit
+    # it; session provenance is otherwise invisible to a linter.
+    ai_session=$(printf '%s\n' "$trailers" | grep '^AI-session:' || true)
+    if [ -n "$ai_session" ]; then
+        bad_ai=$(printf '%s\n' "$ai_session" | sed -n '/^AI-session:[[:space:]]*true[[:space:]]*$/!p' || true)
+        if [ -n "$bad_ai" ]; then
+            r3=fail
+            fail 3 "$short" "$subject" "AI-session must have exact value 'true' (got: $bad_ai)"
+        elif ! printf '%s\n' "$trailers" | grep -Eq '^Assisted-by:'; then
+            r3=fail
+            fail 3 "$short" "$subject" "AI-session: true requires an Assisted-by trailer"
+        fi
+    fi
 }
 
 # Verify git is present and new enough for %(trailers:only,unfold).
@@ -88,10 +170,35 @@ if ! awk -v v="$git_version" 'BEGIN {
     ok = (p[1] > 2) || (p[1] == 2 && p[2] >= 32);
     exit(ok ? 0 : 1);
 }'; then
-    printf 'error: git >= 2.32 required (found %s); %%('trailers:only,unfold') unavailable\n' "$git_version" >&2
+    printf 'error: git >= 2.32 required (found %s); %%(trailers:only,unfold) unavailable\n' "$git_version" >&2
     exit 2
 fi
 
+# ---------------------------------------------------------------------------
+# Hook mode — lint a single commit message file for R1–R3.
+# ---------------------------------------------------------------------------
+if [ "$1" = "--hook" ]; then
+    [ $# -eq 2 ] || usage
+    msgfile=$2
+    if [ ! -f "$msgfile" ]; then
+        printf 'error: hook message file "%s" not found\n' "$msgfile" >&2
+        exit 2
+    fi
+    short=''
+    subject=$(sed -n '1p' "$msgfile")
+    trailers=$(git interpret-trailers --parse <"$msgfile")
+    fails=0
+    check_message
+    if [ "$fails" -gt 0 ]; then
+        printf 'commit-msg: %d trailer violation(s)\n' "$fails" >&2
+        exit 1
+    fi
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# CI mode — lint the non-merge commits in <base-sha>..<head-sha>.
+# ---------------------------------------------------------------------------
 [ $# -eq 2 ] || usage
 BASE=$1
 HEAD=$2
@@ -130,89 +237,30 @@ for sha in $(git rev-list --no-merges "$BASE..$HEAD"); do
     short=$(git log -1 --format='%h' "$sha")
     subject=$(git log -1 --format='%s' "$sha")
     trailers=$(git log -1 --format='%(trailers:only,unfold)' "$sha")
-    author_name=$(git log -1 --format='%an' "$sha")
     author_email=$(git log -1 --format='%ae' "$sha")
-    committer_name=$(git log -1 --format='%cn' "$sha")
     committer_email=$(git log -1 --format='%ce' "$sha")
 
-    r1=pass
-    r2=pass
-    r3=pass
+    # R4 — no AI agent as git author or committer. Agent harnesses author
+    # commits under their own identity; trailer checks alone miss that. Only
+    # machine identities fail — a human author/committer whose name happens to
+    # be Claude, Mistral, or Kiro must pass.
     r4=pass
-    r5=pass
-    r6=pass
-
-    # R1 — DCO present (bot exemption skips this rule only).
-    if [ "$BOT_EXEMPT" -eq 1 ]; then
-        case $author_email in
-            *'[bot]@users.noreply.github.com')
-                r1=skip
-                printf '::notice::%s %s: R1 skipped (bot author <%s>)\n' "$short" "$subject" "$author_email"
-                ;;
-        esac
-    fi
-    if [ "$r1" = pass ] && ! printf '%s\n' "$trailers" | grep -Eq "$SOB_RE"; then
-        r1=fail
-        fail 1 "$short" "$subject" 'missing Signed-off-by trailer'
-    fi
-
-    # R2 — no AI agent in certification/authorship trailers.
-    # shellcheck disable=SC2086  # word-splitting the trailer list is intentional
-    for t in $CERT_TRAILERS; do
-        if printf '%s\n' "$trailers" | grep -E "^$t" | grep -Eiq "$AI_DENYLIST"; then
-            r2=fail
-            fail 2 "$short" "$subject" "AI-assistant token in $t trailer"
-            break
-        fi
-    done
-
-    # R3 — Assisted-by format (kernel form) when present.
-    bad_assisted=$(printf '%s\n' "$trailers" | grep '^Assisted-by:' | grep -Ev "$ASSISTED_RE" | head -n 1 || true)
-    if [ -n "$bad_assisted" ]; then
-        r3=fail
-        fail 3 "$short" "$subject" "malformed Assisted-by: $bad_assisted"
-    fi
-
-    # R4 — Fixes format when present.
-    bad_fixes=$(printf '%s\n' "$trailers" | grep '^Fixes:' | grep -Ev "$FIXES_RE" | head -n 1 || true)
-    if [ -n "$bad_fixes" ]; then
+    if printf '%s\n%s\n' "$author_email" "$committer_email" | grep -Eiq "^($AGENT_IDENTITIES)$"; then
         r4=fail
-        fail 4 "$short" "$subject" "malformed Fixes: $bad_fixes"
+        fail 4 "$short" "$subject" \
+            'git author/committer is an AI agent identity — before merge, take authorship (git commit --amend --reset-author or an interactive rebase) and retain the AI attribution via an Assisted-by trailer'
     fi
 
-    # R5 — AI-session promotion. This implements kernel bug-fix procedure
-    # step 6 — Assisted-by is mandatory for AI find-and-fix sessions — using
-    # an explicit trailer as the observable signal, since session provenance
-    # is otherwise invisible to a linter. Configure your agents to emit it.
-    # "AI-session" with any value other than exactly "true" is a hard fail
-    # (typo guard).
-    ai_session=$(printf '%s\n' "$trailers" | grep '^AI-session:' || true)
-    if [ -n "$ai_session" ]; then
-        bad_ai=$(printf '%s\n' "$ai_session" | sed -n '/^AI-session:[[:space:]]*true[[:space:]]*$/!p' || true)
-        if [ -n "$bad_ai" ]; then
-            r5=fail
-            fail 5 "$short" "$subject" "AI-session must have exact value 'true' (got: $bad_ai)"
-        elif ! printf '%s\n' "$trailers" | grep -Eq '^Assisted-by:'; then
-            r5=fail
-            fail 5 "$short" "$subject" "AI-session: true requires an Assisted-by trailer"
-        fi
-    fi
-
-    # R6 — no AI agent as git author or committer. Agent harnesses author
-    # commits under their own identity; trailer checks alone miss that.
-    if printf '%s\n%s\n' "$author_name <$author_email>" "$committer_name <$committer_email>" | grep -Eiq "$AI_DENYLIST"; then
-        r6=fail
-        fail 6 "$short" "$subject" \
-            'git author/committer matches AI-assistant denylist — before merge, take authorship (git commit --amend --reset-author or interactive rebase), add your own Signed-off-by, and retain the AI attribution via a kernel-form Assisted-by trailer'
-    fi
+    # R1–R3 — shared message-level rules.
+    check_message
 
     linted=$((linted + 1))
     subject_safe=$(printf '%s' "$subject" | sed 's/|/\\|/g')
-    rows="$rows| $short | $subject_safe | $r1 | $r2 | $r3 | $r4 | $r5 | $r6 |$nl"
+    rows="$rows| $short | $subject_safe | $r1 | $r2 | $r3 | $r4 |$nl"
 done
 
 # Per-commit × per-rule summary table.
-summary="### commit-trailers${nl}${nl}| commit | subject | R1 (DCO) | R2 (no AI cert) | R3 (Assisted-by) | R4 (Fixes) | R5 (AI-session) | R6 (no AI author) |${nl}| --- | --- | --- | --- | --- | --- | --- | --- |${nl}$rows"
+summary="### commit-trailers${nl}${nl}| commit | subject | R1 (no AI co-author) | R2 (Assisted-by) | R3 (AI-session) | R4 (no AI author) |${nl}| --- | --- | --- | --- | --- | --- |${nl}$rows"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     printf '%s\n' "$summary" >>"$GITHUB_STEP_SUMMARY"
