@@ -301,6 +301,34 @@ fn training_through_the_abi_records_the_pinned_counts() {
 }
 
 #[test]
+fn context_reopens_same_user_dir_after_registry_drain() {
+    let user_dir = TempUserDir::new("reopen-after-drain");
+    let (first_context, first_instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(first_instance, cstr("nihao").as_ptr()),
+        5
+    );
+    assert!(pinyin_remember_user_input(
+        first_instance,
+        cstr("你好").as_ptr(),
+        -1
+    ));
+    crate::instance::pinyin_free_instance(first_instance);
+    crate::context::pinyin_fini(first_context);
+
+    // The drained registry must let a second context on the same dir create a
+    // fresh redb handle; the first context's committed phrase is visible.
+    let (second_context, second_instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let store = store_of(second_instance);
+    assert_eq!(
+        store.token_for_phrase("你好").unwrap(),
+        Some(FIRST_USER_TOKEN)
+    );
+    crate::instance::pinyin_free_instance(second_instance);
+    crate::context::pinyin_fini(second_context);
+}
+
+#[test]
 fn training_entry_points_refuse_without_a_user_store() {
     let empty = cstr("");
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));

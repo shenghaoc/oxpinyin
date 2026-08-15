@@ -224,8 +224,11 @@ impl fmt::Debug for UserStore {
 /// `pinyin_init`) would otherwise fail — and the C ABI's degrade-to-`None`
 /// would then silently disable all learning for that context. Instead the
 /// second open hands back a clone of the already-open handle, so every context
-/// on one user dir shares the same counts and the same §4 dirty flag. Entries
-/// are `Weak`, so a path drops out once its last [`UserStore`] is gone.
+/// on one user dir shares the same counts and the same §4 dirty flag.
+///
+/// Entries are `Weak`, and C ABI handle destructors call
+/// [`UserStore::drain_registry`]; that drops dead entries and shrinks the map
+/// so a `dlclose`d cdylib leaves no process-lifetime heap behind.
 type StoreRegistry = HashMap<PathBuf, (Weak<Mutex<Database>>, Weak<AtomicBool>)>;
 static OPEN_STORES: OnceLock<Mutex<StoreRegistry>> = OnceLock::new();
 
@@ -322,6 +325,26 @@ impl UserStore {
             (Arc::downgrade(&store.db), Arc::downgrade(&store.dirty)),
         );
         Ok(store)
+    }
+
+    /// Drop dead registry entries and release the map's backing allocation
+    /// when no live store remains.
+    ///
+    /// This is the drain half of the shared-handle registry. C ABI handle
+    /// destructors call it after dropping their [`UserStore`] clone; entries
+    /// whose [`Weak`] handles have no remaining strong count are removed, and
+    /// an empty map is shrunk so the `dlopen`ed cdylib leaves no heap behind
+    /// at `dlclose` (the W7-T1 bisection valgrind record). Live stores owned
+    /// by other contexts are retained.
+    pub fn drain_registry() {
+        let Some(registry) = OPEN_STORES.get() else {
+            return;
+        };
+        let mut reg = registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        reg.retain(|_, (db, dirty)| db.strong_count() > 0 || dirty.strong_count() > 0);
+        reg.shrink_to_fit();
     }
 
     /// Stored bigram count for `(prev, cur)`; `0` if unrecorded.
@@ -914,6 +937,44 @@ mod tests {
 
         drop(first);
         drop(second);
+        UserStore::drain_registry();
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn drain_registry_removes_closed_paths_and_allows_reopen() {
+        let path = temp_path("drain-reopen");
+        let key = registry_key(&path);
+
+        let first = UserStore::open(&path).unwrap();
+        let second = UserStore::open(&path).unwrap();
+        {
+            let registry = OPEN_STORES.get().expect("registry initialized");
+            let reg = registry.lock().unwrap();
+            assert!(reg.contains_key(&key));
+        }
+
+        // One live clone keeps the shared entry; draining after both are
+        // gone removes it, then the same path can open a fresh handle.
+        drop(first);
+        UserStore::drain_registry();
+        {
+            let registry = OPEN_STORES.get().expect("registry initialized");
+            let reg = registry.lock().unwrap();
+            assert!(reg.contains_key(&key), "second clone is still live");
+        }
+        drop(second);
+        UserStore::drain_registry();
+        {
+            let registry = OPEN_STORES.get().expect("registry initialized");
+            let reg = registry.lock().unwrap();
+            assert!(!reg.contains_key(&key));
+        }
+
+        let reopened = UserStore::open(&path).unwrap();
+        assert_eq!(reopened.bigram_count(1, 100).unwrap(), 0);
+        drop(reopened);
+        UserStore::drain_registry();
         let _ = std::fs::remove_file(&path);
     }
 
