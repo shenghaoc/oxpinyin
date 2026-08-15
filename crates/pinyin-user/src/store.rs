@@ -7,11 +7,13 @@
 //! `u64` integers.
 //!
 //! T1: count schema and seed-driven update. T2: user phrase-index tables and
-//! `USER_DICTIONARY` token allocation. The save cycle (T5), Session/capi
-//! training wiring (T3) and the decode-time merge (T4) are out of scope.
+//! `USER_DICTIONARY` token allocation. T3 wires the store into the engine
+//! session and the C ABI (in `pinyin-engine` / `pinyin-capi`); the save cycle
+//! (T5) and the decode-time merge (T4) are out of scope.
 
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
 
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
@@ -148,8 +150,21 @@ impl From<redb::StorageError> for UserStoreError {
 }
 
 /// A redb-backed store of user-learning counts.
+///
+/// `Clone` shares the underlying database handle (cheap): the C ABI context
+/// keeps the canonical store and hands each instance a clone, exactly like
+/// the dictionary and language model handles. `redb`'s `Database` handle is
+/// not itself `Clone` (redb 4.1.0), so it lives behind an `Arc`.
 pub struct UserStore {
-    db: Database,
+    db: Arc<Database>,
+}
+
+impl Clone for UserStore {
+    fn clone(&self) -> Self {
+        Self {
+            db: Arc::clone(&self.db),
+        }
+    }
 }
 
 impl fmt::Debug for UserStore {
@@ -184,7 +199,7 @@ impl UserStore {
             }
         }
         txn.commit()?;
-        Ok(Self { db })
+        Ok(Self { db: Arc::new(db) })
     }
 
     /// Stored bigram count for `(prev, cur)`; `0` if unrecorded.

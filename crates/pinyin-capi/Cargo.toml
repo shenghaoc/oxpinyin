@@ -22,3 +22,4 @@ all = { level = "deny", priority = -1 }
 pinyin-core.workspace = true
 pinyin-data = { path = "../pinyin-data" }
 pinyin-engine.workspace = true
+pinyin-user.workspace = true

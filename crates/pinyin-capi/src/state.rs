@@ -12,8 +12,16 @@ use std::sync::Arc;
 use pinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
 use pinyin_data::{BigramLanguageModel, DictError, LmError, SystemDictionary};
 use pinyin_engine::{CandidateKind, Config, Session, StoragePaths};
+use pinyin_user::UserStore;
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
+
+/// File name of the redb user store under the user data directory.
+///
+/// T3 opens it (the training entry points need somewhere to write); the
+/// save-cycle semantics (atomic rename, `m_modified` no-op) are W6-T5, which
+/// owns the on-disk contract of this file.
+pub(crate) const USER_STORE_FILE: &str = "user_store.redb";
 
 // ── Shared backends ─────────────────────────────────────────────────────
 //
@@ -81,6 +89,13 @@ pub(crate) struct CapiContext {
     pub(crate) config: Config,
     dict: SharedDict,
     lm: SharedLm,
+    /// The user-learning store, shared by value-clone with every instance.
+    ///
+    /// `None` when the caller passed an empty user directory — the
+    /// libpinyin situation where `pinyin_train` refuses — or when the store
+    /// file cannot be opened (a missing/inaccessible user dir must not make
+    /// `pinyin_init` fail; training then degrades to `false`, upstream-style).
+    user: Option<UserStore>,
 }
 
 impl CapiContext {
@@ -103,11 +118,18 @@ impl CapiContext {
         lm.set_lambda_from_table_conf(&sys.join("table.conf"));
         lm.set_unigrams_from_dict(&dict);
 
+        let user = if user_dir.is_empty() {
+            None
+        } else {
+            UserStore::open(&Path::new(user_dir).join(USER_STORE_FILE)).ok()
+        };
+
         Some(Self {
             paths,
             config: Config::default(),
             dict: SharedDict(Arc::new(dict)),
             lm: SharedLm(Arc::new(lm)),
+            user,
         })
     }
 
@@ -122,6 +144,7 @@ impl CapiContext {
         Some(CapiInstance {
             session,
             candidates: Vec::new(),
+            user: self.user.clone(),
         })
     }
 }
@@ -137,6 +160,12 @@ pub(crate) struct CapiCandidate {
     /// Bytes of raw input this candidate consumed, snapshotted at guess time
     /// so `pinyin_choose_candidate` can report the new cursor position.
     pub(crate) consumed_bytes: usize,
+    /// The candidate's scoring token, snapshotted so the training entry
+    /// points (`pinyin_train`'s observation, predicted-candidate training,
+    /// `pinyin_is_user_candidate`) can resolve it without re-decoding.
+    /// `None` for sentence-level and fallback candidates, which carry no
+    /// token and are not trained (§2: only pinned phrases train).
+    pub(crate) token: Option<PhraseToken>,
 }
 
 /// State behind `pinyin_instance_t *`.
@@ -145,6 +174,8 @@ pub(crate) struct CapiInstance {
     /// Snapshotted candidates, rebuilt by `pinyin_guess_candidates`.
     /// `lookup_candidate_t *` pointers borrow into this vec.
     pub(crate) candidates: Vec<CapiCandidate>,
+    /// Clone of the context's user store. `None` under an empty user dir.
+    pub(crate) user: Option<UserStore>,
 }
 
 // ── Pointer casts ───────────────────────────────────────────────────────

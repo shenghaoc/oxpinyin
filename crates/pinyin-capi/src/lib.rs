@@ -32,3 +32,6 @@ mod parse;
 mod sentence;
 mod text;
 mod user_data;
+
+#[cfg(test)]
+mod e2e_tests;
