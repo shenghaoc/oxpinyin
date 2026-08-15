@@ -14,9 +14,11 @@ pub mod dict;
 pub mod interp;
 pub mod lm;
 pub mod table;
+pub mod table_conf;
 
 pub use content::{ContentTable, LoadError, Record, TokenPair};
 pub use dict::{DictError, SystemDictionary};
 pub use interp::{InterpolationError, UnigramTable, parse_interpolation2};
 pub use lm::{BigramLanguageModel, LmError};
 pub use table::{LookupTable, TableError};
+pub use table_conf::{Lambda, PINNED_LAMBDA, parse_table_conf_lambda, read_table_conf_lambda};

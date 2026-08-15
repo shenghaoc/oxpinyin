@@ -27,10 +27,14 @@ use crate::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableK
 
 /// Weight of the bigram term in the interpolated estimate, as a fraction.
 ///
-/// One half: an authored, deliberately neutral value. The interpolation
-/// constants that matter for parity are frozen by
-/// `docs/findings/scoring-spec.md` and cross-checked against real tables in
-/// W3+W4 integration; nothing here claims to be one of them.
+/// One half: an authored, deliberately neutral value for this **portable test
+/// double**, whose data is captured/authored, not the real model. The
+/// shipping decoder (`pinyin_data::lm`) instead reads λ from the model's
+/// `table.conf` (`0.312699` for the pinned model, `data-formats.md` §3); the
+/// fixture keeps a neutral λ because its authored mini-bigram is not the
+/// pinned model's distribution, so tracking the real λ here would buy no
+/// parity and only re-calibrate the fixture pins. See
+/// `docs/findings/scoring-spec.md`.
 const LAMBDA_NUMERATOR: u128 = 1;
 /// Denominator of [`LAMBDA_NUMERATOR`].
 const LAMBDA_DENOMINATOR: u128 = 2;

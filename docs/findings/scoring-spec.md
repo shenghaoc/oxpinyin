@@ -1,6 +1,8 @@
 # Scoring SPEC
 
 Date: 2026-08-09 · Status: **frozen for W4-T3, constants provisional**
+(amended 2026-08-15: λ is now read from the model config, no longer provisional
+`1/2`; see the Architect correction log at the end of this file)
 
 > **The constants in this SPEC are provisional.** The functional form, the
 > cost scale, the sign convention, the tie-break and the totality rules are
@@ -60,12 +62,11 @@ Evaluated as **one exact integer ratio** — numerator and denominator combined
 before the logarithm — so no intermediate rounding enters and the result is
 identical on every platform.
 
-| Constant | Provisional value | Status |
+| Constant | Value | Status |
 |---|---|---|
-| λ | 1/2 | authored, deliberately neutral |
+| λ | `table.conf` (`0.312699` pinned) | superseded the provisional `1/2` — see the correction log |
 
-A neutral half is chosen precisely so it cannot be mistaken for a recovered
-upstream value. The `LanguageModel` implementation owns this term; the seam in
+The `LanguageModel` implementation owns this term; the seam in
 `core-trait-seam.md` requires it to combine the caller's `edge_cost`
 deterministically, which it does.
 
@@ -167,3 +168,19 @@ all 19.
 The test fails on any disagreement among comparable records, so a weight
 change that breaks an observed ordering breaks the build rather than quietly
 moving a number.
+
+## Architect correction log
+
+**2026-08-15 — λ read from config (was provisional `1/2`).** The λ row above
+listed a provisional `1/2` ("authored, deliberately neutral", per the freeze
+banner's "not claimed to be upstream's"). The decoder now reads λ from the
+model's `table.conf` rather than hardcoding it; the pinned value is `0.312699`,
+recorded in `data-formats.md` §3 (verified against the oracle's installed
+copy). It is held as the exact decimal rational the file denotes, reduced to
+lowest terms (`312699 / 1_000_000`), preserving the "one exact integer ratio"
+evaluation above (a value `> 1` is rejected and `model_cost` uses checked
+arithmetic, so a malformed config floors at `UNKNOWN_COST`, never panics).
+Ranking impact is path-specific — the real-unigram three-key order is
+λ-insensitive (the parity pins hold), while the export-ABI `model_cost` path is
+not; see `scoring-constant-sweep.md`. The functional form, cost scale, sign
+convention, tie-break and totality rules in this SPEC are unchanged.

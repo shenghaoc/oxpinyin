@@ -97,6 +97,10 @@ impl CapiContext {
         )
         .ok()?;
         let mut lm = BigramLanguageModel::open(&sys.join("bigram.redb")).ok()?;
+        // Read λ from the install's table.conf when present (data-formats.md
+        // §3); a real install ships one. Absent (no table.conf in the dir),
+        // the pinned 0.312699 default stands.
+        lm.set_lambda_from_table_conf(&sys.join("table.conf"));
         lm.set_unigrams_from_dict(&dict);
 
         Some(Self {
