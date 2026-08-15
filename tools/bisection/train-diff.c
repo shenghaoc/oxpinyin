@@ -75,6 +75,7 @@ typedef int (*fn_choose)(pinyin_instance_t *, size_t, lookup_candidate_t *);
 typedef bool (*fn_train)(pinyin_instance_t *, uint8_t);
 typedef bool (*fn_reset)(pinyin_instance_t *);
 typedef bool (*fn_remember)(pinyin_instance_t *, const char *, gint);
+typedef bool (*fn_mask_out)(pinyin_context_t *, uint32_t, uint32_t);
 typedef export_iterator_t *(*fn_begin_phrases)(pinyin_context_t *, guint);
 typedef bool (*fn_has_next)(export_iterator_t *);
 typedef bool (*fn_get_next)(export_iterator_t *, gchar **, gchar **, gint *);
@@ -99,6 +100,7 @@ struct syms {
     fn_train train;
     fn_reset reset;
     fn_remember remember;
+    fn_mask_out mask_out;
     fn_begin_phrases begin_phrases;
     fn_has_next has_next;
     fn_get_next get_next;
@@ -133,6 +135,7 @@ static void resolve_all(void *handle, struct syms *s) {
     s->train = (fn_train)load("pinyin_train", handle);
     s->reset = (fn_reset)load("pinyin_reset", handle);
     s->remember = (fn_remember)load("pinyin_remember_user_input", handle);
+    s->mask_out = (fn_mask_out)load("pinyin_mask_out", handle);
     s->begin_phrases = (fn_begin_phrases)load("pinyin_begin_get_phrases", handle);
     s->has_next = (fn_has_next)load("pinyin_iterator_has_next_phrase", handle);
     s->get_next = (fn_get_next)load("pinyin_iterator_get_next_phrase", handle);
@@ -323,6 +326,29 @@ int main(int argc, char **argv) {
     if (!s.remember(inst, "世界", 7)) {
         fprintf(stderr, "remember 世界 7 failed\n");
         return 1;
+    }
+
+    /* Phase 2.5 — masking (T6): TRAINDIFF_MASK selects the frontend's
+     * "user" clear (library mask against USER_DICTIONARY) or its "all"
+     * clear (0x0 against 0x0). One mask per process, before the single
+     * export. */
+    if (getenv("TRAINDIFF_MASK")) {
+        uint32_t mask = 0;
+        uint32_t value = 0;
+        if (strcmp(getenv("TRAINDIFF_MASK"), "user") == 0) {
+            mask = 0x0F000000u;
+            value = 0x07000000u;
+        } else if (strcmp(getenv("TRAINDIFF_MASK"), "all") == 0) {
+            mask = 0x0u;
+            value = 0x0u;
+        } else {
+            fprintf(stderr, "TRAINDIFF_MASK must be user or all\n");
+            return 1;
+        }
+        if (!s.mask_out(ctx, mask, value)) {
+            fprintf(stderr, "pinyin_mask_out failed\n");
+            return 1;
+        }
     }
 
     /* Phase 3 — the full triple sets, one export per context. */

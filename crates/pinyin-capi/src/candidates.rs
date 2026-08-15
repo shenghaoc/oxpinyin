@@ -220,7 +220,14 @@ pub extern "C" fn pinyin_is_user_candidate(
 ///                                   lookup_candidate_t * candidate);
 /// ```
 ///
-/// Provisional: always returns false (no user dictionary yet).
+/// The §3.4 removal: the candidate's token must live in the user
+/// dictionary (upstream asserts it; pinyin-rs reports `false` instead of
+/// panicking), then the phrase, its pronunciations, its bigram rows and
+/// its unigram delta are deleted. Does **not** arm `m_modified`, matching
+/// upstream's set-sites. Note: on the current ABI no user token ever
+/// surfaces in a candidate list (candidate collection reads the system
+/// dictionary only), so this resolves `false` through the ABI until user
+/// phrases join the candidate surface.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_remove_user_candidate(
     instance: *mut PinyinInstance,
@@ -229,7 +236,29 @@ pub extern "C" fn pinyin_remove_user_candidate(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    false
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_mut(instance) };
+        // Identify the candidate by pointer equality over the snapshot.
+        let Some(index) = inst
+            .candidates
+            .iter()
+            .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
+        else {
+            return false;
+        };
+        let Some(token) = inst.candidates[index].token else {
+            return false;
+        };
+        if !is_user_token(token.value()) {
+            return false;
+        }
+        let Some(user) = inst.user.as_mut() else {
+            return false;
+        };
+        user.remove_user_phrase(token.value()).unwrap_or(false)
+    })
 }
 
 /// Choose a candidate at an offset, returning the new cursor position.

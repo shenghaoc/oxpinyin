@@ -99,7 +99,38 @@ for rounds in 1 2 3 4 5 6 7 8; do
     echo ""
 done
 
+# ── Mask phases (T6): the frontend's "user" and "all" clears at full
+# training, one mask + one export per fresh context. ─────────────────────
+
+for mask in user all; do
+    echo "--- mask=$mask (rounds=8) ---"
+    CAPI_LOG="$(mktemp)"
+    ORACLE_LOG="$(mktemp)"
+    if ! TRAINDIFF_ROUNDS=8 TRAINDIFF_MASK=$mask ./train-diff "$CAPI_SO" \
+        "$REPO_ROOT/fixtures/w3" > "$CAPI_LOG" 2>/dev/null; then
+        echo "FAIL: train-diff crashed against pinyin-capi (mask=$mask)"
+        cat "$CAPI_LOG"
+        exit 1
+    fi
+    if ! TRAINDIFF_ROUNDS=8 TRAINDIFF_MASK=$mask ./train-diff "$ORACLE_SO" "$ORACLE_DATA" \
+        > "$ORACLE_LOG" 2>/dev/null; then
+        echo "FAIL: train-diff crashed against the oracle (mask=$mask)"
+        cat "$ORACLE_LOG"
+        exit 1
+    fi
+    if ! diff -u <(sort "$ORACLE_LOG") <(sort "$CAPI_LOG") > /dev/null; then
+        echo "DIVERGENCE at mask=$mask: exported triples differ"
+        diff -u <(sort "$ORACLE_LOG") <(sort "$CAPI_LOG") || true
+        fail=1
+    else
+        echo "mask=$mask: IDENTICAL"
+        sort "$CAPI_LOG" | grep -E '^(bigram|phrase):' || echo "(empty export)"
+    fi
+    rm -f "$CAPI_LOG" "$ORACLE_LOG"
+    echo ""
+done
+
 if [ "$fail" -ne 0 ]; then
     exit 2
 fi
-echo "train-diff: PASS — all round counts identical"
+echo "train-diff: PASS — all round counts and mask phases identical"

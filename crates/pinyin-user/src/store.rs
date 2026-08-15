@@ -593,6 +593,203 @@ impl UserStore {
         self.dirty.store(false, Ordering::Relaxed);
         Ok(true)
     }
+
+    /// `pinyin_mask_out`'s store side: delete every entry whose token
+    /// matches `(token & mask) == value` — the exact predicate upstream
+    /// applies to the bigram (`Bigram::mask_out`, `ngram_kyotodb.cpp:199`:
+    /// matching index tokens drop the whole gram, matching items are
+    /// removed and empty grams deleted), the phrase index
+    /// (`SubPhraseIndex::mask_out`, `phrase_index.cpp:689`), and the user
+    /// phrase/pinyin tables (`facade_phrase_table3.h:203`).
+    ///
+    /// One write transaction. The allocation cursor is untouched — a
+    /// monotonic counter, where upstream's `range_end` can shrink and reuse
+    /// ids; invisible in the exported value surface. Does **not** arm
+    /// `m_modified`: upstream's set-sites are `pinyin_train` and
+    /// `pinyin_end_add_phrases` only (`pinyin.cpp:2679`, `:658`), and the
+    /// deletions are committed durably regardless.
+    pub fn mask_out(&mut self, mask: Token, value: Token) -> Result<(), UserStoreError> {
+        let db = self.database();
+        let txn = db.begin_write()?;
+        {
+            // Bigram: drop rows whose predecessor or successor matches, then
+            // rewrite every predecessor's total from the survivors.
+            let mut bigram = txn.open_table(BIGRAM)?;
+            let mut totals = txn.open_table(BIGRAM_TOTAL)?;
+            let mut survivors: std::collections::BTreeMap<Token, u64> =
+                std::collections::BTreeMap::new();
+            let mut rows: Vec<((Token, Token), u64)> = Vec::new();
+            for item in bigram.iter()? {
+                let (key, count) = item?;
+                let (prev, cur) = key.value();
+                rows.push(((prev, cur), count.value()));
+            }
+            for ((prev, cur), count) in rows {
+                if (prev & mask) == value || (cur & mask) == value {
+                    bigram.remove((prev, cur))?;
+                } else {
+                    *survivors.entry(prev).or_default() = survivors
+                        .get(&prev)
+                        .copied()
+                        .unwrap_or(0)
+                        .saturating_add(count);
+                }
+            }
+            let mut old_totals: Vec<Token> = Vec::new();
+            for item in totals.iter()? {
+                let (prev, _) = item?;
+                old_totals.push(prev.value());
+            }
+            for prev in old_totals {
+                totals.remove(prev)?;
+            }
+            for (prev, total) in survivors {
+                if total > 0 {
+                    totals.insert(prev, total)?;
+                }
+            }
+
+            // Unigram deltas and their running total.
+            let mut unigram = txn.open_table(UNIGRAM)?;
+            let mut uni_total = txn.open_table(UNIGRAM_TOTAL)?;
+            let mut removed: Vec<Token> = Vec::new();
+            let mut kept_sum = 0_u64;
+            for item in unigram.iter()? {
+                let (token, delta) = item?;
+                let token = token.value();
+                if (token & mask) == value {
+                    removed.push(token);
+                } else {
+                    kept_sum = kept_sum.saturating_add(delta.value());
+                }
+            }
+            for token in removed {
+                unigram.remove(token)?;
+            }
+            uni_total.insert(UNIGRAM_TOTAL_KEY, kept_sum)?;
+
+            // User phrases: text, reverse lookup, and pronunciations.
+            let mut phrases = txn.open_table(PHRASE)?;
+            let mut by_text = txn.open_table(PHRASE_BY_TEXT)?;
+            let mut prons = txn.open_table(PRONUNCIATION)?;
+            let mut matched: Vec<(Token, String)> = Vec::new();
+            for item in phrases.iter()? {
+                let (token, text) = item?;
+                let token = token.value();
+                if (token & mask) == value {
+                    matched.push((token, text.value().to_owned()));
+                }
+            }
+            for (token, text) in matched {
+                phrases.remove(token)?;
+                by_text.remove(text.as_str())?;
+                remove_pronunciations(&mut prons, token)?;
+            }
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// `pinyin_remove_user_candidate`'s store side (§3.4): fully removes a
+    /// user phrase — the phrase index entry, its pronunciations, its bigram
+    /// rows (as predecessor and successor), and its unigram delta.
+    ///
+    /// `Ok(false)` when the store does not own `token` as a user phrase
+    /// (upstream asserts `USER_DICTIONARY` ownership; pinyin-rs reports it).
+    /// Does **not** arm `m_modified`, like upstream.
+    pub fn remove_user_phrase(&mut self, token: Token) -> Result<bool, UserStoreError> {
+        let db = self.database();
+        let txn = db.begin_write()?;
+        let exists = {
+            let phrases = txn.open_table(PHRASE)?;
+            phrases.get(token)?.is_some()
+        };
+        if !exists {
+            return Ok(false);
+        }
+        {
+            // The full-token predicate on every table that names `token`,
+            // plus the phrase rows themselves.
+            let mut phrases = txn.open_table(PHRASE)?;
+            let text = phrases.get(token)?.map(|g| g.value().to_owned());
+            phrases.remove(token)?;
+            let mut by_text = txn.open_table(PHRASE_BY_TEXT)?;
+            if let Some(text) = text {
+                by_text.remove(text.as_str())?;
+            }
+            let mut prons = txn.open_table(PRONUNCIATION)?;
+            remove_pronunciations(&mut prons, token)?;
+
+            let mut bigram = txn.open_table(BIGRAM)?;
+            let mut totals = txn.open_table(BIGRAM_TOTAL)?;
+            let mut survivors: std::collections::BTreeMap<Token, u64> =
+                std::collections::BTreeMap::new();
+            let mut rows: Vec<((Token, Token), u64)> = Vec::new();
+            for item in bigram.iter()? {
+                let (key, count) = item?;
+                let (prev, cur) = key.value();
+                rows.push(((prev, cur), count.value()));
+            }
+            for ((prev, cur), count) in rows {
+                if prev == token || cur == token {
+                    bigram.remove((prev, cur))?;
+                } else {
+                    *survivors.entry(prev).or_default() = survivors
+                        .get(&prev)
+                        .copied()
+                        .unwrap_or(0)
+                        .saturating_add(count);
+                }
+            }
+            let mut old_totals: Vec<Token> = Vec::new();
+            for item in totals.iter()? {
+                let (prev, _) = item?;
+                old_totals.push(prev.value());
+            }
+            for prev in old_totals {
+                totals.remove(prev)?;
+            }
+            for (prev, total) in survivors {
+                if total > 0 {
+                    totals.insert(prev, total)?;
+                }
+            }
+
+            let mut unigram = txn.open_table(UNIGRAM)?;
+            let mut uni_total = txn.open_table(UNIGRAM_TOTAL)?;
+            let mut kept_sum = 0_u64;
+            for item in unigram.iter()? {
+                let (candidate, delta) = item?;
+                let candidate = candidate.value();
+                if candidate != token {
+                    kept_sum = kept_sum.saturating_add(delta.value());
+                }
+            }
+            unigram.remove(token)?;
+            uni_total.insert(UNIGRAM_TOTAL_KEY, kept_sum)?;
+        }
+        txn.commit()?;
+        Ok(true)
+    }
+}
+
+/// Removes every pronunciation row of `token`.
+fn remove_pronunciations(
+    prons: &mut redb::Table<(Token, &[u8]), u64>,
+    token: Token,
+) -> Result<(), UserStoreError> {
+    let start: (Token, &[u8]) = (token, &[]);
+    let end: (Token, &[u8]) = (token + 1, &[]);
+    let mut keys: Vec<Vec<u8>> = Vec::new();
+    for item in prons.range(start..end)? {
+        let (key, _) = item?;
+        let (_, key_bytes) = key.value();
+        keys.push(key_bytes.to_vec());
+    }
+    for key in keys {
+        prons.remove((token, key.as_slice()))?;
+    }
+    Ok(())
 }
 
 fn bump_unigram_total(txn: &redb::WriteTransaction, delta: u64) -> Result<(), UserStoreError> {
@@ -634,6 +831,7 @@ fn collect_pronunciations(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{PHRASE_INDEX_LIBRARY_MASK, USER_DICTIONARY, phrase_index_make_token};
 
     fn temp_path(tag: &str) -> std::path::PathBuf {
         let path =
@@ -1044,6 +1242,125 @@ mod tests {
         // Raw rows: sentence_start rows included (the §9 filters live at the
         // C ABI layer, mirroring upstream's iterator).
         assert_eq!(rows, vec![(SENTENCE_START, 10, 69), (10, 20, 207)]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A mixed store: system and user tokens across every table, so the
+    /// mask predicates can be checked per class of entry.
+    fn mixed_store(path: &std::path::Path) -> (UserStore, Token) {
+        const SYSTEM_A: Token = 0x0100_0001;
+        const SYSTEM_B: Token = 0x0200_0001;
+        let mut store = UserStore::open(path).unwrap();
+        let user_a = store.add_phrase("你好", &[10, 20], None).unwrap();
+        let user_b = store.add_phrase("世界", &[30, 40], None).unwrap();
+        // bigram: system→system, system→user, user→system, user→user.
+        store.observe_selection(SYSTEM_A, SYSTEM_B).unwrap();
+        store.observe_selection(SYSTEM_A, user_a).unwrap();
+        store.observe_selection(user_a, SYSTEM_B).unwrap();
+        store.observe_selection(user_a, user_b).unwrap();
+        (store, user_a)
+    }
+
+    #[test]
+    fn mask_out_user_clear_deletes_user_entries_and_keeps_system() {
+        let path = temp_path("mask-user");
+        let (mut store, user_a) = mixed_store(&path);
+        // The setup training armed m_modified; a save consumes it, so the
+        // mask below runs on a clean flag.
+        assert!(store.is_modified());
+        assert!(store.save().unwrap());
+
+        // The frontend's "user" clear: PHRASE_INDEX_LIBRARY_MASK against
+        // MAKE_TOKEN(USER_DICTIONARY, 0).
+        store
+            .mask_out(
+                PHRASE_INDEX_LIBRARY_MASK,
+                phrase_index_make_token(USER_DICTIONARY, 0),
+            )
+            .unwrap();
+
+        // User phrases are gone; the system-only bigram survives with its
+        // total recomputed.
+        assert!(store.phrase(user_a).unwrap().is_none());
+        assert!(store.token_for_phrase("你好").unwrap().is_none());
+        assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
+        assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 69);
+        assert_eq!(store.bigram_count(user_a, 0x0200_0001).unwrap(), 0);
+        assert_eq!(store.bigram_count(0x0100_0001, user_a).unwrap(), 0);
+        assert_eq!(store.bigram_count(user_a, user_a + 1).unwrap(), 0);
+        // The user tokens' unigram deltas are gone; the system token's
+        // deltas (two observations of 0x0200_0001) survive; the running
+        // total is recomputed.
+        assert_eq!(store.unigram_delta(0x0200_0001).unwrap(), 966);
+        assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
+        assert_eq!(store.unigram_total().unwrap(), 966);
+        // The allocation cursor is monotonic — never rolled back.
+        assert_eq!(store.next_user_token().unwrap(), user_a + 2);
+        // Upstream set-sites: masking does not arm m_modified — the flag
+        // stays clear, and a save is the §4 no-op.
+        assert!(!store.is_modified());
+        assert!(!store.save().unwrap());
+
+        // The frontend's "all" clear: mask 0x0 against 0x0 removes what
+        // remains.
+        store.mask_out(0x0, 0x0).unwrap();
+        assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 0);
+        assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 0);
+        assert_eq!(store.unigram_total().unwrap(), 0);
+        assert!(!store.is_modified());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn remove_user_phrase_deletes_everywhere_and_rejects_others() {
+        let path = temp_path("remove");
+        let (mut store, user_a) = mixed_store(&path);
+        // Consume the setup training's m_modified so the removal runs on a
+        // clean flag.
+        assert!(store.save().unwrap());
+
+        assert!(store.remove_user_phrase(user_a).unwrap());
+        assert!(store.phrase(user_a).unwrap().is_none());
+        assert!(store.token_for_phrase("你好").unwrap().is_none());
+        // Bigram rows naming the phrase as predecessor or successor are
+        // gone, with totals recomputed; unrelated rows survive.
+        assert_eq!(store.bigram_count(user_a, 0x0200_0001).unwrap(), 0);
+        assert_eq!(store.bigram_count(0x0100_0001, user_a).unwrap(), 0);
+        assert_eq!(store.bigram_count(user_a, user_a + 1).unwrap(), 0);
+        assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
+        assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 69);
+        assert_eq!(store.bigram_total(user_a).unwrap(), 0);
+        // Unigram delta removed, total recomputed.
+        assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
+        // SYSTEM_B's 966 plus 世界's seeding 15 and its trained 483.
+        assert_eq!(store.unigram_total().unwrap(), 966 + 498);
+        // Not armed, and unknown/system tokens report false.
+        assert!(!store.is_modified());
+        assert!(!store.remove_user_phrase(user_a).unwrap());
+        assert!(!store.remove_user_phrase(0x0100_0001).unwrap());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn mask_and_remove_survive_a_reopen() {
+        let path = temp_path("mask-rt");
+        let (mut store, user_a) = mixed_store(&path);
+        store
+            .mask_out(
+                PHRASE_INDEX_LIBRARY_MASK,
+                phrase_index_make_token(USER_DICTIONARY, 0),
+            )
+            .unwrap();
+        let other = store.add_phrase("中国", &[50, 60], None).unwrap();
+        store.remove_user_phrase(other).unwrap();
+        drop(store);
+
+        let store = UserStore::open(&path).unwrap();
+        assert!(store.token_for_phrase("你好").unwrap().is_none());
+        assert!(store.token_for_phrase("中国").unwrap().is_none());
+        assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
+        assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
+        assert_eq!(store.unigram_total().unwrap(), 966);
         let _ = std::fs::remove_file(&path);
     }
 }

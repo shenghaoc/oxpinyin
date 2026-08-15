@@ -24,8 +24,9 @@ use pinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, UserStore};
 
 use crate::candidates::{
     pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_get_candidate,
-    pinyin_is_user_candidate, pinyin_train,
+    pinyin_is_user_candidate, pinyin_remove_user_candidate, pinyin_train,
 };
+use crate::config::pinyin_mask_out;
 use crate::context::{pinyin_init, pinyin_save};
 use crate::instance::{pinyin_alloc_instance, pinyin_reset};
 use crate::parse::pinyin_parse_more_full_pinyins;
@@ -324,9 +325,72 @@ fn training_entry_points_refuse_without_a_user_store() {
         cstr("你好").as_ptr(),
         -1
     ));
+    assert!(!pinyin_mask_out(context, 0, 0));
 
     // Selection still works: recording the constraint needs no store.
     assert!(pinyin_choose_candidate(instance, 0, cand) > 0);
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn mask_out_clears_user_entries_and_leaves_the_flag_alone() {
+    let user_dir = TempUserDir::new("mask");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    // Two remembered phrases, then the frontend's "user" clear:
+    // PHRASE_INDEX_LIBRARY_MASK against MAKE_TOKEN(USER_DICTIONARY, 0).
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+        5
+    );
+    assert!(pinyin_remember_user_input(
+        instance,
+        cstr("你好").as_ptr(),
+        -1
+    ));
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("shijie").as_ptr()),
+        6
+    );
+    assert!(pinyin_remember_user_input(
+        instance,
+        cstr("世界").as_ptr(),
+        -1
+    ));
+    assert!(pinyin_mask_out(context, 0x0F00_0000, 0x0700_0000));
+
+    // The phrase export is empty; the store lost the phrases but keeps its
+    // monotonic allocation cursor; nothing armed m_modified (remember and
+    // mask both stay off upstream's set-sites).
+    let iter = crate::iterators::pinyin_begin_get_phrases(context, 7);
+    assert!(!iter.is_null());
+    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(iter));
+    crate::iterators::pinyin_end_get_phrases(iter);
+    {
+        let store = store_of(instance);
+        assert!(store.token_for_phrase("你好").unwrap().is_none());
+        assert!(store.token_for_phrase("世界").unwrap().is_none());
+        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 2);
+        assert!(!store.is_modified());
+    }
+    assert!(!pinyin_save(context), "masking does not arm the save gate");
+
+    // The "all" clear removes the remaining count tables too.
+    assert!(pinyin_mask_out(context, 0, 0));
+    {
+        let store = store_of(instance);
+        assert_eq!(store.unigram_total().unwrap(), 0);
+        assert!(!store.is_modified());
+    }
+
+    // remove_user_candidate: null and system-token candidates report false
+    // (user tokens never surface in candidate lists on the current ABI —
+    // collection reads the system dictionary only).
+    assert!(!pinyin_remove_user_candidate(instance, ptr::null_mut()));
+    let cand = candidate(instance, "nihao", 0);
+    assert!(!pinyin_remove_user_candidate(instance, cand));
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
