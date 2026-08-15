@@ -13,6 +13,7 @@ inclusion: always
 | pinyin-oracle | differential harness vs pinned libpinyin | allow | Linux | never |
 | pinyin-dictool | conversions; standalone vocab exporter | deny | yes | yes |
 | pinyin-migrate | settings + vocab import; FFI fallback | allow | Linux | yes |
+| pinyin-corpus | training corpus front-end (zhwiki dump → ngseg raw text) | deny | yes | never |
 | pinyin-segment | training segmenter (`ngseg` reproduction) | deny | yes | never |
 | pinyin-counter | training n-gram counter (`gen_ngram` reproduction) | deny | yes | never |
 | pinyin-lambda | training λ estimator (`gen_deleted_ngram` + `estimate_interpolation`) | deny | yes | never |
