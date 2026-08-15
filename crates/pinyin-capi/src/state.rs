@@ -9,7 +9,9 @@ use std::ffi::CString;
 use std::path::Path;
 use std::sync::Arc;
 
-use pinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
+use pinyin_core::{
+    Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey, UserCountDelta,
+};
 use pinyin_data::{BigramLanguageModel, DictError, LmError, SystemDictionary};
 use pinyin_engine::{CandidateKind, Config, Session, StoragePaths};
 use pinyin_user::UserStore;
@@ -51,8 +53,31 @@ impl Dictionary for SharedDict {
 
 /// `Arc` wrapper so instances share the context's language model without
 /// a `'static` borrow.
+///
+/// The optional [`UserStore`] is the §5 overlay: `score` and
+/// `unigram_freq` saturating-add its counts onto the system model before
+/// the frozen λ blend. `None` (no user dir) and an empty store are both
+/// identity.
 #[derive(Clone)]
-pub(crate) struct SharedLm(Arc<BigramLanguageModel>);
+pub(crate) struct SharedLm {
+    inner: Arc<BigramLanguageModel>,
+    user: Option<UserStore>,
+}
+
+impl SharedLm {
+    fn user_delta(
+        &self,
+        history: &[PhraseToken],
+        token: &PhraseToken,
+    ) -> Result<UserCountDelta, LmError> {
+        let Some(store) = self.user.as_ref() else {
+            return Ok(UserCountDelta::ZERO);
+        };
+        store
+            .count_delta(history.last().map(|t| t.value()), token.value())
+            .map_err(|error| LmError::User(error.to_string()))
+    }
+}
 
 impl LanguageModel for SharedLm {
     type Token = PhraseToken;
@@ -64,15 +89,25 @@ impl LanguageModel for SharedLm {
         token: &Self::Token,
         edge_cost: Cost,
     ) -> Result<Cost, Self::Error> {
-        self.0.score(history, token, edge_cost)
+        let delta = self.user_delta(history, token)?;
+        self.inner
+            .score_with_user_delta(history, token, edge_cost, delta)
     }
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
-        self.0.unigram_freq(token)
+        let extra = match self.user.as_ref() {
+            None => 0,
+            Some(store) => store
+                .unigram_delta(token.value())
+                .map_err(|error| LmError::User(error.to_string()))?,
+        };
+        Ok(self
+            .inner
+            .unigram_freq_with_user_delta(token.value(), extra))
     }
 
     fn has_real_unigrams(&self) -> bool {
-        self.0.has_real_unigrams()
+        self.inner.has_real_unigrams()
     }
 }
 
@@ -128,7 +163,10 @@ impl CapiContext {
             paths,
             config: Config::default(),
             dict: SharedDict(Arc::new(dict)),
-            lm: SharedLm(Arc::new(lm)),
+            lm: SharedLm {
+                inner: Arc::new(lm),
+                user: user.clone(),
+            },
             user,
         })
     }

@@ -27,6 +27,45 @@ pub use vocab::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
 /// The concrete scale is defined by the decoder/scoring specification.
 pub type Cost = i64;
 
+/// User-side count overlay for the decode-time additive merge
+/// (`docs/findings/user-store.md` §5).
+///
+/// The merge is count addition, not a user-vs-system weight: λ still
+/// interpolates bigram-vs-unigram over the *merged* counts. All zeros is
+/// identity — `system.saturating_add(0) == system` — so an empty store is
+/// indistinguishable from no store.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct UserCountDelta {
+    /// User bigram count for `(prev → token)`.
+    pub bigram_count: u64,
+    /// User bigram total mass after `prev`.
+    pub bigram_total: u64,
+    /// User phrase-index unigram delta for `token`.
+    pub unigram_delta: u64,
+    /// Sum of every user unigram delta (the user contribution to the
+    /// unigram total).
+    pub unigram_total_delta: u64,
+}
+
+impl UserCountDelta {
+    /// No user data: the additive merge is a no-op.
+    pub const ZERO: Self = Self {
+        bigram_count: 0,
+        bigram_total: 0,
+        unigram_delta: 0,
+        unigram_total_delta: 0,
+    };
+
+    /// Whether every field is zero.
+    #[must_use]
+    pub const fn is_zero(self) -> bool {
+        self.bigram_count == 0
+            && self.bigram_total == 0
+            && self.unigram_delta == 0
+            && self.unigram_total_delta == 0
+    }
+}
+
 /// Read-only lookup seam for dictionaries.
 ///
 /// Implementations return entries in stable order, use an empty vector for a
@@ -92,6 +131,12 @@ pub trait UserModel {
     type Error;
 
     /// Returns the user-specific cost for `token` after `history`.
+    ///
+    /// The §5 decode-time merge is count addition *before* the λ blend, so
+    /// a `Cost` returned here is not the merge — adding it to the language-
+    /// model cost would be a new weighting scheme. Implementors that hold
+    /// counts expose them as [`UserCountDelta`]; the language model folds
+    /// that overlay into the frozen interpolated formula.
     fn score(&self, history: &[Self::Token], token: &Self::Token) -> Result<Cost, Self::Error>;
 
     /// Records an accepted `token` after `history`.

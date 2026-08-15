@@ -8,13 +8,15 @@
 //!
 //! T1: count schema and seed-driven update. T2: user phrase-index tables and
 //! `USER_DICTIONARY` token allocation. T3 wires the store into the engine
-//! session and the C ABI (in `pinyin-engine` / `pinyin-capi`); the save cycle
-//! (T5) and the decode-time merge (T4) are out of scope.
+//! session and the C ABI (in `pinyin-engine` / `pinyin-capi`). T4 exposes
+//! the counts as a [`pinyin_core::UserCountDelta`] for the decode-time
+//! additive merge. The save cycle (T5) is out of scope.
 
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
+use pinyin_core::UserCountDelta;
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
 use crate::phrase::{
@@ -38,6 +40,12 @@ const BIGRAM_TOTAL: TableDefinition<Token, u64> = TableDefinition::new("user_big
 
 /// Phrase-index unigram deltas: `token -> delta`.
 const UNIGRAM: TableDefinition<Token, u64> = TableDefinition::new("user_unigram");
+
+/// Running sum of every unigram delta: singleton key [`UNIGRAM_TOTAL_KEY`].
+const UNIGRAM_TOTAL: TableDefinition<u8, u64> = TableDefinition::new("user_unigram_total");
+
+/// Sole key in [`UNIGRAM_TOTAL`].
+const UNIGRAM_TOTAL_KEY: u8 = 0;
 
 /// User phrase text: `token -> phrase`.
 const PHRASE: TableDefinition<Token, &str> = TableDefinition::new("user_phrase");
@@ -189,7 +197,20 @@ impl UserStore {
         {
             txn.open_table(BIGRAM)?;
             txn.open_table(BIGRAM_TOTAL)?;
-            txn.open_table(UNIGRAM)?;
+            {
+                // Backfill the running total so a T1–T3 store reopened
+                // after T4 still reports the sum of its unigram deltas.
+                let unigrams = txn.open_table(UNIGRAM)?;
+                let mut uni_total = txn.open_table(UNIGRAM_TOTAL)?;
+                if uni_total.get(UNIGRAM_TOTAL_KEY)?.is_none() {
+                    let mut sum = 0_u64;
+                    for item in unigrams.iter()? {
+                        let (_, value) = item?;
+                        sum = sum.saturating_add(value.value());
+                    }
+                    uni_total.insert(UNIGRAM_TOTAL_KEY, sum)?;
+                }
+            }
             txn.open_table(PHRASE)?;
             txn.open_table(PHRASE_BY_TEXT)?;
             txn.open_table(PRONUNCIATION)?;
@@ -221,6 +242,45 @@ impl UserStore {
         let txn = self.db.begin_read()?;
         let table = txn.open_table(UNIGRAM)?;
         Ok(table.get(token)?.map_or(0, |g| g.value()))
+    }
+
+    /// Sum of every stored unigram delta; `0` if the store is empty.
+    pub fn unigram_total(&self) -> Result<u64, UserStoreError> {
+        let txn = self.db.begin_read()?;
+        let table = txn.open_table(UNIGRAM_TOTAL)?;
+        Ok(table.get(UNIGRAM_TOTAL_KEY)?.map_or(0, |g| g.value()))
+    }
+
+    /// One-transaction §5 overlay for scoring `token` after `prev`.
+    ///
+    /// `prev` of `None` is the empty-history (unigram-only) case: bigram
+    /// fields stay zero. An empty store returns [`UserCountDelta::ZERO`].
+    pub fn count_delta(
+        &self,
+        prev: Option<Token>,
+        token: Token,
+    ) -> Result<UserCountDelta, UserStoreError> {
+        let txn = self.db.begin_read()?;
+        let unigrams = txn.open_table(UNIGRAM)?;
+        let uni_total = txn.open_table(UNIGRAM_TOTAL)?;
+        let unigram_delta = unigrams.get(token)?.map_or(0, |g| g.value());
+        let unigram_total_delta = uni_total.get(UNIGRAM_TOTAL_KEY)?.map_or(0, |g| g.value());
+        let (bigram_count, bigram_total) = if let Some(prev) = prev {
+            let bigram = txn.open_table(BIGRAM)?;
+            let totals = txn.open_table(BIGRAM_TOTAL)?;
+            (
+                bigram.get((prev, token))?.map_or(0, |g| g.value()),
+                totals.get(prev)?.map_or(0, |g| g.value()),
+            )
+        } else {
+            (0, 0)
+        };
+        Ok(UserCountDelta {
+            bigram_count,
+            bigram_total,
+            unigram_delta,
+            unigram_total_delta,
+        })
     }
 
     /// Record a training selection of `cur` after `last` (the `pinyin_train`
@@ -260,9 +320,11 @@ impl UserStore {
             let prev_total = total.get(last)?.map_or(0, |g| g.value());
             total.insert(last, prev_total.saturating_add(seed))?;
 
+            let delta = seed::unigram_delta(seed);
             let mut unigram = txn.open_table(UNIGRAM)?;
             let prev_unigram = unigram.get(cur)?.map_or(0, |g| g.value());
-            unigram.insert(cur, prev_unigram.saturating_add(seed::unigram_delta(seed)))?;
+            unigram.insert(cur, prev_unigram.saturating_add(delta))?;
+            bump_unigram_total(&txn, delta)?;
 
             seed
         };
@@ -328,12 +390,11 @@ impl UserStore {
                 let mut prons = txn.open_table(PRONUNCIATION)?;
                 prons.insert((token, key_bytes.as_slice()), count)?;
 
+                let delta = count.saturating_mul(ADD_PHRASE_UNIGRAM_FACTOR);
                 let mut unigram = txn.open_table(UNIGRAM)?;
                 let prev = unigram.get(token)?.map_or(0, |g| g.value());
-                unigram.insert(
-                    token,
-                    prev.saturating_add(count.saturating_mul(ADD_PHRASE_UNIGRAM_FACTOR)),
-                )?;
+                unigram.insert(token, prev.saturating_add(delta))?;
+                bump_unigram_total(&txn, delta)?;
                 token
             }
         };
@@ -369,6 +430,13 @@ impl UserStore {
             .get(ALLOC_CURSOR)?
             .map_or(FIRST_USER_TOKEN, |g| g.value()))
     }
+}
+
+fn bump_unigram_total(txn: &redb::WriteTransaction, delta: u64) -> Result<(), UserStoreError> {
+    let mut total = txn.open_table(UNIGRAM_TOTAL)?;
+    let prev = total.get(UNIGRAM_TOTAL_KEY)?.map_or(0, |g| g.value());
+    total.insert(UNIGRAM_TOTAL_KEY, prev.saturating_add(delta))?;
+    Ok(())
 }
 
 fn collect_pronunciations(
@@ -418,6 +486,9 @@ mod tests {
         assert_eq!(store.bigram_count(1, 2).unwrap(), 0);
         assert_eq!(store.bigram_total(1).unwrap(), 0);
         assert_eq!(store.unigram_delta(2).unwrap(), 0);
+        assert_eq!(store.unigram_total().unwrap(), 0);
+        assert_eq!(store.count_delta(Some(1), 2).unwrap(), UserCountDelta::ZERO);
+        assert_eq!(store.count_delta(None, 2).unwrap(), UserCountDelta::ZERO);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -431,12 +502,33 @@ mod tests {
         assert_eq!(store.bigram_count(1, 100).unwrap(), 69);
         assert_eq!(store.bigram_total(1).unwrap(), 69);
         assert_eq!(store.unigram_delta(100).unwrap(), 483); // 69 * 7
+        assert_eq!(store.unigram_total().unwrap(), 483);
 
         // Second selection of the same pair: seed 138, count 69 + 138 = 207.
         assert_eq!(store.observe_selection(1, 100).unwrap(), 138);
         assert_eq!(store.bigram_count(1, 100).unwrap(), 207);
         assert_eq!(store.bigram_total(1).unwrap(), 207);
         assert_eq!(store.unigram_delta(100).unwrap(), 483 + 966); // + 138 * 7
+        assert_eq!(store.unigram_total().unwrap(), 483 + 966);
+        assert_eq!(
+            store.count_delta(Some(1), 100).unwrap(),
+            UserCountDelta {
+                bigram_count: 207,
+                bigram_total: 207,
+                unigram_delta: 483 + 966,
+                unigram_total_delta: 483 + 966,
+            }
+        );
+        // Empty history is unigram-only: bigram fields stay zero.
+        assert_eq!(
+            store.count_delta(None, 100).unwrap(),
+            UserCountDelta {
+                bigram_count: 0,
+                bigram_total: 0,
+                unigram_delta: 483 + 966,
+                unigram_total_delta: 483 + 966,
+            }
+        );
 
         let _ = std::fs::remove_file(&path);
     }
@@ -602,6 +694,7 @@ mod tests {
         assert_eq!(p1.pronunciations()[1].keys(), &[11, 20]);
         assert_eq!(p1.pronunciations()[1].count(), 2);
         assert_eq!(store.unigram_delta(t1).unwrap(), 15);
+        assert_eq!(store.unigram_total().unwrap(), 15 + 27);
 
         let p2 = store.phrase(t2).unwrap().unwrap();
         assert_eq!(p2.text(), "世界");
