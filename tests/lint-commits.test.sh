@@ -163,6 +163,9 @@ c5a=$(msg 'grok bare version' \
 c5b=$(msg 'grok model string' \
     '' \
     'Assisted-by: Grok:grok-4.6' | human)
+c5c=$(msg 'lowercase assisted-by key' \
+    '' \
+    'assisted-by: Claude:claude-opus-5' | human)
 
 # --- case 6: malformed Assisted-by --------------------------------------------
 c6a=$(msg 'generic llm chatbot' \
@@ -181,6 +184,9 @@ c6d=$(msg 'duplicate assisted-by' \
 c6e=$(msg 'trailing token assisted-by' \
     '' \
     'Assisted-by: Claude:claude-opus-4 coccinelle' | human)
+c6f=$(msg 'lowercase assisted-by key bad model' \
+    '' \
+    'assisted-by: Grok:4.6' | human)
 
 # --- case 7: AI-session promotion ---------------------------------------------
 c7a=$(msg 'ai session no assisted-by' \
@@ -189,6 +195,13 @@ c7a=$(msg 'ai session no assisted-by' \
 c7b=$(msg 'ai session typo' \
     '' \
     'AI-session: yes' | human)
+c7c=$(msg 'ai session with assisted-by' \
+    '' \
+    'AI-session: true' \
+    'Assisted-by: Claude:claude-opus-5' | human)
+c7d=$(msg 'ai session lowercase key' \
+    '' \
+    'ai-session: true' | human)
 
 # --- case 8: no AI agent as git author/committer ------------------------------
 c8a=$(msg 'kiro agent author' '' \
@@ -219,13 +232,17 @@ expect_pass 'Claude Martin co-author passes R1 (human name)' "$c4a~1" "$c4a"
 expect_pass 'Claude Martin author passes R4 (human name)' "$c4b~1" "$c4b"
 expect_fail 2 'Assisted-by Grok:4.6 fails R2 (regression ba25ff7)' "$c5a~1" "$c5a"
 expect_pass 'Assisted-by Grok:grok-4.6 passes R2' "$c5b~1" "$c5b"
+expect_pass 'lowercase assisted-by key passes R2' "$c5c~1" "$c5c"
 expect_fail 2 'generic LLM chatbot fails R2' "$c6a~1" "$c6a"
 expect_fail 2 'ChatGPTv5 (no colon) fails R2' "$c6b~1" "$c6b"
 expect_fail 2 'placeholder Assisted-by fails R2 (condition 3)' "$c6c~1" "$c6c"
 expect_fail 2 'duplicate Assisted-by fails R2 (condition 4)' "$c6d~1" "$c6d"
 expect_fail 2 'trailing token Assisted-by fails R2 (condition 1)' "$c6e~1" "$c6e"
+expect_fail 2 'lowercase assisted-by key fails R2' "$c6f~1" "$c6f"
 expect_fail 3 'AI-session: true without Assisted-by fails R3' "$c7a~1" "$c7a"
 expect_fail 3 'AI-session: yes fails R3 (typo guard)' "$c7b~1" "$c7b"
+expect_pass 'AI-session: true with Assisted-by passes R3' "$c7c~1" "$c7c"
+expect_fail 3 'lowercase ai-session key fails R3' "$c7d~1" "$c7d"
 expect_fail 4 'Kiro Agent author fails R4' "$c8a~1" "$c8a"
 expect_fail 4 'claude[bot] author fails R4' "$c8b~1" "$c8b"
 expect_pass 'dependabot[bot] author passes R4' "$c8c~1" "$c8c"

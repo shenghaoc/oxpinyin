@@ -104,12 +104,14 @@ check_message() {
         IFS=$oldIFS
     fi
 
-    # R2 — Assisted-by house form when present.
+    # R2 — Assisted-by house form when present. Trailer key is matched
+    # case-insensitively (as R1 does), so `assisted-by:` and `ASSISTED-BY:`
+    # are treated identically.
     #
     # Condition 2 is a semantic heuristic: the MODEL token names the specific
     # model used, and a bare version number names no model (`Grok:4.6` fails;
     # `Grok:grok-4.6` passes). Semantics beyond shape remain human attestation.
-    assisted_lines=$(printf '%s\n' "$trailers" | grep '^Assisted-by:' || true)
+    assisted_lines=$(printf '%s\n' "$trailers" | grep -iE '^assisted-by:' || true)
     if [ -n "$assisted_lines" ]; then
         # Condition 4 — set semantics: identical lines must not repeat.
         dup=$(printf '%s\n' "$assisted_lines" | sort | uniq -d)
@@ -126,16 +128,17 @@ check_message() {
         # shellcheck disable=SC2086  # intentional word-splitting into lines
         for line in $assisted_lines; do
             [ -n "$line" ] || continue
-            if ! printf '%s\n' "$line" | grep -Eq "$ASSISTED_SHAPE_RE"; then
+            if ! printf '%s\n' "$line" | grep -Eiq "$ASSISTED_SHAPE_RE"; then
                 r2=fail
                 fail 2 "$short" "$subject" "Assisted-by violates house form (condition 1, nothing after the model): $line"
-            elif printf '%s\n' "$line" | grep -Eq "$ASSISTED_PLACEHOLDER_RE"; then
+            elif printf '%s\n' "$line" | grep -Eiq "$ASSISTED_PLACEHOLDER_RE"; then
                 r2=fail
                 fail 2 "$short" "$subject" "Assisted-by placeholder text (condition 3): $line"
             else
                 # Condition 2 — MODEL token must contain >=1 ASCII letter.
-                rest=${line#Assisted-by: }
-                model=${rest#*:}
+                # Key matched case-insensitively above, so strip through the
+                # last colon (shape guarantees exactly two colons).
+                model=${line##*:}
                 if ! printf '%s\n' "$model" | grep -Eq '[A-Za-z]'; then
                     r2=fail
                     fail 2 "$short" "$subject" "Assisted-by model has no ASCII letter (condition 2): $line"
@@ -150,13 +153,14 @@ check_message() {
     # least one Assisted-by trailer (which R2 then validates). Any other value
     # is a hard fail (typo guard). Inert until agents are configured to emit
     # it; session provenance is otherwise invisible to a linter.
-    ai_session=$(printf '%s\n' "$trailers" | grep '^AI-session:' || true)
+    ai_session=$(printf '%s\n' "$trailers" | grep -iE '^ai-session:' || true)
     if [ -n "$ai_session" ]; then
-        bad_ai=$(printf '%s\n' "$ai_session" | sed -n '/^AI-session:[[:space:]]*true[[:space:]]*$/!p' || true)
+        # Key is case-insensitive; the value must be exactly "true" (typo guard).
+        bad_ai=$(printf '%s\n' "$ai_session" | grep -vE '^[^:]*:[[:space:]]*true[[:space:]]*$' || true)
         if [ -n "$bad_ai" ]; then
             r3=fail
             fail 3 "$short" "$subject" "AI-session must have exact value 'true' (got: $bad_ai)"
-        elif ! printf '%s\n' "$trailers" | grep -Eq '^Assisted-by:'; then
+        elif ! printf '%s\n' "$trailers" | grep -Eiq '^assisted-by:'; then
             r3=fail
             fail 3 "$short" "$subject" "AI-session: true requires an Assisted-by trailer"
         fi
