@@ -1,0 +1,46 @@
+name: commit-trailers
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  # Stable job name so it can be marked a required status check:
+  #   commit-trailers / lint
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to the v7.0.1 tag commit; verified against the
+      # actions/checkout releases page (do not bump without re-verifying).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Lint PR commits against trailer rules
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # The event payload's base.sha goes stale as the base branch
+          # advances; compute the merge-base at lint time instead so only the
+          # commits this PR introduces are linted.
+          git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          MB="$(git merge-base "origin/${BASE_REF}" "${HEAD_SHA}")"
+          .github/scripts/lint-commits.sh "${MB}" "${HEAD_SHA}"
+
+  # Gate the linter itself: run the self-contained fixture harness on every
+  # PR so a change to the script or workflow cannot silently regress the
+  # rule logic.
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run linter test harness
+        run: tests/lint-commits.test.sh
