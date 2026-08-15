@@ -28,6 +28,8 @@ rustc-ice-*.txt
 # Bisection harness compiled binary
 /tools/bisection/bisect
 /tools/bisection/train-diff
+/tools/bisection/import-diff
+/tools/bisection/frontend-import
 
 # macOS
 .DS_Store

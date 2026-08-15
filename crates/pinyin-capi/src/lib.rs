@@ -33,5 +33,181 @@ mod sentence;
 mod text;
 mod user_data;
 
+pub use context::{pinyin_fini, pinyin_init, pinyin_save};
+pub use iterators::{pinyin_begin_add_phrases, pinyin_end_add_phrases, pinyin_iterator_add_phrase};
+pub use pinyin_user::{DEFAULT_PHRASE_COUNT, ExportedPhrase, USER_DICTIONARY};
+pub use state::ExportedBigramRow;
+pub use types::{ImportIterator, PinyinContext};
+
+/// Open a user-store-only [`PinyinContext`] for standalone migration tools.
+///
+/// This is the Rust-side constructor behind `pinyin-dictool import`: it owns
+/// exactly the state the import/export/save trio needs and no decode model,
+/// so a vocabulary conversion tool can run without system tables installed.
+/// The C ABI `pinyin_init` contract is unchanged — it still requires a
+/// system directory. Release the returned handle with [`pinyin_fini`].
+///
+/// Returns null for an empty or unopenable `user_dir`.
+#[must_use]
+pub fn open_user_import_context(user_dir: &std::path::Path) -> *mut PinyinContext {
+    let Some(user_dir) = user_dir.to_str() else {
+        return std::ptr::null_mut();
+    };
+    ffi::ffi_catch(
+        std::ptr::null_mut(),
+        || match state::CapiContext::new_user_only(user_dir) {
+            Some(ctx) => state::box_context(ctx),
+            None => std::ptr::null_mut(),
+        },
+    )
+}
+
+/// Snapshot the user-store phrase rows a migration tool needs for its
+/// desired-count import math.
+///
+/// This drives the W6-T7 C ABI export iterator
+/// (`pinyin_begin_get_phrases` / `pinyin_iterator_has_next_phrase` /
+/// `pinyin_iterator_get_next_phrase` / `pinyin_end_get_phrases`) and returns
+/// the same §9 rows. `None` for a null context, a context without a user
+/// store, or an iterator failure.
+#[must_use]
+pub fn user_phrase_rows(context: *mut PinyinContext) -> Option<Vec<ExportedPhrase>> {
+    let iter = iterators::pinyin_begin_get_phrases(context, u32::from(USER_DICTIONARY));
+    if iter.is_null() {
+        return None;
+    }
+    let mut rows = Vec::new();
+    while iterators::pinyin_iterator_has_next_phrase(iter) {
+        let mut phrase = std::ptr::null_mut();
+        let mut pinyin = std::ptr::null_mut();
+        let mut count = 0;
+        if !iterators::pinyin_iterator_get_next_phrase(iter, &mut phrase, &mut pinyin, &mut count) {
+            iterators::pinyin_end_get_phrases(iter);
+            return None;
+        }
+        if phrase.is_null() || pinyin.is_null() {
+            let _ = ffi::take_owned_cstr(phrase);
+            let _ = ffi::take_owned_cstr(pinyin);
+            iterators::pinyin_end_get_phrases(iter);
+            return None;
+        }
+        rows.push(ExportedPhrase {
+            text: ffi::take_owned_cstr(phrase),
+            pinyin: ffi::take_owned_cstr(pinyin),
+            count: count.max(0) as u64,
+        });
+    }
+    iterators::pinyin_end_get_phrases(iter);
+    Some(rows)
+}
+
+/// Snapshot the rendered user-bigram rows the frontend Export button writes.
+///
+/// Drives the W6-T7 C ABI bigram export quartet and returns the same rows
+/// `pinyin_begin_get_bigram_phrases` materializes. `None` mirrors
+/// [`user_phrase_rows`].
+#[must_use]
+pub fn user_bigram_rows(context: *mut PinyinContext) -> Option<Vec<ExportedBigramRow>> {
+    let iter = iterators::pinyin_begin_get_bigram_phrases(context);
+    if iter.is_null() {
+        return None;
+    }
+    let mut rows = Vec::new();
+    while iterators::pinyin_bigram_iterator_has_next_phrase(iter) {
+        let mut phrase = std::ptr::null_mut();
+        let mut pinyin = std::ptr::null_mut();
+        let mut count = 0;
+        if !iterators::pinyin_bigram_iterator_get_next_phrase(
+            iter,
+            &mut phrase,
+            &mut pinyin,
+            &mut count,
+        ) {
+            iterators::pinyin_end_get_bigram_phrases(iter);
+            return None;
+        }
+        if phrase.is_null() || pinyin.is_null() {
+            let _ = ffi::take_owned_cstr(phrase);
+            let _ = ffi::take_owned_cstr(pinyin);
+            iterators::pinyin_end_get_bigram_phrases(iter);
+            return None;
+        }
+        rows.push(ExportedBigramRow {
+            phrase: ffi::take_owned_cstr(phrase),
+            pinyin: ffi::take_owned_cstr(pinyin),
+            count: i64::from(count),
+        });
+    }
+    iterators::pinyin_end_get_bigram_phrases(iter);
+    Some(rows)
+}
+
+/// Number of keys the import ABI parses out of `pinyin`.
+///
+/// Mirrors `pinyin_iterator_add_phrase`: longest parsed prefix, complete keys
+/// only, trailing unparsed bytes ignored. `None` when no path can be built.
+/// `pinyin-dictool import` uses this to validate a classic-format pinyin
+/// before the batch starts, with a line number on failure.
+#[must_use]
+pub fn import_pinyin_key_count(pinyin: &str) -> Option<usize> {
+    iterators::parse_import_pinyin(pinyin).map(|keys| keys.len())
+}
+
+/// Begin a [`USER_DICTIONARY`] import batch on a user-import context.
+///
+/// Thin safe wrapper over the C ABI `pinyin_begin_add_phrases` symbol; the
+/// release must be paired with [`end_user_import`].
+#[must_use]
+pub fn begin_user_import(context: *mut PinyinContext) -> *mut ImportIterator {
+    iterators::pinyin_begin_add_phrases(context, USER_DICTIONARY)
+}
+
+/// Add one phrase/reading to the batch started by [`begin_user_import`].
+///
+/// Thin safe wrapper over the C ABI `pinyin_iterator_add_phrase` symbol.
+/// `count` follows the ABI: `-1` means the pinned default count. Returns
+/// `false` for a null iterator, a NUL-containing string field, an index other
+/// than [`USER_DICTIONARY`], an unparseable pinyin, or a store failure.
+pub fn add_user_import_phrase(
+    iter: *mut ImportIterator,
+    phrase: &str,
+    pinyin: &str,
+    count: std::os::raw::c_int,
+) -> bool {
+    if iter.is_null() {
+        return false;
+    }
+    let Ok(phrase) = std::ffi::CString::new(phrase) else {
+        return false;
+    };
+    let Ok(pinyin) = std::ffi::CString::new(pinyin) else {
+        return false;
+    };
+    iterators::pinyin_iterator_add_phrase(iter, phrase.as_ptr(), pinyin.as_ptr(), count)
+}
+
+/// End the batch, arm `m_modified`, and release the iterator handle.
+///
+/// Thin safe wrapper over the C ABI `pinyin_end_add_phrases` symbol.
+pub fn end_user_import(iter: *mut ImportIterator) {
+    iterators::pinyin_end_add_phrases(iter);
+}
+
+/// `pinyin_save` for a user-import context.
+///
+/// Thin safe wrapper over the C ABI symbol; returns `false` for a null
+/// context, an absent user store, an unmodified store, or a compaction
+/// failure.
+pub fn save_user_import_context(context: *mut PinyinContext) -> bool {
+    context::pinyin_save(context)
+}
+
+/// `pinyin_fini` for a context returned by [`open_user_import_context`].
+///
+/// Thin safe wrapper over the C ABI symbol.
+pub fn close_user_import_context(context: *mut PinyinContext) {
+    context::pinyin_fini(context);
+}
+
 #[cfg(test)]
 mod e2e_tests;

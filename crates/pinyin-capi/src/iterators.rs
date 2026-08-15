@@ -1,18 +1,20 @@
 //! Import and export iterator symbols.
 //!
-//! T7 implements the §9 export surface (`docs/findings/user-store.md`):
+//! W6-T7 implemented the §9 export surface (`docs/findings/user-store.md`):
 //! `pinyin_begin_get_phrases` / `pinyin_iterator_has_next_phrase` /
 //! `pinyin_iterator_get_next_phrase` / `pinyin_end_get_phrases`, and the
-//! bigram quartet. The import trio stays a stub: nothing in the ABI subset's
-//! differential drives it, and its `m_modified` set-site (`:658`) arrives
-//! with import proper.
+//! bigram quartet. W7-T1 replaces the import trio stubs with the same
+//! Box-handle discipline: `pinyin_begin_add_phrases` /
+//! `pinyin_iterator_add_phrase` / `pinyin_end_add_phrases`.
 
 use std::os::raw::{c_char, c_int};
 use std::ptr;
 
-use pinyin_user::ExportedPhrase;
+use pinyin_core::SyllableKey;
+use pinyin_core::graph::{Edge, EdgeKind, SegmentGraph};
+use pinyin_user::{ExportedPhrase, PinyinKey, USER_DICTIONARY, UserStore};
 
-use crate::ffi::{ffi_catch, owned_cstr};
+use crate::ffi::{cstr_to_owned_lossy, ffi_catch, owned_cstr};
 use crate::state::{ExportedBigramRow, context_ref};
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
@@ -35,10 +37,23 @@ struct BigramHandle {
 
 // ── Import iterator ──────────────────────────────────────────────────
 //
-// Out of scope for T7: the differential drives remember_user_input, not the
-// import trio. These stay stubbed (begin returns NULL, add returns false)
-// until import lands; upstream's pinyin_end_add_phrases is the other
-// m_modified set-site (pinyin.cpp:658), noted for that task.
+// Upstream batch semantics (`pinyin.cpp:506-659`, read for W7-T1): the
+// "batch" is **per-phrase**, not atomic. `pinyin_iterator_add_phrase` calls
+// `_add_phrase` immediately, which mutates the in-memory phrase/pinyin
+// tables and the unigram count; `pinyin_end_add_phrases` only compacts the
+// phrase index, sets `m_modified = true`, and deletes the iterator. There is
+// no rollback if a later add fails. redb models that exactly: each
+// successful add is its own committed write transaction; end has no data
+// write, only the dirty-flag set-site.
+
+/// State behind `import_iterator_t *`: the target index and the shared user
+/// store clone the adds write through. The clone also carries the shared
+/// §4 dirty flag, so `pinyin_end_add_phrases` can arm `m_modified` without
+/// keeping a raw context pointer alive behind the C caller's back.
+struct ImportHandle {
+    index: u8,
+    user: Option<UserStore>,
+}
 
 /// Begin adding phrases to an index.
 ///
@@ -48,17 +63,46 @@ struct BigramHandle {
 ///                                              guint8 index);
 /// ```
 ///
-/// Returns a handle; caller must call `pinyin_end_add_phrases` to free.
-#[unsafe(no_mangle)]
-pub extern "C" fn pinyin_begin_add_phrases(
+/// Returns a handle for any non-null context, matching the export iterator
+/// shape; caller must call `pinyin_end_add_phrases` to free it. Adds target
+/// [`USER_DICTIONARY`] only — pinyin-rs's system phrase indexes are
+/// read-only redb tables — so any other index yields a handle whose adds
+/// report `false`.
+pub(crate) fn begin_add_phrases_impl(
     context: *mut PinyinContext,
-    _index: u8,
+    index: u8,
 ) -> *mut ImportIterator {
     if context.is_null() {
         return ptr::null_mut();
     }
-    // STUB: import lands with its m_modified set-site (upstream :658).
-    ptr::null_mut()
+    ffi_catch(ptr::null_mut(), || {
+        // SAFETY: `context` is non-null and was produced by `pinyin_init` or
+        // `CapiContext::new_user_only`; the borrow lasts only for this
+        // constructor.
+        let ctx = unsafe { context_ref(context) };
+        let handle = ImportHandle {
+            index,
+            user: ctx.user_store(),
+        };
+        Box::into_raw(Box::new(handle)).cast()
+    })
+}
+
+/// Begin adding phrases to an index.
+///
+/// # C signature
+/// ```c
+/// import_iterator_t * pinyin_begin_add_phrases(pinyin_context_t * context,
+///                                              guint8 index);
+/// ```
+///
+/// Body and handle contract: [`begin_add_phrases_impl`].
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_begin_add_phrases(
+    context: *mut PinyinContext,
+    index: u8,
+) -> *mut ImportIterator {
+    begin_add_phrases_impl(context, index)
 }
 
 /// Add a phrase/pinyin pair to the import iterator.
@@ -71,38 +115,126 @@ pub extern "C" fn pinyin_begin_add_phrases(
 ///                                 gint count);
 /// ```
 ///
-/// `count` of -1 means use the default value.
+/// `count` of -1 means use the default value. The pinyin is parsed with the
+/// frozen untuned full-pinyin inventory under upstream's longest-parsed-prefix
+/// then fewest-keys rule (`pinyin_parser2.cpp` selection, represented here by
+/// [`SegmentGraph`] with incomplete edges filtered out). A phrase whose
+/// character count does not equal the key count reports `false`; trailing
+/// unparsed pinyin bytes are ignored exactly as upstream's parser does.
+/// Negative counts other than -1 are rejected rather than reproduced as the
+/// upstream `guint32` wrap (the pin segfaults on them).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_iterator_add_phrase(
     iter: *mut ImportIterator,
-    _phrase: *const c_char,
-    _pinyin: *const c_char,
-    _count: c_int,
+    phrase: *const c_char,
+    pinyin: *const c_char,
+    count: c_int,
 ) -> bool {
     if iter.is_null() {
         return false;
     }
-    // STUB: import lands with its m_modified set-site (upstream :658).
-    false
+    ffi_catch(false, || {
+        // `cstr_to_owned_lossy` is the C ABI entry point's string
+        // marshaller: null reads as empty, which validation rejects.
+        let phrase = cstr_to_owned_lossy(phrase);
+        let pinyin = cstr_to_owned_lossy(pinyin);
+        let count = if count == -1 {
+            None
+        } else if count >= 0 {
+            Some(count as u64)
+        } else {
+            return false;
+        };
+
+        // SAFETY: `iter` is non-null and was produced by
+        // `pinyin_begin_add_phrases`; the unique borrow lasts for this call.
+        let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
+        if handle.index != USER_DICTIONARY {
+            return false;
+        }
+        let Some(user) = handle.user.as_mut() else {
+            return false;
+        };
+        let Some(keys) = parse_import_pinyin(&pinyin) else {
+            return false;
+        };
+        user.add_phrase(&phrase, &keys, count).is_ok()
+    })
 }
 
-/// End the import iterator and free it.
+/// Parse `pinyin` the way the import path consumes it: longest parsed prefix
+/// from byte zero, fewest complete keys to reach it, first edge winning key
+/// ties. Incomplete initial-only keys are not admitted (`pinyin_parser2.cpp`
+/// only reaches keys in the full-pinyin index; the oracle rejects `n` here).
+pub(crate) fn parse_import_pinyin(pinyin: &str) -> Option<Vec<PinyinKey>> {
+    let graph = SegmentGraph::build(pinyin.as_bytes()).ok()?;
+    let bound = graph.consumed();
+    // steps[node] = (key count, incoming edge, previous node); node 0 is the
+    // root with count zero.
+    let mut steps: Vec<Option<(usize, Edge, usize)>> = vec![None; bound + 1];
+    for node in 0..bound {
+        let count = if node == 0 {
+            0
+        } else {
+            match steps[node] {
+                Some((count, _, _)) => count,
+                None => continue,
+            }
+        };
+        for edge in graph
+            .outgoing(node)
+            .iter()
+            .copied()
+            .filter(|edge| edge.kind() != EdgeKind::Incomplete)
+        {
+            let to = edge.to();
+            if to > bound {
+                continue;
+            }
+            let candidate = count + 1;
+            if steps[to]
+                .as_ref()
+                .is_none_or(|(seen, _, _)| candidate < *seen)
+            {
+                steps[to] = Some((candidate, edge, node));
+            }
+        }
+    }
+
+    let mut keys = Vec::new();
+    let mut node = bound;
+    while node > 0 {
+        let (_, edge, previous) = steps[node]?;
+        keys.push(SyllableKey::from_index(edge.key().index())?.index() as PinyinKey);
+        node = previous;
+    }
+    keys.reverse();
+    Some(keys)
+}
+
+/// End the import iterator, arm `m_modified`, and free it.
 ///
 /// # C signature
 /// ```c
 /// void pinyin_end_add_phrases(import_iterator_t * iter);
 /// ```
+///
+/// Upstream compacts the phrase index here and sets `m_modified = true`
+/// (`pinyin.cpp:657-658`) whether or not any add succeeded. pinyin-rs has no
+/// in-memory phrase chunk to compact; the redb adds are already durable. The
+/// dirty-flag arm is the whole persistence-side effect, so the next
+/// `pinyin_save` compacts and clears (`docs/findings/user-store.md` §4).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
     if iter.is_null() {
         return;
     }
-    // SAFETY: `iter` is non-null (guarded above). `pinyin_begin_add_phrases`
-    // currently always returns NULL, so this branch is unreachable until
-    // import lands; at that point the caller transfers ownership back here
-    // and only here, so reconstructing and dropping the Box is sound.
-    unsafe {
-        drop(Box::from_raw(iter));
+    // SAFETY: `iter` was produced by `pinyin_begin_add_phrases` via
+    // `Box::into_raw`; the caller transfers ownership back here and only
+    // here.
+    let mut handle = unsafe { Box::from_raw(iter.cast::<ImportHandle>()) };
+    if let Some(user) = handle.user.as_mut() {
+        user.mark_modified();
     }
 }
 

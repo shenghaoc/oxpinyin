@@ -11,3 +11,4 @@ description = "Conversions and the standalone vocabulary exporter."
 workspace = true
 
 [dependencies]
+pinyin-capi = { path = "../pinyin-capi" }

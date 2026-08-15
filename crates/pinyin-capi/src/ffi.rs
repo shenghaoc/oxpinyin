@@ -27,11 +27,42 @@ pub unsafe fn cstr_to_string(ptr: *const c_char) -> String {
         .to_owned()
 }
 
-// `void *malloc(size_t)` from the host's libc. The C consumer links GLib,
-// which itself links libc, so this symbol is already resolvable at runtime
-// without adding a dependency.
+/// Safe wrapper for C ABI entry points, which own the null/invalid-UTF-8
+/// contract at the boundary and never let those inputs unwind.
+pub(crate) fn cstr_to_owned_lossy(ptr: *const c_char) -> String {
+    // SAFETY: `cstr_to_string` requires a null-terminated pointer when
+    // non-null. The only callers are `extern "C"` entry points, whose
+    // contract to C is exactly that; a violation is the caller's C-level
+    // memory error, not a Rust lifetime escape.
+    unsafe { cstr_to_string(ptr) }
+}
+
+// `void *malloc(size_t)` and `void free(void *)` from the host's libc. The
+// C consumer links GLib, which itself links libc, so these symbols are already
+// resolvable at runtime without adding a dependency.
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut c_void;
+    fn free(ptr: *mut c_void);
+}
+
+/// Converts one caller-owned export-iterator buffer into a Rust string and
+/// frees it with the matching libc `free` (the iterator allocates with
+/// [`owned_cstr`], i.e. libc `malloc`).
+pub(crate) fn take_owned_cstr(ptr: *mut c_char) -> String {
+    if ptr.is_null() {
+        return String::new();
+    }
+    let text = unsafe {
+        // SAFETY: The export iterators only hand out NUL-terminated, valid
+        // UTF-8 buffers allocated by [`owned_cstr`].
+        CStr::from_ptr(ptr)
+    }
+    .to_string_lossy()
+    .into_owned();
+    // SAFETY: `ptr` came from `owned_cstr`, which uses libc `malloc`; libc
+    // `free` is the matching deallocator.
+    unsafe { free(ptr.cast()) };
+    text
 }
 
 /// Duplicates `s` into a fresh, NUL-terminated buffer using libc `malloc`
