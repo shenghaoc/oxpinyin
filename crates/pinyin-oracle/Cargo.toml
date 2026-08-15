@@ -62,7 +62,7 @@ pinyin-engine = { path = "../pinyin-engine" }
 
 [dev-dependencies]
 # Integration tests share the same internal crates as the parity tooling.
-criterion = "0.5"
+criterion = "0.8"
 dhat = "0.3"
 
 [[bench]]
