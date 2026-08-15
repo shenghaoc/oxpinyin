@@ -64,6 +64,10 @@ pinyin-engine = { path = "../pinyin-engine" }
 # Integration tests share the same internal crates as the parity tooling.
 criterion = "0.8"
 dhat = "0.3"
+# Internal workspace crate, dev-only: the `decode_pass_user_store` bench
+# rebuilds pinyin-capi's `SharedLm` overlay on the scan harness. Not an
+# external dependency, and pinyin-oracle never ships.
+pinyin-user = { path = "../pinyin-user" }
 
 [[bench]]
 name = "scan_perf"

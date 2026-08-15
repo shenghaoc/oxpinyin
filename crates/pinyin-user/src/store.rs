@@ -15,17 +15,17 @@
 
 use std::fmt;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use pinyin_core::UserCountDelta;
-use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 
 use crate::phrase::{
     self, ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, FIRST_USER_TOKEN, PinyinKey, UserPhrase,
     UserPronunciation,
 };
-use crate::registry::{self, RegistryLease, StoreInner};
+use crate::registry::{self, CountSnapshot, RegistryLease, StoreInner};
 use crate::seed;
 
 /// Token type — libpinyin's 32-bit `phrase_token_t`.
@@ -227,6 +227,87 @@ impl UserStore {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    fn count_snapshot(&self) -> MutexGuard<'_, Option<CountSnapshot>> {
+        self.inner
+            .count_snapshot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn write_generation(&self) -> u64 {
+        self.inner.write_generation.load(Ordering::Acquire)
+    }
+
+    fn has_user_data(&self) -> bool {
+        self.inner.has_user_data.load(Ordering::Acquire)
+    }
+
+    /// Opens one read transaction plus the four owned count tables.
+    ///
+    /// Takes `database()` for the call and releases it before returning; the
+    /// caller already holds the snapshot lock, which is the outer half of the
+    /// one legal order (snapshot, then db).
+    fn build_count_snapshot(&self, generation: u64) -> Result<CountSnapshot, UserStoreError> {
+        let db = self.database();
+        let txn = db.begin_read()?;
+        let unigram = txn.open_table(UNIGRAM)?;
+        let unigram_total = txn.open_table(UNIGRAM_TOTAL)?;
+        let bigram = txn.open_table(BIGRAM)?;
+        let bigram_total = txn.open_table(BIGRAM_TOTAL)?;
+        drop(db);
+        Ok(CountSnapshot {
+            generation,
+            unigram,
+            unigram_total,
+            bigram,
+            bigram_total,
+            _txn: txn,
+        })
+    }
+
+    /// Runs `read` against the snapshot for the current write generation,
+    /// rebuilding it first when a write has landed since it was cached.
+    ///
+    /// The snapshot is moved out of the mutex for the call and put back after,
+    /// so `read` always receives a live [`CountSnapshot`]. There is
+    /// deliberately no "snapshot absent" arm: an arm like that would have to
+    /// invent a reading, and the only plausible one — report zero — is exactly
+    /// what a populated store must never say.
+    fn with_count_snapshot<T>(
+        &self,
+        read: impl FnOnce(&CountSnapshot) -> Result<T, UserStoreError>,
+    ) -> Result<T, UserStoreError> {
+        let mut snapshot = self.count_snapshot();
+        let generation = self.write_generation();
+        let cached = match snapshot.take() {
+            Some(cached) if cached.generation == generation => cached,
+            // A rebuild that fails leaves the slot empty: the next read
+            // retries rather than serving counts from a superseded txn.
+            _ => self.build_count_snapshot(generation)?,
+        };
+        let out = read(&cached);
+        *snapshot = Some(cached);
+        out
+    }
+
+    /// Invalidate cached reads after a committed user-data write.
+    ///
+    /// Consumes the caller's [`Self::database`] guard and drops it before
+    /// touching the snapshot lock. Writers therefore hold db alone and then
+    /// snapshot alone, while readers and [`Self::save`] hold snapshot-then-db;
+    /// the two orders cannot interleave into a cycle. Taking the guard by
+    /// value makes that mechanical instead of a rule each call site has to
+    /// remember — forgetting a bare `drop(db)` here would deadlock against a
+    /// concurrent `save`.
+    fn mark_committed_write(&self, db: MutexGuard<'_, Database>, has_user_data: bool) {
+        drop(db);
+        *self.count_snapshot() = None;
+        self.inner
+            .has_user_data
+            .store(has_user_data, Ordering::Release);
+        self.inner.write_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
     /// Open the user store at `path`, creating an empty database if absent.
     ///
     /// Count tables and phrase-index tables are created eagerly so that reads
@@ -257,7 +338,7 @@ impl UserStore {
             other => UserStoreError::Db(other),
         })?;
         let txn = db.begin_write()?;
-        {
+        let has_user_data = {
             txn.open_table(BIGRAM)?;
             txn.open_table(BIGRAM_TOTAL)?;
             {
@@ -281,11 +362,15 @@ impl UserStore {
             if alloc.get(ALLOC_CURSOR)?.is_none() {
                 alloc.insert(ALLOC_CURSOR, FIRST_USER_TOKEN)?;
             }
-        }
+            has_user_data_in_write_txn(&txn)?
+        };
         txn.commit()?;
         let inner = Arc::new(StoreInner {
+            count_snapshot: Mutex::new(None),
             db: Mutex::new(db),
             dirty: AtomicBool::new(false),
+            write_generation: AtomicU64::new(0),
+            has_user_data: AtomicBool::new(has_user_data),
         });
         reg.insert(key, Arc::downgrade(&inner));
         Ok(Self {
@@ -311,11 +396,17 @@ impl UserStore {
     }
 
     /// Accumulated phrase-index unigram delta for `token`; `0` if none.
+    ///
+    /// On the decode hot path, so it takes the cached-snapshot route: an
+    /// empty store answers from one atomic load. The uncached siblings
+    /// ([`Self::bigram_count`], [`Self::bigram_total`],
+    /// [`Self::unigram_total`]) are diagnostic and open their own read
+    /// transaction per call.
     pub fn unigram_delta(&self, token: Token) -> Result<u64, UserStoreError> {
-        let db = self.database();
-        let txn = db.begin_read()?;
-        let table = txn.open_table(UNIGRAM)?;
-        Ok(table.get(token)?.map_or(0, |g| g.value()))
+        if !self.has_user_data() {
+            return Ok(0);
+        }
+        self.with_count_snapshot(|cached| cached.unigram_delta(token))
     }
 
     /// Sum of every stored unigram delta; `0` if the store is empty.
@@ -335,28 +426,10 @@ impl UserStore {
         prev: Option<Token>,
         token: Token,
     ) -> Result<UserCountDelta, UserStoreError> {
-        let db = self.database();
-        let txn = db.begin_read()?;
-        let unigrams = txn.open_table(UNIGRAM)?;
-        let uni_total = txn.open_table(UNIGRAM_TOTAL)?;
-        let unigram_delta = unigrams.get(token)?.map_or(0, |g| g.value());
-        let unigram_total_delta = uni_total.get(UNIGRAM_TOTAL_KEY)?.map_or(0, |g| g.value());
-        let (bigram_count, bigram_total) = if let Some(prev) = prev {
-            let bigram = txn.open_table(BIGRAM)?;
-            let totals = txn.open_table(BIGRAM_TOTAL)?;
-            (
-                bigram.get((prev, token))?.map_or(0, |g| g.value()),
-                totals.get(prev)?.map_or(0, |g| g.value()),
-            )
-        } else {
-            (0, 0)
-        };
-        Ok(UserCountDelta {
-            bigram_count,
-            bigram_total,
-            unigram_delta,
-            unigram_total_delta,
-        })
+        if !self.has_user_data() {
+            return Ok(UserCountDelta::ZERO);
+        }
+        self.with_count_snapshot(|cached| cached.count_delta(prev, token))
     }
 
     /// Record a training selection of `cur` after `last` (the `pinyin_train`
@@ -414,6 +487,7 @@ impl UserStore {
             seed
         };
         txn.commit()?;
+        self.mark_committed_write(db, true);
         Ok(seed)
     }
 
@@ -485,6 +559,7 @@ impl UserStore {
             }
         };
         txn.commit()?;
+        self.mark_committed_write(db, true);
         Ok(token)
     }
 
@@ -596,12 +671,17 @@ impl UserStore {
         if !self.is_modified() {
             return Ok(false);
         }
+        // Hold the snapshot lock across compact so a decode cannot install a
+        // new read transaction while redb refuses live readers.
+        let mut snapshot = self.count_snapshot();
+        *snapshot = None;
         let mut db = self.database();
         // `performed` is false when nothing further could be compacted; the
         // save still succeeded (upstream returns the write+rename result,
         // which is success even when the phrase index had nothing to move).
         let _performed = db.compact()?;
         drop(db);
+        drop(snapshot);
         self.inner.dirty.store(false, Ordering::Relaxed);
         Ok(true)
     }
@@ -695,7 +775,9 @@ impl UserStore {
                 remove_pronunciations(&mut prons, token)?;
             }
         }
+        let has_user_data = has_user_data_in_write_txn(&txn)?;
         txn.commit()?;
+        self.mark_committed_write(db, has_user_data);
         Ok(())
     }
 
@@ -768,9 +850,80 @@ impl UserStore {
             unigram.remove(token)?;
             uni_total.insert(UNIGRAM_TOTAL_KEY, kept_sum)?;
         }
+        let has_user_data = has_user_data_in_write_txn(&txn)?;
         txn.commit()?;
+        self.mark_committed_write(db, has_user_data);
         Ok(true)
     }
+}
+
+impl CountSnapshot {
+    fn unigram_delta(&self, token: Token) -> Result<u64, UserStoreError> {
+        Ok(self.unigram.get(token)?.map_or(0, |g| g.value()))
+    }
+
+    fn count_delta(
+        &self,
+        prev: Option<Token>,
+        token: Token,
+    ) -> Result<UserCountDelta, UserStoreError> {
+        let unigram_delta = self.unigram.get(token)?.map_or(0, |g| g.value());
+        let unigram_total_delta = self
+            .unigram_total
+            .get(UNIGRAM_TOTAL_KEY)?
+            .map_or(0, |g| g.value());
+        let (bigram_count, bigram_total) = if let Some(prev) = prev {
+            (
+                self.bigram.get((prev, token))?.map_or(0, |g| g.value()),
+                self.bigram_total.get(prev)?.map_or(0, |g| g.value()),
+            )
+        } else {
+            (0, 0)
+        };
+        Ok(UserCountDelta {
+            bigram_count,
+            bigram_total,
+            unigram_delta,
+            unigram_total_delta,
+        })
+    }
+}
+
+/// Whether the store holds any user data at all, evaluated inside `txn`.
+///
+/// Backs the [`UserStore::has_user_data`] fast path, so a wrong `false` here
+/// is a silent scoring failure, not a slow one.
+///
+/// `BIGRAM_TOTAL` and `UNIGRAM_TOTAL` are deliberately absent: they are
+/// derived sums that every writer keeps trivial whenever their source table
+/// is empty. `mask_out` and `remove_user_phrase` rewrite the bigram totals
+/// from the surviving rows and insert only positive ones, and set the unigram
+/// total to the surviving sum; `open`'s backfill sums an empty `UNIGRAM` to
+/// `0`. Reading a derived total when its source is empty therefore always
+/// yields the same `UserCountDelta::ZERO` this predicate authorises. A future
+/// writer able to leave a non-trivial total behind an empty source table must
+/// add that table here.
+fn has_user_data_in_write_txn(txn: &redb::WriteTransaction) -> Result<bool, UserStoreError> {
+    let bigram = txn.open_table(BIGRAM)?;
+    if !bigram.is_empty()? {
+        return Ok(true);
+    }
+    drop(bigram);
+
+    let unigram = txn.open_table(UNIGRAM)?;
+    if !unigram.is_empty()? {
+        return Ok(true);
+    }
+    drop(unigram);
+
+    let phrases = txn.open_table(PHRASE)?;
+    if !phrases.is_empty()? {
+        return Ok(true);
+    }
+    drop(phrases);
+
+    let pronunciations = txn.open_table(PRONUNCIATION)?;
+    Ok(!pronunciations.is_empty()?)
 }
 
 /// Removes every pronunciation row of `token`.
@@ -854,12 +1007,156 @@ mod tests {
     fn open_creates_empty_store() {
         let path = temp_path("empty");
         let store = UserStore::open(&path).unwrap();
+        assert!(!store.has_user_data());
+        assert_eq!(store.write_generation(), 0);
         assert_eq!(store.bigram_count(1, 2).unwrap(), 0);
         assert_eq!(store.bigram_total(1).unwrap(), 0);
         assert_eq!(store.unigram_delta(2).unwrap(), 0);
         assert_eq!(store.unigram_total().unwrap(), 0);
         assert_eq!(store.count_delta(Some(1), 2).unwrap(), UserCountDelta::ZERO);
         assert_eq!(store.count_delta(None, 2).unwrap(), UserCountDelta::ZERO);
+        assert!(
+            store.count_snapshot().is_none(),
+            "empty count_delta must not open a redb read transaction"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn cached_count_delta_refreshes_after_committed_writes() {
+        let path = temp_path("cache-refresh");
+        let mut store = UserStore::open(&path).unwrap();
+
+        assert_eq!(
+            store.count_delta(Some(1), 100).unwrap(),
+            UserCountDelta::ZERO
+        );
+        assert_eq!(store.write_generation(), 0);
+
+        store.observe_selection(1, 100).unwrap();
+        let first_generation = store.write_generation();
+        assert!(store.has_user_data());
+        assert_eq!(
+            store.count_delta(Some(1), 100).unwrap(),
+            UserCountDelta {
+                bigram_count: 69,
+                bigram_total: 69,
+                unigram_delta: 483,
+                unigram_total_delta: 483,
+            }
+        );
+
+        store.observe_selection(1, 100).unwrap();
+        assert!(
+            store.write_generation() > first_generation,
+            "a committed write invalidates the cached read snapshot"
+        );
+        assert_eq!(
+            store.count_delta(Some(1), 100).unwrap(),
+            UserCountDelta {
+                bigram_count: 207,
+                bigram_total: 207,
+                unigram_delta: 483 + 966,
+                unigram_total_delta: 483 + 966,
+            }
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn mask_out_all_marks_store_empty_again() {
+        let path = temp_path("empty-again");
+        let mut store = UserStore::open(&path).unwrap();
+        store.observe_selection(1, 100).unwrap();
+        assert!(store.has_user_data());
+        assert_ne!(
+            store.count_delta(Some(1), 100).unwrap(),
+            UserCountDelta::ZERO
+        );
+
+        store.mask_out(0, 0).unwrap();
+        assert!(!store.has_user_data());
+        assert_eq!(
+            store.count_delta(Some(1), 100).unwrap(),
+            UserCountDelta::ZERO
+        );
+        assert!(
+            store.count_snapshot().is_none(),
+            "an emptied store must not keep a cached read transaction"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_write_through_one_handle_invalidates_another_handles_cache() {
+        // The C ABI topology: the context's canonical store writes while
+        // `SharedLm`'s clone reads `count_delta` once per candidate. Both are
+        // clones over one `StoreInner`, so the generation counter, the
+        // `has_user_data` flag, and the snapshot mutex are shared.
+        // `second_open_of_same_path_shares_the_handle` checks cross-handle
+        // visibility through `bigram_count`, which bypasses the cache
+        // entirely — this is the same question asked of the cached path.
+        let path = temp_path("clone-cache");
+        let mut writer = UserStore::open(&path).unwrap();
+        let reader = UserStore::open(&path).unwrap();
+
+        // Prime the reader's fast path while the store is still empty.
+        assert_eq!(
+            reader.count_delta(Some(1), 100).unwrap(),
+            UserCountDelta::ZERO
+        );
+
+        writer.observe_selection(1, 100).unwrap();
+        assert!(
+            reader.has_user_data(),
+            "the flag lives on the shared inner, not the writing handle"
+        );
+        assert_eq!(reader.count_delta(Some(1), 100).unwrap().bigram_count, 69);
+
+        // A second write must retire the snapshot the reader just cached.
+        writer.observe_selection(1, 100).unwrap();
+        assert_eq!(reader.count_delta(Some(1), 100).unwrap().bigram_count, 207);
+
+        // Emptying through the writer restores the reader's zero-cost path
+        // rather than stranding it on a stale snapshot.
+        writer.mask_out(0, 0).unwrap();
+        assert!(!reader.has_user_data());
+        assert_eq!(
+            reader.count_delta(Some(1), 100).unwrap(),
+            UserCountDelta::ZERO
+        );
+        assert_eq!(reader.unigram_delta(100).unwrap(), 0);
+        assert!(
+            reader.count_snapshot().is_none(),
+            "an emptied store must not keep a cached read transaction"
+        );
+
+        drop(writer);
+        drop(reader);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reopen_of_populated_store_sets_has_user_data() {
+        let path = temp_path("reopen-populated");
+        {
+            let mut store = UserStore::open(&path).unwrap();
+            store.observe_selection(1, 100).unwrap();
+        }
+        let store = UserStore::open(&path).unwrap();
+        assert!(store.has_user_data());
+        assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_compacts_after_a_cached_read() {
+        let path = temp_path("save-after-cache");
+        let mut store = UserStore::open(&path).unwrap();
+        store.observe_selection(1, 100).unwrap();
+        assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
+        assert!(store.save().unwrap());
+        assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
         let _ = std::fs::remove_file(&path);
     }
 
