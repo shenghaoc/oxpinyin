@@ -1,0 +1,13 @@
+# W9-T4a interpolation2.text emitter golden (value-level parity
+# with export_interpolation; format contract with parse_interpolation2).
+#
+# The Rust emitter (`pinyin-emitter`) is run over T2's counts of
+# `segmenter-ngseg.txt` (T1's output) with the pinned model20 phrase
+# index supplying phrase text (`<start>` for sentence_start). The full
+# interpolation2.text is several MB, so instead of tracking it we pin
+# its exact shape and a dependency-free FNV-1a 64-bit checksum of the
+# emitted bytes (`\data model interpolation` / `\1-gram` / `\2-gram` /
+# `\end`, `\item` lines with phrase text, no λ).
+unigrams 138096
+bigrams 199
+fnv1a64 a6fd9465851d35de
