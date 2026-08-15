@@ -1,0 +1,12 @@
+# W9-T2 counter differential golden (value-level parity with gen_ngram).
+#
+# The Rust counter (`pinyin-counter`) is run over `segmenter-ngseg.txt`
+# (T1's output) with the pinned model20 phrase index as the freq-1 floor
+# seed. The full value dump is ~1.5 MB of integer counts, so instead of
+# tracking it we pin its exact shape and a dependency-free FNV-1a 64-bit
+# checksum. `fnv1a64` is the hash of `Counts::dump()` — `\data
+# pinyin-counter` / `\1-gram` / `\2-gram` / `\end`, one `token count` or
+# `prev cur count` per line, sorted.
+unigrams 138096
+bigrams 199
+fnv1a64 1f7af24b04577d8b
