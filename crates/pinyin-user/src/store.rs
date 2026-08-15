@@ -13,11 +13,10 @@
 //! additive merge. T5 adds the save cycle: the §4 `m_modified` gate and the
 //! redb-backed persistence point behind `pinyin_save`.
 
-use std::collections::HashMap;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use pinyin_core::UserCountDelta;
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
@@ -26,6 +25,7 @@ use crate::phrase::{
     self, ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, FIRST_USER_TOKEN, PinyinKey, UserPhrase,
     UserPronunciation,
 };
+use crate::registry::{self, RegistryLease, StoreInner};
 use crate::seed;
 
 /// Token type — libpinyin's 32-bit `phrase_token_t`.
@@ -189,24 +189,23 @@ impl From<redb::CompactionError> for UserStoreError {
 /// `Clone` shares the underlying database handle (cheap): the C ABI context
 /// keeps the canonical store and hands each instance a clone, exactly like
 /// the dictionary and language model handles. `redb`'s `Database` handle is
-/// not itself `Clone` (redb 4.1.0), so it lives behind an `Arc`; the `Mutex`
-/// serializes the handle because [`Database::compact`] (the `pinyin_save`
-/// write side) demands `&mut self`.
-///
-/// The §4 `m_modified` flag is also shared, as an [`AtomicBool`]: clones
-/// record dirtiness through their own `&mut self` updates and the context's
-/// `pinyin_save` observes it. The C ABI contract is main-thread-only, so the
-/// flag uses relaxed ordering.
+/// not itself `Clone` (redb 4.1.0), so the handle and the §4 `m_modified`
+/// flag live on one `Arc`; the `Mutex` serializes the handle because
+/// [`Database::compact`] (the `pinyin_save` write side) demands `&mut self`.
+/// Clones record dirtiness through their own `&mut self` updates and the
+/// context's `pinyin_save` observes it. The C ABI contract is
+/// main-thread-only, so the flag uses relaxed ordering.
 pub struct UserStore {
-    db: Arc<Mutex<Database>>,
-    dirty: Arc<AtomicBool>,
+    inner: Arc<StoreInner>,
+    /// Last field so [`RegistryLease`] drains after this handle's `Arc` dies.
+    _lease: RegistryLease,
 }
 
 impl Clone for UserStore {
     fn clone(&self) -> Self {
         Self {
-            db: Arc::clone(&self.db),
-            dirty: Arc::clone(&self.dirty),
+            inner: Arc::clone(&self.inner),
+            _lease: RegistryLease,
         }
     }
 }
@@ -217,42 +216,13 @@ impl fmt::Debug for UserStore {
     }
 }
 
-/// Process-global registry of the live user stores, keyed by canonical path.
-///
-/// redb refuses a second write handle to a file already open in this process,
-/// so a second [`UserStore::open`] of the same user directory (e.g. a second
-/// `pinyin_init`) would otherwise fail — and the C ABI's degrade-to-`None`
-/// would then silently disable all learning for that context. Instead the
-/// second open hands back a clone of the already-open handle, so every context
-/// on one user dir shares the same counts and the same §4 dirty flag.
-///
-/// Entries are `Weak`, and C ABI handle destructors call
-/// [`UserStore::drain_registry`]; that drops dead entries and shrinks the map
-/// so a `dlclose`d cdylib leaves no process-lifetime heap behind.
-type StoreRegistry = HashMap<PathBuf, (Weak<Mutex<Database>>, Weak<AtomicBool>)>;
-static OPEN_STORES: OnceLock<Mutex<StoreRegistry>> = OnceLock::new();
-
-/// Canonical registry key for `path`: the canonicalized parent joined with the
-/// file name, so distinct spellings of one user dir collapse to one entry. The
-/// file itself need not exist yet (redb creates it); only the parent must, and
-/// it does whenever [`Database::create`] can succeed. Falls back to the raw
-/// path when the parent cannot be canonicalized.
-fn registry_key(path: &Path) -> PathBuf {
-    match (path.parent(), path.file_name()) {
-        (Some(parent), Some(name)) => match parent.canonicalize() {
-            Ok(base) => base.join(name),
-            Err(_) => path.to_path_buf(),
-        },
-        _ => path.to_path_buf(),
-    }
-}
-
 impl UserStore {
     /// Locks the shared database handle, recovering from a poisoned lock
     /// (constitution §4: nothing here panics, so a poisoned mutex must not
     /// brick the store either).
     fn database(&self) -> MutexGuard<'_, Database> {
-        self.db
+        self.inner
+            .db
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -267,22 +237,19 @@ impl UserStore {
     ///
     /// Opening a path that is already open in this process returns a clone of
     /// the live handle (shared counts and shared §4 dirty flag) rather than a
-    /// second database handle, which redb refuses; see [`OPEN_STORES`].
+    /// second database handle, which redb refuses.
     pub fn open(path: &Path) -> Result<Self, UserStoreError> {
         // Reuse a live handle for a path already open in this process (redb
-        // refuses a second write handle); see [`OPEN_STORES`]. The registry
-        // lock is held across create + insert so two racing opens of a fresh
-        // path cannot both create.
-        let key = registry_key(path);
-        let registry = OPEN_STORES.get_or_init(|| Mutex::new(HashMap::new()));
-        let mut reg = registry.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(store) = reg.get(&key).and_then(|(db, dirty)| {
-            Some(Self {
-                db: db.upgrade()?,
-                dirty: dirty.upgrade()?,
-            })
-        }) {
-            return Ok(store);
+        // refuses a second write handle). The registry lock is held across
+        // create + insert so two racing opens of a fresh path cannot both
+        // create.
+        let key = registry::registry_key(path);
+        let mut reg = registry::lock_registry();
+        if let Some(inner) = reg.get(&key).and_then(|handle| handle.upgrade()) {
+            return Ok(Self {
+                inner,
+                _lease: RegistryLease,
+            });
         }
 
         let db = Database::create(path).map_err(|e| match e {
@@ -316,35 +283,15 @@ impl UserStore {
             }
         }
         txn.commit()?;
-        let store = Self {
-            db: Arc::new(Mutex::new(db)),
-            dirty: Arc::new(AtomicBool::new(false)),
-        };
-        reg.insert(
-            key,
-            (Arc::downgrade(&store.db), Arc::downgrade(&store.dirty)),
-        );
-        Ok(store)
-    }
-
-    /// Drop dead registry entries and release the map's backing allocation
-    /// when no live store remains.
-    ///
-    /// This is the drain half of the shared-handle registry. C ABI handle
-    /// destructors call it after dropping their [`UserStore`] clone; entries
-    /// whose [`Weak`] handles have no remaining strong count are removed, and
-    /// an empty map is shrunk so the `dlopen`ed cdylib leaves no heap behind
-    /// at `dlclose` (the W7-T1 bisection valgrind record). Live stores owned
-    /// by other contexts are retained.
-    pub fn drain_registry() {
-        let Some(registry) = OPEN_STORES.get() else {
-            return;
-        };
-        let mut reg = registry
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        reg.retain(|_, (db, dirty)| db.strong_count() > 0 || dirty.strong_count() > 0);
-        reg.shrink_to_fit();
+        let inner = Arc::new(StoreInner {
+            db: Mutex::new(db),
+            dirty: AtomicBool::new(false),
+        });
+        reg.insert(key, Arc::downgrade(&inner));
+        Ok(Self {
+            inner,
+            _lease: RegistryLease,
+        })
     }
 
     /// Stored bigram count for `(prev, cur)`; `0` if unrecorded.
@@ -422,7 +369,7 @@ impl UserStore {
     /// only those stays an upstream-faithful no-op.
     pub fn observe_selection(&mut self, last: Token, cur: Token) -> Result<u64, UserStoreError> {
         let seed = self.update(last, cur, SeedPolicy::Training)?;
-        self.dirty.store(true, Ordering::Relaxed);
+        self.inner.dirty.store(true, Ordering::Relaxed);
         Ok(seed)
     }
 
@@ -578,7 +525,7 @@ impl UserStore {
     /// context's `pinyin_save` sees dirtiness recorded through instances.
     #[must_use]
     pub fn is_modified(&self) -> bool {
-        self.dirty.load(Ordering::Relaxed)
+        self.inner.dirty.load(Ordering::Relaxed)
     }
 
     /// Every user phrase as §9 export rows, in token order then stored
@@ -655,7 +602,7 @@ impl UserStore {
         // which is success even when the phrase index had nothing to move).
         let _performed = db.compact()?;
         drop(db);
-        self.dirty.store(false, Ordering::Relaxed);
+        self.inner.dirty.store(false, Ordering::Relaxed);
         Ok(true)
     }
 
@@ -937,44 +884,30 @@ mod tests {
 
         drop(first);
         drop(second);
-        UserStore::drain_registry();
+        assert!(
+            !registry::contains_key(&path),
+            "last drop must empty the registry entry"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
-    fn drain_registry_removes_closed_paths_and_allows_reopen() {
+    fn last_drop_removes_registry_entry_and_allows_reopen() {
         let path = temp_path("drain-reopen");
-        let key = registry_key(&path);
 
         let first = UserStore::open(&path).unwrap();
         let second = UserStore::open(&path).unwrap();
-        {
-            let registry = OPEN_STORES.get().expect("registry initialized");
-            let reg = registry.lock().unwrap();
-            assert!(reg.contains_key(&key));
-        }
+        assert!(registry::contains_key(&path));
 
-        // One live clone keeps the shared entry; draining after both are
-        // gone removes it, then the same path can open a fresh handle.
         drop(first);
-        UserStore::drain_registry();
-        {
-            let registry = OPEN_STORES.get().expect("registry initialized");
-            let reg = registry.lock().unwrap();
-            assert!(reg.contains_key(&key), "second clone is still live");
-        }
+        assert!(registry::contains_key(&path), "second clone is still live");
         drop(second);
-        UserStore::drain_registry();
-        {
-            let registry = OPEN_STORES.get().expect("registry initialized");
-            let reg = registry.lock().unwrap();
-            assert!(!reg.contains_key(&key));
-        }
+        assert!(!registry::contains_key(&path));
 
         let reopened = UserStore::open(&path).unwrap();
         assert_eq!(reopened.bigram_count(1, 100).unwrap(), 0);
         drop(reopened);
-        UserStore::drain_registry();
+        assert!(!registry::contains_key(&path));
         let _ = std::fs::remove_file(&path);
     }
 

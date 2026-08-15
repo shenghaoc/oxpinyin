@@ -23,6 +23,7 @@ pub mod phrase;
 pub mod seed;
 
 mod model;
+mod registry;
 mod store;
 
 pub use phrase::{

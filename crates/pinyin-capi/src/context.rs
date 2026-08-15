@@ -3,8 +3,6 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use pinyin_user::UserStore;
-
 use crate::ffi::{cstr_to_string, ffi_catch};
 use crate::state::{CapiContext, box_context, context_mut};
 use crate::types::PinyinContext;
@@ -59,11 +57,6 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
         unsafe {
             drop(Box::from_raw(context.cast::<CapiContext>()));
         }
-        // Drain dead entries from the shared redb-handle registry now that
-        // this context's UserStore clone is gone. Live contexts are retained;
-        // when this was the last one, the registry map is empty before the
-        // shared object can be dlclose()d (the valgrind gate).
-        UserStore::drain_registry();
     });
 }
 
