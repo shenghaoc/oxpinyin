@@ -33,8 +33,7 @@ Assisted-by: AGENT_NAME:MODEL_VERSION
 ```
 
 Nothing after the model. Trailers are a **set** (no duplicates). Never use
-`Co-Authored-By` for agents. Human-only commits: subject starts with
-`[human]` and omits `Assisted-by`.
+`Co-Authored-By` for agents.
 
 ## STOP → do not improvise
 

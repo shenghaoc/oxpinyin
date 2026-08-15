@@ -1,37 +1,11 @@
 #!/bin/sh
+# commit-msg hook — delegates to the canonical commit-trailer linter so the
+# local hook and CI can never disagree (single source of truth).
+#
+# Only R1–R3 (message-content) rules apply at commit time; R4
+# (author/committer identity) is CI-only because the hook runs before the
+# commit exists (no SHA to inspect) and the author identity is not a property
+# of the message.
 set -eu
-
-message=$1
-subject=$(sed -n '1p' "$message")
-trailers=$(git interpret-trailers --parse <"$message")
-# AGENT:MODEL only. Nothing after the model — no tool lists.
-pattern='^Assisted-by: [[:alnum:]][[:alnum:]._-]*:[[:alnum:]][[:alnum:].+_-]*$'
-placeholders='^Assisted-by: (AGENT|AGENT_NAME):|:(MODEL|MODEL_VERSION)([[:space:]]|$)|\[|\]'
-assisted=$(printf '%s\n' "$trailers" | sed -n '/^Assisted-by:/p')
-
-case $subject in
-\[human\]*)
-	if [ -n "$assisted" ]; then
-		printf '%s\n' 'commit-msg: [human] commits must omit Assisted-by' >&2
-		exit 1
-	fi
-	;;
-*)
-	# No Assisted-by: pass. Rules apply only when trailers are present.
-	if [ -z "$assisted" ]; then
-		exit 0
-	fi
-	if printf '%s\n' "$assisted" | grep -Ev "$pattern" >/dev/null ||
-		printf '%s\n' "$assisted" | grep -Eq "$placeholders"; then
-		printf '%s\n' 'commit-msg: malformed or placeholder Assisted-by trailer' >&2
-		printf '%s\n' 'expected: Assisted-by: AGENT_NAME:MODEL_VERSION' >&2
-		printf '%s\n' 'nothing after the model name (no tool lists)' >&2
-		exit 1
-	fi
-	# Set semantics: each Assisted-by line must appear at most once.
-	if printf '%s\n' "$assisted" | sort | uniq -d | grep -q .; then
-		printf '%s\n' 'commit-msg: duplicate Assisted-by trailer (set semantics)' >&2
-		exit 1
-	fi
-	;;
-esac
+repo_root=$(git rev-parse --show-toplevel)
+exec "$repo_root/.github/scripts/lint-commits.sh" --hook "$1"
