@@ -6,6 +6,8 @@
 //! reserved zero id). This module names those constants and the value types
 //! the store records; it does not talk to redb.
 
+use pinyin_core::SyllableKey;
+
 use crate::store::Token;
 
 /// Sub-index user phrases live in (`novel_types.h:161`, §3).
@@ -122,6 +124,20 @@ impl UserPronunciation {
     #[must_use]
     pub const fn count(&self) -> u64 {
         self.count
+    }
+
+    /// This reading rendered as `'`-joined syllable spellings (e.g. `ni'hao`),
+    /// or `None` when a stored key is not a valid [`SyllableKey`] id.
+    ///
+    /// The single rendering path the §9 phrase and bigram exports share, so
+    /// an unrenderable key is skipped identically on both surfaces.
+    #[must_use]
+    pub fn render_pinyin(&self) -> Option<String> {
+        let mut parts = Vec::with_capacity(self.keys.len());
+        for key in &self.keys {
+            parts.push(SyllableKey::from_index(usize::from(*key))?.text());
+        }
+        Some(parts.join("'"))
     }
 
     pub(crate) fn new(keys: Vec<PinyinKey>, count: u64) -> Self {

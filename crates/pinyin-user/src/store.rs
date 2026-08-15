@@ -18,7 +18,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use pinyin_core::{SyllableKey, UserCountDelta};
+use pinyin_core::UserCountDelta;
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
 use crate::phrase::{
@@ -523,23 +523,12 @@ impl UserStore {
         for item in phrases.iter()? {
             let (token, text) = item?;
             for pronunciation in collect_pronunciations(&prons, token.value())? {
-                let mut parts = Vec::with_capacity(pronunciation.keys().len());
-                let mut renderable = true;
-                for key in pronunciation.keys() {
-                    match SyllableKey::from_index(usize::from(*key)) {
-                        Some(syllable) => parts.push(syllable.text()),
-                        None => {
-                            renderable = false;
-                            break;
-                        }
-                    }
-                }
-                if !renderable {
+                let Some(pinyin) = pronunciation.render_pinyin() else {
                     continue;
-                }
+                };
                 rows.push(ExportedPhrase {
                     text: text.value().to_owned(),
-                    pinyin: parts.join("'"),
+                    pinyin,
                     count: pronunciation.count(),
                 });
             }
@@ -628,11 +617,8 @@ impl UserStore {
                 if (prev & mask) == value || (cur & mask) == value {
                     bigram.remove((prev, cur))?;
                 } else {
-                    *survivors.entry(prev).or_default() = survivors
-                        .get(&prev)
-                        .copied()
-                        .unwrap_or(0)
-                        .saturating_add(count);
+                    let slot = survivors.entry(prev).or_default();
+                    *slot = slot.saturating_add(count);
                 }
             }
             let mut old_totals: Vec<Token> = Vec::new();
@@ -700,23 +686,17 @@ impl UserStore {
     pub fn remove_user_phrase(&mut self, token: Token) -> Result<bool, UserStoreError> {
         let db = self.database();
         let txn = db.begin_write()?;
-        let exists = {
-            let phrases = txn.open_table(PHRASE)?;
-            phrases.get(token)?.is_some()
-        };
-        if !exists {
-            return Ok(false);
-        }
         {
             // The full-token predicate on every table that names `token`,
-            // plus the phrase rows themselves.
+            // plus the phrase rows themselves. An absent phrase is the
+            // `Ok(false)` "store does not own this token" report.
             let mut phrases = txn.open_table(PHRASE)?;
-            let text = phrases.get(token)?.map(|g| g.value().to_owned());
+            let Some(text) = phrases.get(token)?.map(|g| g.value().to_owned()) else {
+                return Ok(false);
+            };
             phrases.remove(token)?;
             let mut by_text = txn.open_table(PHRASE_BY_TEXT)?;
-            if let Some(text) = text {
-                by_text.remove(text.as_str())?;
-            }
+            by_text.remove(text.as_str())?;
             let mut prons = txn.open_table(PRONUNCIATION)?;
             remove_pronunciations(&mut prons, token)?;
 
@@ -734,11 +714,8 @@ impl UserStore {
                 if prev == token || cur == token {
                     bigram.remove((prev, cur))?;
                 } else {
-                    *survivors.entry(prev).or_default() = survivors
-                        .get(&prev)
-                        .copied()
-                        .unwrap_or(0)
-                        .saturating_add(count);
+                    let slot = survivors.entry(prev).or_default();
+                    *slot = slot.saturating_add(count);
                 }
             }
             let mut old_totals: Vec<Token> = Vec::new();
@@ -778,10 +755,18 @@ fn remove_pronunciations(
     prons: &mut redb::Table<(Token, &[u8]), u64>,
     token: Token,
 ) -> Result<(), UserStoreError> {
+    // Guard `token + 1` against overflow at `Token::MAX` (constitution §4:
+    // no panic on any input), mirroring `collect_pronunciations`.
     let start: (Token, &[u8]) = (token, &[]);
-    let end: (Token, &[u8]) = (token + 1, &[]);
+    let range = match token.checked_add(1) {
+        Some(next) => {
+            let end: (Token, &[u8]) = (next, &[]);
+            prons.range(start..end)?
+        }
+        None => prons.range(start..)?,
+    };
     let mut keys: Vec<Vec<u8>> = Vec::new();
-    for item in prons.range(start..end)? {
+    for item in range {
         let (key, _) = item?;
         let (_, key_bytes) = key.value();
         keys.push(key_bytes.to_vec());
@@ -830,6 +815,8 @@ fn collect_pronunciations(
 
 #[cfg(test)]
 mod tests {
+    use pinyin_core::SyllableKey;
+
     use super::*;
     use crate::{PHRASE_INDEX_LIBRARY_MASK, USER_DICTIONARY, phrase_index_make_token};
 

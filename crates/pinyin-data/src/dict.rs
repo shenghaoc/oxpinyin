@@ -190,14 +190,11 @@ impl Dictionary for SystemDictionary {
 
         let mut entries = Vec::new();
         for (token, _freq) in parse_index_records(&raw)? {
-            // Token → text through phrase_index. The full export resolves
-            // every token; a mini fixture may omit some, and those records
-            // contribute no candidate rather than failing the lookup.
-            let key_bytes = token.to_le_bytes();
-            if let Some(text_bytes) = self.phrase_index.get(&key_bytes)? {
-                let text = String::from_utf8(text_bytes).map_err(|_| {
-                    DictError::Parse(format!("phrase text for token {token:#010x} is not UTF-8"))
-                })?;
+            // Token → text through phrase_index (the reverse half is
+            // `phrase_text`). The full export resolves every token; a mini
+            // fixture may omit some, and those records contribute no
+            // candidate rather than failing the lookup.
+            if let Some(text) = self.phrase_text(token)? {
                 entries.push(PhraseEntry::new(PhraseToken::new(token), text));
             }
         }
