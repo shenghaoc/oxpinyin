@@ -473,6 +473,15 @@ name = "pinyin-dictool"
 version = "0.1.0"
 
 [[package]]
+name = "pinyin-emitter"
+version = "0.1.0"
+dependencies = [
+ "pinyin-counter",
+ "pinyin-data",
+ "pinyin-segment",
+]
+
+[[package]]
 name = "pinyin-engine"
 version = "0.1.0"
 dependencies = [

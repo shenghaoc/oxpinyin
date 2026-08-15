@@ -12,6 +12,7 @@ members = [
   "crates/pinyin-segment",
   "crates/pinyin-counter",
   "crates/pinyin-lambda",
+  "crates/pinyin-emitter",
 ]
 
 [workspace.package]
