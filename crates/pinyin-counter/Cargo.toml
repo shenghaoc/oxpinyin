@@ -1,0 +1,19 @@
+[package]
+name = "pinyin-counter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Training-only n-gram counter reproducing libpinyin gen_ngram. Never ships."
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "pinyin-counter"
+path = "src/bin/pinyin-counter.rs"
+
+[dependencies]
+pinyin-segment = { path = "../pinyin-segment" }
