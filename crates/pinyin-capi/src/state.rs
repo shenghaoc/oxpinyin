@@ -230,6 +230,12 @@ impl CapiContext {
         let store = self.user.as_ref()?;
         let raw = store.export_bigrams().ok()?;
         let mut rows = Vec::new();
+        // Memoize the (text, pinyins) rendering: a system token recurs across
+        // many bigram rows and `render_token` is an O(pinyin-index) scan, so
+        // resolving it once per distinct token keeps the export off the
+        // rows×index quadratic.
+        let mut rendered: std::collections::HashMap<u32, Option<(String, Vec<String>)>> =
+            std::collections::HashMap::new();
         for (prev, cur, count) in raw {
             if prev == SENTENCE_START {
                 continue;
@@ -238,10 +244,18 @@ impl CapiContext {
             if count < INITIAL_SEED {
                 continue;
             }
-            let Some((prev_text, prev_pinyins)) = self.render_token(prev) else {
+            let Some((prev_text, prev_pinyins)) = rendered
+                .entry(prev)
+                .or_insert_with(|| self.render_token(prev))
+                .clone()
+            else {
                 continue;
             };
-            let Some((cur_text, cur_pinyins)) = self.render_token(cur) else {
+            let Some((cur_text, cur_pinyins)) = rendered
+                .entry(cur)
+                .or_insert_with(|| self.render_token(cur))
+                .clone()
+            else {
                 continue;
             };
             let phrase = format!("{prev_text}{cur_text}");
@@ -265,23 +279,16 @@ impl CapiContext {
         if is_user_token(token) {
             let store = self.user.as_ref()?;
             let phrase = store.phrase(token).ok().flatten()?;
-            let mut pinyins = Vec::new();
-            for pronunciation in phrase.pronunciations() {
-                let mut parts = Vec::with_capacity(pronunciation.keys().len());
-                let mut renderable = true;
-                for key in pronunciation.keys() {
-                    match SyllableKey::from_index(usize::from(*key)) {
-                        Some(syllable) => parts.push(syllable.text()),
-                        None => {
-                            renderable = false;
-                            break;
-                        }
-                    }
-                }
-                if !renderable {
-                    return None;
-                }
-                pinyins.push(parts.join("'"));
+            // Render each reading through the shared `render_pinyin` helper,
+            // skipping any unrenderable one — the same rule `export_phrases`
+            // applies, so the phrase and bigram exports stay consistent.
+            let pinyins: Vec<String> = phrase
+                .pronunciations()
+                .iter()
+                .filter_map(|pronunciation| pronunciation.render_pinyin())
+                .collect();
+            if pinyins.is_empty() {
+                return None;
             }
             Some((phrase.text().to_owned(), pinyins))
         } else {

@@ -55,15 +55,6 @@ impl UserCountDelta {
         unigram_delta: 0,
         unigram_total_delta: 0,
     };
-
-    /// Whether every field is zero.
-    #[must_use]
-    pub const fn is_zero(self) -> bool {
-        self.bigram_count == 0
-            && self.bigram_total == 0
-            && self.unigram_delta == 0
-            && self.unigram_total_delta == 0
-    }
 }
 
 /// Read-only lookup seam for dictionaries.
