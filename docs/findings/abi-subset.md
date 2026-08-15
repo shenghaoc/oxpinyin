@@ -617,8 +617,9 @@ Two paths depending on candidate type:
 ```
 pinyin_choose_candidate(instance, 0, candidate)
 pinyin_get_candidate_nbest_index(instance, candidate, &index)
+if (index != 0)
+    pinyin_train(instance, index)
 pinyin_get_sentence(instance, index, &sentence)
-pinyin_train(instance, index)
 g_free(sentence)
 // → commit the sentence text
 ```
@@ -823,6 +824,10 @@ Header `ZhuyinScheme` values (`pinyin_custom2.h`):
 `ZHUYIN_HSU_DVORAK` (8), `ZHUYIN_DACHEN_CP26` (9).
 `ZHUYIN_DEFAULT = ZHUYIN_STANDARD`.
 
+The value passed to `pinyin_set_zhuyin_scheme` is the header
+discriminant, **not** the GSettings bopomofo-schema index (which is a
+different 0-based map in `PYPConfig.cc`).
+
 ### Display styles
 
 `display_style_t` enum (consumer-side only, not passed to libpinyin):
@@ -912,10 +917,12 @@ pinyin_unload_phrase_library
 ```
 
 Notes:
-- `pinyin_get_n_pinyin`, `pinyin_get_pinyin_key`, and `pinyin_get_pinyin_string`
-  appear only in `#if 0` dead code at `PYPPinyinEditor.cc:296–333`; they are
-  in the complement because they are **not** live call sites (they remain
+- `pinyin_get_pinyin_key` and `pinyin_get_pinyin_string` appear only in
+  `#if 0` dead code at `PYPPinyinEditor.cc:296–333`; they are in the
+  complement because they are **not** live call sites (they remain
   exports in `libpinyin.ver`).
+- `pinyin_get_n_pinyin` also appears only in that `#if 0` block, but it is
+  **not** a `libpinyin.ver` export.
 - `pinyin_guess_predicted_candidates` is an older variant superseded by
   `pinyin_guess_predicted_candidates_with_punctuations`.
 - `pinyin_parse_full_pinyin` / `pinyin_parse_double_pinyin` /
