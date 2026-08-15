@@ -151,6 +151,16 @@ where
     pub fn paths(&self) -> &StoragePaths;
     pub fn dictionary(&self) -> &D;
     pub fn language_model(&self) -> &L;
+
+    // W6-T3 added the training surface. The frozen W4-T0 methods above
+    // did not change; these are additions. `train` is method-generic over
+    // `UserModel` so the engine stays user-agnostic.
+    pub fn train<U>(&self, user: &mut U) -> Result<(), EngineError>
+    where
+        U: UserModel<Token = PhraseToken>,
+        U::Error: Display;
+    pub fn selected_tokens(&self) -> &[PhraseToken];
+    pub fn composition_keys(&self) -> Result<Vec<SyllableKey>, EngineError>;
 }
 
 pub enum KeyOutcome { Ignored, Consumed, Commit(String) }   // #[non_exhaustive]
@@ -203,6 +213,10 @@ pub enum EngineError {                    // #[non_exhaustive]
     CandidateIndexOutOfRange { index: usize, len: usize },
     Dictionary(String),
     LanguageModel(String),
+    UserModel(String),                    // W6-T3
+    Graph(GraphError),
+    Decode(DecodeError),
+    Scoring(ScoringError),
 }
 ```
 
@@ -237,4 +251,8 @@ the pin's incomplete-key set and makes them graph edges.
 
 ## Architect correction log
 
-None. Entries here record any post-freeze signature change and its authority.
+**2026-08-15 — W6-T3 training surface.** `Session` gained `train`,
+`selected_tokens`, and `composition_keys`. `EngineError` gained
+`UserModel`. None of the frozen W4-T0 signatures changed; these are
+additions. `train` is method-generic over `UserModel` so the engine
+stays user-agnostic. Recorded by W6-T4 so the SPEC and the code agree.

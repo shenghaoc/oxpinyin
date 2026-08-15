@@ -2,10 +2,11 @@
 //!
 //! This is the first implementor of the `pinyin-core` seam — T0
 //! (`docs/findings/user-store.md` §7) found the trait had zero implementors.
-//! T1 wires only the `observe` (write) side. `score` is a neutral placeholder:
-//! the decode-time additive merge of user counts with the system model is
-//! W6-T4, and until then nothing consults `score`, so it must not influence
-//! decode.
+//! T1 wired `observe`. T4 exposes the stored counts as
+//! [`pinyin_core::UserCountDelta`] for the decode-time additive merge;
+//! [`UserModel::score`] cannot return that merge as a [`Cost`] (adding a
+//! user cost after the λ blend would be a new weighting scheme), so it
+//! stays at `0` and decode reads the counts through the language model.
 //!
 //! T3 types the seam with the engine's vocabulary token
 //! ([`PhraseToken`], `docs/findings/session-api.md`): [`Session::train`]
@@ -21,11 +22,14 @@ impl UserModel for UserStore {
     type Token = PhraseToken;
     type Error = UserStoreError;
 
-    /// Neutral placeholder — always `0` (no cost adjustment).
-    ///
-    /// The additive user/system merge is W6-T4; T1 expresses no preference so
-    /// that adding the store cannot move any decode result.
-    fn score(&self, _history: &[Self::Token], _token: &Self::Token) -> Result<Cost, Self::Error> {
+    /// Always `0`. The §5 merge is count addition *before* the probability
+    /// is taken, which lives in the language-model overlay via
+    /// [`UserStore::count_delta`]. A non-zero [`Cost`] here would be a
+    /// post-probability term — a weighting scheme §5 forbids.
+    fn score(&self, history: &[Self::Token], token: &Self::Token) -> Result<Cost, Self::Error> {
+        // Surface store-read failures rather than pretending the overlay
+        // is fine when the file is unreadable.
+        let _ = self.count_delta(history.last().map(|t| t.value()), token.value())?;
         Ok(0)
     }
 
@@ -78,11 +82,16 @@ mod tests {
     #[test]
     fn score_is_neutral_zero() {
         let path = temp_path("score");
-        let store = UserStore::open(&path).unwrap();
+        let mut store = UserStore::open(&path).unwrap();
         assert_eq!(
             UserModel::score(&store, &[token(1), token(2)], &token(3)).unwrap(),
             0
         );
+        // A populated store still returns 0 from this method: the merge is
+        // in the count domain, not a post-hoc cost.
+        UserModel::observe(&mut store, &[], &token(3)).unwrap();
+        assert_eq!(UserModel::score(&store, &[], &token(3)).unwrap(), 0);
+        assert_eq!(store.count_delta(None, 3).unwrap().unigram_delta, 483);
         let _ = std::fs::remove_file(&path);
     }
 }

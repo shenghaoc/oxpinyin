@@ -8,8 +8,9 @@
 //! `USER_DICTIONARY` token allocation (§3), as additional tables in the same
 //! database. W6-T3 wires the store through [`pinyin_core::UserModel`] (typed
 //! with the engine's [`pinyin_core::PhraseToken`]) into the engine session and
-//! the C ABI. Persistence semantics (T5) and the decode-time additive merge
-//! (T4) are out of scope.
+//! the C ABI. W6-T4 exposes the stored counts as a
+//! [`pinyin_core::UserCountDelta`] so decode can merge them additively with
+//! the system model. Persistence semantics (T5) are out of scope.
 #![warn(missing_docs)]
 
 pub mod phrase;

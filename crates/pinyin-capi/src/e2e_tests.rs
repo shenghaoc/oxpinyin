@@ -27,7 +27,7 @@ use crate::candidates::{
     pinyin_is_user_candidate, pinyin_train,
 };
 use crate::context::pinyin_init;
-use crate::instance::pinyin_alloc_instance;
+use crate::instance::{pinyin_alloc_instance, pinyin_reset};
 use crate::parse::pinyin_parse_more_full_pinyins;
 use crate::sentence::pinyin_guess_candidates;
 use crate::state::instance_ref;
@@ -325,6 +325,87 @@ fn training_entry_points_refuse_without_a_user_store() {
 
     // Selection still works: recording the constraint needs no store.
     assert!(pinyin_choose_candidate(instance, 0, cand) > 0);
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// Snapshot of phrase candidates as `(token, text, cost)`.
+fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String, i64)> {
+    // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+    let inst = unsafe { instance_ref(instance) };
+    inst.session
+        .candidates()
+        .iter()
+        .filter_map(|candidate| {
+            Some((
+                candidate.token()?.value(),
+                candidate.text().to_owned(),
+                candidate.cost(),
+            ))
+        })
+        .collect()
+}
+
+#[test]
+fn empty_user_store_decode_is_identical_across_instances() {
+    // (a) at the C ABI / mini-fixture scale: two empty stores, same input,
+    // bit-identical phrase candidates. The corpus-scale empty-store pin
+    // (10136 / 10182 / 94456 of 98930 / absent 1) is
+    // `real_tables_session_reports_parity`.
+    let a_dir = TempUserDir::new("empty-a");
+    let b_dir = TempUserDir::new("empty-b");
+    let (ctx_a, inst_a) = open(a_dir.path.to_str().expect("UTF-8 path"));
+    let (ctx_b, inst_b) = open(b_dir.path.to_str().expect("UTF-8 path"));
+
+    let _ = candidate(inst_a, "nihao", 0);
+    let _ = candidate(inst_b, "nihao", 0);
+    assert_eq!(phrase_snapshot(inst_a), phrase_snapshot(inst_b));
+
+    crate::instance::pinyin_free_instance(inst_a);
+    crate::instance::pinyin_free_instance(inst_b);
+    crate::context::pinyin_fini(ctx_a);
+    crate::context::pinyin_fini(ctx_b);
+}
+
+#[test]
+fn populated_store_cheapens_the_trained_candidate() {
+    // Populated-store pin — separate from the empty-store corpus contract.
+    // Training sequence (reproducible):
+    //   1. parse "nihao", guess, snapshot costs
+    //   2. choose candidate 0, pinyin_train once (seed 69, unigram 483)
+    //   3. reset, parse "nihao", guess again
+    // The trained token's decoder cost is strictly below its empty-store
+    // cost: the additive merge raised the unigram (empty-history ranking
+    // on the mini fixture, which has no real-frequency construction).
+    let user_dir = TempUserDir::new("populated");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let first = candidate(instance, "nihao", 0);
+    let token = token_of(instance, first);
+    let before = phrase_snapshot(instance);
+    let before_cost = before
+        .iter()
+        .find(|(t, _, _)| *t == token)
+        .map(|(_, _, cost)| *cost)
+        .expect("the chosen token is in the empty-store list");
+
+    assert!(pinyin_choose_candidate(instance, 0, first) > 0);
+    assert!(pinyin_train(instance, 0));
+    assert_eq!(store_of(instance).unigram_delta(token).unwrap(), 483);
+
+    assert!(pinyin_reset(instance));
+    let _ = candidate(instance, "nihao", 0);
+    let after = phrase_snapshot(instance);
+    let after_cost = after
+        .iter()
+        .find(|(t, _, _)| *t == token)
+        .map(|(_, _, cost)| *cost)
+        .expect("the trained token is still offered");
+    assert!(
+        after_cost < before_cost,
+        "training must cheapen the trained token: before={before_cost} after={after_cost}"
+    );
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
