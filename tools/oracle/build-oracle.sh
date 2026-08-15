@@ -131,6 +131,59 @@ ibus_src=$work_dir/src/ibus-libpinyin-$IBUS_LIBPINYIN_TAG
 	make install
 )
 
+# Install the internal storage headers, the generated configure header, and
+# the `libstorage` convenience archive that the W7-T2 legacy-migration dump
+# shim links against. These are all `noinst_*` in libpinyin's build, so
+# `make install` skips them; the shim needs them to read a legacy user
+# directory through the STORAGE classes (the version-scripted `.so` hides
+# those symbols). This is an explicit manifest — not a tree copy — so the set
+# that reaches the prefix is reviewed and pinned. It adds nothing to the
+# shared object or the public headers, so `oracle-pin.txt`'s
+# `shared_object_sha256` / `header_sha256` / `data_manifest_sha256` are
+# unchanged.
+install_storage_manifest() {
+	local include_dir="$prefix/include/libpinyin-$LIBPINYIN_TAG"
+	local storage_dir="$include_dir/storage"
+	mkdir -p "$storage_dir"
+
+	# Generated configure header; the storage headers consult its DBM
+	# backend guards (HAVE_TKRZW vs HAVE_BERKELEY_DB/HAVE_KYOTO_CABINET).
+	cp "$lib_src/config.h" "$include_dir/config.h"
+
+	# src/include noinst headers.
+	for name in memory_chunk.h pinyin_utils.h stl_lite.h unaligned_memory.h; do
+		cp "$lib_src/src/include/$name" "$include_dir/$name"
+	done
+
+	# src/storage noinst headers (explicit list).
+	local storage_headers=(
+		chewing_enum.h chewing_key.h pinyin_parser2.h zhuyin_parser2.h
+		phonetic_key_matrix.h phrase_index.h phrase_index_logger.h
+		phrase_large_table2.h phrase_large_table3.h
+		phrase_large_table3_bdb.h phrase_large_table3_kyotodb.h
+		phrase_large_table3_tkrzwdb.h
+		ngram.h ngram_bdb.h ngram_kyotodb.h ngram_tkrzwdb.h
+		flexible_ngram.h flexible_single_gram.h
+		flexible_ngram_bdb.h flexible_ngram_kyotodb.h flexible_ngram_tkrzwdb.h
+		tag_utility.h pinyin_parser_table.h special_table.h
+		double_pinyin_table.h zhuyin_table.h
+		pinyin_phrase2.h pinyin_phrase3.h
+		chewing_large_table.h chewing_large_table2.h
+		chewing_large_table2_bdb.h chewing_large_table2_kyotodb.h
+		chewing_large_table2_tkrzwdb.h
+		facade_chewing_table.h facade_chewing_table2.h
+		facade_phrase_table2.h facade_phrase_table3.h
+		table_info.h bdb_utils.h kyotodb_utils.h tkrzwdb_utils.h
+		punct_table.h punct_table_bdb.h punct_table_kyotodb.h punct_table_tkrzwdb.h
+	)
+	for name in "${storage_headers[@]}"; do
+		cp "$lib_src/src/storage/$name" "$storage_dir/$name"
+	done
+
+	cp "$lib_src/src/storage/libstorage.a" "$prefix/lib/libstorage.a"
+}
+install_storage_manifest
+
 (
 	cd "$ibus_src"
 	autoreconf --force --install --verbose
@@ -153,6 +206,7 @@ shared_object=$(find "$prefix" -type f \( -name 'libpinyin.so' -o -name 'libpiny
 header=$prefix/include/libpinyin-$LIBPINYIN_TAG/pinyin.h
 data_dir=$prefix/lib/libpinyin/data
 data_manifest=$prefix/oracle-data.sha256
+storage_manifest=$prefix/storage-manifest.sha256
 [[ -f $header && -d $data_dir ]] || {
 	printf '%s\n' 'installed oracle header or data directory not found' >&2
 	exit 1
@@ -161,9 +215,15 @@ data_manifest=$prefix/oracle-data.sha256
 	cd "$prefix"
 	find lib/libpinyin/data -type f -print0 | sort -z | xargs -0 sha256sum
 ) >"$data_manifest"
+(
+	cd "$prefix"
+	find "include/libpinyin-$LIBPINYIN_TAG" -type f -name '*.h' -print0 | sort -z | xargs -0 sha256sum
+	sha256sum lib/libstorage.a
+) >"$storage_manifest"
 read -r header_sha256 _ < <(sha256sum "$header")
 read -r shared_object_sha256 _ < <(sha256sum "$shared_object")
 read -r data_manifest_sha256 _ < <(sha256sum "$data_manifest")
+read -r storage_manifest_sha256 _ < <(sha256sum "$storage_manifest")
 cat >"$prefix/oracle-pin.txt" <<EOF
 schema=pinyin-oracle-v1
 pin_ref=$ORACLE_PIN_REF
@@ -176,6 +236,7 @@ dbm=Tkrzw
 header_sha256=$header_sha256
 shared_object_sha256=$shared_object_sha256
 data_manifest_sha256=$data_manifest_sha256
+storage_manifest_sha256=$storage_manifest_sha256
 EOF
 
 printf 'libpinyin_tag=%s\nlibpinyin_commit=%s\n' "$LIBPINYIN_TAG" "$LIBPINYIN_SHA" >&2
