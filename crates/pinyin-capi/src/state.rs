@@ -7,25 +7,80 @@
 
 use std::ffi::CString;
 use std::path::Path;
+use std::sync::Arc;
 
-use pinyin_data::{BigramLanguageModel, SystemDictionary};
+use pinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
+use pinyin_data::{BigramLanguageModel, DictError, LmError, SystemDictionary};
 use pinyin_engine::{CandidateKind, Config, Session, StoragePaths};
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
+// ── Shared backends ─────────────────────────────────────────────────────
+//
+// Context and instance both hold `Arc` clones. Instances must not borrow
+// the context as `'static`: `pinyin_fini` drops the context Box while
+// instances may still be alive, and a `'static` reference would then be a
+// use-after-free.
+
+/// `Arc` wrapper so instances share the context's dictionary without a
+/// `'static` borrow.
+#[derive(Clone)]
+pub(crate) struct SharedDict(Arc<SystemDictionary>);
+
+impl Dictionary for SharedDict {
+    type Syllable = SyllableKey;
+    type Entry = PhraseEntry;
+    type Error = DictError;
+
+    fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+        self.0.lookup(syllables)
+    }
+
+    fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
+        self.0.phrase_prefix_exists(syllables)
+    }
+}
+
+/// `Arc` wrapper so instances share the context's language model without
+/// a `'static` borrow.
+#[derive(Clone)]
+pub(crate) struct SharedLm(Arc<BigramLanguageModel>);
+
+impl LanguageModel for SharedLm {
+    type Token = PhraseToken;
+    type Error = LmError;
+
+    fn score(
+        &self,
+        history: &[Self::Token],
+        token: &Self::Token,
+        edge_cost: Cost,
+    ) -> Result<Cost, Self::Error> {
+        self.0.score(history, token, edge_cost)
+    }
+
+    fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+        self.0.unigram_freq(token)
+    }
+
+    fn has_real_unigrams(&self) -> bool {
+        self.0.has_real_unigrams()
+    }
+}
+
 // ── Context ─────────────────────────────────────────────────────────────
 
-pub(crate) type CapiSession = Session<&'static SystemDictionary, &'static BigramLanguageModel>;
+pub(crate) type CapiSession = Session<SharedDict, SharedLm>;
 
 /// State behind `pinyin_context_t *`.
 ///
-/// Owns the dictionary and language model; instances borrow them via
-/// `&'static` references obtained through the `context_ref` cast.
+/// Owns the dictionary and language model. Instances receive `Arc` clones
+/// so they do not borrow the context.
 pub(crate) struct CapiContext {
     pub(crate) paths: StoragePaths,
     pub(crate) config: Config,
-    dict: SystemDictionary,
-    lm: BigramLanguageModel,
+    dict: SharedDict,
+    lm: SharedLm,
 }
 
 impl CapiContext {
@@ -47,13 +102,19 @@ impl CapiContext {
         Some(Self {
             paths,
             config: Config::default(),
-            dict,
-            lm,
+            dict: SharedDict(Arc::new(dict)),
+            lm: SharedLm(Arc::new(lm)),
         })
     }
 
-    pub(crate) fn alloc_instance(&'static self) -> Option<CapiInstance> {
-        let session = Session::new(&self.config, self.paths.clone(), &self.dict, &self.lm).ok()?;
+    pub(crate) fn alloc_instance(&self) -> Option<CapiInstance> {
+        let session = Session::new(
+            &self.config,
+            self.paths.clone(),
+            self.dict.clone(),
+            self.lm.clone(),
+        )
+        .ok()?;
         Some(CapiInstance {
             session,
             candidates: Vec::new(),
