@@ -10,14 +10,46 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Mutex, MutexGuard, OnceLock, Weak};
 
 use redb::Database;
 
+pub(crate) struct CountSnapshot {
+    pub(crate) generation: u64,
+    /// Owned table handles. redb 4.1.0's `ReadOnlyTable` clones the
+    /// transaction guard rather than borrowing `ReadTransaction`, so this is
+    /// not self-referential.
+    pub(crate) unigram: redb::ReadOnlyTable<u32, u64>,
+    pub(crate) unigram_total: redb::ReadOnlyTable<u8, u64>,
+    pub(crate) bigram: redb::ReadOnlyTable<(u32, u32), u64>,
+    pub(crate) bigram_total: redb::ReadOnlyTable<u32, u64>,
+    /// Kept so the read transaction outlives the table handles.
+    pub(crate) _txn: redb::ReadTransaction,
+}
+
 pub(crate) struct StoreInner {
+    /// Cached decode-time read transaction. Declared before `db` so the
+    /// transaction is dropped first (struct fields drop in declaration order).
+    pub(crate) count_snapshot: Mutex<Option<CountSnapshot>>,
     pub(crate) db: Mutex<Database>,
     pub(crate) dirty: AtomicBool,
+    /// Bumped after every committed user-data write transaction, which
+    /// retires any `count_snapshot` cached against an older generation.
+    ///
+    /// Future raw-write paths, including legacy migration import, must call
+    /// `UserStore::mark_committed_write` after commit rather than touching
+    /// this counter directly. Bumping the generation alone refreshes the
+    /// snapshot but leaves `has_user_data` as it was, and that flag is
+    /// consulted *first* — an import that only bumped the generation would
+    /// leave the store reporting `UserCountDelta::ZERO` for every candidate,
+    /// silently and permanently, however much data it wrote.
+    pub(crate) write_generation: AtomicU64,
+    /// First gate on the decode read path: `false` answers `count_delta` and
+    /// `unigram_delta` with zero from this one atomic, taking no mutex and
+    /// opening no redb transaction. Recomputed at `open` and maintained only
+    /// by `UserStore::mark_committed_write`.
+    pub(crate) has_user_data: AtomicBool,
 }
 
 /// Declared last on [`crate::UserStore`] so this runs after the handle `Arc` dies.
