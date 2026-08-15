@@ -15,6 +15,7 @@ inclusion: always
 | pinyin-migrate | settings + vocab import; FFI fallback | allow | Linux | yes |
 | pinyin-segment | training segmenter (`ngseg` reproduction) | deny | yes | never |
 | pinyin-counter | training n-gram counter (`gen_ngram` reproduction) | deny | yes | never |
+| pinyin-lambda | training λ estimator (`gen_deleted_ngram` + `estimate_interpolation`) | deny | yes | never |
 
 **Portability seam:** `pinyin-engine`'s session API is framework-neutral —
 abstract `KeyInput`, preedit spans + style enum, candidate iteration;
