@@ -3,8 +3,10 @@
  *
  * Loads a pinyin shared object (libpinyin.so or libpinyin_capi.so) via
  * dlopen, resolves all 50 ABI-subset symbols, drives the full-pinyin
- * keystroke cycle through it, and prints a deterministic log.  Run twice
- * (once per .so) and diff the logs to find behavioural divergence.
+ * keystroke cycle, then probes the remaining symbol groups (double/chewing
+ * parse, predicted, user-candidate, key-rest, aux, mask/remember, iterators,
+ * scheme setters, addon load) on valid handles.  Run twice (once per .so)
+ * and diff the logs to find behavioural divergence.
  *
  * Usage:
  *   ./bisect <path-to-so> <systemdir>
@@ -139,7 +141,7 @@ typedef bool           (*fn_pinyin_iterator_add_phrase)(import_iterator_t *, con
 typedef void               (*fn_pinyin_end_add_phrases)(import_iterator_t *);
 
 /* 1k. Phrase / bigram export */
-typedef export_iterator_t *(*fn_pinyin_begin_get_phrases)(pinyin_context_t *, uint8_t);
+typedef export_iterator_t *(*fn_pinyin_begin_get_phrases)(pinyin_context_t *, guint);
 typedef bool           (*fn_pinyin_iterator_has_next_phrase)(export_iterator_t *);
 typedef bool           (*fn_pinyin_iterator_get_next_phrase)(export_iterator_t *, gchar **, gchar **, gint *);
 typedef void               (*fn_pinyin_end_get_phrases)(export_iterator_t *);
@@ -301,17 +303,33 @@ static int resolve_all(void *handle, struct symbols *s) {
  * allocator). */
 
 typedef void (*fn_g_free)(void *);
+typedef void (*fn_g_strfreev)(gchar **);
 
 static fn_g_free g_free_fn;
+static fn_g_strfreev g_strfreev_fn;
 
 static void resolve_g_free(void) {
     g_free_fn = (fn_g_free)free;
+    g_strfreev_fn = NULL;
     void *glib = dlopen("libglib-2.0.so.0", RTLD_NOW);
     if (glib) {
         fn_g_free sym = (fn_g_free)dlsym(glib, "g_free");
         if (sym)
             g_free_fn = sym;
+        g_strfreev_fn = (fn_g_strfreev)dlsym(glib, "g_strfreev");
     }
+}
+
+static void free_strv(gchar **v) {
+    if (!v)
+        return;
+    if (g_strfreev_fn) {
+        g_strfreev_fn(v);
+        return;
+    }
+    for (gchar **p = v; *p; p++)
+        g_free_fn(*p);
+    g_free_fn(v);
 }
 
 /* ── Candidate-type name ──────────────────────────────────────────────── */
@@ -463,6 +481,182 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
     printf("\n");
 }
 
+/* ── Remaining 27 symbols (valid handles only; no NULL-handle calls) ─── */
+
+static void probe_aux(pinyin_instance_t *inst,
+                      bool (*getter)(pinyin_instance_t *, size_t, gchar **),
+                      const char *name) {
+    if (!getter)
+        return;
+    gchar *aux = NULL;
+    bool ok = getter(inst, 0, &aux);
+    printf("%s: %s text=\"%s\"\n", name, ok ? "true" : "false",
+           aux ? aux : "(null)");
+    if (aux) {
+        g_free_fn(aux);
+        printf("%s: free OK\n", name);
+    }
+}
+
+static void probe_remaining(const struct symbols *s, pinyin_context_t *ctx,
+                            pinyin_instance_t *inst) {
+    printf("=== extra_symbols ===\n");
+
+    /* Scheme setters + addon load (after the full-pinyin cycle). */
+    if (s->set_double_pinyin_scheme) {
+        bool ok = s->set_double_pinyin_scheme(ctx, 2); /* DOUBLE_PINYIN_MS */
+        printf("set_double_pinyin_scheme(MS): %s\n", ok ? "true" : "false");
+    }
+    if (s->set_zhuyin_scheme) {
+        bool ok = s->set_zhuyin_scheme(ctx, 1); /* ZHUYIN_STANDARD */
+        printf("set_zhuyin_scheme(STANDARD): %s\n", ok ? "true" : "false");
+    }
+    if (s->load_addon_phrase_library) {
+        bool ok = s->load_addon_phrase_library(ctx, 0);
+        printf("load_addon_phrase_library(0): %s\n", ok ? "true" : "false");
+    }
+    if (s->mask_out) {
+        bool ok = s->mask_out(ctx, 0, 0);
+        printf("mask_out(0,0): %s\n", ok ? "true" : "false");
+    }
+
+    /* Double / chewing parse + chewing keyboard (g_strfreev). */
+    if (s->parse_double) {
+        size_t n = s->parse_double(inst, "nihao");
+        printf("parse_double: consumed=%zu\n", n);
+        if (s->reset)
+            s->reset(inst);
+    }
+    if (s->parse_chewing) {
+        size_t n = s->parse_chewing(inst, "nihao");
+        printf("parse_chewing: consumed=%zu\n", n);
+        if (s->reset)
+            s->reset(inst);
+    }
+    if (s->in_chewing_keyboard) {
+        gchar **symbols = NULL;
+        bool ok = s->in_chewing_keyboard(inst, 'a', &symbols);
+        printf("in_chewing_keyboard('a'): %s symbols=%s\n",
+               ok ? "true" : "false", symbols ? "set" : "(null)");
+        if (symbols)
+            free_strv(symbols);
+    }
+
+    /* Key-rest + double/chewing aux + remember, after a real parse. */
+    if (s->parse_full)
+        s->parse_full(inst, "nihao");
+    if (s->get_pinyin_key_rest) {
+        ChewingKeyRest *rest = NULL;
+        bool ok = s->get_pinyin_key_rest(inst, 0, &rest);
+        printf("get_pinyin_key_rest(0): %s rest=%s\n",
+               ok ? "true" : "false", rest ? "set" : "(null)");
+        if (ok && rest && s->get_pinyin_key_rest_positions) {
+            uint16_t begin = 0, end = 0;
+            bool pos = s->get_pinyin_key_rest_positions(inst, rest, &begin, &end);
+            printf("get_pinyin_key_rest_positions: %s begin=%u end=%u\n",
+                   pos ? "true" : "false", (unsigned)begin, (unsigned)end);
+        }
+    }
+    probe_aux(inst, s->get_double_aux, "get_double_aux");
+    probe_aux(inst, s->get_chewing_aux, "get_chewing_aux");
+    if (s->remember_user_input) {
+        bool ok = s->remember_user_input(inst, "你好", 1);
+        printf("remember_user_input: %s\n", ok ? "true" : "false");
+    }
+
+    /* User-candidate + predicted guess/choose. */
+    if (s->guess_candidates)
+        s->guess_candidates(inst, 0, DEFAULT_SORT);
+    if (s->get_candidate && s->is_user_candidate) {
+        lookup_candidate_t *cand = NULL;
+        if (s->get_candidate(inst, 0, &cand) && cand) {
+            bool user = s->is_user_candidate(inst, cand);
+            printf("is_user_candidate[0]: %s\n", user ? "true" : "false");
+            if (s->remove_user_candidate) {
+                bool rm = s->remove_user_candidate(inst, cand);
+                printf("remove_user_candidate[0]: %s\n", rm ? "true" : "false");
+            }
+        } else {
+            printf("is_user_candidate[0]: no candidate\n");
+        }
+    }
+    if (s->guess_predicted) {
+        bool ok = s->guess_predicted(inst, "你");
+        printf("guess_predicted: %s\n", ok ? "true" : "false");
+        if (ok && s->get_candidate && s->choose_predicted_candidate) {
+            lookup_candidate_t *cand = NULL;
+            if (s->get_candidate(inst, 0, &cand) && cand) {
+                bool ch = s->choose_predicted_candidate(inst, cand);
+                printf("choose_predicted_candidate[0]: %s\n",
+                       ch ? "true" : "false");
+            }
+        }
+    }
+
+    /* Import / unigram export / bigram export. End any non-NULL iterator. */
+    if (s->begin_add_phrases) {
+        import_iterator_t *it = s->begin_add_phrases(ctx, 1);
+        printf("begin_add_phrases: %s\n", it ? "ok" : "NULL");
+        if (it) {
+            if (s->iterator_add_phrase) {
+                bool add = s->iterator_add_phrase(it, "你好", "nihao", 1);
+                printf("iterator_add_phrase: %s\n", add ? "true" : "false");
+            }
+            if (s->end_add_phrases)
+                s->end_add_phrases(it);
+            printf("end_add_phrases: ok\n");
+        }
+    }
+    if (s->begin_get_phrases) {
+        export_iterator_t *it = s->begin_get_phrases(ctx, 1);
+        printf("begin_get_phrases: %s\n", it ? "ok" : "NULL");
+        if (it) {
+            bool has = s->iterator_has_next ? s->iterator_has_next(it) : false;
+            printf("iterator_has_next: %s\n", has ? "true" : "false");
+            if (has && s->iterator_get_next) {
+                gchar *phrase = NULL, *pinyin = NULL;
+                gint count = 0;
+                bool next = s->iterator_get_next(it, &phrase, &pinyin, &count);
+                printf("iterator_get_next: %s count=%d\n",
+                       next ? "true" : "false", (int)count);
+                if (phrase)
+                    g_free_fn(phrase);
+                if (pinyin)
+                    g_free_fn(pinyin);
+            }
+            if (s->end_get_phrases)
+                s->end_get_phrases(it);
+            printf("end_get_phrases: ok\n");
+        }
+    }
+    if (s->begin_get_bigram) {
+        bigram_export_iterator_t *it = s->begin_get_bigram(ctx);
+        printf("begin_get_bigram: %s\n", it ? "ok" : "NULL");
+        if (it) {
+            bool has = s->bigram_has_next ? s->bigram_has_next(it) : false;
+            printf("bigram_has_next: %s\n", has ? "true" : "false");
+            if (has && s->bigram_get_next) {
+                gchar *phrase = NULL, *pinyin = NULL;
+                gint count = 0;
+                bool next = s->bigram_get_next(it, &phrase, &pinyin, &count);
+                printf("bigram_get_next: %s count=%d\n",
+                       next ? "true" : "false", (int)count);
+                if (phrase)
+                    g_free_fn(phrase);
+                if (pinyin)
+                    g_free_fn(pinyin);
+            }
+            if (s->end_get_bigram)
+                s->end_get_bigram(it);
+            printf("end_get_bigram: ok\n");
+        }
+    }
+
+    if (s->reset)
+        s->reset(inst);
+    printf("\n");
+}
+
 /* ── Main ─────────────────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {
@@ -546,6 +740,9 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < N_INPUTS; i++) {
         drive_input(&sym, inst, TEST_INPUTS[i]);
     }
+
+    /* Phase 2b — Remaining 27 symbols, after the full-pinyin cycle. */
+    probe_remaining(&sym, ctx, inst);
 
     /* Phase 3 — Teardown. */
     printf("=== teardown ===\n");
