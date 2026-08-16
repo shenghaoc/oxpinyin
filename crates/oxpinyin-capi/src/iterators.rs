@@ -7,8 +7,7 @@
 use std::os::raw::{c_char, c_int};
 use std::ptr;
 
-use oxpinyin_core::SyllableKey;
-use oxpinyin_core::graph::{Edge, EdgeKind, SegmentGraph};
+use oxpinyin_core::graph::FewestKeys;
 use oxpinyin_user::{ExportedPhrase, PinyinKey, USER_DICTIONARY, UserStore};
 
 use crate::ffi::{cstr_to_owned_lossy, ffi_catch, owned_cstr};
@@ -109,10 +108,10 @@ pub extern "C" fn pinyin_begin_add_phrases(
 ///
 /// `count` of -1 means use the default value. The pinyin is parsed with the
 /// frozen untuned full-pinyin inventory under upstream's longest-parsed-prefix
-/// then fewest-keys rule (`pinyin_parser2.cpp` selection, represented here by
-/// [`SegmentGraph`] with incomplete edges filtered out). A phrase whose
-/// character count does not equal the key count reports `false`; trailing
-/// unparsed pinyin bytes are ignored exactly as upstream's parser does.
+/// then fewest-keys rule (`pinyin_parser2.cpp` selection, [`FewestKeys`]).
+/// A phrase whose character count does not equal the key count reports
+/// `false`; trailing unparsed pinyin bytes are ignored exactly as upstream's
+/// parser does.
 /// Negative counts other than -1 are rejected rather than reproduced as the
 /// upstream `guint32` wrap (the pin segfaults on them).
 #[unsafe(no_mangle)]
@@ -147,70 +146,16 @@ pub extern "C" fn pinyin_iterator_add_phrase(
         let Some(user) = handle.user.as_mut() else {
             return false;
         };
-        let Some(keys) = parse_import_pinyin(&pinyin) else {
+        let Some(parsed) = FewestKeys::parse(&pinyin) else {
             return false;
         };
+        let keys: Vec<PinyinKey> = parsed
+            .keys()
+            .iter()
+            .map(|key| key.index() as PinyinKey)
+            .collect();
         user.add_phrase(&phrase, &keys, count).is_ok()
     })
-}
-
-/// Parse `pinyin` the way the import path consumes it: longest parsed prefix
-/// from byte zero, fewest complete keys to reach it, first edge winning key
-/// ties. Incomplete initial-only keys are not admitted (`pinyin_parser2.cpp`
-/// only reaches keys in the full-pinyin index; the oracle rejects `n` here).
-pub(crate) fn parse_import_pinyin(pinyin: &str) -> Option<Vec<PinyinKey>> {
-    let graph = SegmentGraph::build(pinyin.as_bytes()).ok()?;
-    let bound = graph.consumed();
-    // steps[node] = (key count, incoming edge, previous node); node 0 is the
-    // root with count zero.
-    let mut steps: Vec<Option<(usize, Edge, usize)>> = vec![None; bound + 1];
-    for node in 0..bound {
-        let count = if node == 0 {
-            0
-        } else {
-            match steps[node] {
-                Some((count, _, _)) => count,
-                None => continue,
-            }
-        };
-        for edge in graph
-            .outgoing(node)
-            .iter()
-            .copied()
-            .filter(|edge| edge.kind() != EdgeKind::Incomplete)
-        {
-            let to = edge.to();
-            if to > bound {
-                continue;
-            }
-            let candidate = count + 1;
-            if steps[to]
-                .as_ref()
-                .is_none_or(|(seen, _, _)| candidate < *seen)
-            {
-                steps[to] = Some((candidate, edge, node));
-            }
-        }
-    }
-
-    let mut keys = Vec::new();
-    let mut node = bound;
-    while node > 0 {
-        let (_, edge, previous) = steps[node]?;
-        keys.push(SyllableKey::from_index(edge.key().index())?.index() as PinyinKey);
-        node = previous;
-    }
-    keys.reverse();
-    Some(keys)
-}
-
-/// §9 `'`-joined spelling for keys produced by [`parse_import_pinyin`].
-pub(crate) fn render_import_pinyin(keys: &[PinyinKey]) -> Option<String> {
-    let mut parts = Vec::with_capacity(keys.len());
-    for key in keys {
-        parts.push(SyllableKey::from_index(usize::from(*key))?.text());
-    }
-    Some(parts.join("'"))
 }
 
 /// End the import iterator, arm `m_modified`, and free it.

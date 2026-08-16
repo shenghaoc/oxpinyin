@@ -33,6 +33,8 @@ mod sentence;
 mod text;
 mod user_data;
 
+use oxpinyin_core::graph::FewestKeys;
+
 pub use context::{pinyin_fini, pinyin_init, pinyin_save};
 pub use iterators::{pinyin_begin_add_phrases, pinyin_end_add_phrases, pinyin_iterator_add_phrase};
 pub use oxpinyin_user::{DEFAULT_PHRASE_COUNT, ExportedPhrase, USER_DICTIONARY};
@@ -159,11 +161,10 @@ pub fn user_bigram_rows(context: *mut PinyinContext) -> Option<Vec<ExportedBigra
 /// compare as the same pronunciation.
 #[must_use]
 pub fn import_pinyin(pinyin: &str) -> Option<ImportPinyin> {
-    let keys = iterators::parse_import_pinyin(pinyin)?;
-    let canonical = iterators::render_import_pinyin(&keys)?;
+    let parsed = FewestKeys::parse(pinyin)?;
     Some(ImportPinyin {
-        key_count: keys.len(),
-        canonical,
+        key_count: parsed.keys().len(),
+        canonical: parsed.canonical(),
     })
 }
 
