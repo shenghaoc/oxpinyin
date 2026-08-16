@@ -88,6 +88,7 @@ typedef void (*fn_end_bigram)(bigram_export_iterator_t *);
 
 struct syms {
     fn_init init;
+    fn_init fixture_init;
     fn_fini fini;
     fn_alloc alloc;
     fn_free_instance free_instance;
@@ -122,11 +123,17 @@ static void *load(const char *name, void *handle) {
     return symbol;
 }
 
+static int file_exists(const char *dir, const char *name) {
+    char path[4096];
+    struct stat st;
+    if (snprintf(path, sizeof(path), "%s/%s", dir, name) >= (int)sizeof(path))
+        return 0;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
 static void resolve_all(void *handle, struct syms *s) {
-    {
-        fn_init fixture_init = (fn_init)dlsym(handle, "oxpinyin_init_for_fixtures");
-        s->init = fixture_init ? fixture_init : (fn_init)load("pinyin_init", handle);
-    }
+    s->init = (fn_init)load("pinyin_init", handle);
+    s->fixture_init = (fn_init)dlsym(handle, "oxpinyin_init_for_fixtures");
     s->fini = (fn_fini)load("pinyin_fini", handle);
     s->alloc = (fn_alloc)load("pinyin_alloc_instance", handle);
     s->free_instance = (fn_free_instance)load("pinyin_free_instance", handle);
@@ -170,6 +177,26 @@ static void resolve_g_free(void) {
 }
 
 /* ── Candidate search by text ─────────────────────────────────────────── */
+
+#define CANDIDATE_DEPTH 10u
+
+static void print_top10(const struct syms *s, pinyin_instance_t *inst,
+                        const char *label) {
+    guint n = 0;
+    s->getn(inst, &n);
+    printf("cand:%s n=%u\n", label, n);
+    guint limit = n < CANDIDATE_DEPTH ? n : CANDIDATE_DEPTH;
+    for (guint i = 0; i < limit; i++) {
+        lookup_candidate_t *cand = NULL;
+        if (!s->getc(inst, i, &cand) || !cand) {
+            printf("cand:%s[%u]=FAILED\n", label, i);
+            continue;
+        }
+        const gchar *text = NULL;
+        s->getstr(inst, cand, &text);
+        printf("cand:%s[%u]=%s\n", label, i, text ? text : "(null)");
+    }
+}
 
 static lookup_candidate_t *find_by_text(const struct syms *s,
                                         pinyin_instance_t *inst,
@@ -266,7 +293,10 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    pinyin_context_t *ctx = s.init(argv[2], userdir);
+    fn_init init = (s.fixture_init && !file_exists(argv[2], "interpolation2.text"))
+        ? s.fixture_init
+        : s.init;
+    pinyin_context_t *ctx = init(argv[2], userdir);
     if (!ctx) {
         fprintf(stderr, "pinyin_init failed\n");
         return 1;
@@ -362,6 +392,33 @@ int main(int argc, char **argv) {
             fprintf(stderr, "pinyin_mask_out failed\n");
             return 1;
         }
+    }
+
+    /* Phase 2.75 — populated-store candidate dump (W10 DYNAMIC_ADJUST
+     * read-side). After the same training both engines just wrote, guess
+     * at offset 0 and again after choosing 你. The cited sites
+     * (pinyin.cpp:2201-2212, :1845-1851) add the bigram term of m_freq
+     * only when DYNAMIC_ADJUST is set; bit-clear (this path) must not let
+     * trained user bigrams change candidate frequency. */
+    if (getenv("TRAINDIFF_DUMP_CANDIDATES")) {
+        s.reset(inst);
+        s.parse(inst, "nihao");
+        s.guess(inst, 0, DEFAULT_SORT);
+        print_top10(&s, inst, "nihao@0");
+
+        lookup_candidate_t *ni = find_by_text(&s, inst, "你");
+        if (!ni) {
+            fprintf(stderr, "dump: candidate 你 not offered after training\n");
+            return 1;
+        }
+        int offset = s.choose(inst, 0, ni);
+        if (offset < 0) {
+            fprintf(stderr, "dump: choose 你 failed\n");
+            return 1;
+        }
+        s.guess(inst, (size_t)offset, DEFAULT_SORT);
+        print_top10(&s, inst, "after-ni");
+        s.reset(inst);
     }
 
     /* Phase 3 — the full triple sets, one export per context. */

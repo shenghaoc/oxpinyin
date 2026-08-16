@@ -133,6 +133,17 @@ static void drive(const struct syms *s, pinyin_instance_t *inst,
     guint n = 0;
     s->getn(inst, &n);
     printf("n=%u\n", n);
+    guint limit = n < CANDIDATE_DEPTH ? n : CANDIDATE_DEPTH;
+    for (guint i = 0; i < limit; i++) {
+        lookup_candidate_t *cand = NULL;
+        if (!s->getc(inst, i, &cand) || !cand) {
+            printf("cand[%u]=FAILED\n", i);
+            continue;
+        }
+        const gchar *text = NULL;
+        s->getstr(inst, cand, &text);
+        printf("cand[%u]=%s\n", i, text ? text : "(null)");
+    }
     s->reset(inst);
 }
 
@@ -148,10 +159,15 @@ int main(int argc, char **argv) {
     const char *case_name = argv[3];
     unsigned long options = strtoul(argv[4], NULL, 16);
 
+    /* Correction/fuzzy triggers, plus the xian/fanan resplit-divided class
+     * from the frozen matrix tables (docs/findings/matrix-split-tables.md).
+     * `xian` is the divided-table entry xian→xi+an; `fanan` is the resplit
+     * pair fa+nan→fan+an; `fangan` is the textbook fan+gan / fang+an mix. */
     static const char *inputs[] = {
         "agn", "amg", "diou", "duei", "duen", "lue", "jv", "zon",
         "cang", "sua", "zua", "sang", "zang", "fang", "gang", "lan",
-        "ban", "ben", "bin", "nihao", "lve", "dui", "dun", "zong"
+        "ban", "ben", "bin", "nihao", "lve", "dui", "dun", "zong",
+        "xian", "fanan", "fangan", "tian"
     };
     static const size_t n_inputs = sizeof(inputs) / sizeof(inputs[0]);
 

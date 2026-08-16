@@ -702,7 +702,11 @@ where
             })?;
             if let Some(count) = count {
                 let table = frequencies.get_or_insert_with(|| vec![0; collected.len()]);
-                table[index] = count;
+                // Unigram term of candidate frequency: always on. Upstream
+                // reads FacadePhraseIndex unigrams (including trained user
+                // counts) with no DYNAMIC_ADJUST check. W6-T4's overlay is
+                // that unigram term and stays for both bit states.
+                table[index] = candidate_frequency_sort_key(self.settings.options, count);
             }
         }
         Ok(frequencies)
@@ -1273,6 +1277,37 @@ fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Vec<Vec<ScanK
     columns
 }
 
+/// The sort-key frequency for one candidate.
+///
+/// Upstream `_compute_frequency_of_items` writes
+/// `m_freq = (λ · bigram_poss · DISCOUNT + (1-λ) · unigram/total) · 256³`.
+/// `DYNAMIC_ADJUST` gates only `bigram_poss` (`pinyin.cpp:1845-1851`), after
+/// `pinyin_guess_candidates` loaded the previous token and the merged
+/// system+user bigram under the same bit (`:2201-2212`). The unigram term
+/// of `m_freq` is ungated (FacadePhraseIndex, including user).
+///
+/// [`RankKey::frequency`] is the raw unigram count, not interpolated
+/// `m_freq`. This function therefore returns `unigram` (system + W6-T4
+/// overlay) and adds [`dynamic_adjust_bigram_term`], which is 0 in both
+/// bit states: bit-clear matches the pin, bit-set leaves W6-T4's unigram
+/// merge intact. A non-zero increment would be a ranking-model change
+/// outside W10.
+fn candidate_frequency_sort_key(options: OptionBits, unigram: u64) -> u64 {
+    unigram.saturating_add(dynamic_adjust_bigram_term(options))
+}
+
+/// Bigram increment of the candidate-frequency sort key.
+///
+/// The two cited sites skip this term when `DYNAMIC_ADJUST` is clear —
+/// they do not skip the unigram sort input. The fork masks the bit out
+/// entirely (`PYPConfig.cc:145`), so bit-clear is the default-settings
+/// path. RankKey does not carry interpolated `m_freq`, so the increment
+/// is 0 even when the bit is set.
+fn dynamic_adjust_bigram_term(options: OptionBits) -> u64 {
+    let _ = options.has_dynamic_adjust();
+    0
+}
+
 /// The three sort keys of the pinned candidate construction.
 ///
 /// `Ord` derives the pinned precedence: phrase length first, then pinyin
@@ -1775,5 +1810,26 @@ mod tests {
         let keys = split.composition_keys().expect("the graph builds");
         let texts: Vec<&str> = keys.iter().map(|key| key.text()).collect();
         assert_eq!(texts, ["xi", "an"]);
+    }
+
+    #[test]
+    fn dynamic_adjust_does_not_fold_a_bigram_term_into_the_unigram_sort_key() {
+        use oxpinyin_core::DYNAMIC_ADJUST;
+        use oxpinyin_core::OptionBits;
+
+        let unigram = 1_234;
+        assert_eq!(
+            super::candidate_frequency_sort_key(OptionBits::default(), unigram),
+            unigram,
+            "bit-clear omits the bigram term and keeps the unigram sort input"
+        );
+        assert_eq!(
+            super::candidate_frequency_sort_key(
+                OptionBits::default().with(DYNAMIC_ADJUST, true),
+                unigram
+            ),
+            unigram,
+            "bit-set leaves the W6-T4 unigram merge intact and does not invent a RankKey bigram"
+        );
     }
 }

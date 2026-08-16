@@ -117,6 +117,77 @@ created the user store (`user.conf`). The requested “bit-off ⇒ no training
 writes” would therefore diverge from the pin; the matching implementation is
 to leave `pinyin_train` ungated and record this finding.
 
+### What the two sites gate
+
+The two cited blocks together gate **the bigram contribution to candidate
+frequency**, not the unigram sort input:
+
+| Site | What it does under the bit | What it skips when clear |
+|---|---|---|
+| `pinyin_guess_candidates` `:2201-2212` | Looks up `prev_token` and loads/merges system+user **bigram** grams | That merged-gram input (both system and trained user bigram) |
+| `_compute_frequency_of_items` `:1845-1851` | Sets `bigram_poss` from the merged gram | The `λ · bigram_poss · DISCOUNT` term of `m_freq` |
+
+The unigram term of `m_freq` (`:1856-1865`) always reads
+`FacadePhraseIndex` (system + user unigrams) with **no** `DYNAMIC_ADJUST`
+check. Sentence decode has no check in `pinyin.cpp` either.
+
+oxpinyin's equivalent: `RankKey.frequency` is the raw unigram count
+(system + W6-T4 overlay). The bigram increment is omitted when the bit is
+clear. When the bit is set, W6-T4's unigram merge stays; a non-zero
+bigram increment on `RankKey` would be a ranking-model change outside
+W10. `SharedLm::unigram_freq` stays ungated (the phrase-index term).
+`SharedLm::score` stays ungated (decode, not the cited sites).
+
+The fork masks `DYNAMIC_ADJUST` out entirely (`PYPConfig.cc:145`), so
+bit-clear is the fork's permanent state and this gate is
+default-settings-critical. Verification is the populated-store
+differential (`run-train-diff-dynamic-off.sh`): identical training, bit
+CLEAR, compare candidate TEXT/ORDER at offset 0 and after choosing 你.
+
+Measured 2026-08-17 against the pin-built oracle (`0x188`, one training
+round, full tables): exports identical (3 rows); `nihao@0` and
+`after-ni` top-10 identical (`你好` / `好` first). Trained user unigrams
+still rank (the ungated phrase-index term); trained user bigrams do not
+need to, because the bit is clear.
+
+## Sweep TEXT/ORDER (ABI, top-10)
+
+`run-option-sweep.sh` now diffs parse/aux **and** top-10 candidate
+TEXT/ORDER through `pinyin_get_candidate_string`. Asserting through the
+ABI is verification, not W11 ground.
+
+Fork-default (`0x1fe00198`), 28 inputs:
+
+- **20 identical** including the divided/resplit triggers `xian`
+  (西安, n=756), `fanan` (翻案, n=175), `fangan` (方案/反感, n=179),
+  `tian` (提案, n=263), and `nihao`.
+- **2 tie-order-only** (`diou`, `ben`): same 10-set, every swapped
+  position has equal `phrase_length` (RankKey 1). Span / frequency /
+  collection-order are not on the ABI; this is the documented three-key
+  tie class (`candidate-construction.md` §8.2).
+- **6 TEXT-set STOP** (prefix-identical, then rare/variant tail):
+
+| Input | Shared prefix | Oracle tail | Capi tail |
+|---|---:|---|---|
+| `agn` / `amg` | 3 | 肮\|䬓\|… | 枊\|肮\|䇦\|骯\|… |
+| `lue` / `lve` | 4 | 詻\|擽\|… | 畧\|詻\|锊\|… |
+| `cang` | 8 | 螥\|鶬 | 鸧\|嵢 |
+| `sang` | 6 | 喪\|纕\|䘮\|褬 | 桒\|槡\|喪\|纕 |
+
+These are not parse/option-bit failures (parse/aux passed on every
+case). They sit past the frequent head of the list and look like
+phrase-index / traditional-simplified / rare-GBK inventory — W11/W12
+ground, not a W10 option decode. Per the TEXT/ORDER rule this is a
+STOP, not a silent W11 waiver. Extending W10 vs filing a new owned
+item is a maintainer decision.
+
+`USE_DIVIDED_TABLE` / `USE_RESPLIT_TABLE` were never in W10's scope.
+On the fork-default word (both bits set) the xian/fanan/fangan/tian
+triggers are byte-identical across engines, including `n=`. No
+divided/resplit machinery is added here.
+
+The scan-matrix fuzzy step remains a flagged W11-ground touch.
+
 ## GSettings → bit mapping in the fork
 
 The mapping is in `src/PYPConfig.cc`.
