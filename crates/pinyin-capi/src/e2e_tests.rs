@@ -885,3 +885,28 @@ fn export_iterators_walk_the_stored_triples() {
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
+
+#[test]
+fn import_pinyin_canonicalizes_unseparated_and_trailing_bytes() {
+    let parsed = crate::import_pinyin("nihaoXYZ").expect("parses");
+    assert_eq!(parsed.key_count, 2);
+    assert_eq!(parsed.canonical, "ni'hao");
+    assert_eq!(crate::import_pinyin("ni'hao").unwrap().canonical, "ni'hao");
+}
+
+#[test]
+fn user_only_bigram_export_fails_when_rows_need_system_tables() {
+    let user_dir = TempUserDir::new("user-only-bigram");
+    let store_path = user_dir.path.join(USER_STORE_FILE);
+    let mut store = UserStore::open(&store_path).expect("open empty store");
+    // System tokens (library nibble != 7). One training seed (69) is at
+    // the §9 first-seed threshold, so a real export would emit a row.
+    store.observe_selection(2, 3).expect("train system tokens");
+    drop(store);
+
+    let context = crate::open_user_import_context(&user_dir.path);
+    assert!(!context.is_null());
+    assert!(crate::user_phrase_rows(context).unwrap().is_empty());
+    assert!(crate::user_bigram_rows(context).is_none());
+    crate::close_user_import_context(context);
+}

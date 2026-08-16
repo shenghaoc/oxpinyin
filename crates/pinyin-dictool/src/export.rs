@@ -1,20 +1,13 @@
 //! `pinyin-dictool export`: user redb → classic ibus-libpinyin text.
-//!
-//! Mirrors `LibPinyinBackEnd::exportPinyinDictionary`
-//! (`PYLibPinyin.cc:336-353`) with both Export-button flags on: phrase rows
-//! first (from `pinyin_begin_get_phrases`), then the rendered bigram rows
-//! (from `pinyin_begin_get_bigram_phrases`). The row grammar is the same
-//! space-separated classic interchange as import.
 
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use pinyin_capi::{
-    ExportedBigramRow, ExportedPhrase, PinyinContext, close_user_import_context,
-    open_user_import_context, user_bigram_rows, user_phrase_rows,
-};
+use pinyin_capi::{ExportedBigramRow, ExportedPhrase, user_bigram_rows, user_phrase_rows};
+
+use crate::context::UserImportContext;
 
 /// A user-vocabulary export failure.
 #[derive(Debug)]
@@ -36,7 +29,10 @@ impl fmt::Display for ExportError {
                 write!(f, "cannot open user store under {}", path.display())
             }
             Self::PhraseSnapshot => write!(f, "phrase export iterator failed"),
-            Self::BigramSnapshot => write!(f, "bigram export iterator failed"),
+            Self::BigramSnapshot => write!(
+                f,
+                "bigram export needs system tables (stored rows could not be rendered)"
+            ),
             Self::Write(error) => write!(f, "cannot write export file: {error}"),
         }
     }
@@ -51,8 +47,8 @@ impl std::error::Error for ExportError {
     }
 }
 
-/// Write one classic row: 2 fields when count is zero (upstream's
-/// `count == -1` output means "no count recorded"), otherwise 3 fields.
+/// Write one classic row: 2 fields when count is zero (`dictool-format.md`
+/// §4), otherwise 3 fields.
 fn write_row<W: Write>(out: &mut W, phrase: &str, pinyin: &str, count: i64) -> io::Result<()> {
     if count == 0 {
         writeln!(out, "{phrase} {pinyin}")
@@ -92,13 +88,10 @@ fn write_rows<W: Write>(
 /// stdout. Ordering is the frontend's: every phrase row first (token order,
 /// then pronunciation order), then every rendered bigram row.
 pub fn run(user_dir: &Path, output: Option<&Path>) -> Result<(), ExportError> {
-    let context: *mut PinyinContext = open_user_import_context(user_dir);
-    if context.is_null() {
-        return Err(ExportError::Context(user_dir.to_path_buf()));
-    }
-    let phrases = user_phrase_rows(context).ok_or(ExportError::PhraseSnapshot)?;
-    let bigrams = user_bigram_rows(context).ok_or(ExportError::BigramSnapshot)?;
-    close_user_import_context(context);
+    let context = UserImportContext::open(user_dir)
+        .ok_or_else(|| ExportError::Context(user_dir.to_path_buf()))?;
+    let phrases = user_phrase_rows(context.as_ptr()).ok_or(ExportError::PhraseSnapshot)?;
+    let bigrams = user_bigram_rows(context.as_ptr()).ok_or(ExportError::BigramSnapshot)?;
 
     if let Some(path) = output {
         let mut file = fs::File::create(path).map_err(ExportError::Write)?;

@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use pinyin_capi::import_pinyin_key_count;
+use pinyin_capi::import_pinyin;
 
 use crate::import::MAX_COUNT;
 
@@ -16,8 +16,10 @@ use crate::import::MAX_COUNT;
 pub struct Record {
     /// Phrase text, non-empty and at most 15 Unicode scalar values.
     pub phrase: String,
-    /// Pinyin text accepted by the import ABI (space-free by construction:
-    /// space/tab is the field separator).
+    /// Canonical `'`-joined pinyin (`ni'hao`), not the source spelling.
+    ///
+    /// `nihao` and `nihaoXYZ` parse as the same reading as `ni'hao`, so
+    /// identity and the desired-count snapshot must use this form.
     pub pinyin: String,
     /// Desired absolute pronunciation count; `None` for a 2-field line,
     /// which floors at the ABI default count.
@@ -131,17 +133,18 @@ pub fn parse(text: &str) -> Result<Vec<Record>, ParseError> {
                 "phrase must be 1..=15 Unicode scalar values",
             ));
         }
-        let Some(key_count) = import_pinyin_key_count(pinyin) else {
+        let Some(parsed) = import_pinyin(pinyin) else {
             return Err(ParseError::new(
                 line_number,
                 format!("pinyin does not parse: {pinyin:?}"),
             ));
         };
-        if key_count != phrase_len {
+        if parsed.key_count != phrase_len {
             return Err(ParseError::new(
                 line_number,
                 format!(
-                    "pinyin has {key_count} key(s) but the phrase has {phrase_len} character(s)"
+                    "pinyin has {} key(s) but the phrase has {phrase_len} character(s)",
+                    parsed.key_count
                 ),
             ));
         }
@@ -168,16 +171,19 @@ pub fn parse(text: &str) -> Result<Vec<Record>, ParseError> {
             }
         };
 
-        if !seen.insert((phrase.to_owned(), pinyin.to_owned())) {
+        if !seen.insert((phrase.to_owned(), parsed.canonical.clone())) {
             return Err(ParseError::new(
                 line_number,
-                format!("duplicate (phrase, pinyin) pair: {phrase:?} {pinyin:?}"),
+                format!(
+                    "duplicate (phrase, pinyin) pair: {phrase:?} {:?}",
+                    parsed.canonical
+                ),
             ));
         }
 
         records.push(Record {
             phrase: phrase.to_owned(),
-            pinyin: pinyin.to_owned(),
+            pinyin: parsed.canonical,
             count,
             line: line_number,
         });
@@ -225,14 +231,17 @@ mod tests {
 
     #[test]
     fn unseparated_pinyin_and_trailing_bytes_match_the_import_abi() {
-        let text = "你好 nihao\n你好 nihaoXYZ 4\n";
         assert_eq!(
-            parse(text).unwrap(),
-            vec![
-                record("你好", "nihao", None, 1),
-                record("你好", "nihaoXYZ", Some(4), 2),
-            ]
+            parse("你好 nihao\n").unwrap(),
+            vec![record("你好", "ni'hao", None, 1)]
         );
+        assert_eq!(
+            parse("你好 nihaoXYZ 4\n").unwrap(),
+            vec![record("你好", "ni'hao", Some(4), 1)]
+        );
+        let error = parse("你好 nihao\n你好 nihaoXYZ 4\n").unwrap_err();
+        assert_eq!(error.line, 2);
+        assert!(error.message.contains("duplicate"), "{}", error.message);
     }
 
     #[test]
@@ -247,6 +256,7 @@ mod tests {
             ("词 n 1\n", 1, "pinyin does not parse"),
             ("你好 ni 1\n", 1, "1 key(s) but the phrase has 2"),
             ("你好 ni'hao 1\n你好 ni'hao 2\n", 2, "duplicate"),
+            ("你好 nihao 1\n你好 ni'hao 2\n", 2, "duplicate"),
         ];
         for (text, line, needle) in cases {
             let error = parse(text).unwrap_err();

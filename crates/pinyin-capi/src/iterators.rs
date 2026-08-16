@@ -1,10 +1,7 @@
 //! Import and export iterator symbols.
 //!
-//! W6-T7 implemented the §9 export surface (`docs/findings/user-store.md`):
-//! `pinyin_begin_get_phrases` / `pinyin_iterator_has_next_phrase` /
-//! `pinyin_iterator_get_next_phrase` / `pinyin_end_get_phrases`, and the
-//! bigram quartet. W7-T1 replaces the import trio stubs with the same
-//! Box-handle discipline: `pinyin_begin_add_phrases` /
+//! Export (`docs/findings/user-store.md` §9): `pinyin_begin_get_phrases` and
+//! the bigram quartet. Import: `pinyin_begin_add_phrases` /
 //! `pinyin_iterator_add_phrase` / `pinyin_end_add_phrases`.
 
 use std::os::raw::{c_char, c_int};
@@ -37,14 +34,9 @@ struct BigramHandle {
 
 // ── Import iterator ──────────────────────────────────────────────────
 //
-// Upstream batch semantics (`pinyin.cpp:506-659`, read for W7-T1): the
-// "batch" is **per-phrase**, not atomic. `pinyin_iterator_add_phrase` calls
-// `_add_phrase` immediately, which mutates the in-memory phrase/pinyin
-// tables and the unigram count; `pinyin_end_add_phrases` only compacts the
-// phrase index, sets `m_modified = true`, and deletes the iterator. There is
-// no rollback if a later add fails. redb models that exactly: each
-// successful add is its own committed write transaction; end has no data
-// write, only the dirty-flag set-site.
+// Adds commit immediately; there is no rollback if a later add fails.
+// `pinyin_end_add_phrases` only arms `m_modified` so the next `pinyin_save`
+// writes (`docs/findings/user-store.md` §4).
 
 /// State behind `import_iterator_t *`: the target index and the shared user
 /// store clone the adds write through. The clone also carries the shared
@@ -210,6 +202,15 @@ pub(crate) fn parse_import_pinyin(pinyin: &str) -> Option<Vec<PinyinKey>> {
     }
     keys.reverse();
     Some(keys)
+}
+
+/// §9 `'`-joined spelling for keys produced by [`parse_import_pinyin`].
+pub(crate) fn render_import_pinyin(keys: &[PinyinKey]) -> Option<String> {
+    let mut parts = Vec::with_capacity(keys.len());
+    for key in keys {
+        parts.push(SyllableKey::from_index(usize::from(*key))?.text());
+    }
+    Some(parts.join("'"))
 }
 
 /// End the import iterator, arm `m_modified`, and free it.
@@ -384,8 +385,12 @@ pub extern "C" fn pinyin_begin_get_bigram_phrases(
         return ptr::null_mut();
     }
     ffi_catch(ptr::null_mut(), || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+        // SAFETY: `context` is non-null and was produced by `pinyin_init`
+        // or `CapiContext::new_user_only`.
         let ctx = unsafe { context_ref(context) };
+        if !ctx.can_render_export_bigrams() {
+            return ptr::null_mut();
+        }
         let rows = ctx.export_bigram_rows().unwrap_or_default();
         Box::into_raw(Box::new(BigramHandle { rows, index: 0 })).cast()
     })

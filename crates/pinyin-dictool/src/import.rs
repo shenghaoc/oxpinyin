@@ -1,10 +1,4 @@
 //! `pinyin-dictool import`: text → C ABI import trio → save.
-//!
-//! The command intentionally uses only the supported C ABI symbols
-//! (`pinyin_begin_add_phrases` / `pinyin_iterator_add_phrase` /
-//! `pinyin_end_add_phrases`, then `pinyin_save`) over the Rust-only
-//! user-store context from `pinyin-capi`. That keeps the tool an executable
-//! form of the migration pipeline instead of a second Rust-side store API.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -13,10 +7,11 @@ use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 
 use pinyin_capi::{
-    DEFAULT_PHRASE_COUNT, ExportedPhrase, ImportIterator, PinyinContext, add_user_import_phrase,
-    begin_user_import, close_user_import_context, end_user_import, open_user_import_context,
-    save_user_import_context, user_phrase_rows,
+    DEFAULT_PHRASE_COUNT, ExportedPhrase, ImportIterator, add_user_import_phrase,
+    begin_user_import, end_user_import, save_user_import_context, user_phrase_rows,
 };
+
+use crate::context::UserImportContext;
 
 use crate::format::ParseError;
 
@@ -119,21 +114,16 @@ pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
 
     fs::create_dir_all(user_dir)
         .map_err(|error| ImportError::Read(user_dir.to_path_buf(), error))?;
-    let context: *mut PinyinContext = open_user_import_context(user_dir);
-    if context.is_null() {
-        return Err(ImportError::Context(
+    let context = UserImportContext::open(user_dir).ok_or_else(|| {
+        ImportError::Context(
             user_dir.to_path_buf(),
             "open_user_import_context returned null".to_owned(),
-        ));
-    }
+        )
+    })?;
 
-    // Snapshot before the batch: the file's count is a desired absolute
-    // count, and the raw ABI count is an add amount (verified in
-    // docs/findings/dictool-format.md), so each record becomes the delta
-    // needed to reach its target. This is what makes re-running the same
-    // file idempotent at the CLI level without changing the ABI's
-    // accumulate semantics.
-    let existing: HashMap<(String, String), u64> = user_phrase_rows(context)
+    // File count is a desired absolute floor; the ABI count is an add
+    // amount (`docs/findings/dictool-format.md` §3).
+    let existing: HashMap<(String, String), u64> = user_phrase_rows(context.as_ptr())
         .ok_or(ImportError::Snapshot)?
         .into_iter()
         .map(
@@ -145,9 +135,8 @@ pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
         )
         .collect();
 
-    let iter: *mut ImportIterator = begin_user_import(context);
+    let iter: *mut ImportIterator = begin_user_import(context.as_ptr());
     if iter.is_null() {
-        close_user_import_context(context);
         return Err(ImportError::Begin);
     }
 
@@ -156,10 +145,8 @@ pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
         let key = (record.phrase.clone(), record.pinyin.clone());
         let current = existing.get(&key).copied().unwrap_or(0);
         let desired = record.count.unwrap_or(DEFAULT_PHRASE_COUNT);
-        // Desired count is a monotonic floor. The one special case is a
-        // 3-field line with count 0 against a phrase not yet stored: pass 0
-        // once so the row exists, exactly as the frontend's atoi("0") path
-        // would; a re-run then sees the row and is a no-op.
+        // Desired count is a monotonic floor. Count 0 against a missing
+        // row must still create the row (`atoi("0")`); a re-run is a no-op.
         let delta = if desired > current {
             desired - current
         } else if desired == 0 && !existing.contains_key(&key) {
@@ -168,8 +155,6 @@ pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
             continue;
         };
 
-        // The safe pinyin-capi wrapper marshals `&str` to C strings; the
-        // format parser has already rejected interior NULs.
         let delta_c = c_int::try_from(delta).map_err(|_| ImportError::Add { line: record.line })?;
         if !add_user_import_phrase(iter, &record.phrase, &record.pinyin, delta_c) {
             first_error.get_or_insert(record.line);
@@ -177,8 +162,7 @@ pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
     }
 
     end_user_import(iter);
-    let saved = save_user_import_context(context);
-    close_user_import_context(context);
+    let saved = save_user_import_context(context.as_ptr());
 
     if let Some(line) = first_error {
         return Err(ImportError::Add { line });
@@ -193,7 +177,9 @@ pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
 mod tests {
     use std::path::PathBuf;
 
-    use pinyin_capi::{close_user_import_context, open_user_import_context, user_phrase_rows};
+    use pinyin_capi::{
+        PinyinContext, close_user_import_context, open_user_import_context, user_phrase_rows,
+    };
 
     use super::*;
 
@@ -356,6 +342,28 @@ mod tests {
                     count: 2,
                 },
             ]
+        );
+        close_user_import_context(context);
+    }
+
+    #[test]
+    fn unseparated_pinyin_is_the_same_pronunciation_as_the_export_row() {
+        let dir = temp_dir("canonical");
+        let input = dir.join("input.txt");
+        write(&input, "你好 nihao 3\n");
+
+        run(&dir.join("user"), &input).expect("first import");
+        run(&dir.join("user"), &input).expect("second import is idempotent");
+
+        let context = open_user_import_context(&dir.join("user"));
+        assert!(!context.is_null());
+        assert_eq!(
+            exported(context),
+            vec![ExportedPhrase {
+                text: "你好".to_owned(),
+                pinyin: "ni'hao".to_owned(),
+                count: 3,
+            }]
         );
         close_user_import_context(context);
     }

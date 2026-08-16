@@ -21,6 +21,20 @@ an invented format. Reference implementation, pinned frontend tag `1.16.5`:
   bigram rows from `pinyin_begin_get_bigram_phrases`; a zero count is
   written as the 2-field form, every non-zero count as the 3-field form.
 
+### Why dictool stays on the C ABI
+
+Dictool speaks the classic Import/Export format defined by
+`PYLibPinyin.cc:230-277` (import) and `:280-353` (export), which **is**
+libpinyin's public interchange contract driven by ibus-libpinyin's
+Import/Export buttons. Routing dictool through pinyin-capi's C ABI puts it
+in the same call sequence as the pinned frontend, so
+`tools/bisection/run-import-diff.sh` tests what dictool actually does —
+not a parallel implementation that happens to agree on the current
+fixture. The alternative (dictool over `UserStore` + pinyin-core directly)
+is portable-Rust-friendlier but would fork the behavior surface from the
+frontend's, weakening the interop guarantee. Kept on the C ABI
+deliberately.
+
 ## 1. Grammar
 
 ```text
@@ -92,6 +106,9 @@ absolute pronunciation count**:
   deleted (the file is a monotonic floor);
 - a 3-field `0` against a not-yet-stored pronunciation adds a zero-count
   row once, matching `atoi("0")` on the frontend path; re-runs are no-ops.
+  Export then writes that row as a 2-field line (§4), so a later import of
+  the exported file floors it at the default count — the same asymmetry
+  upstream exhibits.
 
 The parser rejects duplicate `(phrase, pinyin)` lines, so one input has one
 desired value per pronunciation.
@@ -106,8 +123,20 @@ Ordering rule: **phrase rows first, then rendered bigram rows** — the order
 (`PYLibPinyin.cc:346-350`). Within each block the iterator order is kept:
 phrase rows in token order then pronunciation order; bigram rows in the
 stored bigram-key order. A row with count 0 is written as 2 fields; every
-non-zero count is written as 3 fields, exactly like the frontend's
-`-1 == count` skip.
+non-zero count is written as 3 fields.
+
+Count-0 finding from source. The phrase export iterator does **not**
+filter zero-frequency pronunciations: `pinyin_begin_get_phrases` accepts
+every token with at least one pronunciation (`pinyin.cpp:671-683`), and
+`pinyin_iterator_get_next_phrase` leaves `count` at `-1` when the
+pronunciation frequency is zero (`pinyin.cpp:736-739`).
+`exportUserPhrase` then writes that `-1` as the 2-field form
+(`PYLibPinyin.cc:295-298`). The bigram export path cannot emit a zero row:
+`pinyin_bigram_iterator_has_next_phrase` requires `m_count > 68`
+(`pinyin.cpp:789-810`). Dictool reproduces both. §§3–4 therefore
+reproduce libpinyin's own asymmetric behavior: an explicit `0` imports a
+zero-count row, exports as a 2-field line, and re-imports at the default
+count 5.
 
 Round-trip contract: `dictool import` → `dictool export` is row-identical
 to the imported frontend-style text modulo the ordering rule above (no
