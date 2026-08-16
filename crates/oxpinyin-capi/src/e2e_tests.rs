@@ -607,7 +607,7 @@ fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String, i64)> {
 fn empty_user_store_decode_is_identical_across_instances() {
     // (a) at the C ABI / mini-fixture scale: two empty stores, same input,
     // bit-identical phrase candidates. The corpus-scale empty-store pin
-    // (10136 / 10182 / 94456 of 98930 / absent 1) is
+    // (10177 / 10189 / 94871 of 98930 / absent 1) is
     // `real_tables_session_reports_parity`.
     let a_dir = TempUserDir::new("empty-a");
     let b_dir = TempUserDir::new("empty-b");

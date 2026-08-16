@@ -22,13 +22,14 @@ Baselines and neighbours: `docs/findings/parity-climb-residual.md`,
 
 The frozen number every change in this area is measured against, pinned in
 `crates/pinyin-oracle/tests/real_tables_integration.rs`
-(`real_tables_session_reports_parity`) over `fixtures/w4/oracle-candidates.txt`:
+(`real_tables_session_reports_parity`) over `fixtures/w4/oracle-candidates.txt`,
+re-frozen on 2026-08-16 by `docs/findings/pin-refreeze-2026-08.md`:
 
 ```text
 compared            10190
-top-1               10136   99%     assert_eq! pin
-top-5-set           10182   99%     assert_eq! pin
-prefix-10 overlap   94456 of 98930  95%   assert_eq! pins (numerator + denominator)
+top-1               10177   99%     assert_eq! pin
+top-5-set           10189   99%     assert_eq! pin
+prefix-10 overlap   94871 of 98930  95%   assert_eq! pins (numerator + denominator)
 absent                  1           assert_eq! pin
 ```
 
@@ -503,8 +504,9 @@ Stage-1 call sites must stay valid. The `Dictionary`, `LanguageModel` (and
 Any construction change is gated on all of the following. Because the five
 `assert_eq!` pins in §0 are bit-exact, **they will trip by design on any ranking
 change** — re-pinning them is a deliberate, reviewed step (state Δ against
-10136 / 10182 / 1 / 94456–98930 in the commit that re-pins), never a silent
-edit. The tolerant floors (top-1 ≥ 55%, top-5 ≥ 80%, absent ≤ 4%) are the
+10177 / 10189 / 1 / 94871–98930 in the commit that re-pins; the previous
+10136 / 10182 / 94456 contract and its Δ are in
+`pin-refreeze-2026-08.md`), never a silent edit. The tolerant floors (top-1 ≥ 55%, top-5 ≥ 80%, absent ≤ 4%) are the
 regression envelope that must hold regardless.
 
 1. **Portable parity (primary metric).**
@@ -513,7 +515,7 @@ regression envelope that must hold regardless.
        --test real_tables_integration -- --nocapture
    ```
    Report Δ top-1, Δ top-5-set, Δ absent, Δ prefix-10 overlap against
-   10136 / 10182 / 1 / 94456 of 98930. Requires the exported tables at
+   10177 / 10189 / 1 / 94871 of 98930. Requires the exported tables at
    `/tmp/oxpinyin-export` (`oxpinyin-migrate export`) **and** the fetched
    model cache (`tools/model/fetch-model.sh`; the real unigram counts in
    `interpolation2.text` are what the reproduced construction ranks by);
@@ -768,17 +770,17 @@ appearing.
 Under the pinned observation surface (W2 corpus, flags `0x18a`, sort `0x1e`):
 
 ```text
-top-1               10136   99%     (2026-08-13 contract: 6525, 64%)
-top-5-set           10182   99%     (9232, 90%)
-prefix-10 overlap   94456 of 98930  95%   (65505, 66%)
-absent                  1           (70)
+top-1               10177   99%     (2026-08-13 contract: 6525, 64%; 2026-08-16 re-freeze: 10136)
+top-5-set           10189   99%     (9232, 90%; 2026-08-16 re-freeze: 10182)
+prefix-10 overlap   94871 of 98930  95%   (65505, 66%; 2026-08-16 re-freeze: 94456)
+absent                  1           (70; re-freeze unchanged)
 ```
 
 Serial == parallel and debug == release, bit-identical. The single remaining
 absent is `ni''hao`, the frozen doubled-apostrophe path disagreement
 (`segment-graph.md`, §3.1) — absent under every construction, not a scan
 residual. The tie budget: ~279k adjacent fully-tied pairs across ~9.8k inputs
-absorbed by the stable sort; ~1.0k depth-10 order-only tie-swaps.
+absorbed by the stable sort; 1,036 depth-10 order-only tie-swaps (previously 1,030).
 
 ### 8.3 What remains open, and what would re-open a stage
 
@@ -795,8 +797,8 @@ absorbed by the stable sort; ~1.0k depth-10 order-only tie-swaps.
 
 The five `assert_eq!` parity pins (§0) are the reproduced values re-pinned in
 this commit. The compatibility invariants (§3) and the measurement gates (§4)
-are unchanged and still normative, now measured against 10136 / 10182 / 1 /
-94456 of 98930. The parser, the graph, and the k-best machinery are untouched;
+are unchanged and still normative, now measured against 10177 / 10189 / 1 /
+94871 of 98930. The parser, the graph, and the k-best machinery are untouched;
 only the collection that consumed them changed.
 
 STOP and report rather than inventing evidence.

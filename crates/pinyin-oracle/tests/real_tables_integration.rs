@@ -462,9 +462,11 @@ fn real_tables_session_reports_parity() {
     // window scan over the parser-shaped key set (selected parse plus the
     // resplit/divided additions), the three-key order (text length, pinyin
     // span, real unigram count), and keep-first dedup. Measured release and
-    // debug, serial and parallel — all bit-identical.
+    // debug, serial and parallel — all bit-identical. Re-frozen in
+    // docs/findings/pin-refreeze-2026-08.md after incomplete keys were
+    // expanded by phonetic initial instead of string prefix.
     assert_eq!(
-        top1, 10136,
+        top1, 10177,
         "top-1 must be bit-identical to the serial baseline"
     );
     assert_eq!(
@@ -472,11 +474,11 @@ fn real_tables_session_reports_parity() {
         "absent must be bit-identical to the serial baseline"
     );
     assert_eq!(
-        top5, 10182,
+        top5, 10189,
         "top-5-set must be bit-identical to the serial baseline"
     );
     assert_eq!(
-        prefix_overlap, 94456,
+        prefix_overlap, 94871,
         "prefix-10 overlap numerator must match"
     );
     assert_eq!(

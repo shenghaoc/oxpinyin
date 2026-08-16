@@ -116,9 +116,9 @@ floors at `UNKNOWN_COST` rather than overflowing.
 
   ```
   compared            10190
-  top-1               10136   (unchanged)
-  top-5-set           10182   (unchanged)
-  prefix-10 overlap   94456 of 98930 (unchanged)
+  top-1               10177   (re-frozen 2026-08-16; the sweep's pre-freeze value was 10136)
+  top-5-set           10189   (re-frozen 2026-08-16; pre-freeze 10182)
+  prefix-10 overlap   94871 of 98930 (re-frozen 2026-08-16; pre-freeze 94456)
   absent                  1   (unchanged)
   ```
 
