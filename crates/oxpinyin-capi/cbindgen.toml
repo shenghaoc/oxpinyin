@@ -49,7 +49,7 @@ style = "both"
 usize_is_size_t = true
 
 [export]
-exclude = ["malloc", "free"]
+exclude = ["malloc", "free", "oxpinyin_init_for_fixtures"]
 include = [
     "PinyinContext",
     "PinyinInstance",

@@ -121,7 +121,10 @@ static void *load(const char *name, void *handle) {
 }
 
 static void resolve_all(void *handle, struct syms *s) {
-    s->init = (fn_init)load("pinyin_init", handle);
+    {
+        fn_init fixture_init = (fn_init)dlsym(handle, "oxpinyin_init_for_fixtures");
+        s->init = fixture_init ? fixture_init : (fn_init)load("pinyin_init", handle);
+    }
     s->fini = (fn_fini)load("pinyin_fini", handle);
     s->alloc = (fn_alloc)load("pinyin_alloc_instance", handle);
     s->free_instance = (fn_free_instance)load("pinyin_free_instance", handle);
