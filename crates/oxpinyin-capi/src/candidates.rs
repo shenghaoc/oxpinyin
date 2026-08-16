@@ -189,8 +189,10 @@ pub extern "C" fn pinyin_get_candidate_nbest_index(
 /// ```
 ///
 /// The §3.2 nibble test: the candidate's token lives in the
-/// [`USER_DICTIONARY`] sub-index. Sentence-level and fallback candidates
-/// carry no token and are not user candidates.
+/// [`USER_DICTIONARY`] sub-index. Network (nibble 6) is not "user" —
+/// `if (USER_DICTIONARY != index) return false` (`pinyin.cpp:3718`).
+/// Sentence-level and fallback candidates carry no token and are not
+/// user candidates.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_is_user_candidate(
     instance: *mut PinyinInstance,

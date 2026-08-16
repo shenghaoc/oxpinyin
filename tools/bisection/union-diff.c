@@ -9,7 +9,11 @@
  *   2. Load addon library 4 (art); print ADDON_CANDIDATE texts for "erhuang".
  *   3. Train 测测 → 你好, then guess predicted candidates for "测测".
  *      Phrase-prediction only: PREDICTED_PUNCTUATION (8) is omitted
- *      (W11-PUNCT: punct.redb is not public-ABI consumable).
+ *      (#104: punct.redb is not public-ABI consumable).
+ *   4. Filter-edge (`--setup` / `--plant` / `--edge`): user-bigram
+ *      successors at count 9 (just below) and 10 (just at)
+ *      (`pinyin.cpp:2311`, `:2349-2350`). Public pinyin_train first-seeds
+ *      69, so those counts are planted, not trained.
  *
  * Sort profile (not the empty-store parity profile, which never trains):
  *   guess:  SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY
@@ -23,7 +27,11 @@
  * type for the user-position line, so that gap cannot fail the union
  * assertions — same exclusion shape as tie-order.
  *
- * Usage: ./union-diff <path-to-so> <systemdir>
+ * Usage:
+ *   ./union-diff <so> <systemdir>
+ *   ./union-diff <so> <systemdir> --setup <userdir>
+ *   ./union-diff <so> <systemdir> --plant <userdir>
+ *   ./union-diff <so> <systemdir> --edge <userdir>
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -48,8 +56,22 @@ enum {
     PREDICTED_PREFIX_CANDIDATE = 5,
     ADDON_CANDIDATE = 6,
     PREDICTED_PUNCTUATION_CANDIDATE = 8,
-    GUESS_SORT = 0x1e
+    GUESS_SORT = 0x1e,
+    MODE_FULL = 0,
+    MODE_SETUP = 1,
+    MODE_PLANT = 2,
+    MODE_EDGE = 3
 };
+
+/* First three USER_DICTIONARY allocations (`pinyin.cpp:592-594`). */
+#define EDGE_PREFIX "测测"
+#define EDGE_BELOW "甲甲"
+#define EDGE_AT "乙乙"
+#define EDGE_PREFIX_PY "cece"
+#define EDGE_BELOW_PY "jiajia"
+#define EDGE_AT_PY "yiyi"
+#define EDGE_BELOW_COUNT 9
+#define EDGE_AT_COUNT 10
 
 typedef pinyin_context_t *(*fn_init)(const char *, const char *);
 typedef void (*fn_fini)(pinyin_context_t *);
@@ -71,6 +93,8 @@ typedef int (*fn_choose)(pinyin_instance_t *, size_t, lookup_candidate_t *);
 typedef bool (*fn_train)(pinyin_instance_t *, uint8_t);
 typedef bool (*fn_sentence)(pinyin_instance_t *);
 typedef bool (*fn_predict)(pinyin_instance_t *, const char *);
+typedef bool (*fn_save)(pinyin_context_t *);
+typedef bool (*fn_plant)(pinyin_context_t *, const char *, const char *, uint64_t);
 
 struct syms {
     fn_init init;
@@ -93,6 +117,8 @@ struct syms {
     fn_train train;
     fn_sentence sentence;
     fn_predict predict;
+    fn_save save;
+    fn_plant plant;
 };
 
 static void *must(void *handle, const char *name) {
@@ -135,9 +161,55 @@ static int index_of_text(const struct syms *s, pinyin_instance_t *inst, const ch
     return -1;
 }
 
+static int import_edge_phrases(const struct syms *s, pinyin_context_t *ctx) {
+    import_iterator_t *it = s->begin_add(ctx, 7);
+    if (!it)
+        return 0;
+    int ok = s->add(it, EDGE_PREFIX, EDGE_PREFIX_PY, 5) &&
+             s->add(it, EDGE_BELOW, EDGE_BELOW_PY, 5) &&
+             s->add(it, EDGE_AT, EDGE_AT_PY, 5);
+    s->end_add(it);
+    return ok;
+}
+
+static void print_edge_hit(const struct syms *s, pinyin_instance_t *inst,
+                           int want_count, const char *want) {
+    guint n = 0;
+    guint i;
+    s->n_cand(inst, &n);
+    for (i = 0; i < n; i++) {
+        lookup_candidate_t *c = NULL;
+        int type = 0;
+        const char *text = NULL;
+        s->get_cand(inst, i, &c);
+        s->get_type(inst, c, &type);
+        s->get_str(inst, c, &text);
+        if (type == PREDICTED_BIGRAM_CANDIDATE && text && strcmp(text, want) == 0) {
+            printf("pred-edge-%d: %s type=%d\n", want_count, want, type);
+            return;
+        }
+    }
+    printf("pred-edge-%d: %s absent\n", want_count, want);
+}
+
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "Usage: %s <so> <systemdir>\n", argv[0]);
+    int mode = MODE_FULL;
+    const char *userdir_arg = NULL;
+    if (argc == 3) {
+        mode = MODE_FULL;
+    } else if (argc == 5 && strcmp(argv[3], "--setup") == 0) {
+        mode = MODE_SETUP;
+        userdir_arg = argv[4];
+    } else if (argc == 5 && strcmp(argv[3], "--plant") == 0) {
+        mode = MODE_PLANT;
+        userdir_arg = argv[4];
+    } else if (argc == 5 && strcmp(argv[3], "--edge") == 0) {
+        mode = MODE_EDGE;
+        userdir_arg = argv[4];
+    } else {
+        fprintf(stderr,
+                "Usage: %s <so> <systemdir> [--setup|--plant|--edge <userdir>]\n",
+                argv[0]);
         return 1;
     }
     void *h = dlopen(argv[1], RTLD_NOW);
@@ -170,17 +242,73 @@ int main(int argc, char **argv) {
     s.train = (fn_train)must(h, "pinyin_train");
     s.sentence = (fn_sentence)must(h, "pinyin_guess_sentence");
     s.predict = (fn_predict)must(h, "pinyin_guess_predicted_candidates_with_punctuations");
+    s.save = (fn_save)must(h, "pinyin_save");
+    s.plant = (fn_plant)dlsym(h, "oxpinyin_test_set_user_bigram");
 
-    char userdir[] = "/tmp/uniondiff-XXXXXX";
-    if (!mkdtemp(userdir)) {
-        perror("mkdtemp");
-        return 1;
+    char tmpdir[] = "/tmp/uniondiff-XXXXXX";
+    const char *userdir = userdir_arg;
+    if (!userdir) {
+        if (!mkdtemp(tmpdir)) {
+            perror("mkdtemp");
+            return 1;
+        }
+        userdir = tmpdir;
     }
     pinyin_context_t *ctx = s.init(argv[2], userdir);
     if (!ctx) {
         fprintf(stderr, "init failed\n");
         return 1;
     }
+
+    if (mode == MODE_SETUP) {
+        if (!import_edge_phrases(&s, ctx)) {
+            fprintf(stderr, "edge import failed\n");
+            s.fini(ctx);
+            return 1;
+        }
+        if (!s.save(ctx)) {
+            fprintf(stderr, "edge save failed\n");
+            s.fini(ctx);
+            return 1;
+        }
+        printf("edge-setup: %s %s %s\n", EDGE_PREFIX, EDGE_BELOW, EDGE_AT);
+        s.fini(ctx);
+        return 0;
+    }
+
+    if (mode == MODE_PLANT) {
+        if (!s.plant) {
+            fprintf(stderr, "oxpinyin_test_set_user_bigram not in this .so\n");
+            s.fini(ctx);
+            return 3;
+        }
+        if (!s.plant(ctx, EDGE_PREFIX, EDGE_BELOW, EDGE_BELOW_COUNT) ||
+            !s.plant(ctx, EDGE_PREFIX, EDGE_AT, EDGE_AT_COUNT)) {
+            fprintf(stderr, "plant 9/10 failed\n");
+            s.fini(ctx);
+            return 1;
+        }
+        printf("edge-plant: %s->%s=%d %s->%s=%d\n", EDGE_PREFIX, EDGE_BELOW,
+               EDGE_BELOW_COUNT, EDGE_PREFIX, EDGE_AT, EDGE_AT_COUNT);
+        s.fini(ctx);
+        return 0;
+    }
+
+    if (mode == MODE_EDGE) {
+        pinyin_instance_t *edge_inst = s.alloc(ctx);
+        if (!edge_inst) {
+            fprintf(stderr, "alloc failed\n");
+            s.fini(ctx);
+            return 1;
+        }
+        printf("predict-edge: %s\n", s.predict(edge_inst, EDGE_PREFIX) ? "true" : "false");
+        print_edge_hit(&s, edge_inst, EDGE_BELOW_COUNT, EDGE_BELOW);
+        print_edge_hit(&s, edge_inst, EDGE_AT_COUNT, EDGE_AT);
+        s.free_inst(edge_inst);
+        s.fini(ctx);
+        return 0;
+    }
+
     pinyin_instance_t *inst = s.alloc(ctx);
     if (!inst) {
         fprintf(stderr, "alloc failed\n");

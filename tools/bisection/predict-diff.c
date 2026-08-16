@@ -2,7 +2,7 @@
  * predict-diff.c — W11 phrase-prediction differential (non-punctuation).
  *
  * Train a user phrase, then guess predicted candidates for a prefix and
- * print type|text. Punctuation is stubbed empty on oxpinyin (W11-PUNCT);
+ * print type|text. Punctuation is stubbed empty on oxpinyin (#104);
  * this driver compares the non-punctuation prediction list.
  *
  * Usage: ./predict-diff <path-to-so> <systemdir>
