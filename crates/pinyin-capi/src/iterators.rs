@@ -57,7 +57,7 @@ struct ImportHandle {
 ///
 /// Returns a handle for any non-null context, matching the export iterator
 /// shape; caller must call `pinyin_end_add_phrases` to free it. Adds target
-/// [`USER_DICTIONARY`] only — pinyin-rs's system phrase indexes are
+/// [`USER_DICTIONARY`] only — oxpinyin's system phrase indexes are
 /// read-only redb tables — so any other index yields a handle whose adds
 /// report `false`.
 pub(crate) fn begin_add_phrases_impl(
@@ -221,7 +221,7 @@ pub(crate) fn render_import_pinyin(keys: &[PinyinKey]) -> Option<String> {
 /// ```
 ///
 /// Upstream compacts the phrase index here and sets `m_modified = true`
-/// (`pinyin.cpp:657-658`) whether or not any add succeeded. pinyin-rs has no
+/// (`pinyin.cpp:657-658`) whether or not any add succeeded. oxpinyin has no
 /// in-memory phrase chunk to compact; the redb adds are already durable. The
 /// dirty-flag arm is the whole persistence-side effect, so the next
 /// `pinyin_save` compacts and clears (`docs/findings/user-store.md` §4).

@@ -118,7 +118,7 @@ fn parse_manifest(text: &str) -> Manifest {
 #[test]
 fn rust_matches_committed_manifest() {
     let Some(counts) = rust_counts() else {
-        eprintln!("skipping: migrate export not found (PINYIN_EXPORT_DIR / /tmp/pinyin-rs-export)");
+        eprintln!("skipping: migrate export not found (PINYIN_EXPORT_DIR / /tmp/oxpinyin-export)");
         return;
     };
     let manifest_path = manifest_path();

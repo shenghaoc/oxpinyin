@@ -472,7 +472,7 @@ Index 4 is overloaded: it maps to `MERGED_DICTIONARY` (merged.bin) in
 the default space and `art` in the addon space. The correct
 interpretation depends on which load function populated the token.
 
-For pinyin-rs loaders, we maintain separate loader instances for the
+For oxpinyin loaders, we maintain separate loader instances for the
 default and addon dictionaries, resolving tokens through the
 appropriate loader.
 

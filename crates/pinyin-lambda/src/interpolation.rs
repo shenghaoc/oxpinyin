@@ -65,7 +65,7 @@ impl Lambda {
     /// λ formatted as libpinyin's `table.conf` writes it — `%f`, six
     /// decimals (`estimate_interpolation.cpp:139` prints `%f`; `evaluate.py`
     /// feeds that string to `make modify LAMBDA_PARAMETER=`). This is the
-    /// "form usable by pinyin-rs": the shipped `lambda parameter:0.xxxxxx`.
+    /// "form usable by oxpinyin": the shipped `lambda parameter:0.xxxxxx`.
     #[must_use]
     pub fn table_conf_value(&self) -> String {
         format!("{:.6}", self.average)

@@ -117,7 +117,7 @@ c1a=$(msg 'valid assisted-by' \
     'Assisted-by: Claude:claude-opus-5' | human)
 c1b=$(msg 'plain human commit' | human)
 
-# --- case 2: regression pinyin-rs PR#41, 7b504d0 ------------------------------
+# --- case 2: regression oxpinyin PR#41, 7b504d0 ------------------------------
 c2=$(msg 'copilot co-authored-by' \
     '' \
     'Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>' | human)
@@ -154,7 +154,7 @@ c4b=$(msg 'claude martin author' '' \
     | commit 'Claude Martin' 'claude.martin@example.fr' \
              'Claude Martin' 'claude.martin@example.fr')
 
-# --- case 5: regression pinyin-rs PR#41, ba25ff7 ------------------------------
+# --- case 5: regression oxpinyin PR#41, ba25ff7 ------------------------------
 # `Grok:4.6` fails the letter heuristic (31 such trailers observed); the
 # model-string companion passes.
 c5a=$(msg 'grok bare version' \

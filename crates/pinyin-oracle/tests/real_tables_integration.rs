@@ -2,7 +2,7 @@
 //! W2 parity corpus.
 //!
 //! Constructs `Session<SystemDictionary, BigramLanguageModel>` from the
-//! tables `pinyin-migrate export` writes to `/tmp/pinyin-rs-export`, loads the
+//! tables `pinyin-migrate export` writes to `/tmp/oxpinyin-export`, loads the
 //! real unigram counts from `interpolation2.text` in the fetched model cache
 //! (`tools/model/fetch-model.sh`), and compares candidates with the oracle's
 //! **frozen** candidate lists at `fixtures/w4/oracle-candidates.txt`. Without
@@ -50,7 +50,7 @@ fn export_dir() -> Option<PathBuf> {
     // the documented `pinyin-migrate export` target.
     let dir = std::env::var_os("PINYIN_EXPORT_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new("/tmp/pinyin-rs-export").to_path_buf());
+        .unwrap_or_else(|| Path::new("/tmp/oxpinyin-export").to_path_buf());
     if ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"]
         .iter()
         .all(|name| dir.join(name).exists())
@@ -58,7 +58,7 @@ fn export_dir() -> Option<PathBuf> {
         Some(dir)
     } else {
         eprintln!(
-            "exported tables not found at /tmp/pinyin-rs-export; skipping \
+            "exported tables not found at /tmp/oxpinyin-export; skipping \
              (run pinyin-migrate export first)"
         );
         None

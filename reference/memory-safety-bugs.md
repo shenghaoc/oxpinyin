@@ -183,7 +183,7 @@ Sources: upstream GitHub issues, Red Hat ABRT, SUSE Bugzilla, Launchpad, commit 
 "Rust prevents this" is three different claims, and conflating them is how
 rewrite projects end up making promises their first release breaks. The
 tiers below sort every catalogued bug by *which mechanism* actually holds
-the guarantee in pinyin-rs — the type system, the ownership model with its
+the guarantee in oxpinyin — the type system, the ownership model with its
 named escape hatches, or policy-plus-tests where the language holds
 nothing at all. Scope note: Tier A guarantees apply to the
 `#![forbid(unsafe_code)]` core crates; `pinyin-capi` is the one surface
@@ -272,7 +272,7 @@ path and leaves the deliberate one; policy closes the remainder.
 
 Every Tier A and C row is claimable only as a scoped, reproducible
 demonstration — "on input `nih` + candidate select, upstream
-`<pinned ref>` crashes (ibus-libpinyin #566); pinyin-rs returns an error
+`<pinned ref>` crashes (ibus-libpinyin #566); oxpinyin returns an error
 and continues" — never as a blanket "memory-safe, therefore crash-free".
 Tier C is the standing proof the blanket form would be false.
 Operationally: each repro above is registered in the cross-lane evidence family

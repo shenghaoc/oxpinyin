@@ -5,7 +5,7 @@
 //! cargo run -p pinyin-oracle --release --bin parity-sweep
 //! ```
 //!
-//! Requires `/tmp/pinyin-rs-export` tables. Prints top-1 for each trial on a
+//! Requires `/tmp/oxpinyin-export` tables. Prints top-1 for each trial on a
 //! fixed 2,000-input sample, then optionally re-scores the winner on the
 //! full corpus when `PARITY_SWEEP_FULL=1`.
 
@@ -107,7 +107,7 @@ fn pct(n: usize, d: usize) -> usize {
 }
 
 fn main() -> ExitCode {
-    let dir = Path::new("/tmp/pinyin-rs-export");
+    let dir = Path::new("/tmp/oxpinyin-export");
     if !dir.join("pinyin_index.redb").exists() {
         eprintln!("missing {dir:?}; run pinyin-migrate export first");
         return ExitCode::from(2);

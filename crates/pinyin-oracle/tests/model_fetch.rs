@@ -22,7 +22,7 @@ impl Scratch {
             .map(|elapsed| elapsed.as_nanos())
             .unwrap_or(0);
         let dir = std::env::temp_dir().join(format!(
-            "pinyin-rs-model-{}-{}-{}-{}",
+            "oxpinyin-model-{}-{}-{}-{}",
             label,
             std::process::id(),
             nanos,

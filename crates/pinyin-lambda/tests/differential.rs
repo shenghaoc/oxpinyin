@@ -138,7 +138,7 @@ fn parse_manifest(text: &str) -> Manifest {
 #[test]
 fn rust_lambda_matches_committed_manifest() {
     let Some(estimate) = rust_estimate() else {
-        eprintln!("skipping: migrate export not found (PINYIN_EXPORT_DIR / /tmp/pinyin-rs-export)");
+        eprintln!("skipping: migrate export not found (PINYIN_EXPORT_DIR / /tmp/oxpinyin-export)");
         return;
     };
     let path = manifest_path();

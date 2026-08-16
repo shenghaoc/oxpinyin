@@ -1,7 +1,7 @@
 //! `pinyin-dictool` — standalone vocabulary conversion tool.
 //!
 //! Import mode turns the pinned user-vocabulary text format
-//! (`docs/findings/dictool-format.md`) into the pinyin-rs user redb store
+//! (`docs/findings/dictool-format.md`) into the oxpinyin user redb store
 //! through the public C ABI import trio and `pinyin_save`.
 
 #![warn(missing_docs)]

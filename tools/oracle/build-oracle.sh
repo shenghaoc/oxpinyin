@@ -18,7 +18,7 @@ MODEL_URL=https://downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz
 MODEL_SHA256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
 ORACLE_PIN_REF="libpinyin-$LIBPINYIN_TAG-$LIBPINYIN_SHA+model20-$MODEL_SHA256+dbm-tkrzw"
 
-work_dir=${TMPDIR:-/tmp}/pinyin-rs-oracle
+work_dir=${TMPDIR:-/tmp}/oxpinyin-oracle
 prefix=
 jobs=1
 
@@ -29,7 +29,7 @@ Usage: build-oracle.sh [OPTIONS]
 Build the pinned libpinyin and ibus-libpinyin releases from verified archives.
 
 Options:
-  --work-dir DIR  Download and build directory (default: $TMPDIR/pinyin-rs-oracle)
+  --work-dir DIR  Download and build directory (default: $TMPDIR/oxpinyin-oracle)
   --prefix DIR    Installation prefix (default: WORK_DIR/prefix)
   --jobs N        Parallel make jobs (default: 1)
   -h, --help      Show this help

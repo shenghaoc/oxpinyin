@@ -9,9 +9,9 @@
 //!    `total == Σ count`, every successor belongs to a system library,
 //!    and resolved spot checks hold for three common previous tokens.
 //!
-//! The tests skip with a notice when `/tmp/pinyin-rs-export` is absent;
+//! The tests skip with a notice when `/tmp/oxpinyin-export` is absent;
 //! generate it with
-//! `cargo run -p pinyin-migrate --features oracle-ffi -- export --out-dir /tmp/pinyin-rs-export`.
+//! `cargo run -p pinyin-migrate --features oracle-ffi -- export --out-dir /tmp/oxpinyin-export`.
 
 #![cfg(feature = "oracle-ffi")]
 
@@ -22,7 +22,7 @@ use pinyin_data::LookupTable;
 use pinyin_oracle::{Oracle, OracleFlags, OraclePrefix};
 
 fn export_dir() -> Option<PathBuf> {
-    let dir = Path::new("/tmp/pinyin-rs-export").to_path_buf();
+    let dir = Path::new("/tmp/oxpinyin-export").to_path_buf();
     if dir.join("pinyin_index.redb").exists()
         && dir.join("phrase_index.redb").exists()
         && dir.join("bigram.redb").exists()
@@ -30,7 +30,7 @@ fn export_dir() -> Option<PathBuf> {
         Some(dir)
     } else {
         eprintln!(
-            "exported tables not found at /tmp/pinyin-rs-export; skipping \
+            "exported tables not found at /tmp/oxpinyin-export; skipping \
              (run pinyin-migrate export first)"
         );
         None

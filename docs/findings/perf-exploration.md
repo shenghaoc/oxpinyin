@@ -9,7 +9,7 @@ implementation and a recommendation for each of five hypothesized
 optimizations. Nothing here is a construction change.
 
 Host: 12 logical cores, one measurement thread unless noted. Release
-(`opt-level=3`), rustc 1.97.1. Exported tables from `/tmp/pinyin-rs-export`.
+(`opt-level=3`), rustc 1.97.1. Exported tables from `/tmp/oxpinyin-export`.
 Model cache: `target/model20/extracted/` (SHA-256
 `59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155`).
 `perf` and `heaptrack` are not installed. CPU profile is Valgrind Callgrind

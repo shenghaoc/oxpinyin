@@ -45,7 +45,7 @@ cargo test --release -p pinyin-oracle --test real_tables_integration -- --nocapt
 
 Metric: `real_tables_session_reports_parity` over the W2 corpus (10,190 inputs
 with oracle candidates, 98,930 prefix-10 depth) against
-`fixtures/w4/oracle-candidates.txt` via `/tmp/pinyin-rs-export`.
+`fixtures/w4/oracle-candidates.txt` via `/tmp/oxpinyin-export`.
 
 ## Results
 

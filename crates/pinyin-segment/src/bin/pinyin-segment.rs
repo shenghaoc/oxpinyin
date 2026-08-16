@@ -3,7 +3,7 @@
 //! Usage: pinyin-segment [--generate-extra-enter] [-o outputfile] [inputfile]
 //!
 //! Paths default to the migrate export (`PINYIN_EXPORT_DIR` /
-//! `/tmp/pinyin-rs-export`) and the fetched model20 cache
+//! `/tmp/oxpinyin-export`) and the fetched model20 cache
 //! (`PINYIN_MODEL_DIR` / `tools/model/fetch-model.sh`).
 
 #![allow(missing_docs)]

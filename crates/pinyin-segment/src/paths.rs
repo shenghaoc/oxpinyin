@@ -20,7 +20,7 @@ pub const MODEL_CACHE_ENV: &str = "PINYIN_MODEL_CACHE";
 pub const EXPORT_DIR_ENV: &str = "PINYIN_EXPORT_DIR";
 
 /// Default export directory used by the oracle integration tests.
-pub const DEFAULT_EXPORT_DIR: &str = "/tmp/pinyin-rs-export";
+pub const DEFAULT_EXPORT_DIR: &str = "/tmp/oxpinyin-export";
 
 /// Files the segmenter needs from a migrate export.
 pub const EXPORT_FILES: &[&str] = &["phrase_index.redb", "bigram.redb"];

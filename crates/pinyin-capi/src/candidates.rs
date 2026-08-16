@@ -221,7 +221,7 @@ pub extern "C" fn pinyin_is_user_candidate(
 /// ```
 ///
 /// The §3.4 removal: the candidate's token must live in the user
-/// dictionary (upstream asserts it; pinyin-rs reports `false` instead of
+/// dictionary (upstream asserts it; oxpinyin reports `false` instead of
 /// panicking), then the phrase, its pronunciations, its bigram rows and
 /// its unigram delta are deleted. Does **not** arm `m_modified`, matching
 /// upstream's set-sites. Note: on the current ABI no user token ever
