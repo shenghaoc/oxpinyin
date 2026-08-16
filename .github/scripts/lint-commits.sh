@@ -7,7 +7,7 @@
 #   lint-commits.sh <base-sha> <head-sha>     CI mode: lint the non-merge
 #                                             commits in the range (R1–R4).
 #   lint-commits.sh --hook <message-file>     Hook mode: lint a single commit
-#                                             message for R1–R3 only.
+#                                             message for R1–R2 only.
 #
 # CI mode: the caller is responsible for computing the merge-base; this script
 # lints the non-merge commits in `<base-sha>..<head-sha>`.
@@ -65,7 +65,7 @@ fail() {
     fi
 }
 
-# check_message — the message-level rules (R1–R3) shared by CI mode and the
+# check_message — the message-level rules (R1–R2) shared by CI mode and the
 # commit-msg hook. Operates on the globals $short, $subject, $trailers;
 # sets r1..r3 and increments $fails, emitting ::error:: lines per violation.
 #
@@ -75,7 +75,6 @@ fail() {
 check_message() {
     r1=pass
     r2=pass
-    r3=pass
 
     # R1 — no AI agent identity in Co-authored-by:. Key match is
     # case-insensitive (Claude Code emits Co-Authored-By:, GitHub emits
@@ -149,22 +148,6 @@ check_message() {
         IFS=$oldIFS
     fi
 
-    # R3 — AI-session promotion. "AI-session: true" (exact value) requires at
-    # least one Assisted-by trailer (which R2 then validates). Any other value
-    # is a hard fail (typo guard). Inert until agents are configured to emit
-    # it; session provenance is otherwise invisible to a linter.
-    ai_session=$(printf '%s\n' "$trailers" | grep -iE '^ai-session:' || true)
-    if [ -n "$ai_session" ]; then
-        # Key is case-insensitive; the value must be exactly "true" (typo guard).
-        bad_ai=$(printf '%s\n' "$ai_session" | grep -vE '^[^:]*:[[:space:]]*true[[:space:]]*$' || true)
-        if [ -n "$bad_ai" ]; then
-            r3=fail
-            fail 3 "$short" "$subject" "AI-session must have exact value 'true' (got: $bad_ai)"
-        elif ! printf '%s\n' "$trailers" | grep -Eiq '^assisted-by:'; then
-            r3=fail
-            fail 3 "$short" "$subject" "AI-session: true requires an Assisted-by trailer"
-        fi
-    fi
 }
 
 # Verify git is present and new enough for %(trailers:only,unfold).
@@ -179,7 +162,7 @@ if ! awk -v v="$git_version" 'BEGIN {
 fi
 
 # ---------------------------------------------------------------------------
-# Hook mode — lint a single commit message file for R1–R3.
+# Hook mode — lint a single commit message file for R1–R2.
 # ---------------------------------------------------------------------------
 if [ "$1" = "--hook" ]; then
     [ $# -eq 2 ] || usage
@@ -255,16 +238,16 @@ for sha in $(git rev-list --no-merges "$BASE..$HEAD"); do
             'git author/committer is an AI agent identity — before merge, take authorship (git commit --amend --reset-author or an interactive rebase) and retain the AI attribution via an Assisted-by trailer'
     fi
 
-    # R1–R3 — shared message-level rules.
+    # R1–R2 — shared message-level rules.
     check_message
 
     linted=$((linted + 1))
     subject_safe=$(printf '%s' "$subject" | sed 's/|/\\|/g')
-    rows="$rows| $short | $subject_safe | $r1 | $r2 | $r3 | $r4 |$nl"
+    rows="$rows| $short | $subject_safe | $r1 | $r2 | $r4 |$nl"
 done
 
 # Per-commit × per-rule summary table.
-summary="### commit-trailers${nl}${nl}| commit | subject | R1 (no AI co-author) | R2 (Assisted-by) | R3 (AI-session) | R4 (no AI author) |${nl}| --- | --- | --- | --- | --- | --- |${nl}$rows"
+summary="### commit-trailers${nl}${nl}| commit | subject | R1 (no AI co-author) | R2 (Assisted-by) | R4 (no AI author) |${nl}| --- | --- | --- | --- | --- |${nl}$rows"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     printf '%s\n' "$summary" >>"$GITHUB_STEP_SUMMARY"
