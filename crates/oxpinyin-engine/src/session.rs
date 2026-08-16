@@ -416,6 +416,23 @@ where
         self.parsed_prefix
     }
 
+    /// Apply a live `incomplete-pinyin` change and refresh if composing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when a composing session fails to refresh
+    /// under the new setting.
+    pub fn set_incomplete_pinyin(&mut self, enabled: bool) -> Result<(), EngineError> {
+        if self.settings.incomplete == enabled {
+            return Ok(());
+        }
+        self.settings.incomplete = enabled;
+        if self.raw.is_empty() {
+            return Ok(());
+        }
+        self.refresh()
+    }
+
     /// What the shell should display.
     #[must_use]
     pub fn preedit(&self) -> Preedit {

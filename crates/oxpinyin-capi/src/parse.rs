@@ -3,6 +3,8 @@
 use std::os::raw::c_char;
 use std::ptr;
 
+use std::sync::atomic::Ordering;
+
 use crate::ffi::{cstr_to_string, ffi_catch};
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, PinyinInstance};
@@ -14,8 +16,9 @@ use crate::types::{GChar, PinyinInstance};
 /// current session: the fork compares `pinyin_choose_candidate`'s cursor
 /// against it (`docs/findings/abi-subset.md` W8 contract).
 ///
-/// The stored length is the session's filtered `fewest_keys` prefix, not
-/// the unfiltered graph `consumed()`.
+/// The stored length is the session's filtered `fewest_keys` prefix, so
+/// `PINYIN_INCOMPLETE` off reports 2 for `nih` rather than the unfiltered
+/// graph `consumed()` of 3.
 ///
 /// Resets and clears the candidate snapshot even for empty input, so a
 /// prior composition is discarded and the stored length returns to 0.
@@ -24,6 +27,13 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
     inst.reset_parse_state();
+    if inst
+        .session
+        .set_incomplete_pinyin(inst.incomplete.load(Ordering::Relaxed))
+        .is_err()
+    {
+        return 0;
+    }
     if text.is_empty() {
         return 0;
     }

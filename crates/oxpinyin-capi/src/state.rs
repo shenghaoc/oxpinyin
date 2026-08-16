@@ -8,6 +8,7 @@
 use std::ffi::CString;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey, UserCountDelta,
@@ -133,6 +134,9 @@ pub(crate) struct CapiContext {
     /// file cannot be opened (a missing/inaccessible user dir must not make
     /// `pinyin_init` fail; training then degrades to `false`, upstream-style).
     user: Option<UserStore>,
+    /// Live `PINYIN_INCOMPLETE` bit. Shared with every instance so
+    /// `pinyin_set_options` remasks already-allocated sessions.
+    pub(crate) incomplete: Arc<AtomicBool>,
 }
 
 impl CapiContext {
@@ -170,6 +174,7 @@ impl CapiContext {
                 user: user.clone(),
             }),
             user,
+            incomplete: Arc::new(AtomicBool::new(true)),
         })
     }
 
@@ -190,6 +195,7 @@ impl CapiContext {
             dict: None,
             lm: None,
             user: Some(user),
+            incomplete: Arc::new(AtomicBool::new(true)),
         })
     }
 
@@ -206,6 +212,7 @@ impl CapiContext {
             candidates: Vec::new(),
             parsed_len: 0,
             user: self.user.clone(),
+            incomplete: Arc::clone(&self.incomplete),
         })
     }
 
@@ -405,6 +412,8 @@ pub(crate) struct CapiInstance {
     pub(crate) parsed_len: usize,
     /// Clone of the context's user store. `None` under an empty user dir.
     pub(crate) user: Option<UserStore>,
+    /// Shared live `PINYIN_INCOMPLETE` flag from the owning context.
+    pub(crate) incomplete: Arc<AtomicBool>,
 }
 
 impl CapiInstance {

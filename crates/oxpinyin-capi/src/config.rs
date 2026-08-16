@@ -1,6 +1,7 @@
 //! Configuration symbols: options, schemes, phrase library loading.
 
 use std::os::raw::c_int;
+use std::sync::atomic::Ordering;
 
 use oxpinyin_engine::ConfigValue;
 
@@ -15,11 +16,10 @@ use crate::types::{PinyinContext, PinyinOptionT, PinyinTableFlag};
 /// bool pinyin_set_options(pinyin_context_t * context, pinyin_option_t options);
 /// ```
 ///
-/// W8 fork-bootstrap wiring: the fork passes its GSettings-derived option
-/// mask before allocating any instance.  oxpinyin-engine currently has a
-/// session key for `PINYIN_INCOMPLETE`, so that bit is decoded into
-/// `incomplete-pinyin`; the correction/fuzzy/dynamic-adjust bits still have
-/// no engine backend and are accepted without effect (see the W8 report).
+/// Decodes `PINYIN_INCOMPLETE` into the live context flag and the
+/// `incomplete-pinyin` config key. Already-allocated instances observe the
+/// remask on the next parse or guess. Other bits are accepted without
+/// effect until their engine backends exist.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: PinyinOptionT) -> bool {
     if context.is_null() {
@@ -28,10 +28,10 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
     ffi_catch(false, || {
         // SAFETY: `context` is non-null and was produced by `pinyin_init`.
         let ctx = unsafe { context_mut(context) };
-        ctx.config.set(
-            "incomplete-pinyin",
-            ConfigValue::Bool((options & (PinyinTableFlag::PINYIN_INCOMPLETE as u32)) != 0),
-        );
+        let enabled = (options & (PinyinTableFlag::PINYIN_INCOMPLETE as u32)) != 0;
+        ctx.config
+            .set("incomplete-pinyin", ConfigValue::Bool(enabled));
+        ctx.incomplete.store(enabled, Ordering::Relaxed);
         true
     })
 }
