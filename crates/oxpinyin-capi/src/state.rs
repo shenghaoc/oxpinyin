@@ -139,8 +139,31 @@ pub(crate) struct CapiContext {
     pub(crate) incomplete: Arc<AtomicBool>,
 }
 
+/// Where [`CapiContext::new`] takes unigram counts from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UnigramSource {
+    /// Require a parsable `interpolation2.text` next to the redb tables.
+    RealOnly,
+    /// Test fixtures and the W3 mini tables use export-ABI flat counts.
+    FlatExportForFixtures,
+}
+
 impl CapiContext {
     pub(crate) fn new(system_dir: &str, user_dir: &str) -> Option<Self> {
+        Self::new_with_unigrams(system_dir, user_dir, UnigramSource::RealOnly)
+    }
+
+    /// Fixture/test constructor: the W3 mini system dir deliberately has no
+    /// model file, so it opts into the old flat-export behaviour explicitly.
+    pub(crate) fn new_for_fixtures(system_dir: &str, user_dir: &str) -> Option<Self> {
+        Self::new_with_unigrams(system_dir, user_dir, UnigramSource::FlatExportForFixtures)
+    }
+
+    fn new_with_unigrams(
+        system_dir: &str,
+        user_dir: &str,
+        unigram_source: UnigramSource,
+    ) -> Option<Self> {
         if system_dir.is_empty() {
             return None;
         }
@@ -157,7 +180,21 @@ impl CapiContext {
         // §3); a real install ships one. Absent (no table.conf in the dir),
         // the pinned 0.312699 default stands.
         lm.set_lambda_from_table_conf(&sys.join("table.conf"));
-        lm.set_unigrams_from_dict(&dict);
+
+        // W8 fork-bootstrap wiring: the fork's runtime system dir carries
+        // the fetched pinned model as `interpolation2.text`; install its
+        // real phrase-index counts so the candidate construction runs the
+        // pinned three-key order.  A present-but-unparsable file is an init
+        // failure, matching upstream's NULL on load failure.
+        let interpolation2 = sys.join("interpolation2.text");
+        if interpolation2.is_file() {
+            lm.set_unigrams_from_interpolation2(&interpolation2).ok()?;
+        } else {
+            match unigram_source {
+                UnigramSource::RealOnly => return None,
+                UnigramSource::FlatExportForFixtures => lm.set_unigrams_from_dict(&dict),
+            }
+        }
 
         let user = if user_dir.is_empty() {
             None

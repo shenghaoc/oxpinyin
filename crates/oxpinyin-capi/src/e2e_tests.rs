@@ -28,7 +28,7 @@ use crate::candidates::{
     pinyin_train,
 };
 use crate::config::{pinyin_mask_out, pinyin_set_options};
-use crate::context::{pinyin_init, pinyin_save};
+use crate::context::{pinyin_init, pinyin_init_for_fixtures, pinyin_save};
 use crate::instance::{pinyin_alloc_instance, pinyin_reset};
 use crate::iterators::{
     pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
@@ -73,19 +73,104 @@ impl Drop for TempUserDir {
     }
 }
 
+/// A fresh, process-unique system directory with copies of the three W3
+/// redb tables, used only by the real-unigram policy tests.
+struct TempSystemDir {
+    path: PathBuf,
+}
+
+impl TempSystemDir {
+    fn new(tag: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "oxpinyin-capi-system-{tag}-{}.d",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("temp system dir");
+        for name in ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"] {
+            std::fs::copy(system_dir().join(name), path.join(name)).expect("copy redb table");
+        }
+        Self { path }
+    }
+
+    fn write(&self, name: &str, contents: &str) {
+        std::fs::write(self.path.join(name), contents).expect("write temp system file");
+    }
+}
+
+impl Drop for TempSystemDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
 fn cstr(value: impl AsRef<str>) -> CString {
     CString::new(value.as_ref().as_bytes()).expect("no interior NUL")
 }
 
-/// `pinyin_init` + `pinyin_alloc_instance` over the mini fixture.
+/// `pinyin_init_for_fixtures` + `pinyin_alloc_instance` over the mini
+/// fixture.  The public `pinyin_init` path refuses a system dir without
+/// `interpolation2.text`, so the W3-mini tests opt into the flat-export
+/// unigrams through the crate-private fixture constructor.
 fn open(user_dir: &str) -> (*mut PinyinContext, *mut PinyinInstance) {
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
     let user = cstr(user_dir);
-    let context = pinyin_init(system.as_ptr(), user.as_ptr());
-    assert!(!context.is_null(), "pinyin_init must open the mini fixture");
+    let context = pinyin_init_for_fixtures(system.as_ptr(), user.as_ptr());
+    assert!(
+        !context.is_null(),
+        "fixture init must open the mini fixture"
+    );
     let instance = pinyin_alloc_instance(context);
     assert!(!instance.is_null());
     (context, instance)
+}
+
+#[test]
+fn public_init_refuses_a_system_dir_without_real_unigrams() {
+    // The W3 mini fixture deliberately has no `interpolation2.text`.  The
+    // public ABI must not silently fall back to flat export counts, because
+    // that would rank production candidates with made-up frequencies.
+    let system = TempSystemDir::new("no-interpolation");
+    let user = TempUserDir::new("no-interpolation-user");
+    let context = pinyin_init(
+        cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+        cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+    );
+    assert!(
+        context.is_null(),
+        "missing interpolation2.text must fail init"
+    );
+}
+
+#[test]
+fn public_init_refuses_an_unparsable_interpolation2_file() {
+    let system = TempSystemDir::new("bad-interpolation");
+    system.write("interpolation2.text", "not an interpolation model\n");
+    let user = TempUserDir::new("bad-interpolation-user");
+    let context = pinyin_init(
+        cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+        cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+    );
+    assert!(
+        context.is_null(),
+        "present-but-unparsable interpolation2.text must fail init"
+    );
+}
+
+#[test]
+fn public_init_loads_a_parsable_interpolation2_file() {
+    let system = TempSystemDir::new("good-interpolation");
+    system.write(
+        "interpolation2.text",
+        "\\data model interpolation\n\\1-gram\n\\item 1 ok count 1\n",
+    );
+    let user = TempUserDir::new("good-interpolation-user");
+    let context = pinyin_init(
+        cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+        cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+    );
+    assert!(!context.is_null(), "parsable model file must open");
+    crate::context::pinyin_fini(context);
 }
 
 /// The instance's user store handle (the same connection the entry points
@@ -409,7 +494,7 @@ fn training_through_the_abi_records_the_pinned_counts() {
 fn training_entry_points_refuse_without_a_user_store() {
     let empty = cstr("");
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
-    let context = pinyin_init(system.as_ptr(), empty.as_ptr());
+    let context = pinyin_init_for_fixtures(system.as_ptr(), empty.as_ptr());
     assert!(
         !context.is_null(),
         "an empty user dir is not an init failure"

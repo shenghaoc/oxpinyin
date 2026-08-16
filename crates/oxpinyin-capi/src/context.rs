@@ -4,8 +4,30 @@ use std::os::raw::c_char;
 use std::ptr;
 
 use crate::ffi::{cstr_to_owned_lossy, ffi_catch};
-use crate::state::{CapiContext, box_context, context_mut};
+use crate::state::{CapiContext, UnigramSource, box_context, context_mut};
 use crate::types::PinyinContext;
+
+fn init_context(
+    systemdir: *const c_char,
+    userdir: *const c_char,
+    unigram_source: UnigramSource,
+) -> *mut PinyinContext {
+    ffi_catch(ptr::null_mut(), || {
+        // SAFETY: Both pointers are C strings from the caller (null OK).
+        let system_dir = cstr_to_owned_lossy(systemdir);
+        let user_dir = cstr_to_owned_lossy(userdir);
+        let context = match unigram_source {
+            UnigramSource::RealOnly => CapiContext::new(&system_dir, &user_dir),
+            UnigramSource::FlatExportForFixtures => {
+                CapiContext::new_for_fixtures(&system_dir, &user_dir)
+            }
+        };
+        match context {
+            Some(ctx) => box_context(ctx),
+            None => ptr::null_mut(),
+        }
+    })
+}
 
 /// Create a new pinyin context.
 ///
@@ -15,21 +37,37 @@ use crate::types::PinyinContext;
 /// ```
 ///
 /// Opens the system dictionary and language model tables from `systemdir`.
-/// Returns NULL when `systemdir` is empty or any table fails to open.
+/// Returns NULL when `systemdir` is empty, any table fails to open, or the
+/// system dir has no parsable `interpolation2.text` real-unigram model.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_init(
     systemdir: *const c_char,
     userdir: *const c_char,
 ) -> *mut PinyinContext {
-    ffi_catch(ptr::null_mut(), || {
-        // SAFETY: Both pointers are C strings from the caller (null OK).
-        let system_dir = cstr_to_owned_lossy(systemdir);
-        let user_dir = cstr_to_owned_lossy(userdir);
-        match CapiContext::new(&system_dir, &user_dir) {
-            Some(ctx) => box_context(ctx),
-            None => ptr::null_mut(),
-        }
-    })
+    init_context(systemdir, userdir, UnigramSource::RealOnly)
+}
+
+/// Fixture constructor for tools and Rust tests that drive the W3 mini
+/// tables (no `interpolation2.text`).
+///
+/// Not in `pinyin.h` and not part of the W8 51-symbol surface. C tools
+/// `dlsym` this name; the public [`pinyin_init`] path never takes the
+/// flat-export fallback.
+#[unsafe(no_mangle)]
+pub extern "C" fn oxpinyin_init_for_fixtures(
+    systemdir: *const c_char,
+    userdir: *const c_char,
+) -> *mut PinyinContext {
+    init_context(systemdir, userdir, UnigramSource::FlatExportForFixtures)
+}
+
+/// Rust-test alias of [`oxpinyin_init_for_fixtures`].
+#[cfg(test)]
+pub(crate) fn pinyin_init_for_fixtures(
+    systemdir: *const c_char,
+    userdir: *const c_char,
+) -> *mut PinyinContext {
+    oxpinyin_init_for_fixtures(systemdir, userdir)
 }
 
 /// Finalize and free a pinyin context.

@@ -86,7 +86,10 @@ static void *load_symbol(const char *name, void *handle) {
 }
 
 static void resolve_all(void *handle, struct syms *s) {
-    s->init = (fn_init)load_symbol("pinyin_init", handle);
+    {
+        fn_init fixture_init = (fn_init)dlsym(handle, "oxpinyin_init_for_fixtures");
+        s->init = fixture_init ? fixture_init : (fn_init)load_symbol("pinyin_init", handle);
+    }
     s->fini = (fn_fini)load_symbol("pinyin_fini", handle);
     s->save = (fn_save)load_symbol("pinyin_save", handle);
     s->begin_add = (fn_begin_add)load_symbol("pinyin_begin_add_phrases", handle);

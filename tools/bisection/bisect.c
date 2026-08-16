@@ -232,6 +232,14 @@ static int resolve_all(void *handle, struct symbols *s) {
     int missing = 0;
 
     RESOLVE(handle, *s, init,                 "pinyin_init");
+    /* oxpinyin W3 fixtures: prefer the non-header constructor. The pinned
+     * C++ oracle has no such symbol and keeps pinyin_init. */
+    {
+        fn_pinyin_init fixture_init =
+            (fn_pinyin_init)dlsym(handle, "oxpinyin_init_for_fixtures");
+        if (fixture_init)
+            s->init = fixture_init;
+    }
     RESOLVE(handle, *s, fini,                 "pinyin_fini");
     RESOLVE(handle, *s, alloc_instance,       "pinyin_alloc_instance");
     RESOLVE(handle, *s, free_instance,        "pinyin_free_instance");
