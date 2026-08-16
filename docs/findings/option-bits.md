@@ -135,8 +135,9 @@ oxpinyin's equivalent: `RankKey.frequency` is the raw unigram count
 (system + W6-T4 overlay). The bigram increment is omitted when the bit is
 clear. When the bit is set, W6-T4's unigram merge stays; a non-zero
 bigram increment on `RankKey` would be a ranking-model change outside
-W10. `SharedLm::unigram_freq` stays ungated (the phrase-index term).
-`SharedLm::score` stays ungated (decode, not the cited sites).
+W10 (deferred: issue #99). `SharedLm::unigram_freq` stays ungated (the
+phrase-index term). `SharedLm::score` stays ungated (decode, not the
+cited sites).
 
 The fork masks `DYNAMIC_ADJUST` out entirely (`PYPConfig.cc:145`), so
 bit-clear is the fork's permanent state and this gate is
@@ -165,21 +166,8 @@ Fork-default (`0x1fe00198`), 28 inputs:
   position has equal `phrase_length` (RankKey 1). Span / frequency /
   collection-order are not on the ABI; this is the documented three-key
   tie class (`candidate-construction.md` §8.2).
-- **6 TEXT-set STOP** (prefix-identical, then rare/variant tail):
-
-| Input | Shared prefix | Oracle tail | Capi tail |
-|---|---:|---|---|
-| `agn` / `amg` | 3 | 肮\|䬓\|… | 枊\|肮\|䇦\|骯\|… |
-| `lue` / `lve` | 4 | 詻\|擽\|… | 畧\|詻\|锊\|… |
-| `cang` | 8 | 螥\|鶬 | 鸧\|嵢 |
-| `sang` | 6 | 喪\|纕\|䘮\|褬 | 桒\|槡\|喪\|纕 |
-
-These are not parse/option-bit failures (parse/aux passed on every
-case). They sit past the frequent head of the list and look like
-phrase-index / traditional-simplified / rare-GBK inventory — W11/W12
-ground, not a W10 option decode. Per the TEXT/ORDER rule this is a
-STOP, not a silent W11 waiver. Extending W10 vs filing a new owned
-item is a maintainer decision.
+- **6 TEXT-set tails**, all-off-controlled as W12 (see triage below).
+  Excluded from W10's STOP gate.
 
 `USE_DIVIDED_TABLE` / `USE_RESPLIT_TABLE` were never in W10's scope.
 On the fork-default word (both bits set) the xian/fanan/fangan/tian
@@ -187,6 +175,28 @@ triggers are byte-identical across engines, including `n=`. No
 divided/resplit machinery is added here.
 
 The scan-matrix fuzzy step remains a flagged W11-ground touch.
+Under `PINYIN_AMB_AN_ANG` (`amb-17`), `fangan` TEXT-set differs
+(oracle `方案|反感|翻案|访港|…`, capi `方案|反感|方|房|…`). Fork-default
+and all-off `fangan` are identical; the extra oracle phrases are the
+fuzzy matrix, not a W10 parse-table miss. The sweep attributes amb-*
+TEXT-set diffs to that flag rather than failing W10.
+
+## TEXT-set STOP triage (all-off control)
+
+Control: same top-10 ABI assertion under ALL-BITS-OFF (`0x0`).
+
+| Input | All-off verdict | Owner | Action |
+|---|---|---|---|
+| `cang` | TEXT-set DIFF prefix=8, `n=31` both | W12 | exclude from W10 gate |
+| `sang` | TEXT-set DIFF prefix=6, `n=16` both | W12 | exclude from W10 gate |
+| `lve` | TEXT-set DIFF prefix=4, `n=22` both | W12 | exclude from W10 gate |
+| `lue` | IDENTICAL as `lu+e` (not a native `lve`). With `CORRECT_UE_VE`: same engine's list equals native `lve` (`n=22`). Cross-engine tail is `lve`'s all-off residual | W12 | exclude from W10 gate |
+| `agn` | no complete parse (falls back to `a`, identical). With `CORRECT_GN_NG`: same engine's list equals native `ang` (`n=21`). Cross-engine tail is `ang`'s all-off residual | W12 | exclude from W10 gate |
+| `amg` | same as `agn` via `CORRECT_MG_NG` → native `ang` | W12 | exclude from W10 gate |
+
+Upstream draws a corrected key's inventory from the **same** `content_table` slot as the canonical spelling: `search_pinyin_index` (`pinyin_parser2.cpp:93-116`) sets `key = content_table[index->m_table_index].m_chewing_key`. `pinyin_parser_table.h` gives `agn`/`amg`/`ang` table index 4 and `lue`/`lve` table index 203. The corrected parse does **not** restrict the inventory; it is the native key. Capi is not admitting extra correction-only entries — `n=` matches, and the tail is the ~4k prefix-overlap residual the pins count rather than assert as text (W12). No W10 work.
+
+`DYNAMIC_ADJUST` bit-SET (fold `λ · bigram_poss · DISCOUNT` into `m_freq`) is unreached and deferred: issue #99.
 
 ## GSettings → bit mapping in the fork
 
