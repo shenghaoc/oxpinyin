@@ -89,5 +89,5 @@ structural and should wait until F1–F2 are measured.
 
 - Do not raise `phrase_key_bonus` back toward 2,000 without a new full-corpus
   number — the sweep showed that hurts top-1.
-- Do not read upstream C++ for the junk rules; derive them from the pin's
-  public observe output on the noise strata already in the corpus.
+- Change junk-rule handling without re-running the noise-strata differential;
+  the pin's public output on those strata is the evidence.

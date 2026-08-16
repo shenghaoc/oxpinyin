@@ -29,10 +29,9 @@ The authority for the header identity is the `header_sha256` field of
 - data payload verified by `oracle-data.sha256` (23 generated files).
 
 This is the same method `docs/findings/abi-subset.md` used to derive the
-frontend-called subset: read the declared public interface, not the
-implementation. No `.cpp` translation unit was read, and no upstream logic was
-transcribed. The parity *behaviour* contract remains the executable oracle plus
-frozen fixtures, per `docs/findings/spec-derivation.md`.
+frontend-called subset: derive it from the declared public interface. The
+parity *behaviour* contract remains the executable oracle plus frozen
+fixtures, per `docs/findings/spec-derivation.md`.
 
 Independent cross-check: the flag word this finding derives for the F-A capture
 profile, `IS_PINYIN | PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |

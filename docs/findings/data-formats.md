@@ -162,7 +162,7 @@ index. Two sub-families exist:
     Formula-driven record parsing covers 11/12 files completely; the
     12th (geology.bin) has records with nested sub-records (see §2.5).
 -   **System dictionaries** (gb_char, gbk_char, opengram, merged):
-    same header, but data-section layout not yet reverse-engineered.
+    same header, but data-section layout not yet ported.
     Out of scope for initial loader implementation per §5.
 
 ### 2.1 Common header (28 bytes)
@@ -384,7 +384,7 @@ sub-record parser, which will be finalised during loader implementation.
 
 System dictionaries (gb_char, gbk_char, opengram, merged) use the same
 28-byte header and index tables. Their data-section format has not been
-reverse-engineered.
+ported.
 
 **Out of scope** for initial loader implementation per §5.
 

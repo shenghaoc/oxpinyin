@@ -80,8 +80,8 @@ and the difference decides what any capture could ever recover:
   **phrase-token decomposition** are *not* exposed at all. In the pinned header
   (`include/libpinyin-2.11.91/pinyin.h`) `lookup_candidate_t` is opaque; there is
   no public accessor for begin/end, tokens, or a model score. No capture can
-  record them without reading upstream C/C++ layout (forbidden) or an indirect
-  probe with named limits (§1.6).
+  record them without reading upstream C/C++ layout or an indirect probe with
+  named limits (§1.6).
 
 This is the root reason §1 cannot promote the hypothesis to a contract: the
 mechanism the hypothesis is *about* — which segmentation and which phrase tokens
@@ -328,10 +328,10 @@ whose phrase text equals the string, so it **cannot** disambiguate homographs
 (same text, different token) and gives **no** offsets. `pinyin_choose_candidate`
 returns a post-choose cursor but is mutating and would have to be followed by a
 reset. Neither is part of the frozen capture; either may be used in *analysis*
-(§6) with these caveats stated. Reading the struct layout from upstream C/C++ to
-recover the hidden fields is forbidden (AGENTS.md) — the absence of a public
-accessor is a hard stop, not an invitation to improvise (this is the exact
-failure this document exists to prevent).
+(§6) with these caveats stated. Recovering the hidden fields by reading the
+upstream C/C++ struct layout is allowed by AGENTS.md's Source policy, but the
+frozen capture protocol does not do it, so the absence of a public accessor
+still means the capture-level claims stay inferred.
 
 **Which type values can appear.** `collect_candidates` calls
 `pinyin_guess_candidates(instance, 0, 0x1e)`, where `0x1e =
@@ -366,8 +366,8 @@ does not populate them.
   `pinyin_get_candidate`, `pinyin_get_candidate_string`). Adding FFI declarations
   for `pinyin_get_candidate_type` / `pinyin_get_candidate_nbest_index` from the
   installed **public header** is the same established practice `ffi.rs` embodies,
-  and is categorically distinct from reading upstream **C/C++ implementation**
-  (forbidden by AGENTS.md spec discipline). The oracle is a test subject, never
+  and is categorically distinct from reading upstream **C/C++ implementation**.
+  The oracle is a test subject, never
   shipped (`.kiro/steering/structure.md`).
 - **What it settles, and what it does not.** It settles §1.4.3: whether the
   oracle's rank-1 (in the near-miss buckets, where we already hold the phrase) is

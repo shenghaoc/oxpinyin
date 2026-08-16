@@ -21,10 +21,27 @@ Kiro always-loads `.kiro/steering/`; this file wins on any conflict.
    shipping code.
 8. When in doubt, STOP — do not improvise.
 
-## Spec discipline
+## Source policy
 
-Implement only from frozen `docs/findings/` SPECs and fixtures. Never read or
-copy upstream C/C++ to implement. If behaviour contradicts a SPEC, STOP.
+oxpinyin is a Rust rewrite of libpinyin under the same license
+(GPL-3.0-or-later). Reading and copying upstream C++ source is expected and
+encouraged — there is no clean-room restriction. The original rule existed to
+avoid verbatim copying, but true clean-room reverse engineering takes far
+longer and wastes effort for no benefit when the source is legally available.
+
+Method: copy as much as possible from upstream, rewrite it in Rust with a
+loosely coupled project structure, then oxidize further. Internal structure
+is free to diverge, subject to two constraints: external interface behavior
+must be unchanged, and time and space complexity must never both be worsened
+— a regression in one is acceptable only when traded against a gain in the
+other, must be minimized, and must be justified in the change's report.
+Stage 2 targets a smaller binary, faster execution, and much lower RAM than
+libpinyin; internal freedom exists to serve that, not to erode it.
+
+Rust-mechanism divergences: where upstream behavior cannot be reproduced
+because of a language-mechanism difference, record it in
+docs/findings/upstream-divergences.md, move on, and do not chase it. These
+notes are collected to report back to libpinyin once the rewrite is complete.
 
 ## Attribution
 
@@ -55,12 +72,12 @@ every PR commit (R1–R4) and at commit time via `.githooks/commit-msg`
 
 Ambiguous task · needs interface/ABI/dep change · test cannot pass without
 breaking the constitution · SPEC contradicts observed pin behaviour ·
-implementation would require reading upstream C++.
+implementation would require changing a frozen SPEC without an ask.
 
 ## Hard forbids
 
 Add/upgrade deps without ask · edit frozen SPECs/goldens/CI policy without
-ask · `unsafe` outside allowlisted crates · copy upstream code · silence
+ask · `unsafe` outside allowlisted crates · silence
 lints.
 
 ## Toolchain

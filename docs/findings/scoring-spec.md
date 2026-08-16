@@ -25,9 +25,10 @@ first, second, third. Ordinal evidence constrains the constants — it produces
 inequalities — but does not determine them. This SPEC states the inequalities
 it can prove and picks values satisfying them.
 
-Reading upstream C++ to recover the numbers is forbidden by the constitution
-and by `AGENTS.md`'s spec discipline. Guessing them and calling them derived
-would be worse than saying they are provisional.
+Reading upstream C++ to recover the numbers is expected under AGENTS.md's
+Source policy. The values below are still marked provisional: they were
+settled by the parity sweep, not yet source-verified against the pinned
+upstream implementation.
 
 ## Cost scale
 

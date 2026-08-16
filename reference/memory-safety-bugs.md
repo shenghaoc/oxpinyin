@@ -100,6 +100,15 @@ Sources: upstream GitHub issues, Red Hat ABRT, SUSE Bugzilla, Launchpad, commit 
 | **Status** | Fixed in the 1.16.1 timeframe |
 | **Why Rust helps** | The borrow checker turns this entire class of bug into a compile-time error. |
 
+### 3.2 Bigram export iterator reuses stale pinyin-join storage
+
+| Field | Value |
+|-------|-------|
+| **Source cite** | `src/pinyin.cpp:842-872` (`pinyin_bigram_iterator_has_next_phrase`) |
+| **Symptoms** | Repeating the bigram export cycle inside one context segfaults (observed by the W6 train differential; the harness runs one export per fresh context for the oracle). |
+| **Status** | Registered in `docs/findings/upstream-divergences.md` |
+| **Why Rust helps** | oxpinyin renders the full export row snapshot into owned strings before exposing the iterator; no C pointer can outlive a reused buffer. |
+
 ---
 
 ## 4. Unaligned / Architecture-Specific Access
