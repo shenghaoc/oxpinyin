@@ -167,7 +167,8 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   phrases don't currently surface in candidates (the W8 parity gate had to
   empty `network.txt`). Upstream uses two `FacadePhraseIndex` facades
   (default vs addon), not one 16-way nibble union; oxpinyin's decode reads
-  a single system index.
+  a single system index. Phase 0 ground:
+  `docs/findings/phrase-union.md`.
   This is the gap a user notices first — user-dictionary phrases (added via
   the add-phrase iterators or dictool import) never surface as candidates
   at all — and it carries real architectural risk: scope it before

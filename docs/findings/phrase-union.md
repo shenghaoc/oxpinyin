@@ -66,14 +66,16 @@ add/remove/unigram change (`phrase_index.h:615-616`, `:631-634`, `:668-671`,
 
 `pinyin_init` creates two facade instances:
 
-- `context->m_phrase_index` — the **default** space. It loads the default
-  table list (system `SYSTEM_FILE` libraries 1..4 plus `USER_FILE` library 7)
-  in a loop over `get_default_tables()`
-  (`src/pinyin.cpp:374-391`; `_load_phrase_library` at `:237-323`).
-  `NETWORK_DICTIONARY` (`6`) is also a `USER_FILE` entry in this same loop
-  (`docs/findings/data-formats.md` §3.1), so when a non-empty `network.bin`
-  exists it joins the default facade exactly like the user dictionary and its
-  tokens surface as normal candidates.
+- `context->m_phrase_index` — the **default** space. It loads every default
+  table that is not `NOT_USED` (`src/pinyin.cpp:374-391`;
+  `_load_phrase_library` at `:237-323`): system `SYSTEM_FILE` libraries
+  1..4 plus three `USER_FILE` sub-indexes from `table.conf` —
+  `ADDON_DICTIONARY` (5, `addon.bin`), `NETWORK_DICTIONARY` (6,
+  `network.bin`), and `USER_DICTIONARY` (7, `user.bin`)
+  (`docs/findings/data-formats.md` §3.1). A missing/empty `*.bin` still
+  creates the sub-index. Choosing an `ADDON_CANDIDATE` later *promotes*
+  that phrase into default nibble 5 (`pinyin.cpp:2532-2561`), after which
+  it is a `NORMAL_CANDIDATE` found through `m_pinyin_table`.
 - `context->m_addon_phrase_index` — the **addon** space. It is constructed
   empty and deliberately has no libraries loaded:
   `context->m_addon_phrase_index = new FacadePhraseIndex;` followed by
@@ -91,7 +93,9 @@ There are also two pinyin tables and two phrase tables:
 The pinyin table and phrase table are **separate structures from the phrase
 index**. Candidate guessing searches the pinyin table and then resolves token
 text/frequency through the phrase index (§3.3). The phrase table is used by
-longer-candidate and prediction paths, not by normal `pinyin_guess_candidates`.
+prediction prefixes, user-phrase allocation, addon promotion, and
+mask/remove — not by normal `pinyin_guess_candidates` and not by
+`_prepend_longer_candidates`.
 
 ### 3.3 How `pinyin_guess_candidates` enumerates candidates
 
@@ -127,10 +131,11 @@ ascending library-nibble order, then each contiguous token range. Therefore:
 `search`, which fills `PhraseIndexRanges` per token nibble
 (`src/storage/chewing_large_table2.h:104-151`).
 
-The phrase table does **not** feed normal guessing. It feeds
-`_prepend_longer_candidates` (`search_suggestion_with_matrix`,
-`pinyin.cpp:1870-1927`), prediction prefixes (§3.6), user-phrase allocation,
-and masking/removal.
+The phrase table does **not** feed normal guessing. Longer candidates come
+from a pinyin-table `search_suggestion_with_matrix`
+(`pinyin.cpp:1870-1927`, `:1883-1884`); the phrase table is used by
+prediction prefixes (§3.6), user-phrase allocation, addon choose-promotion
+into nibble 5 (`:2555`), and mask/remove.
 
 ### 3.4 Candidate ranking by source
 
@@ -267,15 +272,16 @@ currently produces a predicted candidate for the call to consume.
 | `crates/oxpinyin-user/src/phrase.rs` | Has nibble helpers for `USER_DICTIONARY` only | Does not model addon tokens; addon ambiguity (§3.5) must live outside the token nibble |
 | `crates/oxpinyin-capi/src/iterators.rs` export | Only `USER_DICTIONARY` exports; system/addon exports are empty | Acceptable for the user export ABI; not a candidate-surface blocker |
 
-There is also no source for `NETWORK_DICTIONARY` (`6`) at all. Upstream treats
-it as a second `USER_FILE` sub-index in the default facade; oxpinyin has no
-network-file store, so restoring a non-empty `network.txt`/`network.bin` has
-nothing to load. See §9.
+There is also no source for default-facade `USER_FILE` nibbles 5
+(`ADDON_DICTIONARY`, choose-promoted addon phrases) or 6
+(`NETWORK_DICTIONARY`). Upstream treats both as `USER_FILE` sub-indexes
+in the default facade, like user (7). oxpinyin has no `addon.bin` /
+`network.bin` store, so a promoted addon or a restored `network.txt`
+has nowhere to land. See §9.
 
 ## 5. Addon data availability — a load-bearing decision
 
-The prompt says to make `pinyin_load_addon_phrase_library` real "against the
-existing `addon_*.redb` (W3 already converts them)". Those W3 files are
+W3 `addon_*.redb` cannot be the runtime addon tables. Those files are
 `oxpinyin-migrate convert` passthroughs of the raw Tkrzw files, i.e. the
 same **undocumented sectioned binary format** that
 `docs/findings/data-layer-export.md` deliberately refused to parse for the
@@ -326,10 +332,10 @@ signature:
 
 - **Default union** = `SystemDictionary` + `UserLookup`, exposed as one
   `Dictionary` implementation. Its `lookup` returns system entries first, then
-  user entries, matching upstream's ascending library-nibble append order
-  (system sub-indexes 1..4 before user sub-index 7). Its
-  `phrase_prefix_exists` ORs the system probe and the user probe. At zero user
-  data the user half is empty, so this is bit-identical to today.
+  default `USER_FILE` entries in nibble order (5, then 6, then 7), matching
+  upstream's ascending library-nibble append. Its `phrase_prefix_exists`
+  ORs the system probe and the user-file probe. At zero user-file data the
+  second half is empty, so this is bit-identical to today.
 - **Addon set** = one `AddonDictionary` per loaded library, kept separate and
   not folded into `lookup`, so an addon token never needs to be distinguished
   from system `MERGED_DICTIONARY` by nibble alone.
@@ -518,7 +524,10 @@ Unique names under `tools/bisection/`, not edits to `run-import-diff.sh` or
    default-facade mechanism as user. Confirm from the pinned frontend which
    index its network import targets and reproduce exactly (W7-T1 made only
    index 7 writable; if extending writability to 6 is structurally more than
-   a second nibble in the same path, report and it splits out).
+   a second nibble in the same path, report and it splits out). Default
+   nibble 5 (`ADDON_DICTIONARY` / `addon.bin`) is the same `USER_FILE`
+   slot and the choose-promotion target (`pinyin.cpp:2532-2561`); same
+   split-out rule if promotion is more than a third nibble.
 3. **Punctuation prediction is conditional.** Check `punct.redb`
    consumability first. Consumable → include punctuation in the first
    prediction PR. Not → stub empty, run the prediction differential in
