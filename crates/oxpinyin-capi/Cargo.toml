@@ -14,7 +14,15 @@ description = "C ABI subset of libpinyin's public API, for the borrowed frontend
 # checked-in header stays `pinyin.h` with exported `pinyin_*` symbols).
 [lib]
 name = "pinyin_capi"
-crate-type = ["cdylib", "rlib"] # cdylib is the ABI; rlib lets oxpinyin-dictool call the same symbols in-process.
+# cdylib is the ABI; rlib lets oxpinyin-dictool call the same symbols
+# in-process; staticlib is required by cargo-c and shipped alongside the .so.
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+# Declared so cargo-c identifies this crate as the workspace's C-API export
+# target. cargo-c checks for the *presence* of this feature name; it is never
+# enabled by default, so plain `cargo build`/`--workspace` behaviour is unchanged.
+capi = []
 
 [lints.rust]
 unsafe_code = "allow" # FFI + glib marshalling only; // SAFETY: on every block
@@ -28,3 +36,34 @@ oxpinyin-core.workspace = true
 oxpinyin-data = { path = "../oxpinyin-data" }
 oxpinyin-engine.workspace = true
 oxpinyin-user.workspace = true
+
+# cargo-c packaging metadata. See docs/packaging.md for the rationale and the
+# Fedora/Debian recipes that consume this.
+[package.metadata.capi.header]
+# The checked-in pinyin.h ships verbatim; never regenerate it with cbindgen, so
+# the file the fork compiles against stays byte-identical.
+generation = false
+# Install the header directly under $includedir (/usr/include/pinyin.h), not
+# under a per-library subdirectory.
+subdirectory = ""
+
+[package.metadata.capi.install.include]
+# Ship the existing crate-root header without moving it into assets/.
+asset = [{ from = "pinyin.h", to = "" }]
+
+[package.metadata.capi.pkg_config]
+# Package name and .pc filename are the project identity ("oxpinyin"); the -l
+# link flag still resolves to -lpinyin_capi (see library.name below).
+name = "oxpinyin"
+filename = "oxpinyin"
+
+[package.metadata.capi.library]
+# The .so basename is part of the compatibility bootstrap: the fork links
+# -lpinyin_capi today, so this must stay `pinyin_capi`.
+name = "pinyin_capi"
+# ABI version, independent of the crate version. cargo-c derives the soname from
+# this version (for 0.minor.patch it emits "0.minor"), yielding
+# libpinyin_capi.so.0.1. Bump only on a deliberate C-ABI break; this field
+# protects the 51-symbol bootstrap contract.
+version = "0.1.0"
+versioning = true
