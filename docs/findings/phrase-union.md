@@ -204,9 +204,10 @@ Prediction has three independent inputs:
    (`pinyin.cpp:2309-2368`) walks `m_prefixes` backwards, loads **only the
    user bigram** for each prefix token into `merged_gram`, and stops at the
    first prefix that has one. It retrieves all successor `(token,count)` rows,
-   keeps `count >= 10`, and appends successors whose phrase length is 2 then 1
-   as `PREDICTED_BIGRAM_CANDIDATE`, resolving phrase length through
-   `m_phrase_index`.
+   keeps those with `m_count >= filter` where `const guint32 filter = 10`
+   (`pinyin.cpp:2311`, skip at `:2349-2350`), and appends successors whose
+   phrase length is 2 then 1 as `PREDICTED_BIGRAM_CANDIDATE`, resolving
+   phrase length through `m_phrase_index`.
 3. `_compute_predicted_prefix_candidates(instance)` (`pinyin.cpp:2370-2409`)
    calls `m_phrase_table->search_suggestion(prefix_len, prefix_ucs4, tokens)`,
    then appends each token as `PREDICTED_PREFIX_CANDIDATE`, skipping phrases
@@ -410,7 +411,8 @@ surfaces that `Session` deliberately does not model:
   suffix search (for `_compute_prefixes`) and prefix suggestion (for
   `_compute_predicted_prefix_candidates`).
 - Add a `UserBigram` successor iterator to `UserStore` (or expose the existing
-  bigram table read) with the `count >= 10` filter.
+  bigram table read) with the copied `filter = 10` skip
+  (`pinyin.cpp:2311`, `:2349-2350`).
 - `SharedLm`/`SharedDict` expose a `predict(prefix)` method that reproduces
   `_compute_prefixes` → `_compute_predicted_bigram_candidates` →
   `_compute_predicted_prefix_candidates` → sort/dedup.
