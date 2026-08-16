@@ -22,13 +22,16 @@
 pub mod phrase;
 pub mod seed;
 
+mod lookup;
 mod model;
 mod registry;
 mod store;
 
+pub use lookup::UserLookup;
 pub use phrase::{
-    ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, FIRST_USER_TOKEN, MAX_PHRASE_LENGTH,
-    PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PinyinKey, USER_DICTIONARY, UserPhrase,
-    UserPronunciation, is_user_token, phrase_index_library_index, phrase_index_make_token,
+    ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, FIRST_NETWORK_TOKEN, FIRST_USER_TOKEN,
+    MAX_PHRASE_LENGTH, NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PinyinKey,
+    USER_DICTIONARY, UserPhrase, UserPronunciation, is_user_file_library, is_user_file_token,
+    is_user_token, phrase_index_library_index, phrase_index_make_token,
 };
 pub use store::{ExportedPhrase, SENTENCE_START, Token, UserStore, UserStoreError};

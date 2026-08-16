@@ -31,6 +31,7 @@ mod cursor;
 mod instance;
 mod iterators;
 mod parse;
+mod predict;
 mod sentence;
 mod text;
 mod user_data;
@@ -39,7 +40,9 @@ use oxpinyin_core::graph::FewestKeys;
 
 pub use context::{pinyin_fini, pinyin_init, pinyin_save};
 pub use iterators::{pinyin_begin_add_phrases, pinyin_end_add_phrases, pinyin_iterator_add_phrase};
-pub use oxpinyin_user::{DEFAULT_PHRASE_COUNT, ExportedPhrase, USER_DICTIONARY};
+pub use oxpinyin_user::{
+    DEFAULT_PHRASE_COUNT, ExportedPhrase, NETWORK_DICTIONARY, USER_DICTIONARY,
+};
 pub use state::ExportedBigramRow;
 pub use types::{ImportIterator, PinyinContext};
 

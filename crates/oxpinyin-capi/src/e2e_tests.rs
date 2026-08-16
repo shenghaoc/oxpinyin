@@ -24,7 +24,7 @@ use crate::candidates::{
     pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_get_candidate,
     pinyin_is_user_candidate, pinyin_remove_user_candidate, pinyin_train,
 };
-use crate::config::pinyin_mask_out;
+use crate::config::{pinyin_load_addon_phrase_library, pinyin_mask_out};
 use crate::context::{pinyin_init_for_fixtures, pinyin_save};
 use crate::instance::{pinyin_alloc_instance, pinyin_reset};
 use crate::iterators::{
@@ -32,10 +32,12 @@ use crate::iterators::{
     pinyin_end_get_phrases, pinyin_iterator_add_phrase, pinyin_iterator_has_next_phrase,
 };
 use crate::parse::pinyin_parse_more_full_pinyins;
-use crate::sentence::pinyin_guess_candidates;
+use crate::sentence::{
+    pinyin_guess_candidates, pinyin_guess_predicted_candidates_with_punctuations,
+};
 use crate::state::{USER_STORE_FILE, instance_ref};
-use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open, system_dir};
-use crate::types::{LookupCandidate, PinyinInstance};
+use crate::test_support::{DEFAULT_SORT, TempSystemDir, TempUserDir, cstr, open, system_dir};
+use crate::types::{LookupCandidate, PinyinInstance, lookup_candidate_type_t};
 use crate::user_data::pinyin_remember_user_input;
 
 /// The instance's user store handle (the same connection the entry points
@@ -861,4 +863,158 @@ fn user_only_bigram_export_fails_when_rows_need_system_tables() {
     assert!(crate::user_phrase_rows(context).unwrap().is_empty());
     assert!(crate::user_bigram_rows(context).is_none());
     crate::close_user_import_context(context);
+}
+
+#[test]
+fn imported_user_phrase_surfaces_as_a_user_candidate() {
+    let user_dir = TempUserDir::new("user-surface");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let iter = pinyin_begin_add_phrases(context, 7);
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("测测").as_ptr(),
+        cstr("cece").as_ptr(),
+        5,
+    ));
+    pinyin_end_add_phrases(iter);
+
+    let input = cstr("cece");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 4);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    // SAFETY: live instance; snapshot is valid until the next guess.
+    let inst = unsafe { instance_ref(instance) };
+    let found = inst
+        .candidates
+        .iter()
+        .find(|c| c.text.as_bytes() == "测测".as_bytes());
+    let found = found.expect("imported user phrase must surface");
+    assert!(
+        found
+            .token
+            .is_some_and(|token| oxpinyin_user::is_user_token(token.value()))
+    );
+    assert_eq!(
+        found.candidate_type,
+        lookup_candidate_type_t::NORMAL_CANDIDATE
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn network_index_accepts_the_same_add_path() {
+    let user_dir = TempUserDir::new("network-add");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let iter = pinyin_begin_add_phrases(context, 6);
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("网词").as_ptr(),
+        cstr("wangci").as_ptr(),
+        5,
+    ));
+    pinyin_end_add_phrases(iter);
+
+    let export = pinyin_begin_get_phrases(context, 6);
+    assert_eq!(
+        drain_phrases(export),
+        vec![("网词".to_owned(), "wang'ci".to_owned(), 5)]
+    );
+    crate::iterators::pinyin_end_get_phrases(export);
+
+    let user_export = pinyin_begin_get_phrases(context, 7);
+    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(
+        user_export
+    ));
+    crate::iterators::pinyin_end_get_phrases(user_export);
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn addon_library_load_is_idempotent_and_surfaces_addon_candidates() {
+    let system = TempSystemDir::new("addon-load");
+    system.write(
+        "interpolation2.text",
+        "\\data model interpolation\n\\1-gram\n\\item 1 ok count 1\n",
+    );
+    let user = TempUserDir::new("addon-load-user");
+    let context = pinyin_init_for_fixtures(
+        cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+        cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+    );
+    assert!(!context.is_null());
+    assert!(pinyin_load_addon_phrase_library(context, 4));
+    assert!(
+        !pinyin_load_addon_phrase_library(context, 4),
+        "second load of the same index is false"
+    );
+    assert!(
+        !pinyin_load_addon_phrase_library(context, 15),
+        "missing library is false"
+    );
+
+    let instance = pinyin_alloc_instance(context);
+    assert!(!instance.is_null());
+    let input = cstr("erhuang");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 7);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    // SAFETY: live instance.
+    let inst = unsafe { instance_ref(instance) };
+    assert!(
+        inst.candidates.iter().any(|c| {
+            c.candidate_type == lookup_candidate_type_t::ADDON_CANDIDATE
+                && (c.text.as_bytes() == "二簧".as_bytes()
+                    || c.text.as_bytes() == "二黄".as_bytes())
+        }),
+        "loaded art addon must offer 二簧/二黄 for erhuang"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn predicted_candidates_include_trained_bigram_successors() {
+    let user_dir = TempUserDir::new("predict");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let first = candidate(instance, "nihao", 0);
+    assert!(pinyin_choose_candidate(instance, 0, first) > 0);
+    assert!(pinyin_train(instance, 0));
+    // Train enough times that the user bigram count reaches the filter (10).
+    for _ in 0..4 {
+        assert!(pinyin_reset(instance));
+        let again = candidate(instance, "nihao", 0);
+        assert!(pinyin_choose_candidate(instance, 0, again) > 0);
+        assert!(pinyin_train(instance, 0));
+    }
+
+    let prefix = cstr("你");
+    assert!(pinyin_guess_predicted_candidates_with_punctuations(
+        instance,
+        prefix.as_ptr()
+    ));
+    // SAFETY: live instance after guess_predicted.
+    let inst = unsafe { instance_ref(instance) };
+    assert!(
+        !inst.candidates.is_empty(),
+        "prediction must return at least the prefix suggestions or bigrams"
+    );
+    assert!(
+        inst.candidates.iter().all(|c| {
+            matches!(
+                c.candidate_type,
+                lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
+                    | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
+            )
+        }),
+        "punctuation is stubbed empty"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
 }

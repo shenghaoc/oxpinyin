@@ -1,14 +1,18 @@
 //! User phrase-index types and the token-layout constants pinned in
 //! `docs/findings/user-store.md` §3.
 //!
-//! New user phrases live in the `USER_DICTIONARY` sub-index. Token allocation
-//! is "max token in the sub-index + 1" (`range.m_range_end`, bumped past the
-//! reserved zero id). This module names those constants and the value types
-//! the store records; it does not talk to redb.
+//! New user-file phrases live in the `USER_DICTIONARY` or
+//! `NETWORK_DICTIONARY` sub-index. Token allocation is "max token in the
+//! sub-index + 1" (`range.m_range_end`, bumped past the reserved zero id).
+//! This module names those constants and the value types the store records;
+//! it does not talk to redb.
 
 use oxpinyin_core::SyllableKey;
 
 use crate::store::Token;
+
+/// Sub-index network phrases live in (`novel_types.h:160`).
+pub const NETWORK_DICTIONARY: u8 = 6;
 
 /// Sub-index user phrases live in (`novel_types.h:161`, §3).
 pub const USER_DICTIONARY: u8 = 7;
@@ -53,11 +57,23 @@ pub const fn phrase_index_make_token(phrase_index: u8, token: Token) -> Token {
     (((phrase_index as Token) << 24) & PHRASE_INDEX_LIBRARY_MASK) | (token & PHRASE_MASK)
 }
 
+/// Whether `index` is a default-facade `USER_FILE` nibble (network or user).
+#[must_use]
+pub const fn is_user_file_library(index: u8) -> bool {
+    index == NETWORK_DICTIONARY || index == USER_DICTIONARY
+}
+
 /// Whether `token` lives in [`USER_DICTIONARY`] — the same nibble test as
 /// `pinyin_is_user_candidate` (`pinyin.cpp:3716-3719`, §3.2).
 #[must_use]
 pub const fn is_user_token(token: Token) -> bool {
     phrase_index_library_index(token) == USER_DICTIONARY
+}
+
+/// Whether `token` lives in a default-facade `USER_FILE` sub-index.
+#[must_use]
+pub const fn is_user_file_token(token: Token) -> bool {
+    is_user_file_library(phrase_index_library_index(token))
 }
 
 /// First token allocated in an empty user sub-index.
@@ -69,22 +85,45 @@ pub const fn is_user_token(token: Token) -> bool {
 /// would hit the bump and land on the same token.
 pub const FIRST_USER_TOKEN: Token = phrase_index_make_token(USER_DICTIONARY, 1);
 
-/// Apply the reserved-zero skip and reject a token that has left
-/// [`USER_DICTIONARY`].
+/// First token allocated in an empty network sub-index.
+pub const FIRST_NETWORK_TOKEN: Token = phrase_index_make_token(NETWORK_DICTIONARY, 1);
+
+/// First token of an empty `USER_FILE` sub-index `library`.
 #[must_use]
-pub(crate) fn canonicalize_user_token(token: Token) -> Option<Token> {
+pub const fn first_library_token(library: u8) -> Token {
+    phrase_index_make_token(library, 1)
+}
+
+/// Apply the reserved-zero skip and reject a token that has left `library`.
+#[must_use]
+pub(crate) fn canonicalize_library_token(library: u8, token: Token) -> Option<Token> {
     let token = if token & PHRASE_MASK == 0 {
         token.checked_add(1)?
     } else {
         token
     };
-    is_user_token(token).then_some(token)
+    (phrase_index_library_index(token) == library).then_some(token)
+}
+
+/// Apply the reserved-zero skip and reject a token that has left
+/// [`USER_DICTIONARY`].
+#[cfg_attr(not(test), allow(dead_code))]
+#[must_use]
+pub(crate) fn canonicalize_user_token(token: Token) -> Option<Token> {
+    canonicalize_library_token(USER_DICTIONARY, token)
+}
+
+/// Next token after `token` under "max + 1" inside `library`.
+#[must_use]
+pub(crate) fn next_library_token_after(library: u8, token: Token) -> Option<Token> {
+    canonicalize_library_token(library, token.checked_add(1)?)
 }
 
 /// Next token after `token` under "max + 1" inside [`USER_DICTIONARY`].
+#[cfg_attr(not(test), allow(dead_code))]
 #[must_use]
 pub(crate) fn next_user_token_after(token: Token) -> Option<Token> {
-    canonicalize_user_token(token.checked_add(1)?)
+    next_library_token_after(USER_DICTIONARY, token)
 }
 
 /// Little-endian `u16` packing of a key sequence. redb stores this as `&[u8]`.
@@ -206,7 +245,11 @@ mod tests {
     #[test]
     fn constants_match_pinned_spec() {
         // docs/findings/user-store.md §3 constants table + novel_types.h.
+        assert_eq!(NETWORK_DICTIONARY, 6);
         assert_eq!(USER_DICTIONARY, 7);
+        assert!(is_user_file_library(NETWORK_DICTIONARY));
+        assert!(is_user_file_library(USER_DICTIONARY));
+        assert!(!is_user_file_library(4));
         assert_eq!(PHRASE_MASK, 0x00FF_FFFF);
         assert_eq!(PHRASE_INDEX_LIBRARY_MASK, 0x0F00_0000);
         assert_eq!(MAX_PHRASE_LENGTH, 16);
@@ -216,6 +259,7 @@ mod tests {
 
     #[test]
     fn make_token_and_library_index_match_macros() {
+        assert_eq!(phrase_index_make_token(6, 1), 0x0600_0001);
         assert_eq!(phrase_index_make_token(7, 1), 0x0700_0001);
         assert_eq!(phrase_index_make_token(7, 0), 0x0700_0000);
         assert_eq!(phrase_index_library_index(0x0700_0001), 7);

@@ -109,6 +109,26 @@ pub trait Dictionary {
     fn phrase_prefix_exists(&self, _syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
         Ok(true)
     }
+
+    /// Addon-facade lookup pass, empty for every existing implementor.
+    ///
+    /// W11: the default facade stays on [`Dictionary::lookup`]; the addon
+    /// facade is a second pass so an addon token never has to be
+    /// distinguished from `MERGED_DICTIONARY` by nibble alone
+    /// (`docs/findings/phrase-union.md` §6.3). Defaulted so other
+    /// implementors compile unchanged.
+    fn lookup_addon(&self, _syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+        Ok(Vec::new())
+    }
+
+    /// Addon-facade `SEARCH_CONTINUED` probe, `false` for every existing
+    /// implementor.
+    fn phrase_prefix_exists_addon(
+        &self,
+        _syllables: &[Self::Syllable],
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
 }
 
 impl<D: Dictionary + ?Sized> Dictionary for &D {
@@ -122,6 +142,17 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
         (**self).phrase_prefix_exists(syllables)
+    }
+
+    fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+        (**self).lookup_addon(syllables)
+    }
+
+    fn phrase_prefix_exists_addon(
+        &self,
+        syllables: &[Self::Syllable],
+    ) -> Result<bool, Self::Error> {
+        (**self).phrase_prefix_exists_addon(syllables)
     }
 }
 
@@ -197,6 +228,28 @@ pub trait LanguageModel {
     fn has_real_unigrams(&self) -> bool {
         false
     }
+
+    /// Sum of the default-facade unigram table, when the model carries one.
+    ///
+    /// Used only to put addon frequencies on a comparable scale. Defaulted
+    /// to `None` so existing implementors compile unchanged.
+    fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {
+        Ok(None)
+    }
+
+    /// Addon-facade unigram of `token`, when an addon set is loaded.
+    ///
+    /// `None` means no addon table; `Some(0)` is a loaded-table miss.
+    /// Defaulted so existing implementors compile unchanged
+    /// (`docs/findings/phrase-union.md` §6.4).
+    fn addon_unigram_freq(&self, _token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+        Ok(None)
+    }
+
+    /// Sum of loaded addon unigrams, when an addon set is loaded.
+    fn addon_unigram_total(&self) -> Result<Option<u64>, Self::Error> {
+        Ok(None)
+    }
 }
 
 impl<L: LanguageModel + ?Sized> LanguageModel for &L {
@@ -218,6 +271,18 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
 
     fn has_real_unigrams(&self) -> bool {
         (**self).has_real_unigrams()
+    }
+
+    fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {
+        (**self).unigram_total()
+    }
+
+    fn addon_unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+        (**self).addon_unigram_freq(token)
+    }
+
+    fn addon_unigram_total(&self) -> Result<Option<u64>, Self::Error> {
+        (**self).addon_unigram_total()
     }
 }
 

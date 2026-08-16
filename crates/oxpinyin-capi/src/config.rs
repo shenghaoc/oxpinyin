@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 use oxpinyin_engine::ConfigValue;
 
 use crate::ffi::ffi_catch;
-use crate::state::context_mut;
+use crate::state::{context_mut, context_ref};
 use crate::types::{PinyinContext, PinyinOptionT, PinyinTableFlag};
 
 /// Set pinyin options on the context.
@@ -116,16 +116,20 @@ pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: 
 ///                                       guint8 index);
 /// ```
 ///
-/// Provisional: always returns false (no addon phrase system yet).
+/// Loads addon library `index` from `addon_{index}_*.redb` next to the
+/// system tables. Returns `false` when the context is null, the library is
+/// already loaded, or the exported tables are missing
+/// (`docs/findings/phrase-union.md` §3.5).
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_load_addon_phrase_library(
-    context: *mut PinyinContext,
-    _index: u8,
-) -> bool {
+pub extern "C" fn pinyin_load_addon_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
     if context.is_null() {
         return false;
     }
-    false
+    ffi_catch(false, || {
+        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+        let ctx = unsafe { context_ref(context) };
+        ctx.load_addon(index)
+    })
 }
 
 /// Mask out phrase tokens matching a pattern.

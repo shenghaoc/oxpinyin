@@ -693,13 +693,34 @@ where
         collected: &[Candidate],
     ) -> Result<Option<Vec<u64>>, EngineError> {
         let mut frequencies: Option<Vec<u64>> = None;
+        let default_total = self
+            .model
+            .unigram_total()
+            .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
+            .unwrap_or(0);
+        let addon_total = self
+            .model
+            .addon_unigram_total()
+            .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
+            .unwrap_or(0);
         for (index, candidate) in collected.iter().enumerate() {
             let Some(token) = candidate.token() else {
                 continue;
             };
-            let count = self.model.unigram_freq(&token).map_err(|error| {
-                EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-            })?;
+            let count = if candidate.kind() == CandidateKind::Addon {
+                let raw = self
+                    .model
+                    .addon_unigram_freq(&token)
+                    .map_err(|error| {
+                        EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
+                    })?
+                    .unwrap_or(0);
+                Some(scale_addon_frequency(raw, default_total, addon_total))
+            } else {
+                self.model.unigram_freq(&token).map_err(|error| {
+                    EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
+                })?
+            };
             if let Some(count) = count {
                 let table = frequencies.get_or_insert_with(|| vec![0; collected.len()]);
                 // Unigram term of candidate frequency: always on. Upstream
@@ -955,14 +976,22 @@ where
             let entries = self.dictionary.lookup(sequence).map_err(|error| {
                 EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
             })?;
-            append_scan_entries(entries, path.len(), end, into);
+            append_scan_entries(entries, path.len(), end, CandidateKind::Phrase, into);
+            let addon = self.dictionary.lookup_addon(sequence).map_err(|error| {
+                EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
+            })?;
+            append_scan_entries(addon, path.len(), end, CandidateKind::Addon, into);
         }
 
         let can_extend = self
             .dictionary
             .phrase_prefix_exists(path)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        *continued |= can_extend;
+        let addon_extend = self
+            .dictionary
+            .phrase_prefix_exists_addon(path)
+            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
+        *continued |= can_extend || addon_extend;
         Ok(())
     }
 }
@@ -972,18 +1001,33 @@ fn append_scan_entries(
     entries: Vec<PhraseEntry>,
     keys: usize,
     end: usize,
+    kind: CandidateKind,
     into: &mut Vec<Candidate>,
 ) {
     for entry in entries {
         into.push(Candidate::new(
             entry.text().to_owned(),
-            CandidateKind::Phrase,
+            kind,
             keys,
             end,
             0,
             Some(entry.token()),
         ));
     }
+}
+
+/// Puts an addon unigram on the default-facade count scale.
+///
+/// When no addon table is loaded `addon_total` is 0 and this is unused.
+/// A zero default total leaves the raw addon count (mini fixtures).
+fn scale_addon_frequency(addon_unigram: u64, default_total: u64, addon_total: u64) -> u64 {
+    if addon_total == 0 {
+        return addon_unigram;
+    }
+    if default_total == 0 {
+        return addon_unigram;
+    }
+    addon_unigram.saturating_mul(default_total) / addon_total
 }
 
 /// One resplit pair the scan matrix admits alongside the selected parse,
