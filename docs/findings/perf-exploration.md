@@ -118,7 +118,7 @@ lifetime story cheap.
   today. `Cow::Borrowed` would therefore need a phrase-text cache (or a
   session-scoped borrow of the map), not just a type change on
   `Candidate`.
-- API churn: `PhraseEntry.text: String` is in `pinyin-core`;
+- API churn: `PhraseEntry.text: String` is in `oxpinyin-core`;
   `Dictionary::Entry` is an associated type; `Candidate`, `CandidateList`,
   `Session::select` (already `to_owned`s the text into `selected`), and
   every fixture adapter would grow a lifetime. The blanket `&D` impl

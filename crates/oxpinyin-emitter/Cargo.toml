@@ -1,0 +1,23 @@
+[package]
+name = "oxpinyin-emitter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Training-only interpolation2.text emitter reproducing libpinyin export_interpolation. Never ships."
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "oxpinyin-emitter"
+path = "src/bin/oxpinyin-emitter.rs"
+
+[dependencies]
+oxpinyin-segment = { path = "../oxpinyin-segment" }
+oxpinyin-counter = { path = "../oxpinyin-counter" }
+
+[dev-dependencies]
+oxpinyin-data = { path = "../oxpinyin-data" }

@@ -53,7 +53,7 @@ no entry supports a blanket claim that Rust code cannot crash.
 - **Trigger:** create a candidate snapshot, regenerate candidates after a mode
   or input change, then replay every index from the stale snapshot, including
   `len` and `usize::MAX`.
-- **Reproduction command:** `cargo test -p pinyin-engine
+- **Reproduction command:** `cargo test -p oxpinyin-engine
   f_e_02_candidate_replay -- --exact` when the session lane exists; seed the
   same sequence into the session fuzz target.
 - **Passing artifact:** bounds-checked error for every stale/out-of-range
@@ -158,7 +158,7 @@ no entry supports a blanket claim that Rust code cannot crash.
 - **Legacy trigger:** kill a Berkeley DB writer, retain its `__db.*` sidecars,
   and reopen. This is an upstream demonstration only: the pinned oracle now
   uses Tkrzw and shipping code must not introduce Berkeley DB.
-- **Reproduction command:** `cargo test -p pinyin-user
+- **Reproduction command:** `cargo test -p oxpinyin-user
   f_e_11_hard_kill_reopen -- --exact` for the replacement store.
 - **Passing artifact:** hard-kill/reopen completes within timeout with a valid
   single-file store and no Berkeley DB sidecar files.

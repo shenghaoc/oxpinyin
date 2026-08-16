@@ -11,7 +11,7 @@
  *
  * Exit status: 0 when importPinyinDictionary and exportPinyinDictionary
  * both return TRUE. The exported file is the frontend's own classic-format
- * output, which the caller diffs against pinyin-dictool.
+ * output, which the caller diffs against oxpinyin-dictool.
  */
 #include <cstdio>
 

@@ -136,7 +136,7 @@ of `phrase_key_bonus > 0` in `scoring-spec.md`).
 
 **Consequence for the hypothesis.** The clause "ours … cannot pool across
 segmentations" is **false against our own tree.** `Session::refresh`
-(`crates/pinyin-engine/src/session.rs:461`) iterates *every* one of the
+(`crates/oxpinyin-engine/src/session.rs:461`) iterates *every* one of the
 `SEGMENTATION_K = 8` best paths and calls both `collect_prefix_phrases` and
 `collect_sentence` on each, then pools, sorts by `Candidate::cost`, dedups by
 text, and truncates to `MAX_CANDIDATES = 64`. The doc comment at
@@ -514,7 +514,7 @@ regression envelope that must hold regardless.
    ```
    Report Δ top-1, Δ top-5-set, Δ absent, Δ prefix-10 overlap against
    10136 / 10182 / 1 / 94456 of 98930. Requires the exported tables at
-   `/tmp/oxpinyin-export` (`pinyin-migrate export`) **and** the fetched
+   `/tmp/oxpinyin-export` (`oxpinyin-migrate export`) **and** the fetched
    model cache (`tools/model/fetch-model.sh`; the real unigram counts in
    `interpolation2.text` are what the reproduced construction ranks by);
    the test skips with a diagnostic without them and is measured under
@@ -552,7 +552,7 @@ Out of scope for this SPEC and any construction change it gates:
 - Fuzzy / typo / abbreviation edges (`EdgeKind` Stage-2 variants stay
   undeclared, `segment-graph.md`).
 - User-model learning, per-user adaptation, prediction candidates.
-- C-ABI (`pinyin-capi`) or session-API (`session-api.md`) signature changes.
+- C-ABI (`oxpinyin-capi`) or session-API (`session-api.md`) signature changes.
 - Model-data redistribution (`model-provenance.md`).
 - Parser / path-set changes (`parser-spec.md`, `parser-path-set.md`).
 - Reading upstream C/C++ implementation. W2-CAND reads only the public FFI

@@ -1,6 +1,6 @@
 # Counter port — `gen_ngram` n-gram counting (W9-T2)
 
-This documents the Rust `pinyin-counter` crate, a value-level reproduction of
+This documents the Rust `oxpinyin-counter` crate, a value-level reproduction of
 libpinyin's `gen_ngram` counting stage. It consumes T1's segmented-token
 output and produces the unigram/bigram **integer counts** that W9-T3 (the
 λ estimator) will interpolate.
@@ -23,9 +23,9 @@ The pin's training pipeline runs four stages in this order:
 4. `utils/storage/export_interpolation` — textual dump of the resulting counts.
 
 So the floor is a **data-build** step (`gen_unigram`), *not* part of
-`gen_ngram`'s counting. `pinyin-counter` mirrors that split: `Counter` carries
+`gen_ngram`'s counting. `oxpinyin-counter` mirrors that split: `Counter` carries
 a `floor_tokens` set (the phrase-index token set, from
-`pinyin_segment::PhraseLexicon::tokens()`) and emits `1 + occurrences` for each
+`oxpinyin_segment::PhraseLexicon::tokens()`) and emits `1 + occurrences` for each
 seeded token, `occurrences` for a token that appears in the stream but is
 absent from the index (faithful to `add_unigram_frequency`, which creates the
 item at the occurrence count).
@@ -39,7 +39,7 @@ exactly T1's `Emitted::to_ngseg_line`:
 - `0 {raw}` — unknown text, emitted verbatim.
 - an empty line — a `null_token` sentence separator.
 
-`pinyin-counter`'s `parse_ngseg` reproduces that grammar (token + phrase
+`oxpinyin-counter`'s `parse_ngseg` reproduces that grammar (token + phrase
 split on the first space/tab; empty line ⇒ `null_token`).
 
 ## Counting mapping (`gen_ngram.cpp:78-125` → `counter.rs`)
@@ -71,13 +71,13 @@ Notes:
 The stored value is the raw count, never a probability. `SingleGramItem`
 holds `guint32 m_freq` (`src/storage/ngram.cpp:33`); `retrieve_all` exposes it
 as `m_count = m_freq` and computes `m_freq / (gfloat)total_freq` only at
-retrieve time (`ngram.cpp:145-146`). `pinyin-counter` stores `u64` counts in
+retrieve time (`ngram.cpp:145-146`). `oxpinyin-counter` stores `u64` counts in
 `Counts` (unigrams `token → u64`, bigrams `(prev, cur) → u64`) — no floats
 appear anywhere in the count representation.
 
 ## Value-level differential parity
 
-`gen_ngram` writes a binary phrase index + DBM bigram; `pinyin-counter` writes
+`gen_ngram` writes a binary phrase index + DBM bigram; `oxpinyin-counter` writes
 a `Counts` value and a sorted text dump (`\1-gram` / `\2-gram` sections). Byte
 layouts differ, so parity is asserted at the **value** level:
 
@@ -95,7 +95,7 @@ Result (pinned model20, T1's segmenter-han corpus):
 
 - **138096 unigrams, 199 bigrams, value-identical to `gen_ngram`.**
 
-The parity assertion lives in `crates/pinyin-counter/tests/differential.rs`:
+The parity assertion lives in `crates/oxpinyin-counter/tests/differential.rs`:
 
 - `rust_matches_committed_manifest` — skips if the migrate export is absent;
   otherwise compares against `fixtures/w9/counter-ngram.manifest` (unigram and
@@ -109,7 +109,7 @@ The parity assertion lives in `crates/pinyin-counter/tests/differential.rs`:
 
 ## What W9-T3 (λ estimator) consumes
 
-`pinyin-counter` emits the **plain** counts: unigram `token → count` and
+`oxpinyin-counter` emits the **plain** counts: unigram `token → count` and
 bigram `(prev, cur) → count`. T3's deleted-interpolation EM (the held-out /
 deleted-count structure of `training-algorithm.md` §5) is *not* produced here:
 T3 performs the held-out splitting over these counts, mirroring the pin's

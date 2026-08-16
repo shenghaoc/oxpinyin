@@ -1,9 +1,9 @@
 # λ-estimator port — deleted-interpolation EM (W9-T3)
 
-This documents the Rust `pinyin-lambda` crate, a value-level reproduction of
+This documents the Rust `oxpinyin-lambda` crate, a value-level reproduction of
 libpinyin's held-out counting (`gen_deleted_ngram`) and its
 deleted-interpolation λ estimator (`estimate_interpolation`). It stacks on
-W9-T2 (`pinyin-counter`, the `gen_ngram` reproduction), consuming that crate's
+W9-T2 (`oxpinyin-counter`, the `gen_ngram` reproduction), consuming that crate's
 integer [`Counts`] as the system model and adding the held-out counts and the
 EM the T0 characterization (`training-algorithm.md` §5, §4.3) specified.
 
@@ -54,7 +54,7 @@ the deleted source:
 | `get_freq → set_freq(+1)` else `insert_freq(1)`; `set_total_freq(+1)` (`:111-117`) | `bigrams[(last, cur)] += 1` |
 
 Because the loop is byte-identical to `gen_ngram`'s, the held-out bigram
-**values** equal what `pinyin_counter::Counter` produces for its bigram half
+**values** equal what `oxpinyin_counter::Counter` produces for its bigram half
 over the same input. A unit test (`matches_counter_bigrams`) asserts exactly
 that, pinning the SHOWN claim mechanically against T2's validated counter.
 
@@ -223,7 +223,7 @@ deterministic function of integer counts), asserted bit-exact within Rust.
 
 ### 4.3 Gates (env-guarded, mirroring T1 / T2)
 
-`crates/pinyin-lambda/tests/differential.rs`:
+`crates/oxpinyin-lambda/tests/differential.rs`:
 
 - `rust_lambda_matches_committed_manifest` — recomputes Config X from the
   migrate export + fixture and checks context count, system/held-out bigram
@@ -243,16 +243,16 @@ deterministic function of integer counts), asserted bit-exact within Rust.
 
 The decode language model hardcodes λ as an **authored rational constant**:
 
-- `crates/pinyin-data/src/lm.rs:68-70` — `LAMBDA_NUMERATOR = 1`,
+- `crates/oxpinyin-data/src/lm.rs:68-70` — `LAMBDA_NUMERATOR = 1`,
   `LAMBDA_DENOMINATOR = 2` (λ = 1/2), applied at `lm.rs:239-241` as
   `λ·b/bt + (1−λ)·u/ut` over a common `u128` denominator.
-- `crates/pinyin-core/src/fixture.rs:34-36` — the same 1/2 in the fixture LM.
+- `crates/oxpinyin-core/src/fixture.rs:34-36` — the same 1/2 in the fixture LM.
 
 This is deliberately integer/rational: the decode score stays in exact `u128`
 arithmetic (no float in the hot path), and the constant is documented as
 "authored and deliberately neutral". T3's output is the *derivation* of that
 constant — `estimate_interpolation`'s λ is exactly what libpinyin wrote into
-`table.conf` as `lambda parameter:0.312699` (the value `pinyin-segment` reads
+`table.conf` as `lambda parameter:0.312699` (the value `oxpinyin-segment` reads
 as `PINNED_LAMBDA`). **T3 does not touch the decode path**; it makes λ
 derivable.
 
@@ -270,7 +270,7 @@ derivable.
    sweep (`scoring-constant-sweep.md`) must be re-run and the pins re-frozen
    or accepted to shift.
 3. Note the two λ are distinct today: the **segmenter** already reads
-   `table.conf`'s 0.312699 (`pinyin-segment` `PINNED_LAMBDA`), while the
+   `table.conf`'s 0.312699 (`oxpinyin-segment` `PINNED_LAMBDA`), while the
    **decode LM** uses 1/2. A derived-λ integration should reconcile which
    consumers move.
 
@@ -296,4 +296,4 @@ LAMBDA_PARAMETER=` — as the usable hand-off, without touching any consumer.
 | `get_phrase_index_total_freq` = Σ unigram freqs | `src/storage/phrase_index.h` | 615-616 | SHOWN |
 | shipped `bigram.db` imported from `interpolation2.text` (not `gen_ngram`) | `data/Makefile.am` | 58-62 | SHOWN |
 | `evaluate.py` consumes pre-existing `deleted_bigram.db`, runs default `estimate_interpolation` | trainer `evaluate.py` | 21-23, 59 | SHOWN |
-| decode λ authored constant 1/2 | `crates/pinyin-data/src/lm.rs`, `crates/pinyin-core/src/fixture.rs` | 68-70/239-241, 34-36/360-362 | SHOWN |
+| decode λ authored constant 1/2 | `crates/oxpinyin-data/src/lm.rs`, `crates/oxpinyin-core/src/fixture.rs` | 68-70/239-241, 34-36/360-362 | SHOWN |

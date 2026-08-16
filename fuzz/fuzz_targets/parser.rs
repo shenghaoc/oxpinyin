@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use pinyin_core::{FullPinyinParser, InputParser, ParseError, MAX_PARSE_RESULTS};
+use oxpinyin_core::{FullPinyinParser, InputParser, ParseError, MAX_PARSE_RESULTS};
 
 fuzz_target!(|data: &[u8]| {
     let parser = FullPinyinParser;

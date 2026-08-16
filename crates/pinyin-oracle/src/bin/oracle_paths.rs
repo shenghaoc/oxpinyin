@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use pinyin_core::{Completeness, FullPinyinParser, InputParser, ParseResult};
+use oxpinyin_core::{Completeness, FullPinyinParser, InputParser, ParseResult};
 use pinyin_oracle::capture::{escape, unescape};
 use pinyin_oracle::{EXPECTED_PIN_REF, OracleFlags};
 

@@ -55,20 +55,20 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
 
 | ID | Focus | Crate(s) |
 |---|---|---|
-| W1 | Types, parser, correction flags | pinyin-core |
+| W1 | Types, parser, correction flags | oxpinyin-core |
 | W2 | Oracle FFI + differential runner | pinyin-oracle |
-| W3 | Table loading | pinyin-data |
-| W4 | SegmentGraph, k-best, engine session | pinyin-core, pinyin-engine |
-| W5 | C ABI subset | pinyin-capi |
-| W6 | User store (redb) | pinyin-user |
-| W7 | Classic text-format interop via pinyin-dictool (import + export) | pinyin-dictool, pinyin-capi |
-| W8 | oxpinyin library release + compatibility bootstrap for the ibus-libpinyin fork | pinyin-capi |
-| W9 | Training toolchain | pinyin-segment, pinyin-counter, pinyin-lambda, pinyin-emitter, pinyin-corpus |
+| W3 | Table loading | oxpinyin-data |
+| W4 | SegmentGraph, k-best, engine session | oxpinyin-core, oxpinyin-engine |
+| W5 | C ABI subset | oxpinyin-capi |
+| W6 | User store (redb) | oxpinyin-user |
+| W7 | Classic text-format interop via oxpinyin-dictool (import + export) | oxpinyin-dictool, oxpinyin-capi |
+| W8 | oxpinyin library release + compatibility bootstrap for the ibus-libpinyin fork | oxpinyin-capi |
+| W9 | Training toolchain | oxpinyin-segment, oxpinyin-counter, oxpinyin-lambda, oxpinyin-emitter, oxpinyin-corpus |
 
 ### Workstream notes (recorded as decisions settle)
 
 - **W7 is flat, not a task stack.** One deliverable: classic text-format
-  interop via pinyin-dictool (import + export). The line-oriented
+  interop via oxpinyin-dictool (import + export). The line-oriented
   `phrase (SP|TAB) pinyin [count]` format has been libpinyin's public
   interchange since 1.1.0; ibus-libpinyin's Import/Export buttons drive
   `LibPinyinBackEnd::importPinyinDictionary` /
@@ -85,7 +85,7 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   decoder-λ fix (PR #55).
 
 - **W8 is the oxpinyin library release, with a compatibility bootstrap for
-  the maintainer's ibus-libpinyin fork.** pinyin-capi already exposes the
+  the maintainer's ibus-libpinyin fork.** oxpinyin-capi already exposes the
   ~50-symbol subset the pinned ibus-libpinyin 1.16.5 calls. The first
   oxpinyin release ships this as a binary the fork links against with
   minimal changes — enough to switch the fork off the C++ libpinyin backend

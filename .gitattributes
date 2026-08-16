@@ -14,7 +14,7 @@ fuzz/corpus/** -text
 
 # proptest writes these itself and recommends committing them: the seeds are
 # re-run before any novel case, so a bug a property found stays found.
-# crates/pinyin-core/proptest-regressions/kbest.txt holds the shrunk inputs
+# crates/oxpinyin-core/proptest-regressions/kbest.txt holds the shrunk inputs
 # from the per-node-ranking bug. Generated, not authored — collapse it in
 # diffs and keep it out of language stats.
 **/proptest-regressions/** linguist-generated

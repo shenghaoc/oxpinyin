@@ -2,11 +2,11 @@
 
 Date: 2026-08-15 · Status: **tier-1 invariants green; tier-2 end-to-end
 differential value-identical against the pin-built 2.11.91 trainer
-chain** · Crate: `pinyin-corpus` (never ships).
+chain** · Crate: `oxpinyin-corpus` (never ships).
 
 This is the corpus front-end of the W9 trainer. It converts a
 Chinese-Wikipedia XML dump into the line-oriented raw text that
-`pinyin-segment` (the `ngseg` reproduction, W9-T1) consumes — every line
+`oxpinyin-segment` (the `ngseg` reproduction, W9-T1) consumes — every line
 contains Han and the output is predominantly Han text with standard
 Chinese punctuation, but Latin names and digits pass through too — so the
 full chain
@@ -39,9 +39,9 @@ the chain (tier 2). No oracle is fabricated for the cleaning itself.
 
 ## Crate placement
 
-New crate `crates/pinyin-corpus`, sibling to the four W9 trainer crates
-(`pinyin-segment` / `pinyin-counter` / `pinyin-lambda` /
-`pinyin-emitter`). W9 maps each trainer stage to its own crate; the
+New crate `crates/oxpinyin-corpus`, sibling to the four W9 trainer crates
+(`oxpinyin-segment` / `oxpinyin-counter` / `oxpinyin-lambda` /
+`oxpinyin-emitter`). W9 maps each trainer stage to its own crate; the
 corpus front-end is the first stage, and a dedicated crate keeps the
 seam small. `unsafe`: deny. Portable. `publish = false`. Never ships
 with the engine.
@@ -134,7 +134,7 @@ the shape T1's `getline` reads (one `\n` stripped per line, never
 ## The join: T4b → T1 with zero glue
 
 Confirmed via the LSP (rust-analyzer hover on
-`pinyin_segment::Segmenter::segment_bytes`):
+`oxpinyin_segment::Segmenter::segment_bytes`):
 `pub fn segment_bytes(&self, input: &[u8], extra_enter: bool) -> Result<String, SegmentError>`
 — line-oriented UTF-8, one sentence per line. T4b's writer emits
 exactly that byte shape (asserted in `tests/invariants.rs`), and the
@@ -146,7 +146,7 @@ segmentations are asserted byte-identical before any counting.
 
 ### Tier 1 — cleaning-stage invariants (no oracle, CI-unconditional)
 
-`crates/pinyin-corpus/tests/invariants.rs` asserts on the committed
+`crates/oxpinyin-corpus/tests/invariants.rs` asserts on the committed
 sample:
 
 - every line non-empty, trimmed, `\n`-only line endings, no `\r`;
@@ -165,7 +165,7 @@ has no tool to diff against. Stated plainly, not papered over.
 
 ### Tier 2 — end-to-end differential (the real oracle, env-gated)
 
-`crates/pinyin-corpus/tests/differential.rs`:
+`crates/oxpinyin-corpus/tests/differential.rs`:
 
 - `rust_chain_consumes_t4b_sample_with_zero_glue` — T4b sample → T1 →
   T2 → T3 → T4a in-process (skips only when the migrate export /
@@ -201,12 +201,12 @@ value-identical; λ stdout byte-identical (average 0.999999).
 
 The e2e configuration feeds the **same** stream to the system bigram
 and the held-out (`gen_deleted_ngram`) side — the maximal-overlap
-held-out configuration, `pinyin-lambda`'s own default. Every held-out
+held-out configuration, `oxpinyin-lambda`'s own default. Every held-out
 bigram was therefore seen in training, so per-context λ saturates at
 1.000000 on both sides; the λ check is exact but degenerate. The
 non-degenerate λ arithmetic (mixed hit/miss contexts, λ across (0, 1))
 is already differentially verified by W9-T3's own Config X gate
-(`crates/pinyin-lambda/tests/differential.rs`); this stage must not
+(`crates/oxpinyin-lambda/tests/differential.rs`); this stage must not
 re-invent it.
 
 ## Licensing
@@ -238,9 +238,9 @@ no corpus, no model bytes are committed.
 
 | Claim | Source | Tag |
 |---|---|---|
-| T1 input type `segment_bytes(&[u8], bool)` | `crates/pinyin-segment/src/lib.rs:101` (LSP hover) | SHOWN |
-| T1 line rule: one `\n` stripped, never `\r` | `crates/pinyin-segment/src/driver.rs:143-164` | SHOWN |
-| T2 consumes T1's stdout text | `pinyin_counter::count_ngseg` (LSP hover) | SHOWN |
-| T4a renders `interpolation2.text` | `pinyin_emitter::emit_interpolation2` (LSP hover) | SHOWN |
+| T1 input type `segment_bytes(&[u8], bool)` | `crates/oxpinyin-segment/src/lib.rs:101` (LSP hover) | SHOWN |
+| T1 line rule: one `\n` stripped, never `\r` | `crates/oxpinyin-segment/src/driver.rs:143-164` | SHOWN |
+| T2 consumes T1's stdout text | `oxpinyin_counter::count_ngseg` (LSP hover) | SHOWN |
+| T4a renders `interpolation2.text` | `oxpinyin_emitter::emit_interpolation2` (LSP hover) | SHOWN |
 | λ tolerance: 6 dp byte-identical, `|Δaverage| < 1e-6` | `docs/findings/lambda-port.md` §4.3 | SHOWN |
 | libpinyin corpus prep undocumented; no oracle | W9-T0 `training-algorithm.md` | SHOWN |

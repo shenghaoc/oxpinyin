@@ -1,0 +1,22 @@
+[package]
+name = "oxpinyin-corpus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Training-only corpus front-end: zhwiki dump -> raw Han text for oxpinyin-segment. Never ships."
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "oxpinyin-corpus"
+path = "src/bin/oxpinyin-corpus.rs"
+
+[dev-dependencies]
+oxpinyin-segment = { path = "../oxpinyin-segment" }
+oxpinyin-counter = { path = "../oxpinyin-counter" }
+oxpinyin-lambda = { path = "../oxpinyin-lambda" }
+oxpinyin-emitter = { path = "../oxpinyin-emitter" }

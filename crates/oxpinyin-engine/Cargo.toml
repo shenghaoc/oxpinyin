@@ -1,0 +1,17 @@
+[package]
+name = "oxpinyin-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Supported oxpinyin session API — the stable Rust surface."
+
+# Supported Rust surface; SemVer freezes with the first public release.
+[lints]
+workspace = true
+
+[dependencies]
+# Internal workspace crate: the parser, decoder and vocabulary types this API
+# is a façade over. Not an external dependency.
+oxpinyin-core = { path = "../oxpinyin-core" }

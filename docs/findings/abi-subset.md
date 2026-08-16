@@ -867,13 +867,13 @@ The `lookup_candidate_t` from `pinyin_get_candidate` stays valid through
 `pinyin_choose_candidate` for the following `pinyin_get_candidate_nbest_index`
 call (see §3 ownership).
 
-### Implication for pinyin-capi
+### Implication for oxpinyin-capi
 
 The `pinyin_get_sentence` and `pinyin_train` functions must support a
 non-zero n-best index parameter. The n-best index is obtained from
 `pinyin_get_candidate_nbest_index` and passed through to both sentence
 retrieval and training; `pinyin_train` is called only when that index is
-non-zero. A `pinyin-capi` implementation cannot simplify these to
+non-zero. A `oxpinyin-capi` implementation cannot simplify these to
 index-0-only.
 
 ---
@@ -958,7 +958,7 @@ The consumer uses `assert()` in a few places:
 - `PYPLibPinyinCandidates.cc:348` — asserts `lookup_cursor <=
   m_text.length()` after `pinyin_choose_candidate`.
 
-### Implications for pinyin-capi
+### Implications for oxpinyin-capi
 
 A Rust implementation should:
 1. Return `Result` from all public APIs (per AGENTS.md constitution §4).
@@ -977,7 +977,7 @@ A Rust implementation should:
 
 This is the frontend-called subset, not a promise to clone all of libpinyin.
 Symbols needed only by the differential harness may be added to
-`pinyin-oracle` without expanding the supported `pinyin-capi` surface.
+`pinyin-oracle` without expanding the supported `oxpinyin-capi` surface.
 Every C-ABI symbol requires a dedicated task, a `// SAFETY:` argument for
 each unsafe block, NULL/invalid-input coverage, and an oracle-backed
 behavioural test before freeze.

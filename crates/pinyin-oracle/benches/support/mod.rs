@@ -8,9 +8,9 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use pinyin_core::{Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
-use pinyin_data::{BigramLanguageModel, LookupTable, SystemDictionary};
-use pinyin_engine::{EmptyConfigSource, Session, StoragePaths};
+use oxpinyin_core::{Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
+use oxpinyin_data::{BigramLanguageModel, LookupTable, SystemDictionary};
+use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use pinyin_oracle::model_cache;
 
 /// Twenty committed-corpus lines spanning short, long, ambiguous,
@@ -46,7 +46,7 @@ pub fn export_dir() -> PathBuf {
     for name in ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"] {
         assert!(
             dir.join(name).is_file(),
-            "exported tables missing at {} ({name}); run pinyin-migrate export",
+            "exported tables missing at {} ({name}); run oxpinyin-migrate export",
             dir.display()
         );
     }
@@ -116,7 +116,7 @@ impl ProbeStats {
 impl Dictionary for CountingDict<'_> {
     type Syllable = SyllableKey;
     type Entry = PhraseEntry;
-    type Error = pinyin_data::DictError;
+    type Error = oxpinyin_data::DictError;
 
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
         self.stats.lookups.fetch_add(1, Ordering::Relaxed);
@@ -213,7 +213,7 @@ pub fn load_prefix_tables() -> (Box<[String]>, Box<[String]>) {
 }
 
 fn syllable_initial(text: &str) -> Option<&'static str> {
-    pinyin_core::INCOMPLETE_PINYIN_KEYS
+    oxpinyin_core::INCOMPLETE_PINYIN_KEYS
         .iter()
         .filter(|key| text.starts_with(**key))
         .max_by_key(|key| key.len())

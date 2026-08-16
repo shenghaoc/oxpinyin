@@ -1,6 +1,6 @@
 name: Install libtkrzw
 description: >
-  Build and install the pinned libtkrzw release. pinyin-migrate's C++ bridge
+  Build and install the pinned libtkrzw release. oxpinyin-migrate's C++ bridge
   links it through pkg-config, so the Linux workspace jobs need it present.
   Ubuntu ships no tkrzw package, so it is built from the upstream tarball and
   verified against a pinned checksum before anything is compiled.
@@ -20,7 +20,7 @@ runs:
         echo "${sha256}  tkrzw.tar.gz" | sha256sum -c -
         tar xzf tkrzw.tar.gz
         cd "tkrzw-${version}"
-        # Default configure: no zlib/zstd/lz4/lzma. pinyin-migrate's build
+        # Default configure: no zlib/zstd/lz4/lzma. oxpinyin-migrate's build
         # script links tkrzw and stdc++ only and leaves transitive C libs to
         # libtkrzw.so's NEEDED entries, so the lean build is the right one.
         ./configure

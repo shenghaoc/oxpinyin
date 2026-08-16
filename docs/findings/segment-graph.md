@@ -75,7 +75,7 @@ b c ch d f g h j k l m n p q r s sh t w x y z zh
 
 `parser-spec.md` states there are 23 without listing them; the rule above
 derives the list mechanically, and
-`crates/pinyin-core/src/syllables.rs` asserts it against the complete
+`crates/oxpinyin-core/src/syllables.rs` asserts it against the complete
 inventory rather than trusting the transcription.
 
 **Measured against the pin.** Every `partial` segment the oracle emitted
@@ -187,6 +187,6 @@ The 483 is the population `parser-spec-contradiction-incomplete-keys.md`
 measured. It is the number this graph was built to move, and it moved to zero
 outstanding.
 
-Plus synthetic goldens in `crates/pinyin-core/src/graph.rs` covering the empty
+Plus synthetic goldens in `crates/oxpinyin-core/src/graph.rs` covering the empty
 input, ordering, tie cases, apostrophes, junk, chained initials and
 over-length refusal.

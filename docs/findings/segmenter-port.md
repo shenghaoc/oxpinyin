@@ -1,7 +1,7 @@
 # W9-T1 segmenter port — `ngseg` → Rust
 
 Date: 2026-08-15 · Status: **SHOWN-verified against libpinyin 2.11.91 `ngseg`
-and `PhraseLookup::get_best_match`** · Crate: `pinyin-segment` (never ships).
+and `PhraseLookup::get_best_match`** · Crate: `oxpinyin-segment` (never ships).
 
 This finding records the mapping from libpinyin's training segmenter to the
 Rust port, the scoring-model choice that breaks the training circularity, and
@@ -31,8 +31,8 @@ second input filter.
 
 ## Crate placement
 
-New crate `crates/pinyin-segment`, not a module in `pinyin-engine` or
-`pinyin-data`.
+New crate `crates/oxpinyin-segment`, not a module in `oxpinyin-engine` or
+`oxpinyin-data`.
 
 - The segmenter is a training preprocessor. Putting it on the supported
   session surface would grow the engine ABI for a never-ship tool.
@@ -114,11 +114,11 @@ walk.
 
 **Reused (existing loaders, no second model format):**
 
-- `pinyin_data::LookupTable` / `phrase_index.redb` — token → text.
-- `pinyin_data::BigramLanguageModel::load_successors` — `bigram.redb`,
+- `oxpinyin_data::LookupTable` / `phrase_index.redb` — token → text.
+- `oxpinyin_data::BigramLanguageModel::load_successors` — `bigram.redb`,
   the verbatim `SYSTEM_BIGRAM` export. One new public method; the parse
   was already private.
-- `pinyin_data::parse_interpolation2` — real unigram counts from the
+- `oxpinyin_data::parse_interpolation2` — real unigram counts from the
   fetched `interpolation2.text` cache (`locate_model_dir` / `PINYIN_MODEL_DIR`).
 
 **Newly written (character-domain handling + `ngseg` formatting):**
@@ -132,7 +132,7 @@ walk.
 ### Why `session.rs::collect_sentence` is not called
 
 The task's thesis is that segmentation and decoding share a trellis.
-`collect_sentence` (`crates/pinyin-engine/src/session.rs`, post-#46)
+`collect_sentence` (`crates/oxpinyin-engine/src/session.rs`, post-#46)
 *is* a position-indexed expand-merge-backtrace — but it cannot be
 invoked as `get_best_match`:
 
@@ -199,7 +199,7 @@ input  = fixtures/w9/segmenter-han.txt
 
 **Result: 111 input lines → 233 output records (plus the file-tail
 `null_token`); token sequences bit-identical to `ngseg`.** Asserted by
-`crates/pinyin-segment/tests/differential.rs` against the golden and,
+`crates/oxpinyin-segment/tests/differential.rs` against the golden and,
 when `PINYIN_NGSEG` + the pin data dir are present, against a live
 `ngseg` run. No class of input on this fixture required a documented
 divergence.
@@ -214,5 +214,5 @@ The counter (`gen_ngram`) reads this crate's stdout with
 - `null_token` after a token becomes `sentence_start` for the next
   bigram (unless `--skip-pi-gram-training`).
 
-W9-T2 should treat `pinyin-segment`'s `Emitted::to_ngseg_line` / the CLI
+W9-T2 should treat `oxpinyin-segment`'s `Emitted::to_ngseg_line` / the CLI
 stdout as the tokenised input, not invent a second format.

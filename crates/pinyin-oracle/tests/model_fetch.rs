@@ -1,7 +1,7 @@
 //! Contract of `tools/model/fetch-model.sh` and the model-cache locator.
 //!
 //! These tests pin fetch infrastructure only. They do not open the language
-//! model, the scorer, or a [`pinyin_engine::Session`].
+//! model, the scorer, or a [`oxpinyin_engine::Session`].
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

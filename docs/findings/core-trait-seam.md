@@ -2,7 +2,7 @@
 
 Date: 2026-08-09 · Status: frozen for Foundation
 
-This SPEC freezes the dependency-free `pinyin-core` seam before downstream
+This SPEC freezes the dependency-free `oxpinyin-core` seam before downstream
 implementation. The traits are public and unsealed. Existing required methods
 are the minimum contract; future growth must use methods with default
 implementations unless an Architect correction is merged first.
@@ -104,7 +104,7 @@ freezes the concrete parse type and ordering before implementation.
   input.
 - The seam imposes no `Send`, `Sync`, `'static`, serialization or object-store
   requirement.
-- Associated types prevent `pinyin-core` from depending on data, user, engine
+- Associated types prevent `oxpinyin-core` from depending on data, user, engine
   or platform crates.
 - Implementations must be deterministic for the same explicit input and
   state.

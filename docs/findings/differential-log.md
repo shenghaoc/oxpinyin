@@ -26,7 +26,7 @@ The two engines answer different questions.
 - The oracle reports **one selected segmentation** per input. That is what
   `pinyin_get_pinyin_key` and friends expose, and it is what
   `fixtures/foundation/f-a.txt` records.
-- `pinyin_core::FullPinyinParser` returns **every valid segmentation**, in the
+- `oxpinyin_core::FullPinyinParser` returns **every valid segmentation**, in the
   frozen order of `docs/findings/parser-path-set.md`.
 
 `parser-path-set.md` already settles the relationship in its acceptance section:

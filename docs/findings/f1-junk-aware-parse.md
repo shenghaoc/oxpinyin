@@ -61,7 +61,7 @@ Do not “fix” the divergence by making the two paths agree on junk; that woul
 ## Evidence
 
 - Fixture lines above (oracle-candidates.txt).
-- Graph hard-stop: `crates/pinyin-core/src/graph.rs` (`junk_stops_the_reachable_prefix_without_stopping_the_build`).
+- Graph hard-stop: `crates/oxpinyin-core/src/graph.rs` (`junk_stops_the_reachable_prefix_without_stopping_the_build`).
 - Measured on this tree:
 
 ```text

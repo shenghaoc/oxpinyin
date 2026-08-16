@@ -1,9 +1,9 @@
 # Emitter port — `export_interpolation` → `interpolation2.text` (W9-T4a)
 
-This documents the Rust `pinyin-emitter` crate, a value-level reproduction of
+This documents the Rust `oxpinyin-emitter` crate, a value-level reproduction of
 libpinyin's textual interpolation export. It consumes W9-T2's integer
 [`Counts`] and writes `interpolation2.text` in the grammar
-`crates/pinyin-data/src/interp.rs` already reads.
+`crates/oxpinyin-data/src/interp.rs` already reads.
 
 The reproduction target is `utils/storage/export_interpolation.cpp`, read from
 the pinned libpinyin `2.11.91` source (authorized: it is the trainer dump
@@ -19,14 +19,14 @@ undocumented (T0).
 
 ## Crate placement
 
-New crate `crates/pinyin-emitter`, not a module in `pinyin-counter` or
-`pinyin-lambda`.
+New crate `crates/oxpinyin-emitter`, not a module in `oxpinyin-counter` or
+`oxpinyin-lambda`.
 
 - libpinyin keeps `export_interpolation` as its own `utils/storage` binary,
   downstream of `gen_ngram` and independent of `estimate_interpolation`.
-- W9 already maps each trainer stage to a crate (`pinyin-segment`,
-  `pinyin-counter`, `pinyin-lambda`). A sibling crate keeps that seam.
-- `pinyin-counter::Counts::dump` is a *value-only* checksum format
+- W9 already maps each trainer stage to a crate (`oxpinyin-segment`,
+  `oxpinyin-counter`, `oxpinyin-lambda`). A sibling crate keeps that seam.
+- `oxpinyin-counter::Counts::dump` is a *value-only* checksum format
   (`\data pinyin-counter`, no phrase-text columns). The interpolation
   grammar is a different contract and must not overwrite that dump.
 - `unsafe`: deny. Portable. `publish = false`. Never ships with the engine.
@@ -63,7 +63,7 @@ markers and `\item … count …` records. It is not this PR's reproduction
 target (KMM is out of W9 scope).
 
 ### What `interp.rs` reads
-(`crates/pinyin-data/src/interp.rs`, `parse_interpolation2`)
+(`crates/oxpinyin-data/src/interp.rs`, `parse_interpolation2`)
 
 | Accepts | How | Source |
 |---|---|---|
@@ -106,7 +106,7 @@ PR #55 established that the shipped interpolation weight lives in
 search of the pinned model20 `interpolation2.text` finds no `lambda` line.
 The strong prior from PR #55 holds; there is no discrepancy to report.
 
-T3 already produces the λ value (`pinyin-lambda`,
+T3 already produces the λ value (`oxpinyin-lambda`,
 `Lambda::table_conf_value()`). Wiring that into a `table.conf` emitter is
 a separable follow-up, out of scope here.
 
@@ -156,9 +156,9 @@ DBM storage. It writes the textual format directly from T2's counts.
 
 ### Round-trip through `parse_interpolation2` (CI-unconditional)
 
-`crates/pinyin-emitter/tests/roundtrip.rs` emits a synthetic 2-unigram /
+`crates/oxpinyin-emitter/tests/roundtrip.rs` emits a synthetic 2-unigram /
 2-bigram model, writes it to a temp file, and calls
-`pinyin_data::parse_interpolation2(&path)`
+`oxpinyin_data::parse_interpolation2(&path)`
 (`Result<UnigramTable, InterpolationError>`). The parsed unigram
 `(token, count)` pairs equal the input bit-exact. The two bigrams are
 checked through `parse_interpolation_dump` (the 2-gram half is outside
@@ -176,7 +176,7 @@ Pinned:
 
 ### Differential against `export_interpolation` (env-gated)
 
-`crates/pinyin-emitter/tests/differential.rs::rust_matches_live_export_interpolation`
+`crates/oxpinyin-emitter/tests/differential.rs::rust_matches_live_export_interpolation`
 feeds the same fixture through
 `gen_binary_files → gen_unigram → gen_ngram → export_interpolation` when
 `PINYIN_GEN_BINARY_FILES`, `PINYIN_GEN_UNIGRAM`, `PINYIN_GEN_NGRAM`,
@@ -218,6 +218,6 @@ chain and vendors no corpus, no model bytes, and no `table.conf`.
 | `sentence_start` → `"<start>"` | `src/storage/tag_utility.cpp` | 368-370, 391-393 | SHOWN |
 | `import_interpolation` requires `model interpolation` | `utils/storage/import_interpolation.cpp` | 77-94, 134, 169 | SHOWN |
 | KMM converter emits the same textual sections | `utils/training/k_mixture_model_to_interpolation.cpp` | 78, 138, 174 | SHOWN |
-| `parse_interpolation2` reads `\1-gram` `token u32` + `count u64` | `crates/pinyin-data/src/interp.rs` | 149-252 | SHOWN |
+| `parse_interpolation2` reads `\1-gram` `token u32` + `count u64` | `crates/oxpinyin-data/src/interp.rs` | 149-252 | SHOWN |
 | phrase text ignored; `\2-gram` skipped | `interp.rs` | 191-202 | SHOWN |
 | λ ∈ `table.conf`, not `interpolation2.text` | PR #55; `export_interpolation.cpp` (no λ fprintf) | — | SHOWN |

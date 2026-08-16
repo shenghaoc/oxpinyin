@@ -186,7 +186,7 @@ tiers below sort every catalogued bug by *which mechanism* actually holds
 the guarantee in oxpinyin — the type system, the ownership model with its
 named escape hatches, or policy-plus-tests where the language holds
 nothing at all. Scope note: Tier A guarantees apply to the
-`#![forbid(unsafe_code)]` core crates; `pinyin-capi` is the one surface
+`#![forbid(unsafe_code)]` core crates; `oxpinyin-capi` is the one surface
 where C-shaped risk re-enters, governed by contract (`// SAFETY:` per
 block, ASan across the FFI, the NULL-tolerance template rule below)
 rather than by the compiler.
@@ -197,7 +197,7 @@ rather than by the compiler.
   `Option`/`Result`; the deref-of-NULL cannot be written. *Stage-1
   nuance:* the borrowed C++ frontend still performs the upstream call
   sequence and will pass NULL into our shim — bug 1.1 is prevented at
-  `pinyin-capi` by contract (validate, return the upstream error
+  `oxpinyin-capi` by contract (validate, return the upstream error
   convention), not by the borrow checker. The language protects the
   core; the contract protects the seam.
 - **Use-after-free** (3.1): lifetimes make the dangling reference a

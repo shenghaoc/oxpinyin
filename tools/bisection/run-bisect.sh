@@ -6,7 +6,7 @@
 #   ./run-bisect.sh /path/to/libpinyin.so /path/to/data  # differential
 #
 # Modes:
-#   1. capi-only    — build + run the dlopen harness against pinyin-capi
+#   1. capi-only    — build + run the dlopen harness against oxpinyin-capi
 #   2. valgrind     — re-run the harness under valgrind (if available)
 #   3. ld-preload   — test ibus-engine-libpinyin with LD_PRELOAD (BISECT_LD_PRELOAD=1)
 #   4. differential — compare capi output against an oracle .so (if args given)
@@ -24,10 +24,10 @@ echo "--- building bisect harness ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o bisect bisect.c -ldl
 echo "build: ok"
 
-# ── Build pinyin-capi ────────────────────────────────────────────────────
+# ── Build oxpinyin-capi ────────────────────────────────────────────────────
 
-echo "--- building pinyin-capi ---"
-cargo build -p pinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
+echo "--- building oxpinyin-capi ---"
+cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
 CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
@@ -35,7 +35,7 @@ if [ ! -f "$CAPI_SO" ]; then
 fi
 echo "capi: $CAPI_SO"
 
-# ── Locate system data (redb tables for pinyin-capi) ─────────────────────
+# ── Locate system data (redb tables for oxpinyin-capi) ─────────────────────
 
 CAPI_DATA="$REPO_ROOT/fixtures/w3"
 if [ ! -f "$CAPI_DATA/pinyin_index.redb" ]; then
@@ -45,17 +45,17 @@ fi
 echo "data: $CAPI_DATA"
 echo ""
 
-# ── Mode 1: Run against pinyin-capi ─────────────────────────────────────
+# ── Mode 1: Run against oxpinyin-capi ─────────────────────────────────────
 
-echo "--- running against pinyin-capi ---"
+echo "--- running against oxpinyin-capi ---"
 CAPI_LOG="$(mktemp)"
 if ! ./bisect "$CAPI_SO" "$CAPI_DATA" > "$CAPI_LOG" 2>&1; then
-    echo "FAIL: bisect crashed against pinyin-capi"
+    echo "FAIL: bisect crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     rm -f "$CAPI_LOG"
     exit 1
 fi
-echo "pinyin-capi: ok"
+echo "oxpinyin-capi: ok"
 cat "$CAPI_LOG"
 echo ""
 

@@ -56,7 +56,7 @@ These are later policy layers.
 
 ## Frozen output types
 
-Task 7 adds these public dependency-free types to `pinyin-core`:
+Task 7 adds these public dependency-free types to `oxpinyin-core`:
 
 ```rust
 pub const MAX_PARSE_RESULTS: usize = 4_096;

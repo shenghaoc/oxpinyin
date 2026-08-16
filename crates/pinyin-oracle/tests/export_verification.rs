@@ -11,14 +11,14 @@
 //!
 //! The tests skip with a notice when `/tmp/oxpinyin-export` is absent;
 //! generate it with
-//! `cargo run -p pinyin-migrate --features oracle-ffi -- export --out-dir /tmp/oxpinyin-export`.
+//! `cargo run -p oxpinyin-migrate --features oracle-ffi -- export --out-dir /tmp/oxpinyin-export`.
 
 #![cfg(feature = "oracle-ffi")]
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use pinyin_data::LookupTable;
+use oxpinyin_data::LookupTable;
 use pinyin_oracle::{Oracle, OracleFlags, OraclePrefix};
 
 fn export_dir() -> Option<PathBuf> {
@@ -31,7 +31,7 @@ fn export_dir() -> Option<PathBuf> {
     } else {
         eprintln!(
             "exported tables not found at /tmp/oxpinyin-export; skipping \
-             (run pinyin-migrate export first)"
+             (run oxpinyin-migrate export first)"
         );
         None
     }

@@ -12,7 +12,7 @@ Kiro always-loads `.kiro/steering/`; this file wins on any conflict.
 2. Install-size budget: default payload ≤ pinned reference stack +10%.
 3. No local AI (no client neural/LLM inference).
 4. Nothing panics on any input; public APIs return `Result`.
-5. `unsafe`: `forbid` in pinyin-core; `deny` in data/user/engine (documented
+5. `unsafe`: `forbid` in oxpinyin-core; `deny` in data/user/engine (documented
    mmap exception in data only); FFI only in capi/oracle/migrate with
    `// SAFETY:` per block.
 6. Determinism: output is a pure function of (input, user state, config).

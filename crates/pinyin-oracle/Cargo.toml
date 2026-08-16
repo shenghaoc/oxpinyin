@@ -1,3 +1,7 @@
+# Keep this package name deliberately. `pinyin` here is the upstream oracle
+# domain (libpinyin reproduction target), not project identity, and the frozen
+# differential harness earns one legacy prefix. Do not "fix" this to oxpinyin;
+# the wire/pin schemas and the default oracle prefix are behavior, not names.
 [package]
 name = "pinyin-oracle"
 version.workspace = true
@@ -55,19 +59,19 @@ path = "src/bin/parity_worst.rs"
 [dependencies]
 # Internal workspace crate: the corpus is generated from the frozen syllable
 # inventory, and W2-T3 compares against this parser. Not an external dependency.
-pinyin-core = { path = "../pinyin-core" }
+oxpinyin-core = { path = "../oxpinyin-core" }
 # Session + exported tables for portable parity tooling (never ships).
-pinyin-data = { path = "../pinyin-data" }
-pinyin-engine = { path = "../pinyin-engine" }
+oxpinyin-data = { path = "../oxpinyin-data" }
+oxpinyin-engine = { path = "../oxpinyin-engine" }
 
 [dev-dependencies]
 # Integration tests share the same internal crates as the parity tooling.
 criterion = "0.8"
 dhat = "0.3"
 # Internal workspace crate, dev-only: the `decode_pass_user_store` bench
-# rebuilds pinyin-capi's `SharedLm` overlay on the scan harness. Not an
+# rebuilds oxpinyin-capi's `SharedLm` overlay on the scan harness. Not an
 # external dependency, and pinyin-oracle never ships.
-pinyin-user = { path = "../pinyin-user" }
+oxpinyin-user = { path = "../oxpinyin-user" }
 
 [[bench]]
 name = "scan_perf"

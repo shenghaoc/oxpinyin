@@ -1,0 +1,15 @@
+[package]
+name = "oxpinyin-data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "oxpinyin internal crate — no stability promise; use oxpinyin-engine."
+
+[lints]
+workspace = true
+
+[dependencies]
+oxpinyin-core = { workspace = true }
+redb = { workspace = true }

@@ -75,6 +75,6 @@ here and the branch retains only the F1 code change (64%/90%/70 floor).
 
 ## References
 
-- `crates/pinyin-core/src/scoring.rs` — `Scorer`, `key_cost_table`, `EdgeCost`
-- `crates/pinyin-core/src/kbest.rs` — `EdgeCost` trait (frozen)
-- `crates/pinyin-data/src/lm.rs` — `BigramLanguageModel`, `UNKNOWN_COST`
+- `crates/oxpinyin-core/src/scoring.rs` — `Scorer`, `key_cost_table`, `EdgeCost`
+- `crates/oxpinyin-core/src/kbest.rs` — `EdgeCost` trait (frozen)
+- `crates/oxpinyin-data/src/lm.rs` — `BigramLanguageModel`, `UNKNOWN_COST`

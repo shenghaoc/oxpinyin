@@ -1,7 +1,7 @@
 # Data formats — pinned oracle table files
 
 Date: 2026-08-12 · Status: recorded; human review required before freeze.
-Revision: Tkrzw files converted to redb via pinyin-migrate (FFI bridge);
+Revision: Tkrzw files converted to redb via oxpinyin-migrate (FFI bridge);
 direct Rust parsing replaced by redb loader; fixtures updated to .redb.
 
 Describes every binary table file installed by the pinned oracle under
@@ -51,10 +51,10 @@ table.conf                   1,229   Text configuration
 Three categories:
 
 1.  **Tkrzw Hash DB** (6 files) — key-value stores.  Converted to
-    portable redb databases by `pinyin-migrate` before loading.
+    portable redb databases by `oxpinyin-migrate` before loading.
 2.  **Custom content files** (16 files) — phrase/character
     dictionaries with a common 28-byte header, an index table, and
-    variable-length records.  Parsed directly by `pinyin-data`.
+    variable-length records.  Parsed directly by `oxpinyin-data`.
 3.  **table.conf** — text configuration mapping library indices to
     content-file paths.
 
@@ -65,18 +65,18 @@ Three categories:
 All `*_index.bin`, `punct.bin`, and `bigram.db` files are Tkrzw
 Hash Database Manager format (HashDBM class, v1.x) in the oracle
 installation.  These are **not** parsed directly in Rust.  Instead,
-`pinyin-migrate` reads them via FFI to libtkrzw (Linux-only) and
-writes portable redb databases that `pinyin-data` loads on any
+`oxpinyin-migrate` reads them via FFI to libtkrzw (Linux-only) and
+writes portable redb databases that `oxpinyin-data` loads on any
 platform.
 
-### 1.1 Conversion (pinyin-migrate)
+### 1.1 Conversion (oxpinyin-migrate)
 
 ```
-pinyin-migrate <input.tkh> -o <output.redb> [-n <limit>]
+oxpinyin-migrate <input.tkh> -o <output.redb> [-n <limit>]
 ```
 
 - Reads all key-value pairs from the Tkrzw file via the C++ bridge
-  (`crates/pinyin-migrate/src/bridge.cpp`).
+  (`crates/oxpinyin-migrate/src/bridge.cpp`).
 - Filters empty-key tombstone records.
 - Sorts entries lexicographically by key for deterministic output.
 - Writes a redb v4 database with a single table `"data"`.
@@ -97,9 +97,9 @@ pinyin_index.bin).
 No additional metadata or indexes.  Key and value interpretation is
 the callers responsibility (see §1.3).
 
-### 1.3 Loader (pinyin-data)
+### 1.3 Loader (oxpinyin-data)
 
-`pinyin_data::LookupTable` wraps a `redb::ReadOnlyDatabase`:
+`oxpinyin_data::LookupTable` wraps a `redb::ReadOnlyDatabase`:
 
 ```rust
 let table = LookupTable::open(path)?;

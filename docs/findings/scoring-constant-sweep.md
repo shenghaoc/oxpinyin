@@ -92,7 +92,7 @@ if the scorer form or the data tables change.
 The interpolation weight λ was an authored, deliberately-neutral `1/2`. It is
 now **read from the model's `table.conf`** instead of hardcoded. The pinned
 value is `0.312699` (recorded in `data-formats.md` §3, verified against the
-oracle's installed copy). The decode LM (`pinyin_data::lm`) defaults to
+oracle's installed copy). The decode LM (`oxpinyin_data::lm`) defaults to
 `Lambda::PINNED` (`0.312699`) and overrides it from an install's `table.conf`;
 the fetched cache ships none (`table.conf` is a config artifact, not part of
 `model20.text.tar.gz`), so the default stands there.

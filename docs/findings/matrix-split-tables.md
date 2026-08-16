@@ -6,7 +6,7 @@ The candidate window scan (`candidate-construction.md` §8) walks the key set th
 pinned oracle's matrix admits at each byte position: the selected parse's keys
 plus two frozen lists of alternative splits. This finding freezes those lists
 and their semantics. It is the data half of the scan; the scan itself is
-`crates/pinyin-engine/src/session.rs` (`RESPLIT_TABLE`, `DIVIDED_TABLE`).
+`crates/oxpinyin-engine/src/session.rs` (`RESPLIT_TABLE`, `DIVIDED_TABLE`).
 
 ## Provenance
 

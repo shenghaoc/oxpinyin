@@ -72,7 +72,7 @@ weight while preserving that order exactly, across the whole fixture rather
 than per input, and it is reproducible from the committed captures. A phrase
 observed at several ranks takes its best.
 
-`crates/pinyin-core/tests/fixture_provenance.rs` enforces all of this: every
+`crates/oxpinyin-core/tests/fixture_provenance.rs` enforces all of this: every
 phrase must appear in a committed capture, every weight must equal the rule's
 output, and entries sharing a key sequence must stay in captured order. The
 fixture cannot silently drift away from the pin's observed ranking.
@@ -102,7 +102,7 @@ is an error, not a silent skip.
 
 ## Adapters
 
-`pinyin_core::fixture` provides:
+`oxpinyin_core::fixture` provides:
 
 - `FixtureDictionary` — `Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>`.
   Lookup is exact on the whole key slice and returns entries in fixture order.
@@ -111,9 +111,9 @@ is an error, not a silent skip.
   interpolated bigram over the same vocabulary, combining the caller's edge
   cost as the frozen seam requires.
 
-Both parse from `&str`. `pinyin-core` does no I/O; callers `include_str!`.
+Both parse from `&str`. `oxpinyin-core` does no I/O; callers `include_str!`.
 
-`pinyin_core::cost` holds the arithmetic: costs are integers on a fixed-point
+`oxpinyin_core::cost` holds the arithmetic: costs are integers on a fixed-point
 negative-log₂ scale, one bit of surprisal per `COST_PER_BIT`, with an
 `UNKNOWN_COST` floor for events the model gives no mass. **No floating point.**
 `f64::ln` is not required to be bit-identical across platforms and libms, and
@@ -129,7 +129,7 @@ matter for parity; nothing in this module claims to be one of them.
 
 W3's loaders implement the same two traits over redb-backed tables. The
 integration is a change of two type arguments at the `Session::new` call site.
-Nothing in `pinyin-core`'s decoder, and nothing in `pinyin-engine`'s session,
+Nothing in `oxpinyin-core`'s decoder, and nothing in `oxpinyin-engine`'s session,
 mentions either implementation.
 
 ## Acceptance

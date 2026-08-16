@@ -7,7 +7,7 @@ pin-built libpinyin as the W2 differential subject. It is the implementation
 contract for W2-T1 and the live producer for W2-T3.
 
 `pinyin-oracle` is `publish = false` and never ships. Nothing in this finding
-expands the supported `pinyin-capi` surface.
+expands the supported `oxpinyin-capi` surface.
 
 ## Source identity and provenance
 
@@ -118,7 +118,7 @@ void  g_free(void * mem);   /* GLib, for owned gchar* returns */
 15 of these appear in the 52-symbol frontend-called queue in
 `docs/findings/abi-subset.md`. `pinyin_get_pinyin_is_incomplete` does not;
 `abi-subset.md` explicitly permits harness-only symbols in `pinyin-oracle`
-without expanding the `pinyin-capi` surface. `g_free` is GLib, not libpinyin.
+without expanding the `oxpinyin-capi` surface. `g_free` is GLib, not libpinyin.
 
 ## Constants
 
