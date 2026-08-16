@@ -4,9 +4,12 @@ use std::ffi::CString;
 use std::os::raw::c_uint;
 use std::path::PathBuf;
 
+use crate::candidates::pinyin_get_candidate;
 use crate::context::pinyin_init_for_fixtures;
 use crate::instance::pinyin_alloc_instance;
-use crate::types::{PinyinContext, PinyinInstance};
+use crate::parse::pinyin_parse_more_full_pinyins;
+use crate::sentence::pinyin_guess_candidates;
+use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
 /// `SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY`.
 pub(crate) const DEFAULT_SORT: c_uint = 0x1e;
@@ -79,6 +82,29 @@ impl Drop for TempSystemDir {
 
 pub(crate) fn cstr(value: impl AsRef<str>) -> CString {
     CString::new(value.as_ref().as_bytes()).expect("no interior NUL")
+}
+
+/// Parses `text`, guesses candidates, and returns the pointer to candidate
+/// `index` (borrowed into the instance's snapshot until the next guess).
+pub(crate) fn candidate(
+    instance: *mut PinyinInstance,
+    text: &str,
+    index: c_uint,
+) -> *mut LookupCandidate {
+    let input = cstr(text);
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
+        text.len(),
+        "full input parses"
+    );
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let mut cand: *mut LookupCandidate = std::ptr::null_mut();
+    assert!(
+        pinyin_get_candidate(instance, index, &mut cand),
+        "candidate {index} exists"
+    );
+    assert!(!cand.is_null());
+    cand
 }
 
 pub(crate) fn open(user_dir: &str) -> (*mut PinyinContext, *mut PinyinInstance) {

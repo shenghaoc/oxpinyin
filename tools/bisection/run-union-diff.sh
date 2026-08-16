@@ -7,7 +7,8 @@
 #   1. imported user phrase at the same candidate index;
 #   2. ADDON candidates for the same loaded library;
 #   3. train-then-predict phrase list (punctuation omitted; #104).
-#   4. user-bigram successors planted at count 9 and 10 (pinyin.cpp:2349-2350).
+#   4. user-bigram successors at count 9 and 10 via union-edge-diff.c
+#      (pinyin.cpp:2349-2350). Public train first-seeds 69, so 9/10 are planted.
 #
 # Sort profile is recorded in the driver output. The empty-store parity
 # profile never trains; this script uses the live guess/predict masks.
@@ -23,8 +24,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
 
-echo "--- building union-diff driver ---"
+echo "--- building union-diff drivers ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o union-diff union-diff.c -ldl
+gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o union-edge-diff union-edge-diff.c -ldl
 echo "--- building plant-oracle-bigram ---"
 g++ -std=c++17 -Wall -Wextra -Werror -O2 plant-oracle-bigram.cc \
     -ltkrzw -lpthread -o plant-oracle-bigram
@@ -99,15 +101,15 @@ echo "union-diff: IDENTICAL"
 # engine's user-bigram store after a shared three-phrase import.
 
 echo "--- filter-edge setup ---"
-if ! ./union-diff "$CAPI_SO" "$CAPI_SYS" --setup "$CAPI_EDGE_USER"; then
+if ! ./union-edge-diff "$CAPI_SO" "$CAPI_SYS" setup "$CAPI_EDGE_USER"; then
     echo "FAIL: capi edge setup"
     exit 1
 fi
-if ! ./union-diff "$ORACLE_SO" "$ORACLE_DATA" --setup "$ORACLE_EDGE_USER"; then
+if ! ./union-edge-diff "$ORACLE_SO" "$ORACLE_DATA" setup "$ORACLE_EDGE_USER"; then
     echo "FAIL: oracle edge setup"
     exit 1
 fi
-if ! ./union-diff "$CAPI_SO" "$CAPI_SYS" --plant "$CAPI_EDGE_USER"; then
+if ! ./union-edge-diff "$CAPI_SO" "$CAPI_SYS" plant "$CAPI_EDGE_USER"; then
     echo "FAIL: capi edge plant"
     exit 1
 fi
@@ -119,14 +121,14 @@ fi
 
 CAPI_EDGE="$(mktemp)"
 ORACLE_EDGE="$(mktemp)"
-if ! ./union-diff "$CAPI_SO" "$CAPI_SYS" --edge "$CAPI_EDGE_USER" > "$CAPI_EDGE" 2> /dev/null; then
-    echo "FAIL: union-diff --edge crashed against oxpinyin-capi"
+if ! ./union-edge-diff "$CAPI_SO" "$CAPI_SYS" predict "$CAPI_EDGE_USER" > "$CAPI_EDGE" 2> /dev/null; then
+    echo "FAIL: union-edge-diff predict crashed against oxpinyin-capi"
     cat "$CAPI_EDGE"
     rm -f "$CAPI_EDGE" "$ORACLE_EDGE"
     exit 1
 fi
-if ! ./union-diff "$ORACLE_SO" "$ORACLE_DATA" --edge "$ORACLE_EDGE_USER" > "$ORACLE_EDGE" 2> /dev/null; then
-    echo "FAIL: union-diff --edge crashed against the oracle"
+if ! ./union-edge-diff "$ORACLE_SO" "$ORACLE_DATA" predict "$ORACLE_EDGE_USER" > "$ORACLE_EDGE" 2> /dev/null; then
+    echo "FAIL: union-edge-diff predict crashed against the oracle"
     cat "$ORACLE_EDGE"
     rm -f "$CAPI_EDGE" "$ORACLE_EDGE"
     exit 1
