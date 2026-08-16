@@ -36,6 +36,7 @@ rustc-ice-*.txt
 /tools/bisection/addon-candidate-diff
 /tools/bisection/predict-diff
 /tools/bisection/union-diff
+/tools/bisection/union-edge-diff
 /tools/bisection/plant-oracle-bigram
 
 # macOS
