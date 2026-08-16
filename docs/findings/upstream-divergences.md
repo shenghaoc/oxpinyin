@@ -1,0 +1,51 @@
+# Upstream divergences
+
+Purpose: a register of behaviours that oxpinyin cannot or deliberately does
+not reproduce because of a Rust language mechanism. Source policy permits
+reading and copying upstream; this file is for the residue. Once the rewrite
+is complete, these notes are collected to report back to libpinyin.
+
+## Entry template
+
+```markdown
+### <short name>
+
+- **Upstream source cite:** `path:lines` in the pinned libpinyin source.
+- **Mechanism:** what the C++ does.
+- **What oxpinyin does instead:** the Rust behaviour.
+- **Externally observable:** yes/no and how a caller would see it.
+```
+
+## Register
+
+### Bigram export iterator's pinyin buffer
+
+- **Upstream source cite:** `src/pinyin.cpp:842-872`
+  (`pinyin_bigram_iterator_has_next_phrase` builds the `m_pinyins` join
+  buffer).
+- **Mechanism:** the export iterator keeps C pointers into reused
+  pronunciation/join buffers. Repeating an export cycle inside one context
+  reuses stale storage and the pinned oracle segfaults.
+- **What oxpinyin does instead:** `CapiContext::export_bigram_rows` renders
+  the complete row snapshot up front into owned Rust strings before the
+  iterator handle is created, so repeated iterator cycles cannot alias stale
+  C storage. The per-round train differential runs one export per fresh
+  context for the oracle and compares those rows to oxpinyin
+  (`tools/bisection/run-train-diff.sh`).
+- **Externally observable:** yes — upstream aborts on the repeated-export
+  sequence; oxpinyin returns the same rows on every cycle. Also cross-indexed
+  in `reference/memory-safety-bugs.md` (use-after-free class).
+
+### Public bigram export is a rendering surface
+
+- **Upstream source cite:** `src/pinyin.cpp:775-918`.
+- **Mechanism:** the public bigram iterators render the store: sentence-start
+  predecessors are dropped, counts are doubled, below-threshold rows are
+  hidden, pronunciations are expanded as a Cartesian product, and
+  per-predecessor totals are unreachable.
+- **What oxpinyin does instead:** the C ABI reproduces that rendering for
+  compatibility; the one-time migration tool does not use the lossy iterator
+  and instead links the pinned `libstorage.a` through a dump shim to read the
+  raw user-store values (`docs/findings/legacy-migration.md` §3).
+- **Externally observable:** yes — the C ABI surface matches; the migration
+  tool is an internal tool and keeps the full value surface.

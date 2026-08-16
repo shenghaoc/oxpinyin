@@ -150,8 +150,8 @@ invoked as `get_best_match`:
 4. After #46 it is only the **pre-frequency fallback**. The live
    candidate path is the window scan, which is not a Viterbi at all.
 
-Reading `pinyin_lookup2.cpp` (decode internals) was not required and was
-not done. The segmenter-specific variant is therefore the authorised
+Reading `pinyin_lookup2.cpp` (decode internals) was not required for this
+port. The segmenter-specific variant is therefore the authorised
 `phrase_lookup.cpp` machine, scored from the existing loaders. This is
 documented rather than papered over: a second *shape* of the same
 trellis, not a second scoring model.

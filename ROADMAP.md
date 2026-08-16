@@ -31,7 +31,8 @@ Build: `tools/oracle/build-oracle.sh` (optional container recipe alongside).
 
 1. **Freeze behaviour** into `docs/findings/` SPECs and golden fixtures
    (characterisation of the pin first; see `docs/findings/spec-derivation.md`).
-2. **Implement** only from frozen SPECs/fixtures — not by reading upstream C++.
+2. **Implement** under the Source policy in `AGENTS.md` (copy upstream,
+   rewrite in Rust, then oxidize), with frozen SPECs/fixtures as the gate.
 3. **Prove** with fixture tests everywhere; live oracle diff on Linux is the
    verification tier for Stage 1 gates.
 

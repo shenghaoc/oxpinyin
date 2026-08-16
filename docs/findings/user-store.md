@@ -292,17 +292,14 @@ mapping).
 
 ## 5. Merge / precedence with system data at decode time
 
-> **Tension flag (per task instruction).** The user/system bigram merge lives
-> inside the decode lookup path (`src/lookup/pinyin_lookup2.cpp`), which is
-> decode-library internals. Characterizing the user store's *merge and
-> precedence* required reading it. AGENTS.md's spec discipline forbids reading
-> upstream C++ to derive the **decode algorithm**; this task authorizes reading
-> the **user-data implementation** as the reproduction target. The two meet
-> here. I did **not** re-derive the Viterbi/k-best decode or the λ scoring
-> formula — those are already frozen in `docs/findings/scoring-spec.md`,
+> **Source note.** The user/system bigram merge lives inside the decode lookup
+> path (`src/lookup/pinyin_lookup2.cpp`), which is decode-library internals.
+> Characterizing the user store's *merge and precedence* required reading it;
+> AGENTS.md's Source policy permits reading upstream C++ as the reproduction
+> target. The facts below are limited to *where and how user data combines
+> with system data*; the Viterbi/k-best decode and the λ scoring formula are
+> already frozen in `docs/findings/scoring-spec.md`,
 > `docs/findings/kbest-search.md`, and `docs/findings/decode-differential.md`.
-> The facts below are limited to *where and how user data combines with system
-> data*, and I surface the boundary rather than resolving it unilaterally.
 
 **SHOWN** (`src/lookup/pinyin_lookup2.cpp`, `src/storage/ngram.cpp`):
 

@@ -135,8 +135,8 @@ reproducible with the tools noted below):
   keys and `(freq, next)` record order — real keys are full u32 tokens and
   the record order is `{next, count}` — so its lookups could never match.
 
-Deriving the real bucket function would require reading upstream C++,
-which the constitution forbids. The public-ABI export above sidesteps the
+Deriving the real bucket function would require reading upstream C++.
+The public-ABI export above sidesteps the
 undocumented format entirely: the shipped tables are **ours**, their
 contents are the oracle's, and the bridge between decoder keys and table
 keys is the plain pinyin spelling that both sides already share.
