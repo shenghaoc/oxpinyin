@@ -213,11 +213,7 @@ pub fn load_prefix_tables() -> (Box<[String]>, Box<[String]>) {
 }
 
 fn syllable_initial(text: &str) -> Option<&'static str> {
-    oxpinyin_core::INCOMPLETE_PINYIN_KEYS
-        .iter()
-        .filter(|key| text.starts_with(**key))
-        .max_by_key(|key| key.len())
-        .copied()
+    oxpinyin_core::syllable_initial(text)
 }
 
 /// Heap bytes of a `Box<[String]>`: slice header + each `String`'s buffer.

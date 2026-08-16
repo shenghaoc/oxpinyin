@@ -15,164 +15,28 @@
 //! the predicted flat `+69`, remember-as-index-only, and
 //! `InvalidPhrase` → `false`.
 
-use std::ffi::CString;
 use std::os::raw::c_uint;
-use std::path::PathBuf;
 use std::ptr;
 
 use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, UserStore};
 
 use crate::candidates::{
     pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_get_candidate,
-    pinyin_get_candidate_string, pinyin_is_user_candidate, pinyin_remove_user_candidate,
-    pinyin_train,
+    pinyin_is_user_candidate, pinyin_remove_user_candidate, pinyin_train,
 };
-use crate::config::{pinyin_mask_out, pinyin_set_options};
-use crate::context::{pinyin_init, pinyin_init_for_fixtures, pinyin_save};
+use crate::config::pinyin_mask_out;
+use crate::context::{pinyin_init_for_fixtures, pinyin_save};
 use crate::instance::{pinyin_alloc_instance, pinyin_reset};
 use crate::iterators::{
     pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
     pinyin_end_get_phrases, pinyin_iterator_add_phrase, pinyin_iterator_has_next_phrase,
 };
-use crate::parse::{pinyin_get_parsed_input_length, pinyin_parse_more_full_pinyins};
+use crate::parse::pinyin_parse_more_full_pinyins;
 use crate::sentence::pinyin_guess_candidates;
 use crate::state::{USER_STORE_FILE, instance_ref};
-use crate::text::pinyin_get_full_pinyin_auxiliary_text;
-use crate::types::{GChar, LookupCandidate, PinyinContext, PinyinInstance, PinyinTableFlag};
+use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open, system_dir};
+use crate::types::{LookupCandidate, PinyinInstance};
 use crate::user_data::pinyin_remember_user_input;
-
-/// `SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY`.
-const DEFAULT_SORT: c_uint = 0x1e;
-
-/// The committed W3 mini fixture's system tables.
-fn system_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("fixtures")
-        .join("w3")
-}
-
-/// A fresh, process-unique user directory (removed on drop via the guard).
-struct TempUserDir {
-    path: PathBuf,
-}
-
-impl TempUserDir {
-    fn new(tag: &str) -> Self {
-        let path =
-            std::env::temp_dir().join(format!("oxpinyin-capi-{tag}-{}.d", std::process::id()));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("temp user dir");
-        Self { path }
-    }
-}
-
-impl Drop for TempUserDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
-/// A fresh, process-unique system directory with copies of the three W3
-/// redb tables, used only by the real-unigram policy tests.
-struct TempSystemDir {
-    path: PathBuf,
-}
-
-impl TempSystemDir {
-    fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-capi-system-{tag}-{}.d",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("temp system dir");
-        for name in ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"] {
-            std::fs::copy(system_dir().join(name), path.join(name)).expect("copy redb table");
-        }
-        Self { path }
-    }
-
-    fn write(&self, name: &str, contents: &str) {
-        std::fs::write(self.path.join(name), contents).expect("write temp system file");
-    }
-}
-
-impl Drop for TempSystemDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
-fn cstr(value: impl AsRef<str>) -> CString {
-    CString::new(value.as_ref().as_bytes()).expect("no interior NUL")
-}
-
-/// `pinyin_init_for_fixtures` + `pinyin_alloc_instance` over the mini
-/// fixture.  The public `pinyin_init` path refuses a system dir without
-/// `interpolation2.text`, so the W3-mini tests opt into the flat-export
-/// unigrams through the crate-private fixture constructor.
-fn open(user_dir: &str) -> (*mut PinyinContext, *mut PinyinInstance) {
-    let system = cstr(system_dir().to_str().expect("UTF-8 path"));
-    let user = cstr(user_dir);
-    let context = pinyin_init_for_fixtures(system.as_ptr(), user.as_ptr());
-    assert!(
-        !context.is_null(),
-        "fixture init must open the mini fixture"
-    );
-    let instance = pinyin_alloc_instance(context);
-    assert!(!instance.is_null());
-    (context, instance)
-}
-
-#[test]
-fn public_init_refuses_a_system_dir_without_real_unigrams() {
-    // The W3 mini fixture deliberately has no `interpolation2.text`.  The
-    // public ABI must not silently fall back to flat export counts, because
-    // that would rank production candidates with made-up frequencies.
-    let system = TempSystemDir::new("no-interpolation");
-    let user = TempUserDir::new("no-interpolation-user");
-    let context = pinyin_init(
-        cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
-        cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
-    );
-    assert!(
-        context.is_null(),
-        "missing interpolation2.text must fail init"
-    );
-}
-
-#[test]
-fn public_init_refuses_an_unparsable_interpolation2_file() {
-    let system = TempSystemDir::new("bad-interpolation");
-    system.write("interpolation2.text", "not an interpolation model\n");
-    let user = TempUserDir::new("bad-interpolation-user");
-    let context = pinyin_init(
-        cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
-        cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
-    );
-    assert!(
-        context.is_null(),
-        "present-but-unparsable interpolation2.text must fail init"
-    );
-}
-
-#[test]
-fn public_init_loads_a_parsable_interpolation2_file() {
-    let system = TempSystemDir::new("good-interpolation");
-    system.write(
-        "interpolation2.text",
-        "\\data model interpolation\n\\1-gram\n\\item 1 ok count 1\n",
-    );
-    let user = TempUserDir::new("good-interpolation-user");
-    let context = pinyin_init(
-        cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
-        cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
-    );
-    assert!(!context.is_null(), "parsable model file must open");
-    crate::context::pinyin_fini(context);
-}
 
 /// The instance's user store handle (the same connection the entry points
 /// write through; every update commits before returning).
@@ -203,134 +67,6 @@ fn candidate(instance: *mut PinyinInstance, text: &str, index: c_uint) -> *mut L
     );
     assert!(!cand.is_null());
     cand
-}
-
-#[test]
-fn full_pinyin_auxiliary_text_uses_the_fewest_keys_walk() {
-    let user_dir = TempUserDir::new("full-aux");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    // Captured from the pinned C++ oracle with PINYIN_INCOMPLETE set.
-    let cases = [
-        ("nihao", 5, 2, "ni |hao "),
-        ("ni'hao", 6, 3, "ni |hao "),
-        ("nih", 3, 3, "ni h |"),
-    ];
-    for (input, consumed, cursor, expected) in cases {
-        let input = cstr(input);
-        assert_eq!(
-            pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
-            consumed
-        );
-        let mut aux: *mut GChar = ptr::null_mut();
-        assert!(pinyin_get_full_pinyin_auxiliary_text(
-            instance, cursor, &mut aux
-        ));
-        assert!(!aux.is_null());
-        assert_eq!(crate::ffi::take_owned_cstr(aux.cast()), expected);
-    }
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-#[test]
-fn parsed_input_length_stores_the_parse_result_and_clears_on_reset() {
-    let user_dir = TempUserDir::new("parsed-len");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    // Allocated instances start at 0, upstream `pinyin.cpp:1318`.
-    assert_eq!(pinyin_get_parsed_input_length(instance), 0);
-
-    // "nihao" parses completely: both the parse return and the getter
-    // report the five raw-input bytes, upstream `pinyin.cpp:1511`.
-    let nihao = cstr("nihao");
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, nihao.as_ptr()), 5);
-    assert_eq!(pinyin_get_parsed_input_length(instance), 5);
-
-    // The fork's consumer reads the getter after `pinyin_choose_candidate`
-    // (`PYPLibPinyinCandidates.cc:146-151`); selection does not rewrite the
-    // stored parse length.
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    let mut first = ptr::null_mut();
-    assert!(pinyin_get_candidate(instance, 0, &mut first));
-    assert!(pinyin_choose_candidate(instance, 0, first) > 0);
-    assert_eq!(pinyin_get_parsed_input_length(instance), 5);
-
-    // A partial parse stores exactly what the parse consumed, not the
-    // raw buffer length; the getter is a mirror of the parse return.
-    let partial = cstr("nihaoXYZ");
-    let consumed = pinyin_parse_more_full_pinyins(instance, partial.as_ptr());
-    assert_eq!(pinyin_get_parsed_input_length(instance), consumed);
-
-    // `pinyin_reset` clears `m_parsed_len`, upstream `pinyin.cpp:2692`.
-    assert!(pinyin_reset(instance));
-    assert_eq!(pinyin_get_parsed_input_length(instance), 0);
-
-    // Empty parse and null instance follow the same zero sentinel.
-    let empty = cstr("");
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, empty.as_ptr()), 0);
-    assert_eq!(pinyin_get_parsed_input_length(instance), 0);
-    assert_eq!(pinyin_get_parsed_input_length(ptr::null_mut()), 0);
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-fn first_candidate_text(instance: *mut PinyinInstance) -> String {
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    let mut cand = ptr::null_mut();
-    assert!(pinyin_get_candidate(instance, 0, &mut cand));
-    let mut text: *const GChar = ptr::null();
-    assert!(pinyin_get_candidate_string(instance, cand, &mut text));
-    assert!(!text.is_null());
-    // SAFETY: `text` borrows the snapshot until the next guess.
-    unsafe { std::ffi::CStr::from_ptr(text) }
-        .to_str()
-        .expect("utf-8 candidate")
-        .to_owned()
-}
-
-#[test]
-fn set_options_before_alloc_controls_incomplete_parse_length() {
-    let user_dir = TempUserDir::new("set-options-before");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    crate::instance::pinyin_free_instance(instance);
-
-    assert!(pinyin_set_options(context, 0));
-    let instance = pinyin_alloc_instance(context);
-    let nih = cstr("nih");
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, nih.as_ptr()), 2);
-    assert_eq!(first_candidate_text(instance), "你");
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
-}
-
-#[test]
-fn set_options_remasks_a_live_instance() {
-    let user_dir = TempUserDir::new("set-options-live");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    let nih = cstr("nih");
-    assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, nih.as_ptr()),
-        3,
-        "default incomplete-on consumes the tail"
-    );
-
-    assert!(pinyin_set_options(context, 0));
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, nih.as_ptr()), 2);
-    assert_eq!(first_candidate_text(instance), "你");
-
-    assert!(pinyin_set_options(
-        context,
-        PinyinTableFlag::PINYIN_INCOMPLETE as u32
-    ));
-    assert_eq!(pinyin_parse_more_full_pinyins(instance, nih.as_ptr()), 3);
-
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
 }
 
 /// The token snapshotted on the candidate pointer.

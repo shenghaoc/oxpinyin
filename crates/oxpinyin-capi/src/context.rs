@@ -135,3 +135,54 @@ pub(crate) fn save_context(context: *mut PinyinContext) -> bool {
 pub extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
     save_context(context)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::pinyin_init;
+    use crate::test_support::{TempSystemDir, TempUserDir, cstr};
+
+    #[test]
+    fn public_init_refuses_a_system_dir_without_real_unigrams() {
+        let system = TempSystemDir::new("no-interpolation");
+        let user = TempUserDir::new("no-interpolation-user");
+        let context = pinyin_init(
+            cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+            cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+        );
+        assert!(
+            context.is_null(),
+            "missing interpolation2.text must fail init"
+        );
+    }
+
+    #[test]
+    fn public_init_refuses_an_unparsable_interpolation2_file() {
+        let system = TempSystemDir::new("bad-interpolation");
+        system.write("interpolation2.text", "not an interpolation model\n");
+        let user = TempUserDir::new("bad-interpolation-user");
+        let context = pinyin_init(
+            cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+            cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+        );
+        assert!(
+            context.is_null(),
+            "present-but-unparsable interpolation2.text must fail init"
+        );
+    }
+
+    #[test]
+    fn public_init_loads_a_parsable_interpolation2_file() {
+        let system = TempSystemDir::new("good-interpolation");
+        system.write(
+            "interpolation2.text",
+            "\\data model interpolation\n\\1-gram\n\\item 1 ok count 1\n",
+        );
+        let user = TempUserDir::new("good-interpolation-user");
+        let context = pinyin_init(
+            cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+            cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+        );
+        assert!(!context.is_null(), "parsable model file must open");
+        crate::context::pinyin_fini(context);
+    }
+}

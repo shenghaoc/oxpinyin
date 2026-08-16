@@ -163,3 +163,47 @@ pub extern "C" fn pinyin_in_chewing_keyboard(
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use std::ptr;
+
+    use super::{pinyin_get_parsed_input_length, pinyin_parse_more_full_pinyins};
+    use crate::candidates::pinyin_get_candidate;
+    use crate::instance::pinyin_reset;
+    use crate::sentence::pinyin_guess_candidates;
+    use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
+
+    #[test]
+    fn parsed_input_length_stores_the_parse_result_and_clears_on_reset() {
+        let user_dir = TempUserDir::new("parsed-len");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+        assert_eq!(pinyin_get_parsed_input_length(instance), 0);
+
+        let nihao = cstr("nihao");
+        assert_eq!(pinyin_parse_more_full_pinyins(instance, nihao.as_ptr()), 5);
+        assert_eq!(pinyin_get_parsed_input_length(instance), 5);
+
+        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+        let mut first = ptr::null_mut();
+        assert!(pinyin_get_candidate(instance, 0, &mut first));
+        assert!(crate::candidates::pinyin_choose_candidate(instance, 0, first) > 0);
+        assert_eq!(pinyin_get_parsed_input_length(instance), 5);
+
+        let partial = cstr("nihaoXYZ");
+        let consumed = pinyin_parse_more_full_pinyins(instance, partial.as_ptr());
+        assert_eq!(pinyin_get_parsed_input_length(instance), consumed);
+
+        assert!(pinyin_reset(instance));
+        assert_eq!(pinyin_get_parsed_input_length(instance), 0);
+
+        let empty = cstr("");
+        assert_eq!(pinyin_parse_more_full_pinyins(instance, empty.as_ptr()), 0);
+        assert_eq!(pinyin_get_parsed_input_length(instance), 0);
+        assert_eq!(pinyin_get_parsed_input_length(ptr::null_mut()), 0);
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+}

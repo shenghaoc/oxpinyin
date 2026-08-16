@@ -76,6 +76,32 @@ pub static INCOMPLETE_PINYIN_KEYS: [&str; INCOMPLETE_PINYIN_KEY_COUNT] = [
     "w", "x", "y", "z", "zh",
 ];
 
+/// Longest initial-only key that prefixes `text`.
+///
+/// `None` for a vowel-initial spelling. `ng` returns `Some("n")` because
+/// `"n"` is an inventory prefix; callers that need the chewing `m_initial`
+/// (zero-initial `ng`) should use [`phonetic_initial`].
+#[must_use]
+pub fn syllable_initial(text: &str) -> Option<&'static str> {
+    INCOMPLETE_PINYIN_KEYS
+        .iter()
+        .filter(|key| text.starts_with(**key))
+        .max_by_key(|key| key.len())
+        .copied()
+}
+
+/// Phonetic initial used for incomplete-key expansion.
+///
+/// Matches `ChewingKey.m_initial`: `zh`/`ch`/`sh` stay two-byte initials,
+/// and `ng` is zero-initial (`pinyin_parser_table.h:4211`).
+#[must_use]
+pub fn phonetic_initial(text: &str) -> Option<&'static str> {
+    if text == "ng" {
+        return None;
+    }
+    syllable_initial(text)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -144,6 +170,19 @@ mod tests {
 
         assert_eq!(derived, INCOMPLETE_PINYIN_KEYS);
         assert_eq!(INCOMPLETE_PINYIN_KEYS.len(), INCOMPLETE_PINYIN_KEY_COUNT);
+    }
+
+    #[test]
+    fn phonetic_initial_follows_m_initial() {
+        use super::{phonetic_initial, syllable_initial};
+
+        assert_eq!(syllable_initial("ng"), Some("n"));
+        assert_eq!(phonetic_initial("ng"), None);
+        assert_eq!(phonetic_initial("na"), Some("n"));
+        assert_eq!(phonetic_initial("zhong"), Some("zh"));
+        assert_eq!(phonetic_initial("za"), Some("z"));
+        assert_eq!(phonetic_initial("an"), None);
+        assert_eq!(phonetic_initial("er"), None);
     }
 
     #[test]
