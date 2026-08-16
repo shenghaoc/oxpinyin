@@ -35,6 +35,7 @@ rustc-ice-*.txt
 /tools/bisection/user-candidate-diff
 /tools/bisection/addon-candidate-diff
 /tools/bisection/predict-diff
+/tools/bisection/union-diff
 
 # macOS
 .DS_Store
