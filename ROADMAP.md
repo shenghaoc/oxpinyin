@@ -158,8 +158,9 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   default-settings parity; fuzzy is default-off but shares the same
   parser-table machinery. Verification has two shapes: the correction and
   fuzzy bits are parser-table bits, swept against the pinned oracle via the
-  parse differential; `DYNAMIC_ADJUST` gates training behavior and is
-  verified by `run-train-diff.sh`. Both are mechanically checkable and
+  parse differential; `DYNAMIC_ADJUST` gates the bigram term of candidate
+  frequency at guess time (not training writes) and is verified by the
+  populated-store train-diff. Both are mechanically checkable and
   bounded in scope.
 
 - **W11 is the phrase-index union at lookup.** User, network, and addon

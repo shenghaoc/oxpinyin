@@ -17,7 +17,7 @@ use oxpinyin_core::{
 };
 use oxpinyin_data::{BigramLanguageModel, DictError, LmError, SystemDictionary};
 use oxpinyin_engine::{CandidateKind, Config, Session, StoragePaths};
-use oxpinyin_user::{ExportedPhrase, SENTENCE_START, USER_DICTIONARY, UserStore, is_user_token};
+use oxpinyin_user::{is_user_token, ExportedPhrase, UserStore, SENTENCE_START, USER_DICTIONARY};
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
@@ -100,6 +100,9 @@ impl LanguageModel for SharedLm {
     }
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+        // Ungated unigram term of candidate frequency: upstream reads
+        // FacadePhraseIndex (system + user) with no DYNAMIC_ADJUST check
+        // (`pinyin.cpp:1856-1865`). The bit gates only the bigram term.
         let extra = match self.user.as_ref() {
             None => 0,
             Some(store) => store
