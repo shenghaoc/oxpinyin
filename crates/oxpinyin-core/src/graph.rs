@@ -277,9 +277,10 @@ impl SegmentGraph {
         self.reachable.get(node).copied().unwrap_or(false)
     }
 
-    /// The furthest node reachable from the start.
+    /// The furthest node reachable from the start on the full graph.
     ///
-    /// This is the graph's answer to `pinyin_get_parsed_input_length`.
+    /// Incomplete edges always participate. Filtered parse length is the
+    /// last byte of [`SegmentGraph::fewest_keys`].
     #[must_use]
     pub const fn consumed(&self) -> usize {
         self.consumed
@@ -291,13 +292,13 @@ impl SegmentGraph {
         self.consumed == self.input_len
     }
 
-    /// Fewest-keys path to [`SegmentGraph::consumed`].
+    /// Fewest-keys path under the incomplete-edge filter.
     ///
-    /// Longest parsed length, then fewest keys, first-found ties in
-    /// left-to-right shortest-key-first order — the selection
-    /// `candidate-construction.md` §8.1 freezes. Incomplete edges are
-    /// included only when `allow_incomplete`. Empty when no such path
-    /// exists, including the empty input.
+    /// Longest prefix that a filtered path from byte zero actually covers,
+    /// then fewest keys, first-found ties — `pinyin_parser2.cpp` `final_step`
+    /// plus `candidate-construction.md` §8.1. Incomplete edges are included
+    /// only when `allow_incomplete`. Empty when no such path exists,
+    /// including the empty input.
     #[must_use]
     pub fn fewest_keys(&self, allow_incomplete: bool) -> Vec<Edge> {
         let bound = self.consumed();
@@ -339,8 +340,14 @@ impl SegmentGraph {
             }
         }
 
-        let mut path = Vec::new();
+        // `consumed()` includes incomplete edges. Reconstruct from the
+        // furthest node the *filtered* DP reached (`final_step`).
         let mut node = bound;
+        while node > 0 && steps[node].is_none() {
+            node -= 1;
+        }
+
+        let mut path = Vec::new();
         while node > 0 {
             let Some((_, edge, previous)) = steps[node] else {
                 break;
@@ -743,6 +750,32 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["n"]
         );
+
+        let tail = SegmentGraph::build(b"nih").expect("valid");
+        assert_eq!(
+            tail.fewest_keys(false)
+                .iter()
+                .map(|edge| edge.key().text())
+                .collect::<Vec<_>>(),
+            ["ni"]
+        );
+        assert_eq!(
+            tail.fewest_keys(true)
+                .iter()
+                .map(|edge| edge.key().text())
+                .collect::<Vec<_>>(),
+            ["ni", "h"]
+        );
+
+        let graph = SegmentGraph::build(b"xian").expect("valid");
+        assert_eq!(
+            graph
+                .fewest_keys(false)
+                .iter()
+                .map(|edge| edge.key().text())
+                .collect::<Vec<_>>(),
+            ["xian"]
+        );
     }
 
     #[test]
@@ -762,6 +795,10 @@ mod tests {
             Some("ni'hao".to_owned())
         );
         assert_eq!(FewestKeys::parse("n"), None);
+        assert_eq!(
+            FewestKeys::parse("nih").map(|parsed| parsed.canonical()),
+            Some("ni".to_owned())
+        );
         assert_eq!(
             FewestKeys::parse("").map(|parsed| parsed.keys().len()),
             Some(0)
