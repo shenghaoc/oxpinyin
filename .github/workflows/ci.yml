@@ -43,6 +43,8 @@ jobs:
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo test --locked --workspace
+      - name: C++ pinyin.h smoke gate
+        run: tools/bisection/run-cpp-smoke.sh
 
   # The portable crates on the other two supported operating systems.
   # structure.md marks core/data/user/engine portable; the oracle harness is

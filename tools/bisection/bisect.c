@@ -2,7 +2,7 @@
  * bisect.c — three-subject ABI bisection fixture.
  *
  * Loads a pinyin shared object (libpinyin.so or libpinyin_capi.so) via
- * dlopen, resolves all 50 ABI-subset symbols, drives the full-pinyin
+ * dlopen, resolves all 51 W8 fork-bootstrap symbols, drives the full-pinyin
  * keystroke cycle, then probes the remaining symbol groups (double/chewing
  * parse, predicted, user-candidate, key-rest, aux, mask/remember, iterators,
  * scheme setters, addon load) on valid handles.  Run twice (once per .so)
@@ -76,7 +76,7 @@ typedef enum {
     PREDICTED_PUNCTUATION_CANDIDATE = 8,
 } lookup_candidate_type_t;
 
-/* ── Function pointer types for all 50 live symbols ───────────────────── */
+/* ── Function pointer types for all 51 live symbols ───────────────────── */
 
 /* 1a. Context lifecycle */
 typedef pinyin_context_t *  (*fn_pinyin_init)(const char *, const char *);
@@ -95,6 +95,7 @@ typedef bool (*fn_pinyin_save)(pinyin_context_t *);
 typedef size_t   (*fn_pinyin_parse_more_full_pinyins)(pinyin_instance_t *, const char *);
 typedef size_t   (*fn_pinyin_parse_more_double_pinyins)(pinyin_instance_t *, const char *);
 typedef size_t   (*fn_pinyin_parse_more_chewings)(pinyin_instance_t *, const char *);
+typedef size_t   (*fn_pinyin_get_parsed_input_length)(pinyin_instance_t *);
 typedef bool (*fn_pinyin_in_chewing_keyboard)(pinyin_instance_t *, char, gchar ***);
 
 /* 1d. Sentence / guess */
@@ -168,6 +169,7 @@ struct symbols {
     fn_pinyin_parse_more_full_pinyins    parse_full;
     fn_pinyin_parse_more_double_pinyins  parse_double;
     fn_pinyin_parse_more_chewings        parse_chewing;
+    fn_pinyin_get_parsed_input_length    get_parsed_input_length;
     fn_pinyin_in_chewing_keyboard        in_chewing_keyboard;
     /* 1d */
     fn_pinyin_guess_sentence             guess_sentence;
@@ -220,12 +222,15 @@ struct symbols {
 
 #define RESOLVE(handle, table, field, name) do {                \
     (table).field = (typeof((table).field))dlsym(handle, name); \
-    if (!(table).field)                                         \
+    if (!(table).field) {                                       \
         fprintf(stderr, "  MISSING: %s\n", name);              \
+        missing++;                                              \
+    }                                                           \
 } while (0)
 
 static int resolve_all(void *handle, struct symbols *s) {
     int missing = 0;
+    int missing_critical = 0;
 
     RESOLVE(handle, *s, init,                 "pinyin_init");
     RESOLVE(handle, *s, fini,                 "pinyin_fini");
@@ -239,6 +244,7 @@ static int resolve_all(void *handle, struct symbols *s) {
     RESOLVE(handle, *s, parse_full,           "pinyin_parse_more_full_pinyins");
     RESOLVE(handle, *s, parse_double,         "pinyin_parse_more_double_pinyins");
     RESOLVE(handle, *s, parse_chewing,        "pinyin_parse_more_chewings");
+    RESOLVE(handle, *s, get_parsed_input_length, "pinyin_get_parsed_input_length");
     RESOLVE(handle, *s, in_chewing_keyboard,  "pinyin_in_chewing_keyboard");
     RESOLVE(handle, *s, guess_sentence,       "pinyin_guess_sentence");
     RESOLVE(handle, *s, guess_candidates,     "pinyin_guess_candidates");
@@ -278,19 +284,24 @@ static int resolve_all(void *handle, struct symbols *s) {
     RESOLVE(handle, *s, bigram_get_next,       "pinyin_bigram_iterator_get_next_phrase");
     RESOLVE(handle, *s, end_get_bigram,        "pinyin_end_get_bigram_phrases");
 
-    /* Count missing critical-path symbols. */
-    if (!s->init)           missing++;
-    if (!s->fini)           missing++;
-    if (!s->alloc_instance) missing++;
-    if (!s->free_instance)  missing++;
-    if (!s->parse_full)     missing++;
-    if (!s->guess_sentence) missing++;
-    if (!s->guess_candidates) missing++;
-    if (!s->get_n_candidate)  missing++;
-    if (!s->get_candidate)    missing++;
-    if (!s->get_candidate_string) missing++;
-    if (!s->reset)          missing++;
-    if (!s->save)           missing++;
+    /* Count missing critical-path symbols separately for the diagnostic,
+     * but return the total: the W8 bootstrap contract is exactly 51/51. */
+    if (!s->init)           missing_critical++;
+    if (!s->fini)           missing_critical++;
+    if (!s->alloc_instance) missing_critical++;
+    if (!s->free_instance)  missing_critical++;
+    if (!s->parse_full)     missing_critical++;
+    if (!s->get_parsed_input_length) missing_critical++;
+    if (!s->guess_sentence) missing_critical++;
+    if (!s->guess_candidates) missing_critical++;
+    if (!s->get_n_candidate)  missing_critical++;
+    if (!s->get_candidate)    missing_critical++;
+    if (!s->get_candidate_string) missing_critical++;
+    if (!s->reset)          missing_critical++;
+    if (!s->save)           missing_critical++;
+
+    printf("resolved: %d/51 symbols, missing_critical=%d\n",
+           51 - missing, missing_critical);
 
     return missing;
 }
@@ -371,6 +382,10 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
     /* Parse */
     size_t consumed = s->parse_full(inst, input);
     printf("parse_full: consumed=%zu\n", consumed);
+    if (s->get_parsed_input_length) {
+        printf("parsed_input_length: %zu\n",
+               s->get_parsed_input_length(inst));
+    }
 
     /* Guess sentence */
     bool gs = s->guess_sentence(inst);
@@ -478,6 +493,10 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
     /* Reset for next input */
     bool r = s->reset(inst);
     printf("reset: %s\n", r ? "true" : "false");
+    if (s->get_parsed_input_length) {
+        printf("parsed_input_length_after_reset: %zu\n",
+               s->get_parsed_input_length(inst));
+    }
     printf("\n");
 }
 
@@ -695,15 +714,14 @@ int main(int argc, char **argv) {
     }
     printf("dlopen: ok\n\n");
 
-    /* Resolve all 50 symbols. */
+    /* Resolve all 51 symbols. */
     printf("=== resolve ===\n");
     struct symbols sym;
     memset(&sym, 0, sizeof(sym));
     int missing = resolve_all(handle, &sym);
-    printf("resolved: missing_critical=%d\n\n", missing);
 
     if (missing > 0) {
-        fprintf(stderr, "fatal: %d critical symbols missing\n", missing);
+        fprintf(stderr, "fatal: %d of 51 symbols missing\n", missing);
         dlclose(handle);
         rmdir(user_dir);
         return 1;
