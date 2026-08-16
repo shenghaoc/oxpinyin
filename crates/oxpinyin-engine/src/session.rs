@@ -360,10 +360,10 @@ where
     /// parse order.
     ///
     /// This is the fewest-keys segmentation the scan matrix is built from
-    /// (`selected_path`, `docs/findings/candidate-construction.md` §8.1) over
-    /// the whole raw buffer — the standing-in for libpinyin's saved keys,
-    /// which `pinyin_remember_user_input` walks to store a phrase with its
-    /// pinyin (`docs/findings/user-store.md` §3.1).
+    /// ([`SegmentGraph::fewest_keys`], `docs/findings/candidate-construction.md`
+    /// §8.1) over the whole raw buffer — the standing-in for libpinyin's saved
+    /// keys, which `pinyin_remember_user_input` walks to store a phrase with
+    /// its pinyin (`docs/findings/user-store.md` §3.1).
     ///
     /// # Errors
     ///
@@ -372,7 +372,8 @@ where
     /// [`MAX_INPUT_BYTES`]).
     pub fn composition_keys(&self) -> Result<Vec<SyllableKey>, EngineError> {
         let graph = SegmentGraph::build(self.raw.as_bytes()).map_err(EngineError::Graph)?;
-        Ok(selected_path(&graph, self.settings.incomplete)
+        Ok(graph
+            .fewest_keys(self.settings.incomplete)
             .into_iter()
             .map(|edge| edge.key())
             .collect())
@@ -1076,7 +1077,7 @@ fn build_scan_matrix(graph: &SegmentGraph, allow_incomplete: bool) -> Vec<Vec<Sc
     let mut columns: Vec<Vec<ScanKey>> = vec![Vec::new(); bound + 1];
 
     // 1. The selected parse.
-    let selected_edges = selected_path(graph, allow_incomplete);
+    let selected_edges = graph.fewest_keys(allow_incomplete);
     let selected: Vec<ScanKey> = selected_edges.iter().map(ScanKey::from_edge).collect();
     for scan_key in &selected {
         columns[scan_key.from].push(*scan_key);
@@ -1187,63 +1188,6 @@ fn build_scan_matrix(graph: &SegmentGraph, allow_incomplete: bool) -> Vec<Vec<Sc
     }
 
     columns
-}
-
-/// The parse the scan matrix is built from: the fewest-keys segmentation of
-/// the reachable input, ties broken by first-found in left-to-right,
-/// shortest-key-first order — the selection `candidate-construction.md` §8.1
-/// freezes (prefer the longest parsed length, then fewest keys; every
-/// admitted key carries distance zero under the pinned options, so the first
-/// candidate wins ties).
-fn selected_path(graph: &SegmentGraph, allow_incomplete: bool) -> Vec<Edge> {
-    let bound = graph.consumed();
-    // steps[node] = (key count, incoming edge, previous node); node 0 is the
-    // root with count zero.
-    let mut steps: Vec<Option<(usize, Edge, usize)>> = vec![None; bound + 1];
-
-    for node in 0..bound {
-        let count = if node == 0 {
-            0
-        } else {
-            match steps[node] {
-                Some((count, _, _)) => count,
-                None => continue,
-            }
-        };
-        let mut edges: Vec<Edge> = graph
-            .outgoing(node)
-            .iter()
-            .filter(|edge| allow_incomplete || edge.kind() != EdgeKind::Incomplete)
-            .copied()
-            .collect();
-        // Upstream tries key lengths ascending at each position.
-        edges.sort_by_key(|edge| (edge.to() - edge.from(), edge.key().index()));
-        for edge in edges {
-            let to = edge.to();
-            if to > bound {
-                continue;
-            }
-            let candidate = count + 1;
-            let replace = steps[to]
-                .as_ref()
-                .is_none_or(|(seen, _, _)| candidate < *seen);
-            if replace {
-                steps[to] = Some((candidate, edge, node));
-            }
-        }
-    }
-
-    let mut path = Vec::new();
-    let mut node = bound;
-    while node > 0 {
-        let Some((_, edge, previous)) = steps[node] else {
-            break;
-        };
-        path.push(edge);
-        node = previous;
-    }
-    path.reverse();
-    path
 }
 
 /// The three sort keys of the pinned candidate construction.
