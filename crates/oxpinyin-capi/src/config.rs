@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 use oxpinyin_engine::ConfigValue;
 
 use crate::ffi::ffi_catch;
-use crate::state::{context_mut, context_ref};
+use crate::state::context_mut;
 use crate::types::{PinyinContext, PinyinOptionT, PinyinTableFlag};
 
 /// Set pinyin options on the context.
@@ -29,9 +29,11 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
         // SAFETY: `context` is non-null and was produced by `pinyin_init`.
         let ctx = unsafe { context_mut(context) };
         let enabled = (options & (PinyinTableFlag::PINYIN_INCOMPLETE as u32)) != 0;
+        let use_tone = (options & (PinyinTableFlag::USE_TONE as u32)) != 0;
         ctx.config
             .set("incomplete-pinyin", ConfigValue::Bool(enabled));
         ctx.incomplete.store(enabled, Ordering::Relaxed);
+        ctx.use_tone.store(use_tone, Ordering::Relaxed);
         true
     })
 }
@@ -47,19 +49,31 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
 /// The Rust parameter is `c_int`: callers may pass any `int`, and a closed
 /// `#[repr(C)]` enum would be UB for an unknown discriminant.
 ///
-/// Provisional: accepts the call; scheme routing arrives with a dedicated
-/// double-pinyin parser.
+/// The scheme value is the `DoublePinyinScheme` header discriminant
+/// (`pinyin_custom2.h:108-117`). `DOUBLE_PINYIN_CUSTOMIZED` (30) has no
+/// compiled table; oxpinyin reports `false` and keeps the previous scheme
+/// rather than aborting like upstream.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_double_pinyin_scheme(
     context: *mut PinyinContext,
-    _scheme: c_int,
+    scheme: c_int,
 ) -> bool {
     if context.is_null() {
         return false;
     }
     ffi_catch(false, || {
         // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-        let _ctx = unsafe { context_ref(context) };
+        let ctx = unsafe { context_mut(context) };
+        let scheme = match scheme {
+            1 => oxpinyin_core::DoublePinyinScheme::Zrm,
+            2 => oxpinyin_core::DoublePinyinScheme::Ms,
+            3 => oxpinyin_core::DoublePinyinScheme::Ziguang,
+            4 => oxpinyin_core::DoublePinyinScheme::Abc,
+            5 => oxpinyin_core::DoublePinyinScheme::Pyjj,
+            6 => oxpinyin_core::DoublePinyinScheme::Xhe,
+            _ => return false,
+        };
+        ctx.double_scheme.store(scheme as i32, Ordering::Relaxed);
         true
     })
 }
@@ -75,16 +89,21 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
 /// The Rust parameter is `c_int`: callers may pass any `int`, and a closed
 /// `#[repr(C)]` enum would be UB for an unknown discriminant.
 ///
-/// Provisional: accepts the call; scheme routing arrives with a dedicated
-/// chewing parser.
+/// The first W13 bopomofo pass implements STANDARD only. Other valid
+/// `ZhuyinScheme` header discriminants report `false` and keep the previous
+/// scheme instead of aborting.
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, _scheme: c_int) -> bool {
+pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: c_int) -> bool {
     if context.is_null() {
         return false;
     }
     ffi_catch(false, || {
         // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-        let _ctx = unsafe { context_ref(context) };
+        let ctx = unsafe { context_mut(context) };
+        if scheme != oxpinyin_core::ZhuyinScheme::Standard as i32 {
+            return false;
+        }
+        ctx.zhuyin_scheme.store(scheme, Ordering::Relaxed);
         true
     })
 }

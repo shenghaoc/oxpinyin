@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# run-scheme-diff.sh <double|bopomofo> [scheme-number]
+#
+# W13 per-scheme differential. Drives the same double-pinyin C-ABI sequence
+# into libpinyin_capi.so and the pin-built libpinyin.so and diffs the logs.
+#
+# Env-gated on the pin-built oracle exactly like the import/train diffs:
+# PINYIN_ORACLE_PREFIX (default $HOME/.local/opt/pinyin-oracle).
+#
+# The capi side is built from the workspace. To compare candidate lists
+# against real model data, set W13_CAPI_SYSTEM to a directory containing
+# pinyin_index.redb/phrase_index.redb/bigram.redb and interpolation2.text;
+# otherwise the committed fixtures/w3 mini tables are used and candidate
+# lists are expected to differ (the oracle side is the pin model).
+#
+# Exit codes: 0 = identical or skipped; 1 = build/run failure; 2 = divergence.
+
+set -euo pipefail
+cd "$(dirname "$0")"
+REPO_ROOT="$(cd ../.. && pwd)"
+
+SCHEME="${1:-double}"
+SCHEME_NUMBER="${2:-}"
+
+echo "--- building scheme-diff driver ---"
+gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o scheme-diff scheme-diff.c -ldl
+if [[ "$SCHEME" == "bopomofo" ]]; then
+    gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o chewing-diff chewing-diff.c -ldl
+fi
+echo "build: ok"
+
+echo "--- building oxpinyin-capi ---"
+cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
+CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
+if [[ ! -f "$CAPI_SO" ]]; then
+    echo "fatal: $CAPI_SO not found"
+    exit 1
+fi
+
+PREFIX="${PINYIN_ORACLE_PREFIX:-$HOME/.local/opt/pinyin-oracle}"
+ORACLE_SO="$PREFIX/lib/libpinyin.so"
+ORACLE_DATA="$PREFIX/lib/libpinyin/data"
+
+if [[ ! -f "$PREFIX/oracle-pin.txt" || ! -f "$ORACLE_SO" ]]; then
+    echo "SKIP: pin-built oracle not found at $PREFIX"
+    echo "  build it with tools/oracle/build-oracle.sh and set PINYIN_ORACLE_PREFIX"
+    exit 0
+fi
+if ! grep -q '^pin_ref=libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c' \
+    "$PREFIX/oracle-pin.txt"; then
+    echo "SKIP: oracle prefix at $PREFIX is off-pin"
+    exit 0
+fi
+
+if [[ "$SCHEME" == "bopomofo" ]]; then
+    SCHEME_ARGS=()
+else
+    if [[ -n "$SCHEME_NUMBER" ]]; then
+        SCHEME_ARGS=("$SCHEME_NUMBER")
+    else
+        SCHEME_ARGS=()
+    fi
+fi
+
+USER_DIR="$(mktemp -d)"
+SYSTEM_TMP=""
+trap 'rm -rf "$USER_DIR" "$SYSTEM_TMP"' EXIT
+export SCHEME_DIFF_USER_DIR="$USER_DIR"
+
+CAPI_DATA="$REPO_ROOT/fixtures/w3"
+if [[ -n "${W13_CAPI_SYSTEM:-}" ]]; then
+    SYSTEM_TMP="$(mktemp -d)"
+    cp "$W13_CAPI_SYSTEM"/pinyin_index.redb \
+       "$W13_CAPI_SYSTEM"/phrase_index.redb \
+       "$W13_CAPI_SYSTEM"/bigram.redb "$SYSTEM_TMP"/ 2>/dev/null || true
+    if [[ -n "${W13_INTERPOLATION:-}" && -f "$W13_INTERPOLATION" ]]; then
+        cp "$W13_INTERPOLATION" "$SYSTEM_TMP/interpolation2.text"
+    fi
+    CAPI_DATA="$SYSTEM_TMP"
+fi
+
+echo "--- capi side ---"
+CAPI_LOG="$(mktemp)"
+CAPI_ERR="$(mktemp)"
+if [[ "$SCHEME" == "bopomofo" ]]; then
+    CAPI_DRIVER=./chewing-diff
+    DRIVER_ARGS=("$CAPI_SO" "$CAPI_DATA")
+else
+    CAPI_DRIVER=./scheme-diff
+    DRIVER_ARGS=("$CAPI_SO" "$CAPI_DATA" "${SCHEME_ARGS[@]}")
+fi
+if ! "$CAPI_DRIVER" "${DRIVER_ARGS[@]}" \
+    > "$CAPI_LOG" 2> "$CAPI_ERR"; then
+    echo "FAIL: scheme-diff crashed against oxpinyin-capi"
+    cat "$CAPI_LOG"
+    cat "$CAPI_ERR"
+    rm -f "$CAPI_LOG" "$CAPI_ERR"
+    exit 1
+fi
+echo "oxpinyin-capi: ok"
+
+echo "--- oracle side ---"
+ORACLE_LOG="$(mktemp)"
+ORACLE_ERR="$(mktemp)"
+if [[ "$SCHEME" == "bopomofo" ]]; then
+    ORACLE_DRIVER=./chewing-diff
+    DRIVER_ARGS=("$ORACLE_SO" "$ORACLE_DATA")
+else
+    ORACLE_DRIVER=./scheme-diff
+    DRIVER_ARGS=("$ORACLE_SO" "$ORACLE_DATA" "${SCHEME_ARGS[@]}")
+fi
+if ! "$ORACLE_DRIVER" "${DRIVER_ARGS[@]}" \
+    > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
+    echo "FAIL: scheme-diff crashed against oracle"
+    cat "$ORACLE_LOG"
+    cat "$ORACLE_ERR"
+    rm -f "$CAPI_LOG" "$ORACLE_LOG" "$CAPI_ERR" "$ORACLE_ERR"
+    exit 1
+fi
+echo "oracle: ok"
+
+echo "--- differential ---"
+if [[ "${SCHEME_DIFF_PARSE_AUX_ONLY:-0}" = "1" ]]; then
+    filter_log() { grep -Ev 'candidate|sentence' "$1"; }
+    if diff -u <(filter_log "$ORACLE_LOG") <(filter_log "$CAPI_LOG") > /dev/null; then
+        echo "PARSE_AUX_IDENTICAL"
+        rm -f "$CAPI_LOG" "$ORACLE_LOG" "$CAPI_ERR" "$ORACLE_ERR"
+        exit 0
+    fi
+    echo "DIVERGENCE (parse/aux surface)"
+    diff -u <(filter_log "$ORACLE_LOG") <(filter_log "$CAPI_LOG") || true
+    rm -f "$CAPI_LOG" "$ORACLE_LOG" "$CAPI_ERR" "$ORACLE_ERR"
+    exit 2
+fi
+
+if diff -u "$ORACLE_LOG" "$CAPI_LOG" > /dev/null; then
+    echo "IDENTICAL"
+    rm -f "$CAPI_LOG" "$ORACLE_LOG" "$CAPI_ERR" "$ORACLE_ERR"
+    exit 0
+fi
+
+echo "DIVERGENCE"
+diff -u "$ORACLE_LOG" "$CAPI_LOG" || true
+rm -f "$CAPI_LOG" "$ORACLE_LOG" "$CAPI_ERR" "$ORACLE_ERR"
+exit 2

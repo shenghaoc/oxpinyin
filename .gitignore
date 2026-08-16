@@ -30,6 +30,8 @@ rustc-ice-*.txt
 /tools/bisection/train-diff
 /tools/bisection/import-diff
 /tools/bisection/frontend-import
+/tools/bisection/scheme-diff
+/tools/bisection/chewing-diff
 
 # macOS
 .DS_Store

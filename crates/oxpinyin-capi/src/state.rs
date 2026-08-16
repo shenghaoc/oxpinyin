@@ -8,10 +8,11 @@
 use std::ffi::CString;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicI32};
 
 use oxpinyin_core::{
-    Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey, UserCountDelta,
+    Cost, Dictionary, DoublePinyinParse, DoublePinyinScheme, LanguageModel, PhraseEntry,
+    PhraseToken, SyllableKey, UserCountDelta, ZhuyinParse, ZhuyinScheme,
 };
 use oxpinyin_data::{BigramLanguageModel, DictError, LmError, SystemDictionary};
 use oxpinyin_engine::{CandidateKind, Config, Session, StoragePaths};
@@ -137,6 +138,14 @@ pub(crate) struct CapiContext {
     /// Live `PINYIN_INCOMPLETE` bit. Shared with every instance so
     /// `pinyin_set_options` remasks already-allocated sessions.
     pub(crate) incomplete: Arc<AtomicBool>,
+    /// Live double-pinyin scheme. Shared with every instance so
+    /// `pinyin_set_double_pinyin_scheme` remasks already-allocated sessions.
+    pub(crate) double_scheme: Arc<AtomicI32>,
+    /// Live Zhuyin scheme. Shared with every instance so
+    /// `pinyin_set_zhuyin_scheme` remasks already-allocated sessions.
+    pub(crate) zhuyin_scheme: Arc<AtomicI32>,
+    /// Live `USE_TONE` bit for the bopomofo context.
+    pub(crate) use_tone: Arc<AtomicBool>,
 }
 
 /// Where [`CapiContext::new`] takes unigram counts from.
@@ -212,6 +221,9 @@ impl CapiContext {
             }),
             user,
             incomplete: Arc::new(AtomicBool::new(true)),
+            double_scheme: Arc::new(AtomicI32::new(DoublePinyinScheme::Ms as i32)),
+            zhuyin_scheme: Arc::new(AtomicI32::new(ZhuyinScheme::Standard as i32)),
+            use_tone: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -233,6 +245,9 @@ impl CapiContext {
             lm: None,
             user: Some(user),
             incomplete: Arc::new(AtomicBool::new(true)),
+            double_scheme: Arc::new(AtomicI32::new(DoublePinyinScheme::Ms as i32)),
+            zhuyin_scheme: Arc::new(AtomicI32::new(ZhuyinScheme::Standard as i32)),
+            use_tone: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -250,6 +265,13 @@ impl CapiContext {
             parsed_len: 0,
             user: self.user.clone(),
             incomplete: Arc::clone(&self.incomplete),
+            double_scheme: Arc::clone(&self.double_scheme),
+            zhuyin_scheme: Arc::clone(&self.zhuyin_scheme),
+            use_tone: Arc::clone(&self.use_tone),
+            double_parse: None,
+            double_input: String::new(),
+            zhuyin_parse: None,
+            zhuyin_input: String::new(),
         })
     }
 
@@ -451,6 +473,23 @@ pub(crate) struct CapiInstance {
     pub(crate) user: Option<UserStore>,
     /// Shared live `PINYIN_INCOMPLETE` flag from the owning context.
     pub(crate) incomplete: Arc<AtomicBool>,
+    /// Shared live double-pinyin scheme from the owning context.
+    pub(crate) double_scheme: Arc<AtomicI32>,
+    /// Most recent double-pinyin parse, when the last parse call was the
+    /// double-pinyin entry point. Used for aux text and candidate-offset
+    /// mapping back to the original double-pinyin input bytes.
+    pub(crate) double_parse: Option<DoublePinyinParse>,
+    /// Original double-pinyin input for sentence/preedit fallback display.
+    pub(crate) double_input: String,
+    /// Shared live Zhuyin scheme from the owning context.
+    pub(crate) zhuyin_scheme: Arc<AtomicI32>,
+    /// Most recent Zhuyin parse, when the last parse call was the chewing
+    /// entry point.
+    pub(crate) zhuyin_parse: Option<ZhuyinParse>,
+    /// Original Zhuyin input for sentence/preedit fallback display.
+    pub(crate) zhuyin_input: String,
+    /// Shared live `USE_TONE` flag from the owning context.
+    pub(crate) use_tone: Arc<AtomicBool>,
 }
 
 impl CapiInstance {
@@ -460,6 +499,10 @@ impl CapiInstance {
         self.session.reset();
         self.candidates.clear();
         self.parsed_len = 0;
+        self.double_parse = None;
+        self.double_input.clear();
+        self.zhuyin_parse = None;
+        self.zhuyin_input.clear();
     }
 }
 

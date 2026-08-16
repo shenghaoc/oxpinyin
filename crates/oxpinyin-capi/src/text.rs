@@ -5,6 +5,8 @@
 //! until their dedicated parsers/formatters land.
 
 use oxpinyin_core::graph::SegmentGraph;
+use oxpinyin_core::phonetic_initial;
+use oxpinyin_core::{DoublePinyinParse, ZhuyinParse};
 
 use crate::ffi::{ffi_catch, owned_cstr};
 use crate::state::instance_ref;
@@ -60,6 +62,131 @@ fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize) -> String {
     out
 }
 
+fn split_pinyin_key(key: &str) -> (String, String) {
+    let initial = phonetic_initial(key).unwrap_or("");
+    let yunmu = &key[initial.len()..];
+    (initial.to_owned(), yunmu.to_owned())
+}
+
+fn double_aux_text(
+    input: &str,
+    parse: &DoublePinyinParse,
+    parsed_len: usize,
+    cursor: usize,
+) -> String {
+    let parsed_len = parsed_len.min(input.len());
+    let cursor = cursor.min(parsed_len);
+    let keys = parse.keys();
+
+    let mut prefix = String::new();
+    for item in keys {
+        if cursor < item.end() {
+            break;
+        }
+        prefix.push_str(item.key().text());
+        prefix.push(' ');
+    }
+
+    let mut postfix = String::new();
+    for item in keys {
+        if cursor > item.start() {
+            continue;
+        }
+        postfix.push_str(item.key().text());
+        postfix.push(' ');
+    }
+
+    let mut middle = String::new();
+    let mut offset = 0;
+    for item in keys {
+        if cursor == offset {
+            middle.push('|');
+            break;
+        }
+
+        let begin = item.start();
+        let end = item.end();
+        if begin < cursor && cursor < end {
+            let (shengmu, yunmu) = split_pinyin_key(item.key().text());
+            match cursor - begin {
+                1 => {
+                    middle.push_str(&shengmu);
+                    middle.push('|');
+                    middle.push_str(&yunmu);
+                    middle.push(' ');
+                }
+                2 => {
+                    middle.push_str(&shengmu);
+                    middle.push_str(&yunmu);
+                    middle.push('|');
+                    middle.push(' ');
+                }
+                _ => middle.push('|'),
+            }
+            break;
+        }
+        offset = end;
+    }
+    if middle.is_empty() {
+        middle.push('|');
+    }
+
+    format!("{prefix}{middle}{postfix}")
+}
+
+fn chewing_aux_text(input: &str, parse: &ZhuyinParse, parsed_len: usize, cursor: usize) -> String {
+    let parsed_len = parsed_len.min(input.len());
+    let cursor = cursor.min(parsed_len);
+    let keys = parse.keys();
+
+    let mut prefix = String::new();
+    for item in keys {
+        if cursor < item.end() {
+            break;
+        }
+        prefix.push_str(&item.display());
+        prefix.push(' ');
+    }
+
+    let mut postfix = String::new();
+    for item in keys {
+        if cursor > item.start() {
+            continue;
+        }
+        postfix.push_str(&item.display());
+        postfix.push(' ');
+    }
+
+    let mut middle = String::new();
+    let mut offset = 0;
+    for item in keys {
+        if cursor == offset {
+            middle.push('|');
+            break;
+        }
+
+        let begin = item.start();
+        let end = item.end();
+        if begin < cursor && cursor < end {
+            let chars: Vec<char> = item.display().chars().collect();
+            let split = (cursor - begin).min(chars.len());
+            let left: String = chars[..split].iter().collect();
+            let right: String = chars[split..].iter().collect();
+            middle.push_str(&left);
+            middle.push('|');
+            middle.push_str(&right);
+            middle.push(' ');
+            break;
+        }
+        offset = end;
+    }
+    if middle.is_empty() {
+        middle.push('|');
+    }
+
+    format!("{prefix}{middle}{postfix}")
+}
+
 /// Get auxiliary text for full pinyin display.
 ///
 /// # C signature
@@ -113,11 +240,10 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
 ///
 /// Out-param `aux_text` is caller-owned (`g_free`).
 ///
-/// Provisional: returns the session preedit, not the full-pinyin formatter.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
     instance: *mut PinyinInstance,
-    _cursor: usize,
+    cursor: usize,
     aux_text: *mut *mut GChar,
 ) -> bool {
     if instance.is_null() {
@@ -127,12 +253,34 @@ pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let preedit = inst.session.preedit();
+        let Some(parse) = inst.double_parse.as_ref() else {
+            if !aux_text.is_null() {
+                // Upstream returns false with an allocated empty string when
+                // the matrix is empty (pinyin.cpp:3442-3445).
+                let owned = owned_cstr("");
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *aux_text = owned;
+                }
+            }
+            return false;
+        };
+        if parse.keys().is_empty() {
+            if !aux_text.is_null() {
+                let owned = owned_cstr("");
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *aux_text = owned;
+                }
+            }
+            return false;
+        }
+        let text = double_aux_text(&inst.double_input, parse, inst.parsed_len, cursor);
         if !aux_text.is_null() {
             // SAFETY: Null-checked above. `owned_cstr` returns null on an
             // interior NUL or allocation failure; otherwise ownership
             // transfers to the caller, which frees it with `g_free`.
-            let owned = owned_cstr(preedit.text());
+            let owned = owned_cstr(&text);
             // SAFETY: Null-checked above.
             unsafe {
                 *aux_text = owned;
@@ -156,11 +304,10 @@ pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
 ///
 /// Out-param `aux_text` is caller-owned (`g_free`).
 ///
-/// Provisional: returns the session preedit, not the full-pinyin formatter.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_chewing_auxiliary_text(
     instance: *mut PinyinInstance,
-    _cursor: usize,
+    cursor: usize,
     aux_text: *mut *mut GChar,
 ) -> bool {
     if instance.is_null() {
@@ -170,12 +317,32 @@ pub extern "C" fn pinyin_get_chewing_auxiliary_text(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let preedit = inst.session.preedit();
+        let Some(parse) = inst.zhuyin_parse.as_ref() else {
+            if !aux_text.is_null() {
+                let owned = owned_cstr("");
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *aux_text = owned;
+                }
+            }
+            return false;
+        };
+        if parse.keys().is_empty() {
+            if !aux_text.is_null() {
+                let owned = owned_cstr("");
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *aux_text = owned;
+                }
+            }
+            return false;
+        }
+        let text = chewing_aux_text(&inst.zhuyin_input, parse, inst.parsed_len, cursor);
         if !aux_text.is_null() {
             // SAFETY: Null-checked above. `owned_cstr` returns null on an
             // interior NUL or allocation failure; otherwise ownership
             // transfers to the caller, which frees it with `g_free`.
-            let owned = owned_cstr(preedit.text());
+            let owned = owned_cstr(&text);
             // SAFETY: Null-checked above.
             unsafe {
                 *aux_text = owned;

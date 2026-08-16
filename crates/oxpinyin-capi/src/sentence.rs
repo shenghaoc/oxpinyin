@@ -3,6 +3,8 @@
 use std::ffi::CString;
 use std::os::raw::c_char;
 
+use oxpinyin_core::{DoublePinyinParse, ZhuyinParse};
+
 use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance};
@@ -75,7 +77,22 @@ pub extern "C" fn pinyin_get_sentence(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        if !inst.session.is_composing() {
+        let text = if inst
+            .zhuyin_parse
+            .as_ref()
+            .is_some_and(|parse| !parse.keys().is_empty())
+        {
+            inst.zhuyin_input.clone()
+        } else if inst
+            .double_parse
+            .as_ref()
+            .is_some_and(|parse| !parse.keys().is_empty())
+        {
+            inst.double_input.clone()
+        } else {
+            inst.session.preedit().text().to_owned()
+        };
+        if text.is_empty() {
             if !sentence.is_null() {
                 // SAFETY: Null-checked above.
                 unsafe {
@@ -84,12 +101,11 @@ pub extern "C" fn pinyin_get_sentence(
             }
             return false;
         }
-        let preedit = inst.session.preedit();
         if !sentence.is_null() {
             // SAFETY: Null-checked above. `owned_cstr` returns null on an
             // interior NUL or allocation failure; otherwise ownership
             // transfers to the caller, which frees it with `g_free`.
-            let owned = owned_cstr(preedit.text());
+            let owned = owned_cstr(&text);
             // SAFETY: Null-checked above.
             unsafe {
                 *sentence = owned;
@@ -100,6 +116,38 @@ pub extern "C" fn pinyin_get_sentence(
         }
         true
     })
+}
+
+/// Maps a byte offset in the transformed `'`-joined full-pinyin string back
+/// to the original double-pinyin input offset.
+///
+/// Candidate consumption always lands on a key boundary, so the mapping is
+/// exact there; an offset inside a transformed key is clamped to that key's
+/// original end (the same place a candidate would consume it).
+fn double_original_offset(parse: &DoublePinyinParse, offset: usize) -> usize {
+    let mut transformed = 0;
+    for item in parse.keys() {
+        let key_len = item.key().text().len();
+        let boundary = transformed + key_len;
+        if offset <= boundary {
+            return item.end();
+        }
+        transformed = boundary + 1; // apostrophe between keys
+    }
+    parse.consumed()
+}
+
+fn zhuyin_original_offset(parse: &ZhuyinParse, offset: usize) -> usize {
+    let mut transformed = 0;
+    for item in parse.keys() {
+        let key_len = item.key().text().len();
+        let boundary = transformed + key_len;
+        if offset <= boundary {
+            return item.end();
+        }
+        transformed = boundary + 1; // apostrophe between keys
+    }
+    parse.consumed()
 }
 
 /// Get character offset from a lookup byte offset within a sentence.
@@ -173,17 +221,29 @@ pub extern "C" fn pinyin_guess_candidates(
         {
             return false;
         }
+        if !inst.session.is_composing() {
+            return false;
+        }
         inst.candidates.clear();
+        let double_parse = inst.double_parse.clone();
+        let zhuyin_parse = inst.zhuyin_parse.clone();
         for cand in inst.session.candidates().iter() {
             let text = match CString::new(cand.text().to_owned()) {
                 Ok(s) => s,
                 Err(_) => continue,
             };
+            let consumed_bytes = if let Some(parse) = zhuyin_parse.as_ref() {
+                zhuyin_original_offset(parse, cand.consumed_bytes())
+            } else if let Some(parse) = double_parse.as_ref() {
+                double_original_offset(parse, cand.consumed_bytes())
+            } else {
+                cand.consumed_bytes()
+            };
             inst.candidates.push(CapiCandidate {
                 text,
                 kind: cand.kind(),
                 nbest_index: 0,
-                consumed_bytes: cand.consumed_bytes(),
+                consumed_bytes,
                 token: cand.token(),
             });
         }
