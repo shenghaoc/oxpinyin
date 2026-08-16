@@ -13,9 +13,7 @@
 
 use core::fmt;
 
-use crate::{
-    Completeness, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEYS, MAX_SYLLABLE_LEN, SyllableKey,
-};
+use crate::{Completeness, MAX_SYLLABLE_LEN, OptionBits, SyllableKey};
 
 /// Largest input the graph accepts, in bytes.
 ///
@@ -180,6 +178,21 @@ impl SegmentGraph {
     /// stray apostrophes, the empty input — builds a graph, possibly one with
     /// no edges at all.
     pub fn build(input: &[u8]) -> Result<Self, GraphError> {
+        Self::build_with_options(input, OptionBits::default())
+    }
+
+    /// Builds the graph for `input` under parser option bits.
+    ///
+    /// [`Self::build`] is this method with [`OptionBits::default`], so the
+    /// all-off path stays bit-identical to the frozen parser. The option bits
+    /// only admit correction/ambiguity *spellings*; matrix-level fuzzy
+    /// alternates are added later by the engine scan matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::InputTooLong`] for an input beyond
+    /// [`MAX_GRAPH_INPUT`].
+    pub fn build_with_options(input: &[u8], options: OptionBits) -> Result<Self, GraphError> {
         if input.len() > MAX_GRAPH_INPUT {
             return Err(GraphError::InputTooLong {
                 len: input.len(),
@@ -193,7 +206,7 @@ impl SegmentGraph {
 
         for node in 0..node_count {
             starts.push(u32::try_from(edges.len()).unwrap_or(u32::MAX));
-            emit_edges(input, node, &mut edges);
+            emit_edges(input, node, options, &mut edges);
         }
         starts.push(u32::try_from(edges.len()).unwrap_or(u32::MAX));
 
@@ -427,10 +440,10 @@ impl FewestKeys {
 
 /// Emits every edge leaving `node`, longest key first.
 ///
-/// At a fixed position a given length matches at most one key, because the
-/// complete and initial-only inventories are disjoint sets of exact spellings.
+/// At a fixed position a given length matches at most one key: the canonical,
+/// initial-only, and option-gated alias spellings are disjoint exact strings.
 /// So one edge per length, and the emission order is total.
-fn emit_edges(input: &[u8], node: usize, edges: &mut Vec<Edge>) {
+fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Edge>) {
     let Some(syllable_start) = key_start(input, node) else {
         return;
     };
@@ -451,7 +464,10 @@ fn emit_edges(input: &[u8], node: usize, edges: &mut Vec<Edge>) {
         if !text.iter().all(u8::is_ascii_lowercase) {
             continue;
         }
-        if longest_complete.is_none() && lookup(text, &FULL_PINYIN_SYLLABLES).is_some() {
+        if longest_complete.is_none()
+            && key_for_spelling(text, options)
+                .is_some_and(|key| key.completeness() == Completeness::Complete)
+        {
             longest_complete = Some(length);
             break;
         }
@@ -464,20 +480,18 @@ fn emit_edges(input: &[u8], node: usize, edges: &mut Vec<Edge>) {
             continue;
         }
 
-        let kind = if lookup(text, &FULL_PINYIN_SYLLABLES).is_some() {
-            if longest_complete == Some(length) {
-                EdgeKind::Exact
-            } else {
-                EdgeKind::Segmentation
-            }
-        } else if lookup(text, &INCOMPLETE_PINYIN_KEYS).is_some() {
-            EdgeKind::Incomplete
-        } else {
+        let Some(key) = key_for_spelling(text, options) else {
             continue;
         };
-
-        let Some(key) = ascii_key(text) else {
-            continue;
+        let kind = match key.completeness() {
+            Completeness::Complete => {
+                if longest_complete == Some(length) {
+                    EdgeKind::Exact
+                } else {
+                    EdgeKind::Segmentation
+                }
+            }
+            Completeness::Partial => EdgeKind::Incomplete,
         };
         let (Ok(from), Ok(to), Ok(start)) = (
             u32::try_from(node),
@@ -519,14 +533,10 @@ fn key_start(input: &[u8], node: usize) -> Option<usize> {
     Some(node)
 }
 
-fn lookup(text: &[u8], table: &[&'static str]) -> Option<&'static str> {
-    table.iter().copied().find(|entry| entry.as_bytes() == text)
-}
-
-fn ascii_key(text: &[u8]) -> Option<SyllableKey> {
+fn key_for_spelling(text: &[u8], options: OptionBits) -> Option<SyllableKey> {
     core::str::from_utf8(text)
         .ok()
-        .and_then(SyllableKey::from_text)
+        .and_then(|spelling| SyllableKey::from_option_text(spelling, options))
 }
 
 #[cfg(test)]

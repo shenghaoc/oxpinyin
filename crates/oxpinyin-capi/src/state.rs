@@ -8,11 +8,12 @@
 use std::ffi::CString;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
 use oxpinyin_core::{
-    Cost, Dictionary, DoublePinyinParse, DoublePinyinScheme, LanguageModel, PhraseEntry,
-    PhraseToken, SyllableKey, UserCountDelta, ZhuyinParse, ZhuyinScheme,
+    Cost, Dictionary, DoublePinyinParse, DoublePinyinScheme, LanguageModel, OptionBits,
+    PINYIN_INCOMPLETE, PhraseEntry, PhraseToken, SyllableKey, UserCountDelta, ZhuyinParse,
+    ZhuyinScheme,
 };
 use oxpinyin_data::{BigramLanguageModel, DictError, LmError, SystemDictionary};
 use oxpinyin_engine::{CandidateKind, Config, Session, StoragePaths};
@@ -146,6 +147,9 @@ pub(crate) struct CapiContext {
     pub(crate) zhuyin_scheme: Arc<AtomicI32>,
     /// Live `USE_TONE` bit for the bopomofo context.
     pub(crate) use_tone: Arc<AtomicBool>,
+    /// Live option word. Shared with every instance so `pinyin_set_options`
+    /// remasks already-allocated sessions.
+    pub(crate) options: Arc<AtomicU32>,
 }
 
 /// Where [`CapiContext::new`] takes unigram counts from.
@@ -224,6 +228,7 @@ impl CapiContext {
             double_scheme: Arc::new(AtomicI32::new(DoublePinyinScheme::Ms as i32)),
             zhuyin_scheme: Arc::new(AtomicI32::new(ZhuyinScheme::Standard as i32)),
             use_tone: Arc::new(AtomicBool::new(false)),
+            options: Arc::new(AtomicU32::new(PINYIN_INCOMPLETE)),
         })
     }
 
@@ -248,6 +253,7 @@ impl CapiContext {
             double_scheme: Arc::new(AtomicI32::new(DoublePinyinScheme::Ms as i32)),
             zhuyin_scheme: Arc::new(AtomicI32::new(ZhuyinScheme::Standard as i32)),
             use_tone: Arc::new(AtomicBool::new(false)),
+            options: Arc::new(AtomicU32::new(PINYIN_INCOMPLETE)),
         })
     }
 
@@ -268,6 +274,7 @@ impl CapiContext {
             double_scheme: Arc::clone(&self.double_scheme),
             zhuyin_scheme: Arc::clone(&self.zhuyin_scheme),
             use_tone: Arc::clone(&self.use_tone),
+            options: Arc::clone(&self.options),
             double_parse: None,
             double_input: String::new(),
             zhuyin_parse: None,
@@ -490,6 +497,8 @@ pub(crate) struct CapiInstance {
     pub(crate) zhuyin_input: String,
     /// Shared live `USE_TONE` flag from the owning context.
     pub(crate) use_tone: Arc<AtomicBool>,
+    /// Shared live option word from the owning context.
+    pub(crate) options: Arc<AtomicU32>,
 }
 
 impl CapiInstance {
@@ -503,6 +512,11 @@ impl CapiInstance {
         self.double_input.clear();
         self.zhuyin_parse = None;
         self.zhuyin_input.clear();
+    }
+
+    /// The current live option word.
+    pub(crate) fn options(&self) -> OptionBits {
+        OptionBits::from_bits(self.options.load(Ordering::Relaxed))
     }
 }
 

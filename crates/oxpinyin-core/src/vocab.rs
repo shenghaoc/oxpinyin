@@ -8,25 +8,36 @@
 
 use core::fmt;
 
-use crate::{Completeness, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEYS};
+use crate::options::{
+    OptionBits, PINYIN_AMB_AN_ANG, PINYIN_AMB_C_CH, PINYIN_AMB_EN_ENG, PINYIN_AMB_F_H,
+    PINYIN_AMB_G_K, PINYIN_AMB_IN_ING, PINYIN_AMB_L_N, PINYIN_AMB_L_R, PINYIN_AMB_S_SH,
+    PINYIN_AMB_Z_ZH,
+};
+use crate::{
+    Completeness, FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
+    INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLE_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
+    option_alias_canonical,
+};
 
 /// Number of keys addressable by a [`SyllableKey`].
 ///
-/// **Not constant across stages.** This is 428 for Stage 1 — the 405 complete
-/// syllables plus the 23 initial-only keys. Stage 2 additions (fuzzy
-/// spellings, correction aliases, a second input scheme) take ids *after* the
-/// current end rather than renumbering, so the existing ids stay stable while
-/// this count grows. Anything that persists a key id must record the
-/// inventory it was written against; anything that sizes an array by this
-/// value must recompute it rather than hard-code 428.
-pub const SYLLABLE_KEY_COUNT: usize = FULL_PINYIN_SYLLABLES.len() + INCOMPLETE_PINYIN_KEYS.len();
+/// **Not constant across stages.** This is 430 for Stage 1 — the 405 complete
+/// syllables, the 23 initial-only keys, and the two option-only correction
+/// targets (`eng`, `nun`). Stage 2 additions take ids *after* the current end
+/// rather than renumbering, so the existing ids stay stable while this count
+/// grows. Anything that persists a key id must record the inventory it was
+/// written against; anything that sizes an array by this value must recompute
+/// it rather than hard-code 430.
+pub const SYLLABLE_KEY_COUNT: usize =
+    FULL_PINYIN_SYLLABLE_COUNT + INCOMPLETE_PINYIN_KEY_COUNT + OPTION_ONLY_COMPLETE_SYLLABLE_COUNT;
 
 /// One decoder-visible pinyin key: a complete syllable or an initial-only key.
 ///
 /// Ids are dense and frozen: `0..405` are [`FULL_PINYIN_SYLLABLES`] in their
-/// pinned upstream numeric-ID order, and `405..428` are
-/// [`INCOMPLETE_PINYIN_KEYS`] in ascending byte order. The ordering is part of
-/// the decoder's determinism, so it is never derived from a hash map.
+/// pinned upstream numeric-ID order, `405..428` are
+/// [`INCOMPLETE_PINYIN_KEYS`] in ascending byte order, and `428..430` are
+/// [`OPTION_ONLY_COMPLETE_SYLLABLES`]. The ordering is part of the decoder's
+/// determinism, so it is never derived from a hash map.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SyllableKey(u16);
 
@@ -46,7 +57,97 @@ impl SyllableKey {
         INCOMPLETE_PINYIN_KEYS
             .iter()
             .position(|key| *key == text)
-            .and_then(|index| Self::from_index(FULL_PINYIN_SYLLABLES.len() + index))
+            .and_then(|index| Self::from_index(FULL_PINYIN_SYLLABLE_COUNT + index))
+    }
+
+    /// Returns the key for a canonical spelling, including option-only
+    /// correction targets that [`Self::from_text`] deliberately omits.
+    #[must_use]
+    pub fn from_canonical_text(text: &str) -> Option<Self> {
+        if let Some(index) = FULL_PINYIN_SYLLABLES
+            .iter()
+            .position(|syllable| *syllable == text)
+        {
+            return Self::from_index(index);
+        }
+        if let Some(index) = INCOMPLETE_PINYIN_KEYS.iter().position(|key| *key == text) {
+            return Self::from_index(FULL_PINYIN_SYLLABLE_COUNT + index);
+        }
+        OPTION_ONLY_COMPLETE_SYLLABLES
+            .iter()
+            .position(|syllable| *syllable == text)
+            .and_then(|index| {
+                Self::from_index(FULL_PINYIN_SYLLABLE_COUNT + INCOMPLETE_PINYIN_KEY_COUNT + index)
+            })
+    }
+
+    /// Returns the key for `text` under parser option bits.
+    ///
+    /// Exact spellings work without an option. Correction aliases and the
+    /// parser-table ambiguity aliases are admitted only when their bit is set.
+    #[must_use]
+    pub fn from_option_text(text: &str, options: OptionBits) -> Option<Self> {
+        if let Some(key) = Self::from_text(text) {
+            return Some(key);
+        }
+        let canonical = option_alias_canonical(text, options)?;
+        Self::from_canonical_text(canonical)
+    }
+
+    /// Matrix-level fuzzy alternates for this key, in upstream append order.
+    ///
+    /// This reproduces `fuzzy_syllable_step`
+    /// (`phonetic_key_matrix.cpp:238-315`). The alternates share this key's
+    /// byte span; the caller decides whether the resulting spelling is a real
+    /// key.
+    #[must_use]
+    pub fn fuzzy_alternatives(self, options: OptionBits) -> Vec<Self> {
+        let text = self.text();
+        let mut out = Vec::new();
+
+        if options.contains(PINYIN_AMB_C_CH) {
+            swap_initial(text, "c", "ch", &mut out);
+            swap_initial(text, "ch", "c", &mut out);
+        }
+        if options.contains(PINYIN_AMB_Z_ZH) {
+            swap_initial(text, "z", "zh", &mut out);
+            swap_initial(text, "zh", "z", &mut out);
+        }
+        if options.contains(PINYIN_AMB_S_SH) {
+            swap_initial(text, "s", "sh", &mut out);
+            swap_initial(text, "sh", "s", &mut out);
+        }
+        if options.contains(PINYIN_AMB_L_R) {
+            swap_initial(text, "l", "r", &mut out);
+            swap_initial(text, "r", "l", &mut out);
+        }
+        if options.contains(PINYIN_AMB_L_N) {
+            swap_initial(text, "l", "n", &mut out);
+            swap_initial(text, "n", "l", &mut out);
+        }
+        if options.contains(PINYIN_AMB_F_H) {
+            swap_initial(text, "f", "h", &mut out);
+            swap_initial(text, "h", "f", &mut out);
+        }
+        if options.contains(PINYIN_AMB_G_K) {
+            swap_initial(text, "g", "k", &mut out);
+            swap_initial(text, "k", "g", &mut out);
+        }
+
+        if options.contains(PINYIN_AMB_AN_ANG) {
+            swap_final(text, "an", "ang", &mut out);
+            swap_final(text, "ang", "an", &mut out);
+        }
+        if options.contains(PINYIN_AMB_EN_ENG) {
+            swap_final(text, "en", "eng", &mut out);
+            swap_final(text, "eng", "en", &mut out);
+        }
+        if options.contains(PINYIN_AMB_IN_ING) {
+            swap_final(text, "in", "ing", &mut out);
+            swap_final(text, "ing", "in", &mut out);
+        }
+
+        out
     }
 
     /// Returns the key with dense id `index`, or `None` when out of range.
@@ -68,9 +169,16 @@ impl SyllableKey {
     #[must_use]
     pub fn text(self) -> &'static str {
         let index = self.index();
-        FULL_PINYIN_SYLLABLES
-            .get(index)
-            .or_else(|| INCOMPLETE_PINYIN_KEYS.get(index - FULL_PINYIN_SYLLABLES.len()))
+        if let Some(syllable) = FULL_PINYIN_SYLLABLES.get(index) {
+            return syllable;
+        }
+        let incomplete_start = FULL_PINYIN_SYLLABLE_COUNT;
+        if let Some(key) = INCOMPLETE_PINYIN_KEYS.get(index - incomplete_start) {
+            return key;
+        }
+        let option_start = FULL_PINYIN_SYLLABLE_COUNT + INCOMPLETE_PINYIN_KEY_COUNT;
+        OPTION_ONLY_COMPLETE_SYLLABLES
+            .get(index - option_start)
             .copied()
             .unwrap_or_default()
     }
@@ -78,7 +186,9 @@ impl SyllableKey {
     /// Whether this key is a complete syllable or an initial-only key.
     #[must_use]
     pub const fn completeness(self) -> Completeness {
-        if self.index() < FULL_PINYIN_SYLLABLES.len() {
+        if self.index() < FULL_PINYIN_SYLLABLE_COUNT
+            || self.index() >= FULL_PINYIN_SYLLABLE_COUNT + INCOMPLETE_PINYIN_KEY_COUNT
+        {
             Completeness::Complete
         } else {
             Completeness::Partial
@@ -98,6 +208,30 @@ impl SyllableKey {
     #[must_use]
     pub fn is_empty(self) -> bool {
         false
+    }
+}
+
+fn swap_initial(text: &str, from: &str, to: &str, out: &mut Vec<SyllableKey>) {
+    let Some(rest) = text.strip_prefix(from) else {
+        return;
+    };
+    let mut candidate = String::with_capacity(to.len() + rest.len());
+    candidate.push_str(to);
+    candidate.push_str(rest);
+    if let Some(key) = SyllableKey::from_canonical_text(&candidate) {
+        out.push(key);
+    }
+}
+
+fn swap_final(text: &str, from: &str, to: &str, out: &mut Vec<SyllableKey>) {
+    let Some(prefix) = text.strip_suffix(from) else {
+        return;
+    };
+    let mut candidate = String::with_capacity(prefix.len() + to.len());
+    candidate.push_str(prefix);
+    candidate.push_str(to);
+    if let Some(key) = SyllableKey::from_canonical_text(&candidate) {
+        out.push(key);
     }
 }
 
@@ -184,14 +318,17 @@ impl PhraseEntry {
 #[cfg(test)]
 mod tests {
     use super::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
-    use crate::{Completeness, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEYS};
+    use crate::OptionBits;
+    use crate::{
+        Completeness, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLES,
+    };
 
     #[test]
     fn every_frozen_key_round_trips_through_its_id() {
         for index in 0..SYLLABLE_KEY_COUNT {
             let key = SyllableKey::from_index(index).expect("index is in range");
             assert_eq!(key.index(), index);
-            assert_eq!(SyllableKey::from_text(key.text()), Some(key));
+            assert_eq!(SyllableKey::from_canonical_text(key.text()), Some(key));
             assert_eq!(key.len(), key.text().len());
             assert!(!key.is_empty());
         }
@@ -209,6 +346,11 @@ mod tests {
             assert_eq!(key.completeness(), Completeness::Partial);
             assert!(key.index() >= FULL_PINYIN_SYLLABLES.len());
         }
+        for option_only in OPTION_ONLY_COMPLETE_SYLLABLES {
+            let key = SyllableKey::from_canonical_text(option_only).expect("option-only key");
+            assert_eq!(key.completeness(), Completeness::Complete);
+            assert!(key.index() >= FULL_PINYIN_SYLLABLES.len() + INCOMPLETE_PINYIN_KEYS.len());
+        }
     }
 
     #[test]
@@ -216,6 +358,26 @@ mod tests {
         for text in ["", "NI", "ni2", "qqq", "\u{4f60}", "lv1"] {
             assert_eq!(SyllableKey::from_text(text), None, "text: {text:?}");
         }
+    }
+
+    #[test]
+    fn option_text_resolves_correction_aliases_under_their_bits() {
+        use crate::{PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_MG_NG};
+
+        let gn = OptionBits::from_bits(PINYIN_CORRECT_GN_NG);
+        let mg = OptionBits::from_bits(PINYIN_CORRECT_MG_NG);
+        assert_eq!(
+            SyllableKey::from_option_text("agn", gn).map(SyllableKey::text),
+            Some("ang")
+        );
+        assert_eq!(
+            SyllableKey::from_option_text("amg", mg).map(SyllableKey::text),
+            Some("ang")
+        );
+        assert_eq!(
+            SyllableKey::from_option_text("amg", OptionBits::default()),
+            None
+        );
     }
 
     #[test]

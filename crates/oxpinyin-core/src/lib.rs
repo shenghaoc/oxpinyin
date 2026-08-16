@@ -8,6 +8,7 @@ pub mod cost;
 pub mod fixture;
 pub mod graph;
 pub mod kbest;
+pub mod options;
 mod parser;
 mod scheme;
 pub mod scoring;
@@ -15,6 +16,13 @@ mod syllables;
 mod vocab;
 mod zhuyin_map;
 
+pub use options::{
+    DYNAMIC_ADJUST, OptionBits, PINYIN_AMB_ALL, PINYIN_AMB_AN_ANG, PINYIN_AMB_C_CH,
+    PINYIN_AMB_EN_ENG, PINYIN_AMB_F_H, PINYIN_AMB_G_K, PINYIN_AMB_IN_ING, PINYIN_AMB_L_N,
+    PINYIN_AMB_L_R, PINYIN_AMB_S_SH, PINYIN_AMB_Z_ZH, PINYIN_CORRECT_ALL, PINYIN_CORRECT_GN_NG,
+    PINYIN_CORRECT_IOU_IU, PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_ON_ONG, PINYIN_CORRECT_UE_VE,
+    PINYIN_CORRECT_UEI_UI, PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_V_U, PINYIN_INCOMPLETE,
+};
 pub use parser::{
     Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
 };
@@ -24,7 +32,9 @@ pub use scheme::{
 };
 pub use syllables::{
     FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
-    INCOMPLETE_PINYIN_KEYS, MAX_SYLLABLE_LEN, phonetic_initial, syllable_initial,
+    INCOMPLETE_PINYIN_KEYS, MAX_SYLLABLE_LEN, OPTION_ONLY_COMPLETE_SYLLABLE_COUNT,
+    OPTION_ONLY_COMPLETE_SYLLABLES, canonical_complete_syllable, option_alias_canonical,
+    phonetic_initial, syllable_initial,
 };
 pub use vocab::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
 

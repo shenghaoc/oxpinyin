@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use crate::{FULL_PINYIN_SYLLABLES, InputParser, MAX_SYLLABLE_LEN};
+use crate::{FULL_PINYIN_SYLLABLES, InputParser, MAX_SYLLABLE_LEN, OptionBits, SyllableKey};
 
 const OVER_LIMIT: usize = MAX_PARSE_RESULTS + 1;
 
@@ -72,7 +72,24 @@ impl InputParser for FullPinyinParser {
     type Error = ParseError;
 
     fn parse(&self, input: &[u8]) -> Result<Vec<Self::Parse>, Self::Error> {
-        parse_input(input)
+        parse_input(input, OptionBits::default())
+    }
+}
+
+impl FullPinyinParser {
+    /// Parses `input` under parser option bits.
+    ///
+    /// The [`InputParser::parse`] implementation is this method with
+    /// [`OptionBits::default`], so the frozen all-off path is unchanged.
+    /// Correction aliases and the parser-table ambiguity aliases become
+    /// complete syllables only when their bit is set; matrix-level fuzzy
+    /// alternates are not parser paths.
+    pub fn parse_with_options(
+        &self,
+        input: &[u8],
+        options: OptionBits,
+    ) -> Result<Vec<ParseResult>, ParseError> {
+        parse_input(input, options)
     }
 }
 
@@ -98,7 +115,7 @@ impl Frame {
     }
 }
 
-fn parse_input(input: &[u8]) -> Result<Vec<ParseResult>, ParseError> {
+fn parse_input(input: &[u8], options: OptionBits) -> Result<Vec<ParseResult>, ParseError> {
     let mut accumulated = vec![Vec::new()];
     let mut cursor = 0;
     let mut pending_separator = None;
@@ -115,7 +132,7 @@ fn parse_input(input: &[u8]) -> Result<Vec<ParseResult>, ParseError> {
             return Ok(finish(accumulated, input, remainder_start));
         }
 
-        let group = parse_group(&input[group_start..group_end], group_start)?;
+        let group = parse_group(&input[group_start..group_end], group_start, options)?;
         if group.consumed == 0 {
             let remainder_start = pending_separator.unwrap_or(group_start);
             return Ok(finish(accumulated, input, remainder_start));
@@ -144,39 +161,43 @@ fn parse_input(input: &[u8]) -> Result<Vec<ParseResult>, ParseError> {
     }
 }
 
-fn parse_group(group: &[u8], absolute_start: usize) -> Result<GroupPaths, ParseError> {
-    let complete_count = count_complete_paths(group);
+fn parse_group(
+    group: &[u8],
+    absolute_start: usize,
+    options: OptionBits,
+) -> Result<GroupPaths, ParseError> {
+    let complete_count = count_complete_paths(group, options);
     if complete_count > MAX_PARSE_RESULTS {
         return Err(too_many_alternatives());
     }
     if complete_count != 0 {
         return Ok(GroupPaths {
-            paths: enumerate_complete_paths(group, absolute_start, complete_count),
+            paths: enumerate_complete_paths(group, absolute_start, complete_count, options),
             consumed: group.len(),
             complete: true,
         });
     }
 
-    let target = maximal_fallback_end(group);
-    let fallback_count = count_fallback_paths(group, target);
+    let target = maximal_fallback_end(group, options);
+    let fallback_count = count_fallback_paths(group, target, options);
     if fallback_count > MAX_PARSE_RESULTS {
         return Err(too_many_alternatives());
     }
 
     Ok(GroupPaths {
-        paths: enumerate_fallback_paths(group, absolute_start, target, fallback_count),
+        paths: enumerate_fallback_paths(group, absolute_start, target, fallback_count, options),
         consumed: target,
         complete: false,
     })
 }
 
-fn count_complete_paths(group: &[u8]) -> usize {
+fn count_complete_paths(group: &[u8], options: OptionBits) -> usize {
     let mut counts = vec![0_usize; group.len() + 1];
     counts[group.len()] = 1;
 
     for cursor in (0..group.len()).rev() {
         for length in (1..=MAX_SYLLABLE_LEN.min(group.len() - cursor)).rev() {
-            if complete_syllable(&group[cursor..cursor + length]).is_some() {
+            if complete_syllable(&group[cursor..cursor + length], options).is_some() {
                 counts[cursor] = bounded_add(counts[cursor], counts[cursor + length]);
             }
         }
@@ -189,6 +210,7 @@ fn enumerate_complete_paths(
     group: &[u8],
     absolute_start: usize,
     expected: usize,
+    options: OptionBits,
 ) -> Vec<Vec<ParsedSyllable>> {
     let mut results = Vec::with_capacity(expected);
     let mut path = Vec::new();
@@ -209,7 +231,7 @@ fn enumerate_complete_paths(
         while frame.next_length != 0 {
             let length = frame.next_length;
             frame.next_length -= 1;
-            if let Some(syllable) = complete_syllable(&group[cursor..cursor + length]) {
+            if let Some(syllable) = complete_syllable(&group[cursor..cursor + length], options) {
                 next = Some((syllable, length));
                 break;
             }
@@ -241,7 +263,7 @@ fn enumerate_complete_paths(
     results
 }
 
-fn maximal_fallback_end(group: &[u8]) -> usize {
+fn maximal_fallback_end(group: &[u8], options: OptionBits) -> usize {
     let mut reachable = vec![false; group.len() + 1];
     reachable[0] = true;
     let mut target = 0;
@@ -253,7 +275,7 @@ fn maximal_fallback_end(group: &[u8]) -> usize {
 
         target = target.max(cursor + longest_partial_prefix(&group[cursor..]));
         for length in 1..=MAX_SYLLABLE_LEN.min(group.len() - cursor) {
-            if complete_syllable(&group[cursor..cursor + length]).is_some() {
+            if complete_syllable(&group[cursor..cursor + length], options).is_some() {
                 reachable[cursor + length] = true;
                 target = target.max(cursor + length);
             }
@@ -263,7 +285,7 @@ fn maximal_fallback_end(group: &[u8]) -> usize {
     target
 }
 
-fn count_fallback_paths(group: &[u8], target: usize) -> usize {
+fn count_fallback_paths(group: &[u8], target: usize, options: OptionBits) -> usize {
     let mut ways = vec![0_usize; target + 1];
     ways[0] = 1;
 
@@ -273,7 +295,7 @@ fn count_fallback_paths(group: &[u8], target: usize) -> usize {
         }
 
         for length in 1..=MAX_SYLLABLE_LEN.min(target - cursor) {
-            if complete_syllable(&group[cursor..cursor + length]).is_some() {
+            if complete_syllable(&group[cursor..cursor + length], options).is_some() {
                 ways[cursor + length] = bounded_add(ways[cursor + length], ways[cursor]);
             }
         }
@@ -293,6 +315,7 @@ fn enumerate_fallback_paths(
     absolute_start: usize,
     target: usize,
     expected: usize,
+    options: OptionBits,
 ) -> Vec<Vec<ParsedSyllable>> {
     let mut results = Vec::with_capacity(expected);
     let mut path = Vec::new();
@@ -316,7 +339,7 @@ fn enumerate_fallback_paths(
             let end = cursor + length;
             let bytes = &group[cursor..end];
 
-            if let Some(syllable) = complete_syllable(bytes) {
+            if let Some(syllable) = complete_syllable(bytes, options) {
                 path.push(segment(
                     syllable,
                     absolute_start + cursor,
@@ -395,11 +418,14 @@ fn finish(
         .collect()
 }
 
-fn complete_syllable(bytes: &[u8]) -> Option<&'static str> {
-    FULL_PINYIN_SYLLABLES
-        .iter()
-        .copied()
-        .find(|syllable| syllable.as_bytes() == bytes)
+fn complete_syllable(bytes: &[u8], options: OptionBits) -> Option<&'static str> {
+    let spelling = core::str::from_utf8(bytes).ok()?;
+    let key = SyllableKey::from_option_text(spelling, options)?;
+    if key.completeness() == crate::Completeness::Complete {
+        Some(key.text())
+    } else {
+        None
+    }
 }
 
 fn longest_partial_prefix(bytes: &[u8]) -> usize {
@@ -410,7 +436,7 @@ fn longest_partial_prefix(bytes: &[u8]) -> usize {
 }
 
 fn is_partial_only(bytes: &[u8]) -> bool {
-    complete_syllable(bytes).is_none()
+    complete_syllable(bytes, OptionBits::default()).is_none()
         && FULL_PINYIN_SYLLABLES
             .iter()
             .any(|syllable| bytes.len() < syllable.len() && syllable.as_bytes().starts_with(bytes))

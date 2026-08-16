@@ -1,5 +1,11 @@
 //! Frozen complete full-pinyin syllable inventory.
 
+use crate::options::{
+    OptionBits, PINYIN_AMB_S_SH, PINYIN_AMB_Z_ZH, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU,
+    PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_ON_ONG, PINYIN_CORRECT_UE_VE, PINYIN_CORRECT_UEI_UI,
+    PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_V_U,
+};
+
 /// Number of complete syllables in [`FULL_PINYIN_SYLLABLES`].
 pub const FULL_PINYIN_SYLLABLE_COUNT: usize = 405;
 
@@ -75,6 +81,101 @@ pub static INCOMPLETE_PINYIN_KEYS: [&str; INCOMPLETE_PINYIN_KEY_COUNT] = [
     "b", "c", "ch", "d", "f", "g", "h", "j", "k", "l", "m", "n", "p", "q", "r", "s", "sh", "t",
     "w", "x", "y", "z", "zh",
 ];
+
+/// Number of option-only canonical syllables.
+///
+/// These are `content_table` spellings reachable only through a correction
+/// alias, never through raw input: `pinyin_index` has no `eng` or `nun`
+/// entry (`docs/findings/option-bits.md`).
+pub const OPTION_ONLY_COMPLETE_SYLLABLE_COUNT: usize = 2;
+
+/// Canonical option-only complete syllables, in ascending byte order.
+pub static OPTION_ONLY_COMPLETE_SYLLABLES: [&str; OPTION_ONLY_COMPLETE_SYLLABLE_COUNT] =
+    ["eng", "nun"];
+
+/// A canonical complete syllable spelling, whether it is in the frozen
+/// untuned inventory or an option-only correction target.
+#[must_use]
+pub fn canonical_complete_syllable(text: &str) -> Option<&'static str> {
+    FULL_PINYIN_SYLLABLES
+        .iter()
+        .copied()
+        .find(|syllable| *syllable == text)
+        .or_else(|| {
+            OPTION_ONLY_COMPLETE_SYLLABLES
+                .iter()
+                .copied()
+                .find(|syllable| *syllable == text)
+        })
+}
+
+/// The canonical spelling for an option-gated spelling alias, if enabled.
+///
+/// This is the parser-table half of the option bits: correction aliases and
+/// the two parser-table ambiguity aliases (`sua`→`shua`, `zua`→`zhua`).
+/// Matrix-level fuzzy substitutions live on [`crate::SyllableKey`] instead.
+#[must_use]
+pub fn option_alias_canonical(text: &str, options: OptionBits) -> Option<&'static str> {
+    correction_canonical(text, options).or_else(|| ambiguity_canonical(text, options))
+}
+
+fn correction_canonical(text: &str, options: OptionBits) -> Option<&'static str> {
+    let bytes = text.as_bytes();
+
+    if options.contains(PINYIN_CORRECT_GN_NG) && text.ends_with("gn") {
+        return checked_canonical(text, 2, "ng");
+    }
+    if options.contains(PINYIN_CORRECT_MG_NG) && text.ends_with("mg") {
+        return checked_canonical(text, 2, "ng");
+    }
+    if options.contains(PINYIN_CORRECT_IOU_IU) && text.ends_with("iou") {
+        return checked_canonical(text, 3, "iu");
+    }
+    if options.contains(PINYIN_CORRECT_UEI_UI) && text.ends_with("uei") {
+        return checked_canonical(text, 3, "ui");
+    }
+    if options.contains(PINYIN_CORRECT_UEN_UN) && text.ends_with("uen") {
+        return checked_canonical(text, 3, "un");
+    }
+    if options.contains(PINYIN_CORRECT_UE_VE) && text.ends_with("ue") {
+        return checked_canonical(text, 2, "ve");
+    }
+    if options.contains(PINYIN_CORRECT_V_U)
+        && bytes.len() >= 2
+        && matches!(bytes[0], b'j' | b'q' | b'x' | b'y')
+        && bytes[1] == b'v'
+    {
+        let mut candidate = String::with_capacity(text.len());
+        candidate.push(char::from(bytes[0]));
+        candidate.push('u');
+        candidate.push_str(&text[2..]);
+        return canonical_complete_syllable(&candidate);
+    }
+    if options.contains(PINYIN_CORRECT_ON_ONG) && text.ends_with("on") {
+        let mut candidate = String::with_capacity(text.len() + 1);
+        candidate.push_str(text);
+        candidate.push('g');
+        return canonical_complete_syllable(&candidate);
+    }
+
+    None
+}
+
+fn ambiguity_canonical(text: &str, options: OptionBits) -> Option<&'static str> {
+    match text {
+        "sua" if options.contains(PINYIN_AMB_S_SH) => Some("shua"),
+        "zua" if options.contains(PINYIN_AMB_Z_ZH) => Some("zhua"),
+        _ => None,
+    }
+}
+
+fn checked_canonical(text: &str, suffix_len: usize, suffix: &str) -> Option<&'static str> {
+    let base_len = text.len() - suffix_len;
+    let mut candidate = String::with_capacity(base_len + suffix.len());
+    candidate.push_str(&text[..base_len]);
+    candidate.push_str(suffix);
+    canonical_complete_syllable(&candidate)
+}
 
 /// Longest initial-only key that prefixes `text`.
 ///
@@ -193,5 +294,35 @@ mod tests {
             assert!(!FULL_PINYIN_SYLLABLES.contains(&key));
             previous = key;
         }
+    }
+
+    #[test]
+    fn correction_aliases_resolve_to_their_canonical_syllable() {
+        use super::{
+            OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU, PINYIN_CORRECT_MG_NG,
+            PINYIN_CORRECT_UE_VE, PINYIN_CORRECT_UEI_UI, PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_V_U,
+            option_alias_canonical,
+        };
+
+        let cases = [
+            ("agn", "ang", PINYIN_CORRECT_GN_NG),
+            ("amg", "ang", PINYIN_CORRECT_MG_NG),
+            ("diou", "diu", PINYIN_CORRECT_IOU_IU),
+            ("duei", "dui", PINYIN_CORRECT_UEI_UI),
+            ("duen", "dun", PINYIN_CORRECT_UEN_UN),
+            ("lue", "lve", PINYIN_CORRECT_UE_VE),
+            ("jv", "ju", PINYIN_CORRECT_V_U),
+        ];
+        for (alias, canonical, bit) in cases {
+            assert_eq!(
+                option_alias_canonical(alias, OptionBits::from_bits(bit)),
+                Some(canonical)
+            );
+            assert_eq!(option_alias_canonical(alias, OptionBits::default()), None);
+        }
+        assert_eq!(
+            option_alias_canonical("zon", OptionBits::from_bits(1 << 28)),
+            Some("zong")
+        );
     }
 }

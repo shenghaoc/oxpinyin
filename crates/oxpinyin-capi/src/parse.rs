@@ -29,11 +29,7 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
     inst.reset_parse_state();
-    if inst
-        .session
-        .set_incomplete_pinyin(inst.incomplete.load(Ordering::Relaxed))
-        .is_err()
-    {
+    if inst.session.set_options(inst.options()).is_err() {
         return 0;
     }
     if text.is_empty() {
