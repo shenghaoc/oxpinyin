@@ -39,6 +39,15 @@ pub use pinyin_user::{DEFAULT_PHRASE_COUNT, ExportedPhrase, USER_DICTIONARY};
 pub use state::ExportedBigramRow;
 pub use types::{ImportIterator, PinyinContext};
 
+/// One successful import-pinyin parse.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImportPinyin {
+    /// Complete keys the ABI would write.
+    pub key_count: usize,
+    /// `'`-joined syllable spellings, matching [`ExportedPhrase::pinyin`].
+    pub canonical: String,
+}
+
 /// Open a user-store-only [`PinyinContext`] for standalone migration tools.
 ///
 /// This is the Rust-side constructor behind `pinyin-dictool import`: it owns
@@ -142,21 +151,31 @@ pub fn user_bigram_rows(context: *mut PinyinContext) -> Option<Vec<ExportedBigra
     Some(rows)
 }
 
-/// Number of keys the import ABI parses out of `pinyin`.
+/// Parse `pinyin` the way `pinyin_iterator_add_phrase` does.
 ///
-/// Mirrors `pinyin_iterator_add_phrase`: longest parsed prefix, complete keys
-/// only, trailing unparsed bytes ignored. `None` when no path can be built.
-/// `pinyin-dictool import` uses this to validate a classic-format pinyin
-/// before the batch starts, with a line number on failure.
+/// Longest parsed prefix, complete keys only, trailing unparsed bytes
+/// ignored. `None` when no path can be built. `canonical` is the §9
+/// `'`-joined spelling, so a file line `nihao` and a stored row `ni'hao`
+/// compare as the same pronunciation.
+#[must_use]
+pub fn import_pinyin(pinyin: &str) -> Option<ImportPinyin> {
+    let keys = iterators::parse_import_pinyin(pinyin)?;
+    let canonical = iterators::render_import_pinyin(&keys)?;
+    Some(ImportPinyin {
+        key_count: keys.len(),
+        canonical,
+    })
+}
+
+/// Number of keys [`import_pinyin`] parses out of `pinyin`.
 #[must_use]
 pub fn import_pinyin_key_count(pinyin: &str) -> Option<usize> {
-    iterators::parse_import_pinyin(pinyin).map(|keys| keys.len())
+    import_pinyin(pinyin).map(|parsed| parsed.key_count)
 }
 
 /// Begin a [`USER_DICTIONARY`] import batch on a user-import context.
 ///
-/// Thin safe wrapper over the C ABI `pinyin_begin_add_phrases` symbol; the
-/// release must be paired with [`end_user_import`].
+/// Pair with [`end_user_import`].
 #[must_use]
 pub fn begin_user_import(context: *mut PinyinContext) -> *mut ImportIterator {
     iterators::pinyin_begin_add_phrases(context, USER_DICTIONARY)
@@ -164,7 +183,6 @@ pub fn begin_user_import(context: *mut PinyinContext) -> *mut ImportIterator {
 
 /// Add one phrase/reading to the batch started by [`begin_user_import`].
 ///
-/// Thin safe wrapper over the C ABI `pinyin_iterator_add_phrase` symbol.
 /// `count` follows the ABI: `-1` means the pinned default count. Returns
 /// `false` for a null iterator, a NUL-containing string field, an index other
 /// than [`USER_DICTIONARY`], an unparseable pinyin, or a store failure.
@@ -187,24 +205,19 @@ pub fn add_user_import_phrase(
 }
 
 /// End the batch, arm `m_modified`, and release the iterator handle.
-///
-/// Thin safe wrapper over the C ABI `pinyin_end_add_phrases` symbol.
 pub fn end_user_import(iter: *mut ImportIterator) {
     iterators::pinyin_end_add_phrases(iter);
 }
 
 /// `pinyin_save` for a user-import context.
 ///
-/// Thin safe wrapper over the C ABI symbol; returns `false` for a null
-/// context, an absent user store, an unmodified store, or a compaction
-/// failure.
+/// Returns `false` for a null context, an absent user store, an unmodified
+/// store, or a compaction failure.
 pub fn save_user_import_context(context: *mut PinyinContext) -> bool {
     context::pinyin_save(context)
 }
 
 /// `pinyin_fini` for a context returned by [`open_user_import_context`].
-///
-/// Thin safe wrapper over the C ABI symbol.
 pub fn close_user_import_context(context: *mut PinyinContext) {
     context::pinyin_fini(context);
 }

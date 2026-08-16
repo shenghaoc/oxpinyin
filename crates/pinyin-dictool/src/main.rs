@@ -6,6 +6,7 @@
 
 #![warn(missing_docs)]
 
+mod context;
 mod export;
 mod format;
 mod import;
@@ -36,31 +37,7 @@ fn command(args: &[OsString]) -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         "import" => {
-            let mut user_dir: Option<PathBuf> = None;
-            let mut file: Option<PathBuf> = None;
-            let mut index = 1;
-            while index < args.len() {
-                let arg = args[index].to_string_lossy();
-                match arg.as_ref() {
-                    "--user-dir" => {
-                        index += 1;
-                        let Some(value) = args.get(index) else {
-                            return Err("--user-dir requires a path".into());
-                        };
-                        user_dir = Some(PathBuf::from(value));
-                    }
-                    arg if !arg.starts_with('-') => {
-                        if file.replace(PathBuf::from(args[index].clone())).is_some() {
-                            return Err(format!("unexpected extra argument: {arg}").into());
-                        }
-                    }
-                    _ => return Err(format!("unknown import option: {arg}").into()),
-                }
-                index += 1;
-            }
-            let Some(user_dir) = user_dir else {
-                return Err("import requires --user-dir <path>".into());
-            };
+            let (user_dir, file) = parse_user_dir_args(args, "import")?;
             let Some(file) = file else {
                 return Err("import requires an input <file.txt>".into());
             };
@@ -68,36 +45,44 @@ fn command(args: &[OsString]) -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         "export" => {
-            let mut user_dir: Option<PathBuf> = None;
-            let mut file: Option<PathBuf> = None;
-            let mut index = 1;
-            while index < args.len() {
-                let arg = args[index].to_string_lossy();
-                match arg.as_ref() {
-                    "--user-dir" => {
-                        index += 1;
-                        let Some(value) = args.get(index) else {
-                            return Err("--user-dir requires a path".into());
-                        };
-                        user_dir = Some(PathBuf::from(value));
-                    }
-                    arg if !arg.starts_with('-') => {
-                        if file.replace(PathBuf::from(args[index].clone())).is_some() {
-                            return Err(format!("unexpected extra argument: {arg}").into());
-                        }
-                    }
-                    _ => return Err(format!("unknown export option: {arg}").into()),
-                }
-                index += 1;
-            }
-            let Some(user_dir) = user_dir else {
-                return Err("export requires --user-dir <path>".into());
-            };
+            let (user_dir, file) = parse_user_dir_args(args, "export")?;
             export::run(&user_dir, file.as_deref())?;
             Ok(())
         }
         _ => usage(),
     }
+}
+
+fn parse_user_dir_args(
+    args: &[OsString],
+    command: &str,
+) -> Result<(PathBuf, Option<PathBuf>), Box<dyn std::error::Error>> {
+    let mut user_dir: Option<PathBuf> = None;
+    let mut file: Option<PathBuf> = None;
+    let mut index = 1;
+    while index < args.len() {
+        let arg = args[index].to_string_lossy();
+        match arg.as_ref() {
+            "--user-dir" => {
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err("--user-dir requires a path".into());
+                };
+                user_dir = Some(PathBuf::from(value));
+            }
+            arg if !arg.starts_with('-') => {
+                if file.replace(PathBuf::from(args[index].clone())).is_some() {
+                    return Err(format!("unexpected extra argument: {arg}").into());
+                }
+            }
+            _ => return Err(format!("unknown {command} option: {arg}").into()),
+        }
+        index += 1;
+    }
+    let Some(user_dir) = user_dir else {
+        return Err(format!("{command} requires --user-dir <path>").into());
+    };
+    Ok((user_dir, file))
 }
 
 fn usage() -> ! {

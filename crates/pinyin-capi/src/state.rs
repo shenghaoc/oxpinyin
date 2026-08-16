@@ -254,6 +254,28 @@ impl CapiContext {
     /// next text; pinyin = prev pinyin + `'` + next pinyin (one row per
     /// pronunciation combination); count = stored × 2 (upstream's local
     /// `unigram_factor`).
+    /// False when this context cannot render every exportable bigram row
+    /// (user-store-only, and at least one stored pair needs the system
+    /// phrase index). Callers must fail the snapshot rather than skip those
+    /// rows into an incomplete file.
+    pub(crate) fn can_render_export_bigrams(&self) -> bool {
+        const INITIAL_SEED: u64 = 23 * 3;
+        if self.dict.is_some() {
+            return true;
+        }
+        let Some(store) = self.user.as_ref() else {
+            return true;
+        };
+        let Ok(raw) = store.export_bigrams() else {
+            return false;
+        };
+        !raw.iter().any(|(prev, cur, count)| {
+            *prev != SENTENCE_START
+                && *count >= INITIAL_SEED
+                && (!is_user_token(*prev) || !is_user_token(*cur))
+        })
+    }
+
     pub(crate) fn export_bigram_rows(&self) -> Option<Vec<ExportedBigramRow>> {
         const INITIAL_SEED: u64 = 23 * 3;
         let store = self.user.as_ref()?;
