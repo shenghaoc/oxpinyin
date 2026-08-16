@@ -162,6 +162,14 @@ static const char *TEST_INPUTS[] = {
     "su6",
     "x",
     "",
+    /* Rejection class: illegal tone / no-syllable stops. Each invalid
+     * case sits next to a valid control that already appears above or
+     * here so PARSE_AUX can pin consumed length and aux on both. */
+    "su ",
+    "sux6",
+    "sucl",
+    "6",
+    " ",
 };
 static const size_t N_INPUTS = sizeof(TEST_INPUTS) / sizeof(TEST_INPUTS[0]);
 

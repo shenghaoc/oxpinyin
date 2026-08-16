@@ -1,8 +1,7 @@
 //! Auxiliary text retrieval.
 //!
 //! Full pinyin is C++-formatted (space-separated syllable keys with `|` at
-//! the cursor). Double pinyin and chewing remain provisional preedit text
-//! until their dedicated parsers/formatters land.
+//! the cursor). Double pinyin and chewing use the scheme aux walkers.
 
 use oxpinyin_core::graph::SegmentGraph;
 use oxpinyin_core::phonetic_initial;

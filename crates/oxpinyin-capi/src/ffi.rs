@@ -88,3 +88,47 @@ pub(crate) fn owned_cstr(s: &str) -> *mut c_char {
     }
     dst.cast::<c_char>()
 }
+
+/// NULL-terminated array of [`owned_cstr`] pointers for `g_strfreev`.
+///
+/// The array and every string are libc `malloc`. Returns null if any
+/// allocation fails (and frees whatever was already allocated).
+pub(crate) fn owned_cstr_list(items: &[impl AsRef<str>]) -> *mut *mut c_char {
+    let n = items.len();
+    let bytes = n
+        .checked_add(1)
+        .and_then(|count| count.checked_mul(std::mem::size_of::<*mut c_char>()));
+    let Some(bytes) = bytes else {
+        return ptr::null_mut();
+    };
+    // SAFETY: `malloc` returns `bytes` writable bytes or null.
+    let arr = unsafe { malloc(bytes) }.cast::<*mut c_char>();
+    if arr.is_null() {
+        return ptr::null_mut();
+    }
+    for (i, item) in items.iter().enumerate() {
+        let s = owned_cstr(item.as_ref());
+        if s.is_null() {
+            for j in 0..i {
+                // SAFETY: slots `0..i` were written by `owned_cstr`.
+                unsafe {
+                    free((*arr.add(j)).cast());
+                }
+            }
+            // SAFETY: `arr` came from `malloc` above.
+            unsafe {
+                free(arr.cast());
+            }
+            return ptr::null_mut();
+        }
+        // SAFETY: `arr` has `n+1` slots; `i < n`.
+        unsafe {
+            *arr.add(i) = s;
+        }
+    }
+    // SAFETY: terminator slot.
+    unsafe {
+        *arr.add(n) = ptr::null_mut();
+    }
+    arr
+}
