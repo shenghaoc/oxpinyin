@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Supported pinyin-rs session API — the stable Rust surface."
+description = "Supported oxpinyin session API — the stable Rust surface."
 
 # Supported Rust surface; SemVer freezes with the first public release.
 [lints]

@@ -32,7 +32,7 @@ struct Row {
 }
 
 fn main() -> ExitCode {
-    let dir = Path::new("/tmp/pinyin-rs-export");
+    let dir = Path::new("/tmp/oxpinyin-export");
     if !dir.join("pinyin_index.redb").exists() {
         eprintln!("missing export tables");
         return ExitCode::from(2);

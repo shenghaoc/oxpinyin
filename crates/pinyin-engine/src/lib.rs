@@ -28,7 +28,7 @@
 //! # }
 //! let mut session = Session::new(
 //!     &EmptyConfigSource,
-//!     StoragePaths::new("/tmp/pinyin-rs"),
+//!     StoragePaths::new("/tmp/oxpinyin"),
 //!     Empty,
 //!     Empty,
 //! )?;

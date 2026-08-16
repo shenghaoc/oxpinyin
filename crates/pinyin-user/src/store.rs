@@ -794,7 +794,7 @@ impl UserStore {
     /// rows (as predecessor and successor), and its unigram delta.
     ///
     /// `Ok(false)` when the store does not own `token` as a user phrase
-    /// (upstream asserts `USER_DICTIONARY` ownership; pinyin-rs reports it).
+    /// (upstream asserts `USER_DICTIONARY` ownership; oxpinyin reports it).
     /// Does **not** arm `m_modified`, like upstream.
     pub fn remove_user_phrase(&mut self, token: Token) -> Result<bool, UserStoreError> {
         let db = self.database();

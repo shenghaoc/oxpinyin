@@ -10,7 +10,7 @@ using the pinned system model (`table.conf` λ = 0.312699). The Rust
 segmenter must emit the same bytes.
 
 `counter-ngram.manifest` pins the value-level result of the W9-T2
-`pinyin-counter` over `segmenter-ngseg.txt`: the unigram/bigram counts and
+`oxpinyin-counter` over `segmenter-ngseg.txt`: the unigram/bigram counts and
 an FNV-1a 64-bit checksum of the full `Counts::dump()`. The full dump is
 ~1.5 MB of integer counts (the phrase index's token-id space), so only the
 checksum and shape are tracked; the live differential test reconstructs the
@@ -18,7 +18,7 @@ full value map from pin-built `gen_binary_files` → `gen_unigram` →
 `gen_ngram` → `export_interpolation` when those binaries are available.
 
 `interpolation2.manifest` pins the value-level result of the W9-T4a
-`pinyin-emitter` over the same T1→T2 chain: the unigram/bigram record
+`oxpinyin-emitter` over the same T1→T2 chain: the unigram/bigram record
 counts and an FNV-1a 64-bit checksum of the emitted `interpolation2.text`
 (header, `\item` lines with phrase text, both n-gram sections, no λ).
 The live differential reconstructs the pin-built
@@ -31,7 +31,7 @@ without an `opencc` binary. It is real markup — infobox templates,
 `<ref>`s, tables, file links — deliberately, because synthetic text
 would not exercise the stripper.
 
-`corpus-sample.txt` is the `pinyin-corpus` output for that fixture (with
+`corpus-sample.txt` is the `oxpinyin-corpus` output for that fixture (with
 the opencc `t2s` conversion applied — the identity on all-simplified
 input). It is the committed raw-text sample: tier-1 well-formedness
 invariants run on it, and tier-2 feeds it to T1 and to pin `ngseg` with

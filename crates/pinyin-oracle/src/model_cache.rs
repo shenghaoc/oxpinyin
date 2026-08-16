@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn missing_directory_is_incomplete() {
-        let path = PathBuf::from("/no/such/pinyin-rs-model-dir");
+        let path = PathBuf::from("/no/such/oxpinyin-model-dir");
         assert!(!model_dir_is_complete(&path));
         assert_eq!(missing_model_files(&path).len(), 18);
         assert!(matches!(

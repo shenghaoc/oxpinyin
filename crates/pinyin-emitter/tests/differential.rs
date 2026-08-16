@@ -126,7 +126,7 @@ fn parse_manifest(text: &str) -> Manifest {
 #[test]
 fn fixture_emit_roundtrips_through_parse_interpolation2() {
     let Some((counts, _lexicon, emitted)) = rust_counts_and_text() else {
-        eprintln!("skipping: migrate export not found (PINYIN_EXPORT_DIR / /tmp/pinyin-rs-export)");
+        eprintln!("skipping: migrate export not found (PINYIN_EXPORT_DIR / /tmp/oxpinyin-export)");
         return;
     };
 

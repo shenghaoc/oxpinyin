@@ -38,11 +38,11 @@ pub const CYCLE_INPUTS: &[&str] = &[
     "chuaipengdengzaimiu",
 ];
 
-/// `/tmp/pinyin-rs-export` or `$PINYIN_EXPORT_DIR`.
+/// `/tmp/oxpinyin-export` or `$PINYIN_EXPORT_DIR`.
 pub fn export_dir() -> PathBuf {
     let dir = std::env::var_os("PINYIN_EXPORT_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp/pinyin-rs-export"));
+        .unwrap_or_else(|| PathBuf::from("/tmp/oxpinyin-export"));
     for name in ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"] {
         assert!(
             dir.join(name).is_file(),

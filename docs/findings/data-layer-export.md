@@ -3,7 +3,7 @@
 Date: 2026-08-10 · Status: **frozen for the data-layer rebuild** ·
 Authorised by the maintainer's rebuild plan of 2026-08-10.
 
-pinyin-rs reads the system dictionary and bigram from portable redb tables.
+oxpinyin reads the system dictionary and bigram from portable redb tables.
 This finding freezes where those tables come from, their exact schemas, and
 how they are verified. It replaces the withdrawn syllable-encoder approach
 (branch `feat/integration-syllable-encoder`), whose `SyllableKey → TableKey`
@@ -114,7 +114,7 @@ top successors resolved via `pinyin_token_get_phrase` are asserted (e.g.
    previous section pass.
 
 The tests skip (with a notice) when the generated tables are absent; the
-canonical local path is `/tmp/pinyin-rs-export/`.
+canonical local path is `/tmp/oxpinyin-export/`.
 
 ## Why the previous approach was withdrawn
 

@@ -4,7 +4,8 @@ Portable Rust re-expression of
 [libpinyin](https://github.com/libpinyin/libpinyin). Constitution and agent
 rules: `AGENTS.md`. Crate roles: `.kiro/steering/structure.md`.
 
-> **Project rename:** pinyin-rs → **oxpinyin** (repo, crate, docs).
+> **Project identity:** **oxpinyin** (repo, crate, docs). The prior
+> project name is retained in git history only.
 > Shipped artifact naming for the compatibility bootstrap is a separate
 > concern from project identity.
 
@@ -113,7 +114,7 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   input sequence as the pinned upstream configuration.
 
   Earlier language in this repo variously described W8 as
-  "capi + forked frontend", then "ibus-pinyin-rs zbus rewrite", then
+  "capi + forked frontend", then "ibus-oxpinyin zbus rewrite", then
   "drop-in libpinyin.so.15" — all superseded by the above. The maintainer
   being independent of Red Hat / Fedora / upstream libpinyin is what enables
   this scope; a maintainer bound to those distros would be forced into the

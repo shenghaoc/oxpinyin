@@ -43,7 +43,7 @@ pub extern "C" fn pinyin_init(
 /// (`PYLibPinyin.cc:43-50` destroys the timer, removes the timeout source,
 /// and calls only `pinyin_fini`; `focusOut` at `PYPPinyinEngine.cc:496`
 /// saves nothing either). The shutdown decision is recorded in
-/// `docs/findings/user-store.md` §6: pinyin-rs reproduces the call pattern,
+/// `docs/findings/user-store.md` §6: oxpinyin reproduces the call pattern,
 /// and the upstream sub-timer data-loss window does not exist here because
 /// every training update is a durable redb commit.
 #[unsafe(no_mangle)]

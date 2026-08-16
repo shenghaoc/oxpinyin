@@ -514,7 +514,7 @@ regression envelope that must hold regardless.
    ```
    Report Δ top-1, Δ top-5-set, Δ absent, Δ prefix-10 overlap against
    10136 / 10182 / 1 / 94456 of 98930. Requires the exported tables at
-   `/tmp/pinyin-rs-export` (`pinyin-migrate export`) **and** the fetched
+   `/tmp/oxpinyin-export` (`pinyin-migrate export`) **and** the fetched
    model cache (`tools/model/fetch-model.sh`; the real unigram counts in
    `interpolation2.text` are what the reproduced construction ranks by);
    the test skips with a diagnostic without them and is measured under

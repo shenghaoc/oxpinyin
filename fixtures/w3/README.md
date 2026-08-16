@@ -11,14 +11,14 @@ Two families, both deterministic against the pinned oracle
   (`docs/findings/data-layer-export.md`), regenerated with
 
   ```sh
-  cargo run -p pinyin-migrate --features oracle-ffi -- export --out-dir fixtures/w3 --mini
+  cargo run -p oxpinyin-migrate --features oracle-ffi -- export --out-dir fixtures/w3 --mini
   ```
 
   `--mini` keeps the allowlisted pinyin keys (`MINI_KEYS` in
-  `crates/pinyin-migrate/src/export.rs`), the phrase tokens those keys
+  `crates/oxpinyin-migrate/src/export.rs`), the phrase tokens those keys
   reference, and the bigram entries whose previous token is one of those
   phrases — every kept record byte-identical to the full export.
-  `punct.redb` and `addon_*.redb` are verbatim `pinyin-migrate convert`
+  `punct.redb` and `addon_*.redb` are verbatim `oxpinyin-migrate convert`
   output.
 
 `fixtures.sha256` lists the checksums of every fixture file.

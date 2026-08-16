@@ -1,6 +1,6 @@
 # W9-T2 counter differential golden (value-level parity with gen_ngram).
 #
-# The Rust counter (`pinyin-counter`) is run over `segmenter-ngseg.txt`
+# The Rust counter (`oxpinyin-counter`) is run over `segmenter-ngseg.txt`
 # (T1's output) with the pinned model20 phrase index as the freq-1 floor
 # seed. The full value dump is ~1.5 MB of integer counts, so instead of
 # tracking it we pin its exact shape and a dependency-free FNV-1a 64-bit

@@ -36,7 +36,7 @@ pub const ADD_PHRASE_UNIGRAM_FACTOR: u64 = 3;
 
 /// One pinyin key in a stored pronunciation.
 ///
-/// Opaque 16-bit id. In pinyin-rs this is a [`pinyin_core::SyllableKey`]
+/// Opaque 16-bit id. In oxpinyin this is a [`pinyin_core::SyllableKey`]
 /// index; T2 stores the sequence as values, not libpinyin's `ChewingKey`
 /// bitfields.
 pub type PinyinKey = u16;

@@ -1,4 +1,4 @@
-# pinyin-rs
+# oxpinyin
 
 A portable Rust re-expression of
 [libpinyin](https://github.com/libpinyin/libpinyin): Stage 1 is exact-output

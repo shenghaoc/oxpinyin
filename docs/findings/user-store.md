@@ -6,7 +6,7 @@ user-data *values and semantics*; the on-disk binary format
 (MemoryChunk/DBM) is a NON-GOAL (redb is the store).** See §10.
 
 This finding records, with source file + line citations, the exact behaviour a
-later Rust implementation must reproduce to make pinyin-rs's user store
+later Rust implementation must reproduce to make oxpinyin's user store
 *value-identical* to libpinyin's on identical C-ABI call sequences. It is a
 characterization, not an implementation. No code is added by this task.
 
@@ -20,12 +20,12 @@ construction (they are design, not upstream fact).
 - libpinyin: pinned tag `2.11.91` (sha `0c5e80e1…`), on disk at
   `/tmp/libpinyin-2.11.91`. Paths below beginning `src/` are relative to that
   root. (A byte-identical second copy sits under
-  `/tmp/pinyin-rs-oracle/src/libpinyin-2.11.91`; verified identical for every
+  `/tmp/oxpinyin-oracle/src/libpinyin-2.11.91`; verified identical for every
   file cited here.)
 - Frontend: ibus-libpinyin pinned tag `1.16.5` (sha `2d2cdac0…`), on disk at
-  `/tmp/pinyin-rs-oracle/src/ibus-libpinyin-1.16.5`. Paths beginning `src/PY…`
+  `/tmp/oxpinyin-oracle/src/ibus-libpinyin-1.16.5`. Paths beginning `src/PY…`
   are relative to that root.
-- pinyin-rs: this repo. Paths beginning `crates/` are repo-relative, valid
+- oxpinyin: this repo. Paths beginning `crates/` are repo-relative, valid
   against `main` (`4a9a6f0`, post-W9). Reading these used rust-analyzer via the
   LSP (available — see §7).
 - Provenance of the pinned tags: `docs/findings/oracle-environment.md:15-16`.
@@ -68,7 +68,7 @@ periodically.
 
 Scope of this document: the update path, the user phrase index and token
 allocation, persistence/save, the merge with system data at decode time, what
-the pinned frontend calls and when, pinyin-rs's current state, a proposed W6
+the pinned frontend calls and when, oxpinyin's current state, a proposed W6
 task breakdown, a value-level differential-parity plan, and the explicit
 non-goals. `import_interpolation` (a *training-time* system-model tool) is out
 of scope for the user store — see §8's note.
@@ -224,7 +224,7 @@ phrase-index unigram (§2.1–2.3 — `train_result3`,
 while `3` scales the *new-phrase* seeding count at allocation (§3.2 —
 `_add_phrase`, `pinyin.cpp:522`). There is no discrepancy: a phrase added by
 `pinyin_remember_user_input` seeds its unigram with `count * 3`, and later
-*selections* of it train with `seed * 7`. pinyin-rs reproduces both as
+*selections* of it train with `seed * 7`. oxpinyin reproduces both as
 separate constants (`pinyin_user::seed::UNIGRAM_FACTOR` = 7,
 `pinyin_user::phrase::ADD_PHRASE_UNIGRAM_FACTOR` = 3).
 
@@ -285,7 +285,7 @@ byte layout): (a) user-bigram counts per `(prev_token → token)` and each
 `prev_token` total; (b) user-token unigram frequencies in the user sub-index;
 (c) user phrase-index entries (phrase string, pronunciations, count) and the
 pinyin/phrase table indices that reach them; (d) the system-token unigram
-*deltas* (libpinyin's diff log; in pinyin-rs a redb delta table — INFERRED
+*deltas* (libpinyin's diff log; in oxpinyin a redb delta table — INFERRED
 mapping).
 
 ---
@@ -330,7 +330,7 @@ bigram against the unigram. A user selection therefore raises the merged
 that continuation's decode score. The magnitude of the nudge is exactly the
 `seed` arithmetic of §2 flowing through this additive merge.
 
-**Seam note (W6-T4).** The merge sits in pinyin-rs's language model
+**Seam note (W6-T4).** The merge sits in oxpinyin's language model
 (`BigramLanguageModel::score`, count addition before the λ blend), **not** in
 `UserModel::score`, which stays `Ok(0)`: a `Cost` added after the λ blend
 would be a new weighting scheme — exactly what this section forbids — so the
@@ -379,7 +379,7 @@ flush-on-shutdown**: modifications younger than the last timer tick are lost
 on abrupt exit.
 
 **W6-T5 decision: reproduce the call pattern, not the loss window.**
-pinyin-rs's `pinyin_fini` does not save, matching upstream — and the
+oxpinyin's `pinyin_fini` does not save, matching upstream — and the
 data-loss window does not exist here: every training update is a redb
 transaction committed with Immediate durability (fsync before `commit`
 returns), so sub-timer changes are already on disk. `pinyin_save` reproduces
@@ -407,7 +407,7 @@ export iterators (§9).
 
 ---
 
-## 7. pinyin-rs current state and the gap
+## 7. oxpinyin current state and the gap
 
 The LSP (rust-analyzer) **was available** and used for this section
 (`goToImplementation` / `findReferences` / `documentSymbol`).
@@ -520,7 +520,7 @@ Each yields `(phrase, pinyin, count)` triples. The frontend's
 demonstrate the intended use.
 
 **Plan.** Drive the pinned oracle (the existing `pinyin-oracle` harness) and
-pinyin-rs through an *identical* scripted C-ABI sequence — `pinyin_init` →
+oxpinyin through an *identical* scripted C-ABI sequence — `pinyin_init` →
 parse → `pinyin_choose_candidate` / `pinyin_train` /
 `pinyin_remember_user_input` → `pinyin_save` — then compare the two exported
 `(phrase, pinyin, count)` **sets**. Because the §2 arithmetic is exact integer
@@ -569,14 +569,14 @@ project memory).
 
 - The mapping of libpinyin's system-token unigram **diff-logger** (§4) onto a
   redb representation is a design choice, not an upstream fact; **settled by
-  W6-T1/T5**: pinyin-rs keeps system-token unigram increments in the same
+  W6-T1/T5**: oxpinyin keeps system-token unigram increments in the same
   `user_unigram` delta table as user tokens — the T4 merge adds them onto the
   system counts at decode time, and T5's save persists that single table
   inside `user_store.redb`, so there is no separate diff-log file.
 - ~~Whether any shutdown/disconnect path flushes the store before the 5-minute
   timer (§6) is not visible in the files read; a `pinyin_save` on engine
   teardown elsewhere in the frontend would settle it.~~ **Settled by W6-T5**
-  (§6): upstream has no flush-on-shutdown; pinyin-rs reproduces the call
+  (§6): upstream has no flush-on-shutdown; oxpinyin reproduces the call
   pattern, and its durable per-commit redb writes remove the loss window.
 - The exact numeric value of `lambda` is intentionally not restated here; it is
   frozen in `docs/findings/scoring-spec.md` / `docs/findings/lambda-port.md`.

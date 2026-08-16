@@ -1,6 +1,6 @@
 # AGENTS.md — contract for all coding agents
 
-pinyin-rs is a portable Rust re-expression of libpinyin. Stage 1 = parity
+oxpinyin is a portable Rust re-expression of libpinyin. Stage 1 = parity
 with the pin-built oracle; Stage 2 = measured upgrades. Roadmap:
 `ROADMAP.md`. Crate map: `.kiro/steering/structure.md`.
 
