@@ -24,9 +24,10 @@ use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, UserStore};
 
 use crate::candidates::{
     pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_get_candidate,
-    pinyin_is_user_candidate, pinyin_remove_user_candidate, pinyin_train,
+    pinyin_get_candidate_string, pinyin_is_user_candidate, pinyin_remove_user_candidate,
+    pinyin_train,
 };
-use crate::config::pinyin_mask_out;
+use crate::config::{pinyin_mask_out, pinyin_set_options};
 use crate::context::{pinyin_init, pinyin_save};
 use crate::instance::{pinyin_alloc_instance, pinyin_reset};
 use crate::iterators::{
@@ -36,7 +37,7 @@ use crate::iterators::{
 use crate::parse::{pinyin_get_parsed_input_length, pinyin_parse_more_full_pinyins};
 use crate::sentence::pinyin_guess_candidates;
 use crate::state::{USER_STORE_FILE, instance_ref};
-use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
+use crate::types::{GChar, LookupCandidate, PinyinContext, PinyinInstance, PinyinTableFlag};
 use crate::user_data::pinyin_remember_user_input;
 
 /// `SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY`.
@@ -156,6 +157,62 @@ fn parsed_input_length_stores_the_parse_result_and_clears_on_reset() {
     assert_eq!(pinyin_parse_more_full_pinyins(instance, empty.as_ptr()), 0);
     assert_eq!(pinyin_get_parsed_input_length(instance), 0);
     assert_eq!(pinyin_get_parsed_input_length(ptr::null_mut()), 0);
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+fn first_candidate_text(instance: *mut PinyinInstance) -> String {
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let mut cand = ptr::null_mut();
+    assert!(pinyin_get_candidate(instance, 0, &mut cand));
+    let mut text: *const GChar = ptr::null();
+    assert!(pinyin_get_candidate_string(instance, cand, &mut text));
+    assert!(!text.is_null());
+    // SAFETY: `text` borrows the snapshot until the next guess.
+    unsafe { std::ffi::CStr::from_ptr(text) }
+        .to_str()
+        .expect("utf-8 candidate")
+        .to_owned()
+}
+
+#[test]
+fn set_options_before_alloc_controls_incomplete_parse_length() {
+    let user_dir = TempUserDir::new("set-options-before");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    crate::instance::pinyin_free_instance(instance);
+
+    assert!(pinyin_set_options(context, 0));
+    let instance = pinyin_alloc_instance(context);
+    let nih = cstr("nih");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, nih.as_ptr()), 2);
+    assert_eq!(first_candidate_text(instance), "你");
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn set_options_remasks_a_live_instance() {
+    let user_dir = TempUserDir::new("set-options-live");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let nih = cstr("nih");
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, nih.as_ptr()),
+        3,
+        "default incomplete-on consumes the tail"
+    );
+
+    assert!(pinyin_set_options(context, 0));
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, nih.as_ptr()), 2);
+    assert_eq!(first_candidate_text(instance), "你");
+
+    assert!(pinyin_set_options(
+        context,
+        PinyinTableFlag::PINYIN_INCOMPLETE as u32
+    ));
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, nih.as_ptr()), 3);
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
