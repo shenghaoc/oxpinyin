@@ -124,10 +124,16 @@ is_w12_residual() {
     esac
 }
 
+# Known TEXT-set divergence: amb-17 / fangan under PINYIN_AMB_AN_ANG (#103).
+# Not a W10 parse-table miss; fork-default and all-off are identical.
+is_known_divergent() {
+    [ "$1" = "amb-17" ] && [ "$2" = "fangan" ]
+}
+
 # Compare one case's candidate TEXT/ORDER. Prints notes to stdout.
-# Sets global compare_status to: identical | tie-order | w12-residual | w11-fuzzy | stop
-# $3 is the case name (used to attribute amb-* TEXT-set diffs to the
-# flagged W11 fuzzy step rather than W10).
+# Sets global compare_status to: identical | tie-order | w12-residual |
+# known-divergent | stop
+# $3 is the case name.
 compare_text_order() {
     local oracle_log=$1 capi_log=$2 case_name=$3
     local oracle_tbl capi_tbl
@@ -157,11 +163,11 @@ compare_text_order() {
                 echo "  W12  input=$input  TEXT-set tail; all-off residual, not W10 (docs/findings/option-bits.md)"
                 echo "    oracle: ${oracle_seq:-<empty>}"
                 echo "    capi:   ${capi_seq:-<empty>}"
-            elif [ "${case_name#amb-}" != "$case_name" ]; then
+            elif is_known_divergent "$case_name" "$input"; then
                 if [ "$compare_status" = "identical" ] || [ "$compare_status" = "w12-residual" ] || [ "$compare_status" = "tie-order" ]; then
-                    compare_status="w11-fuzzy"
+                    compare_status="known-divergent"
                 fi
-                echo "  W11  input=$input  TEXT-set under an AMB bit; flagged fuzzy-step, not W10"
+                echo "  KNOWN-DIVERGENT  input=$input  #103 AMB_AN_ANG fuzzy expansion (not W10)"
                 echo "    oracle: ${oracle_seq:-<empty>}"
                 echo "    capi:   ${capi_seq:-<empty>}"
             else
@@ -269,4 +275,4 @@ if [ "$SWEEP_STOP" -ne 0 ]; then
     echo "option-sweep: STOP — candidate TEXT/ORDER diverged beyond a RankKey-1 tie"
     exit 2
 fi
-echo "option-sweep: PASS — parse/aux identical; TEXT/ORDER identical, tie-order-only, or W12-excluded tail"
+echo "option-sweep: PASS — parse/aux identical; TEXT/ORDER identical, tie-order-only, W12-excluded, or KNOWN-DIVERGENT (#103)"
