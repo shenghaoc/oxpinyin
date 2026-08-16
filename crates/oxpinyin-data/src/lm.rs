@@ -487,6 +487,10 @@ impl LanguageModel for BigramLanguageModel {
     fn has_real_unigrams(&self) -> bool {
         self.real_unigrams
     }
+
+    fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {
+        Ok(self.real_unigrams.then_some(self.unigram_total))
+    }
 }
 
 /// Parses a bigram value as `(total, [{next_token, count}])`.

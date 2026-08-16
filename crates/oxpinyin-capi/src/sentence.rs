@@ -7,7 +7,7 @@ use oxpinyin_core::{DoublePinyinParse, ZhuyinParse};
 
 use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
-use crate::types::{GUint, PinyinInstance};
+use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t};
 
 /// Guess a sentence from saved pinyin keys.
 ///
@@ -39,16 +39,24 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
 ///     pinyin_instance_t * instance, const char * prefix);
 /// ```
 ///
-/// Provisional: always returns false (prediction requires a real LM).
+/// Phrase prediction; punctuation prefix is empty until W11-PUNCT
+/// (`punct.redb` is not public-ABI consumable).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     instance: *mut PinyinInstance,
-    _prefix: *const c_char,
+    prefix: *const c_char,
 ) -> bool {
     if instance.is_null() {
         return false;
     }
-    false
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_mut(instance) };
+        // SAFETY: `prefix` is a C string from the caller (null OK).
+        let prefix = unsafe { cstr_to_string(prefix) };
+        crate::predict::guess_predicted(inst, &prefix)
+    })
 }
 
 /// Get a sentence string from the instance (n-best variant).
@@ -239,6 +247,17 @@ pub extern "C" fn pinyin_guess_candidates(
             inst.candidates.push(CapiCandidate {
                 text,
                 kind: cand.kind(),
+                candidate_type: match cand.kind() {
+                    oxpinyin_engine::CandidateKind::Sentence => {
+                        lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+                    }
+                    oxpinyin_engine::CandidateKind::Addon => {
+                        lookup_candidate_type_t::ADDON_CANDIDATE
+                    }
+                    oxpinyin_engine::CandidateKind::Phrase
+                    | oxpinyin_engine::CandidateKind::Fallback
+                    | _ => lookup_candidate_type_t::NORMAL_CANDIDATE,
+                },
                 nbest_index: 0,
                 consumed_bytes,
                 token: cand.token(),

@@ -66,6 +66,8 @@ pub struct SystemDictionary {
     /// the probe the pin uses when the searched sequence holds an
     /// initial-only key. Vowel-initial syllables project to a `0` sentinel.
     initial_keys: Box<[String]>,
+    /// Reverse phrase-table map: exact UTF-8 text → tokens (nibble then id).
+    text_tokens: BTreeMap<String, Vec<u32>>,
 }
 
 impl SystemDictionary {
@@ -75,6 +77,7 @@ impl SystemDictionary {
         let phrase_index = LookupTable::open(phrase_index_path)?;
         let (unigrams, unigram_total) = build_unigram_map(&pinyin_index)?;
         let (pinyin_keys, initial_keys) = build_prefix_tables(&pinyin_index)?;
+        let text_tokens = build_text_tokens(&phrase_index)?;
         Ok(Self {
             pinyin_index,
             phrase_index,
@@ -82,6 +85,7 @@ impl SystemDictionary {
             unigram_total,
             pinyin_keys,
             initial_keys,
+            text_tokens,
         })
     }
 
@@ -142,6 +146,35 @@ impl SystemDictionary {
             }
         }
         Ok(out)
+    }
+
+    /// Tokens whose phrase text is exactly `text`.
+    #[must_use]
+    pub fn tokens_for_text(&self, text: &str) -> &[u32] {
+        self.text_tokens.get(text).map_or(&[], Vec::as_slice)
+    }
+
+    /// Tokens whose phrase text starts with `prefix` and is longer, when
+    /// `prefix` itself is a stored phrase (`PhraseLargeTable3::search_suggestion`).
+    #[must_use]
+    pub fn suggest_after(&self, prefix: &str) -> Vec<(u32, String)> {
+        if prefix.is_empty() || !self.text_tokens.contains_key(prefix) {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (text, tokens) in self.text_tokens.range(prefix.to_owned()..) {
+            if !text.starts_with(prefix) {
+                break;
+            }
+            if text == prefix {
+                continue;
+            }
+            for token in tokens {
+                out.push((*token, text.clone()));
+            }
+        }
+        out.sort_by_key(|(token, _)| *token);
+        out
     }
 
     /// The frozen index key for a syllable sequence: texts joined by `'`.
@@ -299,6 +332,25 @@ fn build_unigram_map(pinyin_index: &LookupTable) -> Result<(BTreeMap<u32, u64>, 
         }
     }
     Ok((map, total))
+}
+
+/// Builds the exact-text → tokens reverse map from the phrase index.
+fn build_text_tokens(phrase_index: &LookupTable) -> Result<BTreeMap<String, Vec<u32>>, DictError> {
+    let mut map: BTreeMap<String, Vec<u32>> = BTreeMap::new();
+    for (key, value) in phrase_index.iter()? {
+        if key.len() != 4 {
+            continue;
+        }
+        let token = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
+        let text = String::from_utf8(value).map_err(|_| {
+            DictError::Parse(format!("phrase text for token {token:#010x} is not UTF-8"))
+        })?;
+        map.entry(text).or_default().push(token);
+    }
+    for tokens in map.values_mut() {
+        tokens.sort_unstable();
+    }
+    Ok(map)
 }
 
 #[cfg(test)]

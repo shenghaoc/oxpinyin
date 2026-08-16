@@ -8,7 +8,7 @@ use std::os::raw::{c_char, c_int};
 use std::ptr;
 
 use oxpinyin_core::graph::FewestKeys;
-use oxpinyin_user::{ExportedPhrase, PinyinKey, USER_DICTIONARY, UserStore};
+use oxpinyin_user::{ExportedPhrase, PinyinKey, UserStore, is_user_file_library};
 
 use crate::ffi::{cstr_to_owned_lossy, ffi_catch, owned_cstr};
 use crate::state::{ExportedBigramRow, context_ref};
@@ -56,9 +56,9 @@ struct ImportHandle {
 ///
 /// Returns a handle for any non-null context, matching the export iterator
 /// shape; caller must call `pinyin_end_add_phrases` to free it. Adds target
-/// [`USER_DICTIONARY`] only — oxpinyin's system phrase indexes are
-/// read-only redb tables — so any other index yields a handle whose adds
-/// report `false`.
+/// [`USER_DICTIONARY`] and [`NETWORK_DICTIONARY`] only — oxpinyin's system
+/// phrase indexes are read-only redb tables — so any other index yields a
+/// handle whose adds report `false`.
 pub(crate) fn begin_add_phrases_impl(
     context: *mut PinyinContext,
     index: u8,
@@ -140,7 +140,7 @@ pub extern "C" fn pinyin_iterator_add_phrase(
         // SAFETY: `iter` is non-null and was produced by
         // `pinyin_begin_add_phrases`; the unique borrow lasts for this call.
         let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
-        if handle.index != USER_DICTIONARY {
+        if !is_user_file_library(handle.index) {
             return false;
         }
         let Some(user) = handle.user.as_mut() else {
@@ -154,7 +154,8 @@ pub extern "C" fn pinyin_iterator_add_phrase(
             .iter()
             .map(|key| key.index() as PinyinKey)
             .collect();
-        user.add_phrase(&phrase, &keys, count).is_ok()
+        user.add_phrase_in(handle.index, &phrase, &keys, count)
+            .is_ok()
     })
 }
 

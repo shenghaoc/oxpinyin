@@ -51,8 +51,17 @@ impl TempSystemDir {
         ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("temp system dir");
-        for name in ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"] {
-            std::fs::copy(system_dir().join(name), path.join(name)).expect("copy redb table");
+        for name in [
+            "pinyin_index.redb",
+            "phrase_index.redb",
+            "bigram.redb",
+            "addon_4_pinyin_index.redb",
+            "addon_4_phrase_index.redb",
+        ] {
+            let src = system_dir().join(name);
+            if src.is_file() {
+                std::fs::copy(&src, path.join(name)).expect("copy redb table");
+            }
         }
         Self { path }
     }

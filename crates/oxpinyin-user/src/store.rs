@@ -22,8 +22,9 @@ use oxpinyin_core::UserCountDelta;
 use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 
 use crate::phrase::{
-    self, ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, FIRST_USER_TOKEN, PinyinKey, UserPhrase,
-    UserPronunciation,
+    self, ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, FIRST_USER_TOKEN, PinyinKey,
+    USER_DICTIONARY, UserPhrase, UserPronunciation, first_library_token, is_user_file_library,
+    phrase_index_library_index,
 };
 use crate::registry::{self, CountSnapshot, RegistryLease, StoreInner};
 use crate::seed;
@@ -69,6 +70,10 @@ const PHRASE: TableDefinition<Token, &str> = TableDefinition::new("user_phrase")
 
 /// Reverse lookup used by the §3.2 "already in this sub-index" merge.
 const PHRASE_BY_TEXT: TableDefinition<&str, Token> = TableDefinition::new("user_phrase_by_text");
+
+/// Per-library reverse lookup so network (6) and user (7) can share a text.
+const PHRASE_BY_LIB_TEXT: TableDefinition<(u8, &str), Token> =
+    TableDefinition::new("user_phrase_by_lib_text");
 
 /// Pronunciations: `(token, encoded key sequence) -> count`.
 const PRONUNCIATION: TableDefinition<(Token, &[u8]), u64> =
@@ -357,6 +362,7 @@ impl UserStore {
             }
             txn.open_table(PHRASE)?;
             txn.open_table(PHRASE_BY_TEXT)?;
+            txn.open_table(PHRASE_BY_LIB_TEXT)?;
             txn.open_table(PRONUNCIATION)?;
             let mut alloc = txn.open_table(ALLOC)?;
             if alloc.get(ALLOC_CURSOR)?.is_none() {
@@ -512,7 +518,28 @@ impl UserStore {
         keys: &[PinyinKey],
         count: Option<u64>,
     ) -> Result<Token, UserStoreError> {
-        if !phrase::phrase_and_keys_valid(phrase, keys) {
+        self.add_phrase_in(USER_DICTIONARY, phrase, keys, count)
+    }
+
+    /// Add a phrase under `library` (`USER_DICTIONARY` or `NETWORK_DICTIONARY`).
+    ///
+    /// Same `_add_phrase` path as [`Self::add_phrase`]; only the token nibble
+    /// and the per-library reverse lookup change.
+    ///
+    /// # Errors
+    ///
+    /// [`UserStoreError::InvalidPhrase`] when the text is empty, too long, the
+    /// key count does not match, or `library` is not a `USER_FILE` nibble.
+    /// [`UserStoreError::TokenSpaceExhausted`] when that nibble's 24-bit id
+    /// space is full.
+    pub fn add_phrase_in(
+        &mut self,
+        library: u8,
+        phrase: &str,
+        keys: &[PinyinKey],
+        count: Option<u64>,
+    ) -> Result<Token, UserStoreError> {
+        if !is_user_file_library(library) || !phrase::phrase_and_keys_valid(phrase, keys) {
             return Err(UserStoreError::InvalidPhrase);
         }
         let count = count.unwrap_or(DEFAULT_PHRASE_COUNT);
@@ -521,10 +548,16 @@ impl UserStore {
         let db = self.database();
         let txn = db.begin_write()?;
         let token = {
+            let mut by_lib = txn.open_table(PHRASE_BY_LIB_TEXT)?;
             let mut by_text = txn.open_table(PHRASE_BY_TEXT)?;
-            if let Some(existing) = by_text.get(phrase)? {
-                let token = existing.value();
-                drop(existing);
+            let existing = if let Some(found) = by_lib.get((library, phrase))? {
+                Some(found.value())
+            } else if library == USER_DICTIONARY {
+                by_text.get(phrase)?.map(|g| g.value())
+            } else {
+                None
+            };
+            if let Some(token) = existing {
                 let mut prons = txn.open_table(PRONUNCIATION)?;
                 let prev = prons
                     .get((token, key_bytes.as_slice()))?
@@ -533,19 +566,32 @@ impl UserStore {
                 token
             } else {
                 let mut alloc = txn.open_table(ALLOC)?;
-                let raw = alloc
-                    .get(ALLOC_CURSOR)?
-                    .map_or(FIRST_USER_TOKEN, |g| g.value());
-                let token = phrase::canonicalize_user_token(raw)
+                let raw = if library == USER_DICTIONARY {
+                    alloc
+                        .get(library)?
+                        .or(alloc.get(ALLOC_CURSOR)?)
+                        .map_or(FIRST_USER_TOKEN, |g| g.value())
+                } else {
+                    alloc
+                        .get(library)?
+                        .map_or(first_library_token(library), |g| g.value())
+                };
+                let token = phrase::canonicalize_library_token(library, raw)
                     .ok_or(UserStoreError::TokenSpaceExhausted)?;
-                let next = phrase::next_user_token_after(token)
+                let next = phrase::next_library_token_after(library, token)
                     .ok_or(UserStoreError::TokenSpaceExhausted)?;
-                alloc.insert(ALLOC_CURSOR, next)?;
+                alloc.insert(library, next)?;
+                if library == USER_DICTIONARY {
+                    alloc.insert(ALLOC_CURSOR, next)?;
+                }
                 drop(alloc);
 
                 let mut phrases = txn.open_table(PHRASE)?;
                 phrases.insert(token, phrase)?;
-                by_text.insert(phrase, token)?;
+                by_lib.insert((library, phrase), token)?;
+                if library == USER_DICTIONARY {
+                    by_text.insert(phrase, token)?;
+                }
 
                 let mut prons = txn.open_table(PRONUNCIATION)?;
                 prons.insert((token, key_bytes.as_slice()), count)?;
@@ -578,10 +624,32 @@ impl UserStore {
 
     /// Token already allocated for `phrase` in the user sub-index, if any.
     pub fn token_for_phrase(&self, phrase: &str) -> Result<Option<Token>, UserStoreError> {
+        self.token_for_phrase_in(USER_DICTIONARY, phrase)
+    }
+
+    /// Token already allocated for `phrase` in `library`, if any.
+    pub fn token_for_phrase_in(
+        &self,
+        library: u8,
+        phrase: &str,
+    ) -> Result<Option<Token>, UserStoreError> {
         let db = self.database();
         let txn = db.begin_read()?;
-        let by_text = txn.open_table(PHRASE_BY_TEXT)?;
-        Ok(by_text.get(phrase)?.map(|g| g.value()))
+        let by_lib = txn.open_table(PHRASE_BY_LIB_TEXT)?;
+        if let Some(token) = by_lib.get((library, phrase))?.map(|g| g.value()) {
+            return Ok(Some(token));
+        }
+        if library == USER_DICTIONARY {
+            let by_text = txn.open_table(PHRASE_BY_TEXT)?;
+            return Ok(by_text.get(phrase)?.map(|g| g.value()));
+        }
+        Ok(None)
+    }
+
+    /// Current write generation; [`UserLookup`] rebuilds when this changes.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.write_generation()
     }
 
     /// Next token the store will allocate. Persisted; a reopen continues
@@ -628,6 +696,9 @@ impl UserStore {
         let mut rows = Vec::new();
         for item in phrases.iter()? {
             let (token, text) = item?;
+            if phrase_index_library_index(token.value()) != USER_DICTIONARY {
+                continue;
+            }
             for pronunciation in collect_pronunciations(&prons, token.value())? {
                 let Some(pinyin) = pronunciation.render_pinyin() else {
                     continue;
@@ -638,6 +709,67 @@ impl UserStore {
                     count: pronunciation.count(),
                 });
             }
+        }
+        Ok(rows)
+    }
+
+    /// Export rows for one `USER_FILE` nibble, in token then pronunciation
+    /// order.
+    pub fn export_phrases_in(&self, library: u8) -> Result<Vec<ExportedPhrase>, UserStoreError> {
+        let db = self.database();
+        let txn = db.begin_read()?;
+        let phrases = txn.open_table(PHRASE)?;
+        let prons = txn.open_table(PRONUNCIATION)?;
+        let mut rows = Vec::new();
+        for item in phrases.iter()? {
+            let (token, text) = item?;
+            if phrase_index_library_index(token.value()) != library {
+                continue;
+            }
+            for pronunciation in collect_pronunciations(&prons, token.value())? {
+                let Some(pinyin) = pronunciation.render_pinyin() else {
+                    continue;
+                };
+                rows.push(ExportedPhrase {
+                    text: text.value().to_owned(),
+                    pinyin,
+                    count: pronunciation.count(),
+                });
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Every stored phrase (user and network) with pronunciations.
+    pub fn phrases(&self) -> Result<Vec<UserPhrase>, UserStoreError> {
+        let db = self.database();
+        let txn = db.begin_read()?;
+        let phrases = txn.open_table(PHRASE)?;
+        let prons = txn.open_table(PRONUNCIATION)?;
+        let mut out = Vec::new();
+        for item in phrases.iter()? {
+            let (token, text) = item?;
+            let token = token.value();
+            let pronunciations = collect_pronunciations(&prons, token)?;
+            out.push(UserPhrase::new(
+                token,
+                text.value().to_owned(),
+                pronunciations,
+            ));
+        }
+        Ok(out)
+    }
+
+    /// User-bigram successors of `prev` as `(token, count)` pairs.
+    pub fn bigram_successors(&self, prev: Token) -> Result<Vec<(Token, u64)>, UserStoreError> {
+        let db = self.database();
+        let txn = db.begin_read()?;
+        let bigrams = txn.open_table(BIGRAM)?;
+        let mut rows = Vec::new();
+        for item in bigrams.range((prev, Token::MIN)..=(prev, Token::MAX))? {
+            let (key, count) = item?;
+            let (_prev, cur) = key.value();
+            rows.push((cur, count.value()));
         }
         Ok(rows)
     }
@@ -768,6 +900,7 @@ impl UserStore {
             // User phrases: text, reverse lookup, and pronunciations.
             let mut phrases = txn.open_table(PHRASE)?;
             let mut by_text = txn.open_table(PHRASE_BY_TEXT)?;
+            let mut by_lib = txn.open_table(PHRASE_BY_LIB_TEXT)?;
             let mut prons = txn.open_table(PRONUNCIATION)?;
             let mut matched: Vec<(Token, String)> = Vec::new();
             for item in phrases.iter()? {
@@ -780,6 +913,7 @@ impl UserStore {
             for (token, text) in matched {
                 phrases.remove(token)?;
                 by_text.remove(text.as_str())?;
+                by_lib.remove((phrase_index_library_index(token), text.as_str()))?;
                 remove_pronunciations(&mut prons, token)?;
             }
         }
@@ -810,6 +944,8 @@ impl UserStore {
             phrases.remove(token)?;
             let mut by_text = txn.open_table(PHRASE_BY_TEXT)?;
             by_text.remove(text.as_str())?;
+            let mut by_lib = txn.open_table(PHRASE_BY_LIB_TEXT)?;
+            by_lib.remove((phrase_index_library_index(token), text.as_str()))?;
             let mut prons = txn.open_table(PRONUNCIATION)?;
             remove_pronunciations(&mut prons, token)?;
 
@@ -1433,10 +1569,26 @@ mod tests {
         const SYSTEM: Token = 0x0100_0001;
         assert!(phrase::is_user_token(user));
         assert!(!phrase::is_user_token(SYSTEM));
-        assert_ne!(
-            phrase::phrase_index_library_index(user),
-            phrase::phrase_index_library_index(SYSTEM)
-        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn network_and_user_can_share_phrase_text() {
+        let path = temp_path("two-nibbles");
+        let mut store = UserStore::open(&path).unwrap();
+        let user = store
+            .add_phrase_in(phrase::USER_DICTIONARY, "词", &[7], Some(5))
+            .unwrap();
+        let net = store
+            .add_phrase_in(phrase::NETWORK_DICTIONARY, "词", &[7], Some(5))
+            .unwrap();
+        assert_ne!(user, net);
+        assert_eq!(phrase::phrase_index_library_index(user), 7);
+        assert_eq!(phrase::phrase_index_library_index(net), 6);
+        assert_eq!(store.export_phrases().unwrap().len(), 1);
+        assert_eq!(store.export_phrases_in(6).unwrap().len(), 1);
+        assert_eq!(store.next_user_token().unwrap(), user + 1);
         let _ = std::fs::remove_file(&path);
     }
 

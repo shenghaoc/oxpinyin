@@ -1,0 +1,167 @@
+//! Phrase prediction: prefixes → user-bigram successors → prefix suggestions.
+//!
+//! Reproduces `pinyin_guess_predicted_candidates` (`pinyin.cpp:2411-2451`)
+//! without punctuation (`docs/findings/phrase-union.md` §3.6 / §6.5).
+//! `punct.redb` is a raw Tkrzw convert, not the public-ABI schema, so the
+//! punctuation prefix stays empty (W11-PUNCT follow-up).
+
+use std::ffi::CString;
+
+use oxpinyin_engine::CandidateKind;
+use oxpinyin_user::UserStore;
+
+use crate::state::{CapiCandidate, CapiInstance, SharedDict};
+use crate::types::lookup_candidate_type_t;
+
+/// Minimum user-bigram count for a predicted successor (`pinyin.cpp:2311`).
+const BIGRAM_FILTER: u64 = 10;
+
+/// One predicted item before sort/dedup.
+struct Predicted {
+    text: String,
+    token: u32,
+    candidate_type: lookup_candidate_type_t,
+    frequency: u64,
+}
+
+/// Fills `inst.candidates` with predicted phrases for `prefix`.
+///
+/// Returns `false` when the prefix matches no phrase-table suffix (upstream
+/// returns false when `m_prefixes` stays empty).
+pub(crate) fn guess_predicted(inst: &mut CapiInstance, prefix: &str) -> bool {
+    inst.candidates.clear();
+    let prefixes = compute_prefixes(&inst.dict, inst.user.as_ref(), prefix);
+    if prefixes.is_empty() {
+        return false;
+    }
+
+    let mut items = Vec::new();
+    append_predicted_bigrams(&inst.dict, inst.user.as_ref(), &prefixes, &mut items);
+    append_predicted_prefix(&inst.dict, inst.user.as_ref(), prefix, &mut items);
+
+    items.sort_by(|left, right| {
+        right
+            .text
+            .chars()
+            .count()
+            .cmp(&left.text.chars().count())
+            .then(right.frequency.cmp(&left.frequency))
+    });
+
+    let mut seen = std::collections::HashSet::new();
+    for item in items {
+        if !seen.insert(item.text.clone()) {
+            continue;
+        }
+        let Ok(text) = CString::new(item.text) else {
+            continue;
+        };
+        inst.candidates.push(CapiCandidate {
+            text,
+            kind: CandidateKind::Phrase,
+            candidate_type: item.candidate_type,
+            nbest_index: 0,
+            consumed_bytes: 0,
+            token: Some(oxpinyin_core::PhraseToken::new(item.token)),
+        });
+    }
+    true
+}
+
+fn compute_prefixes(dict: &SharedDict, user: Option<&UserStore>, prefix: &str) -> Vec<u32> {
+    let chars: Vec<char> = prefix.chars().collect();
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    let user_lookup = user.and_then(|store| oxpinyin_user::UserLookup::from_store(store).ok());
+    let max = chars.len().min(oxpinyin_user::MAX_PHRASE_LENGTH);
+    let mut tokens = Vec::new();
+    for length in 1..=max {
+        let suffix: String = chars[chars.len() - length..].iter().collect();
+        tokens.extend(dict.system().tokens_for_text(&suffix).iter().copied());
+        if let Some(lookup) = user_lookup.as_ref() {
+            tokens.extend(lookup.tokens_for_text(&suffix).iter().copied());
+        }
+    }
+    tokens
+}
+
+fn append_predicted_bigrams(
+    dict: &SharedDict,
+    user: Option<&UserStore>,
+    prefixes: &[u32],
+    into: &mut Vec<Predicted>,
+) {
+    let Some(store) = user else {
+        return;
+    };
+    let mut successors = Vec::new();
+    for prev in prefixes.iter().rev().copied() {
+        let Ok(rows) = store.bigram_successors(prev) else {
+            continue;
+        };
+        if rows.is_empty() {
+            continue;
+        }
+        successors = rows;
+        break;
+    }
+    for length in [2_usize, 1] {
+        for (token, count) in &successors {
+            if *count < BIGRAM_FILTER {
+                continue;
+            }
+            let Some(text) = phrase_text(dict, store, *token) else {
+                continue;
+            };
+            if text.chars().count() != length {
+                continue;
+            }
+            into.push(Predicted {
+                frequency: *count,
+                text,
+                token: *token,
+                candidate_type: lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE,
+            });
+        }
+    }
+}
+
+fn append_predicted_prefix(
+    dict: &SharedDict,
+    user: Option<&UserStore>,
+    prefix: &str,
+    into: &mut Vec<Predicted>,
+) {
+    let prefix_len = prefix.chars().count();
+    if prefix_len == 0 {
+        return;
+    }
+    let limit = prefix_len.saturating_mul(2).saturating_add(1);
+    let mut suggestions = dict.system().suggest_after(prefix);
+    if let Some(store) = user
+        && let Ok(lookup) = oxpinyin_user::UserLookup::from_store(store)
+    {
+        suggestions.extend(lookup.suggest_after(prefix));
+    }
+    suggestions.sort_by_key(|(token, _)| *token);
+    for (token, text) in suggestions {
+        if text.chars().count() > limit {
+            continue;
+        }
+        let frequency = dict.system().unigram_count(token).unwrap_or(0);
+        into.push(Predicted {
+            frequency,
+            text,
+            token,
+            candidate_type: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
+        });
+    }
+}
+
+fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<String> {
+    if let Ok(Some(phrase)) = store.phrase(token) {
+        return Some(phrase.text().to_owned());
+    }
+    dict.system().phrase_text(token).ok().flatten()
+}

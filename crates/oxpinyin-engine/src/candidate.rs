@@ -15,6 +15,8 @@ use oxpinyin_core::{Cost, PhraseToken};
 pub enum CandidateKind {
     /// A dictionary phrase covering part of the composition.
     Phrase,
+    /// An addon-facade phrase (`ADDON_CANDIDATE`).
+    Addon,
     /// A decoded sentence covering the whole composition.
     Sentence,
     /// Raw input offered back when no phrase was found.

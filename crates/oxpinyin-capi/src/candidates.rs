@@ -2,7 +2,6 @@
 
 use std::os::raw::c_int;
 
-use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::{SENTENCE_START, is_user_token};
 
 use crate::ffi::ffi_catch;
@@ -103,11 +102,7 @@ pub extern "C" fn pinyin_get_candidate_type(
         // SAFETY: `candidate` is non-null and was produced by
         // `pinyin_get_candidate`.
         let cand = unsafe { candidate_ref(candidate) };
-        let ctype = match cand.kind {
-            CandidateKind::Sentence => lookup_candidate_type_t::NBEST_MATCH_CANDIDATE,
-            CandidateKind::Phrase => lookup_candidate_type_t::NORMAL_CANDIDATE,
-            CandidateKind::Fallback | _ => lookup_candidate_type_t::NORMAL_CANDIDATE,
-        };
+        let ctype = cand.candidate_type;
         if !candidate_type.is_null() {
             // SAFETY: Null-checked above.
             unsafe {
