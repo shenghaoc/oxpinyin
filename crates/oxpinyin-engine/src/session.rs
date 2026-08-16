@@ -48,13 +48,6 @@ const KEY_INCOMPLETE: &str = "incomplete-pinyin";
 /// one segmentation is not enough to reproduce a candidate list.
 const SEGMENTATION_K: usize = 8;
 
-/// Largest number of candidates a refresh keeps.
-///
-/// Comfortably above the capture protocol's depth of ten, so the differential
-/// can measure a prefix-10 overlap without the list being the thing that
-/// truncates it.
-const MAX_CANDIDATES: usize = 64;
-
 /// Longest phrase, in keys, the sentence builder will look back for.
 const MAX_PHRASE_KEYS: usize = 8;
 
@@ -642,8 +635,6 @@ where
             collected.sort_by_key(Candidate::cost);
             collected.dedup_by(|left, right| left.text() == right.text());
         }
-
-        collected.truncate(MAX_CANDIDATES);
 
         if collected.is_empty() {
             collected.push(Candidate::new(
@@ -1246,7 +1237,8 @@ struct RankKey {
 /// Full dedup rather than the adjacent-only `Vec::dedup_by`: the same text can
 /// be reached through different spans or segmentations, and after the
 /// three-key sort two copies need not be adjacent. One heap allocation per
-/// kept text; the candidate count per refresh is a few hundred at most.
+/// kept text; the candidate count per refresh is bounded by the lookup totals
+/// upstream also materialises (broad initials are in the thousands).
 fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
     let mut seen: HashSet<String> = HashSet::with_capacity(candidates.len());
     candidates.retain(|candidate| {

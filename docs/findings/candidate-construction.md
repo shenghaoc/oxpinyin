@@ -140,7 +140,8 @@ segmentations" is **false against our own tree.** `Session::refresh`
 (`crates/oxpinyin-engine/src/session.rs:461`) iterates *every* one of the
 `SEGMENTATION_K = 8` best paths and calls both `collect_prefix_phrases` and
 `collect_sentence` on each, then pools, sorts by `Candidate::cost`, dedups by
-text, and truncates to `MAX_CANDIDATES = 64`. The doc comment at
+text, and returns every pooled candidate (upstream has no candidate cap).
+The doc comment at
 `session.rs:457` names `xian` and `fangan` as the reason. We pool across
 segmentations today. The accurate framing of our gap is not "we don't pool" — it
 is §1.4.
@@ -495,8 +496,9 @@ Stage-1 call sites must stay valid. The `Dictionary`, `LanguageModel` (and
    `kbest-search.md`'s total order governs the **syllable-path** stage only,
    not the pooled list — `Candidate` carries no edge id to tie-break on. No
    clock, locale, or environment read enters.
-6. **k-bound family respected.** `SEGMENTATION_K = 8`, `MAX_CANDIDATES = 64`,
-   `MAX_PHRASE_KEYS = 8`, `MAX_K = 4096`. Any growth is justified against wall
+6. **k-bound family respected.** `SEGMENTATION_K = 8`,
+   `MAX_PHRASE_KEYS = 8`, `MAX_K = 4096`; the candidate list is uncapped
+   (upstream has no cap). Any growth is justified against wall
    and RSS in §4 and re-pinned deliberately.
 
 ## 4. Measurement gates (runnable as written)
@@ -749,8 +751,9 @@ appearing.
    unigram count descending — the phrase index's counts read from
    `interpolation2.text` in the fetched model cache, integer comparisons only.
    Fully-tied candidates keep collection order (window × key-path × lookup).
-   The list is then deduplicated by text keep-first and truncated to
-   `MAX_CANDIDATES = 64`.
+   The list is then deduplicated by text keep-first and returned in full —
+   upstream has no candidate cap, and the fork observes the lookup-table total
+   at the wire.
 3. **No sentence candidates, no longer candidates.** Under the pinned
    observation surface the pin emits no `NBEST_MATCH` candidates (§7.3, §7.4),
    so no sentence prepend runs; `SORT_WITHOUT_LONGER` clears the
