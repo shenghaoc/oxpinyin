@@ -1,12 +1,13 @@
 # Phrase-index union at lookup — W11 Phase 0 scope and proposed design
 
-Date: 2026-08-17 · Status: **Phase 0 — STOP for maintainer review before
-implementation** · Workstream: W11 · Base: current main (`1c7cbd0`)
+Date: 2026-08-17 · Status: **Phase 0 approved** · Workstream: W11 ·
+Base: current main (`1c7cbd0`)
 
 This finding is the mandatory scope-and-design gate for W11. It records what
 upstream actually unions, maps oxpinyin's current single-system-index
-assumptions, and proposes a design for the second PR in the stack. No runtime
-behaviour is changed by this document.
+assumptions, and proposes a design for the second PR in the stack. §9 records
+the approved ground for that implementation PR. No runtime behaviour is
+changed by this document.
 
 ## 1. Scope
 
@@ -503,27 +504,33 @@ Unique names under `tools/bisection/`, not edits to `run-import-diff.sh` or
 - bisect and valgrind remain 0/0;
 - C++ smoke, `fmt`, `clippy`, `test`.
 
-## 9. STOP points and decisions needed
+## 9. Approved decisions (Phase 0)
 
-1. **Addon data strategy**: Option A (regenerate addon tables in the public-ABI
-   schema, recommended) vs Option B (port the raw sectioned format). Option A
-   re-provenances the W3 `addon_*.redb` files and touches `oxpinyin-migrate`.
-2. **Prediction surface**: whether punctuation candidates from `punct.redb`
-   are in this workstream's first prediction PR or stubbed as an empty
-   punctuation prefix while the non-punctuation path lands.
-3. **Core trait additions**: the design adds defaulted methods to `Dictionary`
-   and `LanguageModel`; confirm this is within W11's accepted ground and does
-   not need the W10/W13 coordination owner.
-4. **Network dictionary**: the default-facade user lookup should be shaped as
-   `USER_FILE` sub-index loading for indices 6 and 7, not a single hard-coded
-   `USER_DICTIONARY=7`, so a future/parallel `network.bin` can join the same
-   path. The explicit post-approval W11 tasks name user dictionary and addon;
-   confirm whether stock `network.txt` is in this PR or a later one.
+1. **Addon data: Option A.** Regenerate from the `.table` text via
+   `oxpinyin-migrate`. Conditions: (a) differential-verify the regenerated
+   tables — pinned libpinyin loads the same `.table` through its own addon
+   path, ADDON candidates compared exactly; (b) remove the raw W3
+   `addon_*.redb` in the implementation PR unless a manifest/test still pins
+   them — if pinned, keep and mark superseded instead of deleting.
+2. **Network index 6 is in scope** for the implementation PR — same
+   default-facade mechanism as user. Confirm from the pinned frontend which
+   index its network import targets and reproduce exactly (W7-T1 made only
+   index 7 writable; if extending writability to 6 is structurally more than
+   a second nibble in the same path, report and it splits out).
+3. **Punctuation prediction is conditional.** Check `punct.redb`
+   consumability first. Consumable → include punctuation in the first
+   prediction PR. Not → stub empty, run the prediction differential in
+   non-punctuation mode, register the gap with a named follow-up. Phrase
+   prediction is differential-exact in the first PR either way.
+4. **Trait additions are within W11 ground** (defaulted methods; other
+   implementors compile unchanged). W10 owns `config.rs` / parser masking;
+   W13 owns new parsers. Flag the seam additions in the implementation
+   report.
+
+The ROADMAP W11 "unions up to 16 libraries by token nibble" claim is
+superseded by §3.2: two facades (`m_phrase_index` vs
+`m_addon_phrase_index`), not one 16-way union (`pinyin.cpp:432-435`).
 
 Expected fork-side consequence: the fork's parity gate can run with stock
 `network.txt` only after the default facade has a `USER_FILE` source for index
-6 as well as 7. If this workstream implements only `USER_DICTIONARY=7` and the
-addon set, stock `network.txt` would still differ from an empty network store;
-the fork itself is not run here.
-
-No implementation has started. This document stops here for maintainer review.
+6 as well as 7. The fork itself is not run here.
