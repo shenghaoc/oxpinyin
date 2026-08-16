@@ -215,11 +215,7 @@ pub extern "C" fn pinyin_guess_candidates(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
-        if inst
-            .session
-            .set_incomplete_pinyin(inst.incomplete.load(std::sync::atomic::Ordering::Relaxed))
-            .is_err()
-        {
+        if inst.session.set_options(inst.options()).is_err() {
             return false;
         }
         if !inst.session.is_composing() {

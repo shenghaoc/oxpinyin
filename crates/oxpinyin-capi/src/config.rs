@@ -16,11 +16,9 @@ use crate::types::{PinyinContext, PinyinOptionT, PinyinTableFlag};
 /// bool pinyin_set_options(pinyin_context_t * context, pinyin_option_t options);
 /// ```
 ///
-/// Decodes `PINYIN_INCOMPLETE` into the live context flag and the
-/// `incomplete-pinyin` config key, and `USE_TONE` into the bopomofo
-/// parser. Already-allocated instances observe the remask on the next
-/// parse or guess. Other bits are accepted without effect until their
-/// engine backends exist.
+/// Decodes the full option word into the live context. `PINYIN_INCOMPLETE`
+/// and `USE_TONE` stay extracted for the W13 scheme parsers; the rest of
+/// the word remasks already-allocated full-pinyin sessions.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: PinyinOptionT) -> bool {
     if context.is_null() {
@@ -35,6 +33,7 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
             .set("incomplete-pinyin", ConfigValue::Bool(enabled));
         ctx.incomplete.store(enabled, Ordering::Relaxed);
         ctx.use_tone.store(use_tone, Ordering::Relaxed);
+        ctx.options.store(options, Ordering::Relaxed);
         true
     })
 }

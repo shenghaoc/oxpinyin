@@ -3,6 +3,7 @@
 //! Full pinyin is C++-formatted (space-separated syllable keys with `|` at
 //! the cursor). Double pinyin and chewing use the scheme aux walkers.
 
+use oxpinyin_core::OptionBits;
 use oxpinyin_core::graph::SegmentGraph;
 use oxpinyin_core::phonetic_initial;
 use oxpinyin_core::{DoublePinyinParse, ZhuyinParse};
@@ -19,13 +20,13 @@ use crate::types::{GChar, PinyinInstance};
 /// visible. Apostrophes are never rendered: a cursor on the apostrophe byte
 /// or on the following key start both land on that key's `syllable_start`
 /// (`ni'hao` cursor 2 and 3 both render `ni |hao `).
-fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize) -> String {
+fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize, options: OptionBits) -> String {
     let parsed = &raw[..parsed_len.min(raw.len())];
     if parsed.is_empty() {
         return String::new();
     }
     let cursor = cursor.min(parsed.len());
-    let Ok(graph) = SegmentGraph::build(parsed.as_bytes()) else {
+    let Ok(graph) = SegmentGraph::build_with_options(parsed.as_bytes(), options) else {
         return String::new();
     };
 
@@ -210,7 +211,12 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let text = full_aux_text(inst.session.raw_input(), inst.parsed_len, cursor);
+        let text = full_aux_text(
+            inst.session.raw_input(),
+            inst.parsed_len,
+            cursor,
+            inst.options(),
+        );
         if !aux_text.is_null() {
             // SAFETY: Null-checked above. `owned_cstr` returns null on an
             // interior NUL or allocation failure; otherwise ownership
@@ -357,6 +363,7 @@ pub extern "C" fn pinyin_get_chewing_auxiliary_text(
 #[cfg(test)]
 mod tests {
     use super::full_aux_text;
+    use oxpinyin_core::OptionBits;
 
     #[test]
     fn full_aux_text_matches_the_oracle_for_simple_keys() {
@@ -373,7 +380,7 @@ mod tests {
             (99, "ni hao |"),
         ] {
             assert_eq!(
-                full_aux_text("nihao", 5, cursor),
+                full_aux_text("nihao", 5, cursor, OptionBits::default()),
                 expected,
                 "nihao cursor {cursor}"
             );
@@ -393,7 +400,7 @@ mod tests {
             (6, "ni hao |"),
         ] {
             assert_eq!(
-                full_aux_text("ni'hao", 6, cursor),
+                full_aux_text("ni'hao", 6, cursor, OptionBits::default()),
                 expected,
                 "ni'hao cursor {cursor}"
             );
@@ -405,15 +412,15 @@ mod tests {
         // nih parses as ni + incomplete h with PINYIN_INCOMPLETE set.
         for (cursor, expected) in [(0, "|ni h "), (2, "ni |h "), (3, "ni h |"), (4, "ni h |")] {
             assert_eq!(
-                full_aux_text("nih", 3, cursor),
+                full_aux_text("nih", 3, cursor, OptionBits::default()),
                 expected,
                 "nih cursor {cursor}"
             );
         }
 
         // A bare incomplete initial renders as the initial itself.
-        assert_eq!(full_aux_text("n", 1, 0), "|n ");
-        assert_eq!(full_aux_text("n", 1, 1), "n |");
+        assert_eq!(full_aux_text("n", 1, 0, OptionBits::default()), "|n ");
+        assert_eq!(full_aux_text("n", 1, 1, OptionBits::default()), "n |");
     }
 
     #[test]

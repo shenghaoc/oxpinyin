@@ -65,6 +65,7 @@ typedef pinyin_context_t *(*fn_init)(const char *, const char *);
 typedef void (*fn_fini)(pinyin_context_t *);
 typedef pinyin_instance_t *(*fn_alloc)(pinyin_context_t *);
 typedef void (*fn_free_instance)(pinyin_instance_t *);
+typedef bool (*fn_set_options)(pinyin_context_t *, uint32_t);
 typedef size_t (*fn_parse)(pinyin_instance_t *, const char *);
 typedef bool (*fn_sentence)(pinyin_instance_t *);
 typedef bool (*fn_guess)(pinyin_instance_t *, size_t, guint);
@@ -90,6 +91,7 @@ struct syms {
     fn_fini fini;
     fn_alloc alloc;
     fn_free_instance free_instance;
+    fn_set_options set_options;
     fn_parse parse;
     fn_sentence sentence;
     fn_guess guess;
@@ -128,6 +130,7 @@ static void resolve_all(void *handle, struct syms *s) {
     s->fini = (fn_fini)load("pinyin_fini", handle);
     s->alloc = (fn_alloc)load("pinyin_alloc_instance", handle);
     s->free_instance = (fn_free_instance)load("pinyin_free_instance", handle);
+    s->set_options = (fn_set_options)load("pinyin_set_options", handle);
     s->parse = (fn_parse)load("pinyin_parse_more_full_pinyins", handle);
     s->sentence = (fn_sentence)load("pinyin_guess_sentence", handle);
     s->guess = (fn_guess)load("pinyin_guess_candidates", handle);
@@ -272,6 +275,13 @@ int main(int argc, char **argv) {
     if (!inst) {
         fprintf(stderr, "pinyin_alloc_instance failed\n");
         return 1;
+    }
+    if (getenv("TRAINDIFF_OPTIONS")) {
+        uint32_t options = (uint32_t)strtoul(getenv("TRAINDIFF_OPTIONS"), NULL, 16);
+        if (!s.set_options(ctx, options)) {
+            fprintf(stderr, "pinyin_set_options failed\n");
+            return 1;
+        }
     }
 
     /* Phase 1 — the doubling sequence on (你 → 好). Each round: parse,

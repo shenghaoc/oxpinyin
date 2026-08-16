@@ -15,7 +15,8 @@ use oxpinyin_core::graph::{Edge, EdgeKind, SegmentGraph};
 use oxpinyin_core::kbest::{DecodedPath, k_best};
 use oxpinyin_core::scoring::{Scorer, ScoringConfig, ScoringError, expand_keys, key_cost_table};
 use oxpinyin_core::{
-    Completeness, Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey, UserModel,
+    Completeness, Cost, Dictionary, LanguageModel, OptionBits, PhraseEntry, PhraseToken,
+    SyllableKey, UserModel,
 };
 
 use crate::candidate::{Candidate, CandidateKind, CandidateList};
@@ -90,7 +91,7 @@ pub enum Selection {
 #[derive(Clone, Copy, Debug)]
 struct Settings {
     page_size: usize,
-    incomplete: bool,
+    options: OptionBits,
 }
 
 impl Settings {
@@ -102,12 +103,16 @@ impl Settings {
             .unwrap_or(DEFAULT_PAGE_SIZE);
         // The captured parity profile has PINYIN_INCOMPLETE set, and the
         // upstream default this engine carries is true; a source that says
-        // nothing gets the parity behaviour.
+        // nothing gets the parity behaviour. Other option bits arrive through
+        // [`Session::set_options`] from the C ABI's raw option word.
         let incomplete = config.get_bool(KEY_INCOMPLETE).unwrap_or(true);
-        Self {
-            page_size,
-            incomplete,
-        }
+        let options = OptionBits::default().with(oxpinyin_core::PINYIN_INCOMPLETE, incomplete);
+        Self { page_size, options }
+    }
+
+    /// Whether the `PINYIN_INCOMPLETE` bit is set.
+    const fn incomplete(self) -> bool {
+        self.options.has_incomplete()
     }
 }
 
@@ -367,9 +372,10 @@ where
     /// into a segment graph (an over-long input; the buffer is capped by
     /// [`MAX_INPUT_BYTES`]).
     pub fn composition_keys(&self) -> Result<Vec<SyllableKey>, EngineError> {
-        let graph = SegmentGraph::build(self.raw.as_bytes()).map_err(EngineError::Graph)?;
+        let graph = SegmentGraph::build_with_options(self.raw.as_bytes(), self.settings.options)
+            .map_err(EngineError::Graph)?;
         Ok(graph
-            .fewest_keys(self.settings.incomplete)
+            .fewest_keys(self.settings.incomplete())
             .into_iter()
             .map(|edge| edge.key())
             .collect())
@@ -416,10 +422,28 @@ where
     /// Returns [`EngineError`] when a composing session fails to refresh
     /// under the new setting.
     pub fn set_incomplete_pinyin(&mut self, enabled: bool) -> Result<(), EngineError> {
-        if self.settings.incomplete == enabled {
+        let options = self
+            .settings
+            .options
+            .with(oxpinyin_core::PINYIN_INCOMPLETE, enabled);
+        self.set_options(options)
+    }
+
+    /// Apply a live option-word change and refresh if composing.
+    ///
+    /// This is the engine half of `pinyin_set_options`: correction and
+    /// ambiguity bits remask already-allocated sessions on the next parse or
+    /// guess. The C ABI stores the raw word and calls this before parse/guess.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when a composing session fails to refresh
+    /// under the new options.
+    pub fn set_options(&mut self, options: OptionBits) -> Result<(), EngineError> {
+        if self.settings.options == options {
             return Ok(());
         }
-        self.settings.incomplete = enabled;
+        self.settings.options = options;
         if self.raw.is_empty() {
             return Ok(());
         }
@@ -578,9 +602,10 @@ where
             return Ok(());
         }
 
-        let graph = SegmentGraph::build(remaining.as_bytes()).map_err(EngineError::Graph)?;
+        let graph = SegmentGraph::build_with_options(remaining.as_bytes(), self.settings.options)
+            .map_err(EngineError::Graph)?;
         self.parsed_prefix = graph
-            .fewest_keys(self.settings.incomplete)
+            .fewest_keys(self.settings.incomplete())
             .last()
             .map_or(0, Edge::to);
         let scorer = Scorer::with_key_costs(
@@ -600,7 +625,12 @@ where
         // candidates, cost order, adjacent dedup.
         let mut collected: Vec<Candidate> = Vec::new();
         if self.model.has_real_unigrams() {
-            self.collect_window_scan(&graph, remaining.as_bytes(), &mut collected)?;
+            self.collect_window_scan(
+                &graph,
+                remaining.as_bytes(),
+                self.settings.options,
+                &mut collected,
+            )?;
 
             // The scan's result stands even when it found nothing. Tokens the
             // table lacks rank as zero rather than falling back.
@@ -797,7 +827,7 @@ where
             let Some(edge) = graph.edge(*id) else {
                 continue;
             };
-            if !self.settings.incomplete && edge.kind() == EdgeKind::Incomplete {
+            if !self.settings.incomplete() && edge.kind() == EdgeKind::Incomplete {
                 break;
             }
             keys.push(edge.key());
@@ -827,9 +857,10 @@ where
         &self,
         graph: &SegmentGraph,
         input: &[u8],
+        options: OptionBits,
         into: &mut Vec<Candidate>,
     ) -> Result<(), EngineError> {
-        let matrix = build_scan_matrix(graph, self.settings.incomplete);
+        let matrix = build_scan_matrix(graph, options);
         let bound = graph.consumed();
         let mut end = 1usize;
         while end <= bound {
@@ -1096,15 +1127,15 @@ impl ScanKey {
 }
 
 /// The keys the pin's matrix holds per byte position: the selected parse's
-/// keys, plus the resplit and divided additions. See
-/// `docs/findings/matrix-split-tables.md` for the frozen pair lists and the
-/// construction they reproduce.
-fn build_scan_matrix(graph: &SegmentGraph, allow_incomplete: bool) -> Vec<Vec<ScanKey>> {
+/// keys, plus the resplit, divided and fuzzy additions. See
+/// `docs/findings/matrix-split-tables.md` for the frozen pair lists and
+/// `docs/findings/option-bits.md` for the fuzzy step.
+fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Vec<Vec<ScanKey>> {
     let bound = graph.consumed();
     let mut columns: Vec<Vec<ScanKey>> = vec![Vec::new(); bound + 1];
 
     // 1. The selected parse.
-    let selected_edges = graph.fewest_keys(allow_incomplete);
+    let selected_edges = graph.fewest_keys(options.has_incomplete());
     let selected: Vec<ScanKey> = selected_edges.iter().map(ScanKey::from_edge).collect();
     for scan_key in &selected {
         columns[scan_key.from].push(*scan_key);
@@ -1194,6 +1225,31 @@ fn build_scan_matrix(graph: &SegmentGraph, allow_incomplete: bool) -> Vec<Vec<Sc
             syllable_start: split,
             crosses_separator: false,
         });
+    }
+    for addition in &additions {
+        columns[addition.from].push(*addition);
+    }
+
+    // 4. Fuzzy syllable alternates over every key collected so far. This is
+    // `fuzzy_syllable_step`; the alternates share the original key's byte
+    // span. This is a W11 candidate-collection touch, kept minimal and
+    // flagged in the W10 report.
+    let snapshot: Vec<(usize, ScanKey)> = columns
+        .iter()
+        .enumerate()
+        .flat_map(|(position, keys)| keys.iter().map(move |key| (position, *key)))
+        .collect();
+    let mut additions: Vec<ScanKey> = Vec::new();
+    for (position, scan_key) in snapshot {
+        for alternate in scan_key.key.fuzzy_alternatives(options) {
+            additions.push(ScanKey {
+                key: alternate,
+                from: position,
+                to: scan_key.to,
+                syllable_start: scan_key.syllable_start,
+                crosses_separator: scan_key.crosses_separator,
+            });
+        }
     }
     for addition in &additions {
         columns[addition.from].push(*addition);
