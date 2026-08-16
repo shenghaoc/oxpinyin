@@ -3,8 +3,6 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use oxpinyin_core::graph::SegmentGraph;
-
 use crate::ffi::{cstr_to_string, ffi_catch};
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, PinyinInstance};
@@ -15,6 +13,9 @@ use crate::types::{GChar, PinyinInstance};
 /// The getter must return this snapshot, not a length recomputed from the
 /// current session: the fork compares `pinyin_choose_candidate`'s cursor
 /// against it (`docs/findings/abi-subset.md` W8 contract).
+///
+/// The stored length is the session's filtered `fewest_keys` prefix, not
+/// the unfiltered graph `consumed()`.
 ///
 /// Resets and clears the candidate snapshot even for empty input, so a
 /// prior composition is discarded and the stored length returns to 0.
@@ -27,9 +28,7 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
         return 0;
     }
     let consumed = match inst.session.type_pinyin(text) {
-        Ok(_) => SegmentGraph::build(inst.session.raw_input().as_bytes())
-            .map(|graph| graph.consumed())
-            .unwrap_or(0),
+        Ok(_) => inst.session.parsed_prefix_len(),
         Err(_) => 0,
     };
     inst.parsed_len = consumed;

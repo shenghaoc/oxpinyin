@@ -140,6 +140,8 @@ pub struct Session<D, L> {
     raw: String,
     selected: String,
     consumed: usize,
+    /// Filtered parse length of the remaining input, from the last refresh.
+    parsed_prefix: usize,
     candidates: CandidateList,
     history: Vec<PhraseToken>,
     scoring: ScoringConfig,
@@ -178,6 +180,7 @@ where
             raw: String::new(),
             selected: String::new(),
             consumed: 0,
+            parsed_prefix: 0,
             candidates: CandidateList::default(),
             history: Vec::new(),
             scoring: ScoringConfig::default(),
@@ -398,8 +401,19 @@ where
         self.raw.clear();
         self.selected.clear();
         self.consumed = 0;
+        self.parsed_prefix = 0;
         self.candidates = CandidateList::default();
         self.history.clear();
+    }
+
+    /// Filtered parse length of the remaining input after the last refresh.
+    ///
+    /// This is the last byte of [`SegmentGraph::fewest_keys`] under the
+    /// session's `incomplete-pinyin` setting — not the unfiltered
+    /// [`SegmentGraph::consumed`].
+    #[must_use]
+    pub const fn parsed_prefix_len(&self) -> usize {
+        self.parsed_prefix
     }
 
     /// What the shell should display.
@@ -550,10 +564,15 @@ where
         let remaining = self.raw[self.consumed..].to_owned();
         if remaining.is_empty() {
             self.candidates = CandidateList::default();
+            self.parsed_prefix = 0;
             return Ok(());
         }
 
         let graph = SegmentGraph::build(remaining.as_bytes()).map_err(EngineError::Graph)?;
+        self.parsed_prefix = graph
+            .fewest_keys(self.settings.incomplete)
+            .last()
+            .map_or(0, Edge::to);
         let scorer = Scorer::with_key_costs(
             self.scoring,
             &self.dictionary,
