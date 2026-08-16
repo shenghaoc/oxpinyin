@@ -69,6 +69,7 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
 | W11 | Phrase-index union at lookup (user, network, addon) | oxpinyin-engine, oxpinyin-data, oxpinyin-user |
 | W12 | Corpus tail (undiagnosed parity gaps) | oxpinyin-core, oxpinyin-engine, oxpinyin-capi |
 | W13 | Double-pinyin and bopomofo input schemes (feature implementation) | oxpinyin-core, oxpinyin-engine |
+| W14 | Sentence surface (n-best emission, NBEST_MATCH typing, get_sentence) | oxpinyin-capi, oxpinyin-engine |
 
 ### Workstream notes (recorded as decisions settle)
 
@@ -137,7 +138,7 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   continues through W10–W12 and closes when the parity bar is met.
   Measuring Stage-2 baselines while Stage-1 work continues is deliberate —
   those numbers are prerequisites for improving against them. Remaining
-  work is not W8 — it is W10–W13 below.
+  work is not W8 — it is W10–W14 below.
 
 - **W9 merged out of numeric order.** W9 is the training toolchain and
   shipped five stages: segmenter (`ngseg`), counter (`gen_ngram`), λ
@@ -191,3 +192,19 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   verified against the pinned oracle on a scheme-specific differential
   surface, with its own frozen scheme SPEC rather than W12's open-ended
   diagnosis criterion.
+
+- **W14 is the sentence surface.** Three parts, one root: sentence
+  candidates do not emit with real unigrams loaded (nbest=0; upstream
+  prepends up to N n-best rows and merges/retypes a sentence equal to an
+  existing phrase — 129 = 126 + 3 vs 126 = 126 on the matched-data
+  evidence in #97); the merged rows must be typed NBEST_MATCH; and
+  `pinyin_get_sentence` must return the decoded 1-best, not raw input.
+  Pre-existing full-pinyin ground, present through all scheme paths,
+  masked until now by the W8 parity profile (sort=2 excluded sentence
+  rows; preedit was aux-text-based). The largest single divergence under
+  the fork's default settings. Tracked as #100; starts after the W10/W11
+  stacks land — the fix lives in `candidates.rs`/`sentence.rs`, the
+  collision zone of the open workstreams. Verification: extend the
+  matched-data candidate differential to assert the nbest rows, typing,
+  and `get_sentence` against the pinned oracle; corpus pins unaffected
+  (the corpus profile excludes sentence rows — a pin move is a leak).
