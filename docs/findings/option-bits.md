@@ -174,12 +174,22 @@ On the fork-default word (both bits set) the xian/fanan/fangan/tian
 triggers are byte-identical across engines, including `n=`. No
 divided/resplit machinery is added here.
 
-The scan-matrix fuzzy step remains a flagged W11-ground touch.
-Under `PINYIN_AMB_AN_ANG` (`amb-17`), `fangan` is **KNOWN-DIVERGENT #103**
-(oracle `方案|反感|翻案|访港|…`, capi `方案|反感|方|房|…`). Fork-default
-and all-off `fangan` are identical. `PINYIN_AMB_*` remains W10-charter:
-the bit is implemented, with this one known divergence deferred until
-the W11 stack lands.
+Scan-matrix keep-rule (Fixes #103): `PhoneticTable::append` is an
+unconditional bag push (`phonetic_key_matrix.h:92-99`); a column is
+`(ChewingKey, ChewingKeyRest)` and Rest is the span (`chewing_key.h:97-104`).
+Same key, different `m_raw_end`, coexist. oxpinyin key-only dedup is
+**pre-fuzzy only** (selected + resplit + divided — the all-off / `0x18a`
+pin). After `fuzzy_syllable_step`, keep is `(key, to)`. `amb-17`/`fangan`
+is asserted identical (`方案|反感|翻案|访港|…`).
+
+Initials-then-finals compose: `fuzzy_syllable_step` applies initials,
+re-fetches the column, then finals (`phonetic_key_matrix.cpp:238-306`).
+`can` under `AMB_C_CH|AMB_AN_ANG` yields `chan`, `cang`, and chained
+`chang`. The sweep case `amb-chain` asserts that.
+
+Bare `gn`/`mg`/`on` are not in `pinyin_index` (80/80/17 stemmed rows).
+`checked_canonical` rejects an empty stem so those bits do not invent
+`ng`/`ong`. `agn` remains gated by `PINYIN_CORRECT_GN_NG`.
 
 ## TEXT-set STOP triage (all-off control)
 

@@ -1234,10 +1234,15 @@ fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Vec<Vec<ScanK
         columns[addition.from].push(*addition);
     }
 
-    // 4. Fuzzy syllable alternates over every key collected so far. This is
-    // `fuzzy_syllable_step`; the alternates share the original key's byte
-    // span. This is a W11 candidate-collection touch, kept minimal and
-    // flagged in the W10 report.
+    // Pre-fuzzy pin: first `SyllableKey` in a column. Fuzzy is off on the
+    // parity word, so this is the all-off / 0x18a matrix.
+    keep_first_in_column(&mut columns, false);
+
+    // 4. `fuzzy_syllable_step`. Upstream `PhoneticTable::append` is a bag
+    // push (`phonetic_key_matrix.h:92-99`); `ChewingKeyRest` is the span
+    // (`chewing_key.h:97-104`). Same key, different `m_raw_end`, coexist.
+    // After fuzzy, keep `(key, to)` so those edges survive; key-only
+    // collapse here is #103.
     let snapshot: Vec<(usize, ScanKey)> = columns
         .iter()
         .enumerate()
@@ -1258,51 +1263,35 @@ fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Vec<Vec<ScanK
     for addition in &additions {
         columns[addition.from].push(*addition);
     }
+    keep_first_in_column(&mut columns, true);
 
-    // Keep the first occurrence of each key in a column.
-    for column in &mut columns {
+    columns
+}
+
+/// Keep the first column entry. `by_span` false is key-only (pre-fuzzy
+/// pin); true is `(key, to)` (upstream Rest span).
+fn keep_first_in_column(columns: &mut [Vec<ScanKey>], by_span: bool) {
+    for column in columns {
         let mut kept = 0_usize;
         for index in 0..column.len() {
-            if !column[..kept]
-                .iter()
-                .any(|earlier| earlier.key == column[index].key)
-            {
+            let duplicate = column[..kept].iter().any(|earlier| {
+                earlier.key == column[index].key && (!by_span || earlier.to == column[index].to)
+            });
+            if !duplicate {
                 column.swap(kept, index);
                 kept += 1;
             }
         }
         column.truncate(kept);
     }
-
-    columns
 }
 
-/// The sort-key frequency for one candidate.
-///
-/// Upstream `_compute_frequency_of_items` writes
-/// `m_freq = (λ · bigram_poss · DISCOUNT + (1-λ) · unigram/total) · 256³`.
-/// `DYNAMIC_ADJUST` gates only `bigram_poss` (`pinyin.cpp:1845-1851`), after
-/// `pinyin_guess_candidates` loaded the previous token and the merged
-/// system+user bigram under the same bit (`:2201-2212`). The unigram term
-/// of `m_freq` is ungated (FacadePhraseIndex, including user).
-///
-/// [`RankKey::frequency`] is the raw unigram count, not interpolated
-/// `m_freq`. This function therefore returns `unigram` (system + W6-T4
-/// overlay) and adds [`dynamic_adjust_bigram_term`], which is 0 in both
-/// bit states: bit-clear matches the pin, bit-set leaves W6-T4's unigram
-/// merge intact. A non-zero increment would be a ranking-model change
-/// outside W10.
+/// Unigram sort key plus the DYNAMIC_ADJUST bigram increment (#99).
 fn candidate_frequency_sort_key(options: OptionBits, unigram: u64) -> u64 {
     unigram.saturating_add(dynamic_adjust_bigram_term(options))
 }
 
-/// Bigram increment of the candidate-frequency sort key.
-///
-/// The two cited sites skip this term when `DYNAMIC_ADJUST` is clear —
-/// they do not skip the unigram sort input. The fork masks the bit out
-/// entirely (`PYPConfig.cc:145`), so bit-clear is the default-settings
-/// path. RankKey does not carry interpolated `m_freq`, so the increment
-/// is 0 even when the bit is set.
+/// Bit-SET fold of `λ · bigram_poss · DISCOUNT` into RankKey: #99.
 fn dynamic_adjust_bigram_term(options: OptionBits) -> u64 {
     let _ = options.has_dynamic_adjust();
     0

@@ -43,10 +43,9 @@ elif [ -f /tmp/oxpinyin-export/pinyin_index.redb ]; then
         cp "/tmp/oxpinyin-export/$table" "$CAPI_DATA/$table"
     done
     for model_dir in \
-        "$REPO_ROOT/target/model20/extracted" \
-        "/home/sheng/Documents/repos/pinyin-rs/target/model20/extracted" \
-        "/home/sheng/Documents/repos/libpinyin/data"; do
-        if [ -f "$model_dir/interpolation2.text" ]; then
+        ${PINYIN_MODEL_DIR:+"$PINYIN_MODEL_DIR"} \
+        "$REPO_ROOT/target/model20/extracted"; do
+        if [ -n "$model_dir" ] && [ -f "$model_dir/interpolation2.text" ]; then
             cp "$model_dir/interpolation2.text" "$CAPI_DATA/interpolation2.text"
             break
         fi
@@ -124,15 +123,8 @@ is_w12_residual() {
     esac
 }
 
-# Known TEXT-set divergence: amb-17 / fangan under PINYIN_AMB_AN_ANG (#103).
-# Not a W10 parse-table miss; fork-default and all-off are identical.
-is_known_divergent() {
-    [ "$1" = "amb-17" ] && [ "$2" = "fangan" ]
-}
-
 # Compare one case's candidate TEXT/ORDER. Prints notes to stdout.
-# Sets global compare_status to: identical | tie-order | w12-residual |
-# known-divergent | stop
+# Sets global compare_status to: identical | tie-order | w12-residual | stop
 # $3 is the case name.
 compare_text_order() {
     local oracle_log=$1 capi_log=$2 case_name=$3
@@ -161,13 +153,6 @@ compare_text_order() {
                     compare_status="w12-residual"
                 fi
                 echo "  W12  input=$input  TEXT-set tail; all-off residual, not W10 (docs/findings/option-bits.md)"
-                echo "    oracle: ${oracle_seq:-<empty>}"
-                echo "    capi:   ${capi_seq:-<empty>}"
-            elif is_known_divergent "$case_name" "$input"; then
-                if [ "$compare_status" = "identical" ] || [ "$compare_status" = "w12-residual" ] || [ "$compare_status" = "tie-order" ]; then
-                    compare_status="known-divergent"
-                fi
-                echo "  KNOWN-DIVERGENT  input=$input  #103 AMB_AN_ANG fuzzy expansion (not W10)"
                 echo "    oracle: ${oracle_seq:-<empty>}"
                 echo "    capi:   ${capi_seq:-<empty>}"
             else
@@ -269,10 +254,12 @@ done
 for bit in 10 11 12 13 14 15 16 17 18 19; do
     run_case "amb-$bit" $((BASE | (1 << bit)))
 done
+# Initials then finals compose (phonetic_key_matrix.cpp:238-306).
+run_case "amb-chain" $((BASE | (1 << 10) | (1 << 17)))
 
 echo ""
 if [ "$SWEEP_STOP" -ne 0 ]; then
     echo "option-sweep: STOP — candidate TEXT/ORDER diverged beyond a RankKey-1 tie"
     exit 2
 fi
-echo "option-sweep: PASS — parse/aux identical; TEXT/ORDER identical, tie-order-only, W12-excluded, or KNOWN-DIVERGENT (#103)"
+echo "option-sweep: PASS — parse/aux identical; TEXT/ORDER identical, tie-order-only, or W12-excluded"

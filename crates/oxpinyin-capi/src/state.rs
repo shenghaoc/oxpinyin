@@ -100,9 +100,6 @@ impl LanguageModel for SharedLm {
     }
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
-        // Ungated unigram term of candidate frequency: upstream reads
-        // FacadePhraseIndex (system + user) with no DYNAMIC_ADJUST check
-        // (`pinyin.cpp:1856-1865`). The bit gates only the bigram term.
         let extra = match self.user.as_ref() {
             None => 0,
             Some(store) => store

@@ -14,9 +14,9 @@ use crate::options::{
     PINYIN_AMB_Z_ZH,
 };
 use crate::{
-    Completeness, FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
-    INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLE_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
-    option_alias_canonical,
+    option_alias_canonical, Completeness, FULL_PINYIN_SYLLABLES, FULL_PINYIN_SYLLABLE_COUNT,
+    INCOMPLETE_PINYIN_KEYS, INCOMPLETE_PINYIN_KEY_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
+    OPTION_ONLY_COMPLETE_SYLLABLE_COUNT,
 };
 
 /// Number of keys addressable by a [`SyllableKey`].
@@ -94,59 +94,21 @@ impl SyllableKey {
         Self::from_canonical_text(canonical)
     }
 
-    /// Matrix-level fuzzy alternates for this key, in upstream append order.
+    /// Matrix-level fuzzy alternates, upstream append order.
     ///
-    /// This reproduces `fuzzy_syllable_step`
-    /// (`phonetic_key_matrix.cpp:238-315`). The alternates share this key's
-    /// byte span; the caller decides whether the resulting spelling is a real
-    /// key.
+    /// `fuzzy_syllable_step` applies initials, re-fetches the column, then
+    /// finals (`phonetic_key_matrix.cpp:238-306`), so an initial bit and a
+    /// final bit compose (`can` → `chang` under `AMB_C_CH` + `AMB_AN_ANG`).
     #[must_use]
     pub fn fuzzy_alternatives(self, options: OptionBits) -> Vec<Self> {
         let text = self.text();
-        let mut out = Vec::new();
-
-        if options.contains(PINYIN_AMB_C_CH) {
-            swap_initial(text, "c", "ch", &mut out);
-            swap_initial(text, "ch", "c", &mut out);
+        let mut initials = Vec::new();
+        apply_initial_swaps(text, options, &mut initials);
+        let mut out = initials.clone();
+        apply_final_swaps(text, options, &mut out);
+        for key in &initials {
+            apply_final_swaps(key.text(), options, &mut out);
         }
-        if options.contains(PINYIN_AMB_Z_ZH) {
-            swap_initial(text, "z", "zh", &mut out);
-            swap_initial(text, "zh", "z", &mut out);
-        }
-        if options.contains(PINYIN_AMB_S_SH) {
-            swap_initial(text, "s", "sh", &mut out);
-            swap_initial(text, "sh", "s", &mut out);
-        }
-        if options.contains(PINYIN_AMB_L_R) {
-            swap_initial(text, "l", "r", &mut out);
-            swap_initial(text, "r", "l", &mut out);
-        }
-        if options.contains(PINYIN_AMB_L_N) {
-            swap_initial(text, "l", "n", &mut out);
-            swap_initial(text, "n", "l", &mut out);
-        }
-        if options.contains(PINYIN_AMB_F_H) {
-            swap_initial(text, "f", "h", &mut out);
-            swap_initial(text, "h", "f", &mut out);
-        }
-        if options.contains(PINYIN_AMB_G_K) {
-            swap_initial(text, "g", "k", &mut out);
-            swap_initial(text, "k", "g", &mut out);
-        }
-
-        if options.contains(PINYIN_AMB_AN_ANG) {
-            swap_final(text, "an", "ang", &mut out);
-            swap_final(text, "ang", "an", &mut out);
-        }
-        if options.contains(PINYIN_AMB_EN_ENG) {
-            swap_final(text, "en", "eng", &mut out);
-            swap_final(text, "eng", "en", &mut out);
-        }
-        if options.contains(PINYIN_AMB_IN_ING) {
-            swap_final(text, "in", "ing", &mut out);
-            swap_final(text, "ing", "in", &mut out);
-        }
-
         out
     }
 
@@ -208,6 +170,52 @@ impl SyllableKey {
     #[must_use]
     pub fn is_empty(self) -> bool {
         false
+    }
+}
+
+fn apply_initial_swaps(text: &str, options: OptionBits, out: &mut Vec<SyllableKey>) {
+    if options.contains(PINYIN_AMB_C_CH) {
+        swap_initial(text, "c", "ch", out);
+        swap_initial(text, "ch", "c", out);
+    }
+    if options.contains(PINYIN_AMB_Z_ZH) {
+        swap_initial(text, "z", "zh", out);
+        swap_initial(text, "zh", "z", out);
+    }
+    if options.contains(PINYIN_AMB_S_SH) {
+        swap_initial(text, "s", "sh", out);
+        swap_initial(text, "sh", "s", out);
+    }
+    if options.contains(PINYIN_AMB_L_R) {
+        swap_initial(text, "l", "r", out);
+        swap_initial(text, "r", "l", out);
+    }
+    if options.contains(PINYIN_AMB_L_N) {
+        swap_initial(text, "l", "n", out);
+        swap_initial(text, "n", "l", out);
+    }
+    if options.contains(PINYIN_AMB_F_H) {
+        swap_initial(text, "f", "h", out);
+        swap_initial(text, "h", "f", out);
+    }
+    if options.contains(PINYIN_AMB_G_K) {
+        swap_initial(text, "g", "k", out);
+        swap_initial(text, "k", "g", out);
+    }
+}
+
+fn apply_final_swaps(text: &str, options: OptionBits, out: &mut Vec<SyllableKey>) {
+    if options.contains(PINYIN_AMB_AN_ANG) {
+        swap_final(text, "an", "ang", out);
+        swap_final(text, "ang", "an", out);
+    }
+    if options.contains(PINYIN_AMB_EN_ENG) {
+        swap_final(text, "en", "eng", out);
+        swap_final(text, "eng", "en", out);
+    }
+    if options.contains(PINYIN_AMB_IN_ING) {
+        swap_final(text, "in", "ing", out);
+        swap_final(text, "ing", "in", out);
     }
 }
 
@@ -317,7 +325,7 @@ impl PhraseEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
+    use super::{PhraseEntry, PhraseToken, SyllableKey, SYLLABLE_KEY_COUNT};
     use crate::OptionBits;
     use crate::{
         Completeness, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLES,
@@ -358,6 +366,35 @@ mod tests {
         for text in ["", "NI", "ni2", "qqq", "\u{4f60}", "lv1"] {
             assert_eq!(SyllableKey::from_text(text), None, "text: {text:?}");
         }
+    }
+
+    #[test]
+    fn fuzzy_alternatives_compose_an_initial_bit_then_a_final_bit() {
+        use crate::{PINYIN_AMB_AN_ANG, PINYIN_AMB_C_CH, PINYIN_AMB_L_N};
+
+        let can = SyllableKey::from_text("can").expect("can");
+        let both = OptionBits::from_bits(PINYIN_AMB_C_CH | PINYIN_AMB_AN_ANG);
+        let texts: Vec<&str> = can
+            .fuzzy_alternatives(both)
+            .iter()
+            .map(|k| k.text())
+            .collect();
+        assert!(
+            texts.contains(&"chan") && texts.contains(&"cang") && texts.contains(&"chang"),
+            "can under C_CH+AN_ANG must yield chan, cang, and chained chang, got {texts:?}"
+        );
+
+        let lan = SyllableKey::from_text("lan").expect("lan");
+        let ln_an = OptionBits::from_bits(PINYIN_AMB_L_N | PINYIN_AMB_AN_ANG);
+        let texts: Vec<&str> = lan
+            .fuzzy_alternatives(ln_an)
+            .iter()
+            .map(|k| k.text())
+            .collect();
+        assert!(
+            texts.contains(&"nan") && texts.contains(&"lang") && texts.contains(&"nang"),
+            "lan under L_N+AN_ANG must yield nan, lang, and chained nang, got {texts:?}"
+        );
     }
 
     #[test]

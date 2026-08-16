@@ -2,8 +2,8 @@
 
 use crate::options::{
     OptionBits, PINYIN_AMB_S_SH, PINYIN_AMB_Z_ZH, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU,
-    PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_ON_ONG, PINYIN_CORRECT_UE_VE, PINYIN_CORRECT_UEI_UI,
-    PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_V_U,
+    PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_ON_ONG, PINYIN_CORRECT_UEI_UI, PINYIN_CORRECT_UEN_UN,
+    PINYIN_CORRECT_UE_VE, PINYIN_CORRECT_V_U,
 };
 
 /// Number of complete syllables in [`FULL_PINYIN_SYLLABLES`].
@@ -151,7 +151,7 @@ fn correction_canonical(text: &str, options: OptionBits) -> Option<&'static str>
         candidate.push_str(&text[2..]);
         return canonical_complete_syllable(&candidate);
     }
-    if options.contains(PINYIN_CORRECT_ON_ONG) && text.ends_with("on") {
+    if options.contains(PINYIN_CORRECT_ON_ONG) && text.ends_with("on") && text.len() > 2 {
         let mut candidate = String::with_capacity(text.len() + 1);
         candidate.push_str(text);
         candidate.push('g');
@@ -170,7 +170,12 @@ fn ambiguity_canonical(text: &str, options: OptionBits) -> Option<&'static str> 
 }
 
 fn checked_canonical(text: &str, suffix_len: usize, suffix: &str) -> Option<&'static str> {
-    let base_len = text.len() - suffix_len;
+    // Bare `gn`/`mg`/`ue`/… are not in `pinyin_index`; only the 80/80/…
+    // stemmed rows are. An empty stem would invent `ng`/`ve`.
+    let base_len = text.len().checked_sub(suffix_len)?;
+    if base_len == 0 {
+        return None;
+    }
     let mut candidate = String::with_capacity(base_len + suffix.len());
     candidate.push_str(&text[..base_len]);
     candidate.push_str(suffix);
@@ -208,8 +213,8 @@ mod tests {
     use std::collections::HashSet;
 
     use super::{
-        FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
-        INCOMPLETE_PINYIN_KEYS, MAX_SYLLABLE_LEN,
+        FULL_PINYIN_SYLLABLES, FULL_PINYIN_SYLLABLE_COUNT, INCOMPLETE_PINYIN_KEYS,
+        INCOMPLETE_PINYIN_KEY_COUNT, MAX_SYLLABLE_LEN,
     };
 
     /// Whether `byte` is a vowel for the initial-only key rule.
@@ -299,9 +304,9 @@ mod tests {
     #[test]
     fn correction_aliases_resolve_to_their_canonical_syllable() {
         use super::{
-            OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU, PINYIN_CORRECT_MG_NG,
-            PINYIN_CORRECT_UE_VE, PINYIN_CORRECT_UEI_UI, PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_V_U,
-            option_alias_canonical,
+            option_alias_canonical, OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU,
+            PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_ON_ONG, PINYIN_CORRECT_UEI_UI,
+            PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_UE_VE, PINYIN_CORRECT_V_U,
         };
 
         let cases = [
@@ -323,6 +328,19 @@ mod tests {
         assert_eq!(
             option_alias_canonical("zon", OptionBits::from_bits(1 << 28)),
             Some("zong")
+        );
+        // Bare gn/mg/on are not in pinyin_index (80/80/17 stemmed rows).
+        assert_eq!(
+            option_alias_canonical("gn", OptionBits::from_bits(PINYIN_CORRECT_GN_NG)),
+            None
+        );
+        assert_eq!(
+            option_alias_canonical("mg", OptionBits::from_bits(PINYIN_CORRECT_MG_NG)),
+            None
+        );
+        assert_eq!(
+            option_alias_canonical("on", OptionBits::from_bits(PINYIN_CORRECT_ON_ONG)),
+            None
         );
     }
 }
