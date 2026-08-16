@@ -8,7 +8,8 @@ measured algorithm upgrades.
 The author acknowledges limited knowledge of Rust; this project is
 a proof of concept.
 
-**Status: pre-alpha — scaffolding only. Not yet usable.**
+**Status: pre-alpha.** Stage 1 workstreams through W7 are merged (W9 too);
+not a library release yet.
 
 ## Quickstart
 
@@ -22,12 +23,19 @@ cargo test --locked --workspace
 
 | Path | What |
 |---|---|
-| `crates/*` | Nine-crate workspace (stubs today) |
+| `crates/*` | 13 crates, none stubs (grouped below) |
 | `ROADMAP.md` | Stages, pin, workstream names |
 | `AGENTS.md` | Agent/collaborator contract |
 | `docs/findings/` | Pin, ABI, schema, SPEC inputs |
 | `tools/oracle/` | Pin build recipe |
 | `.kiro/` | Steering + foundation task specs |
+
+| Group | Crates |
+|---|---|
+| Engine / data / capi | `oxpinyin-core`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-capi` |
+| Training toolchain | `oxpinyin-segment`, `oxpinyin-counter`, `oxpinyin-lambda`, `oxpinyin-emitter`, `oxpinyin-corpus` |
+| Tools | `oxpinyin-dictool`, `oxpinyin-migrate` |
+| Oracle | `pinyin-oracle` |
 
 ## Upstream
 
