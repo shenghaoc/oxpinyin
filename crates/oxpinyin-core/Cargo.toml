@@ -1,0 +1,16 @@
+[package]
+name = "oxpinyin-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "oxpinyin internal crate — no stability promise; use oxpinyin-engine."
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+proptest = { version = "=1.11.0", default-features = false, features = ["std"] }

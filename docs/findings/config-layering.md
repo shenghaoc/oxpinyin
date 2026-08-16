@@ -16,7 +16,7 @@ measurement would be measuring two things at once — the decoder and a
 configuration delta — with no way to tell them apart afterwards.
 
 So the sane default *is* the parity configuration. There is no separate
-"parity mode" to enable. `crates/pinyin-engine/tests/upstream_defaults.rs`
+"parity mode" to enable. `crates/oxpinyin-engine/tests/upstream_defaults.rs`
 re-reads the frozen XML out of `docs/findings/upstream-schema.md` and asserts
 the whole key set, every type and every value. It compares against the
 document, not against a transcription of it, so the table in `config.rs`

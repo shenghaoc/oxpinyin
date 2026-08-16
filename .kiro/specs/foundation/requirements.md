@@ -69,7 +69,7 @@ portable checks so that platform drift is caught before review.
 `cargo fmt --check`, `clippy -D warnings`, and the portable-crate test
 set pass on Linux, macOS and Windows; the Linux lane tests the full workspace;
 the five portable crates carry no platform deps;
-pinyin-core carries `#![forbid(unsafe_code)]`.
+oxpinyin-core carries `#![forbid(unsafe_code)]`.
 
 ### Requirement R5: Behavioural fixtures and cross-lane evidence
 
@@ -88,7 +88,7 @@ evidence base so that Lane-P acceptance is mechanical and needs no oracle.
 that implementation tasks compose without interface drift.
 
 1. The four core traits SHALL be defined signature-only with doc comments.
-   2. They SHALL compile in pinyin-core under `#![forbid(unsafe_code)]`
+   2. They SHALL compile in oxpinyin-core under `#![forbid(unsafe_code)]`
    with no dependencies. 3. WHEN a signature change seems needed after the
    freeze THEN an Architect correction PR SHALL merge before implementation
    resumes.

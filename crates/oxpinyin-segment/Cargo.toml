@@ -1,0 +1,19 @@
+[package]
+name = "oxpinyin-segment"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Training-only Han segmenter reproducing libpinyin ngseg. Never ships."
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "oxpinyin-segment"
+path = "src/bin/oxpinyin-segment.rs"
+
+[dependencies]
+oxpinyin-data = { path = "../oxpinyin-data" }

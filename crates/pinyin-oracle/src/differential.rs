@@ -13,7 +13,7 @@
 
 use std::collections::BTreeMap;
 
-use pinyin_core::{Completeness, FullPinyinParser, InputParser, ParseError, ParseResult};
+use oxpinyin_core::{Completeness, FullPinyinParser, InputParser, ParseError, ParseResult};
 
 use crate::capture::{escape, segments_to_wire};
 use crate::observation::{OracleCompleteness, OracleObservation};

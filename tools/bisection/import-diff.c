@@ -20,7 +20,7 @@
  *   save once, then export once.
  *
  * The CLI's idempotency layer (desired-state deltas) lives in
- * pinyin-dictool; this driver deliberately exercises the raw ABI so the
+ * oxpinyin-dictool; this driver deliberately exercises the raw ABI so the
  * two libraries' per-phrase semantics are what is compared.
  *
  * Usage:

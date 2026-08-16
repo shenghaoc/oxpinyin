@@ -1,10 +1,10 @@
-# pinyin-dictool and the classic libpinyin user-dictionary interchange (W7-T1)
+# oxpinyin-dictool and the classic libpinyin user-dictionary interchange (W7-T1)
 
-Date: 2026-08-16 · Status: **pinned for pinyin-dictool import/export** ·
-Scope: the text format `pinyin-dictool import --user-dir <path> <file.txt>`
-reads and `pinyin-dictool export --user-dir <path> [file.txt]` writes.
+Date: 2026-08-16 · Status: **pinned for oxpinyin-dictool import/export** ·
+Scope: the text format `oxpinyin-dictool import --user-dir <path> <file.txt>`
+reads and `oxpinyin-dictool export --user-dir <path> [file.txt]` writes.
 
-pinyin-dictool speaks the **classic ibus-libpinyin interchange format**, not
+oxpinyin-dictool speaks the **classic ibus-libpinyin interchange format**, not
 an invented format. Reference implementation, pinned frontend tag `1.16.5`:
 
 - Import: `LibPinyinBackEnd::importPinyinDictionary`
@@ -26,11 +26,11 @@ an invented format. Reference implementation, pinned frontend tag `1.16.5`:
 Dictool speaks the classic Import/Export format defined by
 `PYLibPinyin.cc:230-277` (import) and `:280-353` (export), which **is**
 libpinyin's public interchange contract driven by ibus-libpinyin's
-Import/Export buttons. Routing dictool through pinyin-capi's C ABI puts it
+Import/Export buttons. Routing dictool through oxpinyin-capi's C ABI puts it
 in the same call sequence as the pinned frontend, so
 `tools/bisection/run-import-diff.sh` tests what dictool actually does —
 not a parallel implementation that happens to agree on the current
-fixture. The alternative (dictool over `UserStore` + pinyin-core directly)
+fixture. The alternative (dictool over `UserStore` + oxpinyin-core directly)
 is portable-Rust-friendlier but would fork the behavior surface from the
 frontend's, weakening the interop guarantee. Kept on the C ABI
 deliberately.
@@ -73,7 +73,7 @@ as an unparseable pinyin with a line number.
 ## 2. Dictool superset extensions
 
 The frontend silently skips any line whose split does not produce 2 or 3
-pieces and ignores `pinyin_iterator_add_phrase` failures. pinyin-dictool is
+pieces and ignores `pinyin_iterator_add_phrase` failures. oxpinyin-dictool is
 a command-line tool, so it reports instead:
 
 - wrong field count → `line N: expected 2 or 3 space/tab-separated fields`;
@@ -96,7 +96,7 @@ The raw ABI count is an **add amount**, not add-or-update:
   `PhraseItem::add_pronunciation(keys, count)`, which adds to the stored
   count (`phrase_index.cpp:55-88`).
 
-pinyin-dictool import is idempotent because the **file count is a desired
+oxpinyin-dictool import is idempotent because the **file count is a desired
 absolute pronunciation count**:
 
 - 3-field target `C` raises the stored count to `C` (add `C - current`);
@@ -115,7 +115,7 @@ desired value per pronunciation.
 
 ## 4. Export
 
-`pinyin-dictool export --user-dir <path> [file.txt]` writes the classic
+`oxpinyin-dictool export --user-dir <path> [file.txt]` writes the classic
 format through the W6-T7 C ABI export iterators. No `[file]` means stdout.
 
 Ordering rule: **phrase rows first, then rendered bigram rows** — the order

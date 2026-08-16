@@ -32,7 +32,7 @@ would be worse than saying they are provisional.
 ## Cost scale
 
 Costs are `i64` on the fixed-point negative-log₂ scale of
-`pinyin_core::cost`:
+`oxpinyin_core::cost`:
 
 - `COST_PER_BIT` = 1,000. One bit of surprisal costs 1,000 units; an event the
   model gives half its mass to costs 1,000, a quarter 2,000.
@@ -142,10 +142,10 @@ whole answer. `zzzzzzzz` expands past the limit and is correctly barren.
 
 ## Acceptance
 
-Per-formula unit tests in `crates/pinyin-core/src/scoring.rs` cover each
+Per-formula unit tests in `crates/oxpinyin-core/src/scoring.rs` cover each
 worked example above.
 
-`crates/pinyin-core/tests/scoring_fixture.rs` reports the fixture pass rate.
+`crates/oxpinyin-core/tests/scoring_fixture.rs` reports the fixture pass rate.
 Measured at this freeze:
 
 ```text

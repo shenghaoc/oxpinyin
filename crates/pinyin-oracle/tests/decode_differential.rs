@@ -13,12 +13,12 @@
 
 use std::collections::BTreeSet;
 
-use pinyin_core::SyllableKey;
-use pinyin_core::fixture::{FixtureDictionary, FixtureLanguageModel};
-use pinyin_core::graph::SegmentGraph;
-use pinyin_core::kbest::k_best;
-use pinyin_core::scoring::{Scorer, ScoringConfig};
-use pinyin_engine::{EmptyConfigSource, KeyInput, Session, StoragePaths};
+use oxpinyin_core::SyllableKey;
+use oxpinyin_core::fixture::{FixtureDictionary, FixtureLanguageModel};
+use oxpinyin_core::graph::SegmentGraph;
+use oxpinyin_core::kbest::k_best;
+use oxpinyin_core::scoring::{Scorer, ScoringConfig};
+use oxpinyin_engine::{EmptyConfigSource, KeyInput, Session, StoragePaths};
 use pinyin_oracle::capture::unescape;
 
 const PATHS: &str = include_str!("../../../fixtures/w4/oracle-paths.txt");
@@ -74,7 +74,7 @@ fn corpus() -> Vec<(Vec<u8>, Path)> {
 }
 
 /// The keys and offsets of one decoded path.
-fn decoded(graph: &SegmentGraph, path: &pinyin_core::kbest::DecodedPath) -> Path {
+fn decoded(graph: &SegmentGraph, path: &oxpinyin_core::kbest::DecodedPath) -> Path {
     path.edges()
         .iter()
         .filter_map(|id| graph.edge(*id))

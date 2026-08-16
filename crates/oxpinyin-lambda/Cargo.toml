@@ -1,0 +1,20 @@
+[package]
+name = "oxpinyin-lambda"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Training-only deleted-interpolation λ estimator reproducing libpinyin gen_deleted_ngram + estimate_interpolation. Never ships."
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "oxpinyin-lambda"
+path = "src/bin/oxpinyin-lambda.rs"
+
+[dependencies]
+oxpinyin-segment = { path = "../oxpinyin-segment" }
+oxpinyin-counter = { path = "../oxpinyin-counter" }

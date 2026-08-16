@@ -32,10 +32,10 @@ echo "--- building train-diff driver ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o train-diff train-diff.c -ldl
 echo "build: ok"
 
-# ── Build pinyin-capi ────────────────────────────────────────────────────
+# ── Build oxpinyin-capi ────────────────────────────────────────────────────
 
-echo "--- building pinyin-capi ---"
-cargo build -p pinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
+echo "--- building oxpinyin-capi ---"
+cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
 CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
@@ -77,7 +77,7 @@ for rounds in 1 2 3 4 5 6 7 8; do
     ORACLE_LOG="$(mktemp)"
     if ! TRAINDIFF_ROUNDS=$rounds ./train-diff "$CAPI_SO" "$REPO_ROOT/fixtures/w3" \
         > "$CAPI_LOG" 2>/dev/null; then
-        echo "FAIL: train-diff crashed against pinyin-capi (rounds=$rounds)"
+        echo "FAIL: train-diff crashed against oxpinyin-capi (rounds=$rounds)"
         cat "$CAPI_LOG"
         exit 1
     fi
@@ -108,7 +108,7 @@ for mask in user all; do
     ORACLE_LOG="$(mktemp)"
     if ! TRAINDIFF_ROUNDS=8 TRAINDIFF_MASK=$mask ./train-diff "$CAPI_SO" \
         "$REPO_ROOT/fixtures/w3" > "$CAPI_LOG" 2>/dev/null; then
-        echo "FAIL: train-diff crashed against pinyin-capi (mask=$mask)"
+        echo "FAIL: train-diff crashed against oxpinyin-capi (mask=$mask)"
         cat "$CAPI_LOG"
         exit 1
     fi

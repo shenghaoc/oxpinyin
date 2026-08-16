@@ -1,19 +1,19 @@
 [workspace]
 resolver = "3"
 members = [
-  "crates/pinyin-core",
-  "crates/pinyin-data",
-  "crates/pinyin-user",
-  "crates/pinyin-engine",
-  "crates/pinyin-capi",
+  "crates/oxpinyin-core",
+  "crates/oxpinyin-data",
+  "crates/oxpinyin-user",
+  "crates/oxpinyin-engine",
+  "crates/oxpinyin-capi",
   "crates/pinyin-oracle",
-  "crates/pinyin-dictool",
-  "crates/pinyin-migrate",
-  "crates/pinyin-segment",
-  "crates/pinyin-counter",
-  "crates/pinyin-lambda",
-  "crates/pinyin-emitter",
-  "crates/pinyin-corpus",
+  "crates/oxpinyin-dictool",
+  "crates/oxpinyin-migrate",
+  "crates/oxpinyin-segment",
+  "crates/oxpinyin-counter",
+  "crates/oxpinyin-lambda",
+  "crates/oxpinyin-emitter",
+  "crates/oxpinyin-corpus",
 ]
 
 [workspace.package]
@@ -32,7 +32,7 @@ missing_docs = "warn"
 all = { level = "deny", priority = -1 }
 
 [workspace.dependencies]
-pinyin-core = { path = "crates/pinyin-core" }
-pinyin-engine = { path = "crates/pinyin-engine" }
-pinyin-user = { path = "crates/pinyin-user" }
+oxpinyin-core = { path = "crates/oxpinyin-core" }
+oxpinyin-engine = { path = "crates/oxpinyin-engine" }
+oxpinyin-user = { path = "crates/oxpinyin-user" }
 redb = "4"

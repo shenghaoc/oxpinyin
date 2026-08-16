@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use pinyin_data::{BigramLanguageModel, SystemDictionary};
-use pinyin_engine::{EmptyConfigSource, Session, StoragePaths};
+use oxpinyin_data::{BigramLanguageModel, SystemDictionary};
+use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use pinyin_oracle::corpus;
 
 const CANDIDATES_FIXTURE: &str = "fixtures/w4/oracle-candidates.txt";

@@ -18,7 +18,7 @@ to structure cost, pushing more correct single-phrase rankings into top-1.
 
 ## Method
 
-Changed the constant `UNIGRAM_TIEBREAK_SCALE` in `crates/pinyin-data/src/lm.rs`
+Changed the constant `UNIGRAM_TIEBREAK_SCALE` in `crates/oxpinyin-data/src/lm.rs`
 and re-ran the portable parity test for each value:
 
 ```

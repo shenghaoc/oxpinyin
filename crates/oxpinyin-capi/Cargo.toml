@@ -1,0 +1,30 @@
+[package]
+name = "oxpinyin-capi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "C ABI subset of libpinyin's public API, for the borrowed frontend. Linux only."
+
+# Supported C ABI (Linux); soname/versioning freezes with the first public release.
+#
+# Cargo package name is project identity; the built artifact name is part of
+# the compatibility bootstrap and intentionally stays `pinyin_capi` (and the
+# checked-in header stays `pinyin.h` with exported `pinyin_*` symbols).
+[lib]
+name = "pinyin_capi"
+crate-type = ["cdylib", "rlib"] # cdylib is the ABI; rlib lets oxpinyin-dictool call the same symbols in-process.
+
+[lints.rust]
+unsafe_code = "allow" # FFI + glib marshalling only; // SAFETY: on every block
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[dependencies]
+oxpinyin-core.workspace = true
+oxpinyin-data = { path = "../oxpinyin-data" }
+oxpinyin-engine.workspace = true
+oxpinyin-user.workspace = true

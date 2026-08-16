@@ -14,7 +14,7 @@
 use std::env;
 use std::time::Instant;
 
-use pinyin_data::parse_interpolation2;
+use oxpinyin_data::parse_interpolation2;
 
 #[path = "support/mod.rs"]
 mod harness;

@@ -2,7 +2,7 @@
 //! W2 parity corpus.
 //!
 //! Constructs `Session<SystemDictionary, BigramLanguageModel>` from the
-//! tables `pinyin-migrate export` writes to `/tmp/oxpinyin-export`, loads the
+//! tables `oxpinyin-migrate export` writes to `/tmp/oxpinyin-export`, loads the
 //! real unigram counts from `interpolation2.text` in the fetched model cache
 //! (`tools/model/fetch-model.sh`), and compares candidates with the oracle's
 //! **frozen** candidate lists at `fixtures/w4/oracle-candidates.txt`. Without
@@ -26,8 +26,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use pinyin_data::{BigramLanguageModel, SystemDictionary};
-use pinyin_engine::{EmptyConfigSource, Session, StoragePaths};
+use oxpinyin_data::{BigramLanguageModel, SystemDictionary};
+use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use pinyin_oracle::corpus;
 
 fn assert_sync_send<T: Sync + Send>() {}
@@ -47,7 +47,7 @@ fn repo_root() -> PathBuf {
 fn export_dir() -> Option<PathBuf> {
     // `PINYIN_EXPORT_DIR` overrides the default so sandboxed runners can keep
     // the export inside a writable, persistent directory; the default matches
-    // the documented `pinyin-migrate export` target.
+    // the documented `oxpinyin-migrate export` target.
     let dir = std::env::var_os("PINYIN_EXPORT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new("/tmp/oxpinyin-export").to_path_buf());
@@ -59,7 +59,7 @@ fn export_dir() -> Option<PathBuf> {
     } else {
         eprintln!(
             "exported tables not found at /tmp/oxpinyin-export; skipping \
-             (run pinyin-migrate export first)"
+             (run oxpinyin-migrate export first)"
         );
         None
     }
@@ -502,7 +502,7 @@ fn real_tables_session_reports_parity() {
 /// so `补体` must consume exactly `bu'ti` (5 bytes) and leave `an`.
 #[test]
 fn scan_divided_key_consumes_the_apostrophe_span() {
-    use pinyin_engine::Selection;
+    use oxpinyin_engine::Selection;
 
     let Some(dir) = export_dir() else {
         return;

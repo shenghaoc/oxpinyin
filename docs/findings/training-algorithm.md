@@ -20,7 +20,7 @@ shipped model's provenance, which upstream does not document).
   Paths below are relative to that root.
 - Trainer orchestration: `/tmp/tr/trainer-main/` (the `libpinyin/trainer`
   repository) — Python glue and docs only.
-- Output-format cross-check: `crates/pinyin-data/src/interp.rs` (this repo),
+- Output-format cross-check: `crates/oxpinyin-data/src/interp.rs` (this repo),
   at commit `98e9192` (branch `feat/perf-exploration`); **not present on the
   current branch** — see §8.
 
@@ -353,7 +353,7 @@ Two independent tools emit the identical textual format:
 So `export_interpolation` is the **textual dump tool** the differential test
 should compare against (§9).
 
-### 8.2 `interp.rs` — the consumer pinning the format (**SHOWN**, `crates/pinyin-data/src/interp.rs` @ `98e9192`)
+### 8.2 `interp.rs` — the consumer pinning the format (**SHOWN**, `crates/oxpinyin-data/src/interp.rs` @ `98e9192`)
 
 `interp.rs` parses only the `\1-gram` section of `interpolation2.text`; it
 skips `\2-gram` (the system bigram arrives separately in `bigram.redb`). It
@@ -371,7 +371,7 @@ comparison (§9).
 
 **Caveat (SHOWN):** `interp.rs` is not on the current branch; it lives at
 commit `98e9192` and on-disk in the main checkout's
-`crates/pinyin-data/src/interp.rs`. The parser is stable for the purpose of
+`crates/oxpinyin-data/src/interp.rs`. The parser is stable for the purpose of
 pinning the format; W9 must ensure the Rust trainer's `interpolation2.text`
 emitter matches it.
 
@@ -451,6 +451,6 @@ matching the shipped file's exact counts is explicitly out of scope (§7).
 | `get_phrase_item` `ERROR_OK == 0` convention | `src/storage/phrase_index.cpp` | 179-197 | SHOWN |
 | KMM math + counting + conversion | `utils/training/k_mixture_model.h`, `gen_k_mixture_model.cpp`, `k_mixture_model_to_interpolation.cpp` | 45-118, 70-135, 78/117-177 | SHOWN |
 | Textual interpolation export | `utils/storage/export_interpolation.cpp` | 33-40, 76-104, 106-143 | SHOWN |
-| `interp.rs` unigram-only parser | `crates/pinyin-data/src/interp.rs` @ `98e9192` | (whole file) | SHOWN |
+| `interp.rs` unigram-only parser | `crates/oxpinyin-data/src/interp.rs` @ `98e9192` | (whole file) | SHOWN |
 | Multi-epoch orchestration / bootstrap | trainer `docs/fileformat`, `*.py` | (whole files) | INFERRED |
 | Shipped corpus provenance | — | — | INFERRED (absent) |

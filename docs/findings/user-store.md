@@ -225,8 +225,8 @@ while `3` scales the *new-phrase* seeding count at allocation (§3.2 —
 `_add_phrase`, `pinyin.cpp:522`). There is no discrepancy: a phrase added by
 `pinyin_remember_user_input` seeds its unigram with `count * 3`, and later
 *selections* of it train with `seed * 7`. oxpinyin reproduces both as
-separate constants (`pinyin_user::seed::UNIGRAM_FACTOR` = 7,
-`pinyin_user::phrase::ADD_PHRASE_UNIGRAM_FACTOR` = 3).
+separate constants (`oxpinyin_user::seed::UNIGRAM_FACTOR` = 7,
+`oxpinyin_user::phrase::ADD_PHRASE_UNIGRAM_FACTOR` = 3).
 
 ### 3.3 Importing a phrase list
 
@@ -412,24 +412,24 @@ export iterators (§9).
 The LSP (rust-analyzer) **was available** and used for this section
 (`goToImplementation` / `findReferences` / `documentSymbol`).
 
-**The seam exists but is unwired.** `pinyin-core` defines
-`pub trait UserModel` (`crates/pinyin-core/src/lib.rs:87-101`) with
+**The seam exists but is unwired.** `oxpinyin-core` defines
+`pub trait UserModel` (`crates/oxpinyin-core/src/lib.rs:87-101`) with
 `score(history, token) -> Cost` (`:95`) and `observe(history, token)`
 (`:100`) — exactly the read/observe shape the user store needs. LSP
 `goToImplementation` on the trait returns **no implementors**, and
 `findReferences` returns a **single** hit (its own declaration): nothing
 implements it and no engine code consults it.
 
-**`pinyin-user` is an empty shell.** `crates/pinyin-user/src/lib.rs:1-4` is a
+**`oxpinyin-user` is an empty shell.** `crates/oxpinyin-user/src/lib.rs:1-4` is a
 doc comment only ("redb ACID store for user data … The redb major version is
-pinned"); `crates/pinyin-user/Cargo.toml` has an **empty `[dependencies]`** —
+pinned"); `crates/oxpinyin-user/Cargo.toml` has an **empty `[dependencies]`** —
 redb is not yet a dependency.
 
-**The C-ABI user-data entry points are stubs** (all in `crates/pinyin-capi`):
+**The C-ABI user-data entry points are stubs** (all in `crates/oxpinyin-capi`):
 
 | Symbol | File:line | Current behaviour |
 |---|---|---|
-| `pinyin_save` | `context.rs:64-73` | Validated **no-op**; returns `true`, writes nothing (comment: "pinyin-user has no persistence implementation yet"). |
+| `pinyin_save` | `context.rs:64-73` | Validated **no-op**; returns `true`, writes nothing (comment: "oxpinyin-user has no persistence implementation yet"). |
 | `pinyin_remember_user_input` | `user_data.rs:18-28` | **STUB**, returns `false` ("T4 will implement"). |
 | `pinyin_train` | `candidates.rs:299-304` | Validated **no-op**; returns `true` ("no training with StubLm"). |
 | `pinyin_choose_candidate` | `candidates.rs:240-268` | Resolves the candidate by pointer identity and calls `Session::select(index)`; **no** user-store write. |
@@ -441,7 +441,7 @@ redb is not yet a dependency.
 phrase index, no persistence, and no decode-time merge. `Session::select`
 records the selection for decoding but never `observe()`s it into any user
 model (**SHOWN** by the empty `findReferences` on `UserModel`). W6 must (a)
-implement the `UserModel` seam in `pinyin-user` over redb, (b) wire it into
+implement the `UserModel` seam in `oxpinyin-user` over redb, (b) wire it into
 `Session` and the capi entry points above, and (c) implement the additive
 decode-time merge of §5.
 
@@ -453,7 +453,7 @@ Each sub-task names what it implements and how it is verified. Ordering lets
 storage + arithmetic land and be unit-tested before touching decode/parity.
 
 - **W6-T1 — user store schema + update arithmetic.** redb tables in
-  `pinyin-user`: user bigram (`(prev_token, token) → count`, `prev_token →
+  `oxpinyin-user`: user bigram (`(prev_token, token) → count`, `prev_token →
   total`) and user-unigram delta (`token → freq`). Implement `UserModel` for
   it. Encapsulate the §2.1 seed rule (first-seen 69; repeats
   `min(max(prev,69)*2, 22080)`) and the §2.3 flat rule.
@@ -539,12 +539,12 @@ project memory).
 
 **Dependencies.**
 
-- `redb` as the `pinyin-user` backend — *intended* (per the crate doc) but
-  **not yet a dependency** (`crates/pinyin-user/Cargo.toml`). Adding it is a
+- `redb` as the `oxpinyin-user` backend — *intended* (per the crate doc) but
+  **not yet a dependency** (`crates/oxpinyin-user/Cargo.toml`). Adding it is a
   `Cargo.toml` change and therefore a maintainer-ask per AGENTS.md "Hard
   forbids"; W6-T1 must raise it, not slip it in.
-- The `UserModel` seam (`crates/pinyin-core/src/lib.rs:87`) and the engine
-  `Session` (`crates/pinyin-engine/src/session.rs`).
+- The `UserModel` seam (`crates/oxpinyin-core/src/lib.rs:87`) and the engine
+  `Session` (`crates/oxpinyin-engine/src/session.rs`).
 - The oracle export symbols (§9) and the parity harness.
 - W9 (training pipeline) is **independent** — it builds the *system* model
   offline; the user store shares the bigram/λ math but does not depend on W9

@@ -13,10 +13,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use pinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta};
-use pinyin_data::{BigramLanguageModel, LmError, SystemDictionary, parse_interpolation2};
-use pinyin_engine::{EmptyConfigSource, Session, StoragePaths};
-use pinyin_user::{SENTENCE_START, UserStore};
+use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta};
+use oxpinyin_data::{BigramLanguageModel, LmError, SystemDictionary, parse_interpolation2};
+use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
+use oxpinyin_user::{SENTENCE_START, UserStore};
 
 #[path = "support/mod.rs"]
 mod harness;
@@ -25,7 +25,7 @@ use harness::{
     CYCLE_INPUTS, load_prefix_tables, load_real_tables, prefix_probe, real_session, type_keystrokes,
 };
 
-/// Mirrors `pinyin-capi`'s `SharedLm`: dict unigrams plus an optional
+/// Mirrors `oxpinyin-capi`'s `SharedLm`: dict unigrams plus an optional
 /// [`UserStore`] overlay consulted on every `score` / `unigram_freq`.
 struct BenchLm<'a> {
     inner: &'a BigramLanguageModel,

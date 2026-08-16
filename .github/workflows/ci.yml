@@ -63,7 +63,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: >
           cargo test --locked
-          -p pinyin-core -p pinyin-data -p pinyin-user -p pinyin-engine
+          -p oxpinyin-core -p oxpinyin-data -p oxpinyin-user -p oxpinyin-engine
       # Separately and with --no-default-features, so oracle-ffi stays off even
       # if it ever became a default feature. It links the pin-built libpinyin
       # and is Linux-only; on this runner it would not build at all.

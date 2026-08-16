@@ -32,7 +32,7 @@ and is recorded as a known limitation rather than silently ignored.
 
 ## Source inventory
 
-Syllables come from `pinyin_core::FULL_PINYIN_SYLLABLES`: the 405 active
+Syllables come from `oxpinyin_core::FULL_PINYIN_SYLLABLES`: the 405 active
 complete syllables frozen by `docs/findings/parser-spec.md`, in their source
 numeric-ID order. The generator reads that constant rather than restating it, so
 the corpus cannot drift from the frozen inventory.

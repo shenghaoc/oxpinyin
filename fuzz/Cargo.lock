@@ -70,15 +70,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "pinyin-core"
+name = "oxpinyin-core"
 version = "0.1.0"
 
 [[package]]
-name = "pinyin-rs-fuzz"
+name = "oxpinyin-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
- "pinyin-core",
+ "oxpinyin-core",
 ]
 
 [[package]]

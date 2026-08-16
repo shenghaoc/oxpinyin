@@ -400,6 +400,104 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
+name = "oxpinyin-capi"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-core",
+ "oxpinyin-data",
+ "oxpinyin-engine",
+ "oxpinyin-user",
+]
+
+[[package]]
+name = "oxpinyin-core"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
+name = "oxpinyin-corpus"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-counter",
+ "oxpinyin-emitter",
+ "oxpinyin-lambda",
+ "oxpinyin-segment",
+]
+
+[[package]]
+name = "oxpinyin-counter"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-segment",
+]
+
+[[package]]
+name = "oxpinyin-data"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-core",
+ "redb",
+]
+
+[[package]]
+name = "oxpinyin-dictool"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-capi",
+]
+
+[[package]]
+name = "oxpinyin-emitter"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-counter",
+ "oxpinyin-data",
+ "oxpinyin-segment",
+]
+
+[[package]]
+name = "oxpinyin-engine"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-core",
+]
+
+[[package]]
+name = "oxpinyin-lambda"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-counter",
+ "oxpinyin-segment",
+]
+
+[[package]]
+name = "oxpinyin-migrate"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "pinyin-oracle",
+ "pkg-config",
+ "redb",
+]
+
+[[package]]
+name = "oxpinyin-segment"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-data",
+]
+
+[[package]]
+name = "oxpinyin-user"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-core",
+ "redb",
+]
+
+[[package]]
 name = "page_size"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -439,113 +537,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "pinyin-capi"
-version = "0.1.0"
-dependencies = [
- "pinyin-core",
- "pinyin-data",
- "pinyin-engine",
- "pinyin-user",
-]
-
-[[package]]
-name = "pinyin-core"
-version = "0.1.0"
-dependencies = [
- "proptest",
-]
-
-[[package]]
-name = "pinyin-corpus"
-version = "0.1.0"
-dependencies = [
- "pinyin-counter",
- "pinyin-emitter",
- "pinyin-lambda",
- "pinyin-segment",
-]
-
-[[package]]
-name = "pinyin-counter"
-version = "0.1.0"
-dependencies = [
- "pinyin-segment",
-]
-
-[[package]]
-name = "pinyin-data"
-version = "0.1.0"
-dependencies = [
- "pinyin-core",
- "redb",
-]
-
-[[package]]
-name = "pinyin-dictool"
-version = "0.1.0"
-dependencies = [
- "pinyin-capi",
-]
-
-[[package]]
-name = "pinyin-emitter"
-version = "0.1.0"
-dependencies = [
- "pinyin-counter",
- "pinyin-data",
- "pinyin-segment",
-]
-
-[[package]]
-name = "pinyin-engine"
-version = "0.1.0"
-dependencies = [
- "pinyin-core",
-]
-
-[[package]]
-name = "pinyin-lambda"
-version = "0.1.0"
-dependencies = [
- "pinyin-counter",
- "pinyin-segment",
-]
-
-[[package]]
-name = "pinyin-migrate"
-version = "0.1.0"
-dependencies = [
- "cc",
- "pinyin-oracle",
- "pkg-config",
- "redb",
-]
-
-[[package]]
 name = "pinyin-oracle"
 version = "0.1.0"
 dependencies = [
  "criterion",
  "dhat",
- "pinyin-core",
- "pinyin-data",
- "pinyin-engine",
- "pinyin-user",
-]
-
-[[package]]
-name = "pinyin-segment"
-version = "0.1.0"
-dependencies = [
- "pinyin-data",
-]
-
-[[package]]
-name = "pinyin-user"
-version = "0.1.0"
-dependencies = [
- "pinyin-core",
- "redb",
+ "oxpinyin-core",
+ "oxpinyin-data",
+ "oxpinyin-engine",
+ "oxpinyin-user",
 ]
 
 [[package]]

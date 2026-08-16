@@ -1,5 +1,5 @@
 [package]
-name = "pinyin-rs-fuzz"
+name = "oxpinyin-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "=0.4.13"
-pinyin-core = { path = "../crates/pinyin-core" }
+oxpinyin-core = { path = "../crates/oxpinyin-core" }
 
 [[bin]]
 name = "parser"

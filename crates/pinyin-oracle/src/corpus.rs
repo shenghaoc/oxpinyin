@@ -11,7 +11,7 @@
 
 use std::collections::HashSet;
 
-use pinyin_core::{FULL_PINYIN_SYLLABLES, FullPinyinParser, InputParser};
+use oxpinyin_core::{FULL_PINYIN_SYLLABLES, FullPinyinParser, InputParser};
 
 /// Fixed generator seed, `"Parity01"` read as big-endian ASCII.
 pub const SEED: u64 = 0x5061_7269_7479_3031;
@@ -421,7 +421,7 @@ mod tests {
     use std::sync::OnceLock;
 
     use super::{CORPUS_DIR, DOMAIN_HIGH, DOMAIN_LOW, Stratum, generate};
-    use pinyin_core::{FULL_PINYIN_SYLLABLES, FullPinyinParser, InputParser};
+    use oxpinyin_core::{FULL_PINYIN_SYLLABLES, FullPinyinParser, InputParser};
 
     /// Generation is pure, so one run serves every assertion. Regenerating per
     /// test would dominate the suite's runtime for no extra coverage;

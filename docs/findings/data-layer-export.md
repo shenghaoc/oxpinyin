@@ -21,7 +21,7 @@ documented exception of the bigram byte format, which is frozen here from
 observed data and verified by a total mechanical invariant plus
 oracle-resolved spot checks.
 
-The exporter is `pinyin-migrate export` (feature `oracle-ffi`, Linux-first).
+The exporter is `oxpinyin-migrate export` (feature `oracle-ffi`, Linux-first).
 It drives the additional public functions:
 
 - `pinyin_begin_get_phrases` / `pinyin_iterator_has_next_phrase` /
@@ -47,7 +47,7 @@ verification test): `gb_char` 95,698 tuples, `gbk_char` 21,234,
 ## Table schemas
 
 All tables are redb databases with the single `data` table mapping raw
-`&[u8]` keys to raw `&[u8]` values (`pinyin-data::LookupTable`). All
+`&[u8]` keys to raw `&[u8]` values (`oxpinyin-data::LookupTable`). All
 multi-byte integers are little-endian. Entries are written in ascending key
 order and every list below has a frozen order, so a given oracle pin
 exports to byte-identical tables.
@@ -83,7 +83,7 @@ compound binary key.
 
 ### `bigram.redb` — previous token → successor records
 
-Produced by `pinyin-migrate convert` as a **verbatim** record-for-record
+Produced by `oxpinyin-migrate convert` as a **verbatim** record-for-record
 copy of the pin's `bigram.db` (a Tkrzw HashDBM; the bridge copies raw key
 and value bytes untouched). The byte format, frozen from observed data:
 

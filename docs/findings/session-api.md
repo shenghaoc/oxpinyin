@@ -2,7 +2,7 @@
 
 Date: 2026-08-09 · Status: **frozen for W4-T0**
 
-This SPEC freezes the `pinyin-engine` session surface before any decoder work
+This SPEC freezes the `oxpinyin-engine` session surface before any decoder work
 lands on top of it. Every later W4 task fills these signatures in; none of them
 may change one. A signature change after this branch is an Architect+human
 correction, recorded in the log at the end of this file.
@@ -14,9 +14,9 @@ and know exactly what they consume.
 
 ## What this seam is for
 
-`pinyin-engine` is one of the two supported surfaces (the other is
-`pinyin-capi`'s C ABI). Everything below it — `pinyin-core`, `pinyin-data`,
-`pinyin-user` — is internal and carries no stability promise.
+`oxpinyin-engine` is one of the two supported surfaces (the other is
+`oxpinyin-capi`'s C ABI). Everything below it — `oxpinyin-core`, `oxpinyin-data`,
+`oxpinyin-user` — is internal and carries no stability promise.
 
 A shell supplies platform facts as **data** and receives platform-free results:
 
@@ -32,7 +32,7 @@ Naming these matters as much as naming what is present, because each one is a
 place a portable API usually leaks:
 
 - **No keysyms.** `LogicalKey` is an abstract key, never an IBus/X11 keyval.
-  Translation from `IBUS_KEY_*` lives in `pinyin-capi` and nowhere else.
+  Translation from `IBUS_KEY_*` lives in `oxpinyin-capi` and nowhere else.
 - **No GSettings, no dconf, no registry.** Configuration arrives through
   `ConfigSource`. The layered `Config` that satisfies it is W4-T0c; a GSettings
   backend is a shell concern outside both.
@@ -167,7 +167,7 @@ pub enum KeyOutcome { Ignored, Consumed, Commit(String) }   // #[non_exhaustive]
 pub enum Selection { Continued, Completed }                 // #[non_exhaustive]
 ```
 
-The bounds are part of the freeze. They name concrete `pinyin-core` types
+The bounds are part of the freeze. They name concrete `oxpinyin-core` types
 (`SyllableKey`, `PhraseEntry`, `PhraseToken`) precisely so the decoder can be
 added later without widening them, and the `Display` bounds exist because the
 frozen `core-trait-seam.md` traits leave `Error` unbounded — the engine
@@ -226,7 +226,7 @@ growth path and is not a freeze violation. Removing or renaming one is.
 
 ## Decoder vocabulary types
 
-`pinyin-core` gains the types the bounds above name:
+`oxpinyin-core` gains the types the bounds above name:
 
 ```rust
 pub struct SyllableKey(u16);       // dense id over the frozen key inventory
@@ -245,7 +245,7 @@ the pin's incomplete-key set and makes them graph edges.
 ## Acceptance
 
 - Compiles on Linux, macOS and Windows; no `cfg(target_os)` and no platform
-  dependency anywhere in `pinyin-engine`.
+  dependency anywhere in `oxpinyin-engine`.
 - Every public item carries a doc comment.
 - Candidate indexing, preedit span coverage and buffer bounds are unit-tested.
 

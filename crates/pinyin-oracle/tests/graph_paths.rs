@@ -12,8 +12,8 @@
 //! oracle build is needed to run this, which is the point: the check belongs
 //! in ordinary portable CI, not behind a Linux-only feature.
 
-use pinyin_core::graph::SegmentGraph;
-use pinyin_core::{Completeness, SyllableKey};
+use oxpinyin_core::graph::SegmentGraph;
+use oxpinyin_core::{Completeness, SyllableKey};
 use pinyin_oracle::capture::unescape;
 
 const PATHS: &str = include_str!("../../../fixtures/w4/oracle-paths.txt");

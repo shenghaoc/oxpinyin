@@ -24,10 +24,10 @@ echo "--- building import-diff driver ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o import-diff import-diff.c -ldl
 echo "build: ok"
 
-# ── Build pinyin-capi ────────────────────────────────────────────────────
+# ── Build oxpinyin-capi ────────────────────────────────────────────────────
 
-echo "--- building pinyin-capi ---"
-cargo build -p pinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
+echo "--- building oxpinyin-capi ---"
+cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
 CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
@@ -65,7 +65,7 @@ echo ""
 CAPI_LOG="$(mktemp)"
 ORACLE_LOG="$(mktemp)"
 if ! ./import-diff "$CAPI_SO" "$REPO_ROOT/fixtures/w3" > "$CAPI_LOG" 2> /dev/null; then
-    echo "FAIL: import-diff crashed against pinyin-capi"
+    echo "FAIL: import-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     rm -f "$CAPI_LOG" "$ORACLE_LOG"
     exit 1
@@ -158,8 +158,8 @@ run_frontend() {
     fi
 }
 
-DICTOOL="$REPO_ROOT/target/debug/pinyin-dictool"
-cargo build -p pinyin-dictool --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
+DICTOOL="$REPO_ROOT/target/debug/oxpinyin-dictool"
+cargo build -p oxpinyin-dictool --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
 
 run_frontend "$FIXTURE" "$WORK/frontend-a.txt" "$WORK/frontend-cache-a"
 "$DICTOOL" import --user-dir "$WORK/dictool-user" "$FIXTURE"

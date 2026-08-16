@@ -1,4 +1,4 @@
-//! Sample-based sweep of [`pinyin_core::scoring::ScoringConfig`] constants
+//! Sample-based sweep of [`oxpinyin_core::scoring::ScoringConfig`] constants
 //! against `fixtures/w4/oracle-candidates.txt`.
 //!
 //! ```bash
@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
-use pinyin_core::scoring::ScoringConfig;
-use pinyin_data::{BigramLanguageModel, SystemDictionary};
-use pinyin_engine::{EmptyConfigSource, Session, StoragePaths};
+use oxpinyin_core::scoring::ScoringConfig;
+use oxpinyin_data::{BigramLanguageModel, SystemDictionary};
+use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use pinyin_oracle::corpus;
 
 const SAMPLE: usize = 2_000;
@@ -109,7 +109,7 @@ fn pct(n: usize, d: usize) -> usize {
 fn main() -> ExitCode {
     let dir = Path::new("/tmp/oxpinyin-export");
     if !dir.join("pinyin_index.redb").exists() {
-        eprintln!("missing {dir:?}; run pinyin-migrate export first");
+        eprintln!("missing {dir:?}; run oxpinyin-migrate export first");
         return ExitCode::from(2);
     }
 

@@ -94,10 +94,10 @@ The harness discovers no path, reads no environment, uses no clock, and
 contains no `cfg(target_os)`; neither does anything beneath it. CI runs it on
 Linux, macOS and Windows.
 
-The `test-portable` job covers `pinyin-core`, `pinyin-data`, `pinyin-user`,
-`pinyin-engine` and `pinyin-oracle` — the last with its `oracle-ffi` feature
+The `test-portable` job covers `oxpinyin-core`, `oxpinyin-data`, `oxpinyin-user`,
+`oxpinyin-engine` and `pinyin-oracle` — the last with its `oracle-ffi` feature
 off, which is how the graph and decode-level differentials also run on all
-three. `pinyin-capi` and `pinyin-migrate` stay Linux-first per
+three. `oxpinyin-capi` and `oxpinyin-migrate` stay Linux-first per
 `.kiro/steering/structure.md` and are covered by the existing job.
 
 Extending CI was an explicit maintainer decision: `AGENTS.md` lists editing CI
