@@ -230,7 +230,6 @@ struct symbols {
 
 static int resolve_all(void *handle, struct symbols *s) {
     int missing = 0;
-    int missing_critical = 0;
 
     RESOLVE(handle, *s, init,                 "pinyin_init");
     RESOLVE(handle, *s, fini,                 "pinyin_fini");
@@ -284,25 +283,7 @@ static int resolve_all(void *handle, struct symbols *s) {
     RESOLVE(handle, *s, bigram_get_next,       "pinyin_bigram_iterator_get_next_phrase");
     RESOLVE(handle, *s, end_get_bigram,        "pinyin_end_get_bigram_phrases");
 
-    /* Count missing critical-path symbols separately for the diagnostic,
-     * but return the total: the W8 bootstrap contract is exactly 51/51. */
-    if (!s->init)           missing_critical++;
-    if (!s->fini)           missing_critical++;
-    if (!s->alloc_instance) missing_critical++;
-    if (!s->free_instance)  missing_critical++;
-    if (!s->parse_full)     missing_critical++;
-    if (!s->get_parsed_input_length) missing_critical++;
-    if (!s->guess_sentence) missing_critical++;
-    if (!s->guess_candidates) missing_critical++;
-    if (!s->get_n_candidate)  missing_critical++;
-    if (!s->get_candidate)    missing_critical++;
-    if (!s->get_candidate_string) missing_critical++;
-    if (!s->reset)          missing_critical++;
-    if (!s->save)           missing_critical++;
-
-    printf("resolved: %d/51 symbols, missing_critical=%d\n",
-           51 - missing, missing_critical);
-
+    printf("resolved: %d/51 symbols\n", 51 - missing);
     return missing;
 }
 
@@ -382,10 +363,7 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
     /* Parse */
     size_t consumed = s->parse_full(inst, input);
     printf("parse_full: consumed=%zu\n", consumed);
-    if (s->get_parsed_input_length) {
-        printf("parsed_input_length: %zu\n",
-               s->get_parsed_input_length(inst));
-    }
+    printf("parsed_input_length: %zu\n", s->get_parsed_input_length(inst));
 
     /* Guess sentence */
     bool gs = s->guess_sentence(inst);
@@ -493,10 +471,8 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
     /* Reset for next input */
     bool r = s->reset(inst);
     printf("reset: %s\n", r ? "true" : "false");
-    if (s->get_parsed_input_length) {
-        printf("parsed_input_length_after_reset: %zu\n",
-               s->get_parsed_input_length(inst));
-    }
+    printf("parsed_input_length_after_reset: %zu\n",
+           s->get_parsed_input_length(inst));
     printf("\n");
 }
 

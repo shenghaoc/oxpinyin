@@ -407,6 +407,16 @@ pub(crate) struct CapiInstance {
     pub(crate) user: Option<UserStore>,
 }
 
+impl CapiInstance {
+    /// Drop composition state the way `pinyin_reset` does: session, candidate
+    /// snapshot, and stored parse length all return to empty/zero.
+    pub(crate) fn reset_parse_state(&mut self) {
+        self.session.reset();
+        self.candidates.clear();
+        self.parsed_len = 0;
+    }
+}
+
 // ── Pointer casts ───────────────────────────────────────────────────────
 //
 // The opaque `PinyinContext` / `PinyinInstance` types in the C header are

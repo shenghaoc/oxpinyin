@@ -13,10 +13,12 @@ set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
 
-echo "--- building oxpinyin-capi for the C++ smoke gate ---"
-cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
 CAPI_DIR="$REPO_ROOT/target/debug"
 CAPI_SO="$CAPI_DIR/libpinyin_capi.so"
+if [ ! -f "$CAPI_SO" ]; then
+    echo "--- building oxpinyin-capi for the C++ smoke gate ---"
+    cargo build -p oxpinyin-capi --locked --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
+fi
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
     exit 1

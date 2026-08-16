@@ -24,6 +24,10 @@ cpp_compat = true
 # Scheme defaults alias another enumerator, so Rust cannot spell them as enum
 # variants without duplicating a discriminant; the preprocessor definitions
 # keep the C-header values identical to pinyin_custom2.h:116 and :132.
+#
+# PinyinKey / PinyinKeyPos stay here rather than as Rust type aliases:
+# oxpinyin-user already owns `PinyinKey = u16` for stored syllable ids, and a
+# second Rust `PinyinKey = ChewingKey` in this crate is a name collision.
 after_includes = """
 #define PHRASE_MASK 0x00FFFFFF
 #define PHRASE_INDEX_LIBRARY_MASK 0x0F000000
@@ -31,6 +35,8 @@ after_includes = """
     ( ( (phrase_index<<24) & PHRASE_INDEX_LIBRARY_MASK)|(token & PHRASE_MASK))
 #define DOUBLE_PINYIN_DEFAULT DOUBLE_PINYIN_MS
 #define ZHUYIN_DEFAULT ZHUYIN_STANDARD
+typedef struct ChewingKey PinyinKey;
+typedef struct ChewingKeyRest PinyinKeyPos;
 """
 
 # Keep doc comments as C comments in the header.
@@ -50,8 +56,6 @@ include = [
     "LookupCandidate",
     "ChewingKey",
     "ChewingKeyRest",
-    "PinyinKey",
-    "PinyinKeyPos",
     "PinyinTableFlag",
     "PinyinAmbiguity2",
     "PinyinCorrection2",

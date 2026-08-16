@@ -87,9 +87,10 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
 - **W8 is the oxpinyin library release, with a compatibility bootstrap for
   the maintainer's ibus-libpinyin fork.** oxpinyin-capi exposes the
   51-symbol call surface of the fork (`feat/oxpinyin-backend` Phase-0 doc
-  `docs/oxpinyin-switch.md`, tip `0d71866`): the 50 symbols pinned from
-  ibus-libpinyin 1.16.5 plus `pinyin_get_parsed_input_length` (fork commit
-  `2c5baa9`). For W8, the fork surface supersedes the upstream tag freeze.
+  `docs/oxpinyin-switch.md` in that ibus-libpinyin repo, tip `0d71866`):
+  the 50 symbols pinned from ibus-libpinyin 1.16.5 plus
+  `pinyin_get_parsed_input_length` (fork commit `2c5baa9`). For W8, the
+  fork surface supersedes the upstream tag freeze.
   The first oxpinyin release ships this as a binary the fork links against
   with minimal changes — enough to switch the fork off the C++ libpinyin
   backend and onto oxpinyin.
