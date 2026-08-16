@@ -9,12 +9,18 @@ pub mod fixture;
 pub mod graph;
 pub mod kbest;
 mod parser;
+mod scheme;
 pub mod scoring;
 mod syllables;
 mod vocab;
+mod zhuyin_map;
 
 pub use parser::{
     Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
+};
+pub use scheme::{
+    DoublePinyinKey, DoublePinyinParse, DoublePinyinParser, DoublePinyinScheme, ZhuyinKey,
+    ZhuyinParse, ZhuyinParser, ZhuyinScheme,
 };
 pub use syllables::{
     FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,

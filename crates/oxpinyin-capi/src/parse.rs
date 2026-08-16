@@ -5,6 +5,8 @@ use std::ptr;
 
 use std::sync::atomic::Ordering;
 
+use oxpinyin_core::{DoublePinyinScheme, ZhuyinScheme};
+
 use crate::ffi::{cstr_to_string, ffi_catch};
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, PinyinInstance};
@@ -43,6 +45,104 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
     };
     inst.parsed_len = consumed;
     consumed
+}
+
+fn double_scheme(value: i32) -> Option<DoublePinyinScheme> {
+    match value {
+        1 => Some(DoublePinyinScheme::Zrm),
+        2 => Some(DoublePinyinScheme::Ms),
+        3 => Some(DoublePinyinScheme::Ziguang),
+        4 => Some(DoublePinyinScheme::Abc),
+        5 => Some(DoublePinyinScheme::Pyjj),
+        6 => Some(DoublePinyinScheme::Xhe),
+        _ => None,
+    }
+}
+
+/// Double-pinyin batch-parse path.
+///
+/// Parses the original double-pinyin input into full-pinyin `SyllableKey`s,
+/// stores the original bytes and key spans for aux/candidate-offset mapping,
+/// and drives the existing session decoder with the `'`-joined full-pinyin
+/// spelling. The returned length is the original consumed byte count, not the
+/// transformed spelling length.
+fn parse_double_more(instance: *mut PinyinInstance, text: &str) -> usize {
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    inst.reset_parse_state();
+
+    let Some(scheme) = double_scheme(inst.double_scheme.load(Ordering::Relaxed)) else {
+        return 0;
+    };
+    let allow_incomplete = inst.incomplete.load(Ordering::Relaxed);
+    let parser = oxpinyin_core::DoublePinyinParser::with_scheme(scheme);
+    let parsed = parser.parse(text.as_bytes(), allow_incomplete);
+
+    if text.is_empty() {
+        inst.parsed_len = 0;
+        return 0;
+    }
+
+    if inst
+        .session
+        .set_incomplete_pinyin(allow_incomplete)
+        .is_err()
+    {
+        return 0;
+    }
+
+    let full = parsed.full_pinyin();
+    if !full.is_empty() && inst.session.type_pinyin(&full).is_err() {
+        return 0;
+    }
+
+    inst.parsed_len = parsed.consumed();
+    inst.double_input = text.to_owned();
+    inst.double_parse = Some(parsed);
+    inst.parsed_len
+}
+
+fn zhuyin_scheme(value: i32) -> Option<ZhuyinScheme> {
+    match value {
+        1 => Some(ZhuyinScheme::Standard),
+        _ => None,
+    }
+}
+
+/// Zhuyin batch-parse path.
+///
+/// Parses STANDARD keyboard input into tone-less full-pinyin `SyllableKey`s,
+/// stores the original keystrokes and key spans for aux/candidate-offset
+/// mapping, and drives the session decoder with the `'`-joined full-pinyin
+/// spelling. The returned length is the original consumed byte count.
+fn parse_chewing_more(instance: *mut PinyinInstance, text: &str) -> usize {
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    inst.reset_parse_state();
+
+    let Some(scheme) = zhuyin_scheme(inst.zhuyin_scheme.load(Ordering::Relaxed)) else {
+        return 0;
+    };
+    let use_tone = inst.use_tone.load(Ordering::Relaxed);
+    let parser = oxpinyin_core::ZhuyinParser::with_scheme(scheme);
+    let parsed = parser.parse(text.as_bytes(), use_tone);
+
+    if text.is_empty() {
+        inst.parsed_len = 0;
+        return 0;
+    }
+
+    let full = parsed.full_pinyin();
+    if !full.is_empty() && inst.session.type_pinyin(&full).is_err() {
+        return 0;
+    }
+
+    inst.parsed_len = parsed.consumed();
+    inst.zhuyin_input = text.to_owned();
+    inst.zhuyin_parse = Some(parsed);
+    inst.parsed_len
 }
 
 fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> usize {
@@ -88,7 +188,14 @@ pub extern "C" fn pinyin_parse_more_double_pinyins(
     instance: *mut PinyinInstance,
     pinyins: *const c_char,
 ) -> usize {
-    parse_c_string(instance, pinyins)
+    if instance.is_null() {
+        return 0;
+    }
+    ffi_catch(0, || {
+        // SAFETY: `pinyins` is a C string from the caller (null OK).
+        let text = unsafe { cstr_to_string(pinyins) };
+        parse_double_more(instance, &text)
+    })
 }
 
 /// Parse multiple chewing (bopomofo) inputs.
@@ -106,7 +213,14 @@ pub extern "C" fn pinyin_parse_more_chewings(
     instance: *mut PinyinInstance,
     chewings: *const c_char,
 ) -> usize {
-    parse_c_string(instance, chewings)
+    if instance.is_null() {
+        return 0;
+    }
+    ffi_catch(0, || {
+        // SAFETY: `chewings` is a C string from the caller (null OK).
+        let text = unsafe { cstr_to_string(chewings) };
+        parse_chewing_more(instance, &text)
+    })
 }
 
 /// Get the parsed length of the input.
@@ -145,23 +259,54 @@ pub extern "C" fn pinyin_get_parsed_input_length(instance: *mut PinyinInstance) 
 /// `symbols` receives a NULL-terminated string array; caller frees with
 /// `g_strfreev`.
 ///
-/// Provisional: always returns false (no chewing keyboard tables yet).
+/// Returns the Zhuyin symbol(s) for `key` under the current scheme.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_in_chewing_keyboard(
     instance: *mut PinyinInstance,
-    _key: c_char,
+    key: c_char,
     symbols: *mut *mut *mut GChar,
 ) -> bool {
     if instance.is_null() {
         return false;
     }
-    if !symbols.is_null() {
-        // SAFETY: Null-checked above. Write NULL to indicate no results.
-        unsafe {
-            *symbols = ptr::null_mut();
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_ref(instance) };
+        let Some(scheme) = zhuyin_scheme(inst.zhuyin_scheme.load(Ordering::Relaxed)) else {
+            return false;
+        };
+        let use_tone = inst.use_tone.load(Ordering::Relaxed);
+        let parser = oxpinyin_core::ZhuyinParser::with_scheme(scheme);
+        let mapped = parser.symbols_for(key as u8, use_tone);
+        if mapped.is_empty() {
+            if !symbols.is_null() {
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *symbols = ptr::null_mut();
+                }
+            }
+            return false;
         }
-    }
-    false
+
+        if !symbols.is_null() {
+            // Caller frees with g_strfreev. Allocate a NULL-terminated
+            // array of NUL-terminated C strings.
+            let mut ptrs: Vec<*mut GChar> = mapped
+                .iter()
+                .map(|text| crate::ffi::owned_cstr(text))
+                .collect();
+            ptrs.push(ptr::null_mut());
+            let ptr = ptrs.as_mut_ptr();
+            std::mem::forget(ptrs);
+            // SAFETY: The vec's heap array is leaked to the caller, which
+            // releases the individual strings and the array with g_strfreev.
+            unsafe {
+                *symbols = ptr;
+            }
+        }
+        true
+    })
 }
 
 #[cfg(test)]
