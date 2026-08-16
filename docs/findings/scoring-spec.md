@@ -119,10 +119,12 @@ the space the inequalities allow.
 
 ## Incomplete keys at lookup
 
-An incomplete key stands for every complete key it is a proper prefix of, in
-frozen inventory order. This is the pin's behaviour: `nih` offers `你好`,
-`霓虹`, `拟合`, `泥孩`, `你还`, `你和`, `你很`, `你会` — two-key phrases whose
-second syllable begins with `h`.
+An incomplete key stands for every complete key with the same phonetic
+initial (`ChewingKey.m_initial`), in frozen inventory order. This is the
+pin's behaviour: `nih` offers `你好`, `霓虹`, `拟合`, `泥孩`, `你还`, `你和`,
+`你很`, `你会` — two-key phrases whose second syllable begins with `h`.
+String-prefix expansion is wrong: `n` must not reach zero-initial `ng`,
+and `z`/`c`/`s` must not reach `zh`/`ch`/`sh`.
 
 Expansion is a Cartesian product and therefore bounded. Above
 `expansion_limit` (64) sequences the key sequence yields **nothing**, not a
@@ -185,3 +187,10 @@ Ranking impact is path-specific — the real-unigram three-key order is
 λ-insensitive (the parity pins hold), while the export-ABI `model_cost` path is
 not; see `scoring-constant-sweep.md`. The functional form, cost scale, sign
 convention, tie-break and totality rules in this SPEC are unchanged.
+
+**2026-08-16 — incomplete expansion is phonetic initial, not string prefix.**
+The paragraph above said an incomplete key stood for every complete key it is
+a proper prefix of. That leaked `n` into `ng` and `z`/`c`/`s` into
+`zh`/`ch`/`sh`. Lookup now uses `phonetic_initial` (the `m_initial` index);
+see `docs/findings/pin-refreeze-2026-08.md`. The Cartesian-product bound and
+empty-on-overflow rule are unchanged.

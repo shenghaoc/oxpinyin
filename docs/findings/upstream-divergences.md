@@ -49,19 +49,3 @@ is complete, these notes are collected to report back to libpinyin.
   raw user-store values (`docs/findings/legacy-migration.md` §3).
 - **Externally observable:** yes — the C ABI surface matches; the migration
   tool is an internal tool and keeps the full value surface.
-
-### `pinyin_get_right_pinyin_offset` asserts at a parsed-length cursor
-
-- **Upstream source cite:** `src/pinyin.cpp:2162-2176` (`_check_offset`) and
-  `src/pinyin.cpp:3061-3092` (`pinyin_get_right_pinyin_offset`).
-- **Mechanism:** `_check_offset` asserts `zero_key != key` when the requested
-  offset is a column containing only the zero `'` key.  The bisection
-  harness's `cursor == parsed_len` probe for `nihao` reaches that column
-  through `pinyin_get_right_pinyin_offset` and aborts.
-- **What oxpinyin does instead:** cursor helpers are provisional pure
-  arithmetic over the raw input and never assert; the same probe returns
-  `min(offset.saturating_add(1), raw_len)`.  The differential harness
-  therefore keeps its oracle run on cursor positions the oracle accepts, and
-  the capi/valgrind gate exercises the full sequence.
-- **Externally observable:** yes — the oracle aborts on that cursor probe;
-  oxpinyin returns `true` with a boundary value.

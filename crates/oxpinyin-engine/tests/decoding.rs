@@ -204,11 +204,11 @@ fn unknown_input_still_offers_itself_back() {
 
 #[test]
 fn an_expansion_past_the_limit_offers_no_phrase_for_that_span() {
-    // `zh` prefixes 17 complete syllables after the phonetic-initial fix, so
-    // a single initial expands (17 ≤ the default limit of 64) and reaches the
-    // phrases it spells — `zhuan` and `zhong` are both in the mini
+    // `zh` expands to 19 complete syllables after the phonetic-initial fix,
+    // so a single initial expands (19 ≤ the default limit of 64) and reaches
+    // the phrases it spells — `zhuan` and `zhong` are both in the mini
     // vocabulary, so `zhzh` gets candidates, led by 传. What it cannot get
-    // is a *two-key* dictionary phrase: 17 × 17 = 289 sequences,
+    // is a *two-key* dictionary phrase: 19 × 19 = 361 sequences,
     // `expand_keys` returns empty rather than a subset, and no phrase is
     // offered for that span.
     let session = typed("zhzh");

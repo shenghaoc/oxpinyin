@@ -429,12 +429,19 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
             s->get_candidate_type(inst, cand, &ctype);
 
         uint8_t nbest = 0;
+        bool have_nbest = false;
         if (ctype == NBEST_MATCH_CANDIDATE && s->get_candidate_nbest_index)
-            s->get_candidate_nbest_index(inst, cand, &nbest);
+            have_nbest = s->get_candidate_nbest_index(inst, cand, &nbest);
+
+        char nbest_buf[8];
+        const char *nbest_text = "-";
+        if (have_nbest) {
+            snprintf(nbest_buf, sizeof nbest_buf, "%u", (unsigned)nbest);
+            nbest_text = nbest_buf;
+        }
 
         printf("  candidate[%u]: type=%s nbest=%s text=\"%s\"\n",
-               i, ctype_name(ctype),
-               ctype == NBEST_MATCH_CANDIDATE ? "stored" : "-",
+               i, ctype_name(ctype), nbest_text,
                text ? text : "(null)");
     }
 

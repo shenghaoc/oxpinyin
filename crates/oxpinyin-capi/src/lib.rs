@@ -227,3 +227,5 @@ pub fn close_user_import_context(context: *mut PinyinContext) {
 
 #[cfg(test)]
 mod e2e_tests;
+#[cfg(test)]
+mod test_support;

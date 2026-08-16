@@ -404,16 +404,9 @@ pub fn expand_keys(keys: &[SyllableKey], limit: usize) -> Vec<Vec<SyllableKey>> 
 
 /// The complete keys one initial-only key stands for.
 ///
-/// The pinned incomplete index is keyed by [`ChewingKey.m_initial`], not by
-/// the pinyin spelling.  When a key sequence contains an incomplete key,
-/// upstream builds the search key by copying only `m_initial` into a fresh
-/// `ChewingKey` (libpinyin 2.11.91 `pinyin_phrase3.h:170-177`), and the
-/// phrase-index search dispatches to that construction
-/// (`chewing_large_table2.h:136-144`, `chewing_large_table2.cpp:178-184`).
-/// Consequently the spelling `n` means “every syllable with initial N” and
-/// does not reach `ng`, whose table row is zero-initial
-/// (`pinyin_parser_table.h:4211`); `z`/`c`/`s` likewise exclude
-/// `zh`/`ch`/`sh`, which are distinct initial values.
+/// An incomplete key `K` stands for every complete syllable whose
+/// [`phonetic_initial`] is `K`. That is the pinned `m_initial` index:
+/// `n` does not reach `ng`, and `z`/`c`/`s` do not reach `zh`/`ch`/`sh`.
 fn completions(key: SyllableKey) -> Vec<SyllableKey> {
     if key.completeness() == crate::Completeness::Complete {
         return vec![key];
@@ -422,31 +415,9 @@ fn completions(key: SyllableKey) -> Vec<SyllableKey> {
     let initial = key.text();
     FULL_PINYIN_SYLLABLES
         .iter()
-        .filter(|syllable| phonetic_initial(syllable) == initial)
+        .filter(|syllable| crate::phonetic_initial(syllable) == Some(initial))
         .filter_map(|syllable| SyllableKey::from_text(syllable))
         .collect()
-}
-
-/// The pinyin phonetic initial of a complete syllable spelling.
-///
-/// `zh`/`ch`/`sh` are single initial values even though they are two bytes.
-/// `ng` is zero-initial (`pinyin_parser_table.h:4211`) despite starting with
-/// `n`, and a vowel-initial syllable has no consonant initial.
-fn phonetic_initial(syllable: &str) -> &str {
-    if syllable == "ng" {
-        return "";
-    }
-    for initial in ["zh", "ch", "sh"] {
-        if syllable.starts_with(initial) {
-            return initial;
-        }
-    }
-    match syllable.as_bytes().first() {
-        Some(b'a' | b'e' | b'i' | b'o' | b'u' | b'v') | None => "",
-        // Every other complete-syllable first byte in the frozen inventory is
-        // a consonant-initial byte: b c d f g h j k l m n p q r s t w x y z.
-        Some(_) => &syllable[..1],
-    }
 }
 
 #[cfg(test)]

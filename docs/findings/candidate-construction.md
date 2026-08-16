@@ -136,15 +136,15 @@ The longer phrase outranks its own first syllable. **SHOWN** (already the basis
 of `phrase_key_bonus > 0` in `scoring-spec.md`).
 
 **Consequence for the hypothesis.** The clause "ours … cannot pool across
-segmentations" is **false against our own tree.** `Session::refresh`
-(`crates/oxpinyin-engine/src/session.rs:461`) iterates *every* one of the
-`SEGMENTATION_K = 8` best paths and calls both `collect_prefix_phrases` and
-`collect_sentence` on each, then pools, sorts by `Candidate::cost`, dedups by
-text, and returns every pooled candidate (upstream has no candidate cap).
-The doc comment at
-`session.rs:457` names `xian` and `fangan` as the reason. We pool across
-segmentations today. The accurate framing of our gap is not "we don't pool" — it
-is §1.4.
+segmentations" is **false against our own tree.** Under a model with real
+unigram frequencies, `Session::refresh` runs the expanding-window scan of
+§8 — every key-path through the scan matrix, pooled across segmentations,
+ranked by the three-key order, deduplicated keep-first, and returned in
+full (upstream has no candidate cap). The k-best + `collect_prefix_phrases`
+/ `collect_sentence` + cost-sort pipeline described above is only the
+no-unigram fallback (§8 item 4). The `refresh` doc comment names `xian` and
+`fangan` as the reason we scan every segmentation. The accurate framing of
+our gap is not "we don't pool" — it is §1.4.
 
 ### 1.3 SHOWN: rank-1 is not the first phrase of the selected *syllable* path
 

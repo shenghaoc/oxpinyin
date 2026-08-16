@@ -13,7 +13,7 @@ use std::fmt;
 use std::path::Path;
 
 use oxpinyin_core::{
-    Completeness, Dictionary, INCOMPLETE_PINYIN_KEYS, PhraseEntry, PhraseToken, SyllableKey,
+    Completeness, Dictionary, PhraseEntry, PhraseToken, SyllableKey, syllable_initial,
 };
 
 use crate::table::{LookupTable, TableError};
@@ -231,16 +231,6 @@ fn prefix_probe(sorted: &[String], joined: &str) -> bool {
                 && sorted[index].as_bytes().get(joined.len()) == Some(&b'\'')
         }
     }
-}
-
-/// The initial of a syllable spelling: the longest initial-only key that is
-/// a prefix of it, or `None` for a vowel-initial syllable.
-fn syllable_initial(text: &str) -> Option<&'static str> {
-    INCOMPLETE_PINYIN_KEYS
-        .iter()
-        .filter(|key| text.starts_with(**key))
-        .max_by_key(|key| key.len())
-        .copied()
 }
 
 /// The two sorted key lists the prefix probes binary-search: every

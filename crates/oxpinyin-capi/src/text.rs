@@ -15,10 +15,9 @@ use crate::types::{GChar, PinyinInstance};
 ///
 /// The selected keys come from [`SegmentGraph::fewest_keys`] with incomplete
 /// edges admitted, so `nih` renders `ni h` and the initial-only tail stays
-/// visible.  Apostrophes are consumed by the following edge and never appear
-/// in the rendered text; a cursor on the apostrophe byte or on the following
-/// key start both render at the key boundary (`ni'hao` cursor 2 and 3 both
-/// render `ni |hao `).
+/// visible. Apostrophes are never rendered: a cursor on the apostrophe byte
+/// or on the following key start both land on that key's `syllable_start`
+/// (`ni'hao` cursor 2 and 3 both render `ni |hao `).
 fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize) -> String {
     let parsed = &raw[..parsed_len.min(raw.len())];
     if parsed.is_empty() {
@@ -33,35 +32,26 @@ fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize) -> String {
     let mut inserted = false;
 
     for edge in graph.fewest_keys(true) {
-        let boundary = edge.from();
-        let text_start = edge.syllable_start();
-        let text_end = edge.to();
+        let start = edge.syllable_start();
+        let end = edge.to();
         let key = edge.key().text();
 
-        if cursor <= boundary {
-            if !inserted && cursor == boundary {
-                out.push('|');
-                inserted = true;
-            }
-        } else if cursor < text_start {
-            // Cursor is on a consumed apostrophe separator: display it at the
-            // following key boundary, exactly like the cursor at text_start.
-            if !inserted {
-                out.push('|');
-                inserted = true;
-            }
-        } else if cursor < text_end {
-            let split = cursor - text_start;
+        if !inserted && cursor <= start {
+            out.push('|');
+            inserted = true;
+            out.push_str(key);
+            out.push(' ');
+        } else if !inserted && cursor < end {
+            let split = (cursor - start).min(key.len());
             out.push_str(&key[..split]);
             out.push('|');
             out.push_str(&key[split..]);
             out.push(' ');
             inserted = true;
-            continue;
+        } else {
+            out.push_str(key);
+            out.push(' ');
         }
-
-        out.push_str(key);
-        out.push(' ');
     }
 
     if !inserted {
@@ -123,7 +113,7 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
 ///
 /// Out-param `aux_text` is caller-owned (`g_free`).
 ///
-/// Provisional: returns the same preedit text as full pinyin.
+/// Provisional: returns the session preedit, not the full-pinyin formatter.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
     instance: *mut PinyinInstance,
@@ -166,7 +156,7 @@ pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
 ///
 /// Out-param `aux_text` is caller-owned (`g_free`).
 ///
-/// Provisional: returns the same preedit text as full pinyin.
+/// Provisional: returns the session preedit, not the full-pinyin formatter.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_chewing_auxiliary_text(
     instance: *mut PinyinInstance,
@@ -258,5 +248,37 @@ mod tests {
         // A bare incomplete initial renders as the initial itself.
         assert_eq!(full_aux_text("n", 1, 0), "|n ");
         assert_eq!(full_aux_text("n", 1, 1), "n |");
+    }
+
+    #[test]
+    fn full_pinyin_auxiliary_text_uses_the_fewest_keys_walk() {
+        use crate::parse::pinyin_parse_more_full_pinyins;
+        use crate::test_support::{TempUserDir, cstr, open};
+        use crate::types::GChar;
+
+        let user_dir = TempUserDir::new("full-aux");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+        let cases = [
+            ("nihao", 5, 2, "ni |hao "),
+            ("ni'hao", 6, 3, "ni |hao "),
+            ("nih", 3, 3, "ni h |"),
+        ];
+        for (input, consumed, cursor, expected) in cases {
+            let input = cstr(input);
+            assert_eq!(
+                pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
+                consumed
+            );
+            let mut aux: *mut GChar = std::ptr::null_mut();
+            assert!(super::pinyin_get_full_pinyin_auxiliary_text(
+                instance, cursor, &mut aux
+            ));
+            assert!(!aux.is_null());
+            assert_eq!(crate::ffi::take_owned_cstr(aux.cast()), expected);
+        }
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
     }
 }
