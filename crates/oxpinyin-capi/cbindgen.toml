@@ -11,6 +11,28 @@ include_guard = "PINYIN_CAPI_H"
 no_includes = true
 sys_includes = ["stddef.h", "stdbool.h", "stdint.h"]
 
+# The fork's TUs are C++ and include this header directly. cbindgen's
+# cpp_compat wraps the generated declarations in the usual
+# `#ifdef __cplusplus` / `extern "C" { ... }` guard.
+cpp_compat = true
+
+# Phrase-index macros the fork expands. These are preprocessor definitions,
+# which cbindgen cannot derive from Rust enum/const declarations; values and
+# shapes are copied byte-identically from libpinyin 2.11.91,
+# src/include/novel_types.h:41-46 (GPL header, authorized W8 ABI copy).
+# PHRASE_MASK is upstream's own dependency of PHRASE_INDEX_MAKE_TOKEN.
+# Scheme defaults alias another enumerator, so Rust cannot spell them as enum
+# variants without duplicating a discriminant; the preprocessor definitions
+# keep the C-header values identical to pinyin_custom2.h:116 and :132.
+after_includes = """
+#define PHRASE_MASK 0x00FFFFFF
+#define PHRASE_INDEX_LIBRARY_MASK 0x0F000000
+#define PHRASE_INDEX_MAKE_TOKEN(phrase_index, token)                    \\
+    ( ( (phrase_index<<24) & PHRASE_INDEX_LIBRARY_MASK)|(token & PHRASE_MASK))
+#define DOUBLE_PINYIN_DEFAULT DOUBLE_PINYIN_MS
+#define ZHUYIN_DEFAULT ZHUYIN_STANDARD
+"""
+
 # Keep doc comments as C comments in the header.
 documentation = true
 documentation_style = "c99"
@@ -21,12 +43,20 @@ style = "both"
 usize_is_size_t = true
 
 [export]
+exclude = ["malloc", "free"]
 include = [
     "PinyinContext",
     "PinyinInstance",
     "LookupCandidate",
     "ChewingKey",
     "ChewingKeyRest",
+    "PinyinKey",
+    "PinyinKeyPos",
+    "PinyinTableFlag",
+    "PinyinAmbiguity2",
+    "PinyinCorrection2",
+    "PhraseIndexLibraries",
+    "null_token",
     "ImportIterator",
     "ExportIterator",
     "BigramExportIterator",

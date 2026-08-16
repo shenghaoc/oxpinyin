@@ -13,6 +13,22 @@ Date: 2026-08-14 · Source tier: Manual source read; human freeze pending.
 - This is the reference freeze for reproducibility (upstream release state
   as of 2026-07-31).
 
+## W8 bootstrap contract — the fork call surface supersedes the tag freeze
+
+For W8 purposes the bootstrap contract is the live call surface of
+`shenghaoc/ibus-libpinyin`, branch `feat/oxpinyin-backend`, tip `0d71866`
+(Phase-0 characterization: `docs/oxpinyin-switch.md`). That surface is
+**51 symbols**: the 50 tag-1.16.5 symbols in §1 plus
+`pinyin_get_parsed_input_length`, whose live fork call site is
+`src/PYPLibPinyinCandidates.cc:151`. The gap originates in fork commit
+`2c5baa9` ("Fix LibPinyinCandidates::selectCandidate method"), which changed
+the full-selection test from `lookup_cursor == m_editor->m_text.length()` to
+`lookup_cursor == pinyin_get_parsed_input_length(instance)`.
+
+The tag-1.16.5 freeze remains the historical characterization below; the
+fork surface supersedes it for W8. As the roadmap records, the surface is
+free to evolve after the first oxpinyin release.
+
 ## Method
 
 1. Cloned both repos at their pinned tags.
@@ -25,7 +41,8 @@ Date: 2026-08-14 · Source tier: Manual source read; human freeze pending.
 4. Per-symbol signatures copied from `pinyin.h`; ownership inferred from
    header declarations, consumer usage (free patterns), and doc comments.
 
-The live consumer calls exactly **50 symbols** out of the 79 exported.
+The live 1.16.5 consumer calls exactly **50 symbols** out of the 79
+exported (historical; the W8 fork surface above is 51).
 
 Earlier architect capture listed 52; the difference:
 - `pinyin_get_pinyin_key` and `pinyin_get_pinyin_string` appear only inside
@@ -878,11 +895,13 @@ index-0-only.
 
 ---
 
-## 6. Out-of-subset symbols (29 not called by ibus-libpinyin)
+## 6. Out-of-subset symbols (29 not called by ibus-libpinyin at tag 1.16.5)
 
-The following 29 symbols are the exact complement: the sorted 79 names from
-`libpinyin.ver` minus the 50 live call-site symbols in §1. They are exported
-by libpinyin but never called by ibus-libpinyin at tag 1.16.5:
+Historical complement for the tag freeze only. The following 29 symbols are
+the exact complement: the sorted 79 names from `libpinyin.ver` minus the 50
+live 1.16.5 call-site symbols in §1. `pinyin_get_parsed_input_length` has
+since moved into the W8 contract (fork commit `2c5baa9`, call site
+`PYPLibPinyinCandidates.cc:151`) and is implemented by oxpinyin-capi.
 
 ```text
 pinyin_clear_constraint
@@ -973,9 +992,81 @@ A Rust implementation should:
 
 ---
 
+## 8. W8 header-completeness additions
+
+The fork includes `<pinyin.h>` from C++ translation units, so the generated
+header carries `#ifdef __cplusplus` / `extern "C"` guards (cbindgen
+`cpp_compat`). It also carries exactly the aliases and constants the fork's
+live TUs reference; values are byte-identical to the pinned libpinyin
+2.11.91 headers. Upstream citations below use the paths and line numbers in
+the 2.11.91 tree (`0c5e80e1`).
+
+### Compatibility aliases
+
+| Name | Definition | Upstream source |
+|---|---|---|
+| `PinyinKey` | `typedef ChewingKey PinyinKey;` | `src/pinyin.h:1093` |
+| `PinyinKeyPos` | `typedef ChewingKeyRest PinyinKeyPos;` | `src/pinyin.h:1094` |
+
+### Option bits (`PinyinTableFlag`, `PinyinAmbiguity2`, `PinyinCorrection2`)
+
+| Name | Value | Upstream source |
+|---|---:|---|
+| `PINYIN_INCOMPLETE` | `1U << 3` | `src/storage/pinyin_custom2.h:34` |
+| `ZHUYIN_INCOMPLETE` | `1U << 4` | `src/storage/pinyin_custom2.h:35` |
+| `USE_TONE` | `1U << 5` | `src/storage/pinyin_custom2.h:36` |
+| `USE_DIVIDED_TABLE` | `1U << 7` | `src/storage/pinyin_custom2.h:38` |
+| `USE_RESPLIT_TABLE` | `1U << 8` | `src/storage/pinyin_custom2.h:39` |
+| `DYNAMIC_ADJUST` | `1U << 9` | `src/storage/pinyin_custom2.h:40` |
+| `PINYIN_AMB_C_CH` | `1U << 10` | `src/storage/pinyin_custom2.h:50` |
+| `PINYIN_AMB_S_SH` | `1U << 11` | `src/storage/pinyin_custom2.h:51` |
+| `PINYIN_AMB_Z_ZH` | `1U << 12` | `src/storage/pinyin_custom2.h:52` |
+| `PINYIN_AMB_F_H` | `1U << 13` | `src/storage/pinyin_custom2.h:53` |
+| `PINYIN_AMB_G_K` | `1U << 14` | `src/storage/pinyin_custom2.h:54` |
+| `PINYIN_AMB_L_N` | `1U << 15` | `src/storage/pinyin_custom2.h:55` |
+| `PINYIN_AMB_L_R` | `1U << 16` | `src/storage/pinyin_custom2.h:56` |
+| `PINYIN_AMB_AN_ANG` | `1U << 17` | `src/storage/pinyin_custom2.h:57` |
+| `PINYIN_AMB_EN_ENG` | `1U << 18` | `src/storage/pinyin_custom2.h:58` |
+| `PINYIN_AMB_IN_ING` | `1U << 19` | `src/storage/pinyin_custom2.h:59` |
+| `PINYIN_AMB_ALL` | `0x3FFU << 10` | `src/storage/pinyin_custom2.h:60` |
+| `PINYIN_CORRECT_GN_NG` | `1U << 21` | `src/storage/pinyin_custom2.h:71` |
+| `PINYIN_CORRECT_MG_NG` | `1U << 22` | `src/storage/pinyin_custom2.h:72` |
+| `PINYIN_CORRECT_IOU_IU` | `1U << 23` | `src/storage/pinyin_custom2.h:73` |
+| `PINYIN_CORRECT_UEI_UI` | `1U << 24` | `src/storage/pinyin_custom2.h:74` |
+| `PINYIN_CORRECT_UEN_UN` | `1U << 25` | `src/storage/pinyin_custom2.h:75` |
+| `PINYIN_CORRECT_UE_VE` | `1U << 26` | `src/storage/pinyin_custom2.h:76` |
+| `PINYIN_CORRECT_V_U` | `1U << 27` | `src/storage/pinyin_custom2.h:77` |
+| `PINYIN_CORRECT_ON_ONG` | `1U << 28` | `src/storage/pinyin_custom2.h:78` |
+| `PINYIN_CORRECT_ALL` | `0xFFU << 21` | `src/storage/pinyin_custom2.h:79` |
+
+### Scheme defaults
+
+| Name | Value | Upstream source |
+|---|---:|---|
+| `DOUBLE_PINYIN_DEFAULT` | `DOUBLE_PINYIN_MS` (= 2) | `src/storage/pinyin_custom2.h:116` |
+| `ZHUYIN_DEFAULT` | `ZHUYIN_STANDARD` (= 1) | `src/storage/pinyin_custom2.h:132` |
+
+### Phrase-index macros, library ids, and `null_token`
+
+| Name | Value | Upstream source |
+|---|---:|---|
+| `PHRASE_MASK` | `0x00FFFFFF` | `src/include/novel_types.h:41` |
+| `PHRASE_INDEX_LIBRARY_MASK` | `0x0F000000` | `src/include/novel_types.h:42` |
+| `PHRASE_INDEX_MAKE_TOKEN` | `(((phrase_index<<24) & PHRASE_INDEX_LIBRARY_MASK) \| (token & PHRASE_MASK))` | `src/include/novel_types.h:45-46` |
+| `ADDON_DICTIONARY` | 5 | `src/include/novel_types.h:159` |
+| `NETWORK_DICTIONARY` | 6 | `src/include/novel_types.h:160` |
+| `USER_DICTIONARY` | 7 | `src/include/novel_types.h:161` |
+| `null_token` | 0 | `src/include/novel_types.h:121` |
+
+`PHRASE_MASK` is included because `PHRASE_INDEX_MAKE_TOKEN` expands it.
+No other `novel_types.h` / `pinyin_custom2.h` definitions are imported: the
+surface stays minimal.
+
 ## Boundary notes
 
-This is the frontend-called subset, not a promise to clone all of libpinyin.
+For W8 the contract is the fork's 51-symbol live surface (see the note at
+the top of this file); this is the frontend-called subset, not a promise to
+clone all of libpinyin.
 Symbols needed only by the differential harness may be added to
 `pinyin-oracle` without expanding the supported `oxpinyin-capi` surface.
 Every C-ABI symbol requires a dedicated task, a `// SAFETY:` argument for

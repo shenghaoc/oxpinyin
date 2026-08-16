@@ -33,7 +33,7 @@ use crate::iterators::{
     pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
     pinyin_end_get_phrases, pinyin_iterator_add_phrase, pinyin_iterator_has_next_phrase,
 };
-use crate::parse::pinyin_parse_more_full_pinyins;
+use crate::parse::{pinyin_get_parsed_input_length, pinyin_parse_more_full_pinyins};
 use crate::sentence::pinyin_guess_candidates;
 use crate::state::{USER_STORE_FILE, instance_ref};
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
@@ -116,6 +116,49 @@ fn candidate(instance: *mut PinyinInstance, text: &str, index: c_uint) -> *mut L
     );
     assert!(!cand.is_null());
     cand
+}
+
+#[test]
+fn parsed_input_length_stores_the_parse_result_and_clears_on_reset() {
+    let user_dir = TempUserDir::new("parsed-len");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    // Allocated instances start at 0, upstream `pinyin.cpp:1318`.
+    assert_eq!(pinyin_get_parsed_input_length(instance), 0);
+
+    // "nihao" parses completely: both the parse return and the getter
+    // report the five raw-input bytes, upstream `pinyin.cpp:1511`.
+    let nihao = cstr("nihao");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, nihao.as_ptr()), 5);
+    assert_eq!(pinyin_get_parsed_input_length(instance), 5);
+
+    // The fork's consumer reads the getter after `pinyin_choose_candidate`
+    // (`PYPLibPinyinCandidates.cc:146-151`); selection does not rewrite the
+    // stored parse length.
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let mut first = ptr::null_mut();
+    assert!(pinyin_get_candidate(instance, 0, &mut first));
+    assert!(pinyin_choose_candidate(instance, 0, first) > 0);
+    assert_eq!(pinyin_get_parsed_input_length(instance), 5);
+
+    // A partial parse stores exactly what the parse consumed, not the
+    // raw buffer length; the getter is a mirror of the parse return.
+    let partial = cstr("nihaoXYZ");
+    let consumed = pinyin_parse_more_full_pinyins(instance, partial.as_ptr());
+    assert_eq!(pinyin_get_parsed_input_length(instance), consumed);
+
+    // `pinyin_reset` clears `m_parsed_len`, upstream `pinyin.cpp:2692`.
+    assert!(pinyin_reset(instance));
+    assert_eq!(pinyin_get_parsed_input_length(instance), 0);
+
+    // Empty parse and null instance follow the same zero sentinel.
+    let empty = cstr("");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, empty.as_ptr()), 0);
+    assert_eq!(pinyin_get_parsed_input_length(instance), 0);
+    assert_eq!(pinyin_get_parsed_input_length(ptr::null_mut()), 0);
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
 }
 
 /// The token snapshotted on the candidate pointer.

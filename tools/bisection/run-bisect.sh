@@ -45,6 +45,11 @@ fi
 echo "data: $CAPI_DATA"
 echo ""
 
+# ── C++ header smoke (the fork consumes pinyin.h from C++ TUs) ───────────
+
+./run-cpp-smoke.sh
+echo ""
+
 # ── Mode 1: Run against oxpinyin-capi ─────────────────────────────────────
 
 echo "--- running against oxpinyin-capi ---"

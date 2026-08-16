@@ -1,7 +1,9 @@
-//! C ABI subset of libpinyin's public API (50 live symbols).
+//! C ABI subset of libpinyin's public API (51 live symbols).
 //!
 //! Every `#[unsafe(no_mangle)] pub extern "C" fn` matches the signature in
-//! `libpinyin/src/pinyin.h` (tag 2.11.91) symbol-for-symbol.
+//! `libpinyin/src/pinyin.h` (tag 2.11.91) symbol-for-symbol. The surface is
+//! the fork's 51-symbol W8 bootstrap call set: the 50 pinned ibus-libpinyin
+//! 1.16.5 symbols plus `pinyin_get_parsed_input_length`.
 //!
 //! ## Panic discipline
 //!

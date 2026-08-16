@@ -67,6 +67,8 @@ pub extern "C" fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
         let inst = unsafe { instance_mut(instance) };
         inst.session.reset();
         inst.candidates.clear();
+        // Upstream `pinyin_reset` clears `m_parsed_len` (`pinyin.cpp:2692`).
+        inst.parsed_len = 0;
         true
     })
 }

@@ -204,6 +204,7 @@ impl CapiContext {
         Some(CapiInstance {
             session,
             candidates: Vec::new(),
+            parsed_len: 0,
             user: self.user.clone(),
         })
     }
@@ -397,6 +398,11 @@ pub(crate) struct CapiInstance {
     /// Snapshotted candidates, rebuilt by `pinyin_guess_candidates`.
     /// `lookup_candidate_t *` pointers borrow into this vec.
     pub(crate) candidates: Vec<CapiCandidate>,
+    /// Bytes of raw input consumed by the most recent parse call — upstream
+    /// `m_parsed_len` (`pinyin.cpp:84`), returned by
+    /// `pinyin_get_parsed_input_length` (`pinyin.cpp:1611-1613`).
+    /// Allocation and reset both store 0 (`pinyin.cpp:1318,2692`).
+    pub(crate) parsed_len: usize,
     /// Clone of the context's user store. `None` under an empty user dir.
     pub(crate) user: Option<UserStore>,
 }
