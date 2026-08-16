@@ -10,6 +10,8 @@
  *
  * Usage:
  *   ./bisect <path-to-so> <systemdir>
+ *   ./bisect --perf <path-to-so> <systemdir>   # perf/RAM JSON line;
+ *                                              # see run-perf-baseline.sh
  *
  * The output is a structured text log of return values, candidate strings,
  * and ownership-contract exercises (caller-owned strings are freed after
@@ -27,6 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 /* ── Opaque handle types (match pinyin.h) ─────────────────────────────── */
@@ -362,6 +365,310 @@ static const char *TEST_INPUTS[] = {
 };
 static const size_t N_INPUTS = sizeof(TEST_INPUTS) / sizeof(TEST_INPUTS[0]);
 
+/* ── Performance-baseline inputs (same 20-input corpus as the Criterion
+ * keystroke-cycle bench: crates/pinyin-oracle/benches/support/mod.rs) ─── */
+
+static const char *PERF_CYCLE_INPUTS[] = {
+    "ni",
+    "wo",
+    "de",
+    "nihao",
+    "zhongguo",
+    "xian",
+    "fangan",
+    "xi'an",
+    "bu'tian",
+    "fan'gan",
+    "n",
+    "zh",
+    "chongke",
+    "caisho",
+    "paolen",
+    "waimenggu",
+    "lenglan",
+    "naoxion",
+    "liangniejue",
+    "chuaipengdengzaimiu",
+};
+static const size_t N_PERF_CYCLE_INPUTS =
+    sizeof(PERF_CYCLE_INPUTS) / sizeof(PERF_CYCLE_INPUTS[0]);
+
+/* The only observable effect of the perf loops. Function-pointer calls
+ * cannot be folded by the compiler anyway, but this keeps the checksum live
+ * and makes the intent explicit. */
+static volatile uint64_t perf_sink;
+
+static uint64_t now_ns(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+        return 0;
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+struct perf_memory {
+    long rss_kib;
+    long hwm_kib;
+    long vm_size_kib;
+    long rss_anon_kib;
+    long rss_file_kib;
+};
+
+static void read_perf_memory(struct perf_memory *memory) {
+    FILE *status = fopen("/proc/self/status", "r");
+    char line[256];
+
+    memory->rss_kib = -1;
+    memory->hwm_kib = -1;
+    memory->vm_size_kib = -1;
+    memory->rss_anon_kib = -1;
+    memory->rss_file_kib = -1;
+    if (!status)
+        return;
+
+    while (fgets(line, sizeof line, status)) {
+        unsigned long value = 0;
+        if (sscanf(line, "VmRSS: %lu kB", &value) == 1)
+            memory->rss_kib = (long)value;
+        else if (sscanf(line, "VmHWM: %lu kB", &value) == 1)
+            memory->hwm_kib = (long)value;
+        else if (sscanf(line, "VmSize: %lu kB", &value) == 1)
+            memory->vm_size_kib = (long)value;
+        else if (sscanf(line, "RssAnon: %lu kB", &value) == 1)
+            memory->rss_anon_kib = (long)value;
+        else if (sscanf(line, "RssFile: %lu kB", &value) == 1)
+            memory->rss_file_kib = (long)value;
+    }
+    fclose(status);
+}
+
+static void perf_json_string(const char *text) {
+    putchar('"');
+    for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
+        switch (*p) {
+        case '\\': fputs("\\\\", stdout); break;
+        case '"':  fputs("\\\"", stdout); break;
+        case '\n': fputs("\\n", stdout); break;
+        case '\r': fputs("\\r", stdout); break;
+        case '\t': fputs("\\t", stdout); break;
+        default:
+            if (*p < 0x20) {
+                printf("\\u%04x", (unsigned)*p);
+            } else {
+                putchar(*p);
+            }
+        }
+    }
+    putchar('"');
+}
+
+static void perf_print_memory_body(const struct perf_memory *m) {
+    printf("{\"rss_kib\":%ld,\"hwm_kib\":%ld,\"vm_size_kib\":%ld,"
+           "\"rss_anon_kib\":%ld,\"rss_file_kib\":%ld}",
+           m->rss_kib, m->hwm_kib, m->vm_size_kib,
+           m->rss_anon_kib, m->rss_file_kib);
+}
+
+static void perf_print_memory(const char *tag, const struct perf_memory *m) {
+    printf("\"%s\":", tag);
+    perf_print_memory_body(m);
+}
+
+/* One 20-input cycle. For every input the instance is reset, then each
+ * accumulated ASCII prefix is parsed and decoded the way the C++ frontend
+ * drives the keystroke path: parse, guess candidates, read the count. */
+static uint64_t run_perf_cycle(const struct symbols *s, pinyin_instance_t *inst) {
+    uint64_t checksum = 1469598103934665603ULL;
+
+    for (size_t i = 0; i < N_PERF_CYCLE_INPUTS; i++) {
+        const char *input = PERF_CYCLE_INPUTS[i];
+        size_t length = strlen(input);
+        char prefix[256];
+
+        if (length + 1 > sizeof prefix)
+            return checksum;
+        if (!s->reset(inst))
+            return checksum;
+
+        for (size_t j = 0; j < length; j++) {
+            prefix[j] = input[j];
+            prefix[j + 1] = '\0';
+
+            size_t consumed = s->parse_full(inst, prefix);
+            bool guessed = s->guess_candidates(inst, 0, DEFAULT_SORT);
+            guint candidate_count = 0;
+            bool counted = s->get_n_candidate(inst, &candidate_count);
+
+            checksum ^= (uint64_t)consumed;
+            checksum ^= guessed ? 0x9e3779b97f4a7c15ULL : 0xbf58476d1ce4e5b9ULL;
+            checksum ^= counted ? (uint64_t)candidate_count : 0x94d049bb133111ebULL;
+            checksum = (checksum << 7) | (checksum >> 57);
+        }
+    }
+    return checksum;
+}
+
+static int perf_env_count(const char *name, int fallback) {
+    const char *value = getenv(name);
+    char *end = NULL;
+    long parsed;
+
+    if (!value || !*value)
+        return fallback;
+    parsed = strtol(value, &end, 10);
+    if (!end || *end || parsed < 1 || parsed > 100000)
+        return fallback;
+    return (int)parsed;
+}
+
+static int resolve_perf_symbols(void *handle, struct symbols *s) {
+    int missing = 0;
+
+    memset(s, 0, sizeof *s);
+    RESOLVE(handle, *s, init,            "pinyin_init");
+    RESOLVE(handle, *s, fini,            "pinyin_fini");
+    RESOLVE(handle, *s, alloc_instance,  "pinyin_alloc_instance");
+    RESOLVE(handle, *s, free_instance,   "pinyin_free_instance");
+    RESOLVE(handle, *s, set_options,     "pinyin_set_options");
+    RESOLVE(handle, *s, parse_full,      "pinyin_parse_more_full_pinyins");
+    RESOLVE(handle, *s, guess_candidates,"pinyin_guess_candidates");
+    RESOLVE(handle, *s, get_n_candidate, "pinyin_get_n_candidate");
+    RESOLVE(handle, *s, reset,           "pinyin_reset");
+    return missing;
+}
+
+static void perf_remove_user_dir(char *user_dir) {
+    char command[640];
+
+    if (strlen(user_dir) + 32 >= sizeof command)
+        return;
+    snprintf(command, sizeof command, "rm -rf -- '%s'", user_dir);
+    (void)system(command);
+}
+
+static int run_perf_mode(int argc, char **argv) {
+    if (argc < 3) {
+        fprintf(stderr,
+                "Usage: %s --perf <path-to-so> <systemdir>\n"
+                "  Environment: PERF_BACKEND (label), PERF_MODE\n"
+                "    (speed|ram-init|ram-cycle), PERF_CYCLES (default 8).\n",
+                argv[0]);
+        return 1;
+    }
+
+    const char *so_path    = argv[2];
+    const char *system_dir = argv[3];
+
+    const char *backend    = getenv("PERF_BACKEND");
+    const char *mode       = getenv("PERF_MODE");
+    int cycles             = perf_env_count("PERF_CYCLES", 8);
+
+    if (!backend)
+        backend = so_path;
+    if (!mode)
+        mode = "speed";
+
+    char user_dir[] = "/tmp/bisect-perf-XXXXXX";
+    if (!mkdtemp(user_dir)) {
+        perror("mkdtemp");
+        return 1;
+    }
+
+    void *handle = dlopen(so_path, RTLD_NOW);
+    if (!handle) {
+        fprintf(stderr, "dlopen: %s\n", dlerror());
+        perf_remove_user_dir(user_dir);
+        return 1;
+    }
+
+    struct symbols sym;
+    int missing = resolve_perf_symbols(handle, &sym);
+    if (missing > 0) {
+        fprintf(stderr, "fatal: %d perf symbols missing\n", missing);
+        dlclose(handle);
+        perf_remove_user_dir(user_dir);
+        return 1;
+    }
+
+    uint64_t init_start = now_ns();
+    pinyin_context_t *ctx = sym.init(system_dir, user_dir);
+    uint64_t init_end = now_ns();
+    if (!ctx) {
+        fprintf(stderr, "fatal: pinyin_init returned NULL\n");
+        dlclose(handle);
+        perf_remove_user_dir(user_dir);
+        return 1;
+    }
+
+    (void)sym.set_options(ctx, DEFAULT_FLAGS);
+    uint64_t alloc_start = now_ns();
+    pinyin_instance_t *inst = sym.alloc_instance(ctx);
+    uint64_t alloc_end = now_ns();
+    if (!inst) {
+        fprintf(stderr, "fatal: alloc_instance returned NULL\n");
+        sym.fini(ctx);
+        dlclose(handle);
+        perf_remove_user_dir(user_dir);
+        return 1;
+    }
+
+    struct perf_memory after_init;
+    read_perf_memory(&after_init);
+
+    printf("{\"backend\":");
+    perf_json_string(backend);
+    printf(",\"so\":");
+    perf_json_string(so_path);
+    printf(",\"systemdir\":");
+    perf_json_string(system_dir);
+    printf(",\"mode\":");
+    perf_json_string(mode);
+    printf(",\"init_ns\":%llu,\"alloc_ns\":%llu,",
+           (unsigned long long)(init_end - init_start),
+           (unsigned long long)(alloc_end - alloc_start));
+    perf_print_memory("after_init", &after_init);
+
+    if (strcmp(mode, "ram-init") != 0) {
+        uint64_t *cycle_ns = calloc((size_t)cycles, sizeof *cycle_ns);
+        struct perf_memory after_first;
+        struct perf_memory after_last;
+        if (!cycle_ns) {
+            fprintf(stderr, "fatal: calloc cycle_ns failed\n");
+            sym.free_instance(inst);
+            sym.fini(ctx);
+            dlclose(handle);
+            perf_remove_user_dir(user_dir);
+            return 1;
+        }
+
+        for (int i = 0; i < cycles; i++) {
+            uint64_t start = now_ns();
+            perf_sink ^= run_perf_cycle(&sym, inst);
+            uint64_t end = now_ns();
+            cycle_ns[i] = end - start;
+            if (i == 0)
+                read_perf_memory(&after_first);
+        }
+        read_perf_memory(&after_last);
+
+        printf(",\"cycles_ns\":[");
+        for (int i = 0; i < cycles; i++)
+            printf("%s%llu", i ? "," : "", (unsigned long long)cycle_ns[i]);
+        printf("],\"after_first\":");
+        perf_print_memory_body(&after_first);
+        printf(",\"after_last\":");
+        perf_print_memory_body(&after_last);
+        free(cycle_ns);
+    }
+
+    printf("}\n");
+
+    sym.free_instance(inst);
+    sym.fini(ctx);
+    dlclose(handle);
+    perf_remove_user_dir(user_dir);
+    return 0;
+}
+
 /* ── Drive one input through the keystroke cycle ──────────────────────── */
 
 static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
@@ -673,6 +980,9 @@ static void probe_remaining(const struct symbols *s, pinyin_context_t *ctx,
 /* ── Main ─────────────────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {
+    if (argc > 1 && strcmp(argv[1], "--perf") == 0)
+        return run_perf_mode(argc, argv);
+
     if (argc < 3) {
         fprintf(stderr, "Usage: %s <path-to-so> <systemdir>\n", argv[0]);
         return 1;
