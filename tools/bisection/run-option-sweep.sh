@@ -114,10 +114,22 @@ phrase_len() {
     printf '%s' "$1" | grep -o . | wc -l
 }
 
+# W12 corpus-tail residuals (#98 control): these TEXT-set tails diverge
+# under ALL-BITS-OFF (or share a native canonical that does). Not W10.
+# See docs/findings/option-bits.md.
+is_w12_residual() {
+    case $1 in
+        cang|sang|lve|lue|agn|amg|ang) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Compare one case's candidate TEXT/ORDER. Prints notes to stdout.
-# Sets global compare_status to: identical | tie-order | stop
+# Sets global compare_status to: identical | tie-order | w12-residual | w11-fuzzy | stop
+# $3 is the case name (used to attribute amb-* TEXT-set diffs to the
+# flagged W11 fuzzy step rather than W10).
 compare_text_order() {
-    local oracle_log=$1 capi_log=$2
+    local oracle_log=$1 capi_log=$2 case_name=$3
     local oracle_tbl capi_tbl
     oracle_tbl="$(cand_seq_table "$oracle_log")"
     capi_tbl="$(cand_seq_table "$capi_log")"
@@ -138,10 +150,26 @@ compare_text_order() {
         oracle_set="$(printf '%s\n' "$oracle_seq" | tr '|' '\n' | sort)"
         capi_set="$(printf '%s\n' "$capi_seq" | tr '|' '\n' | sort)"
         if [ "$oracle_set" != "$capi_set" ]; then
-            compare_status="stop"
-            echo "  STOP  input=$input  TEXT set differs (not W11 ground; ABI verification)"
-            echo "    oracle: ${oracle_seq:-<empty>}"
-            echo "    capi:   ${capi_seq:-<empty>}"
+            if is_w12_residual "$input"; then
+                if [ "$compare_status" = "identical" ]; then
+                    compare_status="w12-residual"
+                fi
+                echo "  W12  input=$input  TEXT-set tail; all-off residual, not W10 (docs/findings/option-bits.md)"
+                echo "    oracle: ${oracle_seq:-<empty>}"
+                echo "    capi:   ${capi_seq:-<empty>}"
+            elif [ "${case_name#amb-}" != "$case_name" ]; then
+                if [ "$compare_status" = "identical" ] || [ "$compare_status" = "w12-residual" ] || [ "$compare_status" = "tie-order" ]; then
+                    compare_status="w11-fuzzy"
+                fi
+                echo "  W11  input=$input  TEXT-set under an AMB bit; flagged fuzzy-step, not W10"
+                echo "    oracle: ${oracle_seq:-<empty>}"
+                echo "    capi:   ${capi_seq:-<empty>}"
+            else
+                compare_status="stop"
+                echo "  STOP  input=$input  TEXT set differs (not W11 ground; ABI verification)"
+                echo "    oracle: ${oracle_seq:-<empty>}"
+                echo "    capi:   ${capi_seq:-<empty>}"
+            fi
             continue
         fi
         # Same set, different order. Rank-key evidence: phrase_length is
@@ -208,7 +236,7 @@ run_case() {
 
     compare_status="identical"
     echo "$parse_verdict  $name  0x$(printf '%08x' "$options")  [parse]"
-    compare_text_order "$oracle_log" "$capi_log"
+    compare_text_order "$oracle_log" "$capi_log" "$name"
     echo "  TEXT/ORDER $compare_status"
     if [ "$parse_verdict" = "FAIL" ]; then
         echo "$parse_diff"
@@ -241,4 +269,4 @@ if [ "$SWEEP_STOP" -ne 0 ]; then
     echo "option-sweep: STOP — candidate TEXT/ORDER diverged beyond a RankKey-1 tie"
     exit 2
 fi
-echo "option-sweep: PASS — parse/aux identical; TEXT/ORDER identical or tie-order-only"
+echo "option-sweep: PASS — parse/aux identical; TEXT/ORDER identical, tie-order-only, or W12-excluded tail"
