@@ -65,6 +65,10 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
 | W7 | Classic text-format interop via oxpinyin-dictool (import + export) | oxpinyin-dictool, oxpinyin-capi |
 | W8 | oxpinyin library release + compatibility bootstrap for the ibus-libpinyin fork | oxpinyin-capi |
 | W9 | Training toolchain | oxpinyin-segment, oxpinyin-counter, oxpinyin-lambda, oxpinyin-emitter, oxpinyin-corpus |
+| W10 | Option bits: correction, fuzzy/ambiguity, dynamic-adjust gating | oxpinyin-core, oxpinyin-engine |
+| W11 | Phrase-index union at lookup (user, network, addon) | oxpinyin-engine, oxpinyin-data, oxpinyin-user |
+| W12 | Corpus tail (undiagnosed parity gaps) | oxpinyin-core, oxpinyin-engine, oxpinyin-capi |
+| W13 | Double-pinyin and bopomofo input schemes (feature implementation) | oxpinyin-core, oxpinyin-engine |
 
 ### Workstream notes (recorded as decisions settle)
 
@@ -120,11 +124,20 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   input sequence as the pinned upstream configuration.
 
   Earlier language in this repo variously described W8 as
-  "capi + forked frontend", then "ibus-oxpinyin zbus rewrite", then
+  "capi + forked frontend", then "ibus-pinyin-rs zbus rewrite", then
   "drop-in libpinyin.so.15" — all superseded by the above. The maintainer
   being independent of Red Hat / Fedora / upstream libpinyin is what enables
   this scope; a maintainer bound to those distros would be forced into the
   drop-in shape.
+
+  W8 closes the bootstrap milestone, not Stage 1: the fork switched and
+  running against oxpinyin, wire-level parity on the defined bootstrap
+  surface, cargo-c packaging, and a compatibility + performance report
+  that establishes the Stage-2 measurement baseline. Stage 1 parity
+  continues through W10–W12 and closes when the parity bar is met.
+  Measuring Stage-2 baselines while Stage-1 work continues is deliberate —
+  those numbers are prerequisites for improving against them. Remaining
+  work is not W8 — it is W10–W13 below.
 
 - **W9 merged out of numeric order.** W9 is the training toolchain and
   shipped five stages: segmenter (`ngseg`), counter (`gen_ngram`), λ
@@ -132,3 +145,49 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   (`interpolation2.text` via `export_interpolation`), and the corpus
   front-end (zhwiki cleaner). Deliberate scope cut: the KMM path is
   skipped; `interpolation2.text` is the shipped format.
+
+- **W10–W12 are three parity workstreams, not one.** They have different shapes —
+  bounded/mechanical (W10), architectural (W11), open-ended (W12) — and
+  bundling them would make completion hostage to the least predictable
+  member. Same reasoning that flattened W7.
+
+- **W10 is option bits.** Correction (`PINYIN_CORRECT_*`), fuzzy/ambiguity
+  (`PINYIN_AMB_*`), and `DYNAMIC_ADJUST` gating. Correct-pinyin is on by
+  default in the fork's gschema, making this the one true blocker for
+  default-settings parity; fuzzy is default-off but shares the same
+  parser-table machinery. Verification has two shapes: the correction and
+  fuzzy bits are parser-table bits, swept against the pinned oracle via the
+  parse differential; `DYNAMIC_ADJUST` gates training behavior and is
+  verified by `run-train-diff.sh`. Both are mechanically checkable and
+  bounded in scope.
+
+- **W11 is the phrase-index union at lookup.** User, network, and addon
+  phrases don't currently surface in candidates (the W8 parity gate had to
+  empty `network.txt`). Upstream's `FacadePhraseIndex` unions up to 16
+  libraries by token nibble; oxpinyin's decode reads a single system index.
+  This is the gap a user notices first — user-dictionary phrases (added via
+  the add-phrase iterators or dictool import) never surface as candidates
+  at all — and it carries real architectural risk: scope it before
+  estimating it. Trained counts already rank existing candidates through
+  W6's additive merge; what is missing is the user-dictionary surface, not
+  ranking. Landing it also un-no-ops `pinyin_load_addon_phrase_library`,
+  and owns the prediction/suggestion gap —
+  `pinyin_guess_predicted_candidates_with_punctuations` and
+  `pinyin_choose_predicted_candidate` — which the gap inventories list as
+  no-ops with no owning workstream.
+
+- **W12 is the corpus tail.** After the #85 re-freeze: 13 of 10,190 inputs
+  differ at top-1, ~4,059 prefix-10 positions beyond tie-order. Could be one
+  systematic cause or thirteen separate ones — undiagnosed. This workstream
+  is open-ended by nature, unlike W10/W11: its completion criterion is
+  diagnosis-driven rather than feature-driven. Also parked here:
+  the live-typing behaviors the parity sequence doesn't yet exercise (deep
+  paging, mid-composition edits, punctuation modes).
+
+- **W13 is double-pinyin and bopomofo input schemes.** Previously parked in
+  W12, these are new input schemes (feature implementation), not corpus-tail
+  diagnosis; an open-ended workstream would make their completion criterion
+  meaningless. Completion is feature-driven: each scheme is implemented and
+  verified against the pinned oracle on a scheme-specific differential
+  surface, with its own frozen scheme SPEC rather than W12's open-ended
+  diagnosis criterion.
