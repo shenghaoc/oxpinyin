@@ -37,6 +37,7 @@ use crate::iterators::{
 use crate::parse::{pinyin_get_parsed_input_length, pinyin_parse_more_full_pinyins};
 use crate::sentence::pinyin_guess_candidates;
 use crate::state::{USER_STORE_FILE, instance_ref};
+use crate::text::pinyin_get_full_pinyin_auxiliary_text;
 use crate::types::{GChar, LookupCandidate, PinyinContext, PinyinInstance, PinyinTableFlag};
 use crate::user_data::pinyin_remember_user_input;
 
@@ -202,6 +203,35 @@ fn candidate(instance: *mut PinyinInstance, text: &str, index: c_uint) -> *mut L
     );
     assert!(!cand.is_null());
     cand
+}
+
+#[test]
+fn full_pinyin_auxiliary_text_uses_the_fewest_keys_walk() {
+    let user_dir = TempUserDir::new("full-aux");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    // Captured from the pinned C++ oracle with PINYIN_INCOMPLETE set.
+    let cases = [
+        ("nihao", 5, 2, "ni |hao "),
+        ("ni'hao", 6, 3, "ni |hao "),
+        ("nih", 3, 3, "ni h |"),
+    ];
+    for (input, consumed, cursor, expected) in cases {
+        let input = cstr(input);
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
+            consumed
+        );
+        let mut aux: *mut GChar = ptr::null_mut();
+        assert!(pinyin_get_full_pinyin_auxiliary_text(
+            instance, cursor, &mut aux
+        ));
+        assert!(!aux.is_null());
+        assert_eq!(crate::ffi::take_owned_cstr(aux.cast()), expected);
+    }
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
 }
 
 #[test]

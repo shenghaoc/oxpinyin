@@ -1,11 +1,74 @@
 //! Auxiliary text retrieval.
 //!
-//! Provisional: all three input modes return the session's preedit text
-//! until the engine has dedicated formatting per scheme.
+//! Full pinyin is C++-formatted (space-separated syllable keys with `|` at
+//! the cursor). Double pinyin and chewing remain provisional preedit text
+//! until their dedicated parsers/formatters land.
+
+use oxpinyin_core::graph::SegmentGraph;
 
 use crate::ffi::{ffi_catch, owned_cstr};
 use crate::state::instance_ref;
 use crate::types::{GChar, PinyinInstance};
+
+/// Formats the parsed prefix of `raw` the way the pinned C++ backend does:
+/// space-separated syllable spellings with `|` at the byte cursor.
+///
+/// The selected keys come from [`SegmentGraph::fewest_keys`] with incomplete
+/// edges admitted, so `nih` renders `ni h` and the initial-only tail stays
+/// visible.  Apostrophes are consumed by the following edge and never appear
+/// in the rendered text; a cursor on the apostrophe byte or on the following
+/// key start both render at the key boundary (`ni'hao` cursor 2 and 3 both
+/// render `ni |hao `).
+fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize) -> String {
+    let parsed = &raw[..parsed_len.min(raw.len())];
+    if parsed.is_empty() {
+        return String::new();
+    }
+    let cursor = cursor.min(parsed.len());
+    let Ok(graph) = SegmentGraph::build(parsed.as_bytes()) else {
+        return String::new();
+    };
+
+    let mut out = String::new();
+    let mut inserted = false;
+
+    for edge in graph.fewest_keys(true) {
+        let boundary = edge.from();
+        let text_start = edge.syllable_start();
+        let text_end = edge.to();
+        let key = edge.key().text();
+
+        if cursor <= boundary {
+            if !inserted && cursor == boundary {
+                out.push('|');
+                inserted = true;
+            }
+        } else if cursor < text_start {
+            // Cursor is on a consumed apostrophe separator: display it at the
+            // following key boundary, exactly like the cursor at text_start.
+            if !inserted {
+                out.push('|');
+                inserted = true;
+            }
+        } else if cursor < text_end {
+            let split = cursor - text_start;
+            out.push_str(&key[..split]);
+            out.push('|');
+            out.push_str(&key[split..]);
+            out.push(' ');
+            inserted = true;
+            continue;
+        }
+
+        out.push_str(key);
+        out.push(' ');
+    }
+
+    if !inserted {
+        out.push('|');
+    }
+    out
+}
 
 /// Get auxiliary text for full pinyin display.
 ///
@@ -21,7 +84,7 @@ use crate::types::{GChar, PinyinInstance};
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
     instance: *mut PinyinInstance,
-    _cursor: usize,
+    cursor: usize,
     aux_text: *mut *mut GChar,
 ) -> bool {
     if instance.is_null() {
@@ -31,12 +94,12 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let preedit = inst.session.preedit();
+        let text = full_aux_text(inst.session.raw_input(), inst.parsed_len, cursor);
         if !aux_text.is_null() {
             // SAFETY: Null-checked above. `owned_cstr` returns null on an
             // interior NUL or allocation failure; otherwise ownership
             // transfers to the caller, which frees it with `g_free`.
-            let owned = owned_cstr(preedit.text());
+            let owned = owned_cstr(&text);
             // SAFETY: Null-checked above.
             unsafe {
                 *aux_text = owned;
@@ -133,4 +196,67 @@ pub extern "C" fn pinyin_get_chewing_auxiliary_text(
         }
         true
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::full_aux_text;
+
+    #[test]
+    fn full_aux_text_matches_the_oracle_for_simple_keys() {
+        // Captured from the pinned C++ libpinyin 2.11.91 oracle with
+        // PINYIN_INCOMPLETE set, using tools/bisection's dlopen driver.
+        for (cursor, expected) in [
+            (0, "|ni hao "),
+            (1, "n|i hao "),
+            (2, "ni |hao "),
+            (3, "ni h|ao "),
+            (4, "ni ha|o "),
+            (5, "ni hao |"),
+            (6, "ni hao |"),
+            (99, "ni hao |"),
+        ] {
+            assert_eq!(
+                full_aux_text("nihao", 5, cursor),
+                expected,
+                "nihao cursor {cursor}"
+            );
+        }
+    }
+
+    #[test]
+    fn full_aux_text_matches_the_oracle_for_apostrophes() {
+        // The apostrophe is consumed by the following edge and is never
+        // rendered; cursors on the apostrophe byte (2) and on the key start
+        // (3) are both the boundary between ni and hao.
+        for (cursor, expected) in [
+            (0, "|ni hao "),
+            (2, "ni |hao "),
+            (3, "ni |hao "),
+            (4, "ni h|ao "),
+            (6, "ni hao |"),
+        ] {
+            assert_eq!(
+                full_aux_text("ni'hao", 6, cursor),
+                expected,
+                "ni'hao cursor {cursor}"
+            );
+        }
+    }
+
+    #[test]
+    fn full_aux_text_matches_the_oracle_for_incomplete_tails() {
+        // nih parses as ni + incomplete h with PINYIN_INCOMPLETE set.
+        for (cursor, expected) in [(0, "|ni h "), (2, "ni |h "), (3, "ni h |"), (4, "ni h |")] {
+            assert_eq!(
+                full_aux_text("nih", 3, cursor),
+                expected,
+                "nih cursor {cursor}"
+            );
+        }
+
+        // A bare incomplete initial renders as the initial itself.
+        assert_eq!(full_aux_text("n", 1, 0), "|n ");
+        assert_eq!(full_aux_text("n", 1, 1), "n |");
+    }
 }
