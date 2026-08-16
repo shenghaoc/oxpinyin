@@ -175,11 +175,11 @@ triggers are byte-identical across engines, including `n=`. No
 divided/resplit machinery is added here.
 
 The scan-matrix fuzzy step remains a flagged W11-ground touch.
-Under `PINYIN_AMB_AN_ANG` (`amb-17`), `fangan` TEXT-set differs
+Under `PINYIN_AMB_AN_ANG` (`amb-17`), `fangan` is **KNOWN-DIVERGENT #103**
 (oracle `方案|反感|翻案|访港|…`, capi `方案|反感|方|房|…`). Fork-default
-and all-off `fangan` are identical; the extra oracle phrases are the
-fuzzy matrix, not a W10 parse-table miss. The sweep attributes amb-*
-TEXT-set diffs to that flag rather than failing W10.
+and all-off `fangan` are identical. `PINYIN_AMB_*` remains W10-charter:
+the bit is implemented, with this one known divergence deferred until
+the W11 stack lands.
 
 ## TEXT-set STOP triage (all-off control)
 
