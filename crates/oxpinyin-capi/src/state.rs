@@ -110,7 +110,7 @@ impl AddonSet {
 struct SharedDictInner {
     system: SystemDictionary,
     user: Option<UserStore>,
-    user_lookup: Mutex<Option<(u64, UserLookup)>>,
+    user_lookup: Mutex<Option<(u64, Arc<UserLookup>)>>,
     addons: Arc<RwLock<AddonSet>>,
 }
 
@@ -146,9 +146,9 @@ impl SharedDict {
         addons.load(index, system_dir)
     }
 
-    fn user_lookup(&self) -> Result<UserLookup, DictError> {
+    fn user_lookup(&self) -> Result<Arc<UserLookup>, DictError> {
         let Some(store) = self.0.user.as_ref() else {
-            return Ok(UserLookup::empty());
+            return Ok(Arc::new(UserLookup::empty()));
         };
         let mut cache = self
             .0
@@ -159,8 +159,8 @@ impl SharedDict {
             .map_err(|error| DictError::Parse(error.to_string()))?;
         Ok(cache
             .as_ref()
-            .map(|(_, lookup)| lookup.clone())
-            .unwrap_or_else(UserLookup::empty))
+            .map(|(_, lookup)| Arc::clone(lookup))
+            .unwrap_or_else(|| Arc::new(UserLookup::empty())))
     }
 }
 

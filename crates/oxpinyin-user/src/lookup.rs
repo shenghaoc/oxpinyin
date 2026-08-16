@@ -5,6 +5,7 @@
 //! `_append_items` (`docs/findings/phrase-union.md` §3.3).
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use oxpinyin_core::{Completeness, PhraseEntry, PhraseToken, SyllableKey, syllable_initial};
 
@@ -83,7 +84,7 @@ impl UserLookup {
 
     /// Rebuilds `cache` when `store`'s write generation has moved.
     pub fn refresh_in(
-        cache: &mut Option<(u64, Self)>,
+        cache: &mut Option<(u64, Arc<Self>)>,
         store: &UserStore,
     ) -> Result<(), UserStoreError> {
         let generation = store.generation();
@@ -91,7 +92,7 @@ impl UserLookup {
             Some((seen, _)) if *seen == generation => Ok(()),
             _ => {
                 let lookup = Self::from_store(store)?;
-                *cache = Some((generation, lookup));
+                *cache = Some((generation, Arc::new(lookup)));
                 Ok(())
             }
         }

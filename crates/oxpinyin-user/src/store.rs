@@ -722,28 +722,7 @@ impl UserStore {
     /// stored key renders; a row whose keys do not is skipped rather than
     /// fabricated.
     pub fn export_phrases(&self) -> Result<Vec<ExportedPhrase>, UserStoreError> {
-        let db = self.database();
-        let txn = db.begin_read()?;
-        let phrases = txn.open_table(PHRASE)?;
-        let prons = txn.open_table(PRONUNCIATION)?;
-        let mut rows = Vec::new();
-        for item in phrases.iter()? {
-            let (token, text) = item?;
-            if phrase_index_library_index(token.value()) != USER_DICTIONARY {
-                continue;
-            }
-            for pronunciation in collect_pronunciations(&prons, token.value())? {
-                let Some(pinyin) = pronunciation.render_pinyin() else {
-                    continue;
-                };
-                rows.push(ExportedPhrase {
-                    text: text.value().to_owned(),
-                    pinyin,
-                    count: pronunciation.count(),
-                });
-            }
-        }
-        Ok(rows)
+        self.export_phrases_in(USER_DICTIONARY)
     }
 
     /// Export rows for one `USER_FILE` nibble, in token then pronunciation
