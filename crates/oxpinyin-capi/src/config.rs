@@ -17,9 +17,10 @@ use crate::types::{PinyinContext, PinyinOptionT, PinyinTableFlag};
 /// ```
 ///
 /// Decodes `PINYIN_INCOMPLETE` into the live context flag and the
-/// `incomplete-pinyin` config key. Already-allocated instances observe the
-/// remask on the next parse or guess. Other bits are accepted without
-/// effect until their engine backends exist.
+/// `incomplete-pinyin` config key, and `USE_TONE` into the bopomofo
+/// parser. Already-allocated instances observe the remask on the next
+/// parse or guess. Other bits are accepted without effect until their
+/// engine backends exist.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: PinyinOptionT) -> bool {
     if context.is_null() {

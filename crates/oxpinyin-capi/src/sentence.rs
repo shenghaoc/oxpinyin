@@ -63,7 +63,8 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
 /// Out-param `sentence` is caller-owned (`g_free`). The returned buffer is
 /// allocated with libc `malloc`, which `g_free` releases on every platform.
 ///
-/// Provisional: ignores the n-best `index` and returns the preedit text.
+/// Ignores the n-best `index`. Scheme parses return the original
+/// keystroke buffer; full pinyin returns the session preedit.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_sentence(
     instance: *mut PinyinInstance,

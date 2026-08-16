@@ -121,9 +121,21 @@ full-pinyin ground, not W11. The scheme-edge construction in
 ## Auxiliary text
 
 `pinyin_get_chewing_auxiliary_text` walks the matrix like full pinyin but
-renders Zhuyin symbols (`IS_ZHUYIN`), with the cursor split by Zhuyin
-character count (`src/pinyin.cpp:3516-3574`). It appends the tone digit to
-the middle form when `m_tone` is non-zero. There is no apostrophe handling.
+renders Zhuyin via `get_zhuyin_string()` (`src/pinyin.cpp:3516-3574`,
+`chewing_key.cpp:74-89`): tones 2–5 append their tone *mark*; first and
+zero tones omit it. There is no apostrophe handling and no tone digit.
+
+After a successful longest `parse_one_key`, upstream
+`ZhuyinSimpleParser2::parse` calls `_ChewingKey::is_valid_zhuyin`
+(`zhuyin_parser2.cpp:256-257`, `chewing_key.cpp:38-45`) and **breaks**
+the whole parse — it does not retry a shorter key. Illegal tones
+(including first-tone ㄋㄧ / `"su "`) therefore consume 0. oxpinyin
+applies the same post-match stop.
+
+`ZhuyinSimpleParser2::set_scheme` always ors `ZHUYIN_CORRECT_SHUFFLE`
+(`zhuyin_parser2.cpp:272`). This first STANDARD pass does not: shuffled
+spellings such as `1,u` (ㄅㄝㄧ → `bie`) parse as consumed 0. Recorded
+here rather than treated as accidental.
 
 ## Keyboard scope for the first PR
 
@@ -141,4 +153,7 @@ The first differential uses STANDARD keystrokes covering:
 - tone keys `' '` (first tone), `3`, `4`, `6`, `7`;
 - zero-initial syllables;
 - invalid keys and trailing non-keyboard bytes to pin consumed length;
+- rejection class: `"su "` (illegal first tone), `"sux6"` (tone after an
+  invalid syllable), `"6"` / `" "` (tone with no syllable), each next to
+  a valid control (`"su6"`, `"sucl"`, `"su"`);
 - `pinyin_in_chewing_keyboard` symbol vectors for symbol and tone keys.

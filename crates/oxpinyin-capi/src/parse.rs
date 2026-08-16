@@ -181,8 +181,8 @@ pub extern "C" fn pinyin_parse_more_full_pinyins(
 ///                                         const char * pinyins);
 /// ```
 ///
-/// Provisional: routes through the same full-pinyin parse path until
-/// the engine gains a dedicated double-pinyin parser.
+/// Parses through [`oxpinyin_core::DoublePinyinParser`] and drives the
+/// session with the apostrophe-joined full-pinyin spelling.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_parse_more_double_pinyins(
     instance: *mut PinyinInstance,
@@ -206,8 +206,8 @@ pub extern "C" fn pinyin_parse_more_double_pinyins(
 ///                                    const char * chewings);
 /// ```
 ///
-/// Provisional: routes through the same full-pinyin parse path until
-/// the engine gains a dedicated chewing parser.
+/// Parses through [`oxpinyin_core::ZhuyinParser`] (STANDARD) and drives
+/// the session with the apostrophe-joined full-pinyin spelling.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_parse_more_chewings(
     instance: *mut PinyinInstance,
@@ -290,17 +290,16 @@ pub extern "C" fn pinyin_in_chewing_keyboard(
         }
 
         if !symbols.is_null() {
-            // Caller frees with g_strfreev. Allocate a NULL-terminated
-            // array of NUL-terminated C strings.
-            let mut ptrs: Vec<*mut GChar> = mapped
-                .iter()
-                .map(|text| crate::ffi::owned_cstr(text))
-                .collect();
-            ptrs.push(ptr::null_mut());
-            let ptr = ptrs.as_mut_ptr();
-            std::mem::forget(ptrs);
-            // SAFETY: The vec's heap array is leaked to the caller, which
-            // releases the individual strings and the array with g_strfreev.
+            let ptr = crate::ffi::owned_cstr_list(&mapped);
+            if ptr.is_null() {
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *symbols = ptr::null_mut();
+                }
+                return false;
+            }
+            // SAFETY: `owned_cstr_list` is a malloc array of malloc
+            // strings; the caller releases both with g_strfreev.
             unsafe {
                 *symbols = ptr;
             }

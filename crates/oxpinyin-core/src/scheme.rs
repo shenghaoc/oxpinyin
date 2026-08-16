@@ -10,7 +10,7 @@
 //! [`crate::zhuyin_map`].
 
 use crate::SyllableKey;
-use crate::zhuyin_map::ZHUYIN_PINYIN_MAP;
+use crate::zhuyin_map::{VALID_ZHUYIN_TONES, ZHUYIN_PINYIN_MAP};
 
 /// One parsed double-pinyin key: a full-pinyin [`SyllableKey`] and its byte
 /// span in the original two-key (or one-key incomplete) input.
@@ -1026,7 +1026,9 @@ impl ZhuyinParser {
     }
 
     /// Greedily parses `input`, mirroring `ZhuyinSimpleParser2::parse`
-    /// (`src/storage/zhuyin_parser2.cpp:216-268`).
+    /// (`src/storage/zhuyin_parser2.cpp:216-268`), including the post-match
+    /// `is_valid_zhuyin` abort (`:256-257`, `_ChewingKey::is_valid_zhuyin`
+    /// at `chewing_key.cpp:38-45`).
     #[must_use]
     pub fn parse(&self, input: &[u8], use_tone: bool) -> ZhuyinParse {
         if self.scheme != ZhuyinScheme::Standard {
@@ -1058,6 +1060,10 @@ impl ZhuyinParser {
             let Some((key, zhuyin, tone, len)) = matched else {
                 break;
             };
+            // Same stop as upstream `:256-257`: do not retry a shorter key.
+            if !is_valid_zhuyin(key, tone) {
+                break;
+            }
             keys.push(ZhuyinKey {
                 key,
                 start: parsed_len,
@@ -1104,9 +1110,21 @@ fn parse_one_zhuyin_key(input: &[u8], use_tone: bool) -> Option<(SyllableKey, St
     Some((key, zhuyin, tone))
 }
 
+/// `_ChewingKey::is_valid_zhuyin` (`src/storage/chewing_key.cpp:38-45`).
+fn is_valid_zhuyin(key: SyllableKey, tone: u8) -> bool {
+    let index = key.index();
+    let Some(&mask) = VALID_ZHUYIN_TONES.get(index) else {
+        return false;
+    };
+    let Some(bit) = (1u8).checked_shl(u32::from(tone)) else {
+        return false;
+    };
+    mask & bit != 0
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{DoublePinyinParser, DoublePinyinScheme};
+    use super::{DoublePinyinParser, DoublePinyinScheme, ZhuyinParser};
 
     #[test]
     fn default_scheme_is_ms() {
@@ -1154,5 +1172,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn illegal_first_tone_on_ni_stops_without_retrying_a_shorter_key() {
+        let parser = ZhuyinParser::new();
+        let rejected = parser.parse(b"su ", true);
+        assert_eq!(rejected.consumed(), 0);
+        assert!(rejected.keys().is_empty());
+
+        let legal = parser.parse(b"su6", true);
+        assert_eq!(legal.consumed(), 3);
+        assert_eq!(legal.full_pinyin(), "ni");
+        assert_eq!(legal.keys()[0].tone(), 2);
+
+        let untoned = parser.parse(b"su", true);
+        assert_eq!(untoned.consumed(), 2);
+        assert_eq!(untoned.full_pinyin(), "ni");
+        assert_eq!(untoned.keys()[0].tone(), 0);
+    }
+
+    #[test]
+    fn tone_after_an_invalid_syllable_does_not_extend_a_valid_prefix() {
+        let parser = ZhuyinParser::new();
+        let parsed = parser.parse(b"sux6", true);
+        assert_eq!(parsed.consumed(), 2);
+        assert_eq!(parsed.full_pinyin(), "ni");
+    }
+
+    #[test]
+    fn a_tone_key_alone_is_not_a_syllable() {
+        let parser = ZhuyinParser::new();
+        assert_eq!(parser.parse(b"6", true).consumed(), 0);
+        assert_eq!(parser.parse(b" ", true).consumed(), 0);
     }
 }
