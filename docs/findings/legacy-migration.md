@@ -1,8 +1,8 @@
 # Legacy user-data migration (W7-T2) — SHELVED
 
 Date: 2026-08-16 · Status: **SHELVED — cancelled per libpinyin succession precedent** ·
-Scope: the binary legacy-dir migration (`pinyin-dictool migrate --legacy-dir
-<path> --user-dir <path>`) into the pinyin-rs user store.
+Scope: the binary legacy-dir migration (`oxpinyin-dictool migrate --legacy-dir
+<path> --user-dir <path>`) into the oxpinyin user store.
 
 This work is parked, not merged. The findings below are the real, verified
 results worth keeping; the implementation (the `storage_dump` shim, the
@@ -97,10 +97,10 @@ read-write lifecycle).
 ## 5. Tone-strip and key-mapping decision
 
 libpinyin stores pinyin with a trailing tone digit (`ni3`, `hao3`; zero-tone
-is plain `ni`). pinyin-rs stores tone-stripped `SyllableKey` ids. The
+is plain `ni`). oxpinyin stores tone-stripped `SyllableKey` ids. The
 migration strips exactly one trailing `1`..`5` (pinyin spellings never end
 in an ASCII digit, so the strip is unambiguous) and maps each syllable
-through the frozen pinyin-core inventory. A pronunciation with any
+through the frozen oxpinyin-core inventory. A pronunciation with any
 unmappable syllable is dropped and counted (`keys_unmapped`) while the phrase
 is kept; the migration report prints the tone-strip and null-slot arithmetic
 so it is auditable.
