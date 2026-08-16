@@ -314,15 +314,17 @@ impl SegmentGraph {
                     None => continue,
                 }
             };
-            let mut edges: Vec<Edge> = self
+            // At a fixed node each length matches at most one edge, so the
+            // edges here reach distinct nodes and share this node's key count.
+            // Within-node order cannot change the selection (competition is
+            // resolved across nodes by the strict `candidate < seen` check in
+            // ascending node order), so no per-node sort is needed.
+            for edge in self
                 .outgoing(node)
                 .iter()
                 .filter(|edge| allow_incomplete || edge.kind() != EdgeKind::Incomplete)
                 .copied()
-                .collect();
-            // Upstream tries key lengths ascending at each position.
-            edges.sort_by_key(|edge| (edge.to() - edge.from(), edge.key().index()));
-            for edge in edges {
+            {
                 let to = edge.to();
                 if to > bound {
                     continue;
