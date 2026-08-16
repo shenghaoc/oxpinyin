@@ -75,10 +75,9 @@ elif [ -f /tmp/oxpinyin-export/pinyin_index.redb ]; then
         cp "/tmp/oxpinyin-export/$table" "$CAPI_DATA/$table"
     done
     for model_dir in \
-        "$REPO_ROOT/target/model20/extracted" \
-        "/home/sheng/Documents/repos/pinyin-rs/target/model20/extracted" \
-        "/home/sheng/Documents/repos/libpinyin/data"; do
-        if [ -f "$model_dir/interpolation2.text" ]; then
+        ${PINYIN_MODEL_DIR:+"$PINYIN_MODEL_DIR"} \
+        "$REPO_ROOT/target/model20/extracted"; do
+        if [ -n "$model_dir" ] && [ -f "$model_dir/interpolation2.text" ]; then
             cp "$model_dir/interpolation2.text" "$CAPI_DATA/interpolation2.text"
             break
         fi

@@ -167,7 +167,7 @@ int main(int argc, char **argv) {
         "agn", "amg", "diou", "duei", "duen", "lue", "jv", "zon",
         "cang", "sua", "zua", "sang", "zang", "fang", "gang", "lan",
         "ban", "ben", "bin", "nihao", "lve", "dui", "dun", "zong",
-        "xian", "fanan", "fangan", "tian", "ang"
+        "xian", "fanan", "fangan", "tian", "ang", "can"
     };
     static const size_t n_inputs = sizeof(inputs) / sizeof(inputs[0]);
 
