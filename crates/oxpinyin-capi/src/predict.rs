@@ -3,7 +3,7 @@
 //! Reproduces `pinyin_guess_predicted_candidates` (`pinyin.cpp:2411-2451`)
 //! without punctuation (`docs/findings/phrase-union.md` §3.6 / §6.5).
 //! `punct.redb` is a raw Tkrzw convert, not the public-ABI schema, so the
-//! punctuation prefix stays empty (W11-PUNCT follow-up).
+//! punctuation prefix stays empty (#104).
 
 use std::ffi::CString;
 
@@ -13,7 +13,13 @@ use oxpinyin_user::UserStore;
 use crate::state::{CapiCandidate, CapiInstance, SharedDict};
 use crate::types::lookup_candidate_type_t;
 
-/// Minimum user-bigram count for a predicted successor (`pinyin.cpp:2311`).
+/// Minimum user-bigram count for a predicted successor.
+///
+/// Copied from `_compute_predicted_bigram_candidates`:
+/// `const guint32 filter = 10` (`pinyin.cpp:2311`) and
+/// `if (phrase_item->m_count < filter) continue` (`pinyin.cpp:2349-2350`).
+/// Not a design choice — public `pinyin_train` first-seeds 69, so the
+/// 9-vs-10 edge is planted in `run-union-diff.sh`, not trained.
 const BIGRAM_FILTER: u64 = 10;
 
 /// One predicted item before sort/dedup.
@@ -108,6 +114,7 @@ fn append_predicted_bigrams(
     }
     for length in [2_usize, 1] {
         for (token, count) in &successors {
+            // pinyin.cpp:2349-2350: skip when `m_count < filter` (10).
             if *count < BIGRAM_FILTER {
                 continue;
             }

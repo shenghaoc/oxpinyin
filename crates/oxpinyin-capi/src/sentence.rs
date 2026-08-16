@@ -39,7 +39,7 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
 ///     pinyin_instance_t * instance, const char * prefix);
 /// ```
 ///
-/// Phrase prediction; punctuation prefix is empty until W11-PUNCT
+/// Phrase prediction; punctuation prefix is empty until #104
 /// (`punct.redb` is not public-ABI consumable).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(

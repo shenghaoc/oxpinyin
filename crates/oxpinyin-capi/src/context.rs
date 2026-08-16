@@ -4,7 +4,7 @@ use std::os::raw::c_char;
 use std::ptr;
 
 use crate::ffi::{cstr_to_owned_lossy, ffi_catch};
-use crate::state::{CapiContext, UnigramSource, box_context, context_mut};
+use crate::state::{CapiContext, UnigramSource, box_context, context_mut, context_ref};
 use crate::types::PinyinContext;
 
 fn init_context(
@@ -68,6 +68,40 @@ pub(crate) fn pinyin_init_for_fixtures(
     userdir: *const c_char,
 ) -> *mut PinyinContext {
     oxpinyin_init_for_fixtures(systemdir, userdir)
+}
+
+/// Test-only: overwrite a user-bigram successor count by phrase text.
+///
+/// Not in `pinyin.h`. Public `pinyin_train` first-seeds 69 (`23 * 3`), so
+/// the prediction filter edge (`pinyin.cpp:2311`, `:2349-2350`) cannot be
+/// reached through the C ABI. Looks up `prev` and `cur` in the user
+/// phrase index.
+#[unsafe(no_mangle)]
+pub extern "C" fn oxpinyin_test_set_user_bigram(
+    context: *mut PinyinContext,
+    prev: *const c_char,
+    cur: *const c_char,
+    count: u64,
+) -> bool {
+    if context.is_null() {
+        return false;
+    }
+    ffi_catch(false, || {
+        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+        let ctx = unsafe { context_ref(context) };
+        let Some(mut user) = ctx.user_store() else {
+            return false;
+        };
+        let prev_text = cstr_to_owned_lossy(prev);
+        let cur_text = cstr_to_owned_lossy(cur);
+        let Some(prev_tok) = user.token_for_phrase(&prev_text).ok().flatten() else {
+            return false;
+        };
+        let Some(cur_tok) = user.token_for_phrase(&cur_text).ok().flatten() else {
+            return false;
+        };
+        user.set_bigram_count(prev_tok, cur_tok, count).is_ok()
+    })
 }
 
 /// Finalize and free a pinyin context.

@@ -3,10 +3,11 @@
 #
 # Unique name; does not edit run-import-diff.sh or run-train-diff.sh.
 # Drives tools/bisection/union-diff.c against oxpinyin-capi and the
-# pin-built libpinyin. Three assertions, all exact:
+# pin-built libpinyin. Four assertions, all exact:
 #   1. imported user phrase at the same candidate index;
 #   2. ADDON candidates for the same loaded library;
-#   3. train-then-predict phrase list (punctuation omitted; W11-PUNCT).
+#   3. train-then-predict phrase list (punctuation omitted; #104).
+#   4. user-bigram successors planted at count 9 and 10 (pinyin.cpp:2349-2350).
 #
 # Sort profile is recorded in the driver output. The empty-store parity
 # profile never trains; this script uses the live guess/predict masks.
@@ -24,6 +25,9 @@ REPO_ROOT="$(cd ../.. && pwd)"
 
 echo "--- building union-diff driver ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o union-diff union-diff.c -ldl
+echo "--- building plant-oracle-bigram ---"
+g++ -std=c++17 -Wall -Wextra -Werror -O2 plant-oracle-bigram.cc \
+    -ltkrzw -lpthread -o plant-oracle-bigram
 echo "build: ok"
 
 echo "--- building oxpinyin-capi ---"
@@ -50,7 +54,9 @@ fi
 echo "oracle: $ORACLE_SO"
 
 CAPI_SYS="$(mktemp -d)"
-trap 'rm -rf "$CAPI_SYS"' EXIT
+CAPI_EDGE_USER="$(mktemp -d)"
+ORACLE_EDGE_USER="$(mktemp -d)"
+trap 'rm -rf "$CAPI_SYS" "$CAPI_EDGE_USER" "$ORACLE_EDGE_USER"' EXIT
 cp "$REPO_ROOT/fixtures/w3/pinyin_index.redb" "$CAPI_SYS/"
 cp "$REPO_ROOT/fixtures/w3/phrase_index.redb" "$CAPI_SYS/"
 cp "$REPO_ROOT/fixtures/w3/bigram.redb" "$CAPI_SYS/"
@@ -87,4 +93,67 @@ if ! diff -u "$ORACLE_LOG" "$CAPI_LOG" > /dev/null; then
 fi
 rm -f "$CAPI_LOG" "$ORACLE_LOG"
 echo "union-diff: IDENTICAL"
+
+# ── 4. filter-edge: planted successors at count 9 (absent) and 10 (kept)
+# Public pinyin_train first-seeds 69, so 9/10 are planted into each
+# engine's user-bigram store after a shared three-phrase import.
+
+echo "--- filter-edge setup ---"
+if ! ./union-diff "$CAPI_SO" "$CAPI_SYS" --setup "$CAPI_EDGE_USER"; then
+    echo "FAIL: capi edge setup"
+    exit 1
+fi
+if ! ./union-diff "$ORACLE_SO" "$ORACLE_DATA" --setup "$ORACLE_EDGE_USER"; then
+    echo "FAIL: oracle edge setup"
+    exit 1
+fi
+if ! ./union-diff "$CAPI_SO" "$CAPI_SYS" --plant "$CAPI_EDGE_USER"; then
+    echo "FAIL: capi edge plant"
+    exit 1
+fi
+# First three USER_DICTIONARY tokens (`pinyin.cpp:592-594`).
+if ! ./plant-oracle-bigram "$ORACLE_EDGE_USER" 0x07000001 0x07000002 9 0x07000003 10; then
+    echo "FAIL: oracle edge plant"
+    exit 1
+fi
+
+CAPI_EDGE="$(mktemp)"
+ORACLE_EDGE="$(mktemp)"
+if ! ./union-diff "$CAPI_SO" "$CAPI_SYS" --edge "$CAPI_EDGE_USER" > "$CAPI_EDGE" 2> /dev/null; then
+    echo "FAIL: union-diff --edge crashed against oxpinyin-capi"
+    cat "$CAPI_EDGE"
+    rm -f "$CAPI_EDGE" "$ORACLE_EDGE"
+    exit 1
+fi
+if ! ./union-diff "$ORACLE_SO" "$ORACLE_DATA" --edge "$ORACLE_EDGE_USER" > "$ORACLE_EDGE" 2> /dev/null; then
+    echo "FAIL: union-diff --edge crashed against the oracle"
+    cat "$ORACLE_EDGE"
+    rm -f "$CAPI_EDGE" "$ORACLE_EDGE"
+    exit 1
+fi
+
+echo "--- capi edge ---"
+cat "$CAPI_EDGE"
+echo "--- oracle edge ---"
+cat "$ORACLE_EDGE"
+
+if ! diff -u "$ORACLE_EDGE" "$CAPI_EDGE" > /dev/null; then
+    echo "DIVERGENCE: filter-edge logs differ"
+    diff -u "$ORACLE_EDGE" "$CAPI_EDGE" || true
+    rm -f "$CAPI_EDGE" "$ORACLE_EDGE"
+    exit 2
+fi
+# Lock the copied constant: 9 must be dropped, 10 must be a bigram hit.
+if ! grep -qx 'pred-edge-9: 甲甲 absent' "$CAPI_EDGE"; then
+    echo "FAIL: count=9 successor was not filtered"
+    rm -f "$CAPI_EDGE" "$ORACLE_EDGE"
+    exit 2
+fi
+if ! grep -qx 'pred-edge-10: 乙乙 type=4' "$CAPI_EDGE"; then
+    echo "FAIL: count=10 successor was not predicted"
+    rm -f "$CAPI_EDGE" "$ORACLE_EDGE"
+    exit 2
+fi
+rm -f "$CAPI_EDGE" "$ORACLE_EDGE"
+echo "union-diff filter-edge: IDENTICAL"
 exit 0

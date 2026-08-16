@@ -25,7 +25,7 @@ use crate::candidates::{
     pinyin_is_user_candidate, pinyin_remove_user_candidate, pinyin_train,
 };
 use crate::config::{pinyin_load_addon_phrase_library, pinyin_mask_out};
-use crate::context::{pinyin_init_for_fixtures, pinyin_save};
+use crate::context::{oxpinyin_test_set_user_bigram, pinyin_init_for_fixtures, pinyin_save};
 use crate::instance::{pinyin_alloc_instance, pinyin_reset};
 use crate::iterators::{
     pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
@@ -1013,6 +1013,71 @@ fn predicted_candidates_include_trained_bigram_successors() {
             )
         }),
         "punctuation is stubbed empty"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn predicted_bigram_filter_drops_9_keeps_10() {
+    let user_dir = TempUserDir::new("predict-edge");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let iter = pinyin_begin_add_phrases(context, 7);
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("测测").as_ptr(),
+        cstr("cece").as_ptr(),
+        5,
+    ));
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("甲甲").as_ptr(),
+        cstr("jiajia").as_ptr(),
+        5,
+    ));
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("乙乙").as_ptr(),
+        cstr("yiyi").as_ptr(),
+        5,
+    ));
+    pinyin_end_add_phrases(iter);
+
+    assert!(oxpinyin_test_set_user_bigram(
+        context,
+        cstr("测测").as_ptr(),
+        cstr("甲甲").as_ptr(),
+        9,
+    ));
+    assert!(oxpinyin_test_set_user_bigram(
+        context,
+        cstr("测测").as_ptr(),
+        cstr("乙乙").as_ptr(),
+        10,
+    ));
+
+    let prefix = cstr("测测");
+    assert!(pinyin_guess_predicted_candidates_with_punctuations(
+        instance,
+        prefix.as_ptr()
+    ));
+    // SAFETY: live instance after guess_predicted.
+    let inst = unsafe { instance_ref(instance) };
+    let bigrams: Vec<&str> = inst
+        .candidates
+        .iter()
+        .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE)
+        .map(|c| c.text.to_str().unwrap_or(""))
+        .collect();
+    assert!(
+        !bigrams.contains(&"甲甲"),
+        "count 9 must be skipped (pinyin.cpp:2349-2350)"
+    );
+    assert!(
+        bigrams.contains(&"乙乙"),
+        "count 10 must be kept (pinyin.cpp:2349-2350)"
     );
 
     crate::instance::pinyin_free_instance(instance);

@@ -401,6 +401,39 @@ impl UserStore {
         Ok(table.get(prev)?.map_or(0, |g| g.value()))
     }
 
+    /// Overwrite the raw `(prev -> cur)` user-bigram count.
+    ///
+    /// Public `pinyin_train` first-seeds 69 (`seed::INITIAL_SEED`), so
+    /// counts 9 and 10 are not reachable through the C ABI. The
+    /// union-diff filter-edge case plants those values to lock
+    /// `pinyin.cpp:2349-2350`.
+    ///
+    /// # Errors
+    ///
+    /// [`UserStoreError`] when the write transaction cannot commit.
+    pub fn set_bigram_count(
+        &mut self,
+        prev: Token,
+        cur: Token,
+        count: u64,
+    ) -> Result<(), UserStoreError> {
+        let db = self.database();
+        let txn = db.begin_write()?;
+        {
+            let mut bigram = txn.open_table(BIGRAM)?;
+            let prev_count = bigram.get((prev, cur))?.map_or(0, |g| g.value());
+            bigram.insert((prev, cur), count)?;
+
+            let mut total = txn.open_table(BIGRAM_TOTAL)?;
+            let prev_total = total.get(prev)?.map_or(0, |g| g.value());
+            let new_total = prev_total.saturating_sub(prev_count).saturating_add(count);
+            total.insert(prev, new_total)?;
+        }
+        txn.commit()?;
+        self.mark_committed_write(db, true);
+        Ok(())
+    }
+
     /// Accumulated phrase-index unigram delta for `token`; `0` if none.
     ///
     /// On the decode hot path, so it takes the cached-snapshot route: an
@@ -1404,6 +1437,18 @@ mod tests {
         assert_eq!(store.bigram_count(5, 10).unwrap(), 69);
         assert_eq!(store.bigram_count(5, 11).unwrap(), 69);
         assert_eq!(store.bigram_total(5).unwrap(), 138);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn set_bigram_count_plants_filter_edge() {
+        let path = temp_path("plant-edge");
+        let mut store = UserStore::open(&path).unwrap();
+        store.set_bigram_count(1, 10, 9).unwrap();
+        store.set_bigram_count(1, 11, 10).unwrap();
+        assert_eq!(store.bigram_count(1, 10).unwrap(), 9);
+        assert_eq!(store.bigram_count(1, 11).unwrap(), 10);
+        assert_eq!(store.bigram_total(1).unwrap(), 19);
         let _ = std::fs::remove_file(&path);
     }
 
