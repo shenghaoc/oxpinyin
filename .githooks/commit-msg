@@ -2,7 +2,7 @@
 # commit-msg hook — delegates to the canonical commit-trailer linter so the
 # local hook and CI can never disagree (single source of truth).
 #
-# Only R1–R3 (message-content) rules apply at commit time; R4
+# Only R1–R2 (message-content) rules apply at commit time; R4
 # (author/committer identity) is CI-only because the hook runs before the
 # commit exists (no SHA to inspect) and the author identity is not a property
 # of the message.
