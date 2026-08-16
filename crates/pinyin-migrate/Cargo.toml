@@ -15,13 +15,22 @@ missing_docs = "warn"
 all = { level = "deny", priority = -1 }
 
 [features]
-# `export` drives the pin-built libpinyin through pinyin-oracle's seam.
-# Without this feature only the raw Tkrzw → redb `convert` command builds.
-oracle-ffi = ["dep:pinyin-oracle", "pinyin-oracle/oracle-ffi"]
+# `export` drives the pin-built libpinyin through pinyin-oracle's seam, and
+# `migrate` links the internal libstorage.a shim to read a legacy user
+# directory. Without this feature only the raw Tkrzw → redb `convert` command
+# builds.
+oracle-ffi = [
+    "dep:pinyin-oracle",
+    "pinyin-oracle/oracle-ffi",
+    "dep:pinyin-user",
+    "dep:pinyin-core",
+]
 
 [dependencies]
 redb = { workspace = true }
+pinyin-core = { path = "../pinyin-core", optional = true }
 pinyin-oracle = { path = "../pinyin-oracle", optional = true }
+pinyin-user = { path = "../pinyin-user", optional = true }
 
 [build-dependencies]
 cc = "1"

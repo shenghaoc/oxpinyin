@@ -45,6 +45,73 @@ pub struct ExportedPhrase {
     pub count: u64,
 }
 
+/// One migrated pronunciation: the key sequence and its verbatim frequency.
+///
+/// Input to [`UserStore::apply_migration`] only; not part of the supported
+/// public API (hidden). Keys are already tone-stripped
+/// [`crate::PinyinKey`] ids, produced by `pinyin-migrate`.
+#[doc(hidden)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MigrationPronunciation {
+    /// Tone-stripped syllable-key ids, one per syllable.
+    pub keys: Vec<PinyinKey>,
+    /// `get_nth_pronunciation` frequency, verbatim.
+    pub count: u64,
+}
+
+/// One migrated phrase: its legacy token, text, verbatim unigram, and
+/// pronunciations.
+///
+/// Input to [`UserStore::apply_migration`] only; not part of the supported
+/// public API (hidden).
+#[doc(hidden)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MigrationPhrase {
+    /// Full 32-bit user token (library nibble [`crate::USER_DICTIONARY`]).
+    pub token: Token,
+    /// Phrase text (UTF-8).
+    pub text: String,
+    /// `PhraseItem::get_unigram_frequency()` verbatim — **not** multiplied
+    /// by [`crate::ADD_PHRASE_UNIGRAM_FACTOR`], which is the `add_phrase`
+    /// seed rule the migration deliberately does not apply.
+    pub unigram: u64,
+    /// Pronunciations in stored order.
+    pub pronunciations: Vec<MigrationPronunciation>,
+}
+
+/// One migrated bigram predecessor: verbatim total and its successors.
+///
+/// Input to [`UserStore::apply_migration`] only; not part of the supported
+/// public API (hidden). Predecessor/successor tokens are verbatim, so a
+/// predecessor may be a non-user token (e.g. [`SENTENCE_START`] or a system
+/// phrase token); such rows are filed as-is, with no fabricated phrase text.
+#[doc(hidden)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MigrationBigram {
+    /// Predecessor token, verbatim.
+    pub prev: Token,
+    /// `SingleGram::get_total_freq()` verbatim. Informational: the store
+    /// recomputes [`BIGRAM_TOTAL`] from the merged successor rows so the
+    /// per-predecessor total stays exactly the sum of its counts.
+    pub total: u64,
+    /// Successor `(token, count)` pairs.
+    pub successors: Vec<(Token, u64)>,
+}
+
+/// Desired-state snapshot for a legacy migration (the `pinyin-migrate`
+/// output, already normalized into [`crate::PinyinKey`] ids).
+///
+/// Input to [`UserStore::apply_migration`] only; not part of the supported
+/// public API (hidden).
+#[doc(hidden)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MigrationDump {
+    /// Phrases, in ascending token order.
+    pub phrases: Vec<MigrationPhrase>,
+    /// Bigrams, in ascending predecessor-token order.
+    pub bigrams: Vec<MigrationBigram>,
+}
+
 /// `sentence_start` sentinel: the predecessor of the first phrase in a
 /// sentence (`docs/findings/user-store.md` §2; `novel_types.h:122`).
 pub const SENTENCE_START: Token = 1;
@@ -863,6 +930,111 @@ impl UserStore {
         self.mark_committed_write(db, has_user_data);
         Ok(true)
     }
+
+    /// Legacy-migration bulk write: merge a desired-state snapshot (the
+    /// normalized output of `pinyin-migrate`) into this store.
+    ///
+    /// Every value is raised to the migration's desired value when that is
+    /// higher — the same monotonic-floor rule as `add_phrase`/`update`, so
+    /// re-running the same migration is a no-op and never double-counts, and
+    /// post-migration additions are never lowered. Phrase tokens keep their
+    /// legacy identity so bigram successor references stay valid. The
+    /// allocation cursor is advanced past the highest migrated token, so
+    /// future [`Self::add_phrase`] allocations cannot collide.
+    ///
+    /// Bigram per-predecessor totals are **recomputed** from the merged
+    /// successor rows rather than written verbatim: the per-key floor is not
+    /// total-preserving, and [`BIGRAM_TOTAL`] must stay exactly the sum of a
+    /// predecessor's counts. In a fresh store this equals the verbatim
+    /// `get_total_freq()` (libpinyin maintains the same invariant).
+    ///
+    /// This is the first non-ABI write path; it invalidates cached reads by
+    /// bumping the write generation through [`Self::mark_committed_write`],
+    /// exactly like the training write sites.
+    ///
+    /// # Errors
+    ///
+    /// [`UserStoreError`] on any redb-level failure; the transaction is
+    /// atomic (all-or-nothing) on error.
+    #[doc(hidden)]
+    pub fn apply_migration(&mut self, dump: &MigrationDump) -> Result<(), UserStoreError> {
+        let db = self.database();
+        let txn = db.begin_write()?;
+        {
+            let mut phrases = txn.open_table(PHRASE)?;
+            let mut by_text = txn.open_table(PHRASE_BY_TEXT)?;
+            let mut prons = txn.open_table(PRONUNCIATION)?;
+            let mut unigram = txn.open_table(UNIGRAM)?;
+            let mut alloc = txn.open_table(ALLOC)?;
+
+            let mut max_user_token: Option<Token> = None;
+            for p in &dump.phrases {
+                // The shim only emits USER_DICTIONARY tokens; the check keeps
+                // a malformed dump from advancing the alloc cursor with a
+                // non-user id.
+                if !phrase::is_user_token(p.token) {
+                    continue;
+                }
+                phrases.insert(p.token, p.text.as_str())?;
+                by_text.insert(p.text.as_str(), p.token)?;
+
+                for pron in &p.pronunciations {
+                    let key_bytes = phrase::encode_keys(&pron.keys);
+                    let prev = prons
+                        .get((p.token, key_bytes.as_slice()))?
+                        .map_or(0, |g| g.value());
+                    if pron.count > prev {
+                        prons.insert((p.token, key_bytes.as_slice()), pron.count)?;
+                    }
+                }
+
+                let prev_uni = unigram.get(p.token)?.map_or(0, |g| g.value());
+                if p.unigram > prev_uni {
+                    let delta = p.unigram - prev_uni;
+                    unigram.insert(p.token, p.unigram)?;
+                    bump_unigram_total(&txn, delta)?;
+                }
+
+                max_user_token = Some(max_user_token.map_or(p.token, |m| m.max(p.token)));
+            }
+
+            // Advance the allocation cursor past the highest migrated token
+            // so future `add_phrase` allocations cannot reuse a migrated id.
+            if let Some(max_token) = max_user_token {
+                if let Some(next) = phrase::next_user_token_after(max_token) {
+                    let cur = alloc
+                        .get(ALLOC_CURSOR)?
+                        .map_or(FIRST_USER_TOKEN, |g| g.value());
+                    if next > cur {
+                        alloc.insert(ALLOC_CURSOR, next)?;
+                    }
+                }
+            }
+            drop(alloc);
+            drop(unigram);
+            drop(prons);
+            drop(by_text);
+            drop(phrases);
+
+            // Bigram counts: monotonic floor per (prev, cur).
+            let mut bigram = txn.open_table(BIGRAM)?;
+            for b in &dump.bigrams {
+                for &(cur, count) in &b.successors {
+                    let prev = bigram.get((b.prev, cur))?.map_or(0, |g| g.value());
+                    if count > prev {
+                        bigram.insert((b.prev, cur), count)?;
+                    }
+                }
+            }
+            drop(bigram);
+
+            recompute_bigram_totals(&txn)?;
+        }
+        let has_user_data = has_user_data_in_write_txn(&txn)?;
+        txn.commit()?;
+        self.mark_committed_write(db, has_user_data);
+        Ok(())
+    }
 }
 
 impl CountSnapshot {
@@ -965,6 +1137,40 @@ fn bump_unigram_total(txn: &redb::WriteTransaction, delta: u64) -> Result<(), Us
     let mut total = txn.open_table(UNIGRAM_TOTAL)?;
     let prev = total.get(UNIGRAM_TOTAL_KEY)?.map_or(0, |g| g.value());
     total.insert(UNIGRAM_TOTAL_KEY, prev.saturating_add(delta))?;
+    Ok(())
+}
+
+/// Rebuilds every [`BIGRAM_TOTAL`] row from the surviving [`BIGRAM`] rows.
+///
+/// Used by the migration bulk write, where the per-key monotonic floor is not
+/// total-preserving. Mirrors the inline recompute in `mask_out` and
+/// `remove_user_phrase`: empty predecessors are dropped, so a total is only
+/// present for a predecessor that still has at least one successor.
+fn recompute_bigram_totals(txn: &redb::WriteTransaction) -> Result<(), UserStoreError> {
+    let bigram = txn.open_table(BIGRAM)?;
+    let mut totals = txn.open_table(BIGRAM_TOTAL)?;
+    let mut sums: std::collections::BTreeMap<Token, u64> = std::collections::BTreeMap::new();
+    for item in bigram.iter()? {
+        let (key, count) = item?;
+        let (prev, _cur) = key.value();
+        let slot = sums.entry(prev).or_default();
+        *slot = slot.saturating_add(count.value());
+    }
+    drop(bigram);
+
+    let mut old: Vec<Token> = Vec::new();
+    for item in totals.iter()? {
+        let (prev, _) = item?;
+        old.push(prev.value());
+    }
+    for prev in old {
+        totals.remove(prev)?;
+    }
+    for (prev, total) in sums {
+        if total > 0 {
+            totals.insert(prev, total)?;
+        }
+    }
     Ok(())
 }
 
@@ -1724,6 +1930,162 @@ mod tests {
         assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
         assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
         assert_eq!(store.unigram_total().unwrap(), 966);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn key_id(text: &str) -> PinyinKey {
+        SyllableKey::from_text(text).expect("valid syllable").index() as u16
+    }
+
+    fn migration_dump() -> MigrationDump {
+        MigrationDump {
+            phrases: vec![
+                MigrationPhrase {
+                    token: FIRST_USER_TOKEN,
+                    text: "你好".to_owned(),
+                    unigram: 21,
+                    pronunciations: vec![MigrationPronunciation {
+                        keys: vec![key_id("ni"), key_id("hao")],
+                        count: 7,
+                    }],
+                },
+                MigrationPhrase {
+                    token: FIRST_USER_TOKEN + 1,
+                    text: "世界".to_owned(),
+                    unigram: 15,
+                    pronunciations: vec![MigrationPronunciation {
+                        keys: vec![key_id("shi"), key_id("jie")],
+                        count: 5,
+                    }],
+                },
+            ],
+            bigrams: vec![
+                MigrationBigram {
+                    prev: SENTENCE_START,
+                    total: 9,
+                    successors: vec![(FIRST_USER_TOKEN, 4), (FIRST_USER_TOKEN + 1, 5)],
+                },
+                MigrationBigram {
+                    prev: FIRST_USER_TOKEN,
+                    total: 3,
+                    successors: vec![(FIRST_USER_TOKEN + 1, 3)],
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn migration_is_idempotent_and_visible_without_reopen() {
+        let path = temp_path("migrate-cache");
+        let mut store = UserStore::open(&path).unwrap();
+
+        // A first write makes the store non-empty; a subsequent read installs
+        // the cached count snapshot. Gate #1: the bulk write must invalidate
+        // that cache so migrated counts are visible without reopening.
+        store.observe_selection(1, 0x0100_0001).unwrap();
+        assert_eq!(
+            store.count_delta(Some(1), 0x0100_0001).unwrap().bigram_count,
+            69
+        );
+
+        let dump = migration_dump();
+        let seeded_total = store.unigram_total().unwrap();
+        let seeded_bigram_total = store.bigram_total(SENTENCE_START).unwrap();
+        store.apply_migration(&dump).unwrap();
+        assert!(store.has_user_data());
+
+        // Migrated counts visible without reopening (the pre-existing seed
+        // total is preserved alongside the migrated deltas).
+        let delta = store.count_delta(None, FIRST_USER_TOKEN).unwrap();
+        assert_eq!(delta.unigram_delta, 21);
+        assert_eq!(delta.unigram_total_delta, seeded_total + 36);
+        assert_eq!(
+            store
+                .count_delta(Some(SENTENCE_START), FIRST_USER_TOKEN)
+                .unwrap()
+                .bigram_count,
+            4
+        );
+
+        // Bigram totals equal the sum of surviving successors.
+        assert_eq!(store.bigram_count(SENTENCE_START, FIRST_USER_TOKEN + 1).unwrap(), 5);
+        // Totals are recomputed as the sum of surviving successors, so the
+        // pre-existing 69 seed is preserved alongside the migrated 4 + 5.
+        assert_eq!(
+            store.bigram_total(SENTENCE_START).unwrap(),
+            seeded_bigram_total + 9
+        );
+        assert_eq!(store.bigram_total(FIRST_USER_TOKEN).unwrap(), 3);
+
+        // Phrases and pronunciations landed.
+        assert_eq!(store.token_for_phrase("你好").unwrap(), Some(FIRST_USER_TOKEN));
+        let phrase = store.phrase(FIRST_USER_TOKEN).unwrap().unwrap();
+        assert_eq!(phrase.text(), "你好");
+        assert_eq!(phrase.pronunciations()[0].count(), 7);
+
+        // Allocation cursor advanced past the max migrated token.
+        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 2);
+
+        // Idempotency: re-running the same migration changes nothing.
+        let before = (
+            store.export_phrases().unwrap(),
+            store.export_bigrams().unwrap(),
+            store.unigram_total().unwrap(),
+            store.next_user_token().unwrap(),
+        );
+        store.apply_migration(&dump).unwrap();
+        let after = (
+            store.export_phrases().unwrap(),
+            store.export_bigrams().unwrap(),
+            store.unigram_total().unwrap(),
+            store.next_user_token().unwrap(),
+        );
+        assert_eq!(before, after, "re-running migration must not change the store");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn migration_never_lowers_existing_counts() {
+        let path = temp_path("migrate-floor");
+        let mut store = UserStore::open(&path).unwrap();
+
+        // Seed higher counts through the normal APIs.
+        let token = store
+            .add_phrase("你好", &[key_id("ni"), key_id("hao")], Some(100))
+            .unwrap();
+        store.observe_selection(SENTENCE_START, token).unwrap();
+        let seeded_unigram = store.unigram_delta(token).unwrap();
+        let seeded_bigram = store.bigram_count(SENTENCE_START, token).unwrap();
+        let seeded_pron = store.phrase(token).unwrap().unwrap().pronunciations()[0].count();
+
+        // Migrate a strictly-lower desired state over the seeded counts.
+        let dump = MigrationDump {
+            phrases: vec![MigrationPhrase {
+                token,
+                text: "你好".to_owned(),
+                unigram: 1,
+                pronunciations: vec![MigrationPronunciation {
+                    keys: vec![key_id("ni"), key_id("hao")],
+                    count: 2,
+                }],
+            }],
+            bigrams: vec![MigrationBigram {
+                prev: SENTENCE_START,
+                total: 0,
+                successors: vec![(token, 5)],
+            }],
+        };
+        store.apply_migration(&dump).unwrap();
+
+        // The monotonic floor keeps the seeded values.
+        assert_eq!(store.unigram_delta(token).unwrap(), seeded_unigram);
+        assert_eq!(
+            store.bigram_count(SENTENCE_START, token).unwrap(),
+            seeded_bigram
+        );
+        assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), seeded_bigram);
+        let phrase = store.phrase(token).unwrap().unwrap();
+        assert_eq!(phrase.pronunciations()[0].count(), seeded_pron);
         let _ = std::fs::remove_file(&path);
     }
 }

@@ -32,3 +32,7 @@ pub use phrase::{
     UserPronunciation, is_user_token, phrase_index_library_index, phrase_index_make_token,
 };
 pub use store::{ExportedPhrase, SENTENCE_START, Token, UserStore, UserStoreError};
+#[doc(hidden)]
+pub use store::{
+    MigrationBigram, MigrationDump, MigrationPhrase, MigrationPronunciation,
+};
