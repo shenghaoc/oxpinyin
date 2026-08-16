@@ -13,6 +13,28 @@
 #include <cstdlib>
 #include <cstring>
 
+namespace {
+
+struct Session {
+    pinyin_context_t *context = nullptr;
+    pinyin_instance_t *instance = nullptr;
+
+    Session() = default;
+    Session(const Session &) = delete;
+    Session &operator=(const Session &) = delete;
+
+    ~Session() {
+        if (instance != nullptr) {
+            pinyin_free_instance(instance);
+        }
+        if (context != nullptr) {
+            pinyin_fini(context);
+        }
+    }
+};
+
+}  // namespace
+
 int main(int argc, char **argv) {
     if (argc != 3) {
         return 64;
@@ -59,49 +81,33 @@ int main(int argc, char **argv) {
              PHRASE_INDEX_LIBRARY_MASK),
         "PHRASE_INDEX_MAKE_TOKEN");
 
-    pinyin_context_t *context = pinyin_init(argv[1], argv[2]);
-    if (context == nullptr) {
+    Session session;
+    session.context = pinyin_init(argv[1], argv[2]);
+    if (session.context == nullptr) {
         return 1;
     }
-    pinyin_instance_t *instance = pinyin_alloc_instance(context);
-    if (instance == nullptr) {
-        pinyin_fini(context);
+    session.instance = pinyin_alloc_instance(session.context);
+    if (session.instance == nullptr) {
         return 2;
     }
 
     // The W8 gap symbol: 0 after allocation, stored parse result after
     // pinyin_parse_more_full_pinyins, and 0 again after pinyin_reset.
-    if (pinyin_get_parsed_input_length(instance) != 0) {
-        pinyin_free_instance(instance);
-        pinyin_fini(context);
+    if (pinyin_get_parsed_input_length(session.instance) != 0) {
         return 3;
     }
     const char *nihao = "nihao";
-    size_t consumed = pinyin_parse_more_full_pinyins(instance, nihao);
+    size_t consumed = pinyin_parse_more_full_pinyins(session.instance, nihao);
     if (consumed != std::strlen(nihao) ||
-        pinyin_get_parsed_input_length(instance) != consumed) {
-        pinyin_free_instance(instance);
-        pinyin_fini(context);
+        pinyin_get_parsed_input_length(session.instance) != consumed) {
         return 4;
     }
-    if (!pinyin_reset(instance) ||
-        pinyin_get_parsed_input_length(instance) != 0) {
-        pinyin_free_instance(instance);
-        pinyin_fini(context);
+    if (!pinyin_reset(session.instance) ||
+        pinyin_get_parsed_input_length(session.instance) != 0) {
         return 5;
     }
 
-    // PinyinKey/PinyinKeyPos are only compile-surface aliases here; declare
-    // null pointers so their typedefs are actually instantiated by the TU.
-    PinyinKey *key = nullptr;
-    PinyinKeyPos *key_pos = nullptr;
-    if (key != nullptr || key_pos != nullptr) {
-        pinyin_free_instance(instance);
-        pinyin_fini(context);
-        return 6;
-    }
-
-    pinyin_free_instance(instance);
-    pinyin_fini(context);
+    static_assert(sizeof(PinyinKey *) == sizeof(void *), "PinyinKey");
+    static_assert(sizeof(PinyinKeyPos *) == sizeof(void *), "PinyinKeyPos");
     return 0;
 }

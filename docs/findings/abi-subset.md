@@ -895,20 +895,19 @@ index-0-only.
 
 ---
 
-## 6. Out-of-subset symbols (29 not called by ibus-libpinyin at tag 1.16.5)
+## 6. Out-of-subset symbols (28 not called by the W8 fork surface)
 
-Historical complement for the tag freeze only. The following 29 symbols are
-the exact complement: the sorted 79 names from `libpinyin.ver` minus the 50
-live 1.16.5 call-site symbols in §1. `pinyin_get_parsed_input_length` has
-since moved into the W8 contract (fork commit `2c5baa9`, call site
-`PYPLibPinyinCandidates.cc:151`) and is implemented by oxpinyin-capi.
+Historical complement for the tag freeze, minus the one symbol the W8
+fork added. The following 28 names are the sorted 79 `libpinyin.ver`
+exports minus the 51-symbol W8 contract (the 50 live 1.16.5 call-site
+symbols in §1 plus `pinyin_get_parsed_input_length`, fork commit
+`2c5baa9`, call site `PYPLibPinyinCandidates.cc:151`).
 
 ```text
 pinyin_clear_constraint
 pinyin_get_context
 pinyin_get_luoma_pinyin_string
 pinyin_get_n_phrase
-pinyin_get_parsed_input_length
 pinyin_get_phrase_token
 pinyin_get_pinyin_is_incomplete
 pinyin_get_pinyin_key

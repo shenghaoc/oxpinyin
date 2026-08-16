@@ -33,14 +33,6 @@ pub struct ChewingKey;
 /// Opaque chewing key rest (position span).
 pub struct ChewingKeyRest;
 
-/// `PinyinKey` alias (`libpinyin/src/pinyin.h:1093`, tag 2.11.91):
-/// compatibility alias for [`ChewingKey`].
-pub type PinyinKey = ChewingKey;
-
-/// `PinyinKeyPos` alias (`libpinyin/src/pinyin.h:1094`, tag 2.11.91):
-/// compatibility alias for [`ChewingKeyRest`].
-pub type PinyinKeyPos = ChewingKeyRest;
-
 /// Opaque import iterator.
 pub struct ImportIterator;
 
@@ -261,3 +253,13 @@ pub type GChar = c_char;
 /// `null_token` = 0 (`novel_types.h:121`, tag 2.11.91).
 #[allow(non_upper_case_globals)]
 pub const null_token: u32 = 0;
+
+// Header phrase-index literals must stay byte-identical to the canonical
+// `oxpinyin-user` token layout. `PinyinKey` / `PinyinKeyPos` are C-only
+// typedefs in `cbindgen.toml` (`after_includes`) so they do not collide
+// with `oxpinyin_user::PinyinKey` (`u16`).
+const _: () = {
+    assert!(oxpinyin_user::USER_DICTIONARY == 7);
+    assert!(oxpinyin_user::PHRASE_MASK == 0x00FF_FFFF);
+    assert!(oxpinyin_user::PHRASE_INDEX_LIBRARY_MASK == 0x0F00_0000);
+};

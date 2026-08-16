@@ -10,6 +10,8 @@
     ( ( (phrase_index<<24) & PHRASE_INDEX_LIBRARY_MASK)|(token & PHRASE_MASK))
 #define DOUBLE_PINYIN_DEFAULT DOUBLE_PINYIN_MS
 #define ZHUYIN_DEFAULT ZHUYIN_STANDARD
+typedef struct ChewingKey PinyinKey;
+typedef struct ChewingKeyRest PinyinKeyPos;
 
 
 // `null_token` = 0 (`novel_types.h:121`, tag 2.11.91).
@@ -195,12 +197,6 @@ typedef char gchar;
 
 // `pinyin_option_t` — bitmask of pinyin table flags.
 typedef uint32_t pinyin_option_t;
-
-// `PinyinKey` alias (`libpinyin/src/pinyin.h:1093`, tag 2.11.91):
-typedef struct ChewingKey PinyinKey;
-
-// `PinyinKeyPos` alias (`libpinyin/src/pinyin.h:1094`, tag 2.11.91):
-typedef struct ChewingKeyRest PinyinKeyPos;
 
 #ifdef __cplusplus
 extern "C" {

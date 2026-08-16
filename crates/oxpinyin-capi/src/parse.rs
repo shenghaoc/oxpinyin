@@ -12,11 +12,9 @@ use crate::types::{GChar, PinyinInstance};
 /// Shared batch-parse path: reset the instance, type `text`, store the
 /// parsed prefix length, and return it.
 ///
-/// Upstream stores the parser result in `m_parsed_len` on every
-/// `pinyin_parse_more_*` call (`pinyin.cpp:1511,1554,1599`); the getter
-/// `pinyin_get_parsed_input_length` (`pinyin.cpp:1611-1613`) then reads that
-/// stored value. The segment graph's [`SegmentGraph::consumed`] is the
-/// byte count of raw input consumed by the parse.
+/// The getter must return this snapshot, not a length recomputed from the
+/// current session: the fork compares `pinyin_choose_candidate`'s cursor
+/// against it (`docs/findings/abi-subset.md` W8 contract).
 ///
 /// Resets and clears the candidate snapshot even for empty input, so a
 /// prior composition is discarded and the stored length returns to 0.
@@ -24,20 +22,29 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    inst.session.reset();
-    inst.candidates.clear();
-    let consumed = if text.is_empty() {
-        0
-    } else {
-        match inst.session.type_pinyin(text) {
-            Ok(_) => SegmentGraph::build(inst.session.raw_input().as_bytes())
-                .map(|graph| graph.consumed())
-                .unwrap_or(0),
-            Err(_) => 0,
-        }
+    inst.reset_parse_state();
+    if text.is_empty() {
+        return 0;
+    }
+    let consumed = match inst.session.type_pinyin(text) {
+        Ok(_) => SegmentGraph::build(inst.session.raw_input().as_bytes())
+            .map(|graph| graph.consumed())
+            .unwrap_or(0),
+        Err(_) => 0,
     };
     inst.parsed_len = consumed;
     consumed
+}
+
+fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> usize {
+    if instance.is_null() {
+        return 0;
+    }
+    ffi_catch(0, || {
+        // SAFETY: `text` is a C string from the caller (null OK).
+        let text = unsafe { cstr_to_string(text) };
+        parse_more(instance, &text)
+    })
 }
 
 /// Parse multiple full pinyins.
@@ -54,14 +61,7 @@ pub extern "C" fn pinyin_parse_more_full_pinyins(
     instance: *mut PinyinInstance,
     pinyins: *const c_char,
 ) -> usize {
-    if instance.is_null() {
-        return 0;
-    }
-    ffi_catch(0, || {
-        // SAFETY: `pinyins` is a C string from the caller (null OK).
-        let text = unsafe { cstr_to_string(pinyins) };
-        parse_more(instance, &text)
-    })
+    parse_c_string(instance, pinyins)
 }
 
 /// Parse multiple double pinyins.
@@ -79,14 +79,7 @@ pub extern "C" fn pinyin_parse_more_double_pinyins(
     instance: *mut PinyinInstance,
     pinyins: *const c_char,
 ) -> usize {
-    if instance.is_null() {
-        return 0;
-    }
-    ffi_catch(0, || {
-        // SAFETY: `pinyins` is a C string from the caller (null OK).
-        let text = unsafe { cstr_to_string(pinyins) };
-        parse_more(instance, &text)
-    })
+    parse_c_string(instance, pinyins)
 }
 
 /// Parse multiple chewing (bopomofo) inputs.
@@ -104,14 +97,7 @@ pub extern "C" fn pinyin_parse_more_chewings(
     instance: *mut PinyinInstance,
     chewings: *const c_char,
 ) -> usize {
-    if instance.is_null() {
-        return 0;
-    }
-    ffi_catch(0, || {
-        // SAFETY: `chewings` is a C string from the caller (null OK).
-        let text = unsafe { cstr_to_string(chewings) };
-        parse_more(instance, &text)
-    })
+    parse_c_string(instance, chewings)
 }
 
 /// Get the parsed length of the input.
