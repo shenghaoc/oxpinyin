@@ -36,6 +36,16 @@ fn typed(text: &str) -> Fixtures {
     session
 }
 
+fn session_from(vocab: &str) -> Fixtures {
+    Session::new(
+        &EmptyConfigSource,
+        StoragePaths::new("user"),
+        FixtureDictionary::parse(vocab).expect("test vocabulary"),
+        FixtureLanguageModel::parse(vocab, "# no bigrams\n").expect("test model"),
+    )
+    .expect("the test fixtures open")
+}
+
 fn texts(session: &Fixtures) -> Vec<String> {
     session
         .candidates()
@@ -194,13 +204,14 @@ fn unknown_input_still_offers_itself_back() {
 
 #[test]
 fn an_expansion_past_the_limit_offers_no_phrase_for_that_span() {
-    // `z` prefixes 36 complete syllables, so a single initial expands (36 ≤ the
-    // default limit of 64) and reaches the phrases it spells — `zhuan` and
-    // `zhong` are both in the mini vocabulary, so `zzzzzzzz` does get
-    // candidates, led by 传. What it cannot get is a *multi-key* phrase: two
-    // initials are 36 × 36 = 1,296 sequences, `expand_keys` returns empty
-    // rather than a subset, and no phrase is offered for that span.
-    let session = typed("zzzzzzzz");
+    // `zh` prefixes 17 complete syllables after the phonetic-initial fix, so
+    // a single initial expands (17 ≤ the default limit of 64) and reaches the
+    // phrases it spells — `zhuan` and `zhong` are both in the mini
+    // vocabulary, so `zhzh` gets candidates, led by 传. What it cannot get
+    // is a *two-key* dictionary phrase: 17 × 17 = 289 sequences,
+    // `expand_keys` returns empty rather than a subset, and no phrase is
+    // offered for that span.
+    let session = typed("zhzh");
     let candidates = session.candidates();
     assert!(!candidates.is_empty(), "one initial still expands");
     assert_eq!(candidates.get(0).map(Candidate::text), Some("传"));
@@ -212,21 +223,21 @@ fn an_expansion_past_the_limit_offers_no_phrase_for_that_span() {
         assert_eq!(
             candidate.consumed_keys(),
             1,
-            "{} is one dictionary phrase spanning several keys, so an \
+            "{} is one dictionary phrase spanning two keys, so an \
              over-limit expansion returned a subset",
             candidate.text()
         );
     }
 
     // The sentence builder is the exception, and legitimately so: it composes
-    // several one-key phrases rather than looking up one multi-key phrase, so
-    // it spans the whole input without ever expanding two initials at once.
+    // two one-key phrases rather than looking up one multi-key phrase, so it
+    // spans the whole input without ever expanding two initials at once.
     let sentence = candidates
         .iter()
         .find(|candidate| candidate.kind() == CandidateKind::Sentence)
-        .expect("a sentence over the eight keys");
-    assert_eq!(sentence.consumed_keys(), 8);
-    assert_eq!(sentence.text().chars().count(), 8);
+        .expect("a sentence over the two keys");
+    assert_eq!(sentence.consumed_keys(), 2);
+    assert_eq!(sentence.text().chars().count(), 2);
 }
 
 #[test]
@@ -413,4 +424,54 @@ fn enter_commits_the_raw_text_when_nothing_is_chosen() {
             .expect("no failure"),
         oxpinyin_engine::KeyOutcome::Commit("nihao".to_owned())
     );
+}
+
+#[test]
+fn incomplete_initials_expand_by_phonetic_initial() {
+    // A deliberately tiny vocabulary that separates what string-prefix
+    // expansion used to conflate.  `n` must reach the N-initial syllable
+    // `nei` (and therefore 㐻) but never the zero-initial syllable `ng`;
+    // `z`/`c`/`s` must not cross into the retroflex `zh`/`ch`/`sh` initials.
+    let vocab = concat!(
+        "token=1\tkeys=ng\ttext=嗯\tunigram=100\n",
+        "token=2\tkeys=ng\ttext=唔\tunigram=90\n",
+        "token=3\tkeys=ng\ttext=唵\tunigram=80\n",
+        "token=4\tkeys=ng\ttext=㕶\tunigram=70\n",
+        "token=5\tkeys=nei\ttext=㐻\tunigram=100\n",
+        "token=6\tkeys=za\ttext=匝\tunigram=100\n",
+        "token=7\tkeys=zha\ttext=扎\tunigram=100\n",
+        "token=8\tkeys=ca\ttext=擦\tunigram=100\n",
+        "token=9\tkeys=cha\ttext=叉\tunigram=100\n",
+        "token=10\tkeys=sa\ttext=撒\tunigram=100\n",
+        "token=11\tkeys=sha\ttext=沙\tunigram=100\n",
+    );
+
+    let session = session_from(vocab);
+    let mut n = session.clone();
+    n.type_pinyin("n").expect("n types");
+    let offered = texts(&n);
+    assert!(
+        offered.contains(&"㐻".to_owned()),
+        "n keeps nei: {offered:?}"
+    );
+    for ng_only in ["嗯", "唔", "唵", "㕶"] {
+        assert!(
+            !offered.contains(&ng_only.to_owned()),
+            "n must not reach ng-only {ng_only}: {offered:?}"
+        );
+    }
+
+    for (input, kept, excluded) in [("z", "匝", "扎"), ("c", "擦", "叉"), ("s", "撒", "沙")] {
+        let mut session = session.clone();
+        session.type_pinyin(input).expect("initial types");
+        let offered = texts(&session);
+        assert!(
+            offered.contains(&kept.to_owned()),
+            "{input} must keep {kept}: {offered:?}"
+        );
+        assert!(
+            !offered.contains(&excluded.to_owned()),
+            "{input} must exclude {excluded}: {offered:?}"
+        );
+    }
 }

@@ -253,8 +253,9 @@ where
 
     /// The phrases that can spell `keys`, cheapest first.
     ///
-    /// An incomplete key stands for every complete key it is a proper prefix
-    /// of, which is what the pin does: `nih` offers `你好`, `霓虹`, `拟合`.
+    /// An incomplete key stands for every complete key that shares its
+    /// phonetic initial, which is what the pin does: `nih` offers `你好`,
+    /// `霓虹`, `拟合`.
     /// Expansion is bounded by [`ScoringConfig::expansion_limit`]; beyond it
     /// the sequence yields nothing rather than a combinatorial blow-up.
     ///
@@ -345,13 +346,15 @@ where
 /// Every complete-key sequence `keys` can stand for.
 ///
 /// A complete key stands for itself. An incomplete key stands for each
-/// complete syllable it is a proper prefix of, in frozen inventory order.
+/// complete syllable with the same phonetic initial, in frozen inventory
+/// order.
 ///
 /// # Known gap: long incomplete-key sequences yield nothing
 ///
 /// The expansion is a Cartesian product, and each initial-only key multiplies
-/// it by the number of syllables that key prefixes — 9 (`j`) to 36 (`z`) over
-/// the frozen inventory. When the product would exceed `limit`, this returns
+/// it by the number of syllables with that phonetic initial — 9 (`w`) to 26
+/// (`l`) over the frozen inventory. When the product would exceed `limit`,
+/// this returns
 /// an **empty vector** — not a truncated one — so a caller cannot mistake a
 /// subset for the whole answer.
 ///
@@ -360,7 +363,7 @@ where
 /// from the dictionary at all**, not a shorter list. The smallest possible
 /// pair is 9 × 9 = 81, already past the default `limit` of 64, so in practice
 /// the ceiling is one initial per sequence. `zzzzzzzz` decodes to eight `z`
-/// keys, expands to 36⁸, and offers nothing; the session falls back to
+/// keys, expands to 17⁸, and offers nothing; the session falls back to
 /// handing the raw input back.
 ///
 /// That is deliberate for W4 — a wrong candidate list is worse than none, and
@@ -399,18 +402,51 @@ pub fn expand_keys(keys: &[SyllableKey], limit: usize) -> Vec<Vec<SyllableKey>> 
     sequences
 }
 
-/// The complete keys one key stands for.
+/// The complete keys one initial-only key stands for.
+///
+/// The pinned incomplete index is keyed by [`ChewingKey.m_initial`], not by
+/// the pinyin spelling.  When a key sequence contains an incomplete key,
+/// upstream builds the search key by copying only `m_initial` into a fresh
+/// `ChewingKey` (libpinyin 2.11.91 `pinyin_phrase3.h:170-177`), and the
+/// phrase-index search dispatches to that construction
+/// (`chewing_large_table2.h:136-144`, `chewing_large_table2.cpp:178-184`).
+/// Consequently the spelling `n` means “every syllable with initial N” and
+/// does not reach `ng`, whose table row is zero-initial
+/// (`pinyin_parser_table.h:4211`); `z`/`c`/`s` likewise exclude
+/// `zh`/`ch`/`sh`, which are distinct initial values.
 fn completions(key: SyllableKey) -> Vec<SyllableKey> {
     if key.completeness() == crate::Completeness::Complete {
         return vec![key];
     }
 
-    let prefix = key.text();
+    let initial = key.text();
     FULL_PINYIN_SYLLABLES
         .iter()
-        .filter(|syllable| syllable.len() > prefix.len() && syllable.starts_with(prefix))
+        .filter(|syllable| phonetic_initial(syllable) == initial)
         .filter_map(|syllable| SyllableKey::from_text(syllable))
         .collect()
+}
+
+/// The pinyin phonetic initial of a complete syllable spelling.
+///
+/// `zh`/`ch`/`sh` are single initial values even though they are two bytes.
+/// `ng` is zero-initial (`pinyin_parser_table.h:4211`) despite starting with
+/// `n`, and a vowel-initial syllable has no consonant initial.
+fn phonetic_initial(syllable: &str) -> &str {
+    if syllable == "ng" {
+        return "";
+    }
+    for initial in ["zh", "ch", "sh"] {
+        if syllable.starts_with(initial) {
+            return initial;
+        }
+    }
+    match syllable.as_bytes().first() {
+        Some(b'a' | b'e' | b'i' | b'o' | b'u' | b'v') | None => "",
+        // Every other complete-syllable first byte in the frozen inventory is
+        // a consonant-initial byte: b c d f g h j k l m n p q r s t w x y z.
+        Some(_) => &syllable[..1],
+    }
 }
 
 #[cfg(test)]
@@ -461,6 +497,36 @@ mod tests {
         assert_eq!(config.weigh(3 * COST_PER_BIT), 3 * COST_PER_BIT / 2);
         config.lm_weight = 0;
         assert_eq!(config.weigh(UNKNOWN_COST), 0);
+    }
+
+    #[test]
+    fn an_incomplete_key_expands_by_phonetic_initial() {
+        // `n` reaches every N-initial syllable and never the zero-initial
+        // spelling `ng`; `z`/`c`/`s` stop at their initial and exclude the
+        // retroflex `zh`/`ch`/`sh` initials.
+        for (initial, included, excluded) in [
+            ("n", &["na", "nei", "ni", "nv"][..], &["ng"][..]),
+            ("z", &["za", "zeng", "zuo"][..], &["zha", "zhong"][..]),
+            ("c", &["ca", "ceng", "cuo"][..], &["cha", "cheng"][..]),
+            ("s", &["sa", "seng", "suo"][..], &["sha", "sheng"][..]),
+            ("zh", &["zha", "zhong"][..], &["za", "zeng"][..]),
+            ("ch", &["cha", "cheng"][..], &["ca", "ceng"][..]),
+            ("sh", &["sha", "sheng"][..], &["sa", "seng"][..]),
+        ] {
+            let expanded = expand_keys(&keys(initial), 4096);
+            for syllable in included {
+                assert!(
+                    expanded.contains(&keys(syllable)),
+                    "{initial} must include {syllable}"
+                );
+            }
+            for syllable in excluded {
+                assert!(
+                    !expanded.contains(&keys(syllable)),
+                    "{initial} must exclude {syllable}"
+                );
+            }
+        }
     }
 
     #[test]
