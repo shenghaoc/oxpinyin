@@ -36,28 +36,30 @@ git log --reverse --format='%H%n%B%n---' origin/main
 uses. The full body scan was a second pass for `AI-session:` /
 `Assisted-by:` lines that failed to parse as trailers; it added nothing.
 
-Other trailer keys (`Signed-off-by`, `Co-authored-by`) and
-author/committer identities were scanned so a fourth class would not
-hide inside the three named ones. They are not catalogued here.
+Every catalogued trailer in this file is a **forbidden exhibit**, not a
+convention. Do not copy `AI-session:`, `Co-authored-by:` agent
+identities, or bare-version `Assisted-by:` values from these tables.
 
 ## 1. `AI-session:` trailers
 
 ### The rule as it should have been
 
-Do not emit an `AI-session:` trailer. Attribution is `Assisted-by:`
-only. The on-tree linter's R3 does something weaker: if an
-`AI-session:` trailer is present, its value must be exactly `true` and
-an `Assisted-by:` trailer must then exist; any other value fails. R3
-does not reject the trailer's presence.
+Emit exactly one trailer: `Assisted-by: <AgentName>:<model-id>`. That
+forbids every invented trailer without naming any. The on-tree R3
+check did the opposite: it treated `AI-session: true` as a recognized
+value and accepted it whenever `Assisted-by:` was also present.
 
 ### What went wrong
 
 Eight commits on `main` carry `AI-session: true`. All eight also carry
-a well-formed `Assisted-by:` trailer, so today's R3 check accepts every
-one of them. The trailer was emitted after the linter landed on `main`
-(`66dfe06`, 2026-08-15).
+a well-formed `Assisted-by:` trailer, so R3 accepted every one of
+them. The trailer was emitted after the linter landed on `main`
+(`66dfe06`, 2026-08-15). The linter was teaching agents the trailer
+was recognized.
 
 ### Violating commits
+
+The eight rows below are forbidden exhibits, not a convention.
 
 | short | date | subject | offending line |
 |---|---|---|---|
@@ -75,34 +77,30 @@ every line parsed as a trailer.
 
 ### Enforcement now in place
 
-[PR #95](https://github.com/shenghaoc/oxpinyin/pull/95) (open as of this
-audit; one file, `AGENTS.md`) rewords R3 to "Do not emit an
-`AI-session:` trailer" and states there is no change to linter
-behaviour. It does not touch `.github/scripts/lint-commits.sh`.
+[PR #95](https://github.com/shenghaoc/oxpinyin/pull/95) removes R3 and
+all `AI-session:` logic from `.github/scripts/lint-commits.sh`, the
+commit-msg hook, and `tests/lint-commits.test.sh`. `AGENTS.md` keeps
+one positive line: emit exactly one trailer,
+`Assisted-by: <AgentName>:<model-id>`. That is the correct fix: remove
+the teacher, do not reword the lesson.
 
-**#95's lint would not catch this class today.** #95 introduces no
-lint. The on-tree R3 check — landed on `main` in `66dfe06` (2026-08-15),
-authored in [PR #56](https://github.com/shenghaoc/oxpinyin/pull/56) —
-accepts `AI-session: true` plus a valid `Assisted-by:`. That is every
-row above.
-
-Prevention of this class is the `AGENTS.md` prohibition (once #95
-lands), not a machine gate.
+[PR #56](https://github.com/shenghaoc/oxpinyin/pull/56), which authored
+R3, is superseded by the on-tree linter plus #95 and is closed.
 
 ## 2. `Assisted-by` values
 
 ### The rule as it should have been
 
-`Assisted-by: <AgentName>:<model-id>`, nothing after the model.
-Trailers are a set. The linter's R2 mechanizes four conditions when
-the trailer is present: house shape, the model token contains at least
-one ASCII letter (`Grok:4.6` fails, `Grok:grok-4.6` passes), no
-placeholder text, no duplicate identical lines. Semantics beyond shape
-stay a human attestation: the linter has no agent/model allowlist.
+Emit exactly one trailer: `Assisted-by: <AgentName>:<model-id>`.
+The linter's R2 mechanizes four conditions when the trailer is
+present: house shape, the model token contains at least one ASCII
+letter (`Grok:4.6` fails, `Grok:grok-4.6` passes), no placeholder
+text, no duplicate identical lines. Semantics beyond shape stay a
+human attestation: the linter has no agent/model allowlist.
 
-Absence of the trailer is not a lint failure unless R3 has promoted it
-(`AI-session: true`). Commits with no `Assisted-by:` cannot be
-classified as "human" or "AI-assisted" from the message alone.
+Absence of the trailer is not a lint failure. Commits with no
+`Assisted-by:` cannot be classified as "human" or "AI-assisted" from
+the message alone.
 
 ### What went wrong
 
@@ -113,35 +111,35 @@ commits carry more than one distinct `Assisted-by:` line; R2 allows
 that (set semantics). No commit uses a wrong key casing, a missing
 colon, an empty half, a placeholder, or a duplicate identical line.
 
-#95 introduced no allowlist. Values that pass R2 are listed for the
-maintainer to mark; this audit does not call a model-id "wrong"
-beyond the mechanical checks.
+#95 introduced no allowlist. Maintainer annotations (2026-08-17):
+`Kiro:GPT-5.6-Sol` is legitimate (GPT-5.6 shipped 2026-07-09 in
+Sol/Terra/Luna). `Grok:4.5` / `Grok:4.6` are format-only (already
+R2-flagged). `Copilot:` / `Codex:` / `Claude:` paired with
+`deepseek-v4-pro` are valid under the agent:model convention.
 
 ### Distinct values
 
-<!-- maintainer: mark invalid model ids -->
-
-| value | n | mechanical flag |
-|---|---|---|
-| `Grok:grok-4.6` | 32 | — |
-| `Claude:claude-opus-5` | 29 | — |
-| `Copilot:deepseek-v4-pro` | 23 | — |
-| `Kiro:GPT-5.6-Sol` | 22 | — |
-| `Claude:claude-opus-4-8` | 17 | — |
-| `Claude:deepseek-v4-pro` | 14 | — |
-| `Grok:4.5` | 14 | R2 condition 2: model token has no ASCII letter |
-| `Grok:grok-4.5` | 14 | — |
-| `Claude:claude-opus-4-6` | 13 | — |
-| `Kiro:Claude-Opus-5` | 13 | — |
-| `Claude:claude-fable-5` | 10 | — |
-| `MuseCode:muse-spark` | 7 | — |
-| `DeepSeek:deepseek-v4-pro` | 5 | — |
-| `Copilot:muse-spark-1.2-contributor` | 3 | — |
-| `opencode:deepseek-v4-pro` | 2 | — |
-| `Codex:deepseek-v4-pro` | 1 | — |
-| `Codex:gpt-5` | 1 | — |
-| `Grok:4.6` | 1 | R2 condition 2: model token has no ASCII letter |
-| `opencode:muse-spark-1.2-contributor` | 1 | — |
+| value | n | mechanical flag | maintainer |
+|---|---|---|---|
+| `Grok:grok-4.6` | 32 | — | — |
+| `Claude:claude-opus-5` | 29 | — | — |
+| `Copilot:deepseek-v4-pro` | 23 | — | valid agent:model |
+| `Kiro:GPT-5.6-Sol` | 22 | — | legitimate |
+| `Claude:claude-opus-4-8` | 17 | — | — |
+| `Claude:deepseek-v4-pro` | 14 | — | valid agent:model |
+| `Grok:4.5` | 14 | R2 condition 2: model token has no ASCII letter | format-only |
+| `Grok:grok-4.5` | 14 | — | — |
+| `Claude:claude-opus-4-6` | 13 | — | — |
+| `Kiro:Claude-Opus-5` | 13 | — | — |
+| `Claude:claude-fable-5` | 10 | — | — |
+| `MuseCode:muse-spark` | 7 | — | — |
+| `DeepSeek:deepseek-v4-pro` | 5 | — | — |
+| `Copilot:muse-spark-1.2-contributor` | 3 | — | — |
+| `opencode:deepseek-v4-pro` | 2 | — | — |
+| `Codex:deepseek-v4-pro` | 1 | — | valid agent:model |
+| `Codex:gpt-5` | 1 | — | — |
+| `Grok:4.6` | 1 | R2 condition 2: model token has no ASCII letter | format-only |
+| `opencode:muse-spark-1.2-contributor` | 1 | — | — |
 
 Full hashes per value:
 
@@ -457,8 +455,9 @@ failed the same way. The diffs are rustfmt import order in
 legs, and `fuzz` succeeded.
 
 The merge did not wait for those checks. The rationale at the time
-was that `main` was unprotected. The tip of `main` at this audit
-(`12af695`) is still fmt-red under the same three files.
+was that `main` was unprotected. The audit tip (`12af695`) stayed
+fmt-red on those three files until [PR #107](https://github.com/shenghaoc/oxpinyin/pull/107)
+(`c6cf633`) ran `cargo fmt --all`.
 
 Coverage of CI conclusions on `main`:
 
@@ -473,9 +472,9 @@ gh api repos/shenghaoc/oxpinyin/commits/12af69521c00f08328e3cf97b3cf1164a74d4d45
 181 commits queried. 147 have no check-rollup (rebase-stack
 intermediates; Actions fires on the landing tip). 33 rollups are
 `SUCCESS`. 1 is `FAILURE`: `12af695`. The 38 `ci.yml` push-to-`main`
-runs agree: the only failure still on `main` is that tip. Four older
-push runs belong to SHAs no longer on `main` (superseded pin-oracle
-pushes) and are outside this catalogue.
+runs in that window agree. Four older push runs belong to SHAs no
+longer on `main` (superseded pin-oracle pushes) and are outside this
+catalogue.
 
 ### Enforcement now in place
 
@@ -490,39 +489,64 @@ gh api repos/shenghaoc/oxpinyin/rules/branches/main
 
 - Target: `~DEFAULT_BRANCH` (`main`). Enforcement: `active`.
   `bypass_actors`: none.
-- Created 2026-08-08T17:52:23Z; last updated 2026-08-17T02:20:08Z
-  (22 minutes after the #98 merge). The API does not expose the
-  pre-update rule list; the red merge is the evidence that the
-  current required-check list was not enforced at 01:57Z.
+- Created 2026-08-08T17:52:23Z. First tightening 2026-08-17T02:20:08Z
+  (22 minutes after the #98 merge). Context list below is the
+  post-collision snapshot after [PR #108](https://github.com/shenghaoc/oxpinyin/pull/108)
+  renamed the trailer jobs; last fetched `updated_at`
+  2026-08-17T12:51:28Z.
 - Also: no deletion, no force-push, required linear history,
   pull-request required, rebase-only, 0 approving reviews,
   `strict_required_status_checks_policy: true`.
 - Required status checks (GitHub Actions, `integration_id` 15368),
-  on the default branch:
+  on the default branch. GitHub Actions reports the job name as
+  the context, not `workflow / job`. After #108, `lint` and `test`
+  uniquely mean the CI jobs:
 
-  | context |
-  |---|
-  | `lint` |
-  | `test` |
-  | `test-portable (macos-latest)` |
-  | `test-portable (windows-latest)` |
-  | `fuzz` |
+  | context | meaning |
+  |---|---|
+  | `lint` | CI rustfmt + clippy |
+  | `test` | CI `cargo test` |
+  | `test-portable (macos-latest)` | portable matrix |
+  | `test-portable (windows-latest)` | portable matrix |
+  | `fuzz` | bounded parser fuzz |
+  | `trailer-lint` | commit-message trailer lint |
+  | `trailer-test` | trailer-linter harness |
 
-The portable matrix is in the required list.
+The portable matrix is required. The trailer jobs are required
+under their own names. The #98 collision (green `commit-trailers /
+lint` satisfying a required `lint` while rustfmt was red) cannot
+recur: those job names no longer exist.
 
-The trailer lint is not. `.github/workflows/commit-trailers.yml`
-names its jobs `lint` and `test` so they can be marked required as
-`commit-trailers / lint` and `commit-trailers / test`. The ruleset
-lists the bare names `lint` and `test`. `CI` uses those same job
-names for rustfmt/clippy and `cargo test`. On #98 both workflows
-emitted a `lint` check; `commit-trailers / lint` succeeded and
-`CI / lint` failed. A required context that does not name the
-workflow is not a distinct trailer-lint gate.
+## 4. Agent identity in `Co-authored-by:`
+
+### The rule as it should have been
+
+Authorship is human. AI attribution is `Assisted-by:` only. R1
+rejects a `Co-authored-by:` line whose email matches the linter's
+agent-identity list.
+
+### What went wrong
+
+One commit on `main` carries an agent `Co-authored-by:`:
+
+| short | date | subject | offending line |
+|---|---|---|---|
+| `884ec49` | 2026-08-15 | docs(abi-subset): fix signatures, flag/sort/scheme tables, n-best path | `Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>` |
+
+The email matches R1's identity list (the harness uses this exact
+line as the `7b504d0` regression). Today's linter would reject the
+commit. It landed because trailer lint was not a required status
+check — that is the blind spot, not a hole in the email list.
+
+### Enforcement now in place
+
+R1 is unchanged. After #108 the required `trailer-lint` context
+runs R1 on every PR commit.
 
 ## Cutoff
 
-This catalogue closes at the earlier of the ruleset tightening
-(2026-08-17T02:20:08Z, ruleset `20589678`) and the commit that
-introduces this file. Violations listed above remain in history on
-purpose. New commits are subject to the tightened ruleset and the
-on-tree trailer linter; they are not added to these tables.
+This catalogue closes at the audit tip `12af695` (2026-08-17).
+Violations listed above remain in history on purpose. Later
+commits (`c6cf633` fmt, the job-rename, #95, this file) are
+subject to the tightened ruleset and the on-tree trailer linter;
+they are not added to these tables.
