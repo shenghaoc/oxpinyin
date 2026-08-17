@@ -1,6 +1,6 @@
 //! W11 union surface: user/addon candidates and phrase prediction.
 
-use crate::candidates::pinyin_choose_candidate;
+use crate::candidates::{pinyin_choose_candidate, pinyin_get_candidate};
 use crate::config::pinyin_load_addon_phrase_library;
 use crate::context::{oxpinyin_test_set_user_bigram, pinyin_init_for_fixtures};
 use crate::instance::pinyin_alloc_instance;
@@ -90,6 +90,109 @@ fn addon_library_load_is_idempotent_and_surfaces_addon_candidates() {
                     || c.text.as_bytes() == "二黄".as_bytes())
         }),
         "loaded art addon must offer 二簧/二黄 for erhuang"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
+    let system = TempSystemDir::new("addon-promote");
+    system.write(
+        "interpolation2.text",
+        "\\data model interpolation\n\\1-gram\n\\item 1 ok count 1\n",
+    );
+    let user = TempUserDir::new("addon-promote-user");
+    let context = pinyin_init_for_fixtures(
+        cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+        cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+    );
+    assert!(!context.is_null());
+    assert!(pinyin_load_addon_phrase_library(context, 4));
+
+    let instance = pinyin_alloc_instance(context);
+    assert!(!instance.is_null());
+    let input = cstr("erhuang");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 7);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+
+    // Find the addon candidate: its snapshot index and display text.
+    let (index, text) = {
+        // SAFETY: live instance; snapshot valid until the next guess.
+        let inst = unsafe { instance_ref(instance) };
+        let (index, cand) = inst
+            .candidates
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.candidate_type == lookup_candidate_type_t::ADDON_CANDIDATE)
+            .expect("art addon offers an ADDON candidate for erhuang");
+        (index, cand.text.to_str().expect("UTF-8 text").to_owned())
+    };
+
+    // Choose it through the C ABI: this must promote it into default nibble 5.
+    let mut cand: *mut crate::types::LookupCandidate = std::ptr::null_mut();
+    assert!(pinyin_get_candidate(instance, index as u32, &mut cand));
+    assert!(!cand.is_null());
+    assert!(pinyin_choose_candidate(instance, 0, cand) > 0);
+
+    // The snapshot candidate is rewritten to a NORMAL candidate at a nibble-5
+    // token (`pinyin.cpp:2559-2560`).
+    let promoted = {
+        // SAFETY: snapshot untouched since the choose (no intervening guess).
+        let inst = unsafe { instance_ref(instance) };
+        let snapshot = &inst.candidates[index];
+        assert_eq!(
+            snapshot.candidate_type,
+            lookup_candidate_type_t::NORMAL_CANDIDATE,
+            "the chosen addon candidate becomes NORMAL"
+        );
+        let token = snapshot.token.expect("promoted candidate carries a token");
+        assert_eq!(
+            oxpinyin_user::phrase_index_library_index(token.value()),
+            oxpinyin_user::ADDON_DICTIONARY,
+            "promoted token lives in default nibble 5"
+        );
+        token.value()
+    };
+
+    // The user store now carries the phrase under nibble 5, with a reading.
+    // SAFETY: live instance.
+    let inst = unsafe { instance_ref(instance) };
+    let store = inst
+        .user
+        .as_ref()
+        .expect("fixture context has a user store");
+    assert_eq!(
+        store
+            .token_for_phrase_in(oxpinyin_user::ADDON_DICTIONARY, &text)
+            .expect("store read"),
+        Some(promoted),
+        "the promoted phrase resolves under nibble 5"
+    );
+    let phrase = store
+        .phrase(promoted)
+        .expect("store read")
+        .expect("promoted phrase exists");
+    assert_eq!(phrase.text(), text);
+    let reading = phrase
+        .pronunciations()
+        .first()
+        .expect("promoted phrase copied at least one reading");
+
+    // It surfaces through the default-facade user lookup as a normal candidate.
+    let keys: Vec<oxpinyin_core::SyllableKey> = reading
+        .keys()
+        .iter()
+        .map(|k| oxpinyin_core::SyllableKey::from_index(usize::from(*k)).expect("stored key"))
+        .collect();
+    let lookup = oxpinyin_user::UserLookup::from_store(store).expect("build lookup");
+    assert!(
+        lookup
+            .lookup(&keys)
+            .iter()
+            .any(|entry| entry.token().value() == promoted && entry.text() == text),
+        "promoted phrase is found through the default-facade lookup"
     );
 
     crate::instance::pinyin_free_instance(instance);

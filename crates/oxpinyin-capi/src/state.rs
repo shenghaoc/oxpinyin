@@ -19,8 +19,8 @@ use oxpinyin_core::{
 use oxpinyin_data::{BigramLanguageModel, DictError, LmError, PunctTable, SystemDictionary};
 use oxpinyin_engine::{CandidateKind, Config, Session, StoragePaths};
 use oxpinyin_user::{
-    ExportedPhrase, NETWORK_DICTIONARY, SENTENCE_START, USER_DICTIONARY, UserLookup, UserStore,
-    is_user_file_token,
+    ExportedPhrase, NETWORK_DICTIONARY, PinyinKey, SENTENCE_START, USER_DICTIONARY, UserLookup,
+    UserStore, is_user_file_token,
 };
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
@@ -105,6 +105,54 @@ impl AddonSet {
     fn is_empty(&self) -> bool {
         self.loaded.is_empty()
     }
+
+    /// The addon phrase item behind `token`: its text, its pronunciations as
+    /// `(key sequence, count)` pairs, and its copied unigram frequency — the
+    /// `get_phrase_item` half of the promotion (`pinyin.cpp:2534-2549`).
+    ///
+    /// `None` when no loaded addon dictionary owns `token`. A pronunciation
+    /// whose spelling does not map back to syllable keys is dropped, the same
+    /// rule the reverse rendering applies.
+    fn phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
+        for dict in self.loaded.values() {
+            let Ok(Some(text)) = dict.phrase_text(token) else {
+                continue;
+            };
+            let Ok(prons) = dict.pronunciations(token) else {
+                continue;
+            };
+            let readings = prons
+                .into_iter()
+                .filter_map(|(pinyin, freq)| Some((pinyin_to_keys(&pinyin)?, freq)))
+                .collect();
+            let unigram = dict.unigram_count(token).unwrap_or(0);
+            return Some(AddonPhraseItem {
+                text,
+                readings,
+                unigram,
+            });
+        }
+        None
+    }
+}
+
+/// A chosen addon phrase item, ready to promote into default nibble 5.
+pub(crate) struct AddonPhraseItem {
+    /// Phrase text.
+    pub(crate) text: String,
+    /// Pronunciations as `(key sequence, count)` pairs.
+    pub(crate) readings: Vec<(Vec<PinyinKey>, u64)>,
+    /// The item's copied unigram frequency (`add_phrase_item`).
+    pub(crate) unigram: u64,
+}
+
+/// Splits a `'`-joined pinyin spelling into [`SyllableKey`] ids, or `None`
+/// when any syllable is not a frozen key.
+fn pinyin_to_keys(pinyin: &str) -> Option<Vec<PinyinKey>> {
+    pinyin
+        .split('\'')
+        .map(|syllable| SyllableKey::from_text(syllable).map(|key| key.index() as PinyinKey))
+        .collect()
 }
 
 struct SharedDictInner {
@@ -151,6 +199,16 @@ impl SharedDict {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         addons.load(index, system_dir)
+    }
+
+    /// The addon phrase item behind `token`, for the choose-promotion path.
+    pub(crate) fn addon_phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
+        let addons = self
+            .0
+            .addons
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        addons.phrase_item(token)
     }
 
     fn user_lookup(&self) -> Result<Arc<UserLookup>, DictError> {

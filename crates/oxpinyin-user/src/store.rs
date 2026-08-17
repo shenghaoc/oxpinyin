@@ -22,9 +22,9 @@ use oxpinyin_core::UserCountDelta;
 use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 
 use crate::phrase::{
-    self, ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, FIRST_USER_TOKEN, PinyinKey,
-    USER_DICTIONARY, UserPhrase, UserPronunciation, first_library_token, is_user_file_library,
-    phrase_index_library_index,
+    self, ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT, FIRST_USER_TOKEN,
+    PinyinKey, USER_DICTIONARY, UserPhrase, UserPronunciation, first_library_token,
+    is_user_file_library, phrase_index_library_index,
 };
 use crate::registry::{self, CountSnapshot, RegistryLease, StoreInner};
 use crate::seed;
@@ -636,6 +636,88 @@ impl UserStore {
                 bump_unigram_total(&txn, delta)?;
                 token
             }
+        };
+        txn.commit()?;
+        self.mark_committed_write(db, true);
+        Ok(token)
+    }
+
+    /// Promote a chosen addon phrase into the default-facade
+    /// [`ADDON_DICTIONARY`] (nibble 5) sub-index — `pinyin_choose_candidate`'s
+    /// `ADDON_CANDIDATE` branch (`pinyin.cpp:2532-2561`,
+    /// `docs/findings/addon-choose-promotion.md`).
+    ///
+    /// Copies the addon phrase item across facades: `readings` are the item's
+    /// pronunciations as `(key sequence, count)` pairs and `unigram` is the
+    /// item's copied unigram frequency (upstream `add_phrase_item`, *not* the
+    /// `count * 3` seed of [`Self::add_phrase_in`]). Returns the freshly
+    /// allocated nibble-5 token. Choosing the same phrase again merges its
+    /// readings onto the existing token rather than allocating a duplicate (the
+    /// one recorded divergence from upstream's fresh-token-per-choose).
+    ///
+    /// # Errors
+    ///
+    /// [`UserStoreError::InvalidPhrase`] when the text is empty, too long, or no
+    /// reading's key count matches its Unicode scalar length.
+    /// [`UserStoreError::TokenSpaceExhausted`] when the nibble-5 id space is full.
+    pub fn promote_addon_phrase(
+        &mut self,
+        phrase: &str,
+        readings: &[(Vec<PinyinKey>, u64)],
+        unigram: u64,
+    ) -> Result<Token, UserStoreError> {
+        // Keep only readings whose key count matches the phrase length, exactly
+        // the `_add_phrase` input rule; a phrase with no usable reading cannot
+        // be indexed and is rejected rather than stored unreachable.
+        let valid: Vec<&(Vec<PinyinKey>, u64)> = readings
+            .iter()
+            .filter(|(keys, _)| phrase::phrase_and_keys_valid(phrase, keys))
+            .collect();
+        if valid.is_empty() {
+            return Err(UserStoreError::InvalidPhrase);
+        }
+
+        let db = self.database();
+        let txn = db.begin_write()?;
+        let token = {
+            let mut by_lib = txn.open_table(PHRASE_BY_LIB_TEXT)?;
+            let existing = by_lib.get((ADDON_DICTIONARY, phrase))?.map(|g| g.value());
+            let token = if let Some(token) = existing {
+                token
+            } else {
+                let mut alloc = txn.open_table(ALLOC)?;
+                let raw = alloc
+                    .get(ADDON_DICTIONARY)?
+                    .map_or(first_library_token(ADDON_DICTIONARY), |g| g.value());
+                let token = phrase::canonicalize_library_token(ADDON_DICTIONARY, raw)
+                    .ok_or(UserStoreError::TokenSpaceExhausted)?;
+                let next = phrase::next_library_token_after(ADDON_DICTIONARY, token)
+                    .ok_or(UserStoreError::TokenSpaceExhausted)?;
+                alloc.insert(ADDON_DICTIONARY, next)?;
+                drop(alloc);
+
+                let mut phrases = txn.open_table(PHRASE)?;
+                phrases.insert(token, phrase)?;
+                by_lib.insert((ADDON_DICTIONARY, phrase), token)?;
+
+                // Copy the item's unigram frequency verbatim (add_phrase_item),
+                // not the count*3 add-phrase seed.
+                let mut unigrams = txn.open_table(UNIGRAM)?;
+                let prev = unigrams.get(token)?.map_or(0, |g| g.value());
+                unigrams.insert(token, prev.saturating_add(unigram))?;
+                bump_unigram_total(&txn, unigram)?;
+                token
+            };
+
+            let mut prons = txn.open_table(PRONUNCIATION)?;
+            for (keys, count) in valid {
+                let key_bytes = phrase::encode_keys(keys);
+                let prev = prons
+                    .get((token, key_bytes.as_slice()))?
+                    .map_or(0, |g| g.value());
+                prons.insert((token, key_bytes.as_slice()), prev.saturating_add(*count))?;
+            }
+            token
         };
         txn.commit()?;
         self.mark_committed_write(db, true);
@@ -1900,6 +1982,70 @@ mod tests {
         assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
         assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
         assert_eq!(store.unigram_total().unwrap(), 966);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn key(text: &str) -> PinyinKey {
+        SyllableKey::from_text(text)
+            .expect("frozen syllable")
+            .index() as PinyinKey
+    }
+
+    #[test]
+    fn promote_addon_phrase_allocates_nibble_5_and_copies_frequency() {
+        let path = temp_path("promote-addon");
+        let mut store = UserStore::open(&path).unwrap();
+        let keys = [key("er"), key("huang")];
+
+        // Copies the item's unigram frequency verbatim (add_phrase_item), not
+        // the count*3 seed of the user-add path.
+        let token = store
+            .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
+            .unwrap();
+        assert_eq!(
+            phrase_index_library_index(token),
+            ADDON_DICTIONARY,
+            "promotion lands in default nibble 5"
+        );
+        assert_eq!(token, phrase_index_make_token(ADDON_DICTIONARY, 1));
+        assert_eq!(store.unigram_delta(token).unwrap(), 100);
+        assert_eq!(store.unigram_total().unwrap(), 100);
+        assert_eq!(
+            store.token_for_phrase_in(ADDON_DICTIONARY, "二簧").unwrap(),
+            Some(token)
+        );
+        let phrase = store.phrase(token).unwrap().unwrap();
+        assert_eq!(phrase.text(), "二簧");
+        assert_eq!(phrase.pronunciations().len(), 1);
+        assert_eq!(phrase.pronunciations()[0].keys(), keys);
+        assert_eq!(phrase.pronunciations()[0].count(), 100);
+
+        // Re-promoting the same phrase merges onto the existing token — no
+        // duplicate allocation, unigram unchanged, reading count accrues.
+        let again = store
+            .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
+            .unwrap();
+        assert_eq!(again, token, "re-promotion reuses the nibble-5 token");
+        assert_eq!(store.unigram_delta(token).unwrap(), 100);
+        assert_eq!(store.unigram_total().unwrap(), 100);
+        assert_eq!(
+            store.phrase(token).unwrap().unwrap().pronunciations()[0].count(),
+            200
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn promote_addon_phrase_rejects_a_reading_of_the_wrong_length() {
+        let path = temp_path("promote-addon-invalid");
+        let mut store = UserStore::open(&path).unwrap();
+        // "二簧" is two scalars; a single-key reading cannot index it.
+        let err = store
+            .promote_addon_phrase("二簧", &[(vec![key("er")], 100)], 100)
+            .unwrap_err();
+        assert!(matches!(err, UserStoreError::InvalidPhrase));
+        assert!(!store.has_user_data());
         let _ = std::fs::remove_file(&path);
     }
 }
