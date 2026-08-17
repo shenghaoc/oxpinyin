@@ -52,6 +52,15 @@ when the exported crate is the workspace **root**. Here the crate is a normal
 member (`crates/oxpinyin-capi`) and is selected via the `capi` feature plus
 `-p oxpinyin-capi`.
 
+## Consumer detection
+
+The ibus-libpinyin fork (and any other C consumer) detects oxpinyin via
+pkg-config using the `.pc` name `oxpinyin`:
+
+```
+PKG_CHECK_MODULES(LIBPINYIN, [oxpinyin])
+```
+
 ## Static library decision: ship it
 
 cargo-c always builds a `.a` for a `staticlib` crate and has **no** metadata
