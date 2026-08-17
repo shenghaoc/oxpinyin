@@ -67,7 +67,7 @@ fail() {
 
 # check_message — the message-level rules (R1–R2) shared by CI mode and the
 # commit-msg hook. Operates on the globals $short, $subject, $trailers;
-# sets r1..r3 and increments $fails, emitting ::error:: lines per violation.
+# sets r1 and r2 and increments $fails, emitting ::error:: lines per violation.
 #
 # R4 (author/committer identity) is an identity rule and is deliberately NOT
 # here — it is CI-only (the hook runs before the commit exists, so there is no

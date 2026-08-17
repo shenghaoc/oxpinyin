@@ -45,12 +45,8 @@ notes are collected to report back to libpinyin once the rewrite is complete.
 
 ## Attribution
 
-```
-Assisted-by: AGENT_NAME:MODEL_VERSION
-```
-
-Nothing after the model. Trailers are a **set** (no duplicates). Never use
-`Co-Authored-By` for agents.
+Emit exactly one trailer: `Assisted-by: <AgentName>:<model-id>`.
+Nothing after the model. Never use `Co-Authored-By` for agents.
 
 The commit-message linter (`.github/scripts/lint-commits.sh`) enforces this on
 every PR commit (R1, R2, R4) and at commit time via `.githooks/commit-msg`
