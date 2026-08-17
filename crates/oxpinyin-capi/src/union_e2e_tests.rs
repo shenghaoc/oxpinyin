@@ -131,8 +131,62 @@ fn predicted_candidates_include_trained_bigram_successors() {
                     | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
             )
         }),
-        "punctuation is stubbed empty"
+        "你 has no punct.table rows, so the list stays phrase-only"
     );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn predicted_candidates_prepend_punctuation_for_hao() {
+    let user_dir = TempUserDir::new("predict-punct");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let prefix = cstr("好");
+    assert!(pinyin_guess_predicted_candidates_with_punctuations(
+        instance,
+        prefix.as_ptr()
+    ));
+    // SAFETY: live instance after guess_predicted.
+    let inst = unsafe { instance_ref(instance) };
+    let puncts: Vec<&str> = inst
+        .candidates
+        .iter()
+        .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE)
+        .map(|c| c.text.to_str().unwrap_or(""))
+        .collect();
+    assert_eq!(puncts, ["，", "。"]);
+    assert_eq!(
+        inst.candidates[0].candidate_type,
+        lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
+    );
+    assert!(inst.candidates[0].token.is_none());
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn predicted_punctuation_uses_shortest_suffix_first_and_dedups() {
+    let user_dir = TempUserDir::new("predict-punct-suffix");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let prefix = cstr("中国");
+    assert!(pinyin_guess_predicted_candidates_with_punctuations(
+        instance,
+        prefix.as_ptr()
+    ));
+    // SAFETY: live instance after guess_predicted.
+    let inst = unsafe { instance_ref(instance) };
+    let puncts: Vec<&str> = inst
+        .candidates
+        .iter()
+        .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE)
+        .map(|c| c.text.to_str().unwrap_or(""))
+        .collect();
+    // last-1 国 (，) then last-2 中国 (none). 中 is not a suffix.
+    assert_eq!(puncts, ["，"]);
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);

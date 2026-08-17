@@ -2,8 +2,9 @@
  * predict-diff.c — W11 phrase-prediction differential (non-punctuation).
  *
  * Train a user phrase, then guess predicted candidates for a prefix and
- * print type|text. Punctuation is stubbed empty on oxpinyin (#104);
- * this driver compares the non-punctuation prediction list.
+ * print type|text. Punctuation (type 8) is omitted: the capi side uses
+ * mini tables, so a system suffix such as 测 can emit puncts on the
+ * oracle only. Phrase bigrams stay comparable. See run-punct-diff.sh.
  *
  * Usage: ./predict-diff <path-to-so> <systemdir>
  */

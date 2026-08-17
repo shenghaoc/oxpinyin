@@ -11,10 +11,13 @@
 //!   `oracle-ffi` feature and the pin-built oracle (Linux-first).
 //! - `export-addon --table-dir <dir> --out-dir <dir> [--mini]` — public-ABI
 //!   export of addon `.table` text (no oracle FFI).
+//! - `export-punct --table-dir <dir> --out-dir <dir>` — public-ABI export
+//!   of `punct.table` text (no oracle FFI).
 
 #![warn(missing_docs)]
 
 mod addon;
+mod punct;
 mod tkrzw;
 
 #[cfg(feature = "oracle-ffi")]
@@ -57,7 +60,8 @@ fn usage() -> ! {
     eprintln!(
         "Usage:\n  oxpinyin-migrate convert <input.tkh> [-o <output.redb>] [-n <limit>]\n  \
          oxpinyin-migrate export --out-dir <dir> [--mini]   (requires --features oracle-ffi)\n  \
-         oxpinyin-migrate export-addon --table-dir <dir> --out-dir <dir> [--mini]"
+         oxpinyin-migrate export-addon --table-dir <dir> --out-dir <dir> [--mini]\n  \
+         oxpinyin-migrate export-punct --table-dir <dir> --out-dir <dir>"
     );
     std::process::exit(2);
 }
@@ -170,12 +174,39 @@ fn export_addon(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     )
 }
 
+fn export_punct(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut table_dir: Option<PathBuf> = None;
+    let mut out_dir: Option<PathBuf> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--table-dir" => {
+                i += 1;
+                table_dir = Some(PathBuf::from(args.get(i).unwrap_or_else(|| usage())));
+            }
+            "--out-dir" => {
+                i += 1;
+                out_dir = Some(PathBuf::from(args.get(i).unwrap_or_else(|| usage())));
+            }
+            _ => usage(),
+        }
+        i += 1;
+    }
+
+    punct::run(
+        &table_dir.unwrap_or_else(|| usage()),
+        &out_dir.unwrap_or_else(|| usage()),
+    )
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("convert") => convert(&args[2..]),
         Some("export") => export(&args[2..]),
         Some("export-addon") => export_addon(&args[2..]),
+        Some("export-punct") => export_punct(&args[2..]),
         // The bare form `oxpinyin-migrate <input.tkh> [-o …] [-n …]` is the
         // invocation frozen in docs/findings/data-formats.md §1.1; keep it
         // as an alias for `convert`.

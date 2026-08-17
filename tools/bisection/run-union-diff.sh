@@ -6,7 +6,7 @@
 # pin-built libpinyin. Four assertions, all exact:
 #   1. imported user phrase at the same candidate index;
 #   2. ADDON candidates for the same loaded library;
-#   3. train-then-predict phrase list (punctuation omitted; #104).
+#   3. train-then-predict phrase list (punctuation omitted; see punct-diff).
 #   4. user-bigram successors at count 9 and 10 via union-edge-diff.c
 #      (pinyin.cpp:2349-2350). Public train first-seeds 69, so 9/10 are planted.
 #

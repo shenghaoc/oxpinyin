@@ -16,7 +16,7 @@ use oxpinyin_core::{
     PINYIN_INCOMPLETE, PhraseEntry, PhraseToken, SyllableKey, UserCountDelta, ZhuyinParse,
     ZhuyinScheme,
 };
-use oxpinyin_data::{BigramLanguageModel, DictError, LmError, SystemDictionary};
+use oxpinyin_data::{BigramLanguageModel, DictError, LmError, PunctTable, SystemDictionary};
 use oxpinyin_engine::{CandidateKind, Config, Session, StoragePaths};
 use oxpinyin_user::{
     ExportedPhrase, NETWORK_DICTIONARY, SENTENCE_START, USER_DICTIONARY, UserLookup, UserStore,
@@ -112,6 +112,7 @@ struct SharedDictInner {
     user: Option<UserStore>,
     user_lookup: Mutex<Option<(u64, Arc<UserLookup>)>>,
     addons: Arc<RwLock<AddonSet>>,
+    punct: PunctTable,
 }
 
 /// `Arc` wrapper so instances share the context's dictionary without a
@@ -124,17 +125,23 @@ impl SharedDict {
         system: SystemDictionary,
         user: Option<UserStore>,
         addons: Arc<RwLock<AddonSet>>,
+        punct: PunctTable,
     ) -> Self {
         Self(Arc::new(SharedDictInner {
             system,
             user,
             user_lookup: Mutex::new(None),
             addons,
+            punct,
         }))
     }
 
     pub(crate) fn system(&self) -> &SystemDictionary {
         &self.0.system
+    }
+
+    pub(crate) fn punctuations(&self, token: u32) -> &[String] {
+        self.0.punct.punctuations(token)
     }
 
     pub(crate) fn load_addon(&self, index: u8, system_dir: &Path) -> bool {
@@ -397,10 +404,16 @@ impl CapiContext {
         };
 
         let addons = Arc::new(RwLock::new(AddonSet::new()));
+        let punct = PunctTable::open_optional(&sys.join("punct.redb"));
         Some(Self {
             paths,
             config: Config::default(),
-            dict: Some(SharedDict::new(dict, user.clone(), Arc::clone(&addons))),
+            dict: Some(SharedDict::new(
+                dict,
+                user.clone(),
+                Arc::clone(&addons),
+                punct,
+            )),
             lm: Some(SharedLm {
                 inner: Arc::new(lm),
                 user: user.clone(),
