@@ -18,11 +18,18 @@ Two families, both deterministic against the pinned oracle
   `crates/oxpinyin-migrate/src/export.rs`), the phrase tokens those keys
   reference, and the bigram entries whose previous token is one of those
   phrases — every kept record byte-identical to the full export.
-  `punct.redb` and the aggregate `addon_pinyin_index.redb` /
-  `addon_phrase_index.redb` are verbatim `oxpinyin-migrate convert` output
-  of the raw Tkrzw files. Those two `addon_*.redb` files are **superseded**
-  for runtime use: they are the undocumented sectioned format, kept only
-  because this manifest still pins them.
+  `punct.redb` is the Option A public-ABI export of `punct.table` (token →
+  NUL-terminated UTF-8 puncts), regenerated with
+
+  ```sh
+  cargo run -p oxpinyin-migrate -- export-punct --table-dir <model-data> --out-dir fixtures/w3
+  ```
+
+  The aggregate `addon_pinyin_index.redb` / `addon_phrase_index.redb` are
+  verbatim `oxpinyin-migrate convert` output of the raw Tkrzw files. Those
+  two `addon_*.redb` files are **superseded** for runtime use: they are
+  the undocumented sectioned format, kept only because this manifest still
+  pins them.
   `addon_4_pinyin_index.redb` / `addon_4_phrase_index.redb` are the W11
   Option A public-ABI export of a mini `art.table` subset:
 

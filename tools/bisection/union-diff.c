@@ -8,8 +8,9 @@
  *      report the index of that phrase in the candidate list.
  *   2. Load addon library 4 (art); print ADDON_CANDIDATE texts for "erhuang".
  *   3. Train 测测 → 你好, then guess predicted candidates for "测测".
- *      Phrase-prediction only: PREDICTED_PUNCTUATION (8) is omitted
- *      (#104: punct.redb is not public-ABI consumable).
+ *      Phrase-prediction only: PREDICTED_PUNCTUATION (8) is omitted.
+ *      Mini vs full prefix tokens (测) would diverge on punctuation;
+ *      that list is compared by punct-diff.c.
  *
  * Sort profile (not the empty-store parity profile, which never trains):
  *   guess:  SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY

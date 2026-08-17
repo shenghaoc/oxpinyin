@@ -60,6 +60,7 @@ impl TempSystemDir {
             "bigram.redb",
             "addon_4_pinyin_index.redb",
             "addon_4_phrase_index.redb",
+            "punct.redb",
         ] {
             let src = system_dir().join(name);
             if src.is_file() {

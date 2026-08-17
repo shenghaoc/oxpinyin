@@ -39,8 +39,9 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
 ///     pinyin_instance_t * instance, const char * prefix);
 /// ```
 ///
-/// Phrase prediction; punctuation prefix is empty until #104
-/// (`punct.redb` is not public-ABI consumable).
+/// Phrase prediction, then punctuation candidates prepended from
+/// `punct.redb` (`pinyin.cpp:2454-2498`). Always returns `true`, matching
+/// upstream, even when the prefix matched no phrase-table suffix.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     instance: *mut PinyinInstance,
@@ -55,7 +56,7 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
         let inst = unsafe { instance_mut(instance) };
         // SAFETY: `prefix` is a C string from the caller (null OK).
         let prefix = unsafe { cstr_to_string(prefix) };
-        crate::predict::guess_predicted(inst, &prefix)
+        crate::predict::guess_predicted_with_punctuations(inst, &prefix)
     })
 }
 

@@ -1,10 +1,11 @@
-//! Phrase prediction: prefixes → user-bigram successors → prefix suggestions.
+//! Phrase prediction: prefixes → user-bigram successors → prefix suggestions,
+//! then punctuation prepended from the Option A `punct.redb`.
 //!
 //! Reproduces `pinyin_guess_predicted_candidates` (`pinyin.cpp:2411-2451`)
-//! without punctuation (`docs/findings/phrase-union.md` §3.6 / §6.5).
-//! `punct.redb` is a raw Tkrzw convert, not the public-ABI schema, so the
-//! punctuation prefix stays empty (#104).
+//! and the punctuation prefix of
+//! `pinyin_guess_predicted_candidates_with_punctuations` (`:2454-2498`).
 
+use std::collections::HashSet;
 use std::ffi::CString;
 
 use oxpinyin_engine::CandidateKind;
@@ -72,6 +73,47 @@ pub(crate) fn guess_predicted(inst: &mut CapiInstance, prefix: &str) -> bool {
         });
     }
     true
+}
+
+/// Phrase prediction plus the punctuation prefix (`pinyin.cpp:2454-2498`).
+///
+/// Upstream always returns `true` after the prepend, even when the prefix
+/// matched no phrase-table suffix.
+pub(crate) fn guess_predicted_with_punctuations(inst: &mut CapiInstance, prefix: &str) -> bool {
+    let prefixes = compute_prefixes(&inst.dict, inst.user.as_ref(), prefix);
+    let _ = guess_predicted(inst, prefix);
+    prepend_punctuations(inst, &prefixes);
+    true
+}
+
+fn prepend_punctuations(inst: &mut CapiInstance, prefixes: &[u32]) {
+    let mut puncts = Vec::new();
+    let mut seen = HashSet::new();
+    for token in prefixes {
+        for punct in inst.dict.punctuations(*token) {
+            if seen.insert(punct.as_str()) {
+                puncts.push(punct.clone());
+            }
+        }
+    }
+    if puncts.is_empty() {
+        return;
+    }
+    let rest = std::mem::take(&mut inst.candidates);
+    for text in puncts {
+        let Ok(text) = CString::new(text) else {
+            continue;
+        };
+        inst.candidates.push(CapiCandidate {
+            text,
+            kind: CandidateKind::Phrase,
+            candidate_type: lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE,
+            nbest_index: 0,
+            consumed_bytes: 0,
+            token: None,
+        });
+    }
+    inst.candidates.extend(rest);
 }
 
 fn compute_prefixes(dict: &SharedDict, user: Option<&UserStore>, prefix: &str) -> Vec<u32> {
