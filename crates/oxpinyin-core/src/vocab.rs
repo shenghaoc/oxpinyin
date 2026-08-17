@@ -14,9 +14,9 @@ use crate::options::{
     PINYIN_AMB_Z_ZH,
 };
 use crate::{
-    option_alias_canonical, Completeness, FULL_PINYIN_SYLLABLES, FULL_PINYIN_SYLLABLE_COUNT,
-    INCOMPLETE_PINYIN_KEYS, INCOMPLETE_PINYIN_KEY_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
-    OPTION_ONLY_COMPLETE_SYLLABLE_COUNT,
+    Completeness, FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
+    INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLE_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
+    option_alias_canonical,
 };
 
 /// Number of keys addressable by a [`SyllableKey`].
@@ -325,7 +325,7 @@ impl PhraseEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::{PhraseEntry, PhraseToken, SyllableKey, SYLLABLE_KEY_COUNT};
+    use super::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
     use crate::OptionBits;
     use crate::{
         Completeness, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLES,
