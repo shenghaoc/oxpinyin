@@ -1,7 +1,7 @@
 # Phrase-index union at lookup — W11 Phase 0 scope and proposed design
 
 Date: 2026-08-17 · Status: **Phase 0 approved** · Workstream: W11 ·
-Base: current main (`1c7cbd0`)
+Base: current main (`5fcce53`)
 
 This finding is the mandatory scope-and-design gate for W11. It records what
 upstream actually unions, maps oxpinyin's current single-system-index
@@ -527,11 +527,11 @@ Unique names under `tools/bisection/`, not edits to `run-import-diff.sh` or
    a second nibble in the same path, report and it splits out). Default
    nibble 5 (`ADDON_DICTIONARY` / `addon.bin`) is the same `USER_FILE`
    slot and the choose-promotion target (`pinyin.cpp:2532-2561`); same
-   split-out rule if promotion is more than a third nibble.
+   split-out rule if promotion is more than a third nibble (#105).
 3. **Punctuation prediction is conditional.** Check `punct.redb`
    consumability first. Consumable → include punctuation in the first
    prediction PR. Not → stub empty, run the prediction differential in
-   non-punctuation mode, register the gap with a named follow-up. Phrase
+   non-punctuation mode, register the gap as #104. Phrase
    prediction is differential-exact in the first PR either way.
 4. **Trait additions are within W11 ground** (defaulted methods; other
    implementors compile unchanged). W10 owns `config.rs` / parser masking;
