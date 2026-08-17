@@ -11,6 +11,13 @@ use oxpinyin_core::SyllableKey;
 
 use crate::store::Token;
 
+/// Sub-index a chosen addon phrase is promoted into (`novel_types.h:159`).
+///
+/// A `USER_FILE` sub-index of the default facade (`addon.bin`,
+/// `docs/findings/phrase-union.md` §3.2). Choosing an `ADDON_CANDIDATE` copies
+/// it here from the separate addon facade (`docs/findings/addon-choose-promotion.md`).
+pub const ADDON_DICTIONARY: u8 = 5;
+
 /// Sub-index network phrases live in (`novel_types.h:160`).
 pub const NETWORK_DICTIONARY: u8 = 6;
 
@@ -57,10 +64,16 @@ pub const fn phrase_index_make_token(phrase_index: u8, token: Token) -> Token {
     (((phrase_index as Token) << 24) & PHRASE_INDEX_LIBRARY_MASK) | (token & PHRASE_MASK)
 }
 
-/// Whether `index` is a default-facade `USER_FILE` nibble (network or user).
+/// Whether `index` is a default-facade `USER_FILE` nibble.
+///
+/// The three sub-indexes libpinyin persists to the user directory:
+/// [`ADDON_DICTIONARY`] (`addon.bin`, populated by choose-promotion),
+/// [`NETWORK_DICTIONARY`] (`network.bin`), and [`USER_DICTIONARY`]
+/// (`user.bin`) (`docs/findings/phrase-union.md` §3.2). A promoted addon
+/// phrase lands in nibble 5, so it must read back as a user-file token.
 #[must_use]
 pub const fn is_user_file_library(index: u8) -> bool {
-    index == NETWORK_DICTIONARY || index == USER_DICTIONARY
+    index == ADDON_DICTIONARY || index == NETWORK_DICTIONARY || index == USER_DICTIONARY
 }
 
 /// Whether `token` lives in [`USER_DICTIONARY`] — the same nibble test as
@@ -245,11 +258,20 @@ mod tests {
     #[test]
     fn constants_match_pinned_spec() {
         // docs/findings/user-store.md §3 constants table + novel_types.h.
+        assert_eq!(ADDON_DICTIONARY, 5);
         assert_eq!(NETWORK_DICTIONARY, 6);
         assert_eq!(USER_DICTIONARY, 7);
+        // The three USER_FILE sub-indexes of the default facade
+        // (addon.bin / network.bin / user.bin, phrase-union.md §3.2).
+        assert!(is_user_file_library(ADDON_DICTIONARY));
         assert!(is_user_file_library(NETWORK_DICTIONARY));
         assert!(is_user_file_library(USER_DICTIONARY));
+        // Everything below nibble 5 is a SYSTEM_FILE (or reserved), never a
+        // user-file library: 4 is MERGED_DICTIONARY, 0 is the reserved zero.
+        assert!(!is_user_file_library(0));
+        assert!(!is_user_file_library(1));
         assert!(!is_user_file_library(4));
+        assert!(!is_user_file_library(8));
         assert_eq!(PHRASE_MASK, 0x00FF_FFFF);
         assert_eq!(PHRASE_INDEX_LIBRARY_MASK, 0x0F00_0000);
         assert_eq!(MAX_PHRASE_LENGTH, 16);

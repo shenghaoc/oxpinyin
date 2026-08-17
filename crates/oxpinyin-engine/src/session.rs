@@ -288,6 +288,34 @@ where
     /// current list does not hold — including a stale index left over from an
     /// earlier list — and leaves the session usable.
     pub fn select(&mut self, index: usize) -> Result<Selection, EngineError> {
+        self.select_inner(index, None)
+    }
+
+    /// Chooses the candidate at `index`, recording `promoted_token` in the
+    /// sentence history in place of the candidate's own token.
+    ///
+    /// The addon-promotion path (`pinyin.cpp:2532-2561`,
+    /// `docs/findings/addon-choose-promotion.md`): a chosen `ADDON_CANDIDATE`
+    /// becomes a `NORMAL_CANDIDATE` at a freshly allocated default-facade
+    /// nibble-5 token, and it is that promoted token the constraint — and a
+    /// later `pinyin_train` — records, not the addon-facade token.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Session::select`].
+    pub fn select_promoted(
+        &mut self,
+        index: usize,
+        promoted_token: PhraseToken,
+    ) -> Result<Selection, EngineError> {
+        self.select_inner(index, Some(promoted_token))
+    }
+
+    fn select_inner(
+        &mut self,
+        index: usize,
+        token_override: Option<PhraseToken>,
+    ) -> Result<Selection, EngineError> {
         let Some(candidate) = self.candidates.get(index) else {
             return Err(EngineError::CandidateIndexOutOfRange {
                 index,
@@ -297,7 +325,7 @@ where
 
         let text = candidate.text().to_owned();
         let advance = candidate.consumed_bytes();
-        let token = candidate.token();
+        let token = token_override.or_else(|| candidate.token());
         self.selected.push_str(&text);
         if let Some(token) = token {
             self.history.push(token);

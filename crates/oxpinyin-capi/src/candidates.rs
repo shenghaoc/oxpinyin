@@ -2,10 +2,14 @@
 
 use std::os::raw::c_int;
 
+use oxpinyin_core::PhraseToken;
+use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::{SENTENCE_START, is_user_token};
 
 use crate::ffi::ffi_catch;
-use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
+use crate::state::{
+    CapiCandidate, CapiInstance, candidate_ptr, candidate_ref, instance_mut, instance_ref,
+};
 use crate::types::{GChar, GUint, LookupCandidate, PinyinInstance, lookup_candidate_type_t};
 
 /// Get the number of candidates.
@@ -272,11 +276,14 @@ pub extern "C" fn pinyin_remove_user_candidate(
 /// Resolves the candidate by pointer identity over the instance's snapshot
 /// and calls `Session::select`, which records the constraint — the selected
 /// token joins the session's sentence record. Per §2.2 the *bigram* training
-/// of a normal selection is deferred to [`pinyin_train`]; this call writes
-/// nothing to the user store. Addon and predicted types are emitted; a
-/// chosen `ADDON_CANDIDATE` is **not** promoted into default nibble 5
-/// (`addon.bin`) — that is #105 (`pinyin.cpp:2532-2561`). The §2.2
-/// special-candidate unigram training (`LONGER_CANDIDATE`,
+/// of a normal selection is deferred to [`pinyin_train`]; a `NORMAL_CANDIDATE`
+/// writes nothing to the user store. A chosen `ADDON_CANDIDATE` is promoted
+/// into the default facade's nibble-5 (`ADDON_DICTIONARY`, `addon.bin`)
+/// sub-index first — #105 (`pinyin.cpp:2532-2561`,
+/// `docs/findings/addon-choose-promotion.md`): the addon phrase item is copied
+/// across facades, the snapshot candidate becomes a `NORMAL_CANDIDATE` at the
+/// freshly allocated nibble-5 token, and it is that token the constraint
+/// records. The §2.2 special-candidate unigram training (`LONGER_CANDIDATE`,
 /// `SORT_WITHOUT_SENTENCE_CANDIDATE`) has no reachable call site.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_choose_candidate(
@@ -302,11 +309,46 @@ pub extern "C" fn pinyin_choose_candidate(
             return -1;
         };
         let consumed_bytes = inst.candidates[index].consumed_bytes;
-        match inst.session.select(index) {
+        // Addon promotion (`pinyin.cpp:2532-2561`): copy the addon phrase into
+        // default nibble 5 and select under the promoted token; otherwise a
+        // plain select records the candidate's own token.
+        let selection = match try_promote_addon(inst, index) {
+            Some(promoted) => inst.session.select_promoted(index, promoted),
+            None => inst.session.select(index),
+        };
+        match selection {
             Ok(_) => (offset + consumed_bytes) as c_int,
             Err(_) => -1,
         }
     })
+}
+
+/// Promotes the chosen candidate when it is an `ADDON_CANDIDATE`
+/// (`pinyin.cpp:2532-2561`): copies the addon phrase item into the default
+/// facade's nibble-5 sub-index, rewrites the snapshot candidate to a
+/// `NORMAL_CANDIDATE` at the promoted token, and returns that token so the
+/// constraint records it in place of the addon-facade token.
+///
+/// `None` — leaving a plain selection — when the candidate is not an addon
+/// candidate, the addon item cannot be resolved, there is no user store to
+/// promote into, or the store write fails.
+fn try_promote_addon(inst: &mut CapiInstance, index: usize) -> Option<PhraseToken> {
+    if inst.candidates[index].kind != CandidateKind::Addon {
+        return None;
+    }
+    let addon_token = inst.candidates[index].token?;
+    let item = inst.dict.addon_phrase_item(addon_token.value())?;
+    let promoted = inst
+        .user
+        .as_mut()?
+        .promote_addon_phrase(&item.text, &item.readings, item.unigram)
+        .ok()?;
+    let promoted = PhraseToken::new(promoted);
+    let snapshot = &mut inst.candidates[index];
+    snapshot.candidate_type = lookup_candidate_type_t::NORMAL_CANDIDATE;
+    snapshot.kind = CandidateKind::Phrase;
+    snapshot.token = Some(promoted);
+    Some(promoted)
 }
 
 /// Choose a predicted candidate.
