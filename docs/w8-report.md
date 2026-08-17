@@ -264,8 +264,9 @@ wire-level parity holds on the defined bootstrap surface (with the
 - **W13** — double-pinyin and bopomofo input schemes, including the
   provisional parsers and auxiliary text.
 
-**Release note.** `v0.1.0` is tagged after the pre-release history
-rewrite, on the rewritten `main`.
+**Release note.** `v0.1.0` is tagged on the existing history;
+commit-management failures are documented in
+`docs/findings/commit-hygiene-failures.md`, not rewritten away.
 
 ---
 
