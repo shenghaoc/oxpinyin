@@ -57,7 +57,7 @@ member (`crates/oxpinyin-capi`) and is selected via the `capi` feature plus
 The ibus-libpinyin fork (and any other C consumer) detects oxpinyin via
 pkg-config using the `.pc` name `oxpinyin`:
 
-```
+```autoconf
 PKG_CHECK_MODULES(LIBPINYIN, [oxpinyin])
 ```
 

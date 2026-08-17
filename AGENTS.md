@@ -83,10 +83,13 @@ Linux/macOS/Windows. Oracle, capi, migrate: Linux-first.
 
 Fetch and rebase onto the current landing tip immediately before every
 push and before any merge. `git log origin/main..HEAD` must contain only
-this workstream's commits; the diffstat must delete nothing the branch
-does not own. Watch for the stale-base optical illusion (other people's
-merged work appearing as deletions). Re-run pins after any rebase that
-touches engine, capi, or data. Whoever merges later re-measures rather
-than assumes.
+this workstream's commits — the ones this branch introduced, not
+rewritten copies of already-landed work. The diffstat must delete
+nothing the branch does not own. Watch for the stale-base optical
+illusion (other people's merged work appearing as deletions). Re-run
+pins after any rebase that changes the engine, capi, or data crates.
+Whoever merges later re-measures those pins rather than assuming the
+pre-rebase numbers still hold.
 
-fmt failures are merge blockers; a fmt-only commit is always safe.
+fmt failures are merge blockers; a fmt-only commit is always safe
+when the diff is formatting-only and reviewed.
