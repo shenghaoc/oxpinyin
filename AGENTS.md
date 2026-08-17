@@ -78,3 +78,15 @@ lints.
 
 `rust-toolchain.toml` is the only supported toolchain. Portable crates:
 Linux/macOS/Windows. Oracle, capi, migrate: Linux-first.
+
+## Rebase discipline
+
+Fetch and rebase onto the current landing tip immediately before every
+push and before any merge. `git log origin/main..HEAD` must contain only
+this workstream's commits; the diffstat must delete nothing the branch
+does not own. Watch for the stale-base optical illusion (other people's
+merged work appearing as deletions). Re-run pins after any rebase that
+touches engine, capi, or data. Whoever merges later re-measures rather
+than assumes.
+
+fmt failures are merge blockers; a fmt-only commit is always safe.

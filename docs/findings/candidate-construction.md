@@ -782,8 +782,10 @@ absent                  1           (70; re-freeze unchanged)
 Serial == parallel and debug == release, bit-identical. The single remaining
 absent is `ni''hao`, the frozen doubled-apostrophe path disagreement
 (`segment-graph.md`, §3.1) — absent under every construction, not a scan
-residual. The tie budget: ~279k adjacent fully-tied pairs across ~9.8k inputs
-absorbed by the stable sort; 1,036 depth-10 order-only tie-swaps (previously 1,030).
+residual. The tie budget: 971,389 adjacent fully-tied pairs across ~9.8k
+inputs absorbed by the stable sort (was ~279k; the increase is the #87
+candidate-list cap removal); 1,036 depth-10 order-only tie-swaps
+(previously 1,030).
 
 ### 8.3 What remains open, and what would re-open a stage
 

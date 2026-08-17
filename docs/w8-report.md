@@ -124,6 +124,9 @@ caveats). Training was verified under a **second** profile
 compacted from 1,056,768 bytes to 32,768 bytes. That is train → modified
 → timeout → save. It is not part of the TIE-ORDER-ONLY stream.
 
+**Erratum.** The gap list omitted the sentence surface. That surface
+(W14 / #100) was not yet in scope at the time of this report.
+
 ---
 
 ## 3. The pin history
