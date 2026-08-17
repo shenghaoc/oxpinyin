@@ -17,7 +17,7 @@ use oxpinyin_core::{
 };
 use oxpinyin_data::{BigramLanguageModel, DictError, LmError, SystemDictionary};
 use oxpinyin_engine::{CandidateKind, Config, Session, StoragePaths};
-use oxpinyin_user::{is_user_token, ExportedPhrase, UserStore, SENTENCE_START, USER_DICTIONARY};
+use oxpinyin_user::{ExportedPhrase, SENTENCE_START, USER_DICTIONARY, UserStore, is_user_token};
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 

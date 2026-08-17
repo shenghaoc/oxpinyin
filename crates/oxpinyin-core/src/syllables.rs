@@ -2,8 +2,8 @@
 
 use crate::options::{
     OptionBits, PINYIN_AMB_S_SH, PINYIN_AMB_Z_ZH, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU,
-    PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_ON_ONG, PINYIN_CORRECT_UEI_UI, PINYIN_CORRECT_UEN_UN,
-    PINYIN_CORRECT_UE_VE, PINYIN_CORRECT_V_U,
+    PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_ON_ONG, PINYIN_CORRECT_UE_VE, PINYIN_CORRECT_UEI_UI,
+    PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_V_U,
 };
 
 /// Number of complete syllables in [`FULL_PINYIN_SYLLABLES`].
@@ -213,8 +213,8 @@ mod tests {
     use std::collections::HashSet;
 
     use super::{
-        FULL_PINYIN_SYLLABLES, FULL_PINYIN_SYLLABLE_COUNT, INCOMPLETE_PINYIN_KEYS,
-        INCOMPLETE_PINYIN_KEY_COUNT, MAX_SYLLABLE_LEN,
+        FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
+        INCOMPLETE_PINYIN_KEYS, MAX_SYLLABLE_LEN,
     };
 
     /// Whether `byte` is a vowel for the initial-only key rule.
@@ -304,9 +304,9 @@ mod tests {
     #[test]
     fn correction_aliases_resolve_to_their_canonical_syllable() {
         use super::{
-            option_alias_canonical, OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU,
-            PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_ON_ONG, PINYIN_CORRECT_UEI_UI,
-            PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_UE_VE, PINYIN_CORRECT_V_U,
+            OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU, PINYIN_CORRECT_MG_NG,
+            PINYIN_CORRECT_ON_ONG, PINYIN_CORRECT_UE_VE, PINYIN_CORRECT_UEI_UI,
+            PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_V_U, option_alias_canonical,
         };
 
         let cases = [
