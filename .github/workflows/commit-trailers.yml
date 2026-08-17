@@ -8,10 +8,11 @@ permissions:
   contents: read
 
 jobs:
-  # Stable job name so it can be marked a required status check:
-  #   commit-trailers / lint
-  lint:
-    name: lint
+  # Job names are the required-check contexts. They must not collide
+  # with CI's `lint` / `test` (bare-name matching treated a green
+  # trailer job as the rustfmt gate on #98).
+  trailer-lint:
+    name: trailer-lint
     runs-on: ubuntu-latest
     steps:
       # Pinned to the v7.0.1 tag commit; verified against the
@@ -35,8 +36,8 @@ jobs:
   # Gate the linter itself: run the self-contained fixture harness on every
   # PR so a change to the script or workflow cannot silently regress the
   # rule logic.
-  test:
-    name: test
+  trailer-test:
+    name: trailer-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
