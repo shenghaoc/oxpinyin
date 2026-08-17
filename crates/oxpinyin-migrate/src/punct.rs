@@ -49,10 +49,24 @@ pub fn parse_punct_line(line: &str) -> Option<PunctRow> {
     })
 }
 
-/// Reads every well-formed row from a `punct.table` file.
+/// Reads every data row from a `punct.table` file.
+///
+/// Blank lines and `#` comments are skipped. Any other unparsable line is
+/// an error, identified by 1-based line number and content.
 pub fn read_punct_file(path: &Path) -> Result<Vec<PunctRow>, Box<dyn std::error::Error>> {
     let text = fs::read_to_string(path)?;
-    Ok(text.lines().filter_map(parse_punct_line).collect())
+    let mut rows = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some(row) = parse_punct_line(trimmed) else {
+            return Err(format!("malformed punct.table line {}: {trimmed}", index + 1).into());
+        };
+        rows.push(row);
+    }
+    Ok(rows)
 }
 
 /// Serialises rows into token → NUL-terminated UTF-8 punctuation lists.
@@ -126,5 +140,28 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, 16_778_715u32.to_le_bytes());
         assert_eq!(entries[0].1, b"\xef\xbc\x8c\x00\xe3\x80\x82\x00");
+    }
+
+    #[test]
+    fn read_punct_file_skips_blank_and_comment_and_rejects_malformed() {
+        let dir = std::env::temp_dir().join(format!(
+            "oxpinyin-punct-parse-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let good = dir.join("good.table");
+        std::fs::write(&good, "# comment\n\n16778715 的 ， 275240\n").unwrap();
+        assert_eq!(read_punct_file(&good).unwrap().len(), 1);
+
+        let bad = dir.join("punct.table");
+        std::fs::write(&bad, "# comment\nnot-a-row\n").unwrap();
+        let err = read_punct_file(&bad).unwrap_err().to_string();
+        assert!(err.contains("line 2"), "{err}");
+        assert!(err.contains("not-a-row"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
