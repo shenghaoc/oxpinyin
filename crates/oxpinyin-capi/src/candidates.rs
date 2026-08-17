@@ -273,10 +273,11 @@ pub extern "C" fn pinyin_remove_user_candidate(
 /// and calls `Session::select`, which records the constraint — the selected
 /// token joins the session's sentence record. Per §2.2 the *bigram* training
 /// of a normal selection is deferred to [`pinyin_train`]; this call writes
-/// nothing to the user store. The §2.2 special-candidate unigram training
-/// (`LONGER_CANDIDATE`, `SORT_WITHOUT_SENTENCE_CANDIDATE`) has no reachable
-/// call site: the current ABI emits only `NBEST_MATCH_CANDIDATE` and
-/// `NORMAL_CANDIDATE` (see [`pinyin_get_candidate_type`]).
+/// nothing to the user store. Addon and predicted types are emitted; a
+/// chosen `ADDON_CANDIDATE` is **not** promoted into default nibble 5
+/// (`addon.bin`) — that is #105 (`pinyin.cpp:2532-2561`). The §2.2
+/// special-candidate unigram training (`LONGER_CANDIDATE`,
+/// `SORT_WITHOUT_SENTENCE_CANDIDATE`) has no reachable call site.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_choose_candidate(
     instance: *mut PinyinInstance,
