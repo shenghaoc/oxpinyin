@@ -32,6 +32,9 @@ pub struct Candidate {
     consumed_bytes: usize,
     cost: Cost,
     token: Option<PhraseToken>,
+    /// Tail rank of the n-best sentence row this candidate is (W14);
+    /// `0` for every non-row candidate.
+    nbest_index: u8,
 }
 
 impl Candidate {
@@ -42,6 +45,7 @@ impl Candidate {
         consumed_bytes: usize,
         cost: Cost,
         token: Option<PhraseToken>,
+        nbest_index: u8,
     ) -> Self {
         Self {
             text,
@@ -50,6 +54,7 @@ impl Candidate {
             consumed_bytes,
             cost,
             token,
+            nbest_index,
         }
     }
 
@@ -95,6 +100,17 @@ impl Candidate {
     #[must_use]
     pub const fn cost(&self) -> Cost {
         self.cost
+    }
+
+    /// The n-best tail rank when this candidate is a sentence row
+    /// (`pinyin_get_candidate_nbest_index`); `0` otherwise.
+    ///
+    /// Row ranks are the original tail order: a row whose string repeats an
+    /// earlier row's keeps its own rank, because upstream zombies the
+    /// duplicate without renumbering.
+    #[must_use]
+    pub const fn nbest_index(&self) -> u8 {
+        self.nbest_index
     }
 }
 
@@ -157,6 +173,7 @@ mod tests {
                 5,
                 -12,
                 None,
+                0,
             ),
             Candidate::new(
                 "\u{4f60}".to_owned(),
@@ -165,6 +182,7 @@ mod tests {
                 2,
                 -7,
                 Some(PhraseToken::new(3)),
+                0,
             ),
         ])
     }
