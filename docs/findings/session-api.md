@@ -167,6 +167,7 @@ where
     // the m_nbest_results gate: rows live until the next guess or reset,
     // and `candidates` prepends them as NBEST rows while they do.
     pub fn guess_sentence(&mut self) -> Result<bool, EngineError>;
+    pub fn sentence_lookup_active(&self) -> bool;
     pub fn sentence_text(&self, index: u8) -> Option<&str>;
 }
 

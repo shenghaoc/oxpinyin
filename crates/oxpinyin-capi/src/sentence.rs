@@ -76,11 +76,13 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
 /// Out-param `sentence` is caller-owned (`g_free`). The returned buffer is
 /// allocated with libc `malloc`, which `g_free` releases on every platform.
 ///
-/// W14: with sentence rows live this is the decoded text of n-best `index`
-/// (`convert_to_utf8` through the phrase index, `pinyin.cpp:1463-1482`);
-/// past the row count, or before any [`pinyin_guess_sentence`] call, the
-/// pre-W14 provisional ground stands — scheme parses return the original
-/// keystroke buffer, full pinyin the session preedit.
+/// W14: once a sentence lookup is active ([`pinyin_guess_sentence`] ran
+/// since the last reset), this answers decoded-or-nothing — the text of
+/// n-best `index` through the phrase index (`pinyin.cpp:1463-1482`), and
+/// `false` with an empty out-param past the row count or after a lookup
+/// that produced none, exactly upstream's `0 == results.size()` false.
+/// The pre-W14 raw form (scheme keystroke buffer / session preedit)
+/// survives only before any lookup has occurred.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_sentence(
     instance: *mut PinyinInstance,
@@ -94,9 +96,25 @@ pub extern "C" fn pinyin_get_sentence(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let text = if let Some(decoded) = inst.session.sentence_text(index) {
-            decoded.to_owned()
-        } else if inst
+        if inst.session.sentence_lookup_active() {
+            // An active lookup answers decoded-or-nothing — the row text
+            // when held, `false` past the row count or after a lookup that
+            // produced none (upstream's `0 == results.size()` false),
+            // never the raw form.
+            return match inst.session.sentence_text(index) {
+                Some(decoded) => write_owned_sentence(decoded, sentence),
+                None => {
+                    if !sentence.is_null() {
+                        // SAFETY: Null-checked above.
+                        unsafe {
+                            *sentence = std::ptr::null_mut();
+                        }
+                    }
+                    false
+                }
+            };
+        }
+        let text = if inst
             .zhuyin_parse
             .as_ref()
             .is_some_and(|parse| !parse.keys().is_empty())
@@ -111,30 +129,37 @@ pub extern "C" fn pinyin_get_sentence(
         } else {
             inst.session.preedit().text().to_owned()
         };
-        if text.is_empty() {
-            if !sentence.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *sentence = std::ptr::null_mut();
-                }
+        write_owned_sentence(&text, sentence)
+    })
+}
+
+/// Writes `text` through the caller-owned out-param: `false` on an empty
+/// text, an interior NUL, or allocation failure, with the out-param nulled
+/// on every failure path.
+fn write_owned_sentence(text: &str, sentence: *mut *mut c_char) -> bool {
+    if text.is_empty() {
+        if !sentence.is_null() {
+            // SAFETY: Caller null-checks the out-param.
+            unsafe {
+                *sentence = std::ptr::null_mut();
             }
+        }
+        return false;
+    }
+    if !sentence.is_null() {
+        // SAFETY: Null-checked above. `owned_cstr` returns null on an
+        // interior NUL or allocation failure; otherwise ownership
+        // transfers to the caller, which frees it with `g_free`.
+        let owned = owned_cstr(text);
+        // SAFETY: Null-checked above.
+        unsafe {
+            *sentence = owned;
+        }
+        if owned.is_null() {
             return false;
         }
-        if !sentence.is_null() {
-            // SAFETY: Null-checked above. `owned_cstr` returns null on an
-            // interior NUL or allocation failure; otherwise ownership
-            // transfers to the caller, which frees it with `g_free`.
-            let owned = owned_cstr(&text);
-            // SAFETY: Null-checked above.
-            unsafe {
-                *sentence = owned;
-            }
-            if owned.is_null() {
-                return false;
-            }
-        }
-        true
-    })
+    }
+    true
 }
 
 /// Maps a byte offset in the transformed `'`-joined full-pinyin string back
