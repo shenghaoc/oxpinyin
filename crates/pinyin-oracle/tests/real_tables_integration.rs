@@ -678,3 +678,299 @@ fn oracle_candidates_fixture_is_fresh() {
         "candidate payload differs; fixture must be regenerated"
     );
 }
+
+/// One parsed `oracle-sentence-surface.txt` line.
+struct SentenceLine {
+    /// Whether `pinyin_guess_sentence` reported success.
+    guessed: bool,
+    /// Decoded sentences the candidate list proves (`-` for none).
+    sentences: Vec<String>,
+    /// First candidates as `(type-letter, nbest, text)`; the letter is
+    /// `n` for NBEST rows, `N` for normal, `a` for addon.
+    rows: Vec<(char, Option<u8>, String)>,
+}
+
+/// Parsed contents of `oracle-sentence-surface.txt` (the W14 fixture).
+struct SentenceFixture {
+    pin_ref: String,
+    by_input: BTreeMap<String, SentenceLine>,
+}
+
+fn load_sentence_fixture() -> Option<SentenceFixture> {
+    const PATH: &str = "fixtures/w4/oracle-sentence-surface.txt";
+    let raw = match std::fs::read_to_string(repo_root().join(PATH)) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "sentence fixture not found at {PATH}; skipping \
+                 (run cargo run -p pinyin-oracle --features oracle-ffi --bin oracle_sentence_surface)"
+            );
+            return None;
+        }
+        Err(error) => panic!("sentence fixture at {PATH} is unreadable: {error}"),
+    };
+
+    let mut pin_ref = String::new();
+    let mut by_input = BTreeMap::new();
+    for line in raw.lines() {
+        if let Some(value) = line.strip_prefix("# pin_ref=") {
+            pin_ref = value.to_owned();
+            continue;
+        }
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        let mut parts = line.split('\t');
+        let input = parts.next().unwrap_or("").to_owned();
+        let guessed = parts.next().unwrap_or("false") == "true";
+        let sentences_field = parts.next().unwrap_or("");
+        let sentences: Vec<String> = if sentences_field.is_empty() {
+            Vec::new()
+        } else {
+            sentences_field.split('\u{1}').map(str::to_owned).collect()
+        };
+        let rows = parts
+            .next()
+            .unwrap_or("")
+            .split('\u{1}')
+            .filter(|row| !row.is_empty())
+            .map(|row| {
+                let mut fields = row.splitn(3, '/');
+                let kind = fields.next().unwrap_or("?").chars().next().unwrap_or('?');
+                let nbest = fields.next().and_then(|value| value.parse::<u8>().ok());
+                let text = fields.next().unwrap_or("").to_owned();
+                (kind, nbest, text)
+            })
+            .collect();
+        assert!(
+            parts.next().is_none(),
+            "malformed sentence fixture line: {line:?}"
+        );
+        by_input.insert(
+            input,
+            SentenceLine {
+                guessed,
+                sentences,
+                rows,
+            },
+        );
+    }
+    assert!(
+        !pin_ref.is_empty(),
+        "sentence fixture has no # pin_ref header"
+    );
+    Some(SentenceFixture { pin_ref, by_input })
+}
+
+/// The engine's first candidates rendered as fixture rows.
+fn engine_rows(
+    session: &Session<&SystemDictionary, &BigramLanguageModel>,
+) -> Vec<(char, Option<u8>, String)> {
+    session
+        .candidates()
+        .iter()
+        .take(6)
+        .map(|candidate| {
+            let kind = match candidate.kind() {
+                oxpinyin_engine::CandidateKind::Sentence => 'n',
+                oxpinyin_engine::CandidateKind::Addon => 'a',
+                _ => 'N',
+            };
+            let nbest = (candidate.kind() == oxpinyin_engine::CandidateKind::Sentence)
+                .then_some(candidate.nbest_index());
+            (kind, nbest, candidate.text().to_owned())
+        })
+        .collect()
+}
+
+/// W14 sentence-surface parity: the engine's n-best rows, typing, and
+/// decoded sentences against the frozen oracle fixture
+/// (`fixtures/w4/oracle-sentence-surface.txt`, a pin-stamped sample of the
+/// W2 corpus plus the #97 anchor inputs).
+///
+/// The engine side drives the ibus order — `guess_sentence` before reading
+/// candidates — exactly like the capture. The corpus candidate pins stay
+/// gated: the test asserts that no sentence candidate exists before the
+/// guess, which is the gating that keeps `real_tables_session_reports_parity`
+/// frozen.
+#[test]
+fn sentence_surface_reports_parity() {
+    let Some(dir) = export_dir() else { return };
+    let Some(_all_inputs) = load_w2_corpus() else {
+        return;
+    };
+    let Some(fixture) = load_sentence_fixture() else {
+        return;
+    };
+    let Ok(Some(model_dir)) = pinyin_oracle::model_cache::locate_model_dir() else {
+        eprintln!("model cache absent; skipping the sentence-surface parity measurement");
+        return;
+    };
+
+    let dict = SystemDictionary::open(
+        &dir.join("pinyin_index.redb"),
+        &dir.join("phrase_index.redb"),
+    )
+    .expect("SystemDictionary opens");
+    let mut lm = BigramLanguageModel::open(&dir.join("bigram.redb")).expect("LM opens");
+    lm.set_unigrams_from_interpolation2(&model_dir.join("interpolation2.text"))
+        .expect("interpolation2 parses");
+    let lm = lm;
+
+    let mut session = Session::new(&EmptyConfigSource, StoragePaths::new("user"), &dict, &lm)
+        .expect("Session::new");
+
+    let mut total = 0_usize;
+    let mut row0 = 0_usize;
+    let mut rows_exact = 0_usize;
+    let mut sentences_exact = 0_usize;
+    let mut sample_mismatches: Vec<String> = Vec::new();
+
+    for (input, line) in &fixture.by_input {
+        session.reset();
+        let _ = session.type_pinyin(input);
+        // Gating: no sentence candidate before the guess — the corpus pins'
+        // exclusion rule (`docs/findings/sentence-surface.md` §1).
+        assert!(
+            session
+                .candidates()
+                .iter()
+                .all(|candidate| candidate.kind() != oxpinyin_engine::CandidateKind::Sentence),
+            "input {input:?}: sentence candidate leaked before guess_sentence"
+        );
+
+        let guessed = session.guess_sentence().expect("guess cannot fail");
+        assert_eq!(
+            guessed, line.guessed,
+            "input {input:?}: guess retval disagrees"
+        );
+        if line.rows.is_empty() {
+            // The oracle parsed no pinyin at all (junk-leading input): no
+            // sentence surface exists to compare — a pre-existing
+            // candidate-surface divergence, out of W14's scope. The gating
+            // and retval assertions above still ran.
+            continue;
+        }
+        total += 1;
+
+        let engine_sentence =
+            |index: usize| session.sentence_text(u8::try_from(index).unwrap_or(u8::MAX));
+        let fixture_sentence = |index: usize| -> Option<String> {
+            line.sentences
+                .get(index)
+                .and_then(|value| (value.as_str() != "-").then(|| value.clone()))
+        };
+
+        if engine_sentence(0).map(str::to_owned) == fixture_sentence(0) {
+            row0 += 1;
+        } else if sample_mismatches.len() < 24 {
+            sample_mismatches.push(format!(
+                "ROW0 input {input:?}: engine {:?} vs fixture {:?}",
+                engine_sentence(0),
+                fixture_sentence(0)
+            ));
+        }
+        if (0..line.sentences.len())
+            .all(|index| engine_sentence(index).map(str::to_owned) == fixture_sentence(index))
+        {
+            sentences_exact += 1;
+        }
+
+        let rows = engine_rows(&session);
+        if rows == line.rows {
+            rows_exact += 1;
+        } else if sample_mismatches.len() < 10 {
+            sample_mismatches.push(format!(
+                "input {input:?}: engine {rows:?} vs fixture {:?}",
+                line.rows
+            ));
+        }
+    }
+
+    eprintln!("sentence surface parity — W2 sample ({total} inputs)");
+    eprintln!("  fixture pin_ref     {}", fixture.pin_ref);
+    eprintln!("  sentence row 0      {row0}/{total}");
+    eprintln!("  sentences all       {sentences_exact}/{total}");
+    eprintln!("  first-6 rows exact  {rows_exact}/{total}");
+    if !sample_mismatches.is_empty() {
+        eprintln!(
+            "  sample row mismatches:\n    {}",
+            sample_mismatches.join("\n    ")
+        );
+    }
+
+    assert_eq!(total, 496, "the sentence sample's comparable input count");
+    // Pinned: the trellis port's measured agreement with the frozen oracle
+    // capture (release, matched export + interpolation2). Row 0 is the
+    // decoded 1-best `pinyin_get_sentence` returns (98.4%); the residuals
+    // are segmentation and second-tail near-ties — the fixed-point-vs-float
+    // and beam-tie budget recorded in `docs/findings/sentence-surface.md`
+    // §3. Junk-leading inputs the oracle does not parse at all are excluded
+    // above (no sentence surface exists on either side).
+    assert_eq!(row0, 488, "decoded 1-best agreement must hold");
+    assert_eq!(
+        sentences_exact, 385,
+        "full sentence-list agreement must hold"
+    );
+    assert_eq!(rows_exact, 370, "first-6 candidate-row agreement must hold");
+}
+
+/// Live-oracle freshness check for `fixtures/w4/oracle-sentence-surface.txt`.
+///
+/// Re-captures the same deterministic sample from the pin-built oracle and
+/// asserts the frozen fixture matches exactly. Ignored by default; re-run
+/// with:
+///
+/// ```text
+/// cargo test -p pinyin-oracle --features oracle-ffi \
+///     --test real_tables_integration \
+///     sentence_surface_fixture_is_fresh -- --ignored --nocapture
+/// ```
+#[cfg(feature = "oracle-ffi")]
+#[test]
+#[ignore = "live oracle run (~1 min); regenerate with bin oracle_sentence_surface"]
+fn sentence_surface_fixture_is_fresh() {
+    use pinyin_oracle::{Oracle, OracleFlags, OraclePrefix};
+
+    let fixture =
+        load_sentence_fixture().expect("sentence fixture missing; cannot check freshness");
+    assert_eq!(
+        fixture.pin_ref,
+        pinyin_oracle::EXPECTED_PIN_REF,
+        "fixture pin_ref {} is off-pin",
+        fixture.pin_ref
+    );
+
+    let prefix = OraclePrefix::locate().expect("oracle prefix");
+    let mut oracle = Oracle::open_with_temp_user_dir(prefix).expect("oracle opens");
+    let mut session = oracle.session(OracleFlags::DEFAULT).expect("session");
+
+    let mut mismatches: Vec<String> = Vec::new();
+    for (input, line) in &fixture.by_input {
+        let surface = session
+            .observe_sentence_surface(input.as_bytes(), 2)
+            .unwrap_or_else(|error| panic!("oracle observe failed for {input:?}: {error}"));
+        if surface.guessed != line.guessed {
+            mismatches.push(format!("input {input:?}: guessed {}", surface.guessed));
+            continue;
+        }
+        let sentences: Vec<String> = surface
+            .sentences
+            .iter()
+            .map(|sentence| sentence.as_deref().unwrap_or("-").to_owned())
+            .collect();
+        if sentences != line.sentences {
+            mismatches.push(format!(
+                "input {input:?}: sentences {sentences:?} vs frozen {:?}",
+                line.sentences
+            ));
+        }
+    }
+
+    assert!(
+        mismatches.is_empty(),
+        "sentence fixture is stale ({} mismatches): {}",
+        mismatches.len(),
+        mismatches.join("\n  ")
+    );
+}

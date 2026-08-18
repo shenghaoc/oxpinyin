@@ -109,6 +109,17 @@ unsafe extern "C" {
     /// Returns the length of the parsed input prefix.
     pub(crate) fn pinyin_get_parsed_input_length(instance: *mut PinyinInstance) -> usize;
 
+    /// Runs the n-best sentence lookup over the parsed keys.
+    pub(crate) fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool;
+
+    /// Writes a newly allocated UTF-8 decoding of n-best result `index`.
+    /// Release with [`g_free`].
+    pub(crate) fn pinyin_get_sentence(
+        instance: *mut PinyinInstance,
+        index: u8,
+        sentence: *mut *mut c_char,
+    ) -> bool;
+
     /// Builds the candidate list at `offset` under `sort_option`.
     pub(crate) fn pinyin_guess_candidates(
         instance: *mut PinyinInstance,
