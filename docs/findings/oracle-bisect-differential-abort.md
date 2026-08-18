@@ -1,7 +1,7 @@
 # Findings — pinned oracle aborts under bisect's differential mode
 
 Date: 2026-08-18 · Source tier: post-W11 verification observation.
-Status: recorded (upstream defect; oxpinyin unaffected).
+Status: recorded (upstream defect; oxpinyin unaffected; upstream fixed at 95e3af7).
 
 ## Summary
 
@@ -115,8 +115,56 @@ matrix contains a zero key.
   runs through `pinyin-oracle` (`crates/pinyin-oracle/src/live.rs`) under
   `ORACLE_LOCK`, not through the bisect driver, and remains green.
 
+## Upstream status
+
+- **Pin `0c5e80e`** — still asserts (`_check_offset` calls `abort()` via
+  `assert(zero_key != key)`). This is the assertion the W11 bisect hit.
+- **libpinyin `95e3af7`** — Peng Wu's
+  [`Fix _check_offset function`](https://github.com/libpinyin/libpinyin/commit/95e3af71cca3ce6a974e55ab68db1424da79c286)
+  (2026-08-18) replaces the assert with a graceful `return false`:
+
+  ```cpp
+  // Before (0c5e80e):
+  assert(zero_key != key);
+
+  // After (95e3af7):
+  if (zero_key != key)
+      return false;
+  ```
+
+  Verified locally: rebuilt libpinyin at `95e3af7`, the `nihao` +
+  `get_right_pinyin_offset(5)` test no longer aborts (returns `true`,
+  `right=6`). The #570 patterns also complete without abort.
+
+  Note: the full bisect harness still hits a **different** assertion on the
+  fixed build (`phonetic_key_matrix.h:103: Assertion 'index < m_table_content->len'`)
+  for "beijing". This is a separate bug not addressed by 95e3af7.
+
+- **ibus-libpinyin#570** — reported 2026-08-06:
+  <https://github.com/libpinyin/ibus-libpinyin/issues/570>
+
+## oxpinyin-capi
+
+oxpinyin does not abort on any of the trigger patterns:
+
+```sh
+/tmp/test_oxpinyin target/debug/libpinyin_capi.so fixtures/w3
+```
+
+| Test                                        | Result              |
+|---------------------------------------------|---------------------|
+| nihao + get_right_pinyin_offset(5)          | true, right=5       |
+| xiang'a: choose → guess(new_offset)        | ok (83 cands after) |
+| jiang'a / liang'a / bian'a / bian'e / ...   | ok (1 cand; no abort) |
+
+Some patterns return fewer candidates than the oracle (1 vs hundreds)
+because oxpinyin's candidate generation is still less complete in the
+current stage. The important result: **no abort, no panic, processing
+continues normally** for all tested inputs.
+
 ## Action
 
 None on this side. No code, test, or pin change. Recorded here so future
 runs of the optional differential form of `run-bisect.sh` have a pointer
-to the known upstream cause rather than being re-diagnosed.
+to the known upstream cause rather than being re-diagnosed. The oracle pin
+stays at `0c5e80e` until the next formal pin bump.
