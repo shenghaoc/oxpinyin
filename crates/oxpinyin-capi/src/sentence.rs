@@ -7,7 +7,7 @@ use oxpinyin_core::{DoublePinyinParse, ZhuyinParse};
 
 use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
-use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t};
+use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t, sort_option_t};
 
 /// Guess a sentence from saved pinyin keys.
 ///
@@ -16,8 +16,12 @@ use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t};
 /// bool pinyin_guess_sentence(pinyin_instance_t * instance);
 /// ```
 ///
-/// With StubDict the sentence is the raw input itself; real sentence
-/// decoding arrives with T4 backends.
+/// W14: runs the n-best sentence lookup (`Session::guess_sentence`, the
+/// port of `PhoneticLookup<2, 3>`). While the rows live, the candidate
+/// list carries them at its head typed `NBEST_MATCH_CANDIDATE`, and
+/// [`pinyin_get_sentence`] returns their decoded text — upstream's
+/// `m_nbest_results` gate (`pinyin.cpp:1373-1385`, `2292-2293`). Rows are
+/// cleared by [`pinyin_reset`], nothing else.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     if instance.is_null() {
@@ -26,8 +30,8 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     ffi_catch(false, || {
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        inst.session.is_composing()
+        let inst = unsafe { instance_mut(instance) };
+        inst.session.guess_sentence().unwrap_or(false)
     })
 }
 
@@ -72,12 +76,15 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
 /// Out-param `sentence` is caller-owned (`g_free`). The returned buffer is
 /// allocated with libc `malloc`, which `g_free` releases on every platform.
 ///
-/// Ignores the n-best `index`. Scheme parses return the original
-/// keystroke buffer; full pinyin returns the session preedit.
+/// W14: with sentence rows live this is the decoded text of n-best `index`
+/// (`convert_to_utf8` through the phrase index, `pinyin.cpp:1463-1482`);
+/// past the row count, or before any [`pinyin_guess_sentence`] call, the
+/// pre-W14 provisional ground stands — scheme parses return the original
+/// keystroke buffer, full pinyin the session preedit.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_sentence(
     instance: *mut PinyinInstance,
-    _index: u8,
+    index: u8,
     sentence: *mut *mut c_char,
 ) -> bool {
     if instance.is_null() {
@@ -87,7 +94,9 @@ pub extern "C" fn pinyin_get_sentence(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let text = if inst
+        let text = if let Some(decoded) = inst.session.sentence_text(index) {
+            decoded.to_owned()
+        } else if inst
             .zhuyin_parse
             .as_ref()
             .is_some_and(|parse| !parse.keys().is_empty())
@@ -207,15 +216,17 @@ pub extern "C" fn pinyin_get_character_offset(
 ///                              guint sort_option);
 /// ```
 ///
-/// Provisional: `offset` and `sort_option` are ignored — the engine has no
-/// positional or sort backends yet. Snapshots the session's current
-/// candidates into the instance's `CapiCandidate` vec. With StubDict the
-/// candidate list is empty.
+/// `offset` remains ignored — the engine has no positional backend yet.
+/// W14 honours [`sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE`]: with
+/// the bit clear, sentence rows guessed by [`pinyin_guess_sentence`]
+/// appear at the head typed `NBEST_MATCH_CANDIDATE` with their tail rank;
+/// with the bit set they are excluded, exactly upstream's gate
+/// (`pinyin.cpp:2292-2293`).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_guess_candidates(
     instance: *mut PinyinInstance,
     _offset: usize,
-    _sort_option: GUint,
+    sort_option: GUint,
 ) -> bool {
     if instance.is_null() {
         return false;
@@ -230,10 +241,15 @@ pub extern "C" fn pinyin_guess_candidates(
         if !inst.session.is_composing() {
             return false;
         }
+        let without_sentence =
+            sort_option & sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE as GUint != 0;
         inst.candidates.clear();
         let double_parse = inst.double_parse.clone();
         let zhuyin_parse = inst.zhuyin_parse.clone();
         for cand in inst.session.candidates().iter() {
+            if without_sentence && cand.kind() == oxpinyin_engine::CandidateKind::Sentence {
+                continue;
+            }
             let text = match CString::new(cand.text().to_owned()) {
                 Ok(s) => s,
                 Err(_) => continue,
@@ -259,7 +275,7 @@ pub extern "C" fn pinyin_guess_candidates(
                     | oxpinyin_engine::CandidateKind::Fallback
                     | _ => lookup_candidate_type_t::NORMAL_CANDIDATE,
                 },
-                nbest_index: 0,
+                nbest_index: cand.nbest_index(),
                 consumed_bytes,
                 token: cand.token(),
             });

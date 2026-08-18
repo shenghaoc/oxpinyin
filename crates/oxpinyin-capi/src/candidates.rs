@@ -160,7 +160,9 @@ pub extern "C" fn pinyin_get_candidate_string(
 ///                                       guint8 * index);
 /// ```
 ///
-/// Provisional: returns the stored nbest_index (always 0 with StubLm).
+/// W14: the stored tail rank of an `NBEST_MATCH_CANDIDATE` row (upstream
+/// asserts the type and returns `m_nbest_index`, `pinyin.cpp:2878-2884`);
+/// `0` for every non-row candidate.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_candidate_nbest_index(
     instance: *mut PinyinInstance,
