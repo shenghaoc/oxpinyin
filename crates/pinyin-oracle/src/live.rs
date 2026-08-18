@@ -240,6 +240,24 @@ impl Oracle {
     }
 }
 
+/// The W14 sentence-surface capture for one input.
+///
+/// `sentences[i]` is `pinyin_get_sentence(i)`; `candidates` carries the
+/// per-candidate `(text, type, nbest)` the guess produced, in list order
+/// with the n-best rows prepended.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SentenceSurface {
+    /// Whether `pinyin_guess_sentence` reported success.
+    pub guessed: bool,
+    /// Decoded sentences for indices `0..=max_index`, `None` past the end.
+    pub sentences: Vec<Option<String>>,
+    /// Uncapped candidate total, as [`crate::observation::OracleObservation`]
+    /// reports it.
+    pub candidate_total: u32,
+    /// The first [`crate::observation::MAX_CAPTURED_CANDIDATES`] candidates.
+    pub candidates: Vec<CandidateInfo>,
+}
+
 /// One `(phrase, pinyin, count)` tuple from a phrase-library export.
 ///
 /// `pinyin` is the oracle's own spelling: syllables joined by `'`
@@ -495,6 +513,82 @@ impl Session<'_> {
         }
         let (_total, infos) = self.collect_candidates()?;
         Ok(infos)
+    }
+
+    /// Resets, parses `input`, guesses the sentence, and returns the decoded
+    /// n-best sentences plus the candidate list the guess produced — the W14
+    /// sentence-surface capture.
+    ///
+    /// The protocol is the ibus order: `pinyin_guess_sentence` before
+    /// `pinyin_guess_candidates`, so the candidate list carries the prepended
+    /// `NBEST_MATCH_CANDIDATE` rows (`pinyin.cpp:2290-2298`).
+    ///
+    /// `pinyin_get_sentence` **asserts** (aborts) for `index` at or past
+    /// `m_nbest_results.size()`, so the read depth is derived from what the
+    /// candidate list proves: index 0 is always safe (upstream returns false
+    /// for an empty result set), and an index above 0 is read only when the
+    /// list carries an `NBEST_MATCH` row with that index — a surviving row
+    /// proves the result set is larger. Deduplicated rows are not decoded,
+    /// matching what the public ABI exposes at all.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::observe_candidate_infos`].
+    pub fn observe_sentence_surface(
+        &mut self,
+        input: &[u8],
+        max_index: u8,
+    ) -> Result<SentenceSurface, OracleError> {
+        self.reset()?;
+        let (_parse_return, parsed_input_length) = self.parse_input(input)?;
+        if parsed_input_length == 0 {
+            return Ok(SentenceSurface::default());
+        }
+        // SAFETY: instance is non-null and owned by `self`.
+        let guessed = unsafe { ffi::pinyin_guess_sentence(self.instance) };
+        let (candidate_total, infos) = self.collect_candidates()?;
+        let proven = infos
+            .iter()
+            .filter(|info| matches!(info.candidate_type, OracleCandidateType::NbestMatch))
+            .filter_map(|info| info.nbest_index)
+            .max()
+            .unwrap_or(0)
+            .min(max_index);
+        let mut sentences = vec![self.get_sentence(0)?];
+        for index in 1..=proven {
+            sentences.push(self.get_sentence(index)?);
+        }
+        Ok(SentenceSurface {
+            guessed,
+            sentences,
+            candidate_total,
+            candidates: infos,
+        })
+    }
+
+    /// One `pinyin_get_sentence` read, `None` when the oracle reports none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the returned string is not UTF-8.
+    fn get_sentence(&mut self, index: u8) -> Result<Option<String>, OracleError> {
+        let mut text: *mut core::ffi::c_char = core::ptr::null_mut();
+        // SAFETY: instance is non-null and owned by `self`; the out-pointer is
+        // valid and writable. On success libpinyin transfers ownership of the
+        // string, released with `g_free` below exactly once.
+        let ok = unsafe { ffi::pinyin_get_sentence(self.instance, index, &raw mut text) };
+        if !ok || text.is_null() {
+            return Ok(None);
+        }
+        // SAFETY: `text` is a non-null NUL-terminated GLib string we now own;
+        // copied before the `g_free` below, never used after.
+        let borrowed = unsafe { CStr::from_ptr(text) };
+        let copied = borrowed.to_str().ok().map(str::to_owned);
+        // SAFETY: ownership-transferring out-param above; freed exactly once.
+        unsafe { ffi::g_free(text.cast()) };
+        copied.map(Some).ok_or(OracleError::NonUtf8 {
+            function: "pinyin_get_sentence",
+        })
     }
 
     /// The oracle's own `phrase text → phrase_token_t` mapping.
