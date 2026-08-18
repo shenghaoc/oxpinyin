@@ -222,13 +222,22 @@ impl Dictionary for SystemDictionary {
         };
 
         let mut entries = Vec::new();
-        for (token, _freq) in parse_index_records(&raw)? {
+        for (token, freq) in parse_index_records(&raw)? {
             // Token → text through phrase_index (the reverse half is
             // `phrase_text`). The full export resolves every token; a mini
             // fixture may omit some, and those records contribute no
             // candidate rather than failing the lookup.
             if let Some(text) = self.phrase_text(token)? {
-                entries.push(PhraseEntry::new(PhraseToken::new(token), text));
+                // W14: the record's frequency is the matched pronunciation's
+                // share and the aggregated unigram map holds the item's
+                // pronunciation total — matched/total is upstream's
+                // `get_pronunciation_possibility` polyphone discount. The
+                // candidate scan never reads it.
+                let total = self.unigrams.get(&token).copied().unwrap_or(0);
+                entries.push(
+                    PhraseEntry::new(PhraseToken::new(token), text)
+                        .with_pronunciation_possibility(u64::from(freq), total),
+                );
             }
         }
         Ok(entries)

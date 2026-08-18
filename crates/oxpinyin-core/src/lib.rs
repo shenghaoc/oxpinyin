@@ -250,6 +250,56 @@ pub trait LanguageModel {
     fn addon_unigram_total(&self) -> Result<Option<u64>, Self::Error> {
         Ok(None)
     }
+
+    /// The two per-step costs of the n-best sentence trellis (W14).
+    ///
+    /// Upstream `PhoneticLookup` steps carry `log((λ·b + (1−λ)·u) · p)` when
+    /// the previous token has bigram evidence for `token`, and
+    /// `log(u · (1−λ) · p)` otherwise (`phonetic_lookup.h:628-676`); the
+    /// pronunciation term `p` belongs to the caller (the span match), not the
+    /// model. This method reports both branches as fixed-point surprisal so
+    /// the engine can pick per step exactly like upstream: the blended cost
+    /// when `blended` is `Some`, else `unigram`.
+    ///
+    /// `None` in either field means the branch's possibility is below
+    /// upstream's epsilon floor (`bigram_poss < FLT_EPSILON &&
+    /// unigram_poss < DBL_EPSILON` skips the step). A model that answers
+    /// `None` overall — the default — carries no n-best cost data, and the
+    /// engine's trellis yields no rows for it.
+    fn nbest_step_costs(
+        &self,
+        _prev: &Self::Token,
+        _token: &Self::Token,
+    ) -> Result<NbestStepCosts, Self::Error> {
+        Ok(NbestStepCosts::default())
+    }
+}
+
+/// The branch costs of [`LanguageModel::nbest_step_costs`].
+///
+/// Both are surprisal on the core fixed-point scale: lower is better, and
+/// they are summed along a path.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NbestStepCosts {
+    /// `-log2(λ·bigram_poss + (1−λ)·unigram_poss)`: the branch with bigram
+    /// evidence. `None` when the blend's possibility is below the floor.
+    pub blended: Option<Cost>,
+    /// `-log2((1−λ) · unigram_poss)`: the no-evidence branch. `None` when
+    /// the unigram possibility is below the floor (count 0 or no table).
+    pub unigram: Option<Cost>,
+}
+
+impl NbestStepCosts {
+    /// The cost upstream charges for this step: the blended branch when it
+    /// exists, else the unigram branch. `None` skips the step entirely.
+    #[must_use]
+    pub const fn step(&self) -> Option<Cost> {
+        match (self.blended, self.unigram) {
+            (Some(blended), _) => Some(blended),
+            (None, Some(unigram)) => Some(unigram),
+            (None, None) => None,
+        }
+    }
 }
 
 impl<L: LanguageModel + ?Sized> LanguageModel for &L {
@@ -283,6 +333,14 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
 
     fn addon_unigram_total(&self) -> Result<Option<u64>, Self::Error> {
         (**self).addon_unigram_total()
+    }
+
+    fn nbest_step_costs(
+        &self,
+        prev: &Self::Token,
+        token: &Self::Token,
+    ) -> Result<NbestStepCosts, Self::Error> {
+        (**self).nbest_step_costs(prev, token)
     }
 }
 

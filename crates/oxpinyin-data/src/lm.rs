@@ -491,6 +491,67 @@ impl LanguageModel for BigramLanguageModel {
     fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {
         Ok(self.real_unigrams.then_some(self.unigram_total))
     }
+
+    fn nbest_step_costs(
+        &self,
+        prev: &Self::Token,
+        token: &Self::Token,
+    ) -> Result<oxpinyin_core::NbestStepCosts, Self::Error> {
+        // No installed unigram table is the seam's default answer: no n-best
+        // cost data, no rows.
+        let (Some(count), unigram_total) =
+            (self.unigram_count(token.value()), self.unigram_total())
+        else {
+            return Ok(oxpinyin_core::NbestStepCosts::default());
+        };
+        if unigram_total == 0 {
+            return Ok(oxpinyin_core::NbestStepCosts::default());
+        }
+
+        let lambda_num = self.lambda.numerator();
+        let lambda_den = self.lambda.denominator();
+        let one_minus_lambda = lambda_den.saturating_sub(lambda_num);
+
+        // The no-evidence branch: (1 − λ) · u / ut.
+        let unigram = (count > 0)
+            .then(|| {
+                one_minus_lambda
+                    .checked_mul(u128::from(count))
+                    .zip(lambda_den.checked_mul(u128::from(unigram_total)))
+            })
+            .flatten()
+            .and_then(ratio_cost);
+
+        // The blended branch, only when the previous token's bigram row
+        // actually carries this successor: upstream's bigram expansion walks
+        // merged-gram successors (`search_bigram2`), so a count-0 next token
+        // is not a successor and takes the unigram branch instead.
+        let blended = match self.transition(prev.value(), token.value())? {
+            Some((bigram_count, bigram_total)) if bigram_count > 0 => interpolate_ratio(
+                lambda_num,
+                lambda_den,
+                u128::from(bigram_count),
+                u128::from(bigram_total),
+                u128::from(count),
+                u128::from(unigram_total),
+            )
+            .and_then(|(numerator, denominator)| ratio_cost((numerator, denominator))),
+            _ => None,
+        };
+
+        Ok(oxpinyin_core::NbestStepCosts { blended, unigram })
+    }
+}
+
+/// Surprisal of one ratio, `None` when the reduced parts do not fit `u64`
+/// (a pathological λ; the step then reports no cost, like a below-ε
+/// possibility upstream).
+fn ratio_cost((numerator, denominator): (u128, u128)) -> Option<Cost> {
+    let (numerator, denominator) = reduce_ratio(numerator, denominator);
+    match surprisal(numerator, denominator) {
+        UNKNOWN_COST => None,
+        cost => Some(cost),
+    }
 }
 
 /// Parses a bigram value as `(total, [{next_token, count}])`.

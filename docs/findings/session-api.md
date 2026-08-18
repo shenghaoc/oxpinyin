@@ -161,6 +161,13 @@ where
         U::Error: Display;
     pub fn selected_tokens(&self) -> &[PhraseToken];
     pub fn composition_keys(&self) -> Result<Vec<SyllableKey>, EngineError>;
+
+    // W14 added the sentence surface (docs/findings/sentence-surface.md).
+    // Additions again; nothing frozen above changed. `guess_sentence` is
+    // the m_nbest_results gate: rows live until the next guess or reset,
+    // and `candidates` prepends them as NBEST rows while they do.
+    pub fn guess_sentence(&mut self) -> Result<bool, EngineError>;
+    pub fn sentence_text(&self, index: u8) -> Option<&str>;
 }
 
 pub enum KeyOutcome { Ignored, Consumed, Commit(String) }   // #[non_exhaustive]

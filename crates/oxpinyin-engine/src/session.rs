@@ -54,7 +54,7 @@ const MAX_PHRASE_KEYS: usize = 8;
 
 /// Longest key sequence the window scan searches: the pin's phrase-length
 /// cap. Paths beyond it are not searched.
-const MAX_PHRASE_LENGTH: usize = 16;
+pub(crate) const MAX_PHRASE_LENGTH: usize = 16;
 
 /// The window scan's own expansion bound, separate from
 /// [`oxpinyin_core::scoring::ScoringConfig::expansion_limit`] which the
@@ -63,7 +63,7 @@ const MAX_PHRASE_LENGTH: usize = 16;
 /// (14^3 = 2_744 — the pin's `qqq…` offers `请求权`); 4_096 covers it with
 /// headroom. Larger products yield nothing: no stored phrase matches a
 /// longer all-initial span.
-const SCAN_EXPANSION_LIMIT: usize = 4_096;
+pub(crate) const SCAN_EXPANSION_LIMIT: usize = 4_096;
 
 /// What a session did with a key.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -144,6 +144,11 @@ pub struct Session<D, L> {
     history: Vec<PhraseToken>,
     scoring: ScoringConfig,
     key_costs: Vec<Cost>,
+    /// Decoded n-best sentence rows, filled by [`Session::guess_sentence`]
+    /// and cleared by [`Session::reset`] — the `m_nbest_results` gate
+    /// (`docs/findings/sentence-surface.md` §1). Empty means no sentence
+    /// has been guessed for the current composition.
+    nbest_rows: Vec<crate::nbest::NbestRow>,
 }
 
 impl<D, L> Session<D, L>
@@ -183,6 +188,7 @@ where
             history: Vec::new(),
             scoring: ScoringConfig::default(),
             key_costs,
+            nbest_rows: Vec::new(),
         })
     }
 
@@ -329,6 +335,14 @@ where
         self.selected.push_str(&text);
         if let Some(token) = token {
             self.history.push(token);
+        } else if candidate.kind() == CandidateKind::Sentence {
+            // A chosen n-best row records its whole token path — upstream's
+            // `pinyin_choose_candidate` keeps the chosen `MatchResult` on
+            // the instance and `pinyin_train` walks it; the engine's record
+            // is the token history (`docs/findings/user-store.md` §2.1).
+            if let Some(row) = self.nbest_rows.get(usize::from(candidate.nbest_index())) {
+                self.history.extend(row.tokens.iter().copied());
+            }
         }
         self.consumed = self.next_boundary(self.consumed.saturating_add(advance));
         self.refresh()?;
@@ -431,6 +445,7 @@ where
         self.parsed_prefix = 0;
         self.candidates = CandidateList::default();
         self.history.clear();
+        self.nbest_rows.clear();
     }
 
     /// Filtered parse length of the remaining input after the last refresh.
@@ -510,9 +525,97 @@ where
     }
 
     /// The current candidates, in rank order.
+    ///
+    /// Sentence rows appear at the head of this list only after
+    /// [`Session::guess_sentence`] has run for the current composition:
+    /// upstream's candidate list prepends its n-best rows exactly when
+    /// `m_nbest_results` is non-empty (`pinyin.cpp:2292-2293`), and the
+    /// corpus pins were captured without a sentence guess.
     #[must_use]
     pub const fn candidates(&self) -> &CandidateList {
         &self.candidates
+    }
+
+    /// Runs the n-best sentence lookup and stores its rows
+    /// (`pinyin_guess_sentence`, `pinyin.cpp:1373-1385`).
+    ///
+    /// With real unigrams this is the trellis port of upstream's
+    /// `PhoneticLookup<2, 3>` ([`crate::nbest`]); without them the
+    /// pre-frequency per-path DP supplies up to three rows so the surface
+    /// exists for every model. Rows survive further typing and selections
+    /// until the next [`Session::guess_sentence`] or [`Session::reset`] —
+    /// upstream's `m_nbest_results` is cleared nowhere else — and
+    /// [`Session::candidates`] prepends them while they live.
+    ///
+    /// Returns whether a lookup ran at all (upstream returns the lookup's
+    /// `false` only for an empty key matrix; zero rows is still `true`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when a backend fails during the lookup.
+    pub fn guess_sentence(&mut self) -> Result<bool, EngineError> {
+        let remaining = &self.raw[self.consumed..];
+        self.nbest_rows.clear();
+        if remaining.is_empty() {
+            return Ok(false);
+        }
+
+        let graph = SegmentGraph::build_with_options(remaining.as_bytes(), self.settings.options)
+            .map_err(EngineError::Graph)?;
+        let bound = graph.consumed();
+        if bound == 0 {
+            return Ok(false);
+        }
+
+        self.nbest_rows = if self.model.has_real_unigrams() {
+            let matrix = build_scan_matrix(&graph, self.settings.options);
+            crate::nbest::nbest_sentences(
+                &matrix,
+                bound,
+                &self.dictionary,
+                &self.model,
+                &self.history,
+            )?
+        } else {
+            let scorer = Scorer::with_key_costs(
+                self.scoring,
+                &self.dictionary,
+                &self.model,
+                self.key_costs.clone(),
+            );
+            let paths = k_best(&graph, &scorer, SEGMENTATION_K).map_err(EngineError::Decode)?;
+            let mut sentences: Vec<(Candidate, Vec<PhraseToken>)> = Vec::new();
+            for path in &paths {
+                sentences.extend(self.collect_sentences_with_tokens(&graph, &scorer, path)?);
+            }
+            sentences.sort_by_key(|(candidate, _)| candidate.cost());
+            let mut seen: HashSet<String> = HashSet::new();
+            sentences
+                .into_iter()
+                .filter(|(candidate, _)| seen.insert(candidate.text().to_owned()))
+                .take(crate::nbest::NBEST_ROWS)
+                .map(|(candidate, tokens)| crate::nbest::NbestRow {
+                    text: candidate.text().to_owned(),
+                    tokens,
+                    keys: candidate.consumed_keys(),
+                    span: candidate.consumed_bytes(),
+                    cost: candidate.cost(),
+                })
+                .collect()
+        };
+
+        self.refresh()?;
+        Ok(true)
+    }
+
+    /// The decoded text of n-best row `index`, best-first
+    /// (`pinyin_get_sentence`'s payload). `None` when fewer rows exist.
+    #[must_use]
+    pub fn sentence_text(&self, index: u8) -> Option<&str> {
+        self.nbest_rows
+            .get(usize::from(index))
+            .map(|row| row.text.as_str())
+            .filter(|text| !text.is_empty())
     }
 
     /// The raw input typed so far.
@@ -702,7 +805,35 @@ where
                 remaining.len(),
                 0,
                 None,
+                0,
             ));
+        }
+
+        // W14: prepend the stored n-best rows, head first, then drop every
+        // later candidate with the same text — upstream prepends after the
+        // sort and its phrase-string dedup keeps the NBEST row (and the
+        // lower n-best index) over any phrase candidate with the same
+        // string (`pinyin.cpp:2290-2298`, `2058-2126`).
+        if !self.nbest_rows.is_empty() {
+            let mut merged: Vec<Candidate> = self
+                .nbest_rows
+                .iter()
+                .enumerate()
+                .map(|(index, row)| {
+                    Candidate::new(
+                        row.text.clone(),
+                        CandidateKind::Sentence,
+                        row.keys,
+                        row.span,
+                        row.cost,
+                        None,
+                        u8::try_from(index).unwrap_or(u8::MAX),
+                    )
+                })
+                .collect();
+            merged.extend(collected);
+            collected = merged;
+            dedup_by_text_keep_first(&mut collected);
         }
 
         self.candidates = CandidateList::from_vec(collected);
@@ -789,6 +920,7 @@ where
                     ends[length - 1],
                     cost,
                     Some(entry.token()),
+                    0,
                 ));
             }
         }
@@ -800,9 +932,7 @@ where
     /// Only the pre-frequency fallback uses this: when the model carries no
     /// real unigram table the session reproduces its prior behaviour exactly,
     /// sentence candidates included. The real-frequency construction emits
-    /// pooled phrase candidates only — the pin surfaces no sentence-level
-    /// candidates under the pinned observation (`nihaoshi` never lists
-    /// `你好是`).
+    /// pooled phrase candidates only until [`Session::guess_sentence`] runs.
     fn collect_sentence(
         &self,
         graph: &SegmentGraph,
@@ -810,9 +940,23 @@ where
         path: &DecodedPath,
         into: &mut Vec<Candidate>,
     ) -> Result<(), EngineError> {
+        for (candidate, _) in self.collect_sentences_with_tokens(graph, scorer, path)? {
+            into.push(candidate);
+        }
+        Ok(())
+    }
+
+    /// [`Self::collect_sentence`] with each sentence's token path, which a
+    /// chosen fallback row records like a trellis row does.
+    fn collect_sentences_with_tokens(
+        &self,
+        graph: &SegmentGraph,
+        scorer: &Scorer<'_, D, L>,
+        path: &DecodedPath,
+    ) -> Result<Vec<(Candidate, Vec<PhraseToken>)>, EngineError> {
         let (keys, kinds, ends) = self.walk(graph, path);
         if keys.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         // best[i] is the cheapest way to spell keys[..i].
@@ -847,19 +991,24 @@ where
             }
         }
 
-        if let Some((cost, text, _)) = best[keys.len()].clone()
+        if let Some((cost, text, tokens)) = best[keys.len()].clone()
             && !text.is_empty()
         {
-            into.push(Candidate::new(
-                text,
-                CandidateKind::Sentence,
-                keys.len(),
-                ends[keys.len() - 1],
-                cost,
-                None,
-            ));
+            let tokens = tokens[self.history.len()..].to_vec();
+            return Ok(vec![(
+                Candidate::new(
+                    text,
+                    CandidateKind::Sentence,
+                    keys.len(),
+                    ends[keys.len() - 1],
+                    cost,
+                    None,
+                    0,
+                ),
+                tokens,
+            )]);
         }
-        Ok(())
+        Ok(Vec::new())
     }
 
     /// The keys, edge kinds and end offsets along one decoded path.
@@ -1040,6 +1189,7 @@ fn append_scan_entries(
             end,
             0,
             Some(entry.token()),
+            0,
         ));
     }
 }
@@ -1182,12 +1332,12 @@ const DIVIDED_TABLE: &[(&str, &str, &str)] = &[
 /// it ends at and where its own text starts — the two differ from
 /// `from + len` exactly when the key rides over an apostrophe separator.
 #[derive(Clone, Copy)]
-struct ScanKey {
-    key: SyllableKey,
-    from: usize,
-    to: usize,
-    syllable_start: usize,
-    crosses_separator: bool,
+pub(crate) struct ScanKey {
+    pub(crate) key: SyllableKey,
+    pub(crate) from: usize,
+    pub(crate) to: usize,
+    pub(crate) syllable_start: usize,
+    pub(crate) crosses_separator: bool,
 }
 
 impl ScanKey {
@@ -1206,7 +1356,7 @@ impl ScanKey {
 /// keys, plus the resplit, divided and fuzzy additions. See
 /// `docs/findings/matrix-split-tables.md` for the frozen pair lists and
 /// `docs/findings/option-bits.md` for the fuzzy step.
-fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Vec<Vec<ScanKey>> {
+pub(crate) fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Vec<Vec<ScanKey>> {
     let bound = graph.consumed();
     let mut columns: Vec<Vec<ScanKey>> = vec![Vec::new(); bound + 1];
 

@@ -49,6 +49,7 @@ mod candidate;
 mod config;
 mod error;
 mod key;
+mod nbest;
 mod preedit;
 mod session;
 mod storage;

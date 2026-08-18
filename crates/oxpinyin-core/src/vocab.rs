@@ -286,6 +286,13 @@ impl fmt::Display for PhraseToken {
 pub struct PhraseEntry {
     token: PhraseToken,
     text: String,
+    /// Pronunciation possibility `(matched, total)` over the phrase item's
+    /// stored pronunciations (W14's polyphone discount): the fraction of
+    /// the item's pronunciation frequency that spells the looked-up key
+    /// sequence. `None` when the backend carries no per-pronunciation
+    /// counts (the candidate scan never reads it; only the sentence
+    /// trellis does).
+    pronunciation: Option<(u64, u64)>,
 }
 
 impl PhraseEntry {
@@ -301,7 +308,11 @@ impl PhraseEntry {
     /// because anything relies on it.
     #[must_use]
     pub const fn new(token: PhraseToken, text: String) -> Self {
-        Self { token, text }
+        Self {
+            token,
+            text,
+            pronunciation: None,
+        }
     }
 
     /// The scoring token.
@@ -314,6 +325,26 @@ impl PhraseEntry {
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// The pronunciation possibility `(matched, total)`, when the backend
+    /// carries per-pronunciation counts.
+    ///
+    /// Upstream's `get_pronunciation_possibility`
+    /// (`storage/phrase_index.h:129-160`): matched-pronunciation frequency
+    /// over the item's total. `None` means no discount — the possibility
+    /// is 1.
+    #[must_use]
+    pub const fn pronunciation_possibility(&self) -> Option<(u64, u64)> {
+        self.pronunciation
+    }
+
+    /// Sets the pronunciation possibility (builder; [`PhraseEntry::new`]
+    /// leaves it unset so every existing construction keeps its meaning).
+    #[must_use]
+    pub const fn with_pronunciation_possibility(mut self, matched: u64, total: u64) -> Self {
+        self.pronunciation = Some((matched, total));
+        self
     }
 
     /// Consumes the entry and returns its phrase text.
