@@ -118,6 +118,13 @@ struct BeamEntry {
 /// sentence one key shorter is preferred unless the longer one's cost is
 /// more than [`LONG_SENTENCE_PENALTY`] lower; any longer sentence otherwise
 /// loses; at equal length the higher cost loses.
+///
+/// Deliberately **not** a strict weak order — upstream's comparator is
+/// not either — which is why the sort closures below fall back to `seq`
+/// on a tie: that keeps `sort_by` well-defined on the transitive data
+/// the pins were measured under. The residual contract caveat and the
+/// measured rejection of a heap-shaped selection are recorded in
+/// `docs/findings/sentence-surface.md` §3.
 fn loses_to(left: &Value, right: &Value) -> bool {
     match left.length.cmp(&right.length) {
         core::cmp::Ordering::Less if right.length - left.length == 1 => {

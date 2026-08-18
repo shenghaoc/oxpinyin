@@ -149,6 +149,13 @@ pub struct Session<D, L> {
     /// (`docs/findings/sentence-surface.md` §1). Empty means no sentence
     /// has been guessed for the current composition.
     nbest_rows: Vec<crate::nbest::NbestRow>,
+    /// Whether a sentence lookup has run for the current composition —
+    /// the half of the `m_nbest_results` gate an empty-but-active lookup
+    /// still satisfies: upstream's `pinyin_guess_sentence` clears the
+    /// results and attempts the search even on an empty key matrix, so a
+    /// later `pinyin_get_sentence` must answer false rather than fall
+    /// back to the pre-lookup raw form.
+    sentence_lookup_active: bool,
 }
 
 impl<D, L> Session<D, L>
@@ -189,6 +196,7 @@ where
             scoring: ScoringConfig::default(),
             key_costs,
             nbest_rows: Vec::new(),
+            sentence_lookup_active: false,
         })
     }
 
@@ -335,14 +343,18 @@ where
         self.selected.push_str(&text);
         if let Some(token) = token {
             self.history.push(token);
-        } else if candidate.kind() == CandidateKind::Sentence {
-            // A chosen n-best row records its whole token path — upstream's
-            // `pinyin_choose_candidate` keeps the chosen `MatchResult` on
-            // the instance and `pinyin_train` walks it; the engine's record
-            // is the token history (`docs/findings/user-store.md` §2.1).
-            if let Some(row) = self.nbest_rows.get(usize::from(candidate.nbest_index())) {
-                self.history.extend(row.tokens.iter().copied());
-            }
+        } else if candidate.kind() == CandidateKind::Sentence && index < self.nbest_rows.len() {
+            // A prepended n-best row records its whole token path —
+            // upstream's `pinyin_choose_candidate` keeps the chosen
+            // `MatchResult` on the instance and `pinyin_train` walks it;
+            // the engine's record is the token history
+            // (`docs/findings/user-store.md` §2.1). Refresh places the
+            // rows at the head of the list in order, so the list
+            // position is the origin test: the kind alone cannot tell a
+            // row from a fallback sentence candidate, which also carries
+            // `nbest_index` 0 and must never default through to row zero.
+            self.history
+                .extend(self.nbest_rows[index].tokens.iter().copied());
         }
         self.consumed = self.next_boundary(self.consumed.saturating_add(advance));
         self.refresh()?;
@@ -446,6 +458,7 @@ where
         self.candidates = CandidateList::default();
         self.history.clear();
         self.nbest_rows.clear();
+        self.sentence_lookup_active = false;
     }
 
     /// Filtered parse length of the remaining input after the last refresh.
@@ -556,6 +569,7 @@ where
     pub fn guess_sentence(&mut self) -> Result<bool, EngineError> {
         let remaining = &self.raw[self.consumed..];
         self.nbest_rows.clear();
+        self.sentence_lookup_active = true;
         if remaining.is_empty() {
             return Ok(false);
         }
@@ -606,6 +620,17 @@ where
 
         self.refresh()?;
         Ok(true)
+    }
+
+    /// Whether a sentence lookup has run since the last reset.
+    ///
+    /// The lookup-active half of the gate: while this is true,
+    /// `pinyin_get_sentence` answers decoded-or-nothing (upstream's
+    /// `0 == results.size()` false) and never the pre-lookup raw form,
+    /// even when the lookup produced no rows.
+    #[must_use]
+    pub const fn sentence_lookup_active(&self) -> bool {
+        self.sentence_lookup_active
     }
 
     /// The decoded text of n-best row `index`, best-first
@@ -2021,6 +2046,86 @@ mod tests {
         let keys = split.composition_keys().expect("the graph builds");
         let texts: Vec<&str> = keys.iter().map(|key| key.text()).collect();
         assert_eq!(texts, ["xi", "an"]);
+    }
+
+    #[test]
+    fn a_fallback_sentence_never_records_row_tokens() {
+        use crate::nbest::NbestRow;
+
+        let mut session = train_session();
+        session.type_pinyin("nihao").expect("typing cannot fail");
+        assert!(!session.sentence_lookup_active(), "no lookup has run yet");
+
+        // One authored row whose text differs from the DP sentence the
+        // fallback list also offers, so a fallback sentence candidate sits
+        // beyond the row at a known place.
+        session.nbest_rows = vec![NbestRow {
+            text: "\u{884}".to_owned(),
+            tokens: vec![PhraseToken::new(9)],
+            keys: 1,
+            span: 2,
+            cost: 0,
+        }];
+        session.refresh().expect("refresh cannot fail");
+        assert!(
+            !session.sentence_lookup_active(),
+            "only guess_sentence activates the lookup"
+        );
+
+        // The row itself records its whole token path.
+        assert_eq!(
+            session.select(0).expect("the row is live"),
+            Selection::Continued
+        );
+        assert_eq!(session.selected_tokens(), [PhraseToken::new(9)]);
+
+        // A fallback sentence candidate — kind Sentence beyond the rows —
+        // records nothing, and in particular never defaults through to
+        // row zero's tokens.
+        session.reset();
+        session.type_pinyin("nihao").expect("typing cannot fail");
+        session.nbest_rows = vec![NbestRow {
+            text: "\u{884}".to_owned(),
+            tokens: vec![PhraseToken::new(9)],
+            keys: 1,
+            span: 2,
+            cost: 0,
+        }];
+        session.refresh().expect("refresh cannot fail");
+        let fallback = session
+            .candidates()
+            .iter()
+            .position(|candidate| {
+                candidate.kind() == crate::CandidateKind::Sentence
+                    && candidate.text() == "\u{4f60}\u{597d}"
+            })
+            .expect("the fallback sentence is offered beyond the row");
+        assert!(fallback >= session.nbest_rows.len());
+        session.select(fallback).expect("the index is live");
+        assert!(
+            session.selected_tokens().is_empty(),
+            "a fallback sentence records no tokens"
+        );
+    }
+
+    #[test]
+    fn a_lookup_activates_the_sentence_gate_even_without_rows() {
+        let mut session = session();
+        assert!(!session.sentence_lookup_active());
+        // The Silent backends answer nothing: the lookup runs, finds no
+        // rows, and still counts as active — upstream clears
+        // m_nbest_results before every attempt.
+        session
+            .type_pinyin("qqq")
+            .expect("batch typing cannot fail");
+        assert!(
+            session.guess_sentence().expect("guess cannot fail"),
+            "the lookup ran"
+        );
+        assert!(session.sentence_lookup_active());
+        assert_eq!(session.sentence_text(0), None);
+        session.reset();
+        assert!(!session.sentence_lookup_active());
     }
 
     #[test]

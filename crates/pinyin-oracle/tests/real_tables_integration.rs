@@ -713,11 +713,14 @@ fn load_sentence_fixture() -> Option<SentenceFixture> {
     let mut pin_ref = String::new();
     let mut by_input = BTreeMap::new();
     for line in raw.lines() {
+        // Only the two recognised metadata headers are skipped: a corpus
+        // input can itself begin with '#' (a junk byte the W2 corpus
+        // carries), and those rows are data.
         if let Some(value) = line.strip_prefix("# pin_ref=") {
             pin_ref = value.to_owned();
             continue;
         }
-        if line.starts_with('#') || line.is_empty() {
+        if line.starts_with("# sample=") || line.is_empty() {
             continue;
         }
         let mut parts = line.split('\t');
@@ -963,6 +966,26 @@ fn sentence_surface_fixture_is_fresh() {
             mismatches.push(format!(
                 "input {input:?}: sentences {sentences:?} vs frozen {:?}",
                 line.sentences
+            ));
+        }
+        let rows: Vec<(char, Option<u8>, String)> = surface
+            .candidates
+            .iter()
+            .take(6)
+            .map(|info| {
+                let kind = match info.candidate_type {
+                    pinyin_oracle::OracleCandidateType::NbestMatch => 'n',
+                    pinyin_oracle::OracleCandidateType::Normal => 'N',
+                    pinyin_oracle::OracleCandidateType::Addon => 'a',
+                    _ => '?',
+                };
+                (kind, info.nbest_index, info.text.clone())
+            })
+            .collect();
+        if rows != line.rows {
+            mismatches.push(format!(
+                "input {input:?}: rows {rows:?} vs frozen {:?}",
+                line.rows
             ));
         }
     }

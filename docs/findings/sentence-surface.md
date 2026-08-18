@@ -99,10 +99,15 @@ the full `PhoneticKeyMatrix`:
   `phonetic_lookup.h:369-396`).
 
 `pinyin_get_sentence` (`pinyin.cpp:1463-1482`) returns
-`convert_to_utf8(phrase_index, result, NULL, false)` — the token array
-rendered through the phrase index (`lookup.cpp:27-70`) — for `index <
-m_nbest_results.size()`, else `false`. It is the decoded 1-best, never the
-raw form.
+`convert_to_utf8(phrase_index, result, NULL, false)` — the decoded n-best
+sentence row selected by `index`, rendered through the phrase index
+(`lookup.cpp:27-70`) — only when an active sentence lookup has a result at
+`index < m_nbest_results.size()`; otherwise it returns `false`. Index 0 is
+the 1-best. In this fork, the pre-W14 raw form (scheme keystroke buffer /
+session preedit) remains the pre-lookup fallback until
+`pinyin_guess_sentence` runs; after that gate is active,
+`pinyin_get_sentence` answers only from the decoded rows or `false`,
+including when the lookup produced no rows.
 
 `pinyin_choose_candidate` on an NBEST row (`pinyin.cpp:2511-2519`) diffs
 `constraints` between result 0 and the chosen index and returns
@@ -114,8 +119,8 @@ raw form.
    tail order preserved (index visible through
    `pinyin_get_candidate_nbest_index`), NBEST-wins merge against phrase
    candidates, lower-index-wins among rows.
-2. Decoded 1-best through `pinyin_get_sentence`, `false` past the row
-   count.
+2. Decoded n-best rows through `pinyin_get_sentence` (index 0 is the
+   1-best), `false` past the row count.
 3. The trellis ordering: length-preferring comparator with the log(1.2)
    penalty, beam 32, two stores per (step, token), unigram expansion only
    from the beam head, λ-blended bigram/unigram costs on the same counts
@@ -123,12 +128,25 @@ raw form.
 
 Ported divergences (recorded, not chased):
 
-- `pinyin_poss` is 1 for every span match: the export ABI carries one
-  spelling per (phrase, pinyin) tuple and no per-pronunciation
-  frequencies, so polyphone discounting is not reproducible from the
-  shipped tables. Affects near-ties between polyphone spellings.
+- `pinyin_poss` takes the looked-up spelling's matched/total share once
+  per span (§4): it does not sum the possibility over every matrix path
+  of one span the way `compute_pronunciation_possibility` does (first
+  path per token wins), and a matched share rarer than the 40-bit cost
+  floor is treated as upstream's below-ε step skip. The per-pronunciation
+  counts themselves are carried, so the polyphone discount applies.
 - Upstream accumulates `gfloat` costs; the port uses the core fixed-point
   surprisal scale. Ordering agrees except within float rounding of a tie.
+- The ported comparator is **not a strict weak order** — neither is
+  upstream's — and beam/tail top-k run it through Rust's `sort_by`, whose
+  contract wants a total order and which the pinned toolchain
+  demonstrates panicking on adversarial value sets (three beam values
+  with lengths 2/3/4 and costs 600/300/0 form a cycle; reproduced under
+  1.97.1). No corpus or fuzz input has tripped the detector, and the
+  frozen agreement pins were measured under this exact ordering: a
+  heap-shaped pairwise selection (upstream's `get_top_results` shape)
+  was implemented and measured at 459/238/211 — a pin move, so it was
+  rejected per the frozen-pin rule. Recorded for the upstream
+  report-back; revisit only alongside a deliberate pin re-freeze.
 - The constraint machinery (`CONSTRAINT_ONESTEP`/`diff_result`) is not
   ported; the engine's selection model re-seeds the remaining input from
   the recorded history, which is the established W6 surface.
@@ -158,7 +176,10 @@ Ported divergences (recorded, not chased):
   Without real unigrams the per-path DP supplies up to three rows so the
   surface exists for every model (the fallback candidate list keeps its
   pre-W14 shape until a guess happens).
-- Rows carry their token path, and choosing a row records **all** of it:
+- Rows carry their token path, and choosing a row — identified by its
+  list position among the prepended head entries, never by the kind or
+  `nbest_index` alone, which a fallback sentence candidate also carries
+  as 0 — records **all** of it:
   upstream keeps the chosen `MatchResult` on the instance and
   `pinyin_train` walks it, so the engine's selection record
   (`Session::select` → `history`) extends with the row's tokens. The
@@ -168,12 +189,16 @@ Ported divergences (recorded, not chased):
   which has no single token) and the user bigram never landed. Caught by
   `tools/bisection/run-predict-diff.sh`; regression-tested green after
   the fix.
-- C ABI: `pinyin_guess_sentence` fills the rows; `pinyin_get_sentence`
-  returns the decoded row text when rows exist (the pre-W14 raw-form
-  behaviour remains only for scheme parses and un-guessed instances);
-  `pinyin_get_candidate_nbest_index` reports the tail rank;
-  `pinyin_guess_candidates` honours `SORT_WITHOUT_SENTENCE_CANDIDATE` by
-  excluding sentence candidates.
+- C ABI: `pinyin_guess_sentence` fills the rows and marks the lookup
+  active (`Session::sentence_lookup_active`, cleared only by `reset`);
+  while a lookup is active, `pinyin_get_sentence` answers decoded-or-
+  `false` — never the raw form — even when the lookup produced no rows
+  (upstream's `get_nbest_match` clears `m_nbest_results` before every
+  attempt, so the `0 == results.size()` false covers that case too). The
+  pre-W14 raw form survives only before any lookup, for scheme parses
+  and un-guessed instances. `pinyin_get_candidate_nbest_index` reports
+  the tail rank; `pinyin_guess_candidates` honours
+  `SORT_WITHOUT_SENTENCE_CANDIDATE` by excluding sentence candidates.
 
 ## 5. Measured agreement
 
