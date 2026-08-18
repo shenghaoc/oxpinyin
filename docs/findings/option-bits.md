@@ -151,6 +151,19 @@ round, full tables): exports identical (3 rows); `nihao@0` and
 still rank (the ungated phrase-index term); trained user bigrams do not
 need to, because the bit is clear.
 
+Fork revalidation 2026-08-18 at `feat/oxpinyin-backend` tip `612004e`:
+`m_option_mask` still initialises to
+`PINYIN_INCOMPLETE | ZHUYIN_INCOMPLETE | PINYIN_CORRECT_ALL`
+(`PYPConfig.cc:145`); no site anywhere in `PYPConfig.cc` folds
+`DYNAMIC_ADJUST` into `m_option_mask` (only `PINYIN_AMB_ALL` at `:340`
+`:342` `:481` `:483` and `PINYIN_CORRECT_ALL` at `:614` `:616` `:729`
+`:731` are ever adjusted). `Config::option()` returns
+`m_option & m_option_mask`, so the fork's live option word remains
+bit-9-clear regardless of the `dynamic-adjust` schema key at `:219`.
+The set-state bigram fold (#99) stays out of scope for v0.1.0 —
+implementing it now would ship a ranking-model change that no shipped
+profile can reach.
+
 ## Sweep TEXT/ORDER (ABI, top-10)
 
 `run-option-sweep.sh` now diffs parse/aux **and** top-10 candidate
