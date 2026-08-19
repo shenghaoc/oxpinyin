@@ -399,3 +399,62 @@ chars 好/浩) while the oracle's carry the full context (你好/你浩) — the
 §3 constraint-machinery gap. It does not affect this fix (the record
 follows the chosen row, whatever its text), but a user-merged-costs
 probe-surface comparison will meet it.
+
+## 9. User-merged n-best step costs, landed
+
+Date: 2026-08-20 · branch `feat/w14-nbest-user-delta`.
+
+**The gap.** The §7 `SharedLm` forward (#116) answered the
+`BigramLanguageModel`'s system-only costs: rows existed, but their step
+costs ignored the §5 user overlay (`user-store.md` §5), so a trained
+pair could not cheapen its own row the way `score` already allowed.
+Upstream's n-best runs on the same user-aware lookup as `score` —
+`merge_single_gram` before the presence gate (`ngram.cpp:277`) — so the
+step costs must merge user counts into **both** branches, with merged
+denominators, before the observed-successor gate.
+
+**The change.**
+
+- `BigramLanguageModel::nbest_step_costs_with_user_delta(prev, token,
+  user)` recomputes both branches over the merged counts: the unigram
+  term over `system + user.unigram_delta` / `system_total +
+  user.unigram_total_delta`, the blended branch over
+  `merge_bigram(system_row, user.bigram_count, user.bigram_total)` —
+  merged *before* the count > 0 presence gate, so a user-only pair (no
+  system row, trained count) produces a blended cost whose denominator
+  is the merged (here: user) total instead of falling through to the
+  unigram branch. The trait method delegates with
+  `UserCountDelta::ZERO`, bit-identical to the pre-change body.
+- `SharedLm::nbest_step_costs` computes `count_delta(Some(prev), token)`
+  and forwards — the same overlay `score_with_user_delta` takes. Nothing
+  in the trellis, comparator, or the §8 selection record changed.
+
+**Evidence.**
+
+- Unit (`oxpinyin-data`): `nbest_zero_delta_is_bit_identical_to_trait_impl`
+  covers every trait shape — observed successor, count-0 non-successor in
+  an existing row, missing prev, no unigram table. The augmented delta
+  test asserts numerator *and* denominator merge (the blended cost
+  strictly cheapens). `nbest_user_only_pair_produces_a_blended_step`
+  asserts the user-only gram blends over the user total and undercuts
+  the unigram-only branch — the system-only answer for that pair has no
+  blended step at all.
+- C ABI (`tools/bisection/run-nbest-train-diff.sh`, matched model20
+  tables, pin-built oracle): the runner now diffs the **full logs** —
+  probe surfaces included, not just the export triples. That widening is
+  load-bearing: with the `count_delta` forward dropped, the export
+  triples stay identical (training still lands the same user state
+  through the NORMAL candidate; the seam moves row *ranking*, not the
+  recorded path) while the user-only probe stops flipping — ours stayed
+  你好/你好/你好 (n=126) against the oracle's 你浩/你好/你浩 (n=127),
+  runner exit 2. Merged: full logs byte-identical, baseline rows
+  你好×3 flipping to 你浩/你好/你浩 after (你→浩)×3, with 你浩 growing
+  138 → 414 → 1242 across the rounds on both engines.
+- The §8-recorded offset-decode divergence (our mid-train rows cover
+  only the remaining input, the oracle's the full context) did not
+  surface in the compared logs: it lives in the unchecked mid-train
+  decode whose return value the driver deliberately ignores.
+- Pins re-measured on this branch: default candidates 10177 / 10189 /
+  94871 of 98930 / absent 1 / tie-swaps 1036; sentence surface
+  488/385/370 — bit-identical. union / train / import / predict diffs
+  green; fmt, clippy `-D warnings`, workspace tests green.
