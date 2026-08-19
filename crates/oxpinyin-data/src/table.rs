@@ -82,6 +82,39 @@ impl From<redb::StorageError> for TableError {
     }
 }
 
+/// Visit every row of a redb `data` table without retaining a copy.
+///
+/// Used by the typed dictionary and LM loaders so they can parse records
+/// once into native keys instead of slurping `BTreeMap<Vec<u8>, Vec<u8>>`.
+///
+/// # Errors
+///
+/// Returns `E` converted from [`TableError`] on I/O or redb failure, or
+/// whatever `visit` returns.
+pub fn for_each_row<E, F>(path: &Path, mut visit: F) -> Result<(), E>
+where
+    F: FnMut(&[u8], &[u8]) -> Result<(), E>,
+    E: From<TableError>,
+{
+    let db = redb::Builder::new()
+        .open_read_only(path)
+        .map_err(|e| match e {
+            redb::DatabaseError::Storage(redb::StorageError::Io(io)) => TableError::Io(io),
+            other => TableError::Db(other),
+        })
+        .map_err(E::from)?;
+    let txn = db.begin_read().map_err(TableError::from).map_err(E::from)?;
+    let table = txn
+        .open_table(DATA_TABLE)
+        .map_err(TableError::from)
+        .map_err(E::from)?;
+    for item in table.iter().map_err(TableError::from).map_err(E::from)? {
+        let (key, value) = item.map_err(TableError::from).map_err(E::from)?;
+        visit(key.value(), value.value())?;
+    }
+    Ok(())
+}
+
 /// A read-only lookup table backed by a redb database.
 ///
 /// Keys and values are opaque byte slices.  Interpretation (e.g. as
@@ -100,19 +133,11 @@ pub struct LookupTable {
 impl LookupTable {
     /// Open a redb table file for reading.
     pub fn open(path: &Path) -> Result<Self, TableError> {
-        let db = redb::Builder::new()
-            .open_read_only(path)
-            .map_err(|e| match e {
-                redb::DatabaseError::Storage(redb::StorageError::Io(io)) => TableError::Io(io),
-                other => TableError::Db(other),
-            })?;
-        let txn = db.begin_read()?;
-        let table = txn.open_table(DATA_TABLE)?;
         let mut entries = BTreeMap::new();
-        for item in table.iter()? {
-            let (k, v) = item?;
-            entries.insert(k.value().to_vec(), v.value().to_vec());
-        }
+        for_each_row(path, |key, value| {
+            entries.insert(key.to_vec(), value.to_vec());
+            Ok::<(), TableError>(())
+        })?;
         Ok(Self { entries })
     }
 

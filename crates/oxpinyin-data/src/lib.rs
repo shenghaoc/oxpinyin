@@ -20,10 +20,10 @@ pub mod table_conf;
 pub use content::{ContentTable, LoadError, Record, TokenPair};
 pub use dict::{DictError, SystemDictionary};
 pub use interp::{
-    parse_interpolation2, parse_interpolation2_from_reader, InterpolationError, UnigramTable,
+    InterpolationError, UnigramTable, parse_interpolation2, parse_interpolation2_from_reader,
 };
-pub use lm::{merge_bigram, merge_counts, BigramLanguageModel, BigramRow, LmError};
+pub use lm::{BigramLanguageModel, BigramRow, LmError, merge_bigram, merge_counts};
 pub use oxpinyin_core::UserCountDelta;
 pub use punct::PunctTable;
 pub use table::{LookupTable, TableError};
-pub use table_conf::{parse_table_conf_lambda, read_table_conf_lambda, Lambda, PINNED_LAMBDA};
+pub use table_conf::{Lambda, PINNED_LAMBDA, parse_table_conf_lambda, read_table_conf_lambda};
