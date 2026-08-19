@@ -4,7 +4,8 @@ Date: 2026-08-17 · Status: W13 Phase 0 draft (human freeze pending)
 Amended 2026-08-20 by `zhuyin-index-fidelity` (PR 1 of the #109 stack):
 the recorded no-shuffle decision below is superseded — see "Index
 fidelity". Amended again by `zhuyin-simple-keyboards` (PR 2): the
-Simple keyboard family is table-driven — see "Keyboard scope".
+Simple keyboard family is table-driven — see "Keyboard scope" — and by
+`zhuyin-discrete` (PR 3): the Discrete family joins it there.
 
 ## Scope
 
@@ -194,7 +195,7 @@ lookup, `UNKNOWN_COST`, no panic; verified by the id-table audit).
 
 ## Keyboard scope
 
-The `zhuyin-simple-keyboards` PR (2026-08-20) makes the parser
+The `zhuyin-simple-keyboards` PR (2026-08-20) made the parser
 table-driven over the four Simple keyboards: **STANDARD (1), IBM (3),
 GINYIEH (4), ETEN (5)**, each with its pinned symbol/tone tables
 (`chewing_{standard,ibm,ginyieh,eten}_{symbols,tones}`) and all sharing
@@ -203,14 +204,37 @@ canonical aux rendering. The three keyboards use the same 37 symbols on
 different keys (GINYIEH and ETEN both bind the apostrophe; IBM's tone
 keys are `m , . /`); no key is both a symbol and a tone key on any of
 them, verified at extraction and re-verified per run by the driver's
-table cross-check. Deferred: HSU, ETEN26, HSU_DVORAK (Discrete),
-DACHEN_CP26, and STANDARD_DVORAK (the abort slot). Scheme setters accept
-the implemented ABI values; the rest report `false` and keep the
-previous scheme rather than aborting. The per-scheme PARSE_AUX sweep
-(runs 1, 3, 4, 5) is IDENTICAL for each; the added keyboards run the
-compact corpus — tone-bearing, tone-rejection, shuffle with canonical
-aux, one recovered live row, one dead row — with keystrokes derived
-from the selected keyboard's tables.
+table cross-check.
+
+The `zhuyin-discrete` PR (2026-08-20) adds the Discrete family:
+**HSU (2), ETEN26 (6), HSU_DVORAK (8)**, ported as
+`ZhuyinDiscreteParser2` (`zhuyin_parser2.cpp:335-490`). These parse by
+**positional probe** — position 0 in the keyboard's initial table, 1 in
+the middle table, 2 in the final table, 3 (under `USE_TONE`) in the
+tone table, a failed initial probe letting the middle probe read
+position 0 — then require full consumption and a row hit in the
+keyboard's own index; the per-byte Simple concatenation is deliberately
+not reused. A key may appear twice in one table (the dual-mapped keys:
+`c` → ㄒ/ㄕ, `j` → ㄐ/ㄓ, `v` → ㄑ/ㄔ on the HSU keyboards): parsing
+resolves the **first** row, `in_chewing_keyboard` reports both — up to
+three symbols plus the tone mark, `search_chewing_symbols2`. The
+keyboards' indexes (`hsu_zhuyin_index` 500 = 417 plain + 78
+`ZHUYIN_CORRECT_HSU` + 5 incomplete; `eten26_zhuyin_index` 482 = 417 +
+59 `ZHUYIN_CORRECT_ETEN26` + 6) carry the layout remaps as
+correction-gated rows — the same ㄍㄧ keystrokes are `ji` on the HSU
+keyboards and `qi` on ETEN26, ㄐㄨㄥ → zhong, ㄒ → shi, and the vowel
+stand-ins (HSU: ㄇ→an, ㄋ→en, ㄌ→er, ㄍ→e, ㄎ→ang, ㄏ→o; ETEN26:
+ㄆ→ou, ㄇ→an, ㄊ→ang, ㄋ→en, ㄌ→eng, ㄏ→er). HSU_DVORAK shares
+`hsu_zhuyin_index` and its `chewing_hsu_dvorak_*` tables are
+byte-identical to `chewing_hsu_*` at this pin. Deferred: DACHEN_CP26
+and STANDARD_DVORAK (the abort slot). Scheme setters accept the
+implemented ABI values (1/2/3/4/5/6/8); the rest report `false` and
+keep the previous scheme rather than aborting. The per-scheme
+PARSE_AUX sweep (runs 1–6, 8) is IDENTICAL for each; the Discrete
+corpus covers the dual-key ambiguity, tone-bearing/rejection, the
+correction rows, one canonical control, and the incomplete rows, with
+keystrokes positionally derived from the selected keyboard's tables
+(first row per key, like the parser itself).
 
 ## Verification input set
 
