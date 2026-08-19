@@ -105,10 +105,16 @@ def hottest(
     counts: Counter[tuple[str, ...]] = Counter()
     for thread in profile.get("threads") or []:
         stacks = thread.get("stackTable") or {}
-        n_stacks = max(len(column(stacks, "prefix")), len(column(stacks, "frame")))
+        # Bound by the frame column. A prefix-only row has no frame and
+        # must not be walked (that would count an empty stack).
+        n_frames = len(column(stacks, "frame"))
         stack_col = column(thread.get("samples") or {}, "stack")
         for stack_index in stack_col:
-            if not isinstance(stack_index, int) or stack_index < 0 or stack_index >= n_stacks:
+            if (
+                not isinstance(stack_index, int)
+                or stack_index < 0
+                or stack_index >= n_frames
+            ):
                 continue
             counts[walk_stack(thread, stack_index)] += 1
     return sum(counts.values()), counts.most_common(top_n)
@@ -151,7 +157,30 @@ def _self_test() -> int:
     }
     total, rows = hottest(mixed)
     assert total == 5, total
-    assert rows, rows
+    assert rows == [
+        (("root", "leaf"), 4),
+        (("only",), 1),
+    ], rows
+    prefix_only = {
+        "threads": [
+            {
+                "stringArray": ["ok"],
+                "samples": {"stack": [0, 1]},
+                "stackTable": {
+                    "prefix": [None, None],
+                    "frame": [0],
+                },
+                "frameTable": {"func": [0]},
+                "funcTable": {"name": [0]},
+            }
+        ]
+    }
+    prefix_total, prefix_rows = hottest(prefix_only)
+    # Sample 1 points at a prefix row with no matching frame: skip it,
+    # do not count an empty stack.
+    assert prefix_total == 1, prefix_total
+    assert () not in {stack for _, stack in prefix_rows}
+    assert prefix_rows == [(("ok",), 1)], prefix_rows
     bad = {
         "threads": [
             {
