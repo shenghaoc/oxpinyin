@@ -197,11 +197,27 @@ static void rm_rf(const char *dir) {
     rmdir(dir);
 }
 
+/* Parses `input` and requires it to consume exactly `expect` bytes — a
+ * partial parse would silently shrink every later surface. */
+static int parse_expect(const struct syms *s, pinyin_instance_t *inst,
+                        const char *input, size_t expect) {
+    size_t parsed = s->parse(inst, input);
+    if (parsed != expect) {
+        fprintf(stderr, "parse(%s) consumed %zu bytes, expected %zu\n",
+                input, parsed, expect);
+        return 1;
+    }
+    return 0;
+}
+
 static lookup_candidate_t *find_by_text(const struct syms *s,
                                         pinyin_instance_t *inst,
                                         const char *want) {
     guint count = 0;
-    s->getn(inst, &count);
+    if (!s->getn(inst, &count)) {
+        fprintf(stderr, "find_by_text: pinyin_get_n_candidate failed\n");
+        return NULL;
+    }
     for (guint i = 0; i < count; i++) {
         lookup_candidate_t *cand = NULL;
         if (!s->getc(inst, i, &cand) || !cand)
@@ -228,35 +244,67 @@ static const char *type_name(int type) {
     }
 }
 
-/* guess_sentence → print sentence rows 0..2 and the candidate head. */
-static void print_surface(const struct syms *s, pinyin_instance_t *inst,
-                          const char *label) {
-    printf("probe:%s guess=%d\n", label, (int)s->sentence(inst));
+/* guess_sentence → print sentence rows 0..2 and the candidate head.
+ * Returns 1 on any C-ABI failure so the caller can bail through the
+ * shared cleanup; every accessor is checked before the instance state
+ * is reused. */
+static int print_surface(const struct syms *s, pinyin_instance_t *inst,
+                         const char *label) {
+    bool guessed = s->sentence(inst);
+    printf("probe:%s guess=%d\n", label, (int)guessed);
+    if (!guessed) {
+        fprintf(stderr, "probe %s: guess_sentence failed\n", label);
+        return 1;
+    }
     for (guint8 i = 0; i < 3; i++) {
         gchar *text = NULL;
         bool got = s->get_sentence(inst, i, &text);
-        printf("probe:%s sentence[%u]=%s\n", label, i,
-               got && text ? text : "-");
+        if (got && !text) {
+            fprintf(stderr, "probe %s: get_sentence(%u) true with no text\n",
+                    label, i);
+            return 1;
+        }
+        /* `false` is the expected empty row (no n-best result at that
+         * index), not a failure — printed as "-". */
+        printf("probe:%s sentence[%u]=%s\n", label, i, got ? text : "-");
         /* Caller-owned per the C ABI contract; g_free(NULL) is a no-op. */
         g_free_fn(text);
     }
-    s->guess(inst, 0, DEFAULT_SORT);
+    if (!s->guess(inst, 0, DEFAULT_SORT)) {
+        fprintf(stderr, "probe %s: guess_candidates failed\n", label);
+        return 1;
+    }
     guint n = 0;
-    s->getn(inst, &n);
+    if (!s->getn(inst, &n)) {
+        fprintf(stderr, "probe %s: get_n_candidate failed\n", label);
+        return 1;
+    }
     printf("probe:%s n=%u\n", label, n);
     guint limit = n < 8 ? n : 8;
     for (guint i = 0; i < limit; i++) {
         lookup_candidate_t *cand = NULL;
-        if (!s->getc(inst, i, &cand) || !cand)
-            continue;
+        if (!s->getc(inst, i, &cand) || !cand) {
+            fprintf(stderr, "probe %s: get_candidate(%u) failed\n", label, i);
+            return 1;
+        }
         int type = 0;
-        s->gettype(inst, cand, &type);
+        if (!s->gettype(inst, cand, &type)) {
+            fprintf(stderr, "probe %s: get_candidate_type(%u) failed\n", label, i);
+            return 1;
+        }
         const gchar *text = NULL;
-        s->getstr(inst, cand, &text);
+        if (!s->getstr(inst, cand, &text)) {
+            fprintf(stderr, "probe %s: get_candidate_string(%u) failed\n", label, i);
+            return 1;
+        }
         if (type == 1) { /* NBEST: the oracle asserts nbest_index is only
                           asked of NBEST rows */
             guint8 idx = 255;
-            s->getnbest(inst, cand, &idx);
+            if (!s->getnbest(inst, cand, &idx)) {
+                fprintf(stderr, "probe %s: get_candidate_nbest_index(%u) failed\n",
+                        label, i);
+                return 1;
+            }
             printf("probe:%s cand[%u]=%s/%u/%s\n", label, i, type_name(type),
                    (unsigned)idx, text ? text : "(null)");
         } else {
@@ -264,17 +312,25 @@ static void print_surface(const struct syms *s, pinyin_instance_t *inst,
                    text ? text : "(null)");
         }
     }
-    s->reset(inst);
+    if (!s->reset(inst)) {
+        fprintf(stderr, "probe %s: reset failed\n", label);
+        return 1;
+    }
+    return 0;
 }
 
 /* One scripted training round on (first → second) via the real
  * self-learning path: parse, sentence, guess, choose first, re-decode,
- * guess, choose second, re-decode, train. */
+ * guess, choose second, re-decode, train. Returns 1 on any failure; the
+ * caller routes it through the shared cleanup. */
 static int train_pair(const struct syms *s, pinyin_instance_t *inst, int round,
                       const char *first, const char *second) {
-    s->parse(inst, "nihao");
-    s->sentence(inst);
-    s->guess(inst, 0, DEFAULT_SORT);
+    if (parse_expect(s, inst, "nihao", 5))
+        return 1;
+    if (!s->sentence(inst) || !s->guess(inst, 0, DEFAULT_SORT)) {
+        fprintf(stderr, "round %d: pre-choose decode failed\n", round);
+        return 1;
+    }
 
     lookup_candidate_t *ni = find_by_text(s, inst, first);
     if (!ni) {
@@ -286,8 +342,10 @@ static int train_pair(const struct syms *s, pinyin_instance_t *inst, int round,
         fprintf(stderr, "round %d: choose %s failed\n", round, first);
         return 1;
     }
-    s->sentence(inst);
-    s->guess(inst, (size_t)offset, DEFAULT_SORT);
+    if (!s->sentence(inst) || !s->guess(inst, (size_t)offset, DEFAULT_SORT)) {
+        fprintf(stderr, "round %d: mid-choose decode failed\n", round);
+        return 1;
+    }
 
     lookup_candidate_t *hao = find_by_text(s, inst, second);
     if (!hao) {
@@ -298,13 +356,21 @@ static int train_pair(const struct syms *s, pinyin_instance_t *inst, int round,
         fprintf(stderr, "round %d: choose %s failed\n", round, second);
         return 1;
     }
+    /* Kept for upstream sequence fidelity, unchecked: with the input fully
+     * consumed the capi's guess_sentence answers false (Session's
+     * empty-remaining contract) while the oracle answers true — a known
+     * edge divergence, and the return value is not part of the compared
+     * surface (train walks the recorded selection, not this decode). */
     s->sentence(inst);
 
     if (!s->train(inst, 0)) {
         fprintf(stderr, "round %d: pinyin_train failed\n", round);
         return 1;
     }
-    s->reset(inst);
+    if (!s->reset(inst)) {
+        fprintf(stderr, "round %d: reset failed\n", round);
+        return 1;
+    }
     return 0;
 }
 
@@ -364,24 +430,27 @@ int main(int argc, char **argv) {
     }
 
     /* Phase A — baseline: empty user store. */
-    s.parse(inst, "nihao");
-    print_surface(&s, inst, "baseline");
+    if (parse_expect(&s, inst, "nihao", 5) ||
+        print_surface(&s, inst, "baseline"))
+        goto fail_inst;
 
     /* Phase B — user-only pair: 你 → 浩 (no system successor). */
     for (int round = 1; round <= user_rounds; round++) {
         if (train_pair(&s, inst, round, "你", "浩"))
             goto fail_inst;
     }
-    s.parse(inst, "nihao");
-    print_surface(&s, inst, "user-only");
+    if (parse_expect(&s, inst, "nihao", 5) ||
+        print_surface(&s, inst, "user-only"))
+        goto fail_inst;
 
     /* Phase C — augmented pair: 你 → 好 (system successor, count 30). */
     for (int round = 1; round <= rounds; round++) {
         if (train_pair(&s, inst, round, "你", "好"))
             goto fail_inst;
     }
-    s.parse(inst, "nihao");
-    print_surface(&s, inst, "augmented");
+    if (parse_expect(&s, inst, "nihao", 5) ||
+        print_surface(&s, inst, "augmented"))
+        goto fail_inst;
 
     /* Phase D — the landed user state, one export per process. */
     {
@@ -406,11 +475,18 @@ int main(int argc, char **argv) {
                 gchar *phrase = NULL;
                 gchar *pinyin = NULL;
                 gint count = -1;
-                s.bigram_get_next(biter, &phrase, &pinyin, &count);
+                /* Upstream's bigram get_next fills the out-params and
+                 * returns whether MORE rows follow, not whether the call
+                 * succeeded (user-store.md §9, mirrored from train-diff):
+                 * print the filled row either way, and stop the loop when
+                 * it reports no more. */
+                bool more = s.bigram_get_next(biter, &phrase, &pinyin, &count);
                 printf("bigram: %s|%s|%d\n", phrase ? phrase : "(null)",
                        pinyin ? pinyin : "(null)", (int)count);
                 g_free_fn(phrase);
                 g_free_fn(pinyin);
+                if (!more)
+                    break;
             }
             s.end_bigram(biter);
         }
