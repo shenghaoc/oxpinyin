@@ -982,6 +982,35 @@ impl DiscreteTables {
     }
 }
 
+/// The DaChen CP26 keyboard's source tables: initial/middle/final symbol
+/// tables plus tones, ported verbatim from the pinned `zhuyin_table.h`.
+/// The parser is constructor-configured over these and the **global**
+/// index (`ZhuyinDaChenCP26Parser2` has no `set_scheme` and no
+/// `m_options`, `zhuyin_parser2.cpp:541-558`), so no correction bit
+/// applies — the repeat-count probe always builds spellings in canonical
+/// initial+middle+final order, which the plain rows already cover.
+#[derive(Clone, Copy)]
+struct Cp26Tables {
+    /// `(key, zhuyin symbol)` initial-slot rows, pinned order.
+    initials: &'static [(u8, &'static str)],
+    /// Middle-slot rows.
+    middles: &'static [(u8, &'static str)],
+    /// Final-slot rows.
+    finals: &'static [(u8, &'static str)],
+    /// `(key, tone number)` rows.
+    tones: &'static [(u8, u8)],
+}
+
+impl Cp26Tables {
+    /// The tone one key spells, if it is a tone key.
+    fn tone(&self, byte: u8) -> Option<u8> {
+        self.tones
+            .iter()
+            .find(|(key, _)| *key == byte)
+            .map(|(_, tone)| *tone)
+    }
+}
+
 /// Standard keyboard symbol table, `chewing_standard_symbols`
 /// (`src/storage/zhuyin_table.h:9`).
 const STANDARD_SYMBOLS: &[(u8, &str)] = &[
@@ -1322,6 +1351,58 @@ const HSU_DVORAK_FINALS: &[(u8, &str)] = &[
 /// (`src/storage/zhuyin_table.h:424`).
 const HSU_DVORAK_TONES: &[(u8, u8)] = &[(b' ', 1), (b'd', 2), (b'f', 3), (b'j', 4), (b's', 5)];
 
+/// DaChen CP26 keyboard initial table, `chewing_dachen_cp26_initials`
+/// (`src/storage/zhuyin_table.h:433`); dual keys: ['q', 't', 'w'].
+const CP26_INITIALS: &[(u8, &str)] = &[
+    (b'a', "ㄇ"),
+    (b'b', "ㄖ"),
+    (b'c', "ㄏ"),
+    (b'd', "ㄎ"),
+    (b'e', "ㄍ"),
+    (b'f', "ㄑ"),
+    (b'g', "ㄕ"),
+    (b'h', "ㄘ"),
+    (b'n', "ㄙ"),
+    (b'q', "ㄅ"),
+    (b'q', "ㄆ"),
+    (b'r', "ㄐ"),
+    (b's', "ㄋ"),
+    (b't', "ㄓ"),
+    (b't', "ㄔ"),
+    (b'v', "ㄒ"),
+    (b'w', "ㄉ"),
+    (b'w', "ㄊ"),
+    (b'x', "ㄌ"),
+    (b'y', "ㄗ"),
+    (b'z', "ㄈ"),
+];
+
+/// DaChen CP26 keyboard middle table, `chewing_dachen_cp26_middles`
+/// (`src/storage/zhuyin_table.h:458`); dual keys: [].
+const CP26_MIDDLES: &[(u8, &str)] = &[(b'j', "ㄨ"), (b'm', "ㄩ"), (b'u', "ㄧ")];
+
+/// DaChen CP26 keyboard final table, `chewing_dachen_cp26_finals`
+/// (`src/storage/zhuyin_table.h:465`); dual keys: ['i', 'l', 'o', 'p'].
+const CP26_FINALS: &[(u8, &str)] = &[
+    (b'b', "ㄝ"),
+    (b'i', "ㄛ"),
+    (b'i', "ㄞ"),
+    (b'k', "ㄜ"),
+    (b'l', "ㄠ"),
+    (b'l', "ㄤ"),
+    (b'm', "ㄡ"),
+    (b'n', "ㄥ"),
+    (b'o', "ㄟ"),
+    (b'o', "ㄢ"),
+    (b'p', "ㄣ"),
+    (b'p', "ㄦ"),
+    (b'u', "ㄚ"),
+];
+
+/// DaChen CP26 keyboard tone table, `chewing_dachen_cp26_tones`
+/// (`src/storage/zhuyin_table.h:482`).
+const CP26_TONES: &[(u8, u8)] = &[(b' ', 1), (b'd', 4), (b'e', 2), (b'r', 3), (b'y', 5)];
+
 fn tone_symbol(tone: u8) -> &'static str {
     match tone {
         1 => " ",
@@ -1370,14 +1451,17 @@ fn search_zhuyin_index(
 }
 
 /// The compiled keyboard behind a scheme: a Simple symbol/tone pair over
-/// the global index, or a Discrete initial/middle/final set over the
-/// keyboard's own index.
+/// the global index, a Discrete initial/middle/final set over the
+/// keyboard's own index, or the CP26 repeat-count keyboard over the
+/// global index.
 #[derive(Clone, Copy)]
 enum Keyboard {
     /// STANDARD, IBM, GINYIEH, ETEN.
     Simple(SimpleTables),
     /// HSU, ETEN26, HSU_DVORAK.
     Discrete(DiscreteTables),
+    /// DACHEN_CP26.
+    Cp26(Cp26Tables),
 }
 
 /// Stateless parser for one Zhuyin keyboard.
@@ -1459,13 +1543,29 @@ impl ZhuyinScheme {
         }
     }
 
-    /// The compiled keyboard for this scheme, `None` for CP26 and the
-    /// dvorak abort slot.
+    /// The CP26 tables, `None` for every other scheme.
+    fn cp26_tables(self) -> Option<Cp26Tables> {
+        match self {
+            Self::DachenCp26 => Some(Cp26Tables {
+                initials: CP26_INITIALS,
+                middles: CP26_MIDDLES,
+                finals: CP26_FINALS,
+                tones: CP26_TONES,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The compiled keyboard for this scheme, `None` for the dvorak
+    /// abort slot.
     fn keyboard(self) -> Option<Keyboard> {
         if let Some(tables) = self.simple_tables() {
             return Some(Keyboard::Simple(tables));
         }
-        self.discrete_tables().map(Keyboard::Discrete)
+        if let Some(tables) = self.discrete_tables() {
+            return Some(Keyboard::Discrete(tables));
+        }
+        self.cp26_tables().map(Keyboard::Cp26)
     }
 }
 
@@ -1544,6 +1644,27 @@ impl ZhuyinParser {
                 }
                 symbols
             }
+            Some(Keyboard::Cp26(tables)) => {
+                // ZhuyinDaChenCP26Parser2::in_chewing_scheme
+                // (`zhuyin_parser2.cpp:796-844`): initial, middle, and
+                // final hits (both rows of a dual key), the display-only
+                // "ㄧㄚ" extra for 'i', then the tone mark.
+                let mut symbols = Vec::new();
+                for table in [tables.initials, tables.middles, tables.finals] {
+                    symbols.extend(
+                        DiscreteTables::all_symbols(table, key)
+                            .into_iter()
+                            .map(str::to_owned),
+                    );
+                }
+                if key == b'i' {
+                    symbols.push("ㄧㄚ".to_owned());
+                }
+                if use_tone && let Some(tone) = tables.tone(key) {
+                    symbols.push(tone_symbol(tone).to_owned());
+                }
+                symbols
+            }
             None => Vec::new(),
         }
     }
@@ -1612,13 +1733,42 @@ impl ZhuyinParser {
                     },
                 )
             }
+            Keyboard::Cp26(tables) => {
+                // CP26 owns no correction bit; only the caller's
+                // ZHUYIN_INCOMPLETE crosses into the global index's
+                // gate.
+                let options = if allow_incomplete {
+                    ZHUYIN_INCOMPLETE
+                } else {
+                    0
+                };
+                let maximum_len = input
+                    .iter()
+                    .take_while(|&&byte| self.in_scheme(byte, use_tone))
+                    .count();
+                (
+                    maximum_len,
+                    KeyProbe::Cp26 {
+                        tables,
+                        use_tone,
+                        options,
+                    },
+                )
+            }
+        };
+
+        // max_chewing_dachen26_length = 12 for CP26,
+        // max_chewing_length = 4 for every other keyboard.
+        let max_key_len = match keyboard {
+            Keyboard::Cp26(_) => 12,
+            _ => 4,
         };
 
         let mut keys = Vec::new();
         let mut parsed_len = 0;
         while parsed_len < maximum_len {
             let remaining = &input[parsed_len..maximum_len];
-            let try_len = remaining.len().min(4);
+            let try_len = remaining.len().min(max_key_len);
             let mut matched = None;
             for len in (1..=try_len).rev() {
                 if let Some((key, zhuyin, tone)) =
@@ -1676,6 +1826,15 @@ enum KeyProbe {
         /// The parser-owned option word.
         options: u32,
     },
+    /// The CP26 repeat-count path.
+    Cp26 {
+        /// The keyboard's slot tables.
+        tables: Cp26Tables,
+        /// The `USE_TONE` option.
+        use_tone: bool,
+        /// The parser-owned option word.
+        options: u32,
+    },
 }
 
 impl KeyProbe {
@@ -1691,6 +1850,11 @@ impl KeyProbe {
                 use_tone,
                 options,
             } => parse_one_discrete_key(input, use_tone, options, tables),
+            Self::Cp26 {
+                tables,
+                use_tone,
+                options,
+            } => parse_one_cp26_key(input, use_tone, options, tables),
         }
     }
 }
@@ -1797,6 +1961,152 @@ fn parse_one_discrete_key(
 
     let (key, canonical) = search_zhuyin_index(tables.index, &zhuyin, options)?;
     Some((key, canonical.to_owned(), tone))
+}
+
+/// `ZhuyinDaChenCP26Parser2::parse_one_key`
+/// (`src/storage/zhuyin_parser2.cpp:573-716`): the repeat-count probe.
+///
+/// A run of the same key cycles the symbol rows that key maps to —
+/// `count_same_chars` (`:560-573`) counts the run, dual rows pick by
+/// `(count - 1) % 2` (1 tap → first row, 2 taps → second, 3 → first…),
+/// and the whole run is consumed at once. Three middle keys have
+/// multi-way specials instead: `u` cycles `(count - 1) % 3` over
+/// middle ㄧ / final ㄚ / both, `m` cycles `(count - 1) % 2` over middle
+/// ㄩ / final ㄡ, and `j` is always middle ㄨ. Under `USE_TONE` the
+/// **last** input byte is probed in the tone table first and stripped,
+/// so keys that are both initial and tone (`e` ㄍ/2, `r` ㄐ/3, `d` ㄎ/4,
+/// `y` ㄗ/5) resolve by position. The probe requires the whole input
+/// consumed and a hit in the **global** index — which, with no
+/// correction bit or'd in, means the plain rows only.
+///
+/// Live vs display-only: every table row is parse-live (both rows of a
+/// dual cycle by repeat count); the one display-only string is the
+/// `i` key's extra "ㄧㄚ" in `in_chewing_scheme` — parse can produce
+/// ㄧㄚ only through the `u` triple-tap. The upstream `#if 0`
+/// partial-input block (`:752-785`) is dead code at the pin and is not
+/// ported.
+fn parse_one_cp26_key(
+    input: &[u8],
+    use_tone: bool,
+    options: u32,
+    tables: Cp26Tables,
+) -> Option<(SyllableKey, String, u8)> {
+    /// `count_same_chars` (`:560-573`): the length of the run of
+    /// `input[0]` (always ≥ 1).
+    fn count_same_chars(input: &[u8]) -> usize {
+        input.iter().take_while(|&&byte| byte == input[0]).count()
+    }
+
+    if input.is_empty() {
+        return None;
+    }
+
+    let mut len = input.len();
+    let mut tone = 0;
+    if use_tone && let Some(value) = tables.tone(input[len - 1]) {
+        tone = value;
+        len -= 1;
+    }
+    if len == 0 {
+        return None;
+    }
+    let input = &input[..len];
+
+    let mut index = 0;
+    let mut initial = "";
+    let mut middle = "";
+    let mut final_ = "";
+
+    // probe initial: a run cycles a dual key's two rows.
+    let count = count_same_chars(&input[index..]);
+    if let Some((first, second)) = two_symbols(tables.initials, input[index]) {
+        index += count;
+        initial = match second {
+            None => first,
+            Some(second) => {
+                if (count - 1).is_multiple_of(2) {
+                    first
+                } else {
+                    second
+                }
+            }
+        };
+    }
+
+    if index != len {
+        // probe middle: u/m/j have repeat-count specials; the table
+        // lookup then validates and consumes the run.
+        let count = count_same_chars(&input[index..]);
+        let byte = input[index];
+        if byte == b'u' {
+            match (count - 1) % 3 {
+                0 => middle = "ㄧ",
+                1 => final_ = "ㄚ",
+                _ => {
+                    middle = "ㄧ";
+                    final_ = "ㄚ";
+                }
+            }
+        }
+        if byte == b'm' {
+            if (count - 1).is_multiple_of(2) {
+                middle = "ㄩ";
+            } else {
+                final_ = "ㄡ";
+            }
+        }
+        if byte == b'j' {
+            middle = "ㄨ";
+        }
+        if two_symbols(tables.middles, byte).is_some() {
+            index += count;
+        }
+    }
+
+    if index != len && final_.is_empty() {
+        // probe final (skipped when a u/m special already set it): a run
+        // cycles a dual key's two rows.
+        let count = count_same_chars(&input[index..]);
+        if let Some((first, second)) = two_symbols(tables.finals, input[index]) {
+            index += count;
+            final_ = match second {
+                None => first,
+                Some(second) => {
+                    if (count - 1).is_multiple_of(2) {
+                        first
+                    } else {
+                        second
+                    }
+                }
+            };
+        }
+    }
+
+    if index != len {
+        return None;
+    }
+
+    let mut zhuyin = String::with_capacity(initial.len() + middle.len() + final_.len());
+    zhuyin.push_str(initial);
+    zhuyin.push_str(middle);
+    zhuyin.push_str(final_);
+    let (key, canonical) =
+        search_zhuyin_index(&crate::zhuyin_map::ZHUYIN_PINYIN_MAP, &zhuyin, options)?;
+    Some((key, canonical.to_owned(), tone))
+}
+
+/// `search_chewing_symbols2` (`zhuyin_parser2.cpp:131-157`): the first
+/// and second rows a key maps to in `table` (at most two, table order).
+fn two_symbols(
+    table: &'static [(u8, &'static str)],
+    byte: u8,
+) -> Option<(&'static str, Option<&'static str>)> {
+    let mut hits = table
+        .iter()
+        .filter(|(key, _)| *key == byte)
+        .map(|(_, s)| *s);
+    let first = hits.next()?;
+    Some((first, hits.next()))
 }
 
 /// `_ChewingKey::is_valid_zhuyin` (`src/storage/chewing_key.cpp:38-45`).
@@ -2231,17 +2541,15 @@ mod tests {
             ZhuyinScheme::Hsu,
             ZhuyinScheme::Eten26,
             ZhuyinScheme::HsuDvorak,
+            ZhuyinScheme::DachenCp26,
             ZhuyinScheme::Standard,
         ] {
             assert!(parser.set_scheme(scheme));
             assert_eq!(parser.scheme(), scheme);
         }
-        // The CP26 keyboard and the dvorak abort slot keep the current
-        // scheme.
-        for rejected in [ZhuyinScheme::StandardDvorak, ZhuyinScheme::DachenCp26] {
-            assert!(!parser.set_scheme(rejected));
-            assert_eq!(parser.scheme(), ZhuyinScheme::Standard);
-        }
+        // The dvorak abort slot keeps the current scheme.
+        assert!(!parser.set_scheme(ZhuyinScheme::StandardDvorak));
+        assert_eq!(parser.scheme(), ZhuyinScheme::Standard);
     }
 
     #[test]
@@ -2588,5 +2896,127 @@ mod tests {
         let b_key = discrete_key_for(ZhuyinScheme::Hsu, 0, "ㄅ");
         assert_eq!(hsu.parse(&[b_key], true, false).consumed(), 0);
         assert_eq!(hsu.parse(&[b_key], true, true).consumed(), 0);
+    }
+
+    #[test]
+    fn cp26_repeat_counts_cycle_dual_rows() {
+        let parser = ZhuyinParser::with_scheme(ZhuyinScheme::DachenCp26);
+
+        // Initials: single tap is the first row, the run cycles —
+        // t→ㄓ (zhi), tt→ㄔ (chi); q/t/w are the dual initial keys.
+        assert_eq!(parser.parse(b"t", true, false).full_pinyin(), "zhi");
+        assert_eq!(parser.parse(b"tt", true, false).full_pinyin(), "chi");
+        assert_eq!(parser.parse(b"ttt", true, false).full_pinyin(), "zhi");
+
+        // The same tap-count law on a dual final: i→ㄛ (o), ii→ㄞ (ai).
+        assert_eq!(parser.parse(b"i", true, false).full_pinyin(), "o");
+        assert_eq!(parser.parse(b"ii", true, false).full_pinyin(), "ai");
+
+        // Single taps that are complete plain rows.
+        assert_eq!(parser.parse(b"g", true, false).full_pinyin(), "shi");
+        assert_eq!(parser.parse(b"u", true, false).full_pinyin(), "yi");
+        assert_eq!(parser.parse(b"m", true, false).full_pinyin(), "yu");
+    }
+
+    #[test]
+    fn cp26_middle_specials_cycle_three_and_two_ways() {
+        let parser = ZhuyinParser::with_scheme(ZhuyinScheme::DachenCp26);
+
+        // u cycles (count-1) % 3: ㄧ, ㄚ, ㄧㄚ.
+        assert_eq!(parser.parse(b"u", true, false).full_pinyin(), "yi");
+        assert_eq!(parser.parse(b"uu", true, false).full_pinyin(), "a");
+        assert_eq!(parser.parse(b"uuu", true, false).full_pinyin(), "ya");
+        assert_eq!(parser.parse(b"uuuu", true, false).full_pinyin(), "yi");
+
+        // m cycles (count-1) % 2: ㄩ, ㄡ.
+        assert_eq!(parser.parse(b"m", true, false).full_pinyin(), "yu");
+        assert_eq!(parser.parse(b"mm", true, false).full_pinyin(), "ou");
+
+        // With an initial, the specials still apply: quu is ㄅㄚ (ba),
+        // amm is ㄇㄡ (mou — ㄅㄡ is not a Mandarin syllable, so the
+        // m-special needs a compatible initial); after a consumed
+        // middle the finals table is probed plainly, so vum is ㄒㄧㄡ
+        // (xiu) and vub is ㄒㄧㄝ (xie).
+        assert_eq!(parser.parse(b"qu", true, false).full_pinyin(), "bi");
+        assert_eq!(parser.parse(b"qqu", true, false).full_pinyin(), "pi");
+        assert_eq!(parser.parse(b"quu", true, false).full_pinyin(), "ba");
+        assert_eq!(parser.parse(b"amm", true, false).full_pinyin(), "mou");
+        assert_eq!(parser.parse(b"qmm", true, false).consumed(), 0);
+        assert_eq!(parser.parse(b"vub", true, false).full_pinyin(), "xie");
+        assert_eq!(parser.parse(b"vum", true, false).full_pinyin(), "xiu");
+    }
+
+    #[test]
+    fn cp26_tone_probe_wins_the_last_byte() {
+        let parser = ZhuyinParser::with_scheme(ZhuyinScheme::DachenCp26);
+
+        // e/d/r/y are initials AND tones: the tone probe strips the last
+        // byte first — eke is ㄍㄜ plus tone 2, dkd is ㄎㄜ plus tone 4,
+        // and a bare "ee"/"dd" strips to the lone incomplete initials
+        // ㄍ/ㄎ and consumes 0 (upstream identically).
+        let ge2 = parser.parse(b"eke", true, false);
+        assert_eq!(ge2.full_pinyin(), "ge");
+        assert_eq!(ge2.keys()[0].tone(), 2);
+        let ke4 = parser.parse(b"dkd", true, false);
+        assert_eq!(ke4.full_pinyin(), "ke");
+        assert_eq!(ke4.keys()[0].tone(), 4);
+        assert_eq!(parser.parse(b"ee", true, false).consumed(), 0);
+        assert_eq!(parser.parse(b"dd", true, false).consumed(), 0);
+
+        // Tone-bearing and tone-rejection on ㄋㄧ (s, u, e / space).
+        let ni2 = parser.parse(b"sue", true, false);
+        assert_eq!(ni2.full_pinyin(), "ni");
+        assert_eq!(ni2.keys()[0].tone(), 2);
+        assert_eq!(parser.parse(b"su ", true, false).consumed(), 0);
+
+        // A lone tone-or-initial key under USE_TONE strips to nothing.
+        assert_eq!(parser.parse(b"d", true, false).consumed(), 0);
+    }
+
+    #[test]
+    fn cp26_greedy_boundary_and_incomplete_row() {
+        let parser = ZhuyinParser::with_scheme(ZhuyinScheme::DachenCp26);
+
+        // Multi-syllable greedy: ni then shi.
+        let sug = parser.parse(b"sug", true, false);
+        assert_eq!(sug.consumed(), 3);
+        assert_eq!(sug.full_pinyin(), "ni'shi");
+
+        // ㄅ alone is the global index's incomplete row: matched under
+        // the option, stopped by the all-zero mask — consumed 0 either
+        // way, and CP26 owns no correction bit to change that.
+        assert_eq!(parser.parse(b"q", true, false).consumed(), 0);
+        assert_eq!(parser.parse(b"q", true, true).consumed(), 0);
+
+        // Empty input.
+        assert_eq!(parser.parse(b"", true, false).consumed(), 0);
+    }
+
+    #[test]
+    fn cp26_display_reports_the_special_and_dual_rows() {
+        let parser = ZhuyinParser::with_scheme(ZhuyinScheme::DachenCp26);
+        use super::tone_symbol;
+
+        // 'i' reports both final rows plus the display-only ㄧㄚ — the
+        // string parse can only produce through the u triple-tap.
+        assert_eq!(
+            parser.symbols_for(b'i', false),
+            vec!["ㄛ".to_owned(), "ㄞ".to_owned(), "ㄧㄚ".to_owned()]
+        );
+        // 't' reports both initial rows; 'e' its initial plus tone mark.
+        assert_eq!(
+            parser.symbols_for(b't', false),
+            vec!["ㄓ".to_owned(), "ㄔ".to_owned()]
+        );
+        assert_eq!(
+            parser.symbols_for(b'e', true),
+            vec!["ㄍ".to_owned(), tone_symbol(2).to_owned()]
+        );
+        // 'u' spans middle and final tables.
+        assert_eq!(
+            parser.symbols_for(b'u', false),
+            vec!["ㄧ".to_owned(), "ㄚ".to_owned()]
+        );
+        assert!(!parser.in_scheme(b'Q', true));
     }
 }

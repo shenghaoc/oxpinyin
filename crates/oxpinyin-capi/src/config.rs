@@ -89,11 +89,12 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
 /// The Rust parameter is `c_int`: callers may pass any `int`, and a closed
 /// `#[repr(C)]` enum would be UB for an unknown discriminant.
 ///
-/// The Simple Zhuyin keyboards (STANDARD 1, IBM 3, GINYIEH 4, ETEN 5)
-/// and the Discrete keyboards (HSU 2, ETEN26 6, HSU_DVORAK 8) are
-/// implemented table-driven. The remaining `ZhuyinScheme` header
-/// discriminants — DACHEN_CP26 and the STANDARD_DVORAK abort slot —
-/// report `false` and keep the previous scheme instead of aborting.
+/// Every implemented Zhuyin keyboard is table-driven: the Simple
+/// keyboards (STANDARD 1, IBM 3, GINYIEH 4, ETEN 5), the Discrete
+/// keyboards (HSU 2, ETEN26 6, HSU_DVORAK 8), and DACHEN_CP26 9. The
+/// remaining `ZhuyinScheme` header discriminant — the STANDARD_DVORAK
+/// abort slot — reports `false` and keeps the previous scheme instead
+/// of aborting.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: c_int) -> bool {
     if context.is_null() {
@@ -102,7 +103,7 @@ pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: 
     ffi_catch(false, || {
         // SAFETY: `context` is non-null and was produced by `pinyin_init`.
         let ctx = unsafe { context_mut(context) };
-        if !matches!(scheme, 1 | 2 | 3 | 4 | 5 | 6 | 8) {
+        if !matches!(scheme, 1 | 2 | 3 | 4 | 5 | 6 | 8 | 9) {
             return false;
         }
         ctx.zhuyin_scheme.store(scheme, Ordering::Relaxed);
