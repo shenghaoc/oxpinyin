@@ -174,8 +174,13 @@ Ported divergences (recorded, not chased):
   wins), mirroring §1. Rows are cleared by `reset`, exactly the
   `pinyin_reset` rule. `Candidate::nbest_index` carries the tail rank.
   Without real unigrams the per-path DP supplies up to three rows so the
-  surface exists for every model (the fallback candidate list keeps its
-  pre-W14 shape until a guess happens).
+  fallback surface exists whenever the model reports
+  `has_real_unigrams() == false` (the fallback candidate list keeps its
+  pre-W14 shape until a guess happens). With real unigrams the trellis
+  branch instead requires the model to answer `nbest_step_costs` — the
+  default trait impl returns no cost data, so a model that has real
+  unigrams but leaves the default in place produces no rows. §6 records
+  the C ABI façade currently in that shape.
 - Rows carry their token path, and choosing a row — identified by its
   list position among the prepended head entries, never by the kind or
   `nbest_index` alone, which a fallback sentence candidate also carries
@@ -253,17 +258,18 @@ surface pins re-measured: **488/385/370**, bit-identical. Nothing moved.
 **Where the sentence rows go.** The W14 trellis works: the direct-Session
 test `sentence_surface_reports_parity` pins the 488/385/370 agreement
 against the oracle fixture, and that path uses `BigramLanguageModel`
-directly. The C ABI does not, and the sentence surface never activates
-through it. The reason is one line: `SharedLm`
+directly. Through the C ABI the lookup does activate — `pinyin_guess_
+sentence` runs, clears prior rows, and returns `true`, so
+`Session::sentence_lookup_active()` flips on — but the row set comes back
+empty. The reason is one line: `SharedLm`
 (`crates/oxpinyin-capi/src/state.rs:301-363`) implements `LanguageModel`
 but does not override `nbest_step_costs`. The trait's default is
 `Ok(NbestStepCosts::default())` — no cost data — so the trellis in
 `Session::guess_sentence` produces zero rows for every C ABI caller
-regardless of scheme or full pinyin. `pinyin_guess_sentence` still
-returns `true` (the lookup ran and cleared prior rows, upstream's
-`get_nbest_match` contract), but `pinyin_get_sentence` answers false /
-`(null)` (the W14 decoded-or-nothing gate over an empty row set) and
-`pinyin_guess_candidates` prepends nothing.
+regardless of scheme or full pinyin. With the lookup active but empty,
+`pinyin_get_sentence` answers false / `(null)` (the W14 decoded-or-
+nothing gate over an empty row set) and `pinyin_guess_candidates`
+prepends nothing.
 
 A one-input C-ABI probe against the same tables confirms the reach:
 `pinyin_parse_more_full_pinyins("nihao")` → `guess_sentence: true`,
