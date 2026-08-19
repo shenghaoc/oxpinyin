@@ -187,8 +187,8 @@ pub fn load_prefix_tables() -> (Box<[String]>, Box<[String]>) {
     let index = LookupTable::open(&export.join("pinyin_index.redb")).expect("pinyin_index");
     let mut pinyin_keys = Vec::new();
     let mut initial_keys = Vec::new();
-    for (key, _value) in index.iter().expect("iter") {
-        let pinyin = String::from_utf8(key).expect("utf-8 key");
+    for (key, _value) in index.iter() {
+        let pinyin = std::str::from_utf8(key).expect("utf-8 key").to_owned();
         let mut initial = String::new();
         for (position, syllable) in pinyin.split('\'').enumerate() {
             if position > 0 {

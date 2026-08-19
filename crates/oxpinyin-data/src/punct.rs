@@ -29,7 +29,7 @@ impl PunctTable {
     pub fn open(path: &Path) -> Result<Self, DictError> {
         let table = LookupTable::open(path)?;
         let mut by_token = BTreeMap::new();
-        for (key, value) in table.iter()? {
+        for (key, value) in table.iter() {
             if key.len() != 4 {
                 return Err(DictError::Parse(format!(
                     "punct key length {} is not 4",
@@ -37,7 +37,7 @@ impl PunctTable {
                 )));
             }
             let token = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
-            let puncts = decode_puncts(&value)?;
+            let puncts = decode_puncts(value)?;
             if !puncts.is_empty() {
                 by_token.insert(token, puncts);
             }
