@@ -537,11 +537,69 @@ static const struct tone_row HSU_DVORAK_TONES[] = {
     { 's', 5, "˙" },
 };
 
+static const struct symbol_row CP26_INITIALS[] = {
+    { 'a', "ㄇ" },
+    { 'b', "ㄖ" },
+    { 'c', "ㄏ" },
+    { 'd', "ㄎ" },
+    { 'e', "ㄍ" },
+    { 'f', "ㄑ" },
+    { 'g', "ㄕ" },
+    { 'h', "ㄘ" },
+    { 'n', "ㄙ" },
+    { 'q', "ㄅ" },
+    { 'q', "ㄆ" },
+    { 'r', "ㄐ" },
+    { 's', "ㄋ" },
+    { 't', "ㄓ" },
+    { 't', "ㄔ" },
+    { 'v', "ㄒ" },
+    { 'w', "ㄉ" },
+    { 'w', "ㄊ" },
+    { 'x', "ㄌ" },
+    { 'y', "ㄗ" },
+    { 'z', "ㄈ" },
+};
+
+static const struct symbol_row CP26_MIDDLES[] = {
+    { 'j', "ㄨ" },
+    { 'm', "ㄩ" },
+    { 'u', "ㄧ" },
+};
+
+static const struct symbol_row CP26_FINALS[] = {
+    { 'b', "ㄝ" },
+    { 'i', "ㄛ" },
+    { 'i', "ㄞ" },
+    { 'k', "ㄜ" },
+    { 'l', "ㄠ" },
+    { 'l', "ㄤ" },
+    { 'm', "ㄡ" },
+    { 'n', "ㄥ" },
+    { 'o', "ㄟ" },
+    { 'o', "ㄢ" },
+    { 'p', "ㄣ" },
+    { 'p', "ㄦ" },
+    { 'u', "ㄚ" },
+};
+
+static const struct tone_row CP26_TONES[] = {
+    { ' ', 1, " " },
+    { 'd', 4, "ˋ" },
+    { 'e', 2, "ˊ" },
+    { 'r', 3, "ˇ" },
+    { 'y', 5, "˙" },
+};
+
 /* KB_SIMPLE: one symbol table (first-match per key, single symbol).
  * KB_DISCRETE: initial/middle/final slot tables (a key may appear twice
  * in one table — the dual-mapped keys; parsing takes the first row,
  * display collects every row). */
+/* family: 0 Simple (single symbol table, first-match per key),
+ * 1 Discrete (slot probe, first row per key), 2 CP26 (repeat-count
+ * cycling: a run of the same key picks the row by (taps - 1) % rows). */
 struct keyboard {
+    int family;
     const struct symbol_row *symbols;
     size_t nsymbols;
     const struct symbol_row *initials;
@@ -556,6 +614,7 @@ struct keyboard {
 
 #define KB_SIMPLE(symarr, tonearr)                                       \
     {                                                                    \
+        0,                                                               \
         symarr, sizeof(symarr) / sizeof(symarr[0]),                      \
         NULL, 0, NULL, 0, NULL, 0,                                       \
         tonearr, sizeof(tonearr) / sizeof(tonearr[0]),                   \
@@ -563,6 +622,17 @@ struct keyboard {
 
 #define KB_DISCRETE(iniarr, midarr, finarr, tonearr)                     \
     {                                                                    \
+        1,                                                               \
+        NULL, 0,                                                         \
+        iniarr, sizeof(iniarr) / sizeof(iniarr[0]),                      \
+        midarr, sizeof(midarr) / sizeof(midarr[0]),                      \
+        finarr, sizeof(finarr) / sizeof(finarr[0]),                      \
+        tonearr, sizeof(tonearr) / sizeof(tonearr[0]),                   \
+    }
+
+#define KB_CP26(iniarr, midarr, finarr, tonearr)                         \
+    {                                                                    \
+        2,                                                               \
         NULL, 0,                                                         \
         iniarr, sizeof(iniarr) / sizeof(iniarr[0]),                      \
         midarr, sizeof(midarr) / sizeof(midarr[0]),                      \
@@ -572,7 +642,7 @@ struct keyboard {
 
 /* Indexed by scheme slot: 0 -> 1 (STANDARD), 1 -> 3 (IBM),
  * 2 -> 4 (GINYIEH), 3 -> 5 (ETEN), 4 -> 2 (HSU), 5 -> 6 (ETEN26),
- * 6 -> 8 (HSU_DVORAK). */
+ * 6 -> 8 (HSU_DVORAK), 7 -> 9 (DACHEN_CP26). */
 static const struct keyboard KEYBOARDS[] = {
     KB_SIMPLE(STANDARD_SYMBOLS, STANDARD_TONES),
     KB_SIMPLE(IBM_SYMBOLS, IBM_TONES),
@@ -582,6 +652,7 @@ static const struct keyboard KEYBOARDS[] = {
     KB_DISCRETE(ETEN26_INITIALS, ETEN26_MIDDLES, ETEN26_FINALS, ETEN26_TONES),
     KB_DISCRETE(HSU_DVORAK_INITIALS, HSU_DVORAK_MIDDLES, HSU_DVORAK_FINALS,
                 HSU_DVORAK_TONES),
+    KB_CP26(CP26_INITIALS, CP26_MIDDLES, CP26_FINALS, CP26_TONES),
 };
 
 /* The scheme -> slot map; only the implemented keyboards this driver
@@ -595,6 +666,7 @@ static int scheme_slot(int scheme) {
     case 2: return 4;
     case 6: return 5;
     case 8: return 6;
+    case 9: return 7;
     default: return -1;
     }
 }
@@ -723,6 +795,48 @@ static const struct corpus_entry DISCRETE_CORPUS[] = {
     { .symbols = { NULL }, .tone = 0 },
 };
 
+/*
+ * Per-scheme corpus for CP26: single taps, double/triple repeats on the
+ * same key (the repeat-count law), disambiguation pairs, tone-bearing,
+ * tone-rejection, an incomplete row, and empty input.  Keystrokes are
+ * derived by inverting the repeat-count probe over the cp26 tables.
+ */
+static const struct corpus_entry CP26_CORPUS[] = {
+    { .symbols = { "ㄕ", NULL }, .tone = 0 },            /* g    single tap */
+    { .symbols = { "ㄓ", NULL }, .tone = 0 },            /* t    dual, 1 tap */
+    { .symbols = { "ㄔ", NULL }, .tone = 0 },            /* tt   dual, 2 taps */
+    { .symbols = { "ㄅ", "ㄧ", NULL }, .tone = 0 },       /* qu */
+    { .symbols = { "ㄆ", "ㄧ", NULL }, .tone = 0 },       /* qqu  dual initial */
+    { .symbols = { "ㄧ", NULL }, .tone = 0 },            /* u    yi */
+    { .symbols = { "ㄚ", NULL }, .tone = 0 },            /* uu   a */
+    { .symbols = { "ㄧ", "ㄚ", NULL }, .tone = 0 },       /* uuu  ya, u x3 */
+    { .symbols = { "ㄩ", NULL }, .tone = 0 },            /* m    yu */
+    { .symbols = { "ㄡ", NULL }, .tone = 0 },            /* mm   ou, m x2 */
+    { .symbols = { "ㄛ", NULL }, .tone = 0 },            /* i    o */
+    { .symbols = { "ㄞ", NULL }, .tone = 0 },            /* ii   ai, dual final */
+    { .symbols = { "ㄤ", NULL }, .tone = 0 },            /* ll   ang */
+    { .symbols = { "ㄢ", NULL }, .tone = 0 },            /* oo   an */
+    { .symbols = { "ㄦ", NULL }, .tone = 0 },            /* pp   er */
+    { .symbols = { "ㄒ", "ㄧ", "ㄝ", NULL }, .tone = 0 }, /* vub  xie */
+    { .symbols = { "ㄒ", "ㄧ", "ㄡ", NULL }, .tone = 0 }, /* vum  xiu */
+    { .symbols = { "ㄅ", "ㄚ", NULL }, .tone = 0 },       /* quu  ba, u x2 */
+    { .symbols = { "ㄇ", "ㄡ", NULL }, .tone = 0 },       /* amm  mou, m x2 */
+    { .symbols = { "ㄋ", "ㄧ", NULL }, .tone = 2 },       /* sue  tone-bearing */
+    { .symbols = { "ㄋ", "ㄧ", NULL }, .tone = 1 },       /* su   tone-rejection */
+    { .symbols = { "ㄍ", "ㄜ", NULL }, .tone = 2 },       /* eke  tone beats initial */
+    { .symbols = { "ㄎ", "ㄜ", NULL }, .tone = 4 },       /* dkd  tone beats initial */
+    { .symbols = { "ㄅ", NULL }, .tone = 0 },            /* q    incomplete row */
+    { .symbols = { NULL }, .tone = 0 },                  /* empty */
+};
+
+/* Two-syllable greedy boundaries, derived by concatenation. */
+static const struct corpus_entry CP26_MULTI[][2] = {
+    { { .symbols = { "ㄋ", "ㄧ", NULL }, .tone = 0 },
+      { .symbols = { "ㄕ", NULL }, .tone = 0 } },        /* sug  ni'shi */
+    { { .symbols = { "ㄅ", "ㄧ", NULL }, .tone = 0 },
+      { .symbols = { "ㄅ", "ㄚ", NULL }, .tone = 0 } },   /* ququu bi'ba */
+};
+
 /* ── Keystroke derivation ─────────────────────────────────────────────── */
 
 static char key_for_symbol(const struct keyboard *kb, const char *symbol) {
@@ -783,10 +897,140 @@ static char key_for_tone(const struct keyboard *kb, int tone) {
     exit(1);
 }
 
-/* Derives the keystroke string for one corpus entry into `out`, which must
- * hold at least KEYSTROKE_BUF bytes. */
+/* Emits `taps` copies of `key` — a CP26 repeat run. */
+static void cp26_emit_taps(char key, size_t taps, char *out, size_t *len) {
+    for (size_t i = 0; i < taps; i++)
+        out[(*len)++] = key;
+}
+
+/* Finds a CP26 slot-table row and returns its key plus the tap count
+ * the repeat-count law needs: 1 tap for the key's first row, 2 for its
+ * second. */
+static void cp26_key_taps(const struct symbol_row *table, size_t count,
+                          const char *symbol, char *key, size_t *taps) {
+    char last = 0;
+    bool have_last = false;
+    size_t row = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (have_last && last == table[i].key)
+            row++;
+        else {
+            last = table[i].key;
+            have_last = true;
+            row = 0;
+        }
+        if (strcmp(table[i].symbol, symbol) == 0) {
+            *key = table[i].key;
+            *taps = row + 1;
+            return;
+        }
+    }
+    fprintf(stderr, "no cp26 key spells %s\n", symbol);
+    exit(1);
+}
+
+/* Derives the taps for one CP26 syllable by inverting the repeat-count
+ * probe: optional initial (dual rows via 1/2 taps), then the middle
+ * specials — (ㄧ,ㄚ) is the u triple-tap, a bare final ㄚ/ㄡ is
+ * u x2 / m x2 because those keys land at the middle probe first —
+ * then a plain final row, then the tone key. */
+static size_t cp26_derive_syllable(const struct keyboard *kb,
+                                   const struct corpus_entry *entry, char *out) {
+    size_t len = 0;
+    const char *const *symbols = entry->symbols;
+    size_t nsymbols = 0;
+    while (symbols && symbols[nsymbols])
+        nsymbols++;
+
+    size_t at = 0;
+    /* optional initial */
+    if (nsymbols > 0) {
+        bool is_initial = false;
+        for (size_t i = 0; i < kb->ninitials; i++)
+            if (strcmp(kb->initials[i].symbol, symbols[0]) == 0)
+                is_initial = true;
+        if (is_initial) {
+            char key;
+            size_t taps;
+            cp26_key_taps(kb->initials, kb->ninitials, symbols[0], &key, &taps);
+            cp26_emit_taps(key, taps, out, &len);
+            at = 1;
+        }
+    }
+
+    size_t rest = nsymbols - at;
+
+    if (rest == 2) {
+        /* middle + final.  (ㄧ,ㄚ) must be the u triple-tap: separate
+         * middle and final taps would merge into one run and land at
+         * the middle probe.  Every other pair is the middle key once,
+         * then the final row tapped plainly — after a consumed middle
+         * the final probe has no u/m specials, so ㄚ is 'u' x1 and ㄡ
+         * is 'm' x1 there. */
+        const char *mid = symbols[at];
+        const char *fin = symbols[at + 1];
+        if (strcmp(mid, "ㄧ") == 0 && strcmp(fin, "ㄚ") == 0) {
+            cp26_emit_taps('u', 3, out, &len);
+        } else {
+            char mid_key = 0;
+            for (size_t i = 0; i < kb->nmiddles; i++)
+                if (strcmp(kb->middles[i].symbol, mid) == 0)
+                    mid_key = kb->middles[i].key;
+            if (mid_key == 0) {
+                fprintf(stderr, "no cp26 middle row for %s\n", mid);
+                exit(1);
+            }
+            cp26_emit_taps(mid_key, 1, out, &len);
+            if (strcmp(fin, "ㄚ") == 0) {
+                cp26_emit_taps('u', 1, out, &len);
+            } else if (strcmp(fin, "ㄡ") == 0) {
+                cp26_emit_taps('m', 1, out, &len);
+            } else {
+                char key;
+                size_t taps;
+                cp26_key_taps(kb->finals, kb->nfinals, fin, &key, &taps);
+                cp26_emit_taps(key, taps, out, &len);
+            }
+        }
+    } else if (rest == 1) {
+        const char *symbol = symbols[at];
+        bool middle = false;
+        for (size_t i = 0; i < kb->nmiddles; i++)
+            if (strcmp(kb->middles[i].symbol, symbol) == 0)
+                middle = true;
+        if (middle) {
+            char key = 0;
+            for (size_t i = 0; i < kb->nmiddles; i++)
+                if (strcmp(kb->middles[i].symbol, symbol) == 0)
+                    key = kb->middles[i].key;
+            cp26_emit_taps(key, 1, out, &len);
+        } else if (strcmp(symbol, "ㄚ") == 0) {
+            cp26_emit_taps('u', 2, out, &len);
+        } else if (strcmp(symbol, "ㄡ") == 0) {
+            cp26_emit_taps('m', 2, out, &len);
+        } else {
+            char key;
+            size_t taps;
+            cp26_key_taps(kb->finals, kb->nfinals, symbol, &key, &taps);
+            cp26_emit_taps(key, taps, out, &len);
+        }
+    }
+
+    if (entry->tone != 0)
+        out[len++] = key_for_tone(kb, entry->tone);
+    return len;
+}
+
+/* Derives the keystroke string for one corpus entry into `out` (at least
+ * 16 bytes: CP26 repeat runs are longer than one byte per symbol, and
+ * 16 >= KEYSTROKE_BUF also covers the Simple worst case). */
 static void derive_keystrokes(const struct keyboard *kb,
                               const struct corpus_entry *entry, char *out) {
+    if (kb->family == 2) {
+        size_t len = cp26_derive_syllable(kb, entry, out);
+        out[len] = '\0';
+        return;
+    }
     size_t len = 0;
     size_t slot = 0;
     for (const char *const *symbol = entry->symbols; symbol && *symbol; symbol++) {
@@ -976,7 +1220,8 @@ int main(int argc, char **argv) {
         fprintf(stderr,
                 "usage: %s <so> <systemdir> [scheme]\n"
                 "  scheme: 1 STANDARD, 2 HSU, 3 IBM, 4 GINYIEH, 5 ETEN,\n"
-                "          6 ETEN26, 8 HSU_DVORAK (7 and 30 are refused)\n",
+                "          6 ETEN26, 8 HSU_DVORAK, 9 DACHEN_CP26\n"
+                "          (7 and 30 are refused)\n",
                 argv[0]);
         return 1;
     }
@@ -1037,15 +1282,32 @@ int main(int argc, char **argv) {
     } else if (scheme == 2 || scheme == 6 || scheme == 8) {
         corpus = DISCRETE_CORPUS;
         ncorpus = sizeof(DISCRETE_CORPUS) / sizeof(DISCRETE_CORPUS[0]);
+    } else if (scheme == 9) {
+        corpus = CP26_CORPUS;
+        ncorpus = sizeof(CP26_CORPUS) / sizeof(CP26_CORPUS[0]);
     } else {
         corpus = SIMPLE_CORPUS;
         ncorpus = sizeof(SIMPLE_CORPUS) / sizeof(SIMPLE_CORPUS[0]);
     }
 
+    _Static_assert(16 >= KEYSTROKE_BUF,
+                   "keystrokes[] too small for the Simple corpus worst case");
     for (size_t i = 0; i < ncorpus; i++) {
-        char keystrokes[KEYSTROKE_BUF];
+        char keystrokes[16];
         derive_keystrokes(kb, &corpus[i], keystrokes);
         drive_input(&s, inst, keystrokes);
+    }
+
+    if (scheme == 9) {
+        for (size_t i = 0;
+             i < sizeof(CP26_MULTI) / sizeof(CP26_MULTI[0]); i++) {
+            char keystrokes[32];
+            size_t len = cp26_derive_syllable(kb, &CP26_MULTI[i][0], keystrokes);
+            len += cp26_derive_syllable(kb, &CP26_MULTI[i][1],
+                                        keystrokes + len);
+            keystrokes[len] = '\0';
+            drive_input(&s, inst, keystrokes);
+        }
     }
 
     s.free_instance(inst);

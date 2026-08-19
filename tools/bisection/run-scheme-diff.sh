@@ -5,7 +5,7 @@
 # libpinyin_capi.so and the pin-built libpinyin.so and diffs the logs.
 # The scheme number selects the double-pinyin scheme in double mode, or
 # the zhuyin keyboard in bopomofo mode (1 STANDARD, 2 HSU, 3 IBM,
-# 4 GINYIEH, 5 ETEN, 6 ETEN26, 8 HSU_DVORAK; default 1).
+# 4 GINYIEH, 5 ETEN, 6 ETEN26, 8 HSU_DVORAK, 9 DACHEN_CP26; default 1).
 #
 # Env-gated on the pin-built oracle exactly like the import/train diffs:
 # PINYIN_ORACLE_PREFIX (default $HOME/.local/opt/pinyin-oracle).
@@ -57,11 +57,11 @@ fi
 
 if [[ "$SCHEME" == "bopomofo" ]]; then
     # Only the implemented keyboards the driver sweeps: 1 STANDARD,
-    # 2 HSU, 3 IBM, 4 GINYIEH, 5 ETEN, 6 ETEN26, 8 HSU_DVORAK.
-    # 7 (STANDARD_DVORAK) aborts the oracle and is never sent; 30
-    # belongs to the double-pinyin setter.
-    if [[ -n "$SCHEME_NUMBER" && ! "$SCHEME_NUMBER" =~ ^(1|2|3|4|5|6|8)$ ]]; then
-        echo "fatal: bopomofo scheme must be one of 1 2 3 4 5 6 8 (got '$SCHEME_NUMBER')"
+    # 2 HSU, 3 IBM, 4 GINYIEH, 5 ETEN, 6 ETEN26, 8 HSU_DVORAK,
+    # 9 DACHEN_CP26.  7 (STANDARD_DVORAK) aborts the oracle and is
+    # never sent; 30 belongs to the double-pinyin setter.
+    if [[ -n "$SCHEME_NUMBER" && ! "$SCHEME_NUMBER" =~ ^(1|2|3|4|5|6|8|9)$ ]]; then
+        echo "fatal: bopomofo scheme must be one of 1 2 3 4 5 6 8 9 (got '$SCHEME_NUMBER')"
         exit 1
     fi
     SCHEME_ARGS=("${SCHEME_NUMBER:-1}")
