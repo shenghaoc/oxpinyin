@@ -1,0 +1,400 @@
+/*
+ * nbest-train-diff.c — W14 user-aware n-best differential driver.
+ *
+ * Drives an identical scripted C-ABI train-then-guess sequence into a
+ * pinyin shared object (libpinyin_capi.so or the pinned libpinyin.so) and
+ * prints the n-best sentence surface at each stage, so the two libraries'
+ * logs can be diffed. Two seams share this driver:
+ *
+ *   selection record (sentence-surface.md §7) — training (你 → 浩) rounds
+ *   walks the NBEST-wins dedup: after one seed the pair enters the tails
+ *   and only its ROW candidate is choosable, so the export lines prove the
+ *   chosen row's own token path landed (你浩 doubling, never a 你好 pile).
+ *
+ *   user-merged step costs (§8, pending) — the probe blocks below show
+ *   whether trained user grams move the C-ABI n-best rows like the
+ *   oracle's; compare the full logs once that seam lands.
+ *
+ * Training shapes:
+ *
+ *   baseline    — probe "nihao" on an empty user store (rows must agree
+ *                 before anything is trained).
+ *   user-only   — train (你 → 浩) N rounds (NBESTTRAINDIFF_USER_ROUNDS,
+ *                 default 1): the system bigram row for 你 carries no 浩
+ *                 successor, so a blended step for the pair exists only
+ *                 through the user gram.
+ *   augmented   — train (你 → 好) N rounds (NBESTTRAINDIFF_ROUNDS,
+ *                 default 3) on top: 你's system row carries 好, so
+ *                 training shifts the blended value.
+ *   export      — the user-store triple sets, proving both engines landed
+ *                 the same trained state.
+ *
+ * Each probe prints pinyin_get_sentence rows 0..2 plus the candidate head
+ * (type, n-best index, text) after guess_sentence → guess_candidates.
+ *
+ * Requires a real-unigram system dir (interpolation2.text) on the capi
+ * side; the fallback mini fixtures answer no n-best cost data.
+ *
+ * Usage:
+ *   NBESTTRAINDIFF_USER_ROUNDS=<n> NBESTTRAINDIFF_ROUNDS=<n> \
+ *     ./nbest-train-diff <path-to-so> <systemdir>
+ */
+
+#define _POSIX_C_SOURCE 200809L
+#include <dlfcn.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+/* ── Opaque handle types (match pinyin.h) ─────────────────────────────── */
+
+typedef void pinyin_context_t;
+typedef void pinyin_instance_t;
+typedef void lookup_candidate_t;
+typedef void export_iterator_t;
+typedef void bigram_export_iterator_t;
+
+/* ── Scalar types (match pinyin.h / glib) ─────────────────────────────── */
+
+typedef uint32_t guint;
+typedef int32_t gint;
+typedef char gchar;
+typedef uint8_t guint8;
+
+#define DEFAULT_SORT ((guint)0x1e) /* SORT_BY_PHRASE_LENGTH|PINYIN|FREQUENCY */
+
+/* ── Function pointer types ───────────────────────────────────────────── */
+
+typedef pinyin_context_t *(*fn_init)(const char *, const char *);
+typedef void (*fn_fini)(pinyin_context_t *);
+typedef pinyin_instance_t *(*fn_alloc)(pinyin_context_t *);
+typedef void (*fn_free_instance)(pinyin_instance_t *);
+typedef size_t (*fn_parse)(pinyin_instance_t *, const char *);
+typedef bool (*fn_sentence)(pinyin_instance_t *);
+typedef bool (*fn_guess)(pinyin_instance_t *, size_t, guint);
+typedef bool (*fn_getn)(pinyin_instance_t *, guint *);
+typedef bool (*fn_getc)(pinyin_instance_t *, guint, lookup_candidate_t **);
+typedef bool (*fn_gettype)(pinyin_instance_t *, lookup_candidate_t *, int *);
+typedef bool (*fn_getstr)(pinyin_instance_t *, lookup_candidate_t *, const gchar **);
+typedef bool (*fn_getnbest)(pinyin_instance_t *, lookup_candidate_t *, guint8 *);
+typedef bool (*fn_get_sentence)(pinyin_instance_t *, guint8, gchar **);
+typedef int (*fn_choose)(pinyin_instance_t *, size_t, lookup_candidate_t *);
+typedef bool (*fn_train)(pinyin_instance_t *, uint8_t);
+typedef bool (*fn_reset)(pinyin_instance_t *);
+typedef export_iterator_t *(*fn_begin_phrases)(pinyin_context_t *, guint);
+typedef bool (*fn_has_next)(export_iterator_t *);
+typedef bool (*fn_get_next)(export_iterator_t *, gchar **, gchar **, gint *);
+typedef void (*fn_end_phrases)(export_iterator_t *);
+typedef bigram_export_iterator_t *(*fn_begin_bigram)(pinyin_context_t *);
+typedef bool (*fn_bigram_has_next)(bigram_export_iterator_t *);
+typedef bool (*fn_bigram_get_next)(bigram_export_iterator_t *, gchar **, gchar **, gint *);
+typedef void (*fn_end_bigram)(bigram_export_iterator_t *);
+
+struct syms {
+    fn_init init;
+    fn_fini fini;
+    fn_alloc alloc;
+    fn_free_instance free_instance;
+    fn_parse parse;
+    fn_sentence sentence;
+    fn_guess guess;
+    fn_getn getn;
+    fn_getc getc;
+    fn_gettype gettype;
+    fn_getstr getstr;
+    fn_getnbest getnbest;
+    fn_get_sentence get_sentence;
+    fn_choose choose;
+    fn_train train;
+    fn_reset reset;
+    fn_begin_phrases begin_phrases;
+    fn_has_next has_next;
+    fn_get_next get_next;
+    fn_end_phrases end_phrases;
+    fn_begin_bigram begin_bigram;
+    fn_bigram_has_next bigram_has_next;
+    fn_bigram_get_next bigram_get_next;
+    fn_end_bigram end_bigram;
+};
+
+static void *load(const char *name, void *handle) {
+    void *symbol = dlsym(handle, name);
+    if (!symbol) {
+        fprintf(stderr, "  MISSING: %s\n", name);
+        exit(1);
+    }
+    return symbol;
+}
+
+static void resolve_all(void *handle, struct syms *s) {
+    s->init = (fn_init)load("pinyin_init", handle);
+    s->fini = (fn_fini)load("pinyin_fini", handle);
+    s->alloc = (fn_alloc)load("pinyin_alloc_instance", handle);
+    s->free_instance = (fn_free_instance)load("pinyin_free_instance", handle);
+    s->parse = (fn_parse)load("pinyin_parse_more_full_pinyins", handle);
+    s->sentence = (fn_sentence)load("pinyin_guess_sentence", handle);
+    s->guess = (fn_guess)load("pinyin_guess_candidates", handle);
+    s->getn = (fn_getn)load("pinyin_get_n_candidate", handle);
+    s->getc = (fn_getc)load("pinyin_get_candidate", handle);
+    s->gettype = (fn_gettype)load("pinyin_get_candidate_type", handle);
+    s->getstr = (fn_getstr)load("pinyin_get_candidate_string", handle);
+    s->getnbest = (fn_getnbest)load("pinyin_get_candidate_nbest_index", handle);
+    s->get_sentence = (fn_get_sentence)load("pinyin_get_sentence", handle);
+    s->choose = (fn_choose)load("pinyin_choose_candidate", handle);
+    s->train = (fn_train)load("pinyin_train", handle);
+    s->reset = (fn_reset)load("pinyin_reset", handle);
+    s->begin_phrases = (fn_begin_phrases)load("pinyin_begin_get_phrases", handle);
+    s->has_next = (fn_has_next)load("pinyin_iterator_has_next_phrase", handle);
+    s->get_next = (fn_get_next)load("pinyin_iterator_get_next_phrase", handle);
+    s->end_phrases = (fn_end_phrases)load("pinyin_end_get_phrases", handle);
+    s->begin_bigram = (fn_begin_bigram)load("pinyin_begin_get_bigram_phrases", handle);
+    s->bigram_has_next =
+        (fn_bigram_has_next)load("pinyin_bigram_iterator_has_next_phrase", handle);
+    s->bigram_get_next =
+        (fn_bigram_get_next)load("pinyin_bigram_iterator_get_next_phrase", handle);
+    s->end_bigram = (fn_end_bigram)load("pinyin_end_get_bigram_phrases", handle);
+}
+
+/* ── Caller-owned string release ──────────────────────────────────────── */
+
+typedef void (*fn_g_free)(void *);
+static fn_g_free g_free_fn;
+
+static void resolve_g_free(void) {
+    g_free_fn = (fn_g_free)free;
+    void *glib = dlopen("libglib-2.0.so.0", RTLD_NOW);
+    if (glib) {
+        fn_g_free symbol = (fn_g_free)dlsym(glib, "g_free");
+        if (symbol)
+            g_free_fn = symbol;
+    }
+}
+
+/* ── Helpers ──────────────────────────────────────────────────────────── */
+
+static lookup_candidate_t *find_by_text(const struct syms *s,
+                                        pinyin_instance_t *inst,
+                                        const char *want) {
+    guint count = 0;
+    s->getn(inst, &count);
+    for (guint i = 0; i < count; i++) {
+        lookup_candidate_t *cand = NULL;
+        if (!s->getc(inst, i, &cand) || !cand)
+            continue;
+        const gchar *text = NULL;
+        s->getstr(inst, cand, &text);
+        if (text && strcmp(text, want) == 0)
+            return cand;
+    }
+    return NULL;
+}
+
+static const char *type_name(int type) {
+    switch (type) {
+    case 1: return "NBEST";
+    case 2: return "NORMAL";
+    case 3: return "ZOMBIE";
+    case 4: return "PRED_BIGRAM";
+    case 5: return "PRED_PREFIX";
+    case 6: return "ADDON";
+    case 7: return "LONGER";
+    case 8: return "PRED_PUNCT";
+    default: return "?";
+    }
+}
+
+/* guess_sentence → print sentence rows 0..2 and the candidate head. */
+static void print_surface(const struct syms *s, pinyin_instance_t *inst,
+                          const char *label) {
+    printf("probe:%s guess=%d\n", label, (int)s->sentence(inst));
+    for (guint8 i = 0; i < 3; i++) {
+        gchar *text = NULL;
+        bool got = s->get_sentence(inst, i, &text);
+        printf("probe:%s sentence[%u]=%s\n", label, i,
+               got&& text ? text : "-");
+    }
+    s->guess(inst, 0, DEFAULT_SORT);
+    guint n = 0;
+    s->getn(inst, &n);
+    printf("probe:%s n=%u\n", label, n);
+    guint limit = n < 8 ? n : 8;
+    for (guint i = 0; i < limit; i++) {
+        lookup_candidate_t *cand = NULL;
+        if (!s->getc(inst, i, &cand) || !cand)
+            continue;
+        int type = 0;
+        s->gettype(inst, cand, &type);
+        const gchar *text = NULL;
+        s->getstr(inst, cand, &text);
+        if (type == 1) { /* NBEST: the oracle asserts nbest_index is only
+                          asked of NBEST rows */
+            guint8 idx = 255;
+            s->getnbest(inst, cand, &idx);
+            printf("probe:%s cand[%u]=%s/%u/%s\n", label, i, type_name(type),
+                   (unsigned)idx, text ? text : "(null)");
+        } else {
+            printf("probe:%s cand[%u]=%s/-/%s\n", label, i, type_name(type),
+                   text ? text : "(null)");
+        }
+    }
+    s->reset(inst);
+}
+
+/* One scripted training round on (first → second) via the real
+ * self-learning path: parse, sentence, guess, choose first, re-decode,
+ * guess, choose second, re-decode, train. */
+static int train_pair(const struct syms *s, pinyin_instance_t *inst, int round,
+                      const char *first, const char *second) {
+    s->parse(inst, "nihao");
+    s->sentence(inst);
+    s->guess(inst, 0, DEFAULT_SORT);
+
+    lookup_candidate_t *ni = find_by_text(s, inst, first);
+    if (!ni) {
+        fprintf(stderr, "round %d: candidate %s not offered\n", round, first);
+        return 1;
+    }
+    int offset = s->choose(inst, 0, ni);
+    if (offset < 0) {
+        fprintf(stderr, "round %d: choose %s failed\n", round, first);
+        return 1;
+    }
+    s->sentence(inst);
+    s->guess(inst, (size_t)offset, DEFAULT_SORT);
+
+    lookup_candidate_t *hao = find_by_text(s, inst, second);
+    if (!hao) {
+        fprintf(stderr, "round %d: candidate %s not offered\n", round, second);
+        return 1;
+    }
+    if (s->choose(inst, (size_t)offset, hao) < 0) {
+        fprintf(stderr, "round %d: choose %s failed\n", round, second);
+        return 1;
+    }
+    s->sentence(inst);
+
+    if (!s->train(inst, 0)) {
+        fprintf(stderr, "round %d: pinyin_train failed\n", round);
+        return 1;
+    }
+    s->reset(inst);
+    return 0;
+}
+
+/* ── Main ─────────────────────────────────────────────────────────────── */
+
+int main(int argc, char **argv) {
+    if (argc < 3) {
+        fprintf(stderr, "Usage: %s <path-to-so> <systemdir>\n", argv[0]);
+        return 1;
+    }
+
+    int rounds = 3;
+    if (getenv("NBESTTRAINDIFF_ROUNDS"))
+        rounds = atoi(getenv("NBESTTRAINDIFF_ROUNDS"));
+    if (rounds < 1 || rounds > 8) {
+        fprintf(stderr, "NBESTTRAINDIFF_ROUNDS must be in 1..8\n");
+        return 1;
+    }
+    /* The user-only pair trains once by default. After one seed the pair
+     * enters the n-best tails and its own NORMAL candidate is deduped away
+     * (NBEST wins), so every later round chooses the pair's ROW — the exact
+     * selection-record path fixed in sentence-surface.md §7. Raise the
+     * count to stress the row choose under reselection doubling. */
+    int user_rounds = 1;
+    if (getenv("NBESTTRAINDIFF_USER_ROUNDS"))
+        user_rounds = atoi(getenv("NBESTTRAINDIFF_USER_ROUNDS"));
+    if (user_rounds < 1 || user_rounds > 8) {
+        fprintf(stderr, "NBESTTRAINDIFF_USER_ROUNDS must be in 1..8\n");
+        return 1;
+    }
+
+    void *handle = dlopen(argv[1], RTLD_NOW);
+    if (!handle) {
+        fprintf(stderr, "dlopen: %s\n", dlerror());
+        return 1;
+    }
+    struct syms s;
+    memset(&s, 0, sizeof(s));
+    resolve_all(handle, &s);
+    resolve_g_free();
+
+    char userdir[] = "/tmp/nbesttraindiff-user-XXXXXX";
+    if (!mkdtemp(userdir)) {
+        perror("mkdtemp");
+        return 1;
+    }
+
+    pinyin_context_t *ctx = s.init(argv[2], userdir);
+    if (!ctx) {
+        fprintf(stderr, "pinyin_init failed (real-unigram systemdir required)\n");
+        return 1;
+    }
+    pinyin_instance_t *inst = s.alloc(ctx);
+    if (!inst) {
+        fprintf(stderr, "pinyin_alloc_instance failed\n");
+        return 1;
+    }
+
+    /* Phase A — baseline: empty user store. */
+    s.parse(inst, "nihao");
+    print_surface(&s, inst, "baseline");
+
+    /* Phase B — user-only pair: 你 → 浩 (no system successor). */
+    for (int round = 1; round <= user_rounds; round++) {
+        if (train_pair(&s, inst, round, "你", "浩"))
+            return 1;
+    }
+    s.parse(inst, "nihao");
+    print_surface(&s, inst, "user-only");
+
+    /* Phase C — augmented pair: 你 → 好 (system successor, count 30). */
+    for (int round = 1; round <= rounds; round++) {
+        if (train_pair(&s, inst, round, "你", "好"))
+            return 1;
+    }
+    s.parse(inst, "nihao");
+    print_surface(&s, inst, "augmented");
+
+    /* Phase D — the landed user state, one export per process. */
+    {
+        export_iterator_t *iter = s.begin_phrases(ctx, 7 /* USER_DICTIONARY */);
+        if (iter) {
+            while (s.has_next(iter)) {
+                gchar *phrase = NULL;
+                gchar *pinyin = NULL;
+                gint count = -1;
+                if (!s.get_next(iter, &phrase, &pinyin, &count))
+                    break;
+                printf("phrase: %s|%s|%d\n", phrase ? phrase : "(null)",
+                       pinyin ? pinyin : "(null)", (int)count);
+                g_free_fn(phrase);
+                g_free_fn(pinyin);
+            }
+            s.end_phrases(iter);
+        }
+        bigram_export_iterator_t *biter = s.begin_bigram(ctx);
+        if (biter) {
+            while (s.bigram_has_next(biter)) {
+                gchar *phrase = NULL;
+                gchar *pinyin = NULL;
+                gint count = -1;
+                s.bigram_get_next(biter, &phrase, &pinyin, &count);
+                printf("bigram: %s|%s|%d\n", phrase ? phrase : "(null)",
+                       pinyin ? pinyin : "(null)", (int)count);
+                g_free_fn(phrase);
+                g_free_fn(pinyin);
+            }
+            s.end_bigram(biter);
+        }
+    }
+
+    s.free_instance(inst);
+    s.fini(ctx);
+    dlclose(handle);
+    rmdir(userdir); /* best-effort: non-empty on success */
+    return 0;
+}
