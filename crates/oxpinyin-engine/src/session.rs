@@ -862,24 +862,22 @@ where
         // lower n-best index) over any phrase candidate with the same
         // string (`pinyin.cpp:2290-2298`, `2058-2126`).
         if !self.nbest_rows.is_empty() {
-            let mut merged: Vec<Candidate> = self
-                .nbest_rows
-                .iter()
-                .enumerate()
-                .map(|(index, row)| {
-                    Candidate::new(
-                        row.text.clone(),
-                        CandidateKind::Sentence,
-                        row.keys,
-                        row.span,
-                        row.cost,
-                        None,
-                        Some(u8::try_from(index).unwrap_or(u8::MAX)),
-                    )
-                })
-                .collect();
-            merged.append(&mut collected);
-            collected = merged;
+            // Extend-then-rotate keeps `collected`'s allocation (the session
+            // scratch). Assigning a fresh `merged` vec would drop that
+            // capacity on every refresh that has n-best rows.
+            let nbest_n = self.nbest_rows.len();
+            collected.extend(self.nbest_rows.iter().enumerate().map(|(index, row)| {
+                Candidate::new(
+                    row.text.clone(),
+                    CandidateKind::Sentence,
+                    row.keys,
+                    row.span,
+                    row.cost,
+                    None,
+                    Some(u8::try_from(index).unwrap_or(u8::MAX)),
+                )
+            }));
+            collected.rotate_right(nbest_n);
             dedup_by_text_keep_first(&mut collected);
         }
 
