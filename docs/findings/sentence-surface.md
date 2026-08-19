@@ -306,6 +306,18 @@ Date: 2026-08-19 · branch `fix/w14-shared-lm-nbest-costs`.
 decode scores against. One method, no trellis/comparator/candidate
 changes; the trait default stands for other implementors.
 
+**Scope: the forward is system-only.** `UserStore` count deltas are
+deliberately not folded into the step costs here — this change replaces
+the trait default's *empty* costs with the system model's, so C-ABI
+`guess_sentence` emits rows at all. The §5 user overlay (merge before
+the presence gate, merged denominators — the semantics upstream's
+`PhoneticLookup` runs) is the next workstream, gated on the
+shifted-row selection-record fix (#117): until the chosen row's own
+token path is recorded, a user-trained (你→浩)-style pair trains the
+wrong path and any user-merged differential is vacuous. All pins and
+probes below therefore run an empty user store, where merged ==
+system.
+
 Re-verification:
 
 - One-input C-ABI probe (full-pinyin `nihao`, model20 tables):
