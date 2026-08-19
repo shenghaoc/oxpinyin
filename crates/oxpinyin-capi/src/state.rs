@@ -81,9 +81,13 @@ impl AddonSet {
         if self.loaded.is_empty() {
             return Ok(());
         }
+        // `SystemDictionary::lookup_into` replaces its output vec. One
+        // scratch is filled, drained into `out`, and reused so the addon
+        // path never hits the allocating `Dictionary::lookup` default.
+        let mut scratch = Vec::new();
         for dict in self.loaded.values() {
-            // `SystemDictionary::lookup_into` replaces `out`; append via lookup.
-            out.extend(dict.lookup(syllables)?);
+            dict.lookup_into(syllables, &mut scratch)?;
+            out.append(&mut scratch);
         }
         Ok(())
     }

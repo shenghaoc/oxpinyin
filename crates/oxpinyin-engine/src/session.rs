@@ -768,13 +768,21 @@ where
     /// pooled phrase candidates are ranked by the three-key order and
     /// deduplicated directly, with no sentence prepend.
     fn refresh(&mut self) -> Result<(), EngineError> {
-        let remaining = compact_str::CompactString::from(&self.raw[self.consumed..]);
-        if remaining.is_empty() {
+        if self.consumed >= self.raw.len() {
             self.candidates = CandidateList::default();
             self.parsed_prefix = 0;
             return Ok(());
         }
 
+        // Lift scratches before borrowing `raw`, so graph/scan can use
+        // `&self.raw[consumed..]` without cloning into CompactString.
+        let mut collected = core::mem::take(&mut self.scratch_collected);
+        collected.clear();
+        let mut path = core::mem::take(&mut self.scratch_path);
+        let mut entries = core::mem::take(&mut self.scratch_entries);
+        let mut ranked = core::mem::take(&mut self.scratch_ranked);
+
+        let remaining = &self.raw[self.consumed..];
         let graph = SegmentGraph::build_with_options(remaining.as_bytes(), self.settings.options)
             .map_err(EngineError::Graph)?;
         self.parsed_prefix = graph
@@ -789,14 +797,14 @@ where
         // result. Without real frequencies the session reproduces its
         // pre-frequency behaviour exactly: k-best prefixes, sentence
         // candidates, cost order, adjacent dedup.
-        let mut collected = core::mem::take(&mut self.scratch_collected);
-        collected.clear();
         if self.model.has_real_unigrams() {
             self.collect_window_scan(
                 &graph,
                 remaining.as_bytes(),
                 self.settings.options,
                 &mut collected,
+                &mut path,
+                &mut entries,
             )?;
 
             // The scan's result stands even when it found nothing. Tokens the
@@ -804,9 +812,8 @@ where
             let frequencies = self
                 .candidate_frequencies(&collected)?
                 .unwrap_or_else(|| vec![0; collected.len()]);
-            let mut keyed = core::mem::take(&mut self.scratch_ranked);
-            keyed.clear();
-            keyed.extend(
+            ranked.clear();
+            ranked.extend(
                 collected
                     .drain(..)
                     .zip(frequencies)
@@ -823,9 +830,8 @@ where
             // Stable sort, all three keys descending: an all-equal tie keeps
             // the collection order, which is the deterministic stand-in for
             // the pin's internal collection order.
-            keyed.sort_by_key(|(key, _)| core::cmp::Reverse(*key));
-            collected.extend(keyed.drain(..).map(|(_, candidate)| candidate));
-            self.scratch_ranked = keyed;
+            ranked.sort_by_key(|(key, _)| core::cmp::Reverse(*key));
+            collected.extend(ranked.drain(..).map(|(_, candidate)| candidate));
 
             dedup_by_text_keep_first(&mut collected);
         } else {
@@ -846,7 +852,7 @@ where
 
         if collected.is_empty() {
             collected.push(Candidate::new(
-                remaining.clone(),
+                compact_str::CompactString::from(remaining),
                 CandidateKind::Fallback,
                 0,
                 remaining.len(),
@@ -884,6 +890,9 @@ where
         self.candidates.swap_items(&mut collected);
         collected.clear();
         self.scratch_collected = collected;
+        self.scratch_path = path;
+        self.scratch_entries = entries;
+        self.scratch_ranked = ranked;
         Ok(())
     }
 
@@ -1104,26 +1113,26 @@ where
     /// bytes after a searched window are skipped so the next window does not
     /// repeat the same key sequence.
     fn collect_window_scan(
-        &mut self,
+        &self,
         graph: &SegmentGraph,
         input: &[u8],
         options: OptionBits,
         into: &mut Vec<Candidate>,
+        path: &mut SmallVec<[SyllableKey; 16]>,
+        entries: &mut Vec<PhraseEntry>,
     ) -> Result<(), EngineError> {
         let matrix = build_scan_matrix(graph, options);
         let bound = graph.consumed();
-        let mut path = core::mem::take(&mut self.scratch_path);
-        let mut entries = core::mem::take(&mut self.scratch_entries);
         let mut end = 1usize;
         while end <= bound {
             // An end position no key starts at is an empty column: widen.
             let mut continued = matrix.get(end).is_none_or(|column| column.is_empty());
             path.clear();
             let mut buf = ScanBuf {
-                path: &mut path,
+                path,
                 into,
                 continued: &mut continued,
-                entries: &mut entries,
+                entries,
             };
             self.scan_paths(&matrix, 0, end, &mut buf)?;
             if !continued {
@@ -1136,8 +1145,6 @@ where
                 end += 1;
             }
         }
-        self.scratch_path = path;
-        self.scratch_entries = entries;
         Ok(())
     }
 
