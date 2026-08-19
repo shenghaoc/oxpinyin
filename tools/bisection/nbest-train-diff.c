@@ -11,9 +11,9 @@
  *   and only its ROW candidate is choosable, so the export lines prove the
  *   chosen row's own token path landed (你浩 doubling, never a 你好 pile).
  *
- *   user-merged step costs (§9, pending) — the probe blocks below show
- *   whether trained user grams move the C-ABI n-best rows like the
- *   oracle's; compare the full logs once that seam lands.
+ *   user-merged step costs (§9) — the probe blocks below show that
+ *   trained user grams move the C-ABI n-best rows like the oracle's;
+ *   the runner compares the full logs, probes included.
  *
  * Training shapes:
  *
