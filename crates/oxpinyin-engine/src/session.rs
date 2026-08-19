@@ -343,18 +343,21 @@ where
         self.selected.push_str(&text);
         if let Some(token) = token {
             self.history.push(token);
-        } else if candidate.kind() == CandidateKind::Sentence && index < self.nbest_rows.len() {
+        } else if let Some(rank) = candidate.nbest_row() {
             // A prepended n-best row records its whole token path —
             // upstream's `pinyin_choose_candidate` keeps the chosen
             // `MatchResult` on the instance and `pinyin_train` walks it;
             // the engine's record is the token history
-            // (`docs/findings/user-store.md` §2.1). Refresh places the
-            // rows at the head of the list in order, so the list
-            // position is the origin test: the kind alone cannot tell a
-            // row from a fallback sentence candidate, which also carries
-            // `nbest_index` 0 and must never default through to row zero.
-            self.history
-                .extend(self.nbest_rows[index].tokens.iter().copied());
+            // (`docs/findings/user-store.md` §2.1). The row is looked up
+            // by its own tail rank, never by list position: the NBEST-wins
+            // dedup can drop an earlier duplicate row, shifting a
+            // surviving row off the position its rank would give it, and a
+            // positional lookup then trains the wrong path. A fallback
+            // sentence candidate carries no rank and no tokens; it records
+            // nothing, exactly as before.
+            if let Some(row) = self.nbest_rows.get(usize::from(rank)) {
+                self.history.extend(row.tokens.iter().copied());
+            }
         }
         self.consumed = self.next_boundary(self.consumed.saturating_add(advance));
         self.refresh()?;
@@ -830,7 +833,7 @@ where
                 remaining.len(),
                 0,
                 None,
-                0,
+                None,
             ));
         }
 
@@ -852,7 +855,7 @@ where
                         row.span,
                         row.cost,
                         None,
-                        u8::try_from(index).unwrap_or(u8::MAX),
+                        Some(u8::try_from(index).unwrap_or(u8::MAX)),
                     )
                 })
                 .collect();
@@ -945,7 +948,7 @@ where
                     ends[length - 1],
                     cost,
                     Some(entry.token()),
-                    0,
+                    None,
                 ));
             }
         }
@@ -1028,7 +1031,7 @@ where
                     ends[keys.len() - 1],
                     cost,
                     None,
-                    0,
+                    None,
                 ),
                 tokens,
             )]);
@@ -1214,7 +1217,7 @@ fn append_scan_entries(
             end,
             0,
             Some(entry.token()),
-            0,
+            None,
         ));
     }
 }
@@ -2105,6 +2108,60 @@ mod tests {
         assert!(
             session.selected_tokens().is_empty(),
             "a fallback sentence records no tokens"
+        );
+    }
+
+    #[test]
+    fn a_shifted_row_records_its_own_rank_not_its_position() {
+        use crate::nbest::NbestRow;
+
+        let mut session = train_session();
+        session.type_pinyin("nihao").expect("typing cannot fail");
+
+        // Rows [好, 好, 浩]: the NBEST-wins dedup keeps the lower-index 好
+        // and drops row 1, so the surviving 浩 row sits at list position 1
+        // while its rank is 2 — the shape a positional record gets wrong
+        // (the 你→浩 training divergence, `sentence-surface.md` §8).
+        session.nbest_rows = vec![
+            NbestRow {
+                text: "\u{597d}".to_owned(),
+                tokens: vec![PhraseToken::new(0x100)],
+                keys: 1,
+                span: 3,
+                cost: 10,
+            },
+            NbestRow {
+                text: "\u{597d}".to_owned(),
+                tokens: vec![PhraseToken::new(0x101)],
+                keys: 1,
+                span: 3,
+                cost: 20,
+            },
+            NbestRow {
+                text: "\u{6d69}".to_owned(),
+                tokens: vec![PhraseToken::new(0x102)],
+                keys: 1,
+                span: 3,
+                cost: 30,
+            },
+        ];
+        session.refresh().expect("refresh cannot fail");
+
+        let hao = session
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.nbest_row() == Some(2))
+            .expect("the 浩 row survived the dedup");
+        assert_eq!(
+            hao, 1,
+            "the deduped 好 row shifts the 浩 row off its own rank"
+        );
+
+        session.select(hao).expect("the row is live");
+        assert_eq!(
+            session.selected_tokens(),
+            [PhraseToken::new(0x102)],
+            "the chosen row records its own token path, not the deduped row 1's"
         );
     }
 
