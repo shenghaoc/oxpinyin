@@ -68,10 +68,24 @@ impl AddonSet {
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut out = Vec::new();
+        self.lookup_into(syllables, &mut out)?;
+        Ok(out)
+    }
+
+    fn lookup_into(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<(), DictError> {
+        out.clear();
+        if self.loaded.is_empty() {
+            return Ok(());
+        }
         for dict in self.loaded.values() {
+            // `SystemDictionary::lookup_into` replaces `out`; append via lookup.
             out.extend(dict.lookup(syllables)?);
         }
-        Ok(out)
+        Ok(())
     }
 
     fn prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
@@ -258,12 +272,22 @@ impl Dictionary for SharedDict {
     }
 
     fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+        let mut entries = Vec::new();
+        self.lookup_addon_into(syllables, &mut entries)?;
+        Ok(entries)
+    }
+
+    fn lookup_addon_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<(), Self::Error> {
         let addons = self
             .0
             .addons
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        addons.lookup(syllables)
+        addons.lookup_into(syllables, out)
     }
 
     fn phrase_prefix_exists_addon(

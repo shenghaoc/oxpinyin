@@ -42,6 +42,13 @@ fn main() {
         } else {
             "/tmp/dhat-heap-parity.json"
         };
+        // Corpus files and fixture parsing belong with table load: the
+        // profiler must wrap only type_batch / parse+guess.
+        let w2_inputs = if keystroke {
+            Vec::new()
+        } else {
+            load_w2_inputs()
+        };
         // Non-testing mode writes the JSON on Drop (`testing()` skips finish).
         let _profiler = dhat::Profiler::builder()
             .file_name(dump)
@@ -53,8 +60,7 @@ fn main() {
                 type_keystrokes(&mut session, input);
             }
         } else {
-            let inputs = load_w2_inputs();
-            for input in &inputs {
+            for input in &w2_inputs {
                 type_batch(&mut session, input);
             }
         }
