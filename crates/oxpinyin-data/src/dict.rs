@@ -14,6 +14,7 @@ use std::ops::Bound::{Included, Unbounded};
 use std::path::Path;
 use std::sync::OnceLock;
 
+use compact_str::CompactString;
 use oxpinyin_core::{
     Completeness, Dictionary, PhraseEntry, PhraseToken, SyllableKey, syllable_initial,
 };
@@ -187,8 +188,8 @@ impl SystemDictionary {
     }
 
     /// The frozen index key for a syllable sequence: texts joined by `'`.
-    fn index_key(syllables: &[SyllableKey]) -> String {
-        let mut key = String::new();
+    fn index_key(syllables: &[SyllableKey]) -> CompactString {
+        let mut key = CompactString::const_new("");
         for (position, syllable) in syllables.iter().enumerate() {
             if position > 0 {
                 key.push('\'');
@@ -201,8 +202,8 @@ impl SystemDictionary {
     /// Projects a sequence to the initial form the pin's incomplete-index
     /// probe uses: a complete key contributes its initial, an initial-only
     /// key its own spelling, joined by `'` with `0` for vowel-initial keys.
-    fn initial_key(syllables: &[SyllableKey]) -> String {
-        let mut key = String::new();
+    fn initial_key(syllables: &[SyllableKey]) -> CompactString {
+        let mut key = CompactString::const_new("");
         for (position, syllable) in syllables.iter().enumerate() {
             if position > 0 {
                 key.push('\'');
@@ -214,6 +215,41 @@ impl SystemDictionary {
         }
         key
     }
+
+    fn fill_lookup(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<(), DictError> {
+        out.clear();
+        if syllables.is_empty() {
+            return Ok(());
+        }
+        let key = Self::index_key(syllables);
+        let Some(records) = self.pinyin_index.get(key.as_str()) else {
+            return Ok(());
+        };
+
+        for &(token, freq) in records.iter() {
+            // Token → text through phrase_index (the reverse half is
+            // `phrase_text`). The full export resolves every token; a mini
+            // fixture may omit some, and those records contribute no
+            // candidate rather than failing the lookup.
+            if let Some(text) = self.phrase_index.get(&token) {
+                // W14: the record's frequency is the matched pronunciation's
+                // share and the aggregated unigram map holds the item's
+                // pronunciation total — matched/total is upstream's
+                // `get_pronunciation_possibility` polyphone discount. The
+                // candidate scan never reads it.
+                let total = self.unigrams.get(&token).copied().unwrap_or(0);
+                out.push(
+                    PhraseEntry::new(PhraseToken::new(token), CompactString::from(text.as_ref()))
+                        .with_pronunciation_possibility(u64::from(freq), total),
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Dictionary for SystemDictionary {
@@ -222,34 +258,26 @@ impl Dictionary for SystemDictionary {
     type Error = DictError;
 
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
-        if syllables.is_empty() {
-            return Ok(Vec::new());
-        }
-        let key = Self::index_key(syllables);
-        let Some(records) = self.pinyin_index.get(key.as_str()) else {
-            return Ok(Vec::new());
-        };
-
         let mut entries = Vec::new();
-        for &(token, freq) in records.iter() {
-            // Token → text through phrase_index (the reverse half is
-            // `phrase_text`). The full export resolves every token; a mini
-            // fixture may omit some, and those records contribute no
-            // candidate rather than failing the lookup.
-            if let Some(text) = self.phrase_text(token)? {
-                // W14: the record's frequency is the matched pronunciation's
-                // share and the aggregated unigram map holds the item's
-                // pronunciation total — matched/total is upstream's
-                // `get_pronunciation_possibility` polyphone discount. The
-                // candidate scan never reads it.
-                let total = self.unigrams.get(&token).copied().unwrap_or(0);
-                entries.push(
-                    PhraseEntry::new(PhraseToken::new(token), text)
-                        .with_pronunciation_possibility(u64::from(freq), total),
-                );
-            }
-        }
+        self.fill_lookup(syllables, &mut entries)?;
         Ok(entries)
+    }
+
+    fn lookup_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<(), Self::Error> {
+        self.fill_lookup(syllables, out)
+    }
+
+    fn lookup_addon_into(
+        &self,
+        _syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<(), Self::Error> {
+        out.clear();
+        Ok(())
     }
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {

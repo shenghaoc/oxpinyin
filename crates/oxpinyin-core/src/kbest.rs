@@ -11,6 +11,8 @@
 
 use core::fmt;
 
+use smallvec::SmallVec;
+
 use crate::Cost;
 use crate::graph::{Edge, EdgeId, SegmentGraph};
 
@@ -246,8 +248,8 @@ fn incoming_index(graph: &SegmentGraph) -> Incoming {
 }
 
 /// Bucket indices for every state that can be current at `node`.
-fn states_at(incoming: &Incoming, node: usize) -> Vec<usize> {
-    let mut states = Vec::new();
+fn states_at(incoming: &Incoming, node: usize) -> SmallVec<[usize; 8]> {
+    let mut states = SmallVec::new();
     if node == 0 {
         states.push(0);
     }

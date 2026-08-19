@@ -8,6 +8,8 @@
 
 use core::fmt::Display;
 
+use smallvec::SmallVec;
+
 use crate::cost::UNKNOWN_COST;
 use crate::graph::{Edge, EdgeKind};
 use crate::kbest::EdgeCost;
@@ -15,6 +17,14 @@ use crate::{
     Cost, Dictionary, FULL_PINYIN_SYLLABLES, LanguageModel, PhraseEntry, PhraseToken,
     SYLLABLE_KEY_COUNT, SyllableKey,
 };
+
+/// One expanded key sequence. Phrase length is capped at 16, so this stays
+/// on the stack.
+pub type ExpandedKeys = SmallVec<[SyllableKey; 16]>;
+
+/// Completions of one (possibly incomplete) key. The densest initial is 26
+/// syllables (`l`).
+type KeyCompletions = SmallVec<[SyllableKey; 32]>;
 
 /// Denominator of the log-linear weights, so they can be fractional without
 /// floating point.
@@ -273,7 +283,7 @@ where
         for sequence in expand_keys(keys, self.config.expansion_limit) {
             let entries = self
                 .dictionary
-                .lookup(&sequence)
+                .lookup(sequence.as_slice())
                 .map_err(|error| ScoringError::Dictionary(error.to_string()))?;
             for entry in entries {
                 let cost = self.phrase_cost(history, &entry, keys.len(), kinds)?;
@@ -371,9 +381,12 @@ where
 /// it is a gap, not a design endpoint. Closing it wants a dictionary that can
 /// answer a prefix query directly instead of being asked one exact key
 /// sequence at a time, which is a W3 loader concern.
+///
+/// Each sequence is a stack [`ExpandedKeys`] (phrase length ≤ 16).
 #[must_use]
-pub fn expand_keys(keys: &[SyllableKey], limit: usize) -> Vec<Vec<SyllableKey>> {
-    let alternatives: Vec<Vec<SyllableKey>> = keys.iter().map(|key| completions(*key)).collect();
+pub fn expand_keys(keys: &[SyllableKey], limit: usize) -> Vec<ExpandedKeys> {
+    let alternatives: SmallVec<[KeyCompletions; 16]> =
+        keys.iter().map(|key| completions(*key)).collect();
 
     let mut product = 1_usize;
     for choices in &alternatives {
@@ -386,7 +399,7 @@ pub fn expand_keys(keys: &[SyllableKey], limit: usize) -> Vec<Vec<SyllableKey>> 
         };
     }
 
-    let mut sequences: Vec<Vec<SyllableKey>> = vec![Vec::with_capacity(keys.len())];
+    let mut sequences: Vec<ExpandedKeys> = vec![ExpandedKeys::new()];
     for choices in alternatives {
         let mut next = Vec::with_capacity(sequences.len() * choices.len());
         for prefix in &sequences {
@@ -407,9 +420,11 @@ pub fn expand_keys(keys: &[SyllableKey], limit: usize) -> Vec<Vec<SyllableKey>> 
 /// An incomplete key `K` stands for every complete syllable whose
 /// [`phonetic_initial`] is `K`. That is the pinned `m_initial` index:
 /// `n` does not reach `ng`, and `z`/`c`/`s` do not reach `zh`/`ch`/`sh`.
-fn completions(key: SyllableKey) -> Vec<SyllableKey> {
+fn completions(key: SyllableKey) -> KeyCompletions {
     if key.completeness() == crate::Completeness::Complete {
-        return vec![key];
+        let mut out = KeyCompletions::new();
+        out.push(key);
+        return out;
     }
 
     let initial = key.text();
@@ -487,13 +502,17 @@ mod tests {
             let expanded = expand_keys(&keys(initial), 4096);
             for syllable in included {
                 assert!(
-                    expanded.contains(&keys(syllable)),
+                    expanded
+                        .iter()
+                        .any(|sequence| sequence.as_slice() == keys(syllable).as_slice()),
                     "{initial} must include {syllable}"
                 );
             }
             for syllable in excluded {
                 assert!(
-                    !expanded.contains(&keys(syllable)),
+                    !expanded
+                        .iter()
+                        .any(|sequence| sequence.as_slice() == keys(syllable).as_slice()),
                     "{initial} must exclude {syllable}"
                 );
             }
@@ -509,11 +528,23 @@ mod tests {
                 .iter()
                 .all(|sequence| sequence[0] == keys("ni")[0] && sequence.len() == 2)
         );
-        assert!(expanded.contains(&keys("ni,hao")));
-        assert!(expanded.contains(&keys("ni,hong")));
+        assert!(
+            expanded
+                .iter()
+                .any(|sequence| sequence.as_slice() == keys("ni,hao").as_slice())
+        );
+        assert!(
+            expanded
+                .iter()
+                .any(|sequence| sequence.as_slice() == keys("ni,hong").as_slice())
+        );
 
-        assert_eq!(expand_keys(&keys("ni,hao"), 64), vec![keys("ni,hao")]);
-        assert_eq!(expand_keys(&[], 64), vec![Vec::new()]);
+        let complete = expand_keys(&keys("ni,hao"), 64);
+        assert_eq!(complete.len(), 1);
+        assert_eq!(complete[0].as_slice(), keys("ni,hao").as_slice());
+        let empty = expand_keys(&[], 64);
+        assert_eq!(empty.len(), 1);
+        assert!(empty[0].is_empty());
     }
 
     #[test]

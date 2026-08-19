@@ -275,7 +275,7 @@ pub extern "C" fn pinyin_guess_candidates(
             if without_sentence && cand.kind() == oxpinyin_engine::CandidateKind::Sentence {
                 continue;
             }
-            let text = match CString::new(cand.text().to_owned()) {
+            let text = match CString::new(cand.text().as_bytes()) {
                 Ok(s) => s,
                 Err(_) => continue,
             };

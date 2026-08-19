@@ -235,9 +235,19 @@ impl Dictionary for SharedDict {
     type Error = DictError;
 
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
-        let mut entries = self.0.system.lookup(syllables)?;
-        entries.extend(self.user_lookup()?.lookup(syllables));
+        let mut entries = Vec::new();
+        self.lookup_into(syllables, &mut entries)?;
         Ok(entries)
+    }
+
+    fn lookup_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<(), Self::Error> {
+        self.0.system.lookup_into(syllables, out)?;
+        out.extend(self.user_lookup()?.lookup(syllables));
+        Ok(())
     }
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {

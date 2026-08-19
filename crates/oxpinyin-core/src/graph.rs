@@ -201,7 +201,8 @@ impl SegmentGraph {
         }
 
         let node_count = input.len() + 1;
-        let mut edges: Vec<Edge> = Vec::new();
+        let mut edges: Vec<Edge> =
+            Vec::with_capacity(input.len().saturating_mul(MAX_SYLLABLE_LEN).max(8));
         let mut starts = Vec::with_capacity(node_count + 1);
 
         for node in 0..node_count {
