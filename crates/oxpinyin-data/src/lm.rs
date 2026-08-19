@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
-use oxpinyin_core::cost::{UNKNOWN_COST, reduce_ratio, surprisal};
+use oxpinyin_core::cost::{reduce_ratio, surprisal, UNKNOWN_COST};
 use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta};
 
 use crate::interp::{self, InterpolationError, UnigramTable};
@@ -315,7 +315,7 @@ impl BigramLanguageModel {
         else {
             return Ok(None);
         };
-        let (total, records) = parse_bigram_value(&raw)?;
+        let (total, records) = parse_bigram_value(raw)?;
         Ok(Some(BigramRow { total, records }))
     }
 
@@ -701,9 +701,9 @@ mod tests {
     #[test]
     fn invariant_holds_for_every_fixture_entry() {
         let model = model();
-        for (key, value) in model.bigram.iter().unwrap() {
+        for (key, value) in model.bigram.iter() {
             assert_eq!(key.len(), 4, "bigram keys are 4-byte prev tokens");
-            let (total, records) = parse_bigram_value(&value).expect("schema parses");
+            let (total, records) = parse_bigram_value(value).expect("schema parses");
             let sum: u64 = records.iter().map(|(_, count)| u64::from(*count)).sum();
             assert_eq!(u64::from(total), sum, "total == Σ count for {key:02x?}");
         }

@@ -91,6 +91,8 @@ impl From<redb::StorageError> for TableError {
 /// issues millions of lookups over a session (every keystroke × every
 /// prefix × every path), and a redb begin_read + get per call cannot keep
 /// up; the portable tables are tens of megabytes, so the cache fits.
+/// [`LookupTable::get`] and [`LookupTable::iter`] borrow those bytes; they
+/// do not clone a row on every call.
 pub struct LookupTable {
     entries: BTreeMap<Vec<u8>, Vec<u8>>,
 }
@@ -116,9 +118,10 @@ impl LookupTable {
 
     /// Look up a key in the table.
     ///
-    /// Returns `None` if the key is not present.
-    pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, TableError> {
-        Ok(self.entries.get(key).cloned())
+    /// Returns `None` if the key is not present. The bytes are borrowed from
+    /// the in-memory map; they are not cloned.
+    pub fn get(&self, key: &[u8]) -> Result<Option<&[u8]>, TableError> {
+        Ok(self.entries.get(key).map(Vec::as_slice))
     }
 
     /// Return the number of entries in the table.
@@ -131,14 +134,11 @@ impl LookupTable {
         Ok(self.entries.is_empty())
     }
 
-    /// Iterate over all (key, value) pairs.
-    #[allow(clippy::type_complexity)]
-    pub fn iter(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, TableError> {
-        Ok(self
-            .entries
+    /// Iterate over all (key, value) pairs, borrowed from the in-memory map.
+    pub fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> + '_ {
+        self.entries
             .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect())
+            .map(|(key, value)| (key.as_slice(), value.as_slice()))
     }
 }
 
@@ -207,8 +207,8 @@ mod tests {
             assert!(count > 0, "{} should have records", path.display());
 
             // Verify iteration matches count.
-            let entries = table.iter().unwrap();
-            assert_eq!(entries.len() as u64, count);
+            let entries = table.iter().count();
+            assert_eq!(entries as u64, count);
         }
     }
 }

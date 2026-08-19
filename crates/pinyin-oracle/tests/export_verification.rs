@@ -134,7 +134,7 @@ fn bigram_invariant_and_spot_checks() {
 
     // Total-equals-sum over every entry, successors in system libraries.
     let mut successors_of: BTreeMap<u32, Vec<(u32, u32)>> = BTreeMap::new();
-    for (key, value) in table.iter().expect("iter") {
+    for (key, value) in table.iter() {
         assert_eq!(key.len(), 4, "bigram key {key:02x?} is not a u32 token");
         let prev = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
         assert!(

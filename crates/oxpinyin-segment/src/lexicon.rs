@@ -35,7 +35,7 @@ impl PhraseLexicon {
     pub fn from_phrase_index(path: &Path) -> Result<Self, SegmentError> {
         let table = LookupTable::open(path)?;
         let mut pairs = Vec::new();
-        for (key, value) in table.iter()? {
+        for (key, value) in table.iter() {
             if key.len() != 4 {
                 return Err(SegmentError::Config(format!(
                     "phrase_index key length {} is not 4",
@@ -43,10 +43,10 @@ impl PhraseLexicon {
                 )));
             }
             let token = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
-            let text = String::from_utf8(value).map_err(|_| {
+            let text = std::str::from_utf8(value).map_err(|_| {
                 SegmentError::Config(format!("phrase text for token {token} is not UTF-8"))
             })?;
-            pairs.push((token, text));
+            pairs.push((token, text.to_owned()));
         }
         Ok(Self::from_pairs(pairs))
     }
