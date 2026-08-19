@@ -336,3 +336,64 @@ Re-verification:
   (`real_tables_session_reports_parity`, `sentence_surface_reports_parity`).
 - union / train / import / predict diffs and bisect+valgrind all green;
   fmt, clippy `-D warnings`, `test --locked --workspace` green.
+## 8. The selection record's row mapping, fixed
+
+Date: 2026-08-19 · branch `fix/w14-nbest-select-path`.
+
+**The defect.** `Session::select_inner` recorded a chosen n-best row's
+token path as `nbest_rows[list_position]` (the `kind == Sentence &&
+index < nbest_rows.len()` test, pre-fix at `session.rs:346-357`). The
+NBEST-wins dedup keeps the lower-index row when two rows share a string,
+so a surviving row's list position equals its rank only while no earlier
+row was dropped. Rows `[好, 好, 浩]` present 好 (rank 0) at position 0 and
+浩 (rank 2) at position 1: choosing 浩 recorded row 1's — 好's — tokens,
+and `pinyin_train` then wrote 你→好 instead of 你→浩. Upstream never had
+the problem because `pinyin_choose_candidate` keeps the chosen
+`MatchResult` on the instance (`pinyin.cpp:2511-2519`) and train walks
+that, not a positional lookup. `run-train-diff.sh` could not see it: its
+sequence always chooses 你→好, whose candidate sits at position 0 = row
+0.
+
+Found while building a user-merged-costs n-best differential: training
+(你→浩) ×3 through the C ABI exported `你浩|138` (one seed) plus
+`你好|11178` on the engine side, while the pin-built oracle exported
+`你浩|1242` and `你好|1242`.
+
+**The fix.** `Candidate`'s `nbest_index: u8` ("0 also means not a row")
+became `Option<u8>`: `Some(rank)` on row-origin candidates only, `None`
+for everything else — including fallback sentence candidates, which keep
+their record-nothing behaviour (`a_fallback_sentence_never_records_row_
+tokens`). `Candidate::nbest_index()` still answers `u8` for the C ABI
+(`pinyin_get_candidate_nbest_index`), and `Candidate::nbest_row()` is
+the origin marker the selection record reads: row-origin candidates look
+up `nbest_rows[rank]`, bounded by `get`; no candidate's record goes
+through the list position again.
+
+**Evidence.**
+
+- Engine: `a_shifted_row_records_its_own_rank_not_its_position`
+  reconstructs rows `[好, 好, 浩]` and asserts the 浩 row sits at position
+  1 with rank 2 (the shift precondition) and records 浩's tokens.
+  Reverting the lookup to the positional form fails the test with
+  `[0x101]` (the deduped 好 row) against `[0x102]` expected.
+- C ABI (`tools/bisection/run-nbest-train-diff.sh`, matched model20
+  tables, export lines vs the pin-built oracle): (你→浩) × 3 exports
+  `你浩|ni'hao|1242` + `你好|ni'hao|1242` — identical to the oracle, with
+  你浩 doubling 138 → 414 → 1242 across rounds instead of stalling at
+  138 while seeds pile onto 你好. Measured on this branch stacked with the
+  §7 `SharedLm` forward (#116): without it the C ABI emits no
+  rows on the full-pinyin surface, every round chooses the NORMAL
+  candidate, and the run is trivially green — the runner prints a
+  vacuity warning in that shape.
+- Pins re-measured on this branch alone: default candidates 10177 /
+  10189 / 94871 / absent 1 / tie-swaps 1036; sentence surface
+  488/385/370 — bit-identical. union / train / import / predict diffs and
+  bisect+valgrind green; fmt, clippy `-D warnings`, workspace tests
+  green.
+
+**Recorded, not chased here.** A second divergence seen while debugging:
+our offset-decode sentence rows cover only the remaining input (single
+chars 好/浩) while the oracle's carry the full context (你好/你浩) — the
+§3 constraint-machinery gap. It does not affect this fix (the record
+follows the chosen row, whatever its text), but a user-merged-costs
+probe-surface comparison will meet it.
