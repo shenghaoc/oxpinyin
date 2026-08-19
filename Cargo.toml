@@ -38,3 +38,12 @@ oxpinyin-user = { path = "crates/oxpinyin-user" }
 redb = "4"
 smallvec = "1.15"
 compact_str = "0.10"
+
+# Stage-2 CPU profiles: release speed with enough debug to resolve stacks.
+# `debug = "line-tables-only"` keeps the image small; samply/perf still map
+# samples to functions and source lines. `lto = "thin"` is closer to a
+# realistic cargo-c install than fat LTO.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+lto = "thin"

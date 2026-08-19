@@ -207,3 +207,7 @@ Observations only — no optimization work in this PR.
 - Repro: `PINYIN_ORACLE_PREFIX=$HOME/.local/opt/pinyin-oracle \
   PERF_CPU=3 PERF_RUNS=20 PERF_CYCLES=8 PERF_RAM_RUNS=10 \
   tools/bisection/run-perf-baseline.sh`
+
+Continued by the Stage-2 measurement harness in
+`docs/findings/perf-stage2-harness-2026-08.md` (Criterion groups over the
+C ABI, `[profile.profiling]`, `tools/profile/run-w8-cycle.sh`).

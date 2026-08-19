@@ -37,6 +37,18 @@ oxpinyin-data = { path = "../oxpinyin-data" }
 oxpinyin-engine.workspace = true
 oxpinyin-user.workspace = true
 
+[dev-dependencies]
+# Criterion 0.5+ (workspace lock is 0.8). Stage-2 benches only; not a
+# runtime dependency of the C ABI.
+criterion = "0.8"
+# Direct use in `benches/stage2.rs` (`UserStore::count_delta`). Already a
+# runtime dependency of this crate; restated so the bench crate can import it.
+oxpinyin-user = { path = "../oxpinyin-user" }
+
+[[bench]]
+name = "stage2"
+harness = false
+
 # cargo-c packaging metadata. See docs/packaging.md for the rationale and the
 # Fedora/Debian recipes that consume this.
 [package.metadata.capi.header]
