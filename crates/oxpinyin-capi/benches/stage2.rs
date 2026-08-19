@@ -159,16 +159,18 @@ fn guess_sentence_get_sentence(criterion: &mut Criterion) {
             bencher.iter_batched(
                 || {
                     // SAFETY: `capi.instance` is a live handle for this bench.
-                    unsafe {
-                        let _ = pinyin_reset(capi.instance);
-                        pinyin_parse_more_full_pinyins(capi.instance, phrase.as_ptr())
-                    }
+                    let reset = unsafe { pinyin_reset(capi.instance) };
+                    assert!(reset, "pinyin_reset failed");
+                    let parsed =
+                        unsafe { pinyin_parse_more_full_pinyins(capi.instance, phrase.as_ptr()) };
+                    assert!(parsed > 0, "PARSE_MEDIUM did not parse");
                 },
                 |_| {
                     // SAFETY: setup just parsed into the same live instance.
                     let guessed = unsafe { pinyin_guess_sentence(capi.instance) };
                     let fetched = take_sentence(capi.instance);
-                    black_box((guessed, fetched))
+                    assert!(guessed && fetched, "full n-best sentence lookup failed");
+                    black_box(())
                 },
                 BatchSize::SmallInput,
             );

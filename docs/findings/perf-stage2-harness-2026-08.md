@@ -100,16 +100,16 @@ branch before rebase onto #120; second is `fcbc227`.
 | Group | pre-#120 | post-#120 | note |
 |---|---:|---:|---|
 | `parse_more_full_pinyins/short` | 150 µs | 37 µs | >50% improvement, flagged |
-| `parse_more_full_pinyins/medium` | 242 µs | 122 µs | >50% improvement, flagged |
+| `parse_more_full_pinyins/medium` | 242 µs | 122 µs | 49.6%, within 50% noise |
 | `parse_more_full_pinyins/junk_leading` | 20 µs | 16 µs | within 50% noise |
 | `guess_candidates/offset_0` | 13 µs | 9.0 µs | within 50% noise |
 | `guess_candidates/mid_phrase` | 11 µs | 9.7 µs | within 50% noise |
 | `guess_sentence_get_sentence_0/full_nbest_post_116` | 455 µs *(empty trellis)* | 11.0 ms | see below; **not a #120/#119 regression** |
 | `user_store_count_delta_hot_token` | 374 ns | 350 ns | no change |
 
-The 50% threshold did what it is for: parse short/medium counted as
-real, junk/guess 14–31% did not, `count_delta` did not. Do not tighten
-it into a required check.
+The 50% threshold did what it is for: parse short counted as real,
+medium 49.6% stayed in-noise, junk/guess 14–31% did not flag,
+`count_delta` did not. Do not tighten it into a required check.
 
 ### The 455 µs → 11 ms `guess_sentence` jump
 

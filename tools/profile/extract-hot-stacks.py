@@ -67,7 +67,10 @@ def frame_name(thread: dict, frame_index: int) -> str:
     name_col = column(funcs, "name")
     if not isinstance(func_index, int) or not (0 <= func_index < len(name_col)):
         return f"func:{func_index}"
-    return string_of(thread, name_col[func_index])
+    name_index = name_col[func_index]
+    if not isinstance(name_index, int):
+        return f"func:{func_index}"
+    return string_of(thread, name_index)
 
 
 def walk_stack(thread: dict, stack_index: int, limit: int = 12) -> tuple[str, ...]:
@@ -77,14 +80,18 @@ def walk_stack(thread: dict, stack_index: int, limit: int = 12) -> tuple[str, ..
     frames: list[str] = []
     seen: set[int] = set()
     current = stack_index
-    while current is not None and current >= 0 and current not in seen:
+    while isinstance(current, int) and current >= 0 and current not in seen:
         seen.add(current)
-        if current < len(frame_col):
-            frames.append(frame_name(thread, frame_col[current]))
+        if current >= len(frame_col):
+            break
+        frame_index = frame_col[current]
+        if not isinstance(frame_index, int) or frame_index < 0:
+            break
+        frames.append(frame_name(thread, frame_index))
         if current >= len(prefix_col):
             break
         current = prefix_col[current]
-        if current is None or current < 0:
+        if not isinstance(current, int) or current < 0:
             break
         if len(frames) >= limit:
             break
@@ -97,9 +104,11 @@ def hottest(
 ) -> tuple[int, list[tuple[int, tuple[str, ...]]]]:
     counts: Counter[tuple[str, ...]] = Counter()
     for thread in profile.get("threads") or []:
+        stacks = thread.get("stackTable") or {}
+        n_stacks = max(len(column(stacks, "prefix")), len(column(stacks, "frame")))
         stack_col = column(thread.get("samples") or {}, "stack")
         for stack_index in stack_col:
-            if stack_index is None or stack_index < 0:
+            if not isinstance(stack_index, int) or stack_index < 0 or stack_index >= n_stacks:
                 continue
             counts[walk_stack(thread, stack_index)] += 1
     return sum(counts.values()), counts.most_common(top_n)
@@ -143,6 +152,25 @@ def _self_test() -> int:
     total, rows = hottest(mixed)
     assert total == 5, total
     assert rows, rows
+    bad = {
+        "threads": [
+            {
+                "stringArray": ["ok"],
+                "samples": {"stack": [0, "x", None, -1, 99, 0]},
+                "stackTable": {
+                    "prefix": [None, "nope"],
+                    "frame": [0, "bad"],
+                },
+                "frameTable": {"func": [0]},
+                "funcTable": {"name": ["not-an-int"]},
+            }
+        ]
+    }
+    bad_total, _ = hottest(bad)
+    # Two in-range integer samples (the 0s); the rest are skipped.
+    # Name index is non-int → func fallback, no TypeError.
+    assert bad_total == 2, bad_total
+    assert frame_name(bad["threads"][0], 0).startswith("func:")
     print("self-test ok")
     return 0
 
