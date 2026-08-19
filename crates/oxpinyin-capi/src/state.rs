@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use oxpinyin_core::{
-    Cost, Dictionary, DoublePinyinParse, DoublePinyinScheme, LanguageModel, OptionBits,
-    PINYIN_INCOMPLETE, PhraseEntry, PhraseToken, SyllableKey, UserCountDelta, ZhuyinParse,
-    ZhuyinScheme,
+    Cost, Dictionary, DoublePinyinParse, DoublePinyinScheme, LanguageModel, NbestStepCosts,
+    OptionBits, PINYIN_INCOMPLETE, PhraseEntry, PhraseToken, SyllableKey, UserCountDelta,
+    ZhuyinParse, ZhuyinScheme,
 };
 use oxpinyin_data::{BigramLanguageModel, DictError, LmError, PunctTable, SystemDictionary};
 use oxpinyin_engine::{CandidateKind, Config, Session, StoragePaths};
@@ -359,6 +359,14 @@ impl LanguageModel for SharedLm {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         Ok(addons.unigram_total())
+    }
+
+    fn nbest_step_costs(
+        &self,
+        prev: &Self::Token,
+        token: &Self::Token,
+    ) -> Result<NbestStepCosts, Self::Error> {
+        self.inner.nbest_step_costs(prev, token)
     }
 }
 
