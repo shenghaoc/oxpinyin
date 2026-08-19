@@ -3,7 +3,7 @@
 //! Groups:
 //! - `parse_more_full_pinyins`: short / medium / junk-leading
 //! - `guess_candidates`: offset 0 and mid-phrase
-//! - `guess_sentence_get_sentence_0`: n-best lookup plus row 0
+//! - `guess_sentence_get_sentence_0/full_nbest_post_116`: n-best lookup plus row 0
 //! - `user_store_count_delta_hot_token`: cached overlay on one token
 //!
 //! Uses the pinned model dir. Prints the pin SHA in the run header.
@@ -151,24 +151,29 @@ fn guess_sentence_get_sentence(criterion: &mut Criterion) {
     let capi = CapiBench::open();
     let phrase = CString::new(PARSE_MEDIUM).expect("medium");
 
-    criterion.bench_function("guess_sentence_get_sentence_0", |bencher| {
-        bencher.iter_batched(
-            || {
-                // SAFETY: `capi.instance` is a live handle for this bench.
-                unsafe {
-                    let _ = pinyin_reset(capi.instance);
-                    pinyin_parse_more_full_pinyins(capi.instance, phrase.as_ptr())
-                }
-            },
-            |_| {
-                // SAFETY: setup just parsed into the same live instance.
-                let guessed = unsafe { pinyin_guess_sentence(capi.instance) };
-                let fetched = take_sentence(capi.instance);
-                black_box((guessed, fetched))
-            },
-            BatchSize::SmallInput,
-        );
-    });
+    // Full n-best, post-#116 (`SharedLm::nbest_step_costs` forward). The
+    // 455 µs figure was 64170b3, before that forward: empty trellis.
+    criterion.bench_function(
+        "guess_sentence_get_sentence_0/full_nbest_post_116",
+        |bencher| {
+            bencher.iter_batched(
+                || {
+                    // SAFETY: `capi.instance` is a live handle for this bench.
+                    unsafe {
+                        let _ = pinyin_reset(capi.instance);
+                        pinyin_parse_more_full_pinyins(capi.instance, phrase.as_ptr())
+                    }
+                },
+                |_| {
+                    // SAFETY: setup just parsed into the same live instance.
+                    let guessed = unsafe { pinyin_guess_sentence(capi.instance) };
+                    let fetched = take_sentence(capi.instance);
+                    black_box((guessed, fetched))
+                },
+                BatchSize::SmallInput,
+            );
+        },
+    );
 }
 
 struct TempStorePath(PathBuf);

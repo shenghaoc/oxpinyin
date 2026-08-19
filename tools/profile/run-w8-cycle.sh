@@ -28,20 +28,74 @@ BISECT_SRC="$REPO_ROOT/tools/bisection/bisect.c"
 
 PIN_REF='libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw'
 MODEL20_SHA256='59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155'
+EXPECTED_MODEL_FILES=(
+    art.table culture.table economy.table gb_char.table gbk_char.table
+    geology.table history.table interpolation2.text life.table merged.table
+    nature.table opengram.table people.table punct.table science.table
+    society.table sport.table technology.table
+)
 
 PROFILE_DIR="${OXPINYIN_PROFILE_DIR:-$REPO_ROOT/target/profile}"
 STAGE="$PROFILE_DIR/stage"
 CYCLES="${PERF_CYCLES:-32}"
 EXPORT_DIR="${PINYIN_EXPORT_DIR:-/tmp/oxpinyin-export}"
-MODEL_DIR="${PINYIN_MODEL_DIR:-$REPO_ROOT/target/model20/extracted}"
+if [ -n "${PINYIN_MODEL_DIR:-}" ]; then
+    MODEL_DIR="$PINYIN_MODEL_DIR"
+elif [ -n "${PINYIN_MODEL_CACHE:-}" ]; then
+    MODEL_DIR="$PINYIN_MODEL_CACHE/extracted"
+else
+    MODEL_DIR="$REPO_ROOT/target/model20/extracted"
+fi
+
+file_sha256() {
+    local path=$1
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum -- "$path" | awk '{print $1}'
+    else
+        shasum -a 256 -- "$path" | awk '{print $1}'
+    fi
+}
+
+# The extracted tree is the pin only when fetch-model.sh's `verified`
+# marker (or the sibling archive digest) matches MODEL20_SHA256.
+verify_pinned_model() {
+    local dir=$1 name cache_root marker digest archive
+    [ -d "$dir" ] || {
+        echo "fatal: model dir is not a directory: $dir" >&2
+        echo "  run: tools/model/fetch-model.sh" >&2
+        exit 1
+    }
+    for name in "${EXPECTED_MODEL_FILES[@]}"; do
+        if [ ! -f "$dir/$name" ]; then
+            echo "fatal: model dir $dir is missing $name" >&2
+            echo "  run: tools/model/fetch-model.sh" >&2
+            exit 1
+        fi
+    done
+    cache_root=$(python3 -c 'import os, sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$dir")
+    marker="$cache_root/verified"
+    if [ -f "$marker" ] && grep -qx "sha256=$MODEL20_SHA256" "$marker"; then
+        MODEL_DIR=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$dir")
+        return 0
+    fi
+    archive="$cache_root/downloads/model20.text.tar.gz"
+    if [ -f "$archive" ]; then
+        digest=$(file_sha256 "$archive")
+        if [ "$digest" = "$MODEL20_SHA256" ]; then
+            MODEL_DIR=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$dir")
+            return 0
+        fi
+        echo "fatal: archive $archive is not the pinned model20" >&2
+        echo "  expected: $MODEL20_SHA256" >&2
+        echo "  actual:   $digest" >&2
+        exit 1
+    fi
+    echo "fatal: $dir is not a verified model20 cache (no sha256=$MODEL20_SHA256 marker)" >&2
+    echo "  run: tools/model/fetch-model.sh" >&2
+    exit 1
+}
 
 mkdir -p "$PROFILE_DIR"
-
-echo "oxpinyin Stage-2 W8-cycle profile"
-echo "  pin: $PIN_REF"
-echo "  model20 SHA-256: $MODEL20_SHA256"
-echo "  artifacts: $PROFILE_DIR"
-echo "  cycles: $CYCLES"
 
 # ── Inputs ──────────────────────────────────────────────────────────────
 
@@ -52,11 +106,14 @@ for name in pinyin_index.redb phrase_index.redb bigram.redb; do
         exit 1
     fi
 done
-if [ ! -f "$MODEL_DIR/interpolation2.text" ]; then
-    echo "fatal: pinned model missing at $MODEL_DIR/interpolation2.text" >&2
-    echo "  run: tools/model/fetch-model.sh" >&2
-    exit 1
-fi
+verify_pinned_model "$MODEL_DIR"
+
+echo "oxpinyin Stage-2 W8-cycle profile"
+echo "  pin: $PIN_REF"
+echo "  model20 SHA-256: $MODEL20_SHA256"
+echo "  model dir: $MODEL_DIR"
+echo "  artifacts: $PROFILE_DIR"
+echo "  cycles: $CYCLES"
 
 # ── cargo-c install with the profiling profile ──────────────────────────
 

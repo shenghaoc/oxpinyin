@@ -15,7 +15,8 @@ Criterion header and the profile script both print this SHA.
    (`crates/oxpinyin-capi/benches/stage2.rs`), over the pinned model dir:
    - `parse_more_full_pinyins` — short / medium / junk-leading
    - `guess_candidates` — offset 0 and mid-phrase
-   - `guess_sentence_get_sentence_0`
+   - `guess_sentence_get_sentence_0/full_nbest_post_116` — full n-best,
+     post-#116
    - `user_store_count_delta_hot_token`
 2. **`[profile.profiling]`** in the workspace `Cargo.toml`:
    `inherits = "release"`, `debug = "line-tables-only"`, `lto = "thin"`.
@@ -103,12 +104,31 @@ branch before rebase onto #120; second is `fcbc227`.
 | `parse_more_full_pinyins/junk_leading` | 20 µs | 16 µs | within 50% noise |
 | `guess_candidates/offset_0` | 13 µs | 9.0 µs | within 50% noise |
 | `guess_candidates/mid_phrase` | 11 µs | 9.7 µs | within 50% noise |
-| `guess_sentence_get_sentence_0` | 455 µs | 11.0 ms | **not the W8 cycle**; n-best is a different surface (#119) |
+| `guess_sentence_get_sentence_0/full_nbest_post_116` | 455 µs *(empty trellis)* | 11.0 ms | see below; **not a #120/#119 regression** |
 | `user_store_count_delta_hot_token` | 374 ns | 350 ns | no change |
 
 The 50% threshold did what it is for: parse short/medium counted as
 real, junk/guess 14–31% did not, `count_delta` did not. Do not tighten
 it into a required check.
+
+### The 455 µs → 11 ms `guess_sentence` jump
+
+The 455 µs Criterion estimate was saved against **`64170b3`**
+(`docs(w13): review-nits on the sentence-surface note`, 2026-08-19).
+That SHA is an ancestor of **#116** `5e9a975` (`fix(capi): forward
+SharedLm::nbest_step_costs so guess_sentence emits rows`). Before that
+forward, C-ABI `pinyin_guess_sentence` ran an empty trellis (no
+step-costs). After it, the same call is a real beam-32 n-best.
+
+This is empty trellis → full n-best, not a #120 or #119 regression.
+The bench is labeled `full_nbest_post_116`. Re-save the local Criterion
+baseline on current `main`:
+
+```sh
+cargo bench --locked -p oxpinyin-capi --bench stage2 -- --save-baseline post-116
+```
+
+`noise_threshold(0.50)` stays. Benches stay out of required checks.
 
 ## Repro
 
@@ -124,7 +144,7 @@ cargo bench --locked -p oxpinyin-capi --bench stage2 -- --baseline pin
 # profile the W8 candidate cycle against installed oxpinyin-capi
 tools/profile/run-w8-cycle.sh
 # artifacts: target/profile/{header.txt,w8-cycle-timing.json,
-#   w8-cycle.profile.json.gz | callgrind.out | flamegraph.svg}
+#   w8-cycle.profile.json.gz | callgrind.out | w8-cycle.svg}
 ```
 
 On a machine with `perf_event_paranoid ≤ 1`, samply writes

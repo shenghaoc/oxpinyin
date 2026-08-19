@@ -9,6 +9,7 @@
 use std::ffi::CString;
 use std::os::raw::{c_char, c_uint, c_void};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::OnceLock;
 
 use pinyin_capi::{pinyin_fini, pinyin_init};
@@ -41,6 +42,28 @@ pub const PIN_REF: &str = concat!(
 
 /// Pinned SHA-256 of `model20.text.tar.gz`.
 pub const MODEL20_SHA256: &str = "59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155";
+
+/// Inventory `tools/model/fetch-model.sh` extracts (keep in lockstep).
+const EXPECTED_MODEL_FILES: &[&str] = &[
+    "art.table",
+    "culture.table",
+    "economy.table",
+    "gb_char.table",
+    "gbk_char.table",
+    "geology.table",
+    "history.table",
+    "interpolation2.text",
+    "life.table",
+    "merged.table",
+    "nature.table",
+    "opengram.table",
+    "people.table",
+    "punct.table",
+    "science.table",
+    "society.table",
+    "sport.table",
+    "technology.table",
+];
 
 /// W8 parity-profile option word: `IS_PINYIN | PINYIN_INCOMPLETE |
 /// USE_DIVIDED_TABLE | USE_RESPLIT_TABLE` (`0x18a`).
@@ -83,21 +106,93 @@ pub fn export_dir() -> PathBuf {
     dir
 }
 
-/// Fetched model20 extraction; panics if the cache is absent.
+fn missing_model_files(dir: &Path) -> Vec<&'static str> {
+    EXPECTED_MODEL_FILES
+        .iter()
+        .copied()
+        .filter(|name| !dir.join(name).is_file())
+        .collect()
+}
+
+fn cache_root_of(extracted: &Path) -> PathBuf {
+    let canonical = extracted
+        .canonicalize()
+        .unwrap_or_else(|_| extracted.to_path_buf());
+    canonical
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or(canonical)
+}
+
+fn marker_sha256(cache_root: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(cache_root.join("verified")).ok()?;
+    text.lines().find_map(|line| {
+        line.strip_prefix("sha256=")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    })
+}
+
+fn file_sha256(path: &Path) -> Option<String> {
+    let sha256sum = Command::new("sha256sum").arg(path).output();
+    let output = match sha256sum {
+        Ok(out) if out.status.success() => out,
+        _ => Command::new("shasum")
+            .args(["-a", "256"])
+            .arg(path)
+            .output()
+            .ok()
+            .filter(|out| out.status.success())?,
+    };
+    let text = String::from_utf8(output.stdout).ok()?;
+    text.split_whitespace().next().map(str::to_owned)
+}
+
+/// The extracted tree is the pinned model20 only when the fetch-script
+/// `verified` marker (or the sibling archive digest) matches [`MODEL20_SHA256`].
+fn assert_pinned_model(extracted: &Path) -> PathBuf {
+    let missing = missing_model_files(extracted);
+    assert!(
+        missing.is_empty(),
+        "model dir {} is incomplete (missing {missing:?}); run tools/model/fetch-model.sh",
+        extracted.display()
+    );
+    let cache_root = cache_root_of(extracted);
+    if marker_sha256(&cache_root).as_deref() == Some(MODEL20_SHA256) {
+        return extracted
+            .canonicalize()
+            .unwrap_or_else(|_| extracted.to_path_buf());
+    }
+    let archive = cache_root.join("downloads").join("model20.text.tar.gz");
+    if archive.is_file() {
+        let digest = file_sha256(&archive).unwrap_or_default();
+        assert_eq!(
+            digest,
+            MODEL20_SHA256,
+            "archive {} is not the pinned model20 (got {digest}); run tools/model/fetch-model.sh",
+            archive.display()
+        );
+        return extracted
+            .canonicalize()
+            .unwrap_or_else(|_| extracted.to_path_buf());
+    }
+    panic!(
+        "model dir {} is not a verified model20 cache (no sha256={} marker); run tools/model/fetch-model.sh",
+        extracted.display(),
+        MODEL20_SHA256
+    );
+}
+
+/// Fetched model20 extraction; panics if the cache is absent or off-pin.
 pub fn model_dir() -> PathBuf {
     if let Some(raw) = std::env::var_os("PINYIN_MODEL_DIR") {
-        let dir = PathBuf::from(raw);
-        assert!(
-            dir.join("interpolation2.text").is_file(),
-            "PINYIN_MODEL_DIR {} has no interpolation2.text",
-            dir.display()
-        );
-        return dir;
+        return assert_pinned_model(&PathBuf::from(raw));
     }
     if let Some(raw) = std::env::var_os("PINYIN_MODEL_CACHE") {
         let dir = PathBuf::from(raw).join("extracted");
-        if dir.join("interpolation2.text").is_file() {
-            return dir;
+        if dir.is_dir() {
+            return assert_pinned_model(&dir);
         }
     }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -107,12 +202,7 @@ pub fn model_dir() -> PathBuf {
         .join("target")
         .join("model20")
         .join("extracted");
-    assert!(
-        default.join("interpolation2.text").is_file(),
-        "model cache missing at {}; run tools/model/fetch-model.sh",
-        default.display()
-    );
-    default
+    assert_pinned_model(&default)
 }
 
 fn link_or_copy(src: &Path, dst: &Path) {
@@ -220,8 +310,13 @@ impl Drop for CapiBench {
 }
 
 /// Print the pin identity once, at the top of a Criterion run.
+///
+/// The SHA is printed only after [`model_dir`] has accepted the extracted
+/// tree as the pinned model20.
 pub fn print_pin_header() {
+    let dir = model_dir();
     eprintln!("oxpinyin Stage-2 benches");
     eprintln!("  pin: {PIN_REF}");
     eprintln!("  model20 SHA-256: {MODEL20_SHA256}");
+    eprintln!("  model dir: {}", dir.display());
 }
