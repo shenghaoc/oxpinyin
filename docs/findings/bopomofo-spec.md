@@ -3,7 +3,8 @@
 Date: 2026-08-17 · Status: W13 Phase 0 draft (human freeze pending)
 Amended 2026-08-20 by `zhuyin-index-fidelity` (PR 1 of the #109 stack):
 the recorded no-shuffle decision below is superseded — see "Index
-fidelity".
+fidelity". Amended again by `zhuyin-simple-keyboards` (PR 2): the
+Simple keyboard family is table-driven — see "Keyboard scope".
 
 ## Scope
 
@@ -191,13 +192,25 @@ already-documented non-gated full-candidate divergence class (no
 phrases for the new spellings in the string-keyed dictionary — empty
 lookup, `UNKNOWN_COST`, no panic; verified by the id-table audit).
 
-## Keyboard scope for the first PR
+## Keyboard scope
 
-The first bopomofo PR scopes **STANDARD only**, and leaves HSU, IBM,
-GINYIEH, ETEN, ETEN26, STANDARD_DVORAK, HSU_DVORAK and DACHEN_CP26 deferred.
-STANDARD is the fork's default (`ZHUYIN_DEFAULT = ZHUYIN_STANDARD`) and the
-pinned differential surface. Scheme setters accept the full ABI values but
-unimplemented schemes report `false` rather than aborting.
+The `zhuyin-simple-keyboards` PR (2026-08-20) makes the parser
+table-driven over the four Simple keyboards: **STANDARD (1), IBM (3),
+GINYIEH (4), ETEN (5)**, each with its pinned symbol/tone tables
+(`chewing_{standard,ibm,ginyieh,eten}_{symbols,tones}`) and all sharing
+the 1493-row index, the forced `ZHUYIN_CORRECT_SHUFFLE`, and the
+canonical aux rendering. The three keyboards use the same 37 symbols on
+different keys (GINYIEH and ETEN both bind the apostrophe; IBM's tone
+keys are `m , . /`); no key is both a symbol and a tone key on any of
+them, verified at extraction and re-verified per run by the driver's
+table cross-check. Deferred: HSU, ETEN26, HSU_DVORAK (Discrete),
+DACHEN_CP26, and STANDARD_DVORAK (the abort slot). Scheme setters accept
+the implemented ABI values; the rest report `false` and keep the
+previous scheme rather than aborting. The per-scheme PARSE_AUX sweep
+(runs 1, 3, 4, 5) is IDENTICAL for each; the added keyboards run the
+compact corpus — tone-bearing, tone-rejection, shuffle with canonical
+aux, one recovered live row, one dead row — with keystrokes derived
+from the selected keyboard's tables.
 
 ## Verification input set
 
