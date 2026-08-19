@@ -18,27 +18,31 @@ use crate::options::{
 use crate::{
     Completeness, FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
     INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLE_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
-    option_alias_canonical,
+    ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT, ZHUYIN_ONLY_COMPLETE_SYLLABLES, option_alias_canonical,
 };
 
 /// Number of keys addressable by a [`SyllableKey`].
 ///
-/// **Not constant across stages.** This is 430 for Stage 1 — the 405 complete
-/// syllables, the 23 initial-only keys, and the two option-only correction
-/// targets (`eng`, `nun`). Stage 2 additions take ids *after* the current end
-/// rather than renumbering, so the existing ids stay stable while this count
-/// grows. Anything that persists a key id must record the inventory it was
-/// written against; anything that sizes an array by this value must recompute
-/// it rather than hard-code 430.
-pub const SYLLABLE_KEY_COUNT: usize =
-    FULL_PINYIN_SYLLABLE_COUNT + INCOMPLETE_PINYIN_KEY_COUNT + OPTION_ONLY_COMPLETE_SYLLABLE_COUNT;
+/// **Not constant across stages.** This is 440 for Stage 1 — the 405 complete
+/// syllables, the 23 initial-only keys, the two option-only correction
+/// targets (`eng`, `nun`), and the ten zhuyin-only syllables reachable
+/// through the zhuyin index alone. Stage 2 additions take ids *after* the
+/// current end rather than renumbering, so the existing ids stay stable
+/// while this count grows. Anything that persists a key id must record the
+/// inventory it was written against; anything that sizes an array by this
+/// value must recompute it rather than hard-code 440.
+pub const SYLLABLE_KEY_COUNT: usize = FULL_PINYIN_SYLLABLE_COUNT
+    + INCOMPLETE_PINYIN_KEY_COUNT
+    + OPTION_ONLY_COMPLETE_SYLLABLE_COUNT
+    + ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT;
 
 /// One decoder-visible pinyin key: a complete syllable or an initial-only key.
 ///
 /// Ids are dense and frozen: `0..405` are [`FULL_PINYIN_SYLLABLES`] in their
 /// pinned upstream numeric-ID order, `405..428` are
-/// [`INCOMPLETE_PINYIN_KEYS`] in ascending byte order, and `428..430` are
-/// [`OPTION_ONLY_COMPLETE_SYLLABLES`]. The ordering is part of the decoder's
+/// [`INCOMPLETE_PINYIN_KEYS`] in ascending byte order, `428..430` are
+/// [`OPTION_ONLY_COMPLETE_SYLLABLES`], and `430..440` are
+/// [`ZHUYIN_ONLY_COMPLETE_SYLLABLES`]. The ordering is part of the decoder's
 /// determinism, so it is never derived from a hash map.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SyllableKey(u16);
@@ -63,7 +67,13 @@ impl SyllableKey {
     }
 
     /// Returns the key for a canonical spelling, including option-only
-    /// correction targets that [`Self::from_text`] deliberately omits.
+    /// correction targets and zhuyin-only syllables that [`Self::from_text`]
+    /// deliberately omits.
+    ///
+    /// This mirrors `content_table` membership; [`Self::from_text`] mirrors
+    /// `pinyin_index` membership. Correction aliases
+    /// ([`Self::from_option_text`]) resolve only within the pinyin-reachable
+    /// tiers, so tier 4 never becomes a full-pinyin parse target.
     #[must_use]
     pub fn from_canonical_text(text: &str) -> Option<Self> {
         if let Some(index) = FULL_PINYIN_SYLLABLES
@@ -75,12 +85,18 @@ impl SyllableKey {
         if let Some(index) = INCOMPLETE_PINYIN_KEYS.iter().position(|key| *key == text) {
             return Self::from_index(FULL_PINYIN_SYLLABLE_COUNT + index);
         }
-        OPTION_ONLY_COMPLETE_SYLLABLES
+        let option_start = FULL_PINYIN_SYLLABLE_COUNT + INCOMPLETE_PINYIN_KEY_COUNT;
+        if let Some(index) = OPTION_ONLY_COMPLETE_SYLLABLES
             .iter()
             .position(|syllable| *syllable == text)
-            .and_then(|index| {
-                Self::from_index(FULL_PINYIN_SYLLABLE_COUNT + INCOMPLETE_PINYIN_KEY_COUNT + index)
-            })
+        {
+            return Self::from_index(option_start + index);
+        }
+        let zhuyin_start = option_start + OPTION_ONLY_COMPLETE_SYLLABLE_COUNT;
+        ZHUYIN_ONLY_COMPLETE_SYLLABLES
+            .iter()
+            .position(|syllable| *syllable == text)
+            .and_then(|index| Self::from_index(zhuyin_start + index))
     }
 
     /// Returns the key for `text` under parser option bits.
@@ -141,8 +157,12 @@ impl SyllableKey {
             return key;
         }
         let option_start = FULL_PINYIN_SYLLABLE_COUNT + INCOMPLETE_PINYIN_KEY_COUNT;
-        OPTION_ONLY_COMPLETE_SYLLABLES
-            .get(index - option_start)
+        if let Some(syllable) = OPTION_ONLY_COMPLETE_SYLLABLES.get(index - option_start) {
+            return syllable;
+        }
+        let zhuyin_start = option_start + OPTION_ONLY_COMPLETE_SYLLABLE_COUNT;
+        ZHUYIN_ONLY_COMPLETE_SYLLABLES
+            .get(index - zhuyin_start)
             .copied()
             .unwrap_or_default()
     }
@@ -386,6 +406,14 @@ mod tests {
             let key = SyllableKey::from_canonical_text(option_only).expect("option-only key");
             assert_eq!(key.completeness(), Completeness::Complete);
             assert!(key.index() >= FULL_PINYIN_SYLLABLES.len() + INCOMPLETE_PINYIN_KEYS.len());
+        }
+        for zhuyin_only in crate::ZHUYIN_ONLY_COMPLETE_SYLLABLES {
+            let key = SyllableKey::from_canonical_text(zhuyin_only).expect("zhuyin-only key");
+            assert_eq!(key.completeness(), Completeness::Complete);
+            assert!(key.index() >= 430);
+            // The raw full-pinyin surface never sees tier 4: `from_text`
+            // mirrors `pinyin_index` membership, which lacks these rows.
+            assert_eq!(SyllableKey::from_text(zhuyin_only), None);
         }
     }
 

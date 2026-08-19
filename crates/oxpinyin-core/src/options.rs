@@ -9,6 +9,9 @@
 /// `PINYIN_INCOMPLETE = 1U << 3` (`pinyin_custom2.h:34`).
 pub const PINYIN_INCOMPLETE: u32 = 1 << 3;
 
+/// `ZHUYIN_INCOMPLETE = 1U << 4` (`pinyin_custom2.h:35`).
+pub const ZHUYIN_INCOMPLETE: u32 = 1 << 4;
+
 /// `DYNAMIC_ADJUST = 1U << 9` (`pinyin_custom2.h:40`).
 pub const DYNAMIC_ADJUST: u32 = 1 << 9;
 
@@ -53,6 +56,15 @@ pub const PINYIN_CORRECT_V_U: u32 = 1 << 27;
 pub const PINYIN_CORRECT_ON_ONG: u32 = 1 << 28;
 /// `PINYIN_CORRECT_ALL = 0xFFU << 21` (`pinyin_custom2.h:79`).
 pub const PINYIN_CORRECT_ALL: u32 = 0xff << 21;
+
+/// `ZHUYIN_CORRECT_HSU = 1U << 29` (`pinyin_custom2.h:89`).
+pub const ZHUYIN_CORRECT_HSU: u32 = 1 << 29;
+/// `ZHUYIN_CORRECT_ETEN26 = 1U << 30` (`pinyin_custom2.h:90`).
+pub const ZHUYIN_CORRECT_ETEN26: u32 = 1 << 30;
+/// `ZHUYIN_CORRECT_SHUFFLE = 1U << 31` (`pinyin_custom2.h:91`).
+pub const ZHUYIN_CORRECT_SHUFFLE: u32 = 1 << 31;
+/// `ZHUYIN_CORRECT_ALL = 0x7U << 29` (`pinyin_custom2.h:92`).
+pub const ZHUYIN_CORRECT_ALL: u32 = 0x7 << 29;
 
 /// A bit set of parser/decoder options.
 ///
@@ -107,9 +119,12 @@ mod tests {
     #[test]
     fn bit_values_match_the_frozen_header() {
         assert_eq!(PINYIN_INCOMPLETE, 0x8);
+        assert_eq!(ZHUYIN_INCOMPLETE, 0x10);
         assert_eq!(DYNAMIC_ADJUST, 0x200);
         assert_eq!(PINYIN_AMB_ALL, 0x3ff << 10);
         assert_eq!(PINYIN_CORRECT_ALL, 0xff << 21);
+        assert_eq!(ZHUYIN_CORRECT_SHUFFLE, 0x8000_0000);
+        assert_eq!(ZHUYIN_CORRECT_ALL, 0x7 << 29);
         assert_eq!(
             PINYIN_INCOMPLETE | (1 << 4) | PINYIN_CORRECT_ALL | (1 << 7) | (1 << 8),
             0x1fe0_0198
