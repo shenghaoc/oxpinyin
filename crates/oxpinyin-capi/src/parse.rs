@@ -5,7 +5,7 @@ use std::ptr;
 
 use std::sync::atomic::Ordering;
 
-use oxpinyin_core::{DoublePinyinScheme, ZhuyinScheme};
+use oxpinyin_core::{DoublePinyinScheme, ZHUYIN_INCOMPLETE, ZhuyinScheme};
 
 use crate::ffi::{cstr_to_string, ffi_catch};
 use crate::state::{instance_mut, instance_ref};
@@ -122,8 +122,13 @@ fn parse_chewing_more(instance: *mut PinyinInstance, text: &str) -> usize {
         return 0;
     };
     let use_tone = inst.use_tone.load(Ordering::Relaxed);
+    // Upstream passes the caller's option word through after stripping the
+    // parser-owned corrections (`pinyin.cpp:1621`); `ZHUYIN_INCOMPLETE` is
+    // the one caller bit the Simple parser consults, so that bit alone
+    // crosses this seam.
+    let allow_incomplete = inst.options().contains(ZHUYIN_INCOMPLETE);
     let parser = oxpinyin_core::ZhuyinParser::with_scheme(scheme);
-    let parsed = parser.parse(text.as_bytes(), use_tone);
+    let parsed = parser.parse(text.as_bytes(), use_tone, allow_incomplete);
 
     if text.is_empty() {
         inst.parsed_len = 0;

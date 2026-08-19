@@ -93,6 +93,19 @@ pub const OPTION_ONLY_COMPLETE_SYLLABLE_COUNT: usize = 2;
 pub static OPTION_ONLY_COMPLETE_SYLLABLES: [&str; OPTION_ONLY_COMPLETE_SYLLABLE_COUNT] =
     ["eng", "nun"];
 
+/// Number of zhuyin-only canonical syllables.
+///
+/// These are `content_table` spellings reachable through the zhuyin index
+/// but absent from `pinyin_index`, so the raw full-pinyin surface never
+/// sees them (`SyllableKey::from_text` deliberately omits them, mirroring
+/// upstream's index membership; `from_canonical_text` resolves them).
+pub const ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT: usize = 10;
+
+/// Canonical zhuyin-only complete syllables, in ascending byte order.
+pub static ZHUYIN_ONLY_COMPLETE_SYLLABLES: [&str; ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT] = [
+    "chua", "den", "din", "fe", "kei", "len", "nia", "rua", "yai", "zhei",
+];
+
 /// A canonical complete syllable spelling, whether it is in the frozen
 /// untuned inventory or an option-only correction target.
 #[must_use]
@@ -250,8 +263,29 @@ mod tests {
         for required in ["ng", "lv", "lve", "nv", "nve", "zhuan"] {
             assert!(FULL_PINYIN_SYLLABLES.contains(&required));
         }
-        for excluded in ["b", "zh", "den", "kei", "lue", "nue", "tei", "eng"] {
+        for excluded in [
+            "b", "zh", "den", "kei", "lue", "nue", "tei", "eng", "chua", "din", "fe", "len", "nia",
+            "rua", "yai", "zhei",
+        ] {
             assert!(!FULL_PINYIN_SYLLABLES.contains(&excluded));
+        }
+    }
+
+    #[test]
+    fn zhuyin_only_syllables_stay_off_the_full_pinyin_surface() {
+        use super::ZHUYIN_ONLY_COMPLETE_SYLLABLES;
+
+        let mut previous = "";
+        for syllable in ZHUYIN_ONLY_COMPLETE_SYLLABLES {
+            assert!(
+                previous < syllable,
+                "{syllable:?} is out of ascending order"
+            );
+            assert!(
+                !FULL_PINYIN_SYLLABLES.contains(&syllable),
+                "{syllable:?} leaked into the full-pinyin inventory"
+            );
+            previous = syllable;
         }
     }
 
