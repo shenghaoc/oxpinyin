@@ -230,3 +230,63 @@ not a refinement.
 `sentence_surface_fixture_is_fresh` (oracle-ffi, ignored) re-captures the
 sample live and asserts the fixture matches; it passed against the pinned
 oracle at freeze time.
+
+## 6. W13 scheme re-measure — the C ABI n-best wiring gap
+
+Date: 2026-08-19 · main tip `489e94d` (PR #113 merge, W14 landed).
+
+The #97 verdict table re-run against the current tip through
+`tools/bisection/run-scheme-diff.sh`:
+
+| Surface | Pre-W14 (#97) | Post-W14 (`489e94d`) |
+|---|---|---|
+| `PARSE_AUX_ONLY` double | PARSE_AUX_IDENTICAL | **PARSE_AUX_IDENTICAL** |
+| `PARSE_AUX_ONLY` STANDARD bopomofo | PARSE_AUX_IDENTICAL | **PARSE_AUX_IDENTICAL** |
+| Full-candidate double (pin model both sides) | DIVERGE — sentence/NBEST gap + `get_sentence` raw vs decoded + tail tie-order | **DIVERGE** — sentence/NBEST rows still absent, `get_sentence: (null)`, tail tie-order |
+| Full-candidate STANDARD bopomofo | DIVERGE — same full-pinyin picture | **DIVERGE** — same |
+| Sentence rows on real unigrams (via C ABI) | absent (nbest = 0), main and W13 | **absent** on both double and STANDARD, full-pinyin C ABI included |
+
+Default candidate pins re-measured under this branch: **10177 / 10189 /
+94871 of 98930 / absent 1 / tie-swaps 1036**, bit-identical. Sentence-
+surface pins re-measured: **488/385/370**, bit-identical. Nothing moved.
+
+**Where the sentence rows go.** The W14 trellis works: the direct-Session
+test `sentence_surface_reports_parity` pins the 488/385/370 agreement
+against the oracle fixture, and that path uses `BigramLanguageModel`
+directly. The C ABI does not, and the sentence surface never activates
+through it. The reason is one line: `SharedLm`
+(`crates/oxpinyin-capi/src/state.rs:301-363`) implements `LanguageModel`
+but does not override `nbest_step_costs`. The trait's default is
+`Ok(NbestStepCosts::default())` — no cost data — so the trellis in
+`Session::guess_sentence` produces zero rows for every C ABI caller
+regardless of scheme or full pinyin. `pinyin_guess_sentence` still
+returns `true` (the lookup ran and cleared prior rows, upstream's
+`get_nbest_match` contract), but `pinyin_get_sentence` answers false /
+`(null)` (the W14 decoded-or-nothing gate over an empty row set) and
+`pinyin_guess_candidates` prepends nothing.
+
+A one-input C-ABI probe against the same tables confirms the reach:
+`pinyin_parse_more_full_pinyins("nihao")` → `guess_sentence: true`,
+`get_sentence: (null)`, `cand[0] type=NORMAL text="你好"`. The scheme
+paths inherit this from the shared session; they are not the source.
+
+**Classification vs the #97 baseline.**
+
+- PARSE_AUX rows: **gone as a divergence class** — both surfaces still
+  PARSE_AUX_IDENTICAL, unchanged from #97.
+- Full-candidate rows: **still DIVERGE, same underlying cause** (sentence
+  surface absent on the C ABI path). The visible signature on
+  `get_sentence` shifted from raw input to `(null)` because W14 tightened
+  the gate — that is the intended W14 semantics, not a scheme-side
+  regression. The tail tie-order residual is unchanged.
+- No new / unexpected divergences. No default-pin movement.
+
+**Not fixed here.** The C ABI wiring gap belongs to whoever owns the
+`SharedLm` façade; it is documented above as a one-method extension. The
+scheme paths are correct on the surfaces they own (PARSE_AUX, aux text,
+consumed offsets); closing the sentence rows for them requires the same
+`nbest_step_costs` forward that fixes the full-pinyin C ABI. Recorded,
+not chased.
+
+The scheme differential driver itself needs no changes: it already
+exercises the exact surface where the gap shows.
