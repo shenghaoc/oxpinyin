@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # run-scheme-diff.sh <double|bopomofo> [scheme-number]
 #
-# W13 per-scheme differential. Drives the same double-pinyin C-ABI sequence
-# into libpinyin_capi.so and the pin-built libpinyin.so and diffs the logs.
+# W13 per-scheme differential. Drives the same C-ABI sequence into
+# libpinyin_capi.so and the pin-built libpinyin.so and diffs the logs.
+# The scheme number selects the double-pinyin scheme in double mode, or
+# the zhuyin Simple keyboard in bopomofo mode (1 STANDARD, 3 IBM,
+# 4 GINYIEH, 5 ETEN; default 1).
 #
 # Env-gated on the pin-built oracle exactly like the import/train diffs:
 # PINYIN_ORACLE_PREFIX (default $HOME/.local/opt/pinyin-oracle).
@@ -53,7 +56,14 @@ if ! grep -q '^pin_ref=libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636
 fi
 
 if [[ "$SCHEME" == "bopomofo" ]]; then
-    SCHEME_ARGS=()
+    # Only the Simple keyboards the driver sweeps: 1 STANDARD, 3 IBM,
+    # 4 GINYIEH, 5 ETEN.  7 (STANDARD_DVORAK) aborts the oracle and is
+    # never sent; 30 belongs to the double-pinyin setter.
+    if [[ -n "$SCHEME_NUMBER" && ! "$SCHEME_NUMBER" =~ ^(1|3|4|5)$ ]]; then
+        echo "fatal: bopomofo scheme must be 1, 3, 4 or 5 (got '$SCHEME_NUMBER')"
+        exit 1
+    fi
+    SCHEME_ARGS=("${SCHEME_NUMBER:-1}")
 else
     if [[ -n "$SCHEME_NUMBER" ]]; then
         SCHEME_ARGS=("$SCHEME_NUMBER")
@@ -84,7 +94,7 @@ CAPI_LOG="$(mktemp)"
 CAPI_ERR="$(mktemp)"
 if [[ "$SCHEME" == "bopomofo" ]]; then
     CAPI_DRIVER=./chewing-diff
-    DRIVER_ARGS=("$CAPI_SO" "$CAPI_DATA")
+    DRIVER_ARGS=("$CAPI_SO" "$CAPI_DATA" "${SCHEME_ARGS[@]}")
 else
     CAPI_DRIVER=./scheme-diff
     DRIVER_ARGS=("$CAPI_SO" "$CAPI_DATA" "${SCHEME_ARGS[@]}")
@@ -104,7 +114,7 @@ ORACLE_LOG="$(mktemp)"
 ORACLE_ERR="$(mktemp)"
 if [[ "$SCHEME" == "bopomofo" ]]; then
     ORACLE_DRIVER=./chewing-diff
-    DRIVER_ARGS=("$ORACLE_SO" "$ORACLE_DATA")
+    DRIVER_ARGS=("$ORACLE_SO" "$ORACLE_DATA" "${SCHEME_ARGS[@]}")
 else
     ORACLE_DRIVER=./scheme-diff
     DRIVER_ARGS=("$ORACLE_SO" "$ORACLE_DATA" "${SCHEME_ARGS[@]}")
