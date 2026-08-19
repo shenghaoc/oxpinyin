@@ -5,7 +5,8 @@ Amended 2026-08-20 by `zhuyin-index-fidelity` (PR 1 of the #109 stack):
 the recorded no-shuffle decision below is superseded — see "Index
 fidelity". Amended again by `zhuyin-simple-keyboards` (PR 2): the
 Simple keyboard family is table-driven — see "Keyboard scope" — and by
-`zhuyin-discrete` (PR 3): the Discrete family joins it there.
+`zhuyin-discrete` (PR 3): the Discrete family joins it there — and by
+`zhuyin-dachen-cp26` (PR 4): CP26 completes the ported keyboard set.
 
 ## Scope
 
@@ -226,10 +227,33 @@ keyboards and `qi` on ETEN26, ㄐㄨㄥ → zhong, ㄒ → shi, and the vowel
 stand-ins (HSU: ㄇ→an, ㄋ→en, ㄌ→er, ㄍ→e, ㄎ→ang, ㄏ→o; ETEN26:
 ㄆ→ou, ㄇ→an, ㄊ→ang, ㄋ→en, ㄌ→eng, ㄏ→er). HSU_DVORAK shares
 `hsu_zhuyin_index` and its `chewing_hsu_dvorak_*` tables are
-byte-identical to `chewing_hsu_*` at this pin. Deferred: DACHEN_CP26
-and STANDARD_DVORAK (the abort slot). Scheme setters accept the
+byte-identical to `chewing_hsu_*` at this pin. Scheme setters accept the
 implemented ABI values (1/2/3/4/5/6/8); the rest report `false` and
-keep the previous scheme rather than aborting. The per-scheme
+keep the previous scheme rather than aborting.
+
+The `zhuyin-dachen-cp26` PR (2026-08-20) adds **DACHEN_CP26 (9)**,
+ported as `ZhuyinDaChenCP26Parser2` (`zhuyin_parser2.cpp:541-844`).
+The parser is constructor-configured — no `set_scheme`, no `m_options`,
+no correction bit — and searches the **global** index, where only the
+plain rows are reachable because the repeat-count probe always builds
+spellings in canonical initial+middle+final order. The probe's law: a
+run of the same key (counted by `count_same_chars`) cycles the rows
+that key maps to — dual rows pick by `(count - 1) % 2` (1 tap → first
+row, 2 taps → second, 3 → first…), the whole run consumed at once.
+Three middle keys have multi-way specials: `u` cycles
+`(count - 1) % 3` over middle ㄧ / final ㄚ / both, `m` cycles
+`(count - 1) % 2` over middle ㄩ / final ㄡ, and `j` is always middle
+ㄨ. Under `USE_TONE` the **last** byte is probed in the tone table
+first and stripped, so keys that are both initial and tone (`e` `r`
+`d` `y`) resolve by position ("eke" is ge+tone 2; a bare "ee" strips
+to the lone incomplete ㄍ and consumes 0). Max key length is 12
+(`max_chewing_dachen26_length`). Every table row is parse-live (both
+rows of a dual cycle by repeat count); the one display-only string is
+the `i` key's extra "ㄧㄚ" in `in_chewing_scheme` — parse produces
+ㄧㄚ only through the `u` triple-tap. The upstream `#if 0`
+partial-input block (`:752-785`) is dead code at the pin and is not
+ported. Deferred: STANDARD_DVORAK (the abort slot). The scheme setter
+accepts 1/2/3/4/5/6/8/9. The per-scheme
 PARSE_AUX sweep (runs 1–6, 8) is IDENTICAL for each; the Discrete
 corpus covers the dual-key ambiguity, tone-bearing/rejection, the
 correction rows, one canonical control, and the incomplete rows, with
