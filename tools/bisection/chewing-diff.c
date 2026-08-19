@@ -375,35 +375,226 @@ static const struct tone_row ETEN_TONES[] = {
     { '1', 5, "˙" },
 };
 
+static const struct symbol_row HSU_INITIALS[] = {
+    { 'a', "ㄘ" },
+    { 'b', "ㄅ" },
+    { 'c', "ㄒ" },
+    { 'c', "ㄕ" },
+    { 'd', "ㄉ" },
+    { 'f', "ㄈ" },
+    { 'g', "ㄍ" },
+    { 'h', "ㄏ" },
+    { 'j', "ㄐ" },
+    { 'j', "ㄓ" },
+    { 'k', "ㄎ" },
+    { 'l', "ㄌ" },
+    { 'm', "ㄇ" },
+    { 'n', "ㄋ" },
+    { 'p', "ㄆ" },
+    { 'r', "ㄖ" },
+    { 's', "ㄙ" },
+    { 't', "ㄊ" },
+    { 'v', "ㄑ" },
+    { 'v', "ㄔ" },
+    { 'z', "ㄗ" },
+};
+
+static const struct symbol_row HSU_MIDDLES[] = {
+    { 'e', "ㄧ" },
+    { 'u', "ㄩ" },
+    { 'x', "ㄨ" },
+};
+
+static const struct symbol_row HSU_FINALS[] = {
+    { 'a', "ㄟ" },
+    { 'e', "ㄝ" },
+    { 'g', "ㄜ" },
+    { 'h', "ㄛ" },
+    { 'i', "ㄞ" },
+    { 'k', "ㄤ" },
+    { 'l', "ㄥ" },
+    { 'l', "ㄦ" },
+    { 'm', "ㄢ" },
+    { 'n', "ㄣ" },
+    { 'o', "ㄡ" },
+    { 'w', "ㄠ" },
+    { 'y', "ㄚ" },
+};
+
+static const struct tone_row HSU_TONES[] = {
+    { ' ', 1, " " },
+    { 'd', 2, "ˊ" },
+    { 'f', 3, "ˇ" },
+    { 'j', 4, "ˋ" },
+    { 's', 5, "˙" },
+};
+
+static const struct symbol_row ETEN26_INITIALS[] = {
+    { 'b', "ㄅ" },
+    { 'c', "ㄒ" },
+    { 'c', "ㄕ" },
+    { 'd', "ㄉ" },
+    { 'f', "ㄈ" },
+    { 'g', "ㄐ" },
+    { 'g', "ㄓ" },
+    { 'h', "ㄏ" },
+    { 'j', "ㄖ" },
+    { 'k', "ㄎ" },
+    { 'l', "ㄌ" },
+    { 'm', "ㄇ" },
+    { 'n', "ㄋ" },
+    { 'p', "ㄆ" },
+    { 'q', "ㄗ" },
+    { 's', "ㄙ" },
+    { 't', "ㄊ" },
+    { 'v', "ㄍ" },
+    { 'v', "ㄑ" },
+    { 'w', "ㄘ" },
+    { 'y', "ㄔ" },
+};
+
+static const struct symbol_row ETEN26_MIDDLES[] = {
+    { 'e', "ㄧ" },
+    { 'u', "ㄩ" },
+    { 'x', "ㄨ" },
+};
+
+static const struct symbol_row ETEN26_FINALS[] = {
+    { 'a', "ㄚ" },
+    { 'h', "ㄦ" },
+    { 'i', "ㄞ" },
+    { 'l', "ㄥ" },
+    { 'm', "ㄢ" },
+    { 'n', "ㄣ" },
+    { 'o', "ㄛ" },
+    { 'p', "ㄡ" },
+    { 'q', "ㄟ" },
+    { 'r', "ㄜ" },
+    { 't', "ㄤ" },
+    { 'w', "ㄝ" },
+    { 'z', "ㄠ" },
+};
+
+static const struct tone_row ETEN26_TONES[] = {
+    { ' ', 1, " " },
+    { 'd', 5, "˙" },
+    { 'f', 2, "ˊ" },
+    { 'j', 3, "ˇ" },
+    { 'k', 4, "ˋ" },
+};
+
+static const struct symbol_row HSU_DVORAK_INITIALS[] = {
+    { 'a', "ㄘ" },
+    { 'b', "ㄅ" },
+    { 'c', "ㄒ" },
+    { 'c', "ㄕ" },
+    { 'd', "ㄉ" },
+    { 'f', "ㄈ" },
+    { 'g', "ㄍ" },
+    { 'h', "ㄏ" },
+    { 'j', "ㄐ" },
+    { 'j', "ㄓ" },
+    { 'k', "ㄎ" },
+    { 'l', "ㄌ" },
+    { 'm', "ㄇ" },
+    { 'n', "ㄋ" },
+    { 'p', "ㄆ" },
+    { 'r', "ㄖ" },
+    { 's', "ㄙ" },
+    { 't', "ㄊ" },
+    { 'v', "ㄑ" },
+    { 'v', "ㄔ" },
+    { 'z', "ㄗ" },
+};
+
+static const struct symbol_row HSU_DVORAK_MIDDLES[] = {
+    { 'e', "ㄧ" },
+    { 'u', "ㄩ" },
+    { 'x', "ㄨ" },
+};
+
+static const struct symbol_row HSU_DVORAK_FINALS[] = {
+    { 'a', "ㄟ" },
+    { 'e', "ㄝ" },
+    { 'g', "ㄜ" },
+    { 'h', "ㄛ" },
+    { 'i', "ㄞ" },
+    { 'k', "ㄤ" },
+    { 'l', "ㄥ" },
+    { 'l', "ㄦ" },
+    { 'm', "ㄢ" },
+    { 'n', "ㄣ" },
+    { 'o', "ㄡ" },
+    { 'w', "ㄠ" },
+    { 'y', "ㄚ" },
+};
+
+static const struct tone_row HSU_DVORAK_TONES[] = {
+    { ' ', 1, " " },
+    { 'd', 2, "ˊ" },
+    { 'f', 3, "ˇ" },
+    { 'j', 4, "ˋ" },
+    { 's', 5, "˙" },
+};
+
+/* KB_SIMPLE: one symbol table (first-match per key, single symbol).
+ * KB_DISCRETE: initial/middle/final slot tables (a key may appear twice
+ * in one table — the dual-mapped keys; parsing takes the first row,
+ * display collects every row). */
 struct keyboard {
     const struct symbol_row *symbols;
     size_t nsymbols;
+    const struct symbol_row *initials;
+    size_t ninitials;
+    const struct symbol_row *middles;
+    size_t nmiddles;
+    const struct symbol_row *finals;
+    size_t nfinals;
     const struct tone_row *tones;
     size_t ntones;
 };
 
-#define KB(symarr, tonearr)                                             \
-    {                                                                   \
-        symarr, sizeof(symarr) / sizeof(symarr[0]),                     \
-        tonearr, sizeof(tonearr) / sizeof(tonearr[0]),                  \
+#define KB_SIMPLE(symarr, tonearr)                                       \
+    {                                                                    \
+        symarr, sizeof(symarr) / sizeof(symarr[0]),                      \
+        NULL, 0, NULL, 0, NULL, 0,                                       \
+        tonearr, sizeof(tonearr) / sizeof(tonearr[0]),                   \
+    }
+
+#define KB_DISCRETE(iniarr, midarr, finarr, tonearr)                     \
+    {                                                                    \
+        NULL, 0,                                                         \
+        iniarr, sizeof(iniarr) / sizeof(iniarr[0]),                      \
+        midarr, sizeof(midarr) / sizeof(midarr[0]),                      \
+        finarr, sizeof(finarr) / sizeof(finarr[0]),                      \
+        tonearr, sizeof(tonearr) / sizeof(tonearr[0]),                   \
     }
 
 /* Indexed by scheme slot: 0 -> 1 (STANDARD), 1 -> 3 (IBM),
- * 2 -> 4 (GINYIEH), 3 -> 5 (ETEN). */
+ * 2 -> 4 (GINYIEH), 3 -> 5 (ETEN), 4 -> 2 (HSU), 5 -> 6 (ETEN26),
+ * 6 -> 8 (HSU_DVORAK). */
 static const struct keyboard KEYBOARDS[] = {
-    KB(STANDARD_SYMBOLS, STANDARD_TONES),
-    KB(IBM_SYMBOLS, IBM_TONES),
-    KB(GINYIEH_SYMBOLS, GINYIEH_TONES),
-    KB(ETEN_SYMBOLS, ETEN_TONES),
+    KB_SIMPLE(STANDARD_SYMBOLS, STANDARD_TONES),
+    KB_SIMPLE(IBM_SYMBOLS, IBM_TONES),
+    KB_SIMPLE(GINYIEH_SYMBOLS, GINYIEH_TONES),
+    KB_SIMPLE(ETEN_SYMBOLS, ETEN_TONES),
+    KB_DISCRETE(HSU_INITIALS, HSU_MIDDLES, HSU_FINALS, HSU_TONES),
+    KB_DISCRETE(ETEN26_INITIALS, ETEN26_MIDDLES, ETEN26_FINALS, ETEN26_TONES),
+    KB_DISCRETE(HSU_DVORAK_INITIALS, HSU_DVORAK_MIDDLES, HSU_DVORAK_FINALS,
+                HSU_DVORAK_TONES),
 };
 
-/* The scheme -> slot map; only the Simple keyboards this driver sweeps. */
+/* The scheme -> slot map; only the implemented keyboards this driver
+ * sweeps.  7 (STANDARD_DVORAK) and 30 never reach the oracle. */
 static int scheme_slot(int scheme) {
     switch (scheme) {
     case 1: return 0;
     case 3: return 1;
     case 4: return 2;
     case 5: return 3;
+    case 2: return 4;
+    case 6: return 5;
+    case 8: return 6;
     default: return -1;
     }
 }
@@ -508,6 +699,30 @@ static const struct corpus_entry SIMPLE_CORPUS[] = {
     { .symbols = { NULL }, .tone = 0 },
 };
 
+/*
+ * Per-scheme corpus for the Discrete keyboards (HSU, ETEN26,
+ * HSU_DVORAK), shared because all three bind the same 37 symbols:
+ * canonical control, tone-bearing, tone-rejection, the dual-key
+ * ambiguity (ㄒ typed alone is the keyboard's shi remap; with a middle
+ * it is the plain xi), and the keyboard-specific correction rows — the
+ * same ㄍㄧ keystrokes are ji on the HSU keyboards and qi on ETEN26,
+ * and ㄆ is ETEN26's ou stand-in but an incomplete row on HSU.
+ */
+static const struct corpus_entry DISCRETE_CORPUS[] = {
+    { .symbols = { "ㄋ", "ㄧ", NULL }, .tone = 0 },
+    { .symbols = { "ㄋ", "ㄧ", NULL }, .tone = 2 },
+    { .symbols = { "ㄋ", "ㄧ", NULL }, .tone = 1 },
+    { .symbols = { "ㄒ", NULL }, .tone = 0 },
+    { .symbols = { "ㄒ", "ㄧ", NULL }, .tone = 0 },
+    { .symbols = { "ㄒ", "ㄨ", NULL }, .tone = 0 },
+    { .symbols = { "ㄍ", "ㄧ", NULL }, .tone = 0 },
+    { .symbols = { "ㄐ", "ㄨ", "ㄥ", NULL }, .tone = 0 },
+    { .symbols = { "ㄇ", NULL }, .tone = 0 },
+    { .symbols = { "ㄆ", NULL }, .tone = 0 },
+    { .symbols = { "ㄅ", NULL }, .tone = 0 },
+    { .symbols = { NULL }, .tone = 0 },
+};
+
 /* ── Keystroke derivation ─────────────────────────────────────────────── */
 
 static char key_for_symbol(const struct keyboard *kb, const char *symbol) {
@@ -515,6 +730,48 @@ static char key_for_symbol(const struct keyboard *kb, const char *symbol) {
         if (strcmp(kb->symbols[i].symbol, symbol) == 0)
             return kb->symbols[i].key;
     fprintf(stderr, "no key on this keyboard spells %s\n", symbol);
+    exit(1);
+}
+
+/* The key that makes a Discrete positional probe read `symbol` at
+ * `slot`: only each table's first row per key can be parsed (a dual
+ * key's second row is display-only), and the slot's probe order is
+ * initials -> middles -> finals starting at `slot`. */
+static char key_for_discrete_slot(const struct keyboard *kb, size_t slot,
+                                  const char *symbol) {
+    const struct symbol_row *tables[3];
+    size_t counts[3];
+    size_t n = 0;
+    if (slot == 0 && kb->ninitials) {
+        tables[n] = kb->initials;
+        counts[n] = kb->ninitials;
+        n++;
+    }
+    if (slot <= 1 && kb->nmiddles) {
+        tables[n] = kb->middles;
+        counts[n] = kb->nmiddles;
+        n++;
+    }
+    if (kb->nfinals) {
+        tables[n] = kb->finals;
+        counts[n] = kb->nfinals;
+        n++;
+    }
+    for (size_t t = 0; t < n; t++) {
+        char last = 0;
+        bool have_last = false;
+        for (size_t i = 0; i < counts[t]; i++) {
+            char key = tables[t][i].key;
+            if (have_last && last == key)
+                continue;
+            last = key;
+            have_last = true;
+            if (strcmp(tables[t][i].symbol, symbol) == 0)
+                return key;
+        }
+    }
+    fprintf(stderr, "no key on this keyboard derives %s at slot %zu\n",
+            symbol, slot);
     exit(1);
 }
 
@@ -531,8 +788,14 @@ static char key_for_tone(const struct keyboard *kb, int tone) {
 static void derive_keystrokes(const struct keyboard *kb,
                               const struct corpus_entry *entry, char *out) {
     size_t len = 0;
-    for (const char *const *symbol = entry->symbols; symbol && *symbol; symbol++)
-        out[len++] = key_for_symbol(kb, *symbol);
+    size_t slot = 0;
+    for (const char *const *symbol = entry->symbols; symbol && *symbol; symbol++) {
+        if (kb->symbols)
+            out[len++] = key_for_symbol(kb, *symbol);
+        else
+            out[len++] = key_for_discrete_slot(kb, slot, *symbol);
+        slot++;
+    }
     if (entry->tone != 0)
         out[len++] = key_for_tone(kb, entry->tone);
     out[len] = '\0';
@@ -558,12 +821,45 @@ static int verify_keyboard_tables(const struct symbols *s,
         }
         free_strv(symbols);
     }
+    /* Discrete slot tables: every row's symbol (both rows of a dual
+     * key) must appear in the key's reported vector, and tone keys must
+     * report their mark. */
+    for (int slot = 0; slot < 3; slot++) {
+        const struct symbol_row *table;
+        size_t count;
+        switch (slot) {
+        case 0: table = kb->initials; count = kb->ninitials; break;
+        case 1: table = kb->middles; count = kb->nmiddles; break;
+        default: table = kb->finals; count = kb->nfinals; break;
+        }
+        for (size_t i = 0; i < count; i++) {
+            gchar **symbols = NULL;
+            bool ok = s->in_chewing_keyboard(inst, table[i].key, &symbols);
+            bool found = false;
+            if (ok && symbols) {
+                for (gchar **q = symbols; *q; q++)
+                    if (strcmp(*q, table[i].symbol) == 0)
+                        found = true;
+            }
+            if (!found) {
+                printf("table-check: slot-%d key '%c' missing symbol %s\n",
+                       slot, table[i].key, table[i].symbol);
+                failures++;
+            }
+            free_strv(symbols);
+        }
+    }
     for (size_t i = 0; i < kb->ntones; i++) {
         gchar **symbols = NULL;
         bool ok = s->in_chewing_keyboard(inst, kb->tones[i].key, &symbols);
-        if (!ok || !symbols || !symbols[0] ||
-            strcmp(symbols[0], kb->tones[i].mark) != 0 || symbols[1]) {
-            printf("table-check: tone key '%c' mismatch\n",
+        bool found = false;
+        if (ok && symbols) {
+            for (gchar **q = symbols; *q; q++)
+                if (strcmp(*q, kb->tones[i].mark) == 0)
+                    found = true;
+        }
+        if (!found) {
+            printf("table-check: tone key '%c' missing mark\n",
                    kb->tones[i].key);
             failures++;
         }
@@ -679,7 +975,8 @@ int main(int argc, char **argv) {
     if (argc < 3 || slot < 0) {
         fprintf(stderr,
                 "usage: %s <so> <systemdir> [scheme]\n"
-                "  scheme: 1 STANDARD, 3 IBM, 4 GINYIEH, 5 ETEN\n",
+                "  scheme: 1 STANDARD, 2 HSU, 3 IBM, 4 GINYIEH, 5 ETEN,\n"
+                "          6 ETEN26, 8 HSU_DVORAK (7 and 30 are refused)\n",
                 argv[0]);
         return 1;
     }
@@ -732,10 +1029,18 @@ int main(int argc, char **argv) {
     }
     printf("table-check: ok\n");
 
-    const struct corpus_entry *corpus =
-        (scheme == 1) ? CORPUS : SIMPLE_CORPUS;
-    size_t ncorpus = (scheme == 1) ? (sizeof(CORPUS) / sizeof(CORPUS[0]))
-                                   : (sizeof(SIMPLE_CORPUS) / sizeof(SIMPLE_CORPUS[0]));
+    const struct corpus_entry *corpus;
+    size_t ncorpus;
+    if (scheme == 1) {
+        corpus = CORPUS;
+        ncorpus = sizeof(CORPUS) / sizeof(CORPUS[0]);
+    } else if (scheme == 2 || scheme == 6 || scheme == 8) {
+        corpus = DISCRETE_CORPUS;
+        ncorpus = sizeof(DISCRETE_CORPUS) / sizeof(DISCRETE_CORPUS[0]);
+    } else {
+        corpus = SIMPLE_CORPUS;
+        ncorpus = sizeof(SIMPLE_CORPUS) / sizeof(SIMPLE_CORPUS[0]);
+    }
 
     for (size_t i = 0; i < ncorpus; i++) {
         char keystrokes[KEYSTROKE_BUF];
