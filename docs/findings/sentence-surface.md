@@ -337,6 +337,7 @@ Re-verification:
   (`real_tables_session_reports_parity`, `sentence_surface_reports_parity`).
 - union / train / import / predict diffs and bisect+valgrind all green;
   fmt, clippy `-D warnings`, `test --locked --workspace` green.
+
 ## 8. The selection record's row mapping, fixed
 
 Date: 2026-08-19 · branch `fix/w14-nbest-select-path`.

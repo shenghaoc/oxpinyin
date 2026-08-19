@@ -42,10 +42,11 @@ if [[ ! -f "$CAPI_SO" ]]; then
 fi
 echo "capi: $CAPI_SO"
 
-# Vacuity guard: the 你→浩 row-choose only exists once the C-ABI sentence
-# surface emits rows (the SharedLm n-best forward). Without them the run
-# below still passes — every round picks the NORMAL candidate — so say so
-# instead of letting a trivial green masquerade as coverage.
+# Prerequisite, not a warning: the 你→浩 row-choose only exists while the
+# C-ABI sentence surface emits rows. Zero NBEST rows on either side means
+# the run compared only NORMAL-candidate training and never exercised the
+# shifted-row selection record — that is a failed prerequisite, not a
+# (vacuously) identical result.
 probe_nbest_rows() { grep -c 'cand\[0\]=NBEST' "$1" || true; }
 
 PREFIX="${PINYIN_ORACLE_PREFIX:-$HOME/.local/opt/pinyin-oracle}"
@@ -88,11 +89,6 @@ if ! NBESTTRAINDIFF_USER_ROUNDS="$USER_ROUNDS" NBESTTRAINDIFF_ROUNDS="$AUG_ROUND
     exit 1
 fi
 echo "oxpinyin-capi: ok"
-if [[ "$(probe_nbest_rows "$CAPI_LOG")" -eq 0 ]]; then
-    echo "WARNING: the capi emitted no NBEST candidate rows — the row-choose"
-    echo "  path is inactive (the SharedLm n-best forward has not landed);"
-    echo "  this run exercises only NORMAL-candidate training."
-fi
 
 echo "--- oracle side ---"
 ORACLE_LOG="$(mktemp)"
@@ -104,6 +100,19 @@ if ! NBESTTRAINDIFF_USER_ROUNDS="$USER_ROUNDS" NBESTTRAINDIFF_ROUNDS="$AUG_ROUND
     exit 1
 fi
 echo "oracle: ok"
+
+echo "--- prerequisite: the NBEST row path is active on both sides ---"
+CAPI_ROWS="$(probe_nbest_rows "$CAPI_LOG")"
+ORACLE_ROWS="$(probe_nbest_rows "$ORACLE_LOG")"
+if [[ "$CAPI_ROWS" -eq 0 || "$ORACLE_ROWS" -eq 0 ]]; then
+    echo "FAIL: NBEST row path inactive (capi rows: $CAPI_ROWS, oracle rows: $ORACLE_ROWS)"
+    echo "  Zero NBEST rows means every training round chose a NORMAL candidate;"
+    echo "  the differential then proves nothing about the shifted-row selection"
+    echo "  record (docs/findings/sentence-surface.md §8)."
+    rm -f "$CAPI_LOG" "$ORACLE_LOG"
+    exit 1
+fi
+echo "NBEST rows active: capi=$CAPI_ROWS oracle=$ORACLE_ROWS"
 
 echo "--- differential (user-store export lines) ---"
 if diff -u <(grep -E '^(phrase|bigram):' "$ORACLE_LOG") \
