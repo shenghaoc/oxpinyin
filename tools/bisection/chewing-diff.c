@@ -1,21 +1,31 @@
 /*
  * chewing-diff.c — W13 STANDARD bopomofo differential driver.
  *
- * Drives the chewing entry points over a fixed STANDARD-keyboard input
- * sequence: parse length, parsed-input length, keyboard symbol lookups,
- * candidate list, and auxiliary text at every cursor.  Run against
- * libpinyin.so and libpinyin_capi.so and diff the logs.
- *
- * The corpus names zhuyin symbol sequences plus an optional tone number;
- * the keystroke strings are derived at startup from the pinned STANDARD
- * symbol/tone tables below (copied verbatim from zhuyin_table.h:9-58 at
- * the pin 0c5e80e1) and cross-checked against the library under test
- * through pinyin_in_chewing_keyboard, so no keystroke is hand-authored
- * and drift between the embedded copy and the library's own table fails
- * the run loudly instead of feeding wrong syllables.
+ * Drives the chewing entry points over a fixed keyboard input sequence:
+ * parse length, parsed-input length, keyboard symbol lookups, candidate
+ * list, and auxiliary text at every cursor.  Run against libpinyin.so
+ * and libpinyin_capi.so and diff the logs.
  *
  * Usage:
- *   ./chewing-diff <path-to-so> <systemdir>
+ *   ./chewing-diff <path-to-so> <systemdir> [scheme]
+ *
+ * The scheme is the ZhuyinScheme header discriminant: 1 (STANDARD),
+ * 3 (IBM), 4 (GINYIEH), 5 (ETEN).  Anything else is refused locally —
+ * 7 (STANDARD_DVORAK) aborts the oracle and 30 aborts the double-pinyin
+ * setter, so neither is ever sent.
+ *
+ * The corpus names zhuyin symbol sequences plus an optional tone number;
+ * the keystroke strings are derived at startup from the selected
+ * keyboard's pinned symbol/tone tables below (copied verbatim from
+ * zhuyin_table.h at the pin 0c5e80e1) and cross-checked against the
+ * library under test through pinyin_in_chewing_keyboard, so no
+ * keystroke is hand-authored and drift between the embedded copy and
+ * the library's own table fails the run loudly instead of feeding
+ * wrong syllables.
+ *
+ * Scheme 1 runs the full W13 corpus; the other Simple keyboards run the
+ * per-scheme corpus: tone-bearing, tone-rejection, shuffle (canonical
+ * aux), one recovered live row, one dead row.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -159,12 +169,20 @@ static const char *ctype_name(lookup_candidate_type_t t) {
     return t == NBEST_MATCH_CANDIDATE ? "NBEST_MATCH" : "NORMAL";
 }
 
-/* ── Pinned STANDARD keyboard tables (zhuyin_table.h:9-58, marks :12593) */
+/* ── Pinned keyboard tables (zhuyin_table.h:9-204, marks :12593) ─────── */
 
-static const struct {
+struct symbol_row {
     char key;
     const char *symbol;
-} STANDARD_SYMBOLS[] = {
+};
+
+struct tone_row {
+    char key;
+    int tone;
+    const char *mark;
+};
+
+static const struct symbol_row STANDARD_SYMBOLS[] = {
     { ',', "ㄝ" },
     { '-', "ㄦ" },
     { '.', "ㄡ" },
@@ -204,11 +222,7 @@ static const struct {
     { 'z', "ㄈ" },
 };
 
-static const struct {
-    char key;
-    int tone;
-    const char *mark;
-} STANDARD_TONES[] = {
+static const struct tone_row STANDARD_TONES[] = {
     { ' ', 1, " " },
     { '6', 2, "ˊ" },
     { '3', 3, "ˇ" },
@@ -216,8 +230,182 @@ static const struct {
     { '7', 5, "˙" },
 };
 
-#define NSYMBOLS (sizeof(STANDARD_SYMBOLS) / sizeof(STANDARD_SYMBOLS[0]))
-#define NTONES (sizeof(STANDARD_TONES) / sizeof(STANDARD_TONES[0]))
+static const struct symbol_row IBM_SYMBOLS[] = {
+    { '-', "ㄏ" },
+    { '0', "ㄎ" },
+    { '1', "ㄅ" },
+    { '2', "ㄆ" },
+    { '3', "ㄇ" },
+    { '4', "ㄈ" },
+    { '5', "ㄉ" },
+    { '6', "ㄊ" },
+    { '7', "ㄋ" },
+    { '8', "ㄌ" },
+    { '9', "ㄍ" },
+    { ';', "ㄠ" },
+    { 'a', "ㄧ" },
+    { 'b', "ㄥ" },
+    { 'c', "ㄣ" },
+    { 'd', "ㄩ" },
+    { 'e', "ㄒ" },
+    { 'f', "ㄚ" },
+    { 'g', "ㄛ" },
+    { 'h', "ㄜ" },
+    { 'i', "ㄗ" },
+    { 'j', "ㄝ" },
+    { 'k', "ㄞ" },
+    { 'l', "ㄟ" },
+    { 'n', "ㄦ" },
+    { 'o', "ㄘ" },
+    { 'p', "ㄙ" },
+    { 'q', "ㄐ" },
+    { 'r', "ㄓ" },
+    { 's', "ㄨ" },
+    { 't', "ㄔ" },
+    { 'u', "ㄖ" },
+    { 'v', "ㄤ" },
+    { 'w', "ㄑ" },
+    { 'x', "ㄢ" },
+    { 'y', "ㄕ" },
+    { 'z', "ㄡ" },
+};
+
+static const struct tone_row IBM_TONES[] = {
+    { ' ', 1, " " },
+    { 'm', 2, "ˊ" },
+    { ',', 3, "ˇ" },
+    { '.', 4, "ˋ" },
+    { '/', 5, "˙" },
+};
+
+static const struct symbol_row GINYIEH_SYMBOLS[] = {
+    { ',', "ㄚ" },
+    { '-', "ㄣ" },
+    { '.', "ㄞ" },
+    { '/', "ㄢ" },
+    { '0', "ㄟ" },
+    { '2', "ㄅ" },
+    { '3', "ㄉ" },
+    { '6', "ㄓ" },
+    { '8', "ㄧ" },
+    { '9', "ㄛ" },
+    { ';', "ㄡ" },
+    { '=', "ㄦ" },
+    { '[', "ㄤ" },
+    { '\'', "ㄥ" },
+    { 'b', "ㄒ" },
+    { 'c', "ㄌ" },
+    { 'd', "ㄋ" },
+    { 'e', "ㄊ" },
+    { 'f', "ㄎ" },
+    { 'g', "ㄑ" },
+    { 'h', "ㄕ" },
+    { 'i', "ㄨ" },
+    { 'j', "ㄘ" },
+    { 'k', "ㄩ" },
+    { 'l', "ㄝ" },
+    { 'm', "ㄙ" },
+    { 'n', "ㄖ" },
+    { 'o', "ㄜ" },
+    { 'p', "ㄠ" },
+    { 'r', "ㄍ" },
+    { 's', "ㄇ" },
+    { 't', "ㄐ" },
+    { 'u', "ㄗ" },
+    { 'v', "ㄏ" },
+    { 'w', "ㄆ" },
+    { 'x', "ㄈ" },
+    { 'y', "ㄔ" },
+};
+
+static const struct tone_row GINYIEH_TONES[] = {
+    { ' ', 1, " " },
+    { 'q', 2, "ˊ" },
+    { 'a', 3, "ˇ" },
+    { 'z', 4, "ˋ" },
+    { '1', 5, "˙" },
+};
+
+static const struct symbol_row ETEN_SYMBOLS[] = {
+    { ',', "ㄓ" },
+    { '-', "ㄥ" },
+    { '.', "ㄔ" },
+    { '/', "ㄕ" },
+    { '0', "ㄤ" },
+    { '7', "ㄑ" },
+    { '8', "ㄢ" },
+    { '9', "ㄣ" },
+    { ';', "ㄗ" },
+    { '=', "ㄦ" },
+    { '\'', "ㄘ" },
+    { 'a', "ㄚ" },
+    { 'b', "ㄅ" },
+    { 'c', "ㄒ" },
+    { 'd', "ㄉ" },
+    { 'e', "ㄧ" },
+    { 'f', "ㄈ" },
+    { 'g', "ㄐ" },
+    { 'h', "ㄏ" },
+    { 'i', "ㄞ" },
+    { 'j', "ㄖ" },
+    { 'k', "ㄎ" },
+    { 'l', "ㄌ" },
+    { 'm', "ㄇ" },
+    { 'n', "ㄋ" },
+    { 'o', "ㄛ" },
+    { 'p', "ㄆ" },
+    { 'q', "ㄟ" },
+    { 'r', "ㄜ" },
+    { 's', "ㄙ" },
+    { 't', "ㄊ" },
+    { 'u', "ㄩ" },
+    { 'v', "ㄍ" },
+    { 'w', "ㄝ" },
+    { 'x', "ㄨ" },
+    { 'y', "ㄡ" },
+    { 'z', "ㄠ" },
+};
+
+static const struct tone_row ETEN_TONES[] = {
+    { ' ', 1, " " },
+    { '2', 2, "ˊ" },
+    { '3', 3, "ˇ" },
+    { '4', 4, "ˋ" },
+    { '1', 5, "˙" },
+};
+
+struct keyboard {
+    const struct symbol_row *symbols;
+    size_t nsymbols;
+    const struct tone_row *tones;
+    size_t ntones;
+};
+
+#define KB(symarr, tonearr)                                             \
+    {                                                                   \
+        symarr, sizeof(symarr) / sizeof(symarr[0]),                     \
+        tonearr, sizeof(tonearr) / sizeof(tonearr[0]),                  \
+    }
+
+/* Indexed by scheme slot: 0 -> 1 (STANDARD), 1 -> 3 (IBM),
+ * 2 -> 4 (GINYIEH), 3 -> 5 (ETEN). */
+static const struct keyboard KEYBOARDS[] = {
+    KB(STANDARD_SYMBOLS, STANDARD_TONES),
+    KB(IBM_SYMBOLS, IBM_TONES),
+    KB(GINYIEH_SYMBOLS, GINYIEH_TONES),
+    KB(ETEN_SYMBOLS, ETEN_TONES),
+};
+
+/* The scheme -> slot map; only the Simple keyboards this driver sweeps. */
+static int scheme_slot(int scheme) {
+    switch (scheme) {
+    case 1: return 0;
+    case 3: return 1;
+    case 4: return 2;
+    case 5: return 3;
+    default: return -1;
+    }
+}
 
 /* ── Corpus: zhuyin symbol sequences + optional tone (0 = none) ───────── */
 
@@ -234,10 +422,11 @@ struct corpus_entry {
 _Static_assert(KEYSTROKE_BUF >= 3, "keystroke buffer too small");
 
 /*
- * Legacy W13 coverage (previously hand-typed keystrokes, now derived):
- * ni, hao, wo, ren, zhong, shi, yi, ni+tone2, l, empty, then the
- * rejection class (illegal first tone on ni, tone after an invalid
- * syllable, tone alone).
+ * Full W13 corpus (scheme 1): the legacy keystroke set re-derived, the
+ * rejection class, incomplete keys, the six permutations of ㄅㄧㄝ, a
+ * two-symbol swap, shuffle+tone, a multi-key greedy boundary, the twelve
+ * recovered rows with mask-valid and mask-invalid tones, and the five
+ * dead rows.
  */
 static const struct corpus_entry CORPUS[] = {
     { .symbols = { "ㄋ", "ㄧ", NULL }, .tone = 0 },
@@ -259,9 +448,9 @@ static const struct corpus_entry CORPUS[] = {
     /* Incomplete keys: matched under ZHUYIN_INCOMPLETE, then rejected
      * by the all-zero validity masks — consumed 0 both sides. */
     { .symbols = { "ㄅ", NULL }, .tone = 0 },
-    /* Shuffle: every permutation of ㄅㄧㄝ (canonical first), a two-symbol
-     * swap beside its canonical, shuffle composed with tone, and a
-     * multi-key greedy boundary (ㄋㄧ + shuffled ㄅㄝㄧ). */
+    /* Shuffle: every permutation of ㄅㄧㄝ (canonical first), a
+     * two-symbol swap beside its canonical, shuffle composed with tone,
+     * and a multi-key greedy boundary (ㄋㄧ + shuffled ㄅㄝㄧ). */
     { .symbols = { "ㄅ", "ㄧ", "ㄝ", NULL }, .tone = 0 },
     { .symbols = { "ㄅ", "ㄝ", "ㄧ", NULL }, .tone = 0 },
     { .symbols = { "ㄧ", "ㄅ", "ㄝ", NULL }, .tone = 0 },
@@ -273,9 +462,9 @@ static const struct corpus_entry CORPUS[] = {
     { .symbols = { "ㄅ", "ㄝ", "ㄧ", NULL }, .tone = 4 },
     { .symbols = { "ㄋ", "ㄧ", "ㄅ", "ㄝ", "ㄧ", NULL }, .tone = 0 },
     /* Recovered rows (12 zhuyin_index spellings absent from the old
-     * 405-row map): a mask-valid tone and a mask-invalid tone each.
-     * ㄥ (eng) is the rare row whose first tone is VALID — pinned
-     * beside ㄋㄧ's illegal first tone above. */
+     * 405-row map): a mask-valid and a mask-invalid tone each.  ㄥ
+     * (eng) is the rare row whose first tone is VALID — pinned beside
+     * ㄋㄧ's illegal first tone above. */
     { .symbols = { "ㄉ", "ㄣ", NULL }, .tone = 4 },
     { .symbols = { "ㄉ", "ㄣ", NULL }, .tone = 1 },
     { .symbols = { "ㄓ", "ㄟ", NULL }, .tone = 4 },
@@ -299,63 +488,82 @@ static const struct corpus_entry CORPUS[] = {
     { .symbols = { "ㄖ", "ㄨ", "ㄚ", NULL }, .tone = 0 },
 };
 
-#define NCORPUS (sizeof(CORPUS) / sizeof(CORPUS[0]))
+/*
+ * Per-scheme corpus for the added Simple keyboards (IBM, GINYIEH,
+ * ETEN): tone-bearing, tone-rejection, shuffle with its canonical aux,
+ * one recovered live row (both tones), one dead row, and the empty
+ * input.
+ */
+static const struct corpus_entry SIMPLE_CORPUS[] = {
+    { .symbols = { "ㄋ", "ㄧ", NULL }, .tone = 0 },
+    { .symbols = { "ㄋ", "ㄧ", NULL }, .tone = 2 },
+    { .symbols = { "ㄋ", "ㄧ", NULL }, .tone = 1 },
+    { .symbols = { "ㄅ", "ㄧ", "ㄝ", NULL }, .tone = 0 },
+    { .symbols = { "ㄅ", "ㄝ", "ㄧ", NULL }, .tone = 0 },
+    { .symbols = { "ㄅ", "ㄝ", "ㄧ", NULL }, .tone = 4 },
+    { .symbols = { "ㄉ", "ㄣ", NULL }, .tone = 4 },
+    { .symbols = { "ㄉ", "ㄣ", NULL }, .tone = 1 },
+    { .symbols = { "ㄈ", "ㄜ", NULL }, .tone = 0 },
+    { .symbols = { NULL }, .tone = 0 },
+};
 
 /* ── Keystroke derivation ─────────────────────────────────────────────── */
 
-static char key_for_symbol(const char *symbol) {
-    for (size_t i = 0; i < NSYMBOLS; i++)
-        if (strcmp(STANDARD_SYMBOLS[i].symbol, symbol) == 0)
-            return STANDARD_SYMBOLS[i].key;
-    fprintf(stderr, "no STANDARD key spells %s\n", symbol);
+static char key_for_symbol(const struct keyboard *kb, const char *symbol) {
+    for (size_t i = 0; i < kb->nsymbols; i++)
+        if (strcmp(kb->symbols[i].symbol, symbol) == 0)
+            return kb->symbols[i].key;
+    fprintf(stderr, "no key on this keyboard spells %s\n", symbol);
     exit(1);
 }
 
-static char key_for_tone(int tone) {
-    for (size_t i = 0; i < NTONES; i++)
-        if (STANDARD_TONES[i].tone == tone)
-            return STANDARD_TONES[i].key;
-    fprintf(stderr, "no STANDARD key spells tone %d\n", tone);
+static char key_for_tone(const struct keyboard *kb, int tone) {
+    for (size_t i = 0; i < kb->ntones; i++)
+        if (kb->tones[i].tone == tone)
+            return kb->tones[i].key;
+    fprintf(stderr, "no key on this keyboard spells tone %d\n", tone);
     exit(1);
 }
 
 /* Derives the keystroke string for one corpus entry into `out`, which must
  * hold at least KEYSTROKE_BUF bytes. */
-static void derive_keystrokes(const struct corpus_entry *entry, char *out) {
+static void derive_keystrokes(const struct keyboard *kb,
+                              const struct corpus_entry *entry, char *out) {
     size_t len = 0;
     for (const char *const *symbol = entry->symbols; symbol && *symbol; symbol++)
-        out[len++] = key_for_symbol(*symbol);
+        out[len++] = key_for_symbol(kb, *symbol);
     if (entry->tone != 0)
-        out[len++] = key_for_tone(entry->tone);
+        out[len++] = key_for_tone(kb, entry->tone);
     out[len] = '\0';
 }
 
-/* Cross-checks the embedded tables against the library under test: every
- * embedded symbol key must report exactly its symbol, every tone key its
- * mark, and non-keys must report false. Returns 0 when the library's
- * keyboard matches the pinned copy. */
+/* Cross-checks the embedded tables of the selected keyboard against the
+ * library under test: every embedded symbol key must report exactly its
+ * symbol, every tone key its mark, and non-keys must report false.
+ * Returns 0 when the library's keyboard matches the pinned copy. */
 static int verify_keyboard_tables(const struct symbols *s,
-                                  pinyin_instance_t *inst) {
+                                  pinyin_instance_t *inst,
+                                  const struct keyboard *kb) {
     int failures = 0;
 
-    for (size_t i = 0; i < NSYMBOLS; i++) {
+    for (size_t i = 0; i < kb->nsymbols; i++) {
         gchar **symbols = NULL;
-        bool ok = s->in_chewing_keyboard(inst, STANDARD_SYMBOLS[i].key, &symbols);
+        bool ok = s->in_chewing_keyboard(inst, kb->symbols[i].key, &symbols);
         if (!ok || !symbols || !symbols[0] ||
-            strcmp(symbols[0], STANDARD_SYMBOLS[i].symbol) != 0 || symbols[1]) {
+            strcmp(symbols[0], kb->symbols[i].symbol) != 0 || symbols[1]) {
             printf("table-check: symbol key '%c' mismatch\n",
-                   STANDARD_SYMBOLS[i].key);
+                   kb->symbols[i].key);
             failures++;
         }
         free_strv(symbols);
     }
-    for (size_t i = 0; i < NTONES; i++) {
+    for (size_t i = 0; i < kb->ntones; i++) {
         gchar **symbols = NULL;
-        bool ok = s->in_chewing_keyboard(inst, STANDARD_TONES[i].key, &symbols);
+        bool ok = s->in_chewing_keyboard(inst, kb->tones[i].key, &symbols);
         if (!ok || !symbols || !symbols[0] ||
-            strcmp(symbols[0], STANDARD_TONES[i].mark) != 0 || symbols[1]) {
+            strcmp(symbols[0], kb->tones[i].mark) != 0 || symbols[1]) {
             printf("table-check: tone key '%c' mismatch\n",
-                   STANDARD_TONES[i].key);
+                   kb->tones[i].key);
             failures++;
         }
         free_strv(symbols);
@@ -451,10 +659,16 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
 }
 
 int main(int argc, char **argv) {
-    if (argc < 3) {
-        fprintf(stderr, "usage: %s <so> <systemdir>\n", argv[0]);
+    int scheme = (argc > 3) ? atoi(argv[3]) : 1;
+    int slot = scheme_slot(scheme);
+    if (argc < 3 || slot < 0) {
+        fprintf(stderr,
+                "usage: %s <so> <systemdir> [scheme]\n"
+                "  scheme: 1 STANDARD, 3 IBM, 4 GINYIEH, 5 ETEN\n",
+                argv[0]);
         return 1;
     }
+    const struct keyboard *kb = &KEYBOARDS[slot];
 
     resolve_g_free();
     void *handle = dlopen(argv[1], RTLD_NOW);
@@ -477,8 +691,8 @@ int main(int argc, char **argv) {
         return 1;
     }
     s.set_options(ctx, CHEWING_FLAGS);
-    printf("set_zhuyin_scheme(1): %s\n",
-           s.set_zhuyin_scheme(ctx, 1) ? "true" : "false");
+    printf("set_zhuyin_scheme(%d): %s\n", scheme,
+           s.set_zhuyin_scheme(ctx, scheme) ? "true" : "false");
 
     pinyin_instance_t *inst = s.alloc(ctx);
     if (!inst) {
@@ -487,8 +701,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (verify_keyboard_tables(&s, inst) != 0) {
-        fprintf(stderr, "embedded STANDARD tables disagree with the library\n");
+    if (verify_keyboard_tables(&s, inst, kb) != 0) {
+        fprintf(stderr, "embedded keyboard tables disagree with the library\n");
         s.free_instance(inst);
         s.fini(ctx);
         dlclose(handle);
@@ -496,9 +710,14 @@ int main(int argc, char **argv) {
     }
     printf("table-check: ok\n");
 
-    for (size_t i = 0; i < NCORPUS; i++) {
+    const struct corpus_entry *corpus =
+        (scheme == 1) ? CORPUS : SIMPLE_CORPUS;
+    size_t ncorpus = (scheme == 1) ? (sizeof(CORPUS) / sizeof(CORPUS[0]))
+                                   : (sizeof(SIMPLE_CORPUS) / sizeof(SIMPLE_CORPUS[0]));
+
+    for (size_t i = 0; i < ncorpus; i++) {
         char keystrokes[KEYSTROKE_BUF];
-        derive_keystrokes(&CORPUS[i], keystrokes);
+        derive_keystrokes(kb, &corpus[i], keystrokes);
         drive_input(&s, inst, keystrokes);
     }
 
