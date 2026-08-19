@@ -11,9 +11,14 @@
 # doubling 你→浩 — the divergence this runner guards
 # (docs/findings/sentence-surface.md §8).
 #
-# Only the export lines are compared: the probe blocks also print the
-# C-ABI sentence surface, whose user-merged step costs are a separate,
-# still-open seam (§9). Compare the full logs once that lands.
+# The FULL logs are compared — probe blocks and export lines. The probes
+# print the C-ABI sentence surface, whose n-best step costs merge the §5
+# user overlay (sentence-surface.md §9), so trained user grams must move
+# our rows exactly like the oracle's. The export triples alone are not
+# enough: with the merge dropped they stay identical (training still
+# lands the same user state through the NORMAL candidate) while the
+# probe surface stops flipping toward 你浩 — the vacuous green the
+# full-log comparison exists to catch.
 #
 # Env-gated on the pin-built oracle like the train diff
 # (PINYIN_ORACLE_PREFIX, default $HOME/.local/opt/pinyin-oracle) and on a
@@ -114,16 +119,14 @@ if [[ "$CAPI_ROWS" -eq 0 || "$ORACLE_ROWS" -eq 0 ]]; then
 fi
 echo "NBEST rows active: capi=$CAPI_ROWS oracle=$ORACLE_ROWS"
 
-echo "--- differential (user-store export lines) ---"
-if diff -u <(grep -E '^(phrase|bigram):' "$ORACLE_LOG") \
-           <(grep -E '^(phrase|bigram):' "$CAPI_LOG") > /dev/null; then
+echo "--- differential (full log: probe surface + user-store export) ---"
+if diff -u "$ORACLE_LOG" "$CAPI_LOG" > /dev/null; then
     echo "nbest-train-diff: IDENTICAL"
     grep -E '^(phrase|bigram):' "$CAPI_LOG"
     rm -f "$CAPI_LOG" "$ORACLE_LOG"
     exit 0
 fi
-echo "DIVERGENCE (user-store export)"
-diff -u <(grep -E '^(phrase|bigram):' "$ORACLE_LOG") \
-        <(grep -E '^(phrase|bigram):' "$CAPI_LOG") || true
+echo "DIVERGENCE (probe surface or user-store export)"
+diff -u "$ORACLE_LOG" "$CAPI_LOG" || true
 rm -f "$CAPI_LOG" "$ORACLE_LOG"
 exit 2
