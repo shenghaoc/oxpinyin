@@ -129,6 +129,12 @@ impl UnigramTable {
             .map(|index| self.records[index].1)
     }
 
+    /// The `(phrase_token, count)` records, sorted by token ascending.
+    #[must_use]
+    pub fn records(&self) -> &[(u32, u64)] {
+        &self.records
+    }
+
     /// Installs records from a caller-built map, sorted by token for lookup.
     ///
     /// Used by [`crate::BigramLanguageModel`] to accept the existing
@@ -163,8 +169,24 @@ pub fn parse_interpolation2(path: &Path) -> Result<UnigramTable, InterpolationEr
         path: path.to_path_buf(),
         source,
     })?;
-    let mut reader = BufReader::new(file);
+    parse_interpolation2_from_reader(path, BufReader::new(file))
+}
 
+/// Parses the `\1-gram` section from an already-open reader.
+///
+/// Same validation as [`parse_interpolation2`]: missing `\1-gram`, zero
+/// counts, and duplicate tokens are errors. `path` is only used in
+/// [`InterpolationError::Read`].
+///
+/// # Errors
+///
+/// Returns [`InterpolationError`] for a read failure, a malformed item
+/// line, a duplicate token, a zero count, or a stream that ends before
+/// the `\1-gram` header.
+pub fn parse_interpolation2_from_reader<R: BufRead>(
+    path: &Path,
+    mut reader: R,
+) -> Result<UnigramTable, InterpolationError> {
     let mut buffer = String::new();
     let mut line_number = 0_usize;
     let mut in_section = false;
@@ -255,7 +277,7 @@ pub fn parse_interpolation2(path: &Path) -> Result<UnigramTable, InterpolationEr
 mod tests {
     use std::io::Write;
 
-    use super::{InterpolationError, parse_interpolation2};
+    use super::{parse_interpolation2, InterpolationError};
 
     /// One distinct name per test: tests run in parallel and each file is
     /// written once, read once, and removed, so the name is the collision
@@ -325,5 +347,18 @@ mod tests {
         let result = parse_interpolation2(&path);
         std::fs::remove_file(&path).ok();
         assert!(matches!(result, Err(InterpolationError::Parse { .. })));
+    }
+
+    #[test]
+    fn from_reader_rejects_a_zero_count() {
+        let bytes = b"\\1-gram\n\\item 10 x count 0\n";
+        let result = super::parse_interpolation2_from_reader(
+            std::path::Path::new("memory"),
+            std::io::Cursor::new(&bytes[..]),
+        );
+        assert!(matches!(
+            result,
+            Err(InterpolationError::Parse { line: 2, .. })
+        ));
     }
 }
