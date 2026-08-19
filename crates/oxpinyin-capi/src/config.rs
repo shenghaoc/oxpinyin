@@ -89,8 +89,10 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
 /// The Rust parameter is `c_int`: callers may pass any `int`, and a closed
 /// `#[repr(C)]` enum would be UB for an unknown discriminant.
 ///
-/// The first W13 bopomofo pass implements STANDARD only. Other valid
-/// `ZhuyinScheme` header discriminants report `false` and keep the previous
+/// The Simple Zhuyin keyboards are implemented table-driven: STANDARD
+/// (1), IBM (3), GINYIEH (4), ETEN (5). Other valid `ZhuyinScheme`
+/// header discriminants — the Discrete/CP26 keyboards and the
+/// STANDARD_DVORAK abort slot — report `false` and keep the previous
 /// scheme instead of aborting.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: c_int) -> bool {
@@ -100,7 +102,7 @@ pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: 
     ffi_catch(false, || {
         // SAFETY: `context` is non-null and was produced by `pinyin_init`.
         let ctx = unsafe { context_mut(context) };
-        if scheme != oxpinyin_core::ZhuyinScheme::Standard as i32 {
+        if !matches!(scheme, 1 | 3 | 4 | 5) {
             return false;
         }
         ctx.zhuyin_scheme.store(scheme, Ordering::Relaxed);
