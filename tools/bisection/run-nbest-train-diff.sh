@@ -1,24 +1,23 @@
 #!/usr/bin/env bash
-# run-nbest-train-diff.sh — W14 selection-record differential.
+# run-nbest-train-diff.sh — W14 n-best train differential.
 #
 # Drives the scripted C-ABI train-then-guess sequence
 # (tools/bisection/nbest-train-diff.c) into libpinyin_capi.so and the
-# pin-built libpinyin.so and diffs the USER-STORE EXPORT lines: after the
-# same (你 → 浩) × N + (你 → 好) × N training, both engines must hold the
-# same (phrase, pinyin, count) triples. The 你→浩 rounds choose the pair's
-# n-best ROW from round 2 on (NBEST-wins dedup shadows its NORMAL
-# candidate), so a wrong selection record piles seeds onto 你→好 instead of
-# doubling 你→浩 — the divergence this runner guards
-# (docs/findings/sentence-surface.md §8).
+# pin-built libpinyin.so and diffs the FULL logs (probe surface +
+# user-store export). Two seams share this runner:
 #
-# The FULL logs are compared — probe blocks and export lines. The probes
-# print the C-ABI sentence surface, whose n-best step costs merge the §5
-# user overlay (sentence-surface.md §9), so trained user grams must move
-# our rows exactly like the oracle's. The export triples alone are not
-# enough: with the merge dropped they stay identical (training still
-# lands the same user state through the NORMAL candidate) while the
-# probe surface stops flipping toward 你浩 — the vacuous green the
-# full-log comparison exists to catch.
+#   selection record (sentence-surface.md §8) — after (你 → 浩) × N the
+#   pair's n-best ROW is the only choosable 你浩 candidate (NBEST-wins
+#   dedup). A wrong record piles seeds onto 你→好; the export triples
+#   (你浩 doubling 138 → 414 → 1242) prove the chosen row's own token
+#   path landed.
+#
+#   user-merged step costs (sentence-surface.md §9) — the probe blocks
+#   print the C-ABI sentence surface. Export triples alone are vacuous
+#   for this seam: with the merge dropped they stay identical (training
+#   still lands the same user state through the NORMAL candidate) while
+#   the user-only probe stops flipping toward 你浩. Full-log comparison
+#   is what makes the merge load-bearing.
 #
 # Env-gated on the pin-built oracle like the train diff
 # (PINYIN_ORACLE_PREFIX, default $HOME/.local/opt/pinyin-oracle) and on a
