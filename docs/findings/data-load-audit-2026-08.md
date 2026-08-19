@@ -21,11 +21,12 @@ allocator's retained heap from earlier steps cannot hide behind `VmHWM`.
 
 ```text
 PINYIN_EXPORT_DIR=/tmp/oxpinyin-export \
-PINYIN_MODEL_DIR=<model20/extracted> \
-cargo run -p oxpinyin-data --release --example load_profile -- <mode>
+PINYIN_MODEL_DIR=/path/to/model20/extracted \
+cargo run -p oxpinyin-data --release --example load_profile
 ```
 
-Modes: `inventory`, `isolated`, `cumulative`, `dict`, `pinyin`, `phrase`,
+With no mode argument the example runs `all` (inventory + isolated). Named
+modes: `inventory`, `isolated`, `cumulative`, `dict`, `pinyin`, `phrase`,
 `bigram`, `interp`, `full`, `keycosts`.
 
 ## 1. Where init time actually goes
@@ -87,7 +88,7 @@ walks (`build_unigram_map`, `build_prefix_tables`, `build_text_tokens`).
 | `build_unigram_map` | 36.2 ms | pronunciation totals; decode needs this |
 | `build_prefix_tables` | 65.3 ms | `SEARCH_CONTINUED` probes; decode needs this |
 | **`build_text_tokens`** | **135.8 ms** | reverse map for **predict/import only** |
-| `SystemDictionary::open` | **348.0 ms** | sum of the above, one function |
+| `SystemDictionary::open` | **348.0 ms** | **end-to-end** isolated warm median of the whole `open`; not the sum of the rows above (those are overlapping isolated walks) |
 
 `text_tokens` is 39% of dictionary open and is unused until
 `pinyin_guess_predicted_candidates` / suggestion. That is the lazy-open
@@ -220,14 +221,24 @@ the alloc-side story, not init.
 
 ## 6. After numbers (same host, same tables)
 
+Headline is the **isolated warm median** of 3, same process protocol
+before and after. Fresh-process rows are RSS snapshots; their wall times
+are **not comparable** across the before/after pair (different cache
+state, not a paired protocol).
+
 | Process | Before | After |
 |---|---:|---:|
-| `SystemDictionary::open` (isolated warm) | 348 ms | **200 ms** |
-| `SystemDictionary::open` (fresh process) | 1,251 ms / 69,304 KiB RSS / HWM 75,704 | **219–248 ms / 51.7–51.9 MiB / HWM 52.8 MiB** |
-| capi-shaped dict+lm+interp+punct (fresh) | 855 ms / 117,064 KiB / 114,448 KiB anon | **median 340 ms** [318, 405] / **97.5 MiB / 94,880 KiB anon** |
+| `SystemDictionary::open` (isolated warm median) | 348 ms | **200 ms** |
+| `SystemDictionary::open` (fresh process, RSS only) | 69,304 KiB RSS / HWM 75,704 KiB | **51.7–51.9 MiB / HWM 52.8 MiB** |
+| capi-shaped dict+lm+interp+punct (fresh, RSS) | 117,064 KiB / 114,448 KiB anon | **97.5 MiB / 94,880 KiB anon** |
 | `parse_interpolation2` | 29 ms / ~1.1 MiB | unchanged (not this PR) |
 | `PunctTable::open_optional` | 0.3 ms | unchanged |
-| `key_cost_table` | (W8 alloc 48.5 ms) | 28 ms |
+| `key_cost_table` | (W8 alloc 48.5 ms) | 28 ms on this host |
+
+This PR did **not** re-run the W8 dlopen scoreboard. The published 158×
+`pinyin_init` figure is unchanged as a pin. The 348 → 200 ms dictionary
+open is a load-profile measurement of one function inside init, not a
+claim that the 158× ratio is gone.
 
 Dictionary RSS drop is the reverse map (~17 MiB) plus the clone spike
 that no longer happens (HWM −23 MiB on the dict-only process). The three
@@ -265,14 +276,14 @@ as a first move:
    Init win is ~29 ms; disk win is the 3.48× data ratio.
 3. **`key_cost_table`** still walks 430 keys at alloc. After borrowed
    `get` it is 28 ms. Caching it on the context rather than per instance
-   would collapse W8's 48,483× alloc gap.
+   could reduce W8's 48,483× alloc gap.
 
 ## Caveats
 
 - This is the same shared machine as W8; absolute milliseconds moved
-  between processes (dict-only 219–1,251 ms depending on cache). Ratios
-  and RSS are the stable signal. Isolated medians of 3 are the warm
-  numbers; fresh-process rows are the RSS numbers.
+  between processes depending on cache. Isolated warm medians of 3 are
+  the headline speed numbers. Fresh-process rows are RSS snapshots and
+  are not a paired before/after speed protocol.
 - The example's `cumulative` mode after the PR is the live
   `SystemDictionary::open` path (lazy reverse map). Before the PR it
   forced `build_text_tokens` so the 136 ms / 17 MiB cost was visible.

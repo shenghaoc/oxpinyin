@@ -17,13 +17,14 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::hint::black_box;
-use std::io::{BufRead, BufReader, Cursor, Read};
+use std::io::{BufRead, BufReader, Cursor};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use oxpinyin_core::syllable_initial;
 use oxpinyin_data::{
-    parse_interpolation2, BigramLanguageModel, LookupTable, PunctTable, SystemDictionary,
+    parse_interpolation2, parse_interpolation2_from_reader, BigramLanguageModel, LookupTable,
+    PunctTable, SystemDictionary,
 };
 use redb::{ReadableDatabase, ReadableTable};
 
@@ -35,7 +36,8 @@ fn main() {
     let punct = std::env::var_os("PINYIN_PUNCT_REDB").map(PathBuf::from);
     let repeats = std::env::var("LOAD_PROFILE_REPEATS")
         .ok()
-        .and_then(|value| value.parse().ok())
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
         .unwrap_or(3_usize);
     let mode = std::env::args().nth(1).unwrap_or_else(|| "all".to_owned());
 
@@ -55,24 +57,12 @@ fn main() {
             file_inventory(&export, &interpolation2, punct.as_deref());
             interpolation2_shape(&interpolation2);
         }
-        "isolated" => {
-            println!("=== isolated steps (median of {repeats}) ===");
-            profile_redb(&export.join("pinyin_index.redb"), "pinyin_index", repeats);
-            profile_redb(&export.join("phrase_index.redb"), "phrase_index", repeats);
-            profile_redb(&export.join("bigram.redb"), "bigram", repeats);
-            if let Some(path) = punct.as_deref() {
-                if path.is_file() {
-                    profile_redb(path, "punct", repeats);
-                    profile_punct(path, repeats);
-                }
-            } else {
-                profile_punct(Path::new("/no/such/punct.redb"), repeats);
-            }
-            profile_interpolation2(&interpolation2, repeats);
-            profile_dict_derived(&export, repeats);
+        "isolated" => run_isolated(&export, &interpolation2, punct.as_deref(), repeats),
+        "all" => {
+            file_inventory(&export, &interpolation2, punct.as_deref());
+            interpolation2_shape(&interpolation2);
             println!();
-            println!("=== prepared unigram sidecar vs text parse ===");
-            profile_unigram_sidecar(&interpolation2, repeats);
+            run_isolated(&export, &interpolation2, punct.as_deref(), repeats);
         }
         "cumulative" => {
             println!("=== cumulative capi-shaped init (fresh process) ===");
@@ -112,17 +102,34 @@ fn main() {
             println!("  key_costs len={}", costs.len());
             drop((dict, lm, punct_table, costs));
         }
-        "all" => {
+        other => {
             eprintln!(
-                "usage: load_profile <inventory|isolated|cumulative|dict|pinyin|phrase|bigram|interp|full|keycosts>"
+                "unknown mode {other:?}\n\
+                 usage: load_profile [all|inventory|isolated|cumulative|dict|pinyin|phrase|bigram|interp|full|keycosts]"
             );
             std::process::exit(2);
         }
-        other => {
-            eprintln!("unknown mode {other:?}");
-            std::process::exit(2);
-        }
     }
+}
+
+fn run_isolated(export: &Path, interpolation2: &Path, punct: Option<&Path>, repeats: usize) {
+    println!("=== isolated steps (median of {repeats}) ===");
+    profile_redb(&export.join("pinyin_index.redb"), "pinyin_index", repeats);
+    profile_redb(&export.join("phrase_index.redb"), "phrase_index", repeats);
+    profile_redb(&export.join("bigram.redb"), "bigram", repeats);
+    if let Some(path) = punct {
+        if path.is_file() {
+            profile_redb(path, "punct", repeats);
+            profile_punct(path, repeats);
+        }
+    } else {
+        profile_punct(Path::new("/no/such/punct.redb"), repeats);
+    }
+    profile_interpolation2(interpolation2, repeats);
+    profile_dict_derived(export, repeats);
+    println!();
+    println!("=== prepared unigram sidecar vs text parse ===");
+    profile_unigram_sidecar(interpolation2, repeats);
 }
 
 fn retain_step<T>(label: &str, body: impl FnOnce() -> T) {
@@ -404,48 +411,14 @@ fn profile_interpolation2(path: &Path, repeats: usize) {
     let from_bytes = median_of(repeats, || {
         let bytes = std::fs::read(path).expect("read");
         let started = Instant::now();
-        let parsed = parse_interpolation2_reader(Cursor::new(&bytes)).expect("parse bytes");
+        let parsed = parse_interpolation2_from_reader(path, BufReader::new(Cursor::new(&bytes)))
+            .expect("parse bytes");
         let elapsed = started.elapsed();
         drop(parsed);
         drop(bytes);
         elapsed
     });
     println!("  parse from fs::read Cursor (copy already paid): {from_bytes}");
-}
-
-fn parse_interpolation2_reader<R: Read>(
-    reader: R,
-) -> Result<Vec<(u32, u64)>, Box<dyn std::error::Error>> {
-    let mut reader = BufReader::new(reader);
-    let mut buffer = String::new();
-    let mut in_section = false;
-    let mut records = Vec::new();
-    loop {
-        buffer.clear();
-        let n = reader.read_line(&mut buffer)?;
-        if n == 0 {
-            break;
-        }
-        let line = buffer.trim_end_matches(['\r', '\n']);
-        if !in_section {
-            in_section = line == "\\1-gram";
-            continue;
-        }
-        if line.starts_with('\\') && !line.starts_with("\\item") {
-            break;
-        }
-        if line.is_empty() {
-            continue;
-        }
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() < 5 || fields[0] != "\\item" || fields[fields.len() - 2] != "count" {
-            return Err(format!("bad line {line:?}").into());
-        }
-        let token: u32 = fields[1].parse()?;
-        let count: u64 = fields[fields.len() - 1].parse()?;
-        records.push((token, count));
-    }
-    Ok(records)
 }
 
 fn profile_dict_derived(export: &Path, repeats: usize) {
@@ -602,15 +575,15 @@ fn profile_unigram_sidecar(interpolation2: &Path, repeats: usize) {
         println!("  missing interpolation2.text");
         return;
     }
-    let records = parse_interpolation2_reader(File::open(interpolation2).expect("open"))
-        .expect("parse records");
+    let table = parse_interpolation2(interpolation2).expect("parse records");
+    let records = table.records();
     let sidecar = std::env::temp_dir().join(format!(
         "oxpinyin-unigrams-profile-{}.redb",
         std::process::id()
     ));
     let _ = std::fs::remove_file(&sidecar);
     let started = Instant::now();
-    write_unigram_redb(&sidecar, &records).expect("write sidecar");
+    write_unigram_redb(&sidecar, records).expect("write sidecar");
     let write_ms = started.elapsed();
     let size = std::fs::metadata(&sidecar).expect("stat").len();
     println!(
@@ -641,7 +614,7 @@ fn profile_unigram_sidecar(interpolation2: &Path, repeats: usize) {
         std::process::id()
     ));
     let started = Instant::now();
-    write_unigram_pod(&pod_path, &records).expect("write pod");
+    write_unigram_pod(&pod_path, records).expect("write pod");
     let pod_write = started.elapsed();
     let pod_size = std::fs::metadata(&pod_path).expect("stat").len();
     println!("  write aligned (u32,u32,u64) blob: {pod_write:?}  bytes={pod_size}");

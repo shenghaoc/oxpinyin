@@ -326,7 +326,8 @@ fn build_pinyin_derived(index: &LookupTable) -> Result<PinyinDerived, DictError>
         initial_keys.push(initial);
 
         for (token, freq) in parse_index_records(value)? {
-            *unigrams.entry(token).or_default() += u64::from(freq);
+            let count = unigrams.entry(token).or_default();
+            *count = count.saturating_add(u64::from(freq));
             unigram_total = unigram_total.saturating_add(u64::from(freq));
         }
     }
