@@ -277,7 +277,7 @@ pub fn parse_interpolation2_from_reader<R: BufRead>(
 mod tests {
     use std::io::Write;
 
-    use super::{parse_interpolation2, InterpolationError};
+    use super::{InterpolationError, parse_interpolation2};
 
     /// One distinct name per test: tests run in parallel and each file is
     /// written once, read once, and removed, so the name is the collision

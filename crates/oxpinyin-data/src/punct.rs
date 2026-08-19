@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::dict::DictError;
-use crate::table::LookupTable;
+use crate::table;
 
 /// Predicted punctuation lookup, keyed by the preceding phrase token.
 pub struct PunctTable {
@@ -27,9 +27,8 @@ impl PunctTable {
 
     /// Opens an Option A `punct.redb`.
     pub fn open(path: &Path) -> Result<Self, DictError> {
-        let table = LookupTable::open(path)?;
         let mut by_token = BTreeMap::new();
-        for (key, value) in table.iter() {
+        table::for_each_row(path, |key, value| {
             if key.len() != 4 {
                 return Err(DictError::Parse(format!(
                     "punct key length {} is not 4",
@@ -41,7 +40,8 @@ impl PunctTable {
             if !puncts.is_empty() {
                 by_token.insert(token, puncts);
             }
-        }
+            Ok::<(), DictError>(())
+        })?;
         Ok(Self { by_token })
     }
 

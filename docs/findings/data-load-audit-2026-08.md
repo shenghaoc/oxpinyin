@@ -1,6 +1,6 @@
 # Dictionary / LM load audit — init time and RSS (2026-08)
 
-Date: 2026-08-19 · Status: **measured, one cheaper-win PR landed, pins
+Date: 2026-08-19 · Status: **measured, cheaper-win plus typed maps landed, pins
 unchanged.** Follow-up to `perf-baseline-2026-08.md` (W8: `pinyin_init`
 158× the oracle because oxpinyin parses the text model and materializes
 redb at init; runtime data 3.48×). This note attributes those costs and
@@ -127,8 +127,8 @@ file-backed. Same shape: **the working set is the copied BTreeMaps, not
 the mmap**. Oracle's tables stay file-backed; oxpinyin's do not.
 
 `BTreeMap<Vec<u8>, Vec<u8>>` is a bad fit for phrase_index (138k tiny
-pairs) and still the live decode cache — replacing it is a later
-representation change, not this PR.
+pairs). The follow-up on this PR replaces the retained decode maps with
+typed keys (see §9).
 
 ## 3. mmap vs copy, in one sentence
 
@@ -262,21 +262,34 @@ walk 9–15 ms.
   the 83 MB text file and the three slurped BTreeMaps still set the
   floor.
 
-## 8. Next representation work (not this PR)
+## 8. Next representation work
 
 Ranked by these numbers, still without replacing redb or the text model
 as a first move:
 
-1. **Denser in-memory maps** for the three slurped tables (typed
-   `HashMap<u32, String>` / `HashMap<String, Box<[(u32, u32)]>>` /
-   `HashMap<u32, BigramRow>`). Phrase_index is 16× payload in RSS today.
-   Decode `get` would also stop parsing 8-byte records on every lookup.
+1. **Typed in-memory maps** — done in this PR (§9).
 2. **POD unigram sidecar** (16-byte records, `TryFromBytes` when the dep
    is asked for) plus eventually not shipping the 81 MB `\2-gram` half.
    Init win is ~29 ms; disk win is the 3.48× data ratio.
 3. **`key_cost_table`** still walks 430 keys at alloc. After borrowed
    `get` it is 28 ms. Caching it on the context rather than per instance
    could reduce W8's 48,483× alloc gap.
+
+## 9. Typed maps (same host, same protocol as §6)
+
+`SystemDictionary` and `BigramLanguageModel` now parse redb rows once
+into native keys (`Box<str>` pinyin, `u32` tokens) and drop the byte
+`LookupTable`. The reverse phrase map stays a `OnceLock`. No memmap2,
+zerocopy, or rkyv. redb and `interpolation2.text` unchanged.
+
+| Process | Post-cheaper-win (§6) | After typed maps |
+|---|---:|---:|
+| `SystemDictionary::open` (isolated warm median) | 200 ms | **157 ms** |
+| `SystemDictionary::open` (fresh process, RSS) | 51.7 MiB / 49.1 MiB anon / HWM 52.8 MiB | **34.5 MiB / 31.8 MiB anon / HWM 34.5 MiB** |
+
+Fresh-process dict times (five runs): 189 / 147 / 136 / 150 / 151 ms —
+RSS is the stable signal; the isolated warm median is the headline
+speed. Pins were not moved. The W8 dlopen scoreboard was not re-run.
 
 ## Caveats
 

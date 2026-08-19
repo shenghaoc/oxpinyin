@@ -25,11 +25,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
-use oxpinyin_core::cost::{reduce_ratio, surprisal, UNKNOWN_COST};
+use oxpinyin_core::cost::{UNKNOWN_COST, reduce_ratio, surprisal};
 use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta};
 
 use crate::interp::{self, InterpolationError, UnigramTable};
-use crate::table::{LookupTable, TableError};
+use crate::table::{self, TableError};
 use crate::table_conf::Lambda;
 
 /// Error conditions for bigram lookups.
@@ -156,7 +156,7 @@ pub struct BigramRow {
 
 /// Bigram language model backed by `bigram.redb`.
 pub struct BigramLanguageModel {
-    bigram: LookupTable,
+    bigram: BTreeMap<u32, BigramRow>,
     unigrams: Option<UnigramTable>,
     unigram_total: u64,
     /// Whether `unigrams` came from `interpolation2.text`: only the phrase
@@ -178,8 +178,21 @@ impl BigramLanguageModel {
     /// override it from a real install's config with
     /// [`Self::set_lambda_from_table_conf`] or [`Self::set_lambda`].
     pub fn open(path: &Path) -> Result<Self, LmError> {
+        let mut bigram = BTreeMap::new();
+        table::for_each_row(path, |key, value| {
+            if key.len() != 4 {
+                return Err(LmError::Parse(format!(
+                    "bigram key length {} is not 4",
+                    key.len()
+                )));
+            }
+            let prev = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
+            let (total, records) = parse_bigram_value(value)?;
+            bigram.insert(prev, BigramRow { total, records });
+            Ok::<(), LmError>(())
+        })?;
         Ok(Self {
-            bigram: LookupTable::open(path).map_err(LmError::Table)?,
+            bigram,
             unigrams: None,
             unigram_total: 0,
             real_unigrams: false,
@@ -263,7 +276,7 @@ impl BigramLanguageModel {
 
     /// Number of previous-token entries.
     pub fn entry_count(&self) -> Result<u64, LmError> {
-        self.bigram.len().map_err(LmError::Table)
+        Ok(self.bigram.len() as u64)
     }
 
     /// Whether unigram counts have been installed for interpolation.
@@ -308,15 +321,7 @@ impl BigramLanguageModel {
     /// Returns [`LmError`] when the table cannot be read or a value does not
     /// parse under the frozen schema.
     pub fn load_successors(&self, prev: u32) -> Result<Option<BigramRow>, LmError> {
-        let Some(raw) = self
-            .bigram
-            .get(&prev.to_le_bytes())
-            .map_err(LmError::Table)?
-        else {
-            return Ok(None);
-        };
-        let (total, records) = parse_bigram_value(raw)?;
-        Ok(Some(BigramRow { total, records }))
+        Ok(self.bigram.get(&prev).cloned())
     }
 
     /// Returns `(count, total)` for the `prev → next` transition, or `None`
@@ -701,11 +706,13 @@ mod tests {
     #[test]
     fn invariant_holds_for_every_fixture_entry() {
         let model = model();
-        for (key, value) in model.bigram.iter() {
-            assert_eq!(key.len(), 4, "bigram keys are 4-byte prev tokens");
-            let (total, records) = parse_bigram_value(value).expect("schema parses");
-            let sum: u64 = records.iter().map(|(_, count)| u64::from(*count)).sum();
-            assert_eq!(u64::from(total), sum, "total == Σ count for {key:02x?}");
+        for (prev, row) in &model.bigram {
+            let sum: u64 = row.records.iter().map(|(_, count)| u64::from(*count)).sum();
+            assert_eq!(
+                u64::from(row.total),
+                sum,
+                "total == Σ count for prev {prev:#010x}"
+            );
         }
     }
 
