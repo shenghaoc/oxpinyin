@@ -182,9 +182,10 @@ Ported divergences (recorded, not chased):
   unigrams but leaves the default in place produces no rows. §6 records
   the C ABI façade currently in that shape.
 - Rows carry their token path, and choosing a row — identified by its
-  list position among the prepended head entries, never by the kind or
-  `nbest_index` alone, which a fallback sentence candidate also carries
-  as 0 — records **all** of it:
+  own tail rank through `Candidate::nbest_row()` (`Option<u8>`, `None`
+  for every non-row candidate, so a fallback sentence candidate records
+  nothing; §7 — originally by list position, which the NBEST-wins dedup
+  can shift) — records **all** of it:
   upstream keeps the chosen `MatchResult` on the instance and
   `pinyin_train` walks it, so the engine's selection record
   (`Session::select` → `history`) extends with the row's tokens. The

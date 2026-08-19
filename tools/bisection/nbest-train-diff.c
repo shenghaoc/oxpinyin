@@ -41,6 +41,7 @@
  */
 
 #define _POSIX_C_SOURCE 200809L
+#include <dirent.h>
 #include <dlfcn.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -175,6 +176,27 @@ static void resolve_g_free(void) {
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 
+/* Removes `dir` and everything under it, so no exit path can leak the
+ * mkdtemp userdir even when the engine already wrote user data into it. */
+static void rm_rf(const char *dir) {
+    DIR *d = opendir(dir);
+    if (d) {
+        struct dirent *entry;
+        while ((entry = readdir(d)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 ||
+                strcmp(entry->d_name, "..") == 0)
+                continue;
+            char path[4096];
+            if (snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name) >=
+                (int)sizeof(path))
+                continue;
+            unlink(path); /* the store writes regular files only */
+        }
+        closedir(d);
+    }
+    rmdir(dir);
+}
+
 static lookup_candidate_t *find_by_text(const struct syms *s,
                                         pinyin_instance_t *inst,
                                         const char *want) {
@@ -214,7 +236,9 @@ static void print_surface(const struct syms *s, pinyin_instance_t *inst,
         gchar *text = NULL;
         bool got = s->get_sentence(inst, i, &text);
         printf("probe:%s sentence[%u]=%s\n", label, i,
-               got&& text ? text : "-");
+               got && text ? text : "-");
+        /* Caller-owned per the C ABI contract; g_free(NULL) is a no-op. */
+        g_free_fn(text);
     }
     s->guess(inst, 0, DEFAULT_SORT);
     guint n = 0;
@@ -331,12 +355,12 @@ int main(int argc, char **argv) {
     pinyin_context_t *ctx = s.init(argv[2], userdir);
     if (!ctx) {
         fprintf(stderr, "pinyin_init failed (real-unigram systemdir required)\n");
-        return 1;
+        goto fail;
     }
     pinyin_instance_t *inst = s.alloc(ctx);
     if (!inst) {
         fprintf(stderr, "pinyin_alloc_instance failed\n");
-        return 1;
+        goto fail_ctx;
     }
 
     /* Phase A — baseline: empty user store. */
@@ -346,7 +370,7 @@ int main(int argc, char **argv) {
     /* Phase B — user-only pair: 你 → 浩 (no system successor). */
     for (int round = 1; round <= user_rounds; round++) {
         if (train_pair(&s, inst, round, "你", "浩"))
-            return 1;
+            goto fail_inst;
     }
     s.parse(inst, "nihao");
     print_surface(&s, inst, "user-only");
@@ -354,7 +378,7 @@ int main(int argc, char **argv) {
     /* Phase C — augmented pair: 你 → 好 (system successor, count 30). */
     for (int round = 1; round <= rounds; round++) {
         if (train_pair(&s, inst, round, "你", "好"))
-            return 1;
+            goto fail_inst;
     }
     s.parse(inst, "nihao");
     print_surface(&s, inst, "augmented");
@@ -395,6 +419,16 @@ int main(int argc, char **argv) {
     s.free_instance(inst);
     s.fini(ctx);
     dlclose(handle);
-    rmdir(userdir); /* best-effort: non-empty on success */
+    rm_rf(userdir);
     return 0;
+
+    /* Shared cleanup: no exit path leaks the mkdtemp userdir. */
+fail_inst:
+    s.free_instance(inst);
+fail_ctx:
+    s.fini(ctx);
+    dlclose(handle);
+fail:
+    rm_rf(userdir);
+    return 1;
 }
