@@ -361,20 +361,26 @@ impl LanguageModel for SharedLm {
         Ok(addons.unigram_total())
     }
 
-    /// Deliberately system-only: the §5 user overlay (`UserStore`
-    /// `count_delta`) is **not** folded in here yet. This override's job is
-    /// to replace the trait default's empty costs with the
-    /// `BigramLanguageModel`'s, so C-ABI `guess_sentence` emits rows at
-    /// all. Folding the user delta in is the next workstream, gated on the
-    /// shifted-row selection-record fix (#117): until the chosen row's own
-    /// token path is recorded, a user-trained (你→浩) style pair would train
-    /// the wrong path and make the user-merged differential vacuous.
+    /// The §5 user overlay, folded in: this override replaces the trait
+    /// default's empty costs with the `BigramLanguageModel`'s, merged with
+    /// `UserStore::count_delta` — the same overlay `score` takes — so C-ABI
+    /// `guess_sentence` rows train on user counts as well.
     fn nbest_step_costs(
         &self,
         prev: &Self::Token,
         token: &Self::Token,
     ) -> Result<NbestStepCosts, Self::Error> {
-        self.inner.nbest_step_costs(prev, token)
+        // Upstream's n-best runs on the same user-aware PhoneticLookup as
+        // `score` (merge_single_gram before the presence gate), so the step
+        // costs take the same §5 overlay — not the system-only counts.
+        let delta = match self.user.as_ref() {
+            None => UserCountDelta::ZERO,
+            Some(store) => store
+                .count_delta(Some(prev.value()), token.value())
+                .map_err(|error| LmError::User(error.to_string()))?,
+        };
+        self.inner
+            .nbest_step_costs_with_user_delta(prev, token, delta)
     }
 }
 

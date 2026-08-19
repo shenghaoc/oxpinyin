@@ -464,6 +464,82 @@ impl BigramLanguageModel {
         self.real_unigrams
             .then(|| merge_counts(self.unigram_count(token).unwrap_or(0), user_delta))
     }
+
+    /// [`LanguageModel::nbest_step_costs`] with an explicit §5 user-count
+    /// overlay.
+    ///
+    /// Both branch costs are recomputed over the additively merged counts —
+    /// the same merge `score_with_user_delta` applies: the unigram term runs
+    /// on `system_count + user.unigram_delta` over
+    /// `system_total + user.unigram_total_delta` (self-learning bumps the
+    /// phrase-index unigram, `pinyin.cpp:928-929`), and the blended branch
+    /// runs on `merge_bigram(system_row, user.bigram_count,
+    /// user.bigram_total)` — merged *before* the count > 0 presence gate, so
+    /// a user-only pair (no system row, trained count) produces a blended
+    /// cost instead of falling through to the unigram branch, and its
+    /// denominator is the merged total (`merge_single_gram`, `ngram.cpp:277`).
+    ///
+    /// `UserCountDelta::ZERO` is bit-identical to the trait method.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LmError`] when the system table cannot be read.
+    pub fn nbest_step_costs_with_user_delta(
+        &self,
+        prev: &PhraseToken,
+        token: &PhraseToken,
+        user: UserCountDelta,
+    ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
+        // No installed unigram table is the seam's default answer: no n-best
+        // cost data, no rows.
+        let (Some(count), unigram_total) =
+            (self.unigram_count(token.value()), self.unigram_total())
+        else {
+            return Ok(oxpinyin_core::NbestStepCosts::default());
+        };
+        let count = merge_counts(count, user.unigram_delta);
+        let unigram_total = merge_counts(unigram_total, user.unigram_total_delta);
+        if unigram_total == 0 {
+            return Ok(oxpinyin_core::NbestStepCosts::default());
+        }
+
+        let lambda_num = self.lambda.numerator();
+        let lambda_den = self.lambda.denominator();
+        let one_minus_lambda = lambda_den.saturating_sub(lambda_num);
+
+        // The no-evidence branch: (1 − λ) · u / ut.
+        let unigram = (count > 0)
+            .then(|| {
+                one_minus_lambda
+                    .checked_mul(u128::from(count))
+                    .zip(lambda_den.checked_mul(u128::from(unigram_total)))
+            })
+            .flatten()
+            .and_then(ratio_cost);
+
+        // The blended branch, only when the merged bigram row actually
+        // carries this successor: upstream's bigram expansion walks
+        // merged-gram successors (`search_bigram2`), so a count-0 next token
+        // is not a successor and takes the unigram branch instead.
+        let blended = match merge_bigram(
+            self.transition(prev.value(), token.value())?,
+            user.bigram_count,
+            user.bigram_total,
+        ) {
+            Some((bigram_count, bigram_total)) if bigram_count > 0 => interpolate_ratio(
+                lambda_num,
+                lambda_den,
+                u128::from(bigram_count),
+                u128::from(bigram_total),
+                u128::from(count),
+                u128::from(unigram_total),
+            )
+            .and_then(|(numerator, denominator)| ratio_cost((numerator, denominator))),
+            _ => None,
+        };
+
+        Ok(oxpinyin_core::NbestStepCosts { blended, unigram })
+    }
 }
 
 impl LanguageModel for BigramLanguageModel {
@@ -502,49 +578,8 @@ impl LanguageModel for BigramLanguageModel {
         prev: &Self::Token,
         token: &Self::Token,
     ) -> Result<oxpinyin_core::NbestStepCosts, Self::Error> {
-        // No installed unigram table is the seam's default answer: no n-best
-        // cost data, no rows.
-        let (Some(count), unigram_total) =
-            (self.unigram_count(token.value()), self.unigram_total())
-        else {
-            return Ok(oxpinyin_core::NbestStepCosts::default());
-        };
-        if unigram_total == 0 {
-            return Ok(oxpinyin_core::NbestStepCosts::default());
-        }
-
-        let lambda_num = self.lambda.numerator();
-        let lambda_den = self.lambda.denominator();
-        let one_minus_lambda = lambda_den.saturating_sub(lambda_num);
-
-        // The no-evidence branch: (1 − λ) · u / ut.
-        let unigram = (count > 0)
-            .then(|| {
-                one_minus_lambda
-                    .checked_mul(u128::from(count))
-                    .zip(lambda_den.checked_mul(u128::from(unigram_total)))
-            })
-            .flatten()
-            .and_then(ratio_cost);
-
-        // The blended branch, only when the previous token's bigram row
-        // actually carries this successor: upstream's bigram expansion walks
-        // merged-gram successors (`search_bigram2`), so a count-0 next token
-        // is not a successor and takes the unigram branch instead.
-        let blended = match self.transition(prev.value(), token.value())? {
-            Some((bigram_count, bigram_total)) if bigram_count > 0 => interpolate_ratio(
-                lambda_num,
-                lambda_den,
-                u128::from(bigram_count),
-                u128::from(bigram_total),
-                u128::from(count),
-                u128::from(unigram_total),
-            )
-            .and_then(|(numerator, denominator)| ratio_cost((numerator, denominator))),
-            _ => None,
-        };
-
-        Ok(oxpinyin_core::NbestStepCosts { blended, unigram })
+        // System-only: the empty-user identity of the merged path.
+        self.nbest_step_costs_with_user_delta(prev, token, UserCountDelta::ZERO)
     }
 }
 
@@ -928,6 +963,168 @@ mod tests {
         assert!(
             populated < UNKNOWN_COST,
             "a user-only gram must interpolate, not floor: {populated}"
+        );
+    }
+
+    #[test]
+    fn nbest_zero_delta_is_bit_identical_to_trait_impl() {
+        // Every shape the trait method answers: an observed successor, a
+        // count-0 non-successor in an existing row, a prev with no row, and
+        // the no-unigram-table default.
+        let mut model = model();
+        let mut unigrams = BTreeMap::new();
+        unigrams.insert(DE, 50);
+        unigrams.insert(NI, 50);
+        unigrams.insert(0x0100_0001, 50);
+        model.set_unigrams(unigrams, 100);
+
+        const NO_ENTRY_PREV: u32 = 0xFFFF_FFFF;
+        for (prev, token) in [
+            (NI, DE),
+            (NI, 0x0100_0001),
+            (NO_ENTRY_PREV, DE),
+            (NI, 0x0200_0002),
+        ] {
+            let system = model
+                .nbest_step_costs(&PhraseToken::new(prev), &PhraseToken::new(token))
+                .unwrap();
+            let merged = model
+                .nbest_step_costs_with_user_delta(
+                    &PhraseToken::new(prev),
+                    &PhraseToken::new(token),
+                    UserCountDelta::ZERO,
+                )
+                .unwrap();
+            assert_eq!(
+                system, merged,
+                "a zero overlay must be identity for {prev:08x} → {token:08x}"
+            );
+        }
+
+        // No unigram table installed: both answers are the empty default.
+        let bare = BigramLanguageModel::open(&fixtures_dir().join("bigram.redb")).unwrap();
+        let system = bare
+            .nbest_step_costs(&PhraseToken::new(NI), &PhraseToken::new(DE))
+            .unwrap();
+        let merged = bare
+            .nbest_step_costs_with_user_delta(
+                &PhraseToken::new(NI),
+                &PhraseToken::new(DE),
+                UserCountDelta::ZERO,
+            )
+            .unwrap();
+        assert_eq!(
+            (system, merged),
+            (Default::default(), Default::default()),
+            "no unigram table answers the empty default on both paths"
+        );
+    }
+
+    #[test]
+    fn nbest_augmented_delta_merges_into_both_branches() {
+        // System carries the row (你 → 的); training adds the seed 69 on the
+        // bigram and 483 on the unigram. The blended cost must be the blend
+        // over the MERGED counts — numerator and denominator both.
+        let mut model = model();
+        let mut unigrams = BTreeMap::new();
+        unigrams.insert(DE, 50);
+        unigrams.insert(NI, 50);
+        model.set_unigrams(unigrams, 100);
+        let prev = PhraseToken::new(NI);
+        let token = PhraseToken::new(DE);
+
+        let (system_bc, system_bt) = model.transition(NI, DE).unwrap().expect("row exists");
+        let trained = UserCountDelta {
+            bigram_count: 69,
+            bigram_total: 69,
+            unigram_delta: 483,
+            unigram_total_delta: 483,
+        };
+
+        let system = model.nbest_step_costs(&prev, &token).unwrap();
+        let populated = model
+            .nbest_step_costs_with_user_delta(&prev, &token, trained)
+            .unwrap();
+
+        let expected_blended = interpolate_ratio(
+            model.lambda().numerator(),
+            model.lambda().denominator(),
+            u128::from(system_bc + 69),
+            u128::from(system_bt) + 69,
+            50 + 483,
+            100 + 483,
+        )
+        .and_then(ratio_cost);
+        assert_eq!(populated.blended, expected_blended);
+        assert_ne!(
+            populated.blended, system.blended,
+            "an augmented pair must shift the blended cost"
+        );
+        assert!(
+            populated.blended.unwrap() < system.blended.unwrap(),
+            "raising merged counts must cheapen the blended step"
+        );
+
+        // The unigram branch merges too: (1 − λ) · (50+483)/(100+483).
+        let expected_unigram = {
+            let one_minus_lambda = model.lambda().denominator() - model.lambda().numerator();
+            ratio_cost((
+                one_minus_lambda * (50 + 483),
+                model.lambda().denominator() * (100 + 483),
+            ))
+        };
+        assert_eq!(populated.unigram, expected_unigram);
+        assert_ne!(populated.unigram, system.unigram);
+    }
+
+    #[test]
+    fn nbest_user_only_pair_produces_a_blended_step() {
+        // The prev has no system row; training creates the gram. Merged
+        // BEFORE the presence gate, the blended branch appears where the
+        // system-only answer is unigram-only — and its denominator is the
+        // user total, not a system one.
+        let mut model = model();
+        let mut unigrams = BTreeMap::new();
+        unigrams.insert(DE, 100);
+        model.set_unigrams(unigrams, 110);
+        const NO_ENTRY_PREV: u32 = 0xFFFF_FFFF;
+        assert!(matches!(model.transition(NO_ENTRY_PREV, DE), Ok(None)));
+        let prev = PhraseToken::new(NO_ENTRY_PREV);
+        let token = PhraseToken::new(DE);
+
+        let system = model.nbest_step_costs(&prev, &token).unwrap();
+        assert!(
+            system.blended.is_none(),
+            "precondition: system-only answer has no blended step"
+        );
+
+        let user_only = UserCountDelta {
+            bigram_count: 69,
+            bigram_total: 69,
+            unigram_delta: 0,
+            unigram_total_delta: 0,
+        };
+        let populated = model
+            .nbest_step_costs_with_user_delta(&prev, &token, user_only)
+            .unwrap();
+        let expected_blended = interpolate_ratio(
+            model.lambda().numerator(),
+            model.lambda().denominator(),
+            69,
+            69,
+            100,
+            110,
+        )
+        .and_then(ratio_cost);
+        assert_eq!(
+            populated.blended, expected_blended,
+            "a user-only gram must blend over the user total (merged denominator)"
+        );
+        assert!(
+            populated
+                .step()
+                .is_some_and(|step| step < populated.unigram.unwrap()),
+            "the blended step must undercut the unigram-only branch"
         );
     }
 }
