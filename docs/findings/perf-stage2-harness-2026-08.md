@@ -2,7 +2,8 @@
 
 Date: 2026-08-19 · Status: **measurement only — no decode, capi, or core
 behavior changed.** Continues `docs/findings/perf-baseline-2026-08.md` and
-`docs/findings/perf-exploration.md`.
+`docs/findings/perf-exploration.md`. This PR is docs/tools only; it must
+not land in the same diff as #120's engine change.
 
 Pin: `libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c` + model20
 `59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155`. The
@@ -26,25 +27,10 @@ Criterion header and the profile script both print this SHA.
 
 Guardrails: these benches do **not** assert the 10177-class candidate pins
 (those stay in `pinyin-oracle` `real_tables_integration`). Criterion is
-configured with `noise_threshold(0.50)`, so a `--save-baseline` /
-`--baseline` comparison only flags a change larger than 50%. CI does not
-run the benches — that optional large-regression gate is local, not a
-merge policy change.
-
-## Criterion snapshot (this host, pinned tables)
-
-`cargo bench --locked -p oxpinyin-capi --bench stage2`. Median of 20
-samples after 500 ms warmup. Not a pin.
-
-| Group | Median |
-|---|---:|
-| `parse_more_full_pinyins/short` (`ni`) | 150 µs |
-| `parse_more_full_pinyins/medium` (`nihaozhongguo`) | 242 µs |
-| `parse_more_full_pinyins/junk_leading` (`1nihao`) | 20 µs |
-| `guess_candidates/offset_0` | 13 µs |
-| `guess_candidates/mid_phrase` (offset 5) | 11 µs |
-| `guess_sentence_get_sentence_0` | 455 µs |
-| `user_store_count_delta_hot_token` | 374 ns |
+configured with `noise_threshold(0.50)` — deliberately wide, so a
+`--save-baseline` / `--baseline` comparison only flags a change larger
+than 50%. CI does not run the benches and must not grow a required check
+for them.
 
 `pinyin_parse_more_full_pinyins` includes `Session::type_pinyin` /
 `refresh` (the decode). `pinyin_guess_candidates` then snapshots the
@@ -53,30 +39,76 @@ guess arms measure the same copy. Junk-leading is cheap because the
 segment graph stops at the non-`a-z`/`'` prefix. `count_delta` is the
 cached-snapshot overlay, not a redb transaction per call.
 
-## Hottest 3 stacks
+## Re-run on `main` after #120
 
-Recorded with `tools/profile/run-w8-cycle.sh` against the
-`--profile profiling` cargo-c install. This host has
-`perf_event_paranoid=2`, so `samply record` (preferred) refused; the
-script fell back to Valgrind Callgrind. 8 W8 cycles, 4.39 billion `Ir`.
-Init is still in the profile (`pinyin_init` inclusive ~43%); the ranking
-below is **self-`Ir`**, which is decode-dominated and matches the W8
-engine-level Callgrind in `perf-exploration.md`.
+#120 (`perf(engine): cut keystroke-heap allocs`, plus #118's borrowed
+`LookupTable::get`) targeted the same three stacks this harness first
+named: `LookupTable::get` `memcmp`, table value clone, `Vec<Candidate>`
+growth. Re-ran `tools/profile/run-w8-cycle.sh` (`PERF_CYCLES=8`,
+`--profile profiling` cargo-c install) on `origin/main` `fcbc227`
+(post-#118/#119/#120). Same host, `perf_event_paranoid=2`, Callgrind
+fallback. Not a pin.
 
-1. **`__memcmp_avx2_movbe` (16.8% self).** Callers:
-   `Session::refresh` → `search_scan` → `SharedDict::lookup` →
-   `LookupTable::get` → `memcmp` (in-memory BTree key compare), plus
-   init-time `BTreeMap::insert` while slurping the redb tables.
-2. **`malloc` / `_int_malloc` (8.7% + 3.4% self).** Callers:
-   `LookupTable::get` (value clone), `append_scan_entries` (candidate
-   `String`s / `Vec<Candidate>` growth), `Candidate::retain`
-   (`dedup_by_text_keep_first`), `pinyin_guess_candidates` (`CString`
-   snapshots).
-3. **`LookupTable::get` (7.2% self).** The phrase-table get on the
-   window-scan lookup and `SystemDictionary::phrase_text` paths.
+| self-`Ir` | before (#120) | after (`fcbc227`) | absolute |
+|---|---:|---:|---:|
+| PROGRAM TOTALS | 4.393e9 | 2.462e9 | **0.56×** |
+| `__memcmp_avx2_movbe` | 737e6 (16.8%) | 241e6 (9.8%) | **0.33×** |
+| `_int_malloc` | 380e6 (8.7%) | 141e6 (5.7%) | **0.37×** |
+| `malloc` | 147e6 (3.4%) | 45e6 (1.8%) | **0.31×** |
+| `_int_free` | 239e6 (5.4%) | 76e6 (3.1%) | **0.32×** |
+| `LookupTable::get` | 315e6 (7.2%) | *(inlined into `fill_lookup`)* | — |
+| `SystemDictionary::fill_lookup` | — | 299e6 (12.2%) | new #1 |
 
-No algorithm change follows from this ranking; it is the Stage-2 starting
-point on the installed C ABI.
+`memcmp` callers shifted off `LookupTable::get`. Remaining `memcmp`
+inclusive-from-caller: init `BTreeMap<Box<str>, …>::insert` 83e6,
+`syllable_initial` 64e6, `SyllableKey::from_option_text` 35e6,
+`fill_lookup` itself only 8.8e6. Remaining `malloc` on the C-ABI cycle
+is `CString::new` in `pinyin_guess_candidates` (72e6) plus init
+`for_each_row` table load — not `Vec<Candidate>` growth.
+
+### Current hottest 3 stacks (post-#120)
+
+1. **`SystemDictionary::fill_lookup` (12.2% self).** The borrowed phrase
+   get (`lookup_into` → `fill_lookup`). This is what is left of
+   `LookupTable::get` after the clone site went away.
+2. **`__memcmp_avx2_movbe` (9.8% self).** No longer the window-scan table
+   get. Mostly init typed-map insert and `syllable_initial` prefix
+   compare.
+3. **`_int_malloc` (5.7% self).** `CString` snapshots at guess time, and
+   init table materialization.
+
+### `key_cost_table` / init
+
+- **`key_cost_table`: do not touch on this evidence.** Self-`Ir` 0.06%
+  (1.4e6 of 2.46e9). It was already out of the #120 cycle; it is still
+  noise here.
+- **Init stays the separate W8 track.** `SystemDictionary::open` /
+  `for_each_row` / `parse_interpolation2` / typed-map insert are still
+  the 158× `pinyin_init` and 8.22× RSS story
+  (`perf-baseline-2026-08.md`, `perf-alloc-2026-08.md`). #118 dropped
+  the reverse-map; the text model and table slurp remain. That is not
+  this harness PR and not a follow-up to the leftover `memcmp` on the
+  keystroke path.
+
+## Criterion snapshot (this host, pinned tables)
+
+`cargo bench --locked -p oxpinyin-capi --bench stage2`. Median of 20
+samples after 500 ms warmup. Not a pin. First column is the harness
+branch before rebase onto #120; second is `fcbc227`.
+
+| Group | pre-#120 | post-#120 | note |
+|---|---:|---:|---|
+| `parse_more_full_pinyins/short` | 150 µs | 37 µs | >50% improvement, flagged |
+| `parse_more_full_pinyins/medium` | 242 µs | 122 µs | >50% improvement, flagged |
+| `parse_more_full_pinyins/junk_leading` | 20 µs | 16 µs | within 50% noise |
+| `guess_candidates/offset_0` | 13 µs | 9.0 µs | within 50% noise |
+| `guess_candidates/mid_phrase` | 11 µs | 9.7 µs | within 50% noise |
+| `guess_sentence_get_sentence_0` | 455 µs | 11.0 ms | **not the W8 cycle**; n-best is a different surface (#119) |
+| `user_store_count_delta_hot_token` | 374 ns | 350 ns | no change |
+
+The 50% threshold did what it is for: parse short/medium counted as
+real, junk/guess 14–31% did not, `count_delta` did not. Do not tighten
+it into a required check.
 
 ## Repro
 
