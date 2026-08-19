@@ -33,8 +33,12 @@ pub struct Candidate {
     cost: Cost,
     token: Option<PhraseToken>,
     /// Tail rank of the n-best sentence row this candidate is (W14);
-    /// `0` for every non-row candidate.
-    nbest_index: u8,
+    /// `None` for every non-row candidate — including fallback sentence
+    /// candidates, which share the row `CandidateKind::Sentence` but are
+    /// not rows and carry no token path. The rank is the *original* tail
+    /// order, so a row that survives the NBEST-wins dedup still knows
+    /// which `NbestRow` is its own even when its list position shifted.
+    nbest_index: Option<u8>,
 }
 
 impl Candidate {
@@ -45,7 +49,7 @@ impl Candidate {
         consumed_bytes: usize,
         cost: Cost,
         token: Option<PhraseToken>,
-        nbest_index: u8,
+        nbest_index: Option<u8>,
     ) -> Self {
         Self {
             text,
@@ -110,6 +114,19 @@ impl Candidate {
     /// duplicate without renumbering.
     #[must_use]
     pub const fn nbest_index(&self) -> u8 {
+        match self.nbest_index {
+            Some(rank) => rank,
+            None => 0,
+        }
+    }
+
+    /// The tail rank of the n-best row this candidate is, or `None` when it
+    /// is not a row.
+    ///
+    /// The selection record indexes `Session`'s n-best rows by this rank —
+    /// never by list position, which the NBEST-wins dedup can shift.
+    #[must_use]
+    pub const fn nbest_row(&self) -> Option<u8> {
         self.nbest_index
     }
 }
@@ -173,7 +190,7 @@ mod tests {
                 5,
                 -12,
                 None,
-                0,
+                None,
             ),
             Candidate::new(
                 "\u{4f60}".to_owned(),
@@ -182,7 +199,7 @@ mod tests {
                 2,
                 -7,
                 Some(PhraseToken::new(3)),
-                0,
+                None,
             ),
         ])
     }
