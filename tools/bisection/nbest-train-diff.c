@@ -6,12 +6,12 @@
  * prints the n-best sentence surface at each stage, so the two libraries'
  * logs can be diffed. Two seams share this driver:
  *
- *   selection record (sentence-surface.md §7) — training (你 → 浩) rounds
+ *   selection record (sentence-surface.md §8) — training (你 → 浩) rounds
  *   walks the NBEST-wins dedup: after one seed the pair enters the tails
  *   and only its ROW candidate is choosable, so the export lines prove the
  *   chosen row's own token path landed (你浩 doubling, never a 你好 pile).
  *
- *   user-merged step costs (§8, pending) — the probe blocks below show
+ *   user-merged step costs (§9, pending) — the probe blocks below show
  *   whether trained user grams move the C-ABI n-best rows like the
  *   oracle's; compare the full logs once that seam lands.
  *
@@ -392,7 +392,7 @@ int main(int argc, char **argv) {
     /* The user-only pair trains once by default. After one seed the pair
      * enters the n-best tails and its own NORMAL candidate is deduped away
      * (NBEST wins), so every later round chooses the pair's ROW — the exact
-     * selection-record path fixed in sentence-surface.md §7. Raise the
+     * selection-record path fixed in sentence-surface.md §8. Raise the
      * count to stress the row choose under reselection doubling. */
     int user_rounds = 1;
     if (getenv("NBESTTRAINDIFF_USER_ROUNDS"))

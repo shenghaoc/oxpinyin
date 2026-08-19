@@ -9,11 +9,11 @@
 # n-best ROW from round 2 on (NBEST-wins dedup shadows its NORMAL
 # candidate), so a wrong selection record piles seeds onto 你→好 instead of
 # doubling 你→浩 — the divergence this runner guards
-# (docs/findings/sentence-surface.md §7).
+# (docs/findings/sentence-surface.md §8).
 #
 # Only the export lines are compared: the probe blocks also print the
 # C-ABI sentence surface, whose user-merged step costs are a separate,
-# still-open seam (§8). Compare the full logs once that lands.
+# still-open seam (§9). Compare the full logs once that lands.
 #
 # Env-gated on the pin-built oracle like the train diff
 # (PINYIN_ORACLE_PREFIX, default $HOME/.local/opt/pinyin-oracle) and on a
