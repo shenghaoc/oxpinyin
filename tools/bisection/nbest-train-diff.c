@@ -43,6 +43,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <dirent.h>
 #include <dlfcn.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -195,6 +196,27 @@ static void rm_rf(const char *dir) {
         closedir(d);
     }
     rmdir(dir);
+}
+
+/* Reads a rounds env var into `*out`, rejecting everything atoi would
+ * silently accept: empty values, trailing text ("3junk"), conversion
+ * errors, overflow, and anything outside 1..8. Unset keeps the caller's
+ * default. */
+static int parse_rounds_env(const char *name, int *out) {
+    const char *value = getenv(name);
+    if (!value)
+        return 0;
+    char *end = NULL;
+    errno = 0;
+    long parsed = strtol(value, &end, 10);
+    if (value[0] == '\0' || *end != '\0' || errno != 0 ||
+        parsed < 1 || parsed > 8) {
+        fprintf(stderr, "%s must be an integer in 1..8, got \"%s\"\n",
+                name, value);
+        return 1;
+    }
+    *out = (int)parsed;
+    return 0;
 }
 
 /* Parses `input` and requires it to consume exactly `expect` bytes — a
@@ -383,24 +405,16 @@ int main(int argc, char **argv) {
     }
 
     int rounds = 3;
-    if (getenv("NBESTTRAINDIFF_ROUNDS"))
-        rounds = atoi(getenv("NBESTTRAINDIFF_ROUNDS"));
-    if (rounds < 1 || rounds > 8) {
-        fprintf(stderr, "NBESTTRAINDIFF_ROUNDS must be in 1..8\n");
+    if (parse_rounds_env("NBESTTRAINDIFF_ROUNDS", &rounds))
         return 1;
-    }
     /* The user-only pair trains once by default. After one seed the pair
      * enters the n-best tails and its own NORMAL candidate is deduped away
      * (NBEST wins), so every later round chooses the pair's ROW — the exact
      * selection-record path fixed in sentence-surface.md §8. Raise the
      * count to stress the row choose under reselection doubling. */
     int user_rounds = 1;
-    if (getenv("NBESTTRAINDIFF_USER_ROUNDS"))
-        user_rounds = atoi(getenv("NBESTTRAINDIFF_USER_ROUNDS"));
-    if (user_rounds < 1 || user_rounds > 8) {
-        fprintf(stderr, "NBESTTRAINDIFF_USER_ROUNDS must be in 1..8\n");
+    if (parse_rounds_env("NBESTTRAINDIFF_USER_ROUNDS", &user_rounds))
         return 1;
-    }
 
     void *handle = dlopen(argv[1], RTLD_NOW);
     if (!handle) {
