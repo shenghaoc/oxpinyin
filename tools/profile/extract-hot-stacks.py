@@ -23,6 +23,33 @@ def load_profile(path: Path) -> dict:
         return json.load(handle)
 
 
+def column(table: object, name: str) -> list:
+    """Direct column arrays win; otherwise unpack Firefox `{schema, data}` rows.
+
+    Processed/samply profiles store `stack`/`prefix`/`frame` as parallel
+    arrays. Raw Gecko tables store the same fields as `schema` indexes into
+    row-oriented `data`. Prefer the arrays when present so existing
+    column-oriented counting is unchanged.
+    """
+    if not isinstance(table, dict):
+        return []
+    direct = table.get(name)
+    if isinstance(direct, list):
+        return direct
+    schema = table.get("schema")
+    index = schema.get(name) if isinstance(schema, dict) else None
+    if not isinstance(index, int):
+        return []
+    rows = table.get("data") or []
+    out: list = []
+    for row in rows:
+        if isinstance(row, list) and 0 <= index < len(row):
+            out.append(row[index])
+        else:
+            out.append(None)
+    return out
+
+
 def string_of(thread: dict, index: int) -> str:
     table = thread.get("stringArray") or thread.get("stringTable") or []
     if 0 <= index < len(table):
@@ -33,20 +60,20 @@ def string_of(thread: dict, index: int) -> str:
 def frame_name(thread: dict, frame_index: int) -> str:
     frames = thread.get("frameTable") or {}
     funcs = thread.get("funcTable") or {}
-    func_col = frames.get("func") or []
+    func_col = column(frames, "func")
     if not (0 <= frame_index < len(func_col)):
         return f"frame:{frame_index}"
     func_index = func_col[frame_index]
-    name_col = funcs.get("name") or []
-    if not (0 <= func_index < len(name_col)):
+    name_col = column(funcs, "name")
+    if not isinstance(func_index, int) or not (0 <= func_index < len(name_col)):
         return f"func:{func_index}"
     return string_of(thread, name_col[func_index])
 
 
 def walk_stack(thread: dict, stack_index: int, limit: int = 12) -> tuple[str, ...]:
     stacks = thread.get("stackTable") or {}
-    prefix_col = stacks.get("prefix") or []
-    frame_col = stacks.get("frame") or []
+    prefix_col = column(stacks, "prefix")
+    frame_col = column(stacks, "frame")
     frames: list[str] = []
     seen: set[int] = set()
     current = stack_index
@@ -70,8 +97,7 @@ def hottest(
 ) -> tuple[int, list[tuple[int, tuple[str, ...]]]]:
     counts: Counter[tuple[str, ...]] = Counter()
     for thread in profile.get("threads") or []:
-        samples = thread.get("samples") or {}
-        stack_col = samples.get("stack") or []
+        stack_col = column(thread.get("samples") or {}, "stack")
         for stack_index in stack_col:
             if stack_index is None or stack_index < 0:
                 continue
@@ -79,7 +105,51 @@ def hottest(
     return sum(counts.values()), counts.most_common(top_n)
 
 
+def _self_test() -> int:
+    # Column-oriented (processed / samply): unchanged counting.
+    column_thread = {
+        "stringArray": ["root", "leaf"],
+        "samples": {"stack": [1, 1]},
+        "stackTable": {"prefix": [None, 0], "frame": [0, 1]},
+        "frameTable": {"func": [0, 1]},
+        "funcTable": {"name": [0, 1]},
+    }
+    # Row-oriented (raw Firefox): schema + data.
+    row_thread = {
+        "stringTable": ["root", "leaf"],
+        "samples": {"schema": {"stack": 0}, "data": [[1], [1]]},
+        "stackTable": {"schema": {"prefix": 0, "frame": 1}, "data": [[None, 0], [0, 1]]},
+        "frameTable": {"schema": {"func": 0}, "data": [[0], [1]]},
+        "funcTable": {"schema": {"name": 0}, "data": [[0], [1]]},
+    }
+    mixed = {
+        "threads": [
+            column_thread,
+            row_thread,
+            # Direct columns present: ignore leftover schema/data.
+            {
+                "stringArray": ["only"],
+                "samples": {
+                    "stack": [0],
+                    "schema": {"stack": 0},
+                    "data": [[99], [99]],
+                },
+                "stackTable": {"prefix": [None], "frame": [0]},
+                "frameTable": {"func": [0]},
+                "funcTable": {"name": [0]},
+            },
+        ]
+    }
+    total, rows = hottest(mixed)
+    assert total == 5, total
+    assert rows, rows
+    print("self-test ok")
+    return 0
+
+
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
+        return _self_test()
     default = Path("target/profile/w8-cycle.profile.json.gz")
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else default
     if not path.is_file():
