@@ -272,10 +272,10 @@ impl Dictionary for SharedDict {
 /// `Arc` wrapper so instances share the context's language model without
 /// a `'static` borrow.
 ///
-/// The optional [`UserStore`] is the §5 overlay: `score` and
-/// `unigram_freq` saturating-add its counts onto the system model before
-/// the frozen λ blend. `None` (no user dir) and an empty store are both
-/// identity.
+/// The optional [`UserStore`] is the §5 overlay: `score`, `unigram_freq`,
+/// and `nbest_step_costs` saturating-add its counts onto the system model
+/// before the frozen λ blend. `None` (no user dir) and an empty store are
+/// both identity.
 #[derive(Clone)]
 pub(crate) struct SharedLm {
     inner: Arc<BigramLanguageModel>,
@@ -284,16 +284,12 @@ pub(crate) struct SharedLm {
 }
 
 impl SharedLm {
-    fn user_delta(
-        &self,
-        history: &[PhraseToken],
-        token: &PhraseToken,
-    ) -> Result<UserCountDelta, LmError> {
+    fn user_delta(&self, prev: Option<u32>, token: u32) -> Result<UserCountDelta, LmError> {
         let Some(store) = self.user.as_ref() else {
             return Ok(UserCountDelta::ZERO);
         };
         store
-            .count_delta(history.last().map(|t| t.value()), token.value())
+            .count_delta(prev, token)
             .map_err(|error| LmError::User(error.to_string()))
     }
 }
@@ -308,7 +304,7 @@ impl LanguageModel for SharedLm {
         token: &Self::Token,
         edge_cost: Cost,
     ) -> Result<Cost, Self::Error> {
-        let delta = self.user_delta(history, token)?;
+        let delta = self.user_delta(history.last().map(|prev| prev.value()), token.value())?;
         self.inner
             .score_with_user_delta(history, token, edge_cost, delta)
     }
@@ -361,24 +357,13 @@ impl LanguageModel for SharedLm {
         Ok(addons.unigram_total())
     }
 
-    /// The §5 user overlay, folded in: this override replaces the trait
-    /// default's empty costs with the `BigramLanguageModel`'s, merged with
-    /// `UserStore::count_delta` — the same overlay `score` takes — so C-ABI
-    /// `guess_sentence` rows train on user counts as well.
+    /// The §5 overlay `score` takes, forwarded into the n-best step costs.
     fn nbest_step_costs(
         &self,
         prev: &Self::Token,
         token: &Self::Token,
     ) -> Result<NbestStepCosts, Self::Error> {
-        // Upstream's n-best runs on the same user-aware PhoneticLookup as
-        // `score` (merge_single_gram before the presence gate), so the step
-        // costs take the same §5 overlay — not the system-only counts.
-        let delta = match self.user.as_ref() {
-            None => UserCountDelta::ZERO,
-            Some(store) => store
-                .count_delta(Some(prev.value()), token.value())
-                .map_err(|error| LmError::User(error.to_string()))?,
-        };
+        let delta = self.user_delta(Some(prev.value()), token.value())?;
         self.inner
             .nbest_step_costs_with_user_delta(prev, token, delta)
     }

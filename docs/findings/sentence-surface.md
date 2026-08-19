@@ -419,15 +419,18 @@ denominators, before the observed-successor gate.
   user)` recomputes both branches over the merged counts: the unigram
   term over `system + user.unigram_delta` / `system_total +
   user.unigram_total_delta`, the blended branch over
-  `merge_bigram(system_row, user.bigram_count, user.bigram_total)` —
-  merged *before* the count > 0 presence gate, so a user-only pair (no
-  system row, trained count) produces a blended cost whose denominator
-  is the merged (here: user) total instead of falling through to the
-  unigram branch. The trait method delegates with
+  `merged_transition` (system load then `merge_bigram`) — merged
+  *before* the count > 0 presence gate. A user-trained successor with
+  no system count therefore blends instead of falling through to the
+  unigram branch. Two miss shapes: a prev with no system row at all
+  (denominator is the user total), and a prev that has a system row
+  but not this next token — the 你→浩 shape (denominator is
+  `system_row_total + user_total`). The trait method delegates with
   `UserCountDelta::ZERO`, bit-identical to the pre-change body.
-- `SharedLm::nbest_step_costs` computes `count_delta(Some(prev), token)`
-  and forwards — the same overlay `score_with_user_delta` takes. Nothing
-  in the trellis, comparator, or the §8 selection record changed.
+- `SharedLm::nbest_step_costs` takes the same `user_delta` overlay
+  `score` takes (`count_delta(Some(prev), token)`) and forwards.
+  Nothing in the trellis, comparator, or the §8 selection record
+  changed.
 
 **Evidence.**
 
@@ -436,9 +439,12 @@ denominators, before the observed-successor gate.
   an existing row, missing prev, no unigram table. The augmented delta
   test asserts numerator *and* denominator merge (the blended cost
   strictly cheapens). `nbest_user_only_pair_produces_a_blended_step`
-  asserts the user-only gram blends over the user total and undercuts
-  the unigram-only branch — the system-only answer for that pair has no
-  blended step at all.
+  asserts a prev with no system row blends over the user total.
+  `nbest_user_successor_on_existing_row_blends_over_merged_total` is the
+  你→浩 shape: 你's system row exists, the successor is count-0 in it,
+  and the blended denominator is `system_row_total + user_total`, not
+  the user total alone. Both user-trained shapes undercut the
+  unigram-only branch; the system-only answer has no blended step.
 - C ABI (`tools/bisection/run-nbest-train-diff.sh`, matched model20
   tables, pin-built oracle): the runner now diffs the **full logs** —
   probe surfaces included, not just the export triples. That widening is
