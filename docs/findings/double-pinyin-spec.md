@@ -118,14 +118,21 @@ parser-produced key through the existing session by joining the keys as
 tone-less full pinyin (`ni'hao`) and calling `Session::type_pinyin`. That
 is the same path full pinyin uses.
 
-On the live construction (real unigrams from `interpolation2.text`)
-`collect_sentence` does not run. `CandidateKind::Sentence` / ABI
-`NBEST_MATCH` is therefore absent for full pinyin and for every scheme
-encoding of the same utterance — on main and on this branch. Oracle
-`pinyin_guess_sentence` still prepends n-best rows (`你好` on `nihao`;
-`你好中国` on `nihaozhongguo`). That is a larger pre-existing full-pinyin
-gap than the NBEST-vs-NORMAL tag on a coincident phrase. It is not W11
-(W11 owns phrase-index union and prediction). This PR does not close it.
+W14 (`docs/findings/sentence-surface.md`) landed the n-best trellis in the
+engine — the direct-Session parity is 488/385/370 on the pinned model —
+but the C ABI path still shows `CandidateKind::Sentence` / ABI
+`NBEST_MATCH` absent for full pinyin **and** for every scheme encoding.
+The re-measure in §6 of the sentence-surface note tracks the reason to a
+single seam: `SharedLm`
+(`crates/oxpinyin-capi/src/state.rs:301-363`) does not override
+`nbest_step_costs`, so the trait's default returns
+`Ok(NbestStepCosts::default())` and the trellis yields no rows for any C
+ABI caller. `pinyin_guess_sentence` still returns `true`;
+`pinyin_get_sentence` returns `false` / `(null)` (the W14 decoded-or-
+nothing gate over an empty row set). This is a C ABI wiring gap, not a
+scheme problem, and closing it belongs upstream of the scheme paths.
+Oracle `pinyin_guess_sentence` prepends n-best rows (`你好` on `nihao`;
+`你好中国` on `nihaozhongguo`).
 
 A later pass can replace the transformed-spelling shortcut with a
 scheme-edge construction that emits each parser key as a single `Exact`
