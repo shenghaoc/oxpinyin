@@ -108,6 +108,7 @@ fn zhuyin_scheme(value: i32) -> Option<ZhuyinScheme> {
         5 => Some(ZhuyinScheme::Eten),
         6 => Some(ZhuyinScheme::Eten26),
         8 => Some(ZhuyinScheme::HsuDvorak),
+        9 => Some(ZhuyinScheme::DachenCp26),
         _ => None,
     }
 }
