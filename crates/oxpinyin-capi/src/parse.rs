@@ -102,6 +102,9 @@ fn parse_double_more(instance: *mut PinyinInstance, text: &str) -> usize {
 fn zhuyin_scheme(value: i32) -> Option<ZhuyinScheme> {
     match value {
         1 => Some(ZhuyinScheme::Standard),
+        3 => Some(ZhuyinScheme::Ibm),
+        4 => Some(ZhuyinScheme::Ginyieh),
+        5 => Some(ZhuyinScheme::Eten),
         _ => None,
     }
 }

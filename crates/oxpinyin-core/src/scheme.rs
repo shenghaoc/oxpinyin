@@ -4,10 +4,11 @@
 //! double-pinyin tables below are direct ports of the generated upstream
 //! header `src/storage/double_pinyin_table.h` at libpinyin `2.11.91`
 //! (`0c5e80e1200f84fab185d1c5bde458b770a0636c`), cited per table in
-//! `docs/findings/double-pinyin-spec.md`. The STANDARD Zhuyin keyboard and
-//! tone tables come from `src/storage/zhuyin_table.h`; the Zhuyin index —
-//! the pinned 1493-row `zhuyin_index` with its shuffle and incomplete
-//! flag gating — lives in [`crate::zhuyin_map`].
+//! `docs/findings/double-pinyin-spec.md`. The Simple Zhuyin keyboards
+//! (STANDARD, IBM, GINYIEH, ETEN) and their tone tables come from
+//! `src/storage/zhuyin_table.h`; the Zhuyin index — the pinned 1493-row
+//! `zhuyin_index` with its shuffle and incomplete flag gating — lives in
+//! [`crate::zhuyin_map`].
 
 use crate::SyllableKey;
 use crate::options::{
@@ -894,59 +895,219 @@ impl ZhuyinParse {
     }
 }
 
-fn standard_symbol(byte: u8) -> Option<&'static str> {
-    match byte {
-        b',' => Some("ㄝ"),
-        b'-' => Some("ㄦ"),
-        b'.' => Some("ㄡ"),
-        b'/' => Some("ㄥ"),
-        b'0' => Some("ㄢ"),
-        b'1' => Some("ㄅ"),
-        b'2' => Some("ㄉ"),
-        b'5' => Some("ㄓ"),
-        b'8' => Some("ㄚ"),
-        b'9' => Some("ㄞ"),
-        b';' => Some("ㄤ"),
-        b'a' => Some("ㄇ"),
-        b'b' => Some("ㄖ"),
-        b'c' => Some("ㄏ"),
-        b'd' => Some("ㄎ"),
-        b'e' => Some("ㄍ"),
-        b'f' => Some("ㄑ"),
-        b'g' => Some("ㄕ"),
-        b'h' => Some("ㄘ"),
-        b'i' => Some("ㄛ"),
-        b'j' => Some("ㄨ"),
-        b'k' => Some("ㄜ"),
-        b'l' => Some("ㄠ"),
-        b'm' => Some("ㄩ"),
-        b'n' => Some("ㄙ"),
-        b'o' => Some("ㄟ"),
-        b'p' => Some("ㄣ"),
-        b'q' => Some("ㄆ"),
-        b'r' => Some("ㄐ"),
-        b's' => Some("ㄋ"),
-        b't' => Some("ㄔ"),
-        b'u' => Some("ㄧ"),
-        b'v' => Some("ㄒ"),
-        b'w' => Some("ㄊ"),
-        b'x' => Some("ㄌ"),
-        b'y' => Some("ㄗ"),
-        b'z' => Some("ㄈ"),
-        _ => None,
+/// One Simple keyboard's source tables: key-to-symbol and key-to-tone
+/// rows ported verbatim from the pinned `zhuyin_table.h`. Linear scan by
+/// key, exactly like upstream's `search_chewing_symbols` /
+/// `search_chewing_tones` ("we only have < 50 items").
+#[derive(Clone, Copy)]
+struct SimpleTables {
+    /// `(key, zhuyin symbol)` rows.
+    symbols: &'static [(u8, &'static str)],
+    /// `(key, tone number)` rows.
+    tones: &'static [(u8, u8)],
+}
+
+impl SimpleTables {
+    /// The symbol string one key maps to, if it is a symbol key.
+    fn symbol(&self, byte: u8) -> Option<&'static str> {
+        self.symbols
+            .iter()
+            .find(|(key, _)| *key == byte)
+            .map(|(_, symbol)| *symbol)
+    }
+
+    /// The tone one key spells, if it is a tone key.
+    fn tone(&self, byte: u8) -> Option<u8> {
+        self.tones
+            .iter()
+            .find(|(key, _)| *key == byte)
+            .map(|(_, tone)| *tone)
     }
 }
 
-fn standard_tone(byte: u8) -> Option<u8> {
-    match byte {
-        b' ' => Some(1),
-        b'3' => Some(3),
-        b'4' => Some(4),
-        b'6' => Some(2),
-        b'7' => Some(5),
-        _ => None,
-    }
-}
+/// Standard keyboard symbol table, `chewing_standard_symbols`
+/// (`src/storage/zhuyin_table.h:9`).
+const STANDARD_SYMBOLS: &[(u8, &str)] = &[
+    (b',', "ㄝ"),
+    (b'-', "ㄦ"),
+    (b'.', "ㄡ"),
+    (b'/', "ㄥ"),
+    (b'0', "ㄢ"),
+    (b'1', "ㄅ"),
+    (b'2', "ㄉ"),
+    (b'5', "ㄓ"),
+    (b'8', "ㄚ"),
+    (b'9', "ㄞ"),
+    (b';', "ㄤ"),
+    (b'a', "ㄇ"),
+    (b'b', "ㄖ"),
+    (b'c', "ㄏ"),
+    (b'd', "ㄎ"),
+    (b'e', "ㄍ"),
+    (b'f', "ㄑ"),
+    (b'g', "ㄕ"),
+    (b'h', "ㄘ"),
+    (b'i', "ㄛ"),
+    (b'j', "ㄨ"),
+    (b'k', "ㄜ"),
+    (b'l', "ㄠ"),
+    (b'm', "ㄩ"),
+    (b'n', "ㄙ"),
+    (b'o', "ㄟ"),
+    (b'p', "ㄣ"),
+    (b'q', "ㄆ"),
+    (b'r', "ㄐ"),
+    (b's', "ㄋ"),
+    (b't', "ㄔ"),
+    (b'u', "ㄧ"),
+    (b'v', "ㄒ"),
+    (b'w', "ㄊ"),
+    (b'x', "ㄌ"),
+    (b'y', "ㄗ"),
+    (b'z', "ㄈ"),
+];
+
+/// Standard keyboard tone table, `chewing_standard_tones`
+/// (`src/storage/zhuyin_table.h:48`).
+const STANDARD_TONES: &[(u8, u8)] = &[(b' ', 1), (b'3', 3), (b'4', 4), (b'6', 2), (b'7', 5)];
+
+/// IBM keyboard symbol table, `chewing_ibm_symbols`
+/// (`src/storage/zhuyin_table.h:159`).
+const IBM_SYMBOLS: &[(u8, &str)] = &[
+    (b'-', "ㄏ"),
+    (b'0', "ㄎ"),
+    (b'1', "ㄅ"),
+    (b'2', "ㄆ"),
+    (b'3', "ㄇ"),
+    (b'4', "ㄈ"),
+    (b'5', "ㄉ"),
+    (b'6', "ㄊ"),
+    (b'7', "ㄋ"),
+    (b'8', "ㄌ"),
+    (b'9', "ㄍ"),
+    (b';', "ㄠ"),
+    (b'a', "ㄧ"),
+    (b'b', "ㄥ"),
+    (b'c', "ㄣ"),
+    (b'd', "ㄩ"),
+    (b'e', "ㄒ"),
+    (b'f', "ㄚ"),
+    (b'g', "ㄛ"),
+    (b'h', "ㄜ"),
+    (b'i', "ㄗ"),
+    (b'j', "ㄝ"),
+    (b'k', "ㄞ"),
+    (b'l', "ㄟ"),
+    (b'n', "ㄦ"),
+    (b'o', "ㄘ"),
+    (b'p', "ㄙ"),
+    (b'q', "ㄐ"),
+    (b'r', "ㄓ"),
+    (b's', "ㄨ"),
+    (b't', "ㄔ"),
+    (b'u', "ㄖ"),
+    (b'v', "ㄤ"),
+    (b'w', "ㄑ"),
+    (b'x', "ㄢ"),
+    (b'y', "ㄕ"),
+    (b'z', "ㄡ"),
+];
+
+/// IBM keyboard tone table, `chewing_ibm_tones`
+/// (`src/storage/zhuyin_table.h:198`).
+const IBM_TONES: &[(u8, u8)] = &[(b' ', 1), (b',', 3), (b'.', 4), (b'/', 5), (b'm', 2)];
+
+/// Gin-Yieh keyboard symbol table, `chewing_ginyieh_symbols`
+/// (`src/storage/zhuyin_table.h:59`).
+const GINYIEH_SYMBOLS: &[(u8, &str)] = &[
+    (b'\'', "ㄥ"),
+    (b',', "ㄚ"),
+    (b'-', "ㄣ"),
+    (b'.', "ㄞ"),
+    (b'/', "ㄢ"),
+    (b'0', "ㄟ"),
+    (b'2', "ㄅ"),
+    (b'3', "ㄉ"),
+    (b'6', "ㄓ"),
+    (b'8', "ㄧ"),
+    (b'9', "ㄛ"),
+    (b';', "ㄡ"),
+    (b'=', "ㄦ"),
+    (b'[', "ㄤ"),
+    (b'b', "ㄒ"),
+    (b'c', "ㄌ"),
+    (b'd', "ㄋ"),
+    (b'e', "ㄊ"),
+    (b'f', "ㄎ"),
+    (b'g', "ㄑ"),
+    (b'h', "ㄕ"),
+    (b'i', "ㄨ"),
+    (b'j', "ㄘ"),
+    (b'k', "ㄩ"),
+    (b'l', "ㄝ"),
+    (b'm', "ㄙ"),
+    (b'n', "ㄖ"),
+    (b'o', "ㄜ"),
+    (b'p', "ㄠ"),
+    (b'r', "ㄍ"),
+    (b's', "ㄇ"),
+    (b't', "ㄐ"),
+    (b'u', "ㄗ"),
+    (b'v', "ㄏ"),
+    (b'w', "ㄆ"),
+    (b'x', "ㄈ"),
+    (b'y', "ㄔ"),
+];
+
+/// Gin-Yieh keyboard tone table, `chewing_ginyieh_tones`
+/// (`src/storage/zhuyin_table.h:98`).
+const GINYIEH_TONES: &[(u8, u8)] = &[(b' ', 1), (b'1', 5), (b'a', 3), (b'q', 2), (b'z', 4)];
+
+/// Eten keyboard symbol table, `chewing_eten_symbols`
+/// (`src/storage/zhuyin_table.h:109`).
+const ETEN_SYMBOLS: &[(u8, &str)] = &[
+    (b'\'', "ㄘ"),
+    (b',', "ㄓ"),
+    (b'-', "ㄥ"),
+    (b'.', "ㄔ"),
+    (b'/', "ㄕ"),
+    (b'0', "ㄤ"),
+    (b'7', "ㄑ"),
+    (b'8', "ㄢ"),
+    (b'9', "ㄣ"),
+    (b';', "ㄗ"),
+    (b'=', "ㄦ"),
+    (b'a', "ㄚ"),
+    (b'b', "ㄅ"),
+    (b'c', "ㄒ"),
+    (b'd', "ㄉ"),
+    (b'e', "ㄧ"),
+    (b'f', "ㄈ"),
+    (b'g', "ㄐ"),
+    (b'h', "ㄏ"),
+    (b'i', "ㄞ"),
+    (b'j', "ㄖ"),
+    (b'k', "ㄎ"),
+    (b'l', "ㄌ"),
+    (b'm', "ㄇ"),
+    (b'n', "ㄋ"),
+    (b'o', "ㄛ"),
+    (b'p', "ㄆ"),
+    (b'q', "ㄟ"),
+    (b'r', "ㄜ"),
+    (b's', "ㄙ"),
+    (b't', "ㄊ"),
+    (b'u', "ㄩ"),
+    (b'v', "ㄍ"),
+    (b'w', "ㄝ"),
+    (b'x', "ㄨ"),
+    (b'y', "ㄡ"),
+    (b'z', "ㄠ"),
+];
+
+/// Eten keyboard tone table, `chewing_eten_tones`
+/// (`src/storage/zhuyin_table.h:148`).
+const ETEN_TONES: &[(u8, u8)] = &[(b' ', 1), (b'1', 5), (b'2', 2), (b'3', 3), (b'4', 4)];
 
 fn tone_symbol(tone: u8) -> &'static str {
     match tone {
@@ -993,11 +1154,39 @@ fn search_zhuyin_index(zhuyin: &str, options: u32) -> Option<(SyllableKey, &'sta
 
 /// Stateless parser for one Zhuyin keyboard.
 ///
-/// The first W13 pass implements STANDARD only. Unsupported schemes parse
-/// nothing and their setters report `false`.
+/// The Simple keyboards (STANDARD, IBM, GINYIEH, ETEN) are implemented
+/// table-driven over the shared [`crate::zhuyin_map`] index; Discrete,
+/// CP26, and the STANDARD_DVORAK abort slot parse nothing and their
+/// setters report `false`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ZhuyinParser {
     scheme: ZhuyinScheme,
+}
+
+impl ZhuyinScheme {
+    /// The compiled Simple tables for this scheme, or `None` for the
+    /// Discrete/CP26 keyboards and the dvorak abort slot.
+    fn simple_tables(self) -> Option<SimpleTables> {
+        match self {
+            Self::Standard => Some(SimpleTables {
+                symbols: STANDARD_SYMBOLS,
+                tones: STANDARD_TONES,
+            }),
+            Self::Ibm => Some(SimpleTables {
+                symbols: IBM_SYMBOLS,
+                tones: IBM_TONES,
+            }),
+            Self::Ginyieh => Some(SimpleTables {
+                symbols: GINYIEH_SYMBOLS,
+                tones: GINYIEH_TONES,
+            }),
+            Self::Eten => Some(SimpleTables {
+                symbols: ETEN_SYMBOLS,
+                tones: ETEN_TONES,
+            }),
+            _ => None,
+        }
+    }
 }
 
 impl ZhuyinParser {
@@ -1015,9 +1204,13 @@ impl ZhuyinParser {
         Self { scheme }
     }
 
-    /// Selects a scheme. Only STANDARD is implemented in the first pass.
+    /// Selects a scheme. The Simple keyboards (STANDARD, IBM, GINYIEH,
+    /// ETEN) switch tables the way upstream's `set_scheme` does
+    /// (`src/storage/zhuyin_parser2.cpp:271-300`) minus the
+    /// STANDARD_DVORAK fallthrough-abort; everything else reports
+    /// `false` and keeps the current scheme.
     pub fn set_scheme(&mut self, scheme: ZhuyinScheme) -> bool {
-        if scheme != ZhuyinScheme::Standard {
+        if scheme.simple_tables().is_none() {
             return false;
         }
         self.scheme = scheme;
@@ -1033,23 +1226,25 @@ impl ZhuyinParser {
     /// Whether `key` is part of the current keyboard.
     #[must_use]
     pub fn in_scheme(&self, key: u8, use_tone: bool) -> bool {
-        self.scheme == ZhuyinScheme::Standard
-            && (standard_symbol(key).is_some() || (use_tone && standard_tone(key).is_some()))
+        let Some(tables) = self.scheme.simple_tables() else {
+            return false;
+        };
+        tables.symbol(key).is_some() || (use_tone && tables.tone(key).is_some())
     }
 
     /// The Zhuyin symbol(s) mapped by one keystroke.
     ///
-    /// STANDARD has at most one symbol per key; a tone key returns its tone
-    /// mark, matching `pinyin_in_chewing_keyboard`.
+    /// Simple keyboards have at most one symbol per key; a tone key
+    /// returns its tone mark, matching `pinyin_in_chewing_keyboard`.
     #[must_use]
     pub fn symbols_for(&self, key: u8, use_tone: bool) -> Vec<String> {
-        if self.scheme != ZhuyinScheme::Standard {
+        let Some(tables) = self.scheme.simple_tables() else {
             return Vec::new();
-        }
-        if let Some(symbol) = standard_symbol(key) {
+        };
+        if let Some(symbol) = tables.symbol(key) {
             return vec![symbol.to_owned()];
         }
-        if use_tone && let Some(tone) = standard_tone(key) {
+        if use_tone && let Some(tone) = tables.tone(key) {
             return vec![tone_symbol(tone).to_owned()];
         }
         Vec::new()
@@ -1066,9 +1261,9 @@ impl ZhuyinParser {
     /// or's into the option word (`:221`).
     #[must_use]
     pub fn parse(&self, input: &[u8], use_tone: bool, allow_incomplete: bool) -> ZhuyinParse {
-        if self.scheme != ZhuyinScheme::Standard {
+        let Some(tables) = self.scheme.simple_tables() else {
             return ZhuyinParse::default();
-        }
+        };
 
         let options = if allow_incomplete {
             ZHUYIN_CORRECT_SHUFFLE | ZHUYIN_INCOMPLETE
@@ -1079,7 +1274,7 @@ impl ZhuyinParser {
         let maximum_len = input
             .iter()
             .take_while(|&&byte| {
-                standard_symbol(byte).is_some() || (use_tone && standard_tone(byte).is_some())
+                tables.symbol(byte).is_some() || (use_tone && tables.tone(byte).is_some())
             })
             .count();
 
@@ -1090,9 +1285,12 @@ impl ZhuyinParser {
             let try_len = remaining.len().min(4);
             let mut matched = None;
             for len in (1..=try_len).rev() {
-                if let Some((key, zhuyin, tone)) =
-                    parse_one_zhuyin_key(&input[parsed_len..parsed_len + len], use_tone, options)
-                {
+                if let Some((key, zhuyin, tone)) = parse_one_zhuyin_key(
+                    &input[parsed_len..parsed_len + len],
+                    use_tone,
+                    options,
+                    tables,
+                ) {
                     matched = Some((key, zhuyin, tone, len));
                     break;
                 }
@@ -1132,12 +1330,13 @@ fn parse_one_zhuyin_key(
     input: &[u8],
     use_tone: bool,
     options: u32,
+    tables: SimpleTables,
 ) -> Option<(SyllableKey, String, u8)> {
     let mut symbol_len = input.len();
     let mut tone = 0;
     if use_tone
         && symbol_len > 0
-        && let Some(value) = standard_tone(input[symbol_len - 1])
+        && let Some(value) = tables.tone(input[symbol_len - 1])
     {
         tone = value;
         symbol_len -= 1;
@@ -1148,7 +1347,7 @@ fn parse_one_zhuyin_key(
 
     let mut zhuyin = String::new();
     for byte in &input[..symbol_len] {
-        let symbol = standard_symbol(*byte)?;
+        let symbol = tables.symbol(*byte)?;
         zhuyin.push_str(symbol);
     }
     let (key, canonical) = search_zhuyin_index(&zhuyin, options)?;
@@ -1171,7 +1370,7 @@ fn is_valid_zhuyin(key: SyllableKey, tone: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{DoublePinyinParser, DoublePinyinScheme, ZhuyinParser};
+    use super::{DoublePinyinParser, DoublePinyinScheme, ZhuyinParser, ZhuyinScheme};
 
     #[test]
     fn default_scheme_is_ms() {
@@ -1254,39 +1453,41 @@ mod tests {
         assert_eq!(parser.parse(b" ", true, false).consumed(), 0);
     }
 
-    /// The STANDARD key spelling one zhuyin symbol maps to, derived from
-    /// the symbol table rather than hand-authored (the same rule the
+    /// The key one zhuyin symbol maps to on `scheme`'s keyboard, derived
+    /// from the symbol table rather than hand-authored (the same rule the
     /// chewing-diff corpus applies).
-    fn key_for_symbol(symbol: &str) -> u8 {
-        for byte in u8::MIN..=u8::MAX {
-            if super::standard_symbol(byte) == Some(symbol) {
-                return byte;
+    fn key_for_symbol(scheme: ZhuyinScheme, symbol: &str) -> u8 {
+        let tables = scheme.simple_tables().expect("Simple keyboard");
+        for (key, candidate) in tables.symbols {
+            if *candidate == symbol {
+                return *key;
             }
         }
-        panic!("no STANDARD key spells {symbol:?}");
+        panic!("no {scheme:?} key spells {symbol:?}");
     }
 
-    fn keystrokes(symbols: &[&str]) -> Vec<u8> {
+    fn keystrokes(scheme: ZhuyinScheme, symbols: &[&str]) -> Vec<u8> {
         symbols
             .iter()
-            .map(|symbol| key_for_symbol(symbol))
+            .map(|symbol| key_for_symbol(scheme, symbol))
             .collect()
     }
 
-    /// The STANDARD key spelling tone `tone` (1..5), derived from the tone
-    /// table like [`key_for_symbol`].
-    fn key_for_tone(tone: u8) -> u8 {
-        for byte in u8::MIN..=u8::MAX {
-            if super::standard_tone(byte) == Some(tone) {
-                return byte;
+    /// The key spelling tone `tone` (1..5) on `scheme`'s keyboard,
+    /// derived from the tone table like [`key_for_symbol`].
+    fn key_for_tone(scheme: ZhuyinScheme, tone: u8) -> u8 {
+        let tables = scheme.simple_tables().expect("Simple keyboard");
+        for (key, candidate) in tables.tones {
+            if *candidate == tone {
+                return *key;
             }
         }
-        panic!("no STANDARD key spells tone {tone}");
+        panic!("no {scheme:?} key spells tone {tone}");
     }
 
-    fn keystrokes_with_tone(symbols: &[&str], tone: u8) -> Vec<u8> {
-        let mut keys = keystrokes(symbols);
-        keys.push(key_for_tone(tone));
+    fn keystrokes_with_tone(scheme: ZhuyinScheme, symbols: &[&str], tone: u8) -> Vec<u8> {
+        let mut keys = keystrokes(scheme, symbols);
+        keys.push(key_for_tone(scheme, tone));
         keys
     }
 
@@ -1410,7 +1611,11 @@ mod tests {
         let parser = ZhuyinParser::new();
         // The SPEC's own example: ㄅㄝㄧ (shuffled ㄅㄧㄝ) is bie, and it
         // displays as the canonical spelling, like upstream's aux text.
-        let shuffled = parser.parse(&keystrokes(&["ㄅ", "ㄝ", "ㄧ"]), true, false);
+        let shuffled = parser.parse(
+            &keystrokes(ZhuyinScheme::Standard, &["ㄅ", "ㄝ", "ㄧ"]),
+            true,
+            false,
+        );
         assert_eq!(shuffled.consumed(), 3);
         assert_eq!(shuffled.full_pinyin(), "bie");
         assert_eq!(shuffled.keys()[0].zhuyin(), "ㄅㄧㄝ");
@@ -1418,7 +1623,11 @@ mod tests {
         // Every permutation of a three-symbol spelling parses.
         let canonical = ["ㄅ", "ㄧ", "ㄝ"];
         permute(&canonical, &mut |permutation: &[&str]| {
-            let parsed = parser.parse(&keystrokes(permutation), true, false);
+            let parsed = parser.parse(
+                &keystrokes(ZhuyinScheme::Standard, permutation),
+                true,
+                false,
+            );
             assert_eq!(
                 parsed.full_pinyin(),
                 "bie",
@@ -1427,11 +1636,19 @@ mod tests {
         });
 
         // A two-symbol swap: ㄧㄅ (shuffled ㄅㄧ) is bi.
-        let swapped = parser.parse(&keystrokes(&["ㄧ", "ㄅ"]), true, false);
+        let swapped = parser.parse(
+            &keystrokes(ZhuyinScheme::Standard, &["ㄧ", "ㄅ"]),
+            true,
+            false,
+        );
         assert_eq!(swapped.full_pinyin(), "bi");
 
         // Shuffle composes with tone.
-        let toned = parser.parse(&keystrokes_with_tone(&["ㄅ", "ㄝ", "ㄧ"], 4), true, false);
+        let toned = parser.parse(
+            &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄅ", "ㄝ", "ㄧ"], 4),
+            true,
+            false,
+        );
         assert_eq!(toned.full_pinyin(), "bie");
         assert_eq!(toned.keys()[0].tone(), 4);
     }
@@ -1444,20 +1661,36 @@ mod tests {
         // post-match break stops the whole parse at the two symbol keys.
         assert_eq!(
             parser
-                .parse(&keystrokes(&["ㄉ", "ㄣ"]), true, false)
+                .parse(
+                    &keystrokes(ZhuyinScheme::Standard, &["ㄉ", "ㄣ"]),
+                    true,
+                    false
+                )
                 .full_pinyin(),
             "den"
         );
-        let den4 = parser.parse(&keystrokes_with_tone(&["ㄉ", "ㄣ"], 4), true, false);
+        let den4 = parser.parse(
+            &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄉ", "ㄣ"], 4),
+            true,
+            false,
+        );
         assert_eq!(den4.consumed(), 3);
         assert_eq!(den4.full_pinyin(), "den");
-        let den1 = parser.parse(&keystrokes_with_tone(&["ㄉ", "ㄣ"], 1), true, false);
+        let den1 = parser.parse(
+            &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄉ", "ㄣ"], 1),
+            true,
+            false,
+        );
         assert_eq!(den1.consumed(), 0, "tone 1 is mask-invalid for den");
 
         // ㄥ (eng): tones 0 and 1 valid — first tone legal, unlike ㄋㄧ.
         let eng = parser.parse(b"/", true, false);
         assert_eq!(eng.full_pinyin(), "eng");
-        let eng1 = parser.parse(&keystrokes_with_tone(&["ㄥ"], 1), true, false);
+        let eng1 = parser.parse(
+            &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄥ"], 1),
+            true,
+            false,
+        );
         assert_eq!(eng1.consumed(), 2, "tone 1 is mask-valid for eng");
         assert_eq!(eng1.full_pinyin(), "eng");
 
@@ -1465,13 +1698,21 @@ mod tests {
         assert_eq!(parser.parse(b"5o", true, false).full_pinyin(), "zhei");
         assert_eq!(
             parser
-                .parse(&keystrokes_with_tone(&["ㄓ", "ㄟ"], 4), true, false)
+                .parse(
+                    &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄓ", "ㄟ"], 4),
+                    true,
+                    false
+                )
                 .consumed(),
             3
         );
         assert_eq!(
             parser
-                .parse(&keystrokes_with_tone(&["ㄓ", "ㄟ"], 1), true, false)
+                .parse(
+                    &keystrokes_with_tone(ZhuyinScheme::Standard, &["ㄓ", "ㄟ"], 1),
+                    true,
+                    false
+                )
                 .consumed(),
             0
         );
@@ -1479,11 +1720,11 @@ mod tests {
         // The five dead rows (mask 0): matched, then rejected by the
         // post-match validity break — consumed 0 on the whole input.
         for input in [
-            keystrokes(&["ㄈ", "ㄜ"]),       // fe
-            keystrokes(&["ㄉ", "ㄧ", "ㄣ"]), // din
-            keystrokes(&["ㄎ", "ㄟ"]),       // kei
-            keystrokes(&["ㄌ", "ㄣ"]),       // len
-            keystrokes(&["ㄖ", "ㄨ", "ㄚ"]), // rua
+            keystrokes(ZhuyinScheme::Standard, &["ㄈ", "ㄜ"]), // fe
+            keystrokes(ZhuyinScheme::Standard, &["ㄉ", "ㄧ", "ㄣ"]), // din
+            keystrokes(ZhuyinScheme::Standard, &["ㄎ", "ㄟ"]), // kei
+            keystrokes(ZhuyinScheme::Standard, &["ㄌ", "ㄣ"]), // len
+            keystrokes(ZhuyinScheme::Standard, &["ㄖ", "ㄨ", "ㄚ"]), // rua
         ] {
             let parsed = parser.parse(&input, true, false);
             assert_eq!(parsed.consumed(), 0, "{input:?} is a dead row at the pin");
@@ -1534,5 +1775,105 @@ mod tests {
         assert_eq!(parser.parse(b"1", true, true).consumed(), 0);
         assert_eq!(parser.parse(b"x", true, false).consumed(), 0);
         assert_eq!(parser.parse(b"x", true, true).consumed(), 0);
+    }
+
+    #[test]
+    fn simple_keyboards_switch_tables_and_stick() {
+        let mut parser = ZhuyinParser::new();
+        for scheme in [
+            ZhuyinScheme::Ibm,
+            ZhuyinScheme::Ginyieh,
+            ZhuyinScheme::Eten,
+            ZhuyinScheme::Standard,
+        ] {
+            assert!(parser.set_scheme(scheme));
+            assert_eq!(parser.scheme(), scheme);
+        }
+        // The Discrete/CP26 keyboards and the dvorak abort slot keep the
+        // current scheme.
+        for rejected in [
+            ZhuyinScheme::Hsu,
+            ZhuyinScheme::Eten26,
+            ZhuyinScheme::StandardDvorak,
+            ZhuyinScheme::HsuDvorak,
+            ZhuyinScheme::DachenCp26,
+        ] {
+            assert!(!parser.set_scheme(rejected));
+            assert_eq!(parser.scheme(), ZhuyinScheme::Standard);
+        }
+    }
+
+    #[test]
+    fn every_simple_keyboard_parses_the_same_symbols_through_its_own_keys() {
+        for scheme in [
+            ZhuyinScheme::Standard,
+            ZhuyinScheme::Ibm,
+            ZhuyinScheme::Ginyieh,
+            ZhuyinScheme::Eten,
+        ] {
+            let parser = ZhuyinParser::with_scheme(scheme);
+
+            // Tone-bearing and tone-rejection through this keyboard's keys.
+            let ni2 = parser.parse(&keystrokes_with_tone(scheme, &["ㄋ", "ㄧ"], 2), true, false);
+            assert_eq!((scheme, ni2.consumed()), (scheme, 3));
+            assert_eq!((scheme, ni2.full_pinyin().as_str()), (scheme, "ni"));
+            let ni1 = parser.parse(&keystrokes_with_tone(scheme, &["ㄋ", "ㄧ"], 1), true, false);
+            assert_eq!((scheme, ni1.consumed()), (scheme, 0));
+
+            // Keyboard membership mirrors the tables: every symbol key
+            // reports its symbol, every tone key its mark, others nothing.
+            let tables = scheme.simple_tables().expect("Simple keyboard");
+            for &(key, symbol) in tables.symbols {
+                assert!(
+                    parser.in_scheme(key, false),
+                    "{scheme:?} symbol key {key:?}"
+                );
+                assert_eq!(parser.symbols_for(key, false), vec![symbol.to_owned()]);
+            }
+            for &(key, _tone) in tables.tones {
+                assert!(!parser.in_scheme(key, false));
+                assert!(parser.in_scheme(key, true));
+            }
+            assert!(!parser.in_scheme(b'Q', true));
+            assert!(parser.symbols_for(b'Q', true).is_empty());
+        }
+    }
+
+    #[test]
+    fn shuffle_and_recovered_rows_work_on_every_simple_keyboard() {
+        for scheme in [
+            ZhuyinScheme::Standard,
+            ZhuyinScheme::Ibm,
+            ZhuyinScheme::Ginyieh,
+            ZhuyinScheme::Eten,
+        ] {
+            let parser = ZhuyinParser::with_scheme(scheme);
+
+            // Shuffled spelling parses to the canonical syllable and
+            // displays canonically.
+            let shuffled = parser.parse(&keystrokes(scheme, &["ㄅ", "ㄝ", "ㄧ"]), true, false);
+            assert_eq!((scheme, shuffled.consumed()), (scheme, 3));
+            assert_eq!(shuffled.full_pinyin(), "bie");
+            assert_eq!(shuffled.keys()[0].zhuyin(), "ㄅㄧㄝ");
+
+            // One recovered live row: ㄉㄣ accepts tone 4, rejects tone 1.
+            let den4 = parser.parse(&keystrokes_with_tone(scheme, &["ㄉ", "ㄣ"], 4), true, false);
+            assert_eq!((scheme, den4.consumed()), (scheme, 3));
+            assert_eq!(den4.full_pinyin(), "den");
+            let den1 = parser.parse(&keystrokes_with_tone(scheme, &["ㄉ", "ㄣ"], 1), true, false);
+            assert_eq!((scheme, den1.consumed()), (scheme, 0));
+
+            // One dead row: ㄈㄜ matches, then the validity break consumes
+            // nothing — on every keyboard.
+            let fe = parser.parse(&keystrokes(scheme, &["ㄈ", "ㄜ"]), true, false);
+            assert_eq!((scheme, fe.consumed()), (scheme, 0));
+        }
+    }
+
+    #[test]
+    fn apostrophe_keys_follow_the_pinned_tables() {
+        // The two keyboards whose tables use the escaped-quote key.
+        assert_eq!(key_for_symbol(ZhuyinScheme::Ginyieh, "ㄥ"), b'\'');
+        assert_eq!(key_for_symbol(ZhuyinScheme::Eten, "ㄘ"), b'\'');
     }
 }
