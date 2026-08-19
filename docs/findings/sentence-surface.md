@@ -296,3 +296,31 @@ not chased.
 
 The scheme differential driver itself needs no changes: it already
 exercises the exact surface where the gap shows.
+
+## 7. The C ABI wiring gap, closed
+
+Date: 2026-08-19 · branch `fix/w14-shared-lm-nbest-costs`.
+
+`SharedLm` now overrides `nbest_step_costs`, forwarding to the
+`BigramLanguageModel` behind it — the same model the rest of the C-ABI
+decode scores against. One method, no trellis/comparator/candidate
+changes; the trait default stands for other implementors.
+
+Re-verification:
+
+- One-input C-ABI probe (full-pinyin `nihao`, model20 tables):
+  `guess_sentence: true`, `get_sentence(0): 你好`, `cand[0]` is
+  `NBEST_MATCH` with n-best index 0, 126 candidates — byte-identical to
+  the same probe against the pin-built oracle.
+- `run-scheme-diff.sh` double and STANDARD bopomofo (pin model both
+  sides): `get_sentence` is decoded text on every input, no `(null)`,
+  NBEST rows present on both surfaces. Both still end DIVERGE — the
+  residual is the known tie-order class (tail order and decoded-1-best
+  near-ties, e.g. `我们`/`我吗`, `最` appearing at rank 5 instead of a
+  second NBEST row), the same §3 comparator divergences the direct-Session
+  488/385/370 measurement already prices in. Not chased here.
+- Pins: default candidates 10177 / 10189 / 94871 of 98930 / absent 1 /
+  tie-swaps 1036; sentence surface 488/385/370 — all bit-identical
+  (`real_tables_session_reports_parity`, `sentence_surface_reports_parity`).
+- union / train / import / predict diffs and bisect+valgrind all green;
+  fmt, clippy `-D warnings`, `test --locked --workspace` green.
