@@ -12,9 +12,10 @@
 
 use crate::SyllableKey;
 use crate::options::{
-    PINYIN_AMB_ALL, ZHUYIN_CORRECT_ALL, ZHUYIN_CORRECT_SHUFFLE, ZHUYIN_INCOMPLETE,
+    PINYIN_AMB_ALL, ZHUYIN_CORRECT_ALL, ZHUYIN_CORRECT_ETEN26, ZHUYIN_CORRECT_HSU,
+    ZHUYIN_CORRECT_SHUFFLE, ZHUYIN_INCOMPLETE,
 };
-use crate::zhuyin_map::{VALID_ZHUYIN_TONES, ZHUYIN_PINYIN_MAP};
+use crate::zhuyin_map::VALID_ZHUYIN_TONES;
 
 /// One parsed double-pinyin key: a full-pinyin [`SyllableKey`] and its byte
 /// span in the original two-key (or one-key incomplete) input.
@@ -905,6 +906,8 @@ struct SimpleTables {
     symbols: &'static [(u8, &'static str)],
     /// `(key, tone number)` rows.
     tones: &'static [(u8, u8)],
+    /// The global chewing index every Simple keyboard shares.
+    index: &'static [(&'static str, &'static str, &'static str, u32)],
 }
 
 impl SimpleTables {
@@ -914,6 +917,60 @@ impl SimpleTables {
             .iter()
             .find(|(key, _)| *key == byte)
             .map(|(_, symbol)| *symbol)
+    }
+
+    /// The tone one key spells, if it is a tone key.
+    fn tone(&self, byte: u8) -> Option<u8> {
+        self.tones
+            .iter()
+            .find(|(key, _)| *key == byte)
+            .map(|(_, tone)| *tone)
+    }
+}
+
+/// One Discrete keyboard's source tables: separate initial/middle/final
+/// symbol tables plus tones and the keyboard's own index, ported verbatim
+/// from the pinned `zhuyin_table.h` / `pinyin_parser_table.h`.
+///
+/// A key may appear twice in one table (the dual-mapped keys: Hsu `c` →
+/// ㄒ/ㄕ). Parsing resolves the **first** matching row — upstream's
+/// `search_chewing_symbols` returns on first hit — while the display
+/// surface collects every row, upstream's `search_chewing_symbols2`.
+#[derive(Clone, Copy)]
+struct DiscreteTables {
+    /// `(key, zhuyin symbol)` initial-slot rows, pinned order.
+    initials: &'static [(u8, &'static str)],
+    /// Middle-slot rows.
+    middles: &'static [(u8, &'static str)],
+    /// Final-slot rows.
+    finals: &'static [(u8, &'static str)],
+    /// `(key, tone number)` rows.
+    tones: &'static [(u8, u8)],
+    /// The keyboard's own chewing index.
+    index: &'static [(&'static str, &'static str, &'static str, u32)],
+    /// The correction bit `ZhuyinDiscreteParser2::set_scheme` forces for
+    /// this keyboard (`zhuyin_parser2.cpp:474-490`).
+    correction: u32,
+}
+
+impl DiscreteTables {
+    /// The first-matching symbol for `byte` in `table`, matching
+    /// upstream's `search_chewing_symbols`.
+    fn first_symbol(table: &'static [(u8, &'static str)], byte: u8) -> Option<&'static str> {
+        table
+            .iter()
+            .find(|(key, _)| *key == byte)
+            .map(|(_, symbol)| *symbol)
+    }
+
+    /// Every symbol `byte` maps to in `table`, matching upstream's
+    /// `search_chewing_symbols2` (at most two rows per key).
+    fn all_symbols(table: &'static [(u8, &'static str)], byte: u8) -> Vec<&'static str> {
+        table
+            .iter()
+            .filter(|(key, _)| *key == byte)
+            .map(|(_, symbol)| *symbol)
+            .collect()
     }
 
     /// The tone one key spells, if it is a tone key.
@@ -1109,6 +1166,162 @@ const ETEN_SYMBOLS: &[(u8, &str)] = &[
 /// (`src/storage/zhuyin_table.h:148`).
 const ETEN_TONES: &[(u8, u8)] = &[(b' ', 1), (b'1', 5), (b'2', 2), (b'3', 3), (b'4', 4)];
 
+/// Hsu keyboard initial table, `chewing_hsu_initials`
+/// (`src/storage/zhuyin_table.h:209`).
+const HSU_INITIALS: &[(u8, &str)] = &[
+    (b'a', "ㄘ"),
+    (b'b', "ㄅ"),
+    (b'c', "ㄒ"),
+    (b'c', "ㄕ"),
+    (b'd', "ㄉ"),
+    (b'f', "ㄈ"),
+    (b'g', "ㄍ"),
+    (b'h', "ㄏ"),
+    (b'j', "ㄐ"),
+    (b'j', "ㄓ"),
+    (b'k', "ㄎ"),
+    (b'l', "ㄌ"),
+    (b'm', "ㄇ"),
+    (b'n', "ㄋ"),
+    (b'p', "ㄆ"),
+    (b'r', "ㄖ"),
+    (b's', "ㄙ"),
+    (b't', "ㄊ"),
+    (b'v', "ㄑ"),
+    (b'v', "ㄔ"),
+    (b'z', "ㄗ"),
+];
+
+/// Hsu keyboard middle table, `chewing_hsu_middles`
+/// (`src/storage/zhuyin_table.h:234`).
+const HSU_MIDDLES: &[(u8, &str)] = &[(b'e', "ㄧ"), (b'u', "ㄩ"), (b'x', "ㄨ")];
+
+/// Hsu keyboard final table, `chewing_hsu_finals`
+/// (`src/storage/zhuyin_table.h:241`).
+const HSU_FINALS: &[(u8, &str)] = &[
+    (b'a', "ㄟ"),
+    (b'e', "ㄝ"),
+    (b'g', "ㄜ"),
+    (b'h', "ㄛ"),
+    (b'i', "ㄞ"),
+    (b'k', "ㄤ"),
+    (b'l', "ㄥ"),
+    (b'l', "ㄦ"),
+    (b'm', "ㄢ"),
+    (b'n', "ㄣ"),
+    (b'o', "ㄡ"),
+    (b'w', "ㄠ"),
+    (b'y', "ㄚ"),
+];
+
+/// Hsu keyboard tone table, `chewing_hsu_tones`
+/// (`src/storage/zhuyin_table.h:258`).
+const HSU_TONES: &[(u8, u8)] = &[(b' ', 1), (b'd', 2), (b'f', 3), (b'j', 4), (b's', 5)];
+
+/// Eten26 keyboard initial table, `chewing_eten26_initials`
+/// (`src/storage/zhuyin_table.h:267`).
+const ETEN26_INITIALS: &[(u8, &str)] = &[
+    (b'b', "ㄅ"),
+    (b'c', "ㄒ"),
+    (b'c', "ㄕ"),
+    (b'd', "ㄉ"),
+    (b'f', "ㄈ"),
+    (b'g', "ㄐ"),
+    (b'g', "ㄓ"),
+    (b'h', "ㄏ"),
+    (b'j', "ㄖ"),
+    (b'k', "ㄎ"),
+    (b'l', "ㄌ"),
+    (b'm', "ㄇ"),
+    (b'n', "ㄋ"),
+    (b'p', "ㄆ"),
+    (b'q', "ㄗ"),
+    (b's', "ㄙ"),
+    (b't', "ㄊ"),
+    (b'v', "ㄍ"),
+    (b'v', "ㄑ"),
+    (b'w', "ㄘ"),
+    (b'y', "ㄔ"),
+];
+
+/// Eten26 keyboard middle table, `chewing_eten26_middles`
+/// (`src/storage/zhuyin_table.h:292`).
+const ETEN26_MIDDLES: &[(u8, &str)] = &[(b'e', "ㄧ"), (b'u', "ㄩ"), (b'x', "ㄨ")];
+
+/// Eten26 keyboard final table, `chewing_eten26_finals`
+/// (`src/storage/zhuyin_table.h:299`).
+const ETEN26_FINALS: &[(u8, &str)] = &[
+    (b'a', "ㄚ"),
+    (b'h', "ㄦ"),
+    (b'i', "ㄞ"),
+    (b'l', "ㄥ"),
+    (b'm', "ㄢ"),
+    (b'n', "ㄣ"),
+    (b'o', "ㄛ"),
+    (b'p', "ㄡ"),
+    (b'q', "ㄟ"),
+    (b'r', "ㄜ"),
+    (b't', "ㄤ"),
+    (b'w', "ㄝ"),
+    (b'z', "ㄠ"),
+];
+
+/// Eten26 keyboard tone table, `chewing_eten26_tones`
+/// (`src/storage/zhuyin_table.h:316`).
+const ETEN26_TONES: &[(u8, u8)] = &[(b' ', 1), (b'd', 5), (b'f', 2), (b'j', 3), (b'k', 4)];
+
+/// Hsu Dvorak keyboard (byte-identical to the Hsu tables at this pin) initial table, `chewing_hsu_dvorak_initials`
+/// (`src/storage/zhuyin_table.h:375`).
+const HSU_DVORAK_INITIALS: &[(u8, &str)] = &[
+    (b'a', "ㄘ"),
+    (b'b', "ㄅ"),
+    (b'c', "ㄒ"),
+    (b'c', "ㄕ"),
+    (b'd', "ㄉ"),
+    (b'f', "ㄈ"),
+    (b'g', "ㄍ"),
+    (b'h', "ㄏ"),
+    (b'j', "ㄐ"),
+    (b'j', "ㄓ"),
+    (b'k', "ㄎ"),
+    (b'l', "ㄌ"),
+    (b'm', "ㄇ"),
+    (b'n', "ㄋ"),
+    (b'p', "ㄆ"),
+    (b'r', "ㄖ"),
+    (b's', "ㄙ"),
+    (b't', "ㄊ"),
+    (b'v', "ㄑ"),
+    (b'v', "ㄔ"),
+    (b'z', "ㄗ"),
+];
+
+/// Hsu Dvorak keyboard (byte-identical to the Hsu tables at this pin) middle table, `chewing_hsu_dvorak_middles`
+/// (`src/storage/zhuyin_table.h:400`).
+const HSU_DVORAK_MIDDLES: &[(u8, &str)] = &[(b'e', "ㄧ"), (b'u', "ㄩ"), (b'x', "ㄨ")];
+
+/// Hsu Dvorak keyboard (byte-identical to the Hsu tables at this pin) final table, `chewing_hsu_dvorak_finals`
+/// (`src/storage/zhuyin_table.h:407`).
+const HSU_DVORAK_FINALS: &[(u8, &str)] = &[
+    (b'a', "ㄟ"),
+    (b'e', "ㄝ"),
+    (b'g', "ㄜ"),
+    (b'h', "ㄛ"),
+    (b'i', "ㄞ"),
+    (b'k', "ㄤ"),
+    (b'l', "ㄥ"),
+    (b'l', "ㄦ"),
+    (b'm', "ㄢ"),
+    (b'n', "ㄣ"),
+    (b'o', "ㄡ"),
+    (b'w', "ㄠ"),
+    (b'y', "ㄚ"),
+];
+
+/// Hsu Dvorak keyboard (byte-identical to the Hsu tables at this pin) tone table, `chewing_hsu_dvorak_tones`
+/// (`src/storage/zhuyin_table.h:424`).
+const HSU_DVORAK_TONES: &[(u8, u8)] = &[(b' ', 1), (b'd', 2), (b'f', 3), (b'j', 4), (b's', 5)];
+
 fn tone_symbol(tone: u8) -> &'static str {
     match tone {
         1 => " ",
@@ -1132,9 +1345,13 @@ fn tone_symbol(tone: u8) -> &'static str {
 /// `ZHUYIN_INCOMPLETE` passed through from the caller's option word
 /// (`pinyin.cpp` strips `ZHUYIN_CORRECT_ALL` from caller options at every
 /// chewing entry point, so caller corrections can never reach this gate).
-fn search_zhuyin_index(zhuyin: &str, options: u32) -> Option<(SyllableKey, &'static str)> {
-    let index = ZHUYIN_PINYIN_MAP.partition_point(|row| row.0 < zhuyin);
-    let &(spelling, canonical, pinyin, flags) = ZHUYIN_PINYIN_MAP.get(index)?;
+fn search_zhuyin_index(
+    index: &[(&'static str, &'static str, &'static str, u32)],
+    zhuyin: &str,
+    options: u32,
+) -> Option<(SyllableKey, &'static str)> {
+    let position = index.partition_point(|row| row.0 < zhuyin);
+    let &(spelling, canonical, pinyin, flags) = index.get(position)?;
 
     if spelling != zhuyin {
         return None;
@@ -1152,12 +1369,25 @@ fn search_zhuyin_index(zhuyin: &str, options: u32) -> Option<(SyllableKey, &'sta
     SyllableKey::from_canonical_text(pinyin).map(|key| (key, canonical))
 }
 
+/// The compiled keyboard behind a scheme: a Simple symbol/tone pair over
+/// the global index, or a Discrete initial/middle/final set over the
+/// keyboard's own index.
+#[derive(Clone, Copy)]
+enum Keyboard {
+    /// STANDARD, IBM, GINYIEH, ETEN.
+    Simple(SimpleTables),
+    /// HSU, ETEN26, HSU_DVORAK.
+    Discrete(DiscreteTables),
+}
+
 /// Stateless parser for one Zhuyin keyboard.
 ///
 /// The Simple keyboards (STANDARD, IBM, GINYIEH, ETEN) are implemented
-/// table-driven over the shared [`crate::zhuyin_map`] index; Discrete,
-/// CP26, and the STANDARD_DVORAK abort slot parse nothing and their
-/// setters report `false`.
+/// table-driven over the shared [`crate::zhuyin_map`] index; the
+/// Discrete keyboards (HSU, ETEN26, HSU_DVORAK) probe initial/middle/
+/// final/tone positions against their own tables and indexes; CP26 and
+/// the STANDARD_DVORAK abort slot parse nothing and their setters
+/// report `false`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ZhuyinParser {
     scheme: ZhuyinScheme,
@@ -1165,27 +1395,77 @@ pub struct ZhuyinParser {
 
 impl ZhuyinScheme {
     /// The compiled Simple tables for this scheme, or `None` for the
-    /// Discrete/CP26 keyboards and the dvorak abort slot.
+    /// non-Simple keyboards.
     fn simple_tables(self) -> Option<SimpleTables> {
         match self {
             Self::Standard => Some(SimpleTables {
                 symbols: STANDARD_SYMBOLS,
                 tones: STANDARD_TONES,
+                index: &crate::zhuyin_map::ZHUYIN_PINYIN_MAP,
             }),
             Self::Ibm => Some(SimpleTables {
                 symbols: IBM_SYMBOLS,
                 tones: IBM_TONES,
+                index: &crate::zhuyin_map::ZHUYIN_PINYIN_MAP,
             }),
             Self::Ginyieh => Some(SimpleTables {
                 symbols: GINYIEH_SYMBOLS,
                 tones: GINYIEH_TONES,
+                index: &crate::zhuyin_map::ZHUYIN_PINYIN_MAP,
             }),
             Self::Eten => Some(SimpleTables {
                 symbols: ETEN_SYMBOLS,
                 tones: ETEN_TONES,
+                index: &crate::zhuyin_map::ZHUYIN_PINYIN_MAP,
             }),
             _ => None,
         }
+    }
+
+    /// The compiled Discrete tables for this scheme, or `None` for the
+    /// non-Discrete keyboards. Mirrors
+    /// `ZhuyinDiscreteParser2::set_scheme` (`zhuyin_parser2.cpp:474-490`):
+    /// HSU forces `ZHUYIN_CORRECT_HSU` over `hsu_zhuyin_index`, ETEN26
+    /// forces `ZHUYIN_CORRECT_ETEN26` over `eten26_zhuyin_index`, and
+    /// HSU_DVORAK forces the HSU bit over the shared `hsu_zhuyin_index`
+    /// with its own (at this pin byte-identical) key tables.
+    fn discrete_tables(self) -> Option<DiscreteTables> {
+        match self {
+            Self::Hsu => Some(DiscreteTables {
+                initials: HSU_INITIALS,
+                middles: HSU_MIDDLES,
+                finals: HSU_FINALS,
+                tones: HSU_TONES,
+                index: &crate::zhuyin_map::HSU_ZHUYIN_INDEX,
+                correction: ZHUYIN_CORRECT_HSU,
+            }),
+            Self::Eten26 => Some(DiscreteTables {
+                initials: ETEN26_INITIALS,
+                middles: ETEN26_MIDDLES,
+                finals: ETEN26_FINALS,
+                tones: ETEN26_TONES,
+                index: &crate::zhuyin_map::ETEN26_ZHUYIN_INDEX,
+                correction: ZHUYIN_CORRECT_ETEN26,
+            }),
+            Self::HsuDvorak => Some(DiscreteTables {
+                initials: HSU_DVORAK_INITIALS,
+                middles: HSU_DVORAK_MIDDLES,
+                finals: HSU_DVORAK_FINALS,
+                tones: HSU_DVORAK_TONES,
+                index: &crate::zhuyin_map::HSU_ZHUYIN_INDEX,
+                correction: ZHUYIN_CORRECT_HSU,
+            }),
+            _ => None,
+        }
+    }
+
+    /// The compiled keyboard for this scheme, `None` for CP26 and the
+    /// dvorak abort slot.
+    fn keyboard(self) -> Option<Keyboard> {
+        if let Some(tables) = self.simple_tables() {
+            return Some(Keyboard::Simple(tables));
+        }
+        self.discrete_tables().map(Keyboard::Discrete)
     }
 }
 
@@ -1206,11 +1486,12 @@ impl ZhuyinParser {
 
     /// Selects a scheme. The Simple keyboards (STANDARD, IBM, GINYIEH,
     /// ETEN) switch tables the way upstream's `set_scheme` does
-    /// (`src/storage/zhuyin_parser2.cpp:271-300`) minus the
-    /// STANDARD_DVORAK fallthrough-abort; everything else reports
-    /// `false` and keeps the current scheme.
+    /// (`src/storage/zhuyin_parser2.cpp:271-300`) and the Discrete
+    /// keyboards (HSU, ETEN26, HSU_DVORAK) the way theirs does
+    /// (`:474-490`) — both minus upstream's aborts; everything else
+    /// reports `false` and keeps the current scheme.
     pub fn set_scheme(&mut self, scheme: ZhuyinScheme) -> bool {
-        if scheme.simple_tables().is_none() {
+        if scheme.keyboard().is_none() {
             return false;
         }
         self.scheme = scheme;
@@ -1226,57 +1507,112 @@ impl ZhuyinParser {
     /// Whether `key` is part of the current keyboard.
     #[must_use]
     pub fn in_scheme(&self, key: u8, use_tone: bool) -> bool {
-        let Some(tables) = self.scheme.simple_tables() else {
-            return false;
-        };
-        tables.symbol(key).is_some() || (use_tone && tables.tone(key).is_some())
+        !self.symbols_for(key, use_tone).is_empty()
     }
 
     /// The Zhuyin symbol(s) mapped by one keystroke.
     ///
-    /// Simple keyboards have at most one symbol per key; a tone key
-    /// returns its tone mark, matching `pinyin_in_chewing_keyboard`.
+    /// Simple keyboards return at most one symbol; a Discrete key can
+    /// hit the initial, middle, and final tables at once (dual-mapped
+    /// keys contribute both rows), so up to three symbols plus the tone
+    /// mark come back — exactly `ZhuyinDiscreteParser2::
+    /// in_chewing_scheme`'s vector (`zhuyin_parser2.cpp:496-545`).
     #[must_use]
     pub fn symbols_for(&self, key: u8, use_tone: bool) -> Vec<String> {
-        let Some(tables) = self.scheme.simple_tables() else {
-            return Vec::new();
-        };
-        if let Some(symbol) = tables.symbol(key) {
-            return vec![symbol.to_owned()];
+        match self.scheme.keyboard() {
+            Some(Keyboard::Simple(tables)) => {
+                let mut symbols = Vec::new();
+                if let Some(symbol) = tables.symbol(key) {
+                    symbols.push(symbol.to_owned());
+                }
+                if use_tone && let Some(tone) = tables.tone(key) {
+                    symbols.push(tone_symbol(tone).to_owned());
+                }
+                symbols
+            }
+            Some(Keyboard::Discrete(tables)) => {
+                let mut symbols = Vec::new();
+                for table in [tables.initials, tables.middles, tables.finals] {
+                    symbols.extend(
+                        DiscreteTables::all_symbols(table, key)
+                            .into_iter()
+                            .map(str::to_owned),
+                    );
+                }
+                if use_tone && let Some(tone) = tables.tone(key) {
+                    symbols.push(tone_symbol(tone).to_owned());
+                }
+                symbols
+            }
+            None => Vec::new(),
         }
-        if use_tone && let Some(tone) = tables.tone(key) {
-            return vec![tone_symbol(tone).to_owned()];
-        }
-        Vec::new()
     }
 
     /// Greedily parses `input`, mirroring `ZhuyinSimpleParser2::parse`
-    /// (`src/storage/zhuyin_parser2.cpp:216-268`), including the post-match
-    /// `is_valid_zhuyin` abort (`:256-257`, `_ChewingKey::is_valid_zhuyin`
-    /// at `chewing_key.cpp:38-45`).
+    /// (`src/storage/zhuyin_parser2.cpp:216-268`) and
+    /// `ZhuyinDiscreteParser2::parse` (`:408-460`) — the same greedy
+    /// shell — including the post-match `is_valid_zhuyin` abort
+    /// (`:256-257`, `_ChewingKey::is_valid_zhuyin` at
+    /// `chewing_key.cpp:38-45`).
     ///
     /// `allow_incomplete` is the caller's `ZHUYIN_INCOMPLETE` option; the
-    /// parser additionally owns `ZHUYIN_CORRECT_SHUFFLE`, which upstream's
-    /// `set_scheme` forces for every Simple keyboard (`:272`) and `parse`
-    /// or's into the option word (`:221`).
+    /// parser additionally owns its keyboard's correction bit, which
+    /// upstream's `set_scheme` forces (SHUFFLE for Simple, `:272`; HSU /
+    /// ETEN26 for Discrete, `:474-490`) and `parse` or's into the option
+    /// word (`:221`, `:413`).
     #[must_use]
     pub fn parse(&self, input: &[u8], use_tone: bool, allow_incomplete: bool) -> ZhuyinParse {
-        let Some(tables) = self.scheme.simple_tables() else {
+        let Some(keyboard) = self.scheme.keyboard() else {
             return ZhuyinParse::default();
         };
 
-        let options = if allow_incomplete {
-            ZHUYIN_CORRECT_SHUFFLE | ZHUYIN_INCOMPLETE
-        } else {
-            ZHUYIN_CORRECT_SHUFFLE
+        let (maximum_len, probe) = match keyboard {
+            Keyboard::Simple(tables) => {
+                let options = if allow_incomplete {
+                    ZHUYIN_CORRECT_SHUFFLE | ZHUYIN_INCOMPLETE
+                } else {
+                    ZHUYIN_CORRECT_SHUFFLE
+                };
+                let maximum_len = input
+                    .iter()
+                    .take_while(|&&byte| {
+                        tables.symbol(byte).is_some() || (use_tone && tables.tone(byte).is_some())
+                    })
+                    .count();
+                (
+                    maximum_len,
+                    KeyProbe::Simple {
+                        tables,
+                        use_tone,
+                        options,
+                    },
+                )
+            }
+            Keyboard::Discrete(tables) => {
+                let options = if allow_incomplete {
+                    tables.correction | ZHUYIN_INCOMPLETE
+                } else {
+                    tables.correction
+                };
+                let maximum_len = input
+                    .iter()
+                    .take_while(|&&byte| {
+                        [tables.initials, tables.middles, tables.finals]
+                            .iter()
+                            .any(|table| table.iter().any(|(key, _)| *key == byte))
+                            || (use_tone && tables.tone(byte).is_some())
+                    })
+                    .count();
+                (
+                    maximum_len,
+                    KeyProbe::Discrete {
+                        tables,
+                        use_tone,
+                        options,
+                    },
+                )
+            }
         };
-
-        let maximum_len = input
-            .iter()
-            .take_while(|&&byte| {
-                tables.symbol(byte).is_some() || (use_tone && tables.tone(byte).is_some())
-            })
-            .count();
 
         let mut keys = Vec::new();
         let mut parsed_len = 0;
@@ -1285,12 +1621,9 @@ impl ZhuyinParser {
             let try_len = remaining.len().min(4);
             let mut matched = None;
             for len in (1..=try_len).rev() {
-                if let Some((key, zhuyin, tone)) = parse_one_zhuyin_key(
-                    &input[parsed_len..parsed_len + len],
-                    use_tone,
-                    options,
-                    tables,
-                ) {
+                if let Some((key, zhuyin, tone)) =
+                    probe.parse_one_key(&input[parsed_len..parsed_len + len])
+                {
                     matched = Some((key, zhuyin, tone, len));
                     break;
                 }
@@ -1316,6 +1649,48 @@ impl ZhuyinParser {
         ZhuyinParse {
             keys,
             consumed: parsed_len,
+        }
+    }
+}
+
+/// One greedy step of [`ZhuyinParser::parse`], specialised per keyboard
+/// family: Simple concatenates per-key symbols, Discrete probes the
+/// initial/middle/final/tone positions.
+#[derive(Clone, Copy)]
+enum KeyProbe {
+    /// The Simple per-byte concatenation path.
+    Simple {
+        /// The keyboard's symbol/tone tables.
+        tables: SimpleTables,
+        /// The `USE_TONE` option.
+        use_tone: bool,
+        /// The parser-owned option word.
+        options: u32,
+    },
+    /// The Discrete positional-probe path.
+    Discrete {
+        /// The keyboard's slot tables and index.
+        tables: DiscreteTables,
+        /// The `USE_TONE` option.
+        use_tone: bool,
+        /// The parser-owned option word.
+        options: u32,
+    },
+}
+
+impl KeyProbe {
+    fn parse_one_key(&self, input: &[u8]) -> Option<(SyllableKey, String, u8)> {
+        match *self {
+            Self::Simple {
+                tables,
+                use_tone,
+                options,
+            } => parse_one_zhuyin_key(input, use_tone, options, tables),
+            Self::Discrete {
+                tables,
+                use_tone,
+                options,
+            } => parse_one_discrete_key(input, use_tone, options, tables),
         }
     }
 }
@@ -1350,9 +1725,77 @@ fn parse_one_zhuyin_key(
         let symbol = tables.symbol(*byte)?;
         zhuyin.push_str(symbol);
     }
-    let (key, canonical) = search_zhuyin_index(&zhuyin, options)?;
+    let (key, canonical) = search_zhuyin_index(tables.index, &zhuyin, options)?;
     // Display carries the canonical spelling (upstream renders the
     // matched key, not the raw keystrokes); the span stays input-based.
+    Some((key, canonical.to_owned(), tone))
+}
+
+/// `ZhuyinDiscreteParser2::parse_one_key`
+/// (`src/storage/zhuyin_parser2.cpp:335-405`): probe position 0 in the
+/// initial table, position 1 in the middle table, position 2 in the final
+/// table, position 3 (under `USE_TONE`) in the tone table — a failed
+/// initial probe lets the middle probe read position 0, so zero-initial
+/// spellings work — then require the whole input consumed and a row hit
+/// in the keyboard's index. Each probe takes the **first** matching row,
+/// so a dual-mapped key (Hsu `c` → ㄒ/ㄕ) always contributes its first
+/// symbol to a parse; the second mapping is display-only.
+fn parse_one_discrete_key(
+    input: &[u8],
+    use_tone: bool,
+    options: u32,
+    tables: DiscreteTables,
+) -> Option<(SyllableKey, String, u8)> {
+    if input.is_empty() {
+        return None;
+    }
+
+    let mut index = 0;
+    let mut initial = "";
+    let mut middle = "";
+    let mut final_ = "";
+    let mut tone = 0;
+
+    // probe initial
+    if let Some(symbol) = DiscreteTables::first_symbol(tables.initials, input[index]) {
+        initial = symbol;
+        index += 1;
+    }
+
+    if index != input.len() {
+        // probe middle
+        if let Some(symbol) = DiscreteTables::first_symbol(tables.middles, input[index]) {
+            middle = symbol;
+            index += 1;
+        }
+    }
+
+    if index != input.len() {
+        // probe final
+        if let Some(symbol) = DiscreteTables::first_symbol(tables.finals, input[index]) {
+            final_ = symbol;
+            index += 1;
+        }
+    }
+
+    if index != input.len() && use_tone {
+        // probe tone
+        if let Some(value) = tables.tone(input[index]) {
+            tone = value;
+            index += 1;
+        }
+    }
+
+    if index != input.len() {
+        return None;
+    }
+
+    let mut zhuyin = String::with_capacity(initial.len() + middle.len() + final_.len());
+    zhuyin.push_str(initial);
+    zhuyin.push_str(middle);
+    zhuyin.push_str(final_);
+
+    let (key, canonical) = search_zhuyin_index(tables.index, &zhuyin, options)?;
     Some((key, canonical.to_owned(), tone))
 }
 
@@ -1493,9 +1936,9 @@ mod tests {
 
     #[test]
     fn index_matches_the_pinned_row_counts_and_shuffle_law() {
-        use super::ZHUYIN_PINYIN_MAP;
         use crate::ZHUYIN_CORRECT_SHUFFLE;
         use crate::ZHUYIN_INCOMPLETE;
+        use crate::zhuyin_map::ZHUYIN_PINYIN_MAP;
 
         assert_eq!(ZHUYIN_PINYIN_MAP.len(), 1493);
 
@@ -1585,25 +2028,26 @@ mod tests {
         use super::search_zhuyin_index;
         use crate::ZHUYIN_CORRECT_SHUFFLE;
         use crate::ZHUYIN_INCOMPLETE;
+        use crate::zhuyin_map::ZHUYIN_PINYIN_MAP;
 
         // Shuffle rows: only under the parser-owned correction bit. The
         // hit carries the canonical spelling for display.
         let bie = crate::SyllableKey::from_text("bie").expect("bie");
         assert_eq!(
-            search_zhuyin_index("ㄅㄝㄧ", ZHUYIN_CORRECT_SHUFFLE),
+            search_zhuyin_index(&ZHUYIN_PINYIN_MAP, "ㄅㄝㄧ", ZHUYIN_CORRECT_SHUFFLE),
             Some((bie, "ㄅㄧㄝ"))
         );
-        assert_eq!(search_zhuyin_index("ㄅㄝㄧ", 0), None);
+        assert_eq!(search_zhuyin_index(&ZHUYIN_PINYIN_MAP, "ㄅㄝㄧ", 0), None);
 
         // Incomplete rows: only under the caller's option bit. All 14 are
         // parse-dead after the validity mask, but the index gate itself is
         // what this pins (both outcomes at this pin consume 0).
         let b = crate::SyllableKey::from_text("b").expect("b");
         assert_eq!(
-            search_zhuyin_index("ㄅ", ZHUYIN_INCOMPLETE),
+            search_zhuyin_index(&ZHUYIN_PINYIN_MAP, "ㄅ", ZHUYIN_INCOMPLETE),
             Some((b, "ㄅ"))
         );
-        assert_eq!(search_zhuyin_index("ㄅ", 0), None);
+        assert_eq!(search_zhuyin_index(&ZHUYIN_PINYIN_MAP, "ㄅ", 0), None);
     }
 
     #[test]
@@ -1778,26 +2222,23 @@ mod tests {
     }
 
     #[test]
-    fn simple_keyboards_switch_tables_and_stick() {
+    fn keyboards_switch_tables_and_stick() {
         let mut parser = ZhuyinParser::new();
         for scheme in [
             ZhuyinScheme::Ibm,
             ZhuyinScheme::Ginyieh,
             ZhuyinScheme::Eten,
+            ZhuyinScheme::Hsu,
+            ZhuyinScheme::Eten26,
+            ZhuyinScheme::HsuDvorak,
             ZhuyinScheme::Standard,
         ] {
             assert!(parser.set_scheme(scheme));
             assert_eq!(parser.scheme(), scheme);
         }
-        // The Discrete/CP26 keyboards and the dvorak abort slot keep the
-        // current scheme.
-        for rejected in [
-            ZhuyinScheme::Hsu,
-            ZhuyinScheme::Eten26,
-            ZhuyinScheme::StandardDvorak,
-            ZhuyinScheme::HsuDvorak,
-            ZhuyinScheme::DachenCp26,
-        ] {
+        // The CP26 keyboard and the dvorak abort slot keep the current
+        // scheme.
+        for rejected in [ZhuyinScheme::StandardDvorak, ZhuyinScheme::DachenCp26] {
             assert!(!parser.set_scheme(rejected));
             assert_eq!(parser.scheme(), ZhuyinScheme::Standard);
         }
@@ -1875,5 +2316,254 @@ mod tests {
         // The two keyboards whose tables use the escaped-quote key.
         assert_eq!(key_for_symbol(ZhuyinScheme::Ginyieh, "ㄥ"), b'\'');
         assert_eq!(key_for_symbol(ZhuyinScheme::Eten, "ㄘ"), b'\'');
+    }
+
+    /// The key that makes a positional probe read `symbol` at `slot`:
+    /// the parser takes each table's **first** matching row per key, so
+    /// a dual key's second row never derives a parse (same rule the
+    /// chewing-diff corpus applies for the Discrete keyboards).
+    fn discrete_key_for(scheme: ZhuyinScheme, slot: usize, symbol: &str) -> u8 {
+        let tables = scheme.discrete_tables().expect("discrete keyboard");
+        let ordered: &[&[(u8, &'static str)]] = match slot {
+            0 => &[tables.initials, tables.middles, tables.finals],
+            1 => &[tables.middles, tables.finals],
+            _ => &[tables.finals],
+        };
+        for table in ordered {
+            let mut last_key: Option<u8> = None;
+            for &(key, candidate) in *table {
+                if last_key == Some(key) {
+                    continue;
+                }
+                last_key = Some(key);
+                if candidate == symbol {
+                    return key;
+                }
+            }
+        }
+        panic!("no {scheme:?} key derives {symbol:?} at slot {slot}");
+    }
+
+    fn discrete_keystrokes(scheme: ZhuyinScheme, symbols: &[&str]) -> Vec<u8> {
+        symbols
+            .iter()
+            .enumerate()
+            .map(|(slot, symbol)| discrete_key_for(scheme, slot, symbol))
+            .collect()
+    }
+
+    fn discrete_keystrokes_with_tone(scheme: ZhuyinScheme, symbols: &[&str], tone: u8) -> Vec<u8> {
+        let mut keys = discrete_keystrokes(scheme, symbols);
+        let tables = scheme.discrete_tables().expect("discrete keyboard");
+        let tone_key = tables
+            .tones
+            .iter()
+            .find(|(_, value)| *value == tone)
+            .map(|(key, _)| *key)
+            .unwrap_or_else(|| panic!("no {scheme:?} key spells tone {tone}"));
+        keys.push(tone_key);
+        keys
+    }
+
+    #[test]
+    fn discrete_keyboards_parse_through_positional_probes() {
+        for scheme in [
+            ZhuyinScheme::Hsu,
+            ZhuyinScheme::Eten26,
+            ZhuyinScheme::HsuDvorak,
+        ] {
+            let parser = ZhuyinParser::with_scheme(scheme);
+
+            // Canonical control: ㄋㄧ through the n/e keys, tone-bearing
+            // and tone-rejection.
+            let ni = parser.parse(&discrete_keystrokes(scheme, &["ㄋ", "ㄧ"]), true, false);
+            assert_eq!((scheme, ni.consumed()), (scheme, 2));
+            assert_eq!((scheme, ni.full_pinyin().as_str()), (scheme, "ni"));
+            let ni2 = parser.parse(
+                &discrete_keystrokes_with_tone(scheme, &["ㄋ", "ㄧ"], 2),
+                true,
+                false,
+            );
+            assert_eq!((scheme, ni2.consumed()), (scheme, 3));
+            let ni1 = parser.parse(
+                &discrete_keystrokes_with_tone(scheme, &["ㄋ", "ㄧ"], 1),
+                true,
+                false,
+            );
+            assert_eq!((scheme, ni1.consumed()), (scheme, 0));
+        }
+    }
+
+    #[test]
+    fn hsu_remap_rows_parse_with_canonical_display() {
+        let hsu = ZhuyinParser::with_scheme(ZhuyinScheme::Hsu);
+
+        // The keyboard's correction rows: ㄍㄧ→ji (typed g,e), ㄐㄨㄥ→
+        // zhong (j,x,l), ㄑ→chi (q), ㄒ→shi (c), ㄇ→an (m). Display
+        // renders each row's canonical spelling.
+        let ji = hsu.parse(
+            &discrete_keystrokes(hsu.scheme(), &["ㄍ", "ㄧ"]),
+            true,
+            false,
+        );
+        assert_eq!(ji.full_pinyin(), "ji");
+        assert_eq!(ji.keys()[0].zhuyin(), "ㄐㄧ");
+
+        let zhong = hsu.parse(
+            &discrete_keystrokes(hsu.scheme(), &["ㄐ", "ㄨ", "ㄥ"]),
+            true,
+            false,
+        );
+        assert_eq!(zhong.full_pinyin(), "zhong");
+        assert_eq!(zhong.keys()[0].zhuyin(), "ㄓㄨㄥ");
+
+        let chi = hsu.parse(&discrete_keystrokes(hsu.scheme(), &["ㄑ"]), true, false);
+        assert_eq!(chi.full_pinyin(), "chi");
+        let shi = hsu.parse(&discrete_keystrokes(hsu.scheme(), &["ㄒ"]), true, false);
+        assert_eq!(shi.full_pinyin(), "shi");
+        let an = hsu.parse(&discrete_keystrokes(hsu.scheme(), &["ㄇ"]), true, false);
+        assert_eq!(an.full_pinyin(), "an");
+
+        // The palatal plain rows stay reachable through the same keys
+        // plus a middle: c,e types ㄒㄧ = xi.
+        let xi = hsu.parse(
+            &discrete_keystrokes(hsu.scheme(), &["ㄒ", "ㄧ"]),
+            true,
+            false,
+        );
+        assert_eq!(xi.full_pinyin(), "xi");
+    }
+
+    #[test]
+    fn eten26_remap_rows_parse_with_canonical_display() {
+        let eten26 = ZhuyinParser::with_scheme(ZhuyinScheme::Eten26);
+
+        // ETEN26 remaps ㄍㄧ to the qi series (HSU remaps it to ji) and
+        // has its own vowel stand-ins: ㄆ→ou, ㄊ→ang, ㄌ→eng, ㄏ→er.
+        let qi = eten26.parse(
+            &discrete_keystrokes(eten26.scheme(), &["ㄍ", "ㄧ"]),
+            true,
+            false,
+        );
+        assert_eq!(qi.full_pinyin(), "qi");
+        assert_eq!(qi.keys()[0].zhuyin(), "ㄑㄧ");
+
+        for (symbols, pinyin) in [
+            (vec!["ㄆ"], "ou"),
+            (vec!["ㄊ"], "ang"),
+            (vec!["ㄌ"], "eng"),
+            (vec!["ㄏ"], "er"),
+            (vec!["ㄒ", "ㄨ"], "shu"),
+        ] {
+            let parsed = eten26.parse(&discrete_keystrokes(eten26.scheme(), &symbols), true, false);
+            assert_eq!(
+                parsed.full_pinyin(),
+                pinyin,
+                "{symbols:?} on ETEN26 must parse as {pinyin}"
+            );
+        }
+    }
+
+    #[test]
+    fn discrete_indexes_gate_their_correction_rows() {
+        use super::search_zhuyin_index;
+        use crate::ZHUYIN_CORRECT_ETEN26;
+        use crate::ZHUYIN_CORRECT_HSU;
+        use crate::zhuyin_map::{ETEN26_ZHUYIN_INDEX, HSU_ZHUYIN_INDEX};
+
+        // ㄍㄧ is ji under the HSU bit and qi under the ETEN26 bit — the
+        // same keystrokes mean different syllables per keyboard.
+        let ji = crate::SyllableKey::from_text("ji").expect("ji");
+        let qi = crate::SyllableKey::from_text("qi").expect("qi");
+        assert_eq!(
+            search_zhuyin_index(&HSU_ZHUYIN_INDEX, "ㄍㄧ", ZHUYIN_CORRECT_HSU),
+            Some((ji, "ㄐㄧ"))
+        );
+        assert_eq!(search_zhuyin_index(&HSU_ZHUYIN_INDEX, "ㄍㄧ", 0), None);
+        assert_eq!(
+            search_zhuyin_index(&ETEN26_ZHUYIN_INDEX, "ㄍㄧ", ZHUYIN_CORRECT_ETEN26),
+            Some((qi, "ㄑㄧ"))
+        );
+
+        // The HSU incomplete set is 5 rows (ㄅㄆㄈㄉㄊ), ETEN26's is 6
+        // (ㄅㄈㄉㄍㄎㄑ) — both smaller than the global 14.
+        let hsu_incomplete = HSU_ZHUYIN_INDEX
+            .iter()
+            .filter(|row| row.3 & crate::ZHUYIN_INCOMPLETE != 0)
+            .count();
+        let eten26_incomplete = ETEN26_ZHUYIN_INDEX
+            .iter()
+            .filter(|row| row.3 & crate::ZHUYIN_INCOMPLETE != 0)
+            .count();
+        assert_eq!(hsu_incomplete, 5);
+        assert_eq!(eten26_incomplete, 6);
+    }
+
+    #[test]
+    fn dual_mapped_keys_report_every_symbol_but_parse_the_first() {
+        use super::tone_symbol;
+
+        let hsu = ZhuyinParser::with_scheme(ZhuyinScheme::Hsu);
+        // 'c' is dual in the initials (ㄒ/ㄕ): display reports both.
+        assert_eq!(
+            hsu.symbols_for(b'c', false),
+            vec!["ㄒ".to_owned(), "ㄕ".to_owned()]
+        );
+        assert_eq!(
+            hsu.symbols_for(b'j', false),
+            vec!["ㄐ".to_owned(), "ㄓ".to_owned()]
+        );
+        assert_eq!(
+            hsu.symbols_for(b'v', false),
+            vec!["ㄑ".to_owned(), "ㄔ".to_owned()]
+        );
+        // 'e' is a middle (ㄧ) and a final (ㄝ): both, in slot order.
+        assert_eq!(
+            hsu.symbols_for(b'e', false),
+            vec!["ㄧ".to_owned(), "ㄝ".to_owned()]
+        );
+        // 'd' is an initial (ㄉ) and tone 2: symbol plus tone mark.
+        assert_eq!(
+            hsu.symbols_for(b'd', true),
+            vec!["ㄉ".to_owned(), tone_symbol(2).to_owned()]
+        );
+        assert!(hsu.in_scheme(b'd', false));
+        assert!(!hsu.in_scheme(b'Q', true));
+
+        // Parsing takes the first row: 'c' alone is ㄒ → the HSU remap
+        // row makes it shi, never si-from-ㄕ.
+        let c_alone = hsu.parse(b"c", true, false);
+        assert_eq!(c_alone.full_pinyin(), "shi");
+    }
+
+    #[test]
+    fn hsu_dvorak_behaves_like_hsu_at_this_pin() {
+        // chewing_hsu_dvorak_* is byte-identical to chewing_hsu_* at
+        // 2.11.91 and shares hsu_zhuyin_index: same inputs, same parses.
+        let hsu = ZhuyinParser::with_scheme(ZhuyinScheme::Hsu);
+        let dvorak = ZhuyinParser::with_scheme(ZhuyinScheme::HsuDvorak);
+        for input in [
+            &discrete_keystrokes(ZhuyinScheme::Hsu, &["ㄋ", "ㄧ"])[..],
+            b"ge",
+            b"c",
+            b"jxl",
+            b"m",
+        ] {
+            assert_eq!(
+                hsu.parse(input, true, false),
+                dvorak.parse(input, true, false),
+                "{input:?} must parse identically on HSU and HSU_DVORAK"
+            );
+        }
+    }
+
+    #[test]
+    fn discrete_incomplete_rows_consume_zero() {
+        // HSU admits ㄅ under ZHUYIN_INCOMPLETE; the all-zero mask stops
+        // the parse either way (the derivation uses HSU's own keys).
+        let hsu = ZhuyinParser::with_scheme(ZhuyinScheme::Hsu);
+        let b_key = discrete_key_for(ZhuyinScheme::Hsu, 0, "ㄅ");
+        assert_eq!(hsu.parse(&[b_key], true, false).consumed(), 0);
+        assert_eq!(hsu.parse(&[b_key], true, true).consumed(), 0);
     }
 }
