@@ -361,6 +361,14 @@ impl LanguageModel for SharedLm {
         Ok(addons.unigram_total())
     }
 
+    /// Deliberately system-only: the §5 user overlay (`UserStore`
+    /// `count_delta`) is **not** folded in here yet. This override's job is
+    /// to replace the trait default's empty costs with the
+    /// `BigramLanguageModel`'s, so C-ABI `guess_sentence` emits rows at
+    /// all. Folding the user delta in is the next workstream, gated on the
+    /// shifted-row selection-record fix (#117): until the chosen row's own
+    /// token path is recorded, a user-trained (你→浩) style pair would train
+    /// the wrong path and make the user-merged differential vacuous.
     fn nbest_step_costs(
         &self,
         prev: &Self::Token,
