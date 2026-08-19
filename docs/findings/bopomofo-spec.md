@@ -1,6 +1,9 @@
 # Bopomofo/Zhuyin scheme SPEC
 
 Date: 2026-08-17 · Status: W13 Phase 0 draft (human freeze pending)
+Amended 2026-08-20 by `zhuyin-index-fidelity` (PR 1 of the #109 stack):
+the recorded no-shuffle decision below is superseded — see "Index
+fidelity".
 
 ## Scope
 
@@ -133,9 +136,60 @@ the whole parse — it does not retry a shorter key. Illegal tones
 applies the same post-match stop.
 
 `ZhuyinSimpleParser2::set_scheme` always ors `ZHUYIN_CORRECT_SHUFFLE`
-(`zhuyin_parser2.cpp:272`). This first STANDARD pass does not: shuffled
-spellings such as `1,u` (ㄅㄝㄧ → `bie`) parse as consumed 0. Recorded
-here rather than treated as accidental.
+(`zhuyin_parser2.cpp:272`). ~~This first STANDARD pass does not~~ The
+`zhuyin-index-fidelity` port applies the same forced bit, so shuffled
+spellings such as `1,u` (ㄅㄝㄧ → `bie`) parse through the 1062
+`ZHUYIN_CORRECT_SHUFFLE` rows exactly like the pin.
+
+## Index fidelity (`zhuyin-index-fidelity`, 2026-08-20)
+
+The parser table is now the pinned `zhuyin_index` itself — 1493 rows
+(`pinyin_parser_table.h:1492`): 417 plain + 1062 `ZHUYIN_CORRECT_SHUFFLE`
++ 14 `ZHUYIN_INCOMPLETE`, joined to canonical spellings through
+`content_table` and gated by `check_chewing_options`
+(`zhuyin_parser2.cpp:43-100`) in `oxpinyin-core/src/zhuyin_map.rs` /
+`scheme.rs`. Properties pinned by unit tests: rows sorted/unique
+(binary-search invariant), the shuffle law (every multi-symbol plain row
+contributes all non-canonical symbol permutations: 227 two-symbol × 1 +
+167 three-symbol × 5 = 1062, each mapping to its canonical row), and the
+option gating of incomplete/shuffle rows at the index level.
+
+**The 12-row recovery.** The first W13 table carried only the 405 plain
+rows whose pinyin is a full-pinyin syllable. The remaining 12 plain rows
+split into: 2 option-only syllables (`ㄥ`→`eng`, `ㄋㄨㄣ`→`nun`, mapped
+to existing key ids 428/429) and 10 zhuyin-only syllables (`chua, den,
+din, fe, kei, len, nia, rua, yai, zhei` — `content_table` rows with no
+`pinyin_index` spelling). The latter become a fourth inventory tier,
+`SyllableKey` ids 430..440 (`SYLLABLE_KEY_COUNT` 430→440):
+`SyllableKey::from_canonical_text` resolves them (mirroring
+`content_table` membership) while `from_text` deliberately does not
+(mirroring `pinyin_index` membership), so the full-pinyin parse surface
+is unchanged. Live/dead split under the pinned `valid_zhuyin_table`:
+`eng, nun, den, zhei, nia, yai, chua` have non-empty tone masks (live
+parse divergences before this port); `fe, din, kei, len, rua` and all 14
+incomplete rows are all-zero (parse-dead; consumed 0 both sides, now by
+the upstream mechanism). `VALID_ZHUYIN_TONES` is id-indexed at
+`SYLLABLE_KEY_COUNT` (the audit confirmed it was the only fixed-size
+id-indexed table in the workspace; every other consumer derives from the
+count or is `.get()`-guarded).
+
+**Canonical display.** Upstream's aux text renders the matched key's
+canonical spelling (`ChewingKey::get_zhuyin_string`), so a shuffled
+input ㄅㄝㄧ displays as ㄅㄧㄝ. The port carries the row's
+`content_table[].m_chewing` as a canonical column; spans stay
+input-based. The differential surfaced exactly this class before the
+column was added (aux-only divergence on shuffled inputs; parse surfaces
+already matched).
+
+**Option seam.** `pinyin_parse_more_chewings` strips
+`ZHUYIN_CORRECT_ALL` from caller options and passes the word through
+(`pinyin.cpp:1621`); the only caller bit the Simple parser consults is
+`ZHUYIN_INCOMPLETE` (bit 4), which `parse_chewing_more` now masks from
+the whole-word options atomic into `ZhuyinParser::parse`'s
+`allow_incomplete`. Keys recovered by the shuffle/recovery rows join the
+already-documented non-gated full-candidate divergence class (no
+phrases for the new spellings in the string-keyed dictionary — empty
+lookup, `UNKNOWN_COST`, no panic; verified by the id-table audit).
 
 ## Keyboard scope for the first PR
 
@@ -147,13 +201,29 @@ unimplemented schemes report `false` rather than aborting.
 
 ## Verification input set
 
-The first differential uses STANDARD keystrokes covering:
+The differential corpus (`tools/bisection/chewing-diff.c`) names zhuyin
+symbol sequences plus an optional tone; the keystroke strings are
+**derived at startup** from the pinned STANDARD symbol/tone tables
+embedded in the driver (verbatim copies of `zhuyin_table.h:9-58`), and
+the embedded tables are cross-checked against the library under test
+through `pinyin_in_chewing_keyboard` before any input runs. No
+keystroke is hand-authored. Coverage, re-derived per run:
 
-- multi-key syllables: `ru4`/`ru ` style tone digits, `1`, `q`, `a`, `u`;
-- tone keys `' '` (first tone), `3`, `4`, `6`, `7`;
-- zero-initial syllables;
-- invalid keys and trailing non-keyboard bytes to pin consumed length;
-- rejection class: `"su "` (illegal first tone), `"sux6"` (tone after an
-  invalid syllable), `"6"` / `" "` (tone with no syllable), each next to
-  a valid control (`"su6"`, `"sucl"`, `"su"`);
+- the legacy W13 set: `ㄋㄧ`/`ㄏㄠ`/`ㄨㄛ`/`ㄖㄣ`/`ㄓㄨㄥ`/`ㄕ`/`ㄧ`,
+  `ㄋㄧ`+tone2, `ㄌ`, empty input;
+- rejection class: illegal first tone on `ㄋㄧ`, tone after an invalid
+  syllable, tone keys alone, each beside a valid control;
+- incomplete keys `ㄅ`/`ㄌ` (consumed 0 under the all-zero masks);
+- shuffle: all six permutations of `ㄅㄧㄝ`, a two-symbol swap beside its
+  canonical, shuffle composed with tone 4, and a multi-key greedy
+  boundary (`ㄋㄧ` + shuffled `ㄅㄝㄧ`);
+- the twelve recovered rows: a mask-valid and a mask-invalid tone each —
+  including `ㄥ` whose *first* tone is valid, pinned beside `ㄋㄧ`'s
+  illegal first tone — plus the five dead rows (`ㄈㄜ`, `ㄉㄧㄣ`, `ㄎㄟ`,
+  `ㄌㄣ`, `ㄖㄨㄚ`) at consumed 0;
 - `pinyin_in_chewing_keyboard` symbol vectors for symbol and tone keys.
+
+Gate: `SCHEME_DIFF_PARSE_AUX_ONLY=1 ./run-scheme-diff.sh bopomofo` →
+`PARSE_AUX_IDENTICAL` (re-measured with this corpus; double-pinyin
+PARSE_AUX unchanged). The full-log run still diverges in the documented
+candidate/sentence class only.
