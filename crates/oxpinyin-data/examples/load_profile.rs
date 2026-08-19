@@ -119,7 +119,14 @@ fn run_isolated(export: &Path, interpolation2: &Path, punct: Option<&Path>, repe
     profile_redb(&export.join("bigram.redb"), "bigram", repeats);
     if let Some(path) = punct {
         if path.is_file() {
-            profile_redb(path, "punct", repeats);
+            // `open_optional` treats a present-but-invalid file as empty.
+            // The strict redb slurp profiler panics on that input, so only
+            // run it after confirming Option A.
+            if PunctTable::open(path).is_ok() {
+                profile_redb(path, "punct", repeats);
+            } else {
+                println!("  punct redb profiler skipped (not a valid Option A table)");
+            }
             profile_punct(path, repeats);
         }
     } else {

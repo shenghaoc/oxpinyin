@@ -270,7 +270,9 @@ as a first move:
 1. **Typed in-memory maps** — done in this PR (§9).
 2. **POD unigram sidecar** (16-byte records, `TryFromBytes` when the dep
    is asked for) plus eventually not shipping the 81 MB `\2-gram` half.
-   Init win is ~29 ms; disk win is the 3.48× data ratio.
+   Init win is ~29 ms. The 3.48× figure is the W8 oxpinyin/oracle
+   runtime-data ratio, not the `\1-gram`/`\2-gram` section sizes; dropping
+   the 81 MB `\2-gram` half is most of that gap.
 3. **`key_cost_table`** still walks 430 keys at alloc. After borrowed
    `get` it is 28 ms. Caching it on the context rather than per instance
    could reduce W8's 48,483× alloc gap.
