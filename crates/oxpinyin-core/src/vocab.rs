@@ -8,6 +8,8 @@
 
 use core::fmt;
 
+use compact_str::CompactString;
+
 use crate::options::{
     OptionBits, PINYIN_AMB_AN_ANG, PINYIN_AMB_C_CH, PINYIN_AMB_EN_ENG, PINYIN_AMB_F_H,
     PINYIN_AMB_G_K, PINYIN_AMB_IN_ING, PINYIN_AMB_L_N, PINYIN_AMB_L_R, PINYIN_AMB_S_SH,
@@ -285,7 +287,7 @@ impl fmt::Display for PhraseToken {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PhraseEntry {
     token: PhraseToken,
-    text: String,
+    text: CompactString,
     /// Pronunciation possibility `(matched, total)` over the phrase item's
     /// stored pronunciations (W14's polyphone discount): the fraction of
     /// the item's pronunciation frequency that spells the looked-up key
@@ -298,19 +300,14 @@ pub struct PhraseEntry {
 impl PhraseEntry {
     /// Builds an entry.
     ///
-    /// `const` despite the `String`: this function allocates nothing, it only
-    /// moves a string the caller already built, which const evaluation
-    /// permits. Verified on the pinned 1.97.1 — a const context can call it,
-    /// but only with `String::new()`. Building a *non-empty* `String` at
-    /// compile time is still rejected (`String::from` in a `const` is E0015,
-    /// "cannot call non-const associated function"), so the qualifier costs
-    /// nothing and buys little today; it is kept so the door stays open, not
-    /// because anything relies on it.
+    /// Phrase text is a [`CompactString`]: typical hits are one to four CJK
+    /// scalars and stay inline (no heap). Callers may pass a [`String`],
+    /// `&str`, or [`CompactString`].
     #[must_use]
-    pub const fn new(token: PhraseToken, text: String) -> Self {
+    pub fn new(token: PhraseToken, text: impl Into<CompactString>) -> Self {
         Self {
             token,
-            text,
+            text: text.into(),
             pronunciation: None,
         }
     }
@@ -349,7 +346,7 @@ impl PhraseEntry {
 
     /// Consumes the entry and returns its phrase text.
     #[must_use]
-    pub fn into_text(self) -> String {
+    pub fn into_text(self) -> CompactString {
         self.text
     }
 }
@@ -453,7 +450,7 @@ mod tests {
         let entry = PhraseEntry::new(PhraseToken::new(7), "\u{4f60}\u{597d}".to_owned());
         assert_eq!(entry.token().value(), 7);
         assert_eq!(entry.text(), "\u{4f60}\u{597d}");
-        assert_eq!(entry.clone().into_text(), "\u{4f60}\u{597d}");
+        assert_eq!(entry.clone().into_text().as_str(), "\u{4f60}\u{597d}");
         assert_eq!(entry.token().to_string(), "7");
     }
 }

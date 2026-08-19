@@ -74,12 +74,14 @@ pub(crate) fn get_best_match(
         unigram_lambda: (1.0_f64 - f64::from(lambda)) as f32,
     };
 
+    let mut span = String::new();
     for i in 0..nstep - 1 {
         if steps[i].is_empty() {
             continue;
         }
         for end in i + 1..nstep {
-            let span: String = chars[i..end].iter().collect();
+            span.clear();
+            span.extend(chars[i..end].iter());
             let (ok, continued, tokens) = lexicon.search(&span);
             if ok {
                 search_bigram2(&mut steps, i, tokens, &ctx)?;
@@ -128,17 +130,21 @@ fn search_bigram2(
     tokens: &[u32],
     ctx: &ScoreCtx<'_>,
 ) -> Result<(), SegmentError> {
-    let nodes: Vec<Node> = steps[nstep].content.clone();
-    for cur in nodes {
+    let count = steps[nstep].content.len();
+    for idx in 0..count {
+        let cur = steps[nstep].content[idx];
         let Some(row) = ctx.model.successors(cur.token)? else {
             continue;
         };
         if row.total == 0 {
             continue;
         }
-        let freq_of: HashMap<u32, u32> = row.records.into_iter().collect();
         for &token in tokens {
-            let Some(&freq) = freq_of.get(&token) else {
+            let Some(freq) = row
+                .records
+                .iter()
+                .find_map(|(next, freq)| (*next == token).then_some(*freq))
+            else {
                 // get_freq miss: no bigram path for this token.
                 continue;
             };

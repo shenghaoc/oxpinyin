@@ -36,3 +36,5 @@ oxpinyin-core = { path = "crates/oxpinyin-core" }
 oxpinyin-engine = { path = "crates/oxpinyin-engine" }
 oxpinyin-user = { path = "crates/oxpinyin-user" }
 redb = "4"
+smallvec = "1.15"
+compact_str = "0.10"

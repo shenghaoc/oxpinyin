@@ -11,6 +11,8 @@
 use core::fmt::Display;
 use std::collections::HashSet;
 
+use smallvec::SmallVec;
+
 use oxpinyin_core::graph::{Edge, EdgeKind, SegmentGraph};
 use oxpinyin_core::kbest::{DecodedPath, k_best};
 use oxpinyin_core::scoring::{Scorer, ScoringConfig, ScoringError, expand_keys, key_cost_table};
@@ -156,6 +158,14 @@ pub struct Session<D, L> {
     /// later `pinyin_get_sentence` must answer false rather than fall
     /// back to the pre-lookup raw form.
     sentence_lookup_active: bool,
+    /// Reused across keystrokes: the scan's candidate buffer.
+    scratch_collected: Vec<Candidate>,
+    /// Reused Schwartzian buffer for the three-key order.
+    scratch_ranked: Vec<(RankKey, Candidate)>,
+    /// Reused dictionary-hit buffer for one window-scan lookup.
+    scratch_entries: Vec<PhraseEntry>,
+    /// Reused scan path (phrase length ≤ 16).
+    scratch_path: SmallVec<[SyllableKey; 16]>,
 }
 
 impl<D, L> Session<D, L>
@@ -197,6 +207,10 @@ where
             key_costs,
             nbest_rows: Vec::new(),
             sentence_lookup_active: false,
+            scratch_collected: Vec::new(),
+            scratch_ranked: Vec::new(),
+            scratch_entries: Vec::new(),
+            scratch_path: SmallVec::new(),
         })
     }
 
@@ -606,13 +620,13 @@ where
                 sentences.extend(self.collect_sentences_with_tokens(&graph, &scorer, path)?);
             }
             sentences.sort_by_key(|(candidate, _)| candidate.cost());
-            let mut seen: HashSet<String> = HashSet::new();
+            let mut seen: HashSet<compact_str::CompactString> = HashSet::new();
             sentences
                 .into_iter()
-                .filter(|(candidate, _)| seen.insert(candidate.text().to_owned()))
+                .filter(|(candidate, _)| seen.insert(candidate.text().into()))
                 .take(crate::nbest::NBEST_ROWS)
                 .map(|(candidate, tokens)| crate::nbest::NbestRow {
-                    text: candidate.text().to_owned(),
+                    text: candidate.text().into(),
                     tokens,
                     keys: candidate.consumed_keys(),
                     span: candidate.consumed_bytes(),
@@ -754,7 +768,7 @@ where
     /// pooled phrase candidates are ranked by the three-key order and
     /// deduplicated directly, with no sentence prepend.
     fn refresh(&mut self) -> Result<(), EngineError> {
-        let remaining = self.raw[self.consumed..].to_owned();
+        let remaining = compact_str::CompactString::from(&self.raw[self.consumed..]);
         if remaining.is_empty() {
             self.candidates = CandidateList::default();
             self.parsed_prefix = 0;
@@ -767,13 +781,6 @@ where
             .fewest_keys(self.settings.incomplete())
             .last()
             .map_or(0, Edge::to);
-        let scorer = Scorer::with_key_costs(
-            self.scoring,
-            &self.dictionary,
-            &self.model,
-            self.key_costs.clone(),
-        );
-        let paths = k_best(&graph, &scorer, SEGMENTATION_K).map_err(EngineError::Decode)?;
 
         // When the model carries the phrase index's real unigram
         // frequencies, the pinned construction runs — the expanding-window
@@ -782,7 +789,8 @@ where
         // result. Without real frequencies the session reproduces its
         // pre-frequency behaviour exactly: k-best prefixes, sentence
         // candidates, cost order, adjacent dedup.
-        let mut collected: Vec<Candidate> = Vec::new();
+        let mut collected = core::mem::take(&mut self.scratch_collected);
+        collected.clear();
         if self.model.has_real_unigrams() {
             self.collect_window_scan(
                 &graph,
@@ -796,27 +804,38 @@ where
             let frequencies = self
                 .candidate_frequencies(&collected)?
                 .unwrap_or_else(|| vec![0; collected.len()]);
-            let mut keyed: Vec<(RankKey, Candidate)> = collected
-                .into_iter()
-                .zip(frequencies)
-                .map(|(candidate, frequency)| {
-                    let key = RankKey {
-                        phrase_length: candidate.text().chars().count(),
-                        pinyin_span: candidate.consumed_bytes(),
-                        frequency,
-                    };
-                    (key, candidate)
-                })
-                .collect();
+            let mut keyed = core::mem::take(&mut self.scratch_ranked);
+            keyed.clear();
+            keyed.extend(
+                collected
+                    .drain(..)
+                    .zip(frequencies)
+                    .map(|(candidate, frequency)| {
+                        let key = RankKey {
+                            phrase_length: candidate.text().chars().count(),
+                            pinyin_span: candidate.consumed_bytes(),
+                            frequency,
+                        };
+                        (key, candidate)
+                    }),
+            );
 
             // Stable sort, all three keys descending: an all-equal tie keeps
             // the collection order, which is the deterministic stand-in for
             // the pin's internal collection order.
             keyed.sort_by_key(|(key, _)| core::cmp::Reverse(*key));
-            collected = keyed.into_iter().map(|(_, candidate)| candidate).collect();
+            collected.extend(keyed.drain(..).map(|(_, candidate)| candidate));
+            self.scratch_ranked = keyed;
 
             dedup_by_text_keep_first(&mut collected);
         } else {
+            let scorer = Scorer::with_key_costs(
+                self.scoring,
+                &self.dictionary,
+                &self.model,
+                self.key_costs.clone(),
+            );
+            let paths = k_best(&graph, &scorer, SEGMENTATION_K).map_err(EngineError::Decode)?;
             for path in &paths {
                 self.collect_prefix_phrases(&graph, &scorer, path, &mut collected)?;
                 self.collect_sentence(&graph, &scorer, path, &mut collected)?;
@@ -859,12 +878,14 @@ where
                     )
                 })
                 .collect();
-            merged.extend(collected);
+            merged.append(&mut collected);
             collected = merged;
             dedup_by_text_keep_first(&mut collected);
         }
 
-        self.candidates = CandidateList::from_vec(collected);
+        self.candidates.swap_items(&mut collected);
+        collected.clear();
+        self.scratch_collected = collected;
         Ok(())
     }
 
@@ -941,13 +962,14 @@ where
                 .rank_phrases(&self.history, &keys[..length], &kinds[..length])
                 .map_err(EngineError::Scoring)?;
             for (entry, cost) in ranked {
+                let token = entry.token();
                 into.push(Candidate::new(
-                    entry.text().to_owned(),
+                    entry.into_text(),
                     CandidateKind::Phrase,
                     length,
                     ends[length - 1],
                     cost,
-                    Some(entry.token()),
+                    Some(token),
                     None,
                 ));
             }
@@ -1084,7 +1106,7 @@ where
     /// bytes after a searched window are skipped so the next window does not
     /// repeat the same key sequence.
     fn collect_window_scan(
-        &self,
+        &mut self,
         graph: &SegmentGraph,
         input: &[u8],
         options: OptionBits,
@@ -1092,12 +1114,20 @@ where
     ) -> Result<(), EngineError> {
         let matrix = build_scan_matrix(graph, options);
         let bound = graph.consumed();
+        let mut path = core::mem::take(&mut self.scratch_path);
+        let mut entries = core::mem::take(&mut self.scratch_entries);
         let mut end = 1usize;
         while end <= bound {
             // An end position no key starts at is an empty column: widen.
             let mut continued = matrix.get(end).is_none_or(|column| column.is_empty());
-            let mut path: Vec<SyllableKey> = Vec::with_capacity(MAX_PHRASE_LENGTH);
-            self.scan_paths(&matrix, 0, end, &mut path, into, &mut continued)?;
+            path.clear();
+            let mut buf = ScanBuf {
+                path: &mut path,
+                into,
+                continued: &mut continued,
+                entries: &mut entries,
+            };
+            self.scan_paths(&matrix, 0, end, &mut buf)?;
             if !continued {
                 break;
             }
@@ -1108,6 +1138,8 @@ where
                 end += 1;
             }
         }
+        self.scratch_path = path;
+        self.scratch_entries = entries;
         Ok(())
     }
 
@@ -1118,15 +1150,13 @@ where
         matrix: &[Vec<ScanKey>],
         node: usize,
         end: usize,
-        path: &mut Vec<SyllableKey>,
-        into: &mut Vec<Candidate>,
-        continued: &mut bool,
+        buf: &mut ScanBuf<'_>,
     ) -> Result<(), EngineError> {
         let Some(column) = matrix.get(node) else {
             return Ok(());
         };
         for scan_key in column.iter().copied() {
-            self.visit_scan_key(matrix, scan_key, end, path, into, continued)?;
+            self.visit_scan_key(matrix, scan_key, end, buf)?;
         }
         Ok(())
     }
@@ -1137,24 +1167,22 @@ where
         matrix: &[Vec<ScanKey>],
         scan_key: ScanKey,
         end: usize,
-        path: &mut Vec<SyllableKey>,
-        into: &mut Vec<Candidate>,
-        continued: &mut bool,
+        buf: &mut ScanBuf<'_>,
     ) -> Result<(), EngineError> {
         let to = scan_key.to;
         if to > end {
             // A key overhanging the window: the phrase could continue, which is
             // upstream's `longest > end` CONTINUED.
-            *continued = true;
+            *buf.continued = true;
             return Ok(());
         }
-        path.push(scan_key.key);
+        buf.path.push(scan_key.key);
         if to == end {
-            self.search_scan_path(path, end, into, continued)?;
-        } else if path.len() < MAX_PHRASE_LENGTH {
-            self.scan_paths(matrix, to, end, path, into, continued)?;
+            self.search_scan_path(buf.path, end, buf.into, buf.continued, buf.entries)?;
+        } else if buf.path.len() < MAX_PHRASE_LENGTH {
+            self.scan_paths(matrix, to, end, buf)?;
         }
-        path.pop();
+        buf.path.pop();
         Ok(())
     }
 
@@ -1166,26 +1194,18 @@ where
         end: usize,
         into: &mut Vec<Candidate>,
         continued: &mut bool,
+        entries: &mut Vec<PhraseEntry>,
     ) -> Result<(), EngineError> {
         let has_incomplete = path
             .iter()
             .any(|key| key.completeness() == Completeness::Partial);
 
-        let mut sequences: Vec<Vec<SyllableKey>> = Vec::new();
         if has_incomplete {
-            sequences = expand_keys(path, SCAN_EXPANSION_LIMIT);
+            for sequence in expand_keys(path, SCAN_EXPANSION_LIMIT) {
+                self.lookup_and_append(sequence.as_slice(), path.len(), end, into, entries)?;
+            }
         } else {
-            sequences.push(path.to_vec());
-        }
-        for sequence in &sequences {
-            let entries = self.dictionary.lookup(sequence).map_err(|error| {
-                EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-            })?;
-            append_scan_entries(entries, path.len(), end, CandidateKind::Phrase, into);
-            let addon = self.dictionary.lookup_addon(sequence).map_err(|error| {
-                EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-            })?;
-            append_scan_entries(addon, path.len(), end, CandidateKind::Addon, into);
+            self.lookup_and_append(path, path.len(), end, into, entries)?;
         }
 
         let can_extend = self
@@ -1199,24 +1219,44 @@ where
         *continued |= can_extend || addon_extend;
         Ok(())
     }
+
+    fn lookup_and_append(
+        &self,
+        sequence: &[SyllableKey],
+        keys: usize,
+        end: usize,
+        into: &mut Vec<Candidate>,
+        entries: &mut Vec<PhraseEntry>,
+    ) -> Result<(), EngineError> {
+        self.dictionary
+            .lookup_into(sequence, entries)
+            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
+        append_scan_entries(entries.drain(..), keys, end, CandidateKind::Phrase, into);
+        self.dictionary
+            .lookup_addon_into(sequence, entries)
+            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
+        append_scan_entries(entries.drain(..), keys, end, CandidateKind::Addon, into);
+        Ok(())
+    }
 }
 
 /// Pushes the phrases one key-path search returned.
 fn append_scan_entries(
-    entries: Vec<PhraseEntry>,
+    entries: impl IntoIterator<Item = PhraseEntry>,
     keys: usize,
     end: usize,
     kind: CandidateKind,
     into: &mut Vec<Candidate>,
 ) {
     for entry in entries {
+        let token = entry.token();
         into.push(Candidate::new(
-            entry.text().to_owned(),
+            entry.into_text(),
             kind,
             keys,
             end,
             0,
-            Some(entry.token()),
+            Some(token),
             None,
         ));
     }
@@ -1355,6 +1395,14 @@ const DIVIDED_TABLE: &[(&str, &str, &str)] = &[
     ("yuan", "yu", "an"),
     ("zuan", "zu", "an"),
 ];
+
+/// Scratch the window scan threads through the recursive walk.
+struct ScanBuf<'a> {
+    path: &'a mut SmallVec<[SyllableKey; 16]>,
+    into: &'a mut Vec<Candidate>,
+    continued: &'a mut bool,
+    entries: &'a mut Vec<PhraseEntry>,
+}
 
 /// One key of the scan matrix at its byte position, with the byte position
 /// it ends at and where its own text starts — the two differ from
@@ -1566,19 +1614,24 @@ struct RankKey {
 ///
 /// Full dedup rather than the adjacent-only `Vec::dedup_by`: the same text can
 /// be reached through different spans or segmentations, and after the
-/// three-key sort two copies need not be adjacent. One heap allocation per
-/// kept text; the candidate count per refresh is bounded by the lookup totals
-/// upstream also materialises (broad initials are in the thousands).
+/// three-key sort two copies need not be adjacent. Two-pass so the seen-set
+/// can hold `&str` into the live candidates instead of cloning each kept
+/// text.
 fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
-    let mut seen: HashSet<String> = HashSet::with_capacity(candidates.len());
-    candidates.retain(|candidate| {
-        let text = candidate.text();
-        if seen.contains(text) {
-            false
-        } else {
-            seen.insert(text.to_owned());
-            true
-        }
+    let mut keep = Vec::with_capacity(candidates.len());
+    {
+        let mut seen: HashSet<&str> = HashSet::with_capacity(candidates.len());
+        keep.extend(
+            candidates
+                .iter()
+                .map(|candidate| seen.insert(candidate.text())),
+        );
+    }
+    let mut index = 0;
+    candidates.retain(|_| {
+        let kept = keep[index];
+        index += 1;
+        kept
     });
 }
 
@@ -2063,7 +2116,7 @@ mod tests {
         // fallback list also offers, so a fallback sentence candidate sits
         // beyond the row at a known place.
         session.nbest_rows = vec![NbestRow {
-            text: "\u{884}".to_owned(),
+            text: "\u{884}".into(),
             tokens: vec![PhraseToken::new(9)],
             keys: 1,
             span: 2,
@@ -2088,7 +2141,7 @@ mod tests {
         session.reset();
         session.type_pinyin("nihao").expect("typing cannot fail");
         session.nbest_rows = vec![NbestRow {
-            text: "\u{884}".to_owned(),
+            text: "\u{884}".into(),
             tokens: vec![PhraseToken::new(9)],
             keys: 1,
             span: 2,
@@ -2124,21 +2177,21 @@ mod tests {
         // (the 你→浩 training divergence, `sentence-surface.md` §8).
         session.nbest_rows = vec![
             NbestRow {
-                text: "\u{597d}".to_owned(),
+                text: "\u{597d}".into(),
                 tokens: vec![PhraseToken::new(0x100)],
                 keys: 1,
                 span: 3,
                 cost: 10,
             },
             NbestRow {
-                text: "\u{597d}".to_owned(),
+                text: "\u{597d}".into(),
                 tokens: vec![PhraseToken::new(0x101)],
                 keys: 1,
                 span: 3,
                 cost: 20,
             },
             NbestRow {
-                text: "\u{6d69}".to_owned(),
+                text: "\u{6d69}".into(),
                 tokens: vec![PhraseToken::new(0x102)],
                 keys: 1,
                 span: 3,

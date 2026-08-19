@@ -7,6 +7,7 @@
 
 use core::slice;
 
+use compact_str::CompactString;
 use oxpinyin_core::{Cost, PhraseToken};
 
 /// Where a candidate came from.
@@ -26,7 +27,7 @@ pub enum CandidateKind {
 /// One offered conversion.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Candidate {
-    text: String,
+    text: CompactString,
     kind: CandidateKind,
     consumed_keys: usize,
     consumed_bytes: usize,
@@ -42,8 +43,8 @@ pub struct Candidate {
 }
 
 impl Candidate {
-    pub(crate) const fn new(
-        text: String,
+    pub(crate) fn new(
+        text: impl Into<CompactString>,
         kind: CandidateKind,
         consumed_keys: usize,
         consumed_bytes: usize,
@@ -52,7 +53,7 @@ impl Candidate {
         nbest_index: Option<u8>,
     ) -> Self {
         Self {
-            text,
+            text: text.into(),
             kind,
             consumed_keys,
             consumed_bytes,
@@ -138,8 +139,15 @@ pub struct CandidateList {
 }
 
 impl CandidateList {
+    #[allow(dead_code)] // used by the in-crate tests
     pub(crate) const fn from_vec(items: Vec<Candidate>) -> Self {
         Self { items }
+    }
+
+    /// Swap the live list with `items`, returning the previous buffer so
+    /// the session can keep its capacity across keystrokes.
+    pub(crate) fn swap_items(&mut self, items: &mut Vec<Candidate>) {
+        core::mem::swap(&mut self.items, items);
     }
 
     /// Number of candidates.

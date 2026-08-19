@@ -23,11 +23,13 @@
 
 use std::collections::HashMap;
 
+use compact_str::CompactString;
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
     Completeness, Cost, Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken,
     SyllableKey,
 };
+use smallvec::SmallVec;
 
 use crate::error::EngineError;
 use crate::session::{MAX_PHRASE_LENGTH, SCAN_EXPANSION_LIMIT, ScanKey};
@@ -51,7 +53,7 @@ pub(crate) const SENTENCE_START: u32 = 1;
 #[derive(Clone, Debug)]
 pub(crate) struct NbestRow {
     /// Concatenated phrase texts.
-    pub(crate) text: String,
+    pub(crate) text: CompactString,
     /// The phrase tokens in order — the selection record a chosen row
     /// contributes (upstream keeps the whole `MatchResult` on the
     /// instance; the engine records tokens instead).
@@ -144,11 +146,13 @@ fn loses_to(left: &Value, right: &Value) -> bool {
 }
 
 /// The trellis state over the remaining input's byte positions.
+type NodeValues = SmallVec<[Value; NSTORE]>;
+
 struct Trellis {
     /// `nodes[position][token]` = up to [`NSTORE`] values, best-first.
-    nodes: Vec<HashMap<u32, Vec<Value>>>,
+    nodes: Vec<HashMap<u32, NodeValues>>,
     /// Token → phrase text, gathered from the span searches.
-    texts: HashMap<u32, String>,
+    texts: HashMap<u32, CompactString>,
     /// Next insertion sequence.
     seq: u64,
 }
@@ -156,7 +160,9 @@ struct Trellis {
 impl Trellis {
     fn new(bound: usize, seed_token: u32) -> Self {
         let mut nodes = vec![HashMap::new(); bound + 1];
-        nodes[0].insert(seed_token, vec![Value::seed(seed_token)]);
+        let mut seed_values = NodeValues::new();
+        seed_values.push(Value::seed(seed_token));
+        nodes[0].insert(seed_token, seed_values);
         Self {
             nodes,
             texts: HashMap::new(),
@@ -195,23 +201,20 @@ impl Trellis {
     /// The step's beam: every value at `position` with its node slot,
     /// best-first, capped at [`NBEAM`] (`get_candidates` +
     /// `get_top_results`).
-    fn beam(&mut self, position: usize) -> Vec<BeamEntry> {
+    fn beam(&mut self, position: usize) -> SmallVec<[BeamEntry; NBEAM]> {
         // Token-sorted node iteration: HashMap iteration order must not
         // reach the sort input, and the `(rank, seq)` ordering below makes
         // the output independent of it regardless.
         let mut tokens: Vec<_> = self.nodes[position].keys().copied().collect();
         tokens.sort_unstable();
-        let mut entries: Vec<BeamEntry> = tokens
+        let mut entries: SmallVec<[BeamEntry; NBEAM]> = tokens
             .into_iter()
             .filter_map(|token| self.nodes[position].get(&token))
             .flat_map(|node| {
-                node.iter()
-                    .enumerate()
-                    .map(|(slot, value)| BeamEntry {
-                        value: value.clone(),
-                        slot,
-                    })
-                    .collect::<Vec<_>>()
+                node.iter().enumerate().map(|(slot, value)| BeamEntry {
+                    value: value.clone(),
+                    slot,
+                })
             })
             .collect();
         entries.sort_by(|left, right| {
@@ -280,8 +283,8 @@ impl Trellis {
         spans
     }
 
-    fn text(&self, spans: &[(usize, u32)]) -> Option<String> {
-        let mut text = String::new();
+    fn text(&self, spans: &[(usize, u32)]) -> Option<CompactString> {
+        let mut text = CompactString::const_new("");
         for (_, token) in spans {
             text.push_str(self.texts.get(token)?);
         }
@@ -294,7 +297,7 @@ impl Trellis {
 /// unwound) and the entry's pronunciation possibility.
 struct SpanEntry {
     token: u32,
-    text: String,
+    text: CompactString,
     keys: u32,
     pronunciation: Option<(u64, u64)>,
 }
@@ -335,14 +338,14 @@ where
         let mut widening = true;
         while end <= bound && widening {
             widening = false;
-            let mut path: Vec<SyllableKey> = Vec::new();
+            let mut path: SmallVec<[SyllableKey; 16]> = SmallVec::new();
             let mut entries: Vec<SpanEntry> = Vec::new();
             span_entries(matrix, position, end, &mut path, dictionary, &mut entries)?;
             widen_probe(matrix, position, end, &mut path, dictionary, &mut widening)?;
 
             // First path per token wins: equal-cost duplicates from other
             // paths of the same span would only fill node slots.
-            let mut first_of_token: Vec<u32> = Vec::new();
+            let mut first_of_token: SmallVec<[u32; 32]> = SmallVec::new();
             for entry in entries {
                 if !first_of_token.contains(&entry.token) {
                     first_of_token.push(entry.token);
@@ -457,7 +460,7 @@ fn span_entries<D>(
     matrix: &[Vec<ScanKey>],
     start: usize,
     end: usize,
-    path: &mut Vec<SyllableKey>,
+    path: &mut SmallVec<[SyllableKey; 16]>,
     dictionary: &D,
     into: &mut Vec<SpanEntry>,
 ) -> Result<(), EngineError>
@@ -489,7 +492,7 @@ fn widen_probe<D>(
     matrix: &[Vec<ScanKey>],
     start: usize,
     end: usize,
-    path: &mut Vec<SyllableKey>,
+    path: &mut SmallVec<[SyllableKey; 16]>,
     dictionary: &D,
     continued: &mut bool,
 ) -> Result<(), EngineError>
@@ -534,23 +537,37 @@ where
     let has_incomplete = path
         .iter()
         .any(|key| key.completeness() == Completeness::Partial);
-    let sequences: Vec<Vec<SyllableKey>> = if has_incomplete {
-        expand_keys(path, SCAN_EXPANSION_LIMIT)
-    } else {
-        vec![path.to_vec()]
-    };
-    for sequence in &sequences {
-        let entries = dictionary
-            .lookup(sequence)
-            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        for entry in entries {
-            into.push(SpanEntry {
-                token: entry.token().value(),
-                text: entry.text().to_owned(),
-                keys: path_len.try_into().unwrap_or(u32::MAX),
-                pronunciation: entry.pronunciation_possibility(),
-            });
+    if has_incomplete {
+        for sequence in expand_keys(path, SCAN_EXPANSION_LIMIT) {
+            push_span_entries(sequence.as_slice(), path_len, dictionary, into)?;
         }
+    } else {
+        push_span_entries(path, path_len, dictionary, into)?;
+    }
+    Ok(())
+}
+
+fn push_span_entries<D>(
+    sequence: &[SyllableKey],
+    path_len: usize,
+    dictionary: &D,
+    into: &mut Vec<SpanEntry>,
+) -> Result<(), EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: core::fmt::Display,
+{
+    let entries = dictionary
+        .lookup(sequence)
+        .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
+    for entry in entries {
+        let pronunciation = entry.pronunciation_possibility();
+        into.push(SpanEntry {
+            token: entry.token().value(),
+            text: entry.into_text(),
+            keys: path_len.try_into().unwrap_or(u32::MAX),
+            pronunciation,
+        });
     }
     Ok(())
 }
@@ -686,7 +703,7 @@ mod tests {
         let rows: Vec<NbestRow> = nbest_sentences(&matrix, bound, &dict, &model, &[])
             .expect("the trellis cannot fail here");
         assert!(!rows.is_empty());
-        assert_eq!(rows[0].text, "你好");
+        assert_eq!(rows[0].text.as_str(), "你好");
         assert_eq!(rows[0].span, bound);
         assert_eq!(rows[0].keys, 2);
     }
@@ -694,7 +711,7 @@ mod tests {
     #[test]
     fn nbest_row_reports_its_span() {
         let row = NbestRow {
-            text: "你好".to_owned(),
+            text: "你好".into(),
             tokens: vec![PhraseToken::new(7)],
             keys: 2,
             span: 5,

@@ -11,6 +11,8 @@ description = "oxpinyin internal crate — no stability promise; use oxpinyin-en
 workspace = true
 
 [dependencies]
+smallvec.workspace = true
+compact_str.workspace = true
 
 [dev-dependencies]
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }

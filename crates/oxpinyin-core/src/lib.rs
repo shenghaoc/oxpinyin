@@ -90,6 +90,23 @@ pub trait Dictionary {
     /// Looks up entries matching `syllables`.
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error>;
 
+    /// [`Self::lookup`] into a caller-owned buffer, which keeps capacity
+    /// across keystrokes on the window-scan path.
+    ///
+    /// The default copies [`Self::lookup`]'s vector. Implementors that
+    /// already fill a `Vec` should override this and `clear`+`push` into
+    /// `out` instead.
+    fn lookup_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<(), Self::Error> {
+        let entries = self.lookup(syllables)?;
+        out.clear();
+        out.extend(entries);
+        Ok(())
+    }
+
     /// Whether a stored phrase's pinyin can extend `syllables`.
     ///
     /// This is libpinyin's `SEARCH_CONTINUED` probe: the phrase index reports
@@ -121,6 +138,18 @@ pub trait Dictionary {
         Ok(Vec::new())
     }
 
+    /// [`Self::lookup_addon`] into a caller-owned buffer.
+    fn lookup_addon_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<(), Self::Error> {
+        let entries = self.lookup_addon(syllables)?;
+        out.clear();
+        out.extend(entries);
+        Ok(())
+    }
+
     /// Addon-facade `SEARCH_CONTINUED` probe, `false` for every existing
     /// implementor.
     fn phrase_prefix_exists_addon(
@@ -140,12 +169,28 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         (**self).lookup(syllables)
     }
 
+    fn lookup_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<(), Self::Error> {
+        (**self).lookup_into(syllables, out)
+    }
+
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
         (**self).phrase_prefix_exists(syllables)
     }
 
     fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
         (**self).lookup_addon(syllables)
+    }
+
+    fn lookup_addon_into(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<(), Self::Error> {
+        (**self).lookup_addon_into(syllables, out)
     }
 
     fn phrase_prefix_exists_addon(

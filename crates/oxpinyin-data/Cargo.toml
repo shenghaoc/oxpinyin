@@ -13,3 +13,4 @@ workspace = true
 [dependencies]
 oxpinyin-core = { workspace = true }
 redb = { workspace = true }
+compact_str.workspace = true

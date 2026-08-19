@@ -35,14 +35,45 @@ fn main() {
         // before the profiler starts: table slurp, prefix-table build,
         // interpolation2 parse, corpus file reading.
         let (dict, lm) = load_real_tables();
-        let inputs = load_w2_inputs();
         let mut session = real_session(&dict, &lm);
+        let keystroke = args.iter().any(|arg| arg == "--keystroke-only");
+        let dump = if keystroke {
+            "/tmp/dhat-heap-keystroke.json"
+        } else {
+            "/tmp/dhat-heap-parity.json"
+        };
+        // Non-testing mode writes the JSON on Drop (`testing()` skips finish).
         let _profiler = dhat::Profiler::builder()
-            .file_name("/tmp/dhat-heap-parity.json")
-            .trim_backtraces(Some(12))
+            .file_name(dump)
+            .trim_backtraces(Some(16))
             .build();
-        for input in &inputs {
-            type_batch(&mut session, input);
+        let started = Instant::now();
+        if keystroke {
+            for input in CYCLE_INPUTS {
+                type_keystrokes(&mut session, input);
+            }
+        } else {
+            let inputs = load_w2_inputs();
+            for input in &inputs {
+                type_batch(&mut session, input);
+            }
+        }
+        let elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0;
+        // 123 parse+guess steps: sum of CYCLE_INPUTS character counts.
+        let ops = if keystroke { 123_u64 } else { 0 };
+        println!(
+            "dhat_scope               {}",
+            if keystroke {
+                "keystroke_cycle"
+            } else {
+                "w2_batch"
+            }
+        );
+        println!("dhat_dump                {dump}");
+        println!("wall_ms                  {elapsed_ms:.3}");
+        if ops > 0 {
+            println!("ops                      {ops}");
+            println!("cycle_ms                 {elapsed_ms:.3}");
         }
         return;
     }
