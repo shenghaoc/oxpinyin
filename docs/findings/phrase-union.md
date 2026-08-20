@@ -485,14 +485,15 @@ than to the system index.
 Before any feature is active, the empty-store profile must remain bit-identical:
 
 ```text
-top-1      10177
-top-5-set  10189
-prefix-10  94871 of 98930
-absent     1
+top-1      10178
+top-5-set  10190
+prefix-10  94872 of 98930
+absent     0
 tie-swaps  1036
 ```
 
-Movement means a leak into existing behaviour and is a STOP.
+Movement means a leak into existing behaviour and is a STOP. Pins reflect
+the 2026-08-21 amendment (`docs/findings/pin-refreeze-2026-08.md`).
 
 ### 8.2 New differentials
 

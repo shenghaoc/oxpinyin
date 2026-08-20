@@ -92,11 +92,14 @@ the tables.
 `real_tables_session_reports_parity` / `sentence_surface_reports_parity`:
 
 ```text
-top-1 10177 / top-5-set 10189 / prefix-10 94871 of 98930 / absent 1 / tie-swaps 1036
+top-1 10178 / top-5-set 10190 / prefix-10 94872 of 98930 / absent 0 / tie-swaps 1036
 sentence 488 / 385 / 370
 ```
 
-Unchanged.
+Unchanged by this alloc pass (measured at 10177 / 10189 / 94871 / 1 /
+1036 at the time; the 2026-08-21 doubled-apostrophe fix moved the pins
+by one and is orthogonal to the alloc work — see
+`docs/findings/pin-refreeze-2026-08.md` amendment).
 
 ## Residual (not this pass)
 
