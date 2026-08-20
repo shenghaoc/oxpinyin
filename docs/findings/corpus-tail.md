@@ -36,7 +36,7 @@ Measured 2026-08-21, before and after the Class B fix:
 | order-only (tie-swaps) | **1,036** | **1,036** | same |
 | prefix-10 gap | **4,059 of 98,930** | **4,058 of 98,930** | same (94,871 → **94,872** overlap) |
 
-Bit-identical to the four frozen assertions in the pin test (before and
+Bit-identical to the five frozen assertions in the pin test (before and
 after the re-freeze). The pin re-freeze is recorded in
 `docs/findings/pin-refreeze-2026-08.md` as the 2026-08-21 amendment.
 
