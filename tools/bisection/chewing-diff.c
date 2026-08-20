@@ -992,6 +992,14 @@ static size_t cp26_derive_syllable(const struct keyboard *kb,
                 cp26_emit_taps(key, taps, out, &len);
             }
         }
+    } else if (rest > 2) {
+        /* A CP26 key carries at most a middle and a final besides the
+         * initial; an entry with more would silently drop symbols from
+         * the derived keystrokes. */
+        fprintf(stderr,
+                "cp26 entry has %zu non-initial symbols (max 2): %s\n",
+                rest, symbols[at]);
+        exit(1);
     } else if (rest == 1) {
         const char *symbol = symbols[at];
         bool middle = false;
