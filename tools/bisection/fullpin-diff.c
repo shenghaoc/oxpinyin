@@ -17,8 +17,10 @@
  * only — the frozen parity shape).  SCHEME_DIFF_TONE=1 switches it to
  * the USE_TONE profile and extends the corpus with the tone-digit law
  * rows: a second tone digit, the rejected digits 6/0, digit-then-junk,
- * adjacent and apostrophe-joined toned pairs, and every frozen
- * initial-only key with a tone.
+ * and adjacent and apostrophe-joined toned pairs.  Frozen initial-only
+ * keys with tones ("n4") are NOT covered: derive_corpus omits them
+ * because the pinned oracle aborts on them, so the tone sweep is not
+ * exhaustive over the law's input space.
  *
  * Usage:
  *   ./fullpin-diff <path-to-so> <systemdir> [scheme]
@@ -188,8 +190,10 @@ static const char *hanyu_target(const char *spelling) {
  *
  * Under SCHEME_DIFF_TONE=1 the scheme-1 corpus additionally carries the
  * tone-digit law rows: a second tone digit, the rejected 6/0,
- * digit-then-junk, adjacent and apostrophe-joined toned pairs, and every
- * frozen initial-only key with a tone.
+ * digit-then-junk, and adjacent and apostrophe-joined toned pairs.
+ * Frozen initial-only keys with tones are omitted — the pinned oracle
+ * aborts on them (see the NOT-swept note inside), so no scheme's
+ * corpus claims that class.
  */
 static int scheme1_tone_mode(void) {
     const char *tone = getenv("SCHEME_DIFF_TONE");
