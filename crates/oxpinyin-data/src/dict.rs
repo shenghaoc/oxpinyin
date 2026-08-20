@@ -392,14 +392,17 @@ fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDe
 
 /// Restores the ascending unique-key order [`PinyinIndex`] is searched
 /// under: sort, then keep the last row per key — the value
-/// `BTreeMap::insert` would have left. redb's B-tree walk is ascending and
-/// its table keys are unique, so on every well-formed table this is a single
-/// O(n) order check and the repair never runs.
+/// `BTreeMap::insert` would have left. The sort must be **stable**: that
+/// is what keeps equal keys in visitation order, so the last row of each
+/// run is the last-visited one, as insert's overwrite left it. redb's
+/// B-tree walk is ascending and its table keys are unique, so on every
+/// well-formed table this is a single O(n) order check and the repair
+/// never runs.
 fn ensure_sorted_unique<V>(rows: &mut Vec<(Box<str>, V)>) {
     if rows.is_sorted_by(|a, b| a.0 < b.0) {
         return;
     }
-    rows.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
     let mut kept = 0;
     for read in 0..rows.len() {
         if kept > 0 && rows[kept - 1].0 == rows[read].0 {
