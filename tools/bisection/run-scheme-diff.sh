@@ -66,6 +66,31 @@ if ! grep -q '^pin_ref=libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636
     exit 0
 fi
 
+# Romanised full-pinyin schemes (LUOMA 2, SECONDARY_ZHUYIN 3) hit the
+# upstream heap over-read in pinyin_get_full_pinyin_auxiliary_text
+# (docs/findings/full-pinyin-aux-overread.md).  Their PARSE_AUX
+# differential runs against a *patched* oracle built from the pinned
+# source plus tools/oracle/patches/fullpin-aux-overread.patch; every
+# other scheme (bopo, double, full 1 HANYU) and the full-log candidate
+# pins keep using the unpatched pin unchanged.
+if [[ "$SCHEME" == "full" && "${SCHEME_ARGS[0]:-1}" =~ ^(2|3)$ ]]; then
+    PATCHED_PREFIX="${PINYIN_PATCHED_ORACLE_PREFIX:-$HOME/.local/opt/pinyin-oracle-patched}"
+    if [[ ! -f "$PATCHED_PREFIX/oracle-pin.txt" || ! -f "$PATCHED_PREFIX/lib/libpinyin.so" ]]; then
+        echo "SKIP: patched oracle not found at $PATCHED_PREFIX (needed for full scheme ${SCHEME_ARGS[0]:-1})"
+        echo "  build it with:"
+        echo "    tools/oracle/build-oracle.sh --prefix \"\$HOME/.local/opt/pinyin-oracle-patched\" \\"
+        echo "        --apply-patches tools/oracle/patches"
+        exit 0
+    fi
+    if ! grep -q '^pin_ref=libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c.*+patches-' \
+        "$PATCHED_PREFIX/oracle-pin.txt"; then
+        echo "SKIP: patched oracle at $PATCHED_PREFIX is off-pin or missing the patches token"
+        exit 0
+    fi
+    ORACLE_SO="$PATCHED_PREFIX/lib/libpinyin.so"
+    ORACLE_DATA="$PATCHED_PREFIX/lib/libpinyin/data"
+fi
+
 if [[ "$SCHEME" == "full" ]]; then
     if [[ -n "$SCHEME_NUMBER" && ! "$SCHEME_NUMBER" =~ ^(1|2|3)$ ]]; then
         echo "fatal: full scheme must be 1, 2 or 3 (got '$SCHEME_NUMBER')"
