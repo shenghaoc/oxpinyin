@@ -13,7 +13,7 @@
 
 use core::fmt;
 
-use crate::{Completeness, MAX_SYLLABLE_LEN, OptionBits, SyllableKey};
+use crate::{Completeness, MAX_SYLLABLE_LEN, OptionBits, SyllableKey, USE_TONE};
 
 /// Largest input the graph accepts, in bytes.
 ///
@@ -114,6 +114,7 @@ pub struct Edge {
     syllable_start: u32,
     key: SyllableKey,
     kind: EdgeKind,
+    tone: u8,
 }
 
 impl Edge {
@@ -145,6 +146,14 @@ impl Edge {
     #[must_use]
     pub const fn kind(&self) -> EdgeKind {
         self.kind
+    }
+
+    /// The tone consumed with this key under `USE_TONE`, `0` when the span
+    /// carried no trailing digit (`ChewingKey.m_tone`; `CHEWING_ZERO_TONE`
+    /// is 0).
+    #[must_use]
+    pub const fn tone(&self) -> u8 {
+        self.tone
     }
 
     /// Whether a separator byte was consumed before the key.
@@ -450,6 +459,14 @@ fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Ed
     };
 
     let available = input.len() - syllable_start;
+    // The pin's window is `max_full_pinyin_length = 7`, whose own comment
+    // says "include tone" (`pinyin_parser2.cpp:82`): one byte beyond the
+    // longest 6-letter syllable, reachable only through the `USE_TONE`
+    // digit scan. With the bit clear the window stays 6 and no digit ever
+    // joins a span, so the toneless edge set is bit-identical to the
+    // frozen parser.
+    let use_tone = options.contains(USE_TONE);
+    let max_span = MAX_SYLLABLE_LEN + usize::from(use_tone);
     let mut longest_complete = None;
 
     // Each `lookup` below is a linear scan of the 405-entry inventory, so
@@ -460,13 +477,13 @@ fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Ed
     //
     // Two passes so `Exact` can mean "the longest complete syllable here"
     // without the caller having to look at its neighbours.
-    for length in (1..=MAX_SYLLABLE_LEN.min(available)).rev() {
+    for length in (1..=max_span.min(available)).rev() {
         let text = &input[syllable_start..syllable_start + length];
-        if !text.iter().all(u8::is_ascii_lowercase) {
+        let Some((core, _)) = tone_split(text, use_tone) else {
             continue;
-        }
+        };
         if longest_complete.is_none()
-            && key_for_spelling(text, options)
+            && key_for_spelling(core, options)
                 .is_some_and(|key| key.completeness() == Completeness::Complete)
         {
             longest_complete = Some(length);
@@ -474,14 +491,14 @@ fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Ed
         }
     }
 
-    for length in (1..=MAX_SYLLABLE_LEN.min(available)).rev() {
+    for length in (1..=max_span.min(available)).rev() {
         let end = syllable_start + length;
         let text = &input[syllable_start..end];
-        if !text.iter().all(u8::is_ascii_lowercase) {
+        let Some((core, tone)) = tone_split(text, use_tone) else {
             continue;
-        }
+        };
 
-        let Some(key) = key_for_spelling(text, options) else {
+        let Some(key) = key_for_spelling(core, options) else {
             continue;
         };
         let kind = match key.completeness() {
@@ -508,7 +525,29 @@ fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Ed
             syllable_start: start,
             key,
             kind,
+            tone,
         });
+    }
+}
+
+/// `FullPinyinParser2::parse_one_key`'s tone scan
+/// (`pinyin_parser2.cpp:176-190`): under `USE_TONE` a span whose last byte
+/// is an ASCII `1..=5` is that syllable's tone and is consumed with the
+/// span; every remaining byte must be a lowercase letter. The
+/// digit-stripped core then goes through the ordinary option-gated lookup —
+/// completeness is *not* a precondition, so an initial-only key carries a
+/// tone exactly like a complete one. Any other digit (`0`, `6`–`9`) stays
+/// in the core, fails the lookup, and the span falls back to the shorter
+/// toneless parse.
+fn tone_split(text: &[u8], use_tone: bool) -> Option<(&[u8], u8)> {
+    let (core, tone) = match text.last().copied() {
+        Some(digit @ b'1'..=b'5') if use_tone => (&text[..text.len() - 1], digit - b'0'),
+        _ => (text, 0),
+    };
+    if !core.is_empty() && core.iter().all(u8::is_ascii_lowercase) {
+        Some((core, tone))
+    } else {
+        None
     }
 }
 
@@ -543,7 +582,7 @@ fn key_for_spelling(text: &[u8], options: OptionBits) -> Option<SyllableKey> {
 #[cfg(test)]
 mod tests {
     use super::{EdgeKind, FewestKeys, GraphError, MAX_GRAPH_INPUT, SegmentGraph};
-    use crate::SyllableKey;
+    use crate::{OptionBits, SyllableKey, USE_TONE};
 
     /// Renders the graph as `from-to:key:kind`, one edge per entry.
     fn rendered(input: &str) -> Vec<String> {
@@ -561,6 +600,154 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// Renders the graph as `from-to:key:kind:tone` under `options`.
+    fn rendered_with_options(input: &str, options: OptionBits) -> Vec<String> {
+        SegmentGraph::build_with_options(input.as_bytes(), options)
+            .expect("the test inputs are short")
+            .edges()
+            .iter()
+            .map(|edge| {
+                format!(
+                    "{}-{}:{}:{}:{}",
+                    edge.from(),
+                    edge.to(),
+                    edge.key().text(),
+                    edge.kind().as_wire(),
+                    edge.tone()
+                )
+            })
+            .collect()
+    }
+
+    /// `PINYIN_INCOMPLETE | USE_TONE` — the W15 tone profile.
+    fn tone_options() -> OptionBits {
+        OptionBits::from_bits(crate::PINYIN_INCOMPLETE | USE_TONE)
+    }
+
+    #[test]
+    fn use_tone_consumes_a_trailing_digit_with_the_span() {
+        // `pinyin_parser2.cpp:176-214`: the digit is inside the consumed
+        // span, rides the key as its tone, and outranks the shorter
+        // toneless parse at the same position. The shorter parses stay
+        // available as segmentation alternatives.
+        assert_eq!(
+            rendered_with_options("zai4", tone_options()),
+            [
+                "0-4:zai:exact:4",
+                "0-3:zai:segmentation:0",
+                "0-2:za:segmentation:0",
+                "0-1:z:incomplete:0",
+                "1-4:ai:exact:4",
+                "1-3:ai:segmentation:0",
+                "1-2:a:segmentation:0",
+            ]
+        );
+    }
+
+    #[test]
+    fn use_tone_reaches_the_seventh_byte_of_a_span() {
+        // `max_full_pinyin_length = 7` "include[s] tone"
+        // (`pinyin_parser2.cpp:82`): zhuang4 is a 7-byte span and its
+        // toneless 6-byte sibling becomes the segmentation alternative.
+        let edges = rendered_with_options("zhuang4", tone_options());
+        assert!(edges.contains(&"0-7:zhuang:exact:4".to_owned()));
+        assert!(edges.contains(&"0-6:zhuang:segmentation:0".to_owned()));
+        assert!(SegmentGraph::build_with_options(b"zhuang4", tone_options())
+            .expect("valid")
+            .fully_consumed());
+    }
+
+    #[test]
+    fn use_tone_rejects_the_non_tone_digits() {
+        // 0 and 6-9 are not tones: they stay in the core, fail the lookup,
+        // and the span falls back to the shorter toneless parse with the
+        // digit left as junk.
+        for input in ["zai6", "zai0", "zai9"] {
+            let graph = SegmentGraph::build_with_options(input.as_bytes(), tone_options())
+                .expect("valid");
+            assert_eq!(graph.consumed(), 3, "input {input}");
+            assert!(!graph.fully_consumed(), "input {input}");
+            assert!(
+                graph
+                    .edges()
+                    .iter()
+                    .all(|edge| edge.tone() == 0 && edge.to() <= 3),
+                "input {input}"
+            );
+        }
+    }
+
+    #[test]
+    fn use_tone_leaves_junk_after_the_digit_unparsed() {
+        let graph = SegmentGraph::build_with_options(b"zai4Q", tone_options()).expect("valid");
+        assert_eq!(graph.consumed(), 4);
+        assert!(!graph.fully_consumed());
+        let path: Vec<(usize, &str, u8)> = graph
+            .fewest_keys(true)
+            .iter()
+            .map(|edge| (edge.to(), edge.key().text(), edge.tone()))
+            .collect();
+        assert_eq!(path, [(4, "zai", 4)]);
+    }
+
+    #[test]
+    fn use_tone_carries_a_digit_over_an_apostrophe_boundary() {
+        let graph = SegmentGraph::build_with_options(b"zai4'an", tone_options()).expect("valid");
+        assert!(graph.fully_consumed());
+        let path: Vec<(&str, u8)> = graph
+            .fewest_keys(true)
+            .iter()
+            .map(|edge| (edge.key().text(), edge.tone()))
+            .collect();
+        assert_eq!(path, [("zai", 4), ("an", 0)]);
+    }
+
+    #[test]
+    fn use_tone_admits_a_tone_on_an_incomplete_key_only_with_the_bit() {
+        // The scan's only precondition is the option-gated index hit, so
+        // the initial-only "n" carries a tone like any complete syllable.
+        let edges = rendered_with_options("n4", tone_options());
+        assert!(edges.contains(&"0-2:n:incomplete:4".to_owned()));
+
+        // Incomplete edges are emitted unconditionally and filtered by the
+        // walk (`fewest_keys(false)`, the session's `walk`), so the tone
+        // rides an edge the incomplete-off profile drops whole.
+        let without_incomplete = OptionBits::from_bits(USE_TONE);
+        let graph = SegmentGraph::build_with_options(b"n4", without_incomplete).expect("valid");
+        assert_eq!(
+            graph
+                .edges()
+                .iter()
+                .map(|edge| (edge.kind().as_wire(), edge.tone()))
+                .collect::<Vec<_>>(),
+            [("incomplete", 4), ("incomplete", 0)]
+        );
+        assert!(graph.fewest_keys(false).is_empty());
+
+        // A lone digit is an empty core and never parses.
+        assert!(SegmentGraph::build_with_options(b"4", tone_options())
+            .expect("valid")
+            .edges()
+            .is_empty());
+    }
+
+    #[test]
+    fn use_tone_clear_keeps_the_frozen_edge_set() {
+        // The invariant: with the bit clear every toned input builds the
+        // same edges the toneless parser always did — no digit spans, no
+        // tone fields, no window growth.
+        for input in ["zai4", "zhuang4", "n4", "a4", "zai4'an", "ni3hao3"] {
+            let frozen = SegmentGraph::build(input.as_bytes()).expect("valid");
+            let cleared = SegmentGraph::build_with_options(
+                input.as_bytes(),
+                OptionBits::from_bits(crate::PINYIN_INCOMPLETE),
+            )
+            .expect("valid");
+            assert_eq!(frozen.edges(), cleared.edges(), "input {input}");
+            assert!(cleared.edges().iter().all(|edge| edge.tone() == 0));
+        }
     }
 
     #[test]
