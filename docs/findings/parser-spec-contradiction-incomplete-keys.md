@@ -102,8 +102,8 @@ and are **not** part of this contradiction:
 
 | Reason | Input | Note |
 |---|---|---|
-| `consumed-length` | `'ni` | oracle consumes 3, skipping a leading apostrophe; `parser-path-set.md` freezes a leading apostrophe as remainder-starting. Apostrophe-tolerance difference. |
-| `consumed-length` | `ni''hao` | oracle consumes all 7 across a doubled apostrophe; the frozen path set stops at `ni` with remainder `''hao`. Same family. |
+| `consumed-length` | `'ni` | oracle consumes 3, skipping a leading apostrophe; `parser-path-set.md` freezes a leading apostrophe as remainder-starting. Apostrophe-tolerance difference — still open. |
+| `consumed-length` | `ni''hao` | oracle consumes all 7 across a doubled apostrophe. Closed 2026-08-21: `parser-path-set.md` now enumerates both `[ni, hao]` and `[ni, ha, o]` with an empty remainder. |
 | `oracle-sentinel` | `'`, `''`, `'''` | abort guard, see `docs/findings/oracle-apostrophe-abort.md`. |
 | `oracle-sentinel` | `ni'`, `ni'!`, `ni'i` | live F-E-01 shape: a key column with no usable pinyin string. |
 
@@ -183,8 +183,12 @@ Next work after W2 merges: **W3** (data loading) and **W4** (`SegmentGraph`
    partials. Represent mid-position incomplete edges on W4's `SegmentGraph`;
    keep `MAX_PARSE_RESULTS = 4_096` for the foundation parser; treat the 483
    as the W2 baseline until W4.
-3. **Apostrophe-tolerance pair** (`'ni`, `ni''hao`) — still open; decide
-   separately.
+3. **Apostrophe-tolerance pair** (`'ni`, `ni''hao`) — the doubled half
+   (`ni''hao`) closed on 2026-08-21 by aligning with the pin: a run of
+   consecutive apostrophes after a fully consumed left group is a single
+   separator. Details in `docs/findings/parser-spec.md` architect
+   correction log (2026-08-21) and `docs/findings/corpus-tail.md`. The
+   leading half (`'ni`) stays open.
 4. **F-A / fixture coverage** for non-terminal and repeated partials —
    still open for W4 capture against the graph, not for a foundation
    path-set rewrite.

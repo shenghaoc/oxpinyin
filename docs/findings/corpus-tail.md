@@ -1,12 +1,17 @@
 # Corpus tail (W12)
 
-Date: 2026-08-21 · Status: **residual enumeration**
+Date: 2026-08-21 · Status: **residual enumeration; Class B closed**
 
 W12 is the corpus tail (`ROADMAP.md` W12): the undiagnosed parity gap
-against the pinned oracle at `0c5e80e`. This finding names the
-inputs behind the frozen residual counts so a later, targeted fix has a
-concrete target rather than an aggregate. It moves no pin and proposes
-no code change.
+against the pinned oracle at `0c5e80e`. This finding names the inputs
+behind the frozen residual counts so a later, targeted fix has a
+concrete target rather than an aggregate.
+
+The initial enumeration split the 13 top-1 misses into Class A
+(comparator tie-swaps) and Class B (`ni''hao` — doubled-apostrophe
+parse). Class B was closed the same day by aligning with the pin; the
+population section below now records both the pre-fix and post-fix
+numbers.
 
 ## Population
 
@@ -20,24 +25,28 @@ PINYIN_MODEL_DIR=<extracted-model20> \
 cargo run -p pinyin-oracle --release --bin corpus-tail
 ```
 
-Measured 2026-08-21, `main` tip `5f9bc7f`:
+Measured 2026-08-21, before and after the Class B fix:
 
-| residual | value | pinned in |
-|---|---:|---|
-| compared | 10,190 | `real_tables_session_reports_parity` |
-| top-1 misses | **13** | same (top-1 = 10,177) |
-| top-5 misses | **1** | same (top-5-set = 10,189) |
-| absent | **1** | same |
-| order-only (tie-swaps) | **1,036** | same |
-| prefix-10 gap | **4,059 of 98,930** | same (94,871 overlap) |
+| residual | pre-fix | post-fix | pinned in |
+|---|---:|---:|---|
+| compared | 10,190 | 10,190 | `real_tables_session_reports_parity` |
+| top-1 misses | **13** | **12** | same (top-1 = 10,177 → **10,178**) |
+| top-5 misses | **1** | **0** | same (top-5-set = 10,189 → **10,190**) |
+| absent | **1** | **0** | same |
+| order-only (tie-swaps) | **1,036** | **1,036** | same |
+| prefix-10 gap | **4,059 of 98,930** | **4,058 of 98,930** | same (94,871 → **94,872** overlap) |
 
-Bit-identical to the four frozen assertions in the pin test.
+Bit-identical to the four frozen assertions in the pin test (before and
+after the re-freeze). The pin re-freeze is recorded in
+`docs/findings/pin-refreeze-2026-08.md` as the 2026-08-21 amendment.
 
 ## The 13 top-1 misses
 
 Two classes. Twelve are the same tie-swap species the 1,036 order-only
 inputs sit in — same depth-10 set, comparator tie at the top pair.
-One is a novel parse-side signal.
+One (Class B, `ni''hao`) was a novel parse-side signal, closed
+2026-08-21 by aligning the doubled-apostrophe separator with the pin.
+The post-fix residual is 12; Class B moved out of the tail.
 
 ### Class A — top-two comparator tie-swap (12 of 13)
 
@@ -76,45 +85,61 @@ comparator (fixed-point → float, or the tie-break rule) and would move
 the pin — deferred to a maintainer-approved re-freeze, not a W12
 diagnostic.
 
-### Class B — double-apostrophe parse (1 of 13)
+### Class B — double-apostrophe parse (1 of 13) — CLOSED 2026-08-21
 
-| input | oracle top-5 | our top-5 |
-|---|---|---|
-| `ni''hao` | 你好, 你, 尼, 呢, 泥 | 你, 尼, 呢, 泥, 妮 |
+| input | oracle top-5 | our top-5 (pre-fix) | our top-5 (post-fix) |
+|---|---|---|---|
+| `ni''hao` | 你好, 你, 尼, 呢, 泥 | 你, 尼, 呢, 泥, 妮 | 你好, 你, 尼, 呢, 泥 |
 
-The one **absent** case in the corpus. The oracle admits `你好` at rank
-1; our candidate list starts at 你 and `你好` never appears at any
-depth. The double apostrophe collapses a group boundary that the
+The one **absent** case in the corpus. The oracle admitted `你好` at
+rank 1; our candidate list started at 你 and `你好` never appeared at
+any depth. The double apostrophe collapsed a group boundary that the
 pinned parser treats as a single break, letting the two-syllable
 `ni+hao` reach the phrase table on the oracle side while our parser
-disallows the two-syllable phrase across the doubled separator.
+disallowed the two-syllable phrase across the doubled separator.
 
 The single-apostrophe form is not in this residual — corpus stratum
 `05-apostrophe.txt` is generated with a single `'` join
 (`parity-corpus.md` "Strata"), so `ni'hao` sits in the agreement bulk.
-The double-apostrophe shape reaches the corpus only through the
-generator's junk / edge strata (stratum `08-junk.txt` / `09-edge.txt`,
-where non-`a-z`/`'` bytes are inserted alongside apostrophes). This is
-parse-side (path set), not a comparator issue; a fix is bounded and
-does not touch the tie-break scoring.
+The double-apostrophe shape reaches the corpus through the generator's
+edge stratum (`09-edge.txt` line 33). This is parse-side (path set),
+not a comparator issue; the fix is bounded and does not touch the
+tie-break scoring.
+
+**Fix.** Upstream's `FullPinyinParser2::parse`
+(`pinyin_parser2.cpp:237-250`) treats every apostrophe as a zero-width
+step-propagation, so any run of consecutive apostrophes acts as a
+single separator when the group after it consumes at least one byte.
+`oxpinyin-core::FullPinyinParser::parse` and `SegmentGraph::key_start`
+now do the same; the leading-apostrophe half of maintainer decision 3
+(`parser-spec-contradiction-incomplete-keys.md`) stays open.
+
+**Freeze move.** `real_tables_session_reports_parity` re-freezes from
+10,177 / 10,189 / 94,871 of 98,930 / absent 1 to
+**10,178 / 10,190 / 94,872 of 98,930 / absent 0**; tie-swaps stay at
+1,036. Deliberate re-freeze, recorded in
+`docs/findings/pin-refreeze-2026-08.md` 2026-08-21 amendment and
+`docs/findings/parser-spec.md` architect correction log 2026-08-21.
 
 ## The 1 top-5 / 1 absent
 
-Both are `ni''hao`. The single top-5 miss equals the single absent
-input; the twelve Class-A entries are all top-2 hits, so they cross the
-top-5 line trivially.
+Both were `ni''hao`, closed together by the Class B fix. Post-fix
+top-5-set is 10,190 and absent is 0. The twelve Class-A entries are all
+top-2 hits, so they cross the top-5 line trivially.
 
-## The 4,059 prefix-10 residual
+## The 4,058 prefix-10 residual
 
 The prefix-10 gap counts oracle top-10 positions that do not appear
-in our top-10. It sums to 4,059 of 98,930 positions across the corpus,
-so its population is much larger than the 13 top-1 misses.
-Distribution characterisation is out of scope of this enumeration; a
-targeted follow-up would either (a) sample by rank at which the gap
-starts (are the missing oracle candidates always at the tail, or do
-they push earlier?), or (b) categorise by the shared prefix depth
-between our list and the oracle's. Recorded as follow-up; the pin
-does not gate on this figure at any threshold beyond "unchanged".
+in our top-10. Post-fix it sums to 4,058 of 98,930 positions across
+the corpus (was 4,059; the Class B fix recovered the `你好` position
+of `ni''hao`), so its population is much larger than the 12 top-1
+misses. Distribution characterisation is out of scope of this
+enumeration; a targeted follow-up would either (a) sample by rank at
+which the gap starts (are the missing oracle candidates always at the
+tail, or do they push earlier?), or (b) categorise by the shared
+prefix depth between our list and the oracle's. Recorded as
+follow-up; the pin does not gate on this figure at any threshold
+beyond "unchanged".
 
 ## The 1,036 order-only tie-swaps
 
@@ -168,10 +193,12 @@ existing corpus is not the venue.
 
 The 13 top-1 misses are named and split into two classes: 12 in the
 comparator tie-swap species that already has a §3 characterisation
-(`sentence-surface.md`), and 1 in a parse-side species (`ni''hao`) not
-previously registered. The frozen residual counts are reproducible by
+(`sentence-surface.md`), and 1 in a parse-side species (`ni''hao`)
+closed on 2026-08-21 by aligning the doubled-apostrophe separator with
+the pin. The frozen residual counts are reproducible by
 `bin/corpus-tail` against the same tables the pin test uses, so a
 future move on either class is diffable against this baseline.
 
-W12 remains open — enumeration is not resolution — but the tail is no
-longer aggregate.
+W12 remains open — 12 Class A residuals stay unresolved pending a
+comparator re-freeze — but the tail is no longer aggregate, and the
+one non-tie-swap tail is closed.

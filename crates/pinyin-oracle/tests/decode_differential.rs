@@ -33,8 +33,10 @@ const K: usize = 8;
 /// Depth the capture protocol records candidates to.
 const CAPTURE_DEPTH: usize = 10;
 
-/// The two inputs maintainer decision 3 leaves divergent.
-const OPEN_APOSTROPHE_CASES: [&str; 2] = ["'ni", "ni''hao"];
+/// The one input maintainer decision 3 still leaves divergent. The doubled
+/// half (`ni''hao`) closed 2026-08-21 (`docs/findings/parser-spec.md` log,
+/// `docs/findings/corpus-tail.md`); the leading half stays open.
+const OPEN_APOSTROPHE_CASES: [&str; 1] = ["'ni"];
 
 fn field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
     line.split('\t')

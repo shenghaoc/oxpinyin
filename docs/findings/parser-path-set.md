@@ -87,7 +87,7 @@ partial. Paths appear below in required return order.
 | `ni'` | `[ni@0:2:C]` | `'` |
 | `ni'i` | `[ni@0:2:C]` | `'i` |
 | `ni'!` | `[ni@0:2:C]` | `'!` |
-| `ni''hao` | `[ni@0:2:C]` | `''hao` |
+| `ni''hao` | `[ni@0:2:C, hao@4:7:C]`; `[ni@0:2:C, ha@4:6:C, o@6:7:C]` | empty |
 
 The empty input has one empty segmentation rather than zero paths. Junk-prefix
 input likewise has one result with no segments and the entire input as the
@@ -107,3 +107,10 @@ and its selected segmentation do not reorder or remove portable parser paths.
 - 2026-08-09, Task 7: the `chang'an` example now includes the complete
   `[cha, ng, an]` alternative. The original row omitted that table-valid path
   even though the exhaustive rule above already required it.
+- 2026-08-21, W12 Class B: the `ni''hao` example now shows both `[ni, hao]`
+  and `[ni, ha, o]` with an empty remainder. Consecutive apostrophes are a
+  single separator when the right group consumes at least one byte; matches
+  the pin (`fixtures/w4/oracle-candidates.txt` `ni''hao` top-1 `你好`).
+  Cross-referenced in `parser-spec.md` architect correction log
+  (2026-08-21) and `parser-spec-contradiction-incomplete-keys.md`
+  (decision 3, doubled half now closed).

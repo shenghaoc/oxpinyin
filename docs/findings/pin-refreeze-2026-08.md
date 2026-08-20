@@ -45,12 +45,31 @@ agreement on every re-frozen metric and moved no import or train differential.
 SPEC now records:
 
 ```text
-top-1               10177
-top-5-set           10189
-prefix-10 overlap   94871 of 98930
-absent                  1
+top-1               10178
+top-5-set           10190
+prefix-10 overlap   94872 of 98930
+absent                  0
 tie-swaps             1036
 ```
 
 A later change that moves any of these is a deliberate re-freeze decision, not
 a silent edit.
+
+## 2026-08-21 amendment — doubled apostrophe
+
+The pins above supersede the initial re-freeze table (top-1 10177, top-5-set
+10189, prefix-10 94871 of 98930, absent 1). W12 Class B closed on
+2026-08-21: the doubled apostrophe now acts as a single separator between
+groups (`docs/findings/parser-spec.md` architect correction log 2026-08-21;
+`docs/findings/parser-spec-contradiction-incomplete-keys.md` decision 3,
+doubled half). `ni''hao` was the sole absent input and the sole top-5 miss;
+its `你好` phrase now surfaces, moving every affected metric by exactly one
+position. Diagnostic details in `docs/findings/corpus-tail.md`.
+
+| Metric | Prior pin | Amended pin | Δ |
+|---|---|---|---|
+| top-1 | 10177 | 10178 | +1 |
+| top-5-set | 10189 | 10190 | +1 |
+| prefix-10 overlap | 94871 of 98930 | 94872 of 98930 | +1 |
+| absent | 1 | 0 | −1 |
+| tie-swaps (order-only) | 1036 | 1036 | 0 |
