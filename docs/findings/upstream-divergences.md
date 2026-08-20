@@ -50,28 +50,53 @@ is complete, these notes are collected to report back to libpinyin.
 - **Externally observable:** yes — the C ABI surface matches; the migration
   tool is an internal tool and keeps the full value surface.
 
-### HANYU full pinyin ignores tone digits under USE_TONE
+### HANYU full pinyin ignores tone digits under USE_TONE — CLOSED
 
 - **Upstream source cite:** `FullPinyinParser2::parse_one_key`
-  (`src/storage/pinyin_parser2.cpp:155-205`): under `USE_TONE` a
+  (`src/storage/pinyin_parser2.cpp:164-214`): under `USE_TONE` a
   trailing digit 1–5 is the tone and is consumed with the match
-  (`zai4` consumes 4; aux renders `zai4`).
-- **What oxpinyin does instead:** the HANYU full-pinyin surface
-  (`pinyin_parse_more_full_pinyins` → `Session::type_pinyin`) treats
-  the digit as junk — `zai4` consumes 3. The frozen full-pinyin corpus
-  is tone-less, so every earlier differential ran a profile without
-  `USE_TONE` and the gap was unmeasured until the W15 full-scheme
-  driver swept scheme 1 with tones.
-- **Scope:** HANYU only. LUOMA and SECONDARY_ZHUYIN carry the pinned
-  tone-digit behavior (`full_pinyin_index.rs`), and the bopomofo
-  keyboards always did.
-- **Externally observable:** yes, only with `USE_TONE` set on the
-  context — the fork never sets it for full pinyin (ibus-libpinyin
-  1.16.5 calls no tone-bearing full-pinyin path), so the borrowed
-  frontend cannot reach the divergence.
-- **Status:** recorded, not chased — closing it means teaching the
-  frozen HANYU parser (or its capi seam) the tone-digit rule, which is
-  HANYU-surface work outside the #109 scheme stack.
+  (`zai4` consumes 4; aux renders `zai4` through
+  `ChewingKey::get_pinyin_string`, `chewing_key.cpp:47-58`).
+- **Mechanism:** the scan reads only the span's last byte; the
+  digit-stripped core goes through the ordinary option-gated index
+  lookup, so an initial-only key carries a tone like a complete one,
+  and the DP window is `max_full_pinyin_length = 7` "include tone"
+  (`pinyin_parser2.cpp:82`). `0` and `6`–`9` are not tones: they stay
+  in the core, fail the lookup, and the shorter toneless parse wins.
+- **Status:** closed by the HANYU `USE_TONE` port. The graph's
+  `emit_edges` strips a trailing `1..=5` only under the bit (window 7
+  then, 6 otherwise), `Edge` carries the tone, the capi aux renders
+  canonical + digit, fuzzy alternates inherit the tone, and the
+  resplit/divided tables never match a toned key (`ChewingKey`
+  `operator==` includes `m_tone`, `chewing_key.h:81-91`). Measured:
+  `SCHEME_DIFF_TONE=1 SCHEME_DIFF_PARSE_AUX_ONLY=1
+  run-scheme-diff.sh full 1` → PARSE_AUX_IDENTICAL, with the tone-less
+  full-1 sweep staying PARSE_AUX_IDENTICAL over its unchanged corpus.
+- **Back-reference:** distinct from #130's aux over-read (a buffer
+  split in the aux renderer, not parser consumption) — carrying the
+  digit here is exactly what keeps that over-read closed on HANYU.
+
+### Tone digit on an initial-only key aborts the pin's phrase search
+
+- **Upstream source cite:** `contains_incomplete_pinyin`
+  (`src/storage/pinyin_phrase3.h:146-156`) asserts
+  `CHEWING_ZERO_TONE == key.m_tone` for any zero-middle/zero-final
+  key; every `chewing_large_table2` search path dispatches through it.
+- **Mechanism:** the tone scan's only precondition is the option-gated
+  index hit, so the *parser* produces an initial-only key with a tone
+  (`n4` under `PINYIN_INCOMPLETE | USE_TONE`) — and the first phrase
+  search containing that key trips the assert. The parser permits
+  exactly what the search asserts against.
+- **What oxpinyin does instead:** parses the toned initial-only key
+  and searches without aborting — the toned incomplete edge flows the
+  scan matrix like any other (constitution 4: nothing panics).
+- **Externally observable:** yes — the pinned oracle SIGABRTs on `n4`
+  under `USE_TONE | PINYIN_INCOMPLETE` as soon as candidates are
+  guessed; oxpinyin returns candidates. No oracle differential is
+  possible for this class (the pin-built `.so` aborts), the same
+  situation as the scheme-setter rows above; the fullpin-diff tone
+  sweep documents the exclusion in the driver. Report-back candidate
+  for libpinyin.
 
 ### Scheme setters abort or half-mutate on the no-op slots
 
