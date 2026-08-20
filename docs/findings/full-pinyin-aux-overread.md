@@ -144,12 +144,102 @@ For `SECONDARY_ZHUYIN`, `tzuei` (5 raw bytes) canonicalises to `zui`
 (3 bytes). At `cursor = 4` (before the last raw byte `i`), `len = 4`,
 but `strlen("zui") = 3` — `pinyin + 4` reads past the terminator.
 
+The fix this doc proposes upstream (verified byte-identical to
+oxpinyin's output at the over-read positions, see the local
+verification below) repairs the length **invariant** rather than only
+the failing pointer add:
+
+```diff
+--- a/src/pinyin.cpp
++++ b/src/pinyin.cpp
+@@ -3415,9 +3415,11 @@ bool pinyin_get_full_pinyin_auxiliary_text(pinyin_instance_t * instance,
+         if (begin < cursor && cursor < end) {
+             gchar * pinyin = key.get_pinyin_string();
+-            gchar * left = g_strndup(pinyin, len);
+-            gchar * right = g_strdup(pinyin + len);
++            const size_t pinyin_len = strlen(pinyin);
++            const size_t clamped    = len < pinyin_len ? len : pinyin_len;
++            gchar * left  = g_strndup(pinyin, clamped);
++            gchar * right = g_strdup(pinyin + clamped);
+             middle = g_strconcat(left, "|", right, " ", NULL);
+             g_free(left);
+             g_free(right);
+```
+
+`len` is a **raw-input** offset (`cursor - begin`) being used as a
+**string** length against the canonical pinyin; `clamped` restores
+that invariant for both halves of the split. The un-clamped
+`g_strndup(pinyin, len)` on the `left` side is *not* correct by
+construction — it stays in bounds only because `g_strndup`'s API
+contract bounds the source read (at most `n` bytes, stopping at the
+source `NUL`; shorter sources are NUL-padded). That bound is a
+property of choosing `g_strndup`, not of the code around it: swap the
+copy for anything that honours the requested byte count literally
+(`memcpy` or a hand loop — neither promises to stop at the source
+`NUL`) and the over-read silently revives. A one-line right-side-only clamp
+(`g_strdup(pinyin + std_lite::min((size_t)len, strlen(pinyin)))`)
+produces byte-identical output on every input — the two candidates
+diverge on nothing (`clamped == len` whenever `len < strlen`) — but it
+leaves `left` on the unclamped raw offset and keeps the NUL-stopping
+coupling, so it is the weaker form to hand a reviewer.
+
+The variant actually applied to our pin is that minimal-diff one-liner
+(placed at the `g_strdup` call, since `pinyin` is declared inside the
+enclosing `if` block and a smaller hunk is what we want carrying the
+oracle): `tools/oracle/patches/fullpin-aux-overread.patch`, landed on
+main with the `full-pinyin-schemes` branch (PR #126). Refer to that
+file for the applied form; the three-line diff above is the
+upstream-submittable one.
+
 ## Upstream status
 
 - **Pin `0c5e80e`** — over-read present, reproduced above.
-- **libpinyin `main` @ `55e9051`** — the same code is unchanged
-  (verified by reading `src/pinyin.cpp:3411-3424` at that tip; the
-  `len`/`right` computation is byte-identical to the pin).
+- **libpinyin `main` @ `55e9051`** — the same code is unchanged; the fix
+  is **not upstream yet** (verified by reading
+  `src/pinyin.cpp:3411-3424` at that tip; the `len`/`right` computation
+  is byte-identical to the pin).
+- **Impact through the shipped frontend: latent.** ibus-libpinyin
+  1.16.5 does reach the function —
+  `FullPinyinEditor::updateAuxiliaryText` calls
+  `pinyin_get_full_pinyin_auxiliary_text` (`src/PYPFullPinyinEditor.cc:128`)
+  with the editor cursor — but the context never leaves the HANYU
+  default. **Search scope (reproducible negative):** the ibus-libpinyin
+  source tree at tag `1.16.5-22-g612004e` contains no direct call
+  site of `pinyin_set_full_pinyin_scheme` —
+  `grep -rn "pinyin_set_full_pinyin_scheme" src/` over that tree
+  returns nothing (the tag's tarball and the clone at that commit
+  agree). Under HANYU, raw and canonical lengths are equal, so `len`
+  can never exceed `strlen(pinyin)` and the mid-key branch cannot
+  over-read. **Scope of the claim:** latent *through ibus-libpinyin
+  1.16.5 as shipped* — not unreachable in general. Selecting the
+  scheme and parsing only prepare the instance; the over-read fires
+  when `pinyin_get_full_pinyin_auxiliary_text` is then asked for a
+  mid-key cursor whose raw delta `cursor - begin` exceeds the
+  canonical pinyin length. Any consumer that calls
+  `pinyin_set_full_pinyin_scheme` with a romanised scheme
+  (SECONDARY_ZHUYIN or LUOMA), or drives the raw `pinyin_parse_*`
+  single-syllable paths under such a scheme, can reach the over-read
+  under those conditions; the W15 differential here is exactly such a
+  consumer. **Venue:** the
+  bug is in libpinyin (report candidate — Peng Wu); ibus-libpinyin is
+  a consumer that happens not to trigger it as shipped and inherits
+  the fix.
+- **Fix verified locally** — built a patched pinned oracle at
+  `$HOME/.local/opt/pinyin-oracle-patched` from the same
+  `2.11.91`/`0c5e80e` source archive with the diff above applied, and
+  swept it against the unpatched pin: byte-identical on full 1
+  (HANYU) and full 2 (LUOMA); differs on full 3 (SECONDARY_ZHUYIN)
+  only at the three known over-read positions
+  (`tzuei` cursor 4, `tzuei4` cursor 5, `tzueiQ` cursor 4). At those
+  three positions the patched oracle emits `zui|` + space, `zui4|` +
+  space, and `zui|` + space — byte-identical to oxpinyin. No other
+  output differences were observed in this sweep. The sweep's strided
+  corpus happens to contain no LUOMA over-read candidate row, which
+  is why full 2 shows no difference there; the direct LUOMA probe
+  (Reproduction above) closes that gap — at every leaking cursor the
+  patched pin emits the clamped empty right suffix (`zh|` + space,
+  `r|` + space, …) and is byte-identical to the unpatched pin
+  everywhere else.
 - **Existing reports** — searched the venues below on 2026-08-20; **no
   existing report** matches this bug:
   - libpinyin GitHub issues: no hit for the function name, "auxiliary
@@ -171,7 +261,7 @@ but `strlen("zui") = 3` — `pinyin + 4` reads past the terminator.
 
 Recording it here as a fresh upstream memory-safety bug (heap
 information leak into user-visible aux text) — an upstream-report
-candidate.
+candidate **with the fix attached** (the three-line diff above).
 
 ## Scope
 
