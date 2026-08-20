@@ -1419,6 +1419,11 @@ pub(crate) struct ScanKey {
     pub(crate) to: usize,
     pub(crate) syllable_start: usize,
     pub(crate) crosses_separator: bool,
+    /// The tone consumed with this key under `USE_TONE` (`Edge::tone`).
+    /// Rides the fuzzy alternates and locks the resplit/divided tables,
+    /// which compare full `ChewingKey` equality against zero-tone structs
+    /// (`chewing_key.h:81-91`) and therefore never match a toned key.
+    pub(crate) tone: u8,
 }
 
 impl ScanKey {
@@ -1429,6 +1434,7 @@ impl ScanKey {
             to: edge.to(),
             syllable_start: edge.syllable_start(),
             crosses_separator: edge.crosses_separator(),
+            tone: edge.tone(),
         }
     }
 }
@@ -1451,9 +1457,14 @@ pub(crate) fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Ve
     // 2. Resplit pairs along the selected path. A pair only resplits when
     // the two keys share a boundary with no apostrophe between them: the
     // pin fills a zero key at a separator, so its pairs never span one.
+    // A toned key never resplits: upstream matches the full ChewingKey
+    // (tone included) against zero-tone table structs.
     let mut additions: Vec<ScanKey> = Vec::new();
     for pair in selected.windows(2) {
         if pair[1].from != pair[0].to || pair[0].crosses_separator || pair[1].crosses_separator {
+            continue;
+        }
+        if pair[0].tone != 0 || pair[1].tone != 0 {
             continue;
         }
         let Some((_, _, left, right)) = RESPLIT_TABLE.iter().find(|(first, second, _, _)| {
@@ -1474,6 +1485,7 @@ pub(crate) fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Ve
             to: split,
             syllable_start: pair[0].from,
             crosses_separator: false,
+            tone: 0,
         });
         additions.push(ScanKey {
             key: right_key,
@@ -1481,6 +1493,7 @@ pub(crate) fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Ve
             to: pair[1].to,
             syllable_start: split,
             crosses_separator: false,
+            tone: 0,
         });
     }
     for addition in &additions {
@@ -1490,7 +1503,9 @@ pub(crate) fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Ve
     // 3. Divided syllables over every key collected so far. The split parts
     // are measured from the syllable text itself, so a key that rides over
     // an apostrophe still divides (`bu'tian` offers `补体` from the divided
-    // `ti`, whose span covers the apostrophe plus `t` + `i`).
+    // `ti`, whose span covers the apostrophe plus `t` + `i`). A toned key
+    // never divides: the divided table's structs are zero-tone and upstream
+    // matches the full ChewingKey.
     let snapshot: Vec<ScanKey> = columns
         .iter()
         .enumerate()
@@ -1501,10 +1516,14 @@ pub(crate) fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Ve
             to: key.to,
             syllable_start: key.syllable_start,
             crosses_separator: key.crosses_separator,
+            tone: key.tone,
         })
         .collect();
     let mut additions: Vec<ScanKey> = Vec::new();
     for scan_key in &snapshot {
+        if scan_key.tone != 0 {
+            continue;
+        }
         let Some((_, left, right)) = DIVIDED_TABLE
             .iter()
             .find(|(syllable, _, _)| *syllable == scan_key.key.text())
@@ -1524,6 +1543,7 @@ pub(crate) fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Ve
             to: split,
             syllable_start: scan_key.syllable_start,
             crosses_separator: scan_key.crosses_separator,
+            tone: 0,
         });
         additions.push(ScanKey {
             key: right_key,
@@ -1531,6 +1551,7 @@ pub(crate) fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Ve
             to: scan_key.to,
             syllable_start: split,
             crosses_separator: false,
+            tone: 0,
         });
     }
     for addition in &additions {
@@ -1545,7 +1566,9 @@ pub(crate) fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Ve
     // push (`phonetic_key_matrix.h:92-99`); `ChewingKeyRest` is the span
     // (`chewing_key.h:97-104`). Same key, different `m_raw_end`, coexist.
     // After fuzzy, keep `(key, to)` so those edges survive; key-only
-    // collapse here is #103.
+    // collapse here is #103. The tone rides the alternate — upstream
+    // copies the whole key before swapping the initial or final
+    // (`phonetic_key_matrix.cpp:250-259`).
     let snapshot: Vec<(usize, ScanKey)> = columns
         .iter()
         .enumerate()
@@ -1560,6 +1583,7 @@ pub(crate) fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Ve
                 to: scan_key.to,
                 syllable_start: scan_key.syllable_start,
                 crosses_separator: scan_key.crosses_separator,
+                tone: scan_key.tone,
             });
         }
     }
@@ -2262,5 +2286,50 @@ mod tests {
             unigram,
             "bit-set leaves the W6-T4 unigram merge intact and does not invent a RankKey bigram"
         );
+    }
+
+    #[test]
+    fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
+        use oxpinyin_core::graph::SegmentGraph;
+        use oxpinyin_core::{OptionBits, PINYIN_AMB_Z_ZH, PINYIN_INCOMPLETE, USE_TONE};
+
+        let incomplete = OptionBits::from_bits(PINYIN_INCOMPLETE);
+        let toned = OptionBits::from_bits(PINYIN_INCOMPLETE | USE_TONE);
+
+        // Fuzzy alternates inherit the tone: upstream copies the whole
+        // ChewingKey before swapping the initial
+        // (`phonetic_key_matrix.cpp:250-259`).
+        let graph = SegmentGraph::build_with_options(b"zai4", toned).expect("valid");
+        let columns = super::build_scan_matrix(
+            &graph,
+            OptionBits::from_bits(PINYIN_INCOMPLETE | USE_TONE | PINYIN_AMB_Z_ZH),
+        );
+        let column: Vec<_> = columns[0]
+            .iter()
+            .map(|key| (key.key.text(), key.to, key.tone))
+            .collect();
+        assert!(column.contains(&("zai", 4, 4)));
+        assert!(column.contains(&("zhai", 4, 4)));
+
+        // Resplit: ("a", "nan") is a live pair on the toneless walk; a toned
+        // member locks it, because the table structs are zero-tone and the
+        // pin matches the full ChewingKey.
+        let toneless = SegmentGraph::build_with_options(b"anan", incomplete).expect("valid");
+        let columns = super::build_scan_matrix(&toneless, incomplete);
+        assert!(columns[0].iter().any(|key| key.key.text() == "an" && key.to == 2));
+
+        let toned_pair = SegmentGraph::build_with_options(b"a4nan", toned).expect("valid");
+        let columns = super::build_scan_matrix(&toned_pair, toned);
+        assert!(!columns[0].iter().any(|key| key.key.text() == "an"));
+
+        // Divided: "bian" divides toneless; "bian4" carries its tone instead.
+        let toneless = SegmentGraph::build_with_options(b"bian", incomplete).expect("valid");
+        let columns = super::build_scan_matrix(&toneless, incomplete);
+        assert!(columns[0].iter().any(|key| key.key.text() == "bi" && key.to == 2));
+
+        let toned_key = SegmentGraph::build_with_options(b"bian4", toned).expect("valid");
+        let columns = super::build_scan_matrix(&toned_key, toned);
+        assert!(columns[0].iter().any(|key| key.key.text() == "bian" && key.tone == 4));
+        assert!(!columns[0].iter().any(|key| key.key.text() == "bi"));
     }
 }
