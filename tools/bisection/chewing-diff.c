@@ -30,6 +30,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 #include <dlfcn.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -659,7 +660,21 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
 }
 
 int main(int argc, char **argv) {
-    int scheme = (argc > 3) ? atoi(argv[3]) : 1;
+    int scheme = 1;
+    if (argc > 3) {
+        /* Reject everything atoi would silently accept: trailing text
+         * ("2junk"), empty values, conversion errors, overflow — a
+         * typoed CLI arg must not quietly run the wrong scheme (the
+         * same rule nbest-train-diff's parse_rounds_env applies). */
+        errno = 0;
+        char *end = NULL;
+        long value = strtol(argv[3], &end, 10);
+        if (errno != 0 || end == argv[3] || *end != '\0') {
+            scheme = -1;
+        } else {
+            scheme = (int)value;
+        }
+    }
     int slot = scheme_slot(scheme);
     if (argc < 3 || slot < 0) {
         fprintf(stderr,
