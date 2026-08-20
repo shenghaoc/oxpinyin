@@ -946,6 +946,10 @@ Notes:
 - `pinyin_parse_full_pinyin` / `pinyin_parse_double_pinyin` /
   `pinyin_parse_chewing` are the single-syllable parsers; ibus-libpinyin
   uses only the `parse_more_*` (multi-syllable) variants.
+- `pinyin_set_full_pinyin_scheme` moved from complement to the exported
+  surface in the #109 full-scheme PR (W15): HANYU stays the default and
+  the frozen surface; LUOMA/SECONDARY_ZHUYIN parse through their pinned
+  indexes. It remains uncalled by ibus-libpinyin 1.16.5.
 
 ---
 

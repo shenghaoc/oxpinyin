@@ -49,3 +49,26 @@ is complete, these notes are collected to report back to libpinyin.
   raw user-store values (`docs/findings/legacy-migration.md` §3).
 - **Externally observable:** yes — the C ABI surface matches; the migration
   tool is an internal tool and keeps the full value surface.
+
+### HANYU full pinyin ignores tone digits under USE_TONE
+
+- **Upstream source cite:** `FullPinyinParser2::parse_one_key`
+  (`src/storage/pinyin_parser2.cpp:155-205`): under `USE_TONE` a
+  trailing digit 1–5 is the tone and is consumed with the match
+  (`zai4` consumes 4; aux renders `zai4`).
+- **What oxpinyin does instead:** the HANYU full-pinyin surface
+  (`pinyin_parse_more_full_pinyins` → `Session::type_pinyin`) treats
+  the digit as junk — `zai4` consumes 3. The frozen full-pinyin corpus
+  is tone-less, so every earlier differential ran a profile without
+  `USE_TONE` and the gap was unmeasured until the W15 full-scheme
+  driver swept scheme 1 with tones.
+- **Scope:** HANYU only. LUOMA and SECONDARY_ZHUYIN carry the pinned
+  tone-digit behavior (`full_pinyin_index.rs`), and the bopomofo
+  keyboards always did.
+- **Externally observable:** yes, only with `USE_TONE` set on the
+  context — the fork never sets it for full pinyin (ibus-libpinyin
+  1.16.5 calls no tone-bearing full-pinyin path), so the borrowed
+  frontend cannot reach the divergence.
+- **Status:** recorded, not chased — closing it means teaching the
+  frozen HANYU parser (or its capi seam) the tone-digit rule, which is
+  HANYU-surface work outside the #109 scheme stack.
