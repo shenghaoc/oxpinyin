@@ -2654,6 +2654,27 @@ mod tests {
     }
 
     #[test]
+    fn contract_slots_reject_without_mutation() {
+        // The #109 contract locks, core side: CUSTOMIZED (30) and the
+        // dvorak fallthrough slot (7) reject and keep the live scheme —
+        // including a fallback-bearing scheme's fallback behaviour.
+        let mut parser = DoublePinyinParser::with_scheme(DoublePinyinScheme::Zrm);
+        assert!(
+            parser.parse(b"aa", false).consumed() == 2,
+            "ZRM fallback row"
+        );
+        assert!(!parser.set_scheme(DoublePinyinScheme::Customized));
+        assert_eq!(parser.scheme(), DoublePinyinScheme::Zrm);
+        assert_eq!(parser.parse(b"aa", false).consumed(), 2);
+
+        let mut zhuyin = ZhuyinParser::with_scheme(ZhuyinScheme::DachenCp26);
+        assert_eq!(zhuyin.parse(b"t", true, false).full_pinyin(), "zhi");
+        assert!(!zhuyin.set_scheme(ZhuyinScheme::StandardDvorak));
+        assert_eq!(zhuyin.scheme(), ZhuyinScheme::DachenCp26);
+        assert_eq!(zhuyin.parse(b"t", true, false).full_pinyin(), "zhi");
+    }
+
+    #[test]
     fn apostrophe_keys_follow_the_pinned_tables() {
         // The two keyboards whose tables use the escaped-quote key.
         assert_eq!(key_for_symbol(ZhuyinScheme::Ginyieh, "ㄥ"), b'\'');
