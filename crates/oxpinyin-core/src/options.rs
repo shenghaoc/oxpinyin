@@ -12,6 +12,9 @@ pub const PINYIN_INCOMPLETE: u32 = 1 << 3;
 /// `ZHUYIN_INCOMPLETE = 1U << 4` (`pinyin_custom2.h:35`).
 pub const ZHUYIN_INCOMPLETE: u32 = 1 << 4;
 
+/// `USE_TONE = 1U << 5` (`pinyin_custom2.h:36`).
+pub const USE_TONE: u32 = 1 << 5;
+
 /// `DYNAMIC_ADJUST = 1U << 9` (`pinyin_custom2.h:40`).
 pub const DYNAMIC_ADJUST: u32 = 1 << 9;
 

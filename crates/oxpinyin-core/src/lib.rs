@@ -6,6 +6,7 @@
 
 pub mod cost;
 pub mod fixture;
+mod full_pinyin_index;
 pub mod graph;
 pub mod kbest;
 pub mod options;
@@ -16,12 +17,17 @@ mod syllables;
 mod vocab;
 mod zhuyin_map;
 
+pub use full_pinyin_index::{
+    FullPinyinIndexKey, FullPinyinIndexParse, LUOMA_PINYIN_COUNT, LUOMA_PINYIN_INDEX,
+    MAX_INDEX_SPELLING_LEN, SECONDARY_ZHUYIN_COUNT, SECONDARY_ZHUYIN_INDEX,
+    parse_full_pinyin_index,
+};
 pub use options::{
     DYNAMIC_ADJUST, OptionBits, PINYIN_AMB_ALL, PINYIN_AMB_AN_ANG, PINYIN_AMB_C_CH,
     PINYIN_AMB_EN_ENG, PINYIN_AMB_F_H, PINYIN_AMB_G_K, PINYIN_AMB_IN_ING, PINYIN_AMB_L_N,
     PINYIN_AMB_L_R, PINYIN_AMB_S_SH, PINYIN_AMB_Z_ZH, PINYIN_CORRECT_ALL, PINYIN_CORRECT_GN_NG,
     PINYIN_CORRECT_IOU_IU, PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_ON_ONG, PINYIN_CORRECT_UE_VE,
-    PINYIN_CORRECT_UEI_UI, PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_V_U, PINYIN_INCOMPLETE,
+    PINYIN_CORRECT_UEI_UI, PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_V_U, PINYIN_INCOMPLETE, USE_TONE,
     ZHUYIN_CORRECT_ALL, ZHUYIN_CORRECT_ETEN26, ZHUYIN_CORRECT_HSU, ZHUYIN_CORRECT_SHUFFLE,
     ZHUYIN_INCOMPLETE,
 };
@@ -29,8 +35,8 @@ pub use parser::{
     Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
 };
 pub use scheme::{
-    DoublePinyinKey, DoublePinyinParse, DoublePinyinParser, DoublePinyinScheme, ZhuyinKey,
-    ZhuyinParse, ZhuyinParser, ZhuyinScheme,
+    DoublePinyinKey, DoublePinyinParse, DoublePinyinParser, DoublePinyinScheme, FullPinyinScheme,
+    ZhuyinKey, ZhuyinParse, ZhuyinParser, ZhuyinScheme,
 };
 pub use syllables::{
     FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
