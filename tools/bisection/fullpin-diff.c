@@ -19,6 +19,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 #include <dlfcn.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -283,7 +284,18 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
 }
 
 int main(int argc, char **argv) {
-    int scheme = (argc > 3) ? atoi(argv[3]) : 1;
+    int scheme = 1;
+    if (argc > 3) {
+        errno = 0;
+        char *end = NULL;
+        long value = strtol(argv[3], &end, 10);
+        if (errno != 0 || end == argv[3] || *end != '\0'
+            || value < 1 || value > 3) {
+            scheme = -1;
+        } else {
+            scheme = (int)value;
+        }
+    }
     if (argc < 3 || scheme < 1 || scheme > 3) {
         fprintf(stderr,
                 "usage: %s <so> <systemdir> [scheme]\n"
