@@ -136,7 +136,7 @@ fn segmentation_differential_over_the_parity_corpus() {
     assert_eq!(total, 10_459);
     assert_eq!(
         absent, OPEN_APOSTROPHE_CASES,
-        "the only paths the decoder cannot reach are the two open apostrophe cases"
+        "the only path the decoder cannot reach is the one open apostrophe case"
     );
     assert!(
         top1 * 100 >= total * 80,

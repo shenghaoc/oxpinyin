@@ -808,7 +808,8 @@ order-only tie-swaps (previously 1,030).
 The five `assert_eq!` parity pins (§0) are the reproduced values re-pinned in
 this commit. The compatibility invariants (§3) and the measurement gates (§4)
 are unchanged and still normative, now measured against 10178 / 10190 / 0 /
-94872 of 98930. The parser, the graph, and the k-best machinery are untouched;
-only the collection that consumed them changed.
+94872 of 98930. Consecutive-apostrophe separator handling in
+`FullPinyinParser::parse` and `SegmentGraph::key_start` is the only parser/graph
+change; the k-best machinery and the compatibility invariants are untouched.
 
 STOP and report rather than inventing evidence.
