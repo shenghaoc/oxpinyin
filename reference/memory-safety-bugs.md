@@ -47,6 +47,19 @@ Sources: upstream GitHub issues, Red Hat ABRT, SUSE Bugzilla, Launchpad, commit 
 | **Status** | Fixed years ago |
 | **Why Rust helps** | Clearer lifetime of user-data structures; no manual pointer management across async/config callbacks. |
 
+### 1.4 Heap over-read in `pinyin_get_full_pinyin_auxiliary_text` (info-leak; fault permitted)
+
+| Field | Value |
+|-------|-------|
+| **Source cite** | `src/pinyin.cpp:3414-3419` (mid-key cursor branch of `pinyin_get_full_pinyin_auxiliary_text`) |
+| **Component** | libpinyin |
+| **Root cause** | `len = cursor - begin` uses raw-input offsets, then `g_strdup(pinyin + len)` indexes the canonical pinyin string. The over-read occurs only when `begin < cursor < end` and that `len` exceeds `strlen(pinyin)` — not merely because the raw key is longer than the canonical spelling. `len <= strlen(pinyin)` is in-bounds, including the terminating-NUL (`len == strlen(pinyin)` is `g_strdup("")`). Not every cursor under `SECONDARY_ZHUYIN` or `LUOMA` is vulnerable. |
+| **Symptoms** | Non-deterministic heap bytes leak into the aux text returned to the frontend only at those mid-key cursors where `cursor - begin > strlen(pinyin)` (for the SECONDARY_ZHUYIN examples, the cursor immediately before the parsed-key boundary; LUOMA's `tsih` leaks at cursors 2 and 3). Cursors with `len <= strlen(pinyin)`, including the terminator, stay in-bounds. The observed outcome is a user-visible information leak; because forming `pinyin + len` past the permitted one-past-the-end boundary is undefined behaviour, a fault is also permitted rather than excluded. |
+| **Trigger** | `pinyin_set_full_pinyin_scheme(ctx, 3)` (SECONDARY_ZHUYIN); parse `tzuei` / `tzuei4` / `tzueiQ`; request `pinyin_get_full_pinyin_auxiliary_text` at the mid-key cursor immediately before the parsed-key boundary — cursor 4 for `tzuei`/`tzueiQ`, cursor 5 for `tzuei4`. Same shape under LUOMA (`pinyin_set_full_pinyin_scheme(ctx, 2)`), reproduced on 8 of its 18 raw ≥ canonical + 2 index rows — e.g. `jhih` → `zh` at cursor 3, `rih` → `r` at cursor 2. |
+| **Detailed writeup** | `docs/findings/full-pinyin-aux-overread.md` (reproduction and upstream-status survey) |
+| **Status** | Present on pin `0c5e80e`; still present on libpinyin `main` @ `55e9051`; no existing report found on libpinyin/ibus-libpinyin GitHub or Fedora Bugzilla (surveyed 2026-08-20). Upstream-report candidate. |
+| **Why Rust helps** | oxpinyin's aux formatter routes through `&str` bounds — constructing a slice past the canonical string's length panics, so "read until next zero byte" is not expressible; oxpinyin emits an empty right suffix that is well-formed UTF-8 by construction. |
+
 ---
 
 ## 2. Memory / Resource Leaks
