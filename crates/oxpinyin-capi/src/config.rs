@@ -283,8 +283,7 @@ mod tests {
 
         assert!(pinyin_set_options(
             context,
-            PinyinTableFlag::PINYIN_INCOMPLETE as u32
-                | PinyinTableFlag::USE_TONE as u32
+            PinyinTableFlag::PINYIN_INCOMPLETE as u32 | PinyinTableFlag::USE_TONE as u32
         ));
         assert_eq!(
             pinyin_parse_more_full_pinyins(instance, zai4.as_ptr()),
