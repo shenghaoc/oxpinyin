@@ -38,6 +38,41 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
     })
 }
 
+/// Set the full pinyin scheme.
+///
+/// # C signature
+/// ```c
+/// bool pinyin_set_full_pinyin_scheme(pinyin_context_t * context,
+///                                    FullPinyinScheme scheme);
+/// ```
+///
+/// Fork-complement symbol (`docs/findings/abi-subset.md`): exported by
+/// libpinyin.ver, never called by ibus-libpinyin 1.16.5, and added to
+/// the oxpinyin surface post-bootstrap. The Rust parameter is `c_int`:
+/// callers may pass any `int`. HANYU (1) is the default and keeps the
+/// frozen full-pinyin parser surface; LUOMA (2) and SECONDARY_ZHUYIN
+/// (3) switch the parse onto their pinned indexes. Other values report
+/// `false` and keep the previous scheme instead of aborting (the
+/// out-of-enum contract-lock is a separate workstream).
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_set_full_pinyin_scheme(
+    context: *mut PinyinContext,
+    scheme: c_int,
+) -> bool {
+    if context.is_null() {
+        return false;
+    }
+    ffi_catch(false, || {
+        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+        let ctx = unsafe { context_mut(context) };
+        if !matches!(scheme, 1..=3) {
+            return false;
+        }
+        ctx.full_scheme.store(scheme, Ordering::Relaxed);
+        true
+    })
+}
+
 /// Set the double pinyin scheme.
 ///
 /// # C signature

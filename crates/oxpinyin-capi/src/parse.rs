@@ -5,7 +5,9 @@ use std::ptr;
 
 use std::sync::atomic::Ordering;
 
-use oxpinyin_core::{DoublePinyinScheme, ZHUYIN_INCOMPLETE, ZhuyinScheme};
+use oxpinyin_core::{
+    DoublePinyinScheme, FullPinyinScheme, USE_TONE, ZHUYIN_INCOMPLETE, ZhuyinScheme,
+};
 
 use crate::ffi::{cstr_to_string, ffi_catch};
 use crate::state::{instance_mut, instance_ref};
@@ -24,6 +26,15 @@ use crate::types::{GChar, PinyinInstance};
 ///
 /// Resets and clears the candidate snapshot even for empty input, so a
 /// prior composition is discarded and the stored length returns to 0.
+fn full_scheme(value: i32) -> Option<FullPinyinScheme> {
+    match value {
+        1 => Some(FullPinyinScheme::Hanyu),
+        2 => Some(FullPinyinScheme::Luoma),
+        3 => Some(FullPinyinScheme::SecondaryZhuyin),
+        _ => None,
+    }
+}
+
 fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
@@ -35,6 +46,26 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
     if text.is_empty() {
         return 0;
     }
+
+    // LUOMA / SECONDARY_ZHUYIN: parse the raw input through the
+    // scheme's pinned index, store the parse for aux rendering, and
+    // drive the session with the canonical spellings — the same
+    // transformed-spelling seam the double and chewing paths use.
+    if let Some(scheme) = full_scheme(inst.full_scheme.load(Ordering::Relaxed))
+        && let Some(index) = scheme.index()
+    {
+        let use_tone = inst.options().contains(USE_TONE);
+        let parsed = oxpinyin_core::parse_full_pinyin_index(text.as_bytes(), use_tone, index);
+        let full = parsed.full_pinyin();
+        if !full.is_empty() && inst.session.type_pinyin(&full).is_err() {
+            return 0;
+        }
+        inst.parsed_len = parsed.consumed();
+        inst.full_input = text.to_owned();
+        inst.full_parse = Some(parsed);
+        return inst.parsed_len;
+    }
+
     let consumed = match inst.session.type_pinyin(text) {
         Ok(_) => inst.session.parsed_prefix_len(),
         Err(_) => 0,

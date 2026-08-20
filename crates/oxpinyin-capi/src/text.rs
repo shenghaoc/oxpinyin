@@ -20,6 +20,56 @@ use crate::types::{GChar, PinyinInstance};
 /// visible. Apostrophes are never rendered: a cursor on the apostrophe byte
 /// or on the following key start both land on that key's `syllable_start`
 /// (`ni'hao` cursor 2 and 3 both render `ni |hao `).
+/// Aux text for the full-pinyin index schemes: walks the stored parse's
+/// raw spans, rendering each key's canonical spelling plus its tone
+/// digit (upstream renders `ChewingKey::get_pinyin_string`, which
+/// appends `%d` for non-zero tones).
+fn full_index_aux_text(
+    input: &str,
+    parse: &oxpinyin_core::FullPinyinIndexParse,
+    cursor: usize,
+) -> String {
+    let parsed_len = parse.consumed().min(input.len());
+    let cursor = cursor.min(parsed_len);
+    let mut out = String::new();
+    let mut inserted = false;
+
+    for key in parse.keys() {
+        let display = if key.tone() == 0 {
+            key.canonical().to_owned()
+        } else {
+            format!("{}{}", key.canonical(), key.tone())
+        };
+        let start = key.start();
+        let end = key.end();
+
+        if !inserted && cursor <= start {
+            out.push('|');
+            inserted = true;
+            out.push_str(&display);
+            out.push(' ');
+        } else if !inserted && cursor < end {
+            let split = (cursor - start).min(display.len());
+            let chars: Vec<char> = display.chars().collect();
+            let left: String = chars[..split.min(chars.len())].iter().collect();
+            let right: String = chars[split.min(chars.len())..].iter().collect();
+            out.push_str(&left);
+            out.push('|');
+            out.push_str(&right);
+            out.push(' ');
+            inserted = true;
+        } else {
+            out.push_str(&display);
+            out.push(' ');
+        }
+    }
+
+    if !inserted {
+        out.push('|');
+    }
+    out
+}
+
 fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize, options: OptionBits) -> String {
     let parsed = &raw[..parsed_len.min(raw.len())];
     if parsed.is_empty() {
@@ -211,12 +261,33 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let text = full_aux_text(
-            inst.session.raw_input(),
-            inst.parsed_len,
-            cursor,
-            inst.options(),
-        );
+        // Upstream returns false with an allocated empty string when
+        // the matrix is empty — no parse, or a parse that consumed
+        // nothing (`pinyin.cpp:3382-3386`).
+        if inst.parsed_len == 0 {
+            if !aux_text.is_null() {
+                let owned = owned_cstr("");
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *aux_text = owned;
+                }
+            }
+            return false;
+        }
+        let text = if let Some(parse) = inst.full_parse.as_ref() {
+            // LUOMA / SECONDARY_ZHUYIN: render the stored index parse —
+            // canonical spellings (tone digit appended when a tone was
+            // parsed, like `ChewingKey::get_pinyin_string`) over raw
+            // spans.
+            full_index_aux_text(&inst.full_input, parse, cursor)
+        } else {
+            full_aux_text(
+                inst.session.raw_input(),
+                inst.parsed_len,
+                cursor,
+                inst.options(),
+            )
+        };
         if !aux_text.is_null() {
             // SAFETY: Null-checked above. `owned_cstr` returns null on an
             // interior NUL or allocation failure; otherwise ownership

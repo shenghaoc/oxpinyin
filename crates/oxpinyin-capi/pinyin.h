@@ -248,6 +248,9 @@ bool pinyin_train(struct pinyin_instance_t *instance, uint8_t _index);
 // Set pinyin options on the context.
 bool pinyin_set_options(struct pinyin_context_t *context, pinyin_option_t _options);
 
+// Set the full pinyin scheme.
+bool pinyin_set_full_pinyin_scheme(struct pinyin_context_t *context, int _scheme);
+
 // Set the double pinyin scheme.
 bool pinyin_set_double_pinyin_scheme(struct pinyin_context_t *context, int _scheme);
 
