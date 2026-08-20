@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use oxpinyin_core::{
-    Cost, Dictionary, DoublePinyinParse, DoublePinyinScheme, LanguageModel, NbestStepCosts,
-    OptionBits, PINYIN_INCOMPLETE, PhraseEntry, PhraseToken, SyllableKey, UserCountDelta,
-    ZhuyinParse, ZhuyinScheme,
+    Cost, Dictionary, DoublePinyinParse, DoublePinyinScheme, FullPinyinIndexParse,
+    FullPinyinScheme, LanguageModel, NbestStepCosts, OptionBits, PINYIN_INCOMPLETE, PhraseEntry,
+    PhraseToken, SyllableKey, UserCountDelta, ZhuyinParse, ZhuyinScheme,
 };
 use oxpinyin_data::{BigramLanguageModel, DictError, LmError, PunctTable, SystemDictionary};
 use oxpinyin_engine::{CandidateKind, Config, Session, StoragePaths};
@@ -436,6 +436,10 @@ pub(crate) struct CapiContext {
     /// Live Zhuyin scheme. Shared with every instance so
     /// `pinyin_set_zhuyin_scheme` remasks already-allocated sessions.
     pub(crate) zhuyin_scheme: Arc<AtomicI32>,
+    /// Live full-pinyin scheme. Shared with every instance so
+    /// `pinyin_set_full_pinyin_scheme` remasks already-allocated
+    /// sessions.
+    pub(crate) full_scheme: Arc<AtomicI32>,
     /// Live `USE_TONE` bit for the bopomofo context.
     pub(crate) use_tone: Arc<AtomicBool>,
     /// Live option word. Shared with every instance so `pinyin_set_options`
@@ -526,6 +530,7 @@ impl CapiContext {
             incomplete: Arc::new(AtomicBool::new(true)),
             double_scheme: Arc::new(AtomicI32::new(DoublePinyinScheme::Ms as i32)),
             zhuyin_scheme: Arc::new(AtomicI32::new(ZhuyinScheme::Standard as i32)),
+            full_scheme: Arc::new(AtomicI32::new(FullPinyinScheme::Hanyu as i32)),
             use_tone: Arc::new(AtomicBool::new(false)),
             options: Arc::new(AtomicU32::new(PINYIN_INCOMPLETE)),
         })
@@ -551,6 +556,7 @@ impl CapiContext {
             incomplete: Arc::new(AtomicBool::new(true)),
             double_scheme: Arc::new(AtomicI32::new(DoublePinyinScheme::Ms as i32)),
             zhuyin_scheme: Arc::new(AtomicI32::new(ZhuyinScheme::Standard as i32)),
+            full_scheme: Arc::new(AtomicI32::new(FullPinyinScheme::Hanyu as i32)),
             use_tone: Arc::new(AtomicBool::new(false)),
             options: Arc::new(AtomicU32::new(PINYIN_INCOMPLETE)),
         })
@@ -573,12 +579,15 @@ impl CapiContext {
             incomplete: Arc::clone(&self.incomplete),
             double_scheme: Arc::clone(&self.double_scheme),
             zhuyin_scheme: Arc::clone(&self.zhuyin_scheme),
+            full_scheme: Arc::clone(&self.full_scheme),
             use_tone: Arc::clone(&self.use_tone),
             options: Arc::clone(&self.options),
             double_parse: None,
             double_input: String::new(),
             zhuyin_parse: None,
             zhuyin_input: String::new(),
+            full_parse: None,
+            full_input: String::new(),
         })
     }
 
@@ -809,6 +818,14 @@ pub(crate) struct CapiInstance {
     pub(crate) zhuyin_parse: Option<ZhuyinParse>,
     /// Original Zhuyin input for sentence/preedit fallback display.
     pub(crate) zhuyin_input: String,
+    /// Shared live full-pinyin scheme from the owning context.
+    pub(crate) full_scheme: Arc<AtomicI32>,
+    /// Most recent full-pinyin index parse, when the scheme is LUOMA or
+    /// SECONDARY_ZHUYIN and the last parse call was the full-pinyin
+    /// entry point. Used for aux-text rendering over the raw input.
+    pub(crate) full_parse: Option<FullPinyinIndexParse>,
+    /// Original full-pinyin input for aux-text cursor mapping.
+    pub(crate) full_input: String,
     /// Shared live `USE_TONE` flag from the owning context.
     pub(crate) use_tone: Arc<AtomicBool>,
     /// Shared live option word from the owning context.
@@ -826,6 +843,8 @@ impl CapiInstance {
         self.double_input.clear();
         self.zhuyin_parse = None;
         self.zhuyin_input.clear();
+        self.full_parse = None;
+        self.full_input.clear();
     }
 
     /// The current live option word.
