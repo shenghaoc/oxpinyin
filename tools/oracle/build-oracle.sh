@@ -21,6 +21,7 @@ ORACLE_PIN_REF="libpinyin-$LIBPINYIN_TAG-$LIBPINYIN_SHA+model20-$MODEL_SHA256+db
 work_dir=${TMPDIR:-/tmp}/oxpinyin-oracle
 prefix=
 jobs=1
+apply_patches_dir=
 
 usage() {
 	cat <<'EOF'
@@ -29,10 +30,15 @@ Usage: build-oracle.sh [OPTIONS]
 Build the pinned libpinyin and ibus-libpinyin releases from verified archives.
 
 Options:
-  --work-dir DIR  Download and build directory (default: $TMPDIR/oxpinyin-oracle)
-  --prefix DIR    Installation prefix (default: WORK_DIR/prefix)
-  --jobs N        Parallel make jobs (default: 1)
-  -h, --help      Show this help
+  --work-dir DIR       Download and build directory (default: $TMPDIR/oxpinyin-oracle)
+  --prefix DIR         Installation prefix (default: WORK_DIR/prefix)
+  --jobs N             Parallel make jobs (default: 1)
+  --apply-patches DIR  Apply every *.patch in DIR to libpinyin source before
+                       autoreconf; each patch's SHA-256 is folded into pin_ref
+                       and recorded in oracle-pin.txt so the patched build is
+                       distinguishable from the unpatched pin. The install
+                       prefix must also differ from the pinned build.
+  -h, --help           Show this help
 
 Build variables CC, CXX, CFLAGS, CXXFLAGS and LDFLAGS are passed through.
 The final stdout line is the absolute path to the built libpinyin shared object.
@@ -51,6 +57,10 @@ while (($#)); do
 		;;
 	--jobs)
 		jobs=$2
+		shift 2
+		;;
+	--apply-patches)
+		apply_patches_dir=$2
 		shift 2
 		;;
 	-h | --help)
@@ -74,7 +84,7 @@ case $jobs in
 	;;
 esac
 
-for command in curl sha256sum tar autoreconf make pkg-config find sort xargs; do
+for command in curl sha256sum tar autoreconf make pkg-config find sort xargs patch; do
 	command -v "$command" >/dev/null 2>&1 || {
 		printf 'required command not found: %s\n' "$command" >&2
 		exit 1
@@ -123,6 +133,35 @@ tar -xzf "$model_archive" -C "$work_dir/src/libpinyin-$LIBPINYIN_TAG/data"
 lib_src=$work_dir/src/libpinyin-$LIBPINYIN_TAG
 ibus_src=$work_dir/src/ibus-libpinyin-$IBUS_LIBPINYIN_TAG
 
+patch_manifest=
+if [[ -n $apply_patches_dir ]]; then
+	if [[ ! -d $apply_patches_dir ]]; then
+		printf '%s\n' "--apply-patches: not a directory: $apply_patches_dir" >&2
+		exit 1
+	fi
+	apply_patches_dir=$(cd "$apply_patches_dir" && pwd)
+	mapfile -t patches < <(find "$apply_patches_dir" -maxdepth 1 -type f -name '*.patch' -print | sort)
+	if ((${#patches[@]} == 0)); then
+		printf '%s\n' "--apply-patches: no *.patch files in $apply_patches_dir" >&2
+		exit 1
+	fi
+	(
+		cd "$lib_src"
+		for p in "${patches[@]}"; do
+			printf 'applying patch: %s\n' "$p" >&2
+			patch -p1 --forward --no-backup-if-mismatch <"$p"
+		done
+	)
+	patch_manifest=$prefix/oracle-patches.sha256
+	(
+		cd "$apply_patches_dir"
+		# shellcheck disable=SC2016  # sha256sum wants literal names.
+		find . -maxdepth 1 -type f -name '*.patch' -print0 | sort -z | xargs -0 sha256sum
+	) >"$patch_manifest"
+	read -r patch_manifest_sha256 _ < <(sha256sum "$patch_manifest")
+	ORACLE_PIN_REF="$ORACLE_PIN_REF+patches-$patch_manifest_sha256"
+fi
+
 (
 	cd "$lib_src"
 	autoreconf --force --install --verbose
@@ -164,7 +203,8 @@ data_manifest=$prefix/oracle-data.sha256
 read -r header_sha256 _ < <(sha256sum "$header")
 read -r shared_object_sha256 _ < <(sha256sum "$shared_object")
 read -r data_manifest_sha256 _ < <(sha256sum "$data_manifest")
-cat >"$prefix/oracle-pin.txt" <<EOF
+{
+	cat <<EOF
 schema=pinyin-oracle-v1
 pin_ref=$ORACLE_PIN_REF
 libpinyin_tag=$LIBPINYIN_TAG
@@ -177,6 +217,10 @@ header_sha256=$header_sha256
 shared_object_sha256=$shared_object_sha256
 data_manifest_sha256=$data_manifest_sha256
 EOF
+	if [[ -n $patch_manifest ]]; then
+		printf 'patches_manifest_sha256=%s\n' "$patch_manifest_sha256"
+	fi
+} >"$prefix/oracle-pin.txt"
 
 printf 'libpinyin_tag=%s\nlibpinyin_commit=%s\n' "$LIBPINYIN_TAG" "$LIBPINYIN_SHA" >&2
 printf 'ibus_libpinyin_tag=%s\nibus_libpinyin_commit=%s\n' "$IBUS_LIBPINYIN_TAG" "$IBUS_LIBPINYIN_SHA" >&2
