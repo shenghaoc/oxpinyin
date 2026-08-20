@@ -81,6 +81,40 @@ impl DoublePinyinParse {
     }
 }
 
+/// `FullPinyinScheme` from `src/storage/pinyin_custom2.h:98-104`.
+///
+/// HANYU (the frozen [`crate::parser`] surface) stays the default —
+/// `FULL_PINYIN_DEFAULT = FULL_PINYIN_HANYU` and the parser constructor
+/// calls `set_scheme(FULL_PINYIN_DEFAULT)` (`pinyin_parser2.cpp:158-165,
+/// 383-401`). LUOMA and SECONDARY_ZHUYIN switch the parser onto their
+/// pinned indexes in [`crate::full_pinyin_index`]; the out-of-enum
+/// `abort()` slot is deliberately not modelled here (contract-lock
+/// workstream).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum FullPinyinScheme {
+    /// Hanyu pinyin (the default).
+    #[default]
+    Hanyu = 1,
+    /// Luoma pinyin.
+    Luoma = 2,
+    /// Secondary zhuyin romanization.
+    SecondaryZhuyin = 3,
+}
+
+impl FullPinyinScheme {
+    /// The pinned spelling index this scheme parses through, or `None`
+    /// for HANYU (the frozen parser surface).
+    #[must_use]
+    pub const fn index(self) -> Option<&'static [(&'static str, &'static str)]> {
+        match self {
+            Self::Luoma => Some(&crate::full_pinyin_index::LUOMA_PINYIN_INDEX),
+            Self::SecondaryZhuyin => Some(&crate::full_pinyin_index::SECONDARY_ZHUYIN_INDEX),
+            _ => None,
+        }
+    }
+}
+
 /// `DoublePinyinScheme` from `src/storage/pinyin_custom2.h:108-117`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
