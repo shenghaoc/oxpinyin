@@ -2465,6 +2465,29 @@ mod tests {
     }
 
     #[test]
+    fn discrete_indexes_are_sorted_and_unique() {
+        use crate::zhuyin_map::{ETEN26_ZHUYIN_INDEX, HSU_ZHUYIN_INDEX};
+
+        // `search_zhuyin_index` uses `partition_point`; an out-of-order
+        // row would silently make valid spellings unreachable. Count is
+        // already enforced by the array types (500 / 482).
+        for pair in HSU_ZHUYIN_INDEX.windows(2) {
+            assert!(
+                pair[0].0 < pair[1].0,
+                "HSU_ZHUYIN_INDEX not strictly sorted at {:?}",
+                pair[0].0
+            );
+        }
+        for pair in ETEN26_ZHUYIN_INDEX.windows(2) {
+            assert!(
+                pair[0].0 < pair[1].0,
+                "ETEN26_ZHUYIN_INDEX not strictly sorted at {:?}",
+                pair[0].0
+            );
+        }
+    }
+
+    #[test]
     fn discrete_indexes_gate_their_correction_rows() {
         use super::search_zhuyin_index;
         use crate::ZHUYIN_CORRECT_ETEN26;
