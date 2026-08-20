@@ -142,11 +142,17 @@ subset. At or below the limit, it returns every path. This preserves R3.5
 ## Boundaries, partials, and junk
 
 Apostrophe is a hard boundary: complete syllables never span it. Alternatives
-on fully consumed sides are combined as a Cartesian product. A leading,
-repeated, or trailing apostrophe is not a valid separator and starts the
-remainder. An apostrophe is consumed only when its left group is fully
-segmented and its right group consumes at least one byte as a complete or
-partial segment. An empty result with unchanged remainder is not a
+on fully consumed sides are combined as a Cartesian product. A leading or
+trailing apostrophe is not a valid separator and starts the remainder.
+A **run** of consecutive apostrophes after a fully consumed left group is a
+single separator when the group after it consumes at least one byte as a
+complete or partial segment: upstream's `FullPinyinParser2::parse`
+(`pinyin_parser2.cpp:237-250`) treats every apostrophe as a zero-width
+step-propagation, so `ni''hao` consumes the whole input and reaches the
+`hao` group. An apostrophe run is consumed only when its left group is
+fully segmented and its right group consumes at least one byte; a run with
+no productive right side (e.g. `ni''`, `ni''!`) starts the remainder at
+the first apostrophe. An empty result with unchanged remainder is not a
 right-side continuation.
 
 Under the parity profile (`PINYIN_INCOMPLETE` set), an initial-only key is a
@@ -211,3 +217,29 @@ re-evaluated once the parser admits these paths. That re-evaluation, the
 `parser-path-set.md` amendment, and the parser implementation change all
 belong on a **separate branch**. This commit changes only the frozen field
 invariant and the prose that states the observed upstream policy.
+
+### 2026-08-21 — oracle-driven SPEC correction: doubled apostrophe
+
+**Kind:** oracle-driven SPEC correction. Half of maintainer decision 3 in
+`parser-spec-contradiction-incomplete-keys.md` — the doubled-apostrophe
+half — is resolved by aligning with the pin. The leading half stays open.
+
+**Previous invariant.** A leading, repeated, or trailing apostrophe is not
+a valid separator and starts the remainder.
+
+**Corrected invariant.** A leading or trailing apostrophe is not a valid
+separator and starts the remainder. A run of consecutive apostrophes after
+a fully consumed left group is a single separator when the group after it
+consumes at least one byte.
+
+**Evidence.** `fixtures/w4/oracle-candidates.txt` `ni''hao` (stratum
+`09-edge.txt` line 33) → oracle top-1 `你好`; every candidate in the
+oracle's top-10 requires the doubled apostrophe to act as a single
+separator. Before this correction, `ni''hao` was the sole `absent` input in
+the W2 residual (`docs/findings/corpus-tail.md`, W12 Class B).
+
+**Freeze move.** `real_tables_session_reports_parity` re-freezes from
+10,177 / 10,189 / 94,871 of 98,930 / absent 1 to
+**10,178 / 10,190 / 94,872 of 98,930 / absent 0**; tie-swaps stay at
+1,036. Recorded in `docs/findings/pin-refreeze-2026-08.md`
+(the doubled-apostrophe amendment).

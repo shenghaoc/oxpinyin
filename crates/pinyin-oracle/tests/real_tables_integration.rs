@@ -464,21 +464,23 @@ fn real_tables_session_reports_parity() {
     // span, real unigram count), and keep-first dedup. Measured release and
     // debug, serial and parallel — all bit-identical. Re-frozen in
     // docs/findings/pin-refreeze-2026-08.md after incomplete keys were
-    // expanded by phonetic initial instead of string prefix.
+    // expanded by phonetic initial instead of string prefix, and again in
+    // docs/findings/corpus-tail.md after the doubled-apostrophe separator
+    // was aligned with the pin (`ni''hao` — Class B of the W12 residual).
     assert_eq!(
-        top1, 10177,
+        top1, 10178,
         "top-1 must be bit-identical to the serial baseline"
     );
     assert_eq!(
-        absent, 1,
+        absent, 0,
         "absent must be bit-identical to the serial baseline"
     );
     assert_eq!(
-        top5, 10189,
+        top5, 10190,
         "top-5-set must be bit-identical to the serial baseline"
     );
     assert_eq!(
-        prefix_overlap, 94871,
+        prefix_overlap, 94872,
         "prefix-10 overlap numerator must match"
     );
     assert_eq!(

@@ -153,7 +153,14 @@ fn parse_input(input: &[u8], options: OptionBits) -> Result<Vec<ParseResult>, Pa
         }
 
         let separator = cursor;
-        cursor += 1;
+        // Upstream's `FullPinyinParser2::parse` (`pinyin_parser2.cpp:237-250`)
+        // treats every apostrophe as a zero-width step-propagation, so any
+        // run of consecutive apostrophes acts as a single separator once
+        // the right group consumes a byte. Match that here: skip the whole
+        // run before deciding whether the next group is admissible.
+        while cursor < input.len() && input[cursor] == b'\'' {
+            cursor += 1;
+        }
         if cursor == input.len() || !input[cursor].is_ascii_lowercase() {
             return Ok(finish(accumulated, input, separator));
         }
@@ -565,6 +572,23 @@ mod tests {
                 b"'ao",
             )],
         );
+        // Consecutive apostrophes are a single separator: upstream's DP
+        // propagates step-by-step across every `'`, so `ni''hao` consumes
+        // the whole input and the right group's own alternates surface.
+        assert_parse(
+            b"ni''hao",
+            vec![
+                result(vec![complete("ni", 0, 2), complete("hao", 4, 7)], b""),
+                result(
+                    vec![
+                        complete("ni", 0, 2),
+                        complete("ha", 4, 6),
+                        complete("o", 6, 7),
+                    ],
+                    b"",
+                ),
+            ],
+        );
     }
 
     #[test]
@@ -576,7 +600,6 @@ mod tests {
             (b"ni'", vec![complete("ni", 0, 2)], b"'"),
             (b"ni'i", vec![complete("ni", 0, 2)], b"'i"),
             (b"ni'!", vec![complete("ni", 0, 2)], b"'!"),
-            (b"ni''hao", vec![complete("ni", 0, 2)], b"''hao"),
             (&[0xff, b'n', b'i'], vec![], &[0xff, b'n', b'i']),
             (
                 &[b'n', b'i', 0xff, b'h', b'a', b'o'],

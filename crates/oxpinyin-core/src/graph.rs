@@ -554,21 +554,27 @@ fn tone_split(text: &[u8], use_tone: bool) -> Option<(&[u8], u8)> {
 /// Where a key may begin for an edge leaving `node`, or `None` if none can.
 ///
 /// An apostrophe at `node` is a separator and the key begins after it. A
-/// *leading* apostrophe is not a separator: `parser-path-set.md` freezes it as
-/// remainder-starting, and `parser-spec-contradiction-incomplete-keys.md`
-/// leaves the apostrophe-tolerance question open as maintainer decision 3.
-/// The graph does not quietly settle it.
+/// *leading* apostrophe is not a separator: `parser-path-set.md` freezes it
+/// as remainder-starting, and half of maintainer decision 3 in
+/// `parser-spec-contradiction-incomplete-keys.md` — the leading-apostrophe
+/// half — is still open. The graph does not quietly settle it.
+///
+/// A *run* of consecutive apostrophes after a consumed group IS a separator:
+/// upstream's `FullPinyinParser2::parse` (`pinyin_parser2.cpp:237-250`)
+/// treats every apostrophe as a zero-width step-propagation, so `ni''hao`
+/// consumes the whole input on the pin side. Skip the whole run and let the
+/// key begin at the next lowercase byte.
 fn key_start(input: &[u8], node: usize) -> Option<usize> {
     let byte = *input.get(node)?;
     if byte == b'\'' {
         if node == 0 {
             return None;
         }
-        let next = *input.get(node + 1)?;
-        if next == b'\'' {
-            return None;
+        let mut cursor = node + 1;
+        while *input.get(cursor)? == b'\'' {
+            cursor += 1;
         }
-        return Some(node + 1);
+        return Some(cursor);
     }
     Some(node)
 }
@@ -821,10 +827,10 @@ mod tests {
     }
 
     #[test]
-    fn the_open_apostrophe_cases_are_left_open() {
-        // Maintainer decision 3 in parser-spec-contradiction-incomplete-keys.md
-        // keeps these two divergent from the pin. The graph must not settle
-        // them by accident.
+    fn the_leading_apostrophe_case_is_left_open() {
+        // The leading half of maintainer decision 3 in
+        // parser-spec-contradiction-incomplete-keys.md is still open; the
+        // graph must not settle it by accident.
         let leading = SegmentGraph::build(b"'ni").expect("valid");
         assert_eq!(
             leading.consumed(),
@@ -832,11 +838,13 @@ mod tests {
             "a leading apostrophe is not a separator"
         );
 
+        // The doubled half is now resolved: consecutive apostrophes after a
+        // consumed group are a single separator, matching the pin.
         let doubled = SegmentGraph::build(b"ni''hao").expect("valid");
         assert_eq!(
             doubled.consumed(),
-            2,
-            "a doubled apostrophe is not a separator"
+            7,
+            "consecutive apostrophes act as one separator"
         );
 
         let trailing = SegmentGraph::build(b"ni'").expect("valid");

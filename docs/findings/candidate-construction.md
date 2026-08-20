@@ -11,7 +11,8 @@ load-bearing inference (§7), and freezes the construction contract (§8). The
 2026-08-13 contract froze the *absence* of a construction change; on
 2026-08-14 the contract was re-opened and replaced by the reproduced
 construction: the expanding-window scan, the three-key order, and keep-first
-dedup, measured at top-1 99% / absent 1 (§8).
+dedup, measured at top-1 99% / absent 0 (§8; the doubled-apostrophe fix
+2026-08-21 moved absent from 1 to 0).
 
 Baselines and neighbours: `docs/findings/parity-climb-residual.md`,
 `docs/findings/f3-bigram-kbest.md`, `docs/findings/f2-unigram-tiebreak-sweep.md`,
@@ -23,14 +24,16 @@ Baselines and neighbours: `docs/findings/parity-climb-residual.md`,
 The frozen number every change in this area is measured against, pinned in
 `crates/pinyin-oracle/tests/real_tables_integration.rs`
 (`real_tables_session_reports_parity`) over `fixtures/w4/oracle-candidates.txt`,
-re-frozen on 2026-08-16 by `docs/findings/pin-refreeze-2026-08.md`:
+re-frozen on 2026-08-16 by `docs/findings/pin-refreeze-2026-08.md` and
+amended on 2026-08-21 by the doubled-apostrophe fix
+(`docs/findings/corpus-tail.md`):
 
 ```text
 compared            10190
-top-1               10177   99%     assert_eq! pin
-top-5-set           10189   99%     assert_eq! pin
-prefix-10 overlap   94871 of 98930  95%   assert_eq! pins (numerator + denominator)
-absent                  1           assert_eq! pin
+top-1               10178   99%     assert_eq! pin
+top-5-set           10190  100%     assert_eq! pin
+prefix-10 overlap   94872 of 98930  95%   assert_eq! pins (numerator + denominator)
+absent                  0           assert_eq! pin
 ```
 
 These five `assert_eq!` are bit-exact pins for the reproduced window-scan
@@ -506,9 +509,10 @@ Stage-1 call sites must stay valid. The `Dictionary`, `LanguageModel` (and
 Any construction change is gated on all of the following. Because the five
 `assert_eq!` pins in §0 are bit-exact, **they will trip by design on any ranking
 change** — re-pinning them is a deliberate, reviewed step (state Δ against
-10177 / 10189 / 1 / 94871–98930 in the commit that re-pins; the previous
-10136 / 10182 / 94456 contract and its Δ are in
-`pin-refreeze-2026-08.md`), never a silent edit. The tolerant floors (top-1 ≥ 55%, top-5 ≥ 80%, absent ≤ 4%) are the
+10178 / 10190 / 0 / 94872–98930 in the commit that re-pins; the prior
+10177 / 10189 / 1 / 94871 contract, the 10136 / 10182 / 94456 contract, and
+their Δ are in `pin-refreeze-2026-08.md`), never a silent edit. The
+tolerant floors (top-1 ≥ 55%, top-5 ≥ 80%, absent ≤ 4%) are the
 regression envelope that must hold regardless.
 
 1. **Portable parity (primary metric).**
@@ -517,7 +521,7 @@ regression envelope that must hold regardless.
        --test real_tables_integration -- --nocapture
    ```
    Report Δ top-1, Δ top-5-set, Δ absent, Δ prefix-10 overlap against
-   10177 / 10189 / 1 / 94871 of 98930. Requires the exported tables at
+   10178 / 10190 / 0 / 94872 of 98930. Requires the exported tables at
    `/tmp/oxpinyin-export` (`oxpinyin-migrate export`) **and** the fetched
    model cache (`tools/model/fetch-model.sh`; the real unigram counts in
    `interpolation2.text` are what the reproduced construction ranks by);
@@ -773,20 +777,20 @@ appearing.
 Under the pinned observation surface (W2 corpus, flags `0x18a`, sort `0x1e`):
 
 ```text
-top-1               10177   99%     (2026-08-13 contract: 6525, 64%; 2026-08-16 re-freeze: 10136)
-top-5-set           10189   99%     (9232, 90%; 2026-08-16 re-freeze: 10182)
-prefix-10 overlap   94871 of 98930  95%   (65505, 66%; 2026-08-16 re-freeze: 94456)
-absent                  1           (70; re-freeze unchanged)
+top-1               10178   99%     (2026-08-13 contract: 6525, 64%; 2026-08-16 re-freeze: 10136; 2026-08-16 second re-freeze: 10177)
+top-5-set           10190  100%     (9232, 90%; 2026-08-16 re-freeze: 10182; 2026-08-16 second re-freeze: 10189)
+prefix-10 overlap   94872 of 98930  95%   (65505, 66%; 2026-08-16 re-freeze: 94456; 2026-08-16 second re-freeze: 94871)
+absent                  0           (70; 2026-08-16 re-freezes: 1; doubled-apostrophe alignment 2026-08-21 → 0)
 ```
 
-Serial == parallel and debug == release, bit-identical. The single remaining
-absent is `ni''hao`, the frozen doubled-apostrophe path disagreement
-(`segment-graph.md`, §3.1) — absent under every construction, not a scan
-residual. The tie budget: 971,389 adjacent fully-tied pairs across ~9.8k
-inputs that contain at least one such pair (of the 10,190 W2 corpus),
-absorbed by the stable sort (was ~279k; the increase is the #87
-candidate-list cap removal); 1,036 depth-10 order-only tie-swaps
-(previously 1,030).
+Serial == parallel and debug == release, bit-identical. The prior single
+remaining absent was `ni''hao`, which the doubled-apostrophe alignment
+closed on 2026-08-21 (`docs/findings/parser-spec.md` architect correction
+log 2026-08-21; `docs/findings/corpus-tail.md`). The tie budget: 971,389
+adjacent fully-tied pairs across ~9.8k inputs that contain at least one
+such pair (of the 10,190 W2 corpus), absorbed by the stable sort (was
+~279k; the increase is the #87 candidate-list cap removal); 1,036 depth-10
+order-only tie-swaps (previously 1,030).
 
 ### 8.3 What remains open, and what would re-open a stage
 
@@ -803,8 +807,8 @@ candidate-list cap removal); 1,036 depth-10 order-only tie-swaps
 
 The five `assert_eq!` parity pins (§0) are the reproduced values re-pinned in
 this commit. The compatibility invariants (§3) and the measurement gates (§4)
-are unchanged and still normative, now measured against 10177 / 10189 / 1 /
-94871 of 98930. The parser, the graph, and the k-best machinery are untouched;
+are unchanged and still normative, now measured against 10178 / 10190 / 0 /
+94872 of 98930. The parser, the graph, and the k-best machinery are untouched;
 only the collection that consumed them changed.
 
 STOP and report rather than inventing evidence.
