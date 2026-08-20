@@ -13,7 +13,6 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::ops::Bound::{Included, Unbounded};
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -24,7 +23,14 @@ use oxpinyin_core::{
 
 use crate::table::{self, TableError};
 
-type PinyinIndex = BTreeMap<Box<str>, Box<[PhraseEntry]>>;
+/// The pinyin index as a sorted vector map: `(key, hits)` pairs in
+/// ascending key order, searched by binary search.
+///
+/// redb walks its B-tree in ascending primary-key order, so the load
+/// appends rows instead of paying `BTreeMap::insert`'s O(log n) string
+/// compares per row — the init-time memcmp the #129 audit left behind.
+/// Keystroke lookups stay O(log n) key compares, as they were on the tree.
+type PinyinIndex = Vec<(Box<str>, Box<[PhraseEntry]>)>;
 type PhraseIndex = BTreeMap<u32, CompactString>;
 
 /// Error conditions for system dictionary lookups.
@@ -233,7 +239,7 @@ impl SystemDictionary {
             return Ok(());
         }
         let key = Self::index_key(syllables);
-        if let Some(hits) = self.pinyin_index.get(key.as_str()) {
+        if let Some(hits) = index_hits(&self.pinyin_index, key.as_str()) {
             out.extend_from_slice(hits);
         }
         Ok(())
@@ -303,17 +309,23 @@ fn prefix_probe(sorted: &[String], joined: &str) -> bool {
     }
 }
 
-/// The `SEARCH_CONTINUED` probe over the typed pinyin index.
+/// The `SEARCH_CONTINUED` probe over the sorted vector map.
 fn pinyin_prefix_exists(index: &PinyinIndex, joined: &str) -> bool {
-    if index.contains_key(joined) {
-        return true;
-    }
+    // First key >= joined; the exact and the boundary-extension hits can
+    // only be there, as on the tree's `contains_key` + `range` pair.
+    let first_at_or_after = index.partition_point(|(key, _)| key.as_ref() < joined);
+    index.get(first_at_or_after).is_some_and(|(key, _)| {
+        key.as_ref() == joined
+            || (key.starts_with(joined) && key.as_bytes().get(joined.len()) == Some(&b'\''))
+    })
+}
+
+/// Exact-key get on the sorted vector map.
+fn index_hits<'a>(index: &'a PinyinIndex, key: &str) -> Option<&'a [PhraseEntry]> {
     index
-        .range::<str, _>((Included(joined), Unbounded))
-        .next()
-        .is_some_and(|(key, _)| {
-            key.starts_with(joined) && key.as_bytes().get(joined.len()) == Some(&b'\'')
-        })
+        .binary_search_by(|(stored, _)| stored.as_ref().cmp(key))
+        .ok()
+        .map(|position| index[position].1.as_ref())
 }
 
 struct PinyinDerived {
@@ -323,8 +335,12 @@ struct PinyinDerived {
     initial_keys: Box<[String]>,
 }
 
+/// Load-time row staging: pinyin key → parsed `{token, freq}` records,
+/// appended in the walk order `for_each_row` yields, before `resolve_hits`.
+type RawPinyinRows = Vec<(Box<str>, Box<[(u32, u32)]>)>;
+
 fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDerived, DictError> {
-    let mut raw: BTreeMap<Box<str>, Box<[(u32, u32)]>> = BTreeMap::new();
+    let mut raw: RawPinyinRows = Vec::new();
     let mut unigrams: BTreeMap<u32, u64> = BTreeMap::new();
     let mut unigram_total: u64 = 0;
     let mut initial_keys: Vec<String> = Vec::new();
@@ -350,9 +366,13 @@ fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDe
             *count = count.saturating_add(u64::from(freq));
             unigram_total = unigram_total.saturating_add(u64::from(freq));
         }
-        raw.insert(Box::from(pinyin), records);
+        // The row walk is ascending, so this is an append; the order check
+        // below repairs (and keeps the last row per key, as insert did) if a
+        // table ever arrives any other way.
+        raw.push((Box::from(pinyin), records));
         Ok::<(), DictError>(())
     })?;
+    ensure_sorted_unique(&mut raw);
 
     initial_keys.sort_unstable();
     initial_keys.dedup();
@@ -368,6 +388,28 @@ fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDe
         unigram_total,
         initial_keys: initial_keys.into_boxed_slice(),
     })
+}
+
+/// Restores the ascending unique-key order [`PinyinIndex`] is searched
+/// under: sort, then keep the last row per key — the value
+/// `BTreeMap::insert` would have left. redb's B-tree walk is ascending and
+/// its table keys are unique, so on every well-formed table this is a single
+/// O(n) order check and the repair never runs.
+fn ensure_sorted_unique<V>(rows: &mut Vec<(Box<str>, V)>) {
+    if rows.is_sorted_by(|a, b| a.0 < b.0) {
+        return;
+    }
+    rows.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    let mut kept = 0;
+    for read in 0..rows.len() {
+        if kept > 0 && rows[kept - 1].0 == rows[read].0 {
+            rows.swap(kept - 1, read);
+        } else {
+            rows.swap(kept, read);
+            kept += 1;
+        }
+    }
+    rows.truncate(kept);
 }
 
 /// Token → text through `phrase_index` (the reverse half is `phrase_text`).
@@ -515,7 +557,7 @@ mod tests {
 
         let dict = dict();
         let mut reachable: BTreeSet<u32> = BTreeSet::new();
-        for records in dict.pinyin_index.values() {
+        for records in dict.pinyin_index.iter().map(|(_, records)| records) {
             for entry in records.iter() {
                 reachable.insert(entry.token().value());
             }
@@ -586,5 +628,56 @@ mod tests {
             "lazy reverse map must resolve the looked-up phrase"
         );
         assert!(dict.text_tokens.get().is_some());
+    }
+
+    #[test]
+    fn loaded_index_is_sorted_and_unique() {
+        // The sorted vector map is only correct with ascending unique keys;
+        // redb's walk provides them, and this pins that the load keeps them.
+        let dict = dict();
+        assert!(
+            dict.pinyin_index
+                .windows(2)
+                .all(|pair| pair[0].0 < pair[1].0),
+            "pinyin index keys must be strictly ascending after open"
+        );
+    }
+
+    #[test]
+    fn index_hits_binary_searches_the_loaded_order() {
+        let dict = dict();
+        let hits = index_hits(&dict.pinyin_index, "ni'hao").expect("fixture key");
+        assert!(hits.iter().any(|entry| entry.text() == "你好"));
+        assert!(index_hits(&dict.pinyin_index, "no'such").is_none());
+    }
+
+    #[test]
+    fn ensure_sorted_unique_repairs_order_and_keeps_last_row() {
+        let mut rows: Vec<(Box<str>, u8)> = vec![
+            (Box::from("zhong'guo"), 1),
+            (Box::from("ni"), 2),
+            (Box::from("hao"), 3),
+            (Box::from("ni"), 4),
+        ];
+        ensure_sorted_unique(&mut rows);
+        // BTreeMap::insert semantics: one entry per key, last row's value.
+        assert_eq!(
+            rows,
+            vec![
+                (Box::from("hao"), 3),
+                (Box::from("ni"), 4),
+                (Box::from("zhong'guo"), 1),
+            ]
+        );
+
+        // Already strictly ascending: untouched.
+        let mut sorted: Vec<(Box<str>, u8)> = vec![
+            (Box::from("a"), 1),
+            (Box::from("b"), 2),
+            (Box::from("c"), 3),
+        ];
+        ensure_sorted_unique(&mut sorted);
+        assert_eq!(sorted.len(), 3);
+        assert_eq!(sorted[1].1, 2);
     }
 }
