@@ -331,9 +331,25 @@ int main(int argc, char **argv) {
         dlclose(handle);
         return 1;
     }
-    s.set_options(ctx, flags);
+    /* Both configuration calls must be accepted: a silently rejected
+     * set_options would run the sweep under the context defaults, and a
+     * rejected scheme would quietly sweep HANYU on both sides while the
+     * log claims otherwise. */
+    if (!s.set_options(ctx, flags)) {
+        fprintf(stderr, "pinyin_set_options(%u) rejected\n", flags);
+        s.fini(ctx);
+        dlclose(handle);
+        return 1;
+    }
+    bool scheme_selected = s.set_full_scheme(ctx, scheme);
     printf("set_full_pinyin_scheme(%d): %s\n", scheme,
-           s.set_full_scheme(ctx, scheme) ? "true" : "false");
+           scheme_selected ? "true" : "false");
+    if (!scheme_selected) {
+        fprintf(stderr, "pinyin_set_full_pinyin_scheme(%d) rejected\n", scheme);
+        s.fini(ctx);
+        dlclose(handle);
+        return 1;
+    }
 
     pinyin_instance_t *inst = s.alloc(ctx);
     if (!inst) {
