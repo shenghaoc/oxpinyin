@@ -226,6 +226,13 @@ struct corpus_entry {
     int tone;               /* 1..5, or 0 for tone-less */
 };
 
+/* One slot in `symbols` holds the NULL terminator, so an entry carries at
+ * most (len - 1) symbol keys; add one optional tone key and the string NUL. */
+#define MAX_SYMBOLS_PER_ENTRY \
+    ((sizeof(((struct corpus_entry *)0)->symbols) / sizeof(const char *)) - 1)
+#define KEYSTROKE_BUF (MAX_SYMBOLS_PER_ENTRY + 2)
+_Static_assert(KEYSTROKE_BUF >= 3, "keystroke buffer too small");
+
 /*
  * Legacy W13 coverage (previously hand-typed keystrokes, now derived):
  * ni, hao, wo, ren, zhong, shi, yi, ni+tone2, l, empty, then the
@@ -287,6 +294,9 @@ static const struct corpus_entry CORPUS[] = {
      * consumes nothing. */
     { .symbols = { "ㄈ", "ㄜ", NULL }, .tone = 0 },
     { .symbols = { "ㄎ", "ㄟ", NULL }, .tone = 0 },
+    { .symbols = { "ㄉ", "ㄧ", "ㄣ", NULL }, .tone = 0 },
+    { .symbols = { "ㄌ", "ㄣ", NULL }, .tone = 0 },
+    { .symbols = { "ㄖ", "ㄨ", "ㄚ", NULL }, .tone = 0 },
 };
 
 #define NCORPUS (sizeof(CORPUS) / sizeof(CORPUS[0]))
@@ -309,8 +319,8 @@ static char key_for_tone(int tone) {
     exit(1);
 }
 
-/* Derives the keystroke string for one corpus entry into `out` (at least
- * 8 bytes: up to 6 symbol keys + one tone key + NUL). */
+/* Derives the keystroke string for one corpus entry into `out`, which must
+ * hold at least KEYSTROKE_BUF bytes. */
 static void derive_keystrokes(const struct corpus_entry *entry, char *out) {
     size_t len = 0;
     for (const char *const *symbol = entry->symbols; symbol && *symbol; symbol++)
@@ -487,7 +497,7 @@ int main(int argc, char **argv) {
     printf("table-check: ok\n");
 
     for (size_t i = 0; i < NCORPUS; i++) {
-        char keystrokes[8];
+        char keystrokes[KEYSTROKE_BUF];
         derive_keystrokes(&CORPUS[i], keystrokes);
         drive_input(&s, inst, keystrokes);
     }
