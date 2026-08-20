@@ -7,6 +7,9 @@
 //! `[ni, hao]` is a single get on `ni'hao`; there is no per-syllable
 //! binary encoder and no compound binary key. Entries come back in the
 //! stored order, which the exporter froze as frequency-descending.
+//!
+//! Values are the resolved [`PhraseEntry`] slice so `fill_lookup` copies
+//! hits instead of walking `phrase_index` / `unigrams` per record.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -21,8 +24,8 @@ use oxpinyin_core::{
 
 use crate::table::{self, TableError};
 
-type PinyinIndex = BTreeMap<Box<str>, Box<[(u32, u32)]>>;
-type PhraseIndex = BTreeMap<u32, Box<str>>;
+type PinyinIndex = BTreeMap<Box<str>, Box<[PhraseEntry]>>;
+type PhraseIndex = BTreeMap<u32, CompactString>;
 
 /// Error conditions for system dictionary lookups.
 #[derive(Debug)]
@@ -80,8 +83,8 @@ pub struct SystemDictionary {
 impl SystemDictionary {
     /// Opens the system dictionary from the two exported table files.
     pub fn open(pinyin_index_path: &Path, phrase_index_path: &Path) -> Result<Self, DictError> {
-        let derived = load_pinyin_index(pinyin_index_path)?;
         let phrase_index = load_phrase_index(phrase_index_path)?;
+        let derived = load_pinyin_index(pinyin_index_path, &phrase_index)?;
         Ok(Self {
             pinyin_index: derived.pinyin_index,
             phrase_index,
@@ -134,9 +137,13 @@ impl SystemDictionary {
     pub fn pronunciations(&self, token: u32) -> Result<Vec<(String, u64)>, DictError> {
         let mut out = Vec::new();
         for (pinyin, records) in &self.pinyin_index {
-            for &(candidate, freq) in records.iter() {
-                if candidate == token {
-                    out.push((pinyin.to_string(), u64::from(freq)));
+            for entry in records.iter() {
+                if entry.token().value() == token {
+                    let freq = entry
+                        .pronunciation_possibility()
+                        .map(|(matched, _)| matched)
+                        .unwrap_or(0);
+                    out.push((pinyin.to_string(), freq));
                 }
             }
         }
@@ -226,27 +233,8 @@ impl SystemDictionary {
             return Ok(());
         }
         let key = Self::index_key(syllables);
-        let Some(records) = self.pinyin_index.get(key.as_str()) else {
-            return Ok(());
-        };
-
-        for &(token, freq) in records.iter() {
-            // Token → text through phrase_index (the reverse half is
-            // `phrase_text`). The full export resolves every token; a mini
-            // fixture may omit some, and those records contribute no
-            // candidate rather than failing the lookup.
-            if let Some(text) = self.phrase_index.get(&token) {
-                // W14: the record's frequency is the matched pronunciation's
-                // share and the aggregated unigram map holds the item's
-                // pronunciation total — matched/total is upstream's
-                // `get_pronunciation_possibility` polyphone discount. The
-                // candidate scan never reads it.
-                let total = self.unigrams.get(&token).copied().unwrap_or(0);
-                out.push(
-                    PhraseEntry::new(PhraseToken::new(token), CompactString::from(text.as_ref()))
-                        .with_pronunciation_possibility(u64::from(freq), total),
-                );
-            }
+        if let Some(hits) = self.pinyin_index.get(key.as_str()) {
+            out.extend_from_slice(hits);
         }
         Ok(())
     }
@@ -335,8 +323,8 @@ struct PinyinDerived {
     initial_keys: Box<[String]>,
 }
 
-fn load_pinyin_index(path: &Path) -> Result<PinyinDerived, DictError> {
-    let mut pinyin_index = PinyinIndex::new();
+fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDerived, DictError> {
+    let mut raw: BTreeMap<Box<str>, Box<[(u32, u32)]>> = BTreeMap::new();
     let mut unigrams: BTreeMap<u32, u64> = BTreeMap::new();
     let mut unigram_total: u64 = 0;
     let mut initial_keys: Vec<String> = Vec::new();
@@ -362,18 +350,49 @@ fn load_pinyin_index(path: &Path) -> Result<PinyinDerived, DictError> {
             *count = count.saturating_add(u64::from(freq));
             unigram_total = unigram_total.saturating_add(u64::from(freq));
         }
-        pinyin_index.insert(Box::from(pinyin), records);
+        raw.insert(Box::from(pinyin), records);
         Ok::<(), DictError>(())
     })?;
 
     initial_keys.sort_unstable();
     initial_keys.dedup();
+    // Totals are the sum over every pronunciation; resolve after the
+    // aggregate pass so each hit carries the item's final unigram.
+    let pinyin_index = raw
+        .into_iter()
+        .map(|(key, records)| (key, resolve_hits(&records, phrase_index, &unigrams)))
+        .collect();
     Ok(PinyinDerived {
         pinyin_index,
         unigrams,
         unigram_total,
         initial_keys: initial_keys.into_boxed_slice(),
     })
+}
+
+/// Token → text through `phrase_index` (the reverse half is `phrase_text`).
+/// The full export resolves every token; a mini fixture may omit some,
+/// and those records contribute no candidate rather than failing open.
+///
+/// W14: the record's frequency is the matched pronunciation's share and
+/// the aggregated unigram map holds the item's pronunciation total —
+/// matched/total is upstream's `get_pronunciation_possibility` polyphone
+/// discount. The candidate scan never reads it.
+fn resolve_hits(
+    records: &[(u32, u32)],
+    phrase_index: &PhraseIndex,
+    unigrams: &BTreeMap<u32, u64>,
+) -> Box<[PhraseEntry]> {
+    records
+        .iter()
+        .filter_map(|&(token, freq)| {
+            phrase_index.get(&token).map(|text| {
+                let total = unigrams.get(&token).copied().unwrap_or(0);
+                PhraseEntry::new(PhraseToken::new(token), text.clone())
+                    .with_pronunciation_possibility(u64::from(freq), total)
+            })
+        })
+        .collect()
 }
 
 fn load_phrase_index(path: &Path) -> Result<PhraseIndex, DictError> {
@@ -386,7 +405,7 @@ fn load_phrase_index(path: &Path) -> Result<PhraseIndex, DictError> {
         let text = std::str::from_utf8(value).map_err(|_| {
             DictError::Parse(format!("phrase text for token {token:#010x} is not UTF-8"))
         })?;
-        map.insert(token, Box::from(text));
+        map.insert(token, CompactString::from(text));
         Ok::<(), DictError>(())
     })?;
     Ok(map)
@@ -497,8 +516,8 @@ mod tests {
         let dict = dict();
         let mut reachable: BTreeSet<u32> = BTreeSet::new();
         for records in dict.pinyin_index.values() {
-            for &(token, _freq) in records.iter() {
-                reachable.insert(token);
+            for entry in records.iter() {
+                reachable.insert(entry.token().value());
             }
         }
 
@@ -516,6 +535,20 @@ mod tests {
         assert!(entries.is_empty());
         let entries = dict().lookup(&[]).unwrap();
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn lookup_into_matches_lookup_and_keeps_capacity() {
+        let dict = dict();
+        let via_lookup = dict.lookup(&[key("ni")]).unwrap();
+        let mut buf = Vec::with_capacity(via_lookup.len().max(1));
+        dict.lookup_into(&[key("ni")], &mut buf).unwrap();
+        assert_eq!(buf, via_lookup);
+        let cap = buf.capacity();
+        dict.lookup_into(&[key("ni"), key("hao")], &mut buf)
+            .unwrap();
+        assert_eq!(buf, dict.lookup(&[key("ni"), key("hao")]).unwrap());
+        assert!(buf.capacity() >= cap);
     }
 
     #[test]
