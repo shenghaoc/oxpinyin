@@ -12,6 +12,10 @@
 # Env-gated on the pin-built oracle exactly like the import/train diffs:
 # PINYIN_ORACLE_PREFIX (default $HOME/.local/opt/pinyin-oracle).
 #
+# full mode scheme 1 runs the tone-less parity profile by default;
+# SCHEME_DIFF_TONE=1 switches it to the USE_TONE profile and extends
+# the corpus with the tone-digit law rows (see fullpin-diff.c).
+#
 # The capi side is built from the workspace. To compare candidate lists
 # against real model data, set W13_CAPI_SYSTEM to a directory containing
 # pinyin_index.redb/phrase_index.redb/bigram.redb and interpolation2.text;

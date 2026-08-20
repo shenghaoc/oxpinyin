@@ -13,6 +13,13 @@
  * scan finds against the HANYU list (spellings that exist in both but
  * map differently).  Nothing is hand-authored.
  *
+ * Scheme 1 runs the tone-less profile by default (PINYIN_INCOMPLETE
+ * only — the frozen parity shape).  SCHEME_DIFF_TONE=1 switches it to
+ * the USE_TONE profile and extends the corpus with the tone-digit law
+ * rows: a second tone digit, the rejected digits 6/0, digit-then-junk,
+ * adjacent and apostrophe-joined toned pairs, and every frozen
+ * initial-only key with a tone.
+ *
  * Usage:
  *   ./fullpin-diff <path-to-so> <systemdir> [scheme]
  */
@@ -149,7 +156,7 @@ struct index_row {
 /* ── Corpus derivation ────────────────────────────────────────────────── */
 
 #define MAX_INPUT 64
-#define MAX_CORPUS 64
+#define MAX_CORPUS 128
 
 struct corpus {
     char inputs[MAX_CORPUS][MAX_INPUT];
@@ -178,7 +185,17 @@ static const char *hanyu_target(const char *spelling) {
  * (tone-less, tone-bearing, junk-suffixed), an apostrophe-joined pair,
  * and — for the index schemes — the remap rows the runtime scan finds
  * against the HANYU list.  Scheme 1 strides the HANYU list itself.
+ *
+ * Under SCHEME_DIFF_TONE=1 the scheme-1 corpus additionally carries the
+ * tone-digit law rows: a second tone digit, the rejected 6/0,
+ * digit-then-junk, adjacent and apostrophe-joined toned pairs, and every
+ * frozen initial-only key with a tone.
  */
+static int scheme1_tone_mode(void) {
+    const char *tone = getenv("SCHEME_DIFF_TONE");
+    return tone && strcmp(tone, "1") == 0;
+}
+
 static void derive_corpus(struct corpus *c, int scheme) {
     if (scheme == 1) {
         size_t n = sizeof(HANYU_SYLLABLES) / sizeof(HANYU_SYLLABLES[0]);
@@ -189,6 +206,40 @@ static void derive_corpus(struct corpus *c, int scheme) {
             corpus_add(c, buf);
             snprintf(buf, MAX_INPUT, "%sQ", HANYU_SYLLABLES[i]);
             corpus_add(c, buf);
+        }
+        if (scheme1_tone_mode()) {
+            char buf[MAX_INPUT];
+            /* a second tone digit on the stride */
+            for (size_t i = 0; i < n; i += 37) {
+                snprintf(buf, MAX_INPUT, "%s3", HANYU_SYLLABLES[i]);
+                corpus_add(c, buf);
+            }
+            /* the rejected digits: not tones, left as junk */
+            for (size_t k = 0; k <= 6; k += 6) {
+                snprintf(buf, MAX_INPUT, "%s%zu", HANYU_SYLLABLES[0], k);
+                corpus_add(c, buf);
+                snprintf(buf, MAX_INPUT, "%s%zu", HANYU_SYLLABLES[1], k);
+                corpus_add(c, buf);
+            }
+            /* digit then junk */
+            snprintf(buf, MAX_INPUT, "%s4Q", HANYU_SYLLABLES[0]);
+            corpus_add(c, buf);
+            snprintf(buf, MAX_INPUT, "%s4Q", HANYU_SYLLABLES[1]);
+            corpus_add(c, buf);
+            /* adjacent and apostrophe-joined toned pairs */
+            snprintf(buf, MAX_INPUT, "%s3%s3", HANYU_SYLLABLES[0], HANYU_SYLLABLES[1]);
+            corpus_add(c, buf);
+            snprintf(buf, MAX_INPUT, "%s4'%s4", HANYU_SYLLABLES[0], HANYU_SYLLABLES[1]);
+            corpus_add(c, buf);
+            /* NOT swept: a tone digit on an initial-only key ("n4"). The
+             * pin's parser admits it (the scan's only precondition is the
+             * option-gated index hit) but its phrase search asserts
+             * CHEWING_ZERO_TONE == key.m_tone for initial-only keys
+             * (pinyin_phrase3.h:152) and the oracle SIGABRTs — the same
+             * class as zhuyin 7 / double 30: no oracle differential is
+             * possible. oxpinyin keeps the parsed key and does not abort;
+             * the class is covered by the core graph tests and recorded
+             * in docs/findings/upstream-divergences.md. */
         }
         corpus_add(c, "");
         return;
@@ -304,12 +355,12 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Scheme 1 runs the tone-less profile: the HANYU surface has no
-     * USE_TONE digit handling at this pin (recorded in
-     * docs/findings/upstream-divergences.md), while schemes 2/3 carry
-     * the pinned tone-digit behavior. */
+    /* Scheme 1 runs the tone-less profile by default — the frozen parity
+     * shape (PINYIN_INCOMPLETE only) — while schemes 2/3 always carry the
+     * pinned tone-digit behavior.  SCHEME_DIFF_TONE=1 switches scheme 1
+     * to the USE_TONE profile with the tone-law corpus rows. */
     pinyin_option_t flags =
-        (scheme == 1) ? PINYIN_INCOMPLETE : FULLPIN_FLAGS;
+        (scheme == 1 && !scheme1_tone_mode()) ? PINYIN_INCOMPLETE : FULLPIN_FLAGS;
 
     resolve_g_free();
     void *handle = dlopen(argv[1], RTLD_NOW);
