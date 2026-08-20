@@ -654,9 +654,11 @@ mod tests {
         let edges = rendered_with_options("zhuang4", tone_options());
         assert!(edges.contains(&"0-7:zhuang:exact:4".to_owned()));
         assert!(edges.contains(&"0-6:zhuang:segmentation:0".to_owned()));
-        assert!(SegmentGraph::build_with_options(b"zhuang4", tone_options())
-            .expect("valid")
-            .fully_consumed());
+        assert!(
+            SegmentGraph::build_with_options(b"zhuang4", tone_options())
+                .expect("valid")
+                .fully_consumed()
+        );
     }
 
     #[test]
@@ -665,8 +667,8 @@ mod tests {
         // and the span falls back to the shorter toneless parse with the
         // digit left as junk.
         for input in ["zai6", "zai0", "zai9"] {
-            let graph = SegmentGraph::build_with_options(input.as_bytes(), tone_options())
-                .expect("valid");
+            let graph =
+                SegmentGraph::build_with_options(input.as_bytes(), tone_options()).expect("valid");
             assert_eq!(graph.consumed(), 3, "input {input}");
             assert!(!graph.fully_consumed(), "input {input}");
             assert!(
@@ -727,10 +729,12 @@ mod tests {
         assert!(graph.fewest_keys(false).is_empty());
 
         // A lone digit is an empty core and never parses.
-        assert!(SegmentGraph::build_with_options(b"4", tone_options())
-            .expect("valid")
-            .edges()
-            .is_empty());
+        assert!(
+            SegmentGraph::build_with_options(b"4", tone_options())
+                .expect("valid")
+                .edges()
+                .is_empty()
+        );
     }
 
     #[test]

@@ -2316,7 +2316,11 @@ mod tests {
         // pin matches the full ChewingKey.
         let toneless = SegmentGraph::build_with_options(b"anan", incomplete).expect("valid");
         let columns = super::build_scan_matrix(&toneless, incomplete);
-        assert!(columns[0].iter().any(|key| key.key.text() == "an" && key.to == 2));
+        assert!(
+            columns[0]
+                .iter()
+                .any(|key| key.key.text() == "an" && key.to == 2)
+        );
 
         let toned_pair = SegmentGraph::build_with_options(b"a4nan", toned).expect("valid");
         let columns = super::build_scan_matrix(&toned_pair, toned);
@@ -2325,11 +2329,19 @@ mod tests {
         // Divided: "bian" divides toneless; "bian4" carries its tone instead.
         let toneless = SegmentGraph::build_with_options(b"bian", incomplete).expect("valid");
         let columns = super::build_scan_matrix(&toneless, incomplete);
-        assert!(columns[0].iter().any(|key| key.key.text() == "bi" && key.to == 2));
+        assert!(
+            columns[0]
+                .iter()
+                .any(|key| key.key.text() == "bi" && key.to == 2)
+        );
 
         let toned_key = SegmentGraph::build_with_options(b"bian4", toned).expect("valid");
         let columns = super::build_scan_matrix(&toned_key, toned);
-        assert!(columns[0].iter().any(|key| key.key.text() == "bian" && key.tone == 4));
+        assert!(
+            columns[0]
+                .iter()
+                .any(|key| key.key.text() == "bian" && key.tone == 4)
+        );
         assert!(!columns[0].iter().any(|key| key.key.text() == "bi"));
     }
 }
