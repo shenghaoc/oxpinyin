@@ -691,8 +691,15 @@ int main(int argc, char **argv) {
         return 1;
     }
     s.set_options(ctx, CHEWING_FLAGS);
+    bool scheme_selected = s.set_zhuyin_scheme(ctx, scheme);
     printf("set_zhuyin_scheme(%d): %s\n", scheme,
-           s.set_zhuyin_scheme(ctx, scheme) ? "true" : "false");
+           scheme_selected ? "true" : "false");
+    if (!scheme_selected) {
+        fprintf(stderr, "set_zhuyin_scheme(%d) rejected\n", scheme);
+        s.fini(ctx);
+        dlclose(handle);
+        return 1;
+    }
 
     pinyin_instance_t *inst = s.alloc(ctx);
     if (!inst) {
