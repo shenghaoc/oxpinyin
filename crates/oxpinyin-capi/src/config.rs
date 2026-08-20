@@ -266,4 +266,47 @@ mod tests {
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);
     }
+
+    #[test]
+    fn set_options_use_tone_reaches_the_hanyu_parser() {
+        // `pinyin_parser2.cpp:164-214`: with USE_TONE the trailing digit
+        // is consumed with the syllable; without it the digit is junk.
+        let user_dir = TempUserDir::new("set-options-use-tone");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+        let zai4 = cstr("zai4");
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, zai4.as_ptr()),
+            3,
+            "toneless default leaves the digit unparsed"
+        );
+
+        assert!(pinyin_set_options(
+            context,
+            PinyinTableFlag::PINYIN_INCOMPLETE as u32
+                | PinyinTableFlag::USE_TONE as u32
+        ));
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, zai4.as_ptr()),
+            4,
+            "USE_TONE consumes the digit with the syllable"
+        );
+
+        let zhuang4 = cstr("zhuang4");
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, zhuang4.as_ptr()),
+            7,
+            "the 7-byte window admits zhuang4 whole"
+        );
+
+        let rejected = cstr("zai6");
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, rejected.as_ptr()),
+            3,
+            "6 is not a tone: the digit stays junk"
+        );
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
 }

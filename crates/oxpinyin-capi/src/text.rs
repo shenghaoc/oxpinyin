@@ -86,22 +86,32 @@ fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize, options: OptionBit
     for edge in graph.fewest_keys(true) {
         let start = edge.syllable_start();
         let end = edge.to();
-        let key = edge.key().text();
+        // `ChewingKey::get_pinyin_string` (chewing_key.cpp:47-58): the
+        // canonical table spelling with the tone digit appended for
+        // non-zero tones. Carrying the digit keeps raw and canonical
+        // lengths equal on HANYU under USE_TONE, which is the invariant
+        // that holds the #130 aux over-read closed — the clamp below is
+        // the belt, not the excuse.
+        let display = if edge.tone() == 0 {
+            edge.key().text().to_owned()
+        } else {
+            format!("{}{}", edge.key().text(), edge.tone())
+        };
 
         if !inserted && cursor <= start {
             out.push('|');
             inserted = true;
-            out.push_str(key);
+            out.push_str(&display);
             out.push(' ');
         } else if !inserted && cursor < end {
-            let split = (cursor - start).min(key.len());
-            out.push_str(&key[..split]);
+            let split = (cursor - start).min(display.len());
+            out.push_str(&display[..split]);
             out.push('|');
-            out.push_str(&key[split..]);
+            out.push_str(&display[split..]);
             out.push(' ');
             inserted = true;
         } else {
-            out.push_str(key);
+            out.push_str(&display);
             out.push(' ');
         }
     }
@@ -434,7 +444,7 @@ pub extern "C" fn pinyin_get_chewing_auxiliary_text(
 #[cfg(test)]
 mod tests {
     use super::full_aux_text;
-    use oxpinyin_core::OptionBits;
+    use oxpinyin_core::{OptionBits, USE_TONE};
 
     #[test]
     fn full_aux_text_matches_the_oracle_for_simple_keys() {
@@ -454,6 +464,51 @@ mod tests {
                 full_aux_text("nihao", 5, cursor, OptionBits::default()),
                 expected,
                 "nihao cursor {cursor}"
+            );
+        }
+    }
+
+    #[test]
+    fn full_aux_text_carries_the_tone_digit_under_use_tone() {
+        // `ChewingKey::get_pinyin_string` (chewing_key.cpp:47-58) renders
+        // "%s%d" for non-zero tones and the aux splits that rendered
+        // string at the raw-relative cursor (pinyin.cpp:3411-3423) — the
+        // cursor can land on the digit itself. Carrying the digit keeps
+        // raw and canonical lengths equal, holding the #130 over-read
+        // closed on HANYU.
+        let options = OptionBits::from_bits(oxpinyin_core::PINYIN_INCOMPLETE | USE_TONE);
+        for (cursor, expected) in [
+            (0, "|zai4 "),
+            (1, "z|ai4 "),
+            (2, "za|i4 "),
+            (3, "zai|4 "),
+            (4, "zai4 |"),
+            (99, "zai4 |"),
+        ] {
+            assert_eq!(
+                full_aux_text("zai4", 4, cursor, options),
+                expected,
+                "zai4 cursor {cursor}"
+            );
+        }
+        assert_eq!(full_aux_text("ni3hao3", 7, 7, options), "ni3 hao3 |");
+        assert_eq!(full_aux_text("zai4'an", 7, 7, options), "zai4 an |");
+        assert_eq!(full_aux_text("zai4Q", 4, 4, options), "zai4 |");
+    }
+
+    #[test]
+    fn full_aux_text_drops_the_digit_when_use_tone_is_clear() {
+        // The invariant: with the bit clear the toned inputs render
+        // exactly as the frozen toneless parser always did.
+        for (raw, parsed, cursor, expected) in [
+            ("zai4", 3, 0, "|zai "),
+            ("zai4", 3, 3, "zai |"),
+            ("ni3hao3", 3, 3, "ni |"),
+        ] {
+            assert_eq!(
+                full_aux_text(raw, parsed, cursor, OptionBits::default()),
+                expected,
+                "{raw} cursor {cursor}"
             );
         }
     }
