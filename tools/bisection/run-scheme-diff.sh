@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# run-scheme-diff.sh <double|bopomofo> [scheme-number]
+# run-scheme-diff.sh <double|bopomofo|full> [scheme-number]
 #
-# W13 per-scheme differential. Drives the same C-ABI sequence into
+# W13/W15 per-scheme differential. Drives the same C-ABI sequence into
 # libpinyin_capi.so and the pin-built libpinyin.so and diffs the logs.
-# The scheme number selects the double-pinyin scheme in double mode, or
+# The scheme number selects the double-pinyin scheme in double mode,
 # the zhuyin keyboard in bopomofo mode (1 STANDARD, 2 HSU, 3 IBM,
-# 4 GINYIEH, 5 ETEN, 6 ETEN26, 8 HSU_DVORAK, 9 DACHEN_CP26; default 1).
+# 4 GINYIEH, 5 ETEN, 6 ETEN26, 8 HSU_DVORAK, 9 DACHEN_CP26; default 1),
+# or the full-pinyin scheme in full mode (1 HANYU, 2 LUOMA,
+# 3 SECONDARY_ZHUYIN; default 1).
 #
 # Env-gated on the pin-built oracle exactly like the import/train diffs:
 # PINYIN_ORACLE_PREFIX (default $HOME/.local/opt/pinyin-oracle).
@@ -27,8 +29,17 @@ SCHEME_NUMBER="${2:-}"
 
 echo "--- building scheme-diff driver ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o scheme-diff scheme-diff.c -ldl
-if [[ "$SCHEME" == "bopomofo" ]]; then
+if [[ "$SCHEME" == "full" ]]; then
+    if [[ -n "$SCHEME_NUMBER" && ! "$SCHEME_NUMBER" =~ ^(1|2|3)$ ]]; then
+        echo "fatal: full scheme must be 1, 2 or 3 (got '$SCHEME_NUMBER')"
+        exit 1
+    fi
+    SCHEME_ARGS=("${SCHEME_NUMBER:-1}")
+elif [[ "$SCHEME" == "bopomofo" ]]; then
     gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o chewing-diff chewing-diff.c -ldl
+fi
+if [[ "$SCHEME" == "full" ]]; then
+    gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o fullpin-diff fullpin-diff.c -ldl
 fi
 echo "build: ok"
 
@@ -55,7 +66,13 @@ if ! grep -q '^pin_ref=libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636
     exit 0
 fi
 
-if [[ "$SCHEME" == "bopomofo" ]]; then
+if [[ "$SCHEME" == "full" ]]; then
+    if [[ -n "$SCHEME_NUMBER" && ! "$SCHEME_NUMBER" =~ ^(1|2|3)$ ]]; then
+        echo "fatal: full scheme must be 1, 2 or 3 (got '$SCHEME_NUMBER')"
+        exit 1
+    fi
+    SCHEME_ARGS=("${SCHEME_NUMBER:-1}")
+elif [[ "$SCHEME" == "bopomofo" ]]; then
     # Only the implemented keyboards the driver sweeps: 1 STANDARD,
     # 2 HSU, 3 IBM, 4 GINYIEH, 5 ETEN, 6 ETEN26, 8 HSU_DVORAK,
     # 9 DACHEN_CP26.  7 (STANDARD_DVORAK) aborts the oracle and is
@@ -93,7 +110,10 @@ fi
 echo "--- capi side ---"
 CAPI_LOG="$(mktemp)"
 CAPI_ERR="$(mktemp)"
-if [[ "$SCHEME" == "bopomofo" ]]; then
+if [[ "$SCHEME" == "full" ]]; then
+    CAPI_DRIVER=./fullpin-diff
+    DRIVER_ARGS=("$CAPI_SO" "$CAPI_DATA" "${SCHEME_ARGS[@]}")
+elif [[ "$SCHEME" == "bopomofo" ]]; then
     CAPI_DRIVER=./chewing-diff
     DRIVER_ARGS=("$CAPI_SO" "$CAPI_DATA" "${SCHEME_ARGS[@]}")
 else
@@ -113,7 +133,10 @@ echo "oxpinyin-capi: ok"
 echo "--- oracle side ---"
 ORACLE_LOG="$(mktemp)"
 ORACLE_ERR="$(mktemp)"
-if [[ "$SCHEME" == "bopomofo" ]]; then
+if [[ "$SCHEME" == "full" ]]; then
+    ORACLE_DRIVER=./fullpin-diff
+    DRIVER_ARGS=("$ORACLE_SO" "$ORACLE_DATA" "${SCHEME_ARGS[@]}")
+elif [[ "$SCHEME" == "bopomofo" ]]; then
     ORACLE_DRIVER=./chewing-diff
     DRIVER_ARGS=("$ORACLE_SO" "$ORACLE_DATA" "${SCHEME_ARGS[@]}")
 else

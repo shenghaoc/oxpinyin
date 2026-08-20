@@ -47,3 +47,4 @@ rustc-ice-*.txt
 # The user-learning store is per-user runtime data; it must never be
 # committed (W6-T5: no user-data fixtures beyond tiny synthetic ones).
 user_store.redb
+tools/bisection/fullpin-diff
