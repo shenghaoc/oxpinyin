@@ -180,13 +180,17 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   `pinyin_choose_predicted_candidate` — which the gap inventories list as
   no-ops with no owning workstream.
 
-- **W12 is the corpus tail.** After the #85 re-freeze: 13 of 10,190 inputs
-  differ at top-1, ~4,059 prefix-10 positions beyond tie-order. Could be one
-  systematic cause or thirteen separate ones — undiagnosed. This workstream
-  is open-ended by nature, unlike W10/W11: its completion criterion is
-  diagnosis-driven rather than feature-driven. Also parked here:
-  the live-typing behaviors the parity sequence doesn't yet exercise (deep
-  paging, mid-composition edits, punctuation modes).
+- **W12 is the corpus tail.** After the 2026-08-21 doubled-apostrophe fix:
+  12 of 10,190 inputs differ at top-1, ~4,058 prefix-10 positions beyond
+  tie-order. The 12 are all top-two comparator tie-swaps on the same
+  depth-10 set (Class A in `docs/findings/corpus-tail.md`), sharing the
+  `sentence-surface.md` §3 fixed-point-vs-float species; moving them
+  requires a comparator re-freeze. Class B (`ni''hao`) closed
+  2026-08-21 (`docs/findings/pin-refreeze-2026-08.md` amendment). This
+  workstream is open-ended by nature, unlike W10/W11: its completion
+  criterion is diagnosis-driven rather than feature-driven. Also parked
+  here: the live-typing behaviors the parity sequence doesn't yet
+  exercise (deep paging, mid-composition edits, punctuation modes).
 
 - **W13 is double-pinyin and bopomofo input schemes.** Previously parked in
   W12, these are new input schemes (feature implementation), not corpus-tail

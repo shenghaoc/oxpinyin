@@ -26,7 +26,7 @@ Criterion header and the profile script both print this SHA.
    `cargo flamegraph` / `perf record`, then Valgrind Callgrind. Artifacts
    go under `target/profile/` (gitignored).
 
-Guardrails: these benches do **not** assert the 10177-class candidate pins
+Guardrails: these benches do **not** assert the 10178-class candidate pins
 (those stay in `pinyin-oracle` `real_tables_integration`). Criterion is
 configured with `noise_threshold(0.50)` — deliberately wide, so a
 `--save-baseline` / `--baseline` comparison only flags a change larger
