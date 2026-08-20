@@ -82,9 +82,18 @@ if [[ "$SCHEME" == "full" && "${SCHEME_ARGS[0]:-1}" =~ ^(2|3)$ ]]; then
         echo "        --apply-patches tools/oracle/patches"
         exit 0
     fi
-    if ! grep -q '^pin_ref=libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c.*+patches-' \
+    # Require THIS repo's patch set, not merely any patched oracle: the
+    # expected token is the SHA-256 of the sorted *.patch manifest under
+    # tools/oracle/patches, computed the same way build-oracle.sh folds
+    # it into pin_ref.  An oracle carrying unrelated patches would make
+    # the gate compare against the wrong reference.
+    expected_patches_sha=$(cd "$REPO_ROOT/tools/oracle/patches" \
+        && find . -maxdepth 1 -type f -name '*.patch' -print0 \
+        | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+    if ! grep -q "^pin_ref=libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c.*+patches-$expected_patches_sha$" \
         "$PATCHED_PREFIX/oracle-pin.txt"; then
-        echo "SKIP: patched oracle at $PATCHED_PREFIX is off-pin or missing the patches token"
+        echo "SKIP: patched oracle at $PATCHED_PREFIX is off-pin or carries a different patch set"
+        echo "  expected +patches-$expected_patches_sha (from tools/oracle/patches)"
         exit 0
     fi
     ORACLE_SO="$PATCHED_PREFIX/lib/libpinyin.so"

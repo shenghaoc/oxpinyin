@@ -75,6 +75,12 @@ while (($#)); do
 	esac
 done
 
+if [[ -n $apply_patches_dir && -z $prefix ]]; then
+	printf '%s
+' '--apply-patches requires an explicit --prefix: a patched build must not land in the unpatched default prefix' >&2
+	exit 2
+fi
+
 prefix=${prefix:-"$work_dir/prefix"}
 
 case $jobs in
