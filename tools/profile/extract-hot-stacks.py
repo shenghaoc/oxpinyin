@@ -116,7 +116,10 @@ def hottest(
                 or stack_index >= n_frames
             ):
                 continue
-            counts[walk_stack(thread, stack_index)] += 1
+            stack = walk_stack(thread, stack_index)
+            if not stack:
+                continue
+            counts[stack] += 1
     return sum(counts.values()), counts.most_common(top_n)
 
 
@@ -179,8 +182,28 @@ def _self_test() -> int:
     # Sample 1 points at a prefix row with no matching frame: skip it,
     # do not count an empty stack.
     assert prefix_total == 1, prefix_total
-    assert () not in {stack for _, stack in prefix_rows}
+    assert () not in {stack for stack, _ in prefix_rows}
     assert prefix_rows == [(("ok",), 1)], prefix_rows
+    invalid_frame = {
+        "threads": [
+            {
+                "stringArray": ["ok"],
+                "samples": {"stack": [0, 1]},
+                "stackTable": {
+                    "prefix": [None, None],
+                    "frame": [0, None],
+                },
+                "frameTable": {"func": [0]},
+                "funcTable": {"name": [0]},
+            }
+        ]
+    }
+    invalid_total, invalid_rows = hottest(invalid_frame)
+    # Sample 1 is in range of the frame column but the frame value is
+    # invalid: walk_stack returns (); do not count it.
+    assert invalid_total == 1, invalid_total
+    assert () not in {stack for stack, _ in invalid_rows}
+    assert invalid_rows == [(("ok",), 1)], invalid_rows
     bad = {
         "threads": [
             {
