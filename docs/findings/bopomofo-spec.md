@@ -227,16 +227,19 @@ keyboards and `qi` on ETEN26, ㄐㄨㄥ → zhong, ㄒ → shi, and the vowel
 stand-ins (HSU: ㄇ→an, ㄋ→en, ㄌ→er, ㄍ→e, ㄎ→ang, ㄏ→o; ETEN26:
 ㄆ→ou, ㄇ→an, ㄊ→ang, ㄋ→en, ㄌ→eng, ㄏ→er). HSU_DVORAK shares
 `hsu_zhuyin_index` and its `chewing_hsu_dvorak_*` tables are
-byte-identical to `chewing_hsu_*` at this pin. Scheme setters accept the
-implemented ABI values (1/2/3/4/5/6/8); the rest report `false` and
-keep the previous scheme rather than aborting.
+byte-identical to `chewing_hsu_*` at this pin. At that stage, scheme
+setters accepted ABI values 1/2/3/4/5/6/8; the CP26 port below adds
+value 9. Unsupported values report `false` and keep the previous scheme
+rather than aborting.
 
 The `zhuyin-dachen-cp26` PR (2026-08-20) adds **DACHEN_CP26 (9)**,
 ported as `ZhuyinDaChenCP26Parser2` (`zhuyin_parser2.cpp:541-844`).
 The parser is constructor-configured — no `set_scheme`, no `m_options`,
-no correction bit — and searches the **global** index, where only the
-plain rows are reachable because the repeat-count probe always builds
-spellings in canonical initial+middle+final order. The probe's law: a
+no correction bit — and searches the **global** index. Successful
+parsed keys resolve to plain rows because the repeat-count probe always
+builds spellings in canonical initial+middle+final order; incomplete
+rows can match only when the caller sets `ZHUYIN_INCOMPLETE`, and are
+then rejected by the parser's post-match tone-validity mask. The probe's law: a
 run of the same key (counted by `count_same_chars`) cycles the rows
 that key maps to — dual rows pick by `(count - 1) % 2` (1 tap → first
 row, 2 taps → second, 3 → first…), the whole run consumed at once.
