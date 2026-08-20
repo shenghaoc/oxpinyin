@@ -39,7 +39,7 @@ fn repo_root() -> PathBuf {
         .join("..")
 }
 
-fn export_dir() -> Option<PathBuf> {
+fn export_dir() -> Result<PathBuf, String> {
     let dir = std::env::var_os("PINYIN_EXPORT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new("/tmp/oxpinyin-export").to_path_buf());
@@ -47,15 +47,15 @@ fn export_dir() -> Option<PathBuf> {
         .iter()
         .all(|name| dir.join(name).exists())
     {
-        Some(dir)
+        Ok(dir)
     } else {
-        eprintln!("exported tables not found at {}", dir.display());
-        None
+        Err(format!("exported tables not found at {}", dir.display()))
     }
 }
 
-fn load_fixture(path: &Path) -> BTreeMap<String, Vec<String>> {
-    let raw = std::fs::read_to_string(path).expect("fixture");
+fn load_fixture(path: &Path) -> Result<BTreeMap<String, Vec<String>>, String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|error| format!("cannot read fixture {}: {error}", path.display()))?;
     let mut by_input: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for line in raw.lines() {
         if line.starts_with('#') || line.is_empty() {
@@ -67,36 +67,37 @@ fn load_fixture(path: &Path) -> BTreeMap<String, Vec<String>> {
         let cand = parts.next().unwrap_or("").to_owned();
         by_input.entry(input).or_default().push(cand);
     }
-    by_input
+    Ok(by_input)
 }
 
-fn main() -> ExitCode {
-    let Some(dir) = export_dir() else {
-        return ExitCode::from(2);
-    };
+fn run() -> Result<(), String> {
+    let dir = export_dir()?;
     let Ok(Some(model_dir)) = pinyin_oracle::model_cache::locate_model_dir() else {
-        eprintln!("model cache absent; set PINYIN_MODEL_DIR to an extracted model20 dir");
-        return ExitCode::from(2);
+        return Err(
+            "model cache absent; set PINYIN_MODEL_DIR to an extracted model20 dir".to_owned(),
+        );
     };
 
     let dict = SystemDictionary::open(
         &dir.join("pinyin_index.redb"),
         &dir.join("phrase_index.redb"),
     )
-    .expect("SystemDictionary opens");
-    let mut lm =
-        BigramLanguageModel::open(&dir.join("bigram.redb")).expect("BigramLanguageModel opens");
+    .map_err(|error| format!("cannot open SystemDictionary: {error}"))?;
+    let mut lm = BigramLanguageModel::open(&dir.join("bigram.redb"))
+        .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
     lm.set_unigrams_from_interpolation2(&model_dir.join("interpolation2.text"))
-        .expect("interpolation2 parses");
+        .map_err(|error| format!("cannot parse interpolation2: {error}"))?;
     let mut session = Session::new(&EmptyConfigSource, StoragePaths::new("user"), &dict, &lm)
-        .expect("Session::new");
+        .map_err(|error| format!("cannot create Session: {error}"))?;
 
-    let fixture = load_fixture(&repo_root().join(CANDIDATES_FIXTURE));
+    let fixture = load_fixture(&repo_root().join(CANDIDATES_FIXTURE))?;
 
     let corpus_dir = repo_root().join(corpus::CORPUS_DIR);
     let mut inputs = Vec::new();
     for stratum in corpus::generate() {
-        let bytes = std::fs::read(corpus_dir.join(stratum.file_name)).expect("stratum");
+        let path = corpus_dir.join(stratum.file_name);
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("cannot read corpus stratum {}: {error}", path.display()))?;
         inputs.extend(corpus::Stratum::parse_file_bytes(&bytes));
     }
 
@@ -188,5 +189,15 @@ fn main() -> ExitCode {
         println!("{row}");
     }
 
-    ExitCode::SUCCESS
+    Ok(())
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("{message}");
+            ExitCode::FAILURE
+        }
+    }
 }
