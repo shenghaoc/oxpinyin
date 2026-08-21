@@ -51,10 +51,12 @@ leftover appeared; no STOP.
 `span_item_line` replaces `split_whitespace().collect::<Vec<&str>>()`:
 one byte walk per line keeping only the spans the validation reads
 (head, token, second-to-last, last, field count); the phrase text
-between token and `count` is spanned over, never split. ASCII bytes take
-`u8::is_ascii_whitespace` (identical to `char::is_whitespace` on ASCII);
-non-ASCII bytes decode once. `read_line` stays, so an invalid-UTF-8 line
-is still a `Read` error at the same line. The final sort now orders
+between token and `count` is spanned over, never split. ASCII bytes skip
+the UTF-8 decode but keep the `char::is_whitespace` predicate (the
+`u8::is_ascii_whitespace` shortcut diverges on U+000B, which
+`char::is_whitespace` counts as whitespace — caught in review); non-ASCII
+bytes decode once. `read_line` stays, so an invalid-UTF-8 line is still a
+`Read` error at the same line. The final sort now orders
 8-byte `(token, index)` pairs and gathers once — the same comparison
 count moving a quarter of the bytes. Error messages, precedence,
 `'+'`-signed parses, whitespace-only-line rejection, and the
@@ -120,7 +122,8 @@ Dict-only load (`load_profile dict`, release, same export):
 | after-open HWM (transient peak) | 38,152 KiB | 39,060 KiB | +0.9 MiB |
 
 Full capi-shaped init (`load_profile full`, release): PROGRAM TOTALS
-1,164.3e6 → **694.2e6 (0.60×)**. Inclusive: pinyin slurp 350.9 → 199.4e6,
+1,164.3e6 → **699.1e6 (0.60×)** (694.2e6 before the review fix that keeps
+`char::is_whitespace` on the ASCII path). Inclusive: pinyin slurp 350.9 → 199.4e6,
 phrase slurp 174.6 → 99.4e6, interp 156.7 → 125.5e6, bigram 117.7 →
 95.0e6. Wall (cumulative, fresh process): 220.0 → 162.2 ms; init RSS
 78,376 → 71,008 KiB.
