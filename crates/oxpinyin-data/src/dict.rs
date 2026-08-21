@@ -13,6 +13,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -21,17 +22,41 @@ use oxpinyin_core::{
     Completeness, Dictionary, PhraseEntry, PhraseToken, SyllableKey, syllable_initial,
 };
 
-use crate::table::{self, TableError};
+use crate::table::{self, LeByteKey, TableError};
 
-/// The pinyin index as a sorted vector map: `(key, hits)` pairs in
-/// ascending key order, searched by binary search.
+/// The pinyin index as a sorted vector map plus one shared entry arena.
 ///
-/// redb walks its B-tree in ascending primary-key order, so the load
-/// appends rows instead of paying `BTreeMap::insert`'s O(log n) string
-/// compares per row — the init-time memcmp the #129 audit left behind.
-/// Keystroke lookups stay O(log n) key compares, as they were on the tree.
-type PinyinIndex = Vec<(Box<str>, Box<[PhraseEntry]>)>;
-type PhraseIndex = BTreeMap<u32, CompactString>;
+/// `rows` holds `(key, entries range)` pairs in ascending key order — redb
+/// walks its B-tree in that order, so the load appends rows instead of
+/// paying `BTreeMap::insert`'s O(log n) string compares per row (the
+/// #129/#132 audit). All [`PhraseEntry`] hits live contiguously in
+/// `entries`: one allocation for the whole index instead of one boxed
+/// slice per key, and a key's hits are still one contiguous slice for
+/// `fill_lookup`'s `extend_from_slice`.
+#[derive(Default)]
+struct PinyinIndex {
+    /// `(pinyin key, hits range into `entries`)`, ascending key order.
+    rows: Vec<(Box<str>, Range<usize>)>,
+    /// Every resolved hit of every row, concatenated in row order.
+    entries: Vec<PhraseEntry>,
+}
+
+impl PinyinIndex {
+    /// Exact-key get: the hits slice of `key`, or `None`.
+    fn hits(&self, key: &str) -> Option<&[PhraseEntry]> {
+        self.rows
+            .binary_search_by(|(stored, _)| stored.as_ref().cmp(key))
+            .ok()
+            .map(|position| &self.entries[self.rows[position].1.clone()])
+    }
+}
+
+/// The phrase index as a sorted vector map: `(token, text)` pairs in
+/// ascending [`LeByteKey`] order — the order redb's walk already yields
+/// for the 4-byte little-endian keys the exporter wrote — searched by
+/// binary search. The append replaces `BTreeMap::insert`'s O(log n)
+/// per-row walk; iteration stays ascending in walk order.
+type PhraseIndex = Vec<(LeByteKey, CompactString)>;
 
 /// Error conditions for system dictionary lookups.
 #[derive(Debug)]
@@ -103,7 +128,7 @@ impl SystemDictionary {
 
     /// Number of pinyin keys in the index.
     pub fn key_count(&self) -> Result<u64, DictError> {
-        Ok(self.pinyin_index.len() as u64)
+        Ok(self.pinyin_index.rows.len() as u64)
     }
 
     /// Total of all phrase frequencies observed in the pinyin index.
@@ -130,7 +155,7 @@ impl SystemDictionary {
     /// W6-T7 bigram export's text rendering for system tokens
     /// (`docs/findings/user-store.md` §9).
     pub fn phrase_text(&self, token: u32) -> Result<Option<String>, DictError> {
-        Ok(self.phrase_index.get(&token).map(|text| text.to_string()))
+        Ok(phrase_lookup(&self.phrase_index, token).map(str::to_owned))
     }
 
     /// Every pinyin-index spelling recorded for `token`, with its frequency,
@@ -142,8 +167,8 @@ impl SystemDictionary {
     /// The scan is O(index) — an export-time cost, not a decode-path cost.
     pub fn pronunciations(&self, token: u32) -> Result<Vec<(String, u64)>, DictError> {
         let mut out = Vec::new();
-        for (pinyin, records) in &self.pinyin_index {
-            for entry in records.iter() {
+        for (pinyin, range) in &self.pinyin_index.rows {
+            for entry in &self.pinyin_index.entries[range.clone()] {
                 if entry.token().value() == token {
                     let freq = entry
                         .pronunciation_possibility()
@@ -239,7 +264,7 @@ impl SystemDictionary {
             return Ok(());
         }
         let key = Self::index_key(syllables);
-        if let Some(hits) = index_hits(&self.pinyin_index, key.as_str()) {
+        if let Some(hits) = self.pinyin_index.hits(key.as_str()) {
             out.extend_from_slice(hits);
         }
         Ok(())
@@ -295,7 +320,7 @@ impl Dictionary for SystemDictionary {
     }
 }
 
-/// The `SEARCH_CONTINUED` probe over a sorted key list: does any stored key
+/// The `SEARCH_CONTINUED` probe over the sorted key list: does any stored key
 /// equal `joined`, or extend it at a syllable boundary (`joined` + `'`)?
 fn prefix_probe(sorted: &[String], joined: &str) -> bool {
     match sorted.binary_search_by(|candidate| candidate.as_str().cmp(joined)) {
@@ -313,19 +338,20 @@ fn prefix_probe(sorted: &[String], joined: &str) -> bool {
 fn pinyin_prefix_exists(index: &PinyinIndex, joined: &str) -> bool {
     // First key >= joined; the exact and the boundary-extension hits can
     // only be there, as on the tree's `contains_key` + `range` pair.
-    let first_at_or_after = index.partition_point(|(key, _)| key.as_ref() < joined);
-    index.get(first_at_or_after).is_some_and(|(key, _)| {
+    let first_at_or_after = index.rows.partition_point(|(key, _)| key.as_ref() < joined);
+    index.rows.get(first_at_or_after).is_some_and(|(key, _)| {
         key.as_ref() == joined
             || (key.starts_with(joined) && key.as_bytes().get(joined.len()) == Some(&b'\''))
     })
 }
 
-/// Exact-key get on the sorted vector map.
-fn index_hits<'a>(index: &'a PinyinIndex, key: &str) -> Option<&'a [PhraseEntry]> {
+/// Exact-token get on the phrase-index vector map.
+fn phrase_lookup(index: &[(LeByteKey, CompactString)], token: u32) -> Option<&str> {
+    let needle = LeByteKey::new(token);
     index
-        .binary_search_by(|(stored, _)| stored.as_ref().cmp(key))
+        .binary_search_by(|(stored, _)| stored.cmp(&needle))
         .ok()
-        .map(|position| index[position].1.as_ref())
+        .map(|position| index[position].1.as_str())
 }
 
 struct PinyinDerived {
@@ -335,33 +361,43 @@ struct PinyinDerived {
     initial_keys: Box<[String]>,
 }
 
-/// Load-time row staging: pinyin key → parsed `{token, freq}` records,
-/// appended in the walk order `for_each_row` yields, before `resolve_hits`.
-type RawPinyinRows = Vec<(Box<str>, Box<[(u32, u32)]>)>;
+/// Load-time row staging: pinyin key → range into one flat
+/// `{token, freq}` record vec, appended in the walk order `for_each_row`
+/// yields, before `resolve_hits` fans the records out into the arena.
+type RawPinyinRows = Vec<(Box<str>, Range<usize>)>;
 
 fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDerived, DictError> {
     let mut raw: RawPinyinRows = Vec::new();
+    let mut flat_records: Vec<(u32, u32)> = Vec::new();
     let mut unigrams: BTreeMap<u32, u64> = BTreeMap::new();
     let mut unigram_total: u64 = 0;
-    let mut initial_keys: Vec<String> = Vec::new();
+    // Initial keys stage as packed u128s (order-exact, sort integers) and
+    // decode to strings only once, deduped; a key too long to pack falls
+    // back to the string path and re-sorts the whole list — the export's
+    // longest key is 14 syllables against a 25-slot pack.
+    let alphabet = crate::initials::InitialAlphabet::new();
+    let mut initial_keys: Vec<u128> = Vec::new();
+    let mut oversized_initials: Vec<String> = Vec::new();
 
     table::for_each_row(path, |key, value| {
         let pinyin = std::str::from_utf8(key)
             .map_err(|_| DictError::Parse("pinyin index key is not UTF-8".to_owned()))?;
-        let mut initial = String::new();
-        for (position, syllable) in pinyin.split('\'').enumerate() {
-            if position > 0 {
-                initial.push('\'');
-            }
-            match syllable_initial(syllable) {
-                Some(prefix) => initial.push_str(prefix),
-                None => initial.push('0'),
-            }
+        match alphabet.pack(pinyin) {
+            Some(packed) => initial_keys.push(packed),
+            None => oversized_initials.push(alphabet.project(pinyin)),
         }
-        initial_keys.push(initial);
 
-        let records = parse_index_records(value)?;
-        for &(token, freq) in records.iter() {
+        if !value.len().is_multiple_of(8) {
+            return Err(DictError::Parse(format!(
+                "index value length {} is not a multiple of 8",
+                value.len()
+            )));
+        }
+        let start = flat_records.len();
+        for chunk in value.chunks_exact(8) {
+            let token = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            let freq = u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
+            flat_records.push((token, freq));
             let count = unigrams.entry(token).or_default();
             *count = count.saturating_add(u64::from(freq));
             unigram_total = unigram_total.saturating_add(u64::from(freq));
@@ -369,50 +405,46 @@ fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDe
         // The row walk is ascending, so this is an append; the order check
         // below repairs (and keeps the last row per key, as insert did) if a
         // table ever arrives any other way.
-        raw.push((Box::from(pinyin), records));
+        raw.push((Box::from(pinyin), start..flat_records.len()));
         Ok::<(), DictError>(())
     })?;
-    ensure_sorted_unique(&mut raw);
+    table::ensure_sorted_unique(&mut raw);
 
     initial_keys.sort_unstable();
     initial_keys.dedup();
-    // Totals are the sum over every pronunciation; resolve after the
-    // aggregate pass so each hit carries the item's final unigram.
-    let pinyin_index = raw
-        .into_iter()
-        .map(|(key, records)| (key, resolve_hits(&records, phrase_index, &unigrams)))
+    let mut initial_list: Vec<String> = initial_keys
+        .iter()
+        .map(|&packed| alphabet.unpack(packed))
         .collect();
+    if !oversized_initials.is_empty() {
+        initial_list.extend(oversized_initials);
+        initial_list.sort_unstable();
+        initial_list.dedup();
+    }
+    let initial_keys = initial_list.into_boxed_slice();
+
+    // Totals are the sum over every pronunciation; resolve after the
+    // aggregate pass so each hit carries the item's final unigram, and
+    // resolve into one arena so a key's hits stay a contiguous slice.
+    // Totals resolve from a sorted snapshot: the map's in-order walk is
+    // O(n) to build and a binary search per record beats a tree walk.
+    let totals: Vec<(u32, u64)> = unigrams
+        .iter()
+        .map(|(&token, &count)| (token, count))
+        .collect();
+    let mut entries: Vec<PhraseEntry> = Vec::with_capacity(flat_records.len());
+    let mut rows: Vec<(Box<str>, Range<usize>)> = Vec::with_capacity(raw.len());
+    for (key, range) in raw {
+        let start = entries.len();
+        resolve_hits(&flat_records[range], phrase_index, &totals, &mut entries);
+        rows.push((key, start..entries.len()));
+    }
     Ok(PinyinDerived {
-        pinyin_index,
+        pinyin_index: PinyinIndex { rows, entries },
         unigrams,
         unigram_total,
-        initial_keys: initial_keys.into_boxed_slice(),
+        initial_keys,
     })
-}
-
-/// Restores the ascending unique-key order [`PinyinIndex`] is searched
-/// under: sort, then keep the last row per key — the value
-/// `BTreeMap::insert` would have left. The sort must be **stable**: that
-/// is what keeps equal keys in visitation order, so the last row of each
-/// run is the last-visited one, as insert's overwrite left it. redb's
-/// B-tree walk is ascending and its table keys are unique, so on every
-/// well-formed table this is a single O(n) order check and the repair
-/// never runs.
-fn ensure_sorted_unique<V>(rows: &mut Vec<(Box<str>, V)>) {
-    if rows.is_sorted_by(|a, b| a.0 < b.0) {
-        return;
-    }
-    rows.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut kept = 0;
-    for read in 0..rows.len() {
-        if kept > 0 && rows[kept - 1].0 == rows[read].0 {
-            rows.swap(kept - 1, read);
-        } else {
-            rows.swap(kept, read);
-            kept += 1;
-        }
-    }
-    rows.truncate(kept);
 }
 
 /// Token → text through `phrase_index` (the reverse half is `phrase_text`).
@@ -426,18 +458,20 @@ fn ensure_sorted_unique<V>(rows: &mut Vec<(Box<str>, V)>) {
 fn resolve_hits(
     records: &[(u32, u32)],
     phrase_index: &PhraseIndex,
-    unigrams: &BTreeMap<u32, u64>,
-) -> Box<[PhraseEntry]> {
-    records
-        .iter()
-        .filter_map(|&(token, freq)| {
-            phrase_index.get(&token).map(|text| {
-                let total = unigrams.get(&token).copied().unwrap_or(0);
-                PhraseEntry::new(PhraseToken::new(token), text.clone())
-                    .with_pronunciation_possibility(u64::from(freq), total)
-            })
+    totals: &[(u32, u64)],
+    entries: &mut Vec<PhraseEntry>,
+) {
+    entries.extend(records.iter().filter_map(|&(token, freq)| {
+        phrase_lookup(phrase_index, token).map(|text| {
+            let total = totals
+                .binary_search_by_key(&token, |&(token, _)| token)
+                .ok()
+                .map(|position| totals[position].1)
+                .unwrap_or(0);
+            PhraseEntry::new(PhraseToken::new(token), text)
+                .with_pronunciation_possibility(u64::from(freq), total)
         })
-        .collect()
+    }));
 }
 
 fn load_phrase_index(path: &Path) -> Result<PhraseIndex, DictError> {
@@ -450,36 +484,18 @@ fn load_phrase_index(path: &Path) -> Result<PhraseIndex, DictError> {
         let text = std::str::from_utf8(value).map_err(|_| {
             DictError::Parse(format!("phrase text for token {token:#010x} is not UTF-8"))
         })?;
-        map.insert(token, CompactString::from(text));
+        map.push((LeByteKey::new(token), CompactString::from(text)));
         Ok::<(), DictError>(())
     })?;
+    table::ensure_sorted_unique(&mut map);
     Ok(map)
-}
-
-/// Parses an index value as `{token: u32 LE, freq: u32 LE}` records.
-fn parse_index_records(data: &[u8]) -> Result<Box<[(u32, u32)]>, DictError> {
-    if !data.len().is_multiple_of(8) {
-        return Err(DictError::Parse(format!(
-            "index value length {} is not a multiple of 8",
-            data.len()
-        )));
-    }
-    Ok(data
-        .chunks_exact(8)
-        .map(|chunk| {
-            (
-                u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
-                u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
-            )
-        })
-        .collect())
 }
 
 /// Builds the exact-text → tokens reverse map from the typed phrase index.
 fn build_text_tokens(phrase_index: &PhraseIndex) -> Result<BTreeMap<String, Vec<u32>>, DictError> {
     let mut map: BTreeMap<String, Vec<u32>> = BTreeMap::new();
-    for (&token, text) in phrase_index {
-        map.entry(text.to_string()).or_default().push(token);
+    for (token, text) in phrase_index {
+        map.entry(text.to_string()).or_default().push(token.token());
     }
     for tokens in map.values_mut() {
         tokens.sort_unstable();
@@ -560,15 +576,15 @@ mod tests {
 
         let dict = dict();
         let mut reachable: BTreeSet<u32> = BTreeSet::new();
-        for records in dict.pinyin_index.iter().map(|(_, records)| records) {
-            for entry in records.iter() {
+        for range in dict.pinyin_index.rows.iter().map(|(_, range)| range) {
+            for entry in &dict.pinyin_index.entries[range.clone()] {
                 reachable.insert(entry.token().value());
             }
         }
 
-        for token in dict.phrase_index.keys() {
+        for token in dict.phrase_index.iter().map(|(key, _)| key.token()) {
             assert!(
-                reachable.contains(token),
+                reachable.contains(&token),
                 "phrase token {token:#010x} is in phrase_index but no pinyin_index entry references it"
             );
         }
@@ -640,6 +656,7 @@ mod tests {
         let dict = dict();
         assert!(
             dict.pinyin_index
+                .rows
                 .windows(2)
                 .all(|pair| pair[0].0 < pair[1].0),
             "pinyin index keys must be strictly ascending after open"
@@ -647,40 +664,10 @@ mod tests {
     }
 
     #[test]
-    fn index_hits_binary_searches_the_loaded_order() {
+    fn hits_binary_searches_the_loaded_order() {
         let dict = dict();
-        let hits = index_hits(&dict.pinyin_index, "ni'hao").expect("fixture key");
+        let hits = dict.pinyin_index.hits("ni'hao").expect("fixture key");
         assert!(hits.iter().any(|entry| entry.text() == "你好"));
-        assert!(index_hits(&dict.pinyin_index, "no'such").is_none());
-    }
-
-    #[test]
-    fn ensure_sorted_unique_repairs_order_and_keeps_last_row() {
-        let mut rows: Vec<(Box<str>, u8)> = vec![
-            (Box::from("zhong'guo"), 1),
-            (Box::from("ni"), 2),
-            (Box::from("hao"), 3),
-            (Box::from("ni"), 4),
-        ];
-        ensure_sorted_unique(&mut rows);
-        // BTreeMap::insert semantics: one entry per key, last row's value.
-        assert_eq!(
-            rows,
-            vec![
-                (Box::from("hao"), 3),
-                (Box::from("ni"), 4),
-                (Box::from("zhong'guo"), 1),
-            ]
-        );
-
-        // Already strictly ascending: untouched.
-        let mut sorted: Vec<(Box<str>, u8)> = vec![
-            (Box::from("a"), 1),
-            (Box::from("b"), 2),
-            (Box::from("c"), 3),
-        ];
-        ensure_sorted_unique(&mut sorted);
-        assert_eq!(sorted.len(), 3);
-        assert_eq!(sorted[1].1, 2);
+        assert!(dict.pinyin_index.hits("no'such").is_none());
     }
 }

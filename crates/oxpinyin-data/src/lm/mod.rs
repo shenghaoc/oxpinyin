@@ -29,7 +29,7 @@ use oxpinyin_core::cost::{UNKNOWN_COST, reduce_ratio, surprisal};
 use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta};
 
 use crate::interp::{self, InterpolationError, UnigramTable};
-use crate::table::{self, TableError};
+use crate::table::{self, LeByteKey, TableError};
 use crate::table_conf::Lambda;
 
 /// Error conditions for bigram lookups.
@@ -156,7 +156,10 @@ pub struct BigramRow {
 
 /// Bigram language model backed by `bigram.redb`.
 pub struct BigramLanguageModel {
-    bigram: BTreeMap<u32, BigramRow>,
+    /// `(previous token, row)` pairs in ascending [`LeByteKey`] order — the
+    /// order redb's walk yields for the 4-byte LE keys — searched by binary
+    /// search. The append replaces `BTreeMap::insert`'s per-row walk.
+    bigram: Vec<(LeByteKey, BigramRow)>,
     unigrams: Option<UnigramTable>,
     unigram_total: u64,
     /// Whether `unigrams` came from `interpolation2.text`: only the phrase
@@ -178,7 +181,7 @@ impl BigramLanguageModel {
     /// override it from a real install's config with
     /// [`Self::set_lambda_from_table_conf`] or [`Self::set_lambda`].
     pub fn open(path: &Path) -> Result<Self, LmError> {
-        let mut bigram = BTreeMap::new();
+        let mut bigram = Vec::new();
         table::for_each_row(path, |key, value| {
             if key.len() != 4 {
                 return Err(LmError::Parse(format!(
@@ -188,9 +191,12 @@ impl BigramLanguageModel {
             }
             let prev = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
             let (total, records) = parse_bigram_value(value)?;
-            bigram.insert(prev, BigramRow { total, records });
+            // Ascending walk order: an append; the order check repairs (and
+            // keeps the last row per key, as insert did) on any other input.
+            bigram.push((LeByteKey::new(prev), BigramRow { total, records }));
             Ok::<(), LmError>(())
         })?;
+        table::ensure_sorted_unique(&mut bigram);
         Ok(Self {
             bigram,
             unigrams: None,
@@ -321,7 +327,12 @@ impl BigramLanguageModel {
     /// Returns [`LmError`] when the table cannot be read or a value does not
     /// parse under the frozen schema.
     pub fn load_successors(&self, prev: u32) -> Result<Option<BigramRow>, LmError> {
-        Ok(self.bigram.get(&prev).cloned())
+        let needle = LeByteKey::new(prev);
+        Ok(self
+            .bigram
+            .binary_search_by(|(key, _)| key.cmp(&needle))
+            .ok()
+            .map(|position| self.bigram[position].1.clone()))
     }
 
     /// Returns `(count, total)` for the `prev → next` transition, or `None`
