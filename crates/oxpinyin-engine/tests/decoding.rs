@@ -193,6 +193,76 @@ fn choosing_advances_the_composition_and_feeds_the_bigram() {
 }
 
 #[test]
+fn a_row_choice_after_a_normal_selection_records_the_row_path_only() {
+    // Choosing an n-best row replaces `selected` outright (sentence-surface
+    // §10: the row text already carries the prefix), so a normal selection
+    // made between the sentence lookup and the row choice is rolled back out
+    // of the text. The record must follow the text: the row selection
+    // restores the history snapshot taken at the lookup before extending
+    // with the row's tokens, leaving no stale token from the abandoned
+    // normal selection. The control run chooses the row with nothing in
+    // between; the interleaved run must land on the same text and record.
+    let (text, tokens) = {
+        let mut session = typed("nihaozhongguo");
+        assert!(session.guess_sentence().expect("the lookup cannot fail"));
+        let row = session
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.nbest_row().is_some())
+            .expect("the lookup offers a row");
+        assert_eq!(
+            session.select(row).expect("the row is live"),
+            Selection::Completed
+        );
+        let tokens = session.selected_tokens().to_vec();
+        (session.commit().expect("committing"), tokens)
+    };
+    assert_eq!(text, "你好中国");
+    assert!(
+        !tokens.is_empty(),
+        "the row spells a token path: {tokens:?}"
+    );
+
+    let mut session = typed("nihaozhongguo");
+    assert!(session.guess_sentence().expect("the lookup cannot fail"));
+    let normal = session
+        .candidates()
+        .iter()
+        .position(|candidate| candidate.text() == "你好" && candidate.token().is_some())
+        .expect("the phrase 你好 is offered alongside the rows");
+    let normal_token = session
+        .candidates()
+        .get(normal)
+        .and_then(Candidate::token)
+        .expect("a phrase candidate carries a token");
+    assert_eq!(
+        session.select(normal).expect("the phrase is live"),
+        Selection::Continued
+    );
+    assert_eq!(
+        session.selected_tokens(),
+        &[normal_token],
+        "the normal selection on its own still records its token"
+    );
+
+    let row = session
+        .candidates()
+        .iter()
+        .position(|candidate| candidate.nbest_row().is_some())
+        .expect("the rows survive the selection");
+    assert_eq!(
+        session.select(row).expect("the row is live"),
+        Selection::Completed
+    );
+    let recorded = session.selected_tokens().to_vec();
+    assert_eq!(session.commit().expect("committing"), text);
+    assert_eq!(
+        recorded, tokens,
+        "the row choice must replace the record, not extend the stale one"
+    );
+}
+
+#[test]
 fn unknown_input_still_offers_itself_back() {
     let session = typed("qqq");
     let candidates = session.candidates();

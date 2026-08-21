@@ -151,6 +151,14 @@ pub struct Session<D, L> {
     /// (`docs/findings/sentence-surface.md` §1). Empty means no sentence
     /// has been guessed for the current composition.
     nbest_rows: Vec<crate::nbest::NbestRow>,
+    /// History snapshot taken beside [`Self::nbest_rows`] when the lookup
+    /// decoded them — the seed context the rows were decoded against.
+    /// Selecting an n-best row restores it before the row's tokens extend
+    /// the record, so a normal selection made between the lookup and the
+    /// row choice leaves no stale token behind — the record-side half of
+    /// the text assign (`docs/findings/sentence-surface.md` §10). Cleared
+    /// wherever `nbest_rows` is.
+    nbest_history: Vec<PhraseToken>,
     /// Whether a sentence lookup has run for the current composition —
     /// the half of the `m_nbest_results` gate an empty-but-active lookup
     /// still satisfies: upstream's `pinyin_guess_sentence` clears the
@@ -206,6 +214,7 @@ where
             scoring: ScoringConfig::default(),
             key_costs,
             nbest_rows: Vec::new(),
+            nbest_history: Vec::new(),
             sentence_lookup_active: false,
             scratch_collected: Vec::new(),
             scratch_ranked: Vec::new(),
@@ -374,6 +383,12 @@ where
             // sentence candidate carries no rank and no tokens; it records
             // nothing, exactly as before.
             if let Some(row) = self.nbest_rows.get(usize::from(rank)) {
+                // The row replaces everything decoded since the lookup ran
+                // — the text side of that replace is the assign above. A
+                // normal selection made in between must leave no token in
+                // the record either, so restore the snapshot the rows were
+                // decoded against before extending with this row's path.
+                self.history.clone_from(&self.nbest_history);
                 self.history.extend(row.tokens.iter().copied());
             }
         }
@@ -479,6 +494,7 @@ where
         self.candidates = CandidateList::default();
         self.history.clear();
         self.nbest_rows.clear();
+        self.nbest_history.clear();
         self.sentence_lookup_active = false;
     }
 
@@ -590,6 +606,7 @@ where
     pub fn guess_sentence(&mut self) -> Result<bool, EngineError> {
         let remaining = &self.raw[self.consumed..];
         self.nbest_rows.clear();
+        self.nbest_history.clear();
         self.sentence_lookup_active = true;
         if remaining.is_empty() {
             return Ok(false);
@@ -638,6 +655,10 @@ where
                 })
                 .collect()
         };
+        // The rows above were seeded with the history as it stands right
+        // here; a later row selection restores this snapshot before extending
+        // the record with the row's own tokens.
+        self.nbest_history.clone_from(&self.history);
 
         if !self.selected.is_empty() {
             for row in &mut self.nbest_rows {

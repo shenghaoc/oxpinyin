@@ -488,11 +488,20 @@ chased"; §9 confirmed it did not affect the compared logs.
   remaining input, prepends `self.selected` (the accumulated text of
   prior selections) to each row's text when `selected` is non-empty.
   The row's `span`, `tokens`, `keys`, and `cost` are unchanged — only
-  the display text carries the prefix.
+  the display text carries the prefix. The same call snapshots
+  `self.history` into `nbest_history` beside the rows (cleared with
+  them by the next lookup and by `reset`): the seed context the rows
+  were decoded against.
 - `Session::select_inner`: when selecting an n-best row candidate
   (identified by `nbest_row().is_some()`), assigns the candidate text
   to `self.selected` rather than appending, because the text already
-  contains the prefix. Non-row candidates continue to append.
+  contains the prefix. Non-row candidates continue to append. The row
+  selection also restores the `nbest_history` snapshot into
+  `self.history` before extending it with the row's tokens — a normal
+  selection made between the lookup and the row choice is replaced on
+  the record exactly as its text is replaced by the assign, so
+  `selected` and the token record stay synchronized (the review follow-
+  up to the text-side-only assign).
 
 **Evidence.**
 
@@ -501,6 +510,14 @@ chased"; §9 confirmed it did not affect the compared logs.
   `pinyin_get_sentence` returns a string starting with 你, and asserts
   every `NBEST_MATCH_CANDIDATE` in the candidate snapshot also starts
   with 你.
+- Engine regression
+  `a_row_choice_after_a_normal_selection_records_the_row_path_only`
+  (tests/decoding.rs): a normal 你好 selection
+  between the lookup and the row choice records its own token at that
+  point, and the later row selection over "nihaozhongguo" must land on
+  the same committed text and the same `selected_tokens` as a control
+  run that chooses the row directly — pre-fix the record held the
+  stale token plus the row path ([11, 11, 33] for [11, 33]).
 - Pins unchanged: default candidates 10178 / 10190 / 94872 of 98930 /
   absent 0; sentence surface 488/385/370 — bit-identical. fmt, clippy
   `-D warnings`, workspace tests green.
