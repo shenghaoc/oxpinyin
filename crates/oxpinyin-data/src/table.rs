@@ -11,6 +11,7 @@
 //! redb is a pure-Rust embedded database.  Tables produced on Linux by
 //! the migrator can be read on any platform redb supports.
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
@@ -18,6 +19,41 @@ use std::path::Path;
 use redb::{ReadableDatabase, ReadableTable};
 
 const DATA_TABLE: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("data");
+
+/// A `phrase_token_t` ordered the way redb stores it: 4 bytes little-endian,
+/// so ascending **byte** order — which is not ascending integer order.
+///
+/// redb walks its B-tree in ascending key-byte order, so a table keyed by
+/// `token.to_le_bytes()` yields rows already sorted under this order. The
+/// typed loaders append such rows into sorted vectors wrapped in this key,
+/// and binary-search with the same wrapping, so the walk order is loadable
+/// without a sort and lookups stay O(log n).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LeByteKey(u32);
+
+impl LeByteKey {
+    /// Wraps a token for lookup.
+    pub(crate) const fn new(token: u32) -> Self {
+        Self(token)
+    }
+
+    /// The wrapped token.
+    pub(crate) const fn token(self) -> u32 {
+        self.0
+    }
+}
+
+impl Ord for LeByteKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.swap_bytes().cmp(&other.0.swap_bytes())
+    }
+}
+
+impl PartialOrd for LeByteKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 /// Errors that can occur when opening or querying a table.
 #[derive(Debug)]
@@ -113,6 +149,31 @@ where
         visit(key.value(), value.value())?;
     }
     Ok(())
+}
+
+/// Restores the ascending unique-key order a sorted-vector map is searched
+/// under: sort, then keep the last row per key — the value
+/// `BTreeMap::insert` would have left. The sort must be **stable**: that
+/// is what keeps equal keys in visitation order, so the last row of each
+/// run is the last-visited one, as insert's overwrite left it. redb's
+/// B-tree walk is ascending and its table keys are unique, so on every
+/// well-formed table this is a single O(n) order check and the repair
+/// never runs.
+pub(crate) fn ensure_sorted_unique<K: Ord, V>(rows: &mut Vec<(K, V)>) {
+    if rows.is_sorted_by(|a, b| a.0 < b.0) {
+        return;
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut kept = 0;
+    for read in 0..rows.len() {
+        if kept > 0 && rows[kept - 1].0 == rows[read].0 {
+            rows.swap(kept - 1, read);
+        } else {
+            rows.swap(kept, read);
+            kept += 1;
+        }
+    }
+    rows.truncate(kept);
 }
 
 /// A read-only lookup table backed by a redb database.
@@ -215,6 +276,53 @@ mod tests {
         let table = LookupTable::open(&fixtures_dir().join("pinyin_index.redb")).unwrap();
         let val = table.get(b"nonexistent").unwrap();
         assert!(val.is_none());
+    }
+
+    #[test]
+    fn ensure_sorted_unique_repairs_order_and_keeps_last_row() {
+        let mut rows: Vec<(Box<str>, u8)> = vec![
+            (Box::from("zhong'guo"), 1),
+            (Box::from("ni"), 2),
+            (Box::from("hao"), 3),
+            (Box::from("ni"), 4),
+        ];
+        super::ensure_sorted_unique(&mut rows);
+        // BTreeMap::insert semantics: one entry per key, last row's value.
+        assert_eq!(
+            rows,
+            vec![
+                (Box::from("hao"), 3),
+                (Box::from("ni"), 4),
+                (Box::from("zhong'guo"), 1),
+            ]
+        );
+
+        // Already strictly ascending: untouched.
+        let mut sorted: Vec<(Box<str>, u8)> = vec![
+            (Box::from("a"), 1),
+            (Box::from("b"), 2),
+            (Box::from("c"), 3),
+        ];
+        super::ensure_sorted_unique(&mut sorted);
+        assert_eq!(sorted.len(), 3);
+        assert_eq!(sorted[1].1, 2);
+    }
+
+    #[test]
+    fn le_byte_key_orders_tokens_as_stored_bytes() {
+        // redb orders the 4-byte LE keys bytewise: 0x0100 (bytes 00 01 …)
+        // sorts before 0x00ff (bytes ff 00 …) even though 0x00ff < 0x0100
+        // as integers. The newtype must reproduce the walk order, and stay
+        // a total order (equality iff tokens are equal).
+        use super::LeByteKey;
+        let mut keys = vec![LeByteKey::new(0x00ff), LeByteKey::new(0x0100)];
+        keys.sort();
+        assert_eq!(
+            keys.into_iter().map(|key| key.token()).collect::<Vec<_>>(),
+            [0x0100, 0x00ff]
+        );
+        assert!(LeByteKey::new(0x0700) < LeByteKey::new(7));
+        assert_eq!(LeByteKey::new(7), LeByteKey::new(7));
     }
 
     #[test]

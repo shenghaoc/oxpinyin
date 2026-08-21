@@ -154,22 +154,116 @@ impl UnigramTable {
 
 /// Parses the `\1-gram` section of an `interpolation2.text` model export.
 ///
-/// Single pass over the file, one allocation per record and one for the final
-/// boxed slice; the `\2-gram` section is skipped entirely. Borrows nothing
-/// from the file: the table is a compact `(u32, u64)` array sized for the
-/// ~64k-phrase model.
+/// Single pass over the file; the `\2-gram` section is skipped entirely.
+/// Borrows nothing from the file: the table is a compact `(u32, u64)`
+/// array sized for the ~64k-phrase model.
 ///
 /// # Errors
 ///
 /// Returns [`InterpolationError`] for an unreadable file, a malformed item
-/// line inside the section, a duplicate token, or a file that ends before the
-/// `\1-gram` header.
+/// line inside the section, a duplicate token, or a file that ends before
+/// the `\1-gram` header.
 pub fn parse_interpolation2(path: &Path) -> Result<UnigramTable, InterpolationError> {
     let file = File::open(path).map_err(|source| InterpolationError::Read {
         path: path.to_path_buf(),
         source,
     })?;
     parse_interpolation2_from_reader(path, BufReader::new(file))
+}
+
+/// The field spans an item line's one walk needs: the head and token
+/// fields, the count value, and the second-to-last field (the `count`
+/// keyword).
+///
+/// `split_whitespace().collect::<Vec<&str>>()` cost one allocation and a
+/// Unicode-whitespace iterator per line across the ~64k-item section; the
+/// walk keeps only four spans and the field count, which is every input
+/// the validation reads. The phrase text between token and `count` is
+/// spanned over, never split.
+struct ItemLineSpans<'a> {
+    /// Field 0 — must be `\item`; `None` when the line has no fields.
+    head: Option<&'a str>,
+    /// Field 1 — the phrase token; `None` when there is no second field.
+    token: Option<&'a str>,
+    /// Field `n - 2` — must be `count`; `None` when there are fewer than
+    /// two fields.
+    second_to_last: Option<&'a str>,
+    /// Field `n - 1` — the count value; `None` when the line has no fields.
+    last: Option<&'a str>,
+    /// Number of whitespace-separated fields.
+    field_count: usize,
+}
+
+/// Walks `line` once, gathering [`ItemLineSpans`]. Whitespace is
+/// [`char::is_whitespace`] — exactly what `str::split_whitespace` splits
+/// on — so field boundaries match the previous `Vec<&str>` split,
+/// including non-ASCII separators inside the phrase text. ASCII bytes
+/// (the `\item`, token, and count fields) take the byte fast path;
+/// [`u8::is_ascii_whitespace`] is `char::is_whitespace` restricted to
+/// ASCII, so the two paths answer identically.
+fn span_item_line(line: &str) -> ItemLineSpans<'_> {
+    let mut spans = ItemLineSpans {
+        head: None,
+        token: None,
+        second_to_last: None,
+        last: None,
+        field_count: 0,
+    };
+    let mut run_start: Option<usize> = None;
+    let mut index = 0;
+    while index < line.len() {
+        let byte = line.as_bytes()[index];
+        // `index` only ever advances over whole characters, so it stays a
+        // char boundary and multi-byte characters decode exactly once.
+        let (whitespace, width) = if byte.is_ascii() {
+            (byte.is_ascii_whitespace(), 1)
+        } else {
+            match line[index..].chars().next() {
+                Some(ch) => (ch.is_whitespace(), ch.len_utf8()),
+                None => (true, 1),
+            }
+        };
+        if whitespace {
+            if let Some(start) = run_start.take() {
+                close_field(&mut spans, line, start, index);
+            }
+        } else {
+            run_start.get_or_insert(index);
+        }
+        index += width;
+    }
+    if let Some(start) = run_start {
+        close_field(&mut spans, line, start, line.len());
+    }
+    spans
+}
+
+/// Records one `[start, end)` field: counts it, and keeps the spans the
+/// validation reads (head, token, and the rolling last two fields).
+fn close_field<'a>(spans: &mut ItemLineSpans<'a>, line: &'a str, start: usize, end: usize) {
+    spans.field_count += 1;
+    let field = &line[start..end];
+    match spans.field_count {
+        1 => spans.head = Some(field),
+        2 => spans.token = Some(field),
+        _ => {}
+    }
+    spans.second_to_last = spans.last.replace(field);
+}
+
+/// Sorts the records by phrase token.
+///
+/// The section is not token-ordered, so a sort is unavoidable; sorting
+/// 8-byte `(token, index)` pairs and gathering once moves less data
+/// through the same comparison count than sorting the 16-byte records in
+/// place.
+fn sort_records(records: &mut [(u32, u64)]) {
+    let mut order: Vec<u32> = (0..records.len() as u32).collect();
+    order.sort_unstable_by_key(|&index| records[index as usize].0);
+    let source = records.to_vec();
+    for (position, index) in order.into_iter().enumerate() {
+        records[position] = source[index as usize];
+    }
 }
 
 /// Parses the `\1-gram` section from an already-open reader.
@@ -220,28 +314,37 @@ pub fn parse_interpolation2_from_reader<R: BufRead>(
         }
 
         // `\item <id> <text...> count <count>`; the text is ignored because
-        // the token already identifies the phrase. Fields are split so a
+        // the token already identifies the phrase. Fields are checked so a
         // future phrase text containing spaces still parses.
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() < 5 || fields[0] != "\\item" || fields[fields.len() - 2] != "count" {
+        let fields = span_item_line(line);
+        if fields.field_count < 5
+            || fields.head != Some("\\item")
+            || fields.second_to_last != Some("count")
+        {
             return Err(InterpolationError::Parse {
                 line: line_number,
                 detail: format!("expected `\\item <id> <text> count <count>`, got {line:?}"),
             });
         }
-        let token = fields[1]
+        let token = fields
+            .token
+            .unwrap_or_default()
             .parse::<u32>()
             .map_err(|_| InterpolationError::Parse {
                 line: line_number,
-                detail: format!("phrase token {:?} is not a u32", fields[1]),
+                detail: format!(
+                    "phrase token {:?} is not a u32",
+                    fields.token.unwrap_or_default()
+                ),
             })?;
-        let count =
-            fields[fields.len() - 1]
-                .parse::<u64>()
-                .map_err(|_| InterpolationError::Parse {
-                    line: line_number,
-                    detail: format!("unigram count {:?} is not a u64", fields[fields.len() - 1]),
-                })?;
+        // `field_count >= 5` guarantees the last field exists.
+        let count_field = fields.last.unwrap_or_default();
+        let count = count_field
+            .parse::<u64>()
+            .map_err(|_| InterpolationError::Parse {
+                line: line_number,
+                detail: format!("unigram count {:?} is not a u64", count_field),
+            })?;
         if count == 0 {
             return Err(InterpolationError::Parse {
                 line: line_number,
@@ -255,7 +358,7 @@ pub fn parse_interpolation2_from_reader<R: BufRead>(
         return Err(InterpolationError::MissingOneGram);
     }
 
-    records.sort_unstable_by_key(|&(token, _)| token);
+    sort_records(&mut records);
     if let Some(pair) = records.windows(2).find(|pair| pair[0].0 == pair[1].0) {
         return Err(InterpolationError::Parse {
             line: line_number,
@@ -360,5 +463,35 @@ mod tests {
             result,
             Err(InterpolationError::Parse { line: 2, .. })
         ));
+    }
+
+    #[test]
+    fn span_walk_matches_split_whitespace_fields() {
+        // Every line shape the validation reads: head, token, and the
+        // last two fields must be the ones `split_whitespace` would give
+        // — including non-ASCII separators (U+3000) and multi-word text.
+        for line in [
+            "\\item 10 甲 count 5",
+            "  \\item  +10 甲 乙\tcount  007 ",
+            "\\item 10 \u{3000}甲\u{3000} count 5",
+            "\\item",
+            "\\item 10",
+            "\\item 10 x count",
+            "",
+            "   ",
+            "\\item 10 x y count 5",
+        ] {
+            let spans = super::span_item_line(line);
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            assert_eq!(spans.field_count, fields.len(), "field count for {line:?}");
+            assert_eq!(spans.head, fields.first().copied(), "head for {line:?}");
+            assert_eq!(spans.token, fields.get(1).copied(), "token for {line:?}");
+            assert_eq!(
+                spans.second_to_last,
+                fields.len().checked_sub(2).map(|i| fields[i]),
+                "second-to-last for {line:?}"
+            );
+            assert_eq!(spans.last, fields.last().copied(), "last for {line:?}");
+        }
     }
 }

@@ -122,7 +122,8 @@ fn a_no_entry_history_floors_instead_of_discounting() {
 #[test]
 fn invariant_holds_for_every_fixture_entry() {
     let model = model();
-    for (prev, row) in &model.bigram {
+    for (key, row) in &model.bigram {
+        let prev = key.token();
         let sum: u64 = row.records.iter().map(|(_, count)| u64::from(*count)).sum();
         assert_eq!(
             u64::from(row.total),

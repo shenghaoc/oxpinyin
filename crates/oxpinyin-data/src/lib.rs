@@ -11,6 +11,7 @@
 
 pub mod content;
 pub mod dict;
+pub(crate) mod initials;
 pub mod interp;
 pub mod lm;
 pub mod punct;
