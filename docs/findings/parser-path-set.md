@@ -88,6 +88,8 @@ partial. Paths appear below in required return order.
 | `ni'i` | `[ni@0:2:C]` | `'i` |
 | `ni'!` | `[ni@0:2:C]` | `'!` |
 | `ni''hao` | `[ni@0:2:C, hao@4:7:C]`; `[ni@0:2:C, ha@4:6:C, o@6:7:C]` | empty |
+| `'ni` | `[ni@1:3:C]` | empty |
+| `''ni` | `[ni@2:4:C]` | empty |
 
 The empty input has one empty segmentation rather than zero paths. Junk-prefix
 input likewise has one result with no segments and the entire input as the
@@ -114,3 +116,10 @@ and its selected segmentation do not reorder or remove portable parser paths.
   Cross-referenced in `parser-spec.md` architect correction log
   (2026-08-21) and `parser-spec-contradiction-incomplete-keys.md`
   (decision 3, doubled half now closed).
+- 2026-08-21, W12 decision 3 leading half: `'ni` and `''ni` added.
+  A leading run of consecutive apostrophes is consumed when the group
+  after it consumes at least one byte, matching the pin's zero-width
+  step-propagation at position 0. Cross-referenced in `parser-spec.md`
+  architect correction log (2026-08-21, leading apostrophe) and
+  `parser-spec-contradiction-incomplete-keys.md` (decision 3, leading
+  half now closed).

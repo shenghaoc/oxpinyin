@@ -553,23 +553,16 @@ fn tone_split(text: &[u8], use_tone: bool) -> Option<(&[u8], u8)> {
 
 /// Where a key may begin for an edge leaving `node`, or `None` if none can.
 ///
-/// An apostrophe at `node` is a separator and the key begins after it. A
-/// *leading* apostrophe is not a separator: `parser-path-set.md` freezes it
-/// as remainder-starting, and half of maintainer decision 3 in
-/// `parser-spec-contradiction-incomplete-keys.md` — the leading-apostrophe
-/// half — is still open. The graph does not quietly settle it.
-///
-/// A *run* of consecutive apostrophes after a consumed group IS a separator:
-/// upstream's `FullPinyinParser2::parse` (`pinyin_parser2.cpp:237-250`)
-/// treats every apostrophe as a zero-width step-propagation, so `ni''hao`
-/// consumes the whole input on the pin side. Skip the whole run and let the
-/// key begin at the next lowercase byte.
+/// Upstream's `FullPinyinParser2::parse` (`pinyin_parser2.cpp:237-250`)
+/// treats every apostrophe as a zero-width step-propagation: if a
+/// position is reachable and its byte is `'`, the next position is also
+/// reachable. This applies at *every* reachable node, including node 0.
+/// A *run* of consecutive apostrophes collapses to a single hop, so
+/// `'ni` and `ni''hao` both consume their full input on the pin side.
+/// Skip the whole run and let the key begin at the next byte.
 fn key_start(input: &[u8], node: usize) -> Option<usize> {
     let byte = *input.get(node)?;
     if byte == b'\'' {
-        if node == 0 {
-            return None;
-        }
         let mut cursor = node + 1;
         while *input.get(cursor)? == b'\'' {
             cursor += 1;
@@ -827,19 +820,35 @@ mod tests {
     }
 
     #[test]
-    fn the_leading_apostrophe_case_is_left_open() {
-        // The leading half of maintainer decision 3 in
-        // parser-spec-contradiction-incomplete-keys.md is still open; the
-        // graph must not settle it by accident.
+    fn a_leading_apostrophe_run_is_consumed_like_a_separator() {
+        // Upstream's DP propagates across every `'` at position zero, so
+        // `'ni` consumes all three bytes. Matches the pin (decision 3,
+        // leading half now closed).
         let leading = SegmentGraph::build(b"'ni").expect("valid");
         assert_eq!(
             leading.consumed(),
-            0,
-            "a leading apostrophe is not a separator"
+            3,
+            "'ni consumes the leading apostrophe and the syllable"
+        );
+        assert!(leading.fully_consumed());
+        assert!(
+            leading
+                .edges()
+                .iter()
+                .any(|edge| edge.from() == 0 && edge.to() == 3 && edge.crosses_separator()),
+            "'ni has an edge from 0 with syllable_start past the apostrophe"
         );
 
-        // The doubled half is now resolved: consecutive apostrophes after a
-        // consumed group are a single separator, matching the pin.
+        let double_leading = SegmentGraph::build(b"''ni").expect("valid");
+        assert_eq!(
+            double_leading.consumed(),
+            4,
+            "''ni consumes both leading apostrophes"
+        );
+        assert!(double_leading.fully_consumed());
+
+        // The doubled-separator half (after a consumed group) was already
+        // resolved; unchanged.
         let doubled = SegmentGraph::build(b"ni''hao").expect("valid");
         assert_eq!(
             doubled.consumed(),

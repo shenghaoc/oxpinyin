@@ -120,6 +120,22 @@ fn parse_input(input: &[u8], options: OptionBits) -> Result<Vec<ParseResult>, Pa
     let mut cursor = 0;
     let mut pending_separator = None;
 
+    // Leading apostrophe run: upstream's DP (`pinyin_parser2.cpp:237-250`)
+    // propagates across every `'` at position zero, so `'ni` consumes all
+    // three bytes. Skip the run when a lowercase byte follows; otherwise
+    // the whole input is remainder (matching the oracle-sentinel abort for
+    // pure apostrophe strings).
+    if cursor < input.len() && input[cursor] == b'\'' {
+        let sep = cursor;
+        while cursor < input.len() && input[cursor] == b'\'' {
+            cursor += 1;
+        }
+        if cursor == input.len() || !input[cursor].is_ascii_lowercase() {
+            return Ok(finish(accumulated, input, 0));
+        }
+        pending_separator = Some(sep);
+    }
+
     loop {
         let group_start = cursor;
         let group_end = input[group_start..]
@@ -589,6 +605,10 @@ mod tests {
                 ),
             ],
         );
+        // Leading apostrophe run: upstream's DP propagates across every
+        // `'` at position zero, so `'ni` consumes all three bytes.
+        assert_parse(b"'ni", vec![result(vec![complete("ni", 1, 3)], b"")]);
+        assert_parse(b"''ni", vec![result(vec![complete("ni", 2, 4)], b"")]);
     }
 
     #[test]

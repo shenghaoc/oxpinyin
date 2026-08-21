@@ -142,18 +142,18 @@ subset. At or below the limit, it returns every path. This preserves R3.5
 ## Boundaries, partials, and junk
 
 Apostrophe is a hard boundary: complete syllables never span it. Alternatives
-on fully consumed sides are combined as a Cartesian product. A leading or
-trailing apostrophe is not a valid separator and starts the remainder.
-A **run** of consecutive apostrophes after a fully consumed left group is a
-single separator when the group after it consumes at least one byte as a
-complete or partial segment: upstream's `FullPinyinParser2::parse`
-(`pinyin_parser2.cpp:237-250`) treats every apostrophe as a zero-width
-step-propagation, so `ni''hao` consumes the whole input and reaches the
-`hao` group. An apostrophe run is consumed only when its left group is
-fully segmented and its right group consumes at least one byte; a run with
-no productive right side (e.g. `ni''`, `ni''!`) starts the remainder at
-the first apostrophe. An empty result with unchanged remainder is not a
-right-side continuation.
+on fully consumed sides are combined as a Cartesian product. A trailing
+apostrophe is not a valid separator and starts the remainder.
+Upstream's `FullPinyinParser2::parse` (`pinyin_parser2.cpp:237-250`) treats
+every apostrophe at a reachable position as a zero-width step-propagation.
+A **leading** run of consecutive apostrophes is consumed when the group
+after it consumes at least one byte: `'ni` consumes all three bytes and
+`''ni` consumes all four. A **non-leading** run of consecutive apostrophes
+after a fully consumed left group is a single separator under the same
+rule: `ni''hao` consumes the whole input. An apostrophe run with no
+productive right side (e.g. `'`, `ni''`, `ni''!`) starts the remainder at
+the first apostrophe of the run (position 0 for a leading run). An empty
+result with unchanged remainder is not a right-side continuation.
 
 Under the parity profile (`PINYIN_INCOMPLETE` set), an initial-only key is a
 first-class partial usable at any cursor, any number of times, freely
@@ -243,3 +243,23 @@ the W2 residual (`docs/findings/corpus-tail.md`, W12 Class B).
 **10,178 / 10,190 / 94,872 of 98,930 / absent 0**; tie-swaps stay at
 1,036. Recorded in `docs/findings/pin-refreeze-2026-08.md`
 (the doubled-apostrophe amendment).
+
+### 2026-08-21 — oracle-driven SPEC correction: leading apostrophe
+
+**Kind:** oracle-driven SPEC correction. The remaining half of maintainer
+decision 3 in `parser-spec-contradiction-incomplete-keys.md` — the
+leading-apostrophe half — is resolved by aligning with the pin.
+
+**Previous invariant.** A leading or trailing apostrophe is not a valid
+separator and starts the remainder.
+
+**Corrected invariant.** A trailing apostrophe starts the remainder. A
+leading run of consecutive apostrophes is consumed when the group after it
+consumes at least one byte. A leading run with no productive right side
+starts the remainder at position 0.
+
+**Evidence.** `parser-spec-contradiction-incomplete-keys.md` remaining
+divergences: `'ni` oracle consumes 3 vs our 0 (`consumed-length`).
+Upstream's `FullPinyinParser2::parse` (`pinyin_parser2.cpp:237-250`)
+treats every apostrophe at a reachable position as a zero-width
+step-propagation, including at position 0.
