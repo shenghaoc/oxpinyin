@@ -354,7 +354,11 @@ where
         let text = candidate.text().to_owned();
         let advance = candidate.consumed_bytes();
         let token = token_override.or_else(|| candidate.token());
-        self.selected.push_str(&text);
+        if candidate.nbest_row().is_some() {
+            self.selected = text;
+        } else {
+            self.selected.push_str(&text);
+        }
         if let Some(token) = token {
             self.history.push(token);
         } else if let Some(rank) = candidate.nbest_row() {
@@ -634,6 +638,14 @@ where
                 })
                 .collect()
         };
+
+        if !self.selected.is_empty() {
+            for row in &mut self.nbest_rows {
+                let mut full = compact_str::CompactString::from(&self.selected);
+                full.push_str(&row.text);
+                row.text = full;
+            }
+        }
 
         self.refresh()?;
         Ok(true)
