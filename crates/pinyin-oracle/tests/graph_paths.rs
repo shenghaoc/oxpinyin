@@ -21,15 +21,12 @@ const PATHS: &str = include_str!("../../../fixtures/w4/oracle-paths.txt");
 /// Inputs whose oracle path the graph deliberately does not admit.
 ///
 /// Maintainer decision 3 in
-/// `docs/findings/parser-spec-contradiction-incomplete-keys.md` leaves
-/// apostrophe tolerance open: the pin skips a leading apostrophe, and the
-/// leading half of maintainer decision 3 in
-/// `parser-spec-contradiction-incomplete-keys.md` stays open. The doubled
-/// half (`ni''hao`) closed 2026-08-21 (see `parser-spec.md` architect
-/// correction log and `corpus-tail.md`); the graph now consumes it. This
-/// list stays *named* so the day the leading decision lands, this is
-/// where it shows up.
-const OPEN_APOSTROPHE_CASES: [&str; 1] = ["'ni"];
+/// Both halves of maintainer decision 3 in
+/// `parser-spec-contradiction-incomplete-keys.md` are now closed. The doubled
+/// half (`ni''hao`) closed 2026-08-21; the leading half (`'ni`) closed
+/// 2026-08-21 by the same zero-width step-propagation law. No open
+/// apostrophe cases remain.
+const OPEN_APOSTROPHE_CASES: [&str; 0] = [];
 
 /// One record: the input, what the oracle consumed, and the path it chose.
 struct Record {
