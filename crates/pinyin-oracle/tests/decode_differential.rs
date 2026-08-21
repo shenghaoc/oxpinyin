@@ -33,10 +33,11 @@ const K: usize = 8;
 /// Depth the capture protocol records candidates to.
 const CAPTURE_DEPTH: usize = 10;
 
-/// The one input maintainer decision 3 still leaves divergent. The doubled
-/// half (`ni''hao`) closed 2026-08-21 (`docs/findings/parser-spec.md` log,
-/// `docs/findings/corpus-tail.md`); the leading half stays open.
-const OPEN_APOSTROPHE_CASES: [&str; 1] = ["'ni"];
+/// Both halves of maintainer decision 3 are now closed. The doubled half
+/// (`ni''hao`) closed 2026-08-21; the leading half (`'ni`) closed 2026-08-21
+/// by the same zero-width step-propagation law. No open apostrophe cases
+/// remain.
+const OPEN_APOSTROPHE_CASES: [&str; 0] = [];
 
 fn field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
     line.split('\t')
@@ -136,7 +137,7 @@ fn segmentation_differential_over_the_parity_corpus() {
     assert_eq!(total, 10_459);
     assert_eq!(
         absent, OPEN_APOSTROPHE_CASES,
-        "the only path the decoder cannot reach is the one open apostrophe case"
+        "every corpus path should be reachable by the decoder"
     );
     assert!(
         top1 * 100 >= total * 80,
