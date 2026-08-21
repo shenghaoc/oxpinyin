@@ -51,7 +51,13 @@ pub(crate) struct InitialAlphabet {
 impl InitialAlphabet {
     /// Builds the tables from the frozen inventory.
     pub(crate) fn new() -> Self {
-        let mut sorted_keys: Vec<&'static str> = INCOMPLETE_PINYIN_KEYS.to_vec();
+        Self::with_keys(&INCOMPLETE_PINYIN_KEYS)
+    }
+
+    /// Builds the tables from an explicit inventory — the seam the
+    /// future-sized-inventory tests use.
+    fn with_keys(keys: &[&'static str]) -> Self {
+        let mut sorted_keys: Vec<&'static str> = keys.to_vec();
         sorted_keys.sort_unstable();
         let mut table_valid = sorted_keys.len() + FIRST_KEY_CODE as usize <= 1 << SLOT_BITS;
         let mut code_by_prefix = [[VOWEL_CODE; 27]; 26];
@@ -131,9 +137,12 @@ impl InitialAlphabet {
     /// separator undercuts the second letter of a two-letter key, and
     /// zero padding sorts a shorter key first.
     pub(crate) fn pack(&self, pinyin: &str) -> Option<u128> {
-        // A code above 31 would bleed into the next slot's bits, so stop
-        // packing while the order is still exact.
-        if FIRST_KEY_CODE + self.sorted_keys.len() as u128 > 0x1f {
+        // Codes run FIRST_KEY_CODE ..= FIRST_KEY_CODE + len − 1; a code
+        // above 31 would bleed into the next slot's bits, so stop packing
+        // while the order is still exact. A 30-key inventory's top code is
+        // exactly 31 and still packs.
+        let max_code = FIRST_KEY_CODE + self.sorted_keys.len() as u128 - 1;
+        if max_code > 0x1f {
             return None;
         }
         let mut packed = 0_u128;
@@ -347,5 +356,42 @@ mod tests {
             alphabet.project(&oversized.join("'")).split('\'').count(),
             26
         );
+    }
+
+    #[test]
+    fn a_thirty_key_inventory_still_packs() {
+        // Codes run 2..=31 for 30 keys: the top code fills the five-bit
+        // field exactly, so packing must stay on (the old guard rejected
+        // this inventory and silently pushed every key to the string
+        // path). The 31st key pushes the top code to 32, which would
+        // bleed into the next slot: packing must stop.
+        const LETTERS: [&str; 26] = [
+            "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q",
+            "r", "s", "t", "u", "v", "w", "x", "y", "z",
+        ];
+        let mut thirty: Vec<&'static str> = LETTERS.to_vec();
+        thirty.extend_from_slice(&["aa", "bb", "cc", "dd"]);
+        let alphabet = super::InitialAlphabet::with_keys(&thirty);
+        assert_eq!(alphabet.sorted_keys.len(), 30);
+        for key in ["a'b", "dd'a", "aa'a'a"] {
+            let packed = alphabet.pack(key).expect("30-key inventory packs");
+            assert_eq!(
+                alphabet.unpack(packed),
+                alphabet.project(key),
+                "round trip {key}"
+            );
+        }
+
+        let mut thirty_one = thirty;
+        thirty_one.push("ee");
+        let alphabet = super::InitialAlphabet::with_keys(&thirty_one);
+        assert!(
+            alphabet.pack("a'b").is_none(),
+            "code 32 bleeds across slots"
+        );
+        // The slow path still answers for such an inventory — via the
+        // real `syllable_initial`, for syllables it recognizes ("b" and
+        // "n" are real inventory keys that the synthetic list includes).
+        assert_eq!(alphabet.project("b'n"), "b'n");
     }
 }

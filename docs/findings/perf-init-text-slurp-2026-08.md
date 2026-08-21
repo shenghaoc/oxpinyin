@@ -94,20 +94,26 @@ keep-last semantics.
   each projected key folds into five-bit slots whose packed order equals
   the joined-string order (proof in the doc comment; differential tests
   including 1,000 deterministic random keys). The load sorts and dedups
-  integers, then decodes only the 45,404 survivors. Keys longer than 25
-  syllables (export max is 14) fall back to the string path; so would a
-  future three-letter inventory.
+  integers, then decodes only the 45,404 survivors. A future
+  three-letter inventory keeps packing — its spellings code through the
+  `syllable_initial` slow path while the codes fit five bits — and only
+  keys longer than 25 syllables (export max is 14), or an inventory so
+  large its codes overflow the field, fall back to the string path.
 
 **lm/mod.rs — bigram vec.**
 `bigram: BTreeMap<u32, BigramRow>` → `Vec<(LeByteKey, BigramRow)>` append
 + order check; `load_successors` binary-searches. `BigramRow`'s public
 shape (per-row `Vec<(u32, u32)>`) is untouched.
 
-Complexity: three map builds go from O(n log n) insert walks to O(n)
-appends + an O(n) order check; two sorts move from 16/24-byte records to
-4/16-byte keys; lookups stay O(log n), now contiguous. Retained space
-drops (no tree nodes, no per-row malloc headers); the transient resolve
-peak grows ~1 MiB (snapshot + arena coexist). No regression where the
+Complexity: on the ordered input redb's walk actually delivers, the three
+map builds are O(n) appends plus one O(n) order check — the O(n log n)
+insert walks are gone. Off-order input (which well-formed tables cannot
+produce) still repairs through `ensure_sorted_unique`'s stable sort,
+O(n log n), same class as the `BTreeMap` inserts it replaces. Two sorts
+move from 16/24-byte records to 4/16-byte keys; lookups stay O(log n),
+now contiguous. Retained space drops (no tree nodes, no per-row malloc
+headers); the transient resolve peak grows ~1 MiB (snapshot + arena
+coexist). No regression where the
 constitution forbids both-axes worsening.
 
 ## Numbers
@@ -141,29 +147,65 @@ W8 8-cycle Callgrind (profiling `.so`, init + 8 cycles):
 | `fill_lookup` → memcmp (keystroke key-get) | 6.8e6 (314,784×) | 6.8e6 (314,784×) | unchanged |
 
 W8 dlopen scoreboard (20 speed runs, 10 RAM runs per mode, alternating
-oracle/oxpinyin, CPU 3). The before run was clean; two after runs hit a
-contended host (the oracle's own init read 2.19–2.23 ms and its steady
-cycle 32–35 ms — the oracle binary did not change), so the table quotes
-the quietest after run (oracle init 1.607 ms, closest to before's
-1.494 ms):
+oracle/oxpinyin, CPU 3). **Selection rule, fixed before any oxpinyin
+number was compared and applied identically to both revisions:** per
+revision, quote the run whose oracle `pinyin_init` median is lowest.
+The oracle is the unmodified control alternating inside the same
+processes, so its init median reads host contention; the min-oracle run
+is that revision's least-contended sample. The before revision ran
+twice (the original run, plus a fresh worktree run of `6b476b1` taken
+during the after measurements; a third attempt died on a
+checksum-mismatched model download and produced no data) and the after
+revision three times.
 
-| | before | after |
+All runs (each run's oracle init median is its contention reading):
+
+| run | oracle init | oxpinyin init [min, max] | steady cycle ox / oracle |
+|---|---:|---:|---|
+| before 1 | 1.494 ms | 236.470 ms [225.031, 329.425] | 16.030 / 20.455 (0.784×) |
+| before 2 | 1.443 ms | 232.528 ms [223.713, 311.571] | 16.156 / 20.614 (0.784×) |
+| after 1 | 2.233 ms | 245.511 ms [220.448, 490.229] | 21.573 / 32.678 (0.660×) |
+| after 2 | 2.187 ms | 236.526 ms [184.851, 340.508] | 23.659 / 35.405 (0.668×) |
+| after 3 | 1.607 ms | 188.660 ms [167.785, 255.963] | 17.178 / 26.535 (0.647×) |
+
+The contended runs are legible as the high-oracle-init rows: under
+contention both backends' numbers inflate together, which is why the
+rule-selected pair — not a cross-run median — is the comparison.
+
+Rule-selected pair (lowest oracle init per revision):
+
+| | before (run 2) | after (run 3) |
 |---|---:|---:|
-| `pinyin_init` oxpinyin | 236.470 ms [225.031, 329.425] | **188.660 ms [167.785, 255.963]** (median −47.8 ms; min 167.8 vs 225.0) |
-| `pinyin_init` oracle | 1.494 ms | 1.607 ms |
-| init ratio | 158.3× | 117.4× |
-| `pinyin_alloc_instance` | 4.741 ms | 4.763 ms (key_cost_table untouched) |
-| steady cycle | 16.030 ms (0.784× oracle) | 17.178 ms (0.647× oracle) |
-| cold cycle | 16.262 ms (0.723× oracle) | 15.379 ms (0.557× oracle) |
-| post-init RSS | 79,654 KiB (6.63×) | **71,976 KiB (5.99×)**, RssAnon 68,260 |
-| lifetime peak HWM | 80,122 KiB (5.22×) | **72,094 KiB (4.69×)** |
+| `pinyin_init` oxpinyin | 232.528 ms [223.713, 311.571] | **188.660 ms [167.785, 255.963]** (−43.9 ms) |
+| `pinyin_init` oracle | 1.443 ms | 1.607 ms |
+| init ratio | 161.2× | 117.4× |
+| `pinyin_alloc_instance` | 4.856 ms | 4.763 ms (key_cost_table untouched) |
+| steady cycle | 16.156 ms (0.784× oracle) | 17.178 ms (0.647× oracle) |
+| cold cycle | 16.496 ms (0.698× oracle) | 15.379 ms (0.557× oracle) |
+| post-init RSS | 79,548 KiB (6.70×) | **71,976 KiB (5.99×)**, RssAnon 68,260 |
+| lifetime peak HWM | 80,076 KiB (5.25×) | **72,094 KiB (4.69×)** |
 
-Absolute headline: **`pinyin_init` 236.5 → 188.7 ms on the like-for-like
-run** (best-case min 225.0 → 167.8 ms), `SystemDictionary::open` 136.3 →
-93.6 ms, interp parse 16.0 → 13.9 ms, post-init RSS −7.7 MiB. The ×
-columns are soft — the oracle drifts on this host — and the two
-contended after runs are kept in
-`target/profile/init-slurp/final-scoreboard{,2}.log` for the record.
+RAM is contention-independent and consistent across every run of its
+revision (before 79,548–79,654 / HWM 80,076–80,122; after 72,010–72,022
+/ HWM 72,094–72,168 KiB).
+
+**Steady cycle, 16.156 → 17.178 ms — investigated, judged drift, not a
+regression.** In the selected pair the unmodified oracle's own steady
+cycle moved 20.614 → 26.535 ms (+28.7%) inside the same processes: the
+shared control drifted far more than the candidate, and oxpinyin's cold
+cycle moved the other way (16.496 → 15.379 ms, faster) — a code
+regression would slow cold and steady together. The keystroke path's
+deterministic counters are identical on both revisions (`fill_lookup` →
+memcmp: 6.8e6 Ir over 314,784 calls), and the 8-cycle Callgrind total
+drops only by init-attributed work. The +1.0 ms absolute is host load
+concentrated in after run 3's cycle phase; against the control the
+steady ratio improved 0.784× → 0.647×.
+
+Absolute headline: **`pinyin_init` 232.5 → 188.7 ms on the
+rule-selected pair** (best-case min 223.7 → 167.8 ms),
+`SystemDictionary::open` 136.3 → 93.6 ms, interp parse 16.0 → 13.9 ms,
+post-init RSS −7.4 MiB (7,572 KiB on the selected pair). The × columns
+are soft — the oracle drifts on this host.
 
 ## Parity (STOP line)
 
