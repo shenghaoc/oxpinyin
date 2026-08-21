@@ -129,10 +129,10 @@ Dict-only load (`load_profile dict`, release, same export):
 
 Full capi-shaped init (`load_profile full`, release): PROGRAM TOTALS
 1,164.3e6 → **699.1e6 (0.60×)** (694.2e6 before the review fix that keeps
-`char::is_whitespace` on the ASCII path). Inclusive: pinyin slurp 350.9 → 199.4e6,
-phrase slurp 174.6 → 99.4e6, interp 156.7 → 125.5e6, bigram 117.7 →
-95.0e6. Wall (cumulative, fresh process): 220.0 → 162.2 ms; init RSS
-78,376 → 71,008 KiB.
+`char::is_whitespace` on the ASCII path). Inclusive: pinyin slurp
+350.9e6 → 199.4e6, phrase slurp 174.6e6 → 99.4e6, interp 156.7e6 →
+125.5e6, bigram 117.7e6 → 95.0e6. Wall (cumulative, fresh process):
+220.0 → 162.2 ms; init RSS 78,376 → 71,008 KiB.
 
 Isolated medians (median of 5): `parse_interpolation2` 16.0 → **13.9 ms**
 (records 63,907, total 50,913,735 — unchanged); interp sort blob 60.4e6 →
@@ -147,32 +147,37 @@ W8 8-cycle Callgrind (profiling `.so`, init + 8 cycles):
 | `fill_lookup` → memcmp (keystroke key-get) | 6.8e6 (314,784×) | 6.8e6 (314,784×) | unchanged |
 
 W8 dlopen scoreboard (20 speed runs, 10 RAM runs per mode, alternating
-oracle/oxpinyin, CPU 3). **Selection rule, fixed before any oxpinyin
-number was compared and applied identically to both revisions:** per
-revision, quote the run whose oracle `pinyin_init` median is lowest.
-The oracle is the unmodified control alternating inside the same
-processes, so its init median reads host contention; the min-oracle run
-is that revision's least-contended sample. The before revision ran
-twice (the original run, plus a fresh worktree run of `6b476b1` taken
-during the after measurements; a third attempt died on a
-checksum-mismatched model download and produced no data) and the after
-revision three times.
+oracle/oxpinyin, CPU 3). The **primary result is the oracle-normalized
+`pinyin_init` ratio** — the oracle is the unmodified control alternating
+inside the same processes, so dividing by it cancels the host contention
+both backends share. Raw medians are secondary and only ever quoted as a
+labeled best case: the before revision ran twice (the original run, plus
+a fresh worktree run of `6b476b1` taken during the after measurements; a
+third attempt died on a checksum-mismatched model download and produced
+no data) and the after revision three times.
 
 All runs (each run's oracle init median is its contention reading):
 
-| run | oracle init | oxpinyin init [min, max] | steady cycle ox / oracle |
-|---|---:|---:|---|
-| before 1 | 1.494 ms | 236.470 ms [225.031, 329.425] | 16.030 / 20.455 (0.784×) |
-| before 2 | 1.443 ms | 232.528 ms [223.713, 311.571] | 16.156 / 20.614 (0.784×) |
-| after 1 | 2.233 ms | 245.511 ms [220.448, 490.229] | 21.573 / 32.678 (0.660×) |
-| after 2 | 2.187 ms | 236.526 ms [184.851, 340.508] | 23.659 / 35.405 (0.668×) |
-| after 3 | 1.607 ms | 188.660 ms [167.785, 255.963] | 17.178 / 26.535 (0.647×) |
+| run | oracle init | oxpinyin init [min, max] | init ratio (ox/oracle) | steady cycle ox / oracle |
+|---|---:|---:|---:|---|
+| before 1 | 1.494 ms | 236.470 ms [225.031, 329.425] | 158.3× | 16.030 / 20.455 (0.784×) |
+| before 2 | 1.443 ms | 232.528 ms [223.713, 311.571] | 161.2× | 16.156 / 20.614 (0.784×) |
+| after 1 | 2.233 ms | 245.511 ms [220.448, 490.229] | 109.9× | 21.573 / 32.678 (0.660×) |
+| after 2 | 2.187 ms | 236.526 ms [184.851, 340.508] | 108.2× | 23.659 / 35.405 (0.668×) |
+| after 3 | 1.607 ms | 188.660 ms [167.785, 255.963] | 117.4× | 17.178 / 26.535 (0.647×) |
 
-The contended runs are legible as the high-oracle-init rows: under
-contention both backends' numbers inflate together, which is why the
-rule-selected pair — not a cross-run median — is the comparison.
+**Primary (normalized):** the per-run init ratio is 158.3× and 161.2× on
+the two before runs and 108.2×, 109.9×, 117.4× on the three after runs —
+non-overlapping ranges, run-medians 159.8× → 109.9× (the
+oracle-normalized init cost fell to 0.69× its before value). Under
+contention both backends' raw numbers inflate together (the
+high-oracle-init rows), which is why raw medians are not compared
+across runs.
 
-Rule-selected pair (lowest oracle init per revision):
+Best-case pair — the least-contended run per revision (selection rule:
+lowest oracle-init median, fixed before any oxpinyin number was
+compared and applied identically to both revisions). An upper bound on
+the raw improvement, not a representative estimate:
 
 | | before (run 2) | after (run 3) |
 |---|---:|---:|
@@ -189,23 +194,28 @@ RAM is contention-independent and consistent across every run of its
 revision (before 79,548–79,654 / HWM 80,076–80,122; after 72,010–72,022
 / HWM 72,094–72,168 KiB).
 
-**Steady cycle, 16.156 → 17.178 ms — investigated, judged drift, not a
-regression.** In the selected pair the unmodified oracle's own steady
-cycle moved 20.614 → 26.535 ms (+28.7%) inside the same processes: the
-shared control drifted far more than the candidate, and oxpinyin's cold
-cycle moved the other way (16.496 → 15.379 ms, faster) — a code
-regression would slow cold and steady together. The keystroke path's
-deterministic counters are identical on both revisions (`fill_lookup` →
+**Steady cycle, 16.156 → 17.178 ms — investigated; the measurements are
+consistent with host drift but do not rule out a warm-only regression.**
+In the selected pair the unmodified oracle's own steady cycle moved
+20.614 → 26.535 ms (+28.7%) inside the same processes: the shared
+control drifted far more than the candidate, and oxpinyin's cold cycle
+moved the other way (16.496 → 15.379 ms, faster). The keystroke path's
+instruction counters are identical on both revisions (`fill_lookup` →
 memcmp: 6.8e6 Ir over 314,784 calls), and the 8-cycle Callgrind total
-drops only by init-attributed work. The +1.0 ms absolute is host load
-concentrated in after run 3's cycle phase; against the control the
-steady ratio improved 0.784× → 0.647×.
+drops only by init-attributed work — identical counters rule out added
+work, but not micro-architectural effects (e.g. cache behavior of the
+new arena layout) that only warm state would expose; cold improving
+while steady slows is the expected drift signature, not proof. Against
+the control the steady ratio read 0.784× → 0.647×. Settling it would
+take repeated paired cold/steady statistics with uncertainty, which
+this shared host does not reliably provide.
 
-Absolute headline: **`pinyin_init` 232.5 → 188.7 ms on the
-rule-selected pair** (best-case min 223.7 → 167.8 ms),
-`SystemDictionary::open` 136.3 → 93.6 ms, interp parse 16.0 → 13.9 ms,
-post-init RSS −7.4 MiB (7,572 KiB on the selected pair). The × columns
-are soft — the oracle drifts on this host.
+Absolute headline: **oracle-normalized init ratio 158.3–161.2× →
+108.2–117.4× (run-medians 159.8× → 109.9×)**; on the least-contended
+pair the raw medians read 232.5 → 188.7 ms (best case; contended runs
+read up to 245.5/236.5 ms), `SystemDictionary::open` 136.3 → 93.6 ms,
+interp parse 16.0 → 13.9 ms, post-init RSS −7.4 MiB (7,572 KiB,
+contention-independent).
 
 ## Parity (STOP line)
 
@@ -218,7 +228,7 @@ top-1 10178 / top-5-set 10190 / prefix-10 94872 of 98930 / absent 0 / tie-swaps 
 sentence 488 / 385 / 370
 ```
 
-Unchanged. Full `cargo test --locked --workspace` green (580 passed);
+Unchanged. Full `cargo test --locked --workspace` green (581 passed);
 fmt and `clippy --workspace --all-targets -D warnings` clean. Pins did
 not move.
 
