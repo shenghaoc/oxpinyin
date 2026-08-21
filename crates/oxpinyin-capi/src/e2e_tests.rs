@@ -32,7 +32,7 @@ use crate::iterators::{
     pinyin_end_get_phrases, pinyin_iterator_add_phrase, pinyin_iterator_has_next_phrase,
 };
 use crate::parse::pinyin_parse_more_full_pinyins;
-use crate::sentence::pinyin_guess_candidates;
+use crate::sentence::{pinyin_get_sentence, pinyin_guess_candidates, pinyin_guess_sentence};
 use crate::state::{USER_STORE_FILE, instance_ref};
 use crate::test_support::{DEFAULT_SORT, TempUserDir, candidate, cstr, open, system_dir};
 use crate::types::{LookupCandidate, PinyinInstance};
@@ -870,6 +870,73 @@ fn network_index_accepts_the_same_add_path() {
         user_export
     ));
     crate::iterators::pinyin_end_get_phrases(user_export);
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn offset_decode_rows_carry_prefix_context() {
+    let user_dir = TempUserDir::new("offset-ctx");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let input = cstr("nihao");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
+
+    assert!(pinyin_guess_sentence(instance));
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+
+    let (ni_index, ni_ptr) = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        let index = inst
+            .candidates
+            .iter()
+            .position(|c| c.text.as_bytes() == "\u{4f60}".as_bytes())
+            .expect("\u{4f60} is offered for nihao");
+        let mut cand: *mut LookupCandidate = ptr::null_mut();
+        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        (index, cand)
+    };
+    assert!(pinyin_choose_candidate(instance, 0, ni_ptr) > 0);
+
+    assert!(pinyin_guess_sentence(instance));
+
+    let mut sentence: *mut std::os::raw::c_char = ptr::null_mut();
+    assert!(
+        pinyin_get_sentence(instance, 0, &mut sentence),
+        "remaining input should produce at least one sentence row"
+    );
+    assert!(!sentence.is_null());
+    let sentence_str = crate::ffi::take_owned_cstr(sentence);
+    assert!(
+        sentence_str.starts_with("\u{4f60}"),
+        "sentence row at offset should carry the selected prefix: got {sentence_str:?}"
+    );
+
+    assert!(pinyin_guess_candidates(instance, ni_index, DEFAULT_SORT));
+    {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        let nbest: Vec<_> = inst
+            .candidates
+            .iter()
+            .filter(|c| {
+                c.candidate_type == crate::types::lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+            })
+            .collect();
+        assert!(
+            !nbest.is_empty(),
+            "n-best row candidates should be present after offset decode"
+        );
+        for cand in &nbest {
+            let text = cand.text.to_str().expect("UTF-8 candidate");
+            assert!(
+                text.starts_with("\u{4f60}"),
+                "n-best candidate at offset should carry prefix: got {text:?}"
+            );
+        }
+    }
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);

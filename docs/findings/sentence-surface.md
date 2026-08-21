@@ -149,7 +149,10 @@ Ported divergences (recorded, not chased):
   report-back; revisit only alongside a deliberate pin re-freeze.
 - The constraint machinery (`CONSTRAINT_ONESTEP`/`diff_result`) is not
   ported; the engine's selection model re-seeds the remaining input from
-  the recorded history, which is the established W6 surface.
+  the recorded history, which is the established W6 surface. The
+  offset-decode prefix context (§10) reproduces the user-visible effect —
+  mid-composition sentence rows carry the full prefix — without porting
+  the constraint trellis itself.
 
 ## 4. Implementation record
 
@@ -393,12 +396,13 @@ through the list position again.
   bisect+valgrind green; fmt, clippy `-D warnings`, workspace tests
   green.
 
-**Recorded, not chased here.** A second divergence seen while debugging:
-our offset-decode sentence rows cover only the remaining input (single
+**Recorded, fixed in §10.** A second divergence seen while debugging:
+our offset-decode sentence rows covered only the remaining input (single
 chars 好/浩) while the oracle's carry the full context (你好/你浩) — the
-§3 constraint-machinery gap. It does not affect this fix (the record
-follows the chosen row, whatever its text), but a user-merged-costs
-probe-surface comparison will meet it.
+§3 constraint-machinery gap. It did not affect this fix (the record
+follows the chosen row, whatever its text). §10 prepends `selected` to
+each n-best row's text in `guess_sentence`, closing the gap without
+porting the constraint trellis.
 
 ## 9. User-merged n-best step costs, landed
 
@@ -456,11 +460,47 @@ denominators, before the observed-successor gate.
   runner exit 2. Merged: full logs byte-identical, baseline rows
   你好×3 flipping to 你浩/你好/你浩 after (你→浩)×3, with 你浩 growing
   138 → 414 → 1242 across the rounds on both engines.
-- The §8-recorded offset-decode divergence (our mid-train rows cover
+- The §8-recorded offset-decode divergence (our mid-train rows covered
   only the remaining input, the oracle's the full context) did not
   surface in the compared logs: it lives in the unchecked mid-train
-  decode whose return value the driver deliberately ignores.
+  decode whose return value the driver deliberately ignores. Fixed in
+  §10.
 - Pins re-measured on this branch: default candidates 10177 / 10189 /
   94871 of 98930 / absent 1 / tie-swaps 1036; sentence surface
   488/385/370 — bit-identical. union / train / import / predict diffs
   green; fmt, clippy `-D warnings`, workspace tests green.
+
+## 10. Offset-decode prefix context, landed
+
+Date: 2026-08-21 · branch `claude/offset-decode-context-xdrlsb`.
+
+**The gap.** Upstream's `PhoneticLookup` runs over the full
+`PhoneticKeyMatrix` with `CONSTRAINT_ONESTEP`/`diff_result` forcing
+chosen tokens at prefix positions, so decoded sentences naturally carry
+the full context (你好/你浩). The engine's `guess_sentence` rebuilds a
+fresh `SegmentGraph` from `self.raw[self.consumed..]` only, producing
+remaining-input-only rows (好/浩). Documented in §8 as "recorded, not
+chased"; §9 confirmed it did not affect the compared logs.
+
+**The change.**
+
+- `Session::guess_sentence`: after computing n-best rows from the
+  remaining input, prepends `self.selected` (the accumulated text of
+  prior selections) to each row's text when `selected` is non-empty.
+  The row's `span`, `tokens`, `keys`, and `cost` are unchanged — only
+  the display text carries the prefix.
+- `Session::select_inner`: when selecting an n-best row candidate
+  (identified by `nbest_row().is_some()`), assigns the candidate text
+  to `self.selected` rather than appending, because the text already
+  contains the prefix. Non-row candidates continue to append.
+
+**Evidence.**
+
+- CAPI test `offset_decode_rows_carry_prefix_context`: parses "nihao",
+  selects 你, calls `guess_sentence` on the remaining "hao", asserts
+  `pinyin_get_sentence` returns a string starting with 你, and asserts
+  every `NBEST_MATCH_CANDIDATE` in the candidate snapshot also starts
+  with 你.
+- Pins unchanged: default candidates 10178 / 10190 / 94872 of 98930 /
+  absent 0; sentence surface 488/385/370 — bit-identical. fmt, clippy
+  `-D warnings`, workspace tests green.
