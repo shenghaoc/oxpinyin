@@ -499,9 +499,9 @@ chased"; §9 confirmed it did not affect the compared logs.
   selection also restores the `nbest_history` snapshot into
   `self.history` before extending it with the row's tokens — a normal
   selection made between the lookup and the row choice is replaced on
-  the record exactly as its text is replaced by the assign, so
-  `selected` and the token record stay synchronized (the review follow-
-  up to the text-side-only assign).
+  the record exactly as its text is replaced by the assignment, so
+  `selected` and the token record stay synchronized (the review
+  follow-up to the text-side-only assignment).
 
 **Evidence.**
 
