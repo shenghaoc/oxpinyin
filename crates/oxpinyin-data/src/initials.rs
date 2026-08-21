@@ -179,7 +179,7 @@ impl InitialAlphabet {
     pub(crate) fn unpack(&self, packed: u128) -> String {
         let mut projected = String::new();
         for position in 0..MAX_SLOTS {
-            let code = (packed >> (u128::BITS - SLOT_BITS * (position as u32 + 1))) & 0x1f;
+            let code = (packed >> slot_shift(position)) & 0x1f;
             if code == 0 {
                 break;
             }
@@ -198,11 +198,13 @@ const fn slot_shift(position: usize) -> u32 {
 }
 
 /// Appends one slot's projection: `0` for the vowel sentinel, the key for
-/// key codes.
+/// key codes. A code below the key range is not an error to the caller —
+/// the slot simply contributes nothing.
 fn push_slot(projected: &mut String, code: u128, sorted_keys: &[&'static str]) {
     if code == VOWEL_CODE {
         projected.push('0');
-    } else if let Ok(index) = usize::try_from(code - FIRST_KEY_CODE)
+    } else if let Some(offset) = code.checked_sub(FIRST_KEY_CODE)
+        && let Ok(index) = usize::try_from(offset)
         && let Some(key) = sorted_keys.get(index)
     {
         projected.push_str(key);

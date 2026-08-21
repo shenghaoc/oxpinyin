@@ -198,9 +198,9 @@ struct ItemLineSpans<'a> {
 /// [`char::is_whitespace`] — exactly what `str::split_whitespace` splits
 /// on — so field boundaries match the previous `Vec<&str>` split,
 /// including non-ASCII separators inside the phrase text. ASCII bytes
-/// (the `\item`, token, and count fields) take the byte fast path;
-/// [`u8::is_ascii_whitespace`] is `char::is_whitespace` restricted to
-/// ASCII, so the two paths answer identically.
+/// (the `\item`, token, and count fields) skip the UTF-8 decode but keep
+/// the char predicate: `u8::is_ascii_whitespace` would diverge on U+000B,
+/// which `char::is_whitespace` counts as whitespace.
 fn span_item_line(line: &str) -> ItemLineSpans<'_> {
     let mut spans = ItemLineSpans {
         head: None,
@@ -216,7 +216,7 @@ fn span_item_line(line: &str) -> ItemLineSpans<'_> {
         // `index` only ever advances over whole characters, so it stays a
         // char boundary and multi-byte characters decode exactly once.
         let (whitespace, width) = if byte.is_ascii() {
-            (byte.is_ascii_whitespace(), 1)
+            (char::from(byte).is_whitespace(), 1)
         } else {
             match line[index..].chars().next() {
                 Some(ch) => (ch.is_whitespace(), ch.len_utf8()),
@@ -474,6 +474,10 @@ mod tests {
             "\\item 10 甲 count 5",
             "  \\item  +10 甲 乙\tcount  007 ",
             "\\item 10 \u{3000}甲\u{3000} count 5",
+            // U+000B separates fields for `char::is_whitespace` even
+            // though `u8::is_ascii_whitespace` says no.
+            "\\item\u{b}10\u{b}甲\u{b}count\u{b}5",
+            "\\item 10 甲\u{c}count 5",
             "\\item",
             "\\item 10",
             "\\item 10 x count",
