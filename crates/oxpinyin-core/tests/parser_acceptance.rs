@@ -273,7 +273,10 @@ fn assert_path_invariants(
         );
 
         let gap = &input[previous_end..segment.start];
-        prop_assert!(gap.is_empty() || gap == b"'");
+        prop_assert!(
+            gap.is_empty() || (!gap.is_empty() && gap.iter().all(|&b| b == b'\'')),
+            "gap between segments must be empty or apostrophes, got {gap:?}"
+        );
         prop_assert!(!saw_partial, "partial segment must be last");
 
         match segment.completeness {
