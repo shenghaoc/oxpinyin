@@ -843,10 +843,15 @@ pub(crate) struct CapiInstance {
 }
 
 impl CapiInstance {
-    /// Drop composition state the way `pinyin_reset` does: session, candidate
-    /// snapshot, and stored parse length all return to empty/zero.
+    /// The parse-path reset: the composition's parse state goes, the
+    /// selection record and the §3 constraint store stay — upstream's
+    /// `pinyin_parse_more_full_pinyins` never touches instance-level
+    /// constraints (`pinyin.cpp:1497-1533`), and the frontend re-sends
+    /// the whole buffer every keystroke, so the chosen cursor must
+    /// survive the re-parse (`Session::reset_composition`, the L2
+    /// lifetime rule in `docs/findings/live-typing.md`).
     pub(crate) fn reset_parse_state(&mut self) {
-        self.session.reset();
+        self.session.reset_composition();
         self.candidates.clear();
         self.parsed_len = 0;
         self.double_parse = None;
@@ -855,6 +860,34 @@ impl CapiInstance {
         self.zhuyin_input.clear();
         self.full_parse = None;
         self.full_input.clear();
+    }
+
+    /// Begin a parse of `original` (the caller's input, in the active
+    /// mode's own coordinates): continue the current composition when the
+    /// new input strictly extends the stored one AND the composition is
+    /// still incomplete (a mid-composition keystroke — the constraint
+    /// store and the chosen cursor survive, exactly upstream's
+    /// parse-never-touches-constraints rule); otherwise start a fresh
+    /// composition (the previous one completed or the buffer was replaced
+    /// — the frontend's reset-between-compositions contract, which the
+    /// committed-cursor flows rely on).
+    pub(crate) fn begin_parse(&mut self, original: &[u8]) {
+        let stored: &[u8] = if let Some(parse) = self.zhuyin_parse.as_ref() {
+            let _ = parse;
+            self.zhuyin_input.as_bytes()
+        } else if let Some(parse) = self.double_parse.as_ref() {
+            let _ = parse;
+            self.double_input.as_bytes()
+        } else if self.full_parse.is_some() {
+            self.full_input.as_bytes()
+        } else {
+            self.session.raw_input().as_bytes()
+        };
+        let continues = self.session.parse_continues(stored, original);
+        self.reset_parse_state();
+        if !continues {
+            self.session.reset();
+        }
     }
 
     /// The current live option word.

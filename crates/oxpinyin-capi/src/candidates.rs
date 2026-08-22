@@ -348,6 +348,47 @@ pub extern "C" fn pinyin_choose_candidate(
     })
 }
 
+/// Clear the constraint a prior choose pinned, by offset.
+///
+/// # C signature
+/// ```c
+/// bool pinyin_clear_constraint(pinyin_instance_t * instance,
+///                              size_t offset);
+/// ```
+///
+/// `pinyin_clear_constraint` (`pinyin.cpp:2641-2647`, decl
+/// `pinyin.h:585-593`): un-forces the chosen run `offset` lands in — a hit
+/// anywhere inside a run (its `NoSearch` interior included) clears the
+/// whole run — and the selection record follows the surviving forcings.
+/// The caller offset lives in the active parse mode's original input
+/// coordinates (the same space `pinyin_guess_candidates` takes); the
+/// store lives in the session's raw buffer, so the transformed seams map
+/// it across first. Plain full pinyin is the identity.
+///
+/// Returns `false` for a free cell or an out-of-range offset — upstream's
+/// own defined return, never an abort — and for a null instance.
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset: usize) -> bool {
+    if instance.is_null() {
+        return false;
+    }
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_mut(instance) };
+        let session_offset = if let Some(parse) = inst.zhuyin_parse.as_ref() {
+            crate::sentence::zhuyin_session_offset(parse, offset)
+        } else if let Some(parse) = inst.double_parse.as_ref() {
+            crate::sentence::double_session_offset(parse, offset)
+        } else if let Some(parse) = inst.full_parse.as_ref() {
+            crate::sentence::full_session_offset(parse, offset)
+        } else {
+            offset
+        };
+        inst.session.clear_constraint(session_offset)
+    })
+}
+
 /// Promotes the chosen candidate when it is an `ADDON_CANDIDATE`
 /// (`pinyin.cpp:2532-2561`): copies the addon phrase item into the default
 /// facade's nibble-5 sub-index, rewrites the snapshot candidate to a

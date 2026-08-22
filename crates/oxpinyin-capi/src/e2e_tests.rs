@@ -21,8 +21,8 @@ use std::ptr;
 use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, UserStore};
 
 use crate::candidates::{
-    pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_get_candidate,
-    pinyin_is_user_candidate, pinyin_remove_user_candidate, pinyin_train,
+    pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_clear_constraint,
+    pinyin_get_candidate, pinyin_is_user_candidate, pinyin_remove_user_candidate, pinyin_train,
 };
 use crate::config::pinyin_mask_out;
 use crate::context::{pinyin_init_for_fixtures, pinyin_save};
@@ -937,6 +937,74 @@ fn offset_decode_rows_carry_prefix_context() {
             );
         }
     }
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// L2 + `pinyin_clear_constraint` through the ABI: a chosen forcing
+/// survives the frontend's full-buffer re-parse (the store is instance
+/// state that only `pinyin_reset` clears), and clear-by-offset answers
+/// upstream's defined bools.
+#[test]
+fn the_forcing_survives_the_reparse_and_clears_by_offset() {
+    let user_dir = TempUserDir::new("constraint-lifetime");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    // A null instance answers false, never aborts.
+    assert!(!pinyin_clear_constraint(ptr::null_mut(), 0));
+
+    let input = cstr("nihao");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
+    assert!(pinyin_guess_sentence(instance));
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let ni_ptr = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        let index = inst
+            .candidates
+            .iter()
+            .position(|c| c.text.as_bytes() == "\u{4f60}".as_bytes())
+            .expect("\u{4f60} is offered for nihao");
+        let mut cand: *mut LookupCandidate = ptr::null_mut();
+        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        cand
+    };
+    assert!(pinyin_choose_candidate(instance, 0, ni_ptr) > 0);
+
+    // The frontend re-sends the whole buffer every keystroke; the forcing
+    // is instance state, so it survives and the decoded row still carries
+    // the chosen prefix.
+    let extended = cstr("nihaohao");
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, extended.as_ptr()),
+        8
+    );
+    assert!(pinyin_guess_sentence(instance));
+    let mut sentence: *mut std::os::raw::c_char = ptr::null_mut();
+    assert!(
+        pinyin_get_sentence(instance, 0, &mut sentence),
+        "the extended input decodes rows"
+    );
+    let sentence_str = crate::ffi::take_owned_cstr(sentence);
+    assert!(
+        sentence_str.starts_with('\u{4f60}'),
+        "the forcing survived the re-parse: got {sentence_str:?}"
+    );
+
+    // A free offset answers false; a hit inside the forcing's interior
+    // (its NoSearch cell) un-forces the whole run; the freed cells answer
+    // false afterwards.
+    assert!(!pinyin_clear_constraint(instance, 5), "cell 5 is free");
+    assert!(
+        pinyin_clear_constraint(instance, 1),
+        "cell 1 is the run interior"
+    );
+    assert!(!pinyin_clear_constraint(instance, 0), "the run is free now");
+
+    // `pinyin_reset` clears the store outright.
+    assert!(pinyin_reset(instance));
+    assert!(!pinyin_clear_constraint(instance, 0));
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);

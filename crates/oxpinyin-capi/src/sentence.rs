@@ -211,6 +211,46 @@ pub(crate) fn full_original_offset(parse: &FullPinyinIndexParse, offset: usize) 
     parse.consumed()
 }
 
+/// Maps an original-input offset to the transformed session offset — the
+/// inverse of [`double_original_offset`]: the transformed start of the
+/// first key whose original span ends past `offset`. A key-boundary offset
+/// therefore maps to the next key's start, the position a forced run at
+/// that key would sit at.
+pub(crate) fn double_session_offset(parse: &DoublePinyinParse, offset: usize) -> usize {
+    let mut transformed = 0;
+    for item in parse.keys() {
+        if offset < item.end() {
+            return transformed;
+        }
+        transformed += item.key().text().len() + 1; // key + apostrophe
+    }
+    transformed
+}
+
+/// [`double_session_offset`]'s zhuyin sibling.
+pub(crate) fn zhuyin_session_offset(parse: &ZhuyinParse, offset: usize) -> usize {
+    let mut transformed = 0;
+    for item in parse.keys() {
+        if offset < item.end() {
+            return transformed;
+        }
+        transformed += item.key().text().len() + 1; // key + apostrophe
+    }
+    transformed
+}
+
+/// [`double_session_offset`]'s Luoma/secondary-zhuyin sibling.
+pub(crate) fn full_session_offset(parse: &FullPinyinIndexParse, offset: usize) -> usize {
+    let mut transformed = 0;
+    for item in parse.keys() {
+        if offset < item.end() {
+            return transformed;
+        }
+        transformed += item.canonical().len() + 1; // key + apostrophe
+    }
+    transformed
+}
+
 /// Get character offset from a lookup byte offset within a sentence.
 ///
 /// # C signature

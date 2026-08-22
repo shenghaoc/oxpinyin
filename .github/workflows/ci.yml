@@ -45,6 +45,13 @@ jobs:
       - run: cargo test --locked --workspace
       - name: C++ pinyin.h smoke gate
         run: tools/bisection/run-cpp-smoke.sh
+      # The post-choose live-typing/train differential (sentence-surface's
+      # §3 machinery). Self-skips unless the pin-built oracle
+      # (PINYIN_ORACLE_PREFIX) and a real-unigram system dir
+      # (LIVETYPING_SYSTEM) are present on the runner; locally that is
+      # `tools/oracle/build-oracle.sh` plus the exported model20 tables.
+      - name: Live-typing differential
+        run: tools/bisection/run-live-typing-diff.sh
 
   # The portable crates on the other two supported operating systems.
   # structure.md marks core/data/user/engine portable; the oracle harness is

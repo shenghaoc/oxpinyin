@@ -139,3 +139,40 @@ The runner fails (exit 1) unless both logs prove the post-choose surface
 engaged: the choose cursors, and a non-empty after-choose candidate
 window on both sides. A run that never advanced past a choose cannot
 claim identity.
+
+## Closure — the constraint port (2026-08-22, `feat/constraint-machinery`)
+
+All three classes are closed; the differential now runs IDENTICAL under
+the same reproduction, and the vacuity check holds — reverting the walk
+to re-seeding turns it red (63 diff lines, exit 2).
+
+- **L1** — `Session::guess_sentence` walks the full matrix whenever the
+  input is consumed but non-empty: the constrained (or, after a row-0
+  choose, free) walk answers the terminal-choose surface the
+  remaining-input model structurally could not.
+- **L2** — the reset split: `reset_composition` (the parse path) keeps
+  the store, the selection record, and the cursor; only
+  `Session::reset`/`pinyin_reset` clears them (`pinyin.cpp:2697`'s
+  rule). The parse path continues the composition only on the
+  extending re-parse of an incomplete composition — the shape the
+  frontend's keystroke flow produces — so the #141 cursor contracts
+  keep their fresh-composition semantics.
+- **L3** — `Session::train` walks the last lookup's 1-best result
+  against the store (`train_result3`): forced phrases plus the first
+  decoded phrase after each run train, the predecessor threading over
+  every phrase. The export lands `bigram: 你好|ni'hao|1242`, the
+  oracle's own count. A result without forcings (row-0 chooses) falls
+  back to the selection record — the engine's row-record divergence,
+  logged in `upstream-divergences.md`.
+
+The gates held: candidate pins 10,190/10,190/absent 0/order-only
+0/prefix-10 98,930 bit-identical; sentence pins 488/385/379
+bit-identical (the empty store degenerates to the old walk, as the
+fixture flow requires); the scheme sweep engine-side byte-identical
+before and after (its standing oracle DIVERGE is the pre-existing §5
+tie-order class); the train/import/predict/union/user/addon/nbest-train
+differentials all IDENTICAL; fmt/clippy/tests green. The residual §5
+tail-tie mixing that PR A saw inside L2's typed probes is gone with the
+class itself — those probes now compare the constrained walk against
+the oracle's constrained walk, and the remaining sentence-surface
+residuals (the 17 first-6 rows) are untouched, as scoped.
