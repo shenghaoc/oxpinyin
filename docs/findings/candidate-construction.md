@@ -523,10 +523,14 @@ corpus and depth trips them by design. The guarantee goes no further —
 order below the capture depth, inputs outside the corpus, and
 aggregate-neutral offsets that cancel across inputs are invisible to the
 pins. Re-pinning a moved value is a deliberate, reviewed step (state Δ
-against
-10190 / 10190 / 0 / 98930–98930 in the commit that re-pins; the prior
-10178 / 10190 / 0 / 94872 contract, the 10177 / 10189 / 1 / 94871 contract,
-the 10136 / 10182 / 94456 contract, and their Δ are in
+against top-1 10190 / top-5-set 10190 / absent 0 / prefix-10 98930 of
+98930 / order-only 0 in the commit that re-pins; the prior contracts —
+top-1 10178 / top-5-set 10190 / absent 0 / prefix-10 94872 of 98930 /
+order-only 1036 (2026-08-21),
+top-1 10177 / top-5-set 10189 / absent 1 / prefix-10 94871 of 98930 /
+order-only 1036 (2026-08-16, second),
+top-1 10136 / top-5-set 10182 / absent 1 / prefix-10 94456 of 98930 /
+order-only 1030 (2026-08-16, first) — and their Δ are in
 `pin-refreeze-2026-08.md`), never a silent edit. The
 tolerant floors (top-1 ≥ 55%, top-5 ≥ 80%, absent ≤ 4%) are the
 regression envelope that must hold regardless.
@@ -536,8 +540,10 @@ regression envelope that must hold regardless.
    cargo test --release --locked -p pinyin-oracle \
        --test real_tables_integration -- --nocapture
    ```
-   Report Δ top-1, Δ top-5-set, Δ absent, Δ prefix-10 overlap against
-   10190 / 10190 / 0 / 98930 of 98930. Requires the exported tables at
+   Report Δ top-1, Δ top-5-set, Δ absent, Δ prefix-10 overlap, and Δ
+   order-only against the baseline top-1 10190, top-5-set 10190,
+   absent 0, prefix-10 98930 of 98930, order-only 0. Requires the
+   exported tables at
    `/tmp/oxpinyin-export` (`oxpinyin-migrate export`) **and** the fetched
    model cache (`tools/model/fetch-model.sh`; the real unigram counts in
    `interpolation2.text` are what the reproduced construction ranks by);
