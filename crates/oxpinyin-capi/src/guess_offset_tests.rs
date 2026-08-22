@@ -146,6 +146,38 @@ fn a_leading_or_trailing_run_never_walks_off_the_input() {
 }
 
 #[test]
+fn an_offset_past_the_parsed_input_is_refused() {
+    // Upstream reads its matrix out of bounds for such an offset — no
+    // pinned behaviour exists — so the ABI refuses instead of answering
+    // candidates anchored at a position that does not exist. The
+    // one-past-end offset itself is the matrix's reserved extra slot and
+    // stays valid.
+    let user_dir = TempUserDir::new("guess-zero-range");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    assert_eq!(parse(instance, "ni'hao"), 6);
+    assert!(
+        pinyin_guess_candidates(instance, 6, DEFAULT_SORT),
+        "the one-past-end offset is the reserved slot, still in range"
+    );
+    let parsed = pinyin_get_parsed_input_length(instance);
+    assert!(
+        !pinyin_guess_candidates(instance, parsed + 1, DEFAULT_SORT),
+        "an offset past the parsed input is refused"
+    );
+    let mut num: c_uint = 77;
+    assert!(pinyin_get_n_candidate(instance, &mut num));
+    assert_eq!(num, 0, "the refusal leaves no candidates behind");
+    assert!(
+        pinyin_guess_candidates(instance, 0, DEFAULT_SORT),
+        "the refusal leaves the instance usable"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
 fn a_post_separator_choose_returns_the_candidate_end() {
     // The ibus selectCandidate idiom: `cursor = choose(...); if (cursor ==
     // length) commit; else key_rest(cursor)`. The post-separator choose

@@ -246,8 +246,10 @@ pub extern "C" fn pinyin_get_character_offset(
 /// key rest, issue #570). libpinyin@dbff264 normalizes it back to the first
 /// byte of that run and validates the normalized offset —
 /// [`oxpinyin_engine::Session::normalized_lookup_offset`] is that law; a
-/// refusal empties the snapshot and answers `false` where upstream's
-/// `_check_offset` aborts. The lookup itself stays anchored at the
+/// refusal — the unreachable leading-run shape, or an offset beyond the
+/// input's one-past-end position — empties the snapshot and answers
+/// `false` where upstream's `_check_offset` aborts (or reads its matrix
+/// out of bounds). The lookup itself stays anchored at the
 /// session's composition offset, so `pinyin_choose_candidate(offset, cand)`
 /// keeps round-tripping for such candidates. The scan anchor is otherwise
 /// still positionless — the engine has no positional backend yet — and the
