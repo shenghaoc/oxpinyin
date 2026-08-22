@@ -23,9 +23,10 @@ Fedora Bugzilla.
 this block** (declared once here, not repeated per snippet):
 
 ```c
-/* Build: gcc repro.c -ldl $(pkg-config --cflags --libs glib-2.0) — or
- * link libpinyin directly. dlopen() is only how our harness reaches a
- * specific build; a plain link works the same. */
+#include <pinyin.h>
+
+/* Build: gcc repro.c -o repro $(pkg-config --cflags --libs libpinyin)
+ * (pinyin.h pulls the glib headers through pkg-config). */
 pinyin_context_t *ctx = pinyin_init(systemdir, userdir); /* both dirs
     must exist and be writable: the user dir gets the user store */
 pinyin_instance_t *inst = pinyin_alloc_instance(ctx);
@@ -38,11 +39,14 @@ pinyin_fini(ctx);
 depend on it): built by `tools/oracle/build-oracle.sh` with no caller
 CFLAGS/CXXFLAGS, plain `./configure --disable-static --with-dbm=Tkrzw`
 — autotools' default `-g -O2`, **no `-DNDEBUG`**, so `assert()` is
-live. The aborts below are assertion firings, not crash-adjacent
-undefined behaviour; under `-DNDEBUG` findings 2–4 degrade silently
-instead (finding 2 reads an unset out-param, 3 and 4 continue past the
-guard), which is worth stating in the issues as the NDEBUG-shaped
-secondary hazard.
+live. The aborts in findings 2 and 3 are assertion firings, not
+crash-adjacent undefined behaviour, and they degrade silently under
+`-DNDEBUG` — finding 2 then answers `true` with an unset out-param,
+finding 3 continues past the guard into the search — which is worth
+stating in those issues as the NDEBUG-shaped secondary hazard. Finding
+4 is different: STANDARD_DVORAK and CUSTOMIZED reach explicit
+`abort()` calls, which `-DNDEBUG` does not remove — they stay abortive
+in release builds; only the double out-of-enum lie is unconditional.
 
 ---
 
@@ -60,17 +64,16 @@ strlen(pinyin)`. Not every mid-key cursor is vulnerable; the
 SECONDARY_ZHUYIN trigger below is deterministic.
 
 ```c
-/* Reproduction: prints non-deterministic heap bytes as the right aux
- * suffix; run under valgrind/ASan to see the over-read directly. */
-pinyin_context_t *ctx = pinyin_init(systemdir, userdir);
-pinyin_instance_t *inst = pinyin_alloc_instance(ctx);
+/* Reproduction (assumes the shared setup): prints the auxiliary string
+ * with non-deterministic heap bytes past the canonical "tzu" prefix;
+ * run under valgrind/ASan to see the over-read directly. */
 pinyin_set_full_pinyin_scheme(ctx, FULL_PINYIN_SECONDARY_ZHUYIN); /* 3 */
 pinyin_parse_more_full_pinyins(inst, "tzuei");
-guint cursor = 4;   /* the byte immediately before the parsed-key end */
-gchar *left = NULL, *right = NULL;
-pinyin_get_full_pinyin_auxiliary_text(inst, cursor, &left, &right);
-printf("right = \"%s\"\n", right);   /* heap garbage past the canonical
-                                        "tzu" prefix */
+size_t cursor = 4;   /* the byte immediately before the parsed-key end */
+gchar *aux_text = NULL;
+pinyin_get_full_pinyin_auxiliary_text(inst, cursor, &aux_text);
+printf("aux = \"%s\"\n", aux_text);
+g_free(aux_text);
 ```
 
 LUOMA (scheme 2) reproduces the same shape on 8 of its 18 raw ≥
