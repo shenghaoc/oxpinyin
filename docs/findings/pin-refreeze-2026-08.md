@@ -96,6 +96,8 @@ Diagnosis and the 12-input table in `docs/findings/corpus-tail.md`
 | tie-swaps (order-only) | 1036 | 0 | −1036 |
 
 The candidate surface agrees with the pinned oracle bit-identically on
-every W2 corpus input at depth 10. Sentence pins the same day: row-0 and
+every W2 corpus input at depth 10, and the parity test now asserts the
+tie-swap count as its sixth frozen value (`order_only == 0`). Sentence
+pins the same day: row-0 and
 full-list agreement hold (488 / 385), first-6 candidate rows rise
 370 → 379 (`sentence_surface_reports_parity`).

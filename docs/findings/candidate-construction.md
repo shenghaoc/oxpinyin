@@ -34,11 +34,12 @@ top-1               10190  100%     assert_eq! pin
 top-5-set           10190  100%     assert_eq! pin
 prefix-10 overlap   98930 of 98930 100%  assert_eq! pins (numerator + denominator)
 absent                  0           assert_eq! pin
-tie-swaps               0           (bin/corpus-tail; no assert)
+tie-swaps               0           assert_eq! pin
 ```
 
-These five `assert_eq!` are bit-exact pins for the reproduced window-scan
-construction (§8); the tolerant floors beneath them (top-1 ≥ 55%, top-5 ≥ 80%,
+These six `assert_eq!` are bit-exact pins for the reproduced window-scan
+construction (§8) — the five value pins plus the order-only tie-swap count;
+the tolerant floors beneath them (top-1 ≥ 55%, top-5 ≥ 80%,
 absent ≤ 4%) are the regression envelope. The 2026-08-13 pre-construction floor
 was 6525 (64%) / 9232 / 70 / 65505 of 98930; the pre-F1 snapshot in
 `parity-climb-residual.md` was 63% / 177 absent.
@@ -514,7 +515,7 @@ Stage-1 call sites must stay valid. The `Dictionary`, `LanguageModel` (and
 
 ## 4. Measurement gates (runnable as written)
 
-Any construction change is gated on all of the following. Because the five
+Any construction change is gated on all of the following. Because the six
 `assert_eq!` pins in §0 are bit-exact, **they will trip by design on any ranking
 change** — re-pinning them is a deliberate, reviewed step (state Δ against
 10190 / 10190 / 0 / 98930–98930 in the commit that re-pins; the prior
@@ -828,7 +829,7 @@ down and GLib's stable merge sort keeps.
 
 ### 8.4 What this contract does not change
 
-The five `assert_eq!` parity pins (§0) are the reproduced values re-pinned in
+The six `assert_eq!` parity pins (§0) are the reproduced values re-pinned in
 this commit. The compatibility invariants (§3) and the measurement gates (§4)
 are unchanged and still normative, now measured against 10190 / 10190 / 0 /
 98930 of 98930 (the 2026-08-22 Class A port re-freeze). Consecutive-apostrophe

@@ -2510,6 +2510,158 @@ mod tests {
         );
     }
 
+    /// A model with fixed facade answers, so the frequency table's
+    /// per-branch inputs are visible without a real table.
+    struct FixedUnigrams {
+        system: u64,
+        addon: u64,
+        total: u64,
+        addon_total: u64,
+    }
+
+    impl LanguageModel for FixedUnigrams {
+        type Error = EngineError;
+        type Token = PhraseToken;
+
+        fn score(
+            &self,
+            _history: &[PhraseToken],
+            _token: &PhraseToken,
+            edge_cost: Cost,
+        ) -> Result<Cost, EngineError> {
+            Ok(edge_cost)
+        }
+
+        fn has_real_unigrams(&self) -> bool {
+            true
+        }
+
+        fn unigram_freq(&self, _token: &PhraseToken) -> Result<Option<u64>, EngineError> {
+            Ok(Some(self.system))
+        }
+
+        fn unigram_total(&self) -> Result<Option<u64>, EngineError> {
+            Ok(Some(self.total))
+        }
+
+        fn addon_unigram_freq(&self, _token: &PhraseToken) -> Result<Option<u64>, EngineError> {
+            Ok(Some(self.addon))
+        }
+
+        fn addon_unigram_total(&self) -> Result<Option<u64>, EngineError> {
+            Ok(Some(self.addon_total))
+        }
+    }
+
+    #[test]
+    fn addon_candidates_rank_on_their_own_amplified_scale() {
+        use super::CandidateKind;
+        use crate::candidate::Candidate;
+
+        // The pin's two amplified branches (`pinyin.cpp:1829-1843` for the
+        // addon, `:1855-1866` for the system): the system branch adds the
+        // model20 +1 and divides by the index total; the addon branch
+        // amplifies its own raw count over the addon facade's total. The
+        // same raw count 14 therefore lands on 3 over 51,051,831 but 6
+        // over the half-size addon total.
+        let session = Session::new(
+            &EmptyConfigSource,
+            StoragePaths::new("user"),
+            Silent,
+            FixedUnigrams {
+                system: 13,
+                addon: 14,
+                total: 51_051_831,
+                addon_total: 25_525_916,
+            },
+        )
+        .expect("Session::new");
+        let collected = vec![
+            Candidate::new(
+                compact_str::CompactString::from("股"),
+                CandidateKind::Phrase,
+                1,
+                3,
+                0,
+                Some(PhraseToken::new(1)),
+                None,
+            ),
+            Candidate::new(
+                compact_str::CompactString::from("附"),
+                CandidateKind::Addon,
+                1,
+                3,
+                0,
+                Some(PhraseToken::new(2)),
+                None,
+            ),
+        ];
+        let frequencies = session
+            .candidate_frequencies(&collected)
+            .expect("frequency reads cannot fail here");
+        assert_eq!(
+            frequencies,
+            Some(vec![3, 6]),
+            "system = amplified(13 + 1, 51_051_831) = 3; addon = amplified(14, 25_525_916) = 6"
+        );
+    }
+
+    /// One entry per facade, so a scan's two batches are exactly one
+    /// system and one addon candidate.
+    struct TwoFacadeDict {
+        system: PhraseEntry,
+        addon: PhraseEntry,
+    }
+
+    impl Dictionary for TwoFacadeDict {
+        type Entry = PhraseEntry;
+        type Error = EngineError;
+        type Syllable = SyllableKey;
+
+        fn lookup(&self, _syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
+            Ok(vec![self.system.clone()])
+        }
+
+        fn lookup_addon(
+            &self,
+            _syllables: &[SyllableKey],
+        ) -> Result<Vec<PhraseEntry>, EngineError> {
+            Ok(vec![self.addon.clone()])
+        }
+    }
+
+    #[test]
+    fn window_scan_emits_system_candidates_before_addon_candidates() {
+        // Two one-character candidates whose three RankKeys tie (length 1,
+        // span 1, amplified 3: system 13 + 1 over 51,051,831; addon 7 over
+        // the half-size addon total). The stable sort must therefore keep
+        // the scan's flush order — the default facade's batch before the
+        // addon facade's, the array order `_append_items`
+        // (`pinyin.cpp:1769-1791`) lays down.
+        let mut session = Session::new(
+            &EmptyConfigSource,
+            StoragePaths::new("user"),
+            TwoFacadeDict {
+                system: PhraseEntry::new(PhraseToken::new(0x0100_0001), "系".to_owned()),
+                addon: PhraseEntry::new(PhraseToken::new(0x0500_0002), "附".to_owned()),
+            },
+            FixedUnigrams {
+                system: 13,
+                addon: 7,
+                total: 51_051_831,
+                addon_total: 25_525_916,
+            },
+        )
+        .expect("Session::new");
+        session.type_pinyin("a").expect("typing cannot fail");
+        let texts: Vec<&str> = session.candidates().iter().map(|c| c.text()).collect();
+        assert_eq!(
+            texts,
+            ["系", "附"],
+            "a full three-key tie must keep the pin's system-before-addon array order"
+        );
+    }
+
     #[test]
     fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
         use oxpinyin_core::graph::SegmentGraph;

@@ -516,6 +516,10 @@ fn real_tables_session_reports_parity() {
         prefix_depth, 98930,
         "prefix-10 overlap denominator must match"
     );
+    assert_eq!(
+        order_only, 0,
+        "tie-swaps (order-only) must be bit-identical to the serial baseline"
+    );
     assert!(
         top1 * 100 >= total * 55,
         "top-1 fell to {top1_pct}% ({top1}/{total}); expected >= 55%"
@@ -530,9 +534,6 @@ fn real_tables_session_reports_parity() {
     );
 }
 
-/// The scan's split parts are measured from the syllable text, not from the
-/// byte the apostrophe rides on: `bu'tian` divides `tian` into `ti` + `an`,
-/// so `补体` must consume exactly `bu'ti` (5 bytes) and leave `an`.
 /// The Class A tie law's two table facts, engine-side: the interpolation2
 /// 1-gram sum the model loads, and the phrase-index item count the ranking
 /// denominator adds to it. Every model20 item's baked unigram is its
@@ -585,6 +586,9 @@ fn ranking_denominator_is_interpolation2_plus_item_count() {
     );
 }
 
+/// The scan's split parts are measured from the syllable text, not from the
+/// byte the apostrophe rides on: `bu'tian` divides `tian` into `ti` + `an`,
+/// so `补体` must consume exactly `bu'ti` (5 bytes) and leave `an`.
 #[test]
 fn scan_divided_key_consumes_the_apostrophe_span() {
     use oxpinyin_engine::Selection;
