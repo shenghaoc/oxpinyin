@@ -38,7 +38,9 @@ tie-swaps               0           assert_eq! pin
 ```
 
 These six `assert_eq!` are bit-exact pins for the reproduced window-scan
-construction (§8) — the five value pins plus the order-only tie-swap count;
+construction (§8) — the five value pins (top-1, top-5-set, absent, and
+the prefix-10 overlap's numerator and denominator) plus the order-only
+tie-swap count;
 the tolerant floors beneath them (top-1 ≥ 55%, top-5 ≥ 80%,
 absent ≤ 4%) are the regression envelope. The 2026-08-13 pre-construction floor
 was 6525 (64%) / 9232 / 70 / 65505 of 98930; the pre-F1 snapshot in
@@ -517,21 +519,23 @@ Stage-1 call sites must stay valid. The `Dictionary`, `LanguageModel` (and
 
 Any construction change is gated on all of the following. The six
 `assert_eq!` pins in §0 are bit-exact **aggregates over the W2 corpus at
-capture depth 10** (top-1, top-5-set, absent, prefix-10 overlap, and the
-order-only count): a change that moves any of those aggregates on that
+capture depth 10** (top-1, top-5-set, absent, the prefix-10 overlap
+numerator and its denominator `prefix_depth`, and the order-only count):
+a change that moves any of those aggregates on that
 corpus and depth trips them by design. The guarantee goes no further —
 order below the capture depth, inputs outside the corpus, and
 aggregate-neutral offsets that cancel across inputs are invisible to the
 pins. Re-pinning a moved value is a deliberate, reviewed step (state Δ
-against top-1 10190 / top-5-set 10190 / absent 0 / prefix-10 98930 of
-98930 / order-only 0 in the commit that re-pins; the prior contracts —
-top-1 10178 / top-5-set 10190 / absent 0 / prefix-10 94872 of 98930 /
-order-only 1036 (2026-08-21),
-top-1 10177 / top-5-set 10189 / absent 1 / prefix-10 94871 of 98930 /
-order-only 1036 (2026-08-16, second),
-top-1 10136 / top-5-set 10182 / absent 1 / prefix-10 94456 of 98930 /
-order-only 1030 (2026-08-16, first) — and their Δ are in
-`pin-refreeze-2026-08.md`), never a silent edit. The
+against top-1 10190 / top-5-set 10190 / absent 0 / prefix-10 overlap
+98930 / prefix-depth 98930 / order-only 0 in the commit that re-pins; the
+prior contracts —
+top-1 10178 / top-5-set 10190 / absent 0 / prefix-10 overlap 94872 /
+prefix-depth 98930 / order-only 1036 (2026-08-21),
+top-1 10177 / top-5-set 10189 / absent 1 / prefix-10 overlap 94871 /
+prefix-depth 98930 / order-only 1036 (2026-08-16, second),
+top-1 10136 / top-5-set 10182 / absent 1 / prefix-10 overlap 94456 /
+prefix-depth 98930 / order-only 1030 (2026-08-16, first) — and their Δ
+are in `pin-refreeze-2026-08.md`), never a silent edit. The
 tolerant floors (top-1 ≥ 55%, top-5 ≥ 80%, absent ≤ 4%) are the
 regression envelope that must hold regardless.
 
@@ -540,9 +544,10 @@ regression envelope that must hold regardless.
    cargo test --release --locked -p pinyin-oracle \
        --test real_tables_integration -- --nocapture
    ```
-   Report Δ top-1, Δ top-5-set, Δ absent, Δ prefix-10 overlap, and Δ
-   order-only against the baseline top-1 10190, top-5-set 10190,
-   absent 0, prefix-10 98930 of 98930, order-only 0. Requires the
+   Report Δ top-1, Δ top-5-set, Δ absent, Δ prefix-10 overlap, Δ
+   prefix-depth, and Δ order-only against the baseline top-1 10190,
+   top-5-set 10190, absent 0, prefix-10 overlap 98930, prefix-depth
+   98930, order-only 0. Requires the
    exported tables at
    `/tmp/oxpinyin-export` (`oxpinyin-migrate export`) **and** the fetched
    model cache (`tools/model/fetch-model.sh`; the real unigram counts in
