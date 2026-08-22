@@ -16,9 +16,9 @@ pub fn encode_u8(v: u8) -> [u8; 1] {
     [v]
 }
 
-/// Decode a `u8` value.
-pub fn decode_u8(bytes: &[u8]) -> u8 {
-    bytes[0]
+/// Decode a `u8` value.  Returns `None` if `bytes` is empty.
+pub fn decode_u8(bytes: &[u8]) -> Option<u8> {
+    bytes.first().copied()
 }
 
 /// Encode a `Token` (`u32`) as 4 big-endian bytes.
@@ -26,9 +26,10 @@ pub fn encode_token(token: Token) -> [u8; 4] {
     token.to_be_bytes()
 }
 
-/// Decode a `Token` (`u32`) from 4 big-endian bytes.
-pub fn decode_token(bytes: &[u8]) -> Token {
-    Token::from_be_bytes(bytes[0..4].try_into().unwrap())
+/// Decode a `Token` (`u32`) from 4 big-endian bytes.  Returns `None` if
+/// `bytes` is shorter than 4.
+pub fn decode_token(bytes: &[u8]) -> Option<Token> {
+    Some(Token::from_be_bytes(bytes.get(..4)?.try_into().ok()?))
 }
 
 /// Encode a `u64` value as 8 big-endian bytes.
@@ -36,9 +37,10 @@ pub fn encode_u64(v: u64) -> [u8; 8] {
     v.to_be_bytes()
 }
 
-/// Decode a `u64` value from 8 big-endian bytes.
-pub fn decode_u64(bytes: &[u8]) -> u64 {
-    u64::from_be_bytes(bytes[0..8].try_into().unwrap())
+/// Decode a `u64` value from 8 big-endian bytes.  Returns `None` if
+/// `bytes` is shorter than 8.
+pub fn decode_u64(bytes: &[u8]) -> Option<u64> {
+    Some(u64::from_be_bytes(bytes.get(..8)?.try_into().ok()?))
 }
 
 // ── identity types ─────────────────────────────────────────────────
@@ -48,14 +50,10 @@ pub fn encode_str(s: &str) -> &[u8] {
     s.as_bytes()
 }
 
-/// Decode a `&str` from raw UTF-8 bytes (identity).
-///
-/// # Panics
-///
-/// Panics if `bytes` is not valid UTF-8 — stored values were written by
-/// `encode_str`, so this is a data-integrity invariant, not a user input.
-pub fn decode_str(bytes: &[u8]) -> &str {
-    std::str::from_utf8(bytes).unwrap()
+/// Decode a `&str` from raw UTF-8 bytes (identity).  Returns `None` if
+/// `bytes` is not valid UTF-8.
+pub fn decode_str(bytes: &[u8]) -> Option<&str> {
+    std::str::from_utf8(bytes).ok()
 }
 
 /// Encode `&[u8]` (identity — returns the same slice).
@@ -78,11 +76,12 @@ pub fn encode_token_pair(a: Token, b: Token) -> [u8; 8] {
     out
 }
 
-/// Decode a `(Token, Token)` key from 8 big-endian bytes.
-pub fn decode_token_pair(bytes: &[u8]) -> (Token, Token) {
-    let a = Token::from_be_bytes(bytes[0..4].try_into().unwrap());
-    let b = Token::from_be_bytes(bytes[4..8].try_into().unwrap());
-    (a, b)
+/// Decode a `(Token, Token)` key from 8 big-endian bytes.  Returns `None`
+/// if `bytes` is shorter than 8.
+pub fn decode_token_pair(bytes: &[u8]) -> Option<(Token, Token)> {
+    let a = Token::from_be_bytes(bytes.get(..4)?.try_into().ok()?);
+    let b = Token::from_be_bytes(bytes.get(4..8)?.try_into().ok()?);
+    Some((a, b))
 }
 
 /// Encode a `(u8, &str)` key: one byte prefix, then raw UTF-8.
@@ -93,15 +92,12 @@ pub fn encode_u8_str(v: u8, s: &str) -> Vec<u8> {
     out
 }
 
-/// Decode a `(u8, &str)` key: one byte prefix, then raw UTF-8.
-///
-/// # Panics
-///
-/// Panics if the tail is not valid UTF-8.
-pub fn decode_u8_str(bytes: &[u8]) -> (u8, &str) {
-    let v = bytes[0];
-    let s = std::str::from_utf8(&bytes[1..]).unwrap();
-    (v, s)
+/// Decode a `(u8, &str)` key: one byte prefix, then raw UTF-8.  Returns
+/// `None` if `bytes` is empty or the tail is not valid UTF-8.
+pub fn decode_u8_str(bytes: &[u8]) -> Option<(u8, &str)> {
+    let (&v, tail) = bytes.split_first()?;
+    let s = std::str::from_utf8(tail).ok()?;
+    Some((v, s))
 }
 
 /// Encode a `(Token, &[u8])` key: 4 BE bytes, then raw tail.
@@ -112,10 +108,11 @@ pub fn encode_token_bytes(token: Token, tail: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Decode a `(Token, &[u8])` key: 4 BE bytes, then raw tail.
-pub fn decode_token_bytes(bytes: &[u8]) -> (Token, &[u8]) {
-    let token = Token::from_be_bytes(bytes[0..4].try_into().unwrap());
-    (token, &bytes[4..])
+/// Decode a `(Token, &[u8])` key: 4 BE bytes, then raw tail.  Returns
+/// `None` if `bytes` is shorter than 4.
+pub fn decode_token_bytes(bytes: &[u8]) -> Option<(Token, &[u8])> {
+    let token = Token::from_be_bytes(bytes.get(..4)?.try_into().ok()?);
+    Some((token, &bytes[4..]))
 }
 
 // ── tests ──────────────────────────────────────────────────────────
@@ -129,14 +126,14 @@ mod tests {
     #[test]
     fn u8_roundtrip() {
         for v in [0, 1, 127, 255] {
-            assert_eq!(decode_u8(&encode_u8(v)), v);
+            assert_eq!(decode_u8(&encode_u8(v)), Some(v));
         }
     }
 
     #[test]
     fn token_roundtrip_fixed() {
         for v in [0, 1, 0x0700_0001, Token::MAX] {
-            assert_eq!(decode_token(&encode_token(v)), v);
+            assert_eq!(decode_token(&encode_token(v)), Some(v));
         }
     }
 
@@ -148,7 +145,7 @@ mod tests {
     #[test]
     fn u64_roundtrip_fixed() {
         for v in [0, 1, 69, u64::MAX] {
-            assert_eq!(decode_u64(&encode_u64(v)), v);
+            assert_eq!(decode_u64(&encode_u64(v)), Some(v));
         }
     }
 
@@ -163,7 +160,7 @@ mod tests {
     #[test]
     fn str_roundtrip_fixed() {
         for s in ["", "hello", "你好", "ni'hao"] {
-            assert_eq!(decode_str(encode_str(s)), s);
+            assert_eq!(decode_str(encode_str(s)), Some(s));
         }
     }
 
@@ -179,7 +176,7 @@ mod tests {
     fn token_pair_roundtrip_fixed() {
         let cases = [(0, 0), (1, 2), (Token::MAX, 0), (0, Token::MAX)];
         for (a, b) in cases {
-            assert_eq!(decode_token_pair(&encode_token_pair(a, b)), (a, b));
+            assert_eq!(decode_token_pair(&encode_token_pair(a, b)), Some((a, b)));
         }
     }
 
@@ -193,7 +190,7 @@ mod tests {
     fn u8_str_roundtrip_fixed() {
         let cases = [(0u8, ""), (7, "你好"), (255, "ni'hao")];
         for (v, s) in cases {
-            assert_eq!(decode_u8_str(&encode_u8_str(v, s)), (v, s));
+            assert_eq!(decode_u8_str(&encode_u8_str(v, s)), Some((v, s)));
         }
     }
 
@@ -203,9 +200,58 @@ mod tests {
         for &(token, tail) in cases {
             assert_eq!(
                 decode_token_bytes(&encode_token_bytes(token, tail)),
-                (token, tail)
+                Some((token, tail))
             );
         }
+    }
+
+    // ── negative (too-short / invalid) ───────────────────────────────
+
+    #[test]
+    fn decode_u8_empty() {
+        assert_eq!(decode_u8(&[]), None);
+    }
+
+    #[test]
+    fn decode_token_too_short() {
+        assert_eq!(decode_token(&[0, 1]), None);
+        assert_eq!(decode_token(&[0, 1, 2]), None);
+        assert_eq!(decode_token(&[]), None);
+    }
+
+    #[test]
+    fn decode_u64_too_short() {
+        assert_eq!(decode_u64(&[0; 7]), None);
+        assert_eq!(decode_u64(&[]), None);
+    }
+
+    #[test]
+    fn decode_str_invalid_utf8() {
+        assert_eq!(decode_str(&[0xff]), None);
+        assert_eq!(decode_str(&[0xc0, 0x80]), None);
+    }
+
+    #[test]
+    fn decode_token_pair_too_short() {
+        assert_eq!(decode_token_pair(&[0; 7]), None);
+        assert_eq!(decode_token_pair(&[0; 4]), None);
+        assert_eq!(decode_token_pair(&[]), None);
+    }
+
+    #[test]
+    fn decode_u8_str_empty() {
+        assert_eq!(decode_u8_str(&[]), None);
+    }
+
+    #[test]
+    fn decode_u8_str_invalid_utf8() {
+        assert_eq!(decode_u8_str(&[7, 0xff]), None);
+    }
+
+    #[test]
+    fn decode_token_bytes_too_short() {
+        assert_eq!(decode_token_bytes(&[0, 1, 2]), None);
+        assert_eq!(decode_token_bytes(&[]), None);
     }
 
     // ── proptest round-trips ───────────────────────────────────────
@@ -217,22 +263,22 @@ mod tests {
         proptest! {
             #[test]
             fn u8_roundtrip(v: u8) {
-                prop_assert_eq!(decode_u8(&encode_u8(v)), v);
+                prop_assert_eq!(decode_u8(&encode_u8(v)), Some(v));
             }
 
             #[test]
             fn token_roundtrip(v: u32) {
-                prop_assert_eq!(decode_token(&encode_token(v)), v);
+                prop_assert_eq!(decode_token(&encode_token(v)), Some(v));
             }
 
             #[test]
             fn u64_roundtrip(v: u64) {
-                prop_assert_eq!(decode_u64(&encode_u64(v)), v);
+                prop_assert_eq!(decode_u64(&encode_u64(v)), Some(v));
             }
 
             #[test]
             fn str_roundtrip(s in "\\PC{0,64}") {
-                prop_assert_eq!(decode_str(encode_str(&s)), s.as_str());
+                prop_assert_eq!(decode_str(encode_str(&s)), Some(s.as_str()));
             }
 
             #[test]
@@ -242,15 +288,14 @@ mod tests {
 
             #[test]
             fn token_pair_roundtrip(a: u32, b: u32) {
-                prop_assert_eq!(decode_token_pair(&encode_token_pair(a, b)), (a, b));
+                prop_assert_eq!(decode_token_pair(&encode_token_pair(a, b)), Some((a, b)));
             }
 
             #[test]
             fn u8_str_roundtrip(v: u8, s in "\\PC{0,64}") {
                 let enc = encode_u8_str(v, &s);
-                let (dv, ds) = decode_u8_str(&enc);
-                prop_assert_eq!(dv, v);
-                prop_assert_eq!(ds, s.as_str());
+                let dec = decode_u8_str(&enc);
+                prop_assert_eq!(dec, Some((v, s.as_str())));
             }
 
             #[test]
@@ -259,9 +304,8 @@ mod tests {
                 tail in proptest::collection::vec(any::<u8>(), 0..64),
             ) {
                 let enc = encode_token_bytes(token, &tail);
-                let (dec_t, dec_b) = decode_token_bytes(&enc);
-                prop_assert_eq!(dec_t, token);
-                prop_assert_eq!(dec_b, tail.as_slice());
+                let dec = decode_token_bytes(&enc);
+                prop_assert_eq!(dec, Some((token, tail.as_slice())));
             }
         }
     }
