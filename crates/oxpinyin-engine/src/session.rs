@@ -779,6 +779,44 @@ where
         }
     }
 
+    /// Normalizes a caller lookup offset back to the first byte of the
+    /// apostrophe separator run before it, then validates it — the
+    /// `_compute_zero_start` + `_check_offset` pair `pinyin_guess_candidates`
+    /// runs at libpinyin@dbff264 (`pinyin.cpp:2182-2228`).
+    ///
+    /// ibus-libpinyin ≥ 1.16.1 passes the raw begin of the next key rest,
+    /// which can sit one position past the zero-`ChewingKey` `'` run
+    /// (ibus-libpinyin issue #570). The pin walks the matrix from
+    /// `offset - 1` downward while the index stays positive and the column
+    /// is a lone zero key; in the raw buffer those columns are exactly the
+    /// `'` bytes, so the byte walk is the same law.
+    ///
+    /// The candidate lookup stays anchored at the composition offset the
+    /// session owns, so a choose at the caller offset keeps round-tripping;
+    /// the normalized offset is the one a materialized `DYNAMIC_ADJUST`
+    /// previous-token lookup must use (#99 folds that bigram term to zero
+    /// today, `dynamic_adjust_bigram_term`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::LookupOffsetPastSeparator`] where upstream's
+    /// `_check_offset` aborts: the normalized offset still sits one past a
+    /// separator, which only a leading apostrophe run can cause (the walk
+    /// never crosses byte 0).
+    pub fn normalized_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
+        let raw = self.raw.as_bytes();
+        let mut normalized = offset;
+        let mut index = offset.saturating_sub(1);
+        while index > 0 && raw.get(index) == Some(&b'\'') {
+            normalized = index;
+            index -= 1;
+        }
+        if normalized > 0 && raw.get(normalized - 1) == Some(&b'\'') {
+            return Err(EngineError::LookupOffsetPastSeparator { offset, normalized });
+        }
+        Ok(normalized)
+    }
+
     /// Rounds `offset` up to the next character boundary of the raw input.
     ///
     /// The raw buffer only ever holds ASCII, so this is the identity in
@@ -2399,6 +2437,61 @@ mod tests {
         assert_eq!(session.sentence_text(0), None);
         session.reset();
         assert!(!session.sentence_lookup_active());
+    }
+
+    #[test]
+    fn normalized_lookup_offset_walks_the_zero_run_and_refuses_a_leading_one() {
+        let mut session = session();
+        session
+            .type_pinyin("ni'hao")
+            .expect("batch typing cannot fail");
+        assert_eq!(session.normalized_lookup_offset(0), Ok(0));
+        assert_eq!(
+            session.normalized_lookup_offset(3),
+            Ok(2),
+            "one past the separator normalizes to the zero key's own byte"
+        );
+        assert_eq!(session.normalized_lookup_offset(2), Ok(2));
+
+        session.reset();
+        session
+            .type_pinyin("ni''hao")
+            .expect("batch typing cannot fail");
+        assert_eq!(
+            session.normalized_lookup_offset(4),
+            Ok(2),
+            "the whole run collapses to its first byte"
+        );
+
+        session.reset();
+        session
+            .type_pinyin("'ni")
+            .expect("batch typing cannot fail");
+        assert_eq!(
+            session.normalized_lookup_offset(1),
+            Err(EngineError::LookupOffsetPastSeparator {
+                offset: 1,
+                normalized: 1
+            }),
+            "the walk never crosses byte 0, so a leading run refuses \
+             (_check_offset aborts upstream)"
+        );
+        assert_eq!(session.normalized_lookup_offset(0), Ok(0));
+
+        session.reset();
+        session
+            .type_pinyin("ni'")
+            .expect("batch typing cannot fail");
+        assert_eq!(
+            session.normalized_lookup_offset(3),
+            Ok(2),
+            "a trailing run normalizes without reading past the buffer"
+        );
+        assert_eq!(
+            session.normalized_lookup_offset(9),
+            Ok(9),
+            "an out-of-range offset stays put rather than indexing the raw buffer"
+        );
     }
 
     #[test]

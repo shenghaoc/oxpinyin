@@ -241,7 +241,20 @@ pub extern "C" fn pinyin_get_character_offset(
 ///                              guint sort_option);
 /// ```
 ///
-/// `offset` remains ignored — the engine has no positional backend yet.
+/// The caller `offset` may sit one position past the zero-`ChewingKey` `'`
+/// separator run (ibus-libpinyin ≥ 1.16.1 passes the raw begin of the next
+/// key rest, issue #570). libpinyin@dbff264 normalizes it back to the first
+/// byte of that run and validates the normalized offset —
+/// [`oxpinyin_engine::Session::normalized_lookup_offset`] is that law; a
+/// refusal empties the snapshot and answers `false` where upstream's
+/// `_check_offset` aborts. The lookup itself stays anchored at the
+/// session's composition offset, so `pinyin_choose_candidate(offset, cand)`
+/// keeps round-tripping for such candidates. The scan anchor is otherwise
+/// still positionless — the engine has no positional backend yet — and the
+/// transformed seams (double, zhuyin, Luoma/secondary-zhuyin) pass offsets
+/// in original coordinates the session's raw buffer does not share, so the
+/// law applies on the plain full-pinyin path only.
+///
 /// W14 honours [`sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE`]: with
 /// the bit clear, sentence rows guessed by [`pinyin_guess_sentence`]
 /// appear at the head typed `NBEST_MATCH_CANDIDATE` with their tail rank;
@@ -250,7 +263,7 @@ pub extern "C" fn pinyin_get_character_offset(
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_guess_candidates(
     instance: *mut PinyinInstance,
-    _offset: usize,
+    offset: usize,
     sort_option: GUint,
 ) -> bool {
     if instance.is_null() {
@@ -264,6 +277,12 @@ pub extern "C" fn pinyin_guess_candidates(
             return false;
         }
         if !inst.session.is_composing() {
+            return false;
+        }
+        let plain_full_pinyin =
+            inst.full_parse.is_none() && inst.double_parse.is_none() && inst.zhuyin_parse.is_none();
+        if plain_full_pinyin && inst.session.normalized_lookup_offset(offset).is_err() {
+            inst.candidates.clear();
             return false;
         }
         let without_sentence =

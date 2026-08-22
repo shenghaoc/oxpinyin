@@ -376,9 +376,15 @@ bool pinyin_get_character_offset(struct pinyin_instance_t *instance,
                                  size_t offset,
                                  size_t *length);
 
-// Guess candidates at the given offset with sort option.
+// Guess candidates at the given offset with sort option. The offset may
+// point one position past a zero ChewingKey (a separator, e.g. "'"); it is
+// normalized back to the preceding separator internally before the lookup.
+// The normalization applies to plain full-pinyin input only; the double,
+// chewing and Luoma parse paths keep original-coordinate offsets. An offset
+// one past a leading separator run cannot normalize: the call returns false
+// and clears the candidate list.
 bool pinyin_guess_candidates(struct pinyin_instance_t *instance,
-                             size_t _offset,
+                             size_t offset,
                              guint _sort_option);
 
 // Get auxiliary text for full pinyin display.

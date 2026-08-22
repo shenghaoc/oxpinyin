@@ -23,6 +23,16 @@ pub enum EngineError {
         /// How many candidates the list actually holds.
         len: usize,
     },
+    /// A lookup offset sat one position past a leading separator run,
+    /// which the zero-start walk cannot normalize away — `_check_offset`'s
+    /// refusal at libpinyin@dbff264, answered as an error instead of the
+    /// upstream abort.
+    LookupOffsetPastSeparator {
+        /// The offset the caller asked to look up at.
+        offset: usize,
+        /// Where the zero-start walk stopped.
+        normalized: usize,
+    },
     /// The dictionary backend failed.
     Dictionary(String),
     /// The language model backend failed.
@@ -44,6 +54,13 @@ impl fmt::Display for EngineError {
                 write!(
                     formatter,
                     "candidate index {index} is out of range 0..{len}"
+                )
+            }
+            Self::LookupOffsetPastSeparator { offset, normalized } => {
+                write!(
+                    formatter,
+                    "lookup offset {offset} sits one past a leading separator \
+                     run (normalized to {normalized})"
                 )
             }
             Self::Dictionary(message) => write!(formatter, "dictionary error: {message}"),
@@ -73,6 +90,14 @@ mod tests {
         assert_eq!(
             EngineError::LanguageModel("closed".to_owned()).to_string(),
             "language model error: closed"
+        );
+        assert_eq!(
+            EngineError::LookupOffsetPastSeparator {
+                offset: 1,
+                normalized: 1
+            }
+            .to_string(),
+            "lookup offset 1 sits one past a leading separator run (normalized to 1)"
         );
     }
 }
