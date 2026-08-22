@@ -1009,3 +1009,122 @@ fn the_forcing_survives_the_reparse_and_clears_by_offset() {
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
+
+/// The forcing survives a shrinking re-parse and the re-type — the
+/// backspace-after-choose contract: constraints are instance state that
+/// only `pinyin_reset` clears; `validate` drops a forcing only when it
+/// stops spelling under the shrunk buffer. The fixture model cannot run
+/// the constrained walk (the pre-frequency fallback has no constrained
+/// form), so this test pins the LIFETIME: the forcing's cell is still
+/// clearable after the whole ladder and the re-type. The walk-level
+/// proof runs on real tables — the differential's bp phase — and at the
+/// engine level with the trellis fixture model.
+#[test]
+fn the_forcing_survives_a_shrinking_reparse_and_the_retype() {
+    let user_dir = TempUserDir::new("constraint-backspace");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let input = cstr("nihaoshijie");
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
+        "nihaoshijie".len()
+    );
+    assert!(pinyin_guess_sentence(instance));
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let ni_ptr = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        let index = inst
+            .candidates
+            .iter()
+            .position(|c| c.text.as_bytes() == "\u{4f60}".as_bytes())
+            .expect("\u{4f60} is offered");
+        let mut cand: *mut LookupCandidate = ptr::null_mut();
+        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        cand
+    };
+    assert!(pinyin_choose_candidate(instance, 0, ni_ptr) > 0);
+
+    // Backspace down the ladder and re-type past the shrink: the
+    // composition stayed open the whole way (the buffer shrank TO the
+    // cursor at "ni", which is not a selection-committed shape).
+    for buffer in [
+        "nihaoshij",
+        "nihaoshi",
+        "nihaosh",
+        "nihaos",
+        "nihao",
+        "niha",
+        "ni",
+    ] {
+        let shrunk = cstr(buffer);
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, shrunk.as_ptr()),
+            buffer.len()
+        );
+    }
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
+        "nihaoshijie".len()
+    );
+
+    // The forcing's cell survived the ladder and the re-type: a hit
+    // anywhere inside its run still clears it. Pre-fix, the first shrink
+    // dropped it and this answered false.
+    assert!(
+        pinyin_clear_constraint(instance, 1),
+        "the forcing survived the shrink ladder and the re-type"
+    );
+    assert!(!pinyin_clear_constraint(instance, 0), "the run is free now");
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// The other half of the parse rule: a composition a SELECTION consumed
+/// re-parses fresh — the frontend's reset-between-compositions contract
+/// the #141 cursor flows' pinned tests require. A buffer that shrank to
+/// the cursor is not that shape.
+#[test]
+fn a_selection_committed_composition_reparses_fresh() {
+    let user_dir = TempUserDir::new("constraint-committed");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let input = cstr("nihao");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
+    assert!(pinyin_guess_sentence(instance));
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let full_ptr = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        let index = inst
+            .candidates
+            .iter()
+            .position(|c| c.text.as_bytes() == "\u{4f60}\u{597d}".as_bytes())
+            .expect("\u{4f60}\u{597d} is offered");
+        let mut cand: *mut LookupCandidate = ptr::null_mut();
+        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        cand
+    };
+    // Consumes the whole buffer: the commit branch.
+    assert_eq!(pinyin_choose_candidate(instance, 0, full_ptr), 5);
+
+    // The next parse starts a fresh composition: the window is anchored
+    // at 0 again, not at the stale cursor.
+    let next = cstr("nihaoshijie");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, next.as_ptr()), 11);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        assert!(
+            inst.candidates
+                .iter()
+                .any(|c| c.text.as_bytes() == "\u{4f60}".as_bytes()),
+            "the fresh composition offers \u{4f60} at offset 0"
+        );
+    }
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}

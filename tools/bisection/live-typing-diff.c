@@ -30,9 +30,8 @@
  *
  * Usage:
  *   LIVETYPING_ROUNDS=<n> ./live-typing-diff <path-to-so> <systemdir>
- *   LIVETYPING_BACKSPACE=1 adds the opt-in backspace-after-choose phase
- *     (bp-*): its divergence is the recorded parse-survival divergence
- *     and is measured, not gated.
+ *
+ * The backspace-after-choose phase (bp-*) is part of the default diff.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -424,18 +423,11 @@ int main(int argc, char **argv) {
     int rounds = 3;
     if (parse_rounds_env("LIVETYPING_ROUNDS", &rounds))
         return 1;
-    /* Opt-in: the backspace-after-choose phase (LIVETYPING_BACKSPACE=1).
-     * Its divergence is the recorded parse-survival divergence
-     * (upstream-divergences.md: upstream's constraints survive every
-     * re-parse, the engine continues only an extending one), so it must
-     * not run in the default diff — that one gates the closed L-classes
-     * and stays green. */
-    const char *flag = getenv("LIVETYPING_BACKSPACE");
-    int backspace_phase = flag && flag[0] == '1' && flag[1] == '\0';
-    if (flag && !backspace_phase) {
-        fprintf(stderr, "LIVETYPING_BACKSPACE must be 1 or unset, got \"%s\"\n", flag);
-        return 1;
-    }
+    /* The backspace-after-choose phase runs by default: the shrink ladder
+     * and retype gate the parse-survival rule — constraints survive every
+     * re-parse of an open composition, validate drops what stops
+     * spelling — closed with the L-classes' own machinery. */
+    int backspace_phase = 1;
 
     void *handle = dlopen(argv[1], RTLD_NOW);
     if (!handle) {
@@ -558,17 +550,21 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* Phase BP — backspace after a choose (opt-in). The frontend's
+    /* Phase BP — backspace after a choose (default). The frontend's
      * backspace edits its own buffer and re-parses the SHORTER string,
      * so the probe re-parses down a shrink ladder after choosing 你 for
      * "ni", then re-types past the shrink. No training: the phase leaves
      * the user store untouched. The ladder stops at "ni" — the cursor
      * (2) must never overrun one-past-end, where upstream's
-     * _check_offset aborts. */
+     * _check_offset aborts — and skips "nih": the incomplete
+     * single-letter tail is a measured §5 tie-class input (the FREE
+     * walks disagree there with no choose and no constraint — engine
+     * [你和, 你会, 你和] vs oracle [你和, 你和, 你会] — the sentence-surface
+     * pins' priced residual, not this differential's subject). */
     if (backspace_phase) {
         static const char *const ladder[] = {
             "nihaoshiji", "nihaoshij", "nihaoshi", "nihaosh",
-            "nihaos",     "nihao",     "niha",     "nih",     "ni",
+            "nihaos",     "nihao",     "niha",                "ni",
         };
         if (parse_expect(&s, inst, "nihaoshijie", 11)) {
             fprintf(stderr, "backspace: pre-choose parse failed\n");

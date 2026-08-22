@@ -174,31 +174,34 @@ inputs (the pin-built `.so` SIGABRTs).
   marginally spellable — the same inputs where the §3 possibility
   divergence is already observable.
 
-### Constraints survive parse only on the extending re-parse
+### Constraints survive every re-parse except the selection-committed one
 
 - **Upstream source cite:** `src/pinyin.cpp:1497-1533`
   (`pinyin_parse_more_full_pinyins` never touches `m_constraints`);
   `src/pinyin.cpp:2697` (`pinyin_reset` clears them).
 - **Mechanism:** upstream's constraints are instance state that survives
-  every re-parse — including a shrinking one (backspace) and a re-parse
-  after the composition completed — with `validate_constraint` dropping
-  whatever no longer spells at the next guess.
-- **What oxpinyin does instead:** the parse path continues the
-  composition (and keeps the store) only when the new input strictly
-  extends the stored one and the composition is still incomplete — the
-  mid-composition keystroke. A committed composition's re-parse starts
-  fresh (the frontend's reset-between-compositions contract, which the
-  #141 cursor flows rely on), and a shrinking or divergent re-parse
-  drops the forcings outright instead of carrying them into validate.
-- **Externally observable:** yes — measured by the opt-in backspace
-  phase of the live-typing driver (`LIVETYPING_BACKSPACE=1`,
-  `live-typing.md` §"Backspace-after-choose, measured"): after choosing
-  你 for "ni" and shrinking the buffer a keystroke at a time down to
-  "ni" then re-typing to "nihaoshijie", the oracle keeps 你 forced the
-  whole way (rows and offset-2 window at every step, including the
-  retype) while oxpinyin starts the composition fresh at the first
-  shrink — offset-0 window, free rows — and never recovers the forcing
-  on the retype. ~190 diverging log lines over the ladder.
+  every re-parse — extension, backspace, edit, and a re-parse after the
+  composition completed — with `validate_constraint` dropping whatever
+  no longer spells at the next guess. There is no engine-visible
+  "completed" notion: the cursor is the frontend's own state.
+- **What oxpinyin does instead:** the parse continues an OPEN
+  composition's re-parse when the buffer evolved from the stored one —
+  extension, shrink, or re-send keep the store, the selection record,
+  and the clamped cursor; validate drops what stops spelling, and the
+  record follows. Two shapes start fresh: a composition a SELECTION
+  consumed (the frontend's reset-between-compositions contract, which
+  the #141 cursor flows' pinned tests require and which upstream's
+  frontends perform themselves via `pinyin_reset` on commit), and a
+  divergent buffer — a different string is a different composition,
+  and a stale selection-derived cursor must not mis-anchor the new
+  composition's window before validate could drop the mismatched
+  forcings.
+- **Externally observable:** yes — on a re-parse after a
+  selection-consumed composition without an intervening reset, or on a
+  divergent re-parse of an open composition; neither is a shape
+  upstream's frontends drive (they reset on commit, and mid-composition
+  they re-send the same buffer). The backspace ladder itself is
+  measured identical (`live-typing.md` §"Backspace-after-choose").
 
 ### The n-best row-choose cursor is the row's own end
 

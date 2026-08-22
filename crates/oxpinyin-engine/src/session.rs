@@ -166,6 +166,13 @@ pub struct Session<D, L> {
     /// later `pinyin_get_sentence` must answer false rather than fall
     /// back to the pre-lookup raw form.
     sentence_lookup_active: bool,
+    /// Whether a selection consumed the whole buffer — the commit-branch
+    /// shape. A composition completed by choosing re-parses fresh (the
+    /// frontend's reset-between-compositions contract, the #141 cursor
+    /// flows' pinned rule); a composition the buffer shrank INTO (the
+    /// cursor never moved, the backspace ate the tail) stays open, so a
+    /// re-extension continues it with the surviving forcings.
+    selection_committed: bool,
     /// The §3 constraint store — one cell per raw-buffer byte position,
     /// the coordinate space the scan matrix and the choose cursor share.
     /// Survives `reset_composition` (the parse path) exactly as
@@ -232,6 +239,7 @@ where
             nbest_rows: Vec::new(),
             nbest_history: Vec::new(),
             sentence_lookup_active: false,
+            selection_committed: false,
             constraints: crate::constraint::ConstraintStore::default(),
             last_result: Vec::new(),
             scratch_collected: Vec::new(),
@@ -448,6 +456,7 @@ where
             );
         }
         self.consumed = constraint_end;
+        self.selection_committed = constraint_end >= self.raw.len();
         self.refresh()?;
 
         self.selection_outcome()
@@ -644,6 +653,7 @@ where
         self.raw.clear();
         self.selected.clear();
         self.consumed = 0;
+        self.selection_committed = false;
         self.history.clear();
         self.constraints.clear();
     }
@@ -1058,9 +1068,13 @@ where
             return Ok(KeyOutcome::Consumed);
         }
         if !self.selected.is_empty() {
+            // The all-or-nothing un-select: the store goes with the
+            // record, or a forcing would outlive its own selection.
             self.selected.clear();
             self.consumed = 0;
+            self.selection_committed = false;
             self.history.clear();
+            self.constraints.clear();
             self.refresh()?;
             return Ok(KeyOutcome::Consumed);
         }
@@ -1123,10 +1137,20 @@ where
     }
 
     /// Whether a re-parse of `original` continues the current composition
-    /// (`CapiInstance::begin_parse`'s rule): the stored input is a strict
-    /// prefix of the new one and the composition is still incomplete.
-    /// Mid-composition keystrokes extend the buffer this way; a committed
-    /// composition, a backspace, or a fresh buffer does not.
+    /// (`CapiInstance::begin_parse`'s rule): the composition is open —
+    /// not completed by a selection — and the buffer evolved from
+    /// itself (one input is a prefix of the other: forward typing or
+    /// backspace). Upstream's constraints survive every re-parse with
+    /// `validate_constraint` dropping whatever stops spelling at the
+    /// next guess, so an open composition's extension, shrink, or
+    /// re-send continues it — the cursor may sit mid-buffer, or the
+    /// buffer may have shrunk TO the cursor (a backspace that ate the
+    /// tail — still open). Two shapes start fresh: a selection-consumed
+    /// composition (the frontend's reset-between-compositions contract,
+    /// which the #141 cursor flows' pinned tests require) and a
+    /// divergent buffer — a different string is a different composition,
+    /// and a stale selection-derived cursor must not mis-anchor its
+    /// window before validate could drop the mismatched forcings.
     ///
     /// A pure query, not a fallible operation — it reads already-valid
     /// state and cannot fail, so the constitution's `Result` rule for
@@ -1135,11 +1159,11 @@ where
     /// and the infallible [`Session::reset_composition`]/[`reset`].
     #[must_use]
     pub fn parse_continues(&self, stored: &[u8], original: &[u8]) -> bool {
-        self.consumed < self.raw.len()
+        !self.selection_committed
             && !stored.is_empty()
-            && original.len() > stored.len()
-            && original.starts_with(stored)
+            && (original.starts_with(stored) || stored.starts_with(original))
     }
+
 
     /// The filtered fewest-keys parse length of the WHOLE raw buffer —
     /// the `pinyin_parse_more_*` return and `pinyin_get_parsed_input_length`
@@ -3402,6 +3426,76 @@ mod tests {
         assert!(session.clear_constraint(2));
         assert!(session.selected_tokens().is_empty());
         assert!(!session.clear_constraint(0));
+    }
+
+    /// The engine-internal backspace keeps the forcing: erase shrinks
+    /// the raw buffer one keystroke at a time (the engine's own
+    /// backspace path — the capi's shrink is the same rule through
+    /// `begin_parse`), the store survives, and the next guess
+    /// re-validates: down to the forcing's own floor the row is the
+    /// forced phrase alone, and re-typing continues the composition
+    /// with the forcing intact.
+    #[test]
+    fn the_forcing_survives_the_engine_backspace_and_retype() {
+        let mut session = trellis_session();
+        for character in "nihaoshijie".chars() {
+            session
+                .process_key(&KeyInput::character(character))
+                .expect("typing cannot fail");
+        }
+        let index = session
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.token() == Some(PhraseToken::new(1)))
+            .expect("the fixture candidate is offered");
+        session.select(index).expect("selection cannot fail");
+
+        // Backspace the buffer down to the forcing's floor.
+        for _ in 0..9 {
+            assert_eq!(
+                session.process_key(&KeyInput::plain(LogicalKey::Backspace)),
+                Ok(KeyOutcome::Consumed),
+                "erase pops while input remains"
+            );
+        }
+        assert_eq!(session.raw_input(), "ni");
+        assert!(
+            session.guess_sentence().expect("guess cannot fail"),
+            "the floor still walks"
+        );
+        assert_eq!(
+            session.sentence_text(0).expect("row 0 exists"),
+            "\u{4f60}",
+            "the forced phrase is the floor's row"
+        );
+
+        // The re-type continues the open composition with the forcing.
+        for character in "haoshijie".chars() {
+            session
+                .process_key(&KeyInput::character(character))
+                .expect("typing cannot fail");
+        }
+        assert!(
+            session.guess_sentence().expect("guess cannot fail"),
+            "the retype walks"
+        );
+        assert!(
+            session
+                .sentence_text(0)
+                .expect("row 0 exists")
+                .starts_with('\u{4f60}'),
+            "the forcing survived the backspace and the retype"
+        );
+
+        // The all-or-nothing erase (nothing left to pop) un-selects
+        // everything, store included.
+        for _ in 0..11 {
+            let _ = session.process_key(&KeyInput::plain(LogicalKey::Backspace));
+        }
+        assert!(
+            !session.clear_constraint(0),
+            "the un-select cleared the store"
+        );
     }
 
     /// The train fallback's boundary: a row-0 choose constrains nothing

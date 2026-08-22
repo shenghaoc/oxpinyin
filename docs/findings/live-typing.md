@@ -158,9 +158,9 @@ to re-seeding turns it red (63 diff lines, exit 2).
   composition — the shape the frontend's keystroke flow produces — so
   the #141 cursor contracts keep their fresh-composition semantics.
   This is **not** "constraint lifetime fixed": a shrinking re-parse
-  (backspace) still drops the forcing, permanently — measured below
-  (§"Backspace-after-choose, measured") and closed as its own follow-up,
-  not by this port.
+  (backspace) still dropped the forcing, permanently — measured below
+  (§"Backspace-after-choose") and closed by the follow-up
+  `fix/constraint-shrink-survival`, not by this port.
 - **L3** — `Session::train` walks the last lookup's 1-best result
   against the store (`train_result3`): forced phrases plus the first
   decoded phrase after each run train, the predecessor threading over
@@ -181,42 +181,42 @@ class itself — those probes now compare the constrained walk against
 the oracle's constrained walk, and the remaining sentence-surface
 residuals (the 17 first-6 rows) are untouched, as scoped.
 
-## Backspace-after-choose, measured (opt-in)
+## Backspace-after-choose — measured, then closed
 
-`LIVETYPING_BACKSPACE=1 ./live-typing-diff …` adds a `bp-*` phase: choose
-你 for "ni" inside "nihaoshijie", shrink the re-parsed buffer one
-keystroke at a time down to "ni", then re-type to the full buffer. It is
-opt-in because its divergence is the recorded parse-survival divergence
-(`upstream-divergences.md`: upstream's constraints survive every
-re-parse; the engine continues only an extending one) — measuring it
-must not turn the green L-class gate red.
+The `bp-*` phase (part of the default differential): choose 你 for "ni"
+inside "nihaoshijie", shrink the re-parsed buffer one keystroke at a
+time down to "ni", then re-type to the full buffer.
 
-Measured (190 diverging lines over the ladder + retype):
+**Measured before the closure** (190 diverging lines): every shrink step
+dropped the forcing on the engine — window re-anchored at 0, free rows —
+and the retype continued a store-less composition, so the forcing was
+not recoverable by typing: a mid-composition typo fix silently
+evaporated the earlier selection. A correctness defect on its own
+terms, independent of parity.
 
-- **Every shrink step** — the oracle keeps 你 forced: rows
-  `你好时机/你好世纪` (at "nihaoshiji"), `你和/你会` (at "nih", the
-  incomplete tail), with the window anchored at the cursor (好事/好似…,
-  n=101; 和/后/会…, n=1713). The engine starts the composition fresh at
-  the first shrink: window at offset 0 (你好/你/尼…, n=129/133), free
-  rows. The same two mechanisms as the closed L2 (window anchor, forced
-  vs free rows), re-introduced by the shrink.
-- **The "ni" floor** — the forcing exactly covers the buffer; the
-  oracle's surface is the L1 terminal shape (rows 你/你/尼, an
-  NBEST-bearing two-row window). The engine answers the free "ni".
-- **The retype** — the oracle's forcing survived the whole ladder and
-  constrains the re-typed buffer; the engine's fresh reset dropped it at
-  the first shrink, so the re-extension continues a store-less
-  composition. The forcing is not recoverable by typing.
+**Closed** (`fix/constraint-shrink-survival`): the parse rule is now
+"continues the re-parse of an OPEN composition whose buffer evolved
+from itself" — extension, shrink, or re-send — upstream's own shape for
+every keystroke a frontend drives. Open means *not completed by a
+selection*; a buffer that shrank TO the cursor (backspace ate the tail)
+is still open, and the re-extension continues it. Two shapes re-parse
+fresh: the selection-committed composition (the #141 cursor contracts'
+pinned rule) and a divergent buffer (a different string is a different
+composition — a stale selection-derived cursor must not mis-anchor its
+window). The capi parse clamps the surviving cursor into
+the shrunk buffer; the port's existing `validate` drops a forcing only
+when it stops spelling, and the selection record follows the survivors.
+The engine-internal backspace (`erase`) keeps the store the same way,
+and its all-or-nothing un-select now clears the store with the record.
 
-Two driver notes from building the probe: the ladder stops at "ni"
-(the cursor must never overrun one-past-end, where upstream's
-`_check_offset` aborts), and `pinyin_get_sentence` asserts
+The differential now runs the ladder IDENTICAL, floor and retype
+included. Two driver notes stand: the ladder stops at "ni" (the cursor
+must never overrun one-past-end, where upstream's `_check_offset`
+aborts) and skips "nih" — the incomplete single-letter tail where the
+FREE walks already disagree (engine [你和, 你会, 你和] vs oracle
+[你和, 你和, 你会], no choose, no constraint): the §5 tie class on a
+live-typing input, priced by the sentence-surface pins, not this
+differential's subject. And `pinyin_get_sentence` asserts
 `index < results.size()` on a non-empty set (`pinyin.cpp:1474`) — the
-probe now asks only the indices the candidate list proves, the
-frontend's own caller contract. That assert is logged in
-`upstream-divergences.md` (the engine answers false).
-
-Closing this gap is a follow-up decision, not part of the port: it
-needs the parse path to keep the store through a shrink and let
-validate drop what stops spelling — plus the selection-record rebuild
-on the shrunk prefix.
+probe asks only the indices the candidate list proves, the frontend's
+own caller contract; the assert is logged in `upstream-divergences.md`.
