@@ -1,0 +1,134 @@
+# Findings — W12 all-off TEXT-set tails (the six option-sweep residuals)
+
+Date: 2026-08-22 · Status: W12 enumeration; classes assigned, no fix.
+
+`docs/findings/option-bits.md` §"TEXT-set STOP triage" froze six inputs
+as W12 residuals measured by the live-oracle W10 control under
+ALL-BITS-OFF (`0x0`). This finding names each input's all-off behaviour
+on the corpus-tail scoring path — no oracle FFI, the frozen fixture and
+the shared tables only — and assigns each row its class. It does not
+touch ranking, the parser, or any pin.
+
+## Reproduction
+
+```bash
+PINYIN_EXPORT_DIR=/tmp/oxpinyin-export \
+PINYIN_MODEL_DIR=<extracted-model20> \
+cargo run -p pinyin-oracle --release --bin corpus-tail -- --all-off-tails
+```
+
+The `--all-off-tails` flag is this change's addition to the existing
+`bin/corpus-tail`: same setup as the corpus pass (exported redb tables,
+real unigrams from `interpolation2.text`, read-only session, the
+`fixtures/w4/oracle-candidates.txt` fixture), driven at
+`OptionBits::default()` (`0x0`). Read-only, `Result` on I/O, no panic
+path. The six W10-era numbers reproduce exactly: shared prefix 8 / 6 / 4
+and `n=` 31 / 16 / 22 for `cang` / `sang` / `lve`, `n=21` for `ang`.
+
+No zhuyin scheme 7, double scheme 30, or toned incomplete key is sent
+anywhere — the inputs are bare latin words.
+
+### Why the 0x18a fixture row is the 0x0 answer
+
+The fixture was captured at the parity word `0x18a`
+(`oracle-candidates-v1`); the W10 control ran the oracle at `0x0`. For
+the four fixture-backed inputs the two words admit the same answer, so
+the fixture row is the pin's all-off list:
+
+1. `cang`, `sang`, `lve`, `ang` are unflagged `pinyin_index` entries
+   (`pinyin_parser_table.h:46,463,311,15`) — `check_pinyin_options`
+   (`pinyin_parser2.cpp:38-58`) passes them under any option word.
+2. `PINYIN_INCOMPLETE` gates only the initial-only entries (`:41-46`),
+   and the full-pinyin DP prefers the fewest keys at equal length
+   (`:301-303`), so `cang` selects `[cang]`, never `[c][ang]`, under
+   either word.
+3. None of the four keys is a divided-table or resplit-table orig
+   (`special_table.h:9-118`), so the `0x80`/`0x100` bits are inert.
+4. The guess path never reads `PINYIN_INCOMPLETE` (no occurrence in
+   `pinyin.cpp`).
+
+Engine-side, our lists for all four are INVARIANT between `0x0` and the
+parity word (measured below), and the fixture comparison lands on the
+same prefix/`n` the live-oracle W10 control froze — the strongest check
+available without re-linking the oracle.
+
+## The six rows
+
+`ang` is carried as a seventh row: it is the canonical key the
+`agn`/`amg` correction aliases resolve to (`pinyin_parser_table.h:11,13,15`
+share table index 4), so the alias rows are read against it.
+
+| input | all-off parse (consumed) | our top-1 | pin top-1 | first divergence / `n` | class |
+|---|---|---|---|---|---|
+| `cang` | `cang` (4/4) | 藏 | 藏 | rank 9; `n=31` both | TEXT-set gap |
+| `sang` | `sang` (4/4) | 桑 | 桑 | rank 7; `n=16` both | TEXT-set gap (same mechanism as `cang`) |
+| `lve` | `lve` (3/3) | 略 | 略 | rank 5; `n=22` both | TEXT-set gap (same mechanism as `cang`) |
+| `lue` | `lu'e` (3/3) | 路 | — no fixture row; all-off cross-engine IDENTICAL (frozen W10 control) | — | correction-bit alias of `lve` |
+| `agn` | `a` (1/3; no complete parse) | 阿 | — same | — | correction-bit alias of `ang` |
+| `amg` | `a` (1/3) | 阿 | — same | — | same mechanism as `agn`, other bit, same canonical |
+| `ang` *(canonical twin)* | `ang` (3/3) | 昂 | 昂 | rank 4; `n=21` both | TEXT-set gap (same mechanism as `cang`) |
+
+## Shared mechanisms
+
+Three mechanisms cover the seven rows; each is stated once.
+
+**Native-key tail (cang, sang, lve, ang).** One mechanism: a single
+native syllable, parsed to the same one-key matrix by both engines under
+every option word; top-1 and the count-backed head agree, and the
+depth-10 window diverges only in the rare-glyph tail. Measured diverging
+sets (positions at depth 10 missing from the other side's top-10):
+
+| input | shared prefix | ours only | pin only |
+|---|---:|---|---|
+| `cang` | 8 | 鸧 嵢 | 螥 鶬 |
+| `sang` | 6 | 桒 槡 | 䘮 褬 |
+| `lve` | 4 | 畧 㔀 䌎 圙 | 擽 㗕 攊 䤚 |
+| `ang` | 3 | 枊 䇦 骯 | 昻 䩕 䍩 |
+
+Every glyph across the eight diverging sets has an `interpolation2.text`
+single-character count of 0–3 (鸧 3, 嵢 2, 桒/畧/枊 3, the rest 0), while
+the agreeing heads are count-backed (藏 10122, 桑 4382, 略 3501, 昂 1494,
+盎 32, 卬 26). The two engines order the near-zero tail differently —
+ours sits on `interpolation2.text` counts, the pin on its phrase-index
+build — which is the same open deep-tail question as the corpus 4,058
+prefix-10 residual (`corpus-tail.md` §"The 4,058 prefix-10 residual").
+This is the TEXT-set gap class: not a parse, correction-bit, or
+incomplete issue; a fix moves ranking and would need the same
+maintainer-approved re-freeze as Class A.
+
+**Correction alias, same canonical (agn, amg).** One mechanism with two
+bits: under all-off neither `agn` nor `amg` completes a parse
+(`pinyin_index` has no bare `gn`/`mg`), both fall back to `[a]`, and the
+all-off cross-engine verdict is IDENTICAL (frozen W10 control; our
+all-off list is 阿…, `n=8`). The W12 tail exists only when the bit is
+set: measured same-engine, `agn`+`CORRECT_GN_NG` and `amg`+`CORRECT_MG_NG`
+each produce a list EQUAL to native `ang` (`n=21` both) — the corrected
+parse is the canonical key (`content_table` index 4), so the fork-default
+cross-engine tail is exactly `ang`'s native-key tail above.
+
+**Correction alias, distinct canonical (lue).** The `CORRECT_UE_VE`
+alias of `lve`: under all-off it parses `lu'e` (cross-engine IDENTICAL,
+frozen W10 control; our list starts 路, `n=206`), and with the bit set
+the measured same-engine list EQUALS native `lve` (`n=22`) — the tail it
+contributes under fork-default is `lve`'s native-key tail.
+
+## Scope and pins
+
+No parser behaviour, scheme table, `loses_to`, Class A material,
+init/slurp, apostrophe, offset-decode, or `pinyin_clear_constraint` code
+is touched. The default-profile pins stand unchanged — the corpus pass
+on this branch still prints 12 top-1 misses (10,178 top-1), 0 top-5
+misses / 0 absent (10,190 / 10,178), 1,036 order-only, and 4,058 of
+98,930 (94,872 overlap) — and the sentence pins are untouched. The
+`run-option-sweep.sh` W12 exclusion list already carries these inputs;
+no gate changes.
+
+## What this finding closes
+
+The six W12 all-off TEXT-set tails are named, reproduced on the
+fixture-based scoring path (no live oracle), and classed: four rows are
+one native-key TEXT-set gap (`cang`/`sang`/`lve` plus the `ang` twin),
+and three inputs are correction-bit aliases whose tails *are* two of
+those native gaps (`lue`→`lve`, `agn`/`amg`→`ang`). W12's option-sweep
+residual is no longer unnamed; resolving it is the same ranking re-freeze
+that Class A waits on.

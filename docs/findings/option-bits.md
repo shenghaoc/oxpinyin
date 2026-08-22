@@ -194,6 +194,8 @@ Bare `gn`/`mg`/`on` are not in `pinyin_index` (80/80/17 stemmed rows).
 ## TEXT-set STOP triage (all-off control)
 
 Control: same top-10 ABI assertion under ALL-BITS-OFF (`0x0`).
+Each row is enumerated, reproduced on the fixture-based scoring path
+(no live oracle), and classed in `docs/findings/all-off-tails.md`.
 
 | Input | All-off verdict | Owner | Action |
 |---|---|---|---|
