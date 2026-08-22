@@ -150,13 +150,17 @@ to re-seeding turns it red (63 diff lines, exit 2).
   input is consumed but non-empty: the constrained (or, after a row-0
   choose, free) walk answers the terminal-choose surface the
   remaining-input model structurally could not.
-- **L2** — the reset split: `reset_composition` (the parse path) keeps
-  the store, the selection record, and the cursor; only
-  `Session::reset`/`pinyin_reset` clears them (`pinyin.cpp:2697`'s
-  rule). The parse path continues the composition only on the
-  extending re-parse of an incomplete composition — the shape the
-  frontend's keystroke flow produces — so the #141 cursor contracts
-  keep their fresh-composition semantics.
+- **L2 — closed for forward extension only.** The reset split:
+  `reset_composition` (the parse path) keeps the store, the selection
+  record, and the cursor; only `Session::reset`/`pinyin_reset` clears
+  them (`pinyin.cpp:2697`'s rule). The parse path continues the
+  composition only on the strictly extending re-parse of an incomplete
+  composition — the shape the frontend's keystroke flow produces — so
+  the #141 cursor contracts keep their fresh-composition semantics.
+  This is **not** "constraint lifetime fixed": a shrinking re-parse
+  (backspace) still drops the forcing, permanently — measured below
+  (§"Backspace-after-choose, measured") and closed as its own follow-up,
+  not by this port.
 - **L3** — `Session::train` walks the last lookup's 1-best result
   against the store (`train_result3`): forced phrases plus the first
   decoded phrase after each run train, the predecessor threading over

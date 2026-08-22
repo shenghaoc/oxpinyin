@@ -221,13 +221,16 @@ inputs (the pin-built `.so` SIGABRTs).
 
 - **Upstream source cite:** `src/pinyin.cpp:1463-1482`
   (`pinyin_get_sentence`).
-- **Mechanism:** an empty result set answers `false` (defined), but a
-  non-empty one asserts `index < results.size()` — asking one row past
-  the set aborts.
+- **Mechanism:** the API is inconsistent with itself on the same caller
+  error — an empty result set answers `false` (defined), but a
+  non-empty one asserts `index < results.size()`: asking one row past
+  the set SIGABRTs. Two behaviors for one misuse, one of them a crash.
 - **What oxpinyin does instead:** `false` past the row count, including
-  on a non-empty set (the W14 decoded-or-false gate).
+  on a non-empty set (the W14 decoded-or-false gate) — the empty-set
+  branch's own behavior, applied uniformly.
 - **Externally observable:** yes — upstream SIGABRTs on the call;
   oxpinyin returns false. Found while teaching the live-typing driver
   the caller contract: the frontend renders exactly the NBEST rows the
   candidate list carries, so a proved-index-bound question never trips
-  it on either engine.
+  it on either engine. Report-back batch: file with the aux over-read
+  as an internal-inconsistency pair, not a bare assert.
