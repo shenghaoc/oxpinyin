@@ -423,6 +423,11 @@ impl WriteTxn for RedbWriteTxn<'_> {
 /// The default store backend.
 pub type DefaultStore = RedbStore;
 
+#[cfg(feature = "lmdb")]
+mod lmdb;
+#[cfg(feature = "lmdb")]
+pub use lmdb::{LmdbReadSnapshot, LmdbStore};
+
 // ── error mapping ──────────────────────────────────────────────────
 
 fn map_database_error(e: redb::DatabaseError) -> StoreError {
@@ -471,294 +476,315 @@ fn map_compaction_error(e: redb::CompactionError) -> StoreError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    macro_rules! store_tests {
+        ($mod:ident, $store:ty, $ext:literal) => {
+            mod $mod {
+                use super::super::*;
 
-    fn temp_path(tag: &str) -> std::path::PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("oxpinyin-store-{tag}-{}.redb", std::process::id(),));
-        let _ = std::fs::remove_file(&path);
-        path
+                fn temp_path(tag: &str) -> std::path::PathBuf {
+                    let path = std::env::temp_dir().join(format!(
+                        "oxpinyin-store-{}-{tag}-{}.{}",
+                        stringify!($mod),
+                        std::process::id(),
+                        $ext,
+                    ));
+                    cleanup(&path);
+                    path
+                }
+
+                fn cleanup(path: &std::path::Path) {
+                    let _ = std::fs::remove_file(path);
+                    let lock = format!("{}-lock", path.display());
+                    let _ = std::fs::remove_file(&lock);
+                }
+
+                #[test]
+                fn multi_table_write() {
+                    let path = temp_path("multi-table");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("alpha", b"k1", b"v1")?;
+                            txn.put("beta", b"k2", b"v2")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(store.get("alpha", b"k1").unwrap(), Some(b"v1".to_vec()));
+                    assert_eq!(store.get("beta", b"k2").unwrap(), Some(b"v2".to_vec()));
+                    assert_eq!(store.get("alpha", b"k2").unwrap(), None);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn atomic_rollback() {
+                    let path = temp_path("rollback");
+                    let store = <$store>::create(&path).unwrap();
+                    let result: Result<(), _> = store.write(|txn| {
+                        txn.put("t", b"a", b"1")?;
+                        txn.put("t", b"b", b"2")?;
+                        txn.put("u", b"c", b"3")?;
+                        Err(StoreError::Backend("deliberate rollback".into()))
+                    });
+                    assert!(result.is_err());
+                    assert_eq!(store.get("t", b"a").unwrap(), None);
+                    assert_eq!(store.get("t", b"b").unwrap(), None);
+                    assert_eq!(store.get("u", b"c").unwrap(), None);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn read_your_writes() {
+                    let path = temp_path("ryw");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"key", b"val")?;
+                            assert_eq!(txn.get("t", b"key")?, Some(b"val".to_vec()));
+                            Ok(())
+                        })
+                        .unwrap();
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn range_included_included() {
+                    let path = temp_path("range-ii");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"a", b"1")?;
+                            txn.put("t", b"b", b"2")?;
+                            txn.put("t", b"c", b"3")?;
+                            txn.put("t", b"d", b"4")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    let mut rows = Vec::new();
+                    store
+                        .range(
+                            "t",
+                            Bound::Included(b"b".as_slice()),
+                            Bound::Included(b"c".as_slice()),
+                            &mut |k, v| {
+                                rows.push((k.to_vec(), v.to_vec()));
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(rows.len(), 2);
+                    assert_eq!(rows[0].0, b"b");
+                    assert_eq!(rows[0].1, b"2");
+                    assert_eq!(rows[1].0, b"c");
+                    assert_eq!(rows[1].1, b"3");
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn range_included_unbounded() {
+                    let path = temp_path("range-iu");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"a", b"1")?;
+                            txn.put("t", b"b", b"2")?;
+                            txn.put("t", b"c", b"3")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    let mut keys = Vec::new();
+                    store
+                        .range(
+                            "t",
+                            Bound::Included(b"b".as_slice()),
+                            Bound::Unbounded,
+                            &mut |k, _v| {
+                                keys.push(k.to_vec());
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(keys, vec![b"b".to_vec(), b"c".to_vec()]);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn remove_in_write() {
+                    let path = temp_path("remove");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v")?;
+                            txn.remove("t", b"k")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(store.get("t", b"k").unwrap(), None);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn is_empty_lifecycle() {
+                    let path = temp_path("empty");
+                    let store = <$store>::create(&path).unwrap();
+                    assert!(store.is_empty("t").unwrap());
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert!(!store.is_empty("t").unwrap());
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn write_returns_closure_value() {
+                    let path = temp_path("write-ret");
+                    let store = <$store>::create(&path).unwrap();
+                    let val: u32 = store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v")?;
+                            Ok(42u32)
+                        })
+                        .unwrap();
+                    assert_eq!(val, 42);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn compact_preserves_data() {
+                    let path = temp_path("compact");
+                    let mut store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    store.compact().unwrap();
+                    assert_eq!(store.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                // ── snapshot tests ─────────────────────────────────
+
+                #[test]
+                fn snapshot_consistency() {
+                    let path = temp_path("snap-consist");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v1")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    let snap = store.snapshot().unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v2")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v1".to_vec()));
+                    assert_eq!(store.get("t", b"k").unwrap(), Some(b"v2".to_vec()));
+                    drop(snap);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn snapshot_reuse() {
+                    let path = temp_path("snap-reuse");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    let snap = store.snapshot().unwrap();
+                    assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+                    assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+                    drop(snap);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn snapshot_correctness() {
+                    let path = temp_path("snap-correct");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"a", b"1")?;
+                            txn.put("t", b"b", b"2")?;
+                            txn.put("t", b"c", b"3")?;
+                            txn.put("u", b"x", b"9")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    let snap = store.snapshot().unwrap();
+
+                    assert_eq!(snap.get("t", b"a").unwrap(), Some(b"1".to_vec()));
+                    assert_eq!(snap.get("t", b"missing").unwrap(), None);
+                    assert_eq!(snap.get("u", b"x").unwrap(), Some(b"9".to_vec()));
+
+                    assert!(!snap.is_empty("t").unwrap());
+                    assert!(snap.is_empty("nonexistent").unwrap());
+
+                    let mut keys = Vec::new();
+                    snap.for_each("t", &mut |k, _v| {
+                        keys.push(k.to_vec());
+                        Ok(())
+                    })
+                    .unwrap();
+                    assert_eq!(keys, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+
+                    let mut range_keys = Vec::new();
+                    snap.range(
+                        "t",
+                        Bound::Included(b"b".as_slice()),
+                        Bound::Included(b"c".as_slice()),
+                        &mut |k, _v| {
+                            range_keys.push(k.to_vec());
+                            Ok(())
+                        },
+                    )
+                    .unwrap();
+                    assert_eq!(range_keys, vec![b"b".to_vec(), b"c".to_vec()]);
+
+                    let mut range_unbound = Vec::new();
+                    snap.range(
+                        "t",
+                        Bound::Included(b"b".as_slice()),
+                        Bound::Unbounded,
+                        &mut |k, _v| {
+                            range_unbound.push(k.to_vec());
+                            Ok(())
+                        },
+                    )
+                    .unwrap();
+                    assert_eq!(range_unbound, vec![b"b".to_vec(), b"c".to_vec()]);
+
+                    drop(snap);
+                    drop(store);
+                    cleanup(&path);
+                }
+            }
+        };
     }
 
-    #[test]
-    fn multi_table_write() {
-        let path = temp_path("multi-table");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("alpha", b"k1", b"v1")?;
-                txn.put("beta", b"k2", b"v2")?;
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(store.get("alpha", b"k1").unwrap(), Some(b"v1".to_vec()));
-        assert_eq!(store.get("beta", b"k2").unwrap(), Some(b"v2".to_vec()));
-        assert_eq!(store.get("alpha", b"k2").unwrap(), None);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
+    store_tests!(redb, RedbStore, "redb");
 
-    #[test]
-    fn atomic_rollback() {
-        let path = temp_path("rollback");
-        let store = RedbStore::create(&path).unwrap();
-        let result: Result<(), _> = store.write(|txn| {
-            txn.put("t", b"a", b"1")?;
-            txn.put("t", b"b", b"2")?;
-            txn.put("u", b"c", b"3")?;
-            Err(StoreError::Backend("deliberate rollback".into()))
-        });
-        assert!(result.is_err());
-        assert_eq!(store.get("t", b"a").unwrap(), None);
-        assert_eq!(store.get("t", b"b").unwrap(), None);
-        assert_eq!(store.get("u", b"c").unwrap(), None);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn read_your_writes() {
-        let path = temp_path("ryw");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"key", b"val")?;
-                assert_eq!(txn.get("t", b"key")?, Some(b"val".to_vec()));
-                Ok(())
-            })
-            .unwrap();
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn range_included_included() {
-        let path = temp_path("range-ii");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"a", b"1")?;
-                txn.put("t", b"b", b"2")?;
-                txn.put("t", b"c", b"3")?;
-                txn.put("t", b"d", b"4")?;
-                Ok(())
-            })
-            .unwrap();
-        let mut rows = Vec::new();
-        store
-            .range(
-                "t",
-                Bound::Included(b"b".as_slice()),
-                Bound::Included(b"c".as_slice()),
-                &mut |k, v| {
-                    rows.push((k.to_vec(), v.to_vec()));
-                    Ok(())
-                },
-            )
-            .unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].0, b"b");
-        assert_eq!(rows[0].1, b"2");
-        assert_eq!(rows[1].0, b"c");
-        assert_eq!(rows[1].1, b"3");
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn range_included_unbounded() {
-        let path = temp_path("range-iu");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"a", b"1")?;
-                txn.put("t", b"b", b"2")?;
-                txn.put("t", b"c", b"3")?;
-                Ok(())
-            })
-            .unwrap();
-        let mut keys = Vec::new();
-        store
-            .range(
-                "t",
-                Bound::Included(b"b".as_slice()),
-                Bound::Unbounded,
-                &mut |k, _v| {
-                    keys.push(k.to_vec());
-                    Ok(())
-                },
-            )
-            .unwrap();
-        assert_eq!(keys, vec![b"b".to_vec(), b"c".to_vec()]);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn remove_in_write() {
-        let path = temp_path("remove");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"k", b"v")?;
-                txn.remove("t", b"k")?;
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(store.get("t", b"k").unwrap(), None);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn is_empty_lifecycle() {
-        let path = temp_path("empty");
-        let store = RedbStore::create(&path).unwrap();
-        assert!(store.is_empty("t").unwrap());
-        store
-            .write(|txn| {
-                txn.put("t", b"k", b"v")?;
-                Ok(())
-            })
-            .unwrap();
-        assert!(!store.is_empty("t").unwrap());
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn write_returns_closure_value() {
-        let path = temp_path("write-ret");
-        let store = RedbStore::create(&path).unwrap();
-        let val: u32 = store
-            .write(|txn| {
-                txn.put("t", b"k", b"v")?;
-                Ok(42u32)
-            })
-            .unwrap();
-        assert_eq!(val, 42);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn compact_preserves_data() {
-        let path = temp_path("compact");
-        let mut store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"k", b"v")?;
-                Ok(())
-            })
-            .unwrap();
-        store.compact().unwrap();
-        assert_eq!(store.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    // ── snapshot tests ─────────────────────────────────────────────
-
-    #[test]
-    fn snapshot_consistency() {
-        let path = temp_path("snap-consist");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"k", b"v1")?;
-                Ok(())
-            })
-            .unwrap();
-        let snap = store.snapshot().unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"k", b"v2")?;
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v1".to_vec()));
-        assert_eq!(store.get("t", b"k").unwrap(), Some(b"v2".to_vec()));
-        drop(snap);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn snapshot_reuse() {
-        let path = temp_path("snap-reuse");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"k", b"v")?;
-                Ok(())
-            })
-            .unwrap();
-        let snap = store.snapshot().unwrap();
-        assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-        assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-        drop(snap);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn snapshot_correctness() {
-        let path = temp_path("snap-correct");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"a", b"1")?;
-                txn.put("t", b"b", b"2")?;
-                txn.put("t", b"c", b"3")?;
-                txn.put("u", b"x", b"9")?;
-                Ok(())
-            })
-            .unwrap();
-        let snap = store.snapshot().unwrap();
-
-        assert_eq!(snap.get("t", b"a").unwrap(), Some(b"1".to_vec()));
-        assert_eq!(snap.get("t", b"missing").unwrap(), None);
-        assert_eq!(snap.get("u", b"x").unwrap(), Some(b"9".to_vec()));
-
-        assert!(!snap.is_empty("t").unwrap());
-        assert!(snap.is_empty("nonexistent").unwrap());
-
-        let mut keys = Vec::new();
-        snap.for_each("t", &mut |k, _v| {
-            keys.push(k.to_vec());
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(keys, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
-
-        let mut range_keys = Vec::new();
-        snap.range(
-            "t",
-            Bound::Included(b"b".as_slice()),
-            Bound::Included(b"c".as_slice()),
-            &mut |k, _v| {
-                range_keys.push(k.to_vec());
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(range_keys, vec![b"b".to_vec(), b"c".to_vec()]);
-
-        let mut range_unbound = Vec::new();
-        snap.range(
-            "t",
-            Bound::Included(b"b".as_slice()),
-            Bound::Unbounded,
-            &mut |k, _v| {
-                range_unbound.push(k.to_vec());
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(range_unbound, vec![b"b".to_vec(), b"c".to_vec()]);
-
-        drop(snap);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
+    #[cfg(feature = "lmdb")]
+    store_tests!(lmdb, LmdbStore, "lmdb");
 }
