@@ -1,5 +1,5 @@
 [package]
-name = "oxpinyin-data"
+name = "oxpinyin-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,9 +11,4 @@ description = "oxpinyin internal crate — no stability promise; use oxpinyin-en
 workspace = true
 
 [dependencies]
-oxpinyin-core = { workspace = true }
-oxpinyin-store = { workspace = true }
-compact_str.workspace = true
-
-[dev-dependencies]
 redb = { workspace = true }
