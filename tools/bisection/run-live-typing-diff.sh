@@ -131,7 +131,16 @@ fi
 echo "post-choose surface active on both sides"
 
 echo "--- differential (full log: live-typing surface + train + export) ---"
-if diff -u "$ORACLE_LOG" "$CAPI_LOG" > /dev/null; then
+diff_status=0
+diff -u "$ORACLE_LOG" "$CAPI_LOG" > /dev/null || diff_status=$?
+if (( diff_status > 1 )); then
+    # diff's own failure (an unreadable log, an I/O error) is a harness
+    # failure, not a measured divergence — never the intentional exit 2.
+    echo "FAIL: could not compare the differential logs (diff status $diff_status)" >&2
+    rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
+    exit 1
+fi
+if (( diff_status == 0 )); then
     echo "live-typing-diff: IDENTICAL"
     grep -E '^(phrase|bigram):' "$CAPI_LOG"
     rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
