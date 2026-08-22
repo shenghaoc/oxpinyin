@@ -147,12 +147,13 @@ Ported divergences (recorded, not chased):
   was implemented and measured at 459/238/211 — a pin move, so it was
   rejected per the frozen-pin rule. Recorded for the upstream
   report-back; revisit only alongside a deliberate pin re-freeze.
-- The constraint machinery (`CONSTRAINT_ONESTEP`/`diff_result`) is not
-  ported; the engine's selection model re-seeds the remaining input from
-  the recorded history, which is the established W6 surface. The
-  offset-decode prefix context (§10) reproduces the user-visible effect —
-  mid-composition sentence rows carry the full prefix — without porting
-  the constraint trellis itself.
+- The constraint machinery (`CONSTRAINT_ONESTEP`/`diff_result`) **is
+  ported** (`feat/constraint-machinery`, 2026-08-22 — the store in
+  `constraint.rs`, the gated full-matrix walk, the reset split, the
+  constraint-aware train, `pinyin_clear_constraint`; measured in
+  `live-typing.md`). The remaining-input re-seed (the W6 surface) still
+  carries every empty-store decode — the frozen pins' shape — and the
+  §10 prefix context remains the display rule on that path.
 
 ## 4. Implementation record
 

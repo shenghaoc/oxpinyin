@@ -166,6 +166,18 @@ pub struct Session<D, L> {
     /// later `pinyin_get_sentence` must answer false rather than fall
     /// back to the pre-lookup raw form.
     sentence_lookup_active: bool,
+    /// The §3 constraint store — one cell per raw-buffer byte position,
+    /// the coordinate space the scan matrix and the choose cursor share.
+    /// Survives `reset_composition` (the parse path) exactly as
+    /// upstream's instance-level `m_constraints` survive
+    /// `pinyin_parse_more_full_pinyins`; cleared only by the full
+    /// [`Session::reset`] (`pinyin_reset`'s rule).
+    constraints: crate::constraint::ConstraintStore,
+    /// The last sentence lookup's 1-best phrases at their absolute
+    /// positions — upstream's `m_nbest_results[0]`, the result
+    /// `pinyin_train` walks against the constraint store
+    /// (`train_result3`). Cleared wherever the rows are.
+    last_result: Vec<crate::constraint::PhraseSpan>,
     /// Reused across keystrokes: the scan's candidate buffer.
     scratch_collected: Vec<Candidate>,
     /// Reused Schwartzian buffer for the three-key order.
@@ -220,6 +232,8 @@ where
             nbest_rows: Vec::new(),
             nbest_history: Vec::new(),
             sentence_lookup_active: false,
+            constraints: crate::constraint::ConstraintStore::default(),
+            last_result: Vec::new(),
             scratch_collected: Vec::new(),
             scratch_ranked: Vec::new(),
             scratch_entries: Vec::new(),
@@ -369,8 +383,12 @@ where
         let text = candidate.text().to_owned();
         let advance = candidate.consumed_bytes();
         let token = token_override.or_else(|| candidate.token());
+        // The chosen span in the store's coordinates: the composition
+        // offset before the choose to the boundary it advances to.
+        let constraint_start = self.consumed;
+        let constraint_end = self.next_boundary(self.consumed.saturating_add(advance));
         if candidate.nbest_row().is_some() {
-            self.selected = text;
+            self.selected = text.clone();
         } else {
             self.selected.push_str(&text);
         }
@@ -398,9 +416,39 @@ where
                 self.history.extend(row.tokens.iter().copied());
             }
         }
-        self.consumed = self.next_boundary(self.consumed.saturating_add(advance));
+        // The §3 constraint writes (`pinyin_choose_candidate`,
+        // `pinyin.cpp:2576-2584`): a token-bearing candidate forces its
+        // span; an n-best row constrains only the phrases where it
+        // differs from the 1-best (`diff_result`) — a row-0 choose
+        // constrains nothing, exactly upstream.
+        if let Some(rank) = candidate.nbest_row() {
+            let best = self.nbest_rows.first().map(|row| row.spans.as_slice());
+            let Some(chosen) = self.nbest_rows.get(usize::from(rank)) else {
+                self.consumed = constraint_end;
+                self.refresh()?;
+                return self.selection_outcome();
+            };
+            if let Some(best) = best {
+                self.constraints
+                    .diff_result(best, &chosen.spans, self.raw.len());
+            }
+        } else if let Some(token) = token {
+            self.constraints.resize(self.raw.len() + 1);
+            self.constraints.add(
+                constraint_start,
+                constraint_end,
+                token,
+                compact_str::CompactString::from(text.as_str()),
+            );
+        }
+        self.consumed = constraint_end;
         self.refresh()?;
 
+        self.selection_outcome()
+    }
+
+    /// The common tail of [`Session::select_inner`].
+    fn selection_outcome(&self) -> Result<Selection, EngineError> {
         if self.consumed >= self.raw.len() {
             Ok(Selection::Completed)
         } else {
@@ -408,21 +456,29 @@ where
         }
     }
 
-    /// Trains the recorded selection through the user-model seam.
+    /// Trains the recorded sentence through the user-model seam.
     ///
-    /// Walks the sentence recorded so far — the tokens of every phrase the
-    /// user pinned through [`Session::select`], in order — and calls
-    /// [`UserModel::observe`] once per token with the preceding tokens as
-    /// history. The first token therefore observes against an empty history,
-    /// which the pinned store maps to `sentence_start`
-    /// (`docs/findings/user-store.md` §2.1). The C ABI's `pinyin_train` is
-    /// this call: per-candidate selection ([`Session::select`]) only records
+    /// The §3 constraint-aware walk (`train_result3`,
+    /// `phonetic_lookup.h:841-935`): the last sentence lookup's 1-best
+    /// result is walked phrase by phrase against the constraint store — a
+    /// phrase trains when it is user-forced (`OneStep`) or when
+    /// `train_next` is set (the first decoded phrase after each forced
+    /// run, where propagation stops), and the bigram predecessor advances
+    /// over **every** phrase, trained or not. A user who forces 你 for
+    /// "ni" and commits the decoded 好 therefore trains 你→好, not just
+    /// sentence_start→你 (the L3 surface, `docs/findings/live-typing.md`).
+    ///
+    /// Without a decoded result — the fixture fallback models, or no
+    /// lookup since the last reset — the selection history stands in: one
+    /// [`UserModel::observe`] per pinned token with the preceding tokens
+    /// as context (`docs/findings/user-store.md` §2.1). The C ABI's
+    /// `pinyin_train` is this call; per-candidate selection only records
     /// the constraint, and the bigram update is deferred to here (§2.2).
     /// Learning-off callers omit it entirely.
     ///
-    /// Re-calling without new selections re-observes the same sentence, which
-    /// is the upstream behaviour (a second `pinyin_train` doubles the counts —
-    /// there is no guard upstream either).
+    /// Re-calling without new selections re-observes the same sentence,
+    /// which is the upstream behaviour (a second `pinyin_train` doubles
+    /// the counts — there is no guard upstream either).
     ///
     /// # Errors
     ///
@@ -434,11 +490,72 @@ where
         U: UserModel<Token = PhraseToken>,
         U::Error: Display,
     {
+        // The constrained walk applies when the result actually carries
+        // user forcings. A result without any — a row-0 choose constrains
+        // nothing, exactly upstream — falls to the selection record: the
+        // engine's row chooses record tokens where upstream keeps the
+        // MatchResult, so the record is the stand-in (`diff_result` adds
+        // cells only for the differing phrases).
+        let constrained = self
+            .last_result
+            .iter()
+            .any(|span| self.constraints.is_one_step_at(span.start));
+        if constrained {
+            let mut context: Vec<PhraseToken> = Vec::with_capacity(self.last_result.len());
+            let mut train_next = false;
+            for span in &self.last_result {
+                let forced = self.constraints.is_one_step_at(span.start);
+                if train_next || forced {
+                    train_next = forced;
+                    user.observe(&context, &span.token)
+                        .map_err(|error| EngineError::UserModel(error.to_string()))?;
+                }
+                context.push(span.token);
+            }
+            return Ok(());
+        }
         for (index, token) in self.history.iter().enumerate() {
             user.observe(&self.history[..index], token)
                 .map_err(|error| EngineError::UserModel(error.to_string()))?;
         }
         Ok(())
+    }
+
+    /// Clears the constraint run at `offset` — `pinyin_clear_constraint`
+    /// (`pinyin.cpp:2641-2647`). The offset indexes the store's
+    /// coordinate space (raw-buffer byte positions, #141's law); a hit
+    /// anywhere inside a forced run un-forces the whole run. The
+    /// selection record follows the surviving forcings, so the cleared
+    /// phrase's text leaves the preedit and its token leaves the record.
+    ///
+    /// Returns `false` for a free cell or an out-of-range offset —
+    /// upstream's own defined return, never an abort.
+    #[must_use]
+    pub fn clear_constraint(&mut self, offset: usize) -> bool {
+        if !self.constraints.clear_by_offset(offset) {
+            return false;
+        }
+        self.rebuild_selection_from_constraints();
+        true
+    }
+
+    /// Rebuilds the selection record (`selected`, `consumed`, `history`)
+    /// from the surviving forcings. Upstream keeps no such record — the
+    /// frontend tracks its own cursor — so the store is the engine's
+    /// single source once forcings exist.
+    fn rebuild_selection_from_constraints(&mut self) {
+        match self.constraints.selection() {
+            Some((selected, consumed, history)) => {
+                self.selected = selected.into_string();
+                self.consumed = consumed.min(self.raw.len());
+                self.history = history;
+            }
+            None => {
+                self.selected.clear();
+                self.consumed = 0;
+                self.history.clear();
+            }
+        }
     }
 
     /// The sentence recorded so far: the token of every phrase the user
@@ -492,15 +609,35 @@ where
     }
 
     /// Discards the composition.
+    ///
+    /// The full reset — upstream's `pinyin_reset`: the input, the
+    /// selection record, the n-best rows, and the constraint store all
+    /// go (`pinyin.cpp:2697` clears `m_constraints`).
     pub fn reset(&mut self) {
-        self.raw.clear();
+        self.reset_composition();
         self.selected.clear();
         self.consumed = 0;
+        self.history.clear();
+        self.constraints.clear();
+    }
+
+    /// The parse-path reset: the composition's parse state goes, the
+    /// selection record and the constraint store stay.
+    ///
+    /// `pinyin_parse_more_full_pinyins` replaces the input buffer — the
+    /// frontend re-sends the whole buffer every keystroke — and never
+    /// touches upstream's instance-level `m_constraints` or the chosen
+    /// cursor (`pinyin.cpp:1497-1533`); the next `guess_sentence`
+    /// re-validates the surviving forcings against the new matrix. This
+    /// is that split's engine half: the L2 lifetime rule
+    /// (`docs/findings/live-typing.md`).
+    pub fn reset_composition(&mut self) {
+        self.raw.clear();
         self.parsed_prefix = 0;
         self.candidates = CandidateList::default();
-        self.history.clear();
         self.nbest_rows.clear();
         self.nbest_history.clear();
+        self.last_result.clear();
         self.sentence_lookup_active = false;
     }
 
@@ -603,6 +740,16 @@ where
     /// upstream's `m_nbest_results` is cleared nowhere else — and
     /// [`Session::candidates`] prepends them while they live.
     ///
+    /// Which matrix the walk covers: an unconstrained decode with input
+    /// remaining is today's remaining-input walk (the W6 re-seed,
+    /// bit-identical under the frozen pins — the store is empty there).
+    /// Anything else with a non-empty raw buffer walks the **full**
+    /// matrix: a constrained composition (the §3 gates, the chosen
+    /// prefix forced) or a fully-consumed one (upstream's walk still
+    /// answers a terminal choose — the L1 surface,
+    /// `docs/findings/live-typing.md`), which the remaining-input model
+    /// structurally cannot.
+    ///
     /// Returns whether a lookup ran at all (upstream returns the lookup's
     /// `false` only for an empty key matrix; zero rows is still `true`).
     ///
@@ -610,10 +757,73 @@ where
     ///
     /// Returns [`EngineError`] when a backend fails during the lookup.
     pub fn guess_sentence(&mut self) -> Result<bool, EngineError> {
-        let remaining = &self.raw[self.consumed..];
         self.nbest_rows.clear();
         self.nbest_history.clear();
+        self.last_result.clear();
         self.sentence_lookup_active = true;
+        if self.raw.is_empty() {
+            return Ok(false);
+        }
+        let remaining_empty = self.consumed >= self.raw.len();
+        if !remaining_empty && (!self.constraints.is_active() || !self.model.has_real_unigrams()) {
+            return self.guess_over_remaining();
+        }
+        if !self.model.has_real_unigrams() {
+            // The pre-frequency fallback has no constrained form; with the
+            // input consumed there is nothing to fall back to either.
+            return Ok(false);
+        }
+
+        let graph = SegmentGraph::build_with_options(self.raw.as_bytes(), self.settings.options)
+            .map_err(EngineError::Graph)?;
+        let bound = graph.consumed();
+        if bound == 0 {
+            return Ok(false);
+        }
+        let matrix = build_scan_matrix(&graph, self.settings.options);
+
+        // `pinyin_update_constraints`: re-sync the store to the matrix —
+        // grow with free cells (forcings survive typing), shrink by
+        // truncation, drop forcings that overrun or no longer spell. If a
+        // forcing dropped (the buffer changed under it), the selection
+        // record follows the surviving forcings.
+        let mut store = core::mem::take(&mut self.constraints);
+        let dropped = store.validate(bound + 1, |start, end, token| {
+            crate::nbest::span_finds_token(&matrix, start, end, token, &self.dictionary)
+        });
+        self.constraints = store;
+        if dropped? {
+            self.rebuild_selection_from_constraints();
+        }
+
+        self.nbest_rows = crate::nbest::nbest_sentences(
+            &matrix,
+            bound,
+            &self.dictionary,
+            &self.model,
+            &[],
+            Some(&self.constraints),
+        )?;
+        // The full-matrix rows already carry the chosen prefix: a chosen
+        // row's record is its own whole path, so no lookup-time history
+        // snapshot stands behind it (the remaining-input walk's §10
+        // snapshot-restore pair does not apply).
+        self.nbest_history.clear();
+        self.last_result = self
+            .nbest_rows
+            .first()
+            .map_or_else(Vec::new, |row| row.spans.clone());
+
+        self.refresh()?;
+        Ok(true)
+    }
+
+    /// Today's remaining-input walk — the W6 re-seed surface, verbatim:
+    /// the trellis over `raw[consumed..]` seeded from the selection
+    /// history, the §10 text prefix, and the lookup-time history
+    /// snapshot a later row choice restores.
+    fn guess_over_remaining(&mut self) -> Result<bool, EngineError> {
+        let remaining = &self.raw[self.consumed..];
         if remaining.is_empty() {
             return Ok(false);
         }
@@ -625,6 +835,7 @@ where
             return Ok(false);
         }
 
+        let offset = self.consumed;
         self.nbest_rows = if self.model.has_real_unigrams() {
             let matrix = build_scan_matrix(&graph, self.settings.options);
             crate::nbest::nbest_sentences(
@@ -633,6 +844,7 @@ where
                 &self.dictionary,
                 &self.model,
                 &self.history,
+                None,
             )?
         } else {
             let scorer = Scorer::with_key_costs(
@@ -655,16 +867,28 @@ where
                 .map(|(candidate, tokens)| crate::nbest::NbestRow {
                     text: candidate.text().into(),
                     tokens,
+                    spans: Vec::new(),
                     keys: candidate.consumed_keys(),
                     span: candidate.consumed_bytes(),
                     cost: candidate.cost(),
                 })
                 .collect()
         };
-        // The rows above were seeded with the history as it stands right
-        // here; a later row selection restores this snapshot before extending
+        // The rows were seeded with the history as it stands right here;
+        // a later row selection restores this snapshot before extending
         // the record with the row's own tokens.
         self.nbest_history.clone_from(&self.history);
+        // The walk's positions are remaining-relative; the store and the
+        // train result are absolute.
+        for row in &mut self.nbest_rows {
+            for span in &mut row.spans {
+                span.start += offset;
+            }
+        }
+        self.last_result = self
+            .nbest_rows
+            .first()
+            .map_or_else(Vec::new, |row| row.spans.clone());
 
         if !self.selected.is_empty() {
             for row in &mut self.nbest_rows {
@@ -836,6 +1060,37 @@ where
         normalize_lookup_offset(self.raw.as_bytes(), offset)
     }
 
+    /// Whether a re-parse of `original` continues the current composition
+    /// (`CapiInstance::begin_parse`'s rule): the stored input is a strict
+    /// prefix of the new one and the composition is still incomplete.
+    /// Mid-composition keystrokes extend the buffer this way; a committed
+    /// composition, a backspace, or a fresh buffer does not.
+    #[must_use]
+    pub fn parse_continues(&self, stored: &[u8], original: &[u8]) -> bool {
+        self.consumed < self.raw.len()
+            && !stored.is_empty()
+            && original.len() > stored.len()
+            && original.starts_with(stored)
+    }
+
+    /// The filtered fewest-keys parse length of the WHOLE raw buffer —
+    /// the `pinyin_parse_more_*` return and `pinyin_get_parsed_input_length`
+    /// value, which are defined over the passed input, never the
+    /// remaining slice a mid-composition re-parse decodes from.
+    #[must_use]
+    pub fn full_parsed_len(&self) -> usize {
+        if self.raw.is_empty() {
+            return 0;
+        }
+        match SegmentGraph::build_with_options(self.raw.as_bytes(), self.settings.options) {
+            Ok(graph) => graph
+                .fewest_keys(self.settings.incomplete())
+                .last()
+                .map_or(0, Edge::to),
+            Err(_) => 0,
+        }
+    }
+
     /// Rounds `offset` up to the next character boundary of the raw input.
     ///
     /// The raw buffer only ever holds ASCII, so this is the identity in
@@ -865,8 +1120,15 @@ where
     /// deduplicated directly, with no sentence prepend.
     fn refresh(&mut self) -> Result<(), EngineError> {
         if self.consumed >= self.raw.len() {
-            self.candidates = CandidateList::default();
             self.parsed_prefix = 0;
+            self.candidates = CandidateList::default();
+            // A fully-consumed composition still carries its sentence
+            // rows — upstream's window prepends `m_nbest_results` whether
+            // or not any phrase candidate remains at the cursor (the L1
+            // terminal-choose surface).
+            let mut rows_only = Vec::new();
+            self.prepend_nbest_rows(&mut rows_only);
+            self.candidates.swap_items(&mut rows_only);
             return Ok(());
         }
 
@@ -972,25 +1234,7 @@ where
         // sort and its phrase-string dedup keeps the NBEST row (and the
         // lower n-best index) over any phrase candidate with the same
         // string (`pinyin.cpp:2290-2298`, `2058-2126`).
-        if !self.nbest_rows.is_empty() {
-            // Extend-then-rotate keeps `collected`'s allocation (the session
-            // scratch). Assigning a fresh `merged` vec would drop that
-            // capacity on every refresh that has n-best rows.
-            let nbest_n = self.nbest_rows.len();
-            collected.extend(self.nbest_rows.iter().enumerate().map(|(index, row)| {
-                Candidate::new(
-                    row.text.clone(),
-                    CandidateKind::Sentence,
-                    row.keys,
-                    row.span,
-                    row.cost,
-                    None,
-                    Some(u8::try_from(index).unwrap_or(u8::MAX)),
-                )
-            }));
-            collected.rotate_right(nbest_n);
-            dedup_by_text_keep_first(&mut collected);
-        }
+        self.prepend_nbest_rows(&mut collected);
 
         self.candidates.swap_items(&mut collected);
         collected.clear();
@@ -1001,6 +1245,33 @@ where
         self.scratch_window_phrase = window_phrase;
         self.scratch_window_addon = window_addon;
         Ok(())
+    }
+
+    /// Prepends the stored n-best rows onto `collected`, head first, then
+    /// drops every later candidate with the same text — upstream prepends
+    /// after the sort and its phrase-string dedup keeps the NBEST row
+    /// (and the lower n-best index) over any phrase candidate with the
+    /// same string (`pinyin.cpp:2290-2298`, `2058-2126`). Extend-then-
+    /// rotate keeps `collected`'s allocation — the session scratch on the
+    /// scan path, a fresh small vec on the fully-consumed path.
+    fn prepend_nbest_rows(&mut self, collected: &mut Vec<Candidate>) {
+        if self.nbest_rows.is_empty() {
+            return;
+        }
+        let nbest_n = self.nbest_rows.len();
+        collected.extend(self.nbest_rows.iter().enumerate().map(|(index, row)| {
+            Candidate::new(
+                row.text.clone(),
+                CandidateKind::Sentence,
+                row.keys,
+                row.span,
+                row.cost,
+                None,
+                Some(u8::try_from(index).unwrap_or(u8::MAX)),
+            )
+        }));
+        collected.rotate_right(nbest_n);
+        dedup_by_text_keep_first(collected);
     }
 
     /// Per-candidate sort frequencies on the pin's amplified scale, or
@@ -1931,7 +2202,8 @@ const fn is_batch_input_character(character: char) -> bool {
 mod tests {
     use oxpinyin_core::fixture::{FixtureDictionary, FixtureLanguageModel};
     use oxpinyin_core::{
-        Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey, UserModel,
+        Cost, Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey,
+        UserModel,
     };
 
     use super::{KeyOutcome, MAX_INPUT_BYTES, Selection, Session};
@@ -2391,6 +2663,7 @@ mod tests {
         session.nbest_rows = vec![NbestRow {
             text: "\u{884}".into(),
             tokens: vec![PhraseToken::new(9)],
+            spans: Vec::new(),
             keys: 1,
             span: 2,
             cost: 0,
@@ -2416,6 +2689,7 @@ mod tests {
         session.nbest_rows = vec![NbestRow {
             text: "\u{884}".into(),
             tokens: vec![PhraseToken::new(9)],
+            spans: Vec::new(),
             keys: 1,
             span: 2,
             cost: 0,
@@ -2452,6 +2726,7 @@ mod tests {
             NbestRow {
                 text: "\u{597d}".into(),
                 tokens: vec![PhraseToken::new(0x100)],
+                spans: Vec::new(),
                 keys: 1,
                 span: 3,
                 cost: 10,
@@ -2459,6 +2734,7 @@ mod tests {
             NbestRow {
                 text: "\u{597d}".into(),
                 tokens: vec![PhraseToken::new(0x101)],
+                spans: Vec::new(),
                 keys: 1,
                 span: 3,
                 cost: 20,
@@ -2466,6 +2742,7 @@ mod tests {
             NbestRow {
                 text: "\u{6d69}".into(),
                 tokens: vec![PhraseToken::new(0x102)],
+                spans: Vec::new(),
                 keys: 1,
                 span: 3,
                 cost: 30,
@@ -2683,7 +2960,6 @@ mod tests {
         total: u64,
         addon_total: u64,
     }
-
     impl LanguageModel for FixedUnigrams {
         type Error = EngineError;
         type Token = PhraseToken;
@@ -2882,5 +3158,206 @@ mod tests {
                 .any(|key| key.key.text() == "bian" && key.tone == 4)
         );
         assert!(!columns[0].iter().any(|key| key.key.text() == "bi"));
+    }
+
+    /// A model whose n-best step costs exist, so the trellis runs: both
+    /// branches at a fixed cost, `score` passes the edge through.
+    struct TrellisModel {
+        blended: Cost,
+        unigram: Cost,
+    }
+
+    impl LanguageModel for TrellisModel {
+        type Error = EngineError;
+        type Token = PhraseToken;
+
+        fn score(
+            &self,
+            _history: &[PhraseToken],
+            _token: &PhraseToken,
+            edge_cost: Cost,
+        ) -> Result<Cost, EngineError> {
+            Ok(edge_cost)
+        }
+
+        fn has_real_unigrams(&self) -> bool {
+            true
+        }
+
+        fn nbest_step_costs(
+            &self,
+            _prev: &PhraseToken,
+            _token: &PhraseToken,
+        ) -> Result<NbestStepCosts, EngineError> {
+            Ok(NbestStepCosts {
+                blended: Some(self.blended),
+                unigram: Some(self.unigram),
+            })
+        }
+    }
+
+    fn trellis_session() -> Session<FixtureDictionary, TrellisModel> {
+        Session::new(
+            &EmptyConfigSource,
+            StoragePaths::new("user"),
+            FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
+            TrellisModel {
+                blended: 100,
+                unigram: 200,
+            },
+        )
+        .expect("the fixtures open")
+    }
+
+    /// Types `text` and selects the candidate carrying `token`.
+    fn type_and_select_over<M>(session: &mut Session<FixtureDictionary, M>, text: &str, token: u32)
+    where
+        M: LanguageModel<Token = PhraseToken>,
+        M::Error: std::fmt::Display,
+    {
+        for character in text.chars() {
+            session
+                .process_key(&KeyInput::character(character))
+                .expect("typing cannot fail");
+        }
+        let index = session
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
+            .expect("the fixture candidate is offered");
+        session.select(index).expect("selection cannot fail");
+    }
+
+    /// §3: a chosen candidate forces its span — the constrained walk pins
+    /// the chosen 你 and decodes the continuation, so the row carries the
+    /// full sentence.
+    #[test]
+    fn a_selection_forces_its_span_in_the_sentence_walk() {
+        let mut session = trellis_session();
+        type_and_select_over(&mut session, "nihao", 1);
+        assert!(
+            session.guess_sentence().expect("guess cannot fail"),
+            "the constrained walk runs"
+        );
+        assert_eq!(
+            session.sentence_text(0).expect("row 0 exists"),
+            "\u{4f60}\u{597d}",
+            "the forced 你 leads the decoded continuation"
+        );
+    }
+
+    /// L1: a terminal selection still answers — the walk covers the full
+    /// matrix, so a fully-consumed composition has rows.
+    #[test]
+    fn a_terminal_selection_still_answers_the_full_matrix() {
+        let mut session = trellis_session();
+        type_and_select_over(&mut session, "ni", 1);
+        assert_eq!(session.raw_input(), "ni");
+        assert!(
+            session.guess_sentence().expect("guess cannot fail"),
+            "the fully-consumed composition walks the full matrix"
+        );
+        let rows: Vec<&str> = (0..3)
+            .filter_map(|index| session.sentence_text(index))
+            .collect();
+        assert_eq!(
+            rows,
+            ["\u{4f60}", "\u{4f60}"],
+            "the forced phrase is the row — twice: the bigram and unigram branch \
+             lineages of the same token, the shape the oracle's terminal-choose \
+             rows show (the candidate window dedups them)"
+        );
+    }
+
+    /// L2: the forcing survives further typing and is released only by
+    /// the full reset.
+    #[test]
+    fn the_forcing_survives_typing_and_releases_only_on_reset() {
+        let mut session = trellis_session();
+        type_and_select_over(&mut session, "nihao", 1);
+        for character in "s".chars() {
+            session
+                .process_key(&KeyInput::character(character))
+                .expect("typing cannot fail");
+        }
+        assert!(
+            session.guess_sentence().expect("guess cannot fail"),
+            "the walk runs over the extended buffer"
+        );
+        assert!(
+            session
+                .sentence_text(0)
+                .expect("row 0 exists")
+                .starts_with('\u{4f60}'),
+            "the forcing survived the keystroke"
+        );
+
+        session.reset();
+        assert!(
+            !session.clear_constraint(0),
+            "the reset released the forcing — the store is empty"
+        );
+        for character in "nihaos".chars() {
+            session
+                .process_key(&KeyInput::character(character))
+                .expect("typing cannot fail");
+        }
+        assert!(
+            session.guess_sentence().expect("guess cannot fail"),
+            "the post-reset walk runs"
+        );
+    }
+
+    /// `pinyin_clear_constraint`'s engine half: a hit inside a run
+    /// un-forces the whole run, the selection record follows the
+    /// survivors, and a free or out-of-range offset answers false.
+    #[test]
+    fn clear_constraint_unforces_the_run_and_rebuilds_the_record() {
+        let mut session = train_session();
+        type_and_select(&mut session, "nihao", 1);
+        type_and_select(&mut session, "hao", 2);
+        assert_eq!(
+            session.selected_tokens(),
+            [PhraseToken::new(1), PhraseToken::new(2)]
+        );
+
+        // Out of range answers false, never panic.
+        assert!(!session.clear_constraint(999));
+
+        // A hit anywhere inside the head run — its NoSearch interior
+        // included — un-forces the whole run; the record follows the
+        // survivor.
+        assert!(session.clear_constraint(1));
+        assert_eq!(session.selected_tokens(), [PhraseToken::new(2)]);
+        assert!(!session.clear_constraint(0), "the head run is already free");
+
+        assert!(session.clear_constraint(2));
+        assert!(session.selected_tokens().is_empty());
+        assert!(!session.clear_constraint(0));
+    }
+
+    /// L3: the constraint-aware train walk — the forced phrase and the
+    /// first decoded phrase after it train, with the predecessor threading
+    /// over every phrase.
+    #[test]
+    fn a_decoded_continuation_trains_through_the_constraint_walk() {
+        let mut session = trellis_session();
+        type_and_select_over(&mut session, "nihao", 1);
+        assert!(
+            session.guess_sentence().expect("guess cannot fail"),
+            "the constrained decode ran"
+        );
+        let mut recorder = Recorder {
+            observed: Vec::new(),
+        };
+        session.train(&mut recorder).expect("train cannot fail");
+        assert_eq!(
+            recorder.observed,
+            vec![
+                (Vec::new(), PhraseToken::new(1)),
+                (vec![PhraseToken::new(1)], PhraseToken::new(2)),
+            ],
+            "你 (forced) then 好 (first decoded after the run) train, 你→好 included"
+        );
     }
 }

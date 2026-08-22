@@ -133,3 +133,81 @@ answers `false` and keeps the previous scheme in every case, pinned by
 oxpinyin's `false` + unchanged is the non-aborting contract the
 constitution requires; no oracle differential is possible for these
 inputs (the pin-built `.so` SIGABRTs).
+
+### Constraint-aware train without the consistency assert
+
+- **Upstream source cite:** `src/lookup/phonetic_lookup.h:841-935`
+  (`train_result3`), `src/pinyin.cpp:2669-2689` (`pinyin_train`).
+- **Mechanism:** the train walk asserts the result's token at every
+  `CONSTRAINT_ONESTEP` position equals the forced token — a stale result
+  walked against a fresh store aborts. With an empty store it trains
+  nothing at all, results or not.
+- **What oxpinyin does instead:** no assert (the no-abort policy): the
+  last lookup's 1-best result is walked as it is. When the result carries
+  no forcings — a row-0 choose constrains nothing, exactly upstream — the
+  engine falls back to the selection-history walk, because its row chooses
+  record tokens where upstream keeps the `MatchResult` on the instance;
+  without the fallback the union driver's row-0-intercepted choose would
+  train nothing where the oracle's normal-choose flow trains both
+  phrases (`run-union-diff.sh`, kept green).
+- **Externally observable:** yes — a choose-then-train without an
+  intermediate re-guess trains the recorded selection on oxpinyin and
+  aborts upstream; the frontend contract (re-guess between choose and
+  train) makes the two agree on every driven surface.
+
+### validate_constraint's drop test is the span-search shape
+
+- **Upstream source cite:**
+  `src/lookup/phonetic_lookup.cpp:142-168` (`validate_constraint`).
+- **Mechanism:** a forcing is dropped when
+  `compute_pronunciation_possibility` of the forced token over its span
+  falls below `FLT_EPSILON` under the current matrix.
+- **What oxpinyin does instead:** drops when the span search over the
+  span no longer yields the forced token (`span_finds_token`) — the
+  possibility arithmetic itself is the already-recorded §3 divergence
+  (first path per token, matched/total as a step-cost term), so the
+  below-ε threshold has no bit-faithful port. The cells also carry the
+  chosen phrase's display text where upstream re-fetches by token from
+  the phrase index, so the selection record rebuilds from the store
+  alone.
+- **Externally observable:** only on edits that leave a span
+  marginally spellable — the same inputs where the §3 possibility
+  divergence is already observable.
+
+### Constraints survive parse only on the extending re-parse
+
+- **Upstream source cite:** `src/pinyin.cpp:1497-1533`
+  (`pinyin_parse_more_full_pinyins` never touches `m_constraints`);
+  `src/pinyin.cpp:2697` (`pinyin_reset` clears them).
+- **Mechanism:** upstream's constraints are instance state that survives
+  every re-parse — including a shrinking one (backspace) and a re-parse
+  after the composition completed — with `validate_constraint` dropping
+  whatever no longer spells at the next guess.
+- **What oxpinyin does instead:** the parse path continues the
+  composition (and keeps the store) only when the new input strictly
+  extends the stored one and the composition is still incomplete — the
+  mid-composition keystroke. A committed composition's re-parse starts
+  fresh (the frontend's reset-between-compositions contract, which the
+  #141 cursor flows rely on), and a shrinking or divergent re-parse
+  drops the forcings outright instead of carrying them into validate.
+- **Externally observable:** yes — on a backspace-into-a-forced-run
+  surface upstream re-decodes with the surviving forcings; oxpinyin
+  starts the composition over. No frozen pin or differential drives that
+  surface.
+
+### The n-best row-choose cursor is the row's own end
+
+- **Upstream source cite:** `src/pinyin.cpp:2511-2519`
+  (`pinyin_choose_candidate`'s NBEST branch returns
+  `matrix.size() - 1` unconditionally).
+- **Mechanism:** choosing any n-best row answers the whole input's parse
+  length as the new cursor, whatever span the row's own path covered.
+- **What oxpinyin does instead:** the row candidate's absolute end —
+  the composition offset it actually advances to. The two agree whenever
+  the row's path reaches the parse bound (every real-table surface,
+  including the live-typing differential); a degenerate row that stops
+  early (the mini fixture's single-phrase row) answers its own shorter
+  end.
+- **Externally observable:** yes, but only through a row whose path ends
+  before the parsed input does — none of the pinned surfaces constructs
+  one on real tables.

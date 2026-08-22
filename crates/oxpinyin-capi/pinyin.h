@@ -246,6 +246,12 @@ int pinyin_choose_candidate(struct pinyin_instance_t *instance,
 bool pinyin_choose_predicted_candidate(struct pinyin_instance_t *instance,
                                        struct lookup_candidate_t *candidate);
 
+// Clear the constraint a prior choose pinned, by offset in the pinyin
+// keys. A hit anywhere inside a forced run clears the whole run; false
+// when the offset lands on no constraint or is out of range.
+bool pinyin_clear_constraint(struct pinyin_instance_t *instance,
+                             size_t offset);
+
 // Train the current sentence with the given n-best index.
 bool pinyin_train(struct pinyin_instance_t *instance, uint8_t _index);
 

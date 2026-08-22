@@ -47,6 +47,7 @@
 
 mod candidate;
 mod config;
+mod constraint;
 mod error;
 mod key;
 mod nbest;

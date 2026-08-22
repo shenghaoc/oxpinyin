@@ -31,6 +31,7 @@ use oxpinyin_core::{
 };
 use smallvec::SmallVec;
 
+use crate::constraint::{Cell, ConstraintStore, PhraseSpan};
 use crate::error::EngineError;
 use crate::session::{MAX_PHRASE_LENGTH, SCAN_EXPANSION_LIMIT, ScanKey};
 
@@ -58,9 +59,14 @@ pub(crate) struct NbestRow {
     /// contributes (upstream keeps the whole `MatchResult` on the
     /// instance; the engine records tokens instead).
     pub(crate) tokens: Vec<PhraseToken>,
+    /// The row's phrases at their walk positions — the `MatchResult`
+    /// shape `diff_result` constraints and the constraint-aware train
+    /// walk read. Walk-local coordinates; `Session::guess_sentence`
+    /// absolutizes them when it stores the rows.
+    pub(crate) spans: Vec<PhraseSpan>,
     /// Keys the sentence covers.
     pub(crate) keys: usize,
-    /// Bytes of the remaining input the sentence spans.
+    /// Bytes of the input the sentence spans.
     pub(crate) span: usize,
     /// Accumulated trellis surprisal (lower is better).
     pub(crate) cost: Cost,
@@ -302,17 +308,27 @@ struct SpanEntry {
     pronunciation: Option<(u64, u64)>,
 }
 
-/// Computes the sentence rows for the remaining input.
+/// Computes the sentence rows for the input covered by `matrix`.
 ///
 /// `matrix` is the scan matrix ([`crate::session`]'s key columns), `bound`
 /// the parsed byte bound, `history` the selected tokens (the seed bigram
-/// context; empty means `sentence_start`).
+/// context of the unconstrained walk; empty means `sentence_start`).
+///
+/// `constraints` switches in the §3 constrained walk
+/// (`get_nbest_match`'s gates, `phonetic_lookup.h:771-842`): the seed is
+/// `sentence_start` exactly as upstream's `fill_prefixes` plants it (the
+/// forced prefix is the context), `NoSearch` positions are skipped
+/// entirely, a `OneStep` position runs exactly one span search to its
+/// fixed end expanding only the forced token, and free spans break before
+/// ending inside a forced run. `None` — or a store with no forcings — is
+/// today's walk, bit for bit.
 pub(crate) fn nbest_sentences<D, L>(
     matrix: &[Vec<ScanKey>],
     bound: usize,
     dictionary: &D,
     model: &L,
     history: &[PhraseToken],
+    constraints: Option<&ConstraintStore>,
 ) -> Result<Vec<NbestRow>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
@@ -320,13 +336,22 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
-    let seed = history.last().map_or(SENTENCE_START, |token| token.value());
+    let seed = match constraints {
+        Some(_) => SENTENCE_START,
+        None => history.last().map_or(SENTENCE_START, |token| token.value()),
+    };
     let mut trellis = Trellis::new(bound, seed);
     // Memoised step costs: the beam revisits (prev, token) pairs.
     let mut costs: HashMap<(u32, u32), NbestStepCosts> = HashMap::new();
+    let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
 
     let mut position = 0_usize;
     while position < bound {
+        if matches!(cell_at(position), Some(Cell::NoSearch { .. })) {
+            // The interior of a forced run: nothing may start here.
+            position += 1;
+            continue;
+        }
         let beam = trellis.beam(position);
         if beam.is_empty() {
             position += 1;
@@ -334,9 +359,40 @@ where
         }
         let head_seq = beam.first().map(|entry| entry.value.seq);
 
+        if let Some(Cell::OneStep { token, end, .. }) = cell_at(position).cloned() {
+            // One span search to the fixed end, the forced token only —
+            // `search_bigram2`/`search_unigram2`'s ONESTEP branches —
+            // then move on: no widening, no other token starts there.
+            if end > position && end <= bound {
+                let mut path: SmallVec<[SyllableKey; 16]> = SmallVec::new();
+                let mut entries: Vec<SpanEntry> = Vec::new();
+                span_entries(matrix, position, end, &mut path, dictionary, &mut entries)?;
+                if let Some(entry) = entries.iter().find(|entry| entry.token == token.value()) {
+                    expand_entry(
+                        Expansion {
+                            entry,
+                            beam: &beam,
+                            head_seq,
+                            start: position,
+                            end,
+                        },
+                        model,
+                        &mut costs,
+                        &mut trellis,
+                    )?;
+                }
+            }
+            position += 1;
+            continue;
+        }
+
         let mut end = position + 1;
         let mut widening = true;
         while end <= bound && widening {
+            if matches!(cell_at(end), Some(Cell::NoSearch { .. })) {
+                // A span may not end inside a forced run.
+                break;
+            }
             widening = false;
             let mut path: SmallVec<[SyllableKey; 16]> = SmallVec::new();
             let mut entries: Vec<SpanEntry> = Vec::new();
@@ -352,73 +408,18 @@ where
                 } else {
                     continue;
                 }
-                trellis.texts.entry(entry.token).or_insert(entry.text);
-                let chars: u32 = trellis.texts[&entry.token]
-                    .chars()
-                    .count()
-                    .try_into()
-                    .unwrap_or(u32::MAX);
-                let keys = entry.keys;
-                // `pinyin_poss` as a step-cost term: matched/total over the
-                // item's pronunciations, `None` (poss 1) without counts. A
-                // matched share of 0 is upstream's below-ε skip of the step.
-                let pronunciation = match entry.pronunciation {
-                    Some((matched, total)) if matched > 0 && total > 0 => {
-                        Some(oxpinyin_core::cost::surprisal(matched, total))
-                    }
-                    Some((0, _)) => continue,
-                    _ => None,
-                };
-                for predecessor in &beam {
-                    let key = (predecessor.value.token, entry.token);
-                    let step = match costs.get(&key) {
-                        Some(step) => *step,
-                        None => {
-                            let step = model
-                                .nbest_step_costs(
-                                    &PhraseToken::new(predecessor.value.token),
-                                    &PhraseToken::new(entry.token),
-                                )
-                                .map_err(|error| {
-                                    EngineError::Scoring(ScoringError::LanguageModel(
-                                        error.to_string(),
-                                    ))
-                                })?;
-                            costs.insert(key, step);
-                            step
-                        }
-                    };
-                    let push = |mut cost: Cost, trellis: &mut Trellis| {
-                        if let Some(pron) = pronunciation {
-                            cost = cost.saturating_add(pron);
-                        }
-                        trellis.insert(
-                            end,
-                            Value {
-                                token: entry.token,
-                                prev_token: predecessor.value.token,
-                                from: position,
-                                sub: predecessor.slot,
-                                length: predecessor.value.length.saturating_add(chars),
-                                keys: predecessor.value.keys.saturating_add(keys),
-                                cost: predecessor.value.cost.saturating_add(cost),
-                                seq: trellis.seq,
-                            },
-                        );
-                        trellis.seq += 1;
-                    };
-                    // The unigram branch expands only the beam's head
-                    // (`search_unigram2` uses `topresults[0]`); the bigram
-                    // branch expands every beam value.
-                    if Some(predecessor.value.seq) == head_seq
-                        && let Some(step_cost) = step.unigram
-                    {
-                        push(step_cost, &mut trellis);
-                    }
-                    if let Some(step_cost) = step.blended {
-                        push(step_cost, &mut trellis);
-                    }
-                }
+                expand_entry(
+                    Expansion {
+                        entry: &entry,
+                        beam: &beam,
+                        head_seq,
+                        start: position,
+                        end,
+                    },
+                    model,
+                    &mut costs,
+                    &mut trellis,
+                )?;
             }
             end += 1;
         }
@@ -439,19 +440,152 @@ where
         if text.is_empty() {
             continue;
         }
-        let tokens = spans
+        let phrase_spans: Vec<PhraseSpan> = spans
             .iter()
-            .map(|(_, token)| PhraseToken::new(*token))
+            .map(|(start, token)| PhraseSpan {
+                start: *start,
+                token: PhraseToken::new(*token),
+                text: trellis.texts.get(token).cloned().unwrap_or_default(),
+            })
             .collect();
+        let tokens = phrase_spans.iter().map(|span| span.token).collect();
         rows.push(NbestRow {
             text,
             tokens,
+            spans: phrase_spans,
             keys: tail.keys as usize,
             span,
             cost: tail.cost,
         });
     }
     Ok(rows)
+}
+
+/// Whether the forced `token` still spells over `[start, end)` under the
+/// current matrix — the engine-side counterpart of
+/// `validate_constraint`'s `compute_pronunciation_possibility` drop test
+/// (below-`FLT_EPSILON` upstream; "the span search no longer yields the
+/// token" here, the recorded §3 possibility divergence's shape).
+///
+/// # Errors
+///
+/// Propagates the dictionary lookup's backend failure.
+pub(crate) fn span_finds_token<D>(
+    matrix: &[Vec<ScanKey>],
+    start: usize,
+    end: usize,
+    token: PhraseToken,
+    dictionary: &D,
+) -> Result<bool, EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: core::fmt::Display,
+{
+    let mut path: SmallVec<[SyllableKey; 16]> = SmallVec::new();
+    let mut entries: Vec<SpanEntry> = Vec::new();
+    span_entries(matrix, start, end, &mut path, dictionary, &mut entries)?;
+    Ok(entries
+        .iter()
+        .any(|entry| entry.token == token.value() && !matches!(entry.pronunciation, Some((0, _)))))
+}
+
+/// One span expansion over the whole beam: the entry to push, the beam it
+/// rides, and the span it covers.
+struct Expansion<'a> {
+    entry: &'a SpanEntry,
+    beam: &'a [BeamEntry],
+    head_seq: Option<u64>,
+    start: usize,
+    end: usize,
+}
+
+/// Expands one span entry over the whole beam — the shared body of the
+/// free widening loop and the forced one-step expansion. The unigram
+/// branch rides only the beam's head (`search_unigram2` uses
+/// `topresults[0]`); the bigram branch every beam value.
+fn expand_entry<L>(
+    expansion: Expansion<'_>,
+    model: &L,
+    costs: &mut HashMap<(u32, u32), NbestStepCosts>,
+    trellis: &mut Trellis,
+) -> Result<(), EngineError>
+where
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: core::fmt::Display,
+{
+    let Expansion {
+        entry,
+        beam,
+        head_seq,
+        start: position,
+        end,
+    } = expansion;
+    trellis
+        .texts
+        .entry(entry.token)
+        .or_insert_with(|| entry.text.clone());
+    let chars: u32 = trellis.texts[&entry.token]
+        .chars()
+        .count()
+        .try_into()
+        .unwrap_or(u32::MAX);
+    let keys = entry.keys;
+    // `pinyin_poss` as a step-cost term: matched/total over the item's
+    // pronunciations, `None` (poss 1) without counts. A matched share of
+    // 0 is upstream's below-ε skip of the step.
+    let pronunciation = match entry.pronunciation {
+        Some((matched, total)) if matched > 0 && total > 0 => {
+            Some(oxpinyin_core::cost::surprisal(matched, total))
+        }
+        Some((0, _)) => return Ok(()),
+        _ => None,
+    };
+    for predecessor in beam {
+        let key = (predecessor.value.token, entry.token);
+        let step = match costs.get(&key) {
+            Some(step) => *step,
+            None => {
+                let step = model
+                    .nbest_step_costs(
+                        &PhraseToken::new(predecessor.value.token),
+                        &PhraseToken::new(entry.token),
+                    )
+                    .map_err(|error| {
+                        EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
+                    })?;
+                costs.insert(key, step);
+                step
+            }
+        };
+        let push = |mut cost: Cost, trellis: &mut Trellis| {
+            if let Some(pron) = pronunciation {
+                cost = cost.saturating_add(pron);
+            }
+            trellis.insert(
+                end,
+                Value {
+                    token: entry.token,
+                    prev_token: predecessor.value.token,
+                    from: position,
+                    sub: predecessor.slot,
+                    length: predecessor.value.length.saturating_add(chars),
+                    keys: predecessor.value.keys.saturating_add(keys),
+                    cost: predecessor.value.cost.saturating_add(cost),
+                    seq: trellis.seq,
+                },
+            );
+            trellis.seq += 1;
+        };
+        if Some(predecessor.value.seq) == head_seq
+            && let Some(step_cost) = step.unigram
+        {
+            push(step_cost, trellis);
+        }
+        if let Some(step_cost) = step.blended {
+            push(step_cost, trellis);
+        }
+    }
+    Ok(())
 }
 
 /// Enumerates every key-path from `start` to `end` and collects the
@@ -683,7 +817,7 @@ mod tests {
             blended: None,
             unigram: None,
         };
-        let rows = nbest_sentences(&matrix, bound, &dict, &model, &[])
+        let rows = nbest_sentences(&matrix, bound, &dict, &model, &[], None)
             .expect("the trellis cannot fail here");
         assert!(rows.is_empty());
     }
@@ -700,7 +834,7 @@ mod tests {
             unigram: Some(2_000),
         };
         let (matrix, bound) = one_column_matrix("nihao");
-        let rows: Vec<NbestRow> = nbest_sentences(&matrix, bound, &dict, &model, &[])
+        let rows: Vec<NbestRow> = nbest_sentences(&matrix, bound, &dict, &model, &[], None)
             .expect("the trellis cannot fail here");
         assert!(!rows.is_empty());
         assert_eq!(rows[0].text.as_str(), "你好");
@@ -713,6 +847,7 @@ mod tests {
         let row = NbestRow {
             text: "你好".into(),
             tokens: vec![PhraseToken::new(7)],
+            spans: Vec::new(),
             keys: 2,
             span: 5,
             cost: 3,

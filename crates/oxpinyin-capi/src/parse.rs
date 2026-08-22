@@ -39,7 +39,7 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    inst.reset_parse_state();
+    inst.begin_parse(text.as_bytes());
     if inst.session.set_options(inst.options()).is_err() {
         return 0;
     }
@@ -67,7 +67,7 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
     }
 
     let consumed = match inst.session.type_pinyin(text) {
-        Ok(_) => inst.session.parsed_prefix_len(),
+        Ok(_) => inst.session.full_parsed_len(),
         Err(_) => 0,
     };
     inst.parsed_len = consumed;
@@ -97,7 +97,7 @@ fn parse_double_more(instance: *mut PinyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    inst.reset_parse_state();
+    inst.begin_parse(text.as_bytes());
 
     let Some(scheme) = double_scheme(inst.double_scheme.load(Ordering::Relaxed)) else {
         return 0;
@@ -154,7 +154,7 @@ fn parse_chewing_more(instance: *mut PinyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    inst.reset_parse_state();
+    inst.begin_parse(text.as_bytes());
 
     let Some(scheme) = zhuyin_scheme(inst.zhuyin_scheme.load(Ordering::Relaxed)) else {
         return 0;

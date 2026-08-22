@@ -56,6 +56,11 @@ pub extern "C" fn pinyin_free_instance(instance: *mut PinyinInstance) {
 /// ```c
 /// bool pinyin_reset(pinyin_instance_t * instance);
 /// ```
+///
+/// The full reset: upstream's `pinyin_reset` also clears the instance's
+/// constraint store (`pinyin.cpp:2697`) — the parse path's
+/// [`CapiInstance::reset_parse_state`] split deliberately leaves it alive
+/// across keystrokes.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
     if instance.is_null() {
@@ -66,6 +71,7 @@ pub extern "C" fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
         inst.reset_parse_state();
+        inst.session.reset();
         true
     })
 }
