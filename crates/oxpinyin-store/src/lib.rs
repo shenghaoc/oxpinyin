@@ -48,6 +48,35 @@ pub type Visitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a;
 
 // ── traits ─────────────────────────────────────────────────────────
 
+/// A consistent point-in-time read view, storable across calls.
+///
+/// The snapshot is taken from a single read transaction and is
+/// MVCC-isolated: writes committed after [`OrderedStore::snapshot`]
+/// are invisible through it.  Methods open the named table per call on
+/// the held transaction (no pre-opened table set, no owned-copy slurp).
+pub trait ReadSnapshot {
+    /// Read a single key from `table`.  Returns `None` if absent or the
+    /// table does not exist.
+    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
+    /// ascending.  An absent table is treated as empty.
+    fn range(
+        &self,
+        table: &str,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+        visit: &mut Visitor<'_>,
+    ) -> Result<(), StoreError>;
+
+    /// Visit every row of `table` in ascending key-byte order.  An
+    /// absent table is treated as empty.
+    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError>;
+
+    /// Whether `table` has no rows (an absent table counts as empty).
+    fn is_empty(&self, table: &str) -> Result<bool, StoreError>;
+}
+
 /// An atomic write transaction over one or more tables.
 ///
 /// Operations see their own writes (read-your-writes within the closure).
@@ -82,6 +111,17 @@ pub trait WriteTxn {
 /// Implementations provide both read-only and read-write access, point
 /// get, ranged scans, atomic multi-table writes, and compaction.
 pub trait OrderedStore {
+    /// A consistent point-in-time read view, storable across calls.
+    type ReadSnapshot: ReadSnapshot;
+
+    /// Open a consistent read snapshot of the current store state.
+    ///
+    /// The returned handle owns a single read transaction and is
+    /// MVCC-isolated: writes committed after this call are invisible
+    /// through it.  The caller may store it in a struct field and
+    /// reuse it across many calls.
+    fn snapshot(&self) -> Result<Self::ReadSnapshot, StoreError>;
+
     /// Open an existing store file in read-only mode.
     fn open_read_only(path: &Path) -> Result<Self, StoreError>
     where
@@ -147,6 +187,13 @@ impl RedbStore {
 }
 
 impl OrderedStore for RedbStore {
+    type ReadSnapshot = RedbReadSnapshot;
+
+    fn snapshot(&self) -> Result<RedbReadSnapshot, StoreError> {
+        let txn = self.begin_read()?;
+        Ok(RedbReadSnapshot { txn })
+    }
+
     fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         let db = redb::Builder::new()
             .open_read_only(path)
@@ -242,6 +289,76 @@ impl OrderedStore for RedbStore {
                 Ok(())
             }
             RedbInner::ReadOnly(_) => Err(StoreError::Backend("store is read-only".into())),
+        }
+    }
+}
+
+// ── redb read-snapshot ─────────────────────────────────────────────
+
+/// A stored, consistent read snapshot backed by a redb read transaction.
+///
+/// Created by [`RedbStore::snapshot`].  The held transaction is
+/// MVCC-isolated: writes committed after the snapshot was taken are
+/// invisible through it.
+pub struct RedbReadSnapshot {
+    txn: redb::ReadTransaction,
+}
+
+impl ReadSnapshot for RedbReadSnapshot {
+    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+        match self.txn.open_table(def) {
+            Ok(tbl) => Ok(tbl
+                .get(key)
+                .map_err(map_storage_error)?
+                .map(|g| g.value().to_vec())),
+            Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
+            Err(e) => Err(map_table_error(e)),
+        }
+    }
+
+    fn range(
+        &self,
+        table: &str,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+        visit: &mut Visitor<'_>,
+    ) -> Result<(), StoreError> {
+        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+        match self.txn.open_table(def) {
+            Ok(tbl) => {
+                for item in tbl.range::<&[u8]>((lo, hi)).map_err(map_storage_error)? {
+                    let (key, value) = item.map_err(map_storage_error)?;
+                    visit(key.value(), value.value())?;
+                }
+                Ok(())
+            }
+            Err(redb::TableError::TableDoesNotExist(_)) => Ok(()),
+            Err(e) => Err(map_table_error(e)),
+        }
+    }
+
+    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
+        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+        match self.txn.open_table(def) {
+            Ok(tbl) => {
+                for item in tbl.iter().map_err(map_storage_error)? {
+                    let (key, value) = item.map_err(map_storage_error)?;
+                    visit(key.value(), value.value())?;
+                }
+                Ok(())
+            }
+            Err(redb::TableError::TableDoesNotExist(_)) => Ok(()),
+            Err(e) => Err(map_table_error(e)),
+        }
+    }
+
+    fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
+        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+        match self.txn.open_table(def) {
+            Ok(tbl) => tbl.is_empty().map_err(map_storage_error),
+            Err(redb::TableError::TableDoesNotExist(_)) => Ok(true),
+            Err(e) => Err(map_table_error(e)),
         }
     }
 }
@@ -634,6 +751,111 @@ mod tests {
             .unwrap();
         store.compact().unwrap();
         assert_eq!(store.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── snapshot tests ─────────────────────────────────────────────
+
+    #[test]
+    fn snapshot_consistency() {
+        let path = temp_path("snap-consist");
+        let store = RedbStore::create(&path).unwrap();
+        store
+            .write(|txn| {
+                txn.put("t", b"k", b"v1")?;
+                Ok(())
+            })
+            .unwrap();
+        let snap = store.snapshot().unwrap();
+        store
+            .write(|txn| {
+                txn.put("t", b"k", b"v2")?;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v1".to_vec()));
+        assert_eq!(store.get("t", b"k").unwrap(), Some(b"v2".to_vec()));
+        drop(snap);
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn snapshot_reuse() {
+        let path = temp_path("snap-reuse");
+        let store = RedbStore::create(&path).unwrap();
+        store
+            .write(|txn| {
+                txn.put("t", b"k", b"v")?;
+                Ok(())
+            })
+            .unwrap();
+        let snap = store.snapshot().unwrap();
+        assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+        assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+        drop(snap);
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn snapshot_correctness() {
+        let path = temp_path("snap-correct");
+        let store = RedbStore::create(&path).unwrap();
+        store
+            .write(|txn| {
+                txn.put("t", b"a", b"1")?;
+                txn.put("t", b"b", b"2")?;
+                txn.put("t", b"c", b"3")?;
+                txn.put("u", b"x", b"9")?;
+                Ok(())
+            })
+            .unwrap();
+        let snap = store.snapshot().unwrap();
+
+        assert_eq!(snap.get("t", b"a").unwrap(), Some(b"1".to_vec()));
+        assert_eq!(snap.get("t", b"missing").unwrap(), None);
+        assert_eq!(snap.get("u", b"x").unwrap(), Some(b"9".to_vec()));
+
+        assert!(!snap.is_empty("t").unwrap());
+        assert!(snap.is_empty("nonexistent").unwrap());
+
+        let mut keys = Vec::new();
+        snap.for_each("t", &mut |k, _v| {
+            keys.push(k.to_vec());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(keys, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+
+        let mut range_keys = Vec::new();
+        snap.range(
+            "t",
+            Bound::Included(b"b".as_slice()),
+            Bound::Included(b"c".as_slice()),
+            &mut |k, _v| {
+                range_keys.push(k.to_vec());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(range_keys, vec![b"b".to_vec(), b"c".to_vec()]);
+
+        let mut range_unbound = Vec::new();
+        snap.range(
+            "t",
+            Bound::Included(b"b".as_slice()),
+            Bound::Unbounded,
+            &mut |k, _v| {
+                range_unbound.push(k.to_vec());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(range_unbound, vec![b"b".to_vec(), b"c".to_vec()]);
+
+        drop(snap);
         drop(store);
         let _ = std::fs::remove_file(&path);
     }
