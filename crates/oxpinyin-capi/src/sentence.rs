@@ -3,7 +3,7 @@
 use std::ffi::CString;
 use std::os::raw::c_char;
 
-use oxpinyin_core::{DoublePinyinParse, ZhuyinParse};
+use oxpinyin_core::{DoublePinyinParse, FullPinyinIndexParse, ZhuyinParse};
 
 use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
@@ -165,10 +165,11 @@ fn write_owned_sentence(text: &str, sentence: *mut *mut c_char) -> bool {
 /// Maps a byte offset in the transformed `'`-joined full-pinyin string back
 /// to the original double-pinyin input offset.
 ///
-/// Candidate consumption always lands on a key boundary, so the mapping is
-/// exact there; an offset inside a transformed key is clamped to that key's
-/// original end (the same place a candidate would consume it).
-fn double_original_offset(parse: &DoublePinyinParse, offset: usize) -> usize {
+/// Candidate consumption — and the session's post-select composition
+/// offset — always lands on a key boundary, so the mapping is exact there;
+/// an offset inside a transformed key is clamped to that key's original
+/// end (the same place a candidate would consume it).
+pub(crate) fn double_original_offset(parse: &DoublePinyinParse, offset: usize) -> usize {
     let mut transformed = 0;
     for item in parse.keys() {
         let key_len = item.key().text().len();
@@ -181,10 +182,26 @@ fn double_original_offset(parse: &DoublePinyinParse, offset: usize) -> usize {
     parse.consumed()
 }
 
-fn zhuyin_original_offset(parse: &ZhuyinParse, offset: usize) -> usize {
+pub(crate) fn zhuyin_original_offset(parse: &ZhuyinParse, offset: usize) -> usize {
     let mut transformed = 0;
     for item in parse.keys() {
         let key_len = item.key().text().len();
+        let boundary = transformed + key_len;
+        if offset <= boundary {
+            return item.end();
+        }
+        transformed = boundary + 1; // apostrophe between keys
+    }
+    parse.consumed()
+}
+
+/// The Luoma/secondary-zhuyin sibling of [`double_original_offset`]: the
+/// transformed string is the `'`-joined canonical spellings, and each key
+/// remembers its original byte span (tone digit included).
+pub(crate) fn full_original_offset(parse: &FullPinyinIndexParse, offset: usize) -> usize {
+    let mut transformed = 0;
+    for item in parse.keys() {
+        let key_len = item.canonical().len();
         let boundary = transformed + key_len;
         if offset <= boundary {
             return item.end();
@@ -245,17 +262,18 @@ pub extern "C" fn pinyin_get_character_offset(
 /// separator run (ibus-libpinyin ≥ 1.16.1 passes the raw begin of the next
 /// key rest, issue #570). libpinyin@dbff264 normalizes it back to the first
 /// byte of that run and validates the normalized offset —
-/// [`oxpinyin_engine::Session::normalized_lookup_offset`] is that law; a
-/// refusal — the unreachable leading-run shape, or an offset beyond the
-/// input's one-past-end position — empties the snapshot and answers
-/// `false` where upstream's `_check_offset` aborts (or reads its matrix
-/// out of bounds). The lookup itself stays anchored at the
-/// session's composition offset, so `pinyin_choose_candidate(offset, cand)`
-/// keeps round-tripping for such candidates. The scan anchor is otherwise
-/// still positionless — the engine has no positional backend yet — and the
-/// transformed seams (double, zhuyin, Luoma/secondary-zhuyin) pass offsets
-/// in original coordinates the session's raw buffer does not share, so the
-/// law applies on the plain full-pinyin path only.
+/// [`crate::state::CapiInstance::validate_lookup_offset`] runs that law in
+/// the active parse mode's own coordinates: the full walk where `'` is a
+/// zero-key separator (plain full pinyin, Luoma/secondary-zhuyin), the
+/// range refusal alone where a composition cannot hold one (double pinyin,
+/// the zhuyin keyboards — there `'` is out of scheme or a content symbol).
+/// A refusal — the leading-run shape, or an offset beyond one-past-end —
+/// empties the snapshot and answers `false` where upstream's
+/// `_check_offset` aborts (or reads its matrix out of bounds). The lookup
+/// itself stays anchored at the session's composition offset, so
+/// `pinyin_choose_candidate(offset, cand)` keeps round-tripping for such
+/// candidates; the scan anchor is otherwise still positionless — the
+/// engine has no positional backend yet.
 ///
 /// W14 honours [`sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE`]: with
 /// the bit clear, sentence rows guessed by [`pinyin_guess_sentence`]
@@ -281,9 +299,7 @@ pub extern "C" fn pinyin_guess_candidates(
         if !inst.session.is_composing() {
             return false;
         }
-        let plain_full_pinyin =
-            inst.full_parse.is_none() && inst.double_parse.is_none() && inst.zhuyin_parse.is_none();
-        if plain_full_pinyin && inst.session.normalized_lookup_offset(offset).is_err() {
+        if inst.validate_lookup_offset(offset).is_err() {
             inst.candidates.clear();
             return false;
         }

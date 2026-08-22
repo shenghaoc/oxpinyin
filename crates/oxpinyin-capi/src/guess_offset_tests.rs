@@ -10,7 +10,13 @@ use std::os::raw::{c_int, c_uint};
 use std::ptr;
 
 use crate::candidates::{pinyin_choose_candidate, pinyin_get_candidate, pinyin_get_n_candidate};
-use crate::parse::{pinyin_get_parsed_input_length, pinyin_parse_more_full_pinyins};
+use crate::config::{
+    pinyin_set_double_pinyin_scheme, pinyin_set_full_pinyin_scheme, pinyin_set_zhuyin_scheme,
+};
+use crate::parse::{
+    pinyin_get_parsed_input_length, pinyin_parse_more_chewings, pinyin_parse_more_double_pinyins,
+    pinyin_parse_more_full_pinyins,
+};
 use crate::sentence::pinyin_guess_candidates;
 use crate::state::instance_ref;
 use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
@@ -233,6 +239,187 @@ fn a_post_separator_choose_returns_the_candidate_end() {
         pinyin_get_parsed_input_length(instance),
         "the final choose lands the commit branch"
     );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn the_ranking_context_survives_either_guess_offset() {
+    // Upstream resolves the bigram previous token by indexing per-position
+    // match results at the lookup offset; the raw one-past-separator
+    // offset hits a null slot there and the system+user bigram merge is
+    // silently skipped (C++ libpinyin 2.11.92 still does —
+    // libpinyin@412f88e3 feeds the normalized offset instead). oxpinyin's
+    // context is the selection history, which no lookup offset indexes,
+    // so the resolution must survive both caller offsets and stay the
+    // selected word's own token.
+    let user_dir = TempUserDir::new("guess-zero-context");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    assert_eq!(parse(instance, "ni'hao"), 6);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let ni_pos = position_of(instance, "\u{4f60}");
+    let ni_token = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        inst.candidates[ni_pos]
+            .token
+            .expect("\u{4f60} carries its token")
+    };
+    let ni = candidate_at(instance, ni_pos);
+    assert_eq!(pinyin_choose_candidate(instance, 0, ni), 2);
+
+    // Raw post-separator offset first, then the normalized one.
+    for offset in [3usize, 2] {
+        assert!(pinyin_guess_candidates(instance, offset, DEFAULT_SORT));
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        assert_eq!(
+            inst.session.selected_tokens().last().copied(),
+            Some(ni_token),
+            "the ranking context stays the selected word's token at offset {offset}"
+        );
+    }
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn double_pinyin_admits_no_zero_key_and_keeps_the_range_law() {
+    let user_dir = TempUserDir::new("guess-zero-double");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    // ZRM: ni = n+i, hao = h+k.
+    assert!(pinyin_set_double_pinyin_scheme(context, 1));
+
+    // The separator never enters a double composition — the parse stops at
+    // it (upstream instead asserts the input carries none at all,
+    // `pinyin_parser2.cpp:629`) — so no zero-key column can exist and
+    // there is nothing to normalize.
+    let split = cstr("ni'hk");
+    assert_eq!(
+        pinyin_parse_more_double_pinyins(instance, split.as_ptr()),
+        2
+    );
+
+    // The range half of the law holds in original double coordinates.
+    let both = cstr("nihk");
+    assert_eq!(pinyin_parse_more_double_pinyins(instance, both.as_ptr()), 4);
+    assert!(
+        pinyin_guess_candidates(instance, 4, DEFAULT_SORT),
+        "the one-past-end offset is the reserved slot"
+    );
+    assert!(!pinyin_guess_candidates(instance, 5, DEFAULT_SORT));
+    let mut num: c_uint = 77;
+    assert!(pinyin_get_n_candidate(instance, &mut num));
+    assert_eq!(num, 0, "the refusal leaves no candidates behind");
+
+    // The choose cursor is the absolute end in original coordinates: the
+    // transformed separator the session inserts between the keys never
+    // leaks into it, and the walk lands the commit branch.
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let ni = candidate_at(instance, position_of(instance, "\u{4f60}"));
+    assert_eq!(pinyin_choose_candidate(instance, 0, ni), 2);
+    assert!(pinyin_guess_candidates(instance, 2, DEFAULT_SORT));
+    let hao = candidate_at(instance, position_of(instance, "\u{597d}"));
+    let cursor = pinyin_choose_candidate(instance, 2, hao);
+    assert_eq!(cursor, 4, "the second group ends at its own original end");
+    assert_eq!(
+        cursor as usize,
+        pinyin_get_parsed_input_length(instance),
+        "the final choose lands the commit branch"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn zhuyin_keyboards_admit_no_zero_key_and_keep_the_range_law() {
+    let user_dir = TempUserDir::new("guess-zero-zhuyin");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    // Standard: su = \u{310B}\u{3127} (ni), cl = \u{310F}\u{3120} (hao).
+    assert!(pinyin_set_zhuyin_scheme(context, 1));
+
+    // Standard binds no `'`: the parse stops there — no zero-key column.
+    let split = cstr("su'cl");
+    assert_eq!(pinyin_parse_more_chewings(instance, split.as_ptr()), 2);
+
+    // The range half of the law holds in original zhuyin coordinates.
+    let both = cstr("sucl");
+    assert_eq!(pinyin_parse_more_chewings(instance, both.as_ptr()), 4);
+    assert!(pinyin_guess_candidates(instance, 4, DEFAULT_SORT));
+    assert!(!pinyin_guess_candidates(instance, 5, DEFAULT_SORT));
+
+    // The choose cursor is the absolute end in original coordinates.
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let ni = candidate_at(instance, position_of(instance, "\u{4f60}"));
+    assert_eq!(pinyin_choose_candidate(instance, 0, ni), 2);
+    assert!(pinyin_guess_candidates(instance, 2, DEFAULT_SORT));
+    let hao = candidate_at(instance, position_of(instance, "\u{597d}"));
+    let cursor = pinyin_choose_candidate(instance, 2, hao);
+    assert_eq!(cursor, 4, "the second group ends at its own original end");
+    assert_eq!(cursor as usize, pinyin_get_parsed_input_length(instance));
+
+    // Eten binds `'` to the content symbol \u{3118} (c) — an offset beside
+    // it is an ordinary cursor, never normalized away or refused as a
+    // leading separator run.
+    assert!(pinyin_set_zhuyin_scheme(context, 5));
+    let cu = cstr("'x"); // \u{3118}\u{3128} = cu
+    assert_eq!(pinyin_parse_more_chewings(instance, cu.as_ptr()), 2);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    assert!(
+        pinyin_guess_candidates(instance, 1, DEFAULT_SORT),
+        "a content apostrophe is not a zero key"
+    );
+    assert!(pinyin_guess_candidates(instance, 2, DEFAULT_SORT));
+    assert!(!pinyin_guess_candidates(instance, 3, DEFAULT_SORT));
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn luoma_input_carries_the_full_offset_law() {
+    let user_dir = TempUserDir::new("guess-zero-luoma");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    // FULL_PINYIN_LUOMA: the pinned index parse consumes `'` as the
+    // zero-key separator in original coordinates, so the whole law
+    // applies — normalize across the run, refuse the leading run and
+    // out-of-range. "ni" and "hao" spell the same as hanyu in the index.
+    assert!(pinyin_set_full_pinyin_scheme(context, 2));
+
+    assert_eq!(parse(instance, "ni'hao"), 6);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let ni = candidate_at(instance, position_of(instance, "\u{4f60}"));
+    assert_eq!(pinyin_choose_candidate(instance, 0, ni), 2);
+
+    assert!(pinyin_guess_candidates(instance, 3, DEFAULT_SORT));
+    let after_run = texts(instance);
+    assert!(!after_run.is_empty());
+    assert!(pinyin_guess_candidates(instance, 2, DEFAULT_SORT));
+    assert_eq!(
+        texts(instance),
+        after_run,
+        "post-run and run-start offsets answer the same list"
+    );
+
+    let hao = candidate_at(instance, position_of(instance, "\u{597d}"));
+    let cursor = pinyin_choose_candidate(instance, 3, hao);
+    assert_eq!(
+        cursor, 6,
+        "the post-separator choose answers the absolute end"
+    );
+    assert_eq!(cursor as usize, pinyin_get_parsed_input_length(instance));
+
+    // Out of range refused; the leading run cannot normalize (upstream
+    // aborts, oxpinyin refuses).
+    assert_eq!(parse(instance, "ni'hao"), 6);
+    assert!(!pinyin_guess_candidates(instance, 7, DEFAULT_SORT));
+    assert_eq!(parse(instance, "'ni"), 3);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    assert!(!pinyin_guess_candidates(instance, 1, DEFAULT_SORT));
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
