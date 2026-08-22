@@ -515,9 +515,15 @@ Stage-1 call sites must stay valid. The `Dictionary`, `LanguageModel` (and
 
 ## 4. Measurement gates (runnable as written)
 
-Any construction change is gated on all of the following. Because the six
-`assert_eq!` pins in §0 are bit-exact, **they will trip by design on any ranking
-change** — re-pinning them is a deliberate, reviewed step (state Δ against
+Any construction change is gated on all of the following. The six
+`assert_eq!` pins in §0 are bit-exact **aggregates over the W2 corpus at
+capture depth 10** (top-1, top-5-set, absent, prefix-10 overlap, and the
+order-only count): a change that moves any of those aggregates on that
+corpus and depth trips them by design. The guarantee goes no further —
+order below the capture depth, inputs outside the corpus, and
+aggregate-neutral offsets that cancel across inputs are invisible to the
+pins. Re-pinning a moved value is a deliberate, reviewed step (state Δ
+against
 10190 / 10190 / 0 / 98930–98930 in the commit that re-pins; the prior
 10178 / 10190 / 0 / 94872 contract, the 10177 / 10189 / 1 / 94871 contract,
 the 10136 / 10182 / 94456 contract, and their Δ are in
