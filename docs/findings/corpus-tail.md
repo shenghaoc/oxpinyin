@@ -165,7 +165,10 @@ outside the W2 corpus, measured through the C ABI top-10 by
 | `amg` | same as `agn` via `CORRECT_MG_NG` → `ang` | same |
 
 These are the prefix-10 residual class showing up in the option-sweep
-window rather than in the W2 corpus fixture. The `option-sweep.sh`
+window rather than in the W2 corpus fixture. Each input's all-off parse,
+top-1, divergence rank, and class are enumerated in
+`docs/findings/all-off-tails.md` (reproduced with
+`bin/corpus-tail --all-off-tails`, no live oracle). The `option-sweep.sh`
 gate already excludes them from W10's STOP set
 (`run-option-sweep.sh:116-124,151-155`); no additional gate is added
 here.
