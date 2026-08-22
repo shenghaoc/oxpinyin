@@ -181,11 +181,11 @@ below (gap start rank, shared prefix depth) is moot.
 
 Same-set-different-order at depth 10: the comparator tie class of Class
 A, with the swap below rank 1. The 2026-08-22 port (amplified key + the
-pin's array order) moved the count to **0**, reported by the parity
-run's `order-only` diagnostic and by `bin/corpus-tail`. The count is not
-one of the five frozen `assert_eq!` values (top-1, top-5-set, absent,
-prefix-10 numerator and denominator); it is a printed diagnostic, kept
-at zero by the same pins that freeze the rest of the surface.
+pin's array order) moved the count to **0**, and
+`real_tables_session_reports_parity` asserts it there as its sixth
+frozen value (`order_only == 0`, alongside top-1, top-5-set, absent, and
+the prefix-10 numerator and denominator); `bin/corpus-tail` reports the
+same zero.
 
 ## Option-sweep all-off tails (outside the W2 corpus)
 
