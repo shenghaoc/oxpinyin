@@ -79,32 +79,42 @@ if [[ ! -f "$ORACLE_DATA/bigram.db" ]]; then
 fi
 
 CAPI_SYSTEM="${LIVETYPING_SYSTEM:-}"
-if [[ -z "$CAPI_SYSTEM" || ! -f "$CAPI_SYSTEM/interpolation2.text" ]]; then
+if [[ -z "$CAPI_SYSTEM" ]] || ! [[ -f "$CAPI_SYSTEM/interpolation2.text"     && -f "$CAPI_SYSTEM/pinyin_index.redb"     && -f "$CAPI_SYSTEM/phrase_index.redb"     && -f "$CAPI_SYSTEM/bigram.redb" ]]; then
     echo "SKIP: LIVETYPING_SYSTEM must name a real-unigram system dir"
     echo "  (pinyin_index.redb, phrase_index.redb, bigram.redb, interpolation2.text)"
     exit 0
 fi
+# The four-file presence check catches half-assembled dirs; it does NOT bind
+# the tables' identity to the oracle pin (a content hash or manifest belongs
+# to the parked oracle-provisioning work, where the dir is assembled
+# mechanically instead of by hand).
 
 ROUNDS="${LIVETYPING_ROUNDS:-3}"
 
 echo "--- capi side (rounds=$ROUNDS) ---"
 CAPI_LOG="$(mktemp)"
+CAPI_ERR="$(mktemp)"
 if ! LIVETYPING_ROUNDS="$ROUNDS" \
-    ./live-typing-diff "$CAPI_SO" "$CAPI_SYSTEM" > "$CAPI_LOG" 2>/dev/null; then
+    ./live-typing-diff "$CAPI_SO" "$CAPI_SYSTEM" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
     echo "FAIL: live-typing-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
-    rm -f "$CAPI_LOG"
+    echo "--- driver diagnostics (stderr) ---"
+    cat "$CAPI_ERR"
+    rm -f "$CAPI_LOG" "$CAPI_ERR"
     exit 1
 fi
 echo "oxpinyin-capi: ok"
 
 echo "--- oracle side ---"
 ORACLE_LOG="$(mktemp)"
+ORACLE_ERR="$(mktemp)"
 if ! LIVETYPING_ROUNDS="$ROUNDS" \
-    ./live-typing-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2>/dev/null; then
+    ./live-typing-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
     echo "FAIL: live-typing-diff crashed against oracle"
     cat "$ORACLE_LOG"
-    rm -f "$CAPI_LOG" "$ORACLE_LOG"
+    echo "--- driver diagnostics (stderr) ---"
+    cat "$ORACLE_ERR"
+    rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
     exit 1
 fi
 echo "oracle: ok"
@@ -115,7 +125,7 @@ if ! probe_live_surface "$CAPI_LOG" || ! probe_live_surface "$ORACLE_LOG"; then
     echo "  A missing cursor or an empty after-choose candidate window means the run"
     echo "  compared only the pre-choose surface and never exercised the"
     echo "  post-choose decode or the decoded-continuation train."
-    rm -f "$CAPI_LOG" "$ORACLE_LOG"
+    rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
     exit 1
 fi
 echo "post-choose surface active on both sides"
@@ -124,10 +134,10 @@ echo "--- differential (full log: live-typing surface + train + export) ---"
 if diff -u "$ORACLE_LOG" "$CAPI_LOG" > /dev/null; then
     echo "live-typing-diff: IDENTICAL"
     grep -E '^(phrase|bigram):' "$CAPI_LOG"
-    rm -f "$CAPI_LOG" "$ORACLE_LOG"
+    rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
     exit 0
 fi
 echo "DIVERGENCE (live-typing surface or train/export)"
 diff -u "$ORACLE_LOG" "$CAPI_LOG" || true
-rm -f "$CAPI_LOG" "$ORACLE_LOG"
+rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
 exit 2
