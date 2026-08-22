@@ -19,6 +19,31 @@ over-read was additionally surveyed still-present on `main` @
 `55e9051` (2026-08-20) with no existing report found on GitHub or
 Fedora Bugzilla.
 
+**Shared setup — every reproduction below is a fragment that assumes
+this block** (declared once here, not repeated per snippet):
+
+```c
+/* Build: gcc repro.c -ldl $(pkg-config --cflags --libs glib-2.0) — or
+ * link libpinyin directly. dlopen() is only how our harness reaches a
+ * specific build; a plain link works the same. */
+pinyin_context_t *ctx = pinyin_init(systemdir, userdir); /* both dirs
+    must exist and be writable: the user dir gets the user store */
+pinyin_instance_t *inst = pinyin_alloc_instance(ctx);
+/* ... the snippet ... */
+pinyin_free_instance(inst);
+pinyin_fini(ctx);
+```
+
+**Build configuration of the verified oracle** (the assert findings
+depend on it): built by `tools/oracle/build-oracle.sh` with no caller
+CFLAGS/CXXFLAGS, plain `./configure --disable-static --with-dbm=Tkrzw`
+— autotools' default `-g -O2`, **no `-DNDEBUG`**, so `assert()` is
+live. The aborts below are assertion firings, not crash-adjacent
+undefined behaviour; under `-DNDEBUG` findings 2–4 degrade silently
+instead (finding 2 reads an unset out-param, 3 and 4 continue past the
+guard), which is worth stating in the issues as the NDEBUG-shaped
+secondary hazard.
+
 ---
 
 ## 1. Heap over-read in `pinyin_get_full_pinyin_auxiliary_text` (info leak)
@@ -132,10 +157,12 @@ search aborts — is the defect.
 
 ---
 
-## 4. Scheme setters abort or half-mutate on the no-op slots
+## 4. Scheme setters: a valid scheme aborts, invalid inputs lie or abort
 
 **Severity: medium** — three related contract holes in the setter
-family, all verified at `0c5e80e`:
+family, all verified at `0c5e80e`. The first is a VALID input
+(STANDARD_DVORAK is a real scheme); the other two are invalid-input
+handling that aborts or lies:
 
 - **zhuyin STANDARD_DVORAK (7)** — `pinyin_set_zhuyin_scheme` routes 7
   into `ZhuyinSimpleParser2::set_scheme`, whose dvorak arm assigns both
@@ -161,8 +188,9 @@ pinyin_set_zhuyin_scheme(ctx, 7);     /* SIGABRT after the tables were
   fallback-bearing scheme (ZRM/PYJJ/XHE) silently loses its fallback
   while the caller is told the call succeeded — a half-mutation.
 
-**Suggested fix:** the dvorak arm needs a `return true;` (or
-`break`) after assigning; the wrappers should propagate the parser's
+**Suggested fix:** the dvorak arm needs `return true;` after its
+assignments — a bare `break` is not enough, `set_scheme` returns
+`false` after the switch; the wrappers should propagate the parser's
 `false` instead of answering `true`; CUSTOMIZED should validate before
 any mutation runs.
 
