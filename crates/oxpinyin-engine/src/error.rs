@@ -33,6 +33,15 @@ pub enum EngineError {
         /// Where the zero-start walk stopped.
         normalized: usize,
     },
+    /// A lookup offset lay beyond the raw input's one-past-end position —
+    /// upstream reads its matrix out of bounds there, so the range has no
+    /// pinned behaviour and the engine refuses it.
+    LookupOffsetOutOfRange {
+        /// The offset the caller asked to look up at.
+        offset: usize,
+        /// The raw input length the offset may at most equal.
+        len: usize,
+    },
     /// The dictionary backend failed.
     Dictionary(String),
     /// The language model backend failed.
@@ -61,6 +70,12 @@ impl fmt::Display for EngineError {
                     formatter,
                     "lookup offset {offset} sits one past a leading separator \
                      run (normalized to {normalized})"
+                )
+            }
+            Self::LookupOffsetOutOfRange { offset, len } => {
+                write!(
+                    formatter,
+                    "lookup offset {offset} is out of range 0..={len}"
                 )
             }
             Self::Dictionary(message) => write!(formatter, "dictionary error: {message}"),
@@ -98,6 +113,10 @@ mod tests {
             }
             .to_string(),
             "lookup offset 1 sits one past a leading separator run (normalized to 1)"
+        );
+        assert_eq!(
+            EngineError::LookupOffsetOutOfRange { offset: 9, len: 3 }.to_string(),
+            "lookup offset 9 is out of range 0..=3"
         );
     }
 }

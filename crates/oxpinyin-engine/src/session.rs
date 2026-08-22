@@ -815,12 +815,21 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError::LookupOffsetPastSeparator`] where upstream's
+    /// Returns [`EngineError::LookupOffsetOutOfRange`] for an offset beyond
+    /// the raw input's one-past-end position (upstream reads its matrix out
+    /// of bounds there — no pinned behaviour exists to reproduce), and
+    /// [`EngineError::LookupOffsetPastSeparator`] where upstream's
     /// `_check_offset` aborts: the normalized offset still sits one past a
     /// separator, which only a leading apostrophe run can cause (the walk
     /// never crosses byte 0).
     pub fn normalized_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
         let raw = self.raw.as_bytes();
+        if offset > raw.len() {
+            return Err(EngineError::LookupOffsetOutOfRange {
+                offset,
+                len: raw.len(),
+            });
+        }
         let mut normalized = offset;
         let mut index = offset.saturating_sub(1);
         while index > 0 && raw.get(index) == Some(&b'\'') {
@@ -2505,8 +2514,8 @@ mod tests {
         );
         assert_eq!(
             session.normalized_lookup_offset(9),
-            Ok(9),
-            "an out-of-range offset stays put rather than indexing the raw buffer"
+            Err(EngineError::LookupOffsetOutOfRange { offset: 9, len: 3 }),
+            "an offset beyond one-past-end refuses before the walk"
         );
     }
 
