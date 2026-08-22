@@ -863,20 +863,17 @@ impl CapiInstance {
     }
 
     /// Begin a parse of `original` (the caller's input, in the active
-    /// mode's own coordinates): continue the current composition when the
-    /// new input strictly extends the stored one AND the composition is
-    /// still incomplete (a mid-composition keystroke — the constraint
-    /// store and the chosen cursor survive, exactly upstream's
-    /// parse-never-touches-constraints rule); otherwise start a fresh
-    /// composition (the previous one completed or the buffer was replaced
-    /// — the frontend's reset-between-compositions contract, which the
-    /// committed-cursor flows rely on).
+    /// mode's own coordinates): continue the current composition when it
+    /// is open and the buffer evolved from the stored one — extension,
+    /// backspace, or re-send keep the constraint store and the chosen
+    /// cursor, exactly upstream's parse-never-touches-constraints rule,
+    /// with `validate_constraint` dropping what stops spelling at the
+    /// next guess. A selection-consumed composition or a divergent
+    /// buffer starts fresh.
     pub(crate) fn begin_parse(&mut self, original: &[u8]) {
-        let stored: &[u8] = if let Some(parse) = self.zhuyin_parse.as_ref() {
-            let _ = parse;
+        let stored: &[u8] = if self.zhuyin_parse.is_some() {
             self.zhuyin_input.as_bytes()
-        } else if let Some(parse) = self.double_parse.as_ref() {
-            let _ = parse;
+        } else if self.double_parse.is_some() {
             self.double_input.as_bytes()
         } else if self.full_parse.is_some() {
             self.full_input.as_bytes()
