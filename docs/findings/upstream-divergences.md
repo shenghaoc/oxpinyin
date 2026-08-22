@@ -190,10 +190,15 @@ inputs (the pin-built `.so` SIGABRTs).
   fresh (the frontend's reset-between-compositions contract, which the
   #141 cursor flows rely on), and a shrinking or divergent re-parse
   drops the forcings outright instead of carrying them into validate.
-- **Externally observable:** yes — on a backspace-into-a-forced-run
-  surface upstream re-decodes with the surviving forcings; oxpinyin
-  starts the composition over. No frozen pin or differential drives that
-  surface.
+- **Externally observable:** yes — measured by the opt-in backspace
+  phase of the live-typing driver (`LIVETYPING_BACKSPACE=1`,
+  `live-typing.md` §"Backspace-after-choose, measured"): after choosing
+  你 for "ni" and shrinking the buffer a keystroke at a time down to
+  "ni" then re-typing to "nihaoshijie", the oracle keeps 你 forced the
+  whole way (rows and offset-2 window at every step, including the
+  retype) while oxpinyin starts the composition fresh at the first
+  shrink — offset-0 window, free rows — and never recovers the forcing
+  on the retype. ~190 diverging log lines over the ladder.
 
 ### The n-best row-choose cursor is the row's own end
 
@@ -211,3 +216,18 @@ inputs (the pin-built `.so` SIGABRTs).
 - **Externally observable:** yes, but only through a row whose path ends
   before the parsed input does — none of the pinned surfaces constructs
   one on real tables.
+
+### pinyin_get_sentence asserts a non-empty past-the-rows index
+
+- **Upstream source cite:** `src/pinyin.cpp:1463-1482`
+  (`pinyin_get_sentence`).
+- **Mechanism:** an empty result set answers `false` (defined), but a
+  non-empty one asserts `index < results.size()` — asking one row past
+  the set aborts.
+- **What oxpinyin does instead:** `false` past the row count, including
+  on a non-empty set (the W14 decoded-or-false gate).
+- **Externally observable:** yes — upstream SIGABRTs on the call;
+  oxpinyin returns false. Found while teaching the live-typing driver
+  the caller contract: the frontend renders exactly the NBEST rows the
+  candidate list carries, so a proved-index-bound question never trips
+  it on either engine.
