@@ -194,29 +194,28 @@ impl ConstraintStore {
                 continue;
             }
             let next_pos = other.get(index + 1).map_or(tail, |next| next.start);
-            self.add(span.start, next_pos, span.token, span.text.clone());
-            changed = true;
+            // Only a written run counts: `add` refuses an overrunning
+            // span, and a refused write must not be reported as a
+            // constraint.
+            changed = self.add(span.start, next_pos, span.token, span.text.clone()) > 0 || changed;
         }
         changed
     }
 
-    /// The selection record the surviving forcings imply: chosen text,
-    /// composition offset, and token history, left to right. `None` when
-    /// nothing is forced.
-    pub(crate) fn selection(&self) -> Option<(CompactString, usize, Vec<PhraseToken>)> {
-        let mut selected = CompactString::const_new("");
-        let mut consumed = 0;
-        let mut history = Vec::new();
-        let mut forced = false;
-        for cell in &self.cells {
-            if let Cell::OneStep { token, end, text } = cell {
-                selected.push_str(text);
-                consumed = *end;
-                history.push(*token);
-                forced = true;
-            }
-        }
-        forced.then_some((selected, consumed, history))
+    /// The surviving forcings as `(start, end, token, text)` runs, left
+    /// to right — the record-rebuild input. Gaps between runs are free
+    /// spans (`diff_result` forces only the differing phrases); the
+    /// caller supplies their text from the current buffer, so the rebuilt
+    /// record never drops raw input the forcings skip over.
+    pub(crate) fn runs(&self) -> Vec<(usize, usize, PhraseToken, CompactString)> {
+        self.cells
+            .iter()
+            .enumerate()
+            .filter_map(|(start, cell)| match cell {
+                Cell::OneStep { token, end, text } => Some((start, *end, *token, text.clone())),
+                _ => None,
+            })
+            .collect()
     }
 }
 
@@ -339,23 +338,37 @@ mod tests {
     }
 
     #[test]
-    fn selection_rebuilds_from_the_surviving_runs() {
+    fn runs_report_start_and_end_with_gaps_between() {
         let mut store = ConstraintStore::default();
-        store.resize(6);
+        store.resize(8);
         store.add(0, 2, token(7), "你".into());
-        store.add(2, 5, token(9), "浩".into());
-        let (selected, consumed, history) = store.selection().expect("two runs are forced");
-        assert_eq!(selected.as_str(), "你浩");
-        assert_eq!(consumed, 5);
-        assert_eq!(history, vec![token(7), token(9)]);
+        store.add(4, 7, token(9), "浩".into());
+        // diff_result's shape: a free gap [2, 4) between the forcings —
+        // the caller fills it from the buffer, the store only reports
+        // the runs' own coordinates.
+        let runs = store.runs();
+        assert_eq!(runs.len(), 2);
+        assert_eq!((runs[0].0, runs[0].1, runs[0].2.value()), (0, 2, 7));
+        assert_eq!((runs[1].0, runs[1].1, runs[1].2.value()), (4, 7, 9));
 
-        store.clear_by_offset(2);
-        let (selected, consumed, history) = store.selection().expect("one run survives");
-        assert_eq!(selected.as_str(), "你");
-        assert_eq!(consumed, 2);
-        assert_eq!(history, vec![token(7)]);
+        store.clear_by_offset(4);
+        let runs = store.runs();
+        assert_eq!(runs.len(), 1);
+        assert_eq!((runs[0].0, runs[0].1), (0, 2));
 
         store.clear_by_offset(0);
-        assert!(store.selection().is_none());
+        assert!(store.runs().is_empty());
+    }
+
+    #[test]
+    fn a_refused_diff_write_is_not_reported_as_a_constraint() {
+        // An unsized store: every add is refused, so diff_result must
+        // answer that nothing changed rather than claim a forcing that
+        // never landed.
+        let mut store = ConstraintStore::default();
+        let best = [span(0, 10, "你好")];
+        let other = [span(0, 11, "你浩")];
+        assert!(!store.diff_result(&best, &other, 5));
+        assert!(store.runs().is_empty());
     }
 }

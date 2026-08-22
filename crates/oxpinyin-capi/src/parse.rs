@@ -57,7 +57,7 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
         let use_tone = inst.options().contains(USE_TONE);
         let parsed = oxpinyin_core::parse_full_pinyin_index(text.as_bytes(), use_tone, index);
         let full = parsed.full_pinyin();
-        if !full.is_empty() && inst.session.type_pinyin(&full).is_err() {
+        if !full.is_empty() && inst.session.replace_raw(&full).is_err() {
             return 0;
         }
         inst.parsed_len = parsed.consumed();
@@ -66,8 +66,8 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
         return inst.parsed_len;
     }
 
-    let consumed = match inst.session.type_pinyin(text) {
-        Ok(_) => inst.session.full_parsed_len(),
+    let consumed = match inst.session.replace_raw(text) {
+        Ok(()) => inst.session.full_parsed_len(),
         Err(_) => 0,
     };
     inst.parsed_len = consumed;
@@ -120,7 +120,7 @@ fn parse_double_more(instance: *mut PinyinInstance, text: &str) -> usize {
     }
 
     let full = parsed.full_pinyin();
-    if !full.is_empty() && inst.session.type_pinyin(&full).is_err() {
+    if !full.is_empty() && inst.session.replace_raw(&full).is_err() {
         return 0;
     }
 
@@ -174,7 +174,7 @@ fn parse_chewing_more(instance: *mut PinyinInstance, text: &str) -> usize {
     }
 
     let full = parsed.full_pinyin();
-    if !full.is_empty() && inst.session.type_pinyin(&full).is_err() {
+    if !full.is_empty() && inst.session.replace_raw(&full).is_err() {
         return 0;
     }
 

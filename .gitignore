@@ -25,6 +25,9 @@ rustc-ice-*.txt
 /.kiro/settings/cli.json
 /.kiro/settings/lsp.json
 
+# Local agent tooling worktrees (not committed)
+/.claude/
+
 # Bisection harness compiled binary
 /tools/bisection/bisect
 /tools/bisection/train-diff

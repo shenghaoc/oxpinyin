@@ -589,6 +589,18 @@ int main(int argc, char **argv) {
             goto fail_inst;
         }
         printf("bp:cursor=%d\n", bp_cursor);
+        /* The ladder's shortest rung is "ni" (2 bytes): a cursor past it
+         * would drive pinyin_guess_candidates beyond one-past-end, where
+         * upstream's _check_offset aborts — a SIGABRT instead of a
+         * reported divergence. Fail the run loudly if the oracle ever
+         * answers a larger cursor for this choose. */
+        if (bp_cursor > 2) {
+            fprintf(stderr,
+                    "backspace: cursor %d overruns the shortest rung \"ni\" "
+                    "(2); refusing to drive the oracle past one-past-end\n",
+                    bp_cursor);
+            goto fail_inst;
+        }
         char label[32];
         for (size_t i = 0; i < sizeof(ladder) / sizeof(ladder[0]); i++) {
             snprintf(label, sizeof(label), "bp-%s", ladder[i]);
