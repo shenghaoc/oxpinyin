@@ -868,9 +868,11 @@ impl CapiInstance {
     /// - Plain full pinyin: the full law over the session's raw buffer,
     ///   whose `'` bytes are the matrix's zero-key columns
     ///   ([`Session::normalized_lookup_offset`]).
-    /// - LUOMA / SECONDARY_ZHUYIN: the full law over the stored original
-    ///   input — the pinned index parse consumes `'` as the same
-    ///   separator.
+    /// - LUOMA / SECONDARY_ZHUYIN: the full law over the consumed prefix
+    ///   of the stored original input — the pinned index parse consumes
+    ///   `'` as the same separator, and bytes past its consumed length
+    ///   never entered the composition, so they bound the offset range
+    ///   exactly like the other transformed seams' parsed lengths.
     /// - Double pinyin: no zero-key column can exist — `'` is not a scheme
     ///   key, the parse stops there, and upstream asserts the input
     ///   carries none at all (`pinyin_parser2.cpp:629`) — so only the
@@ -884,8 +886,12 @@ impl CapiInstance {
             check_lookup_offset_range(parse.consumed(), offset)
         } else if let Some(parse) = self.double_parse.as_ref() {
             check_lookup_offset_range(parse.consumed(), offset)
-        } else if self.full_parse.is_some() {
-            normalize_lookup_offset(self.full_input.as_bytes(), offset)
+        } else if let Some(parse) = self.full_parse.as_ref() {
+            // The min is defensive only: `full_input` and the parse are set
+            // together and cleared together, so consumed never exceeds the
+            // buffer — but a desync must refuse, not slice-panic.
+            let consumed = parse.consumed().min(self.full_input.len());
+            normalize_lookup_offset(&self.full_input.as_bytes()[..consumed], offset)
         } else {
             self.session.normalized_lookup_offset(offset)
         }

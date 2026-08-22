@@ -421,6 +421,19 @@ fn luoma_input_carries_the_full_offset_law() {
     assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
     assert!(!pinyin_guess_candidates(instance, 1, DEFAULT_SORT));
 
+    // An unparsed suffix is outside the law's domain: the bound is the
+    // parse's consumed prefix, not the stored buffer, exactly like the
+    // other transformed seams' parsed lengths.
+    assert_eq!(parse(instance, "ni'hao!"), 6);
+    assert!(
+        pinyin_guess_candidates(instance, 6, DEFAULT_SORT),
+        "one past the parsed region is the reserved slot"
+    );
+    assert!(
+        !pinyin_guess_candidates(instance, 7, DEFAULT_SORT),
+        "an offset inside the unparsed suffix is refused"
+    );
+
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
