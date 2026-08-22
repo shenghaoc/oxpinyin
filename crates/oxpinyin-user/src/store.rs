@@ -1,5 +1,5 @@
-//! redb-backed integer store for user-learning counts and the user phrase
-//! index.
+//! Ordered-store-backed integer store for user-learning counts and the user
+//! phrase index.
 //!
 //! Models the *values* libpinyin records — user bigram counts, phrase-index
 //! unigram deltas, and user-phrase text/pronunciations — not its MemoryChunk
@@ -14,13 +14,15 @@
 //! redb-backed persistence point behind `pinyin_save`.
 
 use std::fmt;
+use std::ops::Bound;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use oxpinyin_core::UserCountDelta;
-use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
+use oxpinyin_store::{DefaultStore, OrderedStore, ReadSnapshot, StoreError, WriteTxn};
 
+use crate::codec;
 use crate::phrase::{
     self, ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT, FIRST_USER_TOKEN,
     PinyinKey, USER_DICTIONARY, UserPhrase, UserPronunciation, first_library_token,
@@ -50,39 +52,22 @@ pub struct ExportedPhrase {
 /// sentence (`docs/findings/user-store.md` §2; `novel_types.h:122`).
 pub const SENTENCE_START: Token = 1;
 
-/// User bigram counts: `(prev, cur) -> count`.
-const BIGRAM: TableDefinition<(Token, Token), u64> = TableDefinition::new("user_bigram");
+// ── table names ───────────────────────────────────────────────────
 
-/// Per-predecessor bigram totals: `prev -> total`.
-const BIGRAM_TOTAL: TableDefinition<Token, u64> = TableDefinition::new("user_bigram_total");
+const BIGRAM: &str = "user_bigram";
+const BIGRAM_TOTAL: &str = "user_bigram_total";
+const UNIGRAM: &str = "user_unigram";
+const UNIGRAM_TOTAL: &str = "user_unigram_total";
+const PHRASE: &str = "user_phrase";
+const PHRASE_BY_TEXT: &str = "user_phrase_by_text";
+const PHRASE_BY_LIB_TEXT: &str = "user_phrase_by_lib_text";
+const PRONUNCIATION: &str = "user_pronunciation";
+const ALLOC: &str = "user_phrase_alloc";
 
-/// Phrase-index unigram deltas: `token -> delta`.
-const UNIGRAM: TableDefinition<Token, u64> = TableDefinition::new("user_unigram");
-
-/// Running sum of every unigram delta: singleton key [`UNIGRAM_TOTAL_KEY`].
-const UNIGRAM_TOTAL: TableDefinition<u8, u64> = TableDefinition::new("user_unigram_total");
-
-/// Sole key in [`UNIGRAM_TOTAL`].
+/// Sole key in the `user_unigram_total` table.
 const UNIGRAM_TOTAL_KEY: u8 = 0;
 
-/// User phrase text: `token -> phrase`.
-const PHRASE: TableDefinition<Token, &str> = TableDefinition::new("user_phrase");
-
-/// Reverse lookup used by the §3.2 "already in this sub-index" merge.
-const PHRASE_BY_TEXT: TableDefinition<&str, Token> = TableDefinition::new("user_phrase_by_text");
-
-/// Per-library reverse lookup so network (6) and user (7) can share a text.
-const PHRASE_BY_LIB_TEXT: TableDefinition<(u8, &str), Token> =
-    TableDefinition::new("user_phrase_by_lib_text");
-
-/// Pronunciations: `(token, encoded key sequence) -> count`.
-const PRONUNCIATION: TableDefinition<(Token, &[u8]), u64> =
-    TableDefinition::new("user_pronunciation");
-
-/// Persistent allocation cursor: singleton key [`ALLOC_CURSOR`] → next token.
-const ALLOC: TableDefinition<u8, Token> = TableDefinition::new("user_phrase_alloc");
-
-/// Sole key in [`ALLOC`].
+/// Sole key in the `user_phrase_alloc` table.
 const ALLOC_CURSOR: u8 = 0;
 
 /// Which seed rule an update applies.
@@ -97,20 +82,12 @@ enum SeedPolicy {
 /// Errors from opening or updating the user store.
 #[derive(Debug)]
 pub enum UserStoreError {
-    /// The redb file could not be opened (I/O error).
+    /// The store file could not be opened (I/O error).
     Io(std::io::Error),
-    /// redb reported a database-level error.
-    Db(redb::DatabaseError),
-    /// redb reported a table-level error.
-    Table(redb::TableError),
-    /// redb reported a transaction-level error.
-    Transaction(redb::TransactionError),
-    /// redb reported a commit error.
-    Commit(redb::CommitError),
-    /// redb reported a storage-level error.
-    Storage(redb::StorageError),
-    /// redb reported a compaction error.
-    Compaction(redb::CompactionError),
+    /// The storage backend reported an error.
+    Store(StoreError),
+    /// A stored value could not be decoded (corrupt or incompatible).
+    Decode,
     /// Phrase text is empty, too long, or its key count does not match its
     /// Unicode scalar length (`docs/findings/user-store.md` §3.1–3.2).
     InvalidPhrase,
@@ -122,12 +99,8 @@ impl fmt::Display for UserStoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(e) => write!(f, "I/O error: {e}"),
-            Self::Db(e) => write!(f, "database error: {e}"),
-            Self::Table(e) => write!(f, "table error: {e}"),
-            Self::Transaction(e) => write!(f, "transaction error: {e}"),
-            Self::Commit(e) => write!(f, "commit error: {e}"),
-            Self::Storage(e) => write!(f, "storage error: {e}"),
-            Self::Compaction(e) => write!(f, "compaction error: {e}"),
+            Self::Store(e) => write!(f, "store error: {e}"),
+            Self::Decode => write!(f, "stored value could not be decoded"),
             Self::InvalidPhrase => {
                 write!(f, "invalid phrase (empty, too long, or key count mismatch)")
             }
@@ -142,61 +115,203 @@ impl std::error::Error for UserStoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
-            Self::Db(e) => Some(e),
-            Self::Table(e) => Some(e),
-            Self::Transaction(e) => Some(e),
-            Self::Commit(e) => Some(e),
-            Self::Storage(e) => Some(e),
-            Self::Compaction(e) => Some(e),
-            Self::InvalidPhrase | Self::TokenSpaceExhausted => None,
+            Self::Store(e) => Some(e),
+            Self::Decode | Self::InvalidPhrase | Self::TokenSpaceExhausted => None,
         }
     }
 }
 
-impl From<redb::DatabaseError> for UserStoreError {
-    fn from(e: redb::DatabaseError) -> Self {
-        Self::Db(e)
+impl From<StoreError> for UserStoreError {
+    fn from(e: StoreError) -> Self {
+        match e {
+            StoreError::Io(io) => Self::Io(io),
+            other => Self::Store(other),
+        }
     }
 }
 
-impl From<redb::TableError> for UserStoreError {
-    fn from(e: redb::TableError) -> Self {
-        Self::Table(e)
+// ── codec helpers ─────────────────────────────────────────────────
+
+fn get_u64(store: &DefaultStore, table: &str, key: &[u8]) -> Result<Option<u64>, UserStoreError> {
+    match store.get(table, key)? {
+        None => Ok(None),
+        Some(bytes) => codec::decode_u64(&bytes)
+            .map(Some)
+            .ok_or(UserStoreError::Decode),
     }
 }
 
-impl From<redb::TransactionError> for UserStoreError {
-    fn from(e: redb::TransactionError) -> Self {
-        Self::Transaction(e)
+fn get_u64_or(
+    store: &DefaultStore,
+    table: &str,
+    key: &[u8],
+    default: u64,
+) -> Result<u64, UserStoreError> {
+    Ok(get_u64(store, table, key)?.unwrap_or(default))
+}
+
+fn txn_get_u64(txn: &dyn WriteTxn, table: &str, key: &[u8]) -> Result<Option<u64>, StoreError> {
+    match txn.get(table, key)? {
+        None => Ok(None),
+        Some(bytes) => codec::decode_u64(&bytes)
+            .map(Some)
+            .ok_or_else(|| StoreError::Backend("corrupt u64 value".into())),
     }
 }
 
-impl From<redb::CommitError> for UserStoreError {
-    fn from(e: redb::CommitError) -> Self {
-        Self::Commit(e)
+fn txn_get_u64_or(
+    txn: &dyn WriteTxn,
+    table: &str,
+    key: &[u8],
+    default: u64,
+) -> Result<u64, StoreError> {
+    Ok(txn_get_u64(txn, table, key)?.unwrap_or(default))
+}
+
+fn snap_get_u64(
+    snap: &<DefaultStore as OrderedStore>::ReadSnapshot,
+    table: &str,
+    key: &[u8],
+) -> Result<Option<u64>, UserStoreError> {
+    match snap.get(table, key)? {
+        None => Ok(None),
+        Some(bytes) => codec::decode_u64(&bytes)
+            .map(Some)
+            .ok_or(UserStoreError::Decode),
     }
 }
 
-impl From<redb::StorageError> for UserStoreError {
-    fn from(e: redb::StorageError) -> Self {
-        Self::Storage(e)
-    }
+fn snap_get_u64_or(
+    snap: &<DefaultStore as OrderedStore>::ReadSnapshot,
+    table: &str,
+    key: &[u8],
+    default: u64,
+) -> Result<u64, UserStoreError> {
+    Ok(snap_get_u64(snap, table, key)?.unwrap_or(default))
 }
 
-impl From<redb::CompactionError> for UserStoreError {
-    fn from(e: redb::CompactionError) -> Self {
-        Self::Compaction(e)
-    }
+fn bump_unigram_total(txn: &mut dyn WriteTxn, delta: u64) -> Result<(), StoreError> {
+    let key = codec::encode_u8(UNIGRAM_TOTAL_KEY);
+    let prev = txn_get_u64_or(txn, UNIGRAM_TOTAL, &key, 0)?;
+    txn.put(
+        UNIGRAM_TOTAL,
+        &key,
+        &codec::encode_u64(prev.saturating_add(delta)),
+    )?;
+    Ok(())
 }
 
-/// A redb-backed store of user-learning counts.
+/// Pronunciation-range bounds for `token`.
+fn pronunciation_range(token: Token) -> (Bound<Vec<u8>>, Bound<Vec<u8>>) {
+    let lo = Bound::Included(codec::encode_token_bytes(token, &[]).to_vec());
+    let hi = match token.checked_add(1) {
+        Some(next) => Bound::Excluded(codec::encode_token_bytes(next, &[]).to_vec()),
+        None => Bound::Unbounded,
+    };
+    (lo, hi)
+}
+
+fn collect_pronunciations_from_store(
+    store: &DefaultStore,
+    token: Token,
+) -> Result<Vec<UserPronunciation>, UserStoreError> {
+    let (lo, hi) = pronunciation_range(token);
+    let mut out = Vec::new();
+    store.range(
+        PRONUNCIATION,
+        lo.as_ref().map(|v| v.as_slice()),
+        hi.as_ref().map(|v| v.as_slice()),
+        &mut |key, value| {
+            let (_, key_bytes) = codec::decode_token_bytes(key)
+                .ok_or(StoreError::Backend("corrupt pronunciation key".into()))?;
+            let count = codec::decode_u64(value)
+                .ok_or(StoreError::Backend("corrupt pronunciation count".into()))?;
+            out.push(UserPronunciation::new(
+                phrase::decode_keys(key_bytes),
+                count,
+            ));
+            Ok(())
+        },
+    )?;
+    Ok(out)
+}
+
+fn collect_pronunciations_from_txn(
+    txn: &dyn WriteTxn,
+    token: Token,
+) -> Result<Vec<(Vec<u8>, u64)>, StoreError> {
+    let (lo, hi) = pronunciation_range(token);
+    let mut out = Vec::new();
+    txn.range(
+        PRONUNCIATION,
+        lo.as_ref().map(|v| v.as_slice()),
+        hi.as_ref().map(|v| v.as_slice()),
+        &mut |key, value| {
+            let (_, key_bytes) = codec::decode_token_bytes(key)
+                .ok_or(StoreError::Backend("corrupt pronunciation key".into()))?;
+            let count = codec::decode_u64(value)
+                .ok_or(StoreError::Backend("corrupt pronunciation count".into()))?;
+            out.push((key_bytes.to_vec(), count));
+            Ok(())
+        },
+    )?;
+    Ok(out)
+}
+
+fn remove_pronunciations(txn: &mut dyn WriteTxn, token: Token) -> Result<(), StoreError> {
+    let rows = collect_pronunciations_from_txn(txn, token)?;
+    for (key_bytes, _) in rows {
+        txn.remove(PRONUNCIATION, &codec::encode_token_bytes(token, &key_bytes))?;
+    }
+    Ok(())
+}
+
+/// Whether the store holds any user data, evaluated inside `txn`.
+fn has_user_data_in_write_txn(txn: &dyn WriteTxn) -> Result<bool, StoreError> {
+    let mut bigram_empty = true;
+    txn.for_each(BIGRAM, &mut |_, _| {
+        bigram_empty = false;
+        Ok(())
+    })?;
+    if !bigram_empty {
+        return Ok(true);
+    }
+
+    let mut unigram_empty = true;
+    txn.for_each(UNIGRAM, &mut |_, _| {
+        unigram_empty = false;
+        Ok(())
+    })?;
+    if !unigram_empty {
+        return Ok(true);
+    }
+
+    let mut phrase_empty = true;
+    txn.for_each(PHRASE, &mut |_, _| {
+        phrase_empty = false;
+        Ok(())
+    })?;
+    if !phrase_empty {
+        return Ok(true);
+    }
+
+    let mut pron_empty = true;
+    txn.for_each(PRONUNCIATION, &mut |_, _| {
+        pron_empty = false;
+        Ok(())
+    })?;
+    Ok(!pron_empty)
+}
+
+// ── UserStore ─────────────────────────────────────────────────────
+
+/// An ordered-store-backed store of user-learning counts.
 ///
 /// `Clone` shares the underlying database handle (cheap): the C ABI context
 /// keeps the canonical store and hands each instance a clone, exactly like
-/// the dictionary and language model handles. `redb`'s `Database` handle is
-/// not itself `Clone` (redb 4.1.0), so the handle and the §4 `m_modified`
-/// flag live on one `Arc`; the `Mutex` serializes the handle because
-/// [`Database::compact`] (the `pinyin_save` write side) demands `&mut self`.
+/// the dictionary and language model handles. The handle and the §4
+/// `m_modified` flag live on one `Arc`; the `Mutex` serializes the handle
+/// because compaction (the `pinyin_save` write side) demands `&mut self`.
 /// Clones record dirtiness through their own `&mut self` updates and the
 /// context's `pinyin_save` observes it. The C ABI contract is
 /// main-thread-only, so the flag uses relaxed ordering.
@@ -222,10 +337,10 @@ impl fmt::Debug for UserStore {
 }
 
 impl UserStore {
-    /// Locks the shared database handle, recovering from a poisoned lock
+    /// Locks the shared store handle, recovering from a poisoned lock
     /// (constitution §4: nothing here panics, so a poisoned mutex must not
     /// brick the store either).
-    fn database(&self) -> MutexGuard<'_, Database> {
+    fn database(&self) -> MutexGuard<'_, DefaultStore> {
         self.inner
             .db
             .lock()
@@ -247,37 +362,20 @@ impl UserStore {
         self.inner.has_user_data.load(Ordering::Acquire)
     }
 
-    /// Opens one read transaction plus the four owned count tables.
+    /// Opens one read snapshot for the count tables.
     ///
     /// Takes `database()` for the call and releases it before returning; the
     /// caller already holds the snapshot lock, which is the outer half of the
     /// one legal order (snapshot, then db).
     fn build_count_snapshot(&self, generation: u64) -> Result<CountSnapshot, UserStoreError> {
         let db = self.database();
-        let txn = db.begin_read()?;
-        let unigram = txn.open_table(UNIGRAM)?;
-        let unigram_total = txn.open_table(UNIGRAM_TOTAL)?;
-        let bigram = txn.open_table(BIGRAM)?;
-        let bigram_total = txn.open_table(BIGRAM_TOTAL)?;
+        let snap = db.snapshot()?;
         drop(db);
-        Ok(CountSnapshot {
-            generation,
-            unigram,
-            unigram_total,
-            bigram,
-            bigram_total,
-            _txn: txn,
-        })
+        Ok(CountSnapshot { generation, snap })
     }
 
     /// Runs `read` against the snapshot for the current write generation,
     /// rebuilding it first when a write has landed since it was cached.
-    ///
-    /// The snapshot is moved out of the mutex for the call and put back after,
-    /// so `read` always receives a live [`CountSnapshot`]. There is
-    /// deliberately no "snapshot absent" arm: an arm like that would have to
-    /// invent a reading, and the only plausible one — report zero — is exactly
-    /// what a populated store must never say.
     fn with_count_snapshot<T>(
         &self,
         read: impl FnOnce(&CountSnapshot) -> Result<T, UserStoreError>,
@@ -286,8 +384,6 @@ impl UserStore {
         let generation = self.write_generation();
         let cached = match snapshot.take() {
             Some(cached) if cached.generation == generation => cached,
-            // A rebuild that fails leaves the slot empty: the next read
-            // retries rather than serving counts from a superseded txn.
             _ => self.build_count_snapshot(generation)?,
         };
         let out = read(&cached);
@@ -296,15 +392,7 @@ impl UserStore {
     }
 
     /// Invalidate cached reads after a committed user-data write.
-    ///
-    /// Consumes the caller's [`Self::database`] guard and drops it before
-    /// touching the snapshot lock. Writers therefore hold db alone and then
-    /// snapshot alone, while readers and [`Self::save`] hold snapshot-then-db;
-    /// the two orders cannot interleave into a cycle. Taking the guard by
-    /// value makes that mechanical instead of a rule each call site has to
-    /// remember — forgetting a bare `drop(db)` here would deadlock against a
-    /// concurrent `save`.
-    fn mark_committed_write(&self, db: MutexGuard<'_, Database>, has_user_data: bool) {
+    fn mark_committed_write(&self, db: MutexGuard<'_, DefaultStore>, has_user_data: bool) {
         drop(db);
         *self.count_snapshot() = None;
         self.inner
@@ -323,12 +411,8 @@ impl UserStore {
     ///
     /// Opening a path that is already open in this process returns a clone of
     /// the live handle (shared counts and shared §4 dirty flag) rather than a
-    /// second database handle, which redb refuses.
+    /// second database handle.
     pub fn open(path: &Path) -> Result<Self, UserStoreError> {
-        // Reuse a live handle for a path already open in this process (redb
-        // refuses a second write handle). The registry lock is held across
-        // create + insert so two racing opens of a fresh path cannot both
-        // create.
         let key = registry::registry_key(path);
         let mut reg = registry::lock_registry();
         if let Some(inner) = reg.get(&key).and_then(|handle| handle.upgrade()) {
@@ -338,39 +422,30 @@ impl UserStore {
             });
         }
 
-        let db = Database::create(path).map_err(|e| match e {
-            redb::DatabaseError::Storage(redb::StorageError::Io(io)) => UserStoreError::Io(io),
-            other => UserStoreError::Db(other),
+        let db = DefaultStore::create(path)?;
+
+        let has_user_data = db.write(|txn| {
+            // Backfill the running total so a T1–T3 store reopened
+            // after T4 still reports the sum of its unigram deltas.
+            let total_key = codec::encode_u8(UNIGRAM_TOTAL_KEY);
+            if txn.get(UNIGRAM_TOTAL, &total_key)?.is_none() {
+                let mut sum = 0_u64;
+                txn.for_each(UNIGRAM, &mut |_k, v| {
+                    let delta = codec::decode_u64(v)
+                        .ok_or(StoreError::Backend("corrupt unigram value".into()))?;
+                    sum = sum.saturating_add(delta);
+                    Ok(())
+                })?;
+                txn.put(UNIGRAM_TOTAL, &total_key, &codec::encode_u64(sum))?;
+            }
+
+            let alloc_key = codec::encode_u8(ALLOC_CURSOR);
+            if txn.get(ALLOC, &alloc_key)?.is_none() {
+                txn.put(ALLOC, &alloc_key, &codec::encode_token(FIRST_USER_TOKEN))?;
+            }
+            has_user_data_in_write_txn(txn)
         })?;
-        let txn = db.begin_write()?;
-        let has_user_data = {
-            txn.open_table(BIGRAM)?;
-            txn.open_table(BIGRAM_TOTAL)?;
-            {
-                // Backfill the running total so a T1–T3 store reopened
-                // after T4 still reports the sum of its unigram deltas.
-                let unigrams = txn.open_table(UNIGRAM)?;
-                let mut uni_total = txn.open_table(UNIGRAM_TOTAL)?;
-                if uni_total.get(UNIGRAM_TOTAL_KEY)?.is_none() {
-                    let mut sum = 0_u64;
-                    for item in unigrams.iter()? {
-                        let (_, value) = item?;
-                        sum = sum.saturating_add(value.value());
-                    }
-                    uni_total.insert(UNIGRAM_TOTAL_KEY, sum)?;
-                }
-            }
-            txn.open_table(PHRASE)?;
-            txn.open_table(PHRASE_BY_TEXT)?;
-            txn.open_table(PHRASE_BY_LIB_TEXT)?;
-            txn.open_table(PRONUNCIATION)?;
-            let mut alloc = txn.open_table(ALLOC)?;
-            if alloc.get(ALLOC_CURSOR)?.is_none() {
-                alloc.insert(ALLOC_CURSOR, FIRST_USER_TOKEN)?;
-            }
-            has_user_data_in_write_txn(&txn)?
-        };
-        txn.commit()?;
+
         let inner = Arc::new(StoreInner {
             count_snapshot: Mutex::new(None),
             db: Mutex::new(db),
@@ -388,29 +463,16 @@ impl UserStore {
     /// Stored bigram count for `(prev, cur)`; `0` if unrecorded.
     pub fn bigram_count(&self, prev: Token, cur: Token) -> Result<u64, UserStoreError> {
         let db = self.database();
-        let txn = db.begin_read()?;
-        let table = txn.open_table(BIGRAM)?;
-        Ok(table.get((prev, cur))?.map_or(0, |g| g.value()))
+        get_u64_or(&db, BIGRAM, &codec::encode_token_pair(prev, cur), 0)
     }
 
     /// Total bigram mass recorded after `prev`; `0` if none.
     pub fn bigram_total(&self, prev: Token) -> Result<u64, UserStoreError> {
         let db = self.database();
-        let txn = db.begin_read()?;
-        let table = txn.open_table(BIGRAM_TOTAL)?;
-        Ok(table.get(prev)?.map_or(0, |g| g.value()))
+        get_u64_or(&db, BIGRAM_TOTAL, &codec::encode_token(prev), 0)
     }
 
     /// Overwrite the raw `(prev -> cur)` user-bigram count.
-    ///
-    /// Public `pinyin_train` first-seeds 69 (`seed::INITIAL_SEED`), so
-    /// counts 9 and 10 are not reachable through the C ABI. The
-    /// union-diff filter-edge case plants those values to lock
-    /// `pinyin.cpp:2349-2350`.
-    ///
-    /// # Errors
-    ///
-    /// [`UserStoreError`] when the write transaction cannot commit.
     pub fn set_bigram_count(
         &mut self,
         prev: Token,
@@ -418,29 +480,22 @@ impl UserStore {
         count: u64,
     ) -> Result<(), UserStoreError> {
         let db = self.database();
-        let txn = db.begin_write()?;
-        {
-            let mut bigram = txn.open_table(BIGRAM)?;
-            let prev_count = bigram.get((prev, cur))?.map_or(0, |g| g.value());
-            bigram.insert((prev, cur), count)?;
+        db.write(|txn| {
+            let pair_key = codec::encode_token_pair(prev, cur);
+            let prev_count = txn_get_u64_or(txn, BIGRAM, &pair_key, 0)?;
+            txn.put(BIGRAM, &pair_key, &codec::encode_u64(count))?;
 
-            let mut total = txn.open_table(BIGRAM_TOTAL)?;
-            let prev_total = total.get(prev)?.map_or(0, |g| g.value());
+            let total_key = codec::encode_token(prev);
+            let prev_total = txn_get_u64_or(txn, BIGRAM_TOTAL, &total_key, 0)?;
             let new_total = prev_total.saturating_sub(prev_count).saturating_add(count);
-            total.insert(prev, new_total)?;
-        }
-        txn.commit()?;
+            txn.put(BIGRAM_TOTAL, &total_key, &codec::encode_u64(new_total))?;
+            Ok(())
+        })?;
         self.mark_committed_write(db, true);
         Ok(())
     }
 
     /// Accumulated phrase-index unigram delta for `token`; `0` if none.
-    ///
-    /// On the decode hot path, so it takes the cached-snapshot route: an
-    /// empty store answers from one atomic load. The uncached siblings
-    /// ([`Self::bigram_count`], [`Self::bigram_total`],
-    /// [`Self::unigram_total`]) are diagnostic and open their own read
-    /// transaction per call.
     pub fn unigram_delta(&self, token: Token) -> Result<u64, UserStoreError> {
         if !self.has_user_data() {
             return Ok(0);
@@ -451,15 +506,10 @@ impl UserStore {
     /// Sum of every stored unigram delta; `0` if the store is empty.
     pub fn unigram_total(&self) -> Result<u64, UserStoreError> {
         let db = self.database();
-        let txn = db.begin_read()?;
-        let table = txn.open_table(UNIGRAM_TOTAL)?;
-        Ok(table.get(UNIGRAM_TOTAL_KEY)?.map_or(0, |g| g.value()))
+        get_u64_or(&db, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)
     }
 
     /// One-transaction §5 overlay for scoring `token` after `prev`.
-    ///
-    /// `prev` of `None` is the empty-history (unigram-only) case: bigram
-    /// fields stay zero. An empty store returns [`UserCountDelta::ZERO`].
     pub fn count_delta(
         &self,
         prev: Option<Token>,
@@ -473,12 +523,6 @@ impl UserStore {
 
     /// Record a training selection of `cur` after `last` (the `pinyin_train`
     /// path, §2). Returns the seed applied.
-    ///
-    /// This is the one mutation that sets the §4 `m_modified` flag — the
-    /// upstream set-sites are `pinyin_train` (`pinyin.cpp:2679`) and
-    /// `pinyin_end_add_phrases` (`:658`); the predicted path and
-    /// `pinyin_remember_user_input` deliberately do not, so a save after
-    /// only those stays an upstream-faithful no-op.
     pub fn observe_selection(&mut self, last: Token, cur: Token) -> Result<u64, UserStoreError> {
         let seed = self.update(last, cur, SeedPolicy::Training)?;
         self.inner.dirty.store(true, Ordering::Relaxed);
@@ -486,16 +530,15 @@ impl UserStore {
     }
 
     /// Record an accepted *predicted* candidate `cur` after `last` (the
-    /// `pinyin_choose_predicted_candidate` path, §2). Flat `+69` seed. Returns
-    /// the seed applied.
+    /// `pinyin_choose_predicted_candidate` path, §2). Returns the seed
+    /// applied.
     pub fn observe_predicted(&mut self, last: Token, cur: Token) -> Result<u64, UserStoreError> {
         self.update(last, cur, SeedPolicy::Predicted)
     }
 
     /// Single atomic update: compute the seed under `policy`, then raise the
     /// bigram count for `(last, cur)` and `last`'s total by the seed, and
-    /// `cur`'s unigram delta by `seed * 7`. Additions saturate so no input can
-    /// panic (constitution §4).
+    /// `cur`'s unigram delta by `seed * 7`.
     fn update(
         &mut self,
         last: Token,
@@ -503,48 +546,44 @@ impl UserStore {
         policy: SeedPolicy,
     ) -> Result<u64, UserStoreError> {
         let db = self.database();
-        let txn = db.begin_write()?;
-        let seed = {
-            let mut bigram = txn.open_table(BIGRAM)?;
-            let prev = bigram.get((last, cur))?.map_or(0, |g| g.value());
+        let seed = db.write(|txn| {
+            let pair_key = codec::encode_token_pair(last, cur);
+            let prev = txn_get_u64_or(txn, BIGRAM, &pair_key, 0)?;
             let seed = match policy {
                 SeedPolicy::Training => seed::training_seed((prev != 0).then_some(prev)),
                 SeedPolicy::Predicted => seed::predicted_seed(),
             };
-            bigram.insert((last, cur), prev.saturating_add(seed))?;
+            txn.put(
+                BIGRAM,
+                &pair_key,
+                &codec::encode_u64(prev.saturating_add(seed)),
+            )?;
 
-            let mut total = txn.open_table(BIGRAM_TOTAL)?;
-            let prev_total = total.get(last)?.map_or(0, |g| g.value());
-            total.insert(last, prev_total.saturating_add(seed))?;
+            let total_key = codec::encode_token(last);
+            let prev_total = txn_get_u64_or(txn, BIGRAM_TOTAL, &total_key, 0)?;
+            txn.put(
+                BIGRAM_TOTAL,
+                &total_key,
+                &codec::encode_u64(prev_total.saturating_add(seed)),
+            )?;
 
             let delta = seed::unigram_delta(seed);
-            let mut unigram = txn.open_table(UNIGRAM)?;
-            let prev_unigram = unigram.get(cur)?.map_or(0, |g| g.value());
-            unigram.insert(cur, prev_unigram.saturating_add(delta))?;
-            bump_unigram_total(&txn, delta)?;
+            let uni_key = codec::encode_token(cur);
+            let prev_unigram = txn_get_u64_or(txn, UNIGRAM, &uni_key, 0)?;
+            txn.put(
+                UNIGRAM,
+                &uni_key,
+                &codec::encode_u64(prev_unigram.saturating_add(delta)),
+            )?;
+            bump_unigram_total(txn, delta)?;
 
-            seed
-        };
-        txn.commit()?;
+            Ok(seed)
+        })?;
         self.mark_committed_write(db, true);
         Ok(seed)
     }
 
     /// Add a user phrase under [`crate::USER_DICTIONARY`] (`_add_phrase`, §3.2).
-    ///
-    /// `count` of `None` means [`DEFAULT_PHRASE_COUNT`] (the C ABI's `-1`).
-    /// If `phrase` is already in the user sub-index, a new reading is merged
-    /// onto the existing token and the unigram is left unchanged. A new
-    /// phrase allocates `max token + 1`, seeds the unigram with
-    /// `count * 3`, and advances the allocation cursor — all in one write
-    /// transaction.
-    ///
-    /// # Errors
-    ///
-    /// [`UserStoreError::InvalidPhrase`] when the text is empty, too long, or
-    /// the key count does not match the Unicode scalar length.
-    /// [`UserStoreError::TokenSpaceExhausted`] when the 24-bit user id space
-    /// is full.
     pub fn add_phrase(
         &mut self,
         phrase: &str,
@@ -555,16 +594,6 @@ impl UserStore {
     }
 
     /// Add a phrase under `library` (`USER_DICTIONARY` or `NETWORK_DICTIONARY`).
-    ///
-    /// Same `_add_phrase` path as [`Self::add_phrase`]; only the token nibble
-    /// and the per-library reverse lookup change.
-    ///
-    /// # Errors
-    ///
-    /// [`UserStoreError::InvalidPhrase`] when the text is empty, too long, the
-    /// key count does not match, or `library` is not a `USER_FILE` nibble.
-    /// [`UserStoreError::TokenSpaceExhausted`] when that nibble's 24-bit id
-    /// space is full.
     pub fn add_phrase_in(
         &mut self,
         library: u8,
@@ -579,96 +608,105 @@ impl UserStore {
         let key_bytes = phrase::encode_keys(keys);
 
         let db = self.database();
-        let txn = db.begin_write()?;
-        let token = {
-            let mut by_lib = txn.open_table(PHRASE_BY_LIB_TEXT)?;
-            let mut by_text = txn.open_table(PHRASE_BY_TEXT)?;
-            let existing = if let Some(found) = by_lib.get((library, phrase))? {
-                Some(found.value())
+        let token = db.write(|txn| {
+            let lib_key = codec::encode_u8_str(library, phrase);
+            let existing = if let Some(bytes) = txn.get(PHRASE_BY_LIB_TEXT, &lib_key)? {
+                Some(
+                    codec::decode_token(&bytes)
+                        .ok_or(StoreError::Backend("corrupt lib-text token".into()))?,
+                )
             } else if library == USER_DICTIONARY {
-                by_text.get(phrase)?.map(|g| g.value())
+                let text_key = codec::encode_str(phrase);
+                match txn.get(PHRASE_BY_TEXT, text_key)? {
+                    Some(bytes) => Some(
+                        codec::decode_token(&bytes)
+                            .ok_or(StoreError::Backend("corrupt text token".into()))?,
+                    ),
+                    None => None,
+                }
             } else {
                 None
             };
+
             if let Some(token) = existing {
-                let mut prons = txn.open_table(PRONUNCIATION)?;
-                let prev = prons
-                    .get((token, key_bytes.as_slice()))?
-                    .map_or(0, |g| g.value());
-                prons.insert((token, key_bytes.as_slice()), prev.saturating_add(count))?;
-                token
+                let pron_key = codec::encode_token_bytes(token, &key_bytes);
+                let prev = txn_get_u64_or(txn, PRONUNCIATION, &pron_key, 0)?;
+                txn.put(
+                    PRONUNCIATION,
+                    &pron_key,
+                    &codec::encode_u64(prev.saturating_add(count)),
+                )?;
+                Ok(token)
             } else {
-                let mut alloc = txn.open_table(ALLOC)?;
+                let alloc_key = codec::encode_u8(ALLOC_CURSOR);
+                let lib_alloc_key = codec::encode_u8(library);
                 let raw = if library == USER_DICTIONARY {
-                    alloc
-                        .get(library)?
-                        .or(alloc.get(ALLOC_CURSOR)?)
-                        .map_or(FIRST_USER_TOKEN, |g| g.value())
+                    match txn.get(ALLOC, &lib_alloc_key)? {
+                        Some(bytes) => codec::decode_token(&bytes)
+                            .ok_or(StoreError::Backend("corrupt alloc cursor".into()))?,
+                        None => match txn.get(ALLOC, &alloc_key)? {
+                            Some(bytes) => codec::decode_token(&bytes)
+                                .ok_or(StoreError::Backend("corrupt alloc cursor".into()))?,
+                            None => FIRST_USER_TOKEN,
+                        },
+                    }
                 } else {
-                    alloc
-                        .get(library)?
-                        .map_or(first_library_token(library), |g| g.value())
+                    match txn.get(ALLOC, &lib_alloc_key)? {
+                        Some(bytes) => codec::decode_token(&bytes)
+                            .ok_or(StoreError::Backend("corrupt alloc cursor".into()))?,
+                        None => first_library_token(library),
+                    }
                 };
                 let token = phrase::canonicalize_library_token(library, raw)
-                    .ok_or(UserStoreError::TokenSpaceExhausted)?;
+                    .ok_or(StoreError::Backend("token space exhausted".into()))?;
                 let next = phrase::next_library_token_after(library, token)
-                    .ok_or(UserStoreError::TokenSpaceExhausted)?;
-                alloc.insert(library, next)?;
+                    .ok_or(StoreError::Backend("token space exhausted".into()))?;
+                txn.put(ALLOC, &lib_alloc_key, &codec::encode_token(next))?;
                 if library == USER_DICTIONARY {
-                    alloc.insert(ALLOC_CURSOR, next)?;
-                }
-                drop(alloc);
-
-                let mut phrases = txn.open_table(PHRASE)?;
-                phrases.insert(token, phrase)?;
-                by_lib.insert((library, phrase), token)?;
-                if library == USER_DICTIONARY {
-                    by_text.insert(phrase, token)?;
+                    txn.put(ALLOC, &alloc_key, &codec::encode_token(next))?;
                 }
 
-                let mut prons = txn.open_table(PRONUNCIATION)?;
-                prons.insert((token, key_bytes.as_slice()), count)?;
+                txn.put(
+                    PHRASE,
+                    &codec::encode_token(token),
+                    codec::encode_str(phrase),
+                )?;
+                txn.put(PHRASE_BY_LIB_TEXT, &lib_key, &codec::encode_token(token))?;
+                if library == USER_DICTIONARY {
+                    txn.put(
+                        PHRASE_BY_TEXT,
+                        codec::encode_str(phrase),
+                        &codec::encode_token(token),
+                    )?;
+                }
+
+                let pron_key = codec::encode_token_bytes(token, &key_bytes);
+                txn.put(PRONUNCIATION, &pron_key, &codec::encode_u64(count))?;
 
                 let delta = count.saturating_mul(ADD_PHRASE_UNIGRAM_FACTOR);
-                let mut unigram = txn.open_table(UNIGRAM)?;
-                let prev = unigram.get(token)?.map_or(0, |g| g.value());
-                unigram.insert(token, prev.saturating_add(delta))?;
-                bump_unigram_total(&txn, delta)?;
-                token
+                let uni_key = codec::encode_token(token);
+                let prev = txn_get_u64_or(txn, UNIGRAM, &uni_key, 0)?;
+                txn.put(
+                    UNIGRAM,
+                    &uni_key,
+                    &codec::encode_u64(prev.saturating_add(delta)),
+                )?;
+                bump_unigram_total(txn, delta)?;
+                Ok(token)
             }
-        };
-        txn.commit()?;
+        })?;
         self.mark_committed_write(db, true);
         Ok(token)
     }
 
     /// Promote a chosen addon phrase into the default-facade
-    /// [`ADDON_DICTIONARY`] (nibble 5) sub-index — `pinyin_choose_candidate`'s
-    /// `ADDON_CANDIDATE` branch (`pinyin.cpp:2532-2561`,
-    /// `docs/findings/addon-choose-promotion.md`).
-    ///
-    /// Copies the addon phrase item across facades: `readings` are the item's
-    /// pronunciations as `(key sequence, count)` pairs and `unigram` is the
-    /// item's copied unigram frequency (upstream `add_phrase_item`, *not* the
-    /// `count * 3` seed of [`Self::add_phrase_in`]). Returns the freshly
-    /// allocated nibble-5 token. Choosing the same phrase again merges its
-    /// readings onto the existing token rather than allocating a duplicate (the
-    /// one recorded divergence from upstream's fresh-token-per-choose).
-    ///
-    /// # Errors
-    ///
-    /// [`UserStoreError::InvalidPhrase`] when the text is empty, too long, or no
-    /// reading's key count matches its Unicode scalar length.
-    /// [`UserStoreError::TokenSpaceExhausted`] when the nibble-5 id space is full.
+    /// [`ADDON_DICTIONARY`] (nibble 5) sub-index.
     pub fn promote_addon_phrase(
         &mut self,
         phrase: &str,
         readings: &[(Vec<PinyinKey>, u64)],
         unigram: u64,
     ) -> Result<Token, UserStoreError> {
-        // Keep only readings whose key count matches the phrase length, exactly
-        // the `_add_phrase` input rule; a phrase with no usable reading cannot
-        // be indexed and is rejected rather than stored unreachable.
         let valid: Vec<&(Vec<PinyinKey>, u64)> = readings
             .iter()
             .filter(|(keys, _)| phrase::phrase_and_keys_valid(phrase, keys))
@@ -678,48 +716,60 @@ impl UserStore {
         }
 
         let db = self.database();
-        let txn = db.begin_write()?;
-        let token = {
-            let mut by_lib = txn.open_table(PHRASE_BY_LIB_TEXT)?;
-            let existing = by_lib.get((ADDON_DICTIONARY, phrase))?.map(|g| g.value());
+        let token = db.write(|txn| {
+            let lib_key = codec::encode_u8_str(ADDON_DICTIONARY, phrase);
+            let existing = match txn.get(PHRASE_BY_LIB_TEXT, &lib_key)? {
+                Some(bytes) => Some(
+                    codec::decode_token(&bytes)
+                        .ok_or(StoreError::Backend("corrupt lib-text token".into()))?,
+                ),
+                None => None,
+            };
             let token = if let Some(token) = existing {
                 token
             } else {
-                let mut alloc = txn.open_table(ALLOC)?;
-                let raw = alloc
-                    .get(ADDON_DICTIONARY)?
-                    .map_or(first_library_token(ADDON_DICTIONARY), |g| g.value());
+                let lib_alloc_key = codec::encode_u8(ADDON_DICTIONARY);
+                let raw = match txn.get(ALLOC, &lib_alloc_key)? {
+                    Some(bytes) => codec::decode_token(&bytes)
+                        .ok_or(StoreError::Backend("corrupt alloc cursor".into()))?,
+                    None => first_library_token(ADDON_DICTIONARY),
+                };
                 let token = phrase::canonicalize_library_token(ADDON_DICTIONARY, raw)
-                    .ok_or(UserStoreError::TokenSpaceExhausted)?;
+                    .ok_or(StoreError::Backend("token space exhausted".into()))?;
                 let next = phrase::next_library_token_after(ADDON_DICTIONARY, token)
-                    .ok_or(UserStoreError::TokenSpaceExhausted)?;
-                alloc.insert(ADDON_DICTIONARY, next)?;
-                drop(alloc);
+                    .ok_or(StoreError::Backend("token space exhausted".into()))?;
+                txn.put(ALLOC, &lib_alloc_key, &codec::encode_token(next))?;
 
-                let mut phrases = txn.open_table(PHRASE)?;
-                phrases.insert(token, phrase)?;
-                by_lib.insert((ADDON_DICTIONARY, phrase), token)?;
+                txn.put(
+                    PHRASE,
+                    &codec::encode_token(token),
+                    codec::encode_str(phrase),
+                )?;
+                txn.put(PHRASE_BY_LIB_TEXT, &lib_key, &codec::encode_token(token))?;
 
-                // Copy the item's unigram frequency verbatim (add_phrase_item),
-                // not the count*3 add-phrase seed.
-                let mut unigrams = txn.open_table(UNIGRAM)?;
-                let prev = unigrams.get(token)?.map_or(0, |g| g.value());
-                unigrams.insert(token, prev.saturating_add(unigram))?;
-                bump_unigram_total(&txn, unigram)?;
+                let uni_key = codec::encode_token(token);
+                let prev = txn_get_u64_or(txn, UNIGRAM, &uni_key, 0)?;
+                txn.put(
+                    UNIGRAM,
+                    &uni_key,
+                    &codec::encode_u64(prev.saturating_add(unigram)),
+                )?;
+                bump_unigram_total(txn, unigram)?;
                 token
             };
 
-            let mut prons = txn.open_table(PRONUNCIATION)?;
             for (keys, count) in valid {
                 let key_bytes = phrase::encode_keys(keys);
-                let prev = prons
-                    .get((token, key_bytes.as_slice()))?
-                    .map_or(0, |g| g.value());
-                prons.insert((token, key_bytes.as_slice()), prev.saturating_add(*count))?;
+                let pron_key = codec::encode_token_bytes(token, &key_bytes);
+                let prev = txn_get_u64_or(txn, PRONUNCIATION, &pron_key, 0)?;
+                txn.put(
+                    PRONUNCIATION,
+                    &pron_key,
+                    &codec::encode_u64(prev.saturating_add(*count)),
+                )?;
             }
-            token
-        };
-        txn.commit()?;
+            Ok(token)
+        })?;
         self.mark_committed_write(db, true);
         Ok(token)
     }
@@ -727,13 +777,14 @@ impl UserStore {
     /// Phrase text and pronunciations for `token`, if this store owns it.
     pub fn phrase(&self, token: Token) -> Result<Option<UserPhrase>, UserStoreError> {
         let db = self.database();
-        let txn = db.begin_read()?;
-        let phrases = txn.open_table(PHRASE)?;
-        let Some(text) = phrases.get(token)?.map(|g| g.value().to_owned()) else {
+        let token_key = codec::encode_token(token);
+        let Some(text_bytes) = db.get(PHRASE, &token_key)? else {
             return Ok(None);
         };
-        let prons = txn.open_table(PRONUNCIATION)?;
-        let pronunciations = collect_pronunciations(&prons, token)?;
+        let text = codec::decode_str(&text_bytes)
+            .ok_or(UserStoreError::Decode)?
+            .to_owned();
+        let pronunciations = collect_pronunciations_from_store(&db, token)?;
         Ok(Some(UserPhrase::new(token, text, pronunciations)))
     }
 
@@ -749,14 +800,19 @@ impl UserStore {
         phrase: &str,
     ) -> Result<Option<Token>, UserStoreError> {
         let db = self.database();
-        let txn = db.begin_read()?;
-        let by_lib = txn.open_table(PHRASE_BY_LIB_TEXT)?;
-        if let Some(token) = by_lib.get((library, phrase))?.map(|g| g.value()) {
-            return Ok(Some(token));
+        let lib_key = codec::encode_u8_str(library, phrase);
+        if let Some(bytes) = db.get(PHRASE_BY_LIB_TEXT, &lib_key)? {
+            return codec::decode_token(&bytes)
+                .map(Some)
+                .ok_or(UserStoreError::Decode);
         }
         if library == USER_DICTIONARY {
-            let by_text = txn.open_table(PHRASE_BY_TEXT)?;
-            return Ok(by_text.get(phrase)?.map(|g| g.value()));
+            let text_key = codec::encode_str(phrase);
+            if let Some(bytes) = db.get(PHRASE_BY_TEXT, text_key)? {
+                return codec::decode_token(&bytes)
+                    .map(Some)
+                    .ok_or(UserStoreError::Decode);
+            }
         }
         Ok(None)
     }
@@ -767,89 +823,84 @@ impl UserStore {
         self.write_generation()
     }
 
-    /// Next token the store will allocate. Persisted; a reopen continues
-    /// from this value (no reuse, no gap).
+    /// Next token the store will allocate.
     pub fn next_user_token(&self) -> Result<Token, UserStoreError> {
         let db = self.database();
-        let txn = db.begin_read()?;
-        let alloc = txn.open_table(ALLOC)?;
-        Ok(alloc
-            .get(ALLOC_CURSOR)?
-            .map_or(FIRST_USER_TOKEN, |g| g.value()))
+        let alloc_key = codec::encode_u8(ALLOC_CURSOR);
+        match db.get(ALLOC, &alloc_key)? {
+            Some(bytes) => codec::decode_token(&bytes).ok_or(UserStoreError::Decode),
+            None => Ok(FIRST_USER_TOKEN),
+        }
     }
 
-    /// `m_modified` (§4): a training update has been recorded since the
-    /// last successful [`Self::save`]. Shared with every clone, so the
-    /// context's `pinyin_save` sees dirtiness recorded through instances.
+    /// `m_modified` (§4).
     #[must_use]
     pub fn is_modified(&self) -> bool {
         self.inner.dirty.load(Ordering::Relaxed)
     }
 
-    /// Arm `m_modified` without a data write — `pinyin_end_add_phrases`
-    /// (`pinyin.cpp:658`), the import trio's set-site. The phrase adds
-    /// themselves were already durable per-add commits; this flag makes the
-    /// next [`Self::save`] perform its compaction and clear cycle.
+    /// Arm `m_modified` without a data write.
     pub fn mark_modified(&mut self) {
         self.inner.dirty.store(true, Ordering::Relaxed);
     }
 
-    /// Every user phrase as §9 export rows, in token order then stored
-    /// pronunciation order: one row per (phrase, pronunciation), the pinyin
-    /// rendered as `'`-joined syllable spellings and the count the stored
-    /// pronunciation count — the same shape `pinyin_iterator_get_next_phrase`
-    /// yields upstream.
-    ///
-    /// Keys were written from [`oxpinyin_core::SyllableKey`] ids (T3), so every
-    /// stored key renders; a row whose keys do not is skipped rather than
-    /// fabricated.
+    /// Every user phrase as §9 export rows.
     pub fn export_phrases(&self) -> Result<Vec<ExportedPhrase>, UserStoreError> {
         self.export_phrases_in(USER_DICTIONARY)
     }
 
-    /// Export rows for one `USER_FILE` nibble, in token then pronunciation
-    /// order.
+    /// Export rows for one `USER_FILE` nibble.
     pub fn export_phrases_in(&self, library: u8) -> Result<Vec<ExportedPhrase>, UserStoreError> {
         let db = self.database();
-        let txn = db.begin_read()?;
-        let phrases = txn.open_table(PHRASE)?;
-        let prons = txn.open_table(PRONUNCIATION)?;
         let mut rows = Vec::new();
-        for item in phrases.iter()? {
-            let (token, text) = item?;
-            if phrase_index_library_index(token.value()) != library {
-                continue;
+        db.for_each(PHRASE, &mut |k, v| {
+            let token =
+                codec::decode_token(k).ok_or(StoreError::Backend("corrupt phrase token".into()))?;
+            if phrase_index_library_index(token) != library {
+                return Ok(());
             }
-            for pronunciation in collect_pronunciations(&prons, token.value())? {
+            let text =
+                codec::decode_str(v).ok_or(StoreError::Backend("corrupt phrase text".into()))?;
+            // Collect pronunciations inline (we cannot call
+            // collect_pronunciations_from_store here because we don't have a
+            // &DefaultStore — we have a &dyn FnMut, but we need the store).
+            // Instead, store (token, text) and collect after.
+            rows.push((token, text.to_owned()));
+            Ok(())
+        })?;
+        let mut out = Vec::new();
+        for (token, text) in rows {
+            for pronunciation in collect_pronunciations_from_store(&db, token)? {
                 let Some(pinyin) = pronunciation.render_pinyin() else {
                     continue;
                 };
-                rows.push(ExportedPhrase {
-                    text: text.value().to_owned(),
+                out.push(ExportedPhrase {
+                    text: text.clone(),
                     pinyin,
                     count: pronunciation.count(),
                 });
             }
         }
-        Ok(rows)
+        Ok(out)
     }
 
     /// Every stored phrase (user and network) with pronunciations.
     pub fn phrases(&self) -> Result<Vec<UserPhrase>, UserStoreError> {
         let db = self.database();
-        let txn = db.begin_read()?;
-        let phrases = txn.open_table(PHRASE)?;
-        let prons = txn.open_table(PRONUNCIATION)?;
+        let mut tokens_and_texts = Vec::new();
+        db.for_each(PHRASE, &mut |k, v| {
+            let token =
+                codec::decode_token(k).ok_or(StoreError::Backend("corrupt phrase token".into()))?;
+            let text = codec::decode_str(v)
+                .ok_or(StoreError::Backend("corrupt phrase text".into()))?
+                .to_owned();
+            tokens_and_texts.push((token, text));
+            Ok(())
+        })?;
         let mut out = Vec::new();
-        for item in phrases.iter()? {
-            let (token, text) = item?;
-            let token = token.value();
-            let pronunciations = collect_pronunciations(&prons, token)?;
-            out.push(UserPhrase::new(
-                token,
-                text.value().to_owned(),
-                pronunciations,
-            ));
+        for (token, text) in tokens_and_texts {
+            let pronunciations = collect_pronunciations_from_store(&db, token)?;
+            out.push(UserPhrase::new(token, text, pronunciations));
         }
         Ok(out)
     }
@@ -857,247 +908,252 @@ impl UserStore {
     /// User-bigram successors of `prev` as `(token, count)` pairs.
     pub fn bigram_successors(&self, prev: Token) -> Result<Vec<(Token, u64)>, UserStoreError> {
         let db = self.database();
-        let txn = db.begin_read()?;
-        let bigrams = txn.open_table(BIGRAM)?;
+        let lo = codec::encode_token_pair(prev, Token::MIN);
+        let hi = codec::encode_token_pair(prev, Token::MAX);
         let mut rows = Vec::new();
-        for item in bigrams.range((prev, Token::MIN)..=(prev, Token::MAX))? {
-            let (key, count) = item?;
-            let (_prev, cur) = key.value();
-            rows.push((cur, count.value()));
-        }
+        db.range(
+            BIGRAM,
+            Bound::Included(lo.as_slice()),
+            Bound::Included(hi.as_slice()),
+            &mut |k, v| {
+                let (_, cur) = codec::decode_token_pair(k)
+                    .ok_or(StoreError::Backend("corrupt bigram key".into()))?;
+                let count = codec::decode_u64(v)
+                    .ok_or(StoreError::Backend("corrupt bigram count".into()))?;
+                rows.push((cur, count));
+                Ok(())
+            },
+        )?;
         Ok(rows)
     }
 
-    /// Every stored user-bigram row as `(prev, cur, count)`, raw — the
-    /// §9 bigram export filters and renders these (upstream skips
-    /// `sentence_start` predecessors and counts below the first-seed
-    /// threshold, and resolves phrase text through the system phrase
-    /// index, which this crate does not hold).
+    /// Every stored user-bigram row as `(prev, cur, count)`, raw.
     pub fn export_bigrams(&self) -> Result<Vec<(Token, Token, u64)>, UserStoreError> {
         let db = self.database();
-        let txn = db.begin_read()?;
-        let bigrams = txn.open_table(BIGRAM)?;
         let mut rows = Vec::new();
-        for item in bigrams.iter()? {
-            let (key, count) = item?;
-            let (prev, cur) = key.value();
-            rows.push((prev, cur, count.value()));
-        }
+        db.for_each(BIGRAM, &mut |k, v| {
+            let (prev, cur) = codec::decode_token_pair(k)
+                .ok_or(StoreError::Backend("corrupt bigram key".into()))?;
+            let count =
+                codec::decode_u64(v).ok_or(StoreError::Backend("corrupt bigram count".into()))?;
+            rows.push((prev, cur, count));
+            Ok(())
+        })?;
         Ok(rows)
     }
 
     /// The `pinyin_save` write side (§4).
-    ///
-    /// `Ok(false)` is the unmodified deliberate no-op — upstream's
-    /// `pinyin_save` returns `false` when `m_modified` is clear
-    /// (`pinyin.cpp:1136`). A dirty save compacts the database
-    /// ([`Database::compact`], upstream's `m_phrase_index->compact()` at
-    /// `:1139`): every training update was already committed atomically and
-    /// durably (redb's Immediate durability fsyncs before `commit` returns),
-    /// so there is no serialization step to write — compaction plus the
-    /// flag clear is the whole save.
-    ///
-    /// The flag clears only on success. Upstream clears it unconditionally
-    /// (`pinyin.cpp:1145`), which drops data after a failed write; the
-    /// deviation keeps a failed save retryable and is noted in §4's
-    /// reproduction notes.
     pub fn save(&mut self) -> Result<bool, UserStoreError> {
         if !self.is_modified() {
             return Ok(false);
         }
-        // Hold the snapshot lock across compact so a decode cannot install a
-        // new read transaction while redb refuses live readers.
         let mut snapshot = self.count_snapshot();
         *snapshot = None;
         let mut db = self.database();
-        // `performed` is false when nothing further could be compacted; the
-        // save still succeeded (upstream returns the write+rename result,
-        // which is success even when the phrase index had nothing to move).
-        let _performed = db.compact()?;
+        db.compact()?;
         drop(db);
         drop(snapshot);
         self.inner.dirty.store(false, Ordering::Relaxed);
         Ok(true)
     }
 
-    /// `pinyin_mask_out`'s store side: delete every entry whose token
-    /// matches `(token & mask) == value` — the exact predicate upstream
-    /// applies to the bigram (`Bigram::mask_out`, `ngram_kyotodb.cpp:199`:
-    /// matching index tokens drop the whole gram, matching items are
-    /// removed and empty grams deleted), the phrase index
-    /// (`SubPhraseIndex::mask_out`, `phrase_index.cpp:689`), and the user
-    /// phrase/pinyin tables (`facade_phrase_table3.h:203`).
-    ///
-    /// One write transaction. The allocation cursor is untouched — a
-    /// monotonic counter, where upstream's `range_end` can shrink and reuse
-    /// ids; invisible in the exported value surface. Does **not** arm
-    /// `m_modified`: upstream's set-sites are `pinyin_train` and
-    /// `pinyin_end_add_phrases` only (`pinyin.cpp:2679`, `:658`), and the
-    /// deletions are committed durably regardless.
+    /// `pinyin_mask_out`'s store side.
     pub fn mask_out(&mut self, mask: Token, value: Token) -> Result<(), UserStoreError> {
         let db = self.database();
-        let txn = db.begin_write()?;
-        {
-            // Bigram: drop rows whose predecessor or successor matches, then
-            // rewrite every predecessor's total from the survivors.
-            let mut bigram = txn.open_table(BIGRAM)?;
-            let mut totals = txn.open_table(BIGRAM_TOTAL)?;
+        let has_user_data = db.write(|txn| {
+            // Bigram: collect all rows, then remove matching and rewrite totals.
+            let mut bigram_rows: Vec<((Token, Token), u64)> = Vec::new();
+            txn.for_each(BIGRAM, &mut |k, v| {
+                let (prev, cur) = codec::decode_token_pair(k)
+                    .ok_or(StoreError::Backend("corrupt bigram key".into()))?;
+                let count = codec::decode_u64(v)
+                    .ok_or(StoreError::Backend("corrupt bigram count".into()))?;
+                bigram_rows.push(((prev, cur), count));
+                Ok(())
+            })?;
+
             let mut survivors: std::collections::BTreeMap<Token, u64> =
                 std::collections::BTreeMap::new();
-            let mut rows: Vec<((Token, Token), u64)> = Vec::new();
-            for item in bigram.iter()? {
-                let (key, count) = item?;
-                let (prev, cur) = key.value();
-                rows.push(((prev, cur), count.value()));
-            }
-            for ((prev, cur), count) in rows {
+            for ((prev, cur), count) in &bigram_rows {
                 if (prev & mask) == value || (cur & mask) == value {
-                    bigram.remove((prev, cur))?;
+                    txn.remove(BIGRAM, &codec::encode_token_pair(*prev, *cur))?;
                 } else {
-                    let slot = survivors.entry(prev).or_default();
-                    *slot = slot.saturating_add(count);
+                    let slot = survivors.entry(*prev).or_default();
+                    *slot = slot.saturating_add(*count);
                 }
             }
+
             let mut old_totals: Vec<Token> = Vec::new();
-            for item in totals.iter()? {
-                let (prev, _) = item?;
-                old_totals.push(prev.value());
-            }
+            txn.for_each(BIGRAM_TOTAL, &mut |k, _v| {
+                let prev = codec::decode_token(k)
+                    .ok_or(StoreError::Backend("corrupt bigram_total key".into()))?;
+                old_totals.push(prev);
+                Ok(())
+            })?;
             for prev in old_totals {
-                totals.remove(prev)?;
+                txn.remove(BIGRAM_TOTAL, &codec::encode_token(prev))?;
             }
             for (prev, total) in survivors {
                 if total > 0 {
-                    totals.insert(prev, total)?;
+                    txn.put(
+                        BIGRAM_TOTAL,
+                        &codec::encode_token(prev),
+                        &codec::encode_u64(total),
+                    )?;
                 }
             }
 
             // Unigram deltas and their running total.
-            let mut unigram = txn.open_table(UNIGRAM)?;
-            let mut uni_total = txn.open_table(UNIGRAM_TOTAL)?;
-            let mut removed: Vec<Token> = Vec::new();
+            let mut unigram_rows: Vec<(Token, u64)> = Vec::new();
+            txn.for_each(UNIGRAM, &mut |k, v| {
+                let token = codec::decode_token(k)
+                    .ok_or(StoreError::Backend("corrupt unigram key".into()))?;
+                let delta = codec::decode_u64(v)
+                    .ok_or(StoreError::Backend("corrupt unigram value".into()))?;
+                unigram_rows.push((token, delta));
+                Ok(())
+            })?;
             let mut kept_sum = 0_u64;
-            for item in unigram.iter()? {
-                let (token, delta) = item?;
-                let token = token.value();
+            for (token, delta) in &unigram_rows {
                 if (token & mask) == value {
-                    removed.push(token);
+                    txn.remove(UNIGRAM, &codec::encode_token(*token))?;
                 } else {
-                    kept_sum = kept_sum.saturating_add(delta.value());
+                    kept_sum = kept_sum.saturating_add(*delta);
                 }
             }
-            for token in removed {
-                unigram.remove(token)?;
-            }
-            uni_total.insert(UNIGRAM_TOTAL_KEY, kept_sum)?;
+            txn.put(
+                UNIGRAM_TOTAL,
+                &codec::encode_u8(UNIGRAM_TOTAL_KEY),
+                &codec::encode_u64(kept_sum),
+            )?;
 
             // User phrases: text, reverse lookup, and pronunciations.
-            let mut phrases = txn.open_table(PHRASE)?;
-            let mut by_text = txn.open_table(PHRASE_BY_TEXT)?;
-            let mut by_lib = txn.open_table(PHRASE_BY_LIB_TEXT)?;
-            let mut prons = txn.open_table(PRONUNCIATION)?;
             let mut matched: Vec<(Token, String)> = Vec::new();
-            for item in phrases.iter()? {
-                let (token, text) = item?;
-                let token = token.value();
+            txn.for_each(PHRASE, &mut |k, v| {
+                let token = codec::decode_token(k)
+                    .ok_or(StoreError::Backend("corrupt phrase token".into()))?;
                 if (token & mask) == value {
-                    matched.push((token, text.value().to_owned()));
+                    let text = codec::decode_str(v)
+                        .ok_or(StoreError::Backend("corrupt phrase text".into()))?
+                        .to_owned();
+                    matched.push((token, text));
                 }
-            }
+                Ok(())
+            })?;
             for (token, text) in matched {
-                phrases.remove(token)?;
-                by_text.remove(text.as_str())?;
-                by_lib.remove((phrase_index_library_index(token), text.as_str()))?;
-                remove_pronunciations(&mut prons, token)?;
+                txn.remove(PHRASE, &codec::encode_token(token))?;
+                txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
+                txn.remove(
+                    PHRASE_BY_LIB_TEXT,
+                    &codec::encode_u8_str(phrase_index_library_index(token), &text),
+                )?;
+                remove_pronunciations(txn, token)?;
             }
-        }
-        let has_user_data = has_user_data_in_write_txn(&txn)?;
-        txn.commit()?;
+            has_user_data_in_write_txn(txn)
+        })?;
         self.mark_committed_write(db, has_user_data);
         Ok(())
     }
 
-    /// `pinyin_remove_user_candidate`'s store side (§3.4): fully removes a
-    /// user phrase — the phrase index entry, its pronunciations, its bigram
-    /// rows (as predecessor and successor), and its unigram delta.
-    ///
-    /// `Ok(false)` when the store does not own `token` as a user phrase
-    /// (upstream asserts `USER_DICTIONARY` ownership; oxpinyin reports it).
-    /// Does **not** arm `m_modified`, like upstream.
+    /// `pinyin_remove_user_candidate`'s store side (§3.4).
     pub fn remove_user_phrase(&mut self, token: Token) -> Result<bool, UserStoreError> {
         let db = self.database();
-        let txn = db.begin_write()?;
-        {
-            // The full-token predicate on every table that names `token`,
-            // plus the phrase rows themselves. An absent phrase is the
-            // `Ok(false)` "store does not own this token" report.
-            let mut phrases = txn.open_table(PHRASE)?;
-            let Some(text) = phrases.get(token)?.map(|g| g.value().to_owned()) else {
-                return Ok(false);
-            };
-            phrases.remove(token)?;
-            let mut by_text = txn.open_table(PHRASE_BY_TEXT)?;
-            by_text.remove(text.as_str())?;
-            let mut by_lib = txn.open_table(PHRASE_BY_LIB_TEXT)?;
-            by_lib.remove((phrase_index_library_index(token), text.as_str()))?;
-            let mut prons = txn.open_table(PRONUNCIATION)?;
-            remove_pronunciations(&mut prons, token)?;
+        let result: Result<Option<bool>, UserStoreError> = db
+            .write(|txn| {
+                let token_key = codec::encode_token(token);
+                let Some(text_bytes) = txn.get(PHRASE, &token_key)? else {
+                    return Ok(None);
+                };
+                let text = codec::decode_str(&text_bytes)
+                    .ok_or(StoreError::Backend("corrupt phrase text".into()))?
+                    .to_owned();
 
-            let mut bigram = txn.open_table(BIGRAM)?;
-            let mut totals = txn.open_table(BIGRAM_TOTAL)?;
-            let mut survivors: std::collections::BTreeMap<Token, u64> =
-                std::collections::BTreeMap::new();
-            let mut rows: Vec<((Token, Token), u64)> = Vec::new();
-            for item in bigram.iter()? {
-                let (key, count) = item?;
-                let (prev, cur) = key.value();
-                rows.push(((prev, cur), count.value()));
-            }
-            for ((prev, cur), count) in rows {
-                if prev == token || cur == token {
-                    bigram.remove((prev, cur))?;
-                } else {
-                    let slot = survivors.entry(prev).or_default();
-                    *slot = slot.saturating_add(count);
-                }
-            }
-            let mut old_totals: Vec<Token> = Vec::new();
-            for item in totals.iter()? {
-                let (prev, _) = item?;
-                old_totals.push(prev.value());
-            }
-            for prev in old_totals {
-                totals.remove(prev)?;
-            }
-            for (prev, total) in survivors {
-                if total > 0 {
-                    totals.insert(prev, total)?;
-                }
-            }
+                txn.remove(PHRASE, &token_key)?;
+                txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
+                txn.remove(
+                    PHRASE_BY_LIB_TEXT,
+                    &codec::encode_u8_str(phrase_index_library_index(token), &text),
+                )?;
+                remove_pronunciations(txn, token)?;
 
-            let mut unigram = txn.open_table(UNIGRAM)?;
-            let mut uni_total = txn.open_table(UNIGRAM_TOTAL)?;
-            let mut kept_sum = 0_u64;
-            for item in unigram.iter()? {
-                let (candidate, delta) = item?;
-                let candidate = candidate.value();
-                if candidate != token {
-                    kept_sum = kept_sum.saturating_add(delta.value());
+                // Bigram: collect, remove matching, rewrite totals.
+                let mut bigram_rows: Vec<((Token, Token), u64)> = Vec::new();
+                txn.for_each(BIGRAM, &mut |k, v| {
+                    let (prev, cur) = codec::decode_token_pair(k)
+                        .ok_or(StoreError::Backend("corrupt bigram key".into()))?;
+                    let count = codec::decode_u64(v)
+                        .ok_or(StoreError::Backend("corrupt bigram count".into()))?;
+                    bigram_rows.push(((prev, cur), count));
+                    Ok(())
+                })?;
+
+                let mut survivors: std::collections::BTreeMap<Token, u64> =
+                    std::collections::BTreeMap::new();
+                for ((prev, cur), count) in &bigram_rows {
+                    if *prev == token || *cur == token {
+                        txn.remove(BIGRAM, &codec::encode_token_pair(*prev, *cur))?;
+                    } else {
+                        let slot = survivors.entry(*prev).or_default();
+                        *slot = slot.saturating_add(*count);
+                    }
                 }
+
+                let mut old_totals: Vec<Token> = Vec::new();
+                txn.for_each(BIGRAM_TOTAL, &mut |k, _v| {
+                    let prev = codec::decode_token(k)
+                        .ok_or(StoreError::Backend("corrupt bigram_total key".into()))?;
+                    old_totals.push(prev);
+                    Ok(())
+                })?;
+                for prev in old_totals {
+                    txn.remove(BIGRAM_TOTAL, &codec::encode_token(prev))?;
+                }
+                for (prev, total) in survivors {
+                    if total > 0 {
+                        txn.put(
+                            BIGRAM_TOTAL,
+                            &codec::encode_token(prev),
+                            &codec::encode_u64(total),
+                        )?;
+                    }
+                }
+
+                // Unigram: recompute total excluding the removed token.
+                let mut kept_sum = 0_u64;
+                txn.for_each(UNIGRAM, &mut |k, v| {
+                    let candidate = codec::decode_token(k)
+                        .ok_or(StoreError::Backend("corrupt unigram key".into()))?;
+                    if candidate != token {
+                        let delta = codec::decode_u64(v)
+                            .ok_or(StoreError::Backend("corrupt unigram value".into()))?;
+                        kept_sum = kept_sum.saturating_add(delta);
+                    }
+                    Ok(())
+                })?;
+                txn.remove(UNIGRAM, &codec::encode_token(token))?;
+                txn.put(
+                    UNIGRAM_TOTAL,
+                    &codec::encode_u8(UNIGRAM_TOTAL_KEY),
+                    &codec::encode_u64(kept_sum),
+                )?;
+
+                let has = has_user_data_in_write_txn(txn)?;
+                Ok(Some(has))
+            })
+            .map_err(UserStoreError::from);
+        match result? {
+            None => Ok(false),
+            Some(has_user_data) => {
+                self.mark_committed_write(db, has_user_data);
+                Ok(true)
             }
-            unigram.remove(token)?;
-            uni_total.insert(UNIGRAM_TOTAL_KEY, kept_sum)?;
         }
-        let has_user_data = has_user_data_in_write_txn(&txn)?;
-        txn.commit()?;
-        self.mark_committed_write(db, has_user_data);
-        Ok(true)
     }
 }
 
 impl CountSnapshot {
     fn unigram_delta(&self, token: Token) -> Result<u64, UserStoreError> {
-        Ok(self.unigram.get(token)?.map_or(0, |g| g.value()))
+        snap_get_u64_or(&self.snap, UNIGRAM, &codec::encode_token(token), 0)
     }
 
     fn count_delta(
@@ -1105,15 +1161,22 @@ impl CountSnapshot {
         prev: Option<Token>,
         token: Token,
     ) -> Result<UserCountDelta, UserStoreError> {
-        let unigram_delta = self.unigram.get(token)?.map_or(0, |g| g.value());
-        let unigram_total_delta = self
-            .unigram_total
-            .get(UNIGRAM_TOTAL_KEY)?
-            .map_or(0, |g| g.value());
+        let unigram_delta = snap_get_u64_or(&self.snap, UNIGRAM, &codec::encode_token(token), 0)?;
+        let unigram_total_delta = snap_get_u64_or(
+            &self.snap,
+            UNIGRAM_TOTAL,
+            &codec::encode_u8(UNIGRAM_TOTAL_KEY),
+            0,
+        )?;
         let (bigram_count, bigram_total) = if let Some(prev) = prev {
             (
-                self.bigram.get((prev, token))?.map_or(0, |g| g.value()),
-                self.bigram_total.get(prev)?.map_or(0, |g| g.value()),
+                snap_get_u64_or(
+                    &self.snap,
+                    BIGRAM,
+                    &codec::encode_token_pair(prev, token),
+                    0,
+                )?,
+                snap_get_u64_or(&self.snap, BIGRAM_TOTAL, &codec::encode_token(prev), 0)?,
             )
         } else {
             (0, 0)
@@ -1125,106 +1188,6 @@ impl CountSnapshot {
             unigram_total_delta,
         })
     }
-}
-
-/// Whether the store holds any user data at all, evaluated inside `txn`.
-///
-/// Backs the [`UserStore::has_user_data`] fast path, so a wrong `false` here
-/// is a silent scoring failure, not a slow one.
-///
-/// `BIGRAM_TOTAL` and `UNIGRAM_TOTAL` are deliberately absent: they are
-/// derived sums that every writer keeps trivial whenever their source table
-/// is empty. `mask_out` and `remove_user_phrase` rewrite the bigram totals
-/// from the surviving rows and insert only positive ones, and set the unigram
-/// total to the surviving sum; `open`'s backfill sums an empty `UNIGRAM` to
-/// `0`. Reading a derived total when its source is empty therefore always
-/// yields the same `UserCountDelta::ZERO` this predicate authorises. A future
-/// writer able to leave a non-trivial total behind an empty source table must
-/// add that table here.
-fn has_user_data_in_write_txn(txn: &redb::WriteTransaction) -> Result<bool, UserStoreError> {
-    let bigram = txn.open_table(BIGRAM)?;
-    if !bigram.is_empty()? {
-        return Ok(true);
-    }
-    drop(bigram);
-
-    let unigram = txn.open_table(UNIGRAM)?;
-    if !unigram.is_empty()? {
-        return Ok(true);
-    }
-    drop(unigram);
-
-    let phrases = txn.open_table(PHRASE)?;
-    if !phrases.is_empty()? {
-        return Ok(true);
-    }
-    drop(phrases);
-
-    let pronunciations = txn.open_table(PRONUNCIATION)?;
-    Ok(!pronunciations.is_empty()?)
-}
-
-/// Removes every pronunciation row of `token`.
-fn remove_pronunciations(
-    prons: &mut redb::Table<(Token, &[u8]), u64>,
-    token: Token,
-) -> Result<(), UserStoreError> {
-    // Guard `token + 1` against overflow at `Token::MAX` (constitution §4:
-    // no panic on any input), mirroring `collect_pronunciations`.
-    let start: (Token, &[u8]) = (token, &[]);
-    let range = match token.checked_add(1) {
-        Some(next) => {
-            let end: (Token, &[u8]) = (next, &[]);
-            prons.range(start..end)?
-        }
-        None => prons.range(start..)?,
-    };
-    let mut keys: Vec<Vec<u8>> = Vec::new();
-    for item in range {
-        let (key, _) = item?;
-        let (_, key_bytes) = key.value();
-        keys.push(key_bytes.to_vec());
-    }
-    for key in keys {
-        prons.remove((token, key.as_slice()))?;
-    }
-    Ok(())
-}
-
-fn bump_unigram_total(txn: &redb::WriteTransaction, delta: u64) -> Result<(), UserStoreError> {
-    let mut total = txn.open_table(UNIGRAM_TOTAL)?;
-    let prev = total.get(UNIGRAM_TOTAL_KEY)?.map_or(0, |g| g.value());
-    total.insert(UNIGRAM_TOTAL_KEY, prev.saturating_add(delta))?;
-    Ok(())
-}
-
-fn collect_pronunciations(
-    prons: &redb::ReadOnlyTable<(Token, &[u8]), u64>,
-    token: Token,
-) -> Result<Vec<UserPronunciation>, UserStoreError> {
-    let start: (Token, &[u8]) = (token, &[]);
-    let mut out = Vec::new();
-    if token < Token::MAX {
-        let end: (Token, &[u8]) = (token + 1, &[]);
-        for item in prons.range(start..end)? {
-            let (key, value) = item?;
-            let (_tok, key_bytes) = key.value();
-            out.push(UserPronunciation::new(
-                phrase::decode_keys(key_bytes),
-                value.value(),
-            ));
-        }
-    } else {
-        for item in prons.range(start..)? {
-            let (key, value) = item?;
-            let (_tok, key_bytes) = key.value();
-            out.push(UserPronunciation::new(
-                phrase::decode_keys(key_bytes),
-                value.value(),
-            ));
-        }
-    }
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -1255,7 +1218,7 @@ mod tests {
         assert_eq!(store.count_delta(None, 2).unwrap(), UserCountDelta::ZERO);
         assert!(
             store.count_snapshot().is_none(),
-            "empty count_delta must not open a redb read transaction"
+            "empty count_delta must not open a read transaction"
         );
         let _ = std::fs::remove_file(&path);
     }
@@ -1327,18 +1290,10 @@ mod tests {
 
     #[test]
     fn a_write_through_one_handle_invalidates_another_handles_cache() {
-        // The C ABI topology: the context's canonical store writes while
-        // `SharedLm`'s clone reads `count_delta` once per candidate. Both are
-        // clones over one `StoreInner`, so the generation counter, the
-        // `has_user_data` flag, and the snapshot mutex are shared.
-        // `second_open_of_same_path_shares_the_handle` checks cross-handle
-        // visibility through `bigram_count`, which bypasses the cache
-        // entirely — this is the same question asked of the cached path.
         let path = temp_path("clone-cache");
         let mut writer = UserStore::open(&path).unwrap();
         let reader = UserStore::open(&path).unwrap();
 
-        // Prime the reader's fast path while the store is still empty.
         assert_eq!(
             reader.count_delta(Some(1), 100).unwrap(),
             UserCountDelta::ZERO
@@ -1351,12 +1306,9 @@ mod tests {
         );
         assert_eq!(reader.count_delta(Some(1), 100).unwrap().bigram_count, 69);
 
-        // A second write must retire the snapshot the reader just cached.
         writer.observe_selection(1, 100).unwrap();
         assert_eq!(reader.count_delta(Some(1), 100).unwrap().bigram_count, 207);
 
-        // Emptying through the writer restores the reader's zero-cost path
-        // rather than stranding it on a stale snapshot.
         writer.mask_out(0, 0).unwrap();
         assert!(!reader.has_user_data());
         assert_eq!(
@@ -1400,20 +1352,13 @@ mod tests {
 
     #[test]
     fn second_open_of_same_path_shares_the_handle() {
-        // redb refuses a second write handle to an open file; `open` must hand
-        // back a clone of the live one instead, so a second context on the same
-        // user dir keeps learning (rather than silently degrading to `None`).
         let path = temp_path("shared-handle");
         let mut first = UserStore::open(&path).unwrap();
         let mut second = UserStore::open(&path).unwrap();
 
-        // A write through one handle is visible through the other: one db.
         assert_eq!(first.observe_selection(1, 100).unwrap(), 69);
         assert_eq!(second.bigram_count(1, 100).unwrap(), 69);
 
-        // The §4 dirty flag is shared: the write through `first` arms `second`'s
-        // save gate, so `second` performs the (single, shared) save and both
-        // handles are clean afterward.
         assert!(second.save().unwrap());
         assert!(!first.save().unwrap());
 
@@ -1451,18 +1396,16 @@ mod tests {
         let path = temp_path("seq");
         let mut store = UserStore::open(&path).unwrap();
 
-        // First selection: seed 69.
         assert_eq!(store.observe_selection(1, 100).unwrap(), 69);
         assert_eq!(store.bigram_count(1, 100).unwrap(), 69);
         assert_eq!(store.bigram_total(1).unwrap(), 69);
-        assert_eq!(store.unigram_delta(100).unwrap(), 483); // 69 * 7
+        assert_eq!(store.unigram_delta(100).unwrap(), 483);
         assert_eq!(store.unigram_total().unwrap(), 483);
 
-        // Second selection of the same pair: seed 138, count 69 + 138 = 207.
         assert_eq!(store.observe_selection(1, 100).unwrap(), 138);
         assert_eq!(store.bigram_count(1, 100).unwrap(), 207);
         assert_eq!(store.bigram_total(1).unwrap(), 207);
-        assert_eq!(store.unigram_delta(100).unwrap(), 483 + 966); // + 138 * 7
+        assert_eq!(store.unigram_delta(100).unwrap(), 483 + 966);
         assert_eq!(store.unigram_total().unwrap(), 483 + 966);
         assert_eq!(
             store.count_delta(Some(1), 100).unwrap(),
@@ -1473,7 +1416,6 @@ mod tests {
                 unigram_total_delta: 483 + 966,
             }
         );
-        // Empty history is unigram-only: bigram fields stay zero.
         assert_eq!(
             store.count_delta(None, 100).unwrap(),
             UserCountDelta {
@@ -1491,8 +1433,6 @@ mod tests {
     fn totals_accumulate_per_predecessor() {
         let path = temp_path("totals");
         let mut store = UserStore::open(&path).unwrap();
-        // Two distinct successors of the same predecessor: total is the sum of
-        // both first-selection seeds.
         assert_eq!(store.observe_selection(5, 10).unwrap(), 69);
         assert_eq!(store.observe_selection(5, 11).unwrap(), 69);
         assert_eq!(store.bigram_count(5, 10).unwrap(), 69);
@@ -1518,8 +1458,8 @@ mod tests {
         let path = temp_path("pred");
         let mut store = UserStore::open(&path).unwrap();
         assert_eq!(store.observe_predicted(1, 200).unwrap(), 69);
-        assert_eq!(store.observe_predicted(1, 200).unwrap(), 69); // still flat
-        assert_eq!(store.bigram_count(1, 200).unwrap(), 138); // 69 + 69
+        assert_eq!(store.observe_predicted(1, 200).unwrap(), 69);
+        assert_eq!(store.bigram_count(1, 200).unwrap(), 138);
         assert_eq!(store.bigram_total(1).unwrap(), 138);
         assert_eq!(store.unigram_delta(200).unwrap(), 483 * 2);
         let _ = std::fs::remove_file(&path);
@@ -1533,15 +1473,15 @@ mod tests {
             store.observe_selection(SENTENCE_START, 10).unwrap();
             store.observe_selection(10, 20).unwrap();
             store.observe_selection(10, 20).unwrap();
-        } // dropping the store closes the database
+        }
 
         let store = UserStore::open(&path).unwrap();
         assert_eq!(store.bigram_count(SENTENCE_START, 10).unwrap(), 69);
-        assert_eq!(store.bigram_count(10, 20).unwrap(), 207); // 69 + 138
+        assert_eq!(store.bigram_count(10, 20).unwrap(), 207);
         assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
         assert_eq!(store.bigram_total(10).unwrap(), 207);
         assert_eq!(store.unigram_delta(10).unwrap(), 483);
-        assert_eq!(store.unigram_delta(20).unwrap(), 1449); // 483 + 966
+        assert_eq!(store.unigram_delta(20).unwrap(), 1449);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1550,24 +1490,16 @@ mod tests {
         let path = temp_path("dirty");
         let mut store = UserStore::open(&path).unwrap();
 
-        // Fresh open is clean: save is the §4 unmodified no-op (upstream
-        // pinyin_save returns false when m_modified is clear, :1136).
         assert!(!store.is_modified());
         assert!(!store.save().unwrap());
         assert!(!store.save().unwrap());
 
-        // pinyin_train (observe_selection) is an m_modified set-site
-        // (upstream pinyin.cpp:2679): save now writes and clears.
         store.observe_selection(SENTENCE_START, 10).unwrap();
         assert!(store.is_modified());
         assert!(store.save().unwrap());
         assert!(!store.is_modified());
         assert!(!store.save().unwrap());
 
-        // The predicted path and add_phrase deliberately do NOT set
-        // m_modified (upstream's set-sites are train and end_add_phrases
-        // only): their data is committed durably regardless, but a save
-        // after only those stays an upstream-faithful no-op.
         store.observe_predicted(10, 20).unwrap();
         assert!(!store.is_modified());
         assert!(!store.save().unwrap());
@@ -1575,7 +1507,6 @@ mod tests {
         assert!(!store.is_modified());
         assert!(!store.save().unwrap());
 
-        // The next training selection re-arms the gate.
         store.observe_selection(SENTENCE_START, 10).unwrap();
         assert!(store.is_modified());
         assert!(store.save().unwrap());
@@ -1594,24 +1525,22 @@ mod tests {
             store.observe_selection(10, 20).unwrap();
             let token = store.add_phrase("你好", &[10, 20], None).unwrap();
             assert_eq!(token, FIRST_USER_TOKEN);
-            // The dirty save writes (compacts) and clears the flag.
             assert!(store.is_modified());
             assert!(store.save().unwrap());
             assert!(!store.is_modified());
-        } // drop closes the database
+        }
 
         let mut store = UserStore::open(&path).unwrap();
         assert!(!store.is_modified());
         assert!(!store.save().unwrap(), "a reopen starts clean");
 
-        // Counts, allocation cursor and running unigram total all survive.
         assert_eq!(store.bigram_count(SENTENCE_START, 10).unwrap(), 69);
-        assert_eq!(store.bigram_count(10, 20).unwrap(), 207); // 69 + 138
+        assert_eq!(store.bigram_count(10, 20).unwrap(), 207);
         assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
         assert_eq!(store.bigram_total(10).unwrap(), 207);
         assert_eq!(store.unigram_delta(10).unwrap(), 483);
-        assert_eq!(store.unigram_delta(20).unwrap(), 1449); // 483 + 966
-        assert_eq!(store.unigram_total().unwrap(), 483 + 1449 + 15); // + phrase 5*3
+        assert_eq!(store.unigram_delta(20).unwrap(), 1449);
+        assert_eq!(store.unigram_total().unwrap(), 483 + 1449 + 15);
         assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
         assert_eq!(
             store.token_for_phrase("你好").unwrap(),
@@ -1625,7 +1554,6 @@ mod tests {
         assert_eq!(phrase.pronunciations()[0].keys(), &[10, 20]);
         assert_eq!(phrase.pronunciations()[0].count(), 5);
 
-        // The §5 overlay reads the persisted counts.
         assert_eq!(
             store.count_delta(Some(10), 20).unwrap(),
             UserCountDelta {
@@ -1671,7 +1599,6 @@ mod tests {
         let path = temp_path("nibble");
         let mut store = UserStore::open(&path).unwrap();
         let user = store.add_phrase("词", &[7], None).unwrap();
-        // GB_DICTIONARY = 1; a typical system token is not a user token.
         const SYSTEM: Token = 0x0100_0001;
         assert!(phrase::is_user_token(user));
         assert!(!phrase::is_user_token(SYSTEM));
@@ -1703,7 +1630,6 @@ mod tests {
         let path = temp_path("uni");
         let mut store = UserStore::open(&path).unwrap();
         let token = store.add_phrase("你好", &[10, 20], None).unwrap();
-        // default_count 5 * add-phrase unigram_factor 3.
         assert_eq!(store.unigram_delta(token).unwrap(), 15);
         assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 0);
 
@@ -1719,7 +1645,6 @@ mod tests {
         let first = store.add_phrase("你好", &[10, 20], None).unwrap();
         let again = store.add_phrase("你好", &[11, 20], Some(8)).unwrap();
         assert_eq!(first, again);
-        // Merge does not allocate and does not raise the unigram (§3.2).
         assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
         assert_eq!(store.unigram_delta(first).unwrap(), 15);
 
@@ -1740,7 +1665,7 @@ mod tests {
         let token = store.add_phrase("词", &[7], Some(5)).unwrap();
         let again = store.add_phrase("词", &[7], Some(5)).unwrap();
         assert_eq!(token, again);
-        assert_eq!(store.unigram_delta(token).unwrap(), 15); // seeded once
+        assert_eq!(store.unigram_delta(token).unwrap(), 15);
         let got = store.phrase(token).unwrap().unwrap();
         assert_eq!(got.pronunciations().len(), 1);
         assert_eq!(got.pronunciations()[0].count(), 10);
@@ -1778,7 +1703,6 @@ mod tests {
         assert_eq!(p2.pronunciations()[0].count(), 9);
         assert_eq!(store.unigram_delta(t2).unwrap(), 27);
 
-        // Reopened cursor allocates the next id — no reuse, no gap.
         let mut store = store;
         let t3 = store.add_phrase("中国", &[50, 60], None).unwrap();
         assert_eq!(t3, t2 + 1);
@@ -1825,13 +1749,10 @@ mod tests {
         let shi = SyllableKey::from_text("shi").expect("frozen key").index() as u16;
         let jie = SyllableKey::from_text("jie").expect("frozen key").index() as u16;
 
-        // Two remembers of the same reading merge into one pronunciation
-        // row (upstream's add_pronunciation merges exact-match keys).
         store.add_phrase("你好", &[ni, hao], None).unwrap();
         store.add_phrase("你好", &[ni, hao], Some(7)).unwrap();
         store.add_phrase("世界", &[shi, jie], Some(3)).unwrap();
 
-        // Token order, then pronunciation order; pinyin is `'`-joined (§9).
         assert_eq!(
             store.export_phrases().unwrap(),
             vec![
@@ -1860,21 +1781,16 @@ mod tests {
 
         let mut rows = store.export_bigrams().unwrap();
         rows.sort();
-        // Raw rows: sentence_start rows included (the §9 filters live at the
-        // C ABI layer, mirroring upstream's iterator).
         assert_eq!(rows, vec![(SENTENCE_START, 10, 69), (10, 20, 207)]);
         let _ = std::fs::remove_file(&path);
     }
 
-    /// A mixed store: system and user tokens across every table, so the
-    /// mask predicates can be checked per class of entry.
     fn mixed_store(path: &std::path::Path) -> (UserStore, Token) {
         const SYSTEM_A: Token = 0x0100_0001;
         const SYSTEM_B: Token = 0x0200_0001;
         let mut store = UserStore::open(path).unwrap();
         let user_a = store.add_phrase("你好", &[10, 20], None).unwrap();
         let user_b = store.add_phrase("世界", &[30, 40], None).unwrap();
-        // bigram: system→system, system→user, user→system, user→user.
         store.observe_selection(SYSTEM_A, SYSTEM_B).unwrap();
         store.observe_selection(SYSTEM_A, user_a).unwrap();
         store.observe_selection(user_a, SYSTEM_B).unwrap();
@@ -1886,13 +1802,9 @@ mod tests {
     fn mask_out_user_clear_deletes_user_entries_and_keeps_system() {
         let path = temp_path("mask-user");
         let (mut store, user_a) = mixed_store(&path);
-        // The setup training armed m_modified; a save consumes it, so the
-        // mask below runs on a clean flag.
         assert!(store.is_modified());
         assert!(store.save().unwrap());
 
-        // The frontend's "user" clear: PHRASE_INDEX_LIBRARY_MASK against
-        // MAKE_TOKEN(USER_DICTIONARY, 0).
         store
             .mask_out(
                 PHRASE_INDEX_LIBRARY_MASK,
@@ -1900,8 +1812,6 @@ mod tests {
             )
             .unwrap();
 
-        // User phrases are gone; the system-only bigram survives with its
-        // total recomputed.
         assert!(store.phrase(user_a).unwrap().is_none());
         assert!(store.token_for_phrase("你好").unwrap().is_none());
         assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
@@ -1909,21 +1819,13 @@ mod tests {
         assert_eq!(store.bigram_count(user_a, 0x0200_0001).unwrap(), 0);
         assert_eq!(store.bigram_count(0x0100_0001, user_a).unwrap(), 0);
         assert_eq!(store.bigram_count(user_a, user_a + 1).unwrap(), 0);
-        // The user tokens' unigram deltas are gone; the system token's
-        // deltas (two observations of 0x0200_0001) survive; the running
-        // total is recomputed.
         assert_eq!(store.unigram_delta(0x0200_0001).unwrap(), 966);
         assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
         assert_eq!(store.unigram_total().unwrap(), 966);
-        // The allocation cursor is monotonic — never rolled back.
         assert_eq!(store.next_user_token().unwrap(), user_a + 2);
-        // Upstream set-sites: masking does not arm m_modified — the flag
-        // stays clear, and a save is the §4 no-op.
         assert!(!store.is_modified());
         assert!(!store.save().unwrap());
 
-        // The frontend's "all" clear: mask 0x0 against 0x0 removes what
-        // remains.
         store.mask_out(0x0, 0x0).unwrap();
         assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 0);
         assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 0);
@@ -1936,26 +1838,19 @@ mod tests {
     fn remove_user_phrase_deletes_everywhere_and_rejects_others() {
         let path = temp_path("remove");
         let (mut store, user_a) = mixed_store(&path);
-        // Consume the setup training's m_modified so the removal runs on a
-        // clean flag.
         assert!(store.save().unwrap());
 
         assert!(store.remove_user_phrase(user_a).unwrap());
         assert!(store.phrase(user_a).unwrap().is_none());
         assert!(store.token_for_phrase("你好").unwrap().is_none());
-        // Bigram rows naming the phrase as predecessor or successor are
-        // gone, with totals recomputed; unrelated rows survive.
         assert_eq!(store.bigram_count(user_a, 0x0200_0001).unwrap(), 0);
         assert_eq!(store.bigram_count(0x0100_0001, user_a).unwrap(), 0);
         assert_eq!(store.bigram_count(user_a, user_a + 1).unwrap(), 0);
         assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
         assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 69);
         assert_eq!(store.bigram_total(user_a).unwrap(), 0);
-        // Unigram delta removed, total recomputed.
         assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
-        // SYSTEM_B's 966 plus 世界's seeding 15 and its trained 483.
         assert_eq!(store.unigram_total().unwrap(), 966 + 498);
-        // Not armed, and unknown/system tokens report false.
         assert!(!store.is_modified());
         assert!(!store.remove_user_phrase(user_a).unwrap());
         assert!(!store.remove_user_phrase(0x0100_0001).unwrap());
@@ -1997,8 +1892,6 @@ mod tests {
         let mut store = UserStore::open(&path).unwrap();
         let keys = [key("er"), key("huang")];
 
-        // Copies the item's unigram frequency verbatim (add_phrase_item), not
-        // the count*3 seed of the user-add path.
         let token = store
             .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
             .unwrap();
@@ -2020,8 +1913,6 @@ mod tests {
         assert_eq!(phrase.pronunciations()[0].keys(), keys);
         assert_eq!(phrase.pronunciations()[0].count(), 100);
 
-        // Re-promoting the same phrase merges onto the existing token — no
-        // duplicate allocation, unigram unchanged, reading count accrues.
         let again = store
             .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
             .unwrap();
@@ -2040,7 +1931,6 @@ mod tests {
     fn promote_addon_phrase_rejects_a_reading_of_the_wrong_length() {
         let path = temp_path("promote-addon-invalid");
         let mut store = UserStore::open(&path).unwrap();
-        // "二簧" is two scalars; a single-key reading cannot index it.
         let err = store
             .promote_addon_phrase("二簧", &[(vec![key("er")], 100)], 100)
             .unwrap_err();
