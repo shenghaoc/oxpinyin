@@ -176,3 +176,43 @@ tail-tie mixing that PR A saw inside L2's typed probes is gone with the
 class itself — those probes now compare the constrained walk against
 the oracle's constrained walk, and the remaining sentence-surface
 residuals (the 17 first-6 rows) are untouched, as scoped.
+
+## Backspace-after-choose, measured (opt-in)
+
+`LIVETYPING_BACKSPACE=1 ./live-typing-diff …` adds a `bp-*` phase: choose
+你 for "ni" inside "nihaoshijie", shrink the re-parsed buffer one
+keystroke at a time down to "ni", then re-type to the full buffer. It is
+opt-in because its divergence is the recorded parse-survival divergence
+(`upstream-divergences.md`: upstream's constraints survive every
+re-parse; the engine continues only an extending one) — measuring it
+must not turn the green L-class gate red.
+
+Measured (190 diverging lines over the ladder + retype):
+
+- **Every shrink step** — the oracle keeps 你 forced: rows
+  `你好时机/你好世纪` (at "nihaoshiji"), `你和/你会` (at "nih", the
+  incomplete tail), with the window anchored at the cursor (好事/好似…,
+  n=101; 和/后/会…, n=1713). The engine starts the composition fresh at
+  the first shrink: window at offset 0 (你好/你/尼…, n=129/133), free
+  rows. The same two mechanisms as the closed L2 (window anchor, forced
+  vs free rows), re-introduced by the shrink.
+- **The "ni" floor** — the forcing exactly covers the buffer; the
+  oracle's surface is the L1 terminal shape (rows 你/你/尼, an
+  NBEST-bearing two-row window). The engine answers the free "ni".
+- **The retype** — the oracle's forcing survived the whole ladder and
+  constrains the re-typed buffer; the engine's fresh reset dropped it at
+  the first shrink, so the re-extension continues a store-less
+  composition. The forcing is not recoverable by typing.
+
+Two driver notes from building the probe: the ladder stops at "ni"
+(the cursor must never overrun one-past-end, where upstream's
+`_check_offset` aborts), and `pinyin_get_sentence` asserts
+`index < results.size()` on a non-empty set (`pinyin.cpp:1474`) — the
+probe now asks only the indices the candidate list proves, the
+frontend's own caller contract. That assert is logged in
+`upstream-divergences.md` (the engine answers false).
+
+Closing this gap is a follow-up decision, not part of the port: it
+needs the parse path to keep the store through a shrink and let
+validate drop what stops spelling — plus the selection-record rebuild
+on the shrunk prefix.

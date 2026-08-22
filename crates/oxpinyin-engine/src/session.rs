@@ -490,12 +490,17 @@ where
         U: UserModel<Token = PhraseToken>,
         U::Error: Display,
     {
-        // The constrained walk applies when the result actually carries
-        // user forcings. A result without any — a row-0 choose constrains
-        // nothing, exactly upstream — falls to the selection record: the
-        // engine's row chooses record tokens where upstream keeps the
-        // MatchResult, so the record is the stand-in (`diff_result` adds
-        // cells only for the differing phrases).
+        // The constrained walk applies only when the result actually
+        // sits on user forcings — some phrase of the last lookup's 1-best
+        // lands on a OneStep cell. Everything else falls to the selection
+        // record: a row-0 choose constrains nothing (exactly upstream,
+        // `diff_result` adds cells only for the differing phrases) yet the
+        // engine's row chooses still record tokens, and a model that
+        // cannot run the constrained walk (the pre-frequency fallback)
+        // leaves the result without spans at all. The record is the
+        // stand-in for exactly those shapes — it cannot mask a missed
+        // cell: a forcing that failed to record changes the row and
+        // window surfaces the differential probes, not the train output.
         let constrained = self
             .last_result
             .iter()
@@ -3334,6 +3339,54 @@ mod tests {
         assert!(session.clear_constraint(2));
         assert!(session.selected_tokens().is_empty());
         assert!(!session.clear_constraint(0));
+    }
+
+    /// The train fallback's boundary: a row-0 choose constrains nothing
+    /// (upstream-faithful), so the record — not the result — carries the
+    /// training; a result that sits on a forcing takes the constrained
+    /// walk instead (the test above). This pins the trigger, not just the
+    /// outcome: taking the constrained path here would observe nothing.
+    #[test]
+    fn a_row_zero_choose_trains_through_the_record() {
+        let mut session = trellis_session();
+        for character in "nihao".chars() {
+            session
+                .process_key(&KeyInput::character(character))
+                .expect("typing cannot fail");
+        }
+        assert!(
+            session.guess_sentence().expect("guess cannot fail"),
+            "rows exist before the choose"
+        );
+        let row = session
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.nbest_row() == Some(0))
+            .expect("the rank-0 row is offered at the head");
+        session.select(row).expect("the row is choosable");
+        assert!(
+            !session.clear_constraint(0),
+            "a row-0 choose recorded no forcing"
+        );
+        let row_tokens: Vec<PhraseToken> = session.selected_tokens().to_vec();
+        assert_eq!(
+            row_tokens,
+            vec![PhraseToken::new(1), PhraseToken::new(2)],
+            "the row's whole path is the record"
+        );
+
+        let mut recorder = Recorder {
+            observed: Vec::new(),
+        };
+        session.train(&mut recorder).expect("train cannot fail");
+        assert_eq!(
+            recorder.observed,
+            vec![
+                (Vec::new(), PhraseToken::new(1)),
+                (vec![PhraseToken::new(1)], PhraseToken::new(2)),
+            ],
+            "the record walked — the forcing-less result trained nothing by itself"
+        );
     }
 
     /// L3: the constraint-aware train walk — the forced phrase and the

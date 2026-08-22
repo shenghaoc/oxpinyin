@@ -30,6 +30,9 @@
  *
  * Usage:
  *   LIVETYPING_ROUNDS=<n> ./live-typing-diff <path-to-so> <systemdir>
+ *   LIVETYPING_BACKSPACE=1 adds the opt-in backspace-after-choose phase
+ *     (bp-*): its divergence is the recorded parse-survival divergence
+ *     and is measured, not gated.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -269,38 +272,41 @@ static const char *type_name(int type) {
     }
 }
 
-/* Prints sentence rows 0..2 (the get_sentence half of a probe). A `false`
- * return is the expected empty row, printed as "-". */
+/* Prints sentence rows 0..=upto (the get_sentence half of a probe). A
+ * `false` return is the expected empty row, printed as "-". Only indices
+ * the candidate list proves may be asked: upstream's pinyin_get_sentence
+ * answers false for an EMPTY result set but asserts `index <
+ * results.size()` on a non-empty one (pinyin.cpp:1474), so an unproved
+ * index is not a legal caller question — the frontend renders exactly
+ * the NBEST rows the candidate list carries. */
 static int print_sentences(const struct syms *s, pinyin_instance_t *inst,
-                           const char *label) {
-    for (guint8 i = 0; i < 3; i++) {
+                           const char *label, int upto) {
+    for (int i = 0; i <= upto && i < 3; i++) {
         gchar *text = NULL;
-        bool got = s->get_sentence(inst, i, &text);
+        bool got = s->get_sentence(inst, (guint8)i, &text);
         if (got && !text) {
-            fprintf(stderr, "probe %s: get_sentence(%u) true with no text\n",
+            fprintf(stderr, "probe %s: get_sentence(%d) true with no text\n",
                     label, i);
             return 1;
         }
-        printf("probe:%s sentence[%u]=%s\n", label, i, got ? text : "-");
+        printf("probe:%s sentence[%d]=%s\n", label, i, got ? text : "-");
         /* Caller-owned per the C ABI contract; g_free(NULL) is a no-op. */
         g_free_fn(text);
     }
     return 0;
 }
 
-/* guess_sentence → sentence rows → guess_candidates at `offset` → the
- * candidate head. Keeps the instance state (no reset), so the live-typing
- * phase can chain calls. The guess retval is PRINTED, never bailed on: a
- * `false` is a legitimate compared surface here — with the input fully
- * consumed the capi answers false (Session's empty-remaining contract)
- * while the oracle still walks the constrained full matrix and emits the
- * forced phrase as a row. Returns 1 only on accessor failures. */
+/* guess_sentence → guess_candidates at `offset` → the candidate head →
+ * the sentence rows the head proves. Keeps the instance state (no
+ * reset), so the live-typing phase can chain calls. The guess retval is
+ * PRINTED, never bailed on: a `false` is a legitimate compared surface
+ * here — with the input fully consumed the capi answers false while the
+ * oracle still walks the constrained full matrix and emits the forced
+ * phrase as a row. Returns 1 only on accessor failures. */
 static int probe_at(const struct syms *s, pinyin_instance_t *inst,
                     const char *label, size_t offset) {
     bool guessed = s->sentence(inst);
     printf("probe:%s guess=%d\n", label, (int)guessed);
-    if (print_sentences(s, inst, label))
-        return 1;
     if (!s->guess(inst, offset, DEFAULT_SORT)) {
         fprintf(stderr, "probe %s: guess_candidates failed\n", label);
         return 1;
@@ -312,6 +318,7 @@ static int probe_at(const struct syms *s, pinyin_instance_t *inst,
     }
     printf("probe:%s n=%u\n", label, n);
     guint limit = n < 8 ? n : 8;
+    int proven = -1;
     for (guint i = 0; i < limit; i++) {
         lookup_candidate_t *cand = NULL;
         if (!s->getc(inst, i, &cand) || !cand) {
@@ -336,6 +343,8 @@ static int probe_at(const struct syms *s, pinyin_instance_t *inst,
                         label, i);
                 return 1;
             }
+            if ((int)idx > proven)
+                proven = idx;
             printf("probe:%s cand[%u]=%s/%u/%s\n", label, i, type_name(type),
                    (unsigned)idx, text ? text : "(null)");
         } else {
@@ -343,7 +352,9 @@ static int probe_at(const struct syms *s, pinyin_instance_t *inst,
                    text ? text : "(null)");
         }
     }
-    return 0;
+    /* The window proves the rows it carries; no NBEST row means the
+     * lookup produced none, and no index may be asked. */
+    return print_sentences(s, inst, label, proven);
 }
 
 /* Phase B keystroke: re-parse the FULL accumulated buffer — both
@@ -413,6 +424,18 @@ int main(int argc, char **argv) {
     int rounds = 3;
     if (parse_rounds_env("LIVETYPING_ROUNDS", &rounds))
         return 1;
+    /* Opt-in: the backspace-after-choose phase (LIVETYPING_BACKSPACE=1).
+     * Its divergence is the recorded parse-survival divergence
+     * (upstream-divergences.md: upstream's constraints survive every
+     * re-parse, the engine continues only an extending one), so it must
+     * not run in the default diff — that one gates the closed L-classes
+     * and stays green. */
+    const char *flag = getenv("LIVETYPING_BACKSPACE");
+    int backspace_phase = flag && flag[0] == '1' && flag[1] == '\0';
+    if (flag && !backspace_phase) {
+        fprintf(stderr, "LIVETYPING_BACKSPACE must be 1 or unset, got \"%s\"\n", flag);
+        return 1;
+    }
 
     void *handle = dlopen(argv[1], RTLD_NOW);
     if (!handle) {
@@ -531,6 +554,56 @@ int main(int argc, char **argv) {
         }
         if (!s.reset(inst)) {
             fprintf(stderr, "live-typing: reset failed\n");
+            goto fail_inst;
+        }
+    }
+
+    /* Phase BP — backspace after a choose (opt-in). The frontend's
+     * backspace edits its own buffer and re-parses the SHORTER string,
+     * so the probe re-parses down a shrink ladder after choosing 你 for
+     * "ni", then re-types past the shrink. No training: the phase leaves
+     * the user store untouched. The ladder stops at "ni" — the cursor
+     * (2) must never overrun one-past-end, where upstream's
+     * _check_offset aborts. */
+    if (backspace_phase) {
+        static const char *const ladder[] = {
+            "nihaoshiji", "nihaoshij", "nihaoshi", "nihaosh",
+            "nihaos",     "nihao",     "niha",     "nih",     "ni",
+        };
+        if (parse_expect(&s, inst, "nihaoshijie", 11)) {
+            fprintf(stderr, "backspace: pre-choose parse failed\n");
+            goto fail_inst;
+        }
+        if (!s.sentence(inst) || !s.guess(inst, 0, DEFAULT_SORT)) {
+            fprintf(stderr, "backspace: pre-choose decode failed\n");
+            goto fail_inst;
+        }
+        lookup_candidate_t *bp_ni = find_by_text(&s, inst, "\xe4\xbd\xa0" /* 你 */);
+        if (!bp_ni) {
+            fprintf(stderr, "backspace: candidate 你 not offered\n");
+            goto fail_inst;
+        }
+        int bp_cursor = s.choose(inst, 0, bp_ni);
+        if (bp_cursor < 0) {
+            fprintf(stderr, "backspace: choose 你 failed\n");
+            goto fail_inst;
+        }
+        printf("bp:cursor=%d\n", bp_cursor);
+        char label[32];
+        for (size_t i = 0; i < sizeof(ladder) / sizeof(ladder[0]); i++) {
+            snprintf(label, sizeof(label), "bp-%s", ladder[i]);
+            if (type_step(&s, inst, label, ladder[i], (size_t)bp_cursor)) {
+                fprintf(stderr, "backspace: shrink %s failed\n", ladder[i]);
+                goto fail_inst;
+            }
+        }
+        /* Re-type past the shrink: the composition re-extends. */
+        if (type_step(&s, inst, "bp-retype", "nihaoshijie", (size_t)bp_cursor)) {
+            fprintf(stderr, "backspace: retype failed\n");
+            goto fail_inst;
+        }
+        if (!s.reset(inst)) {
+            fprintf(stderr, "backspace: reset failed\n");
             goto fail_inst;
         }
     }
