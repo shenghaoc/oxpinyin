@@ -569,6 +569,7 @@ where
             self.selected.clear();
             self.consumed = 0;
             self.history.clear();
+            self.selection_committed = false;
             return;
         }
         // Gaps between forced runs are free spans (diff_result forces only
@@ -591,6 +592,12 @@ where
         self.selected = selected;
         self.consumed = cursor.min(self.raw.len());
         self.history = history;
+        // A rebuild means the record changed under the selection — a
+        // cleared run or a validate drop — so the commit-branch shape no
+        // longer holds even when the surviving forcings still reach the
+        // buffer end. Leaving the flag set would make the next compatible
+        // re-parse start fresh and silently drop the survivors.
+        self.selection_committed = false;
     }
 
     /// The sentence recorded so far: the token of every phrase the user
@@ -1152,6 +1159,15 @@ where
     /// and a stale selection-derived cursor must not mis-anchor its
     /// window before validate could drop the mismatched forcings.
     ///
+    /// Whether a selection consumed the whole buffer and no rebuild has
+    /// since changed the record — the commit-branch shape that makes the
+    /// next re-parse start fresh (`parse_continues`'s other half). A
+    /// pure query over valid state.
+    #[must_use]
+    pub const fn selection_committed(&self) -> bool {
+        self.selection_committed
+    }
+
     /// A pure query, not a fallible operation — it reads already-valid
     /// state and cannot fail, so the constitution's `Result` rule for
     /// fallible public APIs does not reach it. The state-changing halves
@@ -1163,7 +1179,6 @@ where
             && !stored.is_empty()
             && (original.starts_with(stored) || stored.starts_with(original))
     }
-
 
     /// The filtered fewest-keys parse length of the WHOLE raw buffer —
     /// the `pinyin_parse_more_*` return and `pinyin_get_parsed_input_length`
@@ -3426,6 +3441,69 @@ mod tests {
         assert!(session.clear_constraint(2));
         assert!(session.selected_tokens().is_empty());
         assert!(!session.clear_constraint(0));
+    }
+
+    /// Review regression: clearing a tail forcing re-opens a committed
+    /// composition. The rebuild once left `selection_committed` set, so
+    /// the next compatible re-parse started fresh and silently dropped
+    /// the surviving head forcing.
+    #[test]
+    fn clearing_a_tail_forcing_reopens_a_committed_composition() {
+        let mut session = trellis_session();
+        for character in "nihaoshijie".chars() {
+            session
+                .process_key(&KeyInput::character(character))
+                .expect("typing cannot fail");
+        }
+        let select_token = |session: &mut Session<FixtureDictionary, TrellisModel>, token| {
+            let index = session
+                .candidates()
+                .iter()
+                .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
+                .expect("the fixture candidate is offered");
+            session.select(index).expect("selection cannot fail");
+        };
+        select_token(&mut session, 1); // 你 over [0,2)
+        select_token(&mut session, 2); // 好 over [2,5)
+        // The remainder has no window candidates: select the raw-text
+        // fallback to consume the buffer — the commit-branch shape.
+        let index = session
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.kind() == crate::CandidateKind::Fallback)
+            .expect("the fallback covers the remainder");
+        session.select(index).expect("selection cannot fail");
+        assert!(
+            session.selection_committed(),
+            "the last selection consumed the buffer"
+        );
+
+        // Un-force the tail run; the record rebuilds over the survivor
+        // and the composition is open again.
+        assert!(session.clear_constraint(2));
+        assert!(
+            !session.selection_committed(),
+            "the rebuild re-opened the composition"
+        );
+        assert_eq!(session.selected_tokens(), [PhraseToken::new(1)]);
+
+        // Further typing keeps the surviving 你 forcing alive.
+        for character in "s".chars() {
+            session
+                .process_key(&KeyInput::character(character))
+                .expect("typing cannot fail");
+        }
+        assert!(
+            session.guess_sentence().expect("guess cannot fail"),
+            "the walk runs"
+        );
+        assert!(
+            session
+                .sentence_text(0)
+                .expect("row 0 exists")
+                .starts_with('\u{4f60}'),
+            "the surviving head forcing outlived the clearing and the typing"
+        );
     }
 
     /// The engine-internal backspace keeps the forcing: erase shrinks
