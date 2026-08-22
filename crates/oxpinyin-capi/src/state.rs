@@ -17,7 +17,10 @@ use oxpinyin_core::{
     PhraseToken, SyllableKey, UserCountDelta, ZhuyinParse, ZhuyinScheme,
 };
 use oxpinyin_data::{BigramLanguageModel, DictError, LmError, PunctTable, SystemDictionary};
-use oxpinyin_engine::{CandidateKind, Config, Session, StoragePaths};
+use oxpinyin_engine::{
+    CandidateKind, Config, EngineError, Session, StoragePaths, check_lookup_offset_range,
+    normalize_lookup_offset,
+};
 use oxpinyin_user::{
     ExportedPhrase, NETWORK_DICTIONARY, PinyinKey, SENTENCE_START, USER_DICTIONARY, UserLookup,
     UserStore, is_user_file_token,
@@ -857,6 +860,35 @@ impl CapiInstance {
     /// The current live option word.
     pub(crate) fn options(&self) -> OptionBits {
         OptionBits::from_bits(self.options.load(Ordering::Relaxed))
+    }
+
+    /// The generalized lookup-offset law in the active parse mode's own
+    /// coordinates — the space the caller's guess/choose offsets live in.
+    ///
+    /// - Plain full pinyin: the full law over the session's raw buffer,
+    ///   whose `'` bytes are the matrix's zero-key columns
+    ///   ([`Session::normalized_lookup_offset`]).
+    /// - LUOMA / SECONDARY_ZHUYIN: the full law over the stored original
+    ///   input — the pinned index parse consumes `'` as the same
+    ///   separator.
+    /// - Double pinyin: no zero-key column can exist — `'` is not a scheme
+    ///   key, the parse stops there, and upstream asserts the input
+    ///   carries none at all (`pinyin_parser2.cpp:629`) — so only the
+    ///   range refusal against the parsed original length applies.
+    /// - Zhuyin: `'` is either outside the keyboard (the parse stops
+    ///   there) or a *content* symbol (Gin-Yieh ㄥ, Eten ㄘ), never a zero
+    ///   key, so the separator walk would mis-read content; only the
+    ///   range refusal against the parsed original length applies.
+    pub(crate) fn validate_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
+        if let Some(parse) = self.zhuyin_parse.as_ref() {
+            check_lookup_offset_range(parse.consumed(), offset)
+        } else if let Some(parse) = self.double_parse.as_ref() {
+            check_lookup_offset_range(parse.consumed(), offset)
+        } else if self.full_parse.is_some() {
+            normalize_lookup_offset(self.full_input.as_bytes(), offset)
+        } else {
+            self.session.normalized_lookup_offset(offset)
+        }
     }
 }
 

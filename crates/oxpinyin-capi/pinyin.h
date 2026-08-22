@@ -233,7 +233,11 @@ bool pinyin_is_user_candidate(struct pinyin_instance_t *instance,
 bool pinyin_remove_user_candidate(struct pinyin_instance_t *instance,
                                   struct lookup_candidate_t *candidate);
 
-// Choose a candidate at an offset, returning the new cursor position.
+// Choose a candidate at an offset, returning the new cursor position. The
+// cursor is the candidate's absolute end in the active parse mode's own
+// coordinates — never past the parsed input, even when the caller offset
+// sits one position past a separator run the candidate's span also covers
+// (commit exactly at cursor == parsed length).
 int pinyin_choose_candidate(struct pinyin_instance_t *instance,
                             size_t offset,
                             struct lookup_candidate_t *candidate);
@@ -376,14 +380,17 @@ bool pinyin_get_character_offset(struct pinyin_instance_t *instance,
                                  size_t offset,
                                  size_t *length);
 
-// Guess candidates at the given offset with sort option. The offset may
-// point one position past a zero ChewingKey (a separator, e.g. "'"); it is
-// normalized back to the preceding separator internally before the lookup.
-// The normalization applies to plain full-pinyin input only; the double,
-// chewing and Luoma parse paths keep original-coordinate offsets. An offset
-// one past a leading separator run cannot normalize, and an offset beyond
-// the input's one-past-end position is out of range: either call returns
-// false and clears the candidate list.
+// Guess candidates at the given offset with sort option. The offset lives
+// in the active parse mode's own coordinates. Where a composition can hold
+// a zero ChewingKey (a separator, e.g. "'" — full pinyin and the
+// Luoma/secondary-zhuyin schemes), an offset one position past the
+// separator run is normalized back to the run's first byte before the
+// lookup. Double pinyin and the zhuyin keyboards admit no zero key ("'" is
+// not a scheme key there, or is a content symbol such as Eten's), so no
+// normalization applies. An offset one past a leading separator run cannot
+// normalize, and an offset beyond the parsed input's one-past-end position
+// is out of range: either call returns false and clears the candidate list
+// (C++ libpinyin asserts, or reads its matrix out of bounds, instead).
 bool pinyin_guess_candidates(struct pinyin_instance_t *instance,
                              size_t offset,
                              guint _sort_option);

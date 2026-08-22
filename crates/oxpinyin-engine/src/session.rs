@@ -808,10 +808,20 @@ where
     /// `'` bytes, so the byte walk is the same law.
     ///
     /// The candidate lookup stays anchored at the composition offset the
-    /// session owns, so a choose at the caller offset keeps round-tripping;
-    /// the normalized offset is the one a materialized `DYNAMIC_ADJUST`
-    /// previous-token lookup must use (#99 folds that bigram term to zero
-    /// today, `dynamic_adjust_bigram_term`).
+    /// session owns, so a choose at the caller offset keeps round-tripping.
+    ///
+    /// Previous-token context: upstream resolves the bigram predecessor by
+    /// indexing per-position match results at the lookup offset, and the
+    /// raw one-past-separator offset hits a null slot — the system+user
+    /// bigram merge is silently skipped and ranking quietly degrades
+    /// (C++ libpinyin 2.11.92 still does; libpinyin@412f88e3 feeds the
+    /// normalized offset instead). oxpinyin's counterpart is the selection
+    /// history — [`Session::selected_tokens`]' tail seeds `rank_phrases`
+    /// and the n-best trellis — which no lookup offset ever indexes, so
+    /// that degradation cannot occur here; any future offset-indexed
+    /// context lookup must take this method's normalized offset (#99
+    /// folds the ranking bigram term to zero today,
+    /// `dynamic_adjust_bigram_term`).
     ///
     /// # Errors
     ///
@@ -823,23 +833,7 @@ where
     /// separator, which only a leading apostrophe run can cause (the walk
     /// never crosses byte 0).
     pub fn normalized_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
-        let raw = self.raw.as_bytes();
-        if offset > raw.len() {
-            return Err(EngineError::LookupOffsetOutOfRange {
-                offset,
-                len: raw.len(),
-            });
-        }
-        let mut normalized = offset;
-        let mut index = offset.saturating_sub(1);
-        while index > 0 && raw.get(index) == Some(&b'\'') {
-            normalized = index;
-            index -= 1;
-        }
-        if normalized > 0 && raw.get(normalized - 1) == Some(&b'\'') {
-            return Err(EngineError::LookupOffsetPastSeparator { offset, normalized });
-        }
-        Ok(normalized)
+        normalize_lookup_offset(self.raw.as_bytes(), offset)
     }
 
     /// Rounds `offset` up to the next character boundary of the raw input.
@@ -1808,6 +1802,59 @@ fn keep_first_in_column(columns: &mut [Vec<ScanKey>], by_span: bool) {
         }
         column.truncate(kept);
     }
+}
+
+/// The lookup-offset law over one coordinate buffer whose `'` bytes are
+/// zero-key separator columns — plain full pinyin's raw buffer, or the
+/// original input of an index-parsed scheme (Luoma, secondary zhuyin),
+/// whose pinned parse consumes `'` as the same separator.
+///
+/// Range first ([`check_lookup_offset_range`]), then the
+/// `_compute_zero_start` walk and the `_check_offset` validation of
+/// `pinyin_guess_candidates` at libpinyin@dbff264: from `offset - 1`
+/// downward while the index stays positive and the byte is `'`, then
+/// refuse a normalized offset still one past a separator (only a leading
+/// run can cause it — the walk never crosses byte 0).
+///
+/// Do **not** call this for a buffer where `'` is not a separator: double
+/// pinyin never admits one into a composition, and the Gin-Yieh/Eten
+/// zhuyin keyboards bind `'` to the content symbols ㄥ/ㄘ — there only
+/// [`check_lookup_offset_range`] applies.
+///
+/// # Errors
+///
+/// [`EngineError::LookupOffsetOutOfRange`] past one-past-end;
+/// [`EngineError::LookupOffsetPastSeparator`] for the leading-run shape
+/// upstream aborts on.
+pub fn normalize_lookup_offset(input: &[u8], offset: usize) -> Result<usize, EngineError> {
+    check_lookup_offset_range(input.len(), offset)?;
+    let mut normalized = offset;
+    let mut index = offset.saturating_sub(1);
+    while index > 0 && input.get(index) == Some(&b'\'') {
+        normalized = index;
+        index -= 1;
+    }
+    if normalized > 0 && input.get(normalized - 1) == Some(&b'\'') {
+        return Err(EngineError::LookupOffsetPastSeparator { offset, normalized });
+    }
+    Ok(normalized)
+}
+
+/// The range half of the lookup-offset law: an offset may at most equal
+/// the coordinate buffer's one-past-end position (upstream's reserved
+/// matrix slot). This is the whole law for parse modes whose compositions
+/// hold no zero-key columns (double pinyin, the zhuyin keyboards).
+///
+/// # Errors
+///
+/// [`EngineError::LookupOffsetOutOfRange`] when `offset > len` — upstream
+/// reads its matrix out of bounds there, so no pinned behaviour exists
+/// and the offset is refused.
+pub fn check_lookup_offset_range(len: usize, offset: usize) -> Result<usize, EngineError> {
+    if offset > len {
+        return Err(EngineError::LookupOffsetOutOfRange { offset, len });
+    }
+    Ok(offset)
 }
 
 /// Unigram sort key plus the DYNAMIC_ADJUST bigram increment (#99).
