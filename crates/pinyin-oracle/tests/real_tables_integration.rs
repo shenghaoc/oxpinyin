@@ -461,14 +461,19 @@ fn real_tables_session_reports_parity() {
     // Pinned to the real-frequency candidate construction: the expanding-
     // window scan over the parser-shaped key set (selected parse plus the
     // resplit/divided additions), the three-key order (text length, pinyin
-    // span, real unigram count), and keep-first dedup. Measured release and
+    // span, the pin's amplified frequency — the truncated f32 possibility
+    // `trunc(((1−λ)·unigram/total)·2²⁴)`, which collapses near-ties onto
+    // collection order), and keep-first dedup. Measured release and
     // debug, serial and parallel — all bit-identical. Re-frozen in
     // docs/findings/pin-refreeze-2026-08.md after incomplete keys were
-    // expanded by phonetic initial instead of string prefix, and again in
+    // expanded by phonetic initial instead of string prefix, again in
     // docs/findings/corpus-tail.md after the doubled-apostrophe separator
-    // was aligned with the pin (`ni''hao` — Class B of the W12 residual).
+    // was aligned with the pin (`ni''hao` — Class B of the W12 residual),
+    // and again in docs/findings/corpus-tail.md after the amplified
+    // frequency and the pin's array order were ported (Class A — the
+    // candidate residual closed to zero).
     assert_eq!(
-        top1, 10178,
+        top1, 10190,
         "top-1 must be bit-identical to the serial baseline"
     );
     assert_eq!(
@@ -480,7 +485,7 @@ fn real_tables_session_reports_parity() {
         "top-5-set must be bit-identical to the serial baseline"
     );
     assert_eq!(
-        prefix_overlap, 94872,
+        prefix_overlap, 98930,
         "prefix-10 overlap numerator must match"
     );
     assert_eq!(
@@ -504,6 +509,46 @@ fn real_tables_session_reports_parity() {
 /// The scan's split parts are measured from the syllable text, not from the
 /// byte the apostrophe rides on: `bu'tian` divides `tian` into `ti` + `an`,
 /// so `补体` must consume exactly `bu'ti` (5 bytes) and leave `an`.
+/// The Class A tie law's two table facts, engine-side: the interpolation2
+/// 1-gram sum the model loads, and the phrase-index item count the ranking
+/// denominator adds to it. Every model20 item's baked unigram is its
+/// interpolation2 count + 1 (probe-verified over the whole index,
+/// `docs/findings/corpus-tail.md` Class A), so the pin's
+/// `get_phrase_index_total_freq` is the sum plus one per item:
+/// 50_913_735 + 138_096 = 51_051_831.
+#[test]
+fn ranking_denominator_is_interpolation2_plus_item_count() {
+    use oxpinyin_core::Dictionary;
+
+    let Some(dir) = export_dir() else {
+        return;
+    };
+    let Ok(Some(model_dir)) = pinyin_oracle::model_cache::locate_model_dir() else {
+        return;
+    };
+
+    let dict = SystemDictionary::open(
+        &dir.join("pinyin_index.redb"),
+        &dir.join("phrase_index.redb"),
+    )
+    .expect("SystemDictionary opens");
+    let mut lm =
+        BigramLanguageModel::open(&dir.join("bigram.redb")).expect("BigramLanguageModel opens");
+    lm.set_unigrams_from_interpolation2(&model_dir.join("interpolation2.text"))
+        .expect("interpolation2 parses");
+
+    assert_eq!(
+        lm.unigram_total(),
+        50_913_735,
+        "interpolation2 1-gram sum must match the pin's denominator input"
+    );
+    assert_eq!(
+        dict.phrase_index_item_count(),
+        138_096,
+        "exported phrase-index items must match the pin's item count"
+    );
+}
+
 #[test]
 fn scan_divided_key_consumes_the_apostrophe_span() {
     use oxpinyin_engine::Selection;
@@ -917,7 +962,7 @@ fn sentence_surface_reports_parity() {
         sentences_exact, 385,
         "full sentence-list agreement must hold"
     );
-    assert_eq!(rows_exact, 370, "first-6 candidate-row agreement must hold");
+    assert_eq!(rows_exact, 379, "first-6 candidate-row agreement must hold");
 }
 
 /// Live-oracle freshness check for `fixtures/w4/oracle-sentence-surface.txt`.

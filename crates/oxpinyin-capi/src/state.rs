@@ -305,6 +305,13 @@ impl Dictionary for SharedDict {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         addons.prefix_exists(syllables)
     }
+
+    fn phrase_index_item_count(&self) -> u64 {
+        // System items only: the parity surface the ranking denominator
+        // reproduces runs an empty user store, where this is the whole
+        // facade. A trained store's user items are not folded in.
+        self.0.system.phrase_index_item_count()
+    }
 }
 
 /// `Arc` wrapper so instances share the context's language model without

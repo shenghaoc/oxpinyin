@@ -167,6 +167,21 @@ pub trait Dictionary {
     ) -> Result<bool, Self::Error> {
         Ok(false)
     }
+
+    /// Number of phrase items the default facade carries.
+    ///
+    /// The pinned oracle's candidate frequency divides every unigram by the
+    /// phrase index's total frequency (`pinyin.cpp:1858`), and that total is
+    /// the sum of one baked unigram per item. A table-backed implementor
+    /// answers with its item count so the ranking can reproduce that
+    /// denominator; `0` is the fixture answer, where no such index exists.
+    ///
+    /// Defaulted so existing implementors compile unchanged
+    /// (`docs/findings/core-trait-seam.md`: the seam grows by defaulted
+    /// methods only).
+    fn phrase_index_item_count(&self) -> u64 {
+        0
+    }
 }
 
 impl<D: Dictionary + ?Sized> Dictionary for &D {
@@ -207,6 +222,10 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         syllables: &[Self::Syllable],
     ) -> Result<bool, Self::Error> {
         (**self).phrase_prefix_exists_addon(syllables)
+    }
+
+    fn phrase_index_item_count(&self) -> u64 {
+        (**self).phrase_index_item_count()
     }
 }
 

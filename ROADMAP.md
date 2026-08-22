@@ -67,7 +67,7 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
 | W9 | Training toolchain | oxpinyin-segment, oxpinyin-counter, oxpinyin-lambda, oxpinyin-emitter, oxpinyin-corpus |
 | W10 | Option bits: correction, fuzzy/ambiguity, dynamic-adjust gating | oxpinyin-core, oxpinyin-engine |
 | W11 | Phrase-index union at lookup (user, network, addon) | oxpinyin-engine, oxpinyin-data, oxpinyin-user |
-| W12 | Corpus tail (undiagnosed parity gaps) | oxpinyin-core, oxpinyin-engine, oxpinyin-capi |
+| W12 | Corpus tail (parity gaps; candidate residual closed 2026-08-22) | oxpinyin-core, oxpinyin-engine, oxpinyin-capi |
 | W13 | Double-pinyin and bopomofo input schemes (feature implementation) | oxpinyin-core, oxpinyin-engine |
 | W14 | Sentence surface (n-best emission, NBEST_MATCH typing, get_sentence) | oxpinyin-capi, oxpinyin-engine |
 
@@ -180,15 +180,17 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   `pinyin_choose_predicted_candidate` — which the gap inventories list as
   no-ops with no owning workstream.
 
-- **W12 is the corpus tail.** After the 2026-08-21 doubled-apostrophe fix:
-  12 of 10,190 inputs differ at top-1, ~4,058 prefix-10 positions beyond
-  tie-order. The 12 are all top-two comparator tie-swaps on the same
-  depth-10 set (Class A in `docs/findings/corpus-tail.md`), sharing the
-  `sentence-surface.md` §3 fixed-point-vs-float species; moving them
-  requires a comparator re-freeze. Class B (`ni''hao`) closed
-  2026-08-21 (`docs/findings/pin-refreeze-2026-08.md` amendment). This
-  workstream is open-ended by nature, unlike W10/W11: its completion
-  criterion is diagnosis-driven rather than feature-driven. Also parked
+- **W12 is the corpus tail.** Closed 2026-08-22: the candidate surface
+  agrees with the pinned oracle bit-identically on every W2 corpus input
+  at depth 10 (10,190 / 10,190 / 98,930 of 98,930 / absent 0 /
+  tie-swaps 0). Class B (`ni''hao`) closed 2026-08-21 by the
+  doubled-apostrophe alignment; Class A — the 12 top-two comparator
+  tie-swaps and the 1,036 order-only / 4,058 prefix-10 residuals, all one
+  species — closed 2026-08-22 by porting the pin's tie law (the amplified
+  f32 frequency key and the array order its stable sort keeps,
+  `docs/findings/corpus-tail.md`, `pin-refreeze-2026-08.md` third
+  amendment). The completion criterion was diagnosis-driven, and every
+  diagnosed class is now zero. Also parked
   here: the live-typing behaviors the parity sequence doesn't yet
   exercise (deep paging, mid-composition edits, punctuation modes).
 

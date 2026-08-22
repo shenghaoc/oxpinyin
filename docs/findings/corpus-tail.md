@@ -1,6 +1,7 @@
 # Corpus tail (W12)
 
-Date: 2026-08-21 · Status: **residual enumeration; Class B closed**
+Date: 2026-08-21 · Status: **residual enumeration; Class B closed 2026-08-21;
+Class A closed 2026-08-22 — candidate residual is zero**
 
 W12 is the corpus tail (`ROADMAP.md` W12): the undiagnosed parity gap
 against the pinned oracle at `0c5e80e`. This finding names the inputs
@@ -25,20 +26,24 @@ PINYIN_MODEL_DIR=<extracted-model20> \
 cargo run -p pinyin-oracle --release --bin corpus-tail
 ```
 
-Measured 2026-08-21, before and after the Class B fix:
+Measured 2026-08-21, before and after the Class B fix, and 2026-08-22
+after the Class A comparator port:
 
-| residual | pre-fix | post-fix | pinned in |
-|---|---:|---:|---|
-| compared | 10,190 | 10,190 | `real_tables_session_reports_parity` |
-| top-1 misses | **13** | **12** | same (top-1 = 10,177 → **10,178**) |
-| top-5 misses | **1** | **0** | same (top-5-set = 10,189 → **10,190**) |
-| absent | **1** | **0** | same |
-| order-only (tie-swaps) | **1,036** | **1,036** | same |
-| prefix-10 gap | **4,059 of 98,930** | **4,058 of 98,930** | same (94,871 → **94,872** overlap) |
+| residual | pre-fix | post-B-fix | post-A-fix (2026-08-22) | pinned in |
+|---|---:|---:|---:|---|
+| compared | 10,190 | 10,190 | 10,190 | `real_tables_session_reports_parity` |
+| top-1 misses | **13** | **12** | **0** | same (top-1 = 10,177 → 10,178 → **10,190**) |
+| top-5 misses | **1** | **0** | **0** | same (top-5-set = 10,189 → **10,190**) |
+| absent | **1** | **0** | **0** | same |
+| order-only (tie-swaps) | **1,036** | **1,036** | **0** | same |
+| prefix-10 gap | **4,059 of 98,930** | **4,058 of 98,930** | **0 of 98,930** | same (94,871 → 94,872 → **98,930** overlap) |
 
-Bit-identical to the five frozen assertions in the pin test (before and
-after the re-freeze). The pin re-freeze is recorded in
-`docs/findings/pin-refreeze-2026-08.md` as the 2026-08-21 amendment.
+The 2026-08-22 re-freeze is recorded in
+`docs/findings/pin-refreeze-2026-08.md` as its third amendment. Sentence
+pins the same day: row-0 and full-list agreement hold (488 / 385), the
+first-6 candidate rows rise 370 → **379** (`sentence_surface_reports_
+parity`) — the candidate list is the first-6 rows' tail, so closing the
+candidate residual lifts exactly that figure.
 
 ## The 13 top-1 misses
 
@@ -48,13 +53,13 @@ One (Class B, `ni''hao`) was a novel parse-side signal, closed
 2026-08-21 by aligning the doubled-apostrophe separator with the pin.
 The post-fix residual is 12; Class B moved out of the tail.
 
-### Class A — top-two comparator tie-swap (12 of 13)
+### Class A — top-two comparator tie-swap (12 of 13) — CLOSED 2026-08-22
 
 Same depth-10 candidate set as the oracle. Every RankKey-1 (phrase text
 length in characters, `candidate-construction.md` §8.2) and RankKey-2
 (pinyin span in bytes) is tied at the top pair; only RankKey-3 (real
-unigram count) breaks the tie, and the choice inverts under the
-port's fixed-point-vs-float divergence and insertion-order tie-breaks
+unigram count) breaks the tie, and the choice inverts under the port's
+fixed-point-vs-float divergence and insertion-order tie-breaks
 (`sentence-surface.md` §3). All twelve share the shape "2-char phrase
 vs 2-char phrase, both from the same syllable cut":
 
@@ -84,6 +89,41 @@ in as the trellis' second/third-tail near-tie residual. A fix moves the
 comparator (fixed-point → float, or the tie-break rule) and would move
 the pin — deferred to a maintainer-approved re-freeze, not a W12
 diagnostic.
+
+**Diagnosis and fix (2026-08-22).** The pin's comparator key is not the
+raw unigram count. `_compute_frequency_of_items`
+(`pinyin.cpp:1855-1866`) fills `m_freq` with the unigram possibility
+`(1−λ)·unigram/total` computed in C `float`, amplified by 2²⁴ and
+truncated to `guint32` (λ = 0.312699 from `table.conf`; `DYNAMIC_ADJUST`
+clear in the parity profile, so the bigram term is zero). Two inputs
+decide the rest:
+
+- **The frequency data is the phrase-index item unigram, which over
+  model20 is exactly interpolation2 count + 1** — probe-verified across
+  all 138,096 items (63,907 interpolation2 tokens are +1; the other
+  74,189 items are exactly 1). The index total follows:
+  50,913,735 + 138,096 = **51,051,831**, also probe-verified.
+- **The sort is stable.** `g_array_sort_with_data` runs GLib's merge sort
+  (stable since 2.32), so a comparator-0 pair keeps the array order
+  `_append_items` (`pinyin.cpp:1769-1791`) laid down: per window,
+  library-ascending then token-ascending, system facade before addon.
+
+Under that law all twelve top pairs collapse to equal `m_freq` (the
+probe values: 0/0, 4/4, 17/17, 19/19, 3/3) and the pin's #1 is always
+the lower (library,) token — the array order, not a frequency choice.
+`goug` proved the tie-break half: its pair ties on raw counts too
+(86 = 86), and the swap was collection order alone.
+
+The port (`feat/w12-class-a-comparator`): RankKey-3 becomes
+`amplified_frequency(count + 1, interpolation2_total + item_count)` —
+the f32 chain in C evaluation order, unit-pinned to the probe values and
+to a corpus-scale count (2,349,890) where f32 and f64 truncate apart —
+and the window scan flushes each window token-ascending (system batch,
+then addon), reproducing the pin's array order for the stable sort.
+`loses_to` and the n-best trellis are untouched. Result: every residual
+count above drops to zero — the 1,036 order-only swaps and the 4,058
+prefix-10 gap were the same species below rank 1, so the port closed
+them with the top pair.
 
 ### Class B — double-apostrophe parse (1 of 13) — CLOSED 2026-08-21
 
@@ -127,27 +167,22 @@ Both were `ni''hao`, closed together by the Class B fix. Post-fix
 top-5-set is 10,190 and absent is 0. The twelve Class-A entries are all
 top-2 hits, so they cross the top-5 line trivially.
 
-## The 4,058 prefix-10 residual
+## The 4,058 prefix-10 residual — CLOSED 2026-08-22
 
-The prefix-10 gap counts oracle top-10 positions that do not appear
-in our top-10. Post-fix it sums to 4,058 of 98,930 positions across
-the corpus (was 4,059; the Class B fix recovered the `你好` position
-of `ni''hao`), so its population is much larger than the 12 top-1
-misses. Distribution characterisation is out of scope of this
-enumeration; a targeted follow-up would either (a) sample by rank at
-which the gap starts (are the missing oracle candidates always at the
-tail, or do they push earlier?), or (b) categorise by the shared
-prefix depth between our list and the oracle's. Recorded as
-follow-up; the pin does not gate on this figure at any threshold
-beyond "unchanged".
+The prefix-10 gap counts oracle top-10 positions that do not appear in
+our top-10. Post-B-fix it summed to 4,058 of 98,930 positions across the
+corpus (was 4,059; the Class B fix recovered the `你好` position of
+`ni''hao`). The Class A port closed it to **0 of 98,930**: the gap's
+population was the same amplified-frequency collapse species below rank
+1, not a distinct tail class. The distribution characterisation proposed
+below (gap start rank, shared prefix depth) is moot.
 
-## The 1,036 order-only tie-swaps
+## The 1,036 order-only tie-swaps — CLOSED 2026-08-22
 
-Same-set-different-order at depth 10. These are the same comparator
-class as Class A above, just where the swap sits below rank 1 and so
-does not degrade `top-1`. Pinned at 1,036 by the parity test; no
-Stage-1 change to the comparator can move the count without moving
-`top-1` as well.
+Same-set-different-order at depth 10: the comparator tie class of Class
+A, with the swap below rank 1. The 2026-08-22 port (amplified key + the
+pin's array order) moved the count to **0**; the pin test froze
+tie-swaps at 1,036 through the 2026-08-21 amendment and now reads 0.
 
 ## Option-sweep all-off tails (outside the W2 corpus)
 
@@ -194,14 +229,15 @@ existing corpus is not the venue.
 
 ## What this finding closes
 
-The 13 top-1 misses are named and split into two classes: 12 in the
-comparator tie-swap species that already has a §3 characterisation
-(`sentence-surface.md`), and 1 in a parse-side species (`ni''hao`)
-closed on 2026-08-21 by aligning the doubled-apostrophe separator with
-the pin. The frozen residual counts are reproducible by
-`bin/corpus-tail` against the same tables the pin test uses, so a
-future move on either class is diffable against this baseline.
+The 13 top-1 misses were named and split into two classes: 12 in the
+comparator tie-swap species (`sentence-surface.md` §3), and 1 in a
+parse-side species (`ni''hao`) closed on 2026-08-21 by aligning the
+doubled-apostrophe separator with the pin. Class A closed 2026-08-22 by
+porting the pin's tie law — the amplified f32 frequency key and the
+array order its stable sort keeps — taking every frozen residual count
+(top-1, top-5, absent, order-only, prefix-10) to zero. The W2 corpus
+candidate surface now agrees with the pinned oracle bit-identically on
+every input at depth 10.
 
-W12 remains open — 12 Class A residuals stay unresolved pending a
-comparator re-freeze — but the tail is no longer aggregate, and the
-one non-tie-swap tail is closed.
+W12's corpus residual is closed. What remains open under W12 is the
+live-typing coverage below, which no frozen pin gates.

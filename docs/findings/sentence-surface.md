@@ -521,3 +521,30 @@ chased"; §9 confirmed it did not affect the compared logs.
 - Pins unchanged: default candidates 10178 / 10190 / 94872 of 98930 /
   absent 0; sentence surface 488/385/370 — bit-identical. fmt, clippy
   `-D warnings`, workspace tests green.
+
+## 11. Class A candidate tie law ported — sentence pins re-measured
+
+Date: 2026-08-22 · branch `feat/w12-class-a-comparator`.
+
+The candidate comparator's frequency key became the pin's amplified
+scale (`trunc(((1−λ)·(unigram+1)/total)·2²⁴)` in `f32`,
+`pinyin.cpp:1855-1866`; the model20 item unigram is interpolation2
+count + 1, total 51,051,831), and the window scan flushes each window
+token-ascending — the array order the oracle's stable
+`g_array_sort_with_data` keeps for comparator-0 pairs. The W12 Class A
+candidate residual closed to zero (10,190 / 10,190 / 98,930 of 98,930 /
+absent 0 / tie-swaps 0; `docs/findings/corpus-tail.md`,
+`pin-refreeze-2026-08.md` third amendment).
+
+**This surface:** `loses_to`, the trellis, and the n-best row machinery
+are untouched — §3's trellis divergences stand. The measured agreement:
+
+- row 0 (decoded 1-best): **488/496**, unchanged.
+- full sentence lists: **385/496**, unchanged.
+- first-6 candidate rows: **379/496**, up from 370 — the candidate list
+  is the tail of those rows, so closing the candidate residual lifts
+  exactly this figure; the remaining 17 are the §3 trellis-side
+  near-ties (tail order, segmentation resplits), not candidate-order
+  divergence.
+
+`sentence_surface_reports_parity` re-frozen at 488/385/379.

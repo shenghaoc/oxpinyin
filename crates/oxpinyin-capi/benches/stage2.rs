@@ -7,7 +7,7 @@
 //! - `user_store_count_delta_hot_token`: cached overlay on one token
 //!
 //! Uses the pinned model dir. Prints the pin SHA in the run header.
-//! Does **not** assert the 10178-class candidate pins — those stay in
+//! Does **not** assert the 10190-class candidate pins — those stay in
 //! `pinyin-oracle` `real_tables_integration`.
 //!
 //! `noise_threshold(0.50)`: a `--baseline` comparison only flags a change

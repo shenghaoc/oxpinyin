@@ -86,9 +86,9 @@ These are independent and move for different reasons:
 3. **Pinned oracle** — libpinyin `2.11.91`. Re-pinning the oracle is a
    deliberate event with its own re-freeze (`pin-refreeze-*.md` convention),
    independent of the crate version and SONAME.
-4. **Parity pins** — `10178 / 10190 / 94872` of `98930` candidate symbols,
-   `0` absent, `1036` tie-swaps (per `pin-refreeze-2026-08.md`
-   2026-08-21 amendment). These freeze the decode/predict output the
+4. **Parity pins** — `10190 / 10190 / 98930` of `98930` candidate symbols,
+   `0` absent, `0` tie-swaps (per `pin-refreeze-2026-08.md`
+   2026-08-22 amendment). These freeze the decode/predict output the
    oracle is held to; packaging must not move them.
 
 **Coupling caveat at 0.x:** streams 1 and 2 are not yet fully independent.
