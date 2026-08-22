@@ -429,6 +429,12 @@ where
                 return self.selection_outcome();
             };
             if let Some(best) = best {
+                // Upstream validates the store at choose time
+                // (`pinyin.cpp:2576-2580`); the engine sizes it here so a
+                // fresh composition's row choose — whose store was never
+                // resized, `add` refusing every span past an empty cell
+                // count — cannot silently write nothing.
+                self.constraints.resize(self.raw.len() + 1);
                 self.constraints
                     .diff_result(best, &chosen.spans, self.raw.len());
             }
@@ -549,18 +555,33 @@ where
     /// frontend tracks its own cursor — so the store is the engine's
     /// single source once forcings exist.
     fn rebuild_selection_from_constraints(&mut self) {
-        match self.constraints.selection() {
-            Some((selected, consumed, history)) => {
-                self.selected = selected.into_string();
-                self.consumed = consumed.min(self.raw.len());
-                self.history = history;
-            }
-            None => {
-                self.selected.clear();
-                self.consumed = 0;
-                self.history.clear();
-            }
+        let runs = self.constraints.runs();
+        if runs.is_empty() {
+            self.selected.clear();
+            self.consumed = 0;
+            self.history.clear();
+            return;
         }
+        // Gaps between forced runs are free spans (diff_result forces only
+        // the differing phrases); their text is the current buffer's bytes,
+        // so the rebuilt record never drops raw input the forcings skip
+        // over — the preedit would otherwise lose exactly that gap.
+        let mut selected = String::new();
+        let mut cursor = 0_usize;
+        let mut history = Vec::with_capacity(runs.len());
+        for (start, end, token, text) in &runs {
+            if *start > cursor
+                && let Some(gap) = self.raw.get(cursor..*start)
+            {
+                selected.push_str(gap);
+            }
+            selected.push_str(text);
+            history.push(*token);
+            cursor = *end;
+        }
+        self.selected = selected;
+        self.consumed = cursor.min(self.raw.len());
+        self.history = history;
     }
 
     /// The sentence recorded so far: the token of every phrase the user
@@ -620,14 +641,15 @@ where
     /// go (`pinyin.cpp:2697` clears `m_constraints`).
     pub fn reset(&mut self) {
         self.reset_composition();
+        self.raw.clear();
         self.selected.clear();
         self.consumed = 0;
         self.history.clear();
         self.constraints.clear();
     }
 
-    /// The parse-path reset: the composition's parse state goes, the
-    /// selection record and the constraint store stay.
+    /// The parse-path reset: the composition's PARSE state goes; the
+    /// raw input, the selection record, and the constraint store stay.
     ///
     /// `pinyin_parse_more_full_pinyins` replaces the input buffer — the
     /// frontend re-sends the whole buffer every keystroke — and never
@@ -636,14 +658,49 @@ where
     /// re-validates the surviving forcings against the new matrix. This
     /// is that split's engine half: the L2 lifetime rule
     /// (`docs/findings/live-typing.md`).
+    ///
+    /// The raw buffer is NOT cleared here: a cleared raw with a surviving
+    /// cursor would leave `consumed > raw.len()` observable, and every
+    /// `raw[consumed..]` slice (`preedit`, `commit`) would panic — the
+    /// constitution forbids that window. The input replacement is atomic
+    /// in [`Session::replace_raw`], which clears, refills, clamps, and
+    /// refreshes in one call, so this reset alone always leaves a
+    /// consistent session.
     pub fn reset_composition(&mut self) {
-        self.raw.clear();
         self.parsed_prefix = 0;
         self.candidates = CandidateList::default();
         self.nbest_rows.clear();
         self.nbest_history.clear();
         self.last_result.clear();
         self.sentence_lookup_active = false;
+    }
+
+    /// Replaces the raw input with `text` in one step — the capi parse
+    /// path's `parse_more` contract (the frontend re-sends the whole
+    /// buffer every keystroke). The selection record and the constraint
+    /// store survive (whether they should is the caller's
+    /// [`Session::parse_continues`] decision); the cursor is clamped into
+    /// the new buffer and the candidates refresh, so the session is never
+    /// observable with a cursor past its input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the refresh under the new input hits
+    /// a backend failure.
+    pub fn replace_raw(&mut self, text: &str) -> Result<(), EngineError> {
+        self.raw.clear();
+        for character in text.chars() {
+            if !is_batch_input_character(character) {
+                continue;
+            }
+            if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
+                break;
+            }
+            self.raw.push(character);
+        }
+        self.consumed = self.consumed.min(self.raw.len());
+        self.refresh()?;
+        Ok(())
     }
 
     /// Filtered parse length of the remaining input after the last refresh.
@@ -1070,6 +1127,12 @@ where
     /// prefix of the new one and the composition is still incomplete.
     /// Mid-composition keystrokes extend the buffer this way; a committed
     /// composition, a backspace, or a fresh buffer does not.
+    ///
+    /// A pure query, not a fallible operation — it reads already-valid
+    /// state and cannot fail, so the constitution's `Result` rule for
+    /// fallible public APIs does not reach it. The state-changing halves
+    /// of the parse pipeline are the fallible [`Session::replace_raw`]
+    /// and the infallible [`Session::reset_composition`]/[`reset`].
     #[must_use]
     pub fn parse_continues(&self, stored: &[u8], original: &[u8]) -> bool {
         self.consumed < self.raw.len()
@@ -3346,6 +3409,83 @@ mod tests {
     /// training; a result that sits on a forcing takes the constrained
     /// walk instead (the test above). This pins the trigger, not just the
     /// outcome: taking the constrained path here would observe nothing.
+    /// Review regression: a rank-greater-than-zero row choose on a FRESH
+    /// composition records its forcing. The row branch once called
+    /// diff_result on a store that was never sized — `add` refused every
+    /// span past an empty cell count, and the forcing silently never
+    /// landed.
+    #[test]
+    fn a_fresh_composition_row_choose_records_its_forcing() {
+        let mut session = train_session();
+        session.type_pinyin("nihao").expect("typing cannot fail");
+        // Hand-crafted rows whose rank-1 phrase differs from row 0's —
+        // the shifted-row shape (`sentence-surface.md` §8).
+        session.nbest_rows = vec![
+            crate::nbest::NbestRow {
+                text: "\u{597d}".into(),
+                tokens: vec![PhraseToken::new(0x100)],
+                spans: vec![crate::constraint::PhraseSpan {
+                    start: 0,
+                    token: PhraseToken::new(0x100),
+                    text: "\u{597d}".into(),
+                }],
+                keys: 1,
+                span: 3,
+                cost: 10,
+            },
+            crate::nbest::NbestRow {
+                text: "\u{6d69}".into(),
+                tokens: vec![PhraseToken::new(0x102)],
+                spans: vec![crate::constraint::PhraseSpan {
+                    start: 0,
+                    token: PhraseToken::new(0x102),
+                    text: "\u{6d69}".into(),
+                }],
+                keys: 1,
+                span: 3,
+                cost: 30,
+            },
+        ];
+        session.refresh().expect("refresh cannot fail");
+        let index = session
+            .candidates()
+            .iter()
+            .position(|candidate| candidate.nbest_row() == Some(1))
+            .expect("the rank-1 row is offered");
+        session.select(index).expect("the row is choosable");
+        assert!(
+            session.clear_constraint(0),
+            "the differing phrase's forcing landed on the fresh composition"
+        );
+    }
+
+    /// Review regression: the record rebuild keeps the raw text of the
+    /// gaps between forcings — `diff_result` leaves unchanged phrases
+    /// free, and the preedit must not drop exactly those bytes.
+    #[test]
+    fn a_record_rebuild_keeps_the_gap_text_between_forcings() {
+        let mut session = train_session();
+        session
+            .type_pinyin("nihaoshijie")
+            .expect("typing cannot fail");
+        // A gapped store straight from diff_result's shape: 你 over
+        // [0,2), a free gap "ha" over [2,5), a forcing over [5,10).
+        session.constraints.resize(12);
+        session
+            .constraints
+            .add(0, 2, PhraseToken::new(1), "\u{4f60}".into());
+        session
+            .constraints
+            .add(5, 10, PhraseToken::new(2), "\u{4e16}\u{754c}".into());
+        session.rebuild_selection_from_constraints();
+        let preedit = session.preedit();
+        assert!(
+            preedit.text().starts_with("\u{4f60}hao\u{4e16}\u{754c}"),
+            "the gap's raw bytes survived the rebuild: got {:?}",
+            preedit.text()
+        );
+    }
+
     #[test]
     fn a_row_zero_choose_trains_through_the_record() {
         let mut session = trellis_session();
