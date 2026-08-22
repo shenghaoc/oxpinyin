@@ -808,8 +808,9 @@ with C evaluation order (λ = 0.312699), where `unigram` is the
 interpolation2 count, `+1` the model20 item-unigram identity, and
 `total` = interpolation2 sum + 138,096 phrase-index items = 51,051,831
 (`pinyin.cpp:1855-1866`; probe-verified over the whole index). The
-truncation collapses near-ties into equal keys — 880,440 adjacent
-fully-tied pairs across 9,972 inputs — which the stable sort resolves by
+truncation collapses near-ties into equal keys — 1,030,385 adjacent
+fully-tied pairs across 10,027 inputs, counted on the amplified scale
+the comparator actually compares — which the stable sort resolves by
 the scan's per-window token-ascending flush (system facade before
 addon), the array order `_append_items` (`pinyin.cpp:1769-1791`) lays
 down and GLib's stable merge sort keeps.

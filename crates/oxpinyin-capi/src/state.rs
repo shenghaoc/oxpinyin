@@ -306,7 +306,7 @@ impl Dictionary for SharedDict {
         addons.prefix_exists(syllables)
     }
 
-    fn phrase_index_item_count(&self) -> u64 {
+    fn phrase_index_item_count(&self) -> Result<u64, Self::Error> {
         // System items only: the parity surface the ranking denominator
         // reproduces runs an empty user store, where this is the whole
         // facade. A trained store's user items are not folded in.

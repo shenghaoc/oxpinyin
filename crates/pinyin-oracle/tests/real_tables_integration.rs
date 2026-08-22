@@ -26,6 +26,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use oxpinyin_core::Dictionary;
 use oxpinyin_data::{BigramLanguageModel, SystemDictionary};
 use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use pinyin_oracle::corpus;
@@ -243,14 +244,29 @@ impl Counts {
 
 /// Counts how often the three-key sort had to fall back on collection order.
 ///
+/// The RankKey-3 contract (`amplified_frequency` in
+/// `oxpinyin-engine/src/session.rs`): the f32 possibility `(1−λ)·count/
+/// total` amplified by 2²⁴ and truncated, in C evaluation order.
+/// Duplicated here because the engine's helper is private; the engine's
+/// unit tests pin the probe values it must reproduce.
+fn amplified_rank_frequency(count: u64, pin_total: u64) -> u64 {
+    const PIN_LAMBDA_F32: f32 = 0.312_699;
+    let possibility = (1.0_f32 - PIN_LAMBDA_F32) * count as f32 / pin_total as f32;
+    u64::from((possibility * 256.0 * 256.0 * 256.0) as u32)
+}
+
 /// After the sort and dedup, two adjacent candidates tie on all three keys
 /// exactly where the stable sort's collection-order rule decided their order.
 /// `tie_pairs` counts those positions; `tie_inputs` counts inputs with at
 /// least one. This is the measurable stand-in for the comparator-equal events
-/// the construction's stable sort absorbs.
+/// the construction's stable sort absorbs. The frequency key is the
+/// amplified scale over the pin total, exactly what the engine's RankKey-3
+/// compares — a raw-count comparison would miss the near-ties the
+/// truncation collapses, which are the ties that matter.
 fn count_ties(
     session: &Session<&SystemDictionary, &BigramLanguageModel>,
     lm: &BigramLanguageModel,
+    pin_total: u64,
 ) -> (bool, usize) {
     let candidates = session.candidates();
     let mut pairs = 0_usize;
@@ -262,7 +278,9 @@ fn count_ties(
             let frequency = candidate
                 .token()
                 .and_then(|token| lm.unigram_count(token.value()))
-                .unwrap_or(0);
+                .map_or(0, |count| {
+                    amplified_rank_frequency(count.saturating_add(1), pin_total)
+                });
             (length, span, frequency)
         })
         .collect();
@@ -344,6 +362,12 @@ fn real_tables_session_reports_parity() {
     let lm = lm; // freeze: init phase over, read-only from here
     let dict = &dict;
     let lm = &lm;
+    // The RankKey-3 denominator: interpolation2 sum + phrase-index items,
+    // the pin's `get_phrase_index_total_freq` over model20.
+    let pin_total = lm.unigram_total().saturating_add(
+        dict.phrase_index_item_count()
+            .expect("phrase-index item count reads"),
+    );
 
     let started = std::time::Instant::now();
     // Split the corpus across scoped threads: one Session per thread over the
@@ -420,7 +444,7 @@ fn real_tables_session_reports_parity() {
                         if !real_cands.is_empty() && !real_cands.iter().any(|t| t == oracle_top) {
                             c.absent = 1;
                         }
-                        let (tied_input, tied_pairs) = count_ties(&session, lm);
+                        let (tied_input, tied_pairs) = count_ties(&session, lm, pin_total);
                         if tied_input {
                             c.tie_inputs = 1;
                         }
@@ -518,13 +542,24 @@ fn real_tables_session_reports_parity() {
 /// 50_913_735 + 138_096 = 51_051_831.
 #[test]
 fn ranking_denominator_is_interpolation2_plus_item_count() {
-    use oxpinyin_core::Dictionary;
-
     let Some(dir) = export_dir() else {
         return;
     };
-    let Ok(Some(model_dir)) = pinyin_oracle::model_cache::locate_model_dir() else {
-        return;
+    let model_dir = match pinyin_oracle::model_cache::locate_model_dir() {
+        Ok(Some(model_dir)) => model_dir,
+        Ok(None) => {
+            eprintln!(
+                "model cache absent: no interpolation2.text; skipping the \
+                 denominator check (run tools/model/fetch-model.sh)"
+            );
+            return;
+        }
+        Err(error) => {
+            panic!(
+                "PINYIN_MODEL_DIR is set but unusable: {error}; \
+                 run tools/model/fetch-model.sh"
+            );
+        }
     };
 
     let dict = SystemDictionary::open(
@@ -543,7 +578,8 @@ fn ranking_denominator_is_interpolation2_plus_item_count() {
         "interpolation2 1-gram sum must match the pin's denominator input"
     );
     assert_eq!(
-        dict.phrase_index_item_count(),
+        dict.phrase_index_item_count()
+            .expect("phrase-index item count reads"),
         138_096,
         "exported phrase-index items must match the pin's item count"
     );
@@ -556,8 +592,21 @@ fn scan_divided_key_consumes_the_apostrophe_span() {
     let Some(dir) = export_dir() else {
         return;
     };
-    let Ok(Some(model_dir)) = pinyin_oracle::model_cache::locate_model_dir() else {
-        return;
+    let model_dir = match pinyin_oracle::model_cache::locate_model_dir() {
+        Ok(Some(model_dir)) => model_dir,
+        Ok(None) => {
+            eprintln!(
+                "model cache absent: no interpolation2.text; skipping this \
+                 measurement (run tools/model/fetch-model.sh)"
+            );
+            return;
+        }
+        Err(error) => {
+            panic!(
+                "PINYIN_MODEL_DIR is set but unusable: {error}; \
+                 run tools/model/fetch-model.sh"
+            );
+        }
     };
 
     let dict = SystemDictionary::open(
@@ -852,9 +901,18 @@ fn sentence_surface_reports_parity() {
     let Some(fixture) = load_sentence_fixture() else {
         return;
     };
-    let Ok(Some(model_dir)) = pinyin_oracle::model_cache::locate_model_dir() else {
-        eprintln!("model cache absent; skipping the sentence-surface parity measurement");
-        return;
+    let model_dir = match pinyin_oracle::model_cache::locate_model_dir() {
+        Ok(Some(model_dir)) => model_dir,
+        Ok(None) => {
+            eprintln!("model cache absent; skipping the sentence-surface parity measurement");
+            return;
+        }
+        Err(error) => {
+            panic!(
+                "PINYIN_MODEL_DIR is set but unusable: {error}; \
+                 run tools/model/fetch-model.sh"
+            );
+        }
     };
 
     let dict = SystemDictionary::open(
