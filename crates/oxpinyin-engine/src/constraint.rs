@@ -140,6 +140,18 @@ impl ConstraintStore {
     /// (`sentence-surface.md` §3) makes "the span search no longer yields
     /// the token" the equivalent test. Returns whether anything dropped.
     ///
+    /// The overrun boundary is `end >= len`, mirroring upstream verbatim,
+    /// and it is not an off-by-one against `add`'s `end > len` refusal:
+    /// `len` is the matrix size — one column per input byte PLUS the
+    /// reserved tail slot — so `end == len - 1` (a run ending at the last
+    /// real byte, the exact-buffer-end forcing the backspace ladder's
+    /// floor pins) survives, while `end == len` would end the run ON the
+    /// tail slot: the walk inserts at `end`, and an insert there targets
+    /// the reserved slot instead of a real column (upstream's trellis
+    /// prepares exactly `size()` steps). `add` accepting `end == len` is
+    /// upstream's own asymmetry — no caller produces such a span, since
+    /// candidate spans end at or before the parsed bound.
+    ///
     /// # Errors
     ///
     /// Propagates the spelling probe's backend failure.
@@ -358,6 +370,28 @@ mod tests {
 
         store.clear_by_offset(0);
         assert!(store.runs().is_empty());
+    }
+
+    #[test]
+    fn the_validate_boundary_pins_the_reserved_tail_slot() {
+        let mut store = ConstraintStore::default();
+        store.resize(4);
+        // end == len - 1: a run ending at the last real byte — the
+        // exact-buffer-end forcing — survives validation.
+        store.add(0, 3, token(7), "你".into());
+        let dropped = store.validate(4, |_, _, _| Ok(true)).expect("probe ok");
+        assert!(!dropped);
+        assert!(store.is_one_step_at(0));
+
+        // end == len: add accepts the span (upstream's own asymmetry),
+        // validate drops it — the walk would insert on the reserved tail
+        // slot, one past the last real column.
+        let mut store = ConstraintStore::default();
+        store.resize(4);
+        assert_eq!(store.add(0, 4, token(7), "你".into()), 4);
+        let dropped = store.validate(4, |_, _, _| Ok(true)).expect("probe ok");
+        assert!(dropped);
+        assert!(!store.is_active());
     }
 
     #[test]

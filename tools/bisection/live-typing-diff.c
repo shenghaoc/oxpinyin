@@ -556,11 +556,15 @@ int main(int argc, char **argv) {
      * "ni", then re-types past the shrink. No training: the phase leaves
      * the user store untouched. The ladder stops at "ni" — the cursor
      * (2) must never overrun one-past-end, where upstream's
-     * _check_offset aborts — and skips "nih": the incomplete
-     * single-letter tail is a measured §5 tie-class input (the FREE
-     * walks disagree there with no choose and no constraint — engine
-     * [你和, 你会, 你和] vs oracle [你和, 你和, 你会] — the sentence-surface
-     * pins' priced residual, not this differential's subject). */
+     * _check_offset aborts — and that floor is the exact-fit case the
+     * store's validate boundary must keep: the forcing's end (2) equals
+     * the buffer's parsed bound, one below the store's reserved tail
+     * slot, so it survives validation and the walk answers the single
+     * forced row. The ladder skips "nih": the incomplete single-letter
+     * tail is a measured §5 tie-class input (the FREE walks disagree
+     * there with no choose and no constraint — engine [你和, 你会, 你和]
+     * vs oracle [你和, 你和, 你会] — the sentence-surface pins' priced
+     * residual, not this differential's subject). */
     if (backspace_phase) {
         static const char *const ladder[] = {
             "nihaoshiji", "nihaoshij", "nihaoshi", "nihaosh",
