@@ -29,6 +29,7 @@ rustc-ice-*.txt
 /tools/bisection/bisect
 /tools/bisection/train-diff
 /tools/bisection/nbest-train-diff
+/tools/bisection/live-typing-diff
 /tools/bisection/import-diff
 /tools/bisection/frontend-import
 /tools/bisection/scheme-diff
