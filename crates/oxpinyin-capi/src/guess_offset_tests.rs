@@ -10,7 +10,7 @@ use std::os::raw::{c_int, c_uint};
 use std::ptr;
 
 use crate::candidates::{pinyin_choose_candidate, pinyin_get_candidate, pinyin_get_n_candidate};
-use crate::parse::pinyin_parse_more_full_pinyins;
+use crate::parse::{pinyin_get_parsed_input_length, pinyin_parse_more_full_pinyins};
 use crate::sentence::pinyin_guess_candidates;
 use crate::state::instance_ref;
 use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
@@ -140,6 +140,67 @@ fn a_leading_or_trailing_run_never_walks_off_the_input() {
     // run without reading past the buffer.
     assert!(parse(instance, "ni'") >= 2);
     assert!(pinyin_guess_candidates(instance, 3, DEFAULT_SORT));
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn a_post_separator_choose_returns_the_candidate_end() {
+    // The ibus selectCandidate idiom: `cursor = choose(...); if (cursor ==
+    // length) commit; else key_rest(cursor)`. The post-separator choose
+    // must answer the candidate's absolute end — caller offset plus the
+    // separator-inclusive span would count the run twice, answer
+    // parsed length + 1, skip the commit branch and send ibus into
+    // key_rest(NULL) territory.
+    let user_dir = TempUserDir::new("guess-zero-choose-end");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    assert_eq!(parse(instance, "ni'hao"), 6);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let ni = candidate_at(instance, position_of(instance, "\u{4f60}"));
+    assert_eq!(pinyin_choose_candidate(instance, 0, ni), 2);
+    // ibus's caller offset: the raw begin of the next key rest, one past
+    // the separator.
+    assert!(pinyin_guess_candidates(instance, 3, DEFAULT_SORT));
+    let hao = candidate_at(instance, position_of(instance, "\u{597d}"));
+    let cursor = pinyin_choose_candidate(instance, 3, hao);
+    assert_eq!(
+        cursor, 6,
+        "the post-separator choose answers the absolute end, not 3 + the \
+         separator-inclusive span"
+    );
+    let parsed = pinyin_get_parsed_input_length(instance);
+    assert!(cursor as usize <= parsed, "the cursor never overshoots");
+    assert_eq!(
+        cursor as usize, parsed,
+        "the ibus idiom lands in the commit branch (cursor == length), \
+         not a further key_rest"
+    );
+
+    // Mid-input the end is below the parse length, so a clamp could not
+    // fake it: ni'hao'a, choose 好 at the post-separator offset 3.
+    assert_eq!(parse(instance, "ni'hao'a"), 8);
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let ni = candidate_at(instance, position_of(instance, "\u{4f60}"));
+    assert_eq!(pinyin_choose_candidate(instance, 0, ni), 2);
+    assert!(pinyin_guess_candidates(instance, 3, DEFAULT_SORT));
+    let hao = candidate_at(instance, position_of(instance, "\u{597d}"));
+    assert_eq!(
+        pinyin_choose_candidate(instance, 3, hao),
+        6,
+        "the mid-input end is the group's own boundary, not the parse length"
+    );
+    // The walk continues from ibus's next post-separator begin and commits
+    // exactly at the parse length.
+    assert!(pinyin_guess_candidates(instance, 7, DEFAULT_SORT));
+    let rest = candidate_at(instance, 0);
+    let cursor = pinyin_choose_candidate(instance, 7, rest);
+    assert_eq!(
+        cursor as usize,
+        pinyin_get_parsed_input_length(instance),
+        "the final choose lands the commit branch"
+    );
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);

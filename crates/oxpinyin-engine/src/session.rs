@@ -711,6 +711,22 @@ where
         !self.raw.is_empty()
     }
 
+    /// Bytes of the raw input consumed by selections so far — the
+    /// composition offset the candidate lookup is anchored at.
+    ///
+    /// After a successful [`Session::select`] this is the chosen
+    /// candidate's absolute end position: the previous anchor plus the
+    /// candidate's span (separator run included), never past the raw
+    /// input. The C ABI answers it as the new lookup cursor — the caller
+    /// offset may sit past a separator run the span also covers, so
+    /// caller-offset-plus-span would count that run twice
+    /// (libpinyin@412f88e3 instead anchors `m_begin` at the caller offset,
+    /// reaching the same end).
+    #[must_use]
+    pub const fn composition_offset(&self) -> usize {
+        self.consumed
+    }
+
     /// Candidates per page, from the configuration the session was opened
     /// with.
     #[must_use]

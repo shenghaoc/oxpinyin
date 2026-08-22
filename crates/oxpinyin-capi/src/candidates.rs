@@ -273,7 +273,11 @@ pub extern "C" fn pinyin_remove_user_candidate(
 ///                             lookup_candidate_t * candidate);
 /// ```
 ///
-/// Returns -1 on failure (consistent with the `int` return type).
+/// Returns -1 on failure (consistent with the `int` return type). On the
+/// plain full-pinyin path the returned cursor is the chosen candidate's
+/// absolute end position — never past the parsed input, even when the
+/// caller offset sits one position past the separator run the candidate's
+/// span also covers (the ibus idiom commits exactly at `cursor == length`).
 ///
 /// Resolves the candidate by pointer identity over the instance's snapshot
 /// and calls `Session::select`, which records the constraint — the selected
@@ -311,6 +315,8 @@ pub extern "C" fn pinyin_choose_candidate(
             return -1;
         };
         let consumed_bytes = inst.candidates[index].consumed_bytes;
+        let plain_full_pinyin =
+            inst.full_parse.is_none() && inst.double_parse.is_none() && inst.zhuyin_parse.is_none();
         // Addon promotion (`pinyin.cpp:2532-2561`): copy the addon phrase into
         // default nibble 5 and select under the promoted token; otherwise a
         // plain select records the candidate's own token.
@@ -319,6 +325,17 @@ pub extern "C" fn pinyin_choose_candidate(
             None => inst.session.select(index),
         };
         match selection {
+            // The candidate's absolute end. The snapshot span is anchored at
+            // the session's composition offset and includes any separator run
+            // it crossed, while the caller offset may already sit past that
+            // run (the begin of the next key rest) — adding them would count
+            // the run twice and answer parsed length + 1, derailing the ibus
+            // commit branch. Upstream never overshoots because its candidates
+            // are anchored at the caller offset (`m_begin = start`,
+            // libpinyin@412f88e3); the post-select composition offset is that
+            // same end. The transformed seams keep the caller-echo
+            // arithmetic: their stored spans are original-coordinate ends.
+            Ok(_) if plain_full_pinyin => inst.session.composition_offset() as c_int,
             Ok(_) => (offset + consumed_bytes) as c_int,
             Err(_) => -1,
         }
