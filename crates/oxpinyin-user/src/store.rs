@@ -132,7 +132,11 @@ impl From<StoreError> for UserStoreError {
 
 // ── codec helpers ─────────────────────────────────────────────────
 
-fn get_u64(store: &DefaultStore, table: &str, key: &[u8]) -> Result<Option<u64>, UserStoreError> {
+fn get_u64(
+    store: &impl OrderedStore,
+    table: &str,
+    key: &[u8],
+) -> Result<Option<u64>, UserStoreError> {
     match store.get(table, key)? {
         None => Ok(None),
         Some(bytes) => codec::decode_u64(&bytes)
@@ -142,7 +146,7 @@ fn get_u64(store: &DefaultStore, table: &str, key: &[u8]) -> Result<Option<u64>,
 }
 
 fn get_u64_or(
-    store: &DefaultStore,
+    store: &impl OrderedStore,
     table: &str,
     key: &[u8],
     default: u64,
@@ -169,7 +173,7 @@ fn txn_get_u64_or(
 }
 
 fn snap_get_u64(
-    snap: &<DefaultStore as OrderedStore>::ReadSnapshot,
+    snap: &impl ReadSnapshot,
     table: &str,
     key: &[u8],
 ) -> Result<Option<u64>, UserStoreError> {
@@ -182,7 +186,7 @@ fn snap_get_u64(
 }
 
 fn snap_get_u64_or(
-    snap: &<DefaultStore as OrderedStore>::ReadSnapshot,
+    snap: &impl ReadSnapshot,
     table: &str,
     key: &[u8],
     default: u64,
@@ -212,7 +216,7 @@ fn pronunciation_range(token: Token) -> (Bound<Vec<u8>>, Bound<Vec<u8>>) {
 }
 
 fn collect_pronunciations_from_store(
-    store: &DefaultStore,
+    store: &impl OrderedStore,
     token: Token,
 ) -> Result<Vec<UserPronunciation>, UserStoreError> {
     let (lo, hi) = pronunciation_range(token);
@@ -303,7 +307,7 @@ fn has_user_data_in_write_txn(txn: &dyn WriteTxn) -> Result<bool, StoreError> {
     Ok(!pron_empty)
 }
 
-// ── UserStore ─────────────────────────────────────────────────────
+// ── GenericUserStore ─────────────────────────────────────────────
 
 /// An ordered-store-backed store of user-learning counts.
 ///
@@ -315,13 +319,16 @@ fn has_user_data_in_write_txn(txn: &dyn WriteTxn) -> Result<bool, StoreError> {
 /// Clones record dirtiness through their own `&mut self` updates and the
 /// context's `pinyin_save` observes it. The C ABI contract is
 /// main-thread-only, so the flag uses relaxed ordering.
-pub struct UserStore {
-    inner: Arc<StoreInner>,
+pub struct GenericUserStore<S: OrderedStore> {
+    inner: Arc<StoreInner<S>>,
     /// Last field so [`RegistryLease`] drains after this handle's `Arc` dies.
     _lease: RegistryLease,
 }
 
-impl Clone for UserStore {
+/// Default user store backed by [`DefaultStore`] (redb).
+pub type UserStore = GenericUserStore<DefaultStore>;
+
+impl<S: OrderedStore> Clone for GenericUserStore<S> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -330,24 +337,24 @@ impl Clone for UserStore {
     }
 }
 
-impl fmt::Debug for UserStore {
+impl<S: OrderedStore> fmt::Debug for GenericUserStore<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UserStore").finish_non_exhaustive()
+        f.debug_struct("GenericUserStore").finish_non_exhaustive()
     }
 }
 
-impl UserStore {
+impl<S: OrderedStore> GenericUserStore<S> {
     /// Locks the shared store handle, recovering from a poisoned lock
     /// (constitution §4: nothing here panics, so a poisoned mutex must not
     /// brick the store either).
-    fn database(&self) -> MutexGuard<'_, DefaultStore> {
+    fn database(&self) -> MutexGuard<'_, S> {
         self.inner
             .db
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn count_snapshot(&self) -> MutexGuard<'_, Option<CountSnapshot>> {
+    fn count_snapshot(&self) -> MutexGuard<'_, Option<CountSnapshot<S>>> {
         self.inner
             .count_snapshot
             .lock()
@@ -367,7 +374,7 @@ impl UserStore {
     /// Takes `database()` for the call and releases it before returning; the
     /// caller already holds the snapshot lock, which is the outer half of the
     /// one legal order (snapshot, then db).
-    fn build_count_snapshot(&self, generation: u64) -> Result<CountSnapshot, UserStoreError> {
+    fn build_count_snapshot(&self, generation: u64) -> Result<CountSnapshot<S>, UserStoreError> {
         let db = self.database();
         let snap = db.snapshot()?;
         drop(db);
@@ -378,7 +385,7 @@ impl UserStore {
     /// rebuilding it first when a write has landed since it was cached.
     fn with_count_snapshot<T>(
         &self,
-        read: impl FnOnce(&CountSnapshot) -> Result<T, UserStoreError>,
+        read: impl FnOnce(&CountSnapshot<S>) -> Result<T, UserStoreError>,
     ) -> Result<T, UserStoreError> {
         let mut snapshot = self.count_snapshot();
         let generation = self.write_generation();
@@ -392,7 +399,7 @@ impl UserStore {
     }
 
     /// Invalidate cached reads after a committed user-data write.
-    fn mark_committed_write(&self, db: MutexGuard<'_, DefaultStore>, has_user_data: bool) {
+    fn mark_committed_write(&self, db: MutexGuard<'_, S>, has_user_data: bool) {
         drop(db);
         *self.count_snapshot() = None;
         self.inner
@@ -401,32 +408,8 @@ impl UserStore {
         self.inner.write_generation.fetch_add(1, Ordering::AcqRel);
     }
 
-    /// Open the user store at `path`, creating an empty database if absent.
-    ///
-    /// Count tables and phrase-index tables are created eagerly so that reads
-    /// issued before any write succeed with zero / `None` rather than a
-    /// "table does not exist" error. A missing allocation cursor is
-    /// initialised to [`FIRST_USER_TOKEN`]. A freshly opened store is clean:
-    /// [`Self::save`] is a no-op until a training update records a change.
-    ///
-    /// Opening a path that is already open in this process returns a clone of
-    /// the live handle (shared counts and shared §4 dirty flag) rather than a
-    /// second database handle.
-    pub fn open(path: &Path) -> Result<Self, UserStoreError> {
-        let key = registry::registry_key(path);
-        let mut reg = registry::lock_registry();
-        if let Some(inner) = reg.get(&key).and_then(|handle| handle.upgrade()) {
-            return Ok(Self {
-                inner,
-                _lease: RegistryLease,
-            });
-        }
-
-        let db = DefaultStore::create(path)?;
-
+    fn init_and_wrap(db: S) -> Result<Arc<StoreInner<S>>, UserStoreError> {
         let has_user_data = db.write(|txn| {
-            // Backfill the running total so a T1–T3 store reopened
-            // after T4 still reports the sum of its unigram deltas.
             let total_key = codec::encode_u8(UNIGRAM_TOTAL_KEY);
             if txn.get(UNIGRAM_TOTAL, &total_key)?.is_none() {
                 let mut sum = 0_u64;
@@ -446,14 +429,20 @@ impl UserStore {
             has_user_data_in_write_txn(txn)
         })?;
 
-        let inner = Arc::new(StoreInner {
+        Ok(Arc::new(StoreInner {
             count_snapshot: Mutex::new(None),
             db: Mutex::new(db),
             dirty: AtomicBool::new(false),
             write_generation: AtomicU64::new(0),
             has_user_data: AtomicBool::new(has_user_data),
-        });
-        reg.insert(key, Arc::downgrade(&inner));
+        }))
+    }
+
+    /// Open a standalone store at `path` (no process-global dedup).
+    #[cfg(test)]
+    pub(crate) fn create(path: &Path) -> Result<Self, UserStoreError> {
+        let db = S::create(path)?;
+        let inner = Self::init_and_wrap(db)?;
         Ok(Self {
             inner,
             _lease: RegistryLease,
@@ -463,13 +452,13 @@ impl UserStore {
     /// Stored bigram count for `(prev, cur)`; `0` if unrecorded.
     pub fn bigram_count(&self, prev: Token, cur: Token) -> Result<u64, UserStoreError> {
         let db = self.database();
-        get_u64_or(&db, BIGRAM, &codec::encode_token_pair(prev, cur), 0)
+        get_u64_or(&*db, BIGRAM, &codec::encode_token_pair(prev, cur), 0)
     }
 
     /// Total bigram mass recorded after `prev`; `0` if none.
     pub fn bigram_total(&self, prev: Token) -> Result<u64, UserStoreError> {
         let db = self.database();
-        get_u64_or(&db, BIGRAM_TOTAL, &codec::encode_token(prev), 0)
+        get_u64_or(&*db, BIGRAM_TOTAL, &codec::encode_token(prev), 0)
     }
 
     /// Overwrite the raw `(prev -> cur)` user-bigram count.
@@ -506,7 +495,7 @@ impl UserStore {
     /// Sum of every stored unigram delta; `0` if the store is empty.
     pub fn unigram_total(&self) -> Result<u64, UserStoreError> {
         let db = self.database();
-        get_u64_or(&db, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)
+        get_u64_or(&*db, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)
     }
 
     /// One-transaction §5 overlay for scoring `token` after `prev`.
@@ -784,7 +773,7 @@ impl UserStore {
         let text = codec::decode_str(&text_bytes)
             .ok_or(UserStoreError::Decode)?
             .to_owned();
-        let pronunciations = collect_pronunciations_from_store(&db, token)?;
+        let pronunciations = collect_pronunciations_from_store(&*db, token)?;
         Ok(Some(UserPhrase::new(token, text, pronunciations)))
     }
 
@@ -870,7 +859,7 @@ impl UserStore {
         })?;
         let mut out = Vec::new();
         for (token, text) in rows {
-            for pronunciation in collect_pronunciations_from_store(&db, token)? {
+            for pronunciation in collect_pronunciations_from_store(&*db, token)? {
                 let Some(pinyin) = pronunciation.render_pinyin() else {
                     continue;
                 };
@@ -899,7 +888,7 @@ impl UserStore {
         })?;
         let mut out = Vec::new();
         for (token, text) in tokens_and_texts {
-            let pronunciations = collect_pronunciations_from_store(&db, token)?;
+            let pronunciations = collect_pronunciations_from_store(&*db, token)?;
             out.push(UserPhrase::new(token, text, pronunciations));
         }
         Ok(out)
@@ -1151,7 +1140,39 @@ impl UserStore {
     }
 }
 
-impl CountSnapshot {
+impl GenericUserStore<DefaultStore> {
+    /// Open the user store at `path`, creating an empty database if absent.
+    ///
+    /// Count tables and phrase-index tables are created eagerly so that reads
+    /// issued before any write succeed with zero / `None` rather than a
+    /// "table does not exist" error. A missing allocation cursor is
+    /// initialised to [`FIRST_USER_TOKEN`]. A freshly opened store is clean:
+    /// [`Self::save`] is a no-op until a training update records a change.
+    ///
+    /// Opening a path that is already open in this process returns a clone of
+    /// the live handle (shared counts and shared §4 dirty flag) rather than a
+    /// second database handle.
+    pub fn open(path: &Path) -> Result<Self, UserStoreError> {
+        let key = registry::registry_key(path);
+        let mut reg = registry::lock_registry();
+        if let Some(inner) = reg.get(&key).and_then(|handle| handle.upgrade()) {
+            return Ok(Self {
+                inner,
+                _lease: RegistryLease,
+            });
+        }
+
+        let db = DefaultStore::create(path)?;
+        let inner = Self::init_and_wrap(db)?;
+        reg.insert(key, Arc::downgrade(&inner));
+        Ok(Self {
+            inner,
+            _lease: RegistryLease,
+        })
+    }
+}
+
+impl<S: OrderedStore> CountSnapshot<S> {
     fn unigram_delta(&self, token: Token) -> Result<u64, UserStoreError> {
         snap_get_u64_or(&self.snap, UNIGRAM, &codec::encode_token(token), 0)
     }
@@ -1192,100 +1213,704 @@ impl CountSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use oxpinyin_core::SyllableKey;
-
     use super::*;
-    use crate::{PHRASE_INDEX_LIBRARY_MASK, USER_DICTIONARY, phrase_index_make_token};
+
+    macro_rules! user_store_tests {
+        ($mod:ident, $backend:ty, $ext:literal) => {
+            mod $mod {
+                use super::super::*;
+                use crate::{PHRASE_INDEX_LIBRARY_MASK, USER_DICTIONARY, phrase_index_make_token};
+                use oxpinyin_core::SyllableKey;
+
+                type Store = GenericUserStore<$backend>;
+
+                fn temp_path(tag: &str) -> std::path::PathBuf {
+                    let path = std::env::temp_dir().join(format!(
+                        "oxpinyin-user-{}-{tag}-{}.{}",
+                        $ext,
+                        std::process::id(),
+                        $ext,
+                    ));
+                    let _ = std::fs::remove_file(&path);
+                    path
+                }
+
+                fn cleanup(path: &std::path::Path) {
+                    let _ = std::fs::remove_file(path);
+                    let mut lock = path.as_os_str().to_os_string();
+                    lock.push("-lock");
+                    let _ = std::fs::remove_file(std::path::Path::new(&lock));
+                }
+
+                #[test]
+                fn open_creates_empty_store() {
+                    let path = temp_path("empty");
+                    let store = Store::create(&path).unwrap();
+                    assert!(!store.has_user_data());
+                    assert_eq!(store.write_generation(), 0);
+                    assert_eq!(store.bigram_count(1, 2).unwrap(), 0);
+                    assert_eq!(store.bigram_total(1).unwrap(), 0);
+                    assert_eq!(store.unigram_delta(2).unwrap(), 0);
+                    assert_eq!(store.unigram_total().unwrap(), 0);
+                    assert_eq!(store.count_delta(Some(1), 2).unwrap(), UserCountDelta::ZERO);
+                    assert_eq!(store.count_delta(None, 2).unwrap(), UserCountDelta::ZERO);
+                    assert!(
+                        store.count_snapshot().is_none(),
+                        "empty count_delta must not open a read transaction"
+                    );
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn cached_count_delta_refreshes_after_committed_writes() {
+                    let path = temp_path("cache-refresh");
+                    let mut store = Store::create(&path).unwrap();
+
+                    assert_eq!(
+                        store.count_delta(Some(1), 100).unwrap(),
+                        UserCountDelta::ZERO
+                    );
+                    assert_eq!(store.write_generation(), 0);
+
+                    store.observe_selection(1, 100).unwrap();
+                    let first_generation = store.write_generation();
+                    assert!(store.has_user_data());
+                    assert_eq!(
+                        store.count_delta(Some(1), 100).unwrap(),
+                        UserCountDelta {
+                            bigram_count: 69,
+                            bigram_total: 69,
+                            unigram_delta: 483,
+                            unigram_total_delta: 483,
+                        }
+                    );
+
+                    store.observe_selection(1, 100).unwrap();
+                    assert!(
+                        store.write_generation() > first_generation,
+                        "a committed write invalidates the cached read snapshot"
+                    );
+                    assert_eq!(
+                        store.count_delta(Some(1), 100).unwrap(),
+                        UserCountDelta {
+                            bigram_count: 207,
+                            bigram_total: 207,
+                            unigram_delta: 483 + 966,
+                            unigram_total_delta: 483 + 966,
+                        }
+                    );
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn mask_out_all_marks_store_empty_again() {
+                    let path = temp_path("empty-again");
+                    let mut store = Store::create(&path).unwrap();
+                    store.observe_selection(1, 100).unwrap();
+                    assert!(store.has_user_data());
+                    assert_ne!(
+                        store.count_delta(Some(1), 100).unwrap(),
+                        UserCountDelta::ZERO
+                    );
+
+                    store.mask_out(0, 0).unwrap();
+                    assert!(!store.has_user_data());
+                    assert_eq!(
+                        store.count_delta(Some(1), 100).unwrap(),
+                        UserCountDelta::ZERO
+                    );
+                    assert!(
+                        store.count_snapshot().is_none(),
+                        "an emptied store must not keep a cached read transaction"
+                    );
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn reopen_of_populated_store_sets_has_user_data() {
+                    let path = temp_path("reopen-populated");
+                    {
+                        let mut store = Store::create(&path).unwrap();
+                        store.observe_selection(1, 100).unwrap();
+                    }
+                    let store = Store::create(&path).unwrap();
+                    assert!(store.has_user_data());
+                    assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn save_compacts_after_a_cached_read() {
+                    let path = temp_path("save-after-cache");
+                    let mut store = Store::create(&path).unwrap();
+                    store.observe_selection(1, 100).unwrap();
+                    assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
+                    assert!(store.save().unwrap());
+                    assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn observe_applies_pinned_seed_sequence() {
+                    let path = temp_path("seq");
+                    let mut store = Store::create(&path).unwrap();
+
+                    assert_eq!(store.observe_selection(1, 100).unwrap(), 69);
+                    assert_eq!(store.bigram_count(1, 100).unwrap(), 69);
+                    assert_eq!(store.bigram_total(1).unwrap(), 69);
+                    assert_eq!(store.unigram_delta(100).unwrap(), 483);
+                    assert_eq!(store.unigram_total().unwrap(), 483);
+
+                    assert_eq!(store.observe_selection(1, 100).unwrap(), 138);
+                    assert_eq!(store.bigram_count(1, 100).unwrap(), 207);
+                    assert_eq!(store.bigram_total(1).unwrap(), 207);
+                    assert_eq!(store.unigram_delta(100).unwrap(), 483 + 966);
+                    assert_eq!(store.unigram_total().unwrap(), 483 + 966);
+                    assert_eq!(
+                        store.count_delta(Some(1), 100).unwrap(),
+                        UserCountDelta {
+                            bigram_count: 207,
+                            bigram_total: 207,
+                            unigram_delta: 483 + 966,
+                            unigram_total_delta: 483 + 966,
+                        }
+                    );
+                    assert_eq!(
+                        store.count_delta(None, 100).unwrap(),
+                        UserCountDelta {
+                            bigram_count: 0,
+                            bigram_total: 0,
+                            unigram_delta: 483 + 966,
+                            unigram_total_delta: 483 + 966,
+                        }
+                    );
+
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn totals_accumulate_per_predecessor() {
+                    let path = temp_path("totals");
+                    let mut store = Store::create(&path).unwrap();
+                    assert_eq!(store.observe_selection(5, 10).unwrap(), 69);
+                    assert_eq!(store.observe_selection(5, 11).unwrap(), 69);
+                    assert_eq!(store.bigram_count(5, 10).unwrap(), 69);
+                    assert_eq!(store.bigram_count(5, 11).unwrap(), 69);
+                    assert_eq!(store.bigram_total(5).unwrap(), 138);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn set_bigram_count_plants_filter_edge() {
+                    let path = temp_path("plant-edge");
+                    let mut store = Store::create(&path).unwrap();
+                    store.set_bigram_count(1, 10, 9).unwrap();
+                    store.set_bigram_count(1, 11, 10).unwrap();
+                    assert_eq!(store.bigram_count(1, 10).unwrap(), 9);
+                    assert_eq!(store.bigram_count(1, 11).unwrap(), 10);
+                    assert_eq!(store.bigram_total(1).unwrap(), 19);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn predicted_path_is_flat_69() {
+                    let path = temp_path("pred");
+                    let mut store = Store::create(&path).unwrap();
+                    assert_eq!(store.observe_predicted(1, 200).unwrap(), 69);
+                    assert_eq!(store.observe_predicted(1, 200).unwrap(), 69);
+                    assert_eq!(store.bigram_count(1, 200).unwrap(), 138);
+                    assert_eq!(store.bigram_total(1).unwrap(), 138);
+                    assert_eq!(store.unigram_delta(200).unwrap(), 483 * 2);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn roundtrip_reopen_reads_identical() {
+                    let path = temp_path("roundtrip");
+                    {
+                        let mut store = Store::create(&path).unwrap();
+                        store.observe_selection(SENTENCE_START, 10).unwrap();
+                        store.observe_selection(10, 20).unwrap();
+                        store.observe_selection(10, 20).unwrap();
+                    }
+
+                    let store = Store::create(&path).unwrap();
+                    assert_eq!(store.bigram_count(SENTENCE_START, 10).unwrap(), 69);
+                    assert_eq!(store.bigram_count(10, 20).unwrap(), 207);
+                    assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
+                    assert_eq!(store.bigram_total(10).unwrap(), 207);
+                    assert_eq!(store.unigram_delta(10).unwrap(), 483);
+                    assert_eq!(store.unigram_delta(20).unwrap(), 1449);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn dirty_gate_matches_m_modified_semantics() {
+                    let path = temp_path("dirty");
+                    let mut store = Store::create(&path).unwrap();
+
+                    assert!(!store.is_modified());
+                    assert!(!store.save().unwrap());
+                    assert!(!store.save().unwrap());
+
+                    store.observe_selection(SENTENCE_START, 10).unwrap();
+                    assert!(store.is_modified());
+                    assert!(store.save().unwrap());
+                    assert!(!store.is_modified());
+                    assert!(!store.save().unwrap());
+
+                    store.observe_predicted(10, 20).unwrap();
+                    assert!(!store.is_modified());
+                    assert!(!store.save().unwrap());
+                    store.add_phrase("你好", &[1, 2], None).unwrap();
+                    assert!(!store.is_modified());
+                    assert!(!store.save().unwrap());
+
+                    store.observe_selection(SENTENCE_START, 10).unwrap();
+                    assert!(store.is_modified());
+                    assert!(store.save().unwrap());
+                    assert!(!store.is_modified());
+
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn save_reopen_roundtrip_preserves_counts_cursor_and_total() {
+                    let path = temp_path("save-rt");
+                    {
+                        let mut store = Store::create(&path).unwrap();
+                        store.observe_selection(SENTENCE_START, 10).unwrap();
+                        store.observe_selection(10, 20).unwrap();
+                        store.observe_selection(10, 20).unwrap();
+                        let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                        assert_eq!(token, FIRST_USER_TOKEN);
+                        assert!(store.is_modified());
+                        assert!(store.save().unwrap());
+                        assert!(!store.is_modified());
+                    }
+
+                    let mut store = Store::create(&path).unwrap();
+                    assert!(!store.is_modified());
+                    assert!(!store.save().unwrap(), "a reopen starts clean");
+
+                    assert_eq!(store.bigram_count(SENTENCE_START, 10).unwrap(), 69);
+                    assert_eq!(store.bigram_count(10, 20).unwrap(), 207);
+                    assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
+                    assert_eq!(store.bigram_total(10).unwrap(), 207);
+                    assert_eq!(store.unigram_delta(10).unwrap(), 483);
+                    assert_eq!(store.unigram_delta(20).unwrap(), 1449);
+                    assert_eq!(store.unigram_total().unwrap(), 483 + 1449 + 15);
+                    assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
+                    assert_eq!(
+                        store.token_for_phrase("你好").unwrap(),
+                        Some(FIRST_USER_TOKEN)
+                    );
+                    let phrase = store
+                        .phrase(FIRST_USER_TOKEN)
+                        .unwrap()
+                        .expect("phrase stored");
+                    assert_eq!(phrase.text(), "你好");
+                    assert_eq!(phrase.pronunciations()[0].keys(), &[10, 20]);
+                    assert_eq!(phrase.pronunciations()[0].count(), 5);
+
+                    assert_eq!(
+                        store.count_delta(Some(10), 20).unwrap(),
+                        UserCountDelta {
+                            bigram_count: 207,
+                            bigram_total: 207,
+                            unigram_delta: 1449,
+                            unigram_total_delta: 483 + 1449 + 15,
+                        }
+                    );
+                    assert_eq!(store.count_delta(None, 20).unwrap().bigram_count, 0);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn first_allocation_is_first_user_token() {
+                    let path = temp_path("first-tok");
+                    let mut store = Store::create(&path).unwrap();
+                    assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
+                    let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                    assert_eq!(token, FIRST_USER_TOKEN);
+                    assert_eq!(token, 0x0700_0001);
+                    assert!(phrase::is_user_token(token));
+                    assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn allocation_increments_by_one_without_gap() {
+                    let path = temp_path("incr");
+                    let mut store = Store::create(&path).unwrap();
+                    let a = store.add_phrase("甲", &[1], None).unwrap();
+                    let b = store.add_phrase("乙", &[2], None).unwrap();
+                    let c = store.add_phrase("丙", &[3], None).unwrap();
+                    assert_eq!(a, FIRST_USER_TOKEN);
+                    assert_eq!(b, a + 1);
+                    assert_eq!(c, a + 2);
+                    assert_eq!(store.next_user_token().unwrap(), a + 3);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn user_token_is_distinguishable_from_system_token() {
+                    let path = temp_path("nibble");
+                    let mut store = Store::create(&path).unwrap();
+                    let user = store.add_phrase("词", &[7], None).unwrap();
+                    const SYSTEM: Token = 0x0100_0001;
+                    assert!(phrase::is_user_token(user));
+                    assert!(!phrase::is_user_token(SYSTEM));
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn network_and_user_can_share_phrase_text() {
+                    let path = temp_path("two-nibbles");
+                    let mut store = Store::create(&path).unwrap();
+                    let user = store
+                        .add_phrase_in(phrase::USER_DICTIONARY, "词", &[7], Some(5))
+                        .unwrap();
+                    let net = store
+                        .add_phrase_in(phrase::NETWORK_DICTIONARY, "词", &[7], Some(5))
+                        .unwrap();
+                    assert_ne!(user, net);
+                    assert_eq!(phrase::phrase_index_library_index(user), 7);
+                    assert_eq!(phrase::phrase_index_library_index(net), 6);
+                    assert_eq!(store.export_phrases().unwrap().len(), 1);
+                    assert_eq!(store.export_phrases_in(6).unwrap().len(), 1);
+                    assert_eq!(store.next_user_token().unwrap(), user + 1);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn add_phrase_seeds_unigram_with_count_times_three() {
+                    let path = temp_path("uni");
+                    let mut store = Store::create(&path).unwrap();
+                    let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                    assert_eq!(store.unigram_delta(token).unwrap(), 15);
+                    assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 0);
+
+                    let token2 = store.add_phrase("世界", &[30, 40], Some(10)).unwrap();
+                    assert_eq!(store.unigram_delta(token2).unwrap(), 30);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn existing_phrase_merges_a_new_reading() {
+                    let path = temp_path("merge");
+                    let mut store = Store::create(&path).unwrap();
+                    let first = store.add_phrase("你好", &[10, 20], None).unwrap();
+                    let again = store.add_phrase("你好", &[11, 20], Some(8)).unwrap();
+                    assert_eq!(first, again);
+                    assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
+                    assert_eq!(store.unigram_delta(first).unwrap(), 15);
+
+                    let got = store.phrase(first).unwrap().unwrap();
+                    assert_eq!(got.text(), "你好");
+                    assert_eq!(got.pronunciations().len(), 2);
+                    assert_eq!(got.pronunciations()[0].keys(), &[10, 20]);
+                    assert_eq!(got.pronunciations()[0].count(), 5);
+                    assert_eq!(got.pronunciations()[1].keys(), &[11, 20]);
+                    assert_eq!(got.pronunciations()[1].count(), 8);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn same_reading_accumulates_pronunciation_count() {
+                    let path = temp_path("same-read");
+                    let mut store = Store::create(&path).unwrap();
+                    let token = store.add_phrase("词", &[7], Some(5)).unwrap();
+                    let again = store.add_phrase("词", &[7], Some(5)).unwrap();
+                    assert_eq!(token, again);
+                    assert_eq!(store.unigram_delta(token).unwrap(), 15);
+                    let got = store.phrase(token).unwrap().unwrap();
+                    assert_eq!(got.pronunciations().len(), 1);
+                    assert_eq!(got.pronunciations()[0].count(), 10);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn phrase_roundtrip_reopen_preserves_cursor() {
+                    let path = temp_path("phrase-rt");
+                    let (t1, t2, next) = {
+                        let mut store = Store::create(&path).unwrap();
+                        let t1 = store.add_phrase("你好", &[10, 20], None).unwrap();
+                        let t2 = store.add_phrase("世界", &[30, 40], Some(9)).unwrap();
+                        store.add_phrase("你好", &[11, 20], Some(2)).unwrap();
+                        (t1, t2, store.next_user_token().unwrap())
+                    };
+
+                    let store = Store::create(&path).unwrap();
+                    assert_eq!(store.next_user_token().unwrap(), next);
+                    assert_eq!(next, FIRST_USER_TOKEN + 2);
+
+                    let p1 = store.phrase(t1).unwrap().unwrap();
+                    assert_eq!(p1.text(), "你好");
+                    assert_eq!(p1.pronunciations().len(), 2);
+                    assert_eq!(p1.pronunciations()[0].keys(), &[10, 20]);
+                    assert_eq!(p1.pronunciations()[0].count(), 5);
+                    assert_eq!(p1.pronunciations()[1].keys(), &[11, 20]);
+                    assert_eq!(p1.pronunciations()[1].count(), 2);
+                    assert_eq!(store.unigram_delta(t1).unwrap(), 15);
+                    assert_eq!(store.unigram_total().unwrap(), 15 + 27);
+
+                    let p2 = store.phrase(t2).unwrap().unwrap();
+                    assert_eq!(p2.text(), "世界");
+                    assert_eq!(p2.pronunciations()[0].keys(), &[30, 40]);
+                    assert_eq!(p2.pronunciations()[0].count(), 9);
+                    assert_eq!(store.unigram_delta(t2).unwrap(), 27);
+
+                    let mut store = store;
+                    let t3 = store.add_phrase("中国", &[50, 60], None).unwrap();
+                    assert_eq!(t3, t2 + 1);
+                    assert_eq!(t3, FIRST_USER_TOKEN + 2);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn invalid_phrase_is_rejected_without_allocation() {
+                    let path = temp_path("invalid");
+                    let mut store = Store::create(&path).unwrap();
+                    assert!(matches!(
+                        store.add_phrase("", &[], None),
+                        Err(UserStoreError::InvalidPhrase)
+                    ));
+                    assert!(matches!(
+                        store.add_phrase("你好", &[10], None),
+                        Err(UserStoreError::InvalidPhrase)
+                    ));
+                    assert!(matches!(
+                        store.add_phrase(&"啊".repeat(16), &[0; 16], None),
+                        Err(UserStoreError::InvalidPhrase)
+                    ));
+                    assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
+                    assert!(store.token_for_phrase("你好").unwrap().is_none());
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn lookup_of_unknown_token_is_none() {
+                    let path = temp_path("miss");
+                    let store = Store::create(&path).unwrap();
+                    assert!(store.phrase(FIRST_USER_TOKEN).unwrap().is_none());
+                    assert!(store.phrase(0x0100_0001).unwrap().is_none());
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn export_phrases_render_the_pinned_triples() {
+                    let path = temp_path("export-phrases");
+                    let mut store = Store::create(&path).unwrap();
+                    let ni = SyllableKey::from_text("ni").expect("frozen key").index() as u16;
+                    let hao = SyllableKey::from_text("hao").expect("frozen key").index() as u16;
+                    let shi = SyllableKey::from_text("shi").expect("frozen key").index() as u16;
+                    let jie = SyllableKey::from_text("jie").expect("frozen key").index() as u16;
+
+                    store.add_phrase("你好", &[ni, hao], None).unwrap();
+                    store.add_phrase("你好", &[ni, hao], Some(7)).unwrap();
+                    store.add_phrase("世界", &[shi, jie], Some(3)).unwrap();
+
+                    assert_eq!(
+                        store.export_phrases().unwrap(),
+                        vec![
+                            ExportedPhrase {
+                                text: "你好".to_owned(),
+                                pinyin: "ni'hao".to_owned(),
+                                count: 12,
+                            },
+                            ExportedPhrase {
+                                text: "世界".to_owned(),
+                                pinyin: "shi'jie".to_owned(),
+                                count: 3,
+                            },
+                        ]
+                    );
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn export_bigrams_lists_every_stored_row_raw() {
+                    let path = temp_path("export-bigrams");
+                    let mut store = Store::create(&path).unwrap();
+                    store.observe_selection(SENTENCE_START, 10).unwrap();
+                    store.observe_selection(10, 20).unwrap();
+                    store.observe_selection(10, 20).unwrap();
+
+                    let mut rows = store.export_bigrams().unwrap();
+                    rows.sort();
+                    assert_eq!(rows, vec![(SENTENCE_START, 10, 69), (10, 20, 207)]);
+                    cleanup(&path);
+                }
+
+                fn mixed_store(path: &std::path::Path) -> (Store, Token) {
+                    const SYSTEM_A: Token = 0x0100_0001;
+                    const SYSTEM_B: Token = 0x0200_0001;
+                    let mut store = Store::create(path).unwrap();
+                    let user_a = store.add_phrase("你好", &[10, 20], None).unwrap();
+                    let user_b = store.add_phrase("世界", &[30, 40], None).unwrap();
+                    store.observe_selection(SYSTEM_A, SYSTEM_B).unwrap();
+                    store.observe_selection(SYSTEM_A, user_a).unwrap();
+                    store.observe_selection(user_a, SYSTEM_B).unwrap();
+                    store.observe_selection(user_a, user_b).unwrap();
+                    (store, user_a)
+                }
+
+                #[test]
+                fn mask_out_user_clear_deletes_user_entries_and_keeps_system() {
+                    let path = temp_path("mask-user");
+                    let (mut store, user_a) = mixed_store(&path);
+                    assert!(store.is_modified());
+                    assert!(store.save().unwrap());
+
+                    store
+                        .mask_out(
+                            PHRASE_INDEX_LIBRARY_MASK,
+                            phrase_index_make_token(USER_DICTIONARY, 0),
+                        )
+                        .unwrap();
+
+                    assert!(store.phrase(user_a).unwrap().is_none());
+                    assert!(store.token_for_phrase("你好").unwrap().is_none());
+                    assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
+                    assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 69);
+                    assert_eq!(store.bigram_count(user_a, 0x0200_0001).unwrap(), 0);
+                    assert_eq!(store.bigram_count(0x0100_0001, user_a).unwrap(), 0);
+                    assert_eq!(store.bigram_count(user_a, user_a + 1).unwrap(), 0);
+                    assert_eq!(store.unigram_delta(0x0200_0001).unwrap(), 966);
+                    assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
+                    assert_eq!(store.unigram_total().unwrap(), 966);
+                    assert_eq!(store.next_user_token().unwrap(), user_a + 2);
+                    assert!(!store.is_modified());
+                    assert!(!store.save().unwrap());
+
+                    store.mask_out(0x0, 0x0).unwrap();
+                    assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 0);
+                    assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 0);
+                    assert_eq!(store.unigram_total().unwrap(), 0);
+                    assert!(!store.is_modified());
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn remove_user_phrase_deletes_everywhere_and_rejects_others() {
+                    let path = temp_path("remove");
+                    let (mut store, user_a) = mixed_store(&path);
+                    assert!(store.save().unwrap());
+
+                    assert!(store.remove_user_phrase(user_a).unwrap());
+                    assert!(store.phrase(user_a).unwrap().is_none());
+                    assert!(store.token_for_phrase("你好").unwrap().is_none());
+                    assert_eq!(store.bigram_count(user_a, 0x0200_0001).unwrap(), 0);
+                    assert_eq!(store.bigram_count(0x0100_0001, user_a).unwrap(), 0);
+                    assert_eq!(store.bigram_count(user_a, user_a + 1).unwrap(), 0);
+                    assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
+                    assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 69);
+                    assert_eq!(store.bigram_total(user_a).unwrap(), 0);
+                    assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
+                    assert_eq!(store.unigram_total().unwrap(), 966 + 498);
+                    assert!(!store.is_modified());
+                    assert!(!store.remove_user_phrase(user_a).unwrap());
+                    assert!(!store.remove_user_phrase(0x0100_0001).unwrap());
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn mask_and_remove_survive_a_reopen() {
+                    let path = temp_path("mask-rt");
+                    let (mut store, user_a) = mixed_store(&path);
+                    store
+                        .mask_out(
+                            PHRASE_INDEX_LIBRARY_MASK,
+                            phrase_index_make_token(USER_DICTIONARY, 0),
+                        )
+                        .unwrap();
+                    let other = store.add_phrase("中国", &[50, 60], None).unwrap();
+                    store.remove_user_phrase(other).unwrap();
+                    drop(store);
+
+                    let store = Store::create(&path).unwrap();
+                    assert!(store.token_for_phrase("你好").unwrap().is_none());
+                    assert!(store.token_for_phrase("中国").unwrap().is_none());
+                    assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
+                    assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
+                    assert_eq!(store.unigram_total().unwrap(), 966);
+                    cleanup(&path);
+                }
+
+                fn key(text: &str) -> PinyinKey {
+                    SyllableKey::from_text(text)
+                        .expect("frozen syllable")
+                        .index() as PinyinKey
+                }
+
+                #[test]
+                fn promote_addon_phrase_allocates_nibble_5_and_copies_frequency() {
+                    let path = temp_path("promote-addon");
+                    let mut store = Store::create(&path).unwrap();
+                    let keys = [key("er"), key("huang")];
+
+                    let token = store
+                        .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
+                        .unwrap();
+                    assert_eq!(
+                        phrase_index_library_index(token),
+                        ADDON_DICTIONARY,
+                        "promotion lands in default nibble 5"
+                    );
+                    assert_eq!(token, phrase_index_make_token(ADDON_DICTIONARY, 1));
+                    assert_eq!(store.unigram_delta(token).unwrap(), 100);
+                    assert_eq!(store.unigram_total().unwrap(), 100);
+                    assert_eq!(
+                        store.token_for_phrase_in(ADDON_DICTIONARY, "二簧").unwrap(),
+                        Some(token)
+                    );
+                    let phrase = store.phrase(token).unwrap().unwrap();
+                    assert_eq!(phrase.text(), "二簧");
+                    assert_eq!(phrase.pronunciations().len(), 1);
+                    assert_eq!(phrase.pronunciations()[0].keys(), keys);
+                    assert_eq!(phrase.pronunciations()[0].count(), 100);
+
+                    let again = store
+                        .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
+                        .unwrap();
+                    assert_eq!(again, token, "re-promotion reuses the nibble-5 token");
+                    assert_eq!(store.unigram_delta(token).unwrap(), 100);
+                    assert_eq!(store.unigram_total().unwrap(), 100);
+                    assert_eq!(
+                        store.phrase(token).unwrap().unwrap().pronunciations()[0].count(),
+                        200
+                    );
+
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn promote_addon_phrase_rejects_a_reading_of_the_wrong_length() {
+                    let path = temp_path("promote-addon-invalid");
+                    let mut store = Store::create(&path).unwrap();
+                    let err = store
+                        .promote_addon_phrase("二簧", &[(vec![key("er")], 100)], 100)
+                        .unwrap_err();
+                    assert!(matches!(err, UserStoreError::InvalidPhrase));
+                    assert!(!store.has_user_data());
+                    cleanup(&path);
+                }
+            }
+        };
+    }
+
+    user_store_tests!(redb, oxpinyin_store::RedbStore, "redb");
+    #[cfg(feature = "lmdb")]
+    user_store_tests!(lmdb, oxpinyin_store::LmdbStore, "lmdb");
+
+    // ── Registry-specific tests (DefaultStore / redb only) ───────
 
     fn temp_path(tag: &str) -> std::path::PathBuf {
         let path =
             std::env::temp_dir().join(format!("oxpinyin-user-{tag}-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
         path
-    }
-
-    #[test]
-    fn open_creates_empty_store() {
-        let path = temp_path("empty");
-        let store = UserStore::open(&path).unwrap();
-        assert!(!store.has_user_data());
-        assert_eq!(store.write_generation(), 0);
-        assert_eq!(store.bigram_count(1, 2).unwrap(), 0);
-        assert_eq!(store.bigram_total(1).unwrap(), 0);
-        assert_eq!(store.unigram_delta(2).unwrap(), 0);
-        assert_eq!(store.unigram_total().unwrap(), 0);
-        assert_eq!(store.count_delta(Some(1), 2).unwrap(), UserCountDelta::ZERO);
-        assert_eq!(store.count_delta(None, 2).unwrap(), UserCountDelta::ZERO);
-        assert!(
-            store.count_snapshot().is_none(),
-            "empty count_delta must not open a read transaction"
-        );
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn cached_count_delta_refreshes_after_committed_writes() {
-        let path = temp_path("cache-refresh");
-        let mut store = UserStore::open(&path).unwrap();
-
-        assert_eq!(
-            store.count_delta(Some(1), 100).unwrap(),
-            UserCountDelta::ZERO
-        );
-        assert_eq!(store.write_generation(), 0);
-
-        store.observe_selection(1, 100).unwrap();
-        let first_generation = store.write_generation();
-        assert!(store.has_user_data());
-        assert_eq!(
-            store.count_delta(Some(1), 100).unwrap(),
-            UserCountDelta {
-                bigram_count: 69,
-                bigram_total: 69,
-                unigram_delta: 483,
-                unigram_total_delta: 483,
-            }
-        );
-
-        store.observe_selection(1, 100).unwrap();
-        assert!(
-            store.write_generation() > first_generation,
-            "a committed write invalidates the cached read snapshot"
-        );
-        assert_eq!(
-            store.count_delta(Some(1), 100).unwrap(),
-            UserCountDelta {
-                bigram_count: 207,
-                bigram_total: 207,
-                unigram_delta: 483 + 966,
-                unigram_total_delta: 483 + 966,
-            }
-        );
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn mask_out_all_marks_store_empty_again() {
-        let path = temp_path("empty-again");
-        let mut store = UserStore::open(&path).unwrap();
-        store.observe_selection(1, 100).unwrap();
-        assert!(store.has_user_data());
-        assert_ne!(
-            store.count_delta(Some(1), 100).unwrap(),
-            UserCountDelta::ZERO
-        );
-
-        store.mask_out(0, 0).unwrap();
-        assert!(!store.has_user_data());
-        assert_eq!(
-            store.count_delta(Some(1), 100).unwrap(),
-            UserCountDelta::ZERO
-        );
-        assert!(
-            store.count_snapshot().is_none(),
-            "an emptied store must not keep a cached read transaction"
-        );
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -1327,30 +1952,6 @@ mod tests {
     }
 
     #[test]
-    fn reopen_of_populated_store_sets_has_user_data() {
-        let path = temp_path("reopen-populated");
-        {
-            let mut store = UserStore::open(&path).unwrap();
-            store.observe_selection(1, 100).unwrap();
-        }
-        let store = UserStore::open(&path).unwrap();
-        assert!(store.has_user_data());
-        assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn save_compacts_after_a_cached_read() {
-        let path = temp_path("save-after-cache");
-        let mut store = UserStore::open(&path).unwrap();
-        store.observe_selection(1, 100).unwrap();
-        assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
-        assert!(store.save().unwrap());
-        assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
     fn second_open_of_same_path_shares_the_handle() {
         let path = temp_path("shared-handle");
         let mut first = UserStore::open(&path).unwrap();
@@ -1388,554 +1989,6 @@ mod tests {
         assert_eq!(reopened.bigram_count(1, 100).unwrap(), 0);
         drop(reopened);
         assert!(!registry::contains_key(&path));
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn observe_applies_pinned_seed_sequence() {
-        let path = temp_path("seq");
-        let mut store = UserStore::open(&path).unwrap();
-
-        assert_eq!(store.observe_selection(1, 100).unwrap(), 69);
-        assert_eq!(store.bigram_count(1, 100).unwrap(), 69);
-        assert_eq!(store.bigram_total(1).unwrap(), 69);
-        assert_eq!(store.unigram_delta(100).unwrap(), 483);
-        assert_eq!(store.unigram_total().unwrap(), 483);
-
-        assert_eq!(store.observe_selection(1, 100).unwrap(), 138);
-        assert_eq!(store.bigram_count(1, 100).unwrap(), 207);
-        assert_eq!(store.bigram_total(1).unwrap(), 207);
-        assert_eq!(store.unigram_delta(100).unwrap(), 483 + 966);
-        assert_eq!(store.unigram_total().unwrap(), 483 + 966);
-        assert_eq!(
-            store.count_delta(Some(1), 100).unwrap(),
-            UserCountDelta {
-                bigram_count: 207,
-                bigram_total: 207,
-                unigram_delta: 483 + 966,
-                unigram_total_delta: 483 + 966,
-            }
-        );
-        assert_eq!(
-            store.count_delta(None, 100).unwrap(),
-            UserCountDelta {
-                bigram_count: 0,
-                bigram_total: 0,
-                unigram_delta: 483 + 966,
-                unigram_total_delta: 483 + 966,
-            }
-        );
-
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn totals_accumulate_per_predecessor() {
-        let path = temp_path("totals");
-        let mut store = UserStore::open(&path).unwrap();
-        assert_eq!(store.observe_selection(5, 10).unwrap(), 69);
-        assert_eq!(store.observe_selection(5, 11).unwrap(), 69);
-        assert_eq!(store.bigram_count(5, 10).unwrap(), 69);
-        assert_eq!(store.bigram_count(5, 11).unwrap(), 69);
-        assert_eq!(store.bigram_total(5).unwrap(), 138);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn set_bigram_count_plants_filter_edge() {
-        let path = temp_path("plant-edge");
-        let mut store = UserStore::open(&path).unwrap();
-        store.set_bigram_count(1, 10, 9).unwrap();
-        store.set_bigram_count(1, 11, 10).unwrap();
-        assert_eq!(store.bigram_count(1, 10).unwrap(), 9);
-        assert_eq!(store.bigram_count(1, 11).unwrap(), 10);
-        assert_eq!(store.bigram_total(1).unwrap(), 19);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn predicted_path_is_flat_69() {
-        let path = temp_path("pred");
-        let mut store = UserStore::open(&path).unwrap();
-        assert_eq!(store.observe_predicted(1, 200).unwrap(), 69);
-        assert_eq!(store.observe_predicted(1, 200).unwrap(), 69);
-        assert_eq!(store.bigram_count(1, 200).unwrap(), 138);
-        assert_eq!(store.bigram_total(1).unwrap(), 138);
-        assert_eq!(store.unigram_delta(200).unwrap(), 483 * 2);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn roundtrip_reopen_reads_identical() {
-        let path = temp_path("roundtrip");
-        {
-            let mut store = UserStore::open(&path).unwrap();
-            store.observe_selection(SENTENCE_START, 10).unwrap();
-            store.observe_selection(10, 20).unwrap();
-            store.observe_selection(10, 20).unwrap();
-        }
-
-        let store = UserStore::open(&path).unwrap();
-        assert_eq!(store.bigram_count(SENTENCE_START, 10).unwrap(), 69);
-        assert_eq!(store.bigram_count(10, 20).unwrap(), 207);
-        assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
-        assert_eq!(store.bigram_total(10).unwrap(), 207);
-        assert_eq!(store.unigram_delta(10).unwrap(), 483);
-        assert_eq!(store.unigram_delta(20).unwrap(), 1449);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn dirty_gate_matches_m_modified_semantics() {
-        let path = temp_path("dirty");
-        let mut store = UserStore::open(&path).unwrap();
-
-        assert!(!store.is_modified());
-        assert!(!store.save().unwrap());
-        assert!(!store.save().unwrap());
-
-        store.observe_selection(SENTENCE_START, 10).unwrap();
-        assert!(store.is_modified());
-        assert!(store.save().unwrap());
-        assert!(!store.is_modified());
-        assert!(!store.save().unwrap());
-
-        store.observe_predicted(10, 20).unwrap();
-        assert!(!store.is_modified());
-        assert!(!store.save().unwrap());
-        store.add_phrase("你好", &[1, 2], None).unwrap();
-        assert!(!store.is_modified());
-        assert!(!store.save().unwrap());
-
-        store.observe_selection(SENTENCE_START, 10).unwrap();
-        assert!(store.is_modified());
-        assert!(store.save().unwrap());
-        assert!(!store.is_modified());
-
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn save_reopen_roundtrip_preserves_counts_cursor_and_total() {
-        let path = temp_path("save-rt");
-        {
-            let mut store = UserStore::open(&path).unwrap();
-            store.observe_selection(SENTENCE_START, 10).unwrap();
-            store.observe_selection(10, 20).unwrap();
-            store.observe_selection(10, 20).unwrap();
-            let token = store.add_phrase("你好", &[10, 20], None).unwrap();
-            assert_eq!(token, FIRST_USER_TOKEN);
-            assert!(store.is_modified());
-            assert!(store.save().unwrap());
-            assert!(!store.is_modified());
-        }
-
-        let mut store = UserStore::open(&path).unwrap();
-        assert!(!store.is_modified());
-        assert!(!store.save().unwrap(), "a reopen starts clean");
-
-        assert_eq!(store.bigram_count(SENTENCE_START, 10).unwrap(), 69);
-        assert_eq!(store.bigram_count(10, 20).unwrap(), 207);
-        assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
-        assert_eq!(store.bigram_total(10).unwrap(), 207);
-        assert_eq!(store.unigram_delta(10).unwrap(), 483);
-        assert_eq!(store.unigram_delta(20).unwrap(), 1449);
-        assert_eq!(store.unigram_total().unwrap(), 483 + 1449 + 15);
-        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
-        assert_eq!(
-            store.token_for_phrase("你好").unwrap(),
-            Some(FIRST_USER_TOKEN)
-        );
-        let phrase = store
-            .phrase(FIRST_USER_TOKEN)
-            .unwrap()
-            .expect("phrase stored");
-        assert_eq!(phrase.text(), "你好");
-        assert_eq!(phrase.pronunciations()[0].keys(), &[10, 20]);
-        assert_eq!(phrase.pronunciations()[0].count(), 5);
-
-        assert_eq!(
-            store.count_delta(Some(10), 20).unwrap(),
-            UserCountDelta {
-                bigram_count: 207,
-                bigram_total: 207,
-                unigram_delta: 1449,
-                unigram_total_delta: 483 + 1449 + 15,
-            }
-        );
-        assert_eq!(store.count_delta(None, 20).unwrap().bigram_count, 0);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn first_allocation_is_first_user_token() {
-        let path = temp_path("first-tok");
-        let mut store = UserStore::open(&path).unwrap();
-        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
-        let token = store.add_phrase("你好", &[10, 20], None).unwrap();
-        assert_eq!(token, FIRST_USER_TOKEN);
-        assert_eq!(token, 0x0700_0001);
-        assert!(phrase::is_user_token(token));
-        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn allocation_increments_by_one_without_gap() {
-        let path = temp_path("incr");
-        let mut store = UserStore::open(&path).unwrap();
-        let a = store.add_phrase("甲", &[1], None).unwrap();
-        let b = store.add_phrase("乙", &[2], None).unwrap();
-        let c = store.add_phrase("丙", &[3], None).unwrap();
-        assert_eq!(a, FIRST_USER_TOKEN);
-        assert_eq!(b, a + 1);
-        assert_eq!(c, a + 2);
-        assert_eq!(store.next_user_token().unwrap(), a + 3);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn user_token_is_distinguishable_from_system_token() {
-        let path = temp_path("nibble");
-        let mut store = UserStore::open(&path).unwrap();
-        let user = store.add_phrase("词", &[7], None).unwrap();
-        const SYSTEM: Token = 0x0100_0001;
-        assert!(phrase::is_user_token(user));
-        assert!(!phrase::is_user_token(SYSTEM));
-
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn network_and_user_can_share_phrase_text() {
-        let path = temp_path("two-nibbles");
-        let mut store = UserStore::open(&path).unwrap();
-        let user = store
-            .add_phrase_in(phrase::USER_DICTIONARY, "词", &[7], Some(5))
-            .unwrap();
-        let net = store
-            .add_phrase_in(phrase::NETWORK_DICTIONARY, "词", &[7], Some(5))
-            .unwrap();
-        assert_ne!(user, net);
-        assert_eq!(phrase::phrase_index_library_index(user), 7);
-        assert_eq!(phrase::phrase_index_library_index(net), 6);
-        assert_eq!(store.export_phrases().unwrap().len(), 1);
-        assert_eq!(store.export_phrases_in(6).unwrap().len(), 1);
-        assert_eq!(store.next_user_token().unwrap(), user + 1);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn add_phrase_seeds_unigram_with_count_times_three() {
-        let path = temp_path("uni");
-        let mut store = UserStore::open(&path).unwrap();
-        let token = store.add_phrase("你好", &[10, 20], None).unwrap();
-        assert_eq!(store.unigram_delta(token).unwrap(), 15);
-        assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 0);
-
-        let token2 = store.add_phrase("世界", &[30, 40], Some(10)).unwrap();
-        assert_eq!(store.unigram_delta(token2).unwrap(), 30);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn existing_phrase_merges_a_new_reading() {
-        let path = temp_path("merge");
-        let mut store = UserStore::open(&path).unwrap();
-        let first = store.add_phrase("你好", &[10, 20], None).unwrap();
-        let again = store.add_phrase("你好", &[11, 20], Some(8)).unwrap();
-        assert_eq!(first, again);
-        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 1);
-        assert_eq!(store.unigram_delta(first).unwrap(), 15);
-
-        let got = store.phrase(first).unwrap().unwrap();
-        assert_eq!(got.text(), "你好");
-        assert_eq!(got.pronunciations().len(), 2);
-        assert_eq!(got.pronunciations()[0].keys(), &[10, 20]);
-        assert_eq!(got.pronunciations()[0].count(), 5);
-        assert_eq!(got.pronunciations()[1].keys(), &[11, 20]);
-        assert_eq!(got.pronunciations()[1].count(), 8);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn same_reading_accumulates_pronunciation_count() {
-        let path = temp_path("same-read");
-        let mut store = UserStore::open(&path).unwrap();
-        let token = store.add_phrase("词", &[7], Some(5)).unwrap();
-        let again = store.add_phrase("词", &[7], Some(5)).unwrap();
-        assert_eq!(token, again);
-        assert_eq!(store.unigram_delta(token).unwrap(), 15);
-        let got = store.phrase(token).unwrap().unwrap();
-        assert_eq!(got.pronunciations().len(), 1);
-        assert_eq!(got.pronunciations()[0].count(), 10);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn phrase_roundtrip_reopen_preserves_cursor() {
-        let path = temp_path("phrase-rt");
-        let (t1, t2, next) = {
-            let mut store = UserStore::open(&path).unwrap();
-            let t1 = store.add_phrase("你好", &[10, 20], None).unwrap();
-            let t2 = store.add_phrase("世界", &[30, 40], Some(9)).unwrap();
-            store.add_phrase("你好", &[11, 20], Some(2)).unwrap();
-            (t1, t2, store.next_user_token().unwrap())
-        };
-
-        let store = UserStore::open(&path).unwrap();
-        assert_eq!(store.next_user_token().unwrap(), next);
-        assert_eq!(next, FIRST_USER_TOKEN + 2);
-
-        let p1 = store.phrase(t1).unwrap().unwrap();
-        assert_eq!(p1.text(), "你好");
-        assert_eq!(p1.pronunciations().len(), 2);
-        assert_eq!(p1.pronunciations()[0].keys(), &[10, 20]);
-        assert_eq!(p1.pronunciations()[0].count(), 5);
-        assert_eq!(p1.pronunciations()[1].keys(), &[11, 20]);
-        assert_eq!(p1.pronunciations()[1].count(), 2);
-        assert_eq!(store.unigram_delta(t1).unwrap(), 15);
-        assert_eq!(store.unigram_total().unwrap(), 15 + 27);
-
-        let p2 = store.phrase(t2).unwrap().unwrap();
-        assert_eq!(p2.text(), "世界");
-        assert_eq!(p2.pronunciations()[0].keys(), &[30, 40]);
-        assert_eq!(p2.pronunciations()[0].count(), 9);
-        assert_eq!(store.unigram_delta(t2).unwrap(), 27);
-
-        let mut store = store;
-        let t3 = store.add_phrase("中国", &[50, 60], None).unwrap();
-        assert_eq!(t3, t2 + 1);
-        assert_eq!(t3, FIRST_USER_TOKEN + 2);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn invalid_phrase_is_rejected_without_allocation() {
-        let path = temp_path("invalid");
-        let mut store = UserStore::open(&path).unwrap();
-        assert!(matches!(
-            store.add_phrase("", &[], None),
-            Err(UserStoreError::InvalidPhrase)
-        ));
-        assert!(matches!(
-            store.add_phrase("你好", &[10], None),
-            Err(UserStoreError::InvalidPhrase)
-        ));
-        assert!(matches!(
-            store.add_phrase(&"啊".repeat(16), &[0; 16], None),
-            Err(UserStoreError::InvalidPhrase)
-        ));
-        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
-        assert!(store.token_for_phrase("你好").unwrap().is_none());
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn lookup_of_unknown_token_is_none() {
-        let path = temp_path("miss");
-        let store = UserStore::open(&path).unwrap();
-        assert!(store.phrase(FIRST_USER_TOKEN).unwrap().is_none());
-        assert!(store.phrase(0x0100_0001).unwrap().is_none());
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn export_phrases_render_the_pinned_triples() {
-        let path = temp_path("export-phrases");
-        let mut store = UserStore::open(&path).unwrap();
-        let ni = SyllableKey::from_text("ni").expect("frozen key").index() as u16;
-        let hao = SyllableKey::from_text("hao").expect("frozen key").index() as u16;
-        let shi = SyllableKey::from_text("shi").expect("frozen key").index() as u16;
-        let jie = SyllableKey::from_text("jie").expect("frozen key").index() as u16;
-
-        store.add_phrase("你好", &[ni, hao], None).unwrap();
-        store.add_phrase("你好", &[ni, hao], Some(7)).unwrap();
-        store.add_phrase("世界", &[shi, jie], Some(3)).unwrap();
-
-        assert_eq!(
-            store.export_phrases().unwrap(),
-            vec![
-                ExportedPhrase {
-                    text: "你好".to_owned(),
-                    pinyin: "ni'hao".to_owned(),
-                    count: 12,
-                },
-                ExportedPhrase {
-                    text: "世界".to_owned(),
-                    pinyin: "shi'jie".to_owned(),
-                    count: 3,
-                },
-            ]
-        );
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn export_bigrams_lists_every_stored_row_raw() {
-        let path = temp_path("export-bigrams");
-        let mut store = UserStore::open(&path).unwrap();
-        store.observe_selection(SENTENCE_START, 10).unwrap();
-        store.observe_selection(10, 20).unwrap();
-        store.observe_selection(10, 20).unwrap();
-
-        let mut rows = store.export_bigrams().unwrap();
-        rows.sort();
-        assert_eq!(rows, vec![(SENTENCE_START, 10, 69), (10, 20, 207)]);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    fn mixed_store(path: &std::path::Path) -> (UserStore, Token) {
-        const SYSTEM_A: Token = 0x0100_0001;
-        const SYSTEM_B: Token = 0x0200_0001;
-        let mut store = UserStore::open(path).unwrap();
-        let user_a = store.add_phrase("你好", &[10, 20], None).unwrap();
-        let user_b = store.add_phrase("世界", &[30, 40], None).unwrap();
-        store.observe_selection(SYSTEM_A, SYSTEM_B).unwrap();
-        store.observe_selection(SYSTEM_A, user_a).unwrap();
-        store.observe_selection(user_a, SYSTEM_B).unwrap();
-        store.observe_selection(user_a, user_b).unwrap();
-        (store, user_a)
-    }
-
-    #[test]
-    fn mask_out_user_clear_deletes_user_entries_and_keeps_system() {
-        let path = temp_path("mask-user");
-        let (mut store, user_a) = mixed_store(&path);
-        assert!(store.is_modified());
-        assert!(store.save().unwrap());
-
-        store
-            .mask_out(
-                PHRASE_INDEX_LIBRARY_MASK,
-                phrase_index_make_token(USER_DICTIONARY, 0),
-            )
-            .unwrap();
-
-        assert!(store.phrase(user_a).unwrap().is_none());
-        assert!(store.token_for_phrase("你好").unwrap().is_none());
-        assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
-        assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 69);
-        assert_eq!(store.bigram_count(user_a, 0x0200_0001).unwrap(), 0);
-        assert_eq!(store.bigram_count(0x0100_0001, user_a).unwrap(), 0);
-        assert_eq!(store.bigram_count(user_a, user_a + 1).unwrap(), 0);
-        assert_eq!(store.unigram_delta(0x0200_0001).unwrap(), 966);
-        assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
-        assert_eq!(store.unigram_total().unwrap(), 966);
-        assert_eq!(store.next_user_token().unwrap(), user_a + 2);
-        assert!(!store.is_modified());
-        assert!(!store.save().unwrap());
-
-        store.mask_out(0x0, 0x0).unwrap();
-        assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 0);
-        assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 0);
-        assert_eq!(store.unigram_total().unwrap(), 0);
-        assert!(!store.is_modified());
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn remove_user_phrase_deletes_everywhere_and_rejects_others() {
-        let path = temp_path("remove");
-        let (mut store, user_a) = mixed_store(&path);
-        assert!(store.save().unwrap());
-
-        assert!(store.remove_user_phrase(user_a).unwrap());
-        assert!(store.phrase(user_a).unwrap().is_none());
-        assert!(store.token_for_phrase("你好").unwrap().is_none());
-        assert_eq!(store.bigram_count(user_a, 0x0200_0001).unwrap(), 0);
-        assert_eq!(store.bigram_count(0x0100_0001, user_a).unwrap(), 0);
-        assert_eq!(store.bigram_count(user_a, user_a + 1).unwrap(), 0);
-        assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
-        assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 69);
-        assert_eq!(store.bigram_total(user_a).unwrap(), 0);
-        assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
-        assert_eq!(store.unigram_total().unwrap(), 966 + 498);
-        assert!(!store.is_modified());
-        assert!(!store.remove_user_phrase(user_a).unwrap());
-        assert!(!store.remove_user_phrase(0x0100_0001).unwrap());
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn mask_and_remove_survive_a_reopen() {
-        let path = temp_path("mask-rt");
-        let (mut store, user_a) = mixed_store(&path);
-        store
-            .mask_out(
-                PHRASE_INDEX_LIBRARY_MASK,
-                phrase_index_make_token(USER_DICTIONARY, 0),
-            )
-            .unwrap();
-        let other = store.add_phrase("中国", &[50, 60], None).unwrap();
-        store.remove_user_phrase(other).unwrap();
-        drop(store);
-
-        let store = UserStore::open(&path).unwrap();
-        assert!(store.token_for_phrase("你好").unwrap().is_none());
-        assert!(store.token_for_phrase("中国").unwrap().is_none());
-        assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
-        assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
-        assert_eq!(store.unigram_total().unwrap(), 966);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    fn key(text: &str) -> PinyinKey {
-        SyllableKey::from_text(text)
-            .expect("frozen syllable")
-            .index() as PinyinKey
-    }
-
-    #[test]
-    fn promote_addon_phrase_allocates_nibble_5_and_copies_frequency() {
-        let path = temp_path("promote-addon");
-        let mut store = UserStore::open(&path).unwrap();
-        let keys = [key("er"), key("huang")];
-
-        let token = store
-            .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
-            .unwrap();
-        assert_eq!(
-            phrase_index_library_index(token),
-            ADDON_DICTIONARY,
-            "promotion lands in default nibble 5"
-        );
-        assert_eq!(token, phrase_index_make_token(ADDON_DICTIONARY, 1));
-        assert_eq!(store.unigram_delta(token).unwrap(), 100);
-        assert_eq!(store.unigram_total().unwrap(), 100);
-        assert_eq!(
-            store.token_for_phrase_in(ADDON_DICTIONARY, "二簧").unwrap(),
-            Some(token)
-        );
-        let phrase = store.phrase(token).unwrap().unwrap();
-        assert_eq!(phrase.text(), "二簧");
-        assert_eq!(phrase.pronunciations().len(), 1);
-        assert_eq!(phrase.pronunciations()[0].keys(), keys);
-        assert_eq!(phrase.pronunciations()[0].count(), 100);
-
-        let again = store
-            .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
-            .unwrap();
-        assert_eq!(again, token, "re-promotion reuses the nibble-5 token");
-        assert_eq!(store.unigram_delta(token).unwrap(), 100);
-        assert_eq!(store.unigram_total().unwrap(), 100);
-        assert_eq!(
-            store.phrase(token).unwrap().unwrap().pronunciations()[0].count(),
-            200
-        );
-
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn promote_addon_phrase_rejects_a_reading_of_the_wrong_length() {
-        let path = temp_path("promote-addon-invalid");
-        let mut store = UserStore::open(&path).unwrap();
-        let err = store
-            .promote_addon_phrase("二簧", &[(vec![key("er")], 100)], 100)
-            .unwrap_err();
-        assert!(matches!(err, UserStoreError::InvalidPhrase));
-        assert!(!store.has_user_data());
         let _ = std::fs::remove_file(&path);
     }
 }

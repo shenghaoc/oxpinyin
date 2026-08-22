@@ -14,6 +14,9 @@ workspace = true
 oxpinyin-core = { workspace = true }
 oxpinyin-store = { workspace = true }
 
+[features]
+lmdb = ["oxpinyin-store/lmdb"]
+
 [dev-dependencies]
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
 redb = { workspace = true }
