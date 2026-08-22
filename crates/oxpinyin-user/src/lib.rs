@@ -19,6 +19,7 @@
 //! the W6 differential.
 #![warn(missing_docs)]
 
+pub mod codec;
 pub mod phrase;
 pub mod seed;
 
