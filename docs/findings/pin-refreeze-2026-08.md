@@ -42,7 +42,7 @@ agreement on every re-frozen metric and moved no import or train differential.
 ## Frozen pins going forward
 
 `real_tables_session_reports_parity` asserts, and the candidate-construction
-SPEC now records:
+SPEC now records (superseded by the 2026-08-22 amendment below):
 
 ```text
 top-1               10178
@@ -73,3 +73,29 @@ position. Diagnostic details in `docs/findings/corpus-tail.md`.
 | prefix-10 overlap | 94871 of 98930 | 94872 of 98930 | +1 |
 | absent | 1 | 0 | −1 |
 | tie-swaps (order-only) | 1036 | 1036 | 0 |
+
+## 2026-08-22 amendment — Class A comparator tie law
+
+W12 Class A closed: the candidate comparator's frequency key is now the
+pin's `m_freq` — the unigram possibility `(1−λ)·unigram/total` computed
+in C `float`, amplified by 2²⁴, truncated to `guint32`
+(`pinyin.cpp:1855-1866`; the model20 phrase-index unigram is
+interpolation2 count + 1, the index total 51,051,831 = interpolation2
+sum + 138,096 items) — and the window scan flushes each window
+token-ascending, the array order GLib's stable sort keeps for
+comparator-0 pairs. `loses_to` and the n-best trellis are untouched.
+Diagnosis and the 12-input table in `docs/findings/corpus-tail.md`
+(Class A, CLOSED 2026-08-22).
+
+| Metric | Prior pin | Amended pin | Δ |
+|---|---|---|---|
+| top-1 | 10178 | 10190 | +12 |
+| top-5-set | 10190 | 10190 | 0 |
+| prefix-10 overlap | 94872 of 98930 | 98930 of 98930 | +4058 |
+| absent | 0 | 0 | 0 |
+| tie-swaps (order-only) | 1036 | 0 | −1036 |
+
+The candidate surface agrees with the pinned oracle bit-identically on
+every W2 corpus input at depth 10. Sentence pins the same day: row-0 and
+full-list agreement hold (488 / 385), first-6 candidate rows rise
+370 → 379 (`sentence_surface_reports_parity`).

@@ -2,7 +2,7 @@
 //!
 //! Benches refuse to start without the exported tables and the fetched
 //! model20 cache: fixture-scale numbers would not describe the pinned
-//! construction. They do not assert the 10178-class candidate pins.
+//! construction. They do not assert the 10190-class candidate pins.
 
 #![allow(dead_code)]
 

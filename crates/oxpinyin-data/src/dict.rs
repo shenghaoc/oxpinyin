@@ -299,6 +299,10 @@ impl Dictionary for SystemDictionary {
         Ok(())
     }
 
+    fn phrase_index_item_count(&self) -> u64 {
+        self.unigram_map().len() as u64
+    }
+
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
         if syllables.is_empty() {
             return Ok(true);

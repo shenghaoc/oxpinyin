@@ -485,11 +485,11 @@ than to the system index.
 Before any feature is active, the empty-store profile must remain bit-identical:
 
 ```text
-top-1      10178
+top-1      10190
 top-5-set  10190
-prefix-10  94872 of 98930
+prefix-10  98930 of 98930
 absent     0
-tie-swaps  1036
+tie-swaps  0
 ```
 
 Movement means a leak into existing behaviour and is a STOP. Pins reflect

@@ -174,6 +174,10 @@ pub struct Session<D, L> {
     scratch_entries: Vec<PhraseEntry>,
     /// Reused scan path (phrase length ≤ 16).
     scratch_path: SmallVec<[SyllableKey; 16]>,
+    /// Reused per-window scan batch, default facade.
+    scratch_window_phrase: Vec<Candidate>,
+    /// Reused per-window scan batch, addon facade.
+    scratch_window_addon: Vec<Candidate>,
 }
 
 impl<D, L> Session<D, L>
@@ -220,6 +224,8 @@ where
             scratch_ranked: Vec::new(),
             scratch_entries: Vec::new(),
             scratch_path: SmallVec::new(),
+            scratch_window_phrase: Vec::new(),
+            scratch_window_addon: Vec::new(),
         })
     }
 
@@ -814,6 +820,8 @@ where
         let mut path = core::mem::take(&mut self.scratch_path);
         let mut entries = core::mem::take(&mut self.scratch_entries);
         let mut ranked = core::mem::take(&mut self.scratch_ranked);
+        let mut window_phrase = core::mem::take(&mut self.scratch_window_phrase);
+        let mut window_addon = core::mem::take(&mut self.scratch_window_addon);
 
         let remaining = &self.raw[self.consumed..];
         let graph = SegmentGraph::build_with_options(remaining.as_bytes(), self.settings.options)
@@ -831,14 +839,21 @@ where
         // pre-frequency behaviour exactly: k-best prefixes, sentence
         // candidates, cost order, adjacent dedup.
         if self.model.has_real_unigrams() {
-            self.collect_window_scan(
-                &graph,
-                remaining.as_bytes(),
-                self.settings.options,
-                &mut collected,
-                &mut path,
-                &mut entries,
-            )?;
+            {
+                let mut scratch = ScanScratch {
+                    path: &mut path,
+                    entries: &mut entries,
+                    window_phrase: &mut window_phrase,
+                    window_addon: &mut window_addon,
+                };
+                self.collect_window_scan(
+                    &graph,
+                    remaining.as_bytes(),
+                    self.settings.options,
+                    &mut collected,
+                    &mut scratch,
+                )?;
+            }
 
             // The scan's result stands even when it found nothing. Tokens the
             // table lacks rank as zero rather than falling back.
@@ -861,8 +876,8 @@ where
             );
 
             // Stable sort, all three keys descending: an all-equal tie keeps
-            // the collection order, which is the deterministic stand-in for
-            // the pin's internal collection order.
+            // the collection order, which the scan now lays down in the
+            // pin's array order (per window, token-ascending).
             ranked.sort_by_key(|(key, _)| core::cmp::Reverse(*key));
             collected.extend(ranked.drain(..).map(|(_, candidate)| candidate));
 
@@ -926,11 +941,26 @@ where
         self.scratch_path = path;
         self.scratch_entries = entries;
         self.scratch_ranked = ranked;
+        self.scratch_window_phrase = window_phrase;
+        self.scratch_window_addon = window_addon;
         Ok(())
     }
 
-    /// Per-candidate real unigram frequencies, or `None` when the model
-    /// carries no real frequency table at all.
+    /// Per-candidate sort frequencies on the pin's amplified scale, or
+    /// `None` when the model carries no real frequency table at all.
+    ///
+    /// The pinned oracle does not compare raw unigram counts: it truncates
+    /// the f32 possibility `(1−λ)·unigram/total` amplified by 2²⁴ into a
+    /// `guint32` (`_compute_frequency_of_items`, `pinyin.cpp:1855-1866`;
+    /// `DYNAMIC_ADJUST` clear ⇒ the bigram term is zero). Near-ties collapse
+    /// to equal keys under that truncation — the tie class
+    /// `docs/findings/corpus-tail.md` calls Class A — and equal keys fall to
+    /// the collection order the stable sort keeps. `amplified_frequency`
+    /// reproduces the arithmetic bit-for-bit; the `+1` is the shipped
+    /// model20 data identity (every phrase-index item's baked unigram is
+    /// its interpolation2 count + 1; items absent from interpolation2 are
+    /// 1), and the denominator is the index total that follows from it:
+    /// interpolation2 sum + item count.
     ///
     /// `Some(0)` marks a phrase the n-gram corpus never saw: it still sorts,
     /// last among its equal-length, equal-span peers. Only the first `Some`
@@ -945,7 +975,8 @@ where
             .model
             .unigram_total()
             .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
-            .unwrap_or(0);
+            .unwrap_or(0)
+            .saturating_add(self.dictionary.phrase_index_item_count());
         let addon_total = self
             .model
             .addon_unigram_total()
@@ -956,6 +987,9 @@ where
                 continue;
             };
             let count = if candidate.kind() == CandidateKind::Addon {
+                // The addon facade's own amplified scale (`pinyin.cpp:1829-
+                // 1843`): no `+1`, the addon index's items carry their own
+                // unigrams. An empty facade has no items and no candidates.
                 let raw = self
                     .model
                     .addon_unigram_freq(&token)
@@ -963,11 +997,14 @@ where
                         EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
                     })?
                     .unwrap_or(0);
-                Some(scale_addon_frequency(raw, default_total, addon_total))
+                Some(amplified_frequency(raw, addon_total))
             } else {
-                self.model.unigram_freq(&token).map_err(|error| {
-                    EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-                })?
+                self.model
+                    .unigram_freq(&token)
+                    .map_err(|error| {
+                        EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
+                    })?
+                    .map(|count| amplified_frequency(count.saturating_add(1), default_total))
             };
             if let Some(count) = count {
                 let table = frequencies.get_or_insert_with(|| vec![0; collected.len()]);
@@ -1151,8 +1188,7 @@ where
         input: &[u8],
         options: OptionBits,
         into: &mut Vec<Candidate>,
-        path: &mut SmallVec<[SyllableKey; 16]>,
-        entries: &mut Vec<PhraseEntry>,
+        scratch: &mut ScanScratch<'_>,
     ) -> Result<(), EngineError> {
         let matrix = build_scan_matrix(graph, options);
         let bound = graph.consumed();
@@ -1160,14 +1196,25 @@ where
         while end <= bound {
             // An end position no key starts at is an empty column: widen.
             let mut continued = matrix.get(end).is_none_or(|column| column.is_empty());
-            path.clear();
-            let mut buf = ScanBuf {
-                path,
-                into,
-                continued: &mut continued,
-                entries,
-            };
-            self.scan_paths(&matrix, 0, end, &mut buf)?;
+            scratch.path.clear();
+            scratch.window_phrase.clear();
+            scratch.window_addon.clear();
+            {
+                let mut buf = ScanBuf {
+                    path: scratch.path,
+                    system: scratch.window_phrase,
+                    addon: scratch.window_addon,
+                    continued: &mut continued,
+                    entries: scratch.entries,
+                };
+                self.scan_paths(&matrix, 0, end, &mut buf)?;
+            }
+            // Flush the window in the pin's array order: the default
+            // facade's tokens ascending, then the addon facade's — the
+            // order `_append_items` lays down and the stable sort keeps
+            // for comparator ties.
+            flush_window_batch(scratch.window_phrase, into);
+            flush_window_batch(scratch.window_addon, into);
             if !continued {
                 break;
             }
@@ -1216,7 +1263,7 @@ where
         }
         buf.path.push(scan_key.key);
         if to == end {
-            self.search_scan_path(buf.path, end, buf.into, buf.continued, buf.entries)?;
+            self.search_scan_path(buf, end)?;
         } else if buf.path.len() < MAX_PHRASE_LENGTH {
             self.scan_paths(matrix, to, end, buf)?;
         }
@@ -1226,24 +1273,31 @@ where
 
     /// The table search on one complete key-path, and the prefix probe that
     /// decides whether the window keeps widening.
-    fn search_scan_path(
-        &self,
-        path: &[SyllableKey],
-        end: usize,
-        into: &mut Vec<Candidate>,
-        continued: &mut bool,
-        entries: &mut Vec<PhraseEntry>,
-    ) -> Result<(), EngineError> {
+    fn search_scan_path(&self, buf: &mut ScanBuf<'_>, end: usize) -> Result<(), EngineError> {
+        let ScanBuf {
+            path,
+            system,
+            addon,
+            continued,
+            entries,
+        } = buf;
         let has_incomplete = path
             .iter()
             .any(|key| key.completeness() == Completeness::Partial);
 
         if has_incomplete {
             for sequence in expand_keys(path, SCAN_EXPANSION_LIMIT) {
-                self.lookup_and_append(sequence.as_slice(), path.len(), end, into, entries)?;
+                self.lookup_and_append(
+                    sequence.as_slice(),
+                    path.len(),
+                    end,
+                    system,
+                    addon,
+                    entries,
+                )?;
             }
         } else {
-            self.lookup_and_append(path, path.len(), end, into, entries)?;
+            self.lookup_and_append(path, path.len(), end, system, addon, entries)?;
         }
 
         let can_extend = self
@@ -1254,7 +1308,7 @@ where
             .dictionary
             .phrase_prefix_exists_addon(path)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        *continued |= can_extend || addon_extend;
+        **continued |= can_extend || addon_extend;
         Ok(())
     }
 
@@ -1263,17 +1317,18 @@ where
         sequence: &[SyllableKey],
         keys: usize,
         end: usize,
-        into: &mut Vec<Candidate>,
+        system: &mut Vec<Candidate>,
+        addon: &mut Vec<Candidate>,
         entries: &mut Vec<PhraseEntry>,
     ) -> Result<(), EngineError> {
         self.dictionary
             .lookup_into(sequence, entries)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        append_scan_entries(entries.drain(..), keys, end, CandidateKind::Phrase, into);
+        append_scan_entries(entries.drain(..), keys, end, CandidateKind::Phrase, system);
         self.dictionary
             .lookup_addon_into(sequence, entries)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        append_scan_entries(entries.drain(..), keys, end, CandidateKind::Addon, into);
+        append_scan_entries(entries.drain(..), keys, end, CandidateKind::Addon, addon);
         Ok(())
     }
 }
@@ -1300,18 +1355,52 @@ fn append_scan_entries(
     }
 }
 
-/// Puts an addon unigram on the default-facade count scale.
+/// Flushes one window's facade batch in the pin's array order.
 ///
-/// When no addon table is loaded `addon_total` is 0 and this is unused.
-/// A zero default total leaves the raw addon count (mini fixtures).
-fn scale_addon_frequency(addon_unigram: u64, default_total: u64, addon_total: u64) -> u64 {
-    if addon_total == 0 {
-        return addon_unigram;
+/// The oracle appends each window's search hits library by library, token
+/// by token (`_append_items`, `pinyin.cpp:1769-1791`), and its stable
+/// `g_array_sort_with_data` keeps exactly that order for candidates whose
+/// three keys tie — the amplified-frequency collapses of
+/// `docs/findings/corpus-tail.md` Class A. The scan reaches the same
+/// tokens through several key-paths; sorting the batch by token and
+/// keeping the first of each reproduces the one-row-per-token array the
+/// pin sorts.
+fn flush_window_batch(batch: &mut Vec<Candidate>, into: &mut Vec<Candidate>) {
+    batch.sort_by_key(|candidate| candidate.token().map_or(u32::MAX, |t| t.value()));
+    let mut last: Option<u32> = None;
+    for candidate in batch.drain(..) {
+        let token = candidate.token().map(|token| token.value());
+        if token == last {
+            continue;
+        }
+        last = token;
+        into.push(candidate);
     }
-    if default_total == 0 {
-        return addon_unigram;
+}
+
+/// λ as the pin parses it out of `table.conf` (`fscanf "%f"`,
+/// `table_info.cpp:220,242`) — the same `f32` bits `oxpinyin_data`'s
+/// `PINNED_LAMBDA` names. Duplicated here because the engine depends on
+/// the core traits, not the data crate.
+const PIN_LAMBDA_F32: f32 = 0.312_699;
+
+/// The pin's candidate `m_freq` under the default profile: the unigram
+/// possibility `(1−λ)·unigram/total` computed and amplified by 2²⁴ in C
+/// `float` arithmetic, then truncated like the `guint32` assignment
+/// (`pinyin.cpp:1862-1866`; `DYNAMIC_ADJUST` clear ⇒ bigram term zero).
+///
+/// The truncation is load-bearing, not a rounding detail: it collapses
+/// near-ties into equal comparator keys — the Class A tie class — which
+/// the stable sort then resolves by collection order. Evaluation order
+/// mirrors the C expression left-to-right (`f32` throughout, the three
+/// `* 256` factors kept as written); any `f64` intermediate or a
+/// pre-combined `* 2²⁴` risks drifting off the tie boundary.
+fn amplified_frequency(unigram: u64, total: u64) -> u64 {
+    if total == 0 {
+        return 0;
     }
-    addon_unigram.saturating_mul(default_total) / addon_total
+    let possibility = (1.0_f32 - PIN_LAMBDA_F32) * unigram as f32 / total as f32;
+    u64::from((possibility * 256.0 * 256.0 * 256.0) as u32)
 }
 
 /// One resplit pair the scan matrix admits alongside the selected parse,
@@ -1435,9 +1524,19 @@ const DIVIDED_TABLE: &[(&str, &str, &str)] = &[
 ];
 
 /// Scratch the window scan threads through the recursive walk.
+/// The window scan's borrowed scratch: the session-owned buffers one scan
+/// reuses, grouped so the scan takes a single argument.
+struct ScanScratch<'a> {
+    path: &'a mut SmallVec<[SyllableKey; 16]>,
+    entries: &'a mut Vec<PhraseEntry>,
+    window_phrase: &'a mut Vec<Candidate>,
+    window_addon: &'a mut Vec<Candidate>,
+}
+
 struct ScanBuf<'a> {
     path: &'a mut SmallVec<[SyllableKey; 16]>,
-    into: &'a mut Vec<Candidate>,
+    system: &'a mut Vec<Candidate>,
+    addon: &'a mut Vec<Candidate>,
     continued: &'a mut bool,
     entries: &'a mut Vec<PhraseEntry>,
 }
@@ -2318,6 +2417,94 @@ mod tests {
             ),
             unigram,
             "bit-set leaves the W6-T4 unigram merge intact and does not invent a RankKey bigram"
+        );
+    }
+
+    #[test]
+    fn amplified_frequency_pins_the_class_a_probe_values() {
+        // The denominator is the pin's phrase-index total over model20:
+        // interpolation2 sum 50_913_735 + 138_096 items, each item's baked
+        // unigram being its interpolation2 count + 1 (probe-verified over
+        // the whole index; `docs/findings/corpus-tail.md` Class A). The
+        // values are the amplified keys the 12 top-1 tie-swaps collapse on.
+        const PIN_TOTAL: u64 = 51_051_831;
+        // 0: the 量比/两笔, 建仓/减仓, 拜倒/白道, 冰坝/并把, 长着/唱着 pairs.
+        assert_eq!(super::amplified_frequency(1, PIN_TOTAL), 0);
+        assert_eq!(super::amplified_frequency(3, PIN_TOTAL), 0);
+        // 3: 写歌 16 vs 写稿 14 (`xiego`).
+        assert_eq!(super::amplified_frequency(14, PIN_TOTAL), 3);
+        assert_eq!(super::amplified_frequency(16, PIN_TOTAL), 3);
+        // 4: 古稀 21 vs 股息 20 (`guxi`), 酸楚 20 vs 算出 18 (`suanch`).
+        assert_eq!(super::amplified_frequency(18, PIN_TOTAL), 4);
+        assert_eq!(super::amplified_frequency(20, PIN_TOTAL), 4);
+        assert_eq!(super::amplified_frequency(21, PIN_TOTAL), 4);
+        // 17: 每家 78 vs 美加 77 (`meijia…`).
+        assert_eq!(super::amplified_frequency(77, PIN_TOTAL), 17);
+        assert_eq!(super::amplified_frequency(78, PIN_TOTAL), 17);
+        // 19: 狗狗 = 沟谷 = 87 (`goug`).
+        assert_eq!(super::amplified_frequency(87, PIN_TOTAL), 19);
+        assert_eq!(super::amplified_frequency(0, PIN_TOTAL), 0);
+        assert_eq!(
+            super::amplified_frequency(20, 0),
+            0,
+            "no index total ranks as zero"
+        );
+    }
+
+    #[test]
+    fn amplified_frequency_is_c_float_not_f64() {
+        // 2_349_890 is a corpus-scale count (interpolation2 tops out at
+        // 3_081_671) where the C float chain and the same chain in f64
+        // truncate apart — 530_766 vs 530_765 — so this pins the f32
+        // arithmetic the oracle's m_freq runs in.
+        assert_eq!(super::amplified_frequency(2_349_890, 51_051_831), 530_766);
+    }
+
+    #[test]
+    fn window_flush_is_token_ascending_and_one_row_per_token() {
+        use super::{CandidateKind, flush_window_batch};
+        use crate::candidate::Candidate;
+
+        let mut batch = vec![
+            Candidate::new(
+                compact_str::CompactString::from("狗狗"),
+                CandidateKind::Phrase,
+                2,
+                4,
+                0,
+                Some(PhraseToken::new(0x0300_16df)),
+                None,
+            ),
+            Candidate::new(
+                compact_str::CompactString::from("沟谷"),
+                CandidateKind::Phrase,
+                2,
+                4,
+                0,
+                Some(PhraseToken::new(0x0100_4c41)),
+                None,
+            ),
+            Candidate::new(
+                compact_str::CompactString::from("沟谷"),
+                CandidateKind::Phrase,
+                1,
+                4,
+                0,
+                Some(PhraseToken::new(0x0100_4c41)),
+                None,
+            ),
+        ];
+        let mut into = Vec::new();
+        flush_window_batch(&mut batch, &mut into);
+        let tokens: Vec<u32> = into
+            .iter()
+            .filter_map(|c| c.token().map(|t| t.value()))
+            .collect();
+        assert_eq!(tokens, [0x0100_4c41, 0x0300_16df]);
+        assert_eq!(
+            into[0].consumed_keys(),
+            2,
+            "the first collected row of a duplicated token is the one kept"
         );
     }
 

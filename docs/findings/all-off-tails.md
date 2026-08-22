@@ -116,12 +116,15 @@ contributes under fork-default is `lve`'s native-key tail.
 
 No parser behaviour, scheme table, `loses_to`, Class A material,
 init/slurp, apostrophe, offset-decode, or `pinyin_clear_constraint` code
-is touched. The default-profile pins stand unchanged — the corpus pass
-on this branch still prints 12 top-1 misses (10,178 top-1), 0 top-5
-misses / 0 absent (10,190 / 10,178), 1,036 order-only, and 4,058 of
-98,930 (94,872 overlap) — and the sentence pins are untouched. The
-`run-option-sweep.sh` W12 exclusion list already carries these inputs;
-no gate changes.
+is touched. At freeze time (2026-08-17) the default-profile pins stood at
+12 top-1 misses (10,178 top-1), 0 top-5 misses / 0 absent (10,190 /
+10,178), 1,036 order-only, and 4,058 of 98,930 (94,872 overlap), sentence
+pins 488/385/370. The 2026-08-22 Class A comparator port
+(`docs/findings/corpus-tail.md`) later closed the corpus residual to
+10,190 / 10,190 / 98,930 / absent 0 / tie-swaps 0 without touching any
+all-off tail input or gate; the six TEXT-set tails are unchanged and the
+`run-option-sweep.sh` W12 exclusion list still carries them; no gate
+changes.
 
 ## What this finding closes
 
