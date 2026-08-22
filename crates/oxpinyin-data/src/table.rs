@@ -1,23 +1,21 @@
-//! Loader for redb-backed lookup tables.
+//! Loader for ordered-store-backed lookup tables.
 //!
-//! Each table is a redb database with a single `data` table mapping raw
+//! Each table is a store database with a single `data` table mapping raw
 //! `&[u8]` keys to raw `&[u8]` values.  These are committed under
 //! `fixtures/w3/` (frozen; no longer regenerated in-tree) per
 //! `docs/findings/data-layer-export.md`.
 //!
 //! # Portability
 //!
-//! redb is a pure-Rust embedded database.  The committed tables can be
-//! read on any platform redb supports.
+//! The default backend is redb, a pure-Rust embedded database.  The
+//! committed tables can be read on any platform redb supports.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
-use redb::{ReadableDatabase, ReadableTable};
-
-const DATA_TABLE: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new("data");
+use oxpinyin_store::{DefaultStore, OrderedStore, StoreError};
 
 /// A `phrase_token_t` ordered the way redb stores it: 4 bytes little-endian,
 /// so ascending **byte** order — which is not ascending integer order.
@@ -57,26 +55,17 @@ impl PartialOrd for LeByteKey {
 /// Errors that can occur when opening or querying a table.
 #[derive(Debug)]
 pub enum TableError {
-    /// The redb file could not be opened (I/O error).
+    /// The store file could not be opened (I/O error).
     Io(std::io::Error),
-    /// redb reported a database-level error.
-    Db(redb::DatabaseError),
-    /// redb reported a table-level error.
-    Table(redb::TableError),
-    /// redb reported a transaction-level error.
-    Transaction(redb::TransactionError),
-    /// redb reported a storage-level error.
-    Storage(redb::StorageError),
+    /// The storage backend reported a non-I/O error.
+    Store(StoreError),
 }
 
 impl fmt::Display for TableError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(e) => write!(f, "I/O error: {e}"),
-            Self::Db(e) => write!(f, "database error: {e}"),
-            Self::Table(e) => write!(f, "table error: {e}"),
-            Self::Transaction(e) => write!(f, "transaction error: {e}"),
-            Self::Storage(e) => write!(f, "storage error: {e}"),
+            Self::Store(e) => write!(f, "store error: {e}"),
         }
     }
 }
@@ -85,69 +74,49 @@ impl std::error::Error for TableError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
-            Self::Db(e) => Some(e),
-            Self::Table(e) => Some(e),
-            Self::Transaction(e) => Some(e),
-            Self::Storage(e) => Some(e),
+            Self::Store(e) => Some(e),
         }
     }
 }
 
-impl From<redb::DatabaseError> for TableError {
-    fn from(e: redb::DatabaseError) -> Self {
-        Self::Db(e)
+impl From<StoreError> for TableError {
+    fn from(e: StoreError) -> Self {
+        match e {
+            StoreError::Io(io) => Self::Io(io),
+            other => Self::Store(other),
+        }
     }
 }
 
-impl From<redb::TableError> for TableError {
-    fn from(e: redb::TableError) -> Self {
-        Self::Table(e)
-    }
-}
-
-impl From<redb::TransactionError> for TableError {
-    fn from(e: redb::TransactionError) -> Self {
-        Self::Transaction(e)
-    }
-}
-
-impl From<redb::StorageError> for TableError {
-    fn from(e: redb::StorageError) -> Self {
-        Self::Storage(e)
-    }
-}
-
-/// Visit every row of a redb `data` table without retaining a copy.
+/// Visit every row of a store's `data` table without retaining a copy.
 ///
 /// Used by the typed dictionary and LM loaders so they can parse records
 /// once into native keys instead of slurping `BTreeMap<Vec<u8>, Vec<u8>>`.
 ///
 /// # Errors
 ///
-/// Returns `E` converted from [`TableError`] on I/O or redb failure, or
+/// Returns `E` converted from [`TableError`] on I/O or store failure, or
 /// whatever `visit` returns.
 pub fn for_each_row<E, F>(path: &Path, mut visit: F) -> Result<(), E>
 where
     F: FnMut(&[u8], &[u8]) -> Result<(), E>,
     E: From<TableError>,
 {
-    let db = redb::Builder::new()
-        .open_read_only(path)
-        .map_err(|e| match e {
-            redb::DatabaseError::Storage(redb::StorageError::Io(io)) => TableError::Io(io),
-            other => TableError::Db(other),
-        })
-        .map_err(E::from)?;
-    let txn = db.begin_read().map_err(TableError::from).map_err(E::from)?;
-    let table = txn
-        .open_table(DATA_TABLE)
+    let store = DefaultStore::open_read_only(path)
         .map_err(TableError::from)
         .map_err(E::from)?;
-    for item in table.iter().map_err(TableError::from).map_err(E::from)? {
-        let (key, value) = item.map_err(TableError::from).map_err(E::from)?;
-        visit(key.value(), value.value())?;
+    let mut visitor_error: Option<E> = None;
+    let scan_result = store.for_each("data", &mut |key, value| match visit(key, value) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            visitor_error = Some(e);
+            Err(StoreError::Backend("visitor error".into()))
+        }
+    });
+    if let Some(e) = visitor_error {
+        return Err(e);
     }
-    Ok(())
+    scan_result.map_err(TableError::from).map_err(E::from)
 }
 
 /// Restores the ascending unique-key order a sorted-vector map is searched
@@ -175,15 +144,15 @@ pub(crate) fn ensure_sorted_unique<K: Ord, V>(rows: &mut Vec<(K, V)>) {
     rows.truncate(kept);
 }
 
-/// A read-only lookup table backed by a redb database.
+/// A read-only lookup table backed by a store database.
 ///
 /// Keys and values are opaque byte slices.  Interpretation (e.g. as
 /// `phrase_token_t[]` arrays or UTF-8 text) is the caller's responsibility.
 ///
 /// On open the whole table is loaded into an in-memory map. The decoder
 /// issues millions of lookups over a session (every keystroke × every
-/// prefix × every path), and a redb begin_read + get per call cannot keep
-/// up; the portable tables are tens of megabytes, so the cache fits.
+/// prefix × every path), and a per-call store read cannot keep up; the
+/// portable tables are tens of megabytes, so the cache fits.
 /// [`LookupTable::get`] and [`LookupTable::iter`] borrow those bytes; they
 /// do not clone a row on every call.
 pub struct LookupTable {
@@ -191,7 +160,7 @@ pub struct LookupTable {
 }
 
 impl LookupTable {
-    /// Open a redb table file for reading.
+    /// Open a store table file for reading.
     pub fn open(path: &Path) -> Result<Self, TableError> {
         let mut entries = BTreeMap::new();
         for_each_row(path, |key, value| {
