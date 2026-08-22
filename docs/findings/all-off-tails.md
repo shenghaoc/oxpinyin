@@ -133,5 +133,7 @@ fixture-based scoring path (no live oracle), and classed: four rows are
 one native-key TEXT-set gap (`cang`/`sang`/`lve` plus the `ang` twin),
 and three inputs are correction-bit aliases whose tails *are* two of
 those native gaps (`lue`→`lve`, `agn`/`amg`→`ang`). W12's option-sweep
-residual is no longer unnamed; resolving it is the same ranking re-freeze
-that Class A waits on.
+residual is no longer unnamed. It is its own unresolved deep-tail
+divergence: the 2026-08-22 Class A comparator port closed the
+default-profile corpus residual without touching these inputs, so they
+are not priced by that re-freeze and still await their own diagnosis.

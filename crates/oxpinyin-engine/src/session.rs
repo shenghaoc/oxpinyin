@@ -976,7 +976,9 @@ where
             .unigram_total()
             .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
             .unwrap_or(0)
-            .saturating_add(self.dictionary.phrase_index_item_count());
+            .saturating_add(self.dictionary.phrase_index_item_count().map_err(|error| {
+                EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
+            })?);
         let addon_total = self
             .model
             .addon_unigram_total()

@@ -493,7 +493,9 @@ tie-swaps  0
 ```
 
 Movement means a leak into existing behaviour and is a STOP. Pins reflect
-the 2026-08-21 amendment (`docs/findings/pin-refreeze-2026-08.md`).
+the 2026-08-22 third amendment — the Class A comparator port
+(`docs/findings/pin-refreeze-2026-08.md`;
+`docs/findings/corpus-tail.md`).
 
 ### 8.2 New differentials
 
