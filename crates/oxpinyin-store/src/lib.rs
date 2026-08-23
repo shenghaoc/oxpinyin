@@ -587,6 +587,24 @@ mod tests {
     }
 
     #[test]
+    fn redb_is_empty_probe_does_not_create_tables() {
+        let path = temp_path("wtxn-probe");
+        let store = RedbStore::create(&path).unwrap();
+        assert!(store.write(|txn| txn.is_empty("t")).unwrap());
+        drop(store);
+        // A committed write transaction that only probed emptiness must
+        // leave the database with zero tables; assert it against redb
+        // directly because the OrderedStore API cannot distinguish an
+        // absent table from an empty one.
+        let db = redb::ReadOnlyDatabase::open(&path).unwrap();
+        let txn = db.begin_read().unwrap();
+        assert_eq!(txn.list_tables().unwrap().count(), 0);
+        drop(txn);
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn range_included_included() {
         let path = temp_path("range-ii");
         let store = RedbStore::create(&path).unwrap();
