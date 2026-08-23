@@ -22,6 +22,10 @@ type SnapTxn<'a> = heed::RoTxn<'a, WithoutTls>;
 // ── helpers ───────────────────────────────────────────────────────
 
 const MAX_DBS: u32 = 32;
+/// LMDB accepts keys of at most 511 bytes and rejects the empty key
+/// (`MDB_BAD_VALSIZE`); enforced ahead of insertion so callers get
+/// [`StoreError::InvalidInput`] instead of a backend error.
+const MAX_KEY_LEN: usize = 511;
 /// Default map-size ceiling: 1 GiB of virtual address space.  LMDB
 /// commits address space sparsely, so this is a cap on database size,
 /// not an up-front allocation.  heed cannot resize an open environment,
@@ -103,7 +107,16 @@ fn open_env(path: &Path, read_only: bool, map_size: usize) -> Result<Env, StoreE
         opts.flags(flags);
         opts.open(path)
     }
-    .map_err(map_heed_error)
+    .map_err(|e| match e {
+        // heed rejects a map size that is not a multiple of the system
+        // page size before touching LMDB, surfacing it as an
+        // `ErrorKind::InvalidInput` I/O error; reclassify it so callers
+        // see StoreError::InvalidInput rather than Io.
+        heed::Error::Io(io) if io.kind() == std::io::ErrorKind::InvalidInput => {
+            StoreError::InvalidInput("map size must be a multiple of the system page size")
+        }
+        other => map_heed_error(other),
+    })
 }
 
 // ── store ─────────────────────────────────────────────────────────
@@ -123,6 +136,9 @@ pub struct LmdbStore {
 impl LmdbStore {
     /// Open or create the store with a non-default map-size ceiling
     /// (`bytes` of virtual address space; LMDB commits it sparsely).
+    ///
+    /// `map_size` must be a multiple of the system page size; other
+    /// values fail with [`StoreError::InvalidInput`].
     ///
     /// heed cannot resize an open environment, so the ceiling chosen at
     /// open time is fixed for the store's lifetime.  Use this instead of
@@ -389,6 +405,9 @@ impl WriteTxn for LmdbWriteTxn<'_> {
 
     fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         validate_table_name(table)?;
+        if key.is_empty() || key.len() > MAX_KEY_LEN {
+            return Err(StoreError::InvalidInput("key length must be 1..=511 bytes"));
+        }
         let db: Database<Bytes, Bytes> = self
             .env
             .create_database(&mut self.txn, Some(table))

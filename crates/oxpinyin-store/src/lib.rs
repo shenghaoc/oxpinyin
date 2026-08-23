@@ -100,6 +100,11 @@ pub trait WriteTxn {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Insert or overwrite `key` → `value` in `table`.
+    ///
+    /// Backends may bound key length by their storage format; the LMDB
+    /// backend rejects keys outside 1..=511 bytes with
+    /// [`StoreError::InvalidInput`], while the redb backend has no such
+    /// limit.
     fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
 
     /// Remove `key` from `table` (no-op if absent).
@@ -898,6 +903,7 @@ mod tests {
                             )
                         }));
                         assert_invalid(store.write(|txn| txn.for_each(table, &mut |_, _| Ok(()))));
+                        assert_invalid(store.write(|txn| txn.is_empty(table)));
                     }
                     drop(store);
                     cleanup(&path);
@@ -1087,6 +1093,57 @@ mod tests {
         assert_eq!(txn.list_tables().unwrap().count(), 0);
         drop(txn);
         drop(db);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[cfg(feature = "lmdb")]
+    #[test]
+    fn lmdb_rejects_key_lengths_lmdb_cannot_store() {
+        let path = std::env::temp_dir().join(format!(
+            "oxpinyin-store-lmdb-keylen-{}.mdb",
+            std::process::id(),
+        ));
+        let _ = std::fs::remove_file(&path);
+        let lock: std::path::PathBuf = {
+            let mut l = path.clone().into_os_string();
+            l.push("-lock");
+            l.into()
+        };
+        let store = LmdbStore::create(&path).unwrap();
+        assert!(matches!(
+            store.write(|txn| txn.put("t", b"", b"v")),
+            Err(StoreError::InvalidInput("key length must be 1..=511 bytes"))
+        ));
+        let long = [b'k'; 512];
+        assert!(matches!(
+            store.write(|txn| txn.put("t", &long, b"v")),
+            Err(StoreError::InvalidInput("key length must be 1..=511 bytes"))
+        ));
+        let boundary = [b'k'; 511];
+        store
+            .write(|txn| txn.put("t", &boundary, b"v"))
+            .expect("511-byte keys are accepted");
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&lock);
+    }
+
+    #[cfg(feature = "lmdb")]
+    #[test]
+    fn lmdb_rejects_unaligned_map_size() {
+        // Absolute: heed resolves the path before validating map-size
+        // alignment, and a relative path fails with NotFound first.
+        let path = std::env::temp_dir().join(format!(
+            "oxpinyin-store-unaligned-{}.mdb",
+            std::process::id(),
+        ));
+        // 3 is not a multiple of any real system page size.
+        assert!(matches!(
+            LmdbStore::create_with_map_size(&path, 3),
+            Err(StoreError::InvalidInput(
+                "map size must be a multiple of the system page size"
+            ))
+        ));
         let _ = std::fs::remove_file(&path);
     }
 
