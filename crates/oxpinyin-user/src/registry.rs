@@ -60,12 +60,42 @@ static OPEN_STORES: OnceLock<Mutex<StoreRegistry>> = OnceLock::new();
 static OPEN_STANDALONE_STORES: OnceLock<Mutex<StandaloneRegistry>> = OnceLock::new();
 
 pub(crate) fn registry_key(path: &Path) -> PathBuf {
+    // An existing file is keyed by its fully canonical path: `.`/`..`
+    // segments and any symlink, including the final component, resolve,
+    // so every alias of the same file collides into one key.
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+    // A missing file cannot canonicalize.  Anchor the key at the
+    // canonical parent (resolving `.`/`..`/symlinks in the directory
+    // part) so the key computed before creation matches the canonical
+    // key computed after it; a bare file name anchors at the CWD.
     match (path.parent(), path.file_name()) {
-        (Some(parent), Some(name)) => match parent.canonicalize() {
-            Ok(base) => base.join(name),
-            Err(_) => path.to_path_buf(),
-        },
-        _ => path.to_path_buf(),
+        (Some(parent), Some(name)) => {
+            let base = if parent.as_os_str().is_empty() {
+                std::env::current_dir().ok()
+            } else {
+                parent.canonicalize().ok()
+            };
+            match base {
+                Some(base) => base.join(name),
+                // The parent chain does not exist either; keep the key
+                // absolute so a relative input still matches later
+                // absolute lookups of the same not-yet-created file.
+                None => absolutize(path),
+            }
+        }
+        _ => absolutize(path),
+    }
+}
+
+fn absolutize(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
     }
 }
 
@@ -88,16 +118,15 @@ impl Drop for StandaloneLease {
 
 /// Reserve `path` for one standalone handle until its last clone drops.
 ///
-/// An existing file is keyed by its fully canonicalized path, so equivalent
-/// aliases — including a symlinked final component — collide into one lease
-/// and a second [`crate::GenericUserStore::create_standalone`] observes
-/// [`UserStoreError::AlreadyOpen`] instead of a second backend handle. A
-/// missing file cannot be resolved that way; it falls back to
-/// [`registry_key`], which canonicalizes the parent directory and joins the
-/// file name.
+/// `path` is keyed by [`registry_key`]: fully canonical when the file
+/// exists (so aliases, including a symlinked final component, collide
+/// into one lease), and anchored at the canonical parent otherwise —
+/// which keeps the key stable across the file's creation, so a second
+/// live [`crate::GenericUserStore::create_standalone`] observes
+/// [`UserStoreError::AlreadyOpen`] regardless of which alias either
+/// call used.
 pub(crate) fn acquire_standalone(path: &Path) -> Option<StandaloneLease> {
-    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let key = registry_key(&resolved);
+    let key = registry_key(path);
     let mut stores = OPEN_STANDALONE_STORES
         .get_or_init(|| Mutex::new(HashSet::new()))
         .lock()
@@ -142,4 +171,81 @@ pub(crate) fn contains_key(path: &Path) -> bool {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     reg.contains_key(&key)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::registry_key;
+    use crate::{GenericUserStore, UserStoreError};
+    use oxpinyin_store::DefaultStore;
+
+    fn temp_paths(tag: &str) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir();
+        let unique = format!("oxpinyin-user-registry-{tag}-{}", std::process::id());
+        let canonical = dir.join(&unique);
+        let dotted = dir.join(format!("./{unique}"));
+        (canonical, dotted)
+    }
+
+    fn cleanup(path: &Path) {
+        let _ = std::fs::remove_file(path);
+        let mut lock = path.as_os_str().to_os_string();
+        lock.push("-lock");
+        let _ = std::fs::remove_file(Path::new(&lock));
+    }
+
+    #[test]
+    fn registry_key_collapses_bare_and_dotted_aliases() {
+        let (canonical, dotted) = temp_paths("key-alias");
+        // Before creation: anchored at the canonical parent.
+        assert_eq!(registry_key(&canonical), registry_key(&dotted));
+        // After creation: fully canonical, still the same key.
+        std::fs::write(&canonical, b"").unwrap();
+        assert_eq!(registry_key(&canonical), registry_key(&dotted));
+        cleanup(&canonical);
+        // A bare relative name and its `./` form resolve against the
+        // process working directory into the same key.
+        let unique = format!("oxpinyin-user-registry-cwd-{}", std::process::id());
+        let cwd = std::env::current_dir().unwrap();
+        let bare = PathBuf::from(&unique);
+        let dotted_cwd = cwd.join(format!("./{unique}"));
+        assert_eq!(registry_key(&dotted_cwd), registry_key(&bare));
+        assert_eq!(registry_key(&bare), cwd.join(&unique));
+    }
+
+    #[test]
+    fn standalone_lease_survives_creation_with_dotted_alias() {
+        let (canonical, dotted) = temp_paths("dotted-lease");
+        cleanup(&canonical);
+        // Reserve through the dotted alias while the file is absent, then
+        // re-reserve through the canonical name now that it exists: both
+        // must observe the same lease.
+        let first = GenericUserStore::<DefaultStore>::create_standalone(&dotted).unwrap();
+        assert!(matches!(
+            GenericUserStore::<DefaultStore>::create_standalone(&canonical),
+            Err(UserStoreError::AlreadyOpen)
+        ));
+        drop(first);
+        cleanup(&canonical);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn standalone_lease_collapses_symlinked_final_component() {
+        let (canonical, _dotted) = temp_paths("symlink-lease");
+        let link = canonical.with_extension("mdb.link");
+        cleanup(&canonical);
+        let _ = std::fs::remove_file(&link);
+        let store = GenericUserStore::<DefaultStore>::create_standalone(&canonical).unwrap();
+        std::os::unix::fs::symlink(&canonical, &link).unwrap();
+        assert!(matches!(
+            GenericUserStore::<DefaultStore>::create_standalone(&link),
+            Err(UserStoreError::AlreadyOpen)
+        ));
+        drop(store);
+        cleanup(&canonical);
+        let _ = std::fs::remove_file(&link);
+    }
 }

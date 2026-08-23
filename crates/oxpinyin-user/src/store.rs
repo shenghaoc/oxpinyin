@@ -428,7 +428,6 @@ impl<S: OrderedStore> GenericUserStore<S> {
     pub fn create_standalone(path: &Path) -> Result<Self, UserStoreError> {
         let standalone_lease =
             Arc::new(registry::acquire_standalone(path).ok_or(UserStoreError::AlreadyOpen)?);
->>>>>>> 332a825 (feat(user): expose GenericUserStore and a public create_standalone ctor)
         let db = S::create(path)?;
         let inner = Self::init_and_wrap(db)?;
         Ok(Self {
