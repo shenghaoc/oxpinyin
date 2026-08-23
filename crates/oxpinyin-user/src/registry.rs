@@ -73,7 +73,16 @@ pub(crate) fn registry_key(path: &Path) -> PathBuf {
     match (path.parent(), path.file_name()) {
         (Some(parent), Some(name)) => {
             let base = if parent.as_os_str().is_empty() {
-                std::env::current_dir().ok()
+                // A bare name anchors at the CWD. Canonicalize it — not just
+                // `current_dir()` — so this key takes the exact same form as
+                // the `parent.canonicalize()` branch and the file-exists
+                // branch above. On Windows `canonicalize` returns a `\\?\`
+                // verbatim path while `current_dir` does not; mixing the two
+                // gave a bare name and its `./` alias different keys (and a
+                // key that would not match this file once created).
+                std::env::current_dir()
+                    .ok()
+                    .and_then(|cwd| cwd.canonicalize().ok())
             } else {
                 parent.canonicalize().ok()
             };
@@ -212,7 +221,13 @@ mod tests {
         let bare = PathBuf::from(&unique);
         let dotted_cwd = cwd.join(format!("./{unique}"));
         assert_eq!(registry_key(&dotted_cwd), registry_key(&bare));
-        assert_eq!(registry_key(&bare), cwd.join(&unique));
+        // The key anchors at the *canonical* CWD (a no-op on Unix, but on
+        // Windows `canonicalize` adds the `\\?\` prefix that `current_dir`
+        // omits), so compare against the canonicalized form.
+        assert_eq!(
+            registry_key(&bare),
+            cwd.canonicalize().unwrap().join(&unique)
+        );
     }
 
     #[test]
