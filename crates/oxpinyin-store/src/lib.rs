@@ -525,6 +525,104 @@ mod tests {
     }
 
     #[test]
+    fn read_only_reopen_and_rejection() {
+        let path = temp_path("read-only");
+        {
+            let store = RedbStore::create(&path).unwrap();
+            store
+                .write(|txn| {
+                    txn.put("t", b"a", b"1")?;
+                    txn.put("t", b"b", b"2")?;
+                    Ok(())
+                })
+                .unwrap();
+        }
+        let mut ro = RedbStore::open_read_only(&path).unwrap();
+        assert_eq!(ro.get("t", b"a").unwrap(), Some(b"1".to_vec()));
+        assert_eq!(ro.get("t", b"zz").unwrap(), None);
+        assert!(!ro.is_empty("t").unwrap());
+        let rejected: Result<(), _> = ro.write(|_txn| Ok(()));
+        assert!(rejected.is_err());
+        assert!(ro.compact().is_err());
+        drop(ro);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn store_for_each_rows_in_order() {
+        let path = temp_path("for-each");
+        let store = RedbStore::create(&path).unwrap();
+        store
+            .write(|txn| {
+                txn.put("t", b"c", b"3")?;
+                txn.put("t", b"a", b"1")?;
+                txn.put("t", b"b", b"2")?;
+                Ok(())
+            })
+            .unwrap();
+        let mut rows = Vec::new();
+        store
+            .for_each("t", &mut |k, v| {
+                rows.push((k.to_vec(), v.to_vec()));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (b"a".to_vec(), b"1".to_vec()),
+                (b"b".to_vec(), b"2".to_vec()),
+                (b"c".to_vec(), b"3".to_vec()),
+            ]
+        );
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn write_txn_scans_see_own_writes_in_order() {
+        let path = temp_path("wtxn-scan");
+        let store = RedbStore::create(&path).unwrap();
+        store
+            .write(|txn| {
+                txn.put("t", b"d", b"4")?;
+                txn.put("t", b"b", b"2")?;
+                txn.put("t", b"a", b"1")?;
+                txn.put("t", b"c", b"3")?;
+                let mut mid = Vec::new();
+                txn.range(
+                    "t",
+                    Bound::Included(b"b".as_slice()),
+                    Bound::Included(b"c".as_slice()),
+                    &mut |k, v| {
+                        mid.push((k.to_vec(), v.to_vec()));
+                        Ok(())
+                    },
+                )?;
+                assert_eq!(
+                    mid,
+                    vec![
+                        (b"b".to_vec(), b"2".to_vec()),
+                        (b"c".to_vec(), b"3".to_vec())
+                    ]
+                );
+                let mut keys = Vec::new();
+                txn.for_each("t", &mut |k, _v| {
+                    keys.push(k.to_vec());
+                    Ok(())
+                })?;
+                assert_eq!(
+                    keys,
+                    vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec(), b"d".to_vec()]
+                );
+                Ok(())
+            })
+            .unwrap();
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn compact_preserves_data() {
         let path = temp_path("compact");
         let mut store = RedbStore::create(&path).unwrap();
