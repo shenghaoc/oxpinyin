@@ -42,7 +42,7 @@ impl std::error::Error for StoreError {
 }
 
 /// Row visitor passed to [`OrderedStore::for_each`].
-type Visitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a;
+pub type Visitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a;
 
 /// A read-only ordered key–value store.
 ///
