@@ -540,10 +540,12 @@ tolerant floors (top-1 ≥ 55%, top-5 ≥ 80%, absent ≤ 4%) are the
 regression envelope that must hold regardless.
 
 1. **Portable parity (primary metric).**
+
    ```bash
    cargo test -p pinyin-oracle --features oracle-ffi \
        --test real_tables_integration -- --ignored --nocapture
    ```
+
    Report Δ top-1, Δ top-5-set, Δ absent, Δ prefix-10 overlap, Δ
    prefix-depth, and Δ order-only against the baseline top-1 10190,
    top-5-set 10190, absent 0, prefix-10 overlap 98930, prefix-depth
@@ -555,16 +557,20 @@ regression envelope that must hold regardless.
    `pinyin_oracle::OraclePrefix::locate`), per
    `crates/pinyin-oracle/tests/real_tables_integration.rs`.
 2. **Thread-order independence.**
+
    ```bash
    PARITY_SERIAL=1 cargo test --release --locked -p pinyin-oracle \
        --test real_tables_integration -- --nocapture
    ```
+
    Serial and parallel runs must agree bit-for-bit; a change that only moves a
    number under parallelism is a determinism bug, not a parity gain.
 3. **Rank-1 recovery and bucket movement.**
+
    ```bash
    cargo run -p pinyin-oracle --release --bin parity-worst
    ```
+
    Report how often the oracle's rank-1 becomes our rank-1, and the movement of
    the rank 2–5 / 6–9 / 10+ / absent buckets in §1.5.
 4. **Wall-clock and RSS** against the post-PR-#32 baseline (~146s parallel on 12

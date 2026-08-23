@@ -110,7 +110,7 @@ fn main() -> ExitCode {
     let dir = Path::new("/tmp/oxpinyin-export");
     let missing: Vec<&str> = ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"]
         .into_iter()
-        .filter(|table| !dir.join(table).exists())
+        .filter(|table| !dir.join(table).is_file())
         .collect();
     if !missing.is_empty() {
         eprintln!(

@@ -85,8 +85,10 @@ compound binary key.
 
 Originally produced by `oxpinyin-migrate convert` as a **verbatim**
 record-for-record copy of the pin's `bigram.db` (a Tkrzw HashDBM; the bridge
-copied raw key and value bytes untouched). The byte format, frozen from
-observed data:
+copied raw key and value bytes untouched). The committed
+`fixtures/w3/bigram.redb` applies that same verbatim per-record copy
+restricted to the mini allowlist (`fixtures/w3/README.md`); the byte format,
+frozen from observed data, describes both:
 
 - **Key**: previous `phrase_token_t` as 4 bytes little-endian.
 - **Value**: `total: u32` followed by 8-byte records
