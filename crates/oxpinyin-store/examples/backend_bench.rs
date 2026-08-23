@@ -14,7 +14,10 @@
 //! plus binary) is common to both backends, so the redb-vs-lmdb delta is
 //! the signal.  Workload rows derive deterministically from the seed, and
 //! every scenario body is one generic function over `S: OrderedStore` —
-//! both backends see identical keys, values, and operation order.
+//! both backends see identical keys, values, and operation order.  Before
+//! printing each block the parent verifies that both children reported the
+//! same metric set and agrees on every non-measurement metric (counts and
+//! data checksums); a mismatch aborts instead of printing a comparison.
 //!
 //! Sizes via env vars (defaults in parentheses): `BACKEND_BENCH_N`
 //! (100_000 bigram rows; pron = N/2, phrase = N/4), `BACKEND_BENCH_GETS`
@@ -92,7 +95,46 @@ fn parent() {
         } else {
             None
         };
+        verify_parity(scenario, &redb, lmdb.as_deref());
         print_block(scenario, &redb, lmdb.as_deref());
+    }
+}
+
+// Metrics allowed to differ across backends: timings, memory, and on-disk
+// sizes.  Everything else — workload counts and data checksums — must agree
+// exactly, since both children run the same deterministic workload.
+fn is_measurement(key: &str) -> bool {
+    key.ends_with("_ms")
+        || key.starts_with("us_per_")
+        || key.ends_with("_bytes")
+        || key == "size_live"
+        || key == "vmhwm_kib"
+}
+
+fn lookup<'a>(rows: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    rows.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+}
+
+fn verify_parity(scenario: &str, redb: &[(String, String)], lmdb: Option<&[(String, String)]>) {
+    let Some(lmdb) = lmdb else { return };
+    for (key, redb_value) in redb {
+        match lookup(lmdb, key) {
+            None => {
+                eprintln!("{scenario}: lmdb missing metric {key:?}");
+                std::process::exit(1);
+            }
+            Some(lmdb_value) if !is_measurement(key) && lmdb_value != redb_value => {
+                eprintln!("{scenario}: {key} disagrees — redb {redb_value}, lmdb {lmdb_value}");
+                std::process::exit(1);
+            }
+            Some(_) => {}
+        }
+    }
+    for (key, _) in lmdb {
+        if lookup(redb, key).is_none() {
+            eprintln!("{scenario}: unexpected lmdb metric {key:?}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -192,12 +234,14 @@ fn point_get<S: OrderedStore>() {
     let started = Instant::now();
     let mut hits = 0_u64;
     let mut bytes = 0_u64;
+    let mut value_sum = 0_u64;
     for i in 0..cfg.gets as u64 {
         let idx = row_hash(cfg.seed ^ 0xDEAD_BEEF, i) % cfg.n as u64;
         let (key, _) = bigram_row(cfg.seed, idx);
         if let Some(value) = store.get(BIGRAM, &key).expect("get") {
             hits += 1;
             bytes += value.len() as u64;
+            value_sum = fold_bytes(value_sum, &value);
         }
     }
     let gets = started.elapsed();
@@ -205,6 +249,7 @@ fn point_get<S: OrderedStore>() {
 
     emit("gets", cfg.gets);
     emit("hits", hits);
+    emit("value_sum", value_sum);
     emit_ms("gets_ms", gets);
     emit("us_per_get", gets.as_secs_f64() * 1e6 / cfg.gets as f64);
     emit("size_live", file_len(&path));
@@ -220,6 +265,8 @@ fn prefix_scan<S: OrderedStore>() {
 
     let started = Instant::now();
     let mut rows = 0_u64;
+    let mut bigram_sum = 0_u64;
+    let mut pron_sum = 0_u64;
     for i in 0..cfg.prefixes as u64 {
         let h = row_hash(cfg.seed ^ 0xFEED_FACE, i);
 
@@ -232,8 +279,9 @@ fn prefix_scan<S: OrderedStore>() {
                 BIGRAM,
                 Bound::Included(&lo[..]),
                 Bound::Excluded(&hi[..]),
-                &mut |_key, _value| {
+                &mut |key, value| {
                     rows += 1;
+                    bigram_sum = fold_bytes(fold_bytes(bigram_sum, key), value);
                     Ok(())
                 },
             )
@@ -248,8 +296,9 @@ fn prefix_scan<S: OrderedStore>() {
                 PRON,
                 Bound::Included(&lo[..]),
                 Bound::Excluded(&hi[..]),
-                &mut |_key, _value| {
+                &mut |key, value| {
                     rows += 1;
+                    pron_sum = fold_bytes(fold_bytes(pron_sum, key), value);
                     Ok(())
                 },
             )
@@ -260,6 +309,8 @@ fn prefix_scan<S: OrderedStore>() {
 
     emit("prefixes", cfg.prefixes);
     emit("rows_hit", rows);
+    emit("bigram_sum", bigram_sum);
+    emit("pron_sum", pron_sum);
     emit_ms("scan_ms", scan);
     emit("size_live", file_len(&path));
     finish();
@@ -294,9 +345,34 @@ fn save_compact<S: OrderedStore>() {
     store.compact().expect("compact");
     let compact = started.elapsed();
 
+    // Post-timing verification: the overwritten bigram slice must read
+    // back with the replacement value and the removed pron slice must be
+    // gone; the survivor checksum is compared across backends.
+    let mut churn_sum = 0_u64;
+    for i in 0..(cfg.n / 10) as u64 {
+        let (key, _) = bigram_row(cfg.seed, i);
+        match store.get(BIGRAM, &key).expect("get after compact") {
+            Some(value) if value == 997_u64.to_be_bytes() => {
+                churn_sum = fold_bytes(churn_sum, &value);
+            }
+            _ => {
+                eprintln!("bigram row {i} wrong or missing after compact");
+                std::process::exit(1);
+            }
+        }
+    }
+    for i in 0..(cfg.n / 20) as u64 {
+        let (key, _) = pron_row(cfg.seed, i);
+        if store.get(PRON, &key).expect("get after compact").is_some() {
+            eprintln!("pron row {i} still present after removal + compact");
+            std::process::exit(1);
+        }
+    }
+
     emit("live_bytes", live);
     emit("compacted_bytes", file_len(&path));
     emit_ms("compact_ms", compact);
+    emit("churn_sum", churn_sum);
     finish();
     drop(store);
     remove_db(&path);
@@ -328,9 +404,11 @@ fn readonly_scan<S: OrderedStore>() {
     let started = Instant::now();
     let mut rows = 0_u64;
     let mut key_bytes = 0_u64;
-    ro.for_each(SYSTEM, &mut |key, _value| {
+    let mut value_sum = 0_u64;
+    ro.for_each(SYSTEM, &mut |key, value| {
         rows += 1;
         key_bytes += key.len() as u64;
+        value_sum = fold_bytes(value_sum, value);
         Ok(())
     })
     .expect("scan system table");
@@ -339,6 +417,7 @@ fn readonly_scan<S: OrderedStore>() {
 
     emit_ms("load_ms", load);
     emit("rows", rows);
+    emit("value_sum", value_sum);
     emit_ms("open_ro_ms", open);
     emit_ms("scan_ms", scan);
     emit("size_live", file_len(&path));
@@ -397,6 +476,14 @@ fn mix(mut z: u64) -> u64 {
 
 fn row_hash(seed: u64, i: u64) -> u64 {
     mix(seed ^ mix(i))
+}
+
+// FNV-1a-style rolling checksum over returned bytes.
+fn fold_bytes(mut sum: u64, bytes: &[u8]) -> u64 {
+    for &b in bytes {
+        sum = sum.wrapping_mul(0x100_0000_01B3).wrapping_add(u64::from(b));
+    }
+    sum
 }
 
 fn bigram_row(seed: u64, i: u64) -> ([u8; 8], [u8; 8]) {
@@ -464,13 +551,24 @@ struct Config {
 }
 
 fn config() -> Config {
-    Config {
+    let cfg = Config {
         n: env_usize("BACKEND_BENCH_N", 100_000),
         gets: env_usize("BACKEND_BENCH_GETS", 50_000),
         prefixes: env_usize("BACKEND_BENCH_PREFIXES", 128),
         readonly: env_usize("BACKEND_BENCH_READONLY", 400_000),
         seed: env_u64("BACKEND_BENCH_SEED", 0x0BB5_EED1),
+    };
+    // phrase_row keys on i % PHRASE_TOKEN_DOMAIN, so a phrase workload
+    // larger than the token domain would wrap and overwrite its own rows.
+    if cfg.n / 4 > PHRASE_TOKEN_DOMAIN as usize {
+        eprintln!(
+            "BACKEND_BENCH_N too large: n/4 = {} exceeds the phrase \
+             token domain {PHRASE_TOKEN_DOMAIN}; phrase keys would collide",
+            cfg.n / 4
+        );
+        std::process::exit(2);
     }
+    cfg
 }
 
 fn env_usize(name: &str, default: usize) -> usize {
