@@ -120,6 +120,10 @@ pub trait OrderedStore {
     /// MVCC-isolated: writes committed after this call are invisible
     /// through it.  The caller may store it in a struct field and
     /// reuse it across many calls.
+    ///
+    /// Retaining the snapshot delays page reclamation: freed pages
+    /// cannot be reclaimed and [`OrderedStore::compact`] fails until
+    /// the snapshot is dropped.
     fn snapshot(&self) -> Result<Self::ReadSnapshot, StoreError>;
 
     /// Open an existing store file in read-only mode.
@@ -137,7 +141,8 @@ pub trait OrderedStore {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Visit every `(key, value)` of `table` in ascending key-byte order,
-    /// borrowing each row (no per-row clone).  Stops early on visitor `Err`.
+    /// borrowing each row (no per-row clone).  Stops early on visitor
+    /// `Err`.  An absent table is treated as empty.
     fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError>;
 
     /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
@@ -186,6 +191,77 @@ impl RedbStore {
     }
 }
 
+// ── redb shared read helpers ───────────────────────────────────────
+
+/// An absent table is treated as empty (`None`).
+fn read_get(
+    txn: &redb::ReadTransaction,
+    table: &str,
+    key: &[u8],
+) -> Result<Option<Vec<u8>>, StoreError> {
+    let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+    match txn.open_table(def) {
+        Ok(tbl) => Ok(tbl
+            .get(key)
+            .map_err(map_storage_error)?
+            .map(|g| g.value().to_vec())),
+        Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
+        Err(e) => Err(map_table_error(e)),
+    }
+}
+
+/// An absent table is treated as empty (no visits).
+fn read_range(
+    txn: &redb::ReadTransaction,
+    table: &str,
+    lo: Bound<&[u8]>,
+    hi: Bound<&[u8]>,
+    visit: &mut Visitor<'_>,
+) -> Result<(), StoreError> {
+    let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+    match txn.open_table(def) {
+        Ok(tbl) => {
+            for item in tbl.range::<&[u8]>((lo, hi)).map_err(map_storage_error)? {
+                let (key, value) = item.map_err(map_storage_error)?;
+                visit(key.value(), value.value())?;
+            }
+            Ok(())
+        }
+        Err(redb::TableError::TableDoesNotExist(_)) => Ok(()),
+        Err(e) => Err(map_table_error(e)),
+    }
+}
+
+/// An absent table is treated as empty (no visits).
+fn read_for_each(
+    txn: &redb::ReadTransaction,
+    table: &str,
+    visit: &mut Visitor<'_>,
+) -> Result<(), StoreError> {
+    let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+    match txn.open_table(def) {
+        Ok(tbl) => {
+            for item in tbl.iter().map_err(map_storage_error)? {
+                let (key, value) = item.map_err(map_storage_error)?;
+                visit(key.value(), value.value())?;
+            }
+            Ok(())
+        }
+        Err(redb::TableError::TableDoesNotExist(_)) => Ok(()),
+        Err(e) => Err(map_table_error(e)),
+    }
+}
+
+/// An absent table counts as empty.
+fn read_is_empty(txn: &redb::ReadTransaction, table: &str) -> Result<bool, StoreError> {
+    let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+    match txn.open_table(def) {
+        Ok(tbl) => tbl.is_empty().map_err(map_storage_error),
+        Err(redb::TableError::TableDoesNotExist(_)) => Ok(true),
+        Err(e) => Err(map_table_error(e)),
+    }
+}
+
 impl OrderedStore for RedbStore {
     type ReadSnapshot = RedbReadSnapshot;
 
@@ -211,27 +287,13 @@ impl OrderedStore for RedbStore {
     }
 
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
         let txn = self.begin_read()?;
-        match txn.open_table(def) {
-            Ok(tbl) => Ok(tbl
-                .get(key)
-                .map_err(map_storage_error)?
-                .map(|g| g.value().to_vec())),
-            Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
-            Err(e) => Err(map_table_error(e)),
-        }
+        read_get(&txn, table, key)
     }
 
     fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
         let txn = self.begin_read()?;
-        let tbl = txn.open_table(def).map_err(map_table_error)?;
-        for item in tbl.iter().map_err(map_storage_error)? {
-            let (key, value) = item.map_err(map_storage_error)?;
-            visit(key.value(), value.value())?;
-        }
-        Ok(())
+        read_for_each(&txn, table, visit)
     }
 
     fn range(
@@ -241,29 +303,13 @@ impl OrderedStore for RedbStore {
         hi: Bound<&[u8]>,
         visit: &mut Visitor<'_>,
     ) -> Result<(), StoreError> {
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
         let txn = self.begin_read()?;
-        match txn.open_table(def) {
-            Ok(tbl) => {
-                for item in tbl.range::<&[u8]>((lo, hi)).map_err(map_storage_error)? {
-                    let (key, value) = item.map_err(map_storage_error)?;
-                    visit(key.value(), value.value())?;
-                }
-                Ok(())
-            }
-            Err(redb::TableError::TableDoesNotExist(_)) => Ok(()),
-            Err(e) => Err(map_table_error(e)),
-        }
+        read_range(&txn, table, lo, hi, visit)
     }
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
         let txn = self.begin_read()?;
-        match txn.open_table(def) {
-            Ok(tbl) => tbl.is_empty().map_err(map_storage_error),
-            Err(redb::TableError::TableDoesNotExist(_)) => Ok(true),
-            Err(e) => Err(map_table_error(e)),
-        }
+        read_is_empty(&txn, table)
     }
 
     fn write<R>(
@@ -306,15 +352,7 @@ pub struct RedbReadSnapshot {
 
 impl ReadSnapshot for RedbReadSnapshot {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
-        match self.txn.open_table(def) {
-            Ok(tbl) => Ok(tbl
-                .get(key)
-                .map_err(map_storage_error)?
-                .map(|g| g.value().to_vec())),
-            Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
-            Err(e) => Err(map_table_error(e)),
-        }
+        read_get(&self.txn, table, key)
     }
 
     fn range(
@@ -324,42 +362,15 @@ impl ReadSnapshot for RedbReadSnapshot {
         hi: Bound<&[u8]>,
         visit: &mut Visitor<'_>,
     ) -> Result<(), StoreError> {
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
-        match self.txn.open_table(def) {
-            Ok(tbl) => {
-                for item in tbl.range::<&[u8]>((lo, hi)).map_err(map_storage_error)? {
-                    let (key, value) = item.map_err(map_storage_error)?;
-                    visit(key.value(), value.value())?;
-                }
-                Ok(())
-            }
-            Err(redb::TableError::TableDoesNotExist(_)) => Ok(()),
-            Err(e) => Err(map_table_error(e)),
-        }
+        read_range(&self.txn, table, lo, hi, visit)
     }
 
     fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
-        match self.txn.open_table(def) {
-            Ok(tbl) => {
-                for item in tbl.iter().map_err(map_storage_error)? {
-                    let (key, value) = item.map_err(map_storage_error)?;
-                    visit(key.value(), value.value())?;
-                }
-                Ok(())
-            }
-            Err(redb::TableError::TableDoesNotExist(_)) => Ok(()),
-            Err(e) => Err(map_table_error(e)),
-        }
+        read_for_each(&self.txn, table, visit)
     }
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
-        match self.txn.open_table(def) {
-            Ok(tbl) => tbl.is_empty().map_err(map_storage_error),
-            Err(redb::TableError::TableDoesNotExist(_)) => Ok(true),
-            Err(e) => Err(map_table_error(e)),
-        }
+        read_is_empty(&self.txn, table)
     }
 }
 
@@ -756,6 +767,79 @@ mod tests {
     }
 
     // ── snapshot tests ─────────────────────────────────────────────
+
+    #[test]
+    fn absent_table_reads_are_empty() {
+        let path = temp_path("absent");
+        let store = RedbStore::create(&path).unwrap();
+
+        assert_eq!(store.get("absent", b"k").unwrap(), None);
+        assert!(store.is_empty("absent").unwrap());
+        let mut visited = false;
+        store
+            .for_each("absent", &mut |_k, _v| {
+                visited = true;
+                Ok(())
+            })
+            .unwrap();
+        assert!(!visited);
+        store
+            .range(
+                "absent",
+                Bound::Unbounded,
+                Bound::Unbounded,
+                &mut |_k, _v| {
+                    visited = true;
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert!(!visited);
+
+        let snap = store.snapshot().unwrap();
+        assert_eq!(snap.get("absent", b"k").unwrap(), None);
+        assert!(snap.is_empty("absent").unwrap());
+        snap.for_each("absent", &mut |_k, _v| {
+            visited = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(!visited);
+        snap.range(
+            "absent",
+            Bound::Unbounded,
+            Bound::Unbounded,
+            &mut |_k, _v| {
+                visited = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(!visited);
+
+        drop(snap);
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn live_snapshot_blocks_compact_until_dropped() {
+        let path = temp_path("snap-compact");
+        let mut store = RedbStore::create(&path).unwrap();
+        store
+            .write(|txn| {
+                txn.put("t", b"k", b"v")?;
+                Ok(())
+            })
+            .unwrap();
+        let snap = store.snapshot().unwrap();
+        assert!(store.compact().is_err());
+        drop(snap);
+        store.compact().unwrap();
+        assert_eq!(store.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
 
     #[test]
     fn snapshot_consistency() {
