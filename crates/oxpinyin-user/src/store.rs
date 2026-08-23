@@ -267,40 +267,14 @@ fn remove_pronunciations(txn: &mut dyn WriteTxn, token: Token) -> Result<(), Sto
 }
 
 /// Whether the store holds any user data, evaluated inside `txn`.
+///
+/// `||` short-circuits, so each table is probed with a first-row
+/// `WriteTxn::is_empty` check and full-table scans are avoided.
 fn has_user_data_in_write_txn(txn: &dyn WriteTxn) -> Result<bool, StoreError> {
-    let mut bigram_empty = true;
-    txn.for_each(BIGRAM, &mut |_, _| {
-        bigram_empty = false;
-        Ok(())
-    })?;
-    if !bigram_empty {
-        return Ok(true);
-    }
-
-    let mut unigram_empty = true;
-    txn.for_each(UNIGRAM, &mut |_, _| {
-        unigram_empty = false;
-        Ok(())
-    })?;
-    if !unigram_empty {
-        return Ok(true);
-    }
-
-    let mut phrase_empty = true;
-    txn.for_each(PHRASE, &mut |_, _| {
-        phrase_empty = false;
-        Ok(())
-    })?;
-    if !phrase_empty {
-        return Ok(true);
-    }
-
-    let mut pron_empty = true;
-    txn.for_each(PRONUNCIATION, &mut |_, _| {
-        pron_empty = false;
-        Ok(())
-    })?;
-    Ok(!pron_empty)
+    Ok(!txn.is_empty(BIGRAM)?
+        || !txn.is_empty(UNIGRAM)?
+        || !txn.is_empty(PHRASE)?
+        || !txn.is_empty(PRONUNCIATION)?)
 }
 
 // ── UserStore ─────────────────────────────────────────────────────
