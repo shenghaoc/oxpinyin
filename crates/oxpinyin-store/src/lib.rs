@@ -105,6 +105,11 @@ pub trait WriteTxn {
     /// backend rejects keys outside 1..=511 bytes with
     /// [`StoreError::InvalidInput`], while the redb backend has no such
     /// limit.
+    ///
+    /// Backends may also bound the number of distinct tables: the LMDB
+    /// backend caps a store at 32 named tables and rejects writes to a 33rd
+    /// with [`StoreError::InvalidInput`], while the redb backend has no such
+    /// limit.
     fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
 
     /// Remove `key` from `table` (no-op if absent).
@@ -574,7 +579,27 @@ mod tests {
             mod $mod {
                 use super::super::*;
 
-                fn temp_path(tag: &str) -> std::path::PathBuf {
+                /// Owns a temporary store path and removes both the data
+                /// file and its `-lock` sidecar when it drops — including
+                /// when a test panics, so a failed assertion leaves no
+                /// state behind in `std::env::temp_dir()`. Derefs to
+                /// `Path`, so `&guard` passes anywhere a `&Path` is wanted.
+                struct TempPath(std::path::PathBuf);
+
+                impl std::ops::Deref for TempPath {
+                    type Target = std::path::Path;
+                    fn deref(&self) -> &std::path::Path {
+                        &self.0
+                    }
+                }
+
+                impl Drop for TempPath {
+                    fn drop(&mut self) {
+                        cleanup(&self.0);
+                    }
+                }
+
+                fn temp_path(tag: &str) -> TempPath {
                     let path = std::env::temp_dir().join(format!(
                         "oxpinyin-store-{}-{tag}-{}.{}",
                         stringify!($mod),
@@ -582,7 +607,7 @@ mod tests {
                         $ext,
                     ));
                     cleanup(&path);
-                    path
+                    TempPath(path)
                 }
 
                 fn cleanup(path: &std::path::Path) {
@@ -1077,6 +1102,17 @@ mod tests {
     #[cfg(feature = "lmdb")]
     store_tests!(lmdb, LmdbStore, "lmdb");
 
+    /// Removes the borrowed path on drop, so a panicking test leaves no
+    /// file behind in `std::env::temp_dir()`. redb keeps no `-lock` sidecar,
+    /// so the single data file is all that needs removing.
+    struct RemoveOnDrop<'a>(&'a std::path::Path);
+
+    impl Drop for RemoveOnDrop<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(self.0);
+        }
+    }
+
     #[test]
     fn redb_is_empty_probe_does_not_create_tables() {
         use ::redb::ReadableDatabase;
@@ -1085,6 +1121,7 @@ mod tests {
             std::process::id(),
         ));
         let _ = std::fs::remove_file(&path);
+        let _cleanup = RemoveOnDrop(&path);
         let store = crate::RedbStore::create(&path).unwrap();
         assert!(store.write(|txn| txn.is_empty("t")).unwrap());
         drop(store);
@@ -1099,7 +1136,6 @@ mod tests {
         assert_eq!(txn.list_tables().unwrap().count(), 0);
         drop(txn);
         drop(db);
-        let _ = std::fs::remove_file(&path);
     }
 
     #[cfg(feature = "lmdb")]
@@ -1175,5 +1211,72 @@ mod tests {
             LmdbStore::open_read_only(&path),
             Err(StoreError::InvalidInput("path contains NUL"))
         ));
+    }
+
+    #[cfg(feature = "lmdb")]
+    #[test]
+    fn lmdb_rejects_more_than_max_named_tables() {
+        let path = std::env::temp_dir().join(format!(
+            "oxpinyin-store-lmdb-maxdbs-{}.mdb",
+            std::process::id(),
+        ));
+        let _ = std::fs::remove_file(&path);
+        let lock: std::path::PathBuf = {
+            let mut l = path.clone().into_os_string();
+            l.push("-lock");
+            l.into()
+        };
+        let store = LmdbStore::create(&path).unwrap();
+        // LMDB caps the environment at 32 named tables; writing past that
+        // must surface as InvalidInput, not an opaque backend error. The
+        // loop runs well beyond 32 so the exact off-by-one does not matter.
+        let result = store.write(|txn| {
+            for i in 0..40 {
+                txn.put(&format!("t{i}"), b"k", b"v")?;
+            }
+            Ok(())
+        });
+        assert!(matches!(
+            result,
+            Err(StoreError::InvalidInput(
+                "too many distinct tables (LMDB caps a store at 32)"
+            ))
+        ));
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&lock);
+    }
+
+    #[cfg(feature = "lmdb")]
+    #[test]
+    fn lmdb_open_read_only_with_map_size_roundtrips() {
+        // A store created with a non-default ceiling reopens read-only with
+        // the same ceiling — the path a store grown past the 1 GiB default
+        // needs, since the trait `open_read_only` hardcodes that default.
+        // (Address space is committed sparsely, so the 2 GiB ceiling costs
+        // nothing on disk for one tiny record.)
+        const BIG_MAP: usize = 2 << 30; // 2 GiB, a multiple of the page size
+        let path = std::env::temp_dir().join(format!(
+            "oxpinyin-store-lmdb-romap-{}.mdb",
+            std::process::id(),
+        ));
+        let _ = std::fs::remove_file(&path);
+        let lock: std::path::PathBuf = {
+            let mut l = path.clone().into_os_string();
+            l.push("-lock");
+            l.into()
+        };
+        let store = LmdbStore::create_with_map_size(&path, BIG_MAP).unwrap();
+        store.write(|txn| txn.put("t", b"k", b"v")).unwrap();
+        drop(store);
+        let readonly = LmdbStore::open_read_only_with_map_size(&path, BIG_MAP).unwrap();
+        assert_eq!(readonly.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+        assert!(matches!(
+            readonly.write(|txn| txn.put("t", b"k2", b"v2")),
+            Err(StoreError::ReadOnly)
+        ));
+        drop(readonly);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&lock);
     }
 }

@@ -125,6 +125,11 @@ fn open_env(path: &Path, read_only: bool, map_size: usize) -> Result<Env, StoreE
 ///
 /// Feature-gated behind `lmdb`.  Uses a single file (`NO_SUB_DIR`)
 /// and the default byte-lexicographic comparator.
+///
+/// LMDB caps an environment at 32 named tables (`MAX_DBS`). Writing to a
+/// 33rd distinct table fails with [`StoreError::InvalidInput`]; the redb
+/// backend has no such limit. Keep the total number of distinct table
+/// names at or below 32 for cross-backend parity.
 pub struct LmdbStore {
     env: Arc<Env>,
     #[allow(dead_code)]
@@ -153,6 +158,26 @@ impl LmdbStore {
             live_snapshots: Arc::new(AtomicUsize::new(0)),
         })
     }
+
+    /// Open the store read-only with a non-default map-size ceiling.
+    ///
+    /// [`OrderedStore::open_read_only`] uses the 1 GiB default, which
+    /// cannot reopen a store that was grown past that ceiling with
+    /// [`LmdbStore::create_with_map_size`]: LMDB rejects a map size smaller
+    /// than the data already on disk.  Pass the same (or a larger) ceiling
+    /// used to create the store.
+    ///
+    /// `map_size` must be a multiple of the system page size; other values
+    /// fail with [`StoreError::InvalidInput`].
+    pub fn open_read_only_with_map_size(path: &Path, map_size: usize) -> Result<Self, StoreError> {
+        let env = open_env(path, true, map_size)?;
+        Ok(Self {
+            env: Arc::new(env),
+            path: path.to_path_buf(),
+            read_only: true,
+            live_snapshots: Arc::new(AtomicUsize::new(0)),
+        })
+    }
 }
 
 impl OrderedStore for LmdbStore {
@@ -165,7 +190,7 @@ impl OrderedStore for LmdbStore {
         self.live_snapshots.fetch_add(1, Ordering::Release);
         Ok(LmdbReadSnapshot {
             inner,
-            live: Arc::clone(&self.live_snapshots),
+            _live: LiveSnapshotGuard(Arc::clone(&self.live_snapshots)),
         })
     }
 
@@ -284,6 +309,11 @@ impl OrderedStore for LmdbStore {
         if self.read_only {
             return Err(StoreError::ReadOnly);
         }
+        // LMDB reclaims freed pages in place, so compaction itself does no
+        // work here. The live-snapshot check is nonetheless retained so this
+        // backend rejects the same precondition as redb (whose compaction
+        // cannot run while a read snapshot pins pages); keeping the two
+        // backends' contracts identical. Do not remove it as dead logic.
         if self.live_snapshots.load(Ordering::Acquire) > 0 {
             return Err(StoreError::Backend(Box::new(SnapshotOpenError)));
         }
@@ -301,16 +331,27 @@ self_cell!(
     }
 );
 
-/// A consistent read snapshot backed by an LMDB read transaction.
-pub struct LmdbReadSnapshot {
-    inner: SnapshotInner,
-    live: Arc<AtomicUsize>,
+/// Decrements the live-snapshot counter when it drops.
+///
+/// Held as the last field of [`LmdbReadSnapshot`] so it runs *after*
+/// `inner` releases the LMDB read transaction (fields drop in declaration
+/// order). The counter therefore never reaches zero while a transaction is
+/// still open, which closes a latent TOCTOU should [`LmdbStore::compact`]
+/// ever be changed to take `&self` instead of `&mut self`.
+struct LiveSnapshotGuard(Arc<AtomicUsize>);
+
+impl Drop for LiveSnapshotGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Release);
+    }
 }
 
-impl Drop for LmdbReadSnapshot {
-    fn drop(&mut self) {
-        self.live.fetch_sub(1, Ordering::Release);
-    }
+/// A consistent read snapshot backed by an LMDB read transaction.
+pub struct LmdbReadSnapshot {
+    /// Dropped before `_live` (declaration order) so the read transaction
+    /// is released before the live-snapshot counter is decremented.
+    inner: SnapshotInner,
+    _live: LiveSnapshotGuard,
 }
 
 impl ReadSnapshot for LmdbReadSnapshot {
@@ -411,7 +452,15 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         let db: Database<Bytes, Bytes> = self
             .env
             .create_database(&mut self.txn, Some(table))
-            .map_err(map_heed_error)?;
+            .map_err(|e| match e {
+                // LMDB caps the environment at MAX_DBS named tables; the
+                // over-limit table name is caller input, so surface it as
+                // InvalidInput rather than an opaque backend error.
+                heed::Error::Mdb(heed::MdbError::DbsFull) => {
+                    StoreError::InvalidInput("too many distinct tables (LMDB caps a store at 32)")
+                }
+                other => map_heed_error(other),
+            })?;
         db.put(&mut self.txn, key, value).map_err(map_heed_error)?;
         Ok(())
     }
