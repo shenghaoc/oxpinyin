@@ -236,6 +236,7 @@ fn read_get(
     table: &str,
     key: &[u8],
 ) -> Result<Option<Vec<u8>>, StoreError> {
+    validate_table_name(table)?;
     let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
     match txn.open_table(def) {
         Ok(tbl) => Ok(tbl
@@ -255,6 +256,7 @@ fn read_range(
     hi: Bound<&[u8]>,
     visit: &mut Visitor<'_>,
 ) -> Result<(), StoreError> {
+    validate_table_name(table)?;
     let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
     match txn.open_table(def) {
         Ok(tbl) => {
@@ -275,6 +277,7 @@ fn read_for_each(
     table: &str,
     visit: &mut Visitor<'_>,
 ) -> Result<(), StoreError> {
+    validate_table_name(table)?;
     let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
     match txn.open_table(def) {
         Ok(tbl) => {
@@ -291,6 +294,7 @@ fn read_for_each(
 
 /// An absent table counts as empty.
 fn read_is_empty(txn: &redb::ReadTransaction, table: &str) -> Result<bool, StoreError> {
+    validate_table_name(table)?;
     let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
     match txn.open_table(def) {
         Ok(tbl) => tbl.is_empty().map_err(map_storage_error),
@@ -367,7 +371,7 @@ impl OrderedStore for RedbStore {
                 Ok(result)
             }
             Err(error) => {
-                txn.abort().map_err(map_storage_error)?;
+                let _ = txn.abort();
                 Err(error)
             }
         }
@@ -607,6 +611,10 @@ mod tests {
                         Err(StoreError::Backend("deliberate rollback".into()))
                     });
                     assert!(result.is_err());
+                    assert!(matches!(
+                        result,
+                        Err(StoreError::Backend(ref e)) if e.to_string() == "deliberate rollback"
+                    ));
                     assert_eq!(store.get("t", b"a").unwrap(), None);
                     assert_eq!(store.get("t", b"b").unwrap(), None);
                     assert_eq!(store.get("u", b"c").unwrap(), None);
@@ -775,6 +783,57 @@ mod tests {
                         )
                         .unwrap();
                     assert_eq!(rows, vec![(b"a".to_vec(), Vec::new())]);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn empty_bounds_never_match_or_error() {
+                    let path = temp_path("empty-bounds");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"a", b"1")?;
+                            txn.put("t", b"b", b"2")?;
+                            Ok(())
+                        })
+                        .unwrap();
+
+                    let mut keys = Vec::new();
+                    store
+                        .range(
+                            "t",
+                            Bound::Included(&[]),
+                            Bound::Unbounded,
+                            &mut |k, _| {
+                                keys.push(k.to_vec());
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(keys, vec![b"a".to_vec(), b"b".to_vec()]);
+
+                    for hi in [Bound::<&[u8]>::Excluded(&[]), Bound::Included(&[])] {
+                        let mut upper_empty_keys = Vec::new();
+                        store
+                            .range("t", Bound::Unbounded, hi, &mut |k, _| {
+                                upper_empty_keys.push(k.to_vec());
+                                Ok(())
+                            })
+                            .unwrap();
+                        assert!(upper_empty_keys.is_empty());
+                    }
+
+                    store
+                        .write(|txn| {
+                            txn.range(
+                                "t",
+                                Bound::Included(&[]),
+                                Bound::Excluded(&[]),
+                                &mut |_, _| Ok(()),
+                            )
+                        })
+                        .unwrap();
                     drop(store);
                     cleanup(&path);
                 }
