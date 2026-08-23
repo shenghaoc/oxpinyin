@@ -28,6 +28,11 @@
 //! Compaction is backend-dependent and best-effort: redb rewrites and
 //! reclaims pages, while LMDB reuses freed pages in place and does not shrink.
 //! The save_compact scenario reports timings and sizes for both backends.
+//!
+//! On Unix, on-disk sizes report both apparent length (st_size) and
+//! allocated blocks (st_blocks × 512) of the data file only; allocated is
+//! the comparison figure, and apparent >> allocated reveals a sparse file.
+//! On other platforms, allocated bytes are reported as zero (unavailable).
 
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
@@ -160,13 +165,13 @@ fn spawn_child(backend: &str, scenario: &str) -> Vec<(String, String)> {
 
 fn print_block(scenario: &str, redb: &[(String, String)], lmdb: Option<&[(String, String)]>) {
     println!("── {scenario} ──");
-    println!("  {:<18} {:>14} {:>14}", "metric", "redb", "lmdb");
+    println!("  {:<26} {:>14} {:>14}", "metric", "redb", "lmdb");
     for (key, value) in redb {
         let lmdb_value = lmdb
             .and_then(|rows| rows.iter().find(|(k, _)| k == key))
             .map(|(_, v)| v.as_str())
             .unwrap_or("-");
-        println!("  {:<18} {:>14} {:>14}", key, value, lmdb_value);
+        println!("  {:<26} {:>14} {:>14}", key, value, lmdb_value);
     }
     println!();
 }
@@ -220,7 +225,9 @@ fn bulk_load<S: OrderedStore>() {
     emit("rows_bigram", count_rows(&store, BIGRAM));
     emit("rows_pron", count_rows(&store, PRON));
     emit("rows_phrase", count_rows(&store, PHRASE));
-    emit("size_live", file_len(&path));
+    let (live_apparent, live_alloc) = file_sizes(&path);
+    emit("live_apparent_bytes", live_apparent);
+    emit("live_alloc_bytes", live_alloc);
     finish();
     drop(store);
     remove_db(&path);
@@ -252,7 +259,9 @@ fn point_get<S: OrderedStore>() {
     emit("value_sum", value_sum);
     emit_ms("gets_ms", gets);
     emit("us_per_get", gets.as_secs_f64() * 1e6 / cfg.gets as f64);
-    emit("size_live", file_len(&path));
+    let (live_apparent, live_alloc) = file_sizes(&path);
+    emit("live_apparent_bytes", live_apparent);
+    emit("live_alloc_bytes", live_alloc);
     finish();
     drop(store);
     remove_db(&path);
@@ -312,7 +321,9 @@ fn prefix_scan<S: OrderedStore>() {
     emit("bigram_sum", bigram_sum);
     emit("pron_sum", pron_sum);
     emit_ms("scan_ms", scan);
-    emit("size_live", file_len(&path));
+    let (live_apparent, live_alloc) = file_sizes(&path);
+    emit("live_apparent_bytes", live_apparent);
+    emit("live_alloc_bytes", live_alloc);
     finish();
     drop(store);
     remove_db(&path);
@@ -340,10 +351,11 @@ fn save_compact<S: OrderedStore>() {
         })
         .expect("churn");
 
-    let live = file_len(&path);
+    let (live_apparent, live_alloc) = file_sizes(&path);
     let started = Instant::now();
     store.compact().expect("compact");
     let compact = started.elapsed();
+    let (compacted_apparent, compacted_alloc) = file_sizes(&path);
 
     // Post-timing verification: the overwritten bigram slice must read
     // back with the replacement value and the removed pron slice must be
@@ -369,8 +381,10 @@ fn save_compact<S: OrderedStore>() {
         }
     }
 
-    emit("live_bytes", live);
-    emit("compacted_bytes", file_len(&path));
+    emit("live_apparent_bytes", live_apparent);
+    emit("live_alloc_bytes", live_alloc);
+    emit("compacted_apparent_bytes", compacted_apparent);
+    emit("compacted_alloc_bytes", compacted_alloc);
     emit_ms("compact_ms", compact);
     emit("churn_sum", churn_sum);
     finish();
@@ -420,7 +434,9 @@ fn readonly_scan<S: OrderedStore>() {
     emit("value_sum", value_sum);
     emit_ms("open_ro_ms", open);
     emit_ms("scan_ms", scan);
-    emit("size_live", file_len(&path));
+    let (live_apparent, live_alloc) = file_sizes(&path);
+    emit("live_apparent_bytes", live_apparent);
+    emit("live_alloc_bytes", live_alloc);
     finish();
     drop(ro);
     remove_db(&path);
@@ -624,6 +640,14 @@ fn remove_db(path: &Path) {
     let _ = std::fs::remove_file(Path::new(&lock));
 }
 
-fn file_len(path: &Path) -> u64 {
-    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+/// (apparent bytes, allocated bytes) of the data file at `path`: st_size
+/// and st_blocks × 512.  Allocated is the fair on-disk figure; apparent is
+/// kept alongside so a sparse file (apparent >> allocated) is visible.
+/// The LMDB `-lock` sidecar is not data and is not counted.
+fn file_sizes(path: &Path) -> (u64, u64) {
+    use std::os::unix::fs::MetadataExt as _;
+    match std::fs::metadata(path) {
+        Ok(meta) => (meta.len(), meta.blocks() * 512),
+        Err(_) => (0, 0),
+    }
 }

@@ -23,6 +23,10 @@
 //! `first_query_ms` (the snapshot-building, storage-touching query) and
 //! `us_per_cached_query` against `backend_bench`'s `us_per_get`.
 //!
+//! On-disk sizes report both apparent length (st_size) and allocated
+//! blocks (st_blocks × 512) of the data file only; allocated is the
+//! comparison figure, and apparent >> allocated reveals a sparse file.
+//!
 //! Sizes via env vars (defaults in parentheses): `STORE_BENCH_TRAIN`
 //! (5_000 observe_selection calls — each is its own committed write
 //! transaction at the backend's default durability), `STORE_BENCH_READS`
@@ -107,13 +111,13 @@ fn spawn_child(backend: &str, scenario: &str) -> Vec<(String, String)> {
 
 fn print_block(scenario: &str, redb: &[(String, String)], lmdb: Option<&[(String, String)]>) {
     println!("── {scenario} ──");
-    println!("  {:<22} {:>14} {:>14}", "metric", "redb", "lmdb");
+    println!("  {:<26} {:>14} {:>14}", "metric", "redb", "lmdb");
     for (key, value) in redb {
         let lmdb_value = lmdb
             .and_then(|rows| rows.iter().find(|(k, _)| k == key))
             .map(|(_, v)| v.as_str())
             .unwrap_or("-");
-        println!("  {:<22} {:>14} {:>14}", key, value, lmdb_value);
+        println!("  {:<26} {:>14} {:>14}", key, value, lmdb_value);
     }
     println!();
 }
@@ -174,7 +178,9 @@ fn train<S: OrderedStore>() {
         "ms_per_call",
         training.as_secs_f64() * 1000.0 / cfg.train as f64,
     );
-    emit("size_live", file_len(&path));
+    let (live_apparent, live_alloc) = file_sizes(&path);
+    emit("live_apparent_bytes", live_apparent);
+    emit("live_alloc_bytes", live_alloc);
     finish();
     drop(store);
     remove_db(&path);
@@ -185,14 +191,17 @@ fn save<S: OrderedStore>() {
     let path = work_path("save");
     let mut store = train_store::<S>(&cfg, &path);
 
-    let live = file_len(&path);
+    let (live_apparent, live_alloc) = file_sizes(&path);
     let started = Instant::now();
     let saved = store.save().expect("save");
     let saving = started.elapsed();
+    let (compacted_apparent, compacted_alloc) = file_sizes(&path);
 
     emit("saved", saved);
-    emit("live_bytes", live);
-    emit("compacted_bytes", file_len(&path));
+    emit("live_apparent_bytes", live_apparent);
+    emit("live_alloc_bytes", live_alloc);
+    emit("compacted_apparent_bytes", compacted_apparent);
+    emit("compacted_alloc_bytes", compacted_alloc);
     emit_ms("save_ms", saving);
     finish();
     drop(store);
@@ -257,7 +266,9 @@ fn read<S: OrderedStore>() {
     }
     emit("predicted", cfg.predicted);
     emit_ms("predicted_ms", predicted);
-    emit("size_live", file_len(&path));
+    let (live_apparent, live_alloc) = file_sizes(&path);
+    emit("live_apparent_bytes", live_apparent);
+    emit("live_alloc_bytes", live_alloc);
     finish();
     drop(store);
     remove_db(&path);
@@ -381,6 +392,14 @@ fn remove_db(path: &Path) {
     let _ = std::fs::remove_file(Path::new(&lock));
 }
 
-fn file_len(path: &Path) -> u64 {
-    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+/// (apparent bytes, allocated bytes) of the data file at `path`: st_size
+/// and st_blocks × 512.  Allocated is the fair on-disk figure; apparent is
+/// kept alongside so a sparse file (apparent >> allocated) is visible.
+/// The LMDB `-lock` sidecar is not data and is not counted.
+fn file_sizes(path: &Path) -> (u64, u64) {
+    use std::os::unix::fs::MetadataExt as _;
+    match std::fs::metadata(path) {
+        Ok(meta) => (meta.len(), meta.blocks() * 512),
+        Err(_) => (0, 0),
+    }
 }
