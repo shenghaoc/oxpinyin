@@ -15,16 +15,16 @@ use std::sync::{Mutex, MutexGuard, OnceLock, Weak};
 
 use oxpinyin_store::{DefaultStore, OrderedStore};
 
-pub(crate) struct CountSnapshot {
+pub(crate) struct CountSnapshot<S: OrderedStore> {
     pub(crate) generation: u64,
-    pub(crate) snap: <DefaultStore as OrderedStore>::ReadSnapshot,
+    pub(crate) snap: S::ReadSnapshot,
 }
 
-pub(crate) struct StoreInner {
+pub(crate) struct StoreInner<S: OrderedStore> {
     /// Cached decode-time read snapshot. Declared before `db` so the
     /// snapshot is dropped first (struct fields drop in declaration order).
-    pub(crate) count_snapshot: Mutex<Option<CountSnapshot>>,
-    pub(crate) db: Mutex<DefaultStore>,
+    pub(crate) count_snapshot: Mutex<Option<CountSnapshot<S>>>,
+    pub(crate) db: Mutex<S>,
     pub(crate) dirty: AtomicBool,
     /// Bumped after every committed user-data write transaction, which
     /// retires any `count_snapshot` cached against an older generation.
@@ -53,7 +53,7 @@ impl Drop for RegistryLease {
     }
 }
 
-type StoreRegistry = HashMap<PathBuf, Weak<StoreInner>>;
+type StoreRegistry = HashMap<PathBuf, Weak<StoreInner<DefaultStore>>>;
 
 static OPEN_STORES: OnceLock<Mutex<StoreRegistry>> = OnceLock::new();
 
