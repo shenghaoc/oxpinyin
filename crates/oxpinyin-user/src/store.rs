@@ -28,7 +28,7 @@ use crate::phrase::{
     PinyinKey, USER_DICTIONARY, UserPhrase, UserPronunciation, first_library_token,
     is_user_file_library, phrase_index_library_index,
 };
-use crate::registry::{self, CountSnapshot, RegistryLease, StoreInner};
+use crate::registry::{self, CountSnapshot, RegistryLease, StandaloneLease, StoreInner};
 use crate::seed;
 
 /// Token type — libpinyin's 32-bit `phrase_token_t`.
@@ -88,6 +88,8 @@ pub enum UserStoreError {
     Store(StoreError),
     /// A stored value could not be decoded (corrupt or incompatible).
     Decode,
+    /// A standalone store at this path is already live in this process.
+    AlreadyOpen,
     /// Phrase text is empty, too long, or its key count does not match its
     /// Unicode scalar length (`docs/findings/user-store.md` §3.1–3.2).
     InvalidPhrase,
@@ -101,6 +103,7 @@ impl fmt::Display for UserStoreError {
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::Store(e) => write!(f, "store error: {e}"),
             Self::Decode => write!(f, "stored value could not be decoded"),
+            Self::AlreadyOpen => write!(f, "standalone user store is already open"),
             Self::InvalidPhrase => {
                 write!(f, "invalid phrase (empty, too long, or key count mismatch)")
             }
@@ -116,7 +119,9 @@ impl std::error::Error for UserStoreError {
         match self {
             Self::Io(e) => Some(e),
             Self::Store(e) => Some(e),
-            Self::Decode | Self::InvalidPhrase | Self::TokenSpaceExhausted => None,
+            Self::Decode | Self::AlreadyOpen | Self::InvalidPhrase | Self::TokenSpaceExhausted => {
+                None
+            }
         }
     }
 }
@@ -295,6 +300,8 @@ fn has_user_data_in_write_txn(txn: &dyn WriteTxn) -> Result<bool, StoreError> {
 /// main-thread-only, so the flag uses relaxed ordering.
 pub struct GenericUserStore<S: OrderedStore> {
     inner: Arc<StoreInner<S>>,
+    /// Keeps a standalone path reservation alive until its last clone drops.
+    _standalone_lease: Option<Arc<StandaloneLease>>,
     /// Last field so [`RegistryLease`] drains after this handle's `Arc` dies.
     _lease: RegistryLease,
 }
@@ -306,6 +313,7 @@ impl<S: OrderedStore> Clone for GenericUserStore<S> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
+            _standalone_lease: self._standalone_lease.clone(),
             _lease: RegistryLease,
         }
     }
@@ -412,17 +420,20 @@ impl<S: OrderedStore> GenericUserStore<S> {
         }))
     }
 
-    /// Open a standalone store at `path` (no process-global dedup).
+    /// Open or create the one standalone store at `path` for this process.
     ///
-    /// Unlike the registry-deduplicated [`open`](Self::open) (which is
-    /// only available for the default backend), this constructor works
-    /// for any [`OrderedStore`] backend, so application code can build a
-    /// `GenericUserStore<LmdbStore>` or another backend directly.
-    pub fn create(path: &Path) -> Result<Self, UserStoreError> {
+    /// This bypasses [`UserStore::open`]'s shared-handle registry, but a
+    /// second live `create_standalone` call for the same path returns
+    /// [`UserStoreError::AlreadyOpen`]. Clones share the first handle.
+    pub fn create_standalone(path: &Path) -> Result<Self, UserStoreError> {
+        let standalone_lease =
+            Arc::new(registry::acquire_standalone(path).ok_or(UserStoreError::AlreadyOpen)?);
+>>>>>>> 332a825 (feat(user): expose GenericUserStore and a public create_standalone ctor)
         let db = S::create(path)?;
         let inner = Self::init_and_wrap(db)?;
         Ok(Self {
             inner,
+            _standalone_lease: Some(standalone_lease),
             _lease: RegistryLease,
         })
     }
@@ -1146,6 +1157,7 @@ impl GenericUserStore<DefaultStore> {
         if let Some(inner) = reg.get(&key).and_then(|handle| handle.upgrade()) {
             return Ok(Self {
                 inner,
+                _standalone_lease: None,
                 _lease: RegistryLease,
             });
         }
@@ -1155,6 +1167,7 @@ impl GenericUserStore<DefaultStore> {
         reg.insert(key, Arc::downgrade(&inner));
         Ok(Self {
             inner,
+            _standalone_lease: None,
             _lease: RegistryLease,
         })
     }
@@ -1236,7 +1249,7 @@ mod tests {
                 #[test]
                 fn open_creates_empty_store() {
                     let path = temp_path("empty");
-                    let store = Store::create(&path).unwrap();
+                    let store = Store::create_standalone(&path).unwrap();
                     assert!(!store.has_user_data());
                     assert_eq!(store.write_generation(), 0);
                     assert_eq!(store.bigram_count(1, 2).unwrap(), 0);
@@ -1253,9 +1266,21 @@ mod tests {
                 }
 
                 #[test]
+                fn create_standalone_rejects_second_live_handle() {
+                    let path = temp_path("second-live-handle");
+                    let first = Store::create_standalone(&path).unwrap();
+                    assert!(matches!(
+                        Store::create_standalone(&path),
+                        Err(UserStoreError::AlreadyOpen)
+                    ));
+                    drop(first);
+                    cleanup(&path);
+                }
+
+                #[test]
                 fn cached_count_delta_refreshes_after_committed_writes() {
                     let path = temp_path("cache-refresh");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
 
                     assert_eq!(
                         store.count_delta(Some(1), 100).unwrap(),
@@ -1296,7 +1321,7 @@ mod tests {
                 #[test]
                 fn mask_out_all_marks_store_empty_again() {
                     let path = temp_path("empty-again");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     store.observe_selection(1, 100).unwrap();
                     assert!(store.has_user_data());
                     assert_ne!(
@@ -1321,10 +1346,10 @@ mod tests {
                 fn reopen_of_populated_store_sets_has_user_data() {
                     let path = temp_path("reopen-populated");
                     {
-                        let mut store = Store::create(&path).unwrap();
+                        let mut store = Store::create_standalone(&path).unwrap();
                         store.observe_selection(1, 100).unwrap();
                     }
-                    let store = Store::create(&path).unwrap();
+                    let store = Store::create_standalone(&path).unwrap();
                     assert!(store.has_user_data());
                     assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
                     cleanup(&path);
@@ -1333,7 +1358,7 @@ mod tests {
                 #[test]
                 fn save_compacts_after_a_cached_read() {
                     let path = temp_path("save-after-cache");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     store.observe_selection(1, 100).unwrap();
                     assert_eq!(store.count_delta(Some(1), 100).unwrap().bigram_count, 69);
                     assert!(store.save().unwrap());
@@ -1344,7 +1369,7 @@ mod tests {
                 #[test]
                 fn observe_applies_pinned_seed_sequence() {
                     let path = temp_path("seq");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
 
                     assert_eq!(store.observe_selection(1, 100).unwrap(), 69);
                     assert_eq!(store.bigram_count(1, 100).unwrap(), 69);
@@ -1382,7 +1407,7 @@ mod tests {
                 #[test]
                 fn totals_accumulate_per_predecessor() {
                     let path = temp_path("totals");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     assert_eq!(store.observe_selection(5, 10).unwrap(), 69);
                     assert_eq!(store.observe_selection(5, 11).unwrap(), 69);
                     assert_eq!(store.bigram_count(5, 10).unwrap(), 69);
@@ -1394,7 +1419,7 @@ mod tests {
                 #[test]
                 fn set_bigram_count_plants_filter_edge() {
                     let path = temp_path("plant-edge");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     store.set_bigram_count(1, 10, 9).unwrap();
                     store.set_bigram_count(1, 11, 10).unwrap();
                     assert_eq!(store.bigram_count(1, 10).unwrap(), 9);
@@ -1406,7 +1431,7 @@ mod tests {
                 #[test]
                 fn predicted_path_is_flat_69() {
                     let path = temp_path("pred");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     assert_eq!(store.observe_predicted(1, 200).unwrap(), 69);
                     assert_eq!(store.observe_predicted(1, 200).unwrap(), 69);
                     assert_eq!(store.bigram_count(1, 200).unwrap(), 138);
@@ -1419,13 +1444,13 @@ mod tests {
                 fn roundtrip_reopen_reads_identical() {
                     let path = temp_path("roundtrip");
                     {
-                        let mut store = Store::create(&path).unwrap();
+                        let mut store = Store::create_standalone(&path).unwrap();
                         store.observe_selection(SENTENCE_START, 10).unwrap();
                         store.observe_selection(10, 20).unwrap();
                         store.observe_selection(10, 20).unwrap();
                     }
 
-                    let store = Store::create(&path).unwrap();
+                    let store = Store::create_standalone(&path).unwrap();
                     assert_eq!(store.bigram_count(SENTENCE_START, 10).unwrap(), 69);
                     assert_eq!(store.bigram_count(10, 20).unwrap(), 207);
                     assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
@@ -1438,7 +1463,7 @@ mod tests {
                 #[test]
                 fn dirty_gate_matches_m_modified_semantics() {
                     let path = temp_path("dirty");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
 
                     assert!(!store.is_modified());
                     assert!(!store.save().unwrap());
@@ -1469,7 +1494,7 @@ mod tests {
                 fn save_reopen_roundtrip_preserves_counts_cursor_and_total() {
                     let path = temp_path("save-rt");
                     {
-                        let mut store = Store::create(&path).unwrap();
+                        let mut store = Store::create_standalone(&path).unwrap();
                         store.observe_selection(SENTENCE_START, 10).unwrap();
                         store.observe_selection(10, 20).unwrap();
                         store.observe_selection(10, 20).unwrap();
@@ -1480,7 +1505,7 @@ mod tests {
                         assert!(!store.is_modified());
                     }
 
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     assert!(!store.is_modified());
                     assert!(!store.save().unwrap(), "a reopen starts clean");
 
@@ -1520,7 +1545,7 @@ mod tests {
                 #[test]
                 fn first_allocation_is_first_user_token() {
                     let path = temp_path("first-tok");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
                     let token = store.add_phrase("你好", &[10, 20], None).unwrap();
                     assert_eq!(token, FIRST_USER_TOKEN);
@@ -1533,7 +1558,7 @@ mod tests {
                 #[test]
                 fn allocation_increments_by_one_without_gap() {
                     let path = temp_path("incr");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     let a = store.add_phrase("甲", &[1], None).unwrap();
                     let b = store.add_phrase("乙", &[2], None).unwrap();
                     let c = store.add_phrase("丙", &[3], None).unwrap();
@@ -1547,7 +1572,7 @@ mod tests {
                 #[test]
                 fn user_token_is_distinguishable_from_system_token() {
                     let path = temp_path("nibble");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     let user = store.add_phrase("词", &[7], None).unwrap();
                     const SYSTEM: Token = 0x0100_0001;
                     assert!(phrase::is_user_token(user));
@@ -1558,7 +1583,7 @@ mod tests {
                 #[test]
                 fn network_and_user_can_share_phrase_text() {
                     let path = temp_path("two-nibbles");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     let user = store
                         .add_phrase_in(phrase::USER_DICTIONARY, "词", &[7], Some(5))
                         .unwrap();
@@ -1577,7 +1602,7 @@ mod tests {
                 #[test]
                 fn add_phrase_seeds_unigram_with_count_times_three() {
                     let path = temp_path("uni");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     let token = store.add_phrase("你好", &[10, 20], None).unwrap();
                     assert_eq!(store.unigram_delta(token).unwrap(), 15);
                     assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 0);
@@ -1590,7 +1615,7 @@ mod tests {
                 #[test]
                 fn existing_phrase_merges_a_new_reading() {
                     let path = temp_path("merge");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     let first = store.add_phrase("你好", &[10, 20], None).unwrap();
                     let again = store.add_phrase("你好", &[11, 20], Some(8)).unwrap();
                     assert_eq!(first, again);
@@ -1610,7 +1635,7 @@ mod tests {
                 #[test]
                 fn same_reading_accumulates_pronunciation_count() {
                     let path = temp_path("same-read");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     let token = store.add_phrase("词", &[7], Some(5)).unwrap();
                     let again = store.add_phrase("词", &[7], Some(5)).unwrap();
                     assert_eq!(token, again);
@@ -1625,14 +1650,14 @@ mod tests {
                 fn phrase_roundtrip_reopen_preserves_cursor() {
                     let path = temp_path("phrase-rt");
                     let (t1, t2, next) = {
-                        let mut store = Store::create(&path).unwrap();
+                        let mut store = Store::create_standalone(&path).unwrap();
                         let t1 = store.add_phrase("你好", &[10, 20], None).unwrap();
                         let t2 = store.add_phrase("世界", &[30, 40], Some(9)).unwrap();
                         store.add_phrase("你好", &[11, 20], Some(2)).unwrap();
                         (t1, t2, store.next_user_token().unwrap())
                     };
 
-                    let store = Store::create(&path).unwrap();
+                    let store = Store::create_standalone(&path).unwrap();
                     assert_eq!(store.next_user_token().unwrap(), next);
                     assert_eq!(next, FIRST_USER_TOKEN + 2);
 
@@ -1662,7 +1687,7 @@ mod tests {
                 #[test]
                 fn invalid_phrase_is_rejected_without_allocation() {
                     let path = temp_path("invalid");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     assert!(matches!(
                         store.add_phrase("", &[], None),
                         Err(UserStoreError::InvalidPhrase)
@@ -1683,7 +1708,7 @@ mod tests {
                 #[test]
                 fn lookup_of_unknown_token_is_none() {
                     let path = temp_path("miss");
-                    let store = Store::create(&path).unwrap();
+                    let store = Store::create_standalone(&path).unwrap();
                     assert!(store.phrase(FIRST_USER_TOKEN).unwrap().is_none());
                     assert!(store.phrase(0x0100_0001).unwrap().is_none());
                     cleanup(&path);
@@ -1692,7 +1717,7 @@ mod tests {
                 #[test]
                 fn export_phrases_render_the_pinned_triples() {
                     let path = temp_path("export-phrases");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     let ni = SyllableKey::from_text("ni").expect("frozen key").index() as u16;
                     let hao = SyllableKey::from_text("hao").expect("frozen key").index() as u16;
                     let shi = SyllableKey::from_text("shi").expect("frozen key").index() as u16;
@@ -1723,7 +1748,7 @@ mod tests {
                 #[test]
                 fn export_bigrams_lists_every_stored_row_raw() {
                     let path = temp_path("export-bigrams");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     store.observe_selection(SENTENCE_START, 10).unwrap();
                     store.observe_selection(10, 20).unwrap();
                     store.observe_selection(10, 20).unwrap();
@@ -1737,7 +1762,7 @@ mod tests {
                 fn mixed_store(path: &std::path::Path) -> (Store, Token) {
                     const SYSTEM_A: Token = 0x0100_0001;
                     const SYSTEM_B: Token = 0x0200_0001;
-                    let mut store = Store::create(path).unwrap();
+                    let mut store = Store::create_standalone(path).unwrap();
                     let user_a = store.add_phrase("你好", &[10, 20], None).unwrap();
                     let user_b = store.add_phrase("世界", &[30, 40], None).unwrap();
                     store.observe_selection(SYSTEM_A, SYSTEM_B).unwrap();
@@ -1820,7 +1845,7 @@ mod tests {
                     store.remove_user_phrase(other).unwrap();
                     drop(store);
 
-                    let store = Store::create(&path).unwrap();
+                    let store = Store::create_standalone(&path).unwrap();
                     assert!(store.token_for_phrase("你好").unwrap().is_none());
                     assert!(store.token_for_phrase("中国").unwrap().is_none());
                     assert_eq!(store.bigram_count(0x0100_0001, 0x0200_0001).unwrap(), 69);
@@ -1838,7 +1863,7 @@ mod tests {
                 #[test]
                 fn add_phrase_reports_typed_token_space_exhaustion() {
                     let path = temp_path("add-phrase-exhausted");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     let last = phrase_index_make_token(USER_DICTIONARY, PHRASE_MASK);
                     {
                         let db = store.database();
@@ -1859,7 +1884,7 @@ mod tests {
                 #[test]
                 fn promote_addon_phrase_reports_typed_token_space_exhaustion() {
                     let path = temp_path("promote-addon-exhausted");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     let last = phrase_index_make_token(ADDON_DICTIONARY, PHRASE_MASK);
                     {
                         let db = store.database();
@@ -1882,7 +1907,7 @@ mod tests {
                 #[test]
                 fn promote_addon_phrase_allocates_nibble_5_and_copies_frequency() {
                     let path = temp_path("promote-addon");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     let keys = [key("er"), key("huang")];
 
                     let token = store
@@ -1923,7 +1948,7 @@ mod tests {
                 #[test]
                 fn promote_addon_phrase_rejects_a_reading_of_the_wrong_length() {
                     let path = temp_path("promote-addon-invalid");
-                    let mut store = Store::create(&path).unwrap();
+                    let mut store = Store::create_standalone(&path).unwrap();
                     let err = store
                         .promote_addon_phrase("二簧", &[(vec![key("er")], 100)], 100)
                         .unwrap_err();
