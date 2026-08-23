@@ -246,6 +246,78 @@ mod tests {
         }
     }
 
+    // ── malformed-input validation ─────────────────────────────────
+
+    #[test]
+    fn decode_u8_empty() {
+        assert!(matches!(
+            decode_u8(&[]),
+            Err(DecodeError::Truncated {
+                expected: 1,
+                actual: 0
+            })
+        ));
+    }
+
+    #[test]
+    fn decode_token_too_short() {
+        for bytes in [&[][..], &[0, 1], &[0, 1, 2]] {
+            assert!(matches!(
+                decode_token(bytes),
+                Err(DecodeError::Truncated { expected: 4, .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn decode_u64_too_short() {
+        for bytes in [&[][..], &[0; 7]] {
+            assert!(matches!(
+                decode_u64(bytes),
+                Err(DecodeError::Truncated { expected: 8, .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn decode_str_invalid_utf8() {
+        for bytes in [&[0xff][..], &[0xc0, 0x80]] {
+            assert_eq!(decode_str(bytes), Err(DecodeError::InvalidUtf8));
+        }
+    }
+
+    #[test]
+    fn decode_token_pair_too_short() {
+        for bytes in [&[][..], &[0; 4], &[0; 7]] {
+            assert!(matches!(
+                decode_token_pair(bytes),
+                Err(DecodeError::Truncated { expected: 8, .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn decode_u8_str_rejects_empty_and_invalid_utf8() {
+        assert!(matches!(
+            decode_u8_str(&[]),
+            Err(DecodeError::Truncated {
+                expected: 1,
+                actual: 0
+            })
+        ));
+        assert_eq!(decode_u8_str(&[7, 0xff]), Err(DecodeError::InvalidUtf8));
+    }
+
+    #[test]
+    fn decode_token_bytes_too_short() {
+        for bytes in [&[][..], &[0, 1, 2]] {
+            assert!(matches!(
+                decode_token_bytes(bytes),
+                Err(DecodeError::Truncated { expected: 4, .. })
+            ));
+        }
+    }
+
     // ── proptest round-trips ───────────────────────────────────────
 
     mod prop {
