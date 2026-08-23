@@ -501,16 +501,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-migrate"
-version = "0.1.0"
-dependencies = [
- "cc",
- "pinyin-oracle",
- "pkg-config",
- "redb",
-]
-
-[[package]]
 name = "oxpinyin-segment"
 version = "0.1.0"
 dependencies = [
@@ -575,12 +565,6 @@ dependencies = [
  "oxpinyin-engine",
  "oxpinyin-user",
 ]
-
-[[package]]
-name = "pkg-config"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "plotters"

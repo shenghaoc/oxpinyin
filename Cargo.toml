@@ -8,7 +8,6 @@ members = [
   "crates/oxpinyin-capi",
   "crates/pinyin-oracle",
   "crates/oxpinyin-dictool",
-  "crates/oxpinyin-migrate",
   "crates/oxpinyin-segment",
   "crates/oxpinyin-counter",
   "crates/oxpinyin-lambda",
