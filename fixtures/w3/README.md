@@ -12,11 +12,16 @@ Two families, both deterministic against the pinned oracle
   produced them has been removed). Their provenance is recorded below for
   reference.
 
-  `pinyin_index.redb` / `phrase_index.redb` / `bigram.redb`: the `--mini`
-  subset of the public-ABI export (`docs/findings/data-layer-export.md`).
-  `--mini` keeps the allowlisted pinyin keys, the phrase tokens those keys
-  reference, and the bigram entries whose previous token is one of those
-  phrases — every kept record byte-identical to the full export.
+  `pinyin_index.redb` / `phrase_index.redb`: the `--mini` subset of the
+  public-ABI export (`docs/findings/data-layer-export.md`). `--mini` keeps
+  the allowlisted pinyin keys and the phrase tokens those keys reference —
+  every kept record byte-identical to the full export.
+
+  `bigram.redb`: verbatim Tkrzw-conversion records of the pin's `bigram.db`
+  per `docs/findings/data-layer-export.md` — not part of the public-ABI
+  export, whose bigram iterator yields no system data — restricted like the
+  other tables to the mini allowlist (entries whose previous token is one
+  of those phrases).
 
   `punct.redb`: the Option A public-ABI export of `punct.table` (token →
   NUL-terminated UTF-8 puncts).

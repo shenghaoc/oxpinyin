@@ -47,7 +47,11 @@ impl SegmenterPaths {
     /// Returns [`SegmentError::MissingPath`] when either side is absent.
     pub fn discover() -> Result<Self, SegmentError> {
         let export = locate_export_dir().ok_or_else(|| SegmentError::MissingPath {
-            detail: format!("no export at ${EXPORT_DIR_ENV} or {DEFAULT_EXPORT_DIR}"),
+            detail: format!(
+                "no export at ${EXPORT_DIR_ENV} or {DEFAULT_EXPORT_DIR}; \
+                 set ${{EXPORT_DIR_ENV}} to an export directory such as \
+                 fixtures/w3/, which holds the committed tables"
+            ),
         })?;
         let model = locate_model_dir().ok_or_else(|| SegmentError::MissingPath {
             detail: format!(

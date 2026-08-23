@@ -90,8 +90,13 @@ echo "installed capi .so:         $CAPI_SO"
 if [ ! -f "$CAPI_DATA/pinyin_index.redb" ] || [ ! -f "$CAPI_DATA/interpolation2.text" ]; then
     echo "--- populating oxpinyin data from export + model cache ---"
     EXPORT_DIR="${PINYIN_EXPORT_DIR:-/tmp/oxpinyin-export}"
-    [ -f "$EXPORT_DIR/pinyin_index.redb" ] || {
-        echo "fatal: exported tables not found at $EXPORT_DIR" >&2
+    missing=""
+    for table in pinyin_index.redb phrase_index.redb bigram.redb; do
+        [ -f "$EXPORT_DIR/$table" ] || missing="$missing $table"
+    done
+    [ -z "$missing" ] || {
+        echo "fatal: exported table(s)$missing not found at $EXPORT_DIR;" >&2
+        echo "  copy or symlink the required tables from fixtures/w3/" >&2
         exit 1
     }
     MODEL_DIR=$(PINYIN_MODEL_CACHE="$WORK/model" \
