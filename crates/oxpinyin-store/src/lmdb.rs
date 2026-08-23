@@ -38,9 +38,13 @@ fn validate_path(path: &Path) -> Result<(), StoreError> {
 
 fn normalize_bound(bound: Bound<&[u8]>) -> Bound<&[u8]> {
     match bound {
-        Bound::Excluded([]) => Bound::Unbounded,
+        Bound::Included([]) | Bound::Excluded([]) => Bound::Unbounded,
         other => other,
     }
+}
+
+fn is_empty_upper_bound(bound: Bound<&[u8]>) -> bool {
+    matches!(bound, Bound::Included([]) | Bound::Excluded([]))
 }
 
 #[allow(unsafe_code)]
@@ -150,6 +154,9 @@ impl OrderedStore for LmdbStore {
             .open_database(&txn, Some(table))
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(()) };
+        if is_empty_upper_bound(hi) {
+            return Ok(());
+        }
         let bounds = (normalize_bound(lo), normalize_bound(hi));
         let iter = db.range(&txn, &bounds).map_err(map_heed_error)?;
         for result in iter {
@@ -245,6 +252,9 @@ impl ReadSnapshot for LmdbReadSnapshot {
                 .open_database(txn, Some(table))
                 .map_err(map_heed_error)?;
             let Some(db) = db else { return Ok(()) };
+            if is_empty_upper_bound(hi) {
+                return Ok(());
+            }
             let bounds = (normalize_bound(lo), normalize_bound(hi));
             let iter = db.range(txn, &bounds).map_err(map_heed_error)?;
             for result in iter {
@@ -316,10 +326,11 @@ impl WriteTxn for LmdbWriteTxn<'_> {
 
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         validate_table_name(table)?;
-        let db: Database<Bytes, Bytes> = self
+        let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .create_database(&mut self.txn, Some(table))
+            .open_database(&self.txn, Some(table))
             .map_err(map_heed_error)?;
+        let Some(db) = db else { return Ok(()) };
         db.delete(&mut self.txn, key).map_err(map_heed_error)?;
         Ok(())
     }
@@ -337,6 +348,9 @@ impl WriteTxn for LmdbWriteTxn<'_> {
             .open_database(&self.txn, Some(table))
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(()) };
+        if is_empty_upper_bound(hi) {
+            return Ok(());
+        }
         let bounds = (normalize_bound(lo), normalize_bound(hi));
         let iter = db.range(&self.txn, &bounds).map_err(map_heed_error)?;
         for result in iter {
