@@ -4,9 +4,11 @@
 //! LMDB byte-lexicographic comparator, so big-endian encoded keys sort
 //! identically to the redb backend.
 
+use std::fmt;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use heed::types::Bytes;
 use heed::{Database, EnvFlags, EnvOpenOptions, RwTxn, WithoutTls};
@@ -20,14 +22,46 @@ type SnapTxn<'a> = heed::RoTxn<'a, WithoutTls>;
 // ── helpers ───────────────────────────────────────────────────────
 
 const MAX_DBS: u32 = 32;
-const MAP_SIZE: usize = 1 << 30; // 1 GiB virtual; LMDB allocates sparsely.
+/// Default map-size ceiling: 1 GiB of virtual address space.  LMDB
+/// commits address space sparsely, so this is a cap on database size,
+/// not an up-front allocation.  heed cannot resize an open environment,
+/// so exceeding the cap fails every write with [`MdbError::MapFull`];
+/// users with larger corpora should open via
+/// [`LmdbStore::create_with_map_size`].
+const MAP_SIZE: usize = 1 << 30;
 
 fn map_heed_error(e: heed::Error) -> StoreError {
     match e {
         heed::Error::Io(io) => StoreError::Io(io),
+        heed::Error::Mdb(heed::MdbError::MapFull) => StoreError::Backend(Box::new(MapFullError)),
         other => StoreError::Backend(Box::new(other)),
     }
 }
+
+/// The LMDB map-size ceiling was reached; writes fail until the store is
+/// reopened with a larger [`LmdbStore::create_with_map_size`] ceiling.
+#[derive(Debug)]
+struct MapFullError;
+
+impl fmt::Display for MapFullError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("LMDB map-size limit reached; reopen with a larger map size")
+    }
+}
+
+impl std::error::Error for MapFullError {}
+
+/// Compaction was requested while a read snapshot was still open.
+#[derive(Debug)]
+struct SnapshotOpenError;
+
+impl fmt::Display for SnapshotOpenError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("cannot compact while a read snapshot is open; drop it first")
+    }
+}
+
+impl std::error::Error for SnapshotOpenError {}
 
 fn validate_path(path: &Path) -> Result<(), StoreError> {
     if path.as_os_str().as_encoded_bytes().contains(&0) {
@@ -48,11 +82,14 @@ fn is_empty_upper_bound(bound: Bound<&[u8]>) -> bool {
 }
 
 #[allow(unsafe_code)]
-fn open_env(path: &Path, read_only: bool) -> Result<Env, StoreError> {
+fn open_env(path: &Path, read_only: bool, map_size: usize) -> Result<Env, StoreError> {
     validate_path(path)?;
+    if map_size == 0 {
+        return Err(StoreError::InvalidInput("map size must be nonzero"));
+    }
     let mut opts = EnvOpenOptions::new().read_txn_without_tls();
     opts.max_dbs(MAX_DBS);
-    opts.map_size(MAP_SIZE);
+    opts.map_size(map_size);
     let mut flags = EnvFlags::NO_SUB_DIR;
     if read_only {
         flags |= EnvFlags::READ_ONLY;
@@ -80,6 +117,26 @@ pub struct LmdbStore {
     #[allow(dead_code)]
     path: PathBuf,
     read_only: bool,
+    live_snapshots: Arc<AtomicUsize>,
+}
+
+impl LmdbStore {
+    /// Open or create the store with a non-default map-size ceiling
+    /// (`bytes` of virtual address space; LMDB commits it sparsely).
+    ///
+    /// heed cannot resize an open environment, so the ceiling chosen at
+    /// open time is fixed for the store's lifetime.  Use this instead of
+    /// [`OrderedStore::create`] when the 1 GiB default is too small; use
+    /// one consistent ceiling for a given file across processes.
+    pub fn create_with_map_size(path: &Path, map_size: usize) -> Result<Self, StoreError> {
+        let env = open_env(path, false, map_size)?;
+        Ok(Self {
+            env: Arc::new(env),
+            path: path.to_path_buf(),
+            read_only: false,
+            live_snapshots: Arc::new(AtomicUsize::new(0)),
+        })
+    }
 }
 
 impl OrderedStore for LmdbStore {
@@ -89,24 +146,30 @@ impl OrderedStore for LmdbStore {
         let inner = SnapshotInner::try_new(self.env.clone(), |env| {
             env.read_txn().map_err(map_heed_error)
         })?;
-        Ok(LmdbReadSnapshot { inner })
+        self.live_snapshots.fetch_add(1, Ordering::Release);
+        Ok(LmdbReadSnapshot {
+            inner,
+            live: Arc::clone(&self.live_snapshots),
+        })
     }
 
     fn open_read_only(path: &Path) -> Result<Self, StoreError> {
-        let env = open_env(path, true)?;
+        let env = open_env(path, true, MAP_SIZE)?;
         Ok(Self {
             env: Arc::new(env),
             path: path.to_path_buf(),
             read_only: true,
+            live_snapshots: Arc::new(AtomicUsize::new(0)),
         })
     }
 
     fn create(path: &Path) -> Result<Self, StoreError> {
-        let env = open_env(path, false)?;
+        let env = open_env(path, false, MAP_SIZE)?;
         Ok(Self {
             env: Arc::new(env),
             path: path.to_path_buf(),
             read_only: false,
+            live_snapshots: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -205,6 +268,9 @@ impl OrderedStore for LmdbStore {
         if self.read_only {
             return Err(StoreError::ReadOnly);
         }
+        if self.live_snapshots.load(Ordering::Acquire) > 0 {
+            return Err(StoreError::Backend(Box::new(SnapshotOpenError)));
+        }
         Ok(())
     }
 }
@@ -222,6 +288,13 @@ self_cell!(
 /// A consistent read snapshot backed by an LMDB read transaction.
 pub struct LmdbReadSnapshot {
     inner: SnapshotInner,
+    live: Arc<AtomicUsize>,
+}
+
+impl Drop for LmdbReadSnapshot {
+    fn drop(&mut self) {
+        self.live.fetch_sub(1, Ordering::Release);
+    }
 }
 
 impl ReadSnapshot for LmdbReadSnapshot {

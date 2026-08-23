@@ -90,6 +90,11 @@ pub trait ReadSnapshot {
 /// Operations see their own writes (read-your-writes within the closure).
 /// All modifications land atomically on commit or are fully rolled back.
 /// Used as `&mut dyn WriteTxn`.
+///
+/// Opening a table inside a write transaction creates it when absent, so
+/// read-side methods ([`WriteTxn::get`], [`WriteTxn::range`],
+/// [`WriteTxn::for_each`], [`WriteTxn::is_empty`]) never observe a
+/// missing-table condition: an untouched table reads as empty.
 pub trait WriteTxn {
     /// Read a single key from `table`.  Returns `None` if absent.
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
@@ -236,8 +241,7 @@ fn read_get(
     table: &str,
     key: &[u8],
 ) -> Result<Option<Vec<u8>>, StoreError> {
-    validate_table_name(table)?;
-    let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+    let def = table_def(table)?;
     match txn.open_table(def) {
         Ok(tbl) => Ok(tbl
             .get(key)
@@ -256,8 +260,7 @@ fn read_range(
     hi: Bound<&[u8]>,
     visit: &mut Visitor<'_>,
 ) -> Result<(), StoreError> {
-    validate_table_name(table)?;
-    let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+    let def = table_def(table)?;
     match txn.open_table(def) {
         Ok(tbl) => {
             for item in tbl.range::<&[u8]>((lo, hi)).map_err(map_storage_error)? {
@@ -277,8 +280,7 @@ fn read_for_each(
     table: &str,
     visit: &mut Visitor<'_>,
 ) -> Result<(), StoreError> {
-    validate_table_name(table)?;
-    let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+    let def = table_def(table)?;
     match txn.open_table(def) {
         Ok(tbl) => {
             for item in tbl.iter().map_err(map_storage_error)? {
@@ -294,8 +296,7 @@ fn read_for_each(
 
 /// An absent table counts as empty.
 fn read_is_empty(txn: &redb::ReadTransaction, table: &str) -> Result<bool, StoreError> {
-    validate_table_name(table)?;
-    let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+    let def = table_def(table)?;
     match txn.open_table(def) {
         Ok(tbl) => tbl.is_empty().map_err(map_storage_error),
         Err(redb::TableError::TableDoesNotExist(_)) => Ok(true),
@@ -470,18 +471,15 @@ impl WriteTxn for RedbWriteTxn<'_> {
     }
 
     fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
+        // Write-transaction table opens create the table when absent, so
+        // `TableDoesNotExist` cannot occur here (see the trait docs).
         let def = table_def(table)?;
-        match self.txn.open_table(def) {
-            Ok(tbl) => {
-                for item in tbl.iter().map_err(map_storage_error)? {
-                    let (key, value) = item.map_err(map_storage_error)?;
-                    visit(key.value(), value.value())?;
-                }
-                Ok(())
-            }
-            Err(redb::TableError::TableDoesNotExist(_)) => Ok(()),
-            Err(e) => Err(map_table_error(e)),
+        let tbl = self.txn.open_table(def).map_err(map_table_error)?;
+        for item in tbl.iter().map_err(map_storage_error)? {
+            let (key, value) = item.map_err(map_storage_error)?;
+            visit(key.value(), value.value())?;
         }
+        Ok(())
     }
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
@@ -492,10 +490,10 @@ impl WriteTxn for RedbWriteTxn<'_> {
             .list_tables()
             .map_err(map_storage_error)?
             .any(|handle| handle.name() == table);
+        let def = table_def(table)?;
         if !exists {
             return Ok(true);
         }
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
         let tbl = self.txn.open_table(def).map_err(map_table_error)?;
         tbl.is_empty().map_err(map_storage_error)
     }
@@ -633,6 +631,26 @@ mod tests {
                             Ok(())
                         })
                         .unwrap();
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn compact_fails_while_snapshot_open() {
+                    let path = temp_path("compact-snap");
+                    let mut store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| txn.put("t", b"k", b"v"))
+                        .unwrap();
+                    let snap = store.snapshot().unwrap();
+                    assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+                    assert!(
+                        store.compact().is_err(),
+                        "compact must fail while a snapshot is open"
+                    );
+                    drop(snap);
+                    store.compact().unwrap();
+                    assert_eq!(store.get("t", b"k").unwrap(), Some(b"v".to_vec()));
                     drop(store);
                     cleanup(&path);
                 }
@@ -1070,6 +1088,16 @@ mod tests {
         drop(txn);
         drop(db);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[cfg(feature = "lmdb")]
+    #[test]
+    fn lmdb_rejects_zero_map_size() {
+        let path = std::path::PathBuf::from("oxpinyin-store-zero-map.mdb");
+        assert!(matches!(
+            LmdbStore::create_with_map_size(&path, 0),
+            Err(StoreError::InvalidInput("map size must be nonzero"))
+        ));
     }
 
     #[cfg(feature = "lmdb")]
