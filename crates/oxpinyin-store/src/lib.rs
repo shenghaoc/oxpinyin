@@ -18,11 +18,16 @@ use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata, TableHandle};
 /// backend type, so callers can branch on I/O failures independently of
 /// which backend produced them.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum StoreError {
     /// An I/O error from the underlying storage layer.
     Io(std::io::Error),
     /// A non-I/O error from the storage backend (type-erased).
     Backend(Box<dyn std::error::Error + Send + Sync>),
+    /// A mutation was requested through a read-only store.
+    ReadOnly,
+    /// A public input cannot be represented by the selected backend.
+    InvalidInput(&'static str),
 }
 
 impl fmt::Display for StoreError {
@@ -30,6 +35,8 @@ impl fmt::Display for StoreError {
         match self {
             Self::Io(e) => write!(f, "store I/O error: {e}"),
             Self::Backend(e) => write!(f, "store error: {e}"),
+            Self::ReadOnly => f.write_str("store is read-only"),
+            Self::InvalidInput(message) => write!(f, "invalid store input: {message}"),
         }
     }
 }
@@ -39,6 +46,7 @@ impl std::error::Error for StoreError {
         match self {
             Self::Io(e) => Some(e),
             Self::Backend(e) => Some(e.as_ref()),
+            Self::ReadOnly | Self::InvalidInput(_) => None,
         }
     }
 }
@@ -167,12 +175,18 @@ pub trait OrderedStore {
     /// Run `f` inside an atomic write transaction.  All puts/removes in
     /// `f` land together on `Ok`, or none land on `Err` (full rollback).
     /// The closure sees its own writes.
+    ///
+    /// The closure must not call [`OrderedStore::write`] again. Backends may
+    /// serialize write transactions, so a nested call can block forever.
     fn write<R>(
         &self,
         f: impl FnOnce(&mut dyn WriteTxn) -> Result<R, StoreError>,
     ) -> Result<R, StoreError>;
 
-    /// Compact the database file, reclaiming free pages.
+    /// Perform backend-dependent compaction work.
+    ///
+    /// redb rewrites the file and reclaims free pages. LMDB reuses freed pages
+    /// in place, so its successful implementation does not shrink the file.
     fn compact(&mut self) -> Result<(), StoreError>;
 }
 
@@ -186,6 +200,23 @@ enum RedbInner {
 /// A redb-backed [`OrderedStore`].
 pub struct RedbStore {
     inner: RedbInner,
+}
+
+pub(crate) fn validate_table_name(table: &str) -> Result<(), StoreError> {
+    if table.is_empty() {
+        return Err(StoreError::InvalidInput("empty table name"));
+    }
+    if table.contains('\0') {
+        return Err(StoreError::InvalidInput("table name contains NUL"));
+    }
+    Ok(())
+}
+
+fn table_def<'a>(
+    table: &'a str,
+) -> Result<redb::TableDefinition<'a, &'static [u8], &'static [u8]>, StoreError> {
+    validate_table_name(table)?;
+    Ok(redb::TableDefinition::new(table))
 }
 
 impl RedbStore {
@@ -324,14 +355,22 @@ impl OrderedStore for RedbStore {
     ) -> Result<R, StoreError> {
         let txn = match &self.inner {
             RedbInner::ReadWrite(db) => db.begin_write().map_err(map_transaction_error)?,
-            RedbInner::ReadOnly(_) => {
-                return Err(StoreError::Backend("store is read-only".into()));
-            }
+            RedbInner::ReadOnly(_) => return Err(StoreError::ReadOnly),
         };
-        let mut wtxn = RedbWriteTxn { txn: &txn };
-        let result = f(&mut wtxn)?;
-        txn.commit().map_err(map_commit_error)?;
-        Ok(result)
+        let result = {
+            let mut wtxn = RedbWriteTxn { txn: &txn };
+            f(&mut wtxn)
+        };
+        match result {
+            Ok(result) => {
+                txn.commit().map_err(map_commit_error)?;
+                Ok(result)
+            }
+            Err(error) => {
+                txn.abort().map_err(map_storage_error)?;
+                Err(error)
+            }
+        }
     }
 
     fn compact(&mut self) -> Result<(), StoreError> {
@@ -340,7 +379,7 @@ impl OrderedStore for RedbStore {
                 let _ = db.compact().map_err(map_compaction_error)?;
                 Ok(())
             }
-            RedbInner::ReadOnly(_) => Err(StoreError::Backend("store is read-only".into())),
+            RedbInner::ReadOnly(_) => Err(StoreError::ReadOnly),
         }
     }
 }
@@ -388,7 +427,7 @@ struct RedbWriteTxn<'txn> {
 
 impl WriteTxn for RedbWriteTxn<'_> {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+        let def = table_def(table)?;
         let tbl = self.txn.open_table(def).map_err(map_table_error)?;
         Ok(tbl
             .get(key)
@@ -397,14 +436,14 @@ impl WriteTxn for RedbWriteTxn<'_> {
     }
 
     fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+        let def = table_def(table)?;
         let mut tbl = self.txn.open_table(def).map_err(map_table_error)?;
         tbl.insert(key, value).map_err(map_storage_error)?;
         Ok(())
     }
 
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+        let def = table_def(table)?;
         let mut tbl = self.txn.open_table(def).map_err(map_table_error)?;
         tbl.remove(key).map_err(map_storage_error)?;
         Ok(())
@@ -417,7 +456,7 @@ impl WriteTxn for RedbWriteTxn<'_> {
         hi: Bound<&[u8]>,
         visit: &mut Visitor<'_>,
     ) -> Result<(), StoreError> {
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+        let def = table_def(table)?;
         let tbl = self.txn.open_table(def).map_err(map_table_error)?;
         for item in tbl.range::<&[u8]>((lo, hi)).map_err(map_storage_error)? {
             let (key, value) = item.map_err(map_storage_error)?;
@@ -427,13 +466,18 @@ impl WriteTxn for RedbWriteTxn<'_> {
     }
 
     fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
-        let tbl = self.txn.open_table(def).map_err(map_table_error)?;
-        for item in tbl.iter().map_err(map_storage_error)? {
-            let (key, value) = item.map_err(map_storage_error)?;
-            visit(key.value(), value.value())?;
+        let def = table_def(table)?;
+        match self.txn.open_table(def) {
+            Ok(tbl) => {
+                for item in tbl.iter().map_err(map_storage_error)? {
+                    let (key, value) = item.map_err(map_storage_error)?;
+                    visit(key.value(), value.value())?;
+                }
+                Ok(())
+            }
+            Err(redb::TableError::TableDoesNotExist(_)) => Ok(()),
+            Err(e) => Err(map_table_error(e)),
         }
-        Ok(())
     }
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
@@ -455,6 +499,11 @@ impl WriteTxn for RedbWriteTxn<'_> {
 
 /// The default store backend.
 pub type DefaultStore = RedbStore;
+
+#[cfg(feature = "lmdb")]
+mod lmdb;
+#[cfg(feature = "lmdb")]
+pub use lmdb::{LmdbReadSnapshot, LmdbStore};
 
 // ── error mapping ──────────────────────────────────────────────────
 
@@ -504,99 +553,459 @@ fn map_compaction_error(e: redb::CompactionError) -> StoreError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    #[cfg(feature = "lmdb")]
+    use super::{LmdbStore, OrderedStore, StoreError};
 
-    fn temp_path(tag: &str) -> std::path::PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("oxpinyin-store-{tag}-{}.redb", std::process::id(),));
-        let _ = std::fs::remove_file(&path);
-        path
+    macro_rules! store_tests {
+        ($mod:ident, $store:ty, $ext:literal) => {
+            mod $mod {
+                use super::super::*;
+
+                fn temp_path(tag: &str) -> std::path::PathBuf {
+                    let path = std::env::temp_dir().join(format!(
+                        "oxpinyin-store-{}-{tag}-{}.{}",
+                        stringify!($mod),
+                        std::process::id(),
+                        $ext,
+                    ));
+                    cleanup(&path);
+                    path
+                }
+
+                fn cleanup(path: &std::path::Path) {
+                    let _ = std::fs::remove_file(path);
+                    let lock = format!("{}-lock", path.display());
+                    let _ = std::fs::remove_file(&lock);
+                }
+
+                #[test]
+                fn multi_table_write() {
+                    let path = temp_path("multi-table");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("alpha", b"k1", b"v1")?;
+                            txn.put("beta", b"k2", b"v2")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(store.get("alpha", b"k1").unwrap(), Some(b"v1".to_vec()));
+                    assert_eq!(store.get("beta", b"k2").unwrap(), Some(b"v2".to_vec()));
+                    assert_eq!(store.get("alpha", b"k2").unwrap(), None);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn atomic_rollback() {
+                    let path = temp_path("rollback");
+                    let store = <$store>::create(&path).unwrap();
+                    let result: Result<(), _> = store.write(|txn| {
+                        txn.put("t", b"a", b"1")?;
+                        txn.put("t", b"b", b"2")?;
+                        txn.put("u", b"c", b"3")?;
+                        Err(StoreError::Backend("deliberate rollback".into()))
+                    });
+                    assert!(result.is_err());
+                    assert_eq!(store.get("t", b"a").unwrap(), None);
+                    assert_eq!(store.get("t", b"b").unwrap(), None);
+                    assert_eq!(store.get("u", b"c").unwrap(), None);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn read_your_writes() {
+                    let path = temp_path("ryw");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"key", b"val")?;
+                            assert_eq!(txn.get("t", b"key")?, Some(b"val".to_vec()));
+                            Ok(())
+                        })
+                        .unwrap();
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn write_txn_is_empty() {
+                    let path = temp_path("wtxn-empty");
+                    let store = <$store>::create(&path).unwrap();
+                    // An absent table counts as empty and must not be created
+                    // by the probe.
+                    assert!(store.write(|txn| txn.is_empty("t")).unwrap());
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v")?;
+                            assert!(!txn.is_empty("t")?);
+                            txn.remove("t", b"k")?;
+                            assert!(txn.is_empty("t")?);
+                            Ok(())
+                        })
+                        .unwrap();
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn range_included_included() {
+                    let path = temp_path("range-ii");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"a", b"1")?;
+                            txn.put("t", b"b", b"2")?;
+                            txn.put("t", b"c", b"3")?;
+                            txn.put("t", b"d", b"4")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    let mut rows = Vec::new();
+                    store
+                        .range(
+                            "t",
+                            Bound::Included(b"b".as_slice()),
+                            Bound::Included(b"c".as_slice()),
+                            &mut |k, v| {
+                                rows.push((k.to_vec(), v.to_vec()));
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(rows.len(), 2);
+                    assert_eq!(rows[0].0, b"b");
+                    assert_eq!(rows[0].1, b"2");
+                    assert_eq!(rows[1].0, b"c");
+                    assert_eq!(rows[1].1, b"3");
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn range_included_unbounded() {
+                    let path = temp_path("range-iu");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"a", b"1")?;
+                            txn.put("t", b"b", b"2")?;
+                            txn.put("t", b"c", b"3")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    let mut keys = Vec::new();
+                    store
+                        .range(
+                            "t",
+                            Bound::Included(b"b".as_slice()),
+                            Bound::Unbounded,
+                            &mut |k, _v| {
+                                keys.push(k.to_vec());
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(keys, vec![b"b".to_vec(), b"c".to_vec()]);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn remove_in_write() {
+                    let path = temp_path("remove");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v")?;
+                            txn.remove("t", b"k")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(store.get("t", b"k").unwrap(), None);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn is_empty_lifecycle() {
+                    let path = temp_path("empty");
+                    let store = <$store>::create(&path).unwrap();
+                    assert!(store.is_empty("t").unwrap());
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert!(!store.is_empty("t").unwrap());
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn missing_table_scans_are_empty_and_excluded_empty_bound_is_safe() {
+                    let path = temp_path("missing-scan");
+                    let store = <$store>::create(&path).unwrap();
+                    let mut rows = Vec::new();
+                    store
+                        .for_each("missing", &mut |key, value| {
+                            rows.push((key.to_vec(), value.to_vec()));
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert!(rows.is_empty());
+
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"a", b"1")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    store
+                        .range(
+                            "t",
+                            Bound::Excluded(&[]),
+                            Bound::Unbounded,
+                            &mut |key, _| {
+                                rows.push((key.to_vec(), Vec::new()));
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(rows, vec![(b"a".to_vec(), Vec::new())]);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn empty_and_nul_table_names_are_rejected_everywhere() {
+                    fn assert_invalid<T>(result: Result<T, StoreError>) {
+                        assert!(matches!(result, Err(StoreError::InvalidInput(_))));
+                    }
+
+                    let path = temp_path("invalid-table");
+                    let store = <$store>::create(&path).unwrap();
+                    for table in ["", "bad\0name"] {
+                        assert_invalid(store.get(table, b"key"));
+                        assert_invalid(store.for_each(table, &mut |_, _| Ok(())));
+                        assert_invalid(store.range(
+                            table,
+                            Bound::Unbounded,
+                            Bound::Unbounded,
+                            &mut |_, _| Ok(()),
+                        ));
+                        assert_invalid(store.is_empty(table));
+
+                        let snapshot = store.snapshot().unwrap();
+                        assert_invalid(snapshot.get(table, b"key"));
+                        assert_invalid(snapshot.for_each(table, &mut |_, _| Ok(())));
+                        assert_invalid(snapshot.range(
+                            table,
+                            Bound::Unbounded,
+                            Bound::Unbounded,
+                            &mut |_, _| Ok(()),
+                        ));
+                        assert_invalid(snapshot.is_empty(table));
+
+                        assert_invalid(store.write(|txn| txn.get(table, b"key")));
+                        assert_invalid(store.write(|txn| txn.put(table, b"key", b"value")));
+                        assert_invalid(store.write(|txn| txn.remove(table, b"key")));
+                        assert_invalid(store.write(|txn| {
+                            txn.range(
+                                table,
+                                Bound::Unbounded,
+                                Bound::Unbounded,
+                                &mut |_, _| Ok(()),
+                            )
+                        }));
+                        assert_invalid(store.write(|txn| txn.for_each(table, &mut |_, _| Ok(()))));
+                    }
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn read_only_reopen_preserves_reads_and_rejects_mutation() {
+                    let path = temp_path("read-only");
+                    let store = <$store>::create(&path).unwrap();
+                    store.write(|txn| txn.put("t", b"key", b"value")).unwrap();
+                    drop(store);
+
+                    let mut readonly = <$store>::open_read_only(&path).unwrap();
+                    assert_eq!(readonly.get("t", b"key").unwrap(), Some(b"value".to_vec()));
+                    assert!(matches!(
+                        readonly.write(|_| Ok(())),
+                        Err(StoreError::ReadOnly)
+                    ));
+                    assert!(matches!(readonly.compact(), Err(StoreError::ReadOnly)));
+                    drop(readonly);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn write_returns_closure_value() {
+                    let path = temp_path("write-ret");
+                    let store = <$store>::create(&path).unwrap();
+                    let val: u32 = store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v")?;
+                            Ok(42u32)
+                        })
+                        .unwrap();
+                    assert_eq!(val, 42);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn compact_preserves_data() {
+                    let path = temp_path("compact");
+                    let mut store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    store.compact().unwrap();
+                    assert_eq!(store.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                // ── snapshot tests ─────────────────────────────────
+
+                #[test]
+                fn snapshot_consistency() {
+                    let path = temp_path("snap-consist");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v1")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    let snap = store.snapshot().unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v2")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v1".to_vec()));
+                    assert_eq!(store.get("t", b"k").unwrap(), Some(b"v2".to_vec()));
+                    drop(snap);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn snapshot_reuse() {
+                    let path = temp_path("snap-reuse");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"k", b"v")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    let snap = store.snapshot().unwrap();
+                    assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+                    assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+                    drop(snap);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn snapshot_correctness() {
+                    let path = temp_path("snap-correct");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"a", b"1")?;
+                            txn.put("t", b"b", b"2")?;
+                            txn.put("t", b"c", b"3")?;
+                            txn.put("u", b"x", b"9")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    let snap = store.snapshot().unwrap();
+
+                    assert_eq!(snap.get("t", b"a").unwrap(), Some(b"1".to_vec()));
+                    assert_eq!(snap.get("t", b"missing").unwrap(), None);
+                    assert_eq!(snap.get("u", b"x").unwrap(), Some(b"9".to_vec()));
+
+                    assert!(!snap.is_empty("t").unwrap());
+                    assert!(snap.is_empty("nonexistent").unwrap());
+
+                    let mut keys = Vec::new();
+                    snap.for_each("t", &mut |k, _v| {
+                        keys.push(k.to_vec());
+                        Ok(())
+                    })
+                    .unwrap();
+                    assert_eq!(keys, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+
+                    let mut range_keys = Vec::new();
+                    snap.range(
+                        "t",
+                        Bound::Included(b"b".as_slice()),
+                        Bound::Included(b"c".as_slice()),
+                        &mut |k, _v| {
+                            range_keys.push(k.to_vec());
+                            Ok(())
+                        },
+                    )
+                    .unwrap();
+                    assert_eq!(range_keys, vec![b"b".to_vec(), b"c".to_vec()]);
+
+                    let mut range_unbound = Vec::new();
+                    snap.range(
+                        "t",
+                        Bound::Included(b"b".as_slice()),
+                        Bound::Unbounded,
+                        &mut |k, _v| {
+                            range_unbound.push(k.to_vec());
+                            Ok(())
+                        },
+                    )
+                    .unwrap();
+                    assert_eq!(range_unbound, vec![b"b".to_vec(), b"c".to_vec()]);
+
+                    drop(snap);
+                    drop(store);
+                    cleanup(&path);
+                }
+            }
+        };
     }
 
-    #[test]
-    fn multi_table_write() {
-        let path = temp_path("multi-table");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("alpha", b"k1", b"v1")?;
-                txn.put("beta", b"k2", b"v2")?;
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(store.get("alpha", b"k1").unwrap(), Some(b"v1".to_vec()));
-        assert_eq!(store.get("beta", b"k2").unwrap(), Some(b"v2".to_vec()));
-        assert_eq!(store.get("alpha", b"k2").unwrap(), None);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
+    store_tests!(redb, RedbStore, "redb");
 
-    #[test]
-    fn atomic_rollback() {
-        let path = temp_path("rollback");
-        let store = RedbStore::create(&path).unwrap();
-        let result: Result<(), _> = store.write(|txn| {
-            txn.put("t", b"a", b"1")?;
-            txn.put("t", b"b", b"2")?;
-            txn.put("u", b"c", b"3")?;
-            Err(StoreError::Backend("deliberate rollback".into()))
-        });
-        assert!(result.is_err());
-        assert_eq!(store.get("t", b"a").unwrap(), None);
-        assert_eq!(store.get("t", b"b").unwrap(), None);
-        assert_eq!(store.get("u", b"c").unwrap(), None);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn read_your_writes() {
-        let path = temp_path("ryw");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"key", b"val")?;
-                assert_eq!(txn.get("t", b"key")?, Some(b"val".to_vec()));
-                Ok(())
-            })
-            .unwrap();
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn write_txn_is_empty() {
-        let path = temp_path("wtxn-empty");
-        let store = RedbStore::create(&path).unwrap();
-        // An absent table counts as empty and must not be created by the probe.
-        assert!(store.write(|txn| txn.is_empty("t")).unwrap());
-        store
-            .write(|txn| {
-                // The earlier probe must not have created the table: remove on
-                // the still-absent table is a no-op success.
-                txn.remove("t", b"k")?;
-                txn.put("t", b"k", b"v")?;
-                assert!(!txn.is_empty("t")?);
-                txn.remove("t", b"k")?;
-                assert!(txn.is_empty("t")?);
-                Ok(())
-            })
-            .unwrap();
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
+    #[cfg(feature = "lmdb")]
+    store_tests!(lmdb, LmdbStore, "lmdb");
 
     #[test]
     fn redb_is_empty_probe_does_not_create_tables() {
-        let path = temp_path("wtxn-probe");
-        let store = RedbStore::create(&path).unwrap();
+        use ::redb::ReadableDatabase;
+        let path = std::env::temp_dir().join(format!(
+            "oxpinyin-store-wtxn-probe-{}.redb",
+            std::process::id(),
+        ));
+        let _ = std::fs::remove_file(&path);
+        let store = crate::RedbStore::create(&path).unwrap();
         assert!(store.write(|txn| txn.is_empty("t")).unwrap());
         drop(store);
         // A committed write transaction that only probed emptiness must
         // leave the database with zero tables; assert it against redb
         // directly because the OrderedStore API cannot distinguish an
-        // absent table from an empty one.
-        let db = redb::ReadOnlyDatabase::open(&path).unwrap();
+        // absent table from an empty one.  (`::redb` because the shared
+        // test suite generates a `tests::redb` submodule that shadows
+        // the crate path.)
+        let db = ::redb::ReadOnlyDatabase::open(&path).unwrap();
         let txn = db.begin_read().unwrap();
         assert_eq!(txn.list_tables().unwrap().count(), 0);
         drop(txn);
@@ -604,405 +1013,17 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    #[cfg(feature = "lmdb")]
     #[test]
-    fn range_included_included() {
-        let path = temp_path("range-ii");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"a", b"1")?;
-                txn.put("t", b"b", b"2")?;
-                txn.put("t", b"c", b"3")?;
-                txn.put("t", b"d", b"4")?;
-                Ok(())
-            })
-            .unwrap();
-        let mut rows = Vec::new();
-        store
-            .range(
-                "t",
-                Bound::Included(b"b".as_slice()),
-                Bound::Included(b"c".as_slice()),
-                &mut |k, v| {
-                    rows.push((k.to_vec(), v.to_vec()));
-                    Ok(())
-                },
-            )
-            .unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].0, b"b");
-        assert_eq!(rows[0].1, b"2");
-        assert_eq!(rows[1].0, b"c");
-        assert_eq!(rows[1].1, b"3");
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn range_included_unbounded() {
-        let path = temp_path("range-iu");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"a", b"1")?;
-                txn.put("t", b"b", b"2")?;
-                txn.put("t", b"c", b"3")?;
-                Ok(())
-            })
-            .unwrap();
-        let mut keys = Vec::new();
-        store
-            .range(
-                "t",
-                Bound::Included(b"b".as_slice()),
-                Bound::Unbounded,
-                &mut |k, _v| {
-                    keys.push(k.to_vec());
-                    Ok(())
-                },
-            )
-            .unwrap();
-        assert_eq!(keys, vec![b"b".to_vec(), b"c".to_vec()]);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn remove_in_write() {
-        let path = temp_path("remove");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"k", b"v")?;
-                txn.remove("t", b"k")?;
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(store.get("t", b"k").unwrap(), None);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn is_empty_lifecycle() {
-        let path = temp_path("empty");
-        let store = RedbStore::create(&path).unwrap();
-        assert!(store.is_empty("t").unwrap());
-        store
-            .write(|txn| {
-                txn.put("t", b"k", b"v")?;
-                Ok(())
-            })
-            .unwrap();
-        assert!(!store.is_empty("t").unwrap());
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn write_returns_closure_value() {
-        let path = temp_path("write-ret");
-        let store = RedbStore::create(&path).unwrap();
-        let val: u32 = store
-            .write(|txn| {
-                txn.put("t", b"k", b"v")?;
-                Ok(42u32)
-            })
-            .unwrap();
-        assert_eq!(val, 42);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn read_only_reopen_and_rejection() {
-        let path = temp_path("read-only");
-        {
-            let store = RedbStore::create(&path).unwrap();
-            store
-                .write(|txn| {
-                    txn.put("t", b"a", b"1")?;
-                    txn.put("t", b"b", b"2")?;
-                    Ok(())
-                })
-                .unwrap();
-        }
-        let mut ro = RedbStore::open_read_only(&path).unwrap();
-        assert_eq!(ro.get("t", b"a").unwrap(), Some(b"1".to_vec()));
-        assert_eq!(ro.get("t", b"zz").unwrap(), None);
-        assert!(!ro.is_empty("t").unwrap());
-        let rejected: Result<(), _> = ro.write(|_txn| Ok(()));
-        assert!(rejected.is_err());
-        assert!(ro.compact().is_err());
-        drop(ro);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn store_for_each_rows_in_order() {
-        let path = temp_path("for-each");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"c", b"3")?;
-                txn.put("t", b"a", b"1")?;
-                txn.put("t", b"b", b"2")?;
-                Ok(())
-            })
-            .unwrap();
-        let mut rows = Vec::new();
-        store
-            .for_each("t", &mut |k, v| {
-                rows.push((k.to_vec(), v.to_vec()));
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(
-            rows,
-            vec![
-                (b"a".to_vec(), b"1".to_vec()),
-                (b"b".to_vec(), b"2".to_vec()),
-                (b"c".to_vec(), b"3".to_vec()),
-            ]
-        );
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn write_txn_scans_see_own_writes_in_order() {
-        let path = temp_path("wtxn-scan");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"d", b"4")?;
-                txn.put("t", b"b", b"2")?;
-                txn.put("t", b"a", b"1")?;
-                txn.put("t", b"c", b"3")?;
-                let mut mid = Vec::new();
-                txn.range(
-                    "t",
-                    Bound::Included(b"b".as_slice()),
-                    Bound::Included(b"c".as_slice()),
-                    &mut |k, v| {
-                        mid.push((k.to_vec(), v.to_vec()));
-                        Ok(())
-                    },
-                )?;
-                assert_eq!(
-                    mid,
-                    vec![
-                        (b"b".to_vec(), b"2".to_vec()),
-                        (b"c".to_vec(), b"3".to_vec())
-                    ]
-                );
-                let mut keys = Vec::new();
-                txn.for_each("t", &mut |k, _v| {
-                    keys.push(k.to_vec());
-                    Ok(())
-                })?;
-                assert_eq!(
-                    keys,
-                    vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec(), b"d".to_vec()]
-                );
-                Ok(())
-            })
-            .unwrap();
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn compact_preserves_data() {
-        let path = temp_path("compact");
-        let mut store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"k", b"v")?;
-                Ok(())
-            })
-            .unwrap();
-        store.compact().unwrap();
-        assert_eq!(store.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    // ── snapshot tests ─────────────────────────────────────────────
-
-    #[test]
-    fn absent_table_reads_are_empty() {
-        let path = temp_path("absent");
-        let store = RedbStore::create(&path).unwrap();
-
-        assert_eq!(store.get("absent", b"k").unwrap(), None);
-        assert!(store.is_empty("absent").unwrap());
-        let mut visited = false;
-        store
-            .for_each("absent", &mut |_k, _v| {
-                visited = true;
-                Ok(())
-            })
-            .unwrap();
-        assert!(!visited);
-        store
-            .range(
-                "absent",
-                Bound::Unbounded,
-                Bound::Unbounded,
-                &mut |_k, _v| {
-                    visited = true;
-                    Ok(())
-                },
-            )
-            .unwrap();
-        assert!(!visited);
-
-        let snap = store.snapshot().unwrap();
-        assert_eq!(snap.get("absent", b"k").unwrap(), None);
-        assert!(snap.is_empty("absent").unwrap());
-        snap.for_each("absent", &mut |_k, _v| {
-            visited = true;
-            Ok(())
-        })
-        .unwrap();
-        assert!(!visited);
-        snap.range(
-            "absent",
-            Bound::Unbounded,
-            Bound::Unbounded,
-            &mut |_k, _v| {
-                visited = true;
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert!(!visited);
-
-        drop(snap);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn live_snapshot_blocks_compact_until_dropped() {
-        let path = temp_path("snap-compact");
-        let mut store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"k", b"v")?;
-                Ok(())
-            })
-            .unwrap();
-        let snap = store.snapshot().unwrap();
-        assert!(store.compact().is_err());
-        drop(snap);
-        store.compact().unwrap();
-        assert_eq!(store.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn snapshot_consistency() {
-        let path = temp_path("snap-consist");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"k", b"v1")?;
-                Ok(())
-            })
-            .unwrap();
-        let snap = store.snapshot().unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"k", b"v2")?;
-                Ok(())
-            })
-            .unwrap();
-        assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v1".to_vec()));
-        assert_eq!(store.get("t", b"k").unwrap(), Some(b"v2".to_vec()));
-        drop(snap);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn snapshot_reuse() {
-        let path = temp_path("snap-reuse");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"k", b"v")?;
-                Ok(())
-            })
-            .unwrap();
-        let snap = store.snapshot().unwrap();
-        assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-        assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-        drop(snap);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn snapshot_correctness() {
-        let path = temp_path("snap-correct");
-        let store = RedbStore::create(&path).unwrap();
-        store
-            .write(|txn| {
-                txn.put("t", b"a", b"1")?;
-                txn.put("t", b"b", b"2")?;
-                txn.put("t", b"c", b"3")?;
-                txn.put("u", b"x", b"9")?;
-                Ok(())
-            })
-            .unwrap();
-        let snap = store.snapshot().unwrap();
-
-        assert_eq!(snap.get("t", b"a").unwrap(), Some(b"1".to_vec()));
-        assert_eq!(snap.get("t", b"missing").unwrap(), None);
-        assert_eq!(snap.get("u", b"x").unwrap(), Some(b"9".to_vec()));
-
-        assert!(!snap.is_empty("t").unwrap());
-        assert!(snap.is_empty("nonexistent").unwrap());
-
-        let mut keys = Vec::new();
-        snap.for_each("t", &mut |k, _v| {
-            keys.push(k.to_vec());
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(keys, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
-
-        let mut range_keys = Vec::new();
-        snap.range(
-            "t",
-            Bound::Included(b"b".as_slice()),
-            Bound::Included(b"c".as_slice()),
-            &mut |k, _v| {
-                range_keys.push(k.to_vec());
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(range_keys, vec![b"b".to_vec(), b"c".to_vec()]);
-
-        let mut range_unbound = Vec::new();
-        snap.range(
-            "t",
-            Bound::Included(b"b".as_slice()),
-            Bound::Unbounded,
-            &mut |k, _v| {
-                range_unbound.push(k.to_vec());
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(range_unbound, vec![b"b".to_vec(), b"c".to_vec()]);
-
-        drop(snap);
-        drop(store);
-        let _ = std::fs::remove_file(&path);
+    fn lmdb_rejects_nul_path() {
+        let path = std::path::PathBuf::from("oxpinyin-store\0invalid.mdb");
+        assert!(matches!(
+            LmdbStore::create(&path),
+            Err(StoreError::InvalidInput("path contains NUL"))
+        ));
+        assert!(matches!(
+            LmdbStore::open_read_only(&path),
+            Err(StoreError::InvalidInput("path contains NUL"))
+        ));
     }
 }
