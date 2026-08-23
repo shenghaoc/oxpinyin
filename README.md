@@ -23,7 +23,7 @@ cargo test --locked --workspace
 
 | Path | What |
 |---|---|
-| `crates/*` | 13 crates, none stubs (grouped below) |
+| `crates/*` | 12 crates, none stubs (grouped below) |
 | `ROADMAP.md` | Stages, pin, workstream names |
 | `AGENTS.md` | Agent/collaborator contract |
 | `docs/findings/` | Pin, ABI, schema, SPEC inputs |
@@ -34,7 +34,7 @@ cargo test --locked --workspace
 |---|---|
 | Engine / data / capi | `oxpinyin-core`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-capi` |
 | Training toolchain | `oxpinyin-segment`, `oxpinyin-counter`, `oxpinyin-lambda`, `oxpinyin-emitter`, `oxpinyin-corpus` |
-| Tools | `oxpinyin-dictool`, `oxpinyin-migrate` |
+| Tools | `oxpinyin-dictool` |
 | Oracle | `pinyin-oracle` |
 
 ## Upstream

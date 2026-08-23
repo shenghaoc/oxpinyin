@@ -1,7 +1,7 @@
 //! System punctuation table: phrase token → predicted punctuation strings.
 //!
-//! Produced by `oxpinyin-migrate export-punct` from `punct.table`
-//! (`docs/findings/prediction-punct.md`). Keys are `phrase_token_t` little
+//! Committed under `fixtures/w3/` (frozen; no longer regenerated in-tree)
+//! per `docs/findings/prediction-punct.md`.  Keys are `phrase_token_t` little
 //! endian; values are NUL-terminated UTF-8 punctuation strings in the
 //! table-file (decreasing-frequency) order.
 

@@ -1,7 +1,7 @@
 //! System dictionary backed by the exported pinyin index and phrase index.
 //!
-//! Implements [`oxpinyin_core::Dictionary`] over the tables that
-//! `oxpinyin-migrate export` derives from the pinned oracle's public ABI
+//! Implements [`oxpinyin_core::Dictionary`] over the tables
+//! committed under `fixtures/w3/` (frozen; no longer regenerated in-tree)
 //! (`docs/findings/data-layer-export.md`). The index is keyed by the
 //! pinyin spelling itself — syllables joined by `'` — so a lookup for
 //! `[ni, hao]` is a single get on `ni'hao`; there is no per-syllable
@@ -92,7 +92,7 @@ impl From<TableError> for DictError {
 }
 
 /// The system dictionary, backed by `pinyin_index.redb` and
-/// `phrase_index.redb` from `oxpinyin-migrate export`.
+/// `phrase_index.redb` committed under `fixtures/w3/`.
 pub struct SystemDictionary {
     /// Pinyin spelling → `{token, freq}` records, stored order.
     pinyin_index: PinyinIndex,

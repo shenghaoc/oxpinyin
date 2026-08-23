@@ -281,7 +281,7 @@ has nowhere to land. See §9.
 
 ## 5. Addon data availability — a load-bearing decision
 
-W3 `addon_*.redb` cannot be the runtime addon tables. Those files are
+W3 `addon_*.redb` cannot be the runtime addon tables. Those files were
 `oxpinyin-migrate convert` passthroughs of the raw Tkrzw files, i.e. the
 same **undocumented sectioned binary format** that
 `docs/findings/data-layer-export.md` deliberately refused to parse for the
@@ -297,7 +297,7 @@ Therefore "use the existing addon_*.redb" can mean one of two very different
 implementations:
 
 **Option A — regenerate the addon tables in the established public-ABI schema.**
-Add a data-preparation step (in `oxpinyin-migrate`, analogous to
+Add a data-preparation step (analogous to
 `docs/findings/data-layer-export.md`) that reads the model archive's addon
 `.table` text files and writes string-keyed pinyin indexes plus token→text
 phrase indexes, one per addon library. Runtime `pinyin_load_addon_phrase_library`
@@ -448,17 +448,14 @@ the C ABI.
 
 ### 6.7 Addon data preparation (Option A implementation shape)
 
-- Add an addon-export command to `oxpinyin-migrate` that reads
-  `data/*.table` from the model archive and writes one string-keyed
-  `pinyin_index` plus one `token→text` phrase index per addon library, with
-  counts taken from the `.table` count column.
+- Add an addon-export data-preparation step that reads `data/*.table` from
+  the model archive and writes one string-keyed `pinyin_index` plus one
+  `token→text` phrase index per addon library, with counts taken from the
+  `.table` count column.
 - Regenerate `fixtures/w3/addon_*.redb` accordingly, keeping the system
   fixtures and all corpus pins untouched.
 - Runtime `CapiContext` discovers addon table paths from a small manifest next
   to the tables (or a fixed naming convention), never by scanning.
-
-This is the only part of the design that touches `oxpinyin-migrate`, which is
-outside W11's stated primary ground; it is flagged below.
 
 ## 7. Complexity comparison vs upstream
 
@@ -517,8 +514,8 @@ Unique names under `tools/bisection/`, not edits to `run-import-diff.sh` or
 
 ## 9. Approved decisions (Phase 0)
 
-1. **Addon data: Option A.** Regenerate from the `.table` text via
-   `oxpinyin-migrate`. Conditions: (a) differential-verify the regenerated
+1. **Addon data: Option A.** Regenerate from the `.table` text via a
+   data-preparation tool. Conditions: (a) differential-verify the regenerated
    tables — pinned libpinyin loads the same `.table` through its own addon
    path, ADDON candidates compared exactly; (b) remove the raw W3
    `addon_*.redb` in the implementation PR unless a manifest/test still pins

@@ -1,8 +1,9 @@
 # Data formats — pinned oracle table files
 
 Date: 2026-08-12 · Status: recorded; human review required before freeze.
-Revision: Tkrzw files converted to redb via oxpinyin-migrate (FFI bridge);
-direct Rust parsing replaced by redb loader; fixtures updated to .redb.
+Revision: Tkrzw files converted to redb (formerly via oxpinyin-migrate FFI
+bridge, now committed under fixtures/w3/); direct Rust parsing replaced by
+redb loader; fixtures updated to .redb.
 
 Describes every binary table file installed by the pinned oracle under
 `$PREFIX/lib/libpinyin/data/`. This is a SPEC — no loader code may be
@@ -51,7 +52,8 @@ table.conf                   1,229   Text configuration
 Three categories:
 
 1.  **Tkrzw Hash DB** (6 files) — key-value stores.  Converted to
-    portable redb databases by `oxpinyin-migrate` before loading.
+    portable redb databases (committed under `fixtures/w3/`) before
+    loading.
 2.  **Custom content files** (16 files) — phrase/character
     dictionaries with a common 28-byte header, an index table, and
     variable-length records.  Parsed directly by `oxpinyin-data`.
@@ -65,25 +67,22 @@ Three categories:
 All `*_index.bin`, `punct.bin`, and `bigram.db` files are Tkrzw
 Hash Database Manager format (HashDBM class, v1.x) in the oracle
 installation.  These are **not** parsed directly in Rust.  Instead,
-`oxpinyin-migrate` reads them via FFI to libtkrzw (Linux-only) and
-writes portable redb databases that `oxpinyin-data` loads on any
-platform.
+The conversion was originally performed by `oxpinyin-migrate` via FFI to
+libtkrzw (Linux-only); the resulting redb databases are committed under
+`fixtures/w3/` and `oxpinyin-data` loads them on any platform.
 
-### 1.1 Conversion (oxpinyin-migrate)
+### 1.1 Conversion (historical)
 
-```
-oxpinyin-migrate <input.tkh> -o <output.redb> [-n <limit>]
-```
+The conversion was originally performed by `oxpinyin-migrate`
+(removed from the workspace):
 
-- Reads all key-value pairs from the Tkrzw file via the C++ bridge
-  (`crates/oxpinyin-migrate/src/bridge.cpp`).
-- Filters empty-key tombstone records.
-- Sorts entries lexicographically by key for deterministic output.
-- Writes a redb v4 database with a single table `"data"`.
+- Read all key-value pairs from the Tkrzw file via the C++ bridge.
+- Filtered empty-key tombstone records.
+- Sorted entries lexicographically by key for deterministic output.
+- Wrote a redb v4 database with a single table `"data"`.
 
-The resulting redb file is **byte-identical** across repeated runs of
-the same conversion command (verified SHA-256 on punct.bin,
-pinyin_index.bin).
+The resulting redb files were **byte-identical** across repeated runs
+and are now committed under `fixtures/w3/` (frozen).
 
 ### 1.2 redb schema
 

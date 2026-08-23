@@ -46,7 +46,7 @@ pub fn export_dir() -> PathBuf {
     for name in ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"] {
         assert!(
             dir.join(name).is_file(),
-            "exported tables missing at {} ({name}); run oxpinyin-migrate export",
+            "exported tables missing at {} ({name}); tables are committed under fixtures/w3/",
             dir.display()
         );
     }

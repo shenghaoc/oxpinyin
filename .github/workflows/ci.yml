@@ -26,7 +26,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/install-tkrzw
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all --check
@@ -39,7 +38,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/install-tkrzw
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo test --locked --workspace
@@ -56,8 +54,8 @@ jobs:
   # The portable crates on the other two supported operating systems.
   # structure.md marks core/data/user/engine portable; the oracle harness is
   # portable too with its Linux-only `oracle-ffi` feature off, and it carries
-  # the graph and decode-level differentials. capi/oracle-ffi/migrate stay
-  # Linux-first and are covered by the job above.
+  # the graph and decode-level differentials. capi/oracle-ffi stay Linux-first
+  # and are covered by the job above.
   test-portable:
     strategy:
       fail-fast: false

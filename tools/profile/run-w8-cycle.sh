@@ -102,7 +102,6 @@ mkdir -p "$PROFILE_DIR"
 for name in pinyin_index.redb phrase_index.redb bigram.redb; do
     if [ ! -f "$EXPORT_DIR/$name" ]; then
         echo "fatal: exported table missing at $EXPORT_DIR/$name" >&2
-        echo "  run: cargo run --locked --release -p oxpinyin-migrate --features oracle-ffi -- export --out-dir $EXPORT_DIR" >&2
         exit 1
     fi
 done

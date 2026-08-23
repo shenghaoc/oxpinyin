@@ -97,8 +97,8 @@ Linux, macOS and Windows.
 The `test-portable` job covers `oxpinyin-core`, `oxpinyin-data`, `oxpinyin-user`,
 `oxpinyin-engine` and `pinyin-oracle` — the last with its `oracle-ffi` feature
 off, which is how the graph and decode-level differentials also run on all
-three. `oxpinyin-capi` and `oxpinyin-migrate` stay Linux-first per
-`.kiro/steering/structure.md` and are covered by the existing job.
+three. `oxpinyin-capi` stays Linux-first per `.kiro/steering/structure.md`
+and is covered by the existing job.
 
 Extending CI was an explicit maintainer decision: `AGENTS.md` lists editing CI
 policy among the hard forbids without an ask, and this is the recorded ask.

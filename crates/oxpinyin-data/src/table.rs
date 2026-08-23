@@ -1,15 +1,14 @@
 //! Loader for redb-backed lookup tables.
 //!
 //! Each table is a redb database with a single `data` table mapping raw
-//! `&[u8]` keys to raw `&[u8]` values.  These are produced by
-//! `oxpinyin-migrate` per `docs/findings/data-layer-export.md`: the phrase
-//! tables via the oracle's public export ABI, the bigram as a verbatim
-//! copy of the oracle's Tkrzw file.
+//! `&[u8]` keys to raw `&[u8]` values.  These are committed under
+//! `fixtures/w3/` (frozen; no longer regenerated in-tree) per
+//! `docs/findings/data-layer-export.md`.
 //!
 //! # Portability
 //!
-//! redb is a pure-Rust embedded database.  Tables produced on Linux by
-//! the migrator can be read on any platform redb supports.
+//! redb is a pure-Rust embedded database.  The committed tables can be
+//! read on any platform redb supports.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;

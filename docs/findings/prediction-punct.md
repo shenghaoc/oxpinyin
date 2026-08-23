@@ -9,9 +9,8 @@ prefix empty and registered #104.
 
 ## Consumability of the raw convert
 
-`oxpinyin-migrate convert` opens every Tkrzw file as HashDBM
-(`bridge.cpp`). Measured on the pin's `punct.bin` (magic `TkrzwHDB`,
-534,528 bytes):
+The former `oxpinyin-migrate convert` opened every Tkrzw file as HashDBM.
+Measured on the pin's `punct.bin` (magic `TkrzwHDB`, 534,528 bytes):
 
 | Open class | `Count` | Key shape | Usable as `m_system_punct_table`? |
 |---|---|---|---|
@@ -30,8 +29,8 @@ decoder (`punct_table.cpp` null-terminated `ucs4_t` runs).
 
 ## Choice
 
-**Option A** — regenerate from `punct.table` via `oxpinyin-migrate
-export-punct`, the same pattern as addon tables (`export-addon`).
+**Option A** — regenerate from `punct.table` via a dedicated export step
+(the same pattern as addon tables).
 
 Rationale:
 

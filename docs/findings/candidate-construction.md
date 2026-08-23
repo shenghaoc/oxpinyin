@@ -549,7 +549,7 @@ regression envelope that must hold regardless.
    top-5-set 10190, absent 0, prefix-10 overlap 98930, prefix-depth
    98930, order-only 0. Requires the
    exported tables at
-   `/tmp/oxpinyin-export` (`oxpinyin-migrate export`) **and** the fetched
+   `/tmp/oxpinyin-export` **and** the fetched
    model cache (`tools/model/fetch-model.sh`; the real unigram counts in
    `interpolation2.text` are what the reproduced construction ranks by);
    the test skips with a diagnostic without them and is measured under

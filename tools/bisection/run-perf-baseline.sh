@@ -88,16 +88,18 @@ echo "installed capi .so:         $CAPI_SO"
 # ── Installed data tree (cargo-c ships no data; packager must add it) ────
 
 if [ ! -f "$CAPI_DATA/pinyin_index.redb" ] || [ ! -f "$CAPI_DATA/interpolation2.text" ]; then
-    echo "--- building oxpinyin data export + model cache ---"
-    cargo run --locked --release -p oxpinyin-migrate --features oracle-ffi \
-        --manifest-path "$REPO_ROOT/Cargo.toml" \
-        -- export --out-dir "$WORK/export"
+    echo "--- populating oxpinyin data from export + model cache ---"
+    EXPORT_DIR="${PINYIN_EXPORT_DIR:-/tmp/oxpinyin-export}"
+    [ -f "$EXPORT_DIR/pinyin_index.redb" ] || {
+        echo "fatal: exported tables not found at $EXPORT_DIR" >&2
+        exit 1
+    }
     MODEL_DIR=$(PINYIN_MODEL_CACHE="$WORK/model" \
         "$REPO_ROOT/tools/model/fetch-model.sh" | tail -n 1)
     mkdir -p "$CAPI_DATA"
-    cp -L "$WORK/export/pinyin_index.redb" \
-          "$WORK/export/phrase_index.redb" \
-          "$WORK/export/bigram.redb" "$CAPI_DATA/"
+    cp -L "$EXPORT_DIR/pinyin_index.redb" \
+          "$EXPORT_DIR/phrase_index.redb" \
+          "$EXPORT_DIR/bigram.redb" "$CAPI_DATA/"
     cp -L "$MODEL_DIR/interpolation2.text" "$CAPI_DATA/interpolation2.text"
 fi
 [ -f "$CAPI_DATA/pinyin_index.redb" ] && [ -f "$CAPI_DATA/interpolation2.text" ] || {
