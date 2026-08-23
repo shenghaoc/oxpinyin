@@ -95,8 +95,8 @@ frozen from observed data, describes both:
   `{next_token: u32, count: u32}`.
 - **Invariant**: `total == Σ count` over the value's records. Holds for
   all 56,359 entries of the pin's table; `oxpinyin-data`'s fixture tests
-  enforce it on every committed entry, so a conversion or interpretation
-  error cannot land silently.
+  enforce it on every committed entry, so a malformed row total cannot
+  land silently.
 
 This is the one schema not obtained through the public ABI. Its
 verification is: (a) the total-equals-sum invariant over the whole table,
