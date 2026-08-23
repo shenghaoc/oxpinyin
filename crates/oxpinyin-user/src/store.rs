@@ -1048,7 +1048,9 @@ impl UserStore {
             })?;
             for (token, text) in matched {
                 txn.remove(PHRASE, &codec::encode_token(token))?;
-                txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
+                if phrase_index_library_index(token) == USER_DICTIONARY {
+                    txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
+                }
                 txn.remove(
                     PHRASE_BY_LIB_TEXT,
                     &codec::encode_u8_str(phrase_index_library_index(token), &text),
@@ -1075,7 +1077,9 @@ impl UserStore {
                     .to_owned();
 
                 txn.remove(PHRASE, &token_key)?;
-                txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
+                if phrase_index_library_index(token) == USER_DICTIONARY {
+                    txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
+                }
                 txn.remove(
                     PHRASE_BY_LIB_TEXT,
                     &codec::encode_u8_str(phrase_index_library_index(token), &text),
