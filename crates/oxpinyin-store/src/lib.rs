@@ -560,8 +560,14 @@ fn map_compaction_error(e: redb::CompactionError) -> StoreError {
 
 #[cfg(test)]
 mod tests {
+    // `OrderedStore` provides `create`/`write`, used by the always-built
+    // `redb_is_empty_probe_does_not_create_tables` below; keep it in scope
+    // regardless of the `lmdb` feature. `LmdbStore`/`StoreError` are only
+    // referenced by lmdb-gated tests, so they stay gated to avoid an
+    // unused-import warning when the feature is off.
+    use super::OrderedStore;
     #[cfg(feature = "lmdb")]
-    use super::{LmdbStore, OrderedStore, StoreError};
+    use super::{LmdbStore, StoreError};
 
     macro_rules! store_tests {
         ($mod:ident, $store:ty, $ext:literal) => {
