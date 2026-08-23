@@ -12,7 +12,6 @@ inclusion: always
 | oxpinyin-capi | C ABI subset for the borrowed frontend | allow | Linux | yes |
 | pinyin-oracle | differential harness vs pinned libpinyin | allow | Linux | never |
 | oxpinyin-dictool | conversions; standalone vocab exporter | deny | yes | yes |
-| oxpinyin-migrate | settings + vocab import; FFI fallback | allow | Linux | yes |
 | oxpinyin-corpus | training corpus front-end (zhwiki dump → ngseg raw text) | deny | yes | never |
 | oxpinyin-segment | training segmenter (`ngseg` reproduction) | deny | yes | never |
 | oxpinyin-counter | training n-gram counter (`gen_ngram` reproduction) | deny | yes | never |

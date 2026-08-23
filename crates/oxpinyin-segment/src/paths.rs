@@ -1,4 +1,4 @@
-//! Path discovery for the fetched model cache and the migrate export.
+//! Path discovery for the fetched model cache and the export directory.
 //!
 //! Mirrors `pinyin_oracle::locate_model_dir` without depending on the
 //! oracle crate (the segmenter is portable and never-ship; it must not
@@ -16,13 +16,13 @@ pub const MODEL_DIR_ENV: &str = "PINYIN_MODEL_DIR";
 /// is appended).
 pub const MODEL_CACHE_ENV: &str = "PINYIN_MODEL_CACHE";
 
-/// Environment variable naming the `oxpinyin-migrate export` directory.
+/// Environment variable naming the export directory.
 pub const EXPORT_DIR_ENV: &str = "PINYIN_EXPORT_DIR";
 
 /// Default export directory used by the oracle integration tests.
 pub const DEFAULT_EXPORT_DIR: &str = "/tmp/oxpinyin-export";
 
-/// Files the segmenter needs from a migrate export.
+/// Files the segmenter needs from the export directory.
 pub const EXPORT_FILES: &[&str] = &["phrase_index.redb", "bigram.redb"];
 
 /// Files the segmenter needs from the fetched model20 cache.
@@ -31,9 +31,9 @@ pub const MODEL_FILES: &[&str] = &["interpolation2.text"];
 /// Locations of the three tables `Segmenter::open` reads.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SegmenterPaths {
-    /// `phrase_index.redb` from `oxpinyin-migrate export`.
+    /// `phrase_index.redb` from the export directory.
     pub phrase_index: PathBuf,
-    /// `bigram.redb` from `oxpinyin-migrate convert` / `export`.
+    /// `bigram.redb` from the export directory.
     pub bigram: PathBuf,
     /// `interpolation2.text` from the fetched model20 cache.
     pub interpolation2: PathBuf,
@@ -47,10 +47,7 @@ impl SegmenterPaths {
     /// Returns [`SegmentError::MissingPath`] when either side is absent.
     pub fn discover() -> Result<Self, SegmentError> {
         let export = locate_export_dir().ok_or_else(|| SegmentError::MissingPath {
-            detail: format!(
-                "no migrate export at ${EXPORT_DIR_ENV} or {DEFAULT_EXPORT_DIR}; \
-                 run `oxpinyin-migrate export --out-dir {DEFAULT_EXPORT_DIR}`"
-            ),
+            detail: format!("no export at ${EXPORT_DIR_ENV} or {DEFAULT_EXPORT_DIR}"),
         })?;
         let model = locate_model_dir().ok_or_else(|| SegmentError::MissingPath {
             detail: format!(

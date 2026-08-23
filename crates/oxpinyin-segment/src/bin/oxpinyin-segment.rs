@@ -2,7 +2,7 @@
 //!
 //! Usage: oxpinyin-segment [--generate-extra-enter] [-o outputfile] [inputfile]
 //!
-//! Paths default to the migrate export (`PINYIN_EXPORT_DIR` /
+//! Paths default to the export directory (`PINYIN_EXPORT_DIR` /
 //! `/tmp/oxpinyin-export`) and the fetched model20 cache
 //! (`PINYIN_MODEL_DIR` / `tools/model/fetch-model.sh`).
 
@@ -107,7 +107,7 @@ fn print_help() {
         "Usage: oxpinyin-segment [--generate-extra-enter] [-o outputfile] [inputfile]\n\
          \n\
          Extra options (not in ngseg):\n\
-           --export-dir DIR    oxpinyin-migrate export (phrase_index.redb, bigram.redb)\n\
+           --export-dir DIR    export directory (phrase_index.redb, bigram.redb)\n\
            --model-dir DIR     fetched model20 cache (interpolation2.text)\n\
            --table-conf FILE   read lambda parameter from table.conf\n\
            --lambda FLOAT      override lambda (default: pin 0.312699)\n"

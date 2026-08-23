@@ -109,7 +109,7 @@ fn pct(n: usize, d: usize) -> usize {
 fn main() -> ExitCode {
     let dir = Path::new("/tmp/oxpinyin-export");
     if !dir.join("pinyin_index.redb").exists() {
-        eprintln!("missing {dir:?}; run oxpinyin-migrate export first");
+        eprintln!("missing {dir:?}; tables are committed under fixtures/w3/");
         return ExitCode::from(2);
     }
 

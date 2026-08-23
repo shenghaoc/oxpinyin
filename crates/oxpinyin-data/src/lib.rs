@@ -2,10 +2,10 @@
 //! Portable: no glib, no Linux-only deps. Internal crate — the supported
 //! public API is `oxpinyin-engine`.
 //!
-//! The redb tables are produced by `oxpinyin-migrate` from the pinned
-//! oracle per `docs/findings/data-layer-export.md`; the custom-content
-//! loader follows `docs/findings/data-formats.md`. This crate only
-//! reads them.
+//! The redb tables are committed under `fixtures/w3/` (frozen; no longer
+//! regenerated in-tree) per `docs/findings/data-layer-export.md`; the
+//! custom-content loader follows `docs/findings/data-formats.md`.  This
+//! crate only reads them.
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
