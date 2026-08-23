@@ -10,7 +10,7 @@ use std::fmt;
 use std::ops::Bound;
 use std::path::Path;
 
-use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata};
+use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata, TableHandle};
 
 /// Errors that can occur when opening or scanning a store.
 ///
@@ -104,6 +104,12 @@ pub trait WriteTxn {
 
     /// Visit every row of `table` in ascending key-byte order.
     fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError>;
+
+    /// Whether `table` has no rows (an absent table counts as empty).
+    ///
+    /// Implementations must stop at the first row instead of scanning
+    /// the whole table.
+    fn is_empty(&self, table: &str) -> Result<bool, StoreError>;
 }
 
 /// An ordered byte-KV store.
@@ -429,6 +435,22 @@ impl WriteTxn for RedbWriteTxn<'_> {
         }
         Ok(())
     }
+
+    fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
+        // `open_table` creates an absent table; probe existence first so an
+        // emptiness check never changes the schema.
+        let exists = self
+            .txn
+            .list_tables()
+            .map_err(map_storage_error)?
+            .any(|handle| handle.name() == table);
+        if !exists {
+            return Ok(true);
+        }
+        let def: redb::TableDefinition<&[u8], &[u8]> = redb::TableDefinition::new(table);
+        let tbl = self.txn.open_table(def).map_err(map_table_error)?;
+        tbl.is_empty().map_err(map_storage_error)
+    }
 }
 
 /// The default store backend.
@@ -535,6 +557,28 @@ mod tests {
             .write(|txn| {
                 txn.put("t", b"key", b"val")?;
                 assert_eq!(txn.get("t", b"key")?, Some(b"val".to_vec()));
+                Ok(())
+            })
+            .unwrap();
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn write_txn_is_empty() {
+        let path = temp_path("wtxn-empty");
+        let store = RedbStore::create(&path).unwrap();
+        // An absent table counts as empty and must not be created by the probe.
+        assert!(store.write(|txn| txn.is_empty("t")).unwrap());
+        store
+            .write(|txn| {
+                // The earlier probe must not have created the table: remove on
+                // the still-absent table is a no-op success.
+                txn.remove("t", b"k")?;
+                txn.put("t", b"k", b"v")?;
+                assert!(!txn.is_empty("t")?);
+                txn.remove("t", b"k")?;
+                assert!(txn.is_empty("t")?);
                 Ok(())
             })
             .unwrap();
