@@ -227,18 +227,23 @@ fn read<S: OrderedStore>() {
     };
 
     // Predicted-candidate acceptances: committed writes that retire the
-    // cached snapshot, interleaved here as a separate timed phase.
-    let started = Instant::now();
+    // cached snapshot.  Each iteration first rebuilds the snapshot with an
+    // untimed query, then times exactly one invalidating write, so
+    // predicted_ms measures one write against a warm snapshot instead of a
+    // burst of writes whose rebuild cost lands outside the interval.
+    let mut predicted = Duration::ZERO;
     let mut seeds = 0_u64;
     for i in 0..cfg.predicted as u64 {
+        std::hint::black_box(query(&store, cfg.seed, cfg.reads as u64 + i));
         let h = row_hash(cfg.seed ^ 0xD1CE_D000, i);
         let last = TOKEN_BASE + (h % PREV_DOMAIN as u64) as u32;
         let cur = TOKEN_BASE + ((h >> 16) % CUR_DOMAIN as u64) as u32;
+        let started = Instant::now();
         seeds += store
             .observe_predicted(last, cur)
             .expect("observe_predicted");
+        predicted += started.elapsed();
     }
-    let predicted = started.elapsed();
     std::hint::black_box(seeds);
 
     emit("cached_queries", cfg.reads.saturating_sub(1));
