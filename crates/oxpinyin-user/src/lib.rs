@@ -35,4 +35,6 @@ pub use phrase::{
     PHRASE_MASK, PinyinKey, USER_DICTIONARY, UserPhrase, UserPronunciation, is_user_file_library,
     is_user_file_token, is_user_token, phrase_index_library_index, phrase_index_make_token,
 };
-pub use store::{ExportedPhrase, SENTENCE_START, Token, UserStore, UserStoreError};
+pub use store::{
+    ExportedPhrase, GenericUserStore, SENTENCE_START, Token, UserStore, UserStoreError,
+};

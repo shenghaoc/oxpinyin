@@ -8,7 +8,7 @@
 //! The last [`crate::UserStore`] drop drains dead `Weak`s and shrinks an empty
 //! map so a `dlclose`d cdylib leaves no heap behind.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Mutex, MutexGuard, OnceLock, Weak};
@@ -54,8 +54,10 @@ impl Drop for RegistryLease {
 }
 
 type StoreRegistry = HashMap<PathBuf, Weak<StoreInner<DefaultStore>>>;
+type StandaloneRegistry = HashSet<PathBuf>;
 
 static OPEN_STORES: OnceLock<Mutex<StoreRegistry>> = OnceLock::new();
+static OPEN_STANDALONE_STORES: OnceLock<Mutex<StandaloneRegistry>> = OnceLock::new();
 
 pub(crate) fn registry_key(path: &Path) -> PathBuf {
     match (path.parent(), path.file_name()) {
@@ -64,6 +66,37 @@ pub(crate) fn registry_key(path: &Path) -> PathBuf {
             Err(_) => path.to_path_buf(),
         },
         _ => path.to_path_buf(),
+    }
+}
+
+/// Lease held by a standalone store and its clones while its path is live.
+pub(crate) struct StandaloneLease {
+    key: PathBuf,
+}
+
+impl Drop for StandaloneLease {
+    fn drop(&mut self) {
+        let Some(registry) = OPEN_STANDALONE_STORES.get() else {
+            return;
+        };
+        let mut stores = registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        stores.remove(&self.key);
+    }
+}
+
+/// Reserve `path` for one standalone handle until its last clone drops.
+pub(crate) fn acquire_standalone(path: &Path) -> Option<StandaloneLease> {
+    let key = registry_key(path);
+    let mut stores = OPEN_STANDALONE_STORES
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if stores.insert(key.clone()) {
+        Some(StandaloneLease { key })
+    } else {
+        None
     }
 }
 
