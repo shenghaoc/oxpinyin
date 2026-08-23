@@ -560,7 +560,8 @@ regression envelope that must hold regardless.
 
    ```bash
    PARITY_SERIAL=1 cargo test --release --locked -p pinyin-oracle \
-       --test real_tables_integration -- --nocapture
+       --features oracle-ffi --test real_tables_integration \
+       -- --ignored --nocapture
    ```
 
    Serial and parallel runs must agree bit-for-bit; a change that only moves a
