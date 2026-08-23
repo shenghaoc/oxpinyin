@@ -640,14 +640,23 @@ fn remove_db(path: &Path) {
     let _ = std::fs::remove_file(Path::new(&lock));
 }
 
-/// (apparent bytes, allocated bytes) of the data file at `path`: st_size
-/// and st_blocks × 512.  Allocated is the fair on-disk figure; apparent is
-/// kept alongside so a sparse file (apparent >> allocated) is visible.
+/// (apparent bytes, allocated bytes) of the data file at `path`.  On Unix,
+/// the values are st_size and st_blocks × 512.  Elsewhere, allocation is
+/// unavailable without platform-specific APIs and is reported as zero.
 /// The LMDB `-lock` sidecar is not data and is not counted.
+#[cfg(unix)]
 fn file_sizes(path: &Path) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt as _;
     match std::fs::metadata(path) {
         Ok(meta) => (meta.len(), meta.blocks() * 512),
+        Err(_) => (0, 0),
+    }
+}
+
+#[cfg(not(unix))]
+fn file_sizes(path: &Path) -> (u64, u64) {
+    match std::fs::metadata(path) {
+        Ok(meta) => (meta.len(), 0),
         Err(_) => (0, 0),
     }
 }
