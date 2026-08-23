@@ -41,9 +41,8 @@ the pinned build — measured directly, in every configuration including
 trained-and-saved user state — so the system bigram is carried by the
 verbatim Tkrzw conversion described below instead.
 
-Observed export sizes for the pin (informative, re-measured by the
-verification test): `gb_char` 95,698 tuples, `gbk_char` 21,234,
-`opengram` 28,255, `merged` 1,051.
+Observed export sizes for the pin (informative): `gb_char` 95,698 tuples,
+`gbk_char` 21,234, `opengram` 28,255, `merged` 1,051.
 
 ## Table schemas
 
@@ -93,9 +92,9 @@ observed data:
 - **Value**: `total: u32` followed by 8-byte records
   `{next_token: u32, count: u32}`.
 - **Invariant**: `total == Σ count` over the value's records. Holds for
-  all 56,359 entries of the pin's table; the verification test enforces it
-  on every entry, so a conversion or interpretation error cannot land
-  silently.
+  all 56,359 entries of the pin's table; `oxpinyin-data`'s fixture tests
+  enforce it on every committed entry, so a conversion or interpretation
+  error cannot land silently.
 
 This is the one schema not obtained through the public ABI. Its
 verification is: (a) the total-equals-sum invariant over the whole table,
@@ -106,17 +105,17 @@ top successors resolved via `pinyin_token_get_phrase` are asserted (e.g.
 
 ## Verification
 
-`crates/pinyin-oracle/tests/export_verification.rs` (feature `oracle-ffi`):
+With the exporter removed, the generated tables survive only frozen under
+`fixtures/w3/`, checksummed by `fixtures/w3/fixtures.sha256`; the live-oracle
+round-trip checks retired with the exporter. Ongoing validation reduces to
+the frozen tables' consumers:
 
-1. **Dictionary round-trip**: re-run the export collection against the live
-   oracle and compare with the generated `pinyin_index.redb` and
-   `phrase_index.redb` — same key set, same records, byte for byte.
-2. **Bigram invariant**: every entry of `bigram.redb` parses under the
-   schema above with `total == Σ count`, and the spot checks of the
-   previous section pass.
-
-The tests skip (with a notice) when the generated tables are absent; the
-canonical local path is `/tmp/oxpinyin-export/`.
+- **Bigram invariant**: every committed entry of `bigram.redb` parses under
+  the schema above with `total == Σ count`
+  (`crates/oxpinyin-data/src/lm/tests.rs::invariant_holds_for_every_fixture_entry`),
+  alongside the 你 → 的 spot check in the same module.
+- The dictionary tables have no remaining round-trip check against the
+  live oracle; their contents are frozen under `fixtures/w3/`.
 
 ## Why the previous approach was withdrawn
 

@@ -541,19 +541,18 @@ regression envelope that must hold regardless.
 
 1. **Portable parity (primary metric).**
    ```bash
-   cargo test --release --locked -p pinyin-oracle \
-       --test real_tables_integration -- --nocapture
+   cargo test -p pinyin-oracle --features oracle-ffi \
+       --test real_tables_integration -- --ignored --nocapture
    ```
    Report Δ top-1, Δ top-5-set, Δ absent, Δ prefix-10 overlap, Δ
    prefix-depth, and Δ order-only against the baseline top-1 10190,
    top-5-set 10190, absent 0, prefix-10 overlap 98930, prefix-depth
-   98930, order-only 0. Requires the
-   exported tables at
-   `/tmp/oxpinyin-export` **and** the fetched
-   model cache (`tools/model/fetch-model.sh`; the real unigram counts in
-   `interpolation2.text` are what the reproduced construction ranks by);
-   the test skips with a diagnostic without them and is measured under
-   `--release`, per
+   98930, order-only 0. Requires the committed fixtures
+   (`fixtures/w4/oracle-candidates.txt`,
+   `fixtures/w4/oracle-sentence-surface.txt`), the W2 corpus
+   (`tests/parity/corpus/inputs`), and the discoverable pin-built oracle
+   (`tools/oracle/build-oracle.sh`; resolved by
+   `pinyin_oracle::OraclePrefix::locate`), per
    `crates/pinyin-oracle/tests/real_tables_integration.rs`.
 2. **Thread-order independence.**
    ```bash

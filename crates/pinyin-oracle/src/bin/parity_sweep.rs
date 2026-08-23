@@ -108,8 +108,15 @@ fn pct(n: usize, d: usize) -> usize {
 
 fn main() -> ExitCode {
     let dir = Path::new("/tmp/oxpinyin-export");
-    if !dir.join("pinyin_index.redb").exists() {
-        eprintln!("missing {dir:?}; tables are committed under fixtures/w3/");
+    let missing: Vec<&str> = ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"]
+        .into_iter()
+        .filter(|table| !dir.join(table).exists())
+        .collect();
+    if !missing.is_empty() {
+        eprintln!(
+            "missing {missing:?} in {dir:?}; copy or symlink the required \
+             tables from the committed fixtures/w3/"
+        );
         return ExitCode::from(2);
     }
 
