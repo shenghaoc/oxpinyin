@@ -115,7 +115,10 @@ the frozen tables' consumers:
 - **Bigram invariant**: every committed entry of `bigram.redb` parses under
   the schema above with `total == Σ count`
   (`crates/oxpinyin-data/src/lm/tests.rs::invariant_holds_for_every_fixture_entry`),
-  alongside the 你 → 的 spot check in the same module.
+  plus the same module's 你 → 的 ordering check
+  (`observed_transition_is_cheaper_than_novel`). Successor top-byte and
+  top-successor orderings are not re-run by any committed test; they were
+  checked once at freeze time (§ above).
 - The dictionary tables have no remaining round-trip check against the
   live oracle; their contents are frozen under `fixtures/w3/`.
 

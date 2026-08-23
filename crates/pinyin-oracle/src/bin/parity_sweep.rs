@@ -124,8 +124,14 @@ fn main() -> ExitCode {
         &dir.join("pinyin_index.redb"),
         &dir.join("phrase_index.redb"),
     )
-    .expect("dict");
-    let mut lm = BigramLanguageModel::open(&dir.join("bigram.redb")).expect("lm");
+    .unwrap_or_else(|error| {
+        eprintln!("cannot open system dictionary from {dir:?}: {error}");
+        std::process::exit(2);
+    });
+    let mut lm = BigramLanguageModel::open(&dir.join("bigram.redb")).unwrap_or_else(|error| {
+        eprintln!("cannot open bigram model from {dir:?}: {error}");
+        std::process::exit(2);
+    });
     lm.set_unigrams_from_dict(&dict);
     let mut session =
         Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm).expect("session");
