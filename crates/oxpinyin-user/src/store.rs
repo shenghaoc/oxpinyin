@@ -2051,4 +2051,36 @@ mod tests {
         assert!(!registry::contains_key(&path));
         let _ = std::fs::remove_file(&path);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn standalone_rejects_second_open_through_a_symlink_alias() {
+        let real = temp_path("alias-real");
+        let link = temp_path("alias-link");
+        let first = UserStore::create_standalone(&real).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert!(
+            matches!(
+                UserStore::create_standalone(&link),
+                Err(UserStoreError::AlreadyOpen)
+            ),
+            "the symlink resolves to the same leased file"
+        );
+
+        drop(first);
+        let reopened = UserStore::create_standalone(&link).unwrap();
+        assert!(matches!(
+            UserStore::create_standalone(&real),
+            Err(UserStoreError::AlreadyOpen)
+        ));
+        drop(reopened);
+
+        for stale in [&real, &link] {
+            let mut lock = stale.as_os_str().to_os_string();
+            lock.push("-lock");
+            let _ = std::fs::remove_file(std::path::Path::new(&lock));
+            let _ = std::fs::remove_file(stale);
+        }
+    }
 }

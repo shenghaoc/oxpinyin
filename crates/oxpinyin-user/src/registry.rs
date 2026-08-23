@@ -87,8 +87,17 @@ impl Drop for StandaloneLease {
 }
 
 /// Reserve `path` for one standalone handle until its last clone drops.
+///
+/// An existing file is keyed by its fully canonicalized path, so equivalent
+/// aliases — including a symlinked final component — collide into one lease
+/// and a second [`crate::GenericUserStore::create_standalone`] observes
+/// [`UserStoreError::AlreadyOpen`] instead of a second backend handle. A
+/// missing file cannot be resolved that way; it falls back to
+/// [`registry_key`], which canonicalizes the parent directory and joins the
+/// file name.
 pub(crate) fn acquire_standalone(path: &Path) -> Option<StandaloneLease> {
-    let key = registry_key(path);
+    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let key = registry_key(&resolved);
     let mut stores = OPEN_STANDALONE_STORES
         .get_or_init(|| Mutex::new(HashSet::new()))
         .lock()
