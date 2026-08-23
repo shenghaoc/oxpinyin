@@ -13,26 +13,18 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Mutex, MutexGuard, OnceLock, Weak};
 
-use redb::Database;
+use oxpinyin_store::{DefaultStore, OrderedStore};
 
 pub(crate) struct CountSnapshot {
     pub(crate) generation: u64,
-    /// Owned table handles. redb 4.1.0's `ReadOnlyTable` clones the
-    /// transaction guard rather than borrowing `ReadTransaction`, so this is
-    /// not self-referential.
-    pub(crate) unigram: redb::ReadOnlyTable<u32, u64>,
-    pub(crate) unigram_total: redb::ReadOnlyTable<u8, u64>,
-    pub(crate) bigram: redb::ReadOnlyTable<(u32, u32), u64>,
-    pub(crate) bigram_total: redb::ReadOnlyTable<u32, u64>,
-    /// Kept so the read transaction outlives the table handles.
-    pub(crate) _txn: redb::ReadTransaction,
+    pub(crate) snap: <DefaultStore as OrderedStore>::ReadSnapshot,
 }
 
 pub(crate) struct StoreInner {
-    /// Cached decode-time read transaction. Declared before `db` so the
-    /// transaction is dropped first (struct fields drop in declaration order).
+    /// Cached decode-time read snapshot. Declared before `db` so the
+    /// snapshot is dropped first (struct fields drop in declaration order).
     pub(crate) count_snapshot: Mutex<Option<CountSnapshot>>,
-    pub(crate) db: Mutex<Database>,
+    pub(crate) db: Mutex<DefaultStore>,
     pub(crate) dirty: AtomicBool,
     /// Bumped after every committed user-data write transaction, which
     /// retires any `count_snapshot` cached against an older generation.
