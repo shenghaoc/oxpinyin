@@ -7,6 +7,16 @@
 // message rather than throwing.  All policy — table-name framing, bound
 // semantics, write buffering — lives on the Rust side; this file only
 // moves bytes.
+//
+// Reads borrow tkrzw's record memory instead of copying it, the way
+// libpinyin's own tkrzw code does (KeyCollectProcessor walks records
+// through ProcessEach with in-place string_views).  db_get and db_scan
+// install a RecordProcessor whose ProcessFull hands the key and value
+// straight to a Rust callback as (pointer, length) slices; there is no
+// intermediary std::string and no per-byte push.  A borrow lasts only
+// for the callback's duration — a callback that wants to keep a row
+// must copy it itself, which is the Rust visitor's business, not the
+// shim's.
 
 #pragma once
 
@@ -40,17 +50,16 @@ class Db {
   mutable tkrzw::TreeDBM dbm;
 };
 
-// A cursor over an open Db.  Must not outlive the Db it was made from;
-// the Rust side keeps every iterator local to one method call.
-class Iter {
- public:
-  explicit Iter(std::unique_ptr<tkrzw::DBM::Iterator> iter);
-  ~Iter() = default;
-  Iter(const Iter&) = delete;
-  Iter& operator=(const Iter&) = delete;
-
-  std::unique_ptr<tkrzw::DBM::Iterator> iter;
-};
+// The Rust-side record sinks.  A sink receives `ctx` — an opaque token
+// the Rust caller owns — plus each borrowed record half as a raw
+// (pointer, length) pair over tkrzw's record memory.  Raw words rather
+// than rust::Slice on purpose: every Slice construction is an
+// out-of-line call into the cxx runtime, which is measurable on a
+// per-record path; the Rust side assembles the slice itself.  The get
+// sink returns nothing; the walk sink returns false to stop the walk.
+using GetSink = rust::Fn<void(std::size_t, const std::uint8_t*, std::size_t)>;
+using WalkSink = rust::Fn<bool(std::size_t, const std::uint8_t*, std::size_t,
+                               const std::uint8_t*, std::size_t)>;
 
 // Opens `path` as a TreeDBM with tkrzw's default tuning, which means the
 // default LexicalKeyComparator: plain unsigned byte order, the order the
@@ -59,8 +68,10 @@ class Iter {
 std::unique_ptr<Db> open_db(rust::Slice<const std::uint8_t> path, bool writable,
                             bool no_create, ShimStatus& status);
 
+// Reads one record, handing the borrowed value to `visit` exactly once.
+// The Rust side's copy inside `visit` is the only one the read pays.
 ShimStatus db_get(const Db& db, rust::Slice<const std::uint8_t> key,
-                  rust::Vec<std::uint8_t>& value, bool& found);
+                  GetSink visit, std::size_t ctx);
 
 // Applies every mutation in one ProcessMulti call: tkrzw locks all the
 // named records for the duration, so the batch lands as a unit against
@@ -71,17 +82,13 @@ ShimStatus db_synchronize(const Db& db, bool hard);
 
 ShimStatus db_rebuild(const Db& db);
 
-std::unique_ptr<Iter> db_iter(const Db& db);
-
-// Positions the cursor at the first record whose key is greater than or
-// equal to `key` — TreeDBM's ordered lower-bound jump.
-ShimStatus iter_jump(Iter& iter, rust::Slice<const std::uint8_t> key);
-
-// Reads the record under the cursor.  `found` is false once the cursor
-// has walked off the end.
-ShimStatus iter_get(Iter& iter, rust::Vec<std::uint8_t>& key,
-                    rust::Vec<std::uint8_t>& value, bool& found);
-
-ShimStatus iter_next(Iter& iter);
+// Walks the records from the lower-bound `start` in ascending key order,
+// handing each to `visit` borrowed, until `visit` returns false, the
+// records run out, or the walk leaves the key space past the end.  One
+// iterator's Jump + Process + Next loop — the same walk a native tkrzw
+// client performs, with each row passed in place instead of copied into
+// intermediary strings.
+ShimStatus db_scan(const Db& db, rust::Slice<const std::uint8_t> start,
+                   WalkSink visit, std::size_t ctx);
 
 }  // namespace oxpinyin_tkrzw

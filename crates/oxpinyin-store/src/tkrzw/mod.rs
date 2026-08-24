@@ -8,6 +8,27 @@
 //! order and oxpinyin's big-endian key codec keeps the ordering it has
 //! under redb and LMDB.
 //!
+//! # Zero-copy reads
+//!
+//! Reads borrow tkrzw's record memory instead of copying it, the way
+//! libpinyin's own tkrzw code does — its `KeyCollectProcessor` walks
+//! records through `ProcessEach` reading in-place `string_view`s. Here
+//! the shim's walk drives an iterator's `Process` and hands every key
+//! and value to a Rust callback as an `&[u8]` slice over tkrzw's
+//! record buffer: no intermediary `std::string`, no per-byte
+//! `push_back`. A borrow lasts only for the callback's duration; a
+//! visitor that wants to keep a row copies exactly what it retains, and
+//! a point `get` makes the one owned copy a result that outlives the
+//! call requires. Carrying a borrowed slice past its callback is the
+//! one thing the design forbids.
+//!
+//! This module and its `bridge` carry an explicit `allow(unsafe_code)`:
+//! the callback plumbing needs a handful of hand-written `unsafe`
+//! blocks (raw token derefs, documented at each site). That waiver is
+//! scoped to the tkrzw backend by decision — the workspace outside it
+//! stays `deny` — and it waives safety ceremony, not correctness: the
+//! shared read and write suites gate this backend like any other.
+//!
 //! # One keyspace, many tables
 //!
 //! A TreeDBM file is a single flat keyspace, while [`ReadStore`] and
@@ -57,6 +78,7 @@
 //! identical 1.0.27 sources built with `./configure && make` behave
 //! correctly, and this backend's tests pass against them; `build.rs`
 //! says as much when the library is missing.
+#![allow(unsafe_code)]
 
 mod bridge;
 
@@ -64,7 +86,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Bound;
 use std::path::Path;
-use std::pin::Pin;
 
 use cxx::UniquePtr;
 
@@ -230,13 +251,98 @@ impl TkrzwStore {
     }
 }
 
-fn pin_iter(iter: &mut UniquePtr<ffi::Iter>) -> Result<Pin<&mut ffi::Iter>, StoreError> {
-    iter.as_mut()
-        .ok_or_else(|| StoreError::Backend(Box::new(ClosedError)))
+// ── zero-copy record callbacks ────────────────────────────────────
+
+/// Everything [`scan_row`] needs for one walk: the table's framed
+/// prefix, the caller's bounds, the visitor, and the slot that carries
+/// a failed visit out of the C++ callback — an error cannot unwind
+/// through the shim, so it is stored and re-raised after the call.
+struct ScanCtx<'a, 'row> {
+    prefix: &'a [u8],
+    lo: Bound<&'a [u8]>,
+    hi: Bound<&'a [u8]>,
+    row: &'a mut Row<'row>,
+    error: Option<StoreError>,
+}
+
+/// The [`ffi::db_scan`] record callback: assembles the borrowed key and
+/// value slices, frames out the table prefix, and dispatches to the
+/// visitor. The slices borrow tkrzw's record memory and are valid only
+/// until this returns; `row` copies whatever it must retain. Returns
+/// `false` to stop the walk.
+///
+/// The pointer contract is the shim's: `key_ptr`/`value_ptr` point at
+/// the record being processed, pinned by the `Process` call that reaches
+/// this callback, non-null (the shim substitutes an empty literal for a
+/// null view), with `key_len`/`value_len` their true sizes.
+fn scan_row(
+    ctx: usize,
+    key_ptr: *const u8,
+    key_len: usize,
+    value_ptr: *const u8,
+    value_len: usize,
+) -> bool {
+    // SAFETY: the pointer contract above — pinned, non-null, true
+    // lengths — is kept by the only caller that can reach this.
+    let (key, value) = unsafe {
+        (
+            std::slice::from_raw_parts(key_ptr, key_len),
+            std::slice::from_raw_parts(value_ptr, value_len),
+        )
+    };
+    // SAFETY: `ctx` is the address of the `ScanCtx` local in `scan`,
+    // cast to a token. Only this callback receives it, only the one
+    // `ffi::db_scan` call that took the token can invoke the callback,
+    // and that call returns before `scan` drops its context — so the
+    // reference lives for every invocation. Nothing else aliases the
+    // context: the walk is single-threaded and reentrant only through
+    // `row`, which cannot reach the token.
+    let ctx = unsafe { &mut *(ctx as *mut ScanCtx<'_, '_>) };
+    // Ascending order means the first key outside the table's run is
+    // the end of it.
+    let Some(user_key) = key.strip_prefix(ctx.prefix) else {
+        return false;
+    };
+    if past_upper(user_key, ctx.hi) {
+        return false;
+    }
+    if in_bounds(user_key, ctx.lo, ctx.hi) {
+        match (ctx.row)(user_key, value) {
+            Ok(true) => {}
+            Ok(false) => return false,
+            Err(error) => {
+                ctx.error = Some(error);
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// The [`ffi::db_get`] record callback: assembles the borrowed value
+/// slice and copies it into the caller's slot. This is the single owned
+/// copy a point read whose result outlives the call needs; a missing
+/// record never invokes it, so the slot staying `None` is the "not
+/// found" answer.
+///
+/// The pointer contract is the shim's, as in [`scan_row`].
+fn get_value(ctx: usize, value_ptr: *const u8, value_len: usize) {
+    // SAFETY: `value_ptr` is tkrzw's record memory for the record being
+    // processed — pinned, non-null, with `value_len` its true size.
+    let value = unsafe { std::slice::from_raw_parts(value_ptr, value_len) };
+    // SAFETY: `ctx` is the address of the `Option<Vec<u8>>` local in
+    // the calling `get`, cast to a token. Only this callback receives
+    // it, only the one `ffi::db_get` call that took the token can
+    // invoke the callback, and that call returns before the local is
+    // read or dropped.
+    unsafe {
+        *(ctx as *mut Option<Vec<u8>>) = Some(value.to_vec());
+    };
 }
 
 /// Walks `table`'s records whose key lies in `(lo, hi)`, ascending,
-/// handing each to `row`. `row` returns `false` to stop early.
+/// handing each to `row` borrowed from tkrzw's record buffer. `row`
+/// returns `false` to stop early.
 ///
 /// Every row the walk yields is already inside the bounds, so callers
 /// do not re-check them.
@@ -247,42 +353,24 @@ fn scan(
     hi: Bound<&[u8]>,
     row: &mut Row<'_>,
 ) -> Result<(), StoreError> {
-    let mut iter = ffi::db_iter(db);
-    if iter.is_null() {
-        return Err(StoreError::Backend(Box::new(ClosedError)));
-    }
     // TreeDBM's Jump is a lower-bound seek, so an Excluded lower bound
-    // lands on the excluded key itself and is skipped below.
+    // lands on the excluded key itself and is skipped by scan_row.
     let start = match lo {
         Bound::Unbounded => prefix.to_vec(),
         Bound::Included(key) | Bound::Excluded(key) => framed(prefix, key),
     };
-    check(ffi::iter_jump(pin_iter(&mut iter)?, &start))?;
-    loop {
-        let mut key = Vec::new();
-        let mut value = Vec::new();
-        let mut found = false;
-        check(ffi::iter_get(
-            pin_iter(&mut iter)?,
-            &mut key,
-            &mut value,
-            &mut found,
-        ))?;
-        if !found {
-            return Ok(());
-        }
-        // Ascending order means the first key outside the table's run is
-        // the end of it.
-        let Some(user_key) = key.strip_prefix(prefix) else {
-            return Ok(());
-        };
-        if past_upper(user_key, hi) {
-            return Ok(());
-        }
-        if in_bounds(user_key, lo, hi) && !row(user_key, &value)? {
-            return Ok(());
-        }
-        check(ffi::iter_next(pin_iter(&mut iter)?))?;
+    let mut ctx = ScanCtx {
+        prefix,
+        lo,
+        hi,
+        row,
+        error: None,
+    };
+    let token = std::ptr::addr_of_mut!(ctx) as usize;
+    check(ffi::db_scan(db, &start, scan_row, token))?;
+    match ctx.error.take() {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 
@@ -293,15 +381,15 @@ impl ReadStore for TkrzwStore {
 
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let prefix = table_prefix(table)?;
-        let mut value = Vec::new();
-        let mut found = false;
+        let mut slot = None;
+        let token = std::ptr::addr_of_mut!(slot) as usize;
         check(ffi::db_get(
             self.handle()?,
             &framed(&prefix, key),
-            &mut value,
-            &mut found,
+            get_value,
+            token,
         ))?;
-        Ok(found.then_some(value))
+        Ok(slot)
     }
 
     fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
@@ -453,10 +541,10 @@ impl WriteTxn for TkrzwWriteTxn<'_> {
         if let Some(slot) = self.buffer.get(&framed_key) {
             return Ok(slot.clone());
         }
-        let mut value = Vec::new();
-        let mut found = false;
-        check(ffi::db_get(self.db, &framed_key, &mut value, &mut found))?;
-        Ok(found.then_some(value))
+        let mut slot = None;
+        let token = std::ptr::addr_of_mut!(slot) as usize;
+        check(ffi::db_get(self.db, &framed_key, get_value, token))?;
+        Ok(slot)
     }
 
     fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
