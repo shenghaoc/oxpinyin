@@ -13,26 +13,58 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Mutex, MutexGuard, OnceLock, Weak};
 
-use oxpinyin_store::{DefaultStore, SnapshotStore, WriteStore};
+use oxpinyin_store::{DefaultStore, WriteStore};
 
-pub(crate) struct CountSnapshot<S: SnapshotStore> {
+use crate::store::Token;
+
+/// Decode-time memo of the four count tables, valid for one write
+/// generation.
+///
+/// The store used to answer these reads through an MVCC read snapshot
+/// held open across calls. Nothing in this deployment shares a store
+/// file with a concurrent writer — one user, own files, one process —
+/// so the isolation that bought was never load-bearing; what was
+/// load-bearing is that a read repeated inside one generation costs
+/// nothing and answers the same value every time. A plain memo gives
+/// both: a key is fetched from the store the first time it is asked
+/// for and served from memory afterwards, and the whole cache is
+/// dropped the moment `write_generation` moves.
+///
+/// This is the freshness contract [`crate::lookup::UserPhraseLookup`]
+/// already runs on — keyed by generation, rebuilt when it moves, no
+/// MVCC anywhere. The difference is that the count tables are the large
+/// ones, so rows are memoised on demand rather than slurped in bulk: a
+/// write costs no rebuild scan, and the cache never grows past the keys
+/// decode actually asked about between two writes. An absent row
+/// memoises as `0`, exactly what the store read it replaces returned.
+#[derive(Debug)]
+pub(crate) struct CountCache {
+    /// The `write_generation` this cache was built for; a mismatch
+    /// retires it wholesale.
     pub(crate) generation: u64,
-    pub(crate) snap: <S as SnapshotStore>::ReadSnapshot,
+    /// `UNIGRAM[token]`.
+    pub(crate) unigram: HashMap<Token, u64>,
+    /// `UNIGRAM_TOTAL`'s single row.
+    pub(crate) unigram_total: Option<u64>,
+    /// `BIGRAM[(prev, cur)]`.
+    pub(crate) bigram: HashMap<(Token, Token), u64>,
+    /// `BIGRAM_TOTAL[prev]`.
+    pub(crate) bigram_total: HashMap<Token, u64>,
 }
 
-pub(crate) struct StoreInner<S: WriteStore + SnapshotStore> {
-    /// Cached decode-time read snapshot. Declared before `db` so the
-    /// snapshot is dropped first (struct fields drop in declaration order).
-    pub(crate) count_snapshot: Mutex<Option<CountSnapshot<S>>>,
+pub(crate) struct StoreInner<S: WriteStore> {
+    /// Decode-time count memo. Declared before `db` so it is dropped
+    /// first (struct fields drop in declaration order).
+    pub(crate) count_cache: Mutex<Option<CountCache>>,
     pub(crate) db: Mutex<S>,
     pub(crate) dirty: AtomicBool,
     /// Bumped after every committed user-data write transaction, which
-    /// retires any `count_snapshot` cached against an older generation.
+    /// retires any `count_cache` built against an older generation.
     ///
     /// Future raw-write paths, including legacy migration import, must call
     /// `UserStore::mark_committed_write` after commit rather than touching
     /// this counter directly. Bumping the generation alone refreshes the
-    /// snapshot but leaves `has_user_data` as it was, and that flag is
+    /// cache but leaves `has_user_data` as it was, and that flag is
     /// consulted *first* — an import that only bumped the generation would
     /// leave the store reporting `UserCountDelta::ZERO` for every candidate,
     /// silently and permanently, however much data it wrote.
