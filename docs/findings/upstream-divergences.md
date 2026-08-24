@@ -271,6 +271,7 @@ inputs (the pin-built `.so` SIGABRTs).
   distinct-set 385/496, n-best ordered / first-6 rows 379/496; the 117
   ordered misses are all trellis-side (0 candidate-surface leaks). The
   candidate surface, which does not share this arithmetic, is
-  bit-identical. Declared a permanent Stage-1 residual in
-  `sentence-surface.md` §12; enumerate with the read-only
+  bit-identical. Recorded as the measured Stage-1 sentence residual in
+  `sentence-surface.md` §12 (recommended as a permanent divergence; the
+  freeze is the maintainer's call); enumerate with the read-only
   `pinyin-oracle` `sentence-tail` binary.

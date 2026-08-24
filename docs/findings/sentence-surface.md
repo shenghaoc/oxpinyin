@@ -548,12 +548,13 @@ are untouched — §3's trellis divergences stand. The measured agreement:
   an error — see §12) are the §3 trellis-side near-ties, not
   candidate-order divergence.
 
-`sentence_surface_reports_parity` re-frozen at 488/385/379. §12 defines
-what each of those three numbers measures — they are three comparison
-strictnesses, not one measure — and declares the residual a permanent
-Stage-1 divergence.
+`sentence_surface_matches_the_declared_residual` holds 488/385/379. §12
+defines what each of those three numbers measures — they are three comparison
+strictnesses, not one measure — and records the residual; whether to freeze it
+as a permanent Stage-1 divergence is the maintainer's decision, pending
+approval.
 
-## 12. The residual, defined and declared a permanent Stage-1 divergence
+## 12. The residual, defined and measured — a Stage-1 divergence pending a freeze decision
 
 Date: 2026-08-24 · branch `feat/gfloat-accumulation-parity`
 
@@ -641,10 +642,12 @@ share the arithmetic: candidates rank on `amplified_frequency` → `RankKey`,
 the trellis on `nbest_step_costs` → `surprisal` — so this divergence is
 contained to the sentence tails and costs nothing on the candidate surface.
 
-**Decision.** `488 / 385 / 379` is the permanent Stage-1 sentence-surface
-residual — one named, understood, deliberately-accepted divergence: the
-well-defined fixed-point behaviour where upstream's is platform-dependent and
-unreproducible, the same call as the aux over-read and `_check_offset`.
-Recorded for report-back in `upstream-divergences.md`. Revisit only under a
+**Recommendation, pending maintainer approval.** `488 / 385 / 379` is the
+measured Stage-1 sentence-surface residual — one named, understood divergence:
+the well-defined fixed-point behaviour where upstream's is platform-dependent
+and unreproducible, the same shape as the aux over-read and `_check_offset`.
+The recommendation is to accept it as a permanent divergence and rely on the
+report-back entry in `upstream-divergences.md`; **freezing it as permanent is
+the maintainer's call, not taken here.** It would be revisited only under a
 deliberate pin re-freeze that accepts platform-locked floating point, which
 the constitution does not permit.

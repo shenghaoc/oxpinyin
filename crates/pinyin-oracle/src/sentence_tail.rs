@@ -49,9 +49,8 @@ pub fn export_dir() -> Option<PathBuf> {
 }
 
 /// Opens the port session over the exported tables with real unigrams, or
-/// `Ok(None)` when the exported tables or the model cache are absent — the
-/// self-skip the whole real-tables tier uses. `Err` only on a present-but-
-/// unusable table.
+/// `Ok(None)` when the exported tables or the model cache are simply absent —
+/// the self-skip the whole real-tables tier uses.
 ///
 /// The model directory must be a **complete** extracted model20 (all 18
 /// files: the 17 phrase tables plus `interpolation2.text`); `locate_model_dir`
@@ -60,13 +59,20 @@ pub fn export_dir() -> Option<PathBuf> {
 ///
 /// # Errors
 ///
-/// Returns a message when a located table cannot be opened or parsed.
+/// Returns a message when a `PINYIN_MODEL_DIR` is **set but unusable** (a
+/// partial or non-directory model dir — surfaced rather than skipped, so a
+/// misconfiguration is not mistaken for "no tables present"), or when a
+/// located table cannot be opened or parsed.
 pub fn open_session_from_env() -> Result<Option<PortSession>, String> {
     let Some(dir) = export_dir() else {
         return Ok(None);
     };
-    let Ok(Some(model_dir)) = crate::model_cache::locate_model_dir() else {
-        return Ok(None);
+    let model_dir = match crate::model_cache::locate_model_dir() {
+        Ok(Some(model_dir)) => model_dir,
+        // No model directory configured or discoverable: skip, like absent tables.
+        Ok(None) => return Ok(None),
+        // PINYIN_MODEL_DIR set but unusable: a misconfiguration, not an absence.
+        Err(error) => return Err(format!("model directory lookup failed: {error}")),
     };
     let dict = SystemDictionary::open(
         &dir.join("pinyin_index.redb"),
