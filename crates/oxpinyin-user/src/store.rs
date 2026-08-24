@@ -1819,6 +1819,65 @@ mod tests {
                     cleanup(&path);
                 }
 
+                #[test]
+                fn bigram_successors_complete_across_256_boundary() {
+                    let path = temp_path("succ-256");
+                    let mut store = Store::create_standalone(&path).unwrap();
+
+                    // Successors of `prev` spanning below and above 256 (and
+                    // above it in a higher byte), so integer order and byte
+                    // order genuinely differ. `prev` itself is 256.
+                    let prev: Token = 0x0000_0100;
+                    let succ_counts: [(Token, u64); 6] = [
+                        (0x0000_0001, 11),
+                        (0x0000_0002, 12),
+                        (0x0000_00FF, 13),
+                        (0x0000_0100, 14),
+                        (0x0000_0101, 15),
+                        (0x0001_0000, 16),
+                    ];
+                    for &(cur, count) in &succ_counts {
+                        store.set_bigram_count(prev, cur, count).unwrap();
+                    }
+
+                    // Neighbouring prevs that bracket `prev` in byte order
+                    // must NOT leak into the scan: prev-1, prev+1, a prev whose
+                    // low byte crosses 256, and a prev in a higher byte.
+                    store.set_bigram_count(prev - 1, 0x0000_0100, 99).unwrap();
+                    store.set_bigram_count(prev + 1, 0x0000_00FF, 99).unwrap();
+                    store
+                        .set_bigram_count(0x0000_00FF, 0x0000_0100, 99)
+                        .unwrap();
+                    store
+                        .set_bigram_count(0x0001_0000, 0x0000_0001, 99)
+                        .unwrap();
+
+                    // Complete and correctly ordered: exactly prev's
+                    // successors, ascending by integer cur (the big-endian key
+                    // property), with no neighbour rows.
+                    let got = store.bigram_successors(prev).unwrap();
+                    let mut expected = succ_counts.to_vec();
+                    expected.sort_by_key(|&(cur, _)| cur);
+                    assert_eq!(
+                        got, expected,
+                        "successor scan must be complete and integer-ordered"
+                    );
+
+                    // Non-vacuity: the successor set crosses 256, so a
+                    // little-endian pair encoding would order these
+                    // differently — this fixture would catch that drift.
+                    let mut le_order: Vec<Token> =
+                        succ_counts.iter().map(|&(cur, _)| cur).collect();
+                    le_order.sort_by_key(|cur| cur.to_le_bytes());
+                    let got_tokens: Vec<Token> = got.iter().map(|&(cur, _)| cur).collect();
+                    assert_ne!(
+                        le_order, got_tokens,
+                        "fixture must cross 256 so LE and BE successor orders differ"
+                    );
+
+                    cleanup(&path);
+                }
+
                 fn mixed_store(path: &std::path::Path) -> (Store, Token) {
                     const SYSTEM_A: Token = 0x0100_0001;
                     const SYSTEM_B: Token = 0x0200_0001;
@@ -2023,6 +2082,131 @@ mod tests {
     user_store_tests!(redb, oxpinyin_store::RedbStore, "redb");
     #[cfg(feature = "lmdb")]
     user_store_tests!(lmdb, oxpinyin_store::LmdbStore, "lmdb");
+    #[cfg(feature = "tkrzw")]
+    user_store_tests!(tkrzw, oxpinyin_store::TkrzwStore, "tkrzw");
+
+    // ── Cross-backend equivalence (features `lmdb` / `tkrzw`) ─────
+
+    /// redb and every other compiled backend, driven through the identical
+    /// generic user store, must produce identical bigram walks and successor
+    /// scans on a key set that crosses the 256 boundary in both `prev` and
+    /// `cur`. Every backend is `memcmp` on the big-endian keys, so they must
+    /// agree exactly; under `--features lmdb,tkrzw` this is the full
+    /// three-way check. Each backend's own walk is also asserted to be in
+    /// ascending integer order, so flipping the pair codec's endianness
+    /// reddens the check on every backend, not just redb.
+    #[cfg(any(feature = "lmdb", feature = "tkrzw"))]
+    #[test]
+    fn bigram_walks_and_successors_identical_across_backends() {
+        use oxpinyin_store::{RedbStore, WriteStore};
+
+        let rows: &[(Token, Token, u64)] = &[
+            (0x0000_00FF, 0x0000_0100, 1),
+            (0x0000_0100, 0x0000_00FF, 2),
+            (0x0000_0100, 0x0001_0000, 3),
+            (0x0000_0100, 0x0000_0001, 4),
+            (0x0000_0101, 0x0000_0100, 5),
+            (0x0001_0000, 0x0000_00FF, 6),
+            (SENTENCE_START, 0x0000_0100, 7),
+        ];
+        const PREVS: &[Token] = &[
+            0x0000_00FF,
+            0x0000_0100,
+            0x0000_0101,
+            0x0001_0000,
+            SENTENCE_START,
+        ];
+
+        fn populate<S: WriteStore>(
+            tag: &str,
+            rows: &[(Token, Token, u64)],
+        ) -> (GenericUserStore<S>, std::path::PathBuf) {
+            let path = std::env::temp_dir().join(format!(
+                "oxpinyin-user-xback-{tag}-{}.db",
+                std::process::id(),
+            ));
+            let _ = std::fs::remove_file(&path);
+            let mut store = GenericUserStore::<S>::create_standalone(&path).unwrap();
+            for &(prev, cur, count) in rows {
+                store.set_bigram_count(prev, cur, count).unwrap();
+            }
+            (store, path)
+        }
+
+        fn cleanup(path: &std::path::Path) {
+            let mut lock = path.as_os_str().to_os_string();
+            lock.push("-lock");
+            let _ = std::fs::remove_file(std::path::Path::new(&lock));
+            let _ = std::fs::remove_file(path);
+        }
+
+        /// A backend's raw bigram walk (`for_each` order) must be ascending
+        /// (prev, cur) integer order — the big-endian key property, not just
+        /// backends agreeing on some arbitrary order. Returns the walk so the
+        /// caller can compare it against the redb reference.
+        fn walk_in_integer_order<S: WriteStore>(
+            store: &GenericUserStore<S>,
+            label: &str,
+        ) -> Vec<(Token, Token, u64)> {
+            let walk = store.export_bigrams().unwrap();
+            let pairs: Vec<(Token, Token)> = walk.iter().map(|&(p, c, _)| (p, c)).collect();
+            assert!(
+                pairs.is_sorted(),
+                "{label}: big-endian bigram keys must walk in integer order",
+            );
+            walk
+        }
+
+        let (redb, redb_path) = populate::<RedbStore>("redb", rows);
+        let reference_walk = walk_in_integer_order(&redb, "redb");
+        let reference_succ: Vec<Vec<(Token, u64)>> = PREVS
+            .iter()
+            .map(|&prev| redb.bigram_successors(prev).unwrap())
+            .collect();
+
+        #[cfg(feature = "lmdb")]
+        {
+            use oxpinyin_store::LmdbStore;
+            let (lmdb, path) = populate::<LmdbStore>("lmdb", rows);
+            assert_eq!(
+                reference_walk,
+                walk_in_integer_order(&lmdb, "lmdb"),
+                "redb and LMDB must yield identical bigram walks",
+            );
+            for (i, &prev) in PREVS.iter().enumerate() {
+                assert_eq!(
+                    reference_succ[i],
+                    lmdb.bigram_successors(prev).unwrap(),
+                    "redb and LMDB successors of {prev:#x} must match",
+                );
+            }
+            drop(lmdb);
+            cleanup(&path);
+        }
+
+        #[cfg(feature = "tkrzw")]
+        {
+            use oxpinyin_store::TkrzwStore;
+            let (tkrzw, path) = populate::<TkrzwStore>("tkrzw", rows);
+            assert_eq!(
+                reference_walk,
+                walk_in_integer_order(&tkrzw, "tkrzw"),
+                "redb and tkrzw must yield identical bigram walks",
+            );
+            for (i, &prev) in PREVS.iter().enumerate() {
+                assert_eq!(
+                    reference_succ[i],
+                    tkrzw.bigram_successors(prev).unwrap(),
+                    "redb and tkrzw successors of {prev:#x} must match",
+                );
+            }
+            drop(tkrzw);
+            cleanup(&path);
+        }
+
+        drop(redb);
+        cleanup(&redb_path);
+    }
 
     // ── Registry-specific tests (DefaultStore / redb only) ───────
 
