@@ -1,0 +1,231 @@
+# Findings — uncovered-surface differentials (paging, punct modes, option profiles, cursor moves)
+
+Date: 2026-08-24 · Status: W12 live-typing enumeration, part 2; classes
+assigned, no fix.
+
+`docs/findings/live-typing.md` measured the post-choose surfaces (choose,
+continue-typing, backspace — since closed by the W14 constraint port).
+This note measures the four surfaces the W12 parking list names beyond
+those: **deep paging**, **punctuation modes**, **FORCE_TONE and the
+remaining option-bit profiles**, and **mid-composition cursor moves**. It
+is measured by `tools/bisection/uncovered-surface-diff.c` /
+`tools/bisection/run-uncovered-surface-diff.sh` against the pin-built
+oracle (libpinyin 2.11.91 @ 0c5e80e) and `libpinyin_capi.so` over the
+matched model20 tables, under the parity word `0x18a` set on both sides
+first (the bare defaults differ; without the common word a
+default-config artefact would masquerade as a divergence). No fix lands
+here; the differential exiting non-zero **is** the deliverable.
+
+## Reproduction
+
+```bash
+# assemble a real-unigram system dir once: the four live-typing files
+# (pinyin_index.redb, phrase_index.redb, bigram.redb, interpolation2.text)
+# PLUS punct.redb — the Option A export (token LE → NUL-terminated UTF-8,
+# docs/findings/prediction-punct.md) of the same model20 punct.table the
+# oracle's punct.bin was built from (370 rows / 272 tokens), so the punct
+# rows compare over matched tables
+UNCOVERED_SYSTEM=/tmp/uncovered-surface-system \
+tools/bisection/run-uncovered-surface-diff.sh
+```
+
+Exit 2 is the measured state below. The driver honours the oracle caller
+contracts: `pinyin_get_sentence` is asked only for proved indices (row 0
+after a successful guess; rows 1..2 only when the walked window's NBEST
+`nbest_index` values prove them — the corpus discipline, `live.rs:551-560`;
+a past-the-rows index on a non-empty set aborts at the pin,
+`pinyin.cpp:1474`); predicted candidates are never passed to
+`pinyin_choose_candidate` (`pinyin.cpp:2506-2508` asserts); no scheme call
+is made anywhere (zhuyin 7 / double 30 never reach the oracle).
+
+## Method
+
+One 837-line oracle log against an 857-line capi log (the capi answers
+where the pin's FORCE_TONE rejection leaves nothing — class C1 below).
+45 line-aligned change hunks, no pure additions or deletions: 160
+diverging oracle-side log positions, 180 capi-side. Phases, in log order:
+
+| Phase | Lines (oracle) | Surface |
+|---|---:|---|
+| A `page:` | 338 | deep paging: parse shi/yi/ji/nihao, decode, walk pages 0..11 (page size 5, the fork default `PYPConfig.cc:148`) plus the last page, sentence rows, a deep choose at index 10, and a choose of the very last row |
+| B `punct` | 149 | punct-table prediction for 好/的/一/你/中国/我/是/了 (head rows with types, every PRED_PUNCT row, counts) plus punctuation bytes in the composition (`nihao,` `ni,hao` `ni'hao` `ni hao` `ni2hao` `，nihao`) |
+| C `opt:` | 205 | option profiles: `0x18a` control (offsets 0 and 2), `0x38a` (DYNAMIC_ADJUST set, offsets 0/2/5), `0x1ca` (parity+FORCE_TONE, 7 inputs), `0x60` (USE_TONE+FORCE_TONE, 4 inputs) |
+| D `cur:` | 145 | cursor moves on `nihaoshijie`: auxiliary text and lookup offset at every byte cursor 0..11, word-level left/right offsets, the candidate window at every moved cursor (left walk then right walk), and one mid-buffer choose at cursor 5 |
+
+## Measured agreement (the seams that hold)
+
+- **Deep paging — surface (a): 338/338 lines identical.** The full-list
+  walk (12 pages plus the last page per input), the deep choose at index
+  10, and the tail-row choose all agree, cursors and post-choose windows
+  included (`shi` n=280, `yi` n=597, `ji` n=481, `nihao` n=126; the deep
+  and tail chooses return the same cursors and identical re-decode
+  surfaces). Paging is frontend index-walking over one library window
+  (`ibus_lookup_table_page_down`, `PYPPhoneticEditor.cc:300-307`); the
+  window itself was already pinned at offset 0, and every deep row of it
+  matches too.
+- **The punct rows themselves — the punct-table path of surface (b):
+  identical for all eight prefixes.** Prediction retvals, window counts
+  `n`, every `PREDICTED_PUNCTUATION` row, and the punct counts match:
+  好 → `，。`; 的 → `，。“、；`; 一 → `、`; 你 → none; 中国 → `，`;
+  我 → `，`; 是 → `“，：`; 了 → `。，“！`. The Option A model20
+  `punct.redb` reproduces the oracle's `punct.bin` predictions exactly.
+- **Punctuation bytes that agree:** the trailing comma (`nihao,` → 5),
+  the mid comma (`ni,hao` → 2), the apostrophe separator (`ni'hao`), and
+  the mid tone digit (`ni2hao`) parse identically.
+- **Option profiles that hold:** the `0x18a` control at offset 0
+  (corpus-proven, re-confirmed here); `0x38a` at offset 0 — DYNAMIC_ADJUST
+  bit-set produced **no divergence of its own** at these probes (at
+  offset 0 `prev_token` is null so no gram merge runs; the offset-2/5
+  probes are dominated by class C2 below); `0x1ca` on all seven inputs —
+  FORCE_TONE is **inert** there because `0x18a` carries no `USE_TONE` bit
+  and the pin's force-tone rejection sits inside the `USE_TONE` branch
+  (`pinyin_parser2.cpp:176-190`); `0x60` on the toned inputs (`ni3hao3`
+  parsed=6, `zai4` parsed=4, `zhuang4` parsed=7, `ni3`, `shi4jie4`).
+- **Cursor-move readouts that hold:** the auxiliary text matches at all
+  twelve cursors of `nihaoshijie` (including the mid-syllable splits
+  `ni h|ao shi jie`); the left-word move at offset 0; and the mid-buffer
+  choose — cursor 11 both sides with an identical post-choose surface
+  (n=3: 你好世界/你好时节/你好是届).
+
+Full/half-width and Chinese/English punctuation **mode toggles are not
+expressible through the pinned C ABI**: the 2.11.91 export list has no
+such symbols (they are ibus-frontend state — `PYHalfFullConverter.cc`,
+`PYPunctTable.h`, `PYPinyinProperties.cc`). The ABI punct surface is the
+punct-table prediction path plus punctuation bytes in the composition,
+both measured above; the mode toggles stay frontend territory.
+
+## The divergence, enumerated
+
+Six classes over 160 oracle-side positions (180 capi-side).
+
+| Class | Surface | Positions (oracle) | Example |
+|---|---|---:|---|
+| B1 | predicted-phrase rows: text not prefix-sliced, head order differs | 79 | `punct-hao:head[2]` 莱坞 vs 好不好 |
+| C2 | unconstrained mid-offset candidate window | 60 | `opt:0x18a-nihao@2:n=` 94 vs 126 |
+| C1 | FORCE_TONE toneless rejection missing | 8 | `opt:0x60-nihao@0:parsed=` 0 vs 5 |
+| D1 | cursor → lookup-offset normalization | 6 | `cur:3 off=` 2 vs 3 |
+| B2 | parse past space / full-width punct bytes | 4 | `punctparse-space-mid:parsed=` 2 vs 5 |
+| D2 | word-move step: syllable vs byte | 3 | `cur:left-right@2 right=` 5 vs 3 |
+
+### B1 — predicted-phrase rows not prefix-sliced, head order differs (79 positions)
+
+For every prefix with predicted phrases, the pin's `PREDICTED_PREFIX`
+rows carry the phrase string **sliced from `m_begin`** — the prefix is
+removed for display: prefix 好 yields 莱坞/奇心/日子 (from
+好莱坞/好奇心/好日子), prefix 你 yields 的爱/是谁/的心. The capi emits
+the **full phrase** (好莱坞, 你是谁). Mechanism: the pin template sets
+`m_begin = m_prefix_len` (`pinyin.cpp:2399` at the pin) and the string
+computation slices from it (`_token_get_phrase(..., candidate->m_begin,
+...)`, `pinyin.cpp:2018-2023`); the capi's prediction path
+(`predict.rs`) emits the whole phrase. The head **order** also differs
+(好莱坞 is row 2 on the pin, row 6 on the capi; 好不好/好半天 lead the
+capi list and sit outside the pin's first ten), while the window count
+`n` agrees per prefix (180/288/592/71/127/169/101/60) — same-count,
+differently-ordered lists with a different text shape. Whether the two
+180-row sets coincide beyond the captured head-12 is unmeasured
+(head-only capture). This surface was never compared before: the W11
+prediction drivers ran mini-table capi against full-table oracle and
+skipped the phrase rows (`prediction-punct.md`: "those drivers … the
+punctuation list is compared … on prefixes present in both tables").
+
+### C2 — the unconstrained mid-offset candidate window (60 positions)
+
+Guessing at a mid-buffer offset **without a prior choose** re-runs the
+pin's span search from that offset: `nihao` at offset 2 returns the hao
+window (n=94, rows 好/号/豪/浩/…); `nihaoshijie` at offset 5 returns the
+shijie window (n=304, rows 世界/时节/…). The capi validates the caller
+offset and then iterates the session's existing candidate list
+(`sentence.rs:342-351`) — the window stays head-anchored wherever the
+cursor is: offset 2 returns the same n=126 你/尼/呢 list as offset 0,
+and every cursor of the phase-D walks returns n=129. Mechanism: the pin
+anchors `start = offset` in `pinyin_guess_candidates`
+(`pinyin.cpp:2224-2262` at the pin); the engine's candidate construction
+has no offset parameter — `Session::candidates()` is the decode-anchored
+list. The post-choose windows still agree (the live-typing seam) because
+the W14 constraint machinery re-seeds the session at the cursor; the
+unconstrained mid-cursor window is the remaining gap, and it dominates
+this measurement (the `0x18a@2` control probe included — the corpus only
+ever compared offset 0). Affected probes: `opt:0x18a-nihao@2` (8
+positions), `opt:0x38a-nihao@2` (8), `opt:0x38a-nihaoshijie@5` (6), and
+the phase-D windows (38: every `cur:left@` / `cur:right@` walk probe and
+`cur:mid`, including `cur:left@10` where the pin's window at the 'e'
+tail column returns n=193 with 阿-family rows while the capi repeats its
+head list).
+
+### C1 — FORCE_TONE toneless rejection missing (8 positions)
+
+Under `USE_TONE|FORCE_TONE` (`0x60`) the pin rejects every toneless
+syllable in `parse_one_key` (`pinyin_parser2.cpp:176-190`: the check
+lives inside the `USE_TONE` branch), so `nihao` parses 0 bytes (empty
+matrix, n=0) and `zai6` parses 0 ('6' is not a tone, the toneless `zai`
+is rejected). The engine has no FORCE_TONE handling at all — the bit is
+absent from the capi header by design (`types.rs:91`) and from the
+engine — so it parses `nihao` fully (5, n=126) and `zai6` as `zai`
+(3, n=32, with sentence rows). The toned inputs agree (see above), and
+`0x1ca` shows the bit alone is inert without `USE_TONE`. The fix shape
+(a force-tone rejection in the parser under both bits) is parked with
+this measurement. No fork GSettings key maps to `USE_TONE` or
+`FORCE_TONE` (`PYPConfig.cc` maps only the incomplete/fuzzy/correct/
+dynamic keys), so no frontend profile a user can produce sends `0x60`
+bare — the class matters for ABI parity, not fork defaults.
+
+### D1 — cursor → lookup-offset normalization missing (6 positions)
+
+`pinyin_get_pinyin_offset` walks the cursor back to the nearest
+non-empty matrix column at the pin (`pinyin.cpp:3010-3029` at the pin):
+mid-syllable cursors normalize to the syllable start (cursor 1 → 0;
+cursors 3, 4 → 2; 6, 7 → 5; 9 → 8). The capi returns the identity
+mapping clamped to the raw length (`cursor.rs:90-111`, documented
+"Provisional"): cursor 3 → 3, cursor 4 → 4, and so on — 6 diverging
+table rows. The cursors 10 and 11 agree (their columns are non-empty on
+both models). The auxiliary text at the same cursors matches, so the
+frontend's visible preedit is unaffected; the offset feeds the window
+anchor (class C2) and the word moves (class D2).
+
+### B2 — parse past space and full-width punctuation bytes (4 positions)
+
+For punctuation bytes inside the composition, the pin's parser stops at
+the first non-pinyin byte: `ni hao` parses 2 (the ni window, n=125) and
+`，nihao` parses 0 (n=0). The engine's parser consumes past the byte:
+`ni hao` reports parsed=5 with the n=126 nihao window, and `，nihao`
+reports parsed=5 with the same window — the space and the full-width
+comma are skipped rather than stopping the parse. The half-width comma
+and the apostrophe agree (both stop/parse identically), so the gap is
+specific to the space and multi-byte (non-ASCII) punctuation bytes.
+
+### D2 — word-move steps: syllable vs byte (3 positions)
+
+The pin's word-level cursor moves step **syllable to syllable**:
+`get_left/right_pinyin_offset` walk to the key that ends at / the first
+key that starts after the offset (`pinyin.cpp:3031-3095` at the pin) —
+at offsets 0/2/5 of `nihaoshijie` the (left, right) pairs are
+(0,2)/(0,5)/(2,8). The capi returns `offset±1` bytes (`cursor.rs:118-175`,
+"Provisional"): (0,1)/(1,3)/(4,6). Three probe lines diverge (left at
+offset 0 happens to agree).
+
+## Harness notes (pin behaviour, not engine divergences)
+
+- **The pin aborts on word moves at tail offsets.** `get_left_pinyin_offset(11)`
+  on `nihaoshijie` trips the second `_check_offset` inside the walk-back
+  (`pinyin.cpp:3055` → `assert` at `:2175` at the pin; measured SIGABRT
+  on the first smoke run). Upstream fixed this after the pin (commit
+  `95e3af7` "Fix _check_offset function" turns the assert into
+  `return false`). The driver probes word moves only at the offsets the
+  smoke run proved safe (0/2/5) and prints the skipped tail offsets with
+  their values — a frontend Ctrl+Left at such a cursor aborts the pinned
+  library; that is the pin's landmine, not a divergence to close.
+- **DYNAMIC_ADJUST bit-set ranking** (the deferred #99 bigram-fold into
+  candidate frequency) is **not** isolated by these probes: at offset 0
+  no previous token exists (no gram merge), and the offset-2/5 windows
+  are inside class C2. Measuring #99 needs a probe that isolates order
+  under a non-null `prev_token` on agreeing windows — parked with C2.
+
+## Scope and pins
+
+Measurement only: no engine, capi, data, or parser code is touched, and
+no pin, gate, or CI policy changes. The differential is not wired into
+CI; exit 2 is its measured state until a later PR closes the classes
+(C1 parser rejection, C2 offset-anchored windows, B1 prefix slicing and
+prediction order, B2 stop-byte parse, D1/D2 the provisional cursor
+functions). Pins re-verified bit-identical after this change (see the
+PR report); fmt/clippy/tests green.
