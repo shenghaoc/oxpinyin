@@ -1183,17 +1183,20 @@ impl CountCache {
         }
     }
 
-    /// `UNIGRAM[token]`, memoised. An absent row reads as `0` and is not
-    /// memoised: sparse stores would otherwise fill the memo with zeros.
+    /// `UNIGRAM[token]`, memoised. A present row is memoised whatever its
+    /// value, including an explicit `0`; an absent row reads as `0`
+    /// without entering the memo.
     fn unigram(&mut self, db: &impl ReadStore, token: Token) -> Result<u64, UserStoreError> {
         if let Some(&hit) = self.unigram.get(&token) {
             return Ok(hit);
         }
-        let value = get_u64_or(db, UNIGRAM, &codec::encode_token(token), 0)?;
-        if value != 0 {
-            memo_insert(&mut self.unigram, token, value);
+        match get_u64(db, UNIGRAM, &codec::encode_token(token))? {
+            Some(value) => {
+                memo_insert(&mut self.unigram, token, value);
+                Ok(value)
+            }
+            None => Ok(0),
         }
-        Ok(value)
     }
 
     /// `UNIGRAM_TOTAL`'s single row, memoised. Absent reads as `0`.
@@ -1206,8 +1209,8 @@ impl CountCache {
         Ok(value)
     }
 
-    /// `BIGRAM[(prev, cur)]`, memoised. An absent row reads as `0` and is
-    /// not memoised, like [`Self::unigram`].
+    /// `BIGRAM[(prev, cur)]`, memoised like [`Self::unigram`]: present
+    /// rows enter the memo, absent ones do not.
     fn bigram(
         &mut self,
         db: &impl ReadStore,
@@ -1217,24 +1220,28 @@ impl CountCache {
         if let Some(&hit) = self.bigram.get(&(prev, cur)) {
             return Ok(hit);
         }
-        let value = get_u64_or(db, BIGRAM, &codec::encode_token_pair(prev, cur), 0)?;
-        if value != 0 {
-            memo_insert(&mut self.bigram, (prev, cur), value);
+        match get_u64(db, BIGRAM, &codec::encode_token_pair(prev, cur))? {
+            Some(value) => {
+                memo_insert(&mut self.bigram, (prev, cur), value);
+                Ok(value)
+            }
+            None => Ok(0),
         }
-        Ok(value)
     }
 
-    /// `BIGRAM_TOTAL[prev]`, memoised. An absent row reads as `0` and is
-    /// not memoised, like [`Self::unigram`].
+    /// `BIGRAM_TOTAL[prev]`, memoised like [`Self::unigram`]: present rows
+    /// enter the memo, absent ones do not.
     fn bigram_total(&mut self, db: &impl ReadStore, prev: Token) -> Result<u64, UserStoreError> {
         if let Some(&hit) = self.bigram_total.get(&prev) {
             return Ok(hit);
         }
-        let value = get_u64_or(db, BIGRAM_TOTAL, &codec::encode_token(prev), 0)?;
-        if value != 0 {
-            memo_insert(&mut self.bigram_total, prev, value);
+        match get_u64(db, BIGRAM_TOTAL, &codec::encode_token(prev))? {
+            Some(value) => {
+                memo_insert(&mut self.bigram_total, prev, value);
+                Ok(value)
+            }
+            None => Ok(0),
         }
-        Ok(value)
     }
 
     fn unigram_delta(&mut self, db: &impl ReadStore, token: Token) -> Result<u64, UserStoreError> {
@@ -2147,7 +2154,9 @@ mod tests {
         }
 
         fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-            assert_eq!(table, UNIGRAM, "stub serves the unigram table only");
+            if table != UNIGRAM {
+                return Ok(None);
+            }
             Ok(self.0.get(key).map(|v| codec::encode_u64(*v).to_vec()))
         }
 
@@ -2166,7 +2175,10 @@ mod tests {
         }
 
         fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
-            self.get(table, b"").map(|_| false)
+            if table != UNIGRAM {
+                return Ok(true);
+            }
+            Ok(self.0.is_empty())
         }
     }
 
@@ -2182,6 +2194,18 @@ mod tests {
         );
         assert_eq!(cache.unigram(&db, 1).unwrap(), 5);
         assert_eq!(cache.unigram.get(&1), Some(&5), "present rows stay cached");
+    }
+
+    #[test]
+    fn explicitly_stored_zero_rows_are_memoised() {
+        let db = MemoDb(BTreeMap::from([(codec::encode_token(3).to_vec(), 0_u64)]));
+        let mut cache = CountCache::new(0);
+        assert_eq!(cache.unigram(&db, 3).unwrap(), 0);
+        assert_eq!(
+            cache.unigram.get(&3),
+            Some(&0),
+            "a stored zero is a present row and stays cached"
+        );
     }
 
     #[test]
