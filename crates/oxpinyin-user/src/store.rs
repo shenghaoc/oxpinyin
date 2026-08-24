@@ -332,20 +332,24 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// The database guard is taken for the whole call and handed to
     /// `read`, which needs it only to fill a memo miss; the lock order is
     /// the same one the snapshot cache used — cache first, then db.
-    /// Holding it across the call is also what makes a multi-key read
-    /// atomic without MVCC: every write path takes the same guard, so no
-    /// commit can land between the two or four rows `count_delta` reads.
+    /// `write_generation` is read under that guard, so cache validation
+    /// is ordered against the same critical section every commit bumps
+    /// in: the observed database state and generation always belong to
+    /// one side of a commit, never straddle it.  Holding the guard across
+    /// the call is also what makes a multi-key read atomic without MVCC:
+    /// every write path takes the same guard, so no commit can land
+    /// between the two or four rows `count_delta` reads.
     fn with_count_cache<T>(
         &self,
         read: impl FnOnce(&mut CountCache, &S) -> Result<T, UserStoreError>,
     ) -> Result<T, UserStoreError> {
         let mut cache = self.count_cache();
+        let db = self.database();
         let generation = self.write_generation();
         let mut current = match cache.take() {
             Some(cached) if cached.generation == generation => cached,
             _ => CountCache::new(generation),
         };
-        let db = self.database();
         let out = read(&mut current, &db);
         drop(db);
         *cache = Some(current);
@@ -353,13 +357,18 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Invalidate cached reads after a committed user-data write.
+    ///
+    /// The generation bump lands while the database guard is still held:
+    /// paired with [`Self::with_count_cache`] reading the generation under
+    /// the same guard, no reader can observe post-commit rows against a
+    /// pre-commit generation (or vice versa).
     fn mark_committed_write(&self, db: MutexGuard<'_, S>, has_user_data: bool) {
-        drop(db);
-        *self.count_cache() = None;
         self.inner
             .has_user_data
             .store(has_user_data, Ordering::Release);
         self.inner.write_generation.fetch_add(1, Ordering::AcqRel);
+        drop(db);
+        *self.count_cache() = None;
     }
 
     fn init_and_wrap(db: S) -> Result<Arc<StoreInner<S>>, UserStoreError> {
