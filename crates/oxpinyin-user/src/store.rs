@@ -1156,6 +1156,21 @@ impl GenericUserStore<DefaultStore> {
     }
 }
 
+/// Entry cap per count-memo map. Bounds memo memory to O(cap) no matter
+/// how many distinct keys a session scores against; the value sits far
+/// above any trained store's working set. On overflow the map resets —
+/// entries are pure speed hints, so wholesale eviction changes nothing
+/// but repeat-read cost.
+const COUNT_MEMO_MAX_ENTRIES: usize = 8192;
+
+/// Inserts into a count-memo map, resetting it first once at capacity.
+fn memo_insert<K: std::hash::Hash + Eq, V>(map: &mut HashMap<K, V>, key: K, value: V) {
+    if map.len() >= COUNT_MEMO_MAX_ENTRIES {
+        map.clear();
+    }
+    map.insert(key, value);
+}
+
 impl CountCache {
     /// An empty memo bound to `generation`.
     pub(crate) fn new(generation: u64) -> Self {
@@ -1168,13 +1183,16 @@ impl CountCache {
         }
     }
 
-    /// `UNIGRAM[token]`, memoised. An absent row reads as `0`.
+    /// `UNIGRAM[token]`, memoised. An absent row reads as `0` and is not
+    /// memoised: sparse stores would otherwise fill the memo with zeros.
     fn unigram(&mut self, db: &impl ReadStore, token: Token) -> Result<u64, UserStoreError> {
         if let Some(&hit) = self.unigram.get(&token) {
             return Ok(hit);
         }
         let value = get_u64_or(db, UNIGRAM, &codec::encode_token(token), 0)?;
-        self.unigram.insert(token, value);
+        if value != 0 {
+            memo_insert(&mut self.unigram, token, value);
+        }
         Ok(value)
     }
 
@@ -1188,7 +1206,8 @@ impl CountCache {
         Ok(value)
     }
 
-    /// `BIGRAM[(prev, cur)]`, memoised. An absent row reads as `0`.
+    /// `BIGRAM[(prev, cur)]`, memoised. An absent row reads as `0` and is
+    /// not memoised, like [`Self::unigram`].
     fn bigram(
         &mut self,
         db: &impl ReadStore,
@@ -1199,17 +1218,22 @@ impl CountCache {
             return Ok(hit);
         }
         let value = get_u64_or(db, BIGRAM, &codec::encode_token_pair(prev, cur), 0)?;
-        self.bigram.insert((prev, cur), value);
+        if value != 0 {
+            memo_insert(&mut self.bigram, (prev, cur), value);
+        }
         Ok(value)
     }
 
-    /// `BIGRAM_TOTAL[prev]`, memoised. An absent row reads as `0`.
+    /// `BIGRAM_TOTAL[prev]`, memoised. An absent row reads as `0` and is
+    /// not memoised, like [`Self::unigram`].
     fn bigram_total(&mut self, db: &impl ReadStore, prev: Token) -> Result<u64, UserStoreError> {
         if let Some(&hit) = self.bigram_total.get(&prev) {
             return Ok(hit);
         }
         let value = get_u64_or(db, BIGRAM_TOTAL, &codec::encode_token(prev), 0)?;
-        self.bigram_total.insert(prev, value);
+        if value != 0 {
+            memo_insert(&mut self.bigram_total, prev, value);
+        }
         Ok(value)
     }
 
@@ -1242,6 +1266,8 @@ impl CountCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oxpinyin_store::Visitor;
+    use std::collections::BTreeMap;
 
     macro_rules! user_store_tests {
         ($mod:ident, $backend:ty, $ext:literal) => {
@@ -2109,5 +2135,72 @@ mod tests {
             let _ = std::fs::remove_file(std::path::Path::new(&lock));
             let _ = std::fs::remove_file(stale);
         }
+    }
+
+    /// An in-memory [`ReadStore`] over 8-byte-encoded counts, so memo
+    /// policy is testable without a backend file.
+    struct MemoDb(BTreeMap<Vec<u8>, u64>);
+
+    impl ReadStore for MemoDb {
+        fn open_read_only(_path: &Path) -> Result<Self, StoreError> {
+            Err(StoreError::Backend("stub opens nothing".into()))
+        }
+
+        fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+            assert_eq!(table, UNIGRAM, "stub serves the unigram table only");
+            Ok(self.0.get(key).map(|v| codec::encode_u64(*v).to_vec()))
+        }
+
+        fn range(
+            &self,
+            _table: &str,
+            _lo: std::ops::Bound<&[u8]>,
+            _hi: std::ops::Bound<&[u8]>,
+            _visit: &mut Visitor<'_>,
+        ) -> Result<(), StoreError> {
+            Err(StoreError::Backend("stub ranges nothing".into()))
+        }
+
+        fn for_each(&self, _table: &str, _visit: &mut Visitor<'_>) -> Result<(), StoreError> {
+            Err(StoreError::Backend("stub walks nothing".into()))
+        }
+
+        fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
+            self.get(table, b"").map(|_| false)
+        }
+    }
+
+    #[test]
+    fn absent_rows_read_zero_without_being_memoised() {
+        let db = MemoDb(BTreeMap::from([(codec::encode_token(1).to_vec(), 5_u64)]));
+        let mut cache = CountCache::new(0);
+        assert_eq!(cache.unigram(&db, 2).unwrap(), 0);
+        assert_eq!(cache.unigram(&db, 2).unwrap(), 0);
+        assert!(
+            !cache.unigram.contains_key(&2),
+            "a zero miss must not occupy memo space"
+        );
+        assert_eq!(cache.unigram(&db, 1).unwrap(), 5);
+        assert_eq!(cache.unigram.get(&1), Some(&5), "present rows stay cached");
+    }
+
+    #[test]
+    fn memo_maps_reset_at_the_capacity_bound() {
+        let db = MemoDb(
+            (1..=u64::try_from(COUNT_MEMO_MAX_ENTRIES + 10).unwrap())
+                .map(|t| (codec::encode_token(t as u32).to_vec(), t))
+                .collect(),
+        );
+        let mut cache = CountCache::new(0);
+        for token in 1..=COUNT_MEMO_MAX_ENTRIES + 10 {
+            let expected = u64::try_from(token).unwrap();
+            assert_eq!(cache.unigram(&db, token as u32).unwrap(), expected);
+        }
+        assert!(
+            cache.unigram.len() <= COUNT_MEMO_MAX_ENTRIES,
+            "memo must not exceed the cap"
+        );
+        // Post-reset the map still answers correctly from the database.
+        assert_eq!(cache.unigram(&db, 1).unwrap(), 1);
     }
 }
