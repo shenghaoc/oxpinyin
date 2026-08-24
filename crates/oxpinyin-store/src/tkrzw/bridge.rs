@@ -82,3 +82,13 @@ pub(crate) mod ffi {
         fn iter_next(iter: Pin<&mut Iter>) -> ShimStatus;
     }
 }
+
+// SAFETY: `Db` wraps a TreeDBM, and tkrzw documents every DBM operation
+// as thread-safe — the database carries its own locking — so a handle
+// can be moved between threads and shared by reference (which is also
+// what lets the store keep `get` and `write` on `&self`). `Iter`
+// deliberately keeps neither marker: it is a raw cursor over one `Db`
+// that tkrzw does not synchronise, and its lifetime is tied to the
+// method that made it, per the module-level safety notes above.
+unsafe impl Send for ffi::Db {}
+unsafe impl Sync for ffi::Db {}
