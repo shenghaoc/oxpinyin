@@ -596,47 +596,263 @@ mod tests {
     #[cfg(feature = "lmdb")]
     use super::{LmdbStore, ReadStore, StoreError};
 
-    macro_rules! store_tests {
+    /// Emits the temp-path plumbing every tier group needs.
+    ///
+    /// Invoked from inside each group's generated module, so the three
+    /// groups do not have to triplicate it.
+    macro_rules! store_test_paths {
+        ($mod:ident, $ext:literal) => {
+            /// Owns a temporary store path and removes both the data
+            /// file and its `-lock` sidecar when it drops — including
+            /// when a test panics, so a failed assertion leaves no
+            /// state behind in `std::env::temp_dir()`. Derefs to
+            /// `Path`, so `&guard` passes anywhere a `&Path` is wanted.
+            struct TempPath(std::path::PathBuf);
+
+            impl std::ops::Deref for TempPath {
+                type Target = std::path::Path;
+                fn deref(&self) -> &std::path::Path {
+                    &self.0
+                }
+            }
+
+            impl Drop for TempPath {
+                fn drop(&mut self) {
+                    cleanup(&self.0);
+                }
+            }
+
+            fn temp_path(tag: &str) -> TempPath {
+                let path = std::env::temp_dir().join(format!(
+                    "oxpinyin-store-{}-{tag}-{}.{}",
+                    stringify!($mod),
+                    std::process::id(),
+                    $ext,
+                ));
+                cleanup(&path);
+                TempPath(path)
+            }
+
+            fn cleanup(path: &std::path::Path) {
+                let _ = std::fs::remove_file(path);
+                let lock = format!("{}-lock", path.display());
+                let _ = std::fs::remove_file(&lock);
+            }
+        };
+    }
+
+    /// The read tier: everything a bare [`ReadStore`] must answer.
+    ///
+    /// `$store` is exercised through [`ReadStore`] alone. `$writer` is a
+    /// [`WriteStore`] used only to lay down the fixture file that `$store`
+    /// then opens read-only — a read-only backend supplies whichever
+    /// writer produces its file format, and runs this group unchanged
+    /// without gaining a write or snapshot capability.
+    macro_rules! store_read_tests {
+        ($mod:ident, $store:ty, $writer:ty, $ext:literal) => {
+            mod $mod {
+                use super::super::*;
+
+                store_test_paths!($mod, $ext);
+
+                /// Lays down a fixture with `$writer`, then returns a
+                /// read-only `$store` handle over the same file.
+                fn seeded(
+                    path: &std::path::Path,
+                    build: impl FnOnce(&mut dyn WriteTxn) -> Result<(), StoreError>,
+                ) -> $store {
+                    let writer = <$writer>::create(path).unwrap();
+                    writer.write(build).unwrap();
+                    drop(writer);
+                    <$store>::open_read_only(path).unwrap()
+                }
+
+                #[test]
+                fn multi_table_get() {
+                    let path = temp_path("multi-table-get");
+                    let store = seeded(&path, |txn| {
+                        txn.put("alpha", b"k1", b"v1")?;
+                        txn.put("beta", b"k2", b"v2")?;
+                        Ok(())
+                    });
+                    assert_eq!(store.get("alpha", b"k1").unwrap(), Some(b"v1".to_vec()));
+                    assert_eq!(store.get("beta", b"k2").unwrap(), Some(b"v2".to_vec()));
+                    assert_eq!(store.get("alpha", b"k2").unwrap(), None);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn range_included_included() {
+                    let path = temp_path("range-ii");
+                    let store = seeded(&path, |txn| {
+                        txn.put("t", b"a", b"1")?;
+                        txn.put("t", b"b", b"2")?;
+                        txn.put("t", b"c", b"3")?;
+                        txn.put("t", b"d", b"4")?;
+                        Ok(())
+                    });
+                    let mut rows = Vec::new();
+                    store
+                        .range(
+                            "t",
+                            Bound::Included(b"b".as_slice()),
+                            Bound::Included(b"c".as_slice()),
+                            &mut |k, v| {
+                                rows.push((k.to_vec(), v.to_vec()));
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(rows.len(), 2);
+                    assert_eq!(rows[0].0, b"b");
+                    assert_eq!(rows[0].1, b"2");
+                    assert_eq!(rows[1].0, b"c");
+                    assert_eq!(rows[1].1, b"3");
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn range_included_unbounded() {
+                    let path = temp_path("range-iu");
+                    let store = seeded(&path, |txn| {
+                        txn.put("t", b"a", b"1")?;
+                        txn.put("t", b"b", b"2")?;
+                        txn.put("t", b"c", b"3")?;
+                        Ok(())
+                    });
+                    let mut keys = Vec::new();
+                    store
+                        .range(
+                            "t",
+                            Bound::Included(b"b".as_slice()),
+                            Bound::Unbounded,
+                            &mut |k, _v| {
+                                keys.push(k.to_vec());
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(keys, vec![b"b".to_vec(), b"c".to_vec()]);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn is_empty_lifecycle() {
+                    let path = temp_path("empty");
+                    let store = seeded(&path, |_| Ok(()));
+                    assert!(store.is_empty("t").unwrap());
+                    drop(store);
+
+                    let store = seeded(&path, |txn| {
+                        txn.put("t", b"k", b"v")?;
+                        Ok(())
+                    });
+                    assert!(!store.is_empty("t").unwrap());
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn missing_table_scans_are_empty_and_excluded_empty_bound_is_safe() {
+                    let path = temp_path("missing-scan");
+                    let store = seeded(&path, |txn| {
+                        txn.put("t", b"a", b"1")?;
+                        Ok(())
+                    });
+                    let mut rows = Vec::new();
+                    store
+                        .for_each("missing", &mut |key, value| {
+                            rows.push((key.to_vec(), value.to_vec()));
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert!(rows.is_empty());
+
+                    store
+                        .range(
+                            "t",
+                            Bound::Excluded(&[]),
+                            Bound::Unbounded,
+                            &mut |key, _| {
+                                rows.push((key.to_vec(), Vec::new()));
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(rows, vec![(b"a".to_vec(), Vec::new())]);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn empty_bounds_never_match_or_error() {
+                    let path = temp_path("empty-bounds");
+                    let store = seeded(&path, |txn| {
+                        txn.put("t", b"a", b"1")?;
+                        txn.put("t", b"b", b"2")?;
+                        Ok(())
+                    });
+
+                    let mut keys = Vec::new();
+                    store
+                        .range("t", Bound::Included(&[]), Bound::Unbounded, &mut |k, _| {
+                            keys.push(k.to_vec());
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(keys, vec![b"a".to_vec(), b"b".to_vec()]);
+
+                    for hi in [Bound::<&[u8]>::Excluded(&[]), Bound::Included(&[])] {
+                        let mut upper_empty_keys = Vec::new();
+                        store
+                            .range("t", Bound::Unbounded, hi, &mut |k, _| {
+                                upper_empty_keys.push(k.to_vec());
+                                Ok(())
+                            })
+                            .unwrap();
+                        assert!(upper_empty_keys.is_empty());
+                    }
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn empty_and_nul_table_names_are_rejected_by_reads() {
+                    fn assert_invalid<T>(result: Result<T, StoreError>) {
+                        assert!(matches!(result, Err(StoreError::InvalidInput(_))));
+                    }
+
+                    let path = temp_path("invalid-table");
+                    let store = seeded(&path, |_| Ok(()));
+                    for table in ["", "bad\0name"] {
+                        assert_invalid(store.get(table, b"key"));
+                        assert_invalid(store.for_each(table, &mut |_, _| Ok(())));
+                        assert_invalid(store.range(
+                            table,
+                            Bound::Unbounded,
+                            Bound::Unbounded,
+                            &mut |_, _| Ok(()),
+                        ));
+                        assert_invalid(store.is_empty(table));
+                    }
+                    drop(store);
+                    cleanup(&path);
+                }
+            }
+        };
+    }
+
+    /// The write tier: creation, atomic multi-table writes, compaction,
+    /// and the read-only handle's refusal to mutate.
+    macro_rules! store_write_tests {
         ($mod:ident, $store:ty, $ext:literal) => {
             mod $mod {
                 use super::super::*;
 
-                /// Owns a temporary store path and removes both the data
-                /// file and its `-lock` sidecar when it drops — including
-                /// when a test panics, so a failed assertion leaves no
-                /// state behind in `std::env::temp_dir()`. Derefs to
-                /// `Path`, so `&guard` passes anywhere a `&Path` is wanted.
-                struct TempPath(std::path::PathBuf);
-
-                impl std::ops::Deref for TempPath {
-                    type Target = std::path::Path;
-                    fn deref(&self) -> &std::path::Path {
-                        &self.0
-                    }
-                }
-
-                impl Drop for TempPath {
-                    fn drop(&mut self) {
-                        cleanup(&self.0);
-                    }
-                }
-
-                fn temp_path(tag: &str) -> TempPath {
-                    let path = std::env::temp_dir().join(format!(
-                        "oxpinyin-store-{}-{tag}-{}.{}",
-                        stringify!($mod),
-                        std::process::id(),
-                        $ext,
-                    ));
-                    cleanup(&path);
-                    TempPath(path)
-                }
-
-                fn cleanup(path: &std::path::Path) {
-                    let _ = std::fs::remove_file(path);
-                    let lock = format!("{}-lock", path.display());
-                    let _ = std::fs::remove_file(&lock);
-                }
+                store_test_paths!($mod, $ext);
 
                 #[test]
                 fn multi_table_write() {
@@ -694,26 +910,6 @@ mod tests {
                 }
 
                 #[test]
-                fn compact_fails_while_snapshot_open() {
-                    let path = temp_path("compact-snap");
-                    let mut store = <$store>::create(&path).unwrap();
-                    store
-                        .write(|txn| txn.put("t", b"k", b"v"))
-                        .unwrap();
-                    let snap = store.snapshot().unwrap();
-                    assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-                    assert!(
-                        store.compact().is_err(),
-                        "compact must fail while a snapshot is open"
-                    );
-                    drop(snap);
-                    store.compact().unwrap();
-                    assert_eq!(store.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
                 fn write_txn_is_empty() {
                     let path = temp_path("wtxn-empty");
                     let store = <$store>::create(&path).unwrap();
@@ -729,69 +925,6 @@ mod tests {
                             Ok(())
                         })
                         .unwrap();
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn range_included_included() {
-                    let path = temp_path("range-ii");
-                    let store = <$store>::create(&path).unwrap();
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"a", b"1")?;
-                            txn.put("t", b"b", b"2")?;
-                            txn.put("t", b"c", b"3")?;
-                            txn.put("t", b"d", b"4")?;
-                            Ok(())
-                        })
-                        .unwrap();
-                    let mut rows = Vec::new();
-                    store
-                        .range(
-                            "t",
-                            Bound::Included(b"b".as_slice()),
-                            Bound::Included(b"c".as_slice()),
-                            &mut |k, v| {
-                                rows.push((k.to_vec(), v.to_vec()));
-                                Ok(())
-                            },
-                        )
-                        .unwrap();
-                    assert_eq!(rows.len(), 2);
-                    assert_eq!(rows[0].0, b"b");
-                    assert_eq!(rows[0].1, b"2");
-                    assert_eq!(rows[1].0, b"c");
-                    assert_eq!(rows[1].1, b"3");
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn range_included_unbounded() {
-                    let path = temp_path("range-iu");
-                    let store = <$store>::create(&path).unwrap();
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"a", b"1")?;
-                            txn.put("t", b"b", b"2")?;
-                            txn.put("t", b"c", b"3")?;
-                            Ok(())
-                        })
-                        .unwrap();
-                    let mut keys = Vec::new();
-                    store
-                        .range(
-                            "t",
-                            Bound::Included(b"b".as_slice()),
-                            Bound::Unbounded,
-                            &mut |k, _v| {
-                                keys.push(k.to_vec());
-                                Ok(())
-                            },
-                        )
-                        .unwrap();
-                    assert_eq!(keys, vec![b"b".to_vec(), b"c".to_vec()]);
                     drop(store);
                     cleanup(&path);
                 }
@@ -813,59 +946,8 @@ mod tests {
                 }
 
                 #[test]
-                fn is_empty_lifecycle() {
-                    let path = temp_path("empty");
-                    let store = <$store>::create(&path).unwrap();
-                    assert!(store.is_empty("t").unwrap());
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"k", b"v")?;
-                            Ok(())
-                        })
-                        .unwrap();
-                    assert!(!store.is_empty("t").unwrap());
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn missing_table_scans_are_empty_and_excluded_empty_bound_is_safe() {
-                    let path = temp_path("missing-scan");
-                    let store = <$store>::create(&path).unwrap();
-                    let mut rows = Vec::new();
-                    store
-                        .for_each("missing", &mut |key, value| {
-                            rows.push((key.to_vec(), value.to_vec()));
-                            Ok(())
-                        })
-                        .unwrap();
-                    assert!(rows.is_empty());
-
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"a", b"1")?;
-                            Ok(())
-                        })
-                        .unwrap();
-                    store
-                        .range(
-                            "t",
-                            Bound::Excluded(&[]),
-                            Bound::Unbounded,
-                            &mut |key, _| {
-                                rows.push((key.to_vec(), Vec::new()));
-                                Ok(())
-                            },
-                        )
-                        .unwrap();
-                    assert_eq!(rows, vec![(b"a".to_vec(), Vec::new())]);
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn empty_bounds_never_match_or_error() {
-                    let path = temp_path("empty-bounds");
+                fn write_txn_empty_bounds_never_match_or_error() {
+                    let path = temp_path("wtxn-empty-bounds");
                     let store = <$store>::create(&path).unwrap();
                     store
                         .write(|txn| {
@@ -874,31 +956,6 @@ mod tests {
                             Ok(())
                         })
                         .unwrap();
-
-                    let mut keys = Vec::new();
-                    store
-                        .range(
-                            "t",
-                            Bound::Included(&[]),
-                            Bound::Unbounded,
-                            &mut |k, _| {
-                                keys.push(k.to_vec());
-                                Ok(())
-                            },
-                        )
-                        .unwrap();
-                    assert_eq!(keys, vec![b"a".to_vec(), b"b".to_vec()]);
-
-                    for hi in [Bound::<&[u8]>::Excluded(&[]), Bound::Included(&[])] {
-                        let mut upper_empty_keys = Vec::new();
-                        store
-                            .range("t", Bound::Unbounded, hi, &mut |k, _| {
-                                upper_empty_keys.push(k.to_vec());
-                                Ok(())
-                            })
-                            .unwrap();
-                        assert!(upper_empty_keys.is_empty());
-                    }
 
                     store
                         .write(|txn| {
@@ -915,7 +972,7 @@ mod tests {
                 }
 
                 #[test]
-                fn empty_and_nul_table_names_are_rejected_everywhere() {
+                fn empty_and_nul_table_names_are_rejected_by_writes() {
                     fn assert_invalid<T>(result: Result<T, StoreError>) {
                         assert!(matches!(result, Err(StoreError::InvalidInput(_))));
                     }
@@ -923,27 +980,6 @@ mod tests {
                     let path = temp_path("invalid-table");
                     let store = <$store>::create(&path).unwrap();
                     for table in ["", "bad\0name"] {
-                        assert_invalid(store.get(table, b"key"));
-                        assert_invalid(store.for_each(table, &mut |_, _| Ok(())));
-                        assert_invalid(store.range(
-                            table,
-                            Bound::Unbounded,
-                            Bound::Unbounded,
-                            &mut |_, _| Ok(()),
-                        ));
-                        assert_invalid(store.is_empty(table));
-
-                        let snapshot = store.snapshot().unwrap();
-                        assert_invalid(snapshot.get(table, b"key"));
-                        assert_invalid(snapshot.for_each(table, &mut |_, _| Ok(())));
-                        assert_invalid(snapshot.range(
-                            table,
-                            Bound::Unbounded,
-                            Bound::Unbounded,
-                            &mut |_, _| Ok(()),
-                        ));
-                        assert_invalid(snapshot.is_empty(table));
-
                         assert_invalid(store.write(|txn| txn.get(table, b"key")));
                         assert_invalid(store.write(|txn| txn.put(table, b"key", b"value")));
                         assert_invalid(store.write(|txn| txn.remove(table, b"key")));
@@ -1010,8 +1046,39 @@ mod tests {
                     drop(store);
                     cleanup(&path);
                 }
+            }
+        };
+    }
 
-                // ── snapshot tests ─────────────────────────────────
+    /// The snapshot tier: MVCC-isolated point-in-time read views.
+    ///
+    /// Proving isolation means committing *after* a snapshot is taken and
+    /// checking the snapshot does not see it, so this group applies to a
+    /// backend that is both [`SnapshotStore`] and [`WriteStore`].
+    macro_rules! store_snapshot_tests {
+        ($mod:ident, $store:ty, $ext:literal) => {
+            mod $mod {
+                use super::super::*;
+
+                store_test_paths!($mod, $ext);
+
+                #[test]
+                fn compact_fails_while_snapshot_open() {
+                    let path = temp_path("compact-snap");
+                    let mut store = <$store>::create(&path).unwrap();
+                    store.write(|txn| txn.put("t", b"k", b"v")).unwrap();
+                    let snap = store.snapshot().unwrap();
+                    assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+                    assert!(
+                        store.compact().is_err(),
+                        "compact must fail while a snapshot is open"
+                    );
+                    drop(snap);
+                    store.compact().unwrap();
+                    assert_eq!(store.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+                    drop(store);
+                    cleanup(&path);
+                }
 
                 #[test]
                 fn snapshot_consistency() {
@@ -1115,14 +1182,46 @@ mod tests {
                     drop(store);
                     cleanup(&path);
                 }
+
+                #[test]
+                fn empty_and_nul_table_names_are_rejected_by_snapshot_reads() {
+                    fn assert_invalid<T>(result: Result<T, StoreError>) {
+                        assert!(matches!(result, Err(StoreError::InvalidInput(_))));
+                    }
+
+                    let path = temp_path("invalid-table");
+                    let store = <$store>::create(&path).unwrap();
+                    for table in ["", "bad\0name"] {
+                        let snapshot = store.snapshot().unwrap();
+                        assert_invalid(snapshot.get(table, b"key"));
+                        assert_invalid(snapshot.for_each(table, &mut |_, _| Ok(())));
+                        assert_invalid(snapshot.range(
+                            table,
+                            Bound::Unbounded,
+                            Bound::Unbounded,
+                            &mut |_, _| Ok(()),
+                        ));
+                        assert_invalid(snapshot.is_empty(table));
+                    }
+                    drop(store);
+                    cleanup(&path);
+                }
             }
         };
     }
 
-    store_tests!(redb, RedbStore, "redb");
+    // Both shipped backends offer every tier, so both run all three
+    // groups. A read-only backend would invoke only `store_read_tests!`.
+    store_read_tests!(redb_read, RedbStore, RedbStore, "redb");
+    store_write_tests!(redb_write, RedbStore, "redb");
+    store_snapshot_tests!(redb_snapshot, RedbStore, "redb");
 
     #[cfg(feature = "lmdb")]
-    store_tests!(lmdb, LmdbStore, "lmdb");
+    store_read_tests!(lmdb_read, LmdbStore, LmdbStore, "lmdb");
+    #[cfg(feature = "lmdb")]
+    store_write_tests!(lmdb_write, LmdbStore, "lmdb");
+    #[cfg(feature = "lmdb")]
+    store_snapshot_tests!(lmdb_snapshot, LmdbStore, "lmdb");
 
     /// Removes the borrowed path on drop, so a panicking test leaves no
     /// file behind in `std::env::temp_dir()`. redb keeps no `-lock` sidecar,
@@ -1149,10 +1248,9 @@ mod tests {
         drop(store);
         // A committed write transaction that only probed emptiness must
         // leave the database with zero tables; assert it against redb
-        // directly because the store traits cannot distinguish an
-        // absent table from an empty one.  (`::redb` because the shared
-        // test suite generates a `tests::redb` submodule that shadows
-        // the crate path.)
+        // directly because the store traits cannot distinguish an absent
+        // table from an empty one.  (`::redb` names the crate
+        // unambiguously alongside the generated per-tier test modules.)
         let db = ::redb::ReadOnlyDatabase::open(&path).unwrap();
         let txn = db.begin_read().unwrap();
         assert_eq!(txn.list_tables().unwrap().count(), 0);
