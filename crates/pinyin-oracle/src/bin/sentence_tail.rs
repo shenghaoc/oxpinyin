@@ -14,8 +14,9 @@
 //! — then every diverging input. See `docs/findings/sentence-surface.md` §12:
 //! the `488 / 385 / 379` there are those three strictnesses, not one measure;
 //! the ordered residual is 117 (all trellis-side, 0 candidate leaks). The
-//! sentence surface is a declared permanent Stage-1 residual, so this reports
-//! it — it does not assert a pin.
+//! sentence surface is a measured Stage-1 residual (freezing it as permanent
+//! is the maintainer's call, pending approval), so this reports it — it does
+//! not assert a pin.
 //!
 //! ```bash
 //! PINYIN_EXPORT_DIR=/tmp/oxpinyin-export \

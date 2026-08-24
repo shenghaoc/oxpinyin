@@ -1,6 +1,8 @@
 //! The gate for the sentence-surface residual `docs/findings/sentence-
-//! surface.md` §12 declares permanent: the port's `guess_sentence` surface
-//! against the pinned oracle fixture, at the three named strictnesses.
+//! surface.md` §12 records: the port's `guess_sentence` surface against the
+//! pinned oracle fixture, at the three named strictnesses. (Whether that
+//! residual is frozen as permanent is the maintainer's call; this gate holds
+//! the measured numbers regardless.)
 //!
 //! Runs the same `pinyin_oracle::sentence_tail::measure` the `sentence-tail`
 //! binary prints, so the asserted numbers and the reported numbers are one
@@ -20,9 +22,9 @@
 
 use pinyin_oracle::sentence_tail;
 
-/// The §12 permanent residual, over the 496 comparable inputs of the frozen
-/// W2 sample. A change to any of these is a pin move: re-measure and re-freeze
-/// §12, do not just edit the number.
+/// The §12 measured residual, over the 496 comparable inputs of the frozen
+/// W2 sample. A change to any of these is a pin move: re-measure and update
+/// §12 (a re-freeze the maintainer signs off), do not just edit the number.
 #[test]
 fn sentence_surface_matches_the_declared_residual() {
     let mut session = match sentence_tail::open_session_from_env() {
