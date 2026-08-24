@@ -52,3 +52,4 @@ rustc-ice-*.txt
 # committed (W6-T5: no user-data fixtures beyond tiny synthetic ones).
 user_store.redb
 tools/bisection/fullpin-diff
+/tools/bisection/uncovered-surface-diff
