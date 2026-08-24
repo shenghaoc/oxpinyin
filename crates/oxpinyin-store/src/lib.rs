@@ -1,10 +1,12 @@
 //! Backend-agnostic ordered key–value store for oxpinyin tables.
 //!
-//! This crate defines the [`OrderedStore`] trait — an ordered byte-KV
-//! interface with point get, ranged scan, atomic multi-table writes,
-//! emptiness check, and compaction — and provides a [`RedbStore`]
-//! implementation backed by redb.  Consumers depend on the trait; the
-//! concrete backend is selected by the [`DefaultStore`] alias.
+//! This crate defines an ordered byte-KV interface split into three
+//! capability tiers — [`ReadStore`] (point get, ranged scan, full scan,
+//! emptiness check), [`WriteStore`] (creation, atomic multi-table writes,
+//! compaction), and [`SnapshotStore`] (MVCC read snapshots) — and provides
+//! a [`RedbStore`] implementation backed by redb that offers all three.
+//! Consumers depend on the narrowest tier they need; the concrete backend
+//! is selected by the [`DefaultStore`] alias.
 
 use std::fmt;
 use std::ops::Bound;
@@ -59,7 +61,7 @@ pub type Visitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a;
 /// A consistent point-in-time read view, storable across calls.
 ///
 /// The snapshot is taken from a single read transaction and is
-/// MVCC-isolated: writes committed after [`OrderedStore::snapshot`]
+/// MVCC-isolated: writes committed after [`SnapshotStore::snapshot`]
 /// are invisible through it.  Methods open the named table per call on
 /// the held transaction (no pre-opened table set, no owned-copy slurp).
 pub trait ReadSnapshot {
@@ -135,44 +137,22 @@ pub trait WriteTxn {
     fn is_empty(&self, table: &str) -> Result<bool, StoreError>;
 }
 
-/// An ordered byte-KV store.
+/// The read tier of an ordered byte-KV store.
 ///
-/// Implementations provide both read-only and read-write access, point
-/// get, ranged scans, atomic multi-table writes, and compaction.
-pub trait OrderedStore {
-    /// A consistent point-in-time read view, storable across calls.
-    type ReadSnapshot: ReadSnapshot;
-
-    /// Open a consistent read snapshot of the current store state.
-    ///
-    /// The returned handle owns a single read transaction and is
-    /// MVCC-isolated: writes committed after this call are invisible
-    /// through it.  The caller may store it in a struct field and
-    /// reuse it across many calls.
-    ///
-    /// Retaining the snapshot delays page reclamation: freed pages
-    /// cannot be reclaimed and [`OrderedStore::compact`] fails until
-    /// the snapshot is dropped.
-    fn snapshot(&self) -> Result<Self::ReadSnapshot, StoreError>;
-
+/// This is the base capability every backend provides: open an existing
+/// file read-only, point get, ranged scan, full scan, and an emptiness
+/// check.  A backend that can only read — no writer, no MVCC snapshot —
+/// implements this and nothing else, and the system-table loader binds
+/// to exactly this tier.
+pub trait ReadStore {
     /// Open an existing store file in read-only mode.
     fn open_read_only(path: &Path) -> Result<Self, StoreError>
-    where
-        Self: Sized;
-
-    /// Open or create a store file in read-write mode.
-    fn create(path: &Path) -> Result<Self, StoreError>
     where
         Self: Sized;
 
     /// Read a single key from `table`.  Returns `None` if absent or the
     /// table does not exist.
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
-
-    /// Visit every `(key, value)` of `table` in ascending key-byte order,
-    /// borrowing each row (no per-row clone).  Stops early on visitor
-    /// `Err`.  An absent table is treated as empty.
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError>;
 
     /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
     /// ascending.  An absent table is treated as empty.
@@ -184,14 +164,30 @@ pub trait OrderedStore {
         visit: &mut Visitor<'_>,
     ) -> Result<(), StoreError>;
 
+    /// Visit every `(key, value)` of `table` in ascending key-byte order,
+    /// borrowing each row (no per-row clone).  Stops early on visitor
+    /// `Err`.  An absent table is treated as empty.
+    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError>;
+
     /// Whether `table` has no rows (an absent table counts as empty).
     fn is_empty(&self, table: &str) -> Result<bool, StoreError>;
+}
+
+/// The write tier: creation, atomic multi-table writes, and compaction.
+///
+/// Adds mutation on top of [`ReadStore`], whose reads a writable backend
+/// necessarily also provides.
+pub trait WriteStore: ReadStore {
+    /// Open or create a store file in read-write mode.
+    fn create(path: &Path) -> Result<Self, StoreError>
+    where
+        Self: Sized;
 
     /// Run `f` inside an atomic write transaction.  All puts/removes in
     /// `f` land together on `Ok`, or none land on `Err` (full rollback).
     /// The closure sees its own writes.
     ///
-    /// The closure must not call [`OrderedStore::write`] again. Backends may
+    /// The closure must not call [`WriteStore::write`] again. Backends may
     /// serialize write transactions, so a nested call can block forever.
     fn write<R>(
         &self,
@@ -205,6 +201,28 @@ pub trait OrderedStore {
     fn compact(&mut self) -> Result<(), StoreError>;
 }
 
+/// The snapshot tier: consistent point-in-time read views.
+///
+/// Adds MVCC-isolated snapshots on top of [`ReadStore`].  A backend
+/// without multi-version reads implements [`ReadStore`] (and possibly
+/// [`WriteStore`]) without this tier.
+pub trait SnapshotStore: ReadStore {
+    /// A consistent point-in-time read view, storable across calls.
+    type ReadSnapshot: ReadSnapshot;
+
+    /// Open a consistent read snapshot of the current store state.
+    ///
+    /// The returned handle owns a single read transaction and is
+    /// MVCC-isolated: writes committed after this call are invisible
+    /// through it.  The caller may store it in a struct field and
+    /// reuse it across many calls.
+    ///
+    /// Retaining the snapshot delays page reclamation: freed pages
+    /// cannot be reclaimed and [`WriteStore::compact`] fails until
+    /// the snapshot is dropped.
+    fn snapshot(&self) -> Result<Self::ReadSnapshot, StoreError>;
+}
+
 // ── redb backend ───────────────────────────────────────────────────
 
 enum RedbInner {
@@ -212,7 +230,7 @@ enum RedbInner {
     ReadWrite(redb::Database),
 }
 
-/// A redb-backed [`OrderedStore`].
+/// A redb-backed store implementing all three capability tiers.
 pub struct RedbStore {
     inner: RedbInner,
 }
@@ -314,27 +332,13 @@ fn read_is_empty(txn: &redb::ReadTransaction, table: &str) -> Result<bool, Store
     }
 }
 
-impl OrderedStore for RedbStore {
-    type ReadSnapshot = RedbReadSnapshot;
-
-    fn snapshot(&self) -> Result<RedbReadSnapshot, StoreError> {
-        let txn = self.begin_read()?;
-        Ok(RedbReadSnapshot { txn })
-    }
-
+impl ReadStore for RedbStore {
     fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         let db = redb::Builder::new()
             .open_read_only(path)
             .map_err(map_database_error)?;
         Ok(Self {
             inner: RedbInner::ReadOnly(db),
-        })
-    }
-
-    fn create(path: &Path) -> Result<Self, StoreError> {
-        let db = redb::Database::create(path).map_err(map_database_error)?;
-        Ok(Self {
-            inner: RedbInner::ReadWrite(db),
         })
     }
 
@@ -362,6 +366,15 @@ impl OrderedStore for RedbStore {
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
         let txn = self.begin_read()?;
         read_is_empty(&txn, table)
+    }
+}
+
+impl WriteStore for RedbStore {
+    fn create(path: &Path) -> Result<Self, StoreError> {
+        let db = redb::Database::create(path).map_err(map_database_error)?;
+        Ok(Self {
+            inner: RedbInner::ReadWrite(db),
+        })
     }
 
     fn write<R>(
@@ -396,6 +409,15 @@ impl OrderedStore for RedbStore {
             }
             RedbInner::ReadOnly(_) => Err(StoreError::ReadOnly),
         }
+    }
+}
+
+impl SnapshotStore for RedbStore {
+    type ReadSnapshot = RedbReadSnapshot;
+
+    fn snapshot(&self) -> Result<RedbReadSnapshot, StoreError> {
+        let txn = self.begin_read()?;
+        Ok(RedbReadSnapshot { txn })
     }
 }
 
@@ -565,14 +587,14 @@ fn map_compaction_error(e: redb::CompactionError) -> StoreError {
 
 #[cfg(test)]
 mod tests {
-    // `OrderedStore` provides `create`/`write`, used by the always-built
+    // `WriteStore` provides `create`/`write`, used by the always-built
     // `redb_is_empty_probe_does_not_create_tables` below; keep it in scope
-    // regardless of the `lmdb` feature. `LmdbStore`/`StoreError` are only
-    // referenced by lmdb-gated tests, so they stay gated to avoid an
-    // unused-import warning when the feature is off.
-    use super::OrderedStore;
+    // regardless of the `lmdb` feature. `LmdbStore`/`ReadStore`/`StoreError`
+    // are only referenced by lmdb-gated tests, so they stay gated to avoid
+    // an unused-import warning when the feature is off.
+    use super::WriteStore;
     #[cfg(feature = "lmdb")]
-    use super::{LmdbStore, StoreError};
+    use super::{LmdbStore, ReadStore, StoreError};
 
     macro_rules! store_tests {
         ($mod:ident, $store:ty, $ext:literal) => {
@@ -1127,7 +1149,7 @@ mod tests {
         drop(store);
         // A committed write transaction that only probed emptiness must
         // leave the database with zero tables; assert it against redb
-        // directly because the OrderedStore API cannot distinguish an
+        // directly because the store traits cannot distinguish an
         // absent table from an empty one.  (`::redb` because the shared
         // test suite generates a `tests::redb` submodule that shadows
         // the crate path.)

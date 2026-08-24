@@ -13,9 +13,10 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
+use std::marker::PhantomData;
 use std::path::Path;
 
-use oxpinyin_store::{DefaultStore, OrderedStore, StoreError};
+use oxpinyin_store::{DefaultStore, ReadStore, StoreError};
 
 /// A `phrase_token_t` ordered the way redb stores it: 4 bytes little-endian,
 /// so ascending **byte** order — which is not ascending integer order.
@@ -93,16 +94,22 @@ impl From<StoreError> for TableError {
 /// Used by the typed dictionary and LM loaders so they can parse records
 /// once into native keys instead of slurping `BTreeMap<Vec<u8>, Vec<u8>>`.
 ///
+/// Generic over the store's **read** tier only: loading a system table
+/// opens the file read-only and walks it, so a backend that offers
+/// nothing but [`ReadStore`] can serve this path.  Callers name the
+/// backend, e.g. `for_each_row::<DefaultStore, _, _>(path, visit)`.
+///
 /// # Errors
 ///
 /// Returns `E` converted from [`TableError`] on I/O or store failure, or
 /// whatever `visit` returns.
-pub fn for_each_row<E, F>(path: &Path, mut visit: F) -> Result<(), E>
+pub fn for_each_row<S, E, F>(path: &Path, mut visit: F) -> Result<(), E>
 where
+    S: ReadStore,
     F: FnMut(&[u8], &[u8]) -> Result<(), E>,
     E: From<TableError>,
 {
-    let store = DefaultStore::open_read_only(path)
+    let store = S::open_read_only(path)
         .map_err(TableError::from)
         .map_err(E::from)?;
     let mut visitor_error: Option<E> = None;
@@ -155,19 +162,33 @@ pub(crate) fn ensure_sorted_unique<K: Ord, V>(rows: &mut Vec<(K, V)>) {
 /// portable tables are tens of megabytes, so the cache fits.
 /// [`LookupTable::get`] and [`LookupTable::iter`] borrow those bytes; they
 /// do not clone a row on every call.
-pub struct LookupTable {
+///
+/// Generic over the store's **read** tier: the backend is used once, by
+/// [`GenericLookupTable::open`], and never again — the rows live in the
+/// map from then on.  [`LookupTable`] is the default-backend alias every
+/// consumer uses.
+pub struct GenericLookupTable<S: ReadStore> {
     entries: BTreeMap<Vec<u8>, Vec<u8>>,
+    /// The backend is only a loading detail, so it is not stored. `fn() -> S`
+    /// keeps the table's auto traits independent of the backend's.
+    _backend: PhantomData<fn() -> S>,
 }
 
-impl LookupTable {
+/// Lookup table over the default backend (redb).
+pub type LookupTable = GenericLookupTable<DefaultStore>;
+
+impl<S: ReadStore> GenericLookupTable<S> {
     /// Open a store table file for reading.
     pub fn open(path: &Path) -> Result<Self, TableError> {
         let mut entries = BTreeMap::new();
-        for_each_row(path, |key, value| {
+        for_each_row::<S, _, _>(path, |key, value| {
             entries.insert(key.to_vec(), value.to_vec());
             Ok::<(), TableError>(())
         })?;
-        Ok(Self { entries })
+        Ok(Self {
+            entries,
+            _backend: PhantomData,
+        })
     }
 
     /// Look up a key in the table.
@@ -196,7 +217,7 @@ impl LookupTable {
     }
 }
 
-impl fmt::Debug for LookupTable {
+impl<S: ReadStore> fmt::Debug for GenericLookupTable<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LookupTable")
             .field("len", &self.entries.len())

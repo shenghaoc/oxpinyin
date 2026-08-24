@@ -1,4 +1,4 @@
-//! redb vs LMDB on the raw [`OrderedStore`] trait — identical workloads.
+//! redb vs LMDB on the raw store tier traits — identical workloads.
 //!
 //! Measurement only; consumes public APIs and touches no parity code.
 //! Run in release, with the LMDB half enabled:
@@ -13,7 +13,7 @@
 //! than a process-monotonic high-water mark; the child baseline (runtime
 //! plus binary) is common to both backends, so the redb-vs-lmdb delta is
 //! the signal.  Workload rows derive deterministically from the seed, and
-//! every scenario body is one generic function over `S: OrderedStore` —
+//! every scenario body is one generic function over its tier —
 //! both backends see identical keys, values, and operation order.  Before
 //! printing each block the parent verifies that both children reported the
 //! same metric set and agrees on every non-measurement metric (counts and
@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 
 #[cfg(feature = "lmdb")]
 use oxpinyin_store::LmdbStore;
-use oxpinyin_store::{OrderedStore, RedbStore};
+use oxpinyin_store::{ReadStore, RedbStore, WriteStore};
 
 const SCENARIOS: [&str; 5] = [
     "bulk_load",
@@ -80,7 +80,7 @@ fn main() {
 
 fn parent() {
     let cfg = config();
-    println!("backend_bench — redb vs lmdb on the OrderedStore trait");
+    println!("backend_bench — redb vs lmdb on the store tier traits");
     println!(
         "n={} (pron {}/2, phrase {}/4)  gets={}  prefixes={}  readonly={}  seed={:#x}",
         cfg.n, cfg.n, cfg.n, cfg.gets, cfg.prefixes, cfg.readonly, cfg.seed
@@ -200,7 +200,7 @@ fn dispatch_lmdb(_scenario: &str) {
     std::process::exit(2);
 }
 
-fn dispatch<S: OrderedStore>(scenario: &str) {
+fn dispatch<S: WriteStore>(scenario: &str) {
     match scenario {
         "bulk_load" => bulk_load::<S>(),
         "point_get" => point_get::<S>(),
@@ -214,7 +214,7 @@ fn dispatch<S: OrderedStore>(scenario: &str) {
     }
 }
 
-fn bulk_load<S: OrderedStore>() {
+fn bulk_load<S: WriteStore>() {
     let cfg = config();
     let path = work_path("bulk-load");
     let started = Instant::now();
@@ -233,24 +233,13 @@ fn bulk_load<S: OrderedStore>() {
     remove_db(&path);
 }
 
-fn point_get<S: OrderedStore>() {
+fn point_get<S: WriteStore>() {
     let cfg = config();
     let path = work_path("point-get");
     let store = load_all::<S>(&cfg, &path);
 
     let started = Instant::now();
-    let mut hits = 0_u64;
-    let mut bytes = 0_u64;
-    let mut value_sum = 0_u64;
-    for i in 0..cfg.gets as u64 {
-        let idx = row_hash(cfg.seed ^ 0xDEAD_BEEF, i) % cfg.n as u64;
-        let (key, _) = bigram_row(cfg.seed, idx);
-        if let Some(value) = store.get(BIGRAM, &key).expect("get") {
-            hits += 1;
-            bytes += value.len() as u64;
-            value_sum = fold_bytes(value_sum, &value);
-        }
-    }
+    let (hits, bytes, value_sum) = measure_point_gets(&store, &cfg);
     let gets = started.elapsed();
     std::hint::black_box((hits, bytes));
 
@@ -267,52 +256,13 @@ fn point_get<S: OrderedStore>() {
     remove_db(&path);
 }
 
-fn prefix_scan<S: OrderedStore>() {
+fn prefix_scan<S: WriteStore>() {
     let cfg = config();
     let path = work_path("prefix-scan");
     let store = load_all::<S>(&cfg, &path);
 
     let started = Instant::now();
-    let mut rows = 0_u64;
-    let mut bigram_sum = 0_u64;
-    let mut pron_sum = 0_u64;
-    for i in 0..cfg.prefixes as u64 {
-        let h = row_hash(cfg.seed ^ 0xFEED_FACE, i);
-
-        // bigram (prev, *): the successor-set lookup
-        let prev = TOKEN_BASE + h % PREV_DOMAIN;
-        let lo = (prev as u32).to_be_bytes();
-        let hi = (prev as u32 + 1).to_be_bytes();
-        store
-            .range(
-                BIGRAM,
-                Bound::Included(&lo[..]),
-                Bound::Excluded(&hi[..]),
-                &mut |key, value| {
-                    rows += 1;
-                    bigram_sum = fold_bytes(fold_bytes(bigram_sum, key), value);
-                    Ok(())
-                },
-            )
-            .expect("bigram range");
-
-        // pron (token, *): the pronunciation-set lookup
-        let token = TOKEN_BASE + (h >> 16) % PRON_TOKEN_DOMAIN;
-        let lo = (token as u32).to_be_bytes();
-        let hi = (token as u32 + 1).to_be_bytes();
-        store
-            .range(
-                PRON,
-                Bound::Included(&lo[..]),
-                Bound::Excluded(&hi[..]),
-                &mut |key, value| {
-                    rows += 1;
-                    pron_sum = fold_bytes(fold_bytes(pron_sum, key), value);
-                    Ok(())
-                },
-            )
-            .expect("pron range");
-    }
+    let (rows, bigram_sum, pron_sum) = measure_prefix_scans(&store, &cfg);
     let scan = started.elapsed();
     std::hint::black_box(rows);
 
@@ -329,7 +279,7 @@ fn prefix_scan<S: OrderedStore>() {
     remove_db(&path);
 }
 
-fn save_compact<S: OrderedStore>() {
+fn save_compact<S: WriteStore>() {
     let cfg = config();
     let path = work_path("save-compact");
     let mut store = load_all::<S>(&cfg, &path);
@@ -392,7 +342,7 @@ fn save_compact<S: OrderedStore>() {
     remove_db(&path);
 }
 
-fn readonly_scan<S: OrderedStore>() {
+fn readonly_scan<S: WriteStore>() {
     let cfg = config();
     let path = work_path("readonly");
 
@@ -416,16 +366,7 @@ fn readonly_scan<S: OrderedStore>() {
     let open = started.elapsed();
 
     let started = Instant::now();
-    let mut rows = 0_u64;
-    let mut key_bytes = 0_u64;
-    let mut value_sum = 0_u64;
-    ro.for_each(SYSTEM, &mut |key, value| {
-        rows += 1;
-        key_bytes += key.len() as u64;
-        value_sum = fold_bytes(value_sum, value);
-        Ok(())
-    })
-    .expect("scan system table");
+    let (rows, key_bytes, value_sum) = measure_full_scan(&ro, SYSTEM);
     let scan = started.elapsed();
     std::hint::black_box((rows, key_bytes));
 
@@ -442,9 +383,93 @@ fn readonly_scan<S: OrderedStore>() {
     remove_db(&path);
 }
 
+// ── measured read work (read tier) ────────────────────────────────
+//
+// The fixture is laid down through `WriteStore`, but every timed read
+// below needs nothing beyond `ReadStore` — so each is bound to that tier
+// and would run unchanged against a read-only backend handed the file.
+
+/// Returns `(hits, value bytes, value checksum)`.
+fn measure_point_gets<S: ReadStore>(store: &S, cfg: &Config) -> (u64, u64, u64) {
+    let mut hits = 0_u64;
+    let mut bytes = 0_u64;
+    let mut value_sum = 0_u64;
+    for i in 0..cfg.gets as u64 {
+        let idx = row_hash(cfg.seed ^ 0xDEAD_BEEF, i) % cfg.n as u64;
+        let (key, _) = bigram_row(cfg.seed, idx);
+        if let Some(value) = store.get(BIGRAM, &key).expect("get") {
+            hits += 1;
+            bytes += value.len() as u64;
+            value_sum = fold_bytes(value_sum, &value);
+        }
+    }
+    (hits, bytes, value_sum)
+}
+
+/// Returns `(rows visited, bigram checksum, pron checksum)`.
+fn measure_prefix_scans<S: ReadStore>(store: &S, cfg: &Config) -> (u64, u64, u64) {
+    let mut rows = 0_u64;
+    let mut bigram_sum = 0_u64;
+    let mut pron_sum = 0_u64;
+    for i in 0..cfg.prefixes as u64 {
+        let h = row_hash(cfg.seed ^ 0xFEED_FACE, i);
+
+        // bigram (prev, *): the successor-set lookup
+        let prev = TOKEN_BASE + h % PREV_DOMAIN;
+        let lo = (prev as u32).to_be_bytes();
+        let hi = (prev as u32 + 1).to_be_bytes();
+        store
+            .range(
+                BIGRAM,
+                Bound::Included(&lo[..]),
+                Bound::Excluded(&hi[..]),
+                &mut |key, value| {
+                    rows += 1;
+                    bigram_sum = fold_bytes(fold_bytes(bigram_sum, key), value);
+                    Ok(())
+                },
+            )
+            .expect("bigram range");
+
+        // pron (token, *): the pronunciation-set lookup
+        let token = TOKEN_BASE + (h >> 16) % PRON_TOKEN_DOMAIN;
+        let lo = (token as u32).to_be_bytes();
+        let hi = (token as u32 + 1).to_be_bytes();
+        store
+            .range(
+                PRON,
+                Bound::Included(&lo[..]),
+                Bound::Excluded(&hi[..]),
+                &mut |key, value| {
+                    rows += 1;
+                    pron_sum = fold_bytes(fold_bytes(pron_sum, key), value);
+                    Ok(())
+                },
+            )
+            .expect("pron range");
+    }
+    (rows, bigram_sum, pron_sum)
+}
+
+/// Returns `(rows, key bytes, value checksum)` for one full-table walk.
+fn measure_full_scan<S: ReadStore>(store: &S, table: &str) -> (u64, u64, u64) {
+    let mut rows = 0_u64;
+    let mut key_bytes = 0_u64;
+    let mut value_sum = 0_u64;
+    store
+        .for_each(table, &mut |key, value| {
+            rows += 1;
+            key_bytes += key.len() as u64;
+            value_sum = fold_bytes(value_sum, value);
+            Ok(())
+        })
+        .expect("scan system table");
+    (rows, key_bytes, value_sum)
+}
+
 // ── shared setup ──────────────────────────────────────────────────
 
-fn load_all<S: OrderedStore>(cfg: &Config, path: &Path) -> S {
+fn load_all<S: WriteStore>(cfg: &Config, path: &Path) -> S {
     let store = fresh::<S>(path);
     store
         .write(|txn| {
@@ -466,12 +491,12 @@ fn load_all<S: OrderedStore>(cfg: &Config, path: &Path) -> S {
     store
 }
 
-fn fresh<S: OrderedStore>(path: &Path) -> S {
+fn fresh<S: WriteStore>(path: &Path) -> S {
     remove_db(path);
     S::create(path).expect("create store")
 }
 
-fn count_rows<S: OrderedStore>(store: &S, table: &str) -> u64 {
+fn count_rows<S: ReadStore>(store: &S, table: &str) -> u64 {
     let mut rows = 0_u64;
     store
         .for_each(table, &mut |_key, _value| {

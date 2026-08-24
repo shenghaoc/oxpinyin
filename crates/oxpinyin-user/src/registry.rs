@@ -13,14 +13,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Mutex, MutexGuard, OnceLock, Weak};
 
-use oxpinyin_store::{DefaultStore, OrderedStore};
+use oxpinyin_store::{DefaultStore, SnapshotStore, WriteStore};
 
-pub(crate) struct CountSnapshot<S: OrderedStore> {
+pub(crate) struct CountSnapshot<S: SnapshotStore> {
     pub(crate) generation: u64,
-    pub(crate) snap: S::ReadSnapshot,
+    pub(crate) snap: <S as SnapshotStore>::ReadSnapshot,
 }
 
-pub(crate) struct StoreInner<S: OrderedStore> {
+pub(crate) struct StoreInner<S: WriteStore + SnapshotStore> {
     /// Cached decode-time read snapshot. Declared before `db` so the
     /// snapshot is dropped first (struct fields drop in declaration order).
     pub(crate) count_snapshot: Mutex<Option<CountSnapshot<S>>>,
