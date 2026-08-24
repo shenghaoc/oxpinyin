@@ -444,6 +444,11 @@ mod lmdb;
 #[cfg(feature = "lmdb")]
 pub use lmdb::LmdbStore;
 
+#[cfg(feature = "tkrzw")]
+mod tkrzw;
+#[cfg(feature = "tkrzw")]
+pub use tkrzw::TkrzwStore;
+
 // ── error mapping ──────────────────────────────────────────────────
 
 fn map_database_error(e: redb::DatabaseError) -> StoreError {
@@ -494,12 +499,19 @@ fn map_compaction_error(e: redb::CompactionError) -> StoreError {
 mod tests {
     // `WriteStore` provides `create`/`write`, used by the always-built
     // `redb_is_empty_probe_does_not_create_tables` below; keep it in scope
-    // regardless of the `lmdb` feature. `LmdbStore`/`ReadStore`/`StoreError`
-    // are only referenced by lmdb-gated tests, so they stay gated to avoid
-    // an unused-import warning when the feature is off.
+    // regardless of the backend features. Everything else here is only
+    // referenced by a feature-gated backend test, so each import is gated
+    // the same way to avoid an unused-import warning when it is off.
+    #[cfg(feature = "tkrzw")]
+    use std::ops::Bound;
+
+    #[cfg(any(feature = "lmdb", feature = "tkrzw"))]
+    use super::ReadStore;
+    #[cfg(feature = "tkrzw")]
+    use super::TkrzwStore;
     use super::WriteStore;
     #[cfg(feature = "lmdb")]
-    use super::{LmdbStore, ReadStore, StoreError};
+    use super::{LmdbStore, StoreError};
 
     /// Emits the temp-path plumbing every tier group needs.
     ///
@@ -963,8 +975,9 @@ mod tests {
         };
     }
 
-    // Both shipped backends offer both tiers, so both run both groups.
-    // A read-only backend would invoke only `store_read_tests!`.
+    // Every backend offers both tiers, so each runs both groups and is
+    // its own fixture writer. A read-only backend would invoke only
+    // `store_read_tests!`.
     store_read_tests!(redb_read, RedbStore, RedbStore, "redb");
     store_write_tests!(redb_write, RedbStore, "redb");
 
@@ -972,6 +985,11 @@ mod tests {
     store_read_tests!(lmdb_read, LmdbStore, LmdbStore, "lmdb");
     #[cfg(feature = "lmdb")]
     store_write_tests!(lmdb_write, LmdbStore, "lmdb");
+
+    #[cfg(feature = "tkrzw")]
+    store_read_tests!(tkrzw_read, TkrzwStore, TkrzwStore, "tkrzw");
+    #[cfg(feature = "tkrzw")]
+    store_write_tests!(tkrzw_write, TkrzwStore, "tkrzw");
 
     /// Removes the borrowed path on drop, so a panicking test leaves no
     /// file behind in `std::env::temp_dir()`. redb keeps no `-lock` sidecar,
@@ -1006,6 +1024,119 @@ mod tests {
         assert_eq!(txn.list_tables().unwrap().count(), 0);
         drop(txn);
         drop(db);
+    }
+
+    /// Removes a tkrzw store file on drop, so a panicking test leaves
+    /// nothing behind in `std::env::temp_dir()`.
+    #[cfg(feature = "tkrzw")]
+    struct RemoveTkrzw(std::path::PathBuf);
+
+    #[cfg(feature = "tkrzw")]
+    impl Drop for RemoveTkrzw {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    #[cfg(feature = "tkrzw")]
+    #[test]
+    fn tkrzw_orders_keys_as_unsigned_bytes() {
+        // The backend installs no custom comparator, so TreeDBM sorts by
+        // its default LexicalKeyComparator. That has to be plain
+        // *unsigned* byte order for oxpinyin's big-endian key codec to
+        // keep the order it has under redb and LMDB — a signed-char
+        // comparison would sort 0x80.. before 0x00.., silently reversing
+        // every high-token range scan. ASCII fixtures cannot tell the
+        // two apart, so probe the high half explicitly.
+        let path = std::env::temp_dir().join(format!(
+            "oxpinyin-store-tkrzw-order-{}.tkrzw",
+            std::process::id(),
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _cleanup = RemoveTkrzw(path.clone());
+        let store = TkrzwStore::create(&path).unwrap();
+        let keys: [&[u8]; 5] = [&[0x00], &[0x7f], &[0x80], &[0xfe], &[0xff]];
+        store
+            .write(|txn| {
+                // Inserted out of order, so the walk order is the store's
+                // and not the insertion sequence.
+                for key in [keys[2], keys[4], keys[0], keys[3], keys[1]] {
+                    txn.put("t", key, b"x")?;
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        let mut walked = Vec::new();
+        store
+            .for_each("t", &mut |key, _value| {
+                walked.push(key.to_vec());
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            walked,
+            keys.iter().map(|key| key.to_vec()).collect::<Vec<_>>(),
+            "TreeDBM must walk keys in ascending unsigned byte order"
+        );
+
+        // The same order must hold through a bounded scan: 0x80..=0xfe
+        // is the half a signed comparison would misplace.
+        let mut ranged = Vec::new();
+        store
+            .range(
+                "t",
+                Bound::Included(&[0x80][..]),
+                Bound::Included(&[0xfe][..]),
+                &mut |key, _value| {
+                    ranged.push(key.to_vec());
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(ranged, vec![vec![0x80], vec![0xfe]]);
+        drop(store);
+    }
+
+    #[cfg(feature = "tkrzw")]
+    #[test]
+    fn tkrzw_keeps_tables_apart_when_one_name_prefixes_another() {
+        // TreeDBM is one keyspace, so the backend frames records as
+        // `table || 0x00 || key`. The framing is prefix-free only
+        // because table names are validated NUL-free; pin that, since a
+        // regression would silently merge `a` into `ab`'s scans.
+        let path = std::env::temp_dir().join(format!(
+            "oxpinyin-store-tkrzw-prefix-{}.tkrzw",
+            std::process::id(),
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _cleanup = RemoveTkrzw(path.clone());
+        let store = TkrzwStore::create(&path).unwrap();
+        store
+            .write(|txn| {
+                txn.put("a", b"k", b"in-a")?;
+                txn.put("ab", b"k", b"in-ab")?;
+                txn.put("a\u{1}b", b"k", b"in-a1b")?;
+                Ok(())
+            })
+            .unwrap();
+
+        for (table, expected) in [("a", "in-a"), ("ab", "in-ab"), ("a\u{1}b", "in-a1b")] {
+            assert_eq!(
+                store.get(table, b"k").unwrap(),
+                Some(expected.as_bytes().to_vec())
+            );
+            let mut rows = 0_usize;
+            store
+                .for_each(table, &mut |_key, value| {
+                    assert_eq!(value, expected.as_bytes());
+                    rows += 1;
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(rows, 1, "{table} must scan only its own rows");
+        }
+        drop(store);
     }
 
     #[cfg(feature = "lmdb")]
