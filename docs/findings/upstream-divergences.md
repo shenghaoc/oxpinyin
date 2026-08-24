@@ -237,3 +237,40 @@ inputs (the pin-built `.so` SIGABRTs).
   candidate list carries, so a proved-index-bound question never trips
   it on either engine. Report-back batch: file with the aux over-read
   as an internal-inconsistency pair, not a bare assert.
+
+### N-best trellis accumulates gfloat log costs — not reproducible in fixed point
+
+- **Upstream source cite:** `src/lookup/phonetic_lookup.h:663, 692`
+  (`m_poss += log(...)` per step, a `gfloat` accumulator rounded at
+  every node); comparator `trellis_value_less_than` (`:66-91`), used by
+  the node store, the beam-32, and the tail-3 selections; final tail
+  sort `trellis_value_compare` (`:174-178`), which truncates the float
+  poss difference to `gint` so two tails within 1.0 nat tie and keep
+  heap-pop order.
+- **Mechanism:** the sentence n-best selection is a pure function of the
+  accumulated `gfloat` log-probabilities. Each step adds a natural `log`
+  (computed in `double`, stored back to `f32`), and near-ties among the
+  top-3 survivors — which 1st/2nd/3rd hypotheses live, and their rank
+  order — are decided by those exact float values, down to the ULP.
+- **What oxpinyin does instead:** the core integer fixed-point surprisal
+  scale (negative log₂ × 1000; `crates/oxpinyin-core/src/cost.rs`),
+  accumulated exactly, with an insertion-order tiebreak. Reproducing the
+  `gfloat` values would require a floating-point natural `log` per step;
+  `f64::ln` delegates to the platform libm with no cross-platform
+  bit-exactness guarantee, the build forbids `-march=native` for exactly
+  this reason, and constitution item 6 requires output to be a pure
+  function of (input, user state, config) on every OS. The float
+  dependency also reaches the tiebreak (heap-pop order is seeded by the
+  exact-float comparator), so it cannot be recovered in fixed point
+  either. Contrast the candidate frequency `amplified_frequency`
+  (`(1−λ)·unigram/total·2²⁴` — IEEE-754 basic ops only, no
+  transcendental), which *is* bit-reproducible and ported to 100%.
+- **Externally observable:** yes, on the sentence surface only. Against
+  the pinned oracle over a 496-input W2 sample
+  (`fixtures/w4/oracle-sentence-surface.txt`): 1-best 488/496, n-best
+  distinct-set 385/496, n-best ordered / first-6 rows 379/496; the 117
+  ordered misses are all trellis-side (0 candidate-surface leaks). The
+  candidate surface, which does not share this arithmetic, is
+  bit-identical. Declared a permanent Stage-1 residual in
+  `sentence-surface.md` §12; enumerate with the read-only
+  `pinyin-oracle` `sentence-tail` binary.

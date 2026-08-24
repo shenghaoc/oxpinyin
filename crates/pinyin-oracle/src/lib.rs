@@ -44,6 +44,7 @@ pub mod model_cache;
 pub mod observation;
 pub mod pin;
 mod pin_ref;
+pub mod sentence_tail;
 pub mod taxonomy;
 
 #[cfg(feature = "oracle-ffi")]

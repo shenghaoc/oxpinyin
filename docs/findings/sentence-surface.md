@@ -544,8 +544,107 @@ are untouched — §3's trellis divergences stand. The measured agreement:
 - full sentence lists: **385/496**, unchanged.
 - first-6 candidate rows: **379/496**, up from 370 — the candidate list
   is the tail of those rows, so closing the candidate residual lifts
-  exactly this figure; the remaining 17 are the §3 trellis-side
-  near-ties (tail order, segmentation resplits), not candidate-order
-  divergence.
+  exactly this figure; the remaining **117** (this line first read "17",
+  an error — see §12) are the §3 trellis-side near-ties, not
+  candidate-order divergence.
 
-`sentence_surface_reports_parity` re-frozen at 488/385/379.
+`sentence_surface_reports_parity` re-frozen at 488/385/379. §12 defines
+what each of those three numbers measures — they are three comparison
+strictnesses, not one measure — and declares the residual a permanent
+Stage-1 divergence.
+
+## 12. The residual, defined and declared a permanent Stage-1 divergence
+
+Date: 2026-08-24 · branch `feat/gfloat-accumulation-parity`
+
+The `488 / 385 / 379` of §5/§11 are **three comparison strictnesses over one
+set of 496 comparable inputs** (the 7 junk-leading inputs the oracle cannot
+parse are excluded — no surface on either side), not one measure at three
+surfaces. Named the way `corpus-tail.md` separates top-1 / top-5-set /
+order-only:
+
+- **1-best agreement — 488/496.** `pinyin_get_sentence(0)` equal: the decoded
+  top sentence.
+- **n-best distinct-set agreement — 385/496.** The set of decoded sentences
+  `get_sentence(0..=proven)`, **order- and duplicate-insensitive**. This is
+  the number §5/§11 printed as "full sentence lists".
+- **n-best ordered-list agreement — 379/496**, which coincides with
+  **first-6 candidate rows — 379/496.** The full *ordered* `get_sentence`
+  vector, and the ordered `(type, nbest, text)` rows; they move together
+  because the rows are those sentences prepended.
+
+So `385` is the *distinct-set* number and `379` the *ordered* number; §5/§11
+set `385` ("full sentence lists") beside the ordered `379` without saying they
+measure differently. **This is a reinterpretation of the definitions, not just
+a clarification** — "full sentence lists" here now means the order- and
+duplicate-insensitive *distinct-set*, and the strictly-ordered list is the
+separate `379`. Text elsewhere that reads `385` as an ordered-list agreement
+is reading the old, conflated definition. The **"17" in §11 was an error**:
+the ordered / first-6 residual is **117**, and every one is trellis-side. The
+read-only `sentence-tail` binary finds **0 candidate-surface leaks** — the 83
+rows it labels "phrase-window" are the phrase slice shifting as the surviving-
+NBEST-row count differs (an intact phrase order seen through a shifted 6-row
+window; `guanyo` the exemplar), and the candidate surface is bit-identical on
+the same tables (`corpus-tail`: 10190/10190, absent 0, order-only 0,
+prefix-10 gap 0).
+
+Reproduce, read-only, no oracle FFI (the fixture holds the pin's answer):
+
+```bash
+# PINYIN_MODEL_DIR must be a COMPLETE extracted model20 (all 18 files: the 17
+# phrase tables plus interpolation2.text). locate_model_dir rejects a partial
+# dir such as the 4-file ~/.cache/oxpinyin-data, so point it at a full extract.
+PINYIN_EXPORT_DIR=<exported redb> PINYIN_MODEL_DIR=<complete extracted model20> \
+  cargo run -p pinyin-oracle --release --bin sentence-tail
+```
+
+The same measurement is the gate: the integration test
+`sentence_surface_parity` (`crates/pinyin-oracle/tests/`) calls the shared
+`pinyin_oracle::sentence_tail::measure` and asserts `488 / 385 / 379` plus the
+residual invariants (`0` order-only, the `6` distinct-same). It self-skips
+when the tables are absent — the same self-skip the real-tables tier uses — so
+`cargo test --workspace` stays green without them, and fails loudly for anyone
+who runs it with them if the numbers move. A move is a deliberate re-freeze of
+this section, not a silent drift.
+
+**Where the 117 live.** First divergence at row0 8, row1 79, row2 30;
+**0 order-only** (no case is one list reordered); **6 distinct-same** (exactly
+the `385 − 379` gap — e.g. `tuihui`, oracle `[退回, 退回, 退会]` vs port
+`[退回, 退会]`: the same two sentences, a duplicate path at rank 1 on one side
+only). The residual is **hypothesis selection**, not display order: port and
+pin keep *different* 1st/2nd/3rd survivors in the top-3, the 8 row-0 misses
+being a different global best (`跑錶` vs `炮表`, `杂拴帕清` vs `杂树安帕清`).
+
+**Why it is not portable — the Phase-1 gate, now confirmed by the dump.** The
+selection runs on `gfloat m_poss`, accumulated `m_poss += log(...)` per step
+with a round-to-`f32` at every node (`$S/src/lookup/phonetic_lookup.h:663,
+692`), and compared throughout — node store, beam-32, tail-3 — by exact-float
+`trellis_value_less_than` (`:66-91`); the final tail sort truncates the float
+difference to `gint`, so poss within 1.0 nat ties and keeps heap-pop order
+(`trellis_value_compare`, `:174-178`). Matching any of the three strictnesses
+means reproducing those `gfloat` values, which means a floating-point natural
+`log` per step. `f64::ln` delegates to the platform libm with no
+cross-platform bit-exactness guarantee; the build forbids `-march=native` for
+exactly this reason; constitution item 6 requires output to be a pure
+function of (input, user state, config) on every OS; and
+`crates/oxpinyin-core/src/cost.rs:11-15` records this as the reason the cost
+scale is integer fixed-point at all. The float dependency reaches the
+tiebreak too — heap-pop order is seeded by the exact-float comparator — so no
+fixed-point transform recovers the order either.
+
+This is **not** the Class A species. Class A's `amplified_frequency`
+(`crates/oxpinyin-engine/src/session.rs:1835-1841`) is
+`(1−λ)·unigram/total·2²⁴` — multiply, divide, cast: IEEE-754 basic ops,
+correctly rounded and bit-identical on every platform, which is why it ported
+to 100%. The `gfloat` cost adds a transcendental. And the surfaces do not
+share the arithmetic: candidates rank on `amplified_frequency` → `RankKey`,
+the trellis on `nbest_step_costs` → `surprisal` — so this divergence is
+contained to the sentence tails and costs nothing on the candidate surface.
+
+**Decision.** `488 / 385 / 379` is the permanent Stage-1 sentence-surface
+residual — one named, understood, deliberately-accepted divergence: the
+well-defined fixed-point behaviour where upstream's is platform-dependent and
+unreproducible, the same call as the aux over-read and `_check_offset`.
+Recorded for report-back in `upstream-divergences.md`. Revisit only under a
+deliberate pin re-freeze that accepts platform-locked floating point, which
+the constitution does not permit.
