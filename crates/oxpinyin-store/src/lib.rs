@@ -1141,6 +1141,61 @@ mod tests {
         drop(store);
     }
 
+    #[cfg(feature = "tkrzw")]
+    #[test]
+    fn tkrzw_write_txn_scan_merges_buffer_over_stored_rows() {
+        // `merged_visit` lays a transaction's buffer over stored rows and
+        // streams the merge in ascending key order: a buffered value
+        // overrides its stored twin, a buffered tombstone hides it, and
+        // buffered inserts slot in around both. Seed three rows, then
+        // buffer one of each mutation — insert before a stored key, update,
+        // tombstone, insert after the last stored key — and scan inside the
+        // transaction before anything commits.
+        let path = std::env::temp_dir().join(format!(
+            "oxpinyin-store-tkrzw-merge-scan-{}.tkrzw",
+            std::process::id(),
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _cleanup = RemoveTkrzw(path.clone());
+        let store = TkrzwStore::create(&path).unwrap();
+        store
+            .write(|txn| {
+                txn.put("t", b"b", b"stored-b")?;
+                txn.put("t", b"d", b"stored-d")?;
+                txn.put("t", b"f", b"stored-f")?;
+                Ok(())
+            })
+            .unwrap();
+
+        store
+            .write(|txn| {
+                txn.put("t", b"a", b"insert-a")?; // before the first stored key
+                txn.put("t", b"b", b"update-b")?; // overwrites a stored key
+                txn.remove("t", b"d")?; // tombstones a stored key
+                txn.put("t", b"g", b"insert-g")?; // after the last stored key
+
+                let mut rows = Vec::new();
+                txn.for_each("t", &mut |key, value| {
+                    rows.push((key.to_vec(), value.to_vec()));
+                    Ok(())
+                })?;
+                assert_eq!(
+                    rows,
+                    vec![
+                        (b"a".to_vec(), b"insert-a".to_vec()),
+                        (b"b".to_vec(), b"update-b".to_vec()),
+                        (b"f".to_vec(), b"stored-f".to_vec()),
+                        (b"g".to_vec(), b"insert-g".to_vec()),
+                    ],
+                    "merged scan must be ascending, apply buffered puts, \
+                     and hide the tombstoned row"
+                );
+                Ok(())
+            })
+            .unwrap();
+        drop(store);
+    }
+
     #[cfg(feature = "lmdb")]
     #[test]
     fn lmdb_rejects_key_lengths_lmdb_cannot_store() {

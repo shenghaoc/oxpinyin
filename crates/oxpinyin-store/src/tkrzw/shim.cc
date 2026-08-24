@@ -40,18 +40,41 @@ void fill(rust::Vec<std::uint8_t>& out, std::string_view bytes) {
 // Maps an exception escaping an entry point onto the status channel:
 // UNKNOWN_ERROR ("generic error whose cause is unknown") fits an
 // allocation failure or similar. Callers report any non-SUCCESS code
-// verbatim, so nothing here has to be named on the Rust side. Building
-// the message can itself throw under memory exhaustion; that terminates
-// the process, which is still better than unwinding into Rust.
+// verbatim, so nothing here has to be named on the Rust side.
+//
+// Translation must not itself throw: these handlers run from the catch
+// blocks at the bridge boundary, so a throw here would keep unwinding
+// into Rust, which cannot catch it. Building the message — or the
+// Status that copies it into a std::string — can allocate, so it is
+// guarded, and a failure falls back to a message-less UNKNOWN_ERROR.
 ShimStatus wrap(const tkrzw::Status& status);
 
+// The "no allocation left to say anything" status: UNKNOWN_ERROR with an
+// empty message. Default-constructing the rust::String leaves it empty
+// without allocating, so this cannot throw. Every translator falls back
+// to it when even building the message fails.
+ShimStatus message_less_unknown() {
+  ShimStatus out;
+  out.code = static_cast<std::int32_t>(tkrzw::Status::UNKNOWN_ERROR);
+  out.message = rust::String();
+  return out;
+}
+
 ShimStatus caught(const std::exception& e) {
-  return wrap(tkrzw::Status(tkrzw::Status::UNKNOWN_ERROR, e.what()));
+  try {
+    return wrap(tkrzw::Status(tkrzw::Status::UNKNOWN_ERROR, e.what()));
+  } catch (...) {
+    return message_less_unknown();
+  }
 }
 
 ShimStatus caught_unknown() {
-  return wrap(
-      tkrzw::Status(tkrzw::Status::UNKNOWN_ERROR, "unknown C++ exception"));
+  try {
+    return wrap(
+        tkrzw::Status(tkrzw::Status::UNKNOWN_ERROR, "unknown C++ exception"));
+  } catch (...) {
+    return message_less_unknown();
+  }
 }
 
 ShimStatus wrap(const tkrzw::Status& status) {
@@ -61,11 +84,7 @@ ShimStatus wrap(const tkrzw::Status& status) {
     out.message = rust::String(status.GetMessage());
     return out;
   } catch (...) {
-    // No allocation to report with; hand back a message-less status.
-    ShimStatus out;
-    out.code = static_cast<std::int32_t>(tkrzw::Status::UNKNOWN_ERROR);
-    out.message = rust::String();
-    return out;
+    return message_less_unknown();
   }
 }
 
