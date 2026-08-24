@@ -26,5 +26,5 @@ pub use interp::{
 pub use lm::{BigramLanguageModel, BigramRow, LmError, merge_bigram, merge_counts};
 pub use oxpinyin_core::UserCountDelta;
 pub use punct::PunctTable;
-pub use table::{LookupTable, TableError};
+pub use table::{GenericLookupTable, LookupTable, TableError};
 pub use table_conf::{Lambda, PINNED_LAMBDA, parse_table_conf_lambda, read_table_conf_lambda};

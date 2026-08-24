@@ -15,7 +15,8 @@
 //! this binary) so VmHWM measures that pair alone; the child baseline is
 //! common to both backends.  Training pairs derive deterministically from
 //! the seed, and every scenario body is one generic function over
-//! `S: OrderedStore` — both backends see identical operations in order.
+//! `S: WriteStore + SnapshotStore` — both backends see identical
+//! operations in order.
 //!
 //! The point of interest: the cached count snapshot should flatten the
 //! raw storage delta measured by `backend_bench` (point_get / prefix_scan
@@ -40,7 +41,7 @@ use std::time::{Duration, Instant};
 
 #[cfg(feature = "lmdb")]
 use oxpinyin_store::LmdbStore;
-use oxpinyin_store::{OrderedStore, RedbStore};
+use oxpinyin_store::{RedbStore, SnapshotStore, WriteStore};
 use oxpinyin_user::GenericUserStore;
 
 const SCENARIOS: [&str; 3] = ["train", "save", "read"];
@@ -147,7 +148,7 @@ fn dispatch_lmdb(_scenario: &str) {
     std::process::exit(2);
 }
 
-fn dispatch<S: OrderedStore>(scenario: &str) {
+fn dispatch<S: WriteStore + SnapshotStore>(scenario: &str) {
     match scenario {
         "train" => train::<S>(),
         "save" => save::<S>(),
@@ -159,7 +160,7 @@ fn dispatch<S: OrderedStore>(scenario: &str) {
     }
 }
 
-fn train<S: OrderedStore>() {
+fn train<S: WriteStore + SnapshotStore>() {
     let cfg = config();
     let path = work_path("train");
     let mut store = open::<S>(&path);
@@ -187,7 +188,7 @@ fn train<S: OrderedStore>() {
     remove_db(&path);
 }
 
-fn save<S: OrderedStore>() {
+fn save<S: WriteStore + SnapshotStore>() {
     let cfg = config();
     let path = work_path("save");
     let mut store = train_store::<S>(&cfg, &path);
@@ -209,7 +210,7 @@ fn save<S: OrderedStore>() {
     remove_db(&path);
 }
 
-fn read<S: OrderedStore>() {
+fn read<S: WriteStore + SnapshotStore>() {
     let cfg = config();
     let path = work_path("read");
     let mut store = train_store::<S>(&cfg, &path);
@@ -277,12 +278,12 @@ fn read<S: OrderedStore>() {
 
 // ── shared setup ──────────────────────────────────────────────────
 
-fn open<S: OrderedStore>(path: &Path) -> GenericUserStore<S> {
+fn open<S: WriteStore + SnapshotStore>(path: &Path) -> GenericUserStore<S> {
     remove_db(path);
     GenericUserStore::<S>::create_standalone(path).expect("create_standalone")
 }
 
-fn train_store<S: OrderedStore>(cfg: &Config, path: &Path) -> GenericUserStore<S> {
+fn train_store<S: WriteStore + SnapshotStore>(cfg: &Config, path: &Path) -> GenericUserStore<S> {
     let mut store = open::<S>(path);
     for i in 0..cfg.train as u64 {
         let (last, cur) = training_pair(cfg.seed, i);
@@ -310,7 +311,7 @@ fn row_hash(seed: u64, i: u64) -> u64 {
     mix(seed ^ mix(i))
 }
 
-fn query<S: OrderedStore>(store: &GenericUserStore<S>, seed: u64, i: u64) -> u64 {
+fn query<S: WriteStore + SnapshotStore>(store: &GenericUserStore<S>, seed: u64, i: u64) -> u64 {
     let h = row_hash(seed ^ 0xC0FF_EE00, i);
     let cur = TOKEN_BASE + ((h >> 16) % CUR_DOMAIN as u64) as u32;
     let prev = if h.is_multiple_of(5) {

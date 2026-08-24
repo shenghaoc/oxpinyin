@@ -1,4 +1,4 @@
-//! LMDB backend for [`OrderedStore`], powered by [heed].
+//! LMDB backend for the store capability tiers, powered by [heed].
 //!
 //! Enabled by the `lmdb` cargo feature.  Key ordering uses the default
 //! LMDB byte-lexicographic comparator, so big-endian encoded keys sort
@@ -14,7 +14,10 @@ use heed::types::Bytes;
 use heed::{Database, EnvFlags, EnvOpenOptions, RwTxn, WithoutTls};
 use self_cell::self_cell;
 
-use crate::{OrderedStore, ReadSnapshot, StoreError, Visitor, WriteTxn, validate_table_name};
+use crate::{
+    ReadSnapshot, ReadStore, SnapshotStore, StoreError, Visitor, WriteStore, WriteTxn,
+    validate_table_name,
+};
 
 type Env = heed::Env<WithoutTls>;
 type SnapTxn<'a> = heed::RoTxn<'a, WithoutTls>;
@@ -121,7 +124,7 @@ fn open_env(path: &Path, read_only: bool, map_size: usize) -> Result<Env, StoreE
 
 // ── store ─────────────────────────────────────────────────────────
 
-/// An LMDB-backed [`OrderedStore`].
+/// An LMDB-backed store implementing all three capability tiers.
 ///
 /// Feature-gated behind `lmdb`.  Uses a single file (`NO_SUB_DIR`)
 /// and the default byte-lexicographic comparator.
@@ -147,7 +150,7 @@ impl LmdbStore {
     ///
     /// heed cannot resize an open environment, so the ceiling chosen at
     /// open time is fixed for the store's lifetime.  Use this instead of
-    /// [`OrderedStore::create`] when the 1 GiB default is too small; use
+    /// [`WriteStore::create`] when the 1 GiB default is too small; use
     /// one consistent ceiling for a given file across processes.
     pub fn create_with_map_size(path: &Path, map_size: usize) -> Result<Self, StoreError> {
         let env = open_env(path, false, map_size)?;
@@ -161,7 +164,7 @@ impl LmdbStore {
 
     /// Open the store read-only with a non-default map-size ceiling.
     ///
-    /// [`OrderedStore::open_read_only`] uses the 1 GiB default, which
+    /// [`ReadStore::open_read_only`] uses the 1 GiB default, which
     /// cannot reopen a store that was grown past that ceiling with
     /// [`LmdbStore::create_with_map_size`]: LMDB rejects a map size smaller
     /// than the data already on disk.  Pass the same (or a larger) ceiling
@@ -180,36 +183,13 @@ impl LmdbStore {
     }
 }
 
-impl OrderedStore for LmdbStore {
-    type ReadSnapshot = LmdbReadSnapshot;
-
-    fn snapshot(&self) -> Result<LmdbReadSnapshot, StoreError> {
-        let inner = SnapshotInner::try_new(self.env.clone(), |env| {
-            env.read_txn().map_err(map_heed_error)
-        })?;
-        self.live_snapshots.fetch_add(1, Ordering::Release);
-        Ok(LmdbReadSnapshot {
-            inner,
-            _live: LiveSnapshotGuard(Arc::clone(&self.live_snapshots)),
-        })
-    }
-
+impl ReadStore for LmdbStore {
     fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         let env = open_env(path, true, MAP_SIZE)?;
         Ok(Self {
             env: Arc::new(env),
             path: path.to_path_buf(),
             read_only: true,
-            live_snapshots: Arc::new(AtomicUsize::new(0)),
-        })
-    }
-
-    fn create(path: &Path) -> Result<Self, StoreError> {
-        let env = open_env(path, false, MAP_SIZE)?;
-        Ok(Self {
-            env: Arc::new(env),
-            path: path.to_path_buf(),
-            read_only: false,
             live_snapshots: Arc::new(AtomicUsize::new(0)),
         })
     }
@@ -280,6 +260,18 @@ impl OrderedStore for LmdbStore {
         let Some(db) = db else { return Ok(true) };
         db.is_empty(&txn).map_err(map_heed_error)
     }
+}
+
+impl WriteStore for LmdbStore {
+    fn create(path: &Path) -> Result<Self, StoreError> {
+        let env = open_env(path, false, MAP_SIZE)?;
+        Ok(Self {
+            env: Arc::new(env),
+            path: path.to_path_buf(),
+            read_only: false,
+            live_snapshots: Arc::new(AtomicUsize::new(0)),
+        })
+    }
 
     fn write<R>(
         &self,
@@ -318,6 +310,21 @@ impl OrderedStore for LmdbStore {
             return Err(StoreError::Backend(Box::new(SnapshotOpenError)));
         }
         Ok(())
+    }
+}
+
+impl SnapshotStore for LmdbStore {
+    type ReadSnapshot = LmdbReadSnapshot;
+
+    fn snapshot(&self) -> Result<LmdbReadSnapshot, StoreError> {
+        let inner = SnapshotInner::try_new(self.env.clone(), |env| {
+            env.read_txn().map_err(map_heed_error)
+        })?;
+        self.live_snapshots.fetch_add(1, Ordering::Release);
+        Ok(LmdbReadSnapshot {
+            inner,
+            _live: LiveSnapshotGuard(Arc::clone(&self.live_snapshots)),
+        })
     }
 }
 

@@ -21,6 +21,7 @@ use compact_str::CompactString;
 use oxpinyin_core::{
     Completeness, Dictionary, PhraseEntry, PhraseToken, SyllableKey, syllable_initial,
 };
+use oxpinyin_store::DefaultStore;
 
 use crate::table::{self, LeByteKey, TableError};
 
@@ -383,7 +384,7 @@ fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDe
     let mut initial_keys: Vec<u128> = Vec::new();
     let mut oversized_initials: Vec<String> = Vec::new();
 
-    table::for_each_row(path, |key, value| {
+    table::for_each_row::<DefaultStore, _, _>(path, |key, value| {
         let pinyin = std::str::from_utf8(key)
             .map_err(|_| DictError::Parse("pinyin index key is not UTF-8".to_owned()))?;
         match alphabet.pack(pinyin) {
@@ -480,7 +481,7 @@ fn resolve_hits(
 
 fn load_phrase_index(path: &Path) -> Result<PhraseIndex, DictError> {
     let mut map = PhraseIndex::new();
-    table::for_each_row(path, |key, value| {
+    table::for_each_row::<DefaultStore, _, _>(path, |key, value| {
         if key.len() != 4 {
             return Ok::<(), DictError>(());
         }
