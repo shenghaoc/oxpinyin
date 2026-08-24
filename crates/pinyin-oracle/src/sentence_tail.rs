@@ -218,10 +218,16 @@ fn distinct_set(items: &[String]) -> Vec<String> {
     set
 }
 
-/// Rank of the first position at which two sentence lists differ; `None` when
-/// they agree over the shorter length and only lengths differ.
+/// Rank of the first position at which two sentence lists diverge. A differing
+/// element returns its index; if the overlapping entries all match but one list
+/// is longer, the shared length is that first missing rank (so a shorter list
+/// missing its rank-1 tail is a rank-1 divergence, not rank-2); `None` only
+/// when the lists are identical (equal length, every element equal).
 fn first_divergent_rank(a: &[String], b: &[String]) -> Option<usize> {
-    a.iter().zip(b.iter()).position(|(x, y)| x != y)
+    if let Some(position) = a.iter().zip(b.iter()).position(|(x, y)| x != y) {
+        return Some(position);
+    }
+    (a.len() != b.len()).then(|| a.len().min(b.len()))
 }
 
 fn sentence_rows(rows: &[String]) -> Vec<String> {
@@ -343,7 +349,8 @@ pub fn measure(session: &mut PortSession, root: &Path) -> Result<SentenceTailRep
             match first_divergent_rank(&port.sentences, &line.sentences) {
                 Some(0) => report.list_diff_at_row0 += 1,
                 Some(1) => report.list_diff_at_row1 += 1,
-                // Rank ≥ 2 or a length-only tail difference.
+                // Rank ≥ 2 (content or a shorter list first missing a rank-2
+                // tail); `None` cannot occur here — the lists already differ.
                 _ => report.list_diff_at_row2 += 1,
             }
             report.list_diffs.push(format!(
