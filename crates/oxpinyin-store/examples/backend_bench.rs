@@ -1,4 +1,4 @@
-//! redb vs LMDB on the raw store tier traits — identical workloads.
+//! redb vs LMDB vs tkrzw on the raw store tier traits — identical workloads.
 //!
 //! Measurement only; consumes public APIs and touches no parity code.
 //! Run in release, with the LMDB half enabled:
@@ -7,7 +7,18 @@
 //! cargo run -p oxpinyin-store --release --example backend_bench --features lmdb
 //! ```
 //!
-//! Without `--features lmdb` the example runs redb only and prints a note.
+//! The tkrzw column needs a working libtkrzw, which today means one built
+//! from source — see `src/tkrzw/mod.rs` for why the Ubuntu package is not
+//! one:
+//!
+//! ```text
+//! PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig \
+//!   cargo run -p oxpinyin-store --release --example backend_bench \
+//!   --features "lmdb tkrzw"
+//! ```
+//!
+//! Without `--features lmdb` the example runs redb only and prints a note;
+//! `--features tkrzw` adds a third column, and the two features compose.
 //! Each (backend, scenario) pair runs in a child process (a re-exec of this
 //! binary), so `/proc/self/status` VmHWM measures that pair alone rather
 //! than a process-monotonic high-water mark; the child baseline (runtime
@@ -25,9 +36,12 @@
 //! (400_000), `BACKEND_BENCH_SEED`.  The LMDB env map size is fixed at
 //! 1 GiB by the backend, so very large overrides can exhaust it.
 //!
-//! Compaction is backend-dependent and best-effort: redb rewrites and
-//! reclaims pages, while LMDB reuses freed pages in place and does not shrink.
-//! The save_compact scenario reports timings and sizes for both backends.
+//! Compaction is backend-dependent and best-effort: redb rewrites the file
+//! and reclaims pages, LMDB reuses freed pages in place and does not shrink,
+//! and tkrzw rebuilds the TreeDBM into a fresh file, so it reclaims like redb
+//! but pays a full rewrite for it. The save_compact scenario reports timings
+//! and sizes for every backend; the numbers are not measuring the same
+//! operation, which is the point of reporting them side by side.
 //!
 //! On Unix, on-disk sizes report both apparent length (st_size) and
 //! allocated blocks (st_blocks × 512) of the data file only; allocated is
@@ -41,6 +55,8 @@ use std::time::{Duration, Instant};
 
 #[cfg(feature = "lmdb")]
 use oxpinyin_store::LmdbStore;
+#[cfg(feature = "tkrzw")]
+use oxpinyin_store::TkrzwStore;
 use oxpinyin_store::{ReadStore, RedbStore, WriteStore};
 
 const SCENARIOS: [&str; 5] = [
@@ -78,30 +94,67 @@ fn main() {
 
 // ── parent: spawn children, print the comparison table ────────────
 
+/// One backend's column: the header label, and the rows its child
+/// reported — `None` when the build lacks that backend's feature and the
+/// column prints as `-`.
+struct Column {
+    name: &'static str,
+    rows: Option<Vec<(String, String)>>,
+}
+
+/// The comparison columns after redb, in print order.
+///
+/// The lmdb column is always shown, empty when the feature is off, which
+/// is what the two-backend build has always printed. The tkrzw column is
+/// only there under its feature, so builds without it print exactly what
+/// they printed before tkrzw existed.
+fn comparison_columns(scenario: &str) -> Vec<Column> {
+    let mut columns = vec![Column {
+        name: "lmdb",
+        rows: cfg!(feature = "lmdb").then(|| spawn_child("lmdb", scenario)),
+    }];
+    if cfg!(feature = "tkrzw") {
+        columns.push(Column {
+            name: "tkrzw",
+            rows: Some(spawn_child("tkrzw", scenario)),
+        });
+    }
+    columns
+}
+
 fn parent() {
     let cfg = config();
-    println!("backend_bench — redb vs lmdb on the store tier traits");
+    if cfg!(feature = "tkrzw") {
+        println!("backend_bench — redb vs lmdb vs tkrzw on the store tier traits");
+    } else {
+        println!("backend_bench — redb vs lmdb on the store tier traits");
+    }
     println!(
         "n={} (pron {}/2, phrase {}/4)  gets={}  prefixes={}  readonly={}  seed={:#x}",
         cfg.n, cfg.n, cfg.n, cfg.gets, cfg.prefixes, cfg.readonly, cfg.seed
     );
     println!("one fresh process per (backend, scenario); VmHWM per pair");
-    if cfg!(feature = "lmdb") {
-        println!("backends: redb, lmdb");
-    } else {
-        println!("backends: redb only — rebuild with --features lmdb for the comparison");
+    match (cfg!(feature = "lmdb"), cfg!(feature = "tkrzw")) {
+        (true, true) => println!("backends: redb, lmdb, tkrzw"),
+        (true, false) => println!("backends: redb, lmdb"),
+        (false, true) => {
+            println!("backends: redb, tkrzw — rebuild with --features lmdb for all three");
+        }
+        (false, false) => {
+            println!("backends: redb only — rebuild with --features lmdb for the comparison");
+        }
     }
     println!();
 
     for scenario in SCENARIOS {
         let redb = spawn_child("redb", scenario);
-        let lmdb = if cfg!(feature = "lmdb") {
-            Some(spawn_child("lmdb", scenario))
-        } else {
-            None
-        };
-        verify_parity(scenario, &redb, lmdb.as_deref());
-        print_block(scenario, &redb, lmdb.as_deref());
+        let columns = comparison_columns(scenario);
+        for column in &columns {
+            if let Some(rows) = &column.rows {
+                verify_parity(scenario, column.name, &redb, rows);
+            }
+        }
+        print_block(scenario, &redb, &columns);
     }
 }
 
@@ -120,24 +173,28 @@ fn lookup<'a>(rows: &'a [(String, String)], key: &str) -> Option<&'a str> {
     rows.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
 }
 
-fn verify_parity(scenario: &str, redb: &[(String, String)], lmdb: Option<&[(String, String)]>) {
-    let Some(lmdb) = lmdb else { return };
+fn verify_parity(
+    scenario: &str,
+    name: &str,
+    redb: &[(String, String)],
+    other: &[(String, String)],
+) {
     for (key, redb_value) in redb {
-        match lookup(lmdb, key) {
+        match lookup(other, key) {
             None => {
-                eprintln!("{scenario}: lmdb missing metric {key:?}");
+                eprintln!("{scenario}: {name} missing metric {key:?}");
                 std::process::exit(1);
             }
-            Some(lmdb_value) if !is_measurement(key) && lmdb_value != redb_value => {
-                eprintln!("{scenario}: {key} disagrees — redb {redb_value}, lmdb {lmdb_value}");
+            Some(value) if !is_measurement(key) && value != redb_value => {
+                eprintln!("{scenario}: {key} disagrees — redb {redb_value}, {name} {value}");
                 std::process::exit(1);
             }
             Some(_) => {}
         }
     }
-    for (key, _) in lmdb {
+    for (key, _) in other {
         if lookup(redb, key).is_none() {
-            eprintln!("{scenario}: unexpected lmdb metric {key:?}");
+            eprintln!("{scenario}: unexpected {name} metric {key:?}");
             std::process::exit(1);
         }
     }
@@ -163,15 +220,24 @@ fn spawn_child(backend: &str, scenario: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn print_block(scenario: &str, redb: &[(String, String)], lmdb: Option<&[(String, String)]>) {
+fn print_block(scenario: &str, redb: &[(String, String)], columns: &[Column]) {
     println!("── {scenario} ──");
-    println!("  {:<26} {:>14} {:>14}", "metric", "redb", "lmdb");
+    print!("  {:<26} {:>14}", "metric", "redb");
+    for column in columns {
+        print!(" {:>14}", column.name);
+    }
+    println!();
     for (key, value) in redb {
-        let lmdb_value = lmdb
-            .and_then(|rows| rows.iter().find(|(k, _)| k == key))
-            .map(|(_, v)| v.as_str())
-            .unwrap_or("-");
-        println!("  {:<26} {:>14} {:>14}", key, value, lmdb_value);
+        print!("  {key:<26} {value:>14}");
+        for column in columns {
+            let cell = column
+                .rows
+                .as_deref()
+                .and_then(|rows| lookup(rows, key))
+                .unwrap_or("-");
+            print!(" {cell:>14}");
+        }
+        println!();
     }
     println!();
 }
@@ -182,6 +248,7 @@ fn run_child(backend: &str, scenario: &str) {
     match backend {
         "redb" => dispatch::<RedbStore>(scenario),
         "lmdb" => dispatch_lmdb(scenario),
+        "tkrzw" => dispatch_tkrzw(scenario),
         other => {
             eprintln!("unknown backend {other:?}");
             std::process::exit(2);
@@ -197,6 +264,20 @@ fn dispatch_lmdb(scenario: &str) {
 #[cfg(not(feature = "lmdb"))]
 fn dispatch_lmdb(_scenario: &str) {
     eprintln!("this build lacks the lmdb feature");
+    std::process::exit(2);
+}
+
+// tkrzw is a full ReadStore + WriteStore peer, so every scenario runs over
+// it through the same generic `dispatch` as the other two — no scenario
+// knows which backend it is measuring.
+#[cfg(feature = "tkrzw")]
+fn dispatch_tkrzw(scenario: &str) {
+    dispatch::<TkrzwStore>(scenario);
+}
+
+#[cfg(not(feature = "tkrzw"))]
+fn dispatch_tkrzw(_scenario: &str) {
+    eprintln!("this build lacks the tkrzw feature");
     std::process::exit(2);
 }
 
