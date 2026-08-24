@@ -608,7 +608,8 @@ when the tables are absent — the same self-skip the real-tables tier uses — 
 who runs it with them if the numbers move. A move is a deliberate re-freeze of
 this section, not a silent drift.
 
-**Where the 117 live.** First divergence at row0 8, row1 79, row2 30;
+**Where the 117 live.** First divergence at row0 8, row1 83, row2 26 (a
+shorter list first missing a rank counts at that rank);
 **0 order-only** (no case is one list reordered); **6 distinct-same** (exactly
 the `385 − 379` gap — e.g. `tuihui`, oracle `[退回, 退回, 退会]` vs port
 `[退回, 退会]`: the same two sentences, a duplicate path at rank 1 on one side
