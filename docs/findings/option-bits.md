@@ -208,6 +208,13 @@ Each row is enumerated, reproduced on the fixture-based scoring path
 
 Upstream draws a corrected key's inventory from the **same** `content_table` slot as the canonical spelling: `search_pinyin_index` (`pinyin_parser2.cpp:93-116`) sets `key = content_table[index->m_table_index].m_chewing_key`. `pinyin_parser_table.h` gives `agn`/`amg`/`ang` table index 4 and `lue`/`lve` table index 203. The corrected parse does **not** restrict the inventory; it is the native key. Capi is not admitting extra correction-only entries — `n=` matches, and the tail is the ~4k prefix-overlap residual the pins count rather than assert as text (W12). No W10 work.
 
+**Closed 2026-08-24** (`docs/findings/all-off-tails.md` §"Closure"): all
+six rows are class (iii), not divergences. The DIFF verdicts in the table
+are pre-`e941090` measurements of the Class A comparator species;
+post-port the lists are bit-identical to the pin at `0x0` (live-oracle
+control, 2026-08-24), and the `run-option-sweep.sh` exclusion list never
+fires.
+
 `DYNAMIC_ADJUST` bit-SET (fold `λ · bigram_poss · DISCOUNT` into `m_freq`) is unreached and deferred: issue #99.
 
 ## GSettings → bit mapping in the fork

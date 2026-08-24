@@ -211,6 +211,13 @@ gate already excludes them from W10's STOP set
 (`run-option-sweep.sh:116-124,151-155`); no additional gate is added
 here.
 
+**Closed 2026-08-24**: these six were the same prefix-10 species the
+Class A port closed on the corpus — the table above is the pre-`e941090`
+measurement. Re-measured post-port (fixture path, live oracle at `0x0`,
+and the full 21-case sweep), all six are bit-identical to the pin and
+the exclusion list never fires; see `docs/findings/all-off-tails.md`
+§"Closure".
+
 ## Live-typing coverage
 
 `ROADMAP.md` W12 also parks live-typing behaviours the parity
