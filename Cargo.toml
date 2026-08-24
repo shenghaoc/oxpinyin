@@ -38,7 +38,6 @@ oxpinyin-store = { path = "crates/oxpinyin-store" }
 oxpinyin-user = { path = "crates/oxpinyin-user" }
 redb = "4"
 heed = "0.22"
-self_cell = "1"
 smallvec = "1.15"
 compact_str = "0.10"
 

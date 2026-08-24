@@ -15,14 +15,20 @@
 //! this binary) so VmHWM measures that pair alone; the child baseline is
 //! common to both backends.  Training pairs derive deterministically from
 //! the seed, and every scenario body is one generic function over
-//! `S: WriteStore + SnapshotStore` — both backends see identical
-//! operations in order.
+//! `S: WriteStore` — both backends see identical operations in order.
 //!
-//! The point of interest: the cached count snapshot should flatten the
+//! The point of interest: the decode-time count memo should flatten the
 //! raw storage delta measured by `backend_bench` (point_get / prefix_scan
 //! in `crates/oxpinyin-store/examples/backend_bench.rs`).  Compare
-//! `first_query_ms` (the snapshot-building, storage-touching query) and
-//! `us_per_cached_query` against `backend_bench`'s `us_per_get`.
+//! `first_query_ms` and `us_per_cached_query` against `backend_bench`'s
+//! `us_per_get`.
+//!
+//! Note what `us_per_cached_query` measures here.  Query rows are drawn
+//! uniformly from a 512 x 8_192 token space, so the bigram key is almost
+//! always one the memo has not seen — this is the memo's worst case, not
+//! decode's, where a candidate set is rescored keystroke after keystroke.
+//! The unigram, unigram-total and bigram-total lookups still warm quickly,
+//! which is where the gain over a held read view comes from.
 //!
 //! On Unix, on-disk sizes report both apparent length (st_size) and
 //! allocated blocks (st_blocks × 512) of the data file only; allocated is
@@ -41,7 +47,7 @@ use std::time::{Duration, Instant};
 
 #[cfg(feature = "lmdb")]
 use oxpinyin_store::LmdbStore;
-use oxpinyin_store::{RedbStore, SnapshotStore, WriteStore};
+use oxpinyin_store::{RedbStore, WriteStore};
 use oxpinyin_user::GenericUserStore;
 
 const SCENARIOS: [&str; 3] = ["train", "save", "read"];
@@ -148,7 +154,7 @@ fn dispatch_lmdb(_scenario: &str) {
     std::process::exit(2);
 }
 
-fn dispatch<S: WriteStore + SnapshotStore>(scenario: &str) {
+fn dispatch<S: WriteStore>(scenario: &str) {
     match scenario {
         "train" => train::<S>(),
         "save" => save::<S>(),
@@ -160,7 +166,7 @@ fn dispatch<S: WriteStore + SnapshotStore>(scenario: &str) {
     }
 }
 
-fn train<S: WriteStore + SnapshotStore>() {
+fn train<S: WriteStore>() {
     let cfg = config();
     let path = work_path("train");
     let mut store = open::<S>(&path);
@@ -188,7 +194,7 @@ fn train<S: WriteStore + SnapshotStore>() {
     remove_db(&path);
 }
 
-fn save<S: WriteStore + SnapshotStore>() {
+fn save<S: WriteStore>() {
     let cfg = config();
     let path = work_path("save");
     let mut store = train_store::<S>(&cfg, &path);
@@ -210,20 +216,21 @@ fn save<S: WriteStore + SnapshotStore>() {
     remove_db(&path);
 }
 
-fn read<S: WriteStore + SnapshotStore>() {
+fn read<S: WriteStore>() {
     let cfg = config();
     let path = work_path("read");
     let mut store = train_store::<S>(&cfg, &path);
 
-    // The first count_delta after training builds the cached count
-    // snapshot — the one raw-storage touch in the read path.
+    // The first count_delta after training builds the count memo for the
+    // current write generation and fills it from storage.
     let started = Instant::now();
     let first = query(&store, cfg.seed, 0);
     let first_query = started.elapsed();
 
     std::hint::black_box(first);
 
-    // The rest hit the cache: no transaction, no storage read. A lone first
+    // The rest are served from the memo for every key it has already seen;
+    // only a key first asked for here still touches storage. A lone first
     // query has no cached remainder, so do not report a zero-denominator rate.
     let cached = if cfg.reads >= 2 {
         let started = Instant::now();
@@ -238,10 +245,10 @@ fn read<S: WriteStore + SnapshotStore>() {
     };
 
     // Predicted-candidate acceptances: committed writes that retire the
-    // cached snapshot.  Each iteration first rebuilds the snapshot with an
-    // untimed query, then times exactly one invalidating write, so
-    // predicted_ms measures one write against a warm snapshot instead of a
-    // burst of writes whose rebuild cost lands outside the interval.
+    // memo.  Each iteration first re-warms it with an untimed query, then
+    // times exactly one invalidating write, so predicted_ms measures one
+    // write against a warm memo instead of a burst of writes whose refill
+    // cost lands outside the interval.
     let mut predicted = Duration::ZERO;
     let mut seeds = 0_u64;
     for i in 0..cfg.predicted as u64 {
@@ -278,12 +285,12 @@ fn read<S: WriteStore + SnapshotStore>() {
 
 // ── shared setup ──────────────────────────────────────────────────
 
-fn open<S: WriteStore + SnapshotStore>(path: &Path) -> GenericUserStore<S> {
+fn open<S: WriteStore>(path: &Path) -> GenericUserStore<S> {
     remove_db(path);
     GenericUserStore::<S>::create_standalone(path).expect("create_standalone")
 }
 
-fn train_store<S: WriteStore + SnapshotStore>(cfg: &Config, path: &Path) -> GenericUserStore<S> {
+fn train_store<S: WriteStore>(cfg: &Config, path: &Path) -> GenericUserStore<S> {
     let mut store = open::<S>(path);
     for i in 0..cfg.train as u64 {
         let (last, cur) = training_pair(cfg.seed, i);
@@ -311,7 +318,7 @@ fn row_hash(seed: u64, i: u64) -> u64 {
     mix(seed ^ mix(i))
 }
 
-fn query<S: WriteStore + SnapshotStore>(store: &GenericUserStore<S>, seed: u64, i: u64) -> u64 {
+fn query<S: WriteStore>(store: &GenericUserStore<S>, seed: u64, i: u64) -> u64 {
     let h = row_hash(seed ^ 0xC0FF_EE00, i);
     let cur = TOKEN_BASE + ((h >> 16) % CUR_DOMAIN as u64) as u32;
     let prev = if h.is_multiple_of(5) {

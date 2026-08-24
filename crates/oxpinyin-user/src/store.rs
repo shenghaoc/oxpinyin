@@ -13,6 +13,7 @@
 //! additive merge. T5 adds the save cycle: the §4 `m_modified` gate and the
 //! redb-backed persistence point behind `pinyin_save`.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::ops::Bound;
 use std::path::Path;
@@ -20,9 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use oxpinyin_core::UserCountDelta;
-use oxpinyin_store::{
-    DefaultStore, ReadSnapshot, ReadStore, SnapshotStore, StoreError, WriteStore, WriteTxn,
-};
+use oxpinyin_store::{DefaultStore, ReadStore, StoreError, WriteStore, WriteTxn};
 
 use crate::codec;
 use crate::phrase::{
@@ -30,7 +29,7 @@ use crate::phrase::{
     PinyinKey, USER_DICTIONARY, UserPhrase, UserPronunciation, first_library_token,
     is_user_file_library, phrase_index_library_index,
 };
-use crate::registry::{self, CountSnapshot, RegistryLease, StandaloneLease, StoreInner};
+use crate::registry::{self, CountCache, RegistryLease, StandaloneLease, StoreInner};
 use crate::seed;
 
 /// Token type — libpinyin's 32-bit `phrase_token_t`.
@@ -175,28 +174,6 @@ fn txn_get_u64_or(
     Ok(txn_get_u64(txn, table, key)?.unwrap_or(default))
 }
 
-fn snap_get_u64(
-    snap: &impl ReadSnapshot,
-    table: &str,
-    key: &[u8],
-) -> Result<Option<u64>, UserStoreError> {
-    match snap.get(table, key)? {
-        None => Ok(None),
-        Some(bytes) => codec::decode_u64(&bytes)
-            .map(Some)
-            .map_err(|_| UserStoreError::Decode),
-    }
-}
-
-fn snap_get_u64_or(
-    snap: &impl ReadSnapshot,
-    table: &str,
-    key: &[u8],
-    default: u64,
-) -> Result<u64, UserStoreError> {
-    Ok(snap_get_u64(snap, table, key)?.unwrap_or(default))
-}
-
 fn bump_unigram_total(txn: &mut dyn WriteTxn, delta: u64) -> Result<(), StoreError> {
     let key = codec::encode_u8(UNIGRAM_TOTAL_KEY);
     let prev = txn_get_u64_or(txn, UNIGRAM_TOTAL, &key, 0)?;
@@ -296,7 +273,7 @@ fn has_user_data_in_write_txn(txn: &dyn WriteTxn) -> Result<bool, StoreError> {
 /// Clones record dirtiness through their own `&mut self` updates and the
 /// context's `pinyin_save` observes it. The C ABI contract is
 /// main-thread-only, so the flag uses relaxed ordering.
-pub struct GenericUserStore<S: WriteStore + SnapshotStore> {
+pub struct GenericUserStore<S: WriteStore> {
     inner: Arc<StoreInner<S>>,
     /// Keeps a standalone path reservation alive until its last clone drops.
     _standalone_lease: Option<Arc<StandaloneLease>>,
@@ -307,7 +284,7 @@ pub struct GenericUserStore<S: WriteStore + SnapshotStore> {
 /// Default user store backed by [`DefaultStore`] (redb).
 pub type UserStore = GenericUserStore<DefaultStore>;
 
-impl<S: WriteStore + SnapshotStore> Clone for GenericUserStore<S> {
+impl<S: WriteStore> Clone for GenericUserStore<S> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -317,13 +294,13 @@ impl<S: WriteStore + SnapshotStore> Clone for GenericUserStore<S> {
     }
 }
 
-impl<S: WriteStore + SnapshotStore> fmt::Debug for GenericUserStore<S> {
+impl<S: WriteStore> fmt::Debug for GenericUserStore<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GenericUserStore").finish_non_exhaustive()
     }
 }
 
-impl<S: WriteStore + SnapshotStore> GenericUserStore<S> {
+impl<S: WriteStore> GenericUserStore<S> {
     /// Locks the shared store handle, recovering from a poisoned lock
     /// (constitution §4: nothing here panics, so a poisoned mutex must not
     /// brick the store either).
@@ -334,9 +311,9 @@ impl<S: WriteStore + SnapshotStore> GenericUserStore<S> {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn count_snapshot(&self) -> MutexGuard<'_, Option<CountSnapshot<S>>> {
+    fn count_cache(&self) -> MutexGuard<'_, Option<CountCache>> {
         self.inner
-            .count_snapshot
+            .count_cache
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -349,39 +326,36 @@ impl<S: WriteStore + SnapshotStore> GenericUserStore<S> {
         self.inner.has_user_data.load(Ordering::Acquire)
     }
 
-    /// Opens one read snapshot for the count tables.
+    /// Runs `read` against the count cache for the current write
+    /// generation, discarding a cache built against an older one first.
     ///
-    /// Takes `database()` for the call and releases it before returning; the
-    /// caller already holds the snapshot lock, which is the outer half of the
-    /// one legal order (snapshot, then db).
-    fn build_count_snapshot(&self, generation: u64) -> Result<CountSnapshot<S>, UserStoreError> {
-        let db = self.database();
-        let snap = db.snapshot()?;
-        drop(db);
-        Ok(CountSnapshot { generation, snap })
-    }
-
-    /// Runs `read` against the snapshot for the current write generation,
-    /// rebuilding it first when a write has landed since it was cached.
-    fn with_count_snapshot<T>(
+    /// The database guard is taken for the whole call and handed to
+    /// `read`, which needs it only to fill a memo miss; the lock order is
+    /// the same one the snapshot cache used — cache first, then db.
+    /// Holding it across the call is also what makes a multi-key read
+    /// atomic without MVCC: every write path takes the same guard, so no
+    /// commit can land between the two or four rows `count_delta` reads.
+    fn with_count_cache<T>(
         &self,
-        read: impl FnOnce(&CountSnapshot<S>) -> Result<T, UserStoreError>,
+        read: impl FnOnce(&mut CountCache, &S) -> Result<T, UserStoreError>,
     ) -> Result<T, UserStoreError> {
-        let mut snapshot = self.count_snapshot();
+        let mut cache = self.count_cache();
         let generation = self.write_generation();
-        let cached = match snapshot.take() {
+        let mut current = match cache.take() {
             Some(cached) if cached.generation == generation => cached,
-            _ => self.build_count_snapshot(generation)?,
+            _ => CountCache::new(generation),
         };
-        let out = read(&cached);
-        *snapshot = Some(cached);
+        let db = self.database();
+        let out = read(&mut current, &db);
+        drop(db);
+        *cache = Some(current);
         out
     }
 
     /// Invalidate cached reads after a committed user-data write.
     fn mark_committed_write(&self, db: MutexGuard<'_, S>, has_user_data: bool) {
         drop(db);
-        *self.count_snapshot() = None;
+        *self.count_cache() = None;
         self.inner
             .has_user_data
             .store(has_user_data, Ordering::Release);
@@ -410,7 +384,7 @@ impl<S: WriteStore + SnapshotStore> GenericUserStore<S> {
         })?;
 
         Ok(Arc::new(StoreInner {
-            count_snapshot: Mutex::new(None),
+            count_cache: Mutex::new(None),
             db: Mutex::new(db),
             dirty: AtomicBool::new(false),
             write_generation: AtomicU64::new(0),
@@ -475,7 +449,7 @@ impl<S: WriteStore + SnapshotStore> GenericUserStore<S> {
         if !self.has_user_data() {
             return Ok(0);
         }
-        self.with_count_snapshot(|cached| cached.unigram_delta(token))
+        self.with_count_cache(|cached, db| cached.unigram_delta(db, token))
     }
 
     /// Sum of every stored unigram delta; `0` if the store is empty.
@@ -493,7 +467,7 @@ impl<S: WriteStore + SnapshotStore> GenericUserStore<S> {
         if !self.has_user_data() {
             return Ok(UserCountDelta::ZERO);
         }
-        self.with_count_snapshot(|cached| cached.count_delta(prev, token))
+        self.with_count_cache(|cached, db| cached.count_delta(db, prev, token))
     }
 
     /// Record a training selection of `cur` after `last` (the `pinyin_train`
@@ -928,12 +902,15 @@ impl<S: WriteStore + SnapshotStore> GenericUserStore<S> {
         if !self.is_modified() {
             return Ok(false);
         }
-        let mut snapshot = self.count_snapshot();
-        *snapshot = None;
+        // Dropping the cache is no longer forced by the backend — no read
+        // view outlives a call, so nothing pins pages against compaction —
+        // but it is kept so `save` leaves exactly the state it always did.
+        let mut cache = self.count_cache();
+        *cache = None;
         let mut db = self.database();
         db.compact()?;
         drop(db);
-        drop(snapshot);
+        drop(cache);
         self.inner.dirty.store(false, Ordering::Relaxed);
         Ok(true)
     }
@@ -1170,33 +1147,77 @@ impl GenericUserStore<DefaultStore> {
     }
 }
 
-impl<S: SnapshotStore> CountSnapshot<S> {
-    fn unigram_delta(&self, token: Token) -> Result<u64, UserStoreError> {
-        snap_get_u64_or(&self.snap, UNIGRAM, &codec::encode_token(token), 0)
+impl CountCache {
+    /// An empty memo bound to `generation`.
+    pub(crate) fn new(generation: u64) -> Self {
+        Self {
+            generation,
+            unigram: HashMap::new(),
+            unigram_total: None,
+            bigram: HashMap::new(),
+            bigram_total: HashMap::new(),
+        }
+    }
+
+    /// `UNIGRAM[token]`, memoised. An absent row reads as `0`.
+    fn unigram(&mut self, db: &impl ReadStore, token: Token) -> Result<u64, UserStoreError> {
+        if let Some(&hit) = self.unigram.get(&token) {
+            return Ok(hit);
+        }
+        let value = get_u64_or(db, UNIGRAM, &codec::encode_token(token), 0)?;
+        self.unigram.insert(token, value);
+        Ok(value)
+    }
+
+    /// `UNIGRAM_TOTAL`'s single row, memoised. Absent reads as `0`.
+    fn unigram_total(&mut self, db: &impl ReadStore) -> Result<u64, UserStoreError> {
+        if let Some(hit) = self.unigram_total {
+            return Ok(hit);
+        }
+        let value = get_u64_or(db, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)?;
+        self.unigram_total = Some(value);
+        Ok(value)
+    }
+
+    /// `BIGRAM[(prev, cur)]`, memoised. An absent row reads as `0`.
+    fn bigram(
+        &mut self,
+        db: &impl ReadStore,
+        prev: Token,
+        cur: Token,
+    ) -> Result<u64, UserStoreError> {
+        if let Some(&hit) = self.bigram.get(&(prev, cur)) {
+            return Ok(hit);
+        }
+        let value = get_u64_or(db, BIGRAM, &codec::encode_token_pair(prev, cur), 0)?;
+        self.bigram.insert((prev, cur), value);
+        Ok(value)
+    }
+
+    /// `BIGRAM_TOTAL[prev]`, memoised. An absent row reads as `0`.
+    fn bigram_total(&mut self, db: &impl ReadStore, prev: Token) -> Result<u64, UserStoreError> {
+        if let Some(&hit) = self.bigram_total.get(&prev) {
+            return Ok(hit);
+        }
+        let value = get_u64_or(db, BIGRAM_TOTAL, &codec::encode_token(prev), 0)?;
+        self.bigram_total.insert(prev, value);
+        Ok(value)
+    }
+
+    fn unigram_delta(&mut self, db: &impl ReadStore, token: Token) -> Result<u64, UserStoreError> {
+        self.unigram(db, token)
     }
 
     fn count_delta(
-        &self,
+        &mut self,
+        db: &impl ReadStore,
         prev: Option<Token>,
         token: Token,
     ) -> Result<UserCountDelta, UserStoreError> {
-        let unigram_delta = snap_get_u64_or(&self.snap, UNIGRAM, &codec::encode_token(token), 0)?;
-        let unigram_total_delta = snap_get_u64_or(
-            &self.snap,
-            UNIGRAM_TOTAL,
-            &codec::encode_u8(UNIGRAM_TOTAL_KEY),
-            0,
-        )?;
+        let unigram_delta = self.unigram(db, token)?;
+        let unigram_total_delta = self.unigram_total(db)?;
         let (bigram_count, bigram_total) = if let Some(prev) = prev {
-            (
-                snap_get_u64_or(
-                    &self.snap,
-                    BIGRAM,
-                    &codec::encode_token_pair(prev, token),
-                    0,
-                )?,
-                snap_get_u64_or(&self.snap, BIGRAM_TOTAL, &codec::encode_token(prev), 0)?,
-            )
+            (self.bigram(db, prev, token)?, self.bigram_total(db, prev)?)
         } else {
             (0, 0)
         };
@@ -1256,7 +1277,7 @@ mod tests {
                     assert_eq!(store.count_delta(Some(1), 2).unwrap(), UserCountDelta::ZERO);
                     assert_eq!(store.count_delta(None, 2).unwrap(), UserCountDelta::ZERO);
                     assert!(
-                        store.count_snapshot().is_none(),
+                        store.count_cache().is_none(),
                         "empty count_delta must not open a read transaction"
                     );
                     cleanup(&path);
@@ -1301,7 +1322,7 @@ mod tests {
                     store.observe_selection(1, 100).unwrap();
                     assert!(
                         store.write_generation() > first_generation,
-                        "a committed write invalidates the cached read snapshot"
+                        "a committed write invalidates the cached count reads"
                     );
                     assert_eq!(
                         store.count_delta(Some(1), 100).unwrap(),
@@ -1333,7 +1354,7 @@ mod tests {
                         UserCountDelta::ZERO
                     );
                     assert!(
-                        store.count_snapshot().is_none(),
+                        store.count_cache().is_none(),
                         "an emptied store must not keep a cached read transaction"
                     );
                     cleanup(&path);
@@ -1999,7 +2020,7 @@ mod tests {
         );
         assert_eq!(reader.unigram_delta(100).unwrap(), 0);
         assert!(
-            reader.count_snapshot().is_none(),
+            reader.count_cache().is_none(),
             "an emptied store must not keep a cached read transaction"
         );
 
