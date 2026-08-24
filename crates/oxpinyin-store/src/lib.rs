@@ -957,16 +957,24 @@ mod tests {
                         })
                         .unwrap();
 
+                    let mut visited = Vec::new();
                     store
                         .write(|txn| {
                             txn.range(
                                 "t",
                                 Bound::Included(&[]),
                                 Bound::Excluded(&[]),
-                                &mut |_, _| Ok(()),
+                                &mut |key, _| {
+                                    visited.push(key.to_vec());
+                                    Ok(())
+                                },
                             )
                         })
                         .unwrap();
+                    assert!(
+                        visited.is_empty(),
+                        "empty bounds matched {visited:?}"
+                    );
                     drop(store);
                     cleanup(&path);
                 }
