@@ -1,0 +1,524 @@
+//! tkrzw backend for the store capability tiers, over TreeDBM.
+//!
+//! Enabled by the `tkrzw` cargo feature. Mirrors libpinyin at `0c5e80e`
+//! (`src/storage/tkrzwdb_utils.h`, `chewing_large_table2_tkrzwdb.cpp`,
+//! `ngram_tkrzwdb.cpp`): TreeDBM only, opened with tkrzw's default
+//! tuning and therefore its default `LexicalKeyComparator`. No custom
+//! comparator is installed, so records sort by plain unsigned byte
+//! order and oxpinyin's big-endian key codec keeps the ordering it has
+//! under redb and LMDB.
+//!
+//! # One keyspace, many tables
+//!
+//! A TreeDBM file is a single flat keyspace, while [`ReadStore`] and
+//! [`WriteStore`] are addressed by `(table, key)`. Records are therefore
+//! stored under `table-name || 0x00 || key`. The framing is
+//! prefix-free — table names are validated NUL-free, so no framed
+//! prefix is a prefix of another — which makes each table a contiguous
+//! run whose internal order is the caller's key order, and makes
+//! `for_each`, `range` and `is_empty` prefix scans. The framing is
+//! internal: nothing outside this module sees it, and no file written
+//! by another backend is readable here or vice versa.
+//!
+//! # Atomicity
+//!
+//! [`WriteStore::write`] buffers the closure's puts and removes,
+//! answers in-closure reads from that buffer over the database, and on
+//! `Ok` applies the whole buffer in one `ProcessMulti` call; on `Err`
+//! the buffer is dropped and nothing is written. `ProcessMulti` locks
+//! every named record for the duration, so the batch lands as a unit
+//! against any other reader or writer.
+//!
+//! This is weaker than what redb and LMDB give. Their commits are
+//! crash-atomic: a torn write is rolled back on the next open. TreeDBM
+//! has no write-ahead log, so a crash *during* the `ProcessMulti` apply
+//! can leave part of a batch on disk. Every commit calls `Synchronize`
+//! so the file is consistent and visible once the call returns, but a
+//! backend comparison should record the difference rather than read
+//! `write` as three equivalent implementations.
+//!
+//! # Platform and the library build
+//!
+//! Linux-first, like the other evaluation backend: paths are handed to
+//! tkrzw as bytes.
+//!
+//! tkrzw must be built from source. `DBM::RecordProcessor::NOOP` and
+//! `REMOVE` are sentinels recognised by *pointer* identity — tkrzw's
+//! own header says to compare `your_value.data() == NOOP.data()` — and
+//! Ubuntu noble's `libtkrzw-dev 1.0.27-1.1build1` is built so that a
+//! client and the shared library disagree about those addresses. The
+//! symptom is silent: `Remove` writes the five-byte `REMOVE` sentinel
+//! as the record's value instead of deleting it, a no-op processor
+//! stores `NOOP`'s bytes, and `Rebuild` aborts with `CANCELED_ERROR`
+//! (`tkrzw_dbm_hash_impl.cc:424` compares against `NOOP.data()`).
+//! That build's own `tkrzw_dbm_util` cannot reopen a TreeDBM it just
+//! created, failing `BROKEN_DATA_ERROR: invalid_key_comparator` — the
+//! same divergence, applied to the comparator function pointer. The
+//! identical 1.0.27 sources built with `./configure && make` behave
+//! correctly, and this backend's tests pass against them; `build.rs`
+//! says as much when the library is missing.
+
+mod bridge;
+
+use std::collections::BTreeMap;
+use std::fmt;
+use std::ops::Bound;
+use std::path::Path;
+use std::pin::Pin;
+
+use cxx::UniquePtr;
+
+use bridge::ffi;
+
+use crate::{ReadStore, StoreError, Visitor, WriteStore, WriteTxn, validate_table_name};
+
+/// `tkrzw::Status::Code::SUCCESS`.
+const STATUS_SUCCESS: i32 = 0;
+/// `tkrzw::Status::Code::SYSTEM_ERROR` — the codes that came from the
+/// operating system, reported as [`StoreError::Io`] so callers can
+/// branch on I/O failures the way they do for the other backends.
+const STATUS_SYSTEM_ERROR: i32 = 2;
+
+// ── errors ────────────────────────────────────────────────────────
+
+/// A non-I/O tkrzw status, carrying the code and message verbatim.
+#[derive(Debug)]
+struct TkrzwError {
+    code: i32,
+    message: String,
+}
+
+impl fmt::Display for TkrzwError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.message.is_empty() {
+            write!(f, "tkrzw status {}", self.code)
+        } else {
+            write!(f, "tkrzw status {}: {}", self.code, self.message)
+        }
+    }
+}
+
+impl std::error::Error for TkrzwError {}
+
+/// The handle was closed, or a `UniquePtr` was unexpectedly null.
+///
+/// Unreachable through the public API — a `TkrzwStore` only exists once
+/// `open_db` returned a live handle — but reported instead of unwrapped
+/// so no input can panic (constitution §4).
+#[derive(Debug)]
+struct ClosedError;
+
+impl fmt::Display for ClosedError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("tkrzw database handle is closed")
+    }
+}
+
+impl std::error::Error for ClosedError {}
+
+fn check(status: ffi::ShimStatus) -> Result<(), StoreError> {
+    match status.code {
+        STATUS_SUCCESS => Ok(()),
+        STATUS_SYSTEM_ERROR => Err(StoreError::Io(std::io::Error::other(status.message))),
+        code => Err(StoreError::Backend(Box::new(TkrzwError {
+            code,
+            message: status.message,
+        }))),
+    }
+}
+
+fn blank_status() -> ffi::ShimStatus {
+    ffi::ShimStatus {
+        code: STATUS_SUCCESS,
+        message: String::new(),
+    }
+}
+
+// ── key framing ───────────────────────────────────────────────────
+
+/// The prefix every record of `table` is stored under.
+///
+/// `validate_table_name` has already rejected the empty name and any
+/// name containing NUL, which is exactly what makes appending a NUL a
+/// prefix-free framing.
+fn table_prefix(table: &str) -> Result<Vec<u8>, StoreError> {
+    validate_table_name(table)?;
+    let mut prefix = Vec::with_capacity(table.len() + 1);
+    prefix.extend_from_slice(table.as_bytes());
+    prefix.push(0);
+    Ok(prefix)
+}
+
+fn framed(prefix: &[u8], key: &[u8]) -> Vec<u8> {
+    let mut framed = Vec::with_capacity(prefix.len() + key.len());
+    framed.extend_from_slice(prefix);
+    framed.extend_from_slice(key);
+    framed
+}
+
+/// Whether `key` falls inside `(lo, hi)` under the same semantics the
+/// other backends' `range` uses.
+fn in_bounds(key: &[u8], lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> bool {
+    let above_lo = match lo {
+        Bound::Unbounded => true,
+        Bound::Included(bound) => key >= bound,
+        Bound::Excluded(bound) => key > bound,
+    };
+    let below_hi = match hi {
+        Bound::Unbounded => true,
+        Bound::Included(bound) => key <= bound,
+        Bound::Excluded(bound) => key < bound,
+    };
+    above_lo && below_hi
+}
+
+/// Row callback for [`scan`]. Returning `false` stops the walk.
+type Row<'a> = dyn FnMut(&[u8], &[u8]) -> Result<bool, StoreError> + 'a;
+
+/// Whether iteration has walked past `hi` and can stop.
+fn past_upper(key: &[u8], hi: Bound<&[u8]>) -> bool {
+    match hi {
+        Bound::Unbounded => false,
+        Bound::Included(bound) => key > bound,
+        Bound::Excluded(bound) => key >= bound,
+    }
+}
+
+// ── store ─────────────────────────────────────────────────────────
+
+/// A tkrzw-backed store implementing both capability tiers.
+///
+/// Feature-gated behind `tkrzw`. See the module documentation for the
+/// table framing and for how `write`'s atomicity differs from redb's
+/// and LMDB's.
+pub struct TkrzwStore {
+    db: UniquePtr<ffi::Db>,
+    read_only: bool,
+}
+
+fn validate_path(path: &Path) -> Result<(), StoreError> {
+    if path.as_os_str().as_encoded_bytes().contains(&0) {
+        return Err(StoreError::InvalidInput("path contains NUL"));
+    }
+    Ok(())
+}
+
+fn open(path: &Path, writable: bool) -> Result<TkrzwStore, StoreError> {
+    validate_path(path)?;
+    let mut status = blank_status();
+    let db = ffi::open_db(
+        path.as_os_str().as_encoded_bytes(),
+        writable,
+        !writable,
+        &mut status,
+    );
+    check(status)?;
+    if db.is_null() {
+        return Err(StoreError::Backend(Box::new(ClosedError)));
+    }
+    Ok(TkrzwStore {
+        db,
+        read_only: !writable,
+    })
+}
+
+impl TkrzwStore {
+    fn handle(&self) -> Result<&ffi::Db, StoreError> {
+        self.db
+            .as_ref()
+            .ok_or_else(|| StoreError::Backend(Box::new(ClosedError)))
+    }
+}
+
+fn pin_iter(iter: &mut UniquePtr<ffi::Iter>) -> Result<Pin<&mut ffi::Iter>, StoreError> {
+    iter.as_mut()
+        .ok_or_else(|| StoreError::Backend(Box::new(ClosedError)))
+}
+
+/// Walks `table`'s records whose key lies in `(lo, hi)`, ascending,
+/// handing each to `row`. `row` returns `false` to stop early.
+///
+/// Every row the walk yields is already inside the bounds, so callers
+/// do not re-check them.
+fn scan(
+    db: &ffi::Db,
+    prefix: &[u8],
+    lo: Bound<&[u8]>,
+    hi: Bound<&[u8]>,
+    row: &mut Row<'_>,
+) -> Result<(), StoreError> {
+    let mut iter = ffi::db_iter(db);
+    if iter.is_null() {
+        return Err(StoreError::Backend(Box::new(ClosedError)));
+    }
+    // TreeDBM's Jump is a lower-bound seek, so an Excluded lower bound
+    // lands on the excluded key itself and is skipped below.
+    let start = match lo {
+        Bound::Unbounded => prefix.to_vec(),
+        Bound::Included(key) | Bound::Excluded(key) => framed(prefix, key),
+    };
+    check(ffi::iter_jump(pin_iter(&mut iter)?, &start))?;
+    loop {
+        let mut key = Vec::new();
+        let mut value = Vec::new();
+        let mut found = false;
+        check(ffi::iter_get(
+            pin_iter(&mut iter)?,
+            &mut key,
+            &mut value,
+            &mut found,
+        ))?;
+        if !found {
+            return Ok(());
+        }
+        // Ascending order means the first key outside the table's run is
+        // the end of it.
+        let Some(user_key) = key.strip_prefix(prefix) else {
+            return Ok(());
+        };
+        if past_upper(user_key, hi) {
+            return Ok(());
+        }
+        if in_bounds(user_key, lo, hi) && !row(user_key, &value)? {
+            return Ok(());
+        }
+        check(ffi::iter_next(pin_iter(&mut iter)?))?;
+    }
+}
+
+impl ReadStore for TkrzwStore {
+    fn open_read_only(path: &Path) -> Result<Self, StoreError> {
+        open(path, false)
+    }
+
+    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let prefix = table_prefix(table)?;
+        let mut value = Vec::new();
+        let mut found = false;
+        check(ffi::db_get(
+            self.handle()?,
+            &framed(&prefix, key),
+            &mut value,
+            &mut found,
+        ))?;
+        Ok(found.then_some(value))
+    }
+
+    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
+        self.range(table, Bound::Unbounded, Bound::Unbounded, visit)
+    }
+
+    fn range(
+        &self,
+        table: &str,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+        visit: &mut Visitor<'_>,
+    ) -> Result<(), StoreError> {
+        let prefix = table_prefix(table)?;
+        scan(self.handle()?, &prefix, lo, hi, &mut |key, value| {
+            visit(key, value)?;
+            Ok(true)
+        })
+    }
+
+    fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
+        let prefix = table_prefix(table)?;
+        let mut empty = true;
+        scan(
+            self.handle()?,
+            &prefix,
+            Bound::Unbounded,
+            Bound::Unbounded,
+            &mut |_key, _value| {
+                empty = false;
+                Ok(false)
+            },
+        )?;
+        Ok(empty)
+    }
+}
+
+impl WriteStore for TkrzwStore {
+    fn create(path: &Path) -> Result<Self, StoreError> {
+        open(path, true)
+    }
+
+    fn write<R>(
+        &self,
+        f: impl FnOnce(&mut dyn WriteTxn) -> Result<R, StoreError>,
+    ) -> Result<R, StoreError> {
+        if self.read_only {
+            return Err(StoreError::ReadOnly);
+        }
+        let db = self.handle()?;
+        let mut txn = TkrzwWriteTxn {
+            db,
+            buffer: BTreeMap::new(),
+        };
+        // On `Err` the buffer dies with the transaction and nothing was
+        // ever written: rollback is the absence of the apply below.
+        let result = f(&mut txn)?;
+        let mutations: Vec<ffi::Mutation> = txn
+            .buffer
+            .into_iter()
+            .map(|(key, slot)| match slot {
+                Some(value) => ffi::Mutation {
+                    key,
+                    value,
+                    remove: false,
+                },
+                None => ffi::Mutation {
+                    key,
+                    value: Vec::new(),
+                    remove: true,
+                },
+            })
+            .collect();
+        if !mutations.is_empty() {
+            check(ffi::db_apply(db, &mutations))?;
+            check(ffi::db_synchronize(db, false))?;
+        }
+        Ok(result)
+    }
+
+    fn compact(&mut self) -> Result<(), StoreError> {
+        if self.read_only {
+            return Err(StoreError::ReadOnly);
+        }
+        check(ffi::db_rebuild(self.handle()?))?;
+        check(ffi::db_synchronize(self.handle()?, false))
+    }
+}
+
+// ── write transaction ─────────────────────────────────────────────
+
+/// Buffers a write transaction's mutations until the single
+/// `ProcessMulti` apply in [`WriteStore::write`].
+///
+/// Keys are framed (`table || 0x00 || key`), and the map is ordered so
+/// the merged scans below yield rows in the same key order the store
+/// does. A `None` slot is a pending removal.
+struct TkrzwWriteTxn<'db> {
+    db: &'db ffi::Db,
+    buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+}
+
+impl TkrzwWriteTxn<'_> {
+    /// The buffered rows of `table` inside `(lo, hi)`, as
+    /// `(user key, slot)`.
+    fn buffered<'a>(
+        &'a self,
+        prefix: &'a [u8],
+        lo: Bound<&'a [u8]>,
+        hi: Bound<&'a [u8]>,
+    ) -> impl Iterator<Item = (&'a [u8], &'a Option<Vec<u8>>)> + 'a {
+        self.buffer
+            .range(prefix.to_vec()..)
+            .map_while(move |(key, slot)| key.strip_prefix(prefix).map(|user| (user, slot)))
+            .filter(move |(user, _)| in_bounds(user, lo, hi))
+    }
+
+    /// The stored rows of `table` inside `(lo, hi)`, with this
+    /// transaction's buffer laid over them.
+    fn merged(
+        &self,
+        prefix: &[u8],
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+    ) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, StoreError> {
+        let mut rows = BTreeMap::new();
+        scan(self.db, prefix, lo, hi, &mut |key, value| {
+            rows.insert(key.to_vec(), value.to_vec());
+            Ok(true)
+        })?;
+        for (user_key, slot) in self.buffered(prefix, lo, hi) {
+            match slot {
+                Some(value) => {
+                    rows.insert(user_key.to_vec(), value.clone());
+                }
+                None => {
+                    rows.remove(user_key);
+                }
+            }
+        }
+        Ok(rows)
+    }
+}
+
+impl WriteTxn for TkrzwWriteTxn<'_> {
+    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let prefix = table_prefix(table)?;
+        let framed_key = framed(&prefix, key);
+        if let Some(slot) = self.buffer.get(&framed_key) {
+            return Ok(slot.clone());
+        }
+        let mut value = Vec::new();
+        let mut found = false;
+        check(ffi::db_get(self.db, &framed_key, &mut value, &mut found))?;
+        Ok(found.then_some(value))
+    }
+
+    fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        let prefix = table_prefix(table)?;
+        self.buffer
+            .insert(framed(&prefix, key), Some(value.to_vec()));
+        Ok(())
+    }
+
+    fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
+        let prefix = table_prefix(table)?;
+        self.buffer.insert(framed(&prefix, key), None);
+        Ok(())
+    }
+
+    fn range(
+        &self,
+        table: &str,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+        visit: &mut Visitor<'_>,
+    ) -> Result<(), StoreError> {
+        let prefix = table_prefix(table)?;
+        for (key, value) in self.merged(&prefix, lo, hi)? {
+            visit(&key, &value)?;
+        }
+        Ok(())
+    }
+
+    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
+        self.range(table, Bound::Unbounded, Bound::Unbounded, visit)
+    }
+
+    fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
+        let prefix = table_prefix(table)?;
+        // A buffered value settles it without touching storage.
+        if self
+            .buffered(&prefix, Bound::Unbounded, Bound::Unbounded)
+            .any(|(_, slot)| slot.is_some())
+        {
+            return Ok(false);
+        }
+        // Otherwise the first stored row this transaction has not
+        // removed does, so the walk stops there rather than counting.
+        let mut empty = true;
+        scan(
+            self.db,
+            &prefix,
+            Bound::Unbounded,
+            Bound::Unbounded,
+            &mut |key, _value| {
+                if self
+                    .buffer
+                    .get(&framed(&prefix, key))
+                    .is_some_and(Option::is_none)
+                {
+                    return Ok(true);
+                }
+                empty = false;
+                Ok(false)
+            },
+        )?;
+        Ok(empty)
+    }
+}
