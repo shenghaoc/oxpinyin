@@ -89,21 +89,38 @@ impl From<StoreError> for TableError {
     }
 }
 
-/// Visit every row of a store's `data` table without retaining a copy.
+/// Visit every row of the default backend's `data` table without
+/// retaining a copy.
 ///
 /// Used by the typed dictionary and LM loaders so they can parse records
 /// once into native keys instead of slurping `BTreeMap<Vec<u8>, Vec<u8>>`.
 ///
-/// Generic over the store's **read** tier only: loading a system table
-/// opens the file read-only and walks it, so a backend that offers
-/// nothing but [`ReadStore`] can serve this path.  Callers name the
-/// backend, e.g. `for_each_row::<DefaultStore, _, _>(path, visit)`.
+/// Opens the file read-only via [`DefaultStore`] and walks it.  For any
+/// other backend use [`for_each_row_with_store`].
 ///
 /// # Errors
 ///
 /// Returns `E` converted from [`TableError`] on I/O or store failure, or
 /// whatever `visit` returns.
-pub fn for_each_row<S, E, F>(path: &Path, mut visit: F) -> Result<(), E>
+pub fn for_each_row<E, F>(path: &Path, visit: F) -> Result<(), E>
+where
+    F: FnMut(&[u8], &[u8]) -> Result<(), E>,
+    E: From<TableError>,
+{
+    for_each_row_with_store::<DefaultStore, E, F>(path, visit)
+}
+
+/// Like [`for_each_row`] but generic over the store's **read** tier:
+/// loading a system table opens the file read-only and walks it, so a
+/// backend that offers nothing but [`ReadStore`] can serve this path.
+/// Callers name the backend, e.g.
+/// `for_each_row_with_store::<DefaultStore, _, _>(path, visit)`.
+///
+/// # Errors
+///
+/// Returns `E` converted from [`TableError`] on I/O or store failure, or
+/// whatever `visit` returns.
+pub fn for_each_row_with_store<S, E, F>(path: &Path, mut visit: F) -> Result<(), E>
 where
     S: ReadStore,
     F: FnMut(&[u8], &[u8]) -> Result<(), E>,
@@ -181,7 +198,7 @@ impl<S: ReadStore> GenericLookupTable<S> {
     /// Open a store table file for reading.
     pub fn open(path: &Path) -> Result<Self, TableError> {
         let mut entries = BTreeMap::new();
-        for_each_row::<S, _, _>(path, |key, value| {
+        for_each_row_with_store::<S, _, _>(path, |key, value| {
             entries.insert(key.to_vec(), value.to_vec());
             Ok::<(), TableError>(())
         })?;
