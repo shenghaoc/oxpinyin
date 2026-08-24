@@ -60,6 +60,10 @@ path = "src/bin/parity_worst.rs"
 name = "corpus-tail"
 path = "src/bin/corpus_tail.rs"
 
+[[bin]]
+name = "sentence-tail"
+path = "src/bin/sentence_tail.rs"
+
 [dependencies]
 # Internal workspace crate: the corpus is generated from the frozen syllable
 # inventory, and W2-T3 compares against this parser. Not an external dependency.
