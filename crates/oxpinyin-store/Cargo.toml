@@ -13,7 +13,6 @@ workspace = true
 [dependencies]
 redb = { workspace = true }
 heed = { workspace = true, optional = true }
-self_cell = { workspace = true, optional = true }
 
 [features]
-lmdb = ["dep:heed", "dep:self_cell"]
+lmdb = ["dep:heed"]

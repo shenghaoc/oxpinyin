@@ -8,19 +8,13 @@ use std::fmt;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use heed::types::Bytes;
 use heed::{Database, EnvFlags, EnvOpenOptions, RwTxn, WithoutTls};
-use self_cell::self_cell;
 
-use crate::{
-    ReadSnapshot, ReadStore, SnapshotStore, StoreError, Visitor, WriteStore, WriteTxn,
-    validate_table_name,
-};
+use crate::{ReadStore, StoreError, Visitor, WriteStore, WriteTxn, validate_table_name};
 
 type Env = heed::Env<WithoutTls>;
-type SnapTxn<'a> = heed::RoTxn<'a, WithoutTls>;
 
 // ── helpers ───────────────────────────────────────────────────────
 
@@ -57,18 +51,6 @@ impl fmt::Display for MapFullError {
 }
 
 impl std::error::Error for MapFullError {}
-
-/// Compaction was requested while a read snapshot was still open.
-#[derive(Debug)]
-struct SnapshotOpenError;
-
-impl fmt::Display for SnapshotOpenError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("cannot compact while a read snapshot is open; drop it first")
-    }
-}
-
-impl std::error::Error for SnapshotOpenError {}
 
 fn validate_path(path: &Path) -> Result<(), StoreError> {
     if path.as_os_str().as_encoded_bytes().contains(&0) {
@@ -124,7 +106,7 @@ fn open_env(path: &Path, read_only: bool, map_size: usize) -> Result<Env, StoreE
 
 // ── store ─────────────────────────────────────────────────────────
 
-/// An LMDB-backed store implementing all three capability tiers.
+/// An LMDB-backed store implementing both capability tiers.
 ///
 /// Feature-gated behind `lmdb`.  Uses a single file (`NO_SUB_DIR`)
 /// and the default byte-lexicographic comparator.
@@ -138,7 +120,6 @@ pub struct LmdbStore {
     #[allow(dead_code)]
     path: PathBuf,
     read_only: bool,
-    live_snapshots: Arc<AtomicUsize>,
 }
 
 impl LmdbStore {
@@ -158,7 +139,6 @@ impl LmdbStore {
             env: Arc::new(env),
             path: path.to_path_buf(),
             read_only: false,
-            live_snapshots: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -178,7 +158,6 @@ impl LmdbStore {
             env: Arc::new(env),
             path: path.to_path_buf(),
             read_only: true,
-            live_snapshots: Arc::new(AtomicUsize::new(0)),
         })
     }
 }
@@ -190,7 +169,6 @@ impl ReadStore for LmdbStore {
             env: Arc::new(env),
             path: path.to_path_buf(),
             read_only: true,
-            live_snapshots: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -269,7 +247,6 @@ impl WriteStore for LmdbStore {
             env: Arc::new(env),
             path: path.to_path_buf(),
             read_only: false,
-            live_snapshots: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -302,131 +279,9 @@ impl WriteStore for LmdbStore {
             return Err(StoreError::ReadOnly);
         }
         // LMDB reclaims freed pages in place, so compaction itself does no
-        // work here. The live-snapshot check is nonetheless retained so this
-        // backend rejects the same precondition as redb (whose compaction
-        // cannot run while a read snapshot pins pages); keeping the two
-        // backends' contracts identical. Do not remove it as dead logic.
-        if self.live_snapshots.load(Ordering::Acquire) > 0 {
-            return Err(StoreError::Backend(Box::new(SnapshotOpenError)));
-        }
+        // work here. redb's compaction can no longer fail either, now that
+        // no read view outlives a call, so both backends succeed.
         Ok(())
-    }
-}
-
-impl SnapshotStore for LmdbStore {
-    type ReadSnapshot = LmdbReadSnapshot;
-
-    fn snapshot(&self) -> Result<LmdbReadSnapshot, StoreError> {
-        let inner = SnapshotInner::try_new(self.env.clone(), |env| {
-            env.read_txn().map_err(map_heed_error)
-        })?;
-        self.live_snapshots.fetch_add(1, Ordering::Release);
-        Ok(LmdbReadSnapshot {
-            inner,
-            _live: LiveSnapshotGuard(Arc::clone(&self.live_snapshots)),
-        })
-    }
-}
-
-// ── read snapshot ─────────────────────────────────────────────────
-
-self_cell!(
-    struct SnapshotInner {
-        owner: Arc<Env>,
-        #[not_covariant]
-        dependent: SnapTxn,
-    }
-);
-
-/// Decrements the live-snapshot counter when it drops.
-///
-/// Held as the last field of [`LmdbReadSnapshot`] so it runs *after*
-/// `inner` releases the LMDB read transaction (fields drop in declaration
-/// order). The counter therefore never reaches zero while a transaction is
-/// still open, which closes a latent TOCTOU should [`LmdbStore::compact`]
-/// ever be changed to take `&self` instead of `&mut self`.
-struct LiveSnapshotGuard(Arc<AtomicUsize>);
-
-impl Drop for LiveSnapshotGuard {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Release);
-    }
-}
-
-/// A consistent read snapshot backed by an LMDB read transaction.
-pub struct LmdbReadSnapshot {
-    /// Dropped before `_live` (declaration order) so the read transaction
-    /// is released before the live-snapshot counter is decremented.
-    inner: SnapshotInner,
-    _live: LiveSnapshotGuard,
-}
-
-impl ReadSnapshot for LmdbReadSnapshot {
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        validate_table_name(table)?;
-        self.inner.with_dependent(|env, txn| {
-            let db: Option<Database<Bytes, Bytes>> = env
-                .open_database(txn, Some(table))
-                .map_err(map_heed_error)?;
-            let Some(db) = db else { return Ok(None) };
-            Ok(db
-                .get(txn, key)
-                .map_err(map_heed_error)?
-                .map(|v| v.to_vec()))
-        })
-    }
-
-    fn range(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
-    ) -> Result<(), StoreError> {
-        validate_table_name(table)?;
-        self.inner.with_dependent(|env, txn| {
-            let db: Option<Database<Bytes, Bytes>> = env
-                .open_database(txn, Some(table))
-                .map_err(map_heed_error)?;
-            let Some(db) = db else { return Ok(()) };
-            if is_empty_upper_bound(hi) {
-                return Ok(());
-            }
-            let bounds = (normalize_bound(lo), normalize_bound(hi));
-            let iter = db.range(txn, &bounds).map_err(map_heed_error)?;
-            for result in iter {
-                let (key, value) = result.map_err(map_heed_error)?;
-                visit(key, value)?;
-            }
-            Ok(())
-        })
-    }
-
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-        validate_table_name(table)?;
-        self.inner.with_dependent(|env, txn| {
-            let db: Option<Database<Bytes, Bytes>> = env
-                .open_database(txn, Some(table))
-                .map_err(map_heed_error)?;
-            let Some(db) = db else { return Ok(()) };
-            let iter = db.iter(txn).map_err(map_heed_error)?;
-            for result in iter {
-                let (key, value) = result.map_err(map_heed_error)?;
-                visit(key, value)?;
-            }
-            Ok(())
-        })
-    }
-
-    fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
-        validate_table_name(table)?;
-        self.inner.with_dependent(|env, txn| {
-            let db: Option<Database<Bytes, Bytes>> = env
-                .open_database(txn, Some(table))
-                .map_err(map_heed_error)?;
-            let Some(db) = db else { return Ok(true) };
-            db.is_empty(txn).map_err(map_heed_error)
-        })
     }
 }
 

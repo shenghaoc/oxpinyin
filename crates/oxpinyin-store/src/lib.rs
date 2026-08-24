@@ -1,12 +1,12 @@
 //! Backend-agnostic ordered key–value store for oxpinyin tables.
 //!
-//! This crate defines an ordered byte-KV interface split into three
+//! This crate defines an ordered byte-KV interface split into two
 //! capability tiers — [`ReadStore`] (point get, ranged scan, full scan,
-//! emptiness check), [`WriteStore`] (creation, atomic multi-table writes,
-//! compaction), and [`SnapshotStore`] (MVCC read snapshots) — and provides
-//! a [`RedbStore`] implementation backed by redb that offers all three.
-//! Consumers depend on the narrowest tier they need; the concrete backend
-//! is selected by the [`DefaultStore`] alias.
+//! emptiness check) and [`WriteStore`] (creation, atomic multi-table
+//! writes, compaction) — and provides a [`RedbStore`] implementation
+//! backed by redb that offers both.  Consumers depend on the narrowest
+//! tier they need; the concrete backend is selected by the
+//! [`DefaultStore`] alias.
 
 use std::fmt;
 use std::ops::Bound;
@@ -57,35 +57,6 @@ impl std::error::Error for StoreError {
 pub type Visitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a;
 
 // ── traits ─────────────────────────────────────────────────────────
-
-/// A consistent point-in-time read view, storable across calls.
-///
-/// The snapshot is taken from a single read transaction and is
-/// MVCC-isolated: writes committed after [`SnapshotStore::snapshot`]
-/// are invisible through it.  Methods open the named table per call on
-/// the held transaction (no pre-opened table set, no owned-copy slurp).
-pub trait ReadSnapshot {
-    /// Read a single key from `table`.  Returns `None` if absent or the
-    /// table does not exist.
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
-
-    /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
-    /// ascending.  An absent table is treated as empty.
-    fn range(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
-    ) -> Result<(), StoreError>;
-
-    /// Visit every row of `table` in ascending key-byte order.  An
-    /// absent table is treated as empty.
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError>;
-
-    /// Whether `table` has no rows (an absent table counts as empty).
-    fn is_empty(&self, table: &str) -> Result<bool, StoreError>;
-}
 
 /// An atomic write transaction over one or more tables.
 ///
@@ -141,7 +112,7 @@ pub trait WriteTxn {
 ///
 /// This is the base capability every backend provides: open an existing
 /// file read-only, point get, ranged scan, full scan, and an emptiness
-/// check.  A backend that can only read — no writer, no MVCC snapshot —
+/// check.  A backend that can only read — no writer at all —
 /// implements this and nothing else, and the system-table loader binds
 /// to exactly this tier.
 pub trait ReadStore {
@@ -199,28 +170,6 @@ pub trait WriteStore: ReadStore {
     /// redb rewrites the file and reclaims free pages. LMDB reuses freed pages
     /// in place, so its successful implementation does not shrink the file.
     fn compact(&mut self) -> Result<(), StoreError>;
-}
-
-/// The snapshot tier: consistent point-in-time read views.
-///
-/// Adds MVCC-isolated snapshots on top of [`ReadStore`].  A backend
-/// without multi-version reads implements [`ReadStore`] (and possibly
-/// [`WriteStore`]) without this tier.
-pub trait SnapshotStore: ReadStore {
-    /// A consistent point-in-time read view, storable across calls.
-    type ReadSnapshot: ReadSnapshot;
-
-    /// Open a consistent read snapshot of the current store state.
-    ///
-    /// The returned handle owns a single read transaction and is
-    /// MVCC-isolated: writes committed after this call are invisible
-    /// through it.  The caller may store it in a struct field and
-    /// reuse it across many calls.
-    ///
-    /// Retaining the snapshot delays page reclamation: freed pages
-    /// cannot be reclaimed and [`WriteStore::compact`] fails until
-    /// the snapshot is dropped.
-    fn snapshot(&self) -> Result<Self::ReadSnapshot, StoreError>;
 }
 
 // ── redb backend ───────────────────────────────────────────────────
@@ -412,50 +361,6 @@ impl WriteStore for RedbStore {
     }
 }
 
-impl SnapshotStore for RedbStore {
-    type ReadSnapshot = RedbReadSnapshot;
-
-    fn snapshot(&self) -> Result<RedbReadSnapshot, StoreError> {
-        let txn = self.begin_read()?;
-        Ok(RedbReadSnapshot { txn })
-    }
-}
-
-// ── redb read-snapshot ─────────────────────────────────────────────
-
-/// A stored, consistent read snapshot backed by a redb read transaction.
-///
-/// Created by [`RedbStore::snapshot`].  The held transaction is
-/// MVCC-isolated: writes committed after the snapshot was taken are
-/// invisible through it.
-pub struct RedbReadSnapshot {
-    txn: redb::ReadTransaction,
-}
-
-impl ReadSnapshot for RedbReadSnapshot {
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        read_get(&self.txn, table, key)
-    }
-
-    fn range(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
-    ) -> Result<(), StoreError> {
-        read_range(&self.txn, table, lo, hi, visit)
-    }
-
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-        read_for_each(&self.txn, table, visit)
-    }
-
-    fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
-        read_is_empty(&self.txn, table)
-    }
-}
-
 // ── redb write-transaction wrapper ─────────────────────────────────
 
 struct RedbWriteTxn<'txn> {
@@ -537,7 +442,7 @@ pub type DefaultStore = RedbStore;
 #[cfg(feature = "lmdb")]
 mod lmdb;
 #[cfg(feature = "lmdb")]
-pub use lmdb::{LmdbReadSnapshot, LmdbStore};
+pub use lmdb::LmdbStore;
 
 // ── error mapping ──────────────────────────────────────────────────
 
@@ -647,7 +552,7 @@ mod tests {
     /// [`WriteStore`] used only to lay down the fixture file that `$store`
     /// then opens read-only — a read-only backend supplies whichever
     /// writer produces its file format, and runs this group unchanged
-    /// without gaining a write or snapshot capability.
+    /// without gaining a write capability.
     macro_rules! store_read_tests {
         ($mod:ident, $store:ty, $writer:ty, $ext:literal) => {
             mod $mod {
@@ -1058,178 +963,15 @@ mod tests {
         };
     }
 
-    /// The snapshot tier: MVCC-isolated point-in-time read views.
-    ///
-    /// Proving isolation means committing *after* a snapshot is taken and
-    /// checking the snapshot does not see it, so this group applies to a
-    /// backend that is both [`SnapshotStore`] and [`WriteStore`].
-    macro_rules! store_snapshot_tests {
-        ($mod:ident, $store:ty, $ext:literal) => {
-            mod $mod {
-                use super::super::*;
-
-                store_test_paths!($mod, $ext);
-
-                #[test]
-                fn compact_fails_while_snapshot_open() {
-                    let path = temp_path("compact-snap");
-                    let mut store = <$store>::create(&path).unwrap();
-                    store.write(|txn| txn.put("t", b"k", b"v")).unwrap();
-                    let snap = store.snapshot().unwrap();
-                    assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-                    assert!(
-                        store.compact().is_err(),
-                        "compact must fail while a snapshot is open"
-                    );
-                    drop(snap);
-                    store.compact().unwrap();
-                    assert_eq!(store.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn snapshot_consistency() {
-                    let path = temp_path("snap-consist");
-                    let store = <$store>::create(&path).unwrap();
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"k", b"v1")?;
-                            Ok(())
-                        })
-                        .unwrap();
-                    let snap = store.snapshot().unwrap();
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"k", b"v2")?;
-                            Ok(())
-                        })
-                        .unwrap();
-                    assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v1".to_vec()));
-                    assert_eq!(store.get("t", b"k").unwrap(), Some(b"v2".to_vec()));
-                    drop(snap);
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn snapshot_reuse() {
-                    let path = temp_path("snap-reuse");
-                    let store = <$store>::create(&path).unwrap();
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"k", b"v")?;
-                            Ok(())
-                        })
-                        .unwrap();
-                    let snap = store.snapshot().unwrap();
-                    assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-                    assert_eq!(snap.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-                    drop(snap);
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn snapshot_correctness() {
-                    let path = temp_path("snap-correct");
-                    let store = <$store>::create(&path).unwrap();
-                    store
-                        .write(|txn| {
-                            txn.put("t", b"a", b"1")?;
-                            txn.put("t", b"b", b"2")?;
-                            txn.put("t", b"c", b"3")?;
-                            txn.put("u", b"x", b"9")?;
-                            Ok(())
-                        })
-                        .unwrap();
-                    let snap = store.snapshot().unwrap();
-
-                    assert_eq!(snap.get("t", b"a").unwrap(), Some(b"1".to_vec()));
-                    assert_eq!(snap.get("t", b"missing").unwrap(), None);
-                    assert_eq!(snap.get("u", b"x").unwrap(), Some(b"9".to_vec()));
-
-                    assert!(!snap.is_empty("t").unwrap());
-                    assert!(snap.is_empty("nonexistent").unwrap());
-
-                    let mut keys = Vec::new();
-                    snap.for_each("t", &mut |k, _v| {
-                        keys.push(k.to_vec());
-                        Ok(())
-                    })
-                    .unwrap();
-                    assert_eq!(keys, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
-
-                    let mut range_keys = Vec::new();
-                    snap.range(
-                        "t",
-                        Bound::Included(b"b".as_slice()),
-                        Bound::Included(b"c".as_slice()),
-                        &mut |k, _v| {
-                            range_keys.push(k.to_vec());
-                            Ok(())
-                        },
-                    )
-                    .unwrap();
-                    assert_eq!(range_keys, vec![b"b".to_vec(), b"c".to_vec()]);
-
-                    let mut range_unbound = Vec::new();
-                    snap.range(
-                        "t",
-                        Bound::Included(b"b".as_slice()),
-                        Bound::Unbounded,
-                        &mut |k, _v| {
-                            range_unbound.push(k.to_vec());
-                            Ok(())
-                        },
-                    )
-                    .unwrap();
-                    assert_eq!(range_unbound, vec![b"b".to_vec(), b"c".to_vec()]);
-
-                    drop(snap);
-                    drop(store);
-                    cleanup(&path);
-                }
-
-                #[test]
-                fn empty_and_nul_table_names_are_rejected_by_snapshot_reads() {
-                    fn assert_invalid<T>(result: Result<T, StoreError>) {
-                        assert!(matches!(result, Err(StoreError::InvalidInput(_))));
-                    }
-
-                    let path = temp_path("invalid-table");
-                    let store = <$store>::create(&path).unwrap();
-                    for table in ["", "bad\0name"] {
-                        let snapshot = store.snapshot().unwrap();
-                        assert_invalid(snapshot.get(table, b"key"));
-                        assert_invalid(snapshot.for_each(table, &mut |_, _| Ok(())));
-                        assert_invalid(snapshot.range(
-                            table,
-                            Bound::Unbounded,
-                            Bound::Unbounded,
-                            &mut |_, _| Ok(()),
-                        ));
-                        assert_invalid(snapshot.is_empty(table));
-                    }
-                    drop(store);
-                    cleanup(&path);
-                }
-            }
-        };
-    }
-
-    // Both shipped backends offer every tier, so both run all three
-    // groups. A read-only backend would invoke only `store_read_tests!`.
+    // Both shipped backends offer both tiers, so both run both groups.
+    // A read-only backend would invoke only `store_read_tests!`.
     store_read_tests!(redb_read, RedbStore, RedbStore, "redb");
     store_write_tests!(redb_write, RedbStore, "redb");
-    store_snapshot_tests!(redb_snapshot, RedbStore, "redb");
 
     #[cfg(feature = "lmdb")]
     store_read_tests!(lmdb_read, LmdbStore, LmdbStore, "lmdb");
     #[cfg(feature = "lmdb")]
     store_write_tests!(lmdb_write, LmdbStore, "lmdb");
-    #[cfg(feature = "lmdb")]
-    store_snapshot_tests!(lmdb_snapshot, LmdbStore, "lmdb");
 
     /// Removes the borrowed path on drop, so a panicking test leaves no
     /// file behind in `std::env::temp_dir()`. redb keeps no `-lock` sidecar,
