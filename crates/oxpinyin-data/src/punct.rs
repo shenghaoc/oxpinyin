@@ -8,6 +8,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use oxpinyin_store::DefaultStore;
+
 use crate::dict::DictError;
 use crate::table;
 
@@ -28,7 +30,7 @@ impl PunctTable {
     /// Opens an Option A `punct.redb`.
     pub fn open(path: &Path) -> Result<Self, DictError> {
         let mut by_token = BTreeMap::new();
-        table::for_each_row(path, |key, value| {
+        table::for_each_row::<DefaultStore, _, _>(path, |key, value| {
             if key.len() != 4 {
                 return Err(DictError::Parse(format!(
                     "punct key length {} is not 4",

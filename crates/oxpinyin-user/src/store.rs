@@ -20,7 +20,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use oxpinyin_core::UserCountDelta;
-use oxpinyin_store::{DefaultStore, OrderedStore, ReadSnapshot, StoreError, WriteTxn};
+use oxpinyin_store::{
+    DefaultStore, ReadSnapshot, ReadStore, SnapshotStore, StoreError, WriteStore, WriteTxn,
+};
 
 use crate::codec;
 use crate::phrase::{
@@ -137,11 +139,7 @@ impl From<StoreError> for UserStoreError {
 
 // ── codec helpers ─────────────────────────────────────────────────
 
-fn get_u64(
-    store: &impl OrderedStore,
-    table: &str,
-    key: &[u8],
-) -> Result<Option<u64>, UserStoreError> {
+fn get_u64(store: &impl ReadStore, table: &str, key: &[u8]) -> Result<Option<u64>, UserStoreError> {
     match store.get(table, key)? {
         None => Ok(None),
         Some(bytes) => codec::decode_u64(&bytes)
@@ -151,7 +149,7 @@ fn get_u64(
 }
 
 fn get_u64_or(
-    store: &impl OrderedStore,
+    store: &impl ReadStore,
     table: &str,
     key: &[u8],
     default: u64,
@@ -221,7 +219,7 @@ fn pronunciation_range(token: Token) -> (Bound<Vec<u8>>, Bound<Vec<u8>>) {
 }
 
 fn collect_pronunciations_from_store(
-    store: &impl OrderedStore,
+    store: &impl ReadStore,
     token: Token,
 ) -> Result<Vec<UserPronunciation>, UserStoreError> {
     let (lo, hi) = pronunciation_range(token);
@@ -298,7 +296,7 @@ fn has_user_data_in_write_txn(txn: &dyn WriteTxn) -> Result<bool, StoreError> {
 /// Clones record dirtiness through their own `&mut self` updates and the
 /// context's `pinyin_save` observes it. The C ABI contract is
 /// main-thread-only, so the flag uses relaxed ordering.
-pub struct GenericUserStore<S: OrderedStore> {
+pub struct GenericUserStore<S: WriteStore + SnapshotStore> {
     inner: Arc<StoreInner<S>>,
     /// Keeps a standalone path reservation alive until its last clone drops.
     _standalone_lease: Option<Arc<StandaloneLease>>,
@@ -309,7 +307,7 @@ pub struct GenericUserStore<S: OrderedStore> {
 /// Default user store backed by [`DefaultStore`] (redb).
 pub type UserStore = GenericUserStore<DefaultStore>;
 
-impl<S: OrderedStore> Clone for GenericUserStore<S> {
+impl<S: WriteStore + SnapshotStore> Clone for GenericUserStore<S> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -319,13 +317,13 @@ impl<S: OrderedStore> Clone for GenericUserStore<S> {
     }
 }
 
-impl<S: OrderedStore> fmt::Debug for GenericUserStore<S> {
+impl<S: WriteStore + SnapshotStore> fmt::Debug for GenericUserStore<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GenericUserStore").finish_non_exhaustive()
     }
 }
 
-impl<S: OrderedStore> GenericUserStore<S> {
+impl<S: WriteStore + SnapshotStore> GenericUserStore<S> {
     /// Locks the shared store handle, recovering from a poisoned lock
     /// (constitution §4: nothing here panics, so a poisoned mutex must not
     /// brick the store either).
@@ -1172,7 +1170,7 @@ impl GenericUserStore<DefaultStore> {
     }
 }
 
-impl<S: OrderedStore> CountSnapshot<S> {
+impl<S: SnapshotStore> CountSnapshot<S> {
     fn unigram_delta(&self, token: Token) -> Result<u64, UserStoreError> {
         snap_get_u64_or(&self.snap, UNIGRAM, &codec::encode_token(token), 0)
     }

@@ -27,6 +27,7 @@ use std::path::Path;
 
 use oxpinyin_core::cost::{UNKNOWN_COST, reduce_ratio, surprisal};
 use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta};
+use oxpinyin_store::DefaultStore;
 
 use crate::interp::{self, InterpolationError, UnigramTable};
 use crate::table::{self, LeByteKey, TableError};
@@ -182,7 +183,7 @@ impl BigramLanguageModel {
     /// [`Self::set_lambda_from_table_conf`] or [`Self::set_lambda`].
     pub fn open(path: &Path) -> Result<Self, LmError> {
         let mut bigram = Vec::new();
-        table::for_each_row(path, |key, value| {
+        table::for_each_row::<DefaultStore, _, _>(path, |key, value| {
             if key.len() != 4 {
                 return Err(LmError::Parse(format!(
                     "bigram key length {} is not 4",
