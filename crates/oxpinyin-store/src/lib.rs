@@ -7,6 +7,20 @@
 //! backed by redb that offers both.  Consumers depend on the narrowest
 //! tier they need; the concrete backend is selected by the
 //! [`DefaultStore`] alias.
+//!
+//! # Key ordering
+//!
+//! Keys are ordered by ascending **byte** order (`memcmp` on the raw stored
+//! key bytes) and nothing else — the store never decodes a key, so it has no
+//! notion of integer order.  All three backends satisfy exactly this: redb's
+//! `Key for &[u8]` is a byte compare; the LMDB backend sets no integer or
+//! custom comparator (so LMDB's default lexicographic one applies); and the
+//! tkrzw backend installs no comparator, so TreeDBM uses its default
+//! `LexicalKeyComparator` (plain unsigned byte order).  Any further backend
+//! must match that default lexicographic comparator.  The encodings each
+//! layer chooses on top of this rule (data little-endian = byte order,
+//! intentionally not integer order; user big-endian = integer order) are
+//! documented in one place in `docs/findings/store-key-ordering.md`.
 
 use std::fmt;
 use std::ops::Bound;
@@ -1407,5 +1421,338 @@ mod tests {
         drop(readonly);
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&lock);
+    }
+
+    // ── cross-backend key-ordering conformance ─────────────────────
+    //
+    // The byte-order contract must hold *identically* across every
+    // backend, and — the property a small-id fixture cannot see — byte
+    // order must diverge from integer order across the 256 boundary.
+    // These sit here rather than in a per-tier group because they are
+    // cross-cutting: the equivalence tests exercise two or three
+    // backends in one body, comparing whichever are compiled in.
+    mod key_ordering {
+        use std::ops::Bound;
+        use std::path::Path;
+
+        #[cfg(feature = "lmdb")]
+        use super::super::LmdbStore;
+        #[cfg(feature = "tkrzw")]
+        use super::super::TkrzwStore;
+        use super::super::{RedbStore, WriteStore};
+
+        /// Tokens that cross the 256 boundary in the low byte and in
+        /// higher bytes, so their little-endian byte order differs from
+        /// their integer order. Deliberately unsorted: the store imposes
+        /// the walk order, not the insertion order.
+        const BOUNDARY_TOKENS: &[u32] = &[
+            0x0000_0200,
+            0x0000_00FF,
+            0x0700_0100,
+            0x0000_0100,
+            0x0000_0001,
+            0x0000_FFFF,
+            0x0000_01FF,
+            0x0700_0001,
+            0x0001_0000,
+            0x0700_00FF,
+            0x00FF_0000,
+            0x0100_0000,
+        ];
+
+        type Rows = Vec<(Vec<u8>, Vec<u8>)>;
+
+        /// Owns a temp store path; removes the data file and any `-lock`
+        /// sidecar (redb keeps none; LMDB and tkrzw do) on drop, so a
+        /// panicking test leaves nothing behind.
+        struct TempPath(std::path::PathBuf);
+
+        impl TempPath {
+            fn new(tag: &str) -> Self {
+                let path = std::env::temp_dir().join(format!(
+                    "oxpinyin-store-keyorder-{tag}-{}.db",
+                    std::process::id(),
+                ));
+                let this = Self(path);
+                this.cleanup();
+                this
+            }
+
+            fn cleanup(&self) {
+                let _ = std::fs::remove_file(&self.0);
+                let mut lock = self.0.clone().into_os_string();
+                lock.push("-lock");
+                let _ = std::fs::remove_file(std::path::PathBuf::from(lock));
+            }
+        }
+
+        impl Drop for TempPath {
+            fn drop(&mut self) {
+                self.cleanup();
+            }
+        }
+
+        /// Insert `keys` (each mapped to a 1-byte value) and return the
+        /// `for_each` walk as owned rows.
+        fn insert_and_walk<S: WriteStore>(path: &Path, keys: &[Vec<u8>]) -> Rows {
+            let store = S::create(path).expect("create store");
+            store
+                .write(|txn| {
+                    for key in keys {
+                        txn.put("data", key, b"v")?;
+                    }
+                    Ok(())
+                })
+                .expect("bulk insert");
+            let mut rows = Rows::new();
+            store
+                .for_each("data", &mut |key, value| {
+                    rows.push((key.to_vec(), value.to_vec()));
+                    Ok(())
+                })
+                .expect("for_each walk");
+            drop(store);
+            rows
+        }
+
+        /// Insert `keys` and return the `range` walk over `[lo, hi)`.
+        fn insert_and_range<S: WriteStore>(
+            path: &Path,
+            keys: &[Vec<u8>],
+            lo: &[u8],
+            hi: &[u8],
+        ) -> Rows {
+            let store = S::create(path).expect("create store");
+            store
+                .write(|txn| {
+                    for key in keys {
+                        txn.put("data", key, b"v")?;
+                    }
+                    Ok(())
+                })
+                .expect("bulk insert");
+            let mut rows = Rows::new();
+            store
+                .range(
+                    "data",
+                    Bound::Included(lo),
+                    Bound::Excluded(hi),
+                    &mut |key, value| {
+                        rows.push((key.to_vec(), value.to_vec()));
+                        Ok(())
+                    },
+                )
+                .expect("range walk");
+            drop(store);
+            rows
+        }
+
+        fn le_keys() -> Vec<Vec<u8>> {
+            BOUNDARY_TOKENS
+                .iter()
+                .map(|t| t.to_le_bytes().to_vec())
+                .collect()
+        }
+
+        fn be_keys() -> Vec<Vec<u8>> {
+            BOUNDARY_TOKENS
+                .iter()
+                .map(|t| t.to_be_bytes().to_vec())
+                .collect()
+        }
+
+        // ── the store contract: byte order, not integer order (redb) ──
+
+        #[test]
+        fn redb_walks_raw_keys_in_byte_order_and_that_is_not_integer_order() {
+            let path = TempPath::new("redb-byteorder");
+            let rows = insert_and_walk::<RedbStore>(&path.0, &le_keys());
+
+            let keys: Vec<&[u8]> = rows.iter().map(|(k, _)| k.as_slice()).collect();
+            assert!(
+                keys.windows(2).all(|w| w[0] < w[1]),
+                "store walk must be strictly ascending by raw byte order",
+            );
+
+            // Non-vacuity: the SAME walk, decoded to integers, is NOT
+            // ascending — byte order and integer order genuinely differ
+            // on this 256-crossing set.
+            let tokens: Vec<u32> = rows
+                .iter()
+                .map(|(k, _)| u32::from_le_bytes([k[0], k[1], k[2], k[3]]))
+                .collect();
+            assert!(
+                !tokens.is_sorted(),
+                "the 256-boundary set must make byte order differ from integer order",
+            );
+        }
+
+        #[test]
+        fn redb_range_walks_byte_order_across_256() {
+            let path = TempPath::new("redb-range");
+            let keys = le_keys();
+            // A window straddling 256 in byte order: LE(0x0000_0100)
+            // (`00 01 00 00`) up to LE(0x0000_00FF) (`FF 00 00 00`).
+            let lo = 0x0000_0100_u32.to_le_bytes();
+            let hi = 0x0000_00FF_u32.to_le_bytes();
+            let rows = insert_and_range::<RedbStore>(&path.0, &keys, &lo, &hi);
+            assert!(!rows.is_empty(), "the range must match rows");
+            let keys: Vec<&[u8]> = rows.iter().map(|(k, _)| k.as_slice()).collect();
+            assert!(
+                keys.windows(2).all(|w| w[0] < w[1]),
+                "range walk must be strictly ascending by raw byte order",
+            );
+            assert!(
+                keys.iter().all(|k| *k >= &lo[..] && *k < &hi[..]),
+                "range must respect its byte-order bounds",
+            );
+        }
+
+        #[test]
+        fn perturbing_encode_endianness_changes_the_store_walk_order() {
+            // Same logical tokens, two encode conventions. Non-vacuity in
+            // pure form: had an encode site used the opposite endianness,
+            // the store would hand back a different order, so any test
+            // asserting a specific order would go red.
+            let path_le = TempPath::new("perturb-le");
+            let path_be = TempPath::new("perturb-be");
+            let le = insert_and_walk::<RedbStore>(&path_le.0, &le_keys());
+            let be = insert_and_walk::<RedbStore>(&path_be.0, &be_keys());
+
+            let le_tokens: Vec<u32> = le
+                .iter()
+                .map(|(k, _)| u32::from_le_bytes([k[0], k[1], k[2], k[3]]))
+                .collect();
+            let be_tokens: Vec<u32> = be
+                .iter()
+                .map(|(k, _)| u32::from_be_bytes([k[0], k[1], k[2], k[3]]))
+                .collect();
+
+            assert!(
+                be_tokens.is_sorted(),
+                "big-endian keys walk in integer order",
+            );
+            assert!(
+                !le_tokens.is_sorted(),
+                "little-endian keys walk in byte order, not integer order",
+            );
+            assert_ne!(
+                le_tokens, be_tokens,
+                "swapping the encode endianness must change the observed walk order",
+            );
+        }
+
+        // ── three-way equivalence: redb == LMDB == tkrzw ──────────────
+
+        /// Asserts every compiled backend yields the same `for_each`
+        /// sequence redb does, on `keys`. redb is always present; LMDB and
+        /// tkrzw join when their features are on, so under
+        /// `--features lmdb,tkrzw` this is the full three-way check.
+        fn assert_for_each_identical(tag: &str, keys: &[Vec<u8>]) -> Rows {
+            let redb_path = TempPath::new(&format!("{tag}-redb"));
+            let reference = insert_and_walk::<RedbStore>(&redb_path.0, keys);
+            #[cfg(feature = "lmdb")]
+            {
+                let p = TempPath::new(&format!("{tag}-lmdb"));
+                assert_eq!(
+                    reference,
+                    insert_and_walk::<LmdbStore>(&p.0, keys),
+                    "redb and LMDB must yield byte-identical for_each sequences",
+                );
+            }
+            #[cfg(feature = "tkrzw")]
+            {
+                let p = TempPath::new(&format!("{tag}-tkrzw"));
+                assert_eq!(
+                    reference,
+                    insert_and_walk::<TkrzwStore>(&p.0, keys),
+                    "redb and tkrzw must yield byte-identical for_each sequences",
+                );
+            }
+            reference
+        }
+
+        #[test]
+        fn for_each_identical_across_backends_le_keys() {
+            let rows = assert_for_each_identical("xback-le", &le_keys());
+            let tokens: Vec<u32> = rows
+                .iter()
+                .map(|(k, _)| u32::from_le_bytes([k[0], k[1], k[2], k[3]]))
+                .collect();
+            assert!(
+                !tokens.is_sorted(),
+                "the shared order must be byte order across 256",
+            );
+        }
+
+        #[test]
+        fn for_each_identical_across_backends_be_keys() {
+            let rows = assert_for_each_identical("xback-be", &be_keys());
+            let tokens: Vec<u32> = rows
+                .iter()
+                .map(|(k, _)| u32::from_be_bytes([k[0], k[1], k[2], k[3]]))
+                .collect();
+            assert!(
+                tokens.is_sorted(),
+                "big-endian keys share integer order across backends",
+            );
+        }
+
+        #[test]
+        fn range_identical_across_backends_across_256() {
+            let keys = le_keys();
+            let lo = 0x0000_0100_u32.to_le_bytes();
+            let hi = 0x0000_00FF_u32.to_le_bytes();
+            let redb_path = TempPath::new("xrange-redb");
+            let reference = insert_and_range::<RedbStore>(&redb_path.0, &keys, &lo, &hi);
+            assert!(!reference.is_empty(), "the range must match rows");
+            #[cfg(feature = "lmdb")]
+            {
+                let p = TempPath::new("xrange-lmdb");
+                assert_eq!(
+                    reference,
+                    insert_and_range::<LmdbStore>(&p.0, &keys, &lo, &hi),
+                    "redb and LMDB must yield byte-identical range sequences",
+                );
+            }
+            #[cfg(feature = "tkrzw")]
+            {
+                let p = TempPath::new("xrange-tkrzw");
+                assert_eq!(
+                    reference,
+                    insert_and_range::<TkrzwStore>(&p.0, &keys, &lo, &hi),
+                    "redb and tkrzw must yield byte-identical range sequences",
+                );
+            }
+        }
+
+        #[test]
+        fn composite_pair_walk_identical_across_backends() {
+            // 8-byte (prev, cur) big-endian pairs — the user-store bigram
+            // key shape — with both components crossing 256.
+            let mut keys: Vec<Vec<u8>> = Vec::new();
+            for &prev in &[0x0000_00FF_u32, 0x0000_0100, 0x0000_0101] {
+                for &cur in &[0x0000_0001_u32, 0x0000_00FF, 0x0000_0100, 0x0001_0000] {
+                    let mut key = Vec::with_capacity(8);
+                    key.extend_from_slice(&prev.to_be_bytes());
+                    key.extend_from_slice(&cur.to_be_bytes());
+                    keys.push(key);
+                }
+            }
+            let rows = assert_for_each_identical("xpair", &keys);
+            let pairs: Vec<(u32, u32)> = rows
+                .iter()
+                .map(|(k, _)| {
+                    (
+                        u32::from_be_bytes([k[0], k[1], k[2], k[3]]),
+                        u32::from_be_bytes([k[4], k[5], k[6], k[7]]),
+                    )
+                })
+                .collect();
+            assert!(
+                pairs.is_sorted(),
+                "big-endian (prev, cur) pairs walk in integer order",
+            );
+        }
     }
 }

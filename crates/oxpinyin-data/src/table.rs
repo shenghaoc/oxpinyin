@@ -332,6 +332,77 @@ mod tests {
     }
 
     #[test]
+    fn store_walk_is_le_byte_ordered_so_loaders_append_without_sorting() {
+        use oxpinyin_store::{DefaultStore, WriteStore};
+
+        // Tokens crossing the 256 boundary, where little-endian byte order
+        // and integer order diverge. Inserted unsorted so the walk order is
+        // the store's, not ours. Includes the USER_DICTIONARY nibble region
+        // (0x0700_00xx) to cross 256 in a low byte under a high one.
+        let tokens: [u32; 10] = [
+            0x0000_0200,
+            0x0000_00FF,
+            0x0700_0100,
+            0x0000_0100,
+            0x0000_0001,
+            0x0000_FFFF,
+            0x0000_01FF,
+            0x0700_0001,
+            0x0001_0000,
+            0x0700_00FF,
+        ];
+        let path = std::env::temp_dir().join(format!(
+            "oxpinyin-data-le-invariant-{}.redb",
+            std::process::id(),
+        ));
+        let _ = std::fs::remove_file(&path);
+        let store = DefaultStore::create(&path).unwrap();
+        store
+            .write(|txn| {
+                for token in tokens {
+                    txn.put("data", &token.to_le_bytes(), b"v")?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        drop(store);
+
+        // Walk the committed table the way the typed loaders do: append each
+        // row in store-walk order, wrapping the decoded token in LeByteKey.
+        let mut walked: Vec<(LeByteKey, ())> = Vec::new();
+        let mut raw_tokens: Vec<u32> = Vec::new();
+        for_each_row::<TableError, _>(&path, |key, _value| {
+            let token = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
+            raw_tokens.push(token);
+            walked.push((LeByteKey::new(token), ()));
+            Ok(())
+        })
+        .unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(walked.len(), tokens.len(), "every row must be walked");
+
+        // The load-without-sort invariant: the walk is ALREADY strictly
+        // ascending under LeByteKey, so `ensure_sorted_unique` takes its O(n)
+        // fast path and never re-sorts — the append is sound.
+        assert!(
+            walked.is_sorted_by(|a, b| a.0 < b.0),
+            "store walk must already be LeByteKey-sorted",
+        );
+        let before = walked.clone();
+        ensure_sorted_unique(&mut walked);
+        assert_eq!(walked, before, "a well-formed store walk needs no repair");
+
+        // Non-vacuity: the SAME walk is NOT ascending by raw integer token.
+        // A loader that assumed integer order (the opposite convention) would
+        // mis-binary-search on this set — the drift this invariant catches.
+        assert!(
+            !raw_tokens.is_sorted(),
+            "the 256-boundary set must make byte order differ from integer order",
+        );
+    }
+
+    #[test]
     fn iter_all_fixture_files() {
         let dir = fixtures_dir();
         for entry in std::fs::read_dir(&dir).unwrap() {

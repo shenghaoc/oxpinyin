@@ -16,6 +16,7 @@ oxpinyin-store = { workspace = true }
 
 [features]
 lmdb = ["oxpinyin-store/lmdb"]
+tkrzw = ["oxpinyin-store/tkrzw"]
 
 [dev-dependencies]
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
