@@ -32,10 +32,14 @@
 //! This is weaker than what redb and LMDB give. Their commits are
 //! crash-atomic: a torn write is rolled back on the next open. TreeDBM
 //! has no write-ahead log, so a crash *during* the `ProcessMulti` apply
-//! can leave part of a batch on disk. Every commit calls `Synchronize`
-//! so the file is consistent and visible once the call returns, but a
-//! backend comparison should record the difference rather than read
-//! `write` as three equivalent implementations.
+//! can leave part of a batch on disk. Every commit calls
+//! `Synchronize(hard=false)`: buffered data is flushed to the operating
+//! system, so once the call returns the file on disk is consistent and
+//! visible to any reader, including after a process crash. That is not
+//! stable storage, though — the bytes are in the kernel's hands, and a
+//! machine crash or power loss can still lose them. A backend
+//! comparison should record the difference rather than read `write` as
+//! three equivalent implementations.
 //!
 //! # Platform and the library build
 //!
@@ -60,6 +64,7 @@
 
 mod bridge;
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Bound;
@@ -419,30 +424,52 @@ impl TkrzwWriteTxn<'_> {
             .filter(move |(user, _)| in_bounds(user, lo, hi))
     }
 
-    /// The stored rows of `table` inside `(lo, hi)`, with this
-    /// transaction's buffer laid over them.
-    fn merged(
+    /// Feeds `visit` every live row of `table` inside `(lo, hi)`, with
+    /// this transaction's buffer laid over storage. The stored cursor
+    /// and the buffered rows are merged in ascending framed-key order as
+    /// a stream — a buffered value overrides its stored twin, a buffered
+    /// tombstone hides it — so no call materialises the result set.
+    fn merged_visit(
         &self,
         prefix: &[u8],
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-    ) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, StoreError> {
-        let mut rows = BTreeMap::new();
-        scan(self.db, prefix, lo, hi, &mut |key, value| {
-            rows.insert(key.to_vec(), value.to_vec());
-            Ok(true)
-        })?;
-        for (user_key, slot) in self.buffered(prefix, lo, hi) {
-            match slot {
-                Some(value) => {
-                    rows.insert(user_key.to_vec(), value.clone());
-                }
-                None => {
-                    rows.remove(user_key);
+        visit: &mut Visitor<'_>,
+    ) -> Result<(), StoreError> {
+        let mut buffered = self.buffered(prefix, lo, hi).peekable();
+        scan(self.db, prefix, lo, hi, &mut |stored_key, stored_value| {
+            // Buffered keys below the stored one have no stored twin:
+            // the live ones are inserts, the dead ones tombstones.
+            while let Some(&(key, slot)) = buffered.peek() {
+                match key.cmp(stored_key) {
+                    Ordering::Less => {
+                        buffered.next();
+                        if let Some(value) = slot {
+                            visit(key, value)?;
+                        }
+                    }
+                    // Equal key: the buffer overrides storage either way.
+                    Ordering::Equal => {
+                        buffered.next();
+                        if let Some(value) = slot {
+                            visit(key, value)?;
+                        }
+                        return Ok(true);
+                    }
+                    Ordering::Greater => break,
                 }
             }
+            visit(stored_key, stored_value)?;
+            Ok(true)
+        })?;
+        // Past the last stored row, whatever buffering remains is all
+        // inserts.
+        for (key, slot) in buffered {
+            if let Some(value) = slot {
+                visit(key, value)?;
+            }
         }
-        Ok(rows)
+        Ok(())
     }
 }
 
@@ -480,10 +507,7 @@ impl WriteTxn for TkrzwWriteTxn<'_> {
         visit: &mut Visitor<'_>,
     ) -> Result<(), StoreError> {
         let prefix = table_prefix(table)?;
-        for (key, value) in self.merged(&prefix, lo, hi)? {
-            visit(&key, &value)?;
-        }
-        Ok(())
+        self.merged_visit(&prefix, lo, hi, visit)
     }
 
     fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {

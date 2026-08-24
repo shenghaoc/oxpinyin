@@ -38,6 +38,11 @@ mod tkrzw {
         println!("cargo:rerun-if-changed=src/tkrzw/shim.cc");
         println!("cargo:rerun-if-changed=src/tkrzw/shim.h");
         println!("cargo:rerun-if-changed=src/tkrzw/bridge.rs");
+        // The pkg-config lookup below decides the include path, the
+        // link path and the embedded rpath; repointing it at a
+        // different tkrzw installation must rerun this script, not
+        // reuse the cached flags.
+        println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
 
         let Some(cflags) = pkg_config("--cflags") else {
             panic!(
@@ -82,6 +87,15 @@ mod tkrzw {
                 // A tkrzw outside the default loader path — the usual
                 // case, since a correct build often has to be made by
                 // hand — would otherwise link but fail to start.
+                //
+                // The unscoped rustc-link-arg reaches every binary
+                // cargo links in this graph (workspace bins, tests,
+                // benches), so they run without environment setup.
+                // That rpath is a convenience, not the contract: code
+                // that consumes the shim outside such a build, or
+                // strips runpaths from its artifacts, must make the
+                // library findable itself via LD_LIBRARY_PATH or its
+                // own rpath setting.
                 println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
             }
         }

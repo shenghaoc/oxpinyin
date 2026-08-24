@@ -505,13 +505,15 @@ mod tests {
     #[cfg(feature = "tkrzw")]
     use std::ops::Bound;
 
+    #[cfg(feature = "lmdb")]
+    use super::LmdbStore;
     #[cfg(any(feature = "lmdb", feature = "tkrzw"))]
     use super::ReadStore;
+    #[cfg(any(feature = "lmdb", feature = "tkrzw"))]
+    use super::StoreError;
     #[cfg(feature = "tkrzw")]
     use super::TkrzwStore;
     use super::WriteStore;
-    #[cfg(feature = "lmdb")]
-    use super::{LmdbStore, StoreError};
 
     /// Emits the temp-path plumbing every tier group needs.
     ///
@@ -1210,6 +1212,20 @@ mod tests {
         ));
         assert!(matches!(
             LmdbStore::open_read_only(&path),
+            Err(StoreError::InvalidInput("path contains NUL"))
+        ));
+    }
+
+    #[cfg(feature = "tkrzw")]
+    #[test]
+    fn tkrzw_rejects_nul_path() {
+        let path = std::path::PathBuf::from("oxpinyin-store\0invalid.tkrzw");
+        assert!(matches!(
+            TkrzwStore::create(&path),
+            Err(StoreError::InvalidInput("path contains NUL"))
+        ));
+        assert!(matches!(
+            TkrzwStore::open_read_only(&path),
             Err(StoreError::InvalidInput("path contains NUL"))
         ));
     }
