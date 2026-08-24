@@ -179,7 +179,7 @@ enum RedbInner {
     ReadWrite(redb::Database),
 }
 
-/// A redb-backed store implementing all three capability tiers.
+/// A redb-backed store implementing both capability tiers.
 pub struct RedbStore {
     inner: RedbInner,
 }
@@ -1193,6 +1193,60 @@ mod tests {
                 Ok(())
             })
             .unwrap();
+        drop(store);
+    }
+
+    #[cfg(feature = "tkrzw")]
+    #[test]
+    fn tkrzw_scan_keeps_every_borrowed_record_intact() {
+        // The zero-copy walk hands the visitor a pointer into tkrzw's
+        // record buffer that is valid only for that record's callback. A
+        // use-after-free of that borrow corrupts LATER records, not the
+        // first — the iterator invalidates or reuses the memory a prior
+        // callback read. Walk many records and verify each key and value
+        // in place as it is visited, so a stale read fails the assertion
+        // rather than passing silently.
+        fn expected_value(i: u32) -> [u8; 32] {
+            let mut value = [0u8; 32];
+            for (j, byte) in value.iter_mut().enumerate() {
+                *byte = i.wrapping_add(j as u32) as u8;
+            }
+            value
+        }
+
+        let path = std::env::temp_dir().join(format!(
+            "oxpinyin-store-tkrzw-scan-many-{}.tkrzw",
+            std::process::id(),
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _cleanup = RemoveTkrzw(path.clone());
+        let store = TkrzwStore::create(&path).unwrap();
+
+        const RECORDS: u32 = 10_000;
+        store
+            .write(|txn| {
+                for i in 0..RECORDS {
+                    txn.put("t", &i.to_be_bytes(), &expected_value(i))?;
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        let mut seen = 0u32;
+        store
+            .for_each("t", &mut |key, value| {
+                let i = u32::from_be_bytes(key.try_into().unwrap());
+                assert_eq!(i, seen, "scan must visit keys in ascending order");
+                assert_eq!(
+                    value,
+                    &expected_value(i),
+                    "record {i} came back corrupt — borrowed buffer invalidated early"
+                );
+                seen += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(seen, RECORDS, "every record must be visited exactly once");
         drop(store);
     }
 
