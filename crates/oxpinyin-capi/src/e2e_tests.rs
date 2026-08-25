@@ -1128,3 +1128,119 @@ fn a_selection_committed_composition_reparses_fresh() {
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
+
+#[test]
+fn predicted_tie_groups_are_text_ascending_including_user_rows() {
+    use crate::sentence::pinyin_guess_predicted_candidates_with_punctuations;
+    use crate::types::lookup_candidate_type_t;
+
+    /// Mirror of predict.rs's private `amplified_frequency` — the same
+    /// mirroring convention as `amplified_law_mirrors_the_session_pinning_values`.
+    fn amplified(baked: u64, total: u64) -> u64 {
+        if total == 0 {
+            return 0;
+        }
+        let possibility = (1.0_f32 - 0.312_699_f32) * baked as f32 / total as f32;
+        u64::from((possibility * 256.0 * 256.0 * 256.0) as u32)
+    }
+
+    let user_dir = TempUserDir::new("pred-defined-order");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    // Populate the USER seam: the prefix phrase 中 (a fixture phrase too,
+    // so the system side also contributes), then two user phrases under
+    // it whose TEXT order (华 U+534E before 年 U+5E74) is the REVERSE of
+    // their token order (中年 is added first, so its token is lower).
+    // Under the removed token pre-sort the tie group emitted 中年 then
+    // 中华; the defined order is text-ascending.
+    let iter = pinyin_begin_add_phrases(context, 7);
+    assert!(!iter.is_null());
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("\u{4e2d}").as_ptr(),
+        cstr("zhong").as_ptr(),
+        9
+    ));
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("\u{4e2d}\u{5e74}").as_ptr(),
+        cstr("zhongnian").as_ptr(),
+        7
+    ));
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("\u{4e2d}\u{534e}").as_ptr(),
+        cstr("zhonghua").as_ptr(),
+        7
+    ));
+    pinyin_end_add_phrases(iter);
+
+    let prefix = cstr("\u{4e2d}");
+    assert!(pinyin_guess_predicted_candidates_with_punctuations(
+        instance,
+        prefix.as_ptr()
+    ));
+
+    // SAFETY: live instance immediately after the guess.
+    let inst = unsafe { instance_ref(instance) };
+    let total = inst
+        .lm
+        .amplified_total(inst.dict.system().unigram_map().len() as u64);
+    let rows: Vec<(String, usize, u64)> = inst
+        .candidates
+        .iter()
+        .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)
+        .map(|c| {
+            let baked = c
+                .token
+                .and_then(|t| inst.dict.system().unigram_count(t.value()))
+                .unwrap_or(0);
+            (
+                c.text.to_str().expect("candidate text is UTF-8").to_owned(),
+                c.text
+                    .to_str()
+                    .expect("candidate text is UTF-8")
+                    .chars()
+                    .count(),
+                amplified(baked, total),
+            )
+        })
+        .collect();
+
+    // The user rows survived the prefix slice and reached the list.
+    let texts: Vec<&str> = rows.iter().map(|(text, _, _)| text.as_str()).collect();
+    assert!(texts.contains(&"\u{534e}"), "中华 sliced to 华: {texts:?}");
+    assert!(texts.contains(&"\u{5e74}"), "中年 sliced to 年: {texts:?}");
+
+    // DEFINED ORDER: the emitted list is sorted by the comparator's keys
+    // (length desc, amplified frequency desc) with TEXT ASCENDING inside
+    // every tie group — equivalently, no later row in the same group may
+    // sort before an earlier one. Covers the user seam: 华 and 年 tie
+    // (both user rows, equal baked count 0) and must appear 华-first.
+    for (i, (text_a, len_a, freq_a)) in rows.iter().enumerate() {
+        for (text_b, len_b, freq_b) in rows.iter().skip(i + 1) {
+            if len_a == len_b && freq_a == freq_b {
+                assert!(
+                    text_a <= text_b,
+                    "tie group out of defined order: {text_a:?} before {text_b:?} \
+                     in {rows:?}"
+                );
+            }
+        }
+    }
+    let hua = texts
+        .iter()
+        .position(|t| *t == "\u{534e}")
+        .expect("华 present");
+    let nian = texts
+        .iter()
+        .position(|t| *t == "\u{5e74}")
+        .expect("年 present");
+    assert!(
+        hua < nian,
+        "text order, not token order, inside the user tie group"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}

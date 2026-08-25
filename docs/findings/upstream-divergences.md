@@ -308,13 +308,15 @@ inputs (the pin-built `.so` SIGABRTs).
   foreign DBM layout is not derivable from any key, so matching the pin's
   order exactly would mean replicating the Tkrzw hash layout or freezing
   per-prefix orders as fixture data.
-- **Externally observable:** yes — the row order of
-  `PREDICTED_PREFIX` candidates from
-  `pinyin_guess_predicted_candidates[_with_punctuations]`. Measured on
-  prefix 好 over the matched model20 tables: sets identical after the
-  prefix slice, 174 of 178 rows at different positions
-  (`tools/bisection/pred-order-diff.c`, the moving-number gate for the
-  B1 fix in `docs/findings/uncovered-surface-differentials.md`).
+- **Externally observable:** yes — the row order of `PREDICTED_PREFIX`
+  candidates from `pinyin_guess_predicted_candidates[_with_punctuations]`.
+  The sets are identical after the prefix slice (closed by the B1 fix —
+  the slice lands in `predict.rs`), and every response is divergent on
+  position only. Position mismatches vs the pin, matched model20 tables:
+  **177/178 on 好, 1557/1571 across the eight measurement prefixes**
+  (the text-ascending order; the pre-switch token-ascending order was
+  174/178 and 1541/1571). The gate is `tools/bisection/pred-order-diff.c`
+  on the measurement branch.
 
 **Decision (maintainer, 2026-08-25): a defined order, not fixture-frozen
 parity.** The pin's order is a compile-time artifact of its DBM choice
@@ -326,20 +328,36 @@ anyone — joining the trellis-float entry as "upstream deterministic but
 not reproducibly so." Two consequences, stated explicitly:
 
 1. oxpinyin **permanently diverges from the pin on list positions**
-   for predicted candidates. The parity number (174/178 on 好,
-   1541/1571 across the eight measurement prefixes) becomes a recorded
-   constant, not a target of zero.
+   for predicted candidates. The parity number (177/178 on 好,
+   1557/1571 across the eight measurement prefixes — measured after
+   the text-ascending switch) is a recorded constant, not a target
+   of zero.
 2. The pred-order gate therefore **changes meaning**: from a parity
    assertion (drive to zero) to a **defined-order assertion** — the
-   emitted list must equal the defined text-ascending order. The
-   runner on the measurement branch needs a follow-up mode for that
-   (compare the capi list against its own text-sorted self, keeping
-   the oracle comparison as the recorded-divergence constant).
+   emitted list equals its own defined text-ascending order
+   (within the comparator's `(char count, amplified frequency)`
+   tie groups). Implemented in-tree: the capi e2e test
+   `predicted_tie_groups_are_text_ascending_including_user_rows`;
+   the runner comparison against the pin stays as the
+   recorded-divergence constant.
 
-Landing state after the B1 PR: the slice and amplified wiring are in;
-the within-tie order is currently **token-ascending** (the
-`suggest_after`/`append_predicted_prefix` pre-sorts, `dict.rs:215`,
-`predict.rs`) — already a defined, build-stable order, but not yet the
-chosen text-ascending one. The follow-up that completes this decision
-drops the two token pre-sorts so the `BTreeMap` text order survives the
-stable sort's tie groups.
+**Completed (fix/predicted-text-order):** the token pre-sorts are gone —
+three sites, not two: `SystemDictionary::suggest_after`
+(`dict.rs:215`), `append_predicted_prefix` (`predict.rs`), and the user
+seam `UserLookup::suggest_after` (`oxpinyin-user/src/lookup.rs`). The
+`BTreeMap` text-ascending walk (token-ascending within one text) now
+survives the stable sort's tie groups, on the system and user seams
+alike — measured new drift constants 177/178 (好) and 1557/1571
+eight prefixes. The defined-order predicate is asserted by the capi
+e2e test `predicted_tie_groups_are_text_ascending_including_user_rows`
+(grouping by the comparator's exact `(char count, amplified frequency)`
+key, populated user store included); the oracle comparison remains the
+recorded drift constant, *not* a target of zero.
+
+**Homograph nuance (frontend-invisible):** within one text the
+per-text token vector stays token-ascending (`build_text_tokens`), so
+a homograph row keeps the same surviving token under the defined order;
+the one case that can differ is a system-vs-user text duplicate — the
+system row now always precedes the user row, so with a populated user
+store the **token recorded on the surviving dedup row** can differ.
+Text, candidate type and counts cannot.

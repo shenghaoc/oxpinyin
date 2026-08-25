@@ -146,6 +146,12 @@ impl UserLookup {
 
     /// Tokens whose phrase text starts with `prefix` and is longer, when
     /// `prefix` itself is a stored phrase.
+    ///
+    /// Rows come out in the DEFINED prediction order — the reverse map's
+    /// text-ascending walk, token-ascending within one text — the same
+    /// order the system seam yields (`SystemDictionary::suggest_after`),
+    /// so populated user stores cannot reorder the tie groups
+    /// (`upstream-divergences.md`, "Predicted-candidate tie order").
     #[must_use]
     pub fn suggest_after(&self, prefix: &str) -> Vec<(u32, String)> {
         if prefix.is_empty() || !self.text_tokens.contains_key(prefix) {
@@ -163,7 +169,6 @@ impl UserLookup {
                 out.push((*token, text.clone()));
             }
         }
-        out.sort_by_key(|(token, _)| *token);
         out
     }
 }
