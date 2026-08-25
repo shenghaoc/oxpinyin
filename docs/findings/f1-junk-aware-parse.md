@@ -39,8 +39,20 @@ It recovered ~107 absent cases only because putting junk into `raw` let **`Segme
 |---|---|---|
 | `process_key` | `a-z` and `'` only | Interactive typing; frozen `session-api.md` |
 | `type_pinyin` | printable ASCII (`char::is_ascii_graphic()`) | Parity / batch harness; keeps junk in `raw` |
+| `replace_raw` | every character (2026-08-26, closing class B2) | capi `pinyin_parse_more_*` seam; keeps the bytes the pin stops at |
 
 No change to `FullPinyinParser`, `parser-spec.md`, or `session-api.md`. The decoder (`SegmentGraph::build` on `raw`) already stops the reachable prefix at the first non-syntax byte.
+
+**2026-08-26 addendum (parse-termination):** `replace_raw` originally
+shared the `type_pinyin` filter, which silently dropped space, control,
+and non-ASCII bytes before the decoder saw them — the engine "parsed
+past" bytes the pin stops at (class B2 of
+`uncovered-surface-differentials.md`: `ni hao` → 5 vs the pin's 2,
+`，nihao` → 5 vs 0). The filter is now a `type_pinyin`-only property:
+`replace_raw` keeps every character so the decoder hard-stops on them,
+exactly the pin's emergent termination. The split is load-bearing: the
+corpus and sentence pins feed through `type_pinyin` only — no path
+reaches `replace_raw` — so the loosened seam cannot move them.
 
 ## Design: split accept sets for interactive vs batch
 

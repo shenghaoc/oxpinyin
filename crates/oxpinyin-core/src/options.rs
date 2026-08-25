@@ -15,6 +15,15 @@ pub const ZHUYIN_INCOMPLETE: u32 = 1 << 4;
 /// `USE_TONE = 1U << 5` (`pinyin_custom2.h:36`).
 pub const USE_TONE: u32 = 1 << 5;
 
+/// `FORCE_TONE = 1U << 6` (`pinyin_custom2.h:37`). Rejected by the
+/// `pinyin_custom2.h` header mirror in `oxpinyin-capi` (the bit arrives
+/// only through the raw `pinyin_set_options` word); the parser honours it
+/// nested inside `USE_TONE` exactly like the pin
+/// (`pinyin_parser2.cpp:176-190`), and nowhere else — the double-pinyin
+/// and zhuyin shapes are a different law, unmeasured here
+/// (`docs/findings/upstream-divergences.md`).
+pub const FORCE_TONE: u32 = 1 << 6;
+
 /// `DYNAMIC_ADJUST = 1U << 9` (`pinyin_custom2.h:40`).
 pub const DYNAMIC_ADJUST: u32 = 1 << 9;
 
@@ -108,6 +117,15 @@ impl OptionBits {
         self.contains(DYNAMIC_ADJUST)
     }
 
+    /// Whether `FORCE_TONE` is set. Dead without `USE_TONE` — the pin
+    /// nests the force-tone rejection inside the tone scan
+    /// (`pinyin_parser2.cpp:176-190`), so a word like `0x1ca` (the parity
+    /// word plus `FORCE_TONE`, no `USE_TONE`) is inert.
+    #[must_use]
+    pub const fn has_force_tone(self) -> bool {
+        self.contains(FORCE_TONE)
+    }
+
     /// Sets or clears `bit` and returns the updated set.
     #[must_use]
     pub const fn with(self, bit: u32, enabled: bool) -> Self {
@@ -123,6 +141,8 @@ mod tests {
     fn bit_values_match_the_frozen_header() {
         assert_eq!(PINYIN_INCOMPLETE, 0x8);
         assert_eq!(ZHUYIN_INCOMPLETE, 0x10);
+        assert_eq!(USE_TONE, 0x20);
+        assert_eq!(FORCE_TONE, 0x40);
         assert_eq!(DYNAMIC_ADJUST, 0x200);
         assert_eq!(PINYIN_AMB_ALL, 0x3ff << 10);
         assert_eq!(PINYIN_CORRECT_ALL, 0xff << 21);

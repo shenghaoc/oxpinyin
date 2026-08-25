@@ -488,3 +488,29 @@ Text, candidate type and counts cannot.
   it instead of rediscovering it; the sibling abort on the same input
   (`pinyin_get_pinyin_key`) remains F-E-14 in
   `oracle-apostrophe-abort.md`.
+
+### FORCE_TONE is honoured on the full-pinyin seam only — the double/zhuyin shapes are a different, unported law
+
+- **Upstream source cite:** `src/storage/pinyin_parser2.cpp:412` and
+  `:448` (`DoublePinyinParser2::parse_one_key`: `if (options & FORCE_TONE
+  && 3 != len) return false;` — NOT nested under `USE_TONE`, and a
+  length-3 requirement the full-pinyin parser does not have — plus the
+  zero-tone rejection at `:448`); `PinyinDirectParser2::parse_one_key`
+  carries the full-pinyin-shaped check (`:645`).
+- **Mechanism:** the pin gives each scheme parser its own FORCE_TONE
+  semantics; the double-pinyin one is a genuinely different law (a
+  two-key-plus-tone length gate).
+- **What oxpinyin does instead:** implements the measured surface — the
+  full-pinyin law, nested inside `USE_TONE` exactly like the pin
+  (`pinyin_parser2.cpp:176-190` ported to `graph.rs::tone_split`) — and
+  leaves the double/zhuyin parsers untouched. The measured C1 surface of
+  the uncovered-surface differential is full-pinyin only; porting the
+  scheme-parser shapes unmeasured is exactly what would perturb the
+  frozen double/zhuyin scheme sweeps.
+- **Externally observable:** yes — a frontend setting FORCE_TONE on a
+  double-pinyin scheme gets the full-pinyin behaviour (no effect without
+  `USE_TONE` on that seam) rather than the pin's length-3 gate. Recorded
+  as a scope boundary, not an oversight: the port lands with a measured
+  double/zhuyin FORCE_TONE differential. The full-pinyin seam itself
+  matches the pin (capi e2e `parse_termination` module, harness phase-C
+  0x60 probes closed).
