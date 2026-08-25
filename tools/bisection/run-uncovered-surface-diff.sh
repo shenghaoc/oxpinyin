@@ -60,7 +60,7 @@ echo "capi: $CAPI_SO"
 # compared nothing for that surface and must not report IDENTICAL.
 probe_surfaces() {
     grep -q '^page-r0-shi:page=0' "$1" && \
-    grep -q '^punct-hao:predict=1' "$1" && \
+    grep -q '^punct-hao:predict=' "$1" && \
     grep -q '^opt:0x60-ni3hao3@0:parsed=' "$1" && \
     grep -q '^cur:0 aux=' "$1"
 }
@@ -99,25 +99,24 @@ fi
 echo "--- capi side ---"
 CAPI_LOG="$(mktemp)"
 CAPI_ERR="$(mktemp)"
+ORACLE_LOG="$(mktemp)"
+ORACLE_ERR="$(mktemp)"
+trap 'rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"' EXIT
 if ! ./uncovered-surface-diff "$CAPI_SO" "$SYSTEM" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
     echo "FAIL: uncovered-surface-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     echo "--- driver diagnostics (stderr) ---"
     cat "$CAPI_ERR"
-    rm -f "$CAPI_LOG" "$CAPI_ERR"
     exit 1
 fi
 echo "oxpinyin-capi: ok"
 
 echo "--- oracle side ---"
-ORACLE_LOG="$(mktemp)"
-ORACLE_ERR="$(mktemp)"
 if ! ./uncovered-surface-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
     echo "FAIL: uncovered-surface-diff crashed against oracle"
     cat "$ORACLE_LOG"
     echo "--- driver diagnostics (stderr) ---"
     cat "$ORACLE_ERR"
-    rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
     exit 1
 fi
 echo "oracle: ok"
@@ -127,7 +126,6 @@ if ! probe_surfaces "$CAPI_LOG" || ! probe_surfaces "$ORACLE_LOG"; then
     echo "FAIL: a phase surface is inactive (paging / punct / profiles / cursor)"
     echo "  A missing page walk, punct prediction, profile probe, or cursor"
     echo "  table means that phase compared nothing."
-    rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
     exit 1
 fi
 echo "all four phase surfaces active on both sides"
@@ -139,15 +137,12 @@ if (( diff_status > 1 )); then
     # diff's own failure (an unreadable log, an I/O error) is a harness
     # failure, not a measured divergence — never the intentional exit 2.
     echo "FAIL: could not compare the differential logs (diff status $diff_status)" >&2
-    rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
     exit 1
 fi
 if (( diff_status == 0 )); then
     echo "uncovered-surface-diff: IDENTICAL"
-    rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
     exit 0
 fi
 echo "DIVERGENCE (paging / punct / option profiles / cursor surfaces)"
 diff -u "$ORACLE_LOG" "$CAPI_LOG" || true
-rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
 exit 2

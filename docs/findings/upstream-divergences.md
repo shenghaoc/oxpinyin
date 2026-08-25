@@ -294,10 +294,18 @@ inputs (the pin-built `.so` SIGABRTs).
   libraries' tokens (27 library switches observed in one prefix's list).
   Deterministic for a given file and tkrzw version; not expressible as a
   sort key over (text, token, library).
-- **What oxpinyin does instead:** `SystemDictionary::suggest_after`
+- **What oxpinyin does instead:** the prediction pipeline has three
+  stages. (1) Collection — `SystemDictionary::suggest_after`
   (`crates/oxpinyin-data/src/dict.rs:196-217`) walks a
-  `BTreeMap<String, Vec<u32>>` in text order; the hash bucket order of a
-  foreign DBM layout is not derivable from any key. Matching the pin's
+  `BTreeMap<String, Vec<u32>>` in text order, collecting every phrase that
+  starts with the prefix, then sorts that collection by token ascending.
+  (2) Ranking — `guess_predicted` (`crates/oxpinyin-capi/src/predict.rs`)
+  applies a stable sort whose primary comparator is **phrase length,
+  descending**, tie-broken by **amplified frequency, descending**, so the
+  final order is determined by that comparator (and the stable collection
+  order within a full tie), NOT directly by the `BTreeMap` walk. (3)
+  Deduplication drops repeats by phrase text. The hash bucket order of a
+  foreign DBM layout is not derivable from any key, so matching the pin's
   order exactly would mean replicating the Tkrzw hash layout or freezing
   per-prefix orders as fixture data.
 - **Externally observable:** yes — the row order of

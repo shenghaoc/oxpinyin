@@ -368,16 +368,17 @@ ranked C2 first while both classes were "divergences"; the B1
 verification (user-visible text corruption in a shipping frontend path,
 vs C2 latent-until-a-frontend-adds-cursor-editing) inverts it:
 
-1. **B1 first, in one pass.** Live, user-visible committed-text
-   corruption (你好 + 你好世界), the smallest surface of the six, and
-   one seam (`predict.rs`): the prefix subtraction closes the
-   corruption, the amplified-law wiring is a one-line exactness call,
-   and the residual row order behind the uniform-count tie is the
-   recorded store-layout divergence (see the root-cause correction and
-   `upstream-divergences.md`), not a comparator to port. The phase-B
-   probes gate the text shape; `pred-order-diff` reports the order
-   number (baseline 好=174/178) so the PR can show what moved and what
-   is recorded divergence.
+1. **B1 — landed in #173 (resolved).** The prefix subtraction closed
+   the user-visible committed-text corruption (你好 + 你好世界) and the
+   amplified-law wiring landed as the one-line exactness call. The
+   residual row order behind the uniform-count tie is the recorded
+   store-layout divergence (174/178 on 好; see the root-cause correction
+   and `upstream-divergences.md`), not a comparator to port, and the
+   maintainer chose the intentional text-ascending order over
+   fixture-frozen parity — so B1's only standing item is that recorded
+   order divergence, not open work. `pred-order-diff` reports the order
+   number so the PR could show what moved and what is recorded
+   divergence.
 2. **C2 next.** A genuine `pinyin_guess_candidates` divergence under
    the parity word on ordinary input, invisible only because the corpus
    never varied the offset and post-choose windows are constrained. No
@@ -401,11 +402,14 @@ forward.
 
 Measurement only: no engine, capi, data, or parser code is touched, and
 no pin, gate, or CI policy changes. The differential is not wired into
-CI; exit 2 is its measured state until a later PR closes the classes
-(C1 parser rejection, C2 offset-anchored windows, B1 prefix slicing and
-prediction order, B2 stop-byte parse, D1/D2 the provisional cursor
-functions). Pins re-verified bit-identical after this change (see the
-PR report); fmt/clippy/tests green. The 2026-08-25 amendment (B1
-consequence, C2 framing, priorities) is docs-only and re-verified the
-same way: the branch delta vs `origin/main` is `tools/bisection/` +
-this doc + one `.gitignore` line, so no pin can move.
+CI; exit 2 is its measured state. B1 (prefix slicing) landed in #173 —
+resolved there, leaving only the intentional text-ascending order
+divergence (the recorded Tkrzw bucket-walk residual, 174/178 on hao;
+see `upstream-divergences.md`) as B1's standing item. The still-open
+classes are C1 parser rejection, C2 offset-anchored windows, B2
+stop-byte parse, and D1/D2 the provisional cursor functions. Pins
+re-verified bit-identical after this change (see the PR report);
+fmt/clippy/tests green. The 2026-08-25 amendment (B1 consequence, C2
+framing, priorities) is docs-only and re-verified the same way: the
+branch delta vs `origin/main` is `tools/bisection/` + this doc + one
+`.gitignore` line, so no pin can move.
