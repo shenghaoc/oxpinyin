@@ -1,6 +1,6 @@
 # Findings — uncovered-surface differentials (paging, punct modes, option profiles, cursor moves)
 
-Date: 2026-08-24, amended 2026-08-25 · Status: W12 live-typing
+Date: 2026-08-24, amended twice 2026-08-25 · Status: W12 live-typing
 enumeration, part 2; classes assigned, no fix. The 2026-08-25 amendment
 verifies B1's user-visible consequence against both frontends, reframes
 C2 as the candidate-window divergence it is, and records the review
@@ -124,12 +124,14 @@ computation slices from it (`_token_get_phrase(..., candidate->m_begin,
 (好莱坞 is row 2 on the pin, row 6 on the capi; 好不好/好半天 lead the
 capi list and sit outside the pin's first ten), while the window count
 `n` agrees per prefix (180/288/592/71/127/169/101/60) — same-count,
-differently-ordered lists with a different text shape. Whether the two
-180-row sets coincide beyond the captured head-12 is unmeasured
-(head-only capture). This surface was never compared before: the W11
-prediction drivers ran mini-table capi against full-table oracle and
-skipped the phrase rows (`prediction-punct.md`: "those drivers … the
-punctuation list is compared … on prefixes present in both tables").
+differently-ordered lists with a different text shape. ~~Whether the two
+180-row sets coincide beyond the captured head-12 is unmeasured~~
+(**measured 2026-08-25, see the root-cause note below: the sets
+coincide exactly after slicing**). This surface was never compared
+before: the W11 prediction drivers ran mini-table capi against
+full-table oracle and skipped the phrase rows (`prediction-punct.md`:
+"those drivers … the punctuation list is compared … on prefixes present
+in both tables").
 
 **Verified consequence (2026-08-25): an engine-side correctness bug,
 user-visible today — not a ranking nuance to ledger.** Both known
@@ -147,8 +149,45 @@ full-phrase text the prefix is duplicated (commit 你好, select the
 你好世界 row → the document reads 你好你好世界), and the panel itself
 already displays the typed prefix inside every suggestion. The fix
 (slice the prefix from the predicted text, `m_begin = prefix_len`) is
-independently fix-worthy regardless of the order/membership half of
-this class.
+independently fix-worthy regardless of the order half of this class.
+
+**Root cause (2026-08-25): one seam, three laws — fix in one pass, not
+two PRs.** All of B1 lives in `predict.rs`
+(`guess_predicted` + `append_predicted_prefix`), and the class is the
+prediction path missing three upstream laws that the normal candidate
+path already carries:
+
+1. **The prefix subtraction.** The pin subtracts `m_begin` twice —
+   from the display string (`_token_get_phrase` slices,
+   `pinyin.cpp:2018-2023`) *and* from the sort key
+   (`_compute_phrase_length` sets `m_phrase_length =
+   get_phrase_length() − m_begin`, `pinyin.cpp:1976-1980`). The capi
+   neither slices nor subtracts: one omission drives both the text
+   corruption and the length component of the order.
+2. **The amplified frequency law.** The pin's predicted sort key is
+   the Class A law — `(1−λ)·unigram/total·2²⁴` truncated
+   (`pinyin.cpp:1858-1866`; `prev_token` is null on this path, so the
+   bigram term drops). The engine ports exactly this as
+   `amplified_frequency` (`session.rs:1835`) but the predicted path
+   never calls it — `append_predicted_prefix` sorts on the RAW
+   `unigram_count` (`predict.rs:201`).
+3. **The tie-break basis.** The pin tie-breaks the stable sort on
+   insertion order = bigram rows in gram order, then prefix rows in
+   `search_suggestion` per-library order (`reduce_tokens` concatenates,
+   `phrase_large_table3.h:77-98`); the capi pre-sorts prefix rows by
+   token ascending (`predict.rs:196`) — load-bearing exactly in the
+   count-0..3 tail where the amplified law collapses to 0 (the all-off
+   tails species).
+
+Measured, not just code-read: a one-off dump of every PREDICTED_PREFIX
+row for prefix 好 (178 rows a side) shows the **sets coincide exactly
+after slicing** — every sorted-set difference is the missing
+subtraction itself (好东西 vs 东西) — so the suggestion search is
+provably correct. But position-by-position, slicing alone still leaves
+**138 of 178 rows out of order**: the frequency law (2) and tie-break
+(3) are live divergences, not theoretical. A slice-only fix closes the
+corruption, not the order. The phase-B probes of
+`uncovered-surface-diff.c` gate the whole pass.
 
 ### C2 — the unconstrained mid-offset candidate window (60 positions)
 
@@ -249,18 +288,28 @@ offset 0 happens to agree).
   are inside class C2. Measuring #99 needs a probe that isolates order
   under a non-null `prev_token` on agreeing windows — parked with C2.
 
-## Priorities (review 2026-08-25)
+## Priorities (review 2026-08-25, order inverted on second review)
 
-Sequencing agreed in review, recorded here for the closing workstreams:
+Sequencing recorded for the closing workstreams. The first review
+ranked C2 first while both classes were "divergences"; the B1
+verification (user-visible text corruption in a shipping frontend path,
+vs C2 latent-until-a-frontend-adds-cursor-editing) inverts it:
 
-1. **C2 first.** A genuine `pinyin_guess_candidates` divergence under
+1. **B1 first, in one pass.** Live, user-visible committed-text
+   corruption (你好 + 你好世界), the smallest surface of the six, and
+   the root-cause note shows the whole class is one seam
+   (`predict.rs`) missing three laws — slice-only would close the
+   corruption but leave 138/178 rows misordered, so the pass carries
+   the amplified-frequency law and the tie-break basis with the slice.
+   The phase-B probes gate it.
+2. **C2 next.** A genuine `pinyin_guess_candidates` divergence under
    the parity word on ordinary input, invisible only because the corpus
-   never varied the offset and post-choose windows are constrained. Its
-   blast radius grows the moment a second frontend adds mid-composition
-   editing (fcitx5 will).
-2. **B1 next** — independently fix-worthy as a correctness bug on its
-   own merits (verified prefix duplication above), regardless of the
-   order/membership half of the class and of parity.
+   never varied the offset and post-choose windows are constrained. No
+   frontend drives mid-composition windows today (fcitx5's cursor moves
+   only via choose returns and backspace); its blast radius grows the
+   moment a second frontend adds mid-composition editing. Starting
+   point: `sentence.rs` passes the caller offset to
+   `validate_lookup_offset` but the span search never sees it.
 3. **C1** is a feature port (the FORCE_TONE rejection in the parser
    under both bits), cleanly measured here.
 4. **D1/D2** track as provisional implementations of the documented
