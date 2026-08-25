@@ -168,3 +168,23 @@ None on this side. No code, test, or pin change. Recorded here so future
 runs of the optional differential form of `run-bisect.sh` have a pointer
 to the known upstream cause rather than being re-diagnosed. The oracle pin
 stays at `0c5e80e` until the next formal pin bump.
+
+## Addendum (2026-08-25) — third sighting, now cleanly reported
+
+The stderr separation in `run-bisect.sh` (the B1 PR's audit fix — the
+runner previously merged driver stderr into the compared log, the same
+interleaving corruption `run-pred-order-diff.sh` measured) changes
+nothing about this abort but makes it legible: the differential mode now
+prints the assertion under a `--- driver diagnostics (stderr) ---`
+header instead of smearing it into the compared rows. Verified against
+the unpatched script — the crash and exit are identical, only the
+reporting changed.
+
+Three sightings of `pinyin.cpp:2175` now, for the record: this one
+(bisect differential mode, first diagnosed 2026-08-18), the
+uncovered-surface differential's word-move probe
+(`docs/findings/uncovered-surface-differentials.md` harness notes —
+`get_left/right_pinyin_offset` trip the second `_check_offset` on their
+computed offset), and this re-sighting through the patched runner. Same
+landmine, one cause: the pin asserts the caller offset sits at a
+syllable boundary, fixed post-pin upstream at `95e3af7`.

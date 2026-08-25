@@ -315,3 +315,31 @@ inputs (the pin-built `.so` SIGABRTs).
   prefix slice, 174 of 178 rows at different positions
   (`tools/bisection/pred-order-diff.c`, the moving-number gate for the
   B1 fix in `docs/findings/uncovered-surface-differentials.md`).
+
+**Decision (maintainer, 2026-08-25): a defined order, not fixture-frozen
+parity.** The pin's order is a compile-time artifact of its DBM choice
+with no semantic content, a frozen fixture would re-freeze whenever the
+pin's storage changes, and it would hand frontends an order that
+carries no meaning. The defined order is **text-ascending** — stable
+across builds, what the `BTreeMap` walk already yields, reproducible by
+anyone — joining the trellis-float entry as "upstream deterministic but
+not reproducibly so." Two consequences, stated explicitly:
+
+1. oxpinyin **permanently diverges from the pin on list positions**
+   for predicted candidates. The parity number (174/178 on 好,
+   1541/1571 across the eight measurement prefixes) becomes a recorded
+   constant, not a target of zero.
+2. The pred-order gate therefore **changes meaning**: from a parity
+   assertion (drive to zero) to a **defined-order assertion** — the
+   emitted list must equal the defined text-ascending order. The
+   runner on the measurement branch needs a follow-up mode for that
+   (compare the capi list against its own text-sorted self, keeping
+   the oracle comparison as the recorded-divergence constant).
+
+Landing state after the B1 PR: the slice and amplified wiring are in;
+the within-tie order is currently **token-ascending** (the
+`suggest_after`/`append_predicted_prefix` pre-sorts, `dict.rs:215`,
+`predict.rs`) — already a defined, build-stable order, but not yet the
+chosen text-ascending one. The follow-up that completes this decision
+drops the two token pre-sorts so the `BTreeMap` text order survives the
+stable sort's tie groups.
