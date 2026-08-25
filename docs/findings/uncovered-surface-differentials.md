@@ -1,7 +1,10 @@
 # Findings — uncovered-surface differentials (paging, punct modes, option profiles, cursor moves)
 
-Date: 2026-08-24 · Status: W12 live-typing enumeration, part 2; classes
-assigned, no fix.
+Date: 2026-08-24, amended 2026-08-25 · Status: W12 live-typing
+enumeration, part 2; classes assigned, no fix. The 2026-08-25 amendment
+verifies B1's user-visible consequence against both frontends, reframes
+C2 as the candidate-window divergence it is, and records the review
+priorities (§ at the end).
 
 `docs/findings/live-typing.md` measured the post-choose surfaces (choose,
 continue-typing, backspace — since closed by the W14 constraint port).
@@ -128,7 +131,33 @@ prediction drivers ran mini-table capi against full-table oracle and
 skipped the phrase rows (`prediction-punct.md`: "those drivers … the
 punctuation list is compared … on prefixes present in both tables").
 
+**Verified consequence (2026-08-25): an engine-side correctness bug,
+user-visible today — not a ranking nuance to ledger.** Both known
+frontends commit the library's predicted-candidate string **verbatim**:
+ibus-libpinyin's suggestion editor commits
+`candidate.m_display_string` as-is
+(`PYPSuggestionEditor.cc:212-230`), and fcitx5-oxpinyin's Phase 5
+`selectPredicted` commits the string from `pinyin_get_candidate_string`
+directly (`src/oxpinyin.cpp:899-927`) — after `enterPredicting` was
+called with the **already-committed** prefix text as the prediction
+prefix (`src/oxpinyin.cpp:857-887`, entered from `commitSentence`).
+Under the pin's stripped text the two halves compose (commit 你好,
+select the 世界 row → document reads 你好世界); under the engine's
+full-phrase text the prefix is duplicated (commit 你好, select the
+你好世界 row → the document reads 你好你好世界), and the panel itself
+already displays the typed prefix inside every suggestion. The fix
+(slice the prefix from the predicted text, `m_begin = prefix_len`) is
+independently fix-worthy regardless of the order/membership half of
+this class.
+
 ### C2 — the unconstrained mid-offset candidate window (60 positions)
+
+This is a **candidate-window divergence, not a paging finding**: the
+parity word `0x18a` on the most ordinary input (`nihao`), at the one
+candidate-lookup argument the corpus never varied — the offset. It
+stayed invisible behind two blind spots at once: every frozen pin asks
+at offset 0 only, and post-choose windows agree because the W14
+constraint machinery re-seeds the session at the cursor.
 
 Guessing at a mid-buffer offset **without a prior choose** re-runs the
 pin's span search from that offset: `nihao` at offset 2 returns the hao
@@ -141,11 +170,11 @@ and every cursor of the phase-D walks returns n=129. Mechanism: the pin
 anchors `start = offset` in `pinyin_guess_candidates`
 (`pinyin.cpp:2224-2262` at the pin); the engine's candidate construction
 has no offset parameter — `Session::candidates()` is the decode-anchored
-list. The post-choose windows still agree (the live-typing seam) because
-the W14 constraint machinery re-seeds the session at the cursor; the
-unconstrained mid-cursor window is the remaining gap, and it dominates
-this measurement (the `0x18a@2` control probe included — the corpus only
-ever compared offset 0). Affected probes: `opt:0x18a-nihao@2` (8
+list. No frontend drives mid-composition windows today — fcitx5-oxpinyin's
+cursor moves only via `pinyin_choose_candidate` returns and backspace
+(`src/oxpinyin.cpp:563-585, 644-675`) — but any Left/Right editing
+feature hits this immediately and wrongly (the head window offered at
+every cursor position). Affected probes: `opt:0x18a-nihao@2` (8
 positions), `opt:0x38a-nihao@2` (8), `opt:0x38a-nihaoshijie@5` (6), and
 the phase-D windows (38: every `cur:left@` / `cur:right@` walk probe and
 `cur:mid`, including `cur:left@10` where the pin's window at the 'e'
@@ -220,6 +249,29 @@ offset 0 happens to agree).
   are inside class C2. Measuring #99 needs a probe that isolates order
   under a non-null `prev_token` on agreeing windows — parked with C2.
 
+## Priorities (review 2026-08-25)
+
+Sequencing agreed in review, recorded here for the closing workstreams:
+
+1. **C2 first.** A genuine `pinyin_guess_candidates` divergence under
+   the parity word on ordinary input, invisible only because the corpus
+   never varied the offset and post-choose windows are constrained. Its
+   blast radius grows the moment a second frontend adds mid-composition
+   editing (fcitx5 will).
+2. **B1 next** — independently fix-worthy as a correctness bug on its
+   own merits (verified prefix duplication above), regardless of the
+   order/membership half of the class and of parity.
+3. **C1** is a feature port (the FORCE_TONE rejection in the parser
+   under both bits), cleanly measured here.
+4. **D1/D2** track as provisional implementations of the documented
+   cursor functions, low priority (9 positions).
+
+Also noted in review: the out-of-tree `punct.redb` regeneration this
+measurement needed (the `oxpinyin-migrate` exporter is gone from main)
+is a reproducibility gap every future full-table punct measurement will
+hit again — an argument for pulling the Stage-2 data-prep compiler
+forward.
+
 ## Scope and pins
 
 Measurement only: no engine, capi, data, or parser code is touched, and
@@ -228,4 +280,7 @@ CI; exit 2 is its measured state until a later PR closes the classes
 (C1 parser rejection, C2 offset-anchored windows, B1 prefix slicing and
 prediction order, B2 stop-byte parse, D1/D2 the provisional cursor
 functions). Pins re-verified bit-identical after this change (see the
-PR report); fmt/clippy/tests green.
+PR report); fmt/clippy/tests green. The 2026-08-25 amendment (B1
+consequence, C2 framing, priorities) is docs-only and re-verified the
+same way: the branch delta vs `origin/main` is `tools/bisection/` +
+this doc + one `.gitignore` line, so no pin can move.
