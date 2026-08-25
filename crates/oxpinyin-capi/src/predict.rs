@@ -11,7 +11,7 @@ use std::ffi::CString;
 use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::UserStore;
 
-use crate::state::{CapiCandidate, CapiInstance, SharedDict};
+use crate::state::{CapiCandidate, CapiInstance, SharedDict, SharedLm};
 use crate::types::lookup_candidate_type_t;
 
 /// Minimum user-bigram count for a predicted successor.
@@ -44,7 +44,7 @@ pub(crate) fn guess_predicted(inst: &mut CapiInstance, prefix: &str) -> bool {
 
     let mut items = Vec::new();
     append_predicted_bigrams(&inst.dict, inst.user.as_ref(), &prefixes, &mut items);
-    append_predicted_prefix(&inst.dict, inst.user.as_ref(), prefix, &mut items);
+    append_predicted_prefix(&inst.dict, &inst.lm, inst.user.as_ref(), prefix, &mut items);
 
     items.sort_by(|left, right| {
         right
@@ -178,6 +178,7 @@ fn append_predicted_bigrams(
 
 fn append_predicted_prefix(
     dict: &SharedDict,
+    lm: &SharedLm,
     user: Option<&UserStore>,
     prefix: &str,
     into: &mut Vec<Predicted>,
@@ -194,18 +195,60 @@ fn append_predicted_prefix(
         suggestions.extend(lookup.suggest_after(prefix));
     }
     suggestions.sort_by_key(|(token, _)| *token);
+    // The pin divides by the phrase-index total, live per call
+    // (`pinyin.cpp:1813-1814`); `amplified_total` is the same construction
+    // the pinned normal path uses (`session.rs:1409-1416`). The item count
+    // leg is `SystemDictionary`'s `phrase_index_item_count`
+    // (`dict.rs:302-304`).
+    let total = lm.amplified_total(dict.system().unigram_map().len() as u64);
     for (token, text) in suggestions {
+        // The length gate stays on the FULL phrase: the pin checks
+        // `get_phrase_length()` against `prefix_len * 2 + 1` before any
+        // slicing (`pinyin.cpp:2392-2395`).
         if text.chars().count() > limit {
             continue;
         }
-        let frequency = dict.system().unigram_count(token).unwrap_or(0);
+        // The prefix subtraction the pin applies twice (`pinyin.cpp:1976-1980`):
+        // the display string is sliced from `m_begin` (`:2018-2023`) and the
+        // phrase-length sort key subtracts it. Storing the sliced text here
+        // drives both — the sort counts `text.chars()`, the dedup and the
+        // emitted candidate reuse the same string, matching upstream's
+        // `_remove_duplicated_items_by_phrase_string` on the final string.
+        let display: String = text.chars().skip(prefix_len).collect();
+        // The sort key is the amplified law, not the raw count: the pin's
+        // PREDICTED_PREFIX branch computes `(1−λ)·unigram/total·2²⁴`
+        // truncated (`pinyin.cpp:1811-1824`), the same law the normal
+        // candidate path pins.
+        let baked = dict.system().unigram_count(token).unwrap_or(0);
         into.push(Predicted {
-            frequency,
-            text,
+            frequency: amplified_frequency(baked, total),
+            text: display,
             token,
             candidate_type: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
         });
     }
+}
+
+/// The pinned interpolation λ (`PIN_LAMBDA_F32` in `session.rs`).
+const PIN_LAMBDA_F32: f32 = 0.312_699;
+
+/// The pin's candidate `m_freq` for predicted rows: the unigram possibility
+/// `(1−λ)·unigram/total` computed and amplified by 2²⁴ in C `float`
+/// arithmetic, then truncated like the `guint32` assignment
+/// (`pinyin.cpp:1811-1824`, the PREDICTED_PREFIX branch).
+///
+/// Mirrors `amplified_frequency` (`session.rs:1835`) exactly — the engine's
+/// copy is private and widening it would change the crate's public surface,
+/// so this copy is bound to the pinned law by
+/// [`tests::amplified_law_mirrors_the_session_pinning_values`] asserting the
+/// same probe values `amplified_frequency_pins_the_class_a_probe_values`
+/// pins there.
+fn amplified_frequency(unigram: u64, total: u64) -> u64 {
+    if total == 0 {
+        return 0;
+    }
+    let possibility = (1.0_f32 - PIN_LAMBDA_F32) * unigram as f32 / total as f32;
+    u64::from((possibility * 256.0 * 256.0 * 256.0) as u32)
 }
 
 fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<String> {
@@ -213,4 +256,33 @@ fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<Strin
         return Some(phrase.text().to_owned());
     }
     dict.system().phrase_text(token).ok().flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::amplified_frequency;
+
+    #[test]
+    fn amplified_law_mirrors_the_session_pinning_values() {
+        // The same probe values `amplified_frequency_pins_the_class_a_probe_values`
+        // pins for the engine's private copy (`session.rs`): binds this
+        // mirror to the pinned law so the two cannot drift.
+        const PIN_TOTAL: u64 = 51_051_831;
+        assert_eq!(amplified_frequency(1, PIN_TOTAL), 0);
+        assert_eq!(amplified_frequency(3, PIN_TOTAL), 0);
+        assert_eq!(amplified_frequency(14, PIN_TOTAL), 3);
+        assert_eq!(amplified_frequency(16, PIN_TOTAL), 3);
+        assert_eq!(amplified_frequency(18, PIN_TOTAL), 4);
+        assert_eq!(amplified_frequency(20, PIN_TOTAL), 4);
+        assert_eq!(amplified_frequency(21, PIN_TOTAL), 4);
+        assert_eq!(amplified_frequency(77, PIN_TOTAL), 17);
+        assert_eq!(amplified_frequency(78, PIN_TOTAL), 17);
+        assert_eq!(amplified_frequency(87, PIN_TOTAL), 19);
+        assert_eq!(amplified_frequency(0, PIN_TOTAL), 0);
+    }
+
+    #[test]
+    fn amplified_law_zero_total_is_zero() {
+        assert_eq!(amplified_frequency(100, 0), 0);
+    }
 }
