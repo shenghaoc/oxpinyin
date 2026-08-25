@@ -339,16 +339,52 @@ pub extern "C" fn pinyin_guess_candidates(
         if !inst.session.is_composing() {
             return false;
         }
-        if inst.validate_lookup_offset(offset).is_err() {
-            inst.candidates.clear();
-            return false;
-        }
+        let normalized = match inst.validate_lookup_offset(offset) {
+            Ok(normalized) => normalized,
+            Err(_) => {
+                inst.candidates.clear();
+                return false;
+            }
+        };
         let without_sentence =
             sort_option & sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE as GUint != 0;
         inst.candidates.clear();
         let double_parse = inst.double_parse.clone();
         let zhuyin_parse = inst.zhuyin_parse.clone();
-        for cand in inst.session.candidates().iter() {
+        // Mirror the pin's per-offset span search. `pinyin_guess_candidates`
+        // anchors its window at `start = offset` (`pinyin.cpp:2224-2262`); the
+        // session's cached list is anchored at the composition offset it owns.
+        // When the caller's normalized lookup offset differs — a
+        // mid-composition cursor with no prior choose — rebuild the window at
+        // that offset. When it matches (offset 0 unconstrained, and every
+        // post-choose lookup, where the frontend's offset equals the
+        // composition offset), the cached list already answers, so those paths
+        // stay bit-identical.
+        //
+        // Re-anchoring is valid only for plain full pinyin, where the caller's
+        // offset is a direct byte index into the session's raw buffer — the
+        // same coordinate space as `composition_offset`. Under a transform
+        // (double pinyin, zhuyin, or the LUOMA / secondary-zhuyin full-pinyin
+        // index) the offset lives in the original input's coordinates, which
+        // `self.raw` does not share; the normalized offset is range-checked
+        // there but is not a raw index, so the cached list stands (the C2
+        // differential never drives a transformed scheme).
+        let transformed =
+            inst.double_parse.is_some() || inst.zhuyin_parse.is_some() || inst.full_parse.is_some();
+        let owned_window;
+        let candidates = if transformed || normalized == inst.session.composition_offset() {
+            inst.session.candidates()
+        } else {
+            owned_window = match inst.session.candidates_at(normalized) {
+                Ok(window) => window,
+                Err(_) => {
+                    inst.candidates.clear();
+                    return false;
+                }
+            };
+            &owned_window
+        };
+        for cand in candidates.iter() {
             if without_sentence && cand.kind() == oxpinyin_engine::CandidateKind::Sentence {
                 continue;
             }
