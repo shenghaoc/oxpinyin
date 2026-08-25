@@ -235,6 +235,33 @@ maintainer chooses fixture-frozen parity. The moving-number gate is
 text shape and order both count — dropping to the order-only residual,
 174/178 on 好, once the slice lands), added with this amendment.
 
+**Landed state (2026-08-25, the B1 fix PR) — measured against the
+prediction, then the discriminator, written so a future reader cannot
+mistake a real set regression for the windowing artifact.** Every
+predicted number hit: text-shape **0 set differences on all eight
+prefixes** (verified on the FULL lists — the 178-row 好 dump and its
+siblings, 1571 rows total); hao **exactly 174/178** (the amplified
+wiring moved not one row); raw total **1541/1571**, inside the
+predicted band. The maintainer decided the same day: **a defined order
+(text-ascending), not fixture-frozen parity** — see the divergence
+entry for the decision and its consequence that the pred-order gate
+becomes a defined-order assertion, not a parity one.
+
+*The discriminator, explicit:* the phase-B `head[i]` rows are a
+**head-12 window** over each prefix's list. Because the two engines'
+row orders differ (the recorded divergence), their first-12 windows
+cover different slices of the same set, and the head rows show **set
+differences that are pure windowing** (86 rows across the eight
+prefixes at the post-fix measurement). That is NOT a text regression.
+The authoritative text-shape check is the **full-list comparison** —
+`pred-order-diff`'s complete per-prefix dumps, sorted-set diff == 0 on
+every prefix. Rule for future runs: a head-window set difference alone
+means nothing; escalate only if the **full-list sorted-set diff is
+non-zero** (that is a real regression — a suggestion missing or
+invented), or if a prefix's row count `n` changes (the counts are
+identical per prefix, 178/283/591/71/126/168/98/56, and a change there
+is a search regression the order divergence cannot explain).
+
 ### C2 — the unconstrained mid-offset candidate window (60 positions)
 
 This is a **candidate-window divergence, not a paging finding**: the
