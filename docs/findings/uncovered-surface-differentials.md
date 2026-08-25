@@ -346,15 +346,28 @@ offset 0 happens to agree).
 
 ## Harness notes (pin behaviour, not engine divergences)
 
-- **The pin aborts on word moves at tail offsets.** `get_left_pinyin_offset(11)`
-  on `nihaoshijie` trips the second `_check_offset` inside the walk-back
-  (`pinyin.cpp:3055` → `assert` at `:2175` at the pin; measured SIGABRT
-  on the first smoke run). Upstream fixed this after the pin (commit
-  `95e3af7` "Fix _check_offset function" turns the assert into
-  `return false`). The driver probes word moves only at the offsets the
-  smoke run proved safe (0/2/5) and prints the skipped tail offsets with
-  their values — a frontend Ctrl+Left at such a cursor aborts the pinned
-  library; that is the pin's landmine, not a divergence to close.
+- **The pin aborts on word moves at tail offsets.** `get_right_pinyin_offset(11)`
+  on `nihaoshijie` trips the second `_check_offset` — the one on the
+  COMPUTED result (`pinyin.cpp:3090` → `assert` at `:2175` at the pin;
+  measured SIGABRT on the first smoke run, re-measured fork-per-probe on
+  the rebuilt pin 2026-08-26). ***Correction (2026-08-26):*** the first
+  smoke run attributed the abort to `get_left_pinyin_offset(11)` via
+  `pinyin.cpp:3055` — wrong call site. The fork-per-probe measurement
+  (every offset in its own child, so the abort is a datum) shows
+  `get_left(11)` genuinely answers `left=10` — its walk halts at column
+  10, where the `e` key ends — and the abort lives at `get_right(11)`:
+  the first check passes (column 10 is the lone non-zero `e`), column 11
+  is the trailing singleton zero key, and the second check at its raw
+  end 12 asserts. Offset 8 is also fully measurable (`left=5`,
+  `right=11`); the driver's skip there is over-cautious. Both
+  `fix/cursor-offset-normalization` docs record the same correction:
+  `oracle-bisect-differential-abort.md` addendum. Upstream fixed this
+  after the pin (commit `95e3af7` "Fix _check_offset function" turns the
+  assert into `return false`). The driver probes word moves only at the
+  offsets the smoke run proved safe (0/2/5) and prints the skipped tail
+  offsets with their values — a frontend Ctrl+Right at cursor 11 aborts
+  the pinned library; that is the pin's landmine, not a divergence to
+  close.
 - **DYNAMIC_ADJUST bit-set ranking** (the deferred #99 bigram-fold into
   candidate frequency) is **not** isolated by these probes: at offset 0
   no previous token exists (no gram merge), and the offset-2/5 windows
