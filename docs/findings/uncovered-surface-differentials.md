@@ -411,5 +411,6 @@ stop-byte parse, and D1/D2 the provisional cursor functions. Pins
 re-verified bit-identical after this change (see the PR report);
 fmt/clippy/tests green. The 2026-08-25 amendment (B1 consequence, C2
 framing, priorities) is docs-only and re-verified the same way: the
-branch delta vs `origin/main` is `tools/bisection/` + this doc + one
+branch delta vs `origin/main` is `tools/bisection/` + this doc +
+`docs/findings/upstream-divergences.md` + `AGENTS.md` + one
 `.gitignore` line, so no pin can move.
