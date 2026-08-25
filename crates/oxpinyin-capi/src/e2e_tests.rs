@@ -774,8 +774,18 @@ fn export_iterators_walk_the_stored_triples() {
         assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
         (index, cand)
     };
-    assert!(pinyin_choose_candidate(instance, 0, ni_ptr) > 0);
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let ni_cursor = pinyin_choose_candidate(instance, 0, ni_ptr);
+    assert_eq!(ni_cursor, 2, "choosing 你 consumes the ni group");
+    // Guess at the post-choose cursor, not offset 0: the window is anchored at
+    // the caller offset (`pinyin.cpp:2224`, mirrored by the C2 fix), so the
+    // remaining 好 group is offered at offset 2, never at 0 — where the window
+    // is the whole `nihao` (你/尼/…, no 好). The frontend passes the choose
+    // cursor here (ibus's `key_rest(cursor)` idiom).
+    assert!(pinyin_guess_candidates(
+        instance,
+        ni_cursor as usize,
+        DEFAULT_SORT
+    ));
     let hao_ptr = {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
         let inst = unsafe { instance_ref(instance) };

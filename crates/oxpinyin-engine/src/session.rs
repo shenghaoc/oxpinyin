@@ -1226,21 +1226,46 @@ where
     /// pooled phrase candidates are ranked by the three-key order and
     /// deduplicated directly, with no sentence prepend.
     fn refresh(&mut self) -> Result<(), EngineError> {
-        if self.consumed >= self.raw.len() {
-            self.parsed_prefix = 0;
-            self.candidates = CandidateList::default();
-            // A fully-consumed composition still carries its sentence
-            // rows — upstream's window prepends `m_nbest_results` whether
-            // or not any phrase candidate remains at the cursor (the L1
-            // terminal-choose surface).
-            let mut rows_only = Vec::new();
-            self.prepend_nbest_rows(&mut rows_only);
-            self.candidates.swap_items(&mut rows_only);
-            return Ok(());
+        // The cached list is anchored at the composition offset the session
+        // owns. Reuse its buffer so the scan keeps its capacity across
+        // keystrokes.
+        let anchor = self.consumed;
+        let mut items = Vec::new();
+        self.candidates.swap_items(&mut items);
+        self.parsed_prefix = self.scan_window(anchor, &mut items)?;
+        self.candidates.swap_items(&mut items);
+        Ok(())
+    }
+
+    /// Builds the candidate window anchored at byte `anchor` in the raw
+    /// buffer into `out`, returning the filtered parse length of the
+    /// remaining slice from `anchor`.
+    ///
+    /// The window is a pure function of `(raw, anchor, constraint-derived
+    /// state)`: the scan reads `&self.raw[anchor..]` and the stored n-best
+    /// rows prepend the same way regardless of the anchor. It mutates only
+    /// the scan scratch and `out` — never the composition offset, the
+    /// constraint store, or the history — so a caller may build a window at a
+    /// lookup offset without disturbing the cached list
+    /// ([`Session::candidates_at`]). With `anchor == self.consumed` it
+    /// reproduces [`Session::refresh`]'s cached list exactly.
+    fn scan_window(
+        &mut self,
+        anchor: usize,
+        out: &mut Vec<Candidate>,
+    ) -> Result<usize, EngineError> {
+        out.clear();
+        if anchor >= self.raw.len() {
+            // A fully-consumed (or past-end) anchor still carries its
+            // sentence rows — upstream's window prepends `m_nbest_results`
+            // whether or not any phrase candidate remains at the cursor (the
+            // L1 terminal-choose surface).
+            self.prepend_nbest_rows(out);
+            return Ok(0);
         }
 
         // Lift scratches before borrowing `raw`, so graph/scan can use
-        // `&self.raw[consumed..]` without cloning into CompactString.
+        // `&self.raw[anchor..]` without cloning into CompactString.
         let mut collected = core::mem::take(&mut self.scratch_collected);
         collected.clear();
         let mut path = core::mem::take(&mut self.scratch_path);
@@ -1249,10 +1274,10 @@ where
         let mut window_phrase = core::mem::take(&mut self.scratch_window_phrase);
         let mut window_addon = core::mem::take(&mut self.scratch_window_addon);
 
-        let remaining = &self.raw[self.consumed..];
+        let remaining = &self.raw[anchor..];
         let graph = SegmentGraph::build_with_options(remaining.as_bytes(), self.settings.options)
             .map_err(EngineError::Graph)?;
-        self.parsed_prefix = graph
+        let parsed_prefix = graph
             .fewest_keys(self.settings.incomplete())
             .last()
             .map_or(0, Edge::to);
@@ -1343,7 +1368,7 @@ where
         // string (`pinyin.cpp:2290-2298`, `2058-2126`).
         self.prepend_nbest_rows(&mut collected);
 
-        self.candidates.swap_items(&mut collected);
+        core::mem::swap(out, &mut collected);
         collected.clear();
         self.scratch_collected = collected;
         self.scratch_path = path;
@@ -1351,7 +1376,28 @@ where
         self.scratch_ranked = ranked;
         self.scratch_window_phrase = window_phrase;
         self.scratch_window_addon = window_addon;
-        Ok(())
+        Ok(parsed_prefix)
+    }
+
+    /// Rebuilds the candidate window anchored at a caller lookup `offset`,
+    /// mirroring the pin's per-offset span search — `pinyin_guess_candidates`
+    /// re-runs `search_matrix` from `start = offset` (`pinyin.cpp:2224-2262`),
+    /// its candidates all beginning at `offset` — and returns it without
+    /// disturbing the cached list or any composition state (constraints,
+    /// consumed, history). The C ABI uses this only when the caller's
+    /// normalized lookup offset differs from [`Session::composition_offset`]:
+    /// a mid-composition cursor with no prior choose. At an equal offset the
+    /// cached [`Session::candidates`] already answers, so offset-0 and every
+    /// post-choose lookup stay bit-identical.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when a backend fails during the scan, exactly
+    /// as the anchored [`Session::refresh`] does.
+    pub fn candidates_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
+        let mut items = Vec::new();
+        self.scan_window(offset, &mut items)?;
+        Ok(CandidateList::from_vec(items))
     }
 
     /// Prepends the stored n-best rows onto `collected`, head first, then
