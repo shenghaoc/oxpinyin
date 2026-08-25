@@ -152,10 +152,10 @@ already displays the typed prefix inside every suggestion. The fix
 independently fix-worthy regardless of the order half of this class.
 
 **Root cause (2026-08-25): one seam, three laws — fix in one pass, not
-two PRs.** All of B1 lives in `predict.rs`
-(`guess_predicted` + `append_predicted_prefix`), and the class is the
-prediction path missing three upstream laws that the normal candidate
-path already carries:
+two PRs — amended again 2026-08-25 after the tie measurement below; see
+the correction at the end of this section.** All of B1 lives in
+`predict.rs` (`guess_predicted` + `append_predicted_prefix`). The
+original three-law reading:
 
 1. **The prefix subtraction.** The pin subtracts `m_begin` twice —
    from the display string (`_token_get_phrase` slices,
@@ -165,29 +165,75 @@ path already carries:
    neither slices nor subtracts: one omission drives both the text
    corruption and the length component of the order.
 2. **The amplified frequency law.** The pin's predicted sort key is
-   the Class A law — `(1−λ)·unigram/total·2²⁴` truncated
-   (`pinyin.cpp:1858-1866`; `prev_token` is null on this path, so the
-   bigram term drops). The engine ports exactly this as
-   `amplified_frequency` (`session.rs:1835`) but the predicted path
-   never calls it — `append_predicted_prefix` sorts on the RAW
-   `unigram_count` (`predict.rs:201`).
-3. **The tie-break basis.** The pin tie-breaks the stable sort on
-   insertion order = bigram rows in gram order, then prefix rows in
-   `search_suggestion` per-library order (`reduce_tokens` concatenates,
-   `phrase_large_table3.h:77-98`); the capi pre-sorts prefix rows by
-   token ascending (`predict.rs:196`) — load-bearing exactly in the
-   count-0..3 tail where the amplified law collapses to 0 (the all-off
-   tails species).
+   `(1−λ)·unigram_freq/total·2²⁴` truncated (`pinyin.cpp:1811-1824`,
+   the PREDICTED_PREFIX early-continue branch). The engine ports the
+   same law as `amplified_frequency` (`session.rs:1835`) but the
+   predicted path never calls it — `append_predicted_prefix` sorts on
+   the raw `unigram_count` (`predict.rs:201`).
+3. **The tie basis.** The pin's within-tie order is the insertion
+   order; the capi pre-sorts prefix rows by token ascending
+   (`predict.rs:196`, and again inside `suggest_after`,
+   `dict.rs:215`).
 
 Measured, not just code-read: a one-off dump of every PREDICTED_PREFIX
 row for prefix 好 (178 rows a side) shows the **sets coincide exactly
 after slicing** — every sorted-set difference is the missing
 subtraction itself (好东西 vs 东西) — so the suggestion search is
-provably correct. But position-by-position, slicing alone still leaves
-**138 of 178 rows out of order**: the frequency law (2) and tie-break
-(3) are live divergences, not theoretical. A slice-only fix closes the
-corruption, not the order. The phase-B probes of
-`uncovered-surface-diff.c` gate the whole pass.
+provably correct. Slicing alone does not close the order.
+
+**Correction (2026-08-25, follow-up measurement): law 2 is
+order-neutral on the system store, and law 3 is not a law at all — it
+is the store's physical iteration order.** Three measurements:
+
+- **The frequency key ties.** The baked phrase-index counts across a
+  prefix's suggestion set are uniform: 好 = 177 rows at count 100 plus
+  one at 200; 的 = 281×100 + 2×99; 一 = 587×100 + 2×99 + 2×200; 我 =
+  167×100 + 1×200. And the amplified law is monotone in the count —
+  strict inequalities stay strict, ties stay ties — so
+  raw-count-vs-amplified ordering is **identical** for every pair a
+  system store can produce (the two scales only diverge for counts
+  below the truncation collapse, ≈4, i.e. fresh user-store phrases).
+  Wiring `amplified_frequency` in is still right for exactness, but it
+  moves zero rows on this surface.
+- **The tie order is the store walk.** Simulating laws 1+2 (sliced
+  length + amplified) re-sorts nothing — the position mismatches vs
+  the pin stay at **174 of 178** (position metric; the "138" quoted in
+  the first amendment was oracle-side diff-edit lines, a different
+  meter — the position count is 174/178 at baseline and after laws
+  1+2 alike). The pin's within-tie order is not token-ascending (174
+  off), not text-ascending (177 off), not library-blocked (177 off;
+  the observed order switches libraries 27 times — one physical store
+  holds all libraries' tokens). It is the **Tkrzw HashDBM bucket-walk
+  order**: `phrase_index.bin` is `TkrzwHDB`, and
+  `PhraseLargeTable3::search_suggestion` iterates it with
+  `MakeIterator`/`Jump(prefix)`/`Next`
+  (`phrase_large_table3_tkrzwdb.cpp:155-190`) — a deterministic order
+  for this exact file and tkrzw version, with no sort-key expression.
+  glib's `g_array_sort_with_data` preserves it verbatim: measured on a
+  178-element array with grouped ties, within-group insertion order
+  survives untouched (0 inversions), so the comparator never scrambles
+  the walk.
+- **The engine's store cannot walk that order.** `suggest_after`
+  builds a `BTreeMap<String, Vec<u32>>` and walks text order
+  (`dict.rs:196-217`); the physical bucket order of a Tkrzw hash file
+  is not derivable from any key. Matching the pin's row order exactly
+  means replicating the Tkrzw hash layout or freezing per-prefix
+  orders as fixture data.
+
+**Revised fix shape.** One PR lands the prefix subtraction (the
+corruption) and wires the amplified law for exactness (a one-line
+call); both are deterministic. The row ORDER behind the tie is a
+store-layout divergence, not a comparator bug — recorded in
+`docs/findings/upstream-divergences.md` (the sentence-trellis float
+entry's sibling category: deterministic upstream, not reproducible
+without importing the foreign store's physical layout). Expected state
+for that PR: the phase-B probes go identical on text shape; the row
+order stays divergent (174/178 on 好) by recorded divergence unless the
+maintainer chooses fixture-frozen parity. The moving-number gate is
+`tools/bisection/pred-order-diff.c` + `run-pred-order-diff.sh`
+(per-prefix position-mismatch counts; raw metric 1571/1571 pre-fix —
+text shape and order both count — dropping to the order-only residual,
+174/178 on 好, once the slice lands), added with this amendment.
 
 ### C2 — the unconstrained mid-offset candidate window (60 positions)
 
@@ -297,11 +343,14 @@ vs C2 latent-until-a-frontend-adds-cursor-editing) inverts it:
 
 1. **B1 first, in one pass.** Live, user-visible committed-text
    corruption (你好 + 你好世界), the smallest surface of the six, and
-   the root-cause note shows the whole class is one seam
-   (`predict.rs`) missing three laws — slice-only would close the
-   corruption but leave 138/178 rows misordered, so the pass carries
-   the amplified-frequency law and the tie-break basis with the slice.
-   The phase-B probes gate it.
+   one seam (`predict.rs`): the prefix subtraction closes the
+   corruption, the amplified-law wiring is a one-line exactness call,
+   and the residual row order behind the uniform-count tie is the
+   recorded store-layout divergence (see the root-cause correction and
+   `upstream-divergences.md`), not a comparator to port. The phase-B
+   probes gate the text shape; `pred-order-diff` reports the order
+   number (baseline 好=174/178) so the PR can show what moved and what
+   is recorded divergence.
 2. **C2 next.** A genuine `pinyin_guess_candidates` divergence under
    the parity word on ordinary input, invisible only because the corpus
    never varied the offset and post-choose windows are constrained. No

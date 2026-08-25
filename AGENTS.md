@@ -79,6 +79,17 @@ lints.
 `rust-toolchain.toml` is the only supported toolchain. Portable crates:
 Linux/macOS/Windows. Oracle, capi, migrate: Linux-first.
 
+## Concurrent sessions
+
+More than one agent may hold this checkout. Never switch the shared
+checkout's branch or touch its working tree for your own work when it
+sits on another workstream's branch (check `git branch --show-current`
+first — a branch you did not create means someone else is mid-flight).
+Do your work in a detached worktree — `git worktree add /tmp/<name>
+<branch>` — commit there, `git worktree remove` when done, and leave
+the shared checkout exactly as found. The shim.cc collision came from
+two agents assuming sole ownership of one tree.
+
 ## Rebase discipline
 
 Fetch and rebase onto the current landing tip immediately before every
