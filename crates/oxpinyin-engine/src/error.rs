@@ -52,6 +52,18 @@ pub enum EngineError {
         /// The composition offset (the selected boundary) it precedes.
         composition: usize,
     },
+    /// A cursor normalization or word move examined an offset one past a
+    /// lone zero-key matrix column — the shape the pin's `_check_offset`
+    /// aborts on (`assert(zero_key != key)`, `pinyin.cpp:2175` at the pin)
+    /// and post-`95e3af7` libpinyin answers with a `false` every caller
+    /// discards (the function then completes with the computed value).
+    /// The engine answers with an error instead, so the C surface returns
+    /// `false` — the no-abort policy, diverging from both upstream arms
+    /// (`docs/findings/upstream-divergences.md`).
+    ZeroKeyOffsetCheck {
+        /// The examined offset whose preceding column holds the lone zero key.
+        offset: usize,
+    },
     /// The dictionary backend failed.
     Dictionary(String),
     /// The language model backend failed.
@@ -97,6 +109,12 @@ impl fmt::Display for EngineError {
                     "selection anchor {anchor} precedes the composition offset {composition}"
                 )
             }
+            Self::ZeroKeyOffsetCheck { offset } => {
+                write!(
+                    formatter,
+                    "offset {offset} sits one past a lone zero-key column"
+                )
+            }
             Self::Dictionary(message) => write!(formatter, "dictionary error: {message}"),
             Self::LanguageModel(message) => write!(formatter, "language model error: {message}"),
             Self::UserModel(message) => write!(formatter, "user model error: {message}"),
@@ -136,6 +154,10 @@ mod tests {
         assert_eq!(
             EngineError::LookupOffsetOutOfRange { offset: 9, len: 3 }.to_string(),
             "lookup offset 9 is out of range 0..=3"
+        );
+        assert_eq!(
+            EngineError::ZeroKeyOffsetCheck { offset: 11 }.to_string(),
+            "offset 11 sits one past a lone zero-key column"
         );
     }
 }

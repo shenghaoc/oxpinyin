@@ -406,3 +406,53 @@ Text, candidate type and counts cannot.
   re-parsed byte suffix rather than indexing a persisted whole-composition
   matrix, so it does not model that matrix's empty mid-syllable columns. Per
   source policy, recorded and not chased.
+
+### The cursor helpers' `_check_offset` aborts answer `false` — not the pin's abort, not post-`95e3af7` upstream's discarded-`false` true
+
+- **Upstream source cite:** `src/pinyin.cpp:2163-2180` (`_check_offset`,
+  the assert at `:2175`) called on the COMPUTED result of the word moves
+  — `pinyin_get_left_pinyin_offset`'s second check (`pinyin.cpp:3055`)
+  and `pinyin_get_right_pinyin_offset`'s (`pinyin.cpp:3090`) — and on
+  the normalized cursor offset of `pinyin_get_pinyin_offset`
+  (`pinyin.cpp:3023`), at the pin.
+- **Mechanism:** `_check_offset` asserts that the column before the
+  examined offset is not a lone zero key. The word moves run it twice —
+  on the caller offset and on their own computed result — and the second
+  call is what fires on tail cursors: for `nihaoshijie` under the parity
+  word `0x18a`, `get_right_pinyin_offset(11)` passes the first check
+  (column 10 holds the lone non-zero `e`), reads the trailing zero key
+  at column 11 (the pin's reserved extra slot), and the second check at
+  the zero's raw end 12 sees column 11's lone zero key and aborts.
+  Measured first-hand on the rebuilt pin with a fork-per-probe driver:
+  the ONLY abort of 48 probes over `nihaoshijie` is `get_right(11)`;
+  `get_left(11)` genuinely answers 10 (its walk halts at column 10).
+  The same shape fires at every offset one past a separator zero —
+  `get_left(3)`/`get_right(3)` on `ni'hao` — and at every offset past
+  the parsed end of an early-stopping parse (`ni2hao` offsets 2..6).
+- **What oxpinyin does instead:** answers `false` — the engine's
+  `EngineError::ZeroKeyOffsetCheck` rendered as the C ABI's `false` by
+  the three cursor helpers, extending the no-abort policy already
+  applied at the guess seam (`LookupOffsetPastSeparator`) and the
+  scheme setters. `get_right` also keeps the pin's one graceful false
+  (no key starts at the position, `pinyin.cpp:3085-3086`).
+- **The two upstream arms:** at the pin (`0c5e80e`) the call SIGABRTs —
+  no oracle differential is possible there. Peng Wu's post-pin
+  [`Fix _check_offset function`](https://github.com/libpinyin/libpinyin/commit/95e3af71cca3ce6a974e55ab68db1424da79c286)
+  replaces the assert with `if (zero_key != key) return false;` — an
+  INVERTED condition whose return value every call site discards, so
+  the fixed upstream completes the call and returns `true` with the
+  computed value (`right=12` on a matrix whose last usable column is
+  11). oxpinyin's `false` diverges from BOTH arms, deliberately: `12`
+  is a value no caller can use — upstream is propagating a broken
+  result rather than reporting failure, and `false` is the only answer
+  a frontend can act on. Report-back candidate for libpinyin (the
+  inverted condition also inverts the intended validation).
+- **Externally observable:** yes — upstream aborts at the pin /
+  returns the broken value post-`95e3af7`; oxpinyin returns `false`.
+  Frontends driving Ctrl+Left/Right at a tail cursor see the
+  difference; no pinned differential is possible at the abort points.
+  The fifth distinct finding in the `_check_offset` family: the three
+  sightings consolidated in `oracle-bisect-differential-abort.md`
+  (the W11 bisect abort, the ibus-libpinyin#570 guess-seam pattern,
+  and the shared root cause), the guess-seam leading-run answered as
+  `LookupOffsetPastSeparator`, and this cursor-helper seam.

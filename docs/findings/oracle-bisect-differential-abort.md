@@ -169,22 +169,46 @@ runs of the optional differential form of `run-bisect.sh` have a pointer
 to the known upstream cause rather than being re-diagnosed. The oracle pin
 stays at `0c5e80e` until the next formal pin bump.
 
-## Addendum (2026-08-25) — third sighting, now cleanly reported
+## Addendum (2026-08-26) — fourth sighting: the word-move second check, and a corrected call site
 
-The stderr separation in `run-bisect.sh` (the B1 PR's audit fix — the
-runner previously merged driver stderr into the compared log, the same
-interleaving corruption `run-pred-order-diff.sh` measured) changes
-nothing about this abort but makes it legible: the differential mode now
-prints the assertion under a `--- driver diagnostics (stderr) ---`
-header instead of smearing it into the compared rows. Verified against
-the unpatched script — the crash and exit are identical, only the
-reporting changed.
+The D1/D2 closure (`fix/cursor-offset-normalization`) measured the
+cursor-helper surface first-hand on the rebuilt pin with a fork-per-probe
+driver (every offset in its own child, so an abort is a datum). For
+`nihaoshijie` under the parity word `0x18a`, 48 probes over
+`pinyin_get_pinyin_offset` / `get_left_pinyin_offset` /
+`get_right_pinyin_offset` produce exactly ONE abort:
 
-Three sightings of `pinyin.cpp:2175` now, for the record: this one
-(bisect differential mode, first diagnosed 2026-08-18), the
-uncovered-surface differential's word-move probe
-(`docs/findings/uncovered-surface-differentials.md` harness notes —
-`get_left/right_pinyin_offset` trip the second `_check_offset` on their
-computed offset), and this re-sighting through the patched runner. Same
-landmine, one cause: the pin asserts the caller offset sits at a
-syllable boundary, fixed post-pin upstream at `95e3af7`.
+```text
+get_right_pinyin_offset(inst, 11, &right)  ->  SIGABRT
+pinyin.cpp:2175: bool _check_offset(...): Assertion `zero_key != key' failed.
+```
+
+Mechanism, traced end to end: the FIRST `_check_offset` at offset 11
+passes (column 10 holds the lone non-zero `e`); column 11 is a singleton
+zero key (the pin's reserved extra slot), so the walk reads its
+`m_raw_end` = 12, and the SECOND `_check_offset` — the one on the
+COMPUTED result, `pinyin.cpp:3090` inside `get_right_pinyin_offset` —
+sees column 11's lone zero key and asserts.
+
+**Correction, recorded not silently applied:** the uncovered-surface
+measurement (PR #174, `uncovered-surface-differentials.md` harness note)
+attributed the tail-cursor abort to `get_left_pinyin_offset(11)` via the
+left walk's second check (`pinyin.cpp:3055`). That is wrong: `get_left(11)`
+genuinely does not abort — its walk halts at column 10 (the `e` key ends
+at 11), the zero-start walk stops at the empty column 9, and the second
+check at 10 passes. The abort lives at `get_right(11)` via `pinyin.cpp:3090`.
+Both aborts are the same `_check_offset` assert at `pinyin.cpp:2175` —
+same landmine, wrong call site recorded. Incidentally, offset 8 is fully
+measurable for both moves (`left=5`, `right=11`); only offset 11 aborts,
+and only the right call — the harness's word-move probe skip at cursor 8
+is over-cautious (the skip prints identical lines on both sides, so the
+differential is unaffected).
+
+**oxpinyin's answer at the abort points:** the no-abort policy —
+`pinyin_get_right_pinyin_offset` (and its siblings) return `false` where
+the pin aborts (`EngineError::ZeroKeyOffsetCheck`), extending the same
+policy as the guess seam above. This diverges from BOTH the pin (abort)
+and post-`95e3af7` upstream (which discards an inverted-condition
+`false` and returns true with the unusable computed value); both arms
+are recorded in `upstream-divergences.md`, as the fifth finding in this
+family.
