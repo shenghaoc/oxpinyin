@@ -192,6 +192,13 @@ impl SystemDictionary {
 
     /// Tokens whose phrase text starts with `prefix` and is longer, when
     /// `prefix` itself is a stored phrase (`PhraseLargeTable3::search_suggestion`).
+    ///
+    /// Rows come out in the DEFINED prediction order (`upstream-divergences.md`,
+    /// "Predicted-candidate tie order"): the `BTreeMap`'s text-ascending
+    /// walk, token-ascending within one text. The pin's order is its DBM's
+    /// physical bucket walk — backend-dependent and semantically arbitrary —
+    /// so oxpinyin deliberately diverges on positions with this defined,
+    /// build-stable order instead.
     #[must_use]
     pub fn suggest_after(&self, prefix: &str) -> Vec<(u32, String)> {
         let Ok(map) = self.reverse_text_tokens() else {
@@ -212,7 +219,6 @@ impl SystemDictionary {
                 out.push((*token, text.clone()));
             }
         }
-        out.sort_by_key(|(token, _)| *token);
         out
     }
 

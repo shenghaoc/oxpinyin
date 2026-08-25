@@ -188,13 +188,18 @@ fn append_predicted_prefix(
         return;
     }
     let limit = prefix_len.saturating_mul(2).saturating_add(1);
+    // No pre-sort here: the system rows arrive in the defined prediction
+    // order (the reverse map's text-ascending walk, token-ascending within
+    // one text — `SystemDictionary::suggest_after`), the user rows in the
+    // same order from their own reverse map, and the stable sort below
+    // keeps both inside their (length, frequency) tie groups
+    // (`upstream-divergences.md`, "Predicted-candidate tie order").
     let mut suggestions = dict.system().suggest_after(prefix);
     if let Some(store) = user
         && let Ok(lookup) = oxpinyin_user::UserLookup::from_store(store)
     {
         suggestions.extend(lookup.suggest_after(prefix));
     }
-    suggestions.sort_by_key(|(token, _)| *token);
     // The pin divides by the phrase-index total, live per call
     // (`pinyin.cpp:1813-1814`); `amplified_total` is the same construction
     // the pinned normal path uses (`session.rs:1409-1416`). The item count
