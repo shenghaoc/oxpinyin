@@ -228,6 +228,14 @@ impl SegmentGraph {
                 continue;
             }
             consumed = node;
+            // The pin's `'` propagation (`pinyin_parser2.cpp:237-251`): an
+            // apostrophe at a reachable position advances the parse one
+            // byte, unconditionally and counted — so a trailing or
+            // standalone run is consumed even though no key covers it
+            // (`ni'` consumes 3, `'''` consumes 3).
+            if node + 1 < node_count && input[node] == b'\'' {
+                reachable[node + 1] = true;
+            }
             let range = starts[node] as usize..starts[node + 1] as usize;
             for edge in &edges[range] {
                 reachable[edge.to()] = true;
@@ -466,6 +474,7 @@ fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Ed
     // joins a span, so the toneless edge set is bit-identical to the
     // frozen parser.
     let use_tone = options.contains(USE_TONE);
+    let force_tone = use_tone && options.contains(crate::FORCE_TONE);
     let max_span = MAX_SYLLABLE_LEN + usize::from(use_tone);
     let mut longest_complete = None;
 
@@ -479,7 +488,7 @@ fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Ed
     // without the caller having to look at its neighbours.
     for length in (1..=max_span.min(available)).rev() {
         let text = &input[syllable_start..syllable_start + length];
-        let Some((core, _)) = tone_split(text, use_tone) else {
+        let Some((core, _)) = tone_split(text, use_tone, force_tone) else {
             continue;
         };
         if longest_complete.is_none()
@@ -494,7 +503,7 @@ fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Ed
     for length in (1..=max_span.min(available)).rev() {
         let end = syllable_start + length;
         let text = &input[syllable_start..end];
-        let Some((core, tone)) = tone_split(text, use_tone) else {
+        let Some((core, tone)) = tone_split(text, use_tone, force_tone) else {
             continue;
         };
 
@@ -539,11 +548,19 @@ fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Ed
 /// tone exactly like a complete one. Any other digit (`0`, `6`–`9`) stays
 /// in the core, fails the lookup, and the span falls back to the shorter
 /// toneless parse.
-fn tone_split(text: &[u8], use_tone: bool) -> Option<(&[u8], u8)> {
+///
+/// `force_tone` carries the pin's `FORCE_TONE` rejection, nested inside the
+/// same `USE_TONE` branch (`pinyin_parser2.cpp:185-189`): a span without a
+/// tone digit does not parse at all. Dead without `USE_TONE` — the caller
+/// derives it as `use_tone && FORCE_TONE`.
+fn tone_split(text: &[u8], use_tone: bool, force_tone: bool) -> Option<(&[u8], u8)> {
     let (core, tone) = match text.last().copied() {
         Some(digit @ b'1'..=b'5') if use_tone => (&text[..text.len() - 1], digit - b'0'),
         _ => (text, 0),
     };
+    if force_tone && tone == 0 {
+        return None;
+    }
     if !core.is_empty() && core.iter().all(u8::is_ascii_lowercase) {
         Some((core, tone))
     } else {
@@ -623,6 +640,40 @@ mod tests {
     /// `PINYIN_INCOMPLETE | USE_TONE` — the W15 tone profile.
     fn tone_options() -> OptionBits {
         OptionBits::from_bits(crate::PINYIN_INCOMPLETE | USE_TONE)
+    }
+
+    fn force_tone_options() -> OptionBits {
+        OptionBits::from_bits(crate::PINYIN_INCOMPLETE | USE_TONE | crate::FORCE_TONE)
+    }
+
+    #[test]
+    fn force_tone_rejects_every_toneless_span() {
+        // The pin's force-tone check sits INSIDE the USE_TONE branch
+        // (`pinyin_parser2.cpp:185-189`): under `USE_TONE | FORCE_TONE` a
+        // span without a trailing 1-5 digit does not parse at all, so
+        // `nihao` and `zai6` consume nothing (the measured 0x60 probes).
+        for input in ["nihao", "zai6", "ni"] {
+            let graph = SegmentGraph::build_with_options(input.as_bytes(), force_tone_options())
+                .expect("valid");
+            assert_eq!(graph.consumed(), 0, "input {input}");
+            assert!(graph.edges().is_empty(), "input {input}");
+        }
+        // Toned spans still parse.
+        let graph =
+            SegmentGraph::build_with_options(b"ni3hao3", force_tone_options()).expect("valid");
+        assert!(graph.fully_consumed());
+        let graph = SegmentGraph::build_with_options(b"zai4", force_tone_options()).expect("valid");
+        assert_eq!(graph.consumed(), 4);
+    }
+
+    #[test]
+    fn force_tone_is_dead_without_use_tone() {
+        // The check is nested inside the tone scan, so a word carrying
+        // FORCE_TONE without USE_TONE (the harness's inert `0x1ca` shape)
+        // parses exactly like the toneless profile.
+        let inert = OptionBits::from_bits(crate::PINYIN_INCOMPLETE | crate::FORCE_TONE);
+        let graph = SegmentGraph::build_with_options(b"nihao", inert).expect("valid");
+        assert!(graph.fully_consumed());
     }
 
     #[test]
@@ -856,8 +907,25 @@ mod tests {
             "consecutive apostrophes act as one separator"
         );
 
+        // RE-PINNED 2 → 3 (parse-termination, closing the inherited
+        // apostrophe class ledgered on fix/cursor-offset-normalization):
+        // the old value pinned the bug. The pin's DP propagates a `'`
+        // byte-for-byte from any reachable position
+        // (`pinyin_parser2.cpp:237-251`) and `final_step` answers the
+        // consistent-chain length, so `ni'` consumes 3 — measured on the
+        // rebuilt pin (`pinyin_parse_more_full_pinyins` returns 3, the
+        // F-E-14 table row). The propagation step now lives in
+        // `build_with_options`' reachability walk.
         let trailing = SegmentGraph::build(b"ni'").expect("valid");
-        assert_eq!(trailing.consumed(), 2);
+        assert_eq!(trailing.consumed(), 3);
+        assert!(trailing.fully_consumed());
+
+        // Standalone apostrophe runs: no key covers them, propagation
+        // alone consumes every byte (pin parses `'''` to 3).
+        let standalone = SegmentGraph::build(b"'''").expect("valid");
+        assert_eq!(standalone.consumed(), 3);
+        assert!(standalone.edges().is_empty());
+        assert!(standalone.fully_consumed());
     }
 
     #[test]

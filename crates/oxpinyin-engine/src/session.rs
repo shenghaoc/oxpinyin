@@ -819,6 +819,20 @@ where
     /// the new buffer and the candidates refresh, so the session is never
     /// observable with a cursor past its input.
     ///
+    /// Keeps every character: the pin's parser accepts any input string
+    /// and simply stops consuming at the first byte no key matches
+    /// (`pinyin_parser2.cpp:237-328` — there is no explicit stop, the
+    /// termination is the DP's reachability), so space, control, and
+    /// non-ASCII bytes must REACH the decoder for it to stop there
+    /// (class B2 of `uncovered-surface-differentials.md`). The decoder
+    /// hard-stops on them; this seam must not pre-filter them away.
+    ///
+    /// The batch [`Session::type_pinyin`] keeps its printable-ASCII
+    /// accept set (the frozen F1 design, `f1-junk-aware-parse.md`): the
+    /// two seams are deliberately different. The corpus and sentence pins
+    /// feed through `type_pinyin` only — no path reaches this seam — so
+    /// the loosened filter here cannot move them.
+    ///
     /// # Errors
     ///
     /// Returns [`EngineError`] when the refresh under the new input hits
@@ -826,9 +840,6 @@ where
     pub fn replace_raw(&mut self, text: &str) -> Result<(), EngineError> {
         self.raw.clear();
         for character in text.chars() {
-            if !is_batch_input_character(character) {
-                continue;
-            }
             if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
                 break;
             }
@@ -1353,16 +1364,25 @@ where
     /// the `pinyin_parse_more_*` return and `pinyin_get_parsed_input_length`
     /// value, which are defined over the passed input, never the
     /// remaining slice a mid-composition re-parse decodes from.
+    ///
+    /// Extends the filtered key path over any trailing apostrophe run:
+    /// the pin's DP propagates `'` byte-for-byte from any reachable
+    /// position (`pinyin_parser2.cpp:237-251`) and `final_step` answers
+    /// the consistent-chain length, so a trailing or standalone run is
+    /// consumed even though no key covers it.
     #[must_use]
     pub fn full_parsed_len(&self) -> usize {
         if self.raw.is_empty() {
             return 0;
         }
         match SegmentGraph::build_with_options(self.raw.as_bytes(), self.settings.options) {
-            Ok(graph) => graph
-                .fewest_keys(self.settings.incomplete())
-                .last()
-                .map_or(0, Edge::to),
+            Ok(graph) => apostrophe_extended(
+                self.raw.as_bytes(),
+                graph
+                    .fewest_keys(self.settings.incomplete())
+                    .last()
+                    .map_or(0, Edge::to),
+            ),
             Err(_) => 0,
         }
     }
@@ -1446,10 +1466,15 @@ where
         let remaining = &self.raw[anchor..];
         let graph = SegmentGraph::build_with_options(remaining.as_bytes(), self.settings.options)
             .map_err(EngineError::Graph)?;
-        let parsed_prefix = graph
-            .fewest_keys(self.settings.incomplete())
-            .last()
-            .map_or(0, Edge::to);
+        // The trailing-run extension of `full_parsed_len`, applied to the
+        // remaining slice (the pin's propagation runs on every parse).
+        let parsed_prefix = apostrophe_extended(
+            remaining.as_bytes(),
+            graph
+                .fewest_keys(self.settings.incomplete())
+                .last()
+                .map_or(0, Edge::to),
+        );
 
         // When the model carries the phrase index's real unigram
         // frequencies, the pinned construction runs — the expanding-window
@@ -2521,14 +2546,35 @@ const fn is_input_character(character: char) -> bool {
     character.is_ascii_lowercase() || character == '\''
 }
 
-/// Whether the batch path ([`Session::type_pinyin`]) accepts `character`.
+/// Whether the engine batch path ([`Session::type_pinyin`]) accepts
+/// `character`.
 ///
-/// Printable ASCII (`0x21..=0x7E`), including junk the parity corpus embeds in
-/// inputs. The decoder (`SegmentGraph`) treats non-`a-z`/`'` bytes as hard
-/// boundaries; see `docs/findings/f1-junk-aware-parse.md`. Space and controls
-/// are excluded so they cannot bypass `LogicalKey::Space` / `Tab` / `Enter`.
+/// Printable ASCII (`0x21..=0x7E`), including junk the parity corpus embeds
+/// in inputs. The decoder (`SegmentGraph`) treats non-`a-z`/`'` bytes as
+/// hard boundaries; see `docs/findings/f1-junk-aware-parse.md`. Space and
+/// controls are excluded so they cannot bypass `LogicalKey::Space` / `Tab`
+/// / `Enter`.
+///
+/// This filter belongs to `type_pinyin` ONLY. The capi parse seam
+/// ([`Session::replace_raw`]) keeps every character so the decoder sees —
+/// and stops at — the bytes the pin stops at; the corpus and sentence
+/// pins never reach that seam.
 const fn is_batch_input_character(character: char) -> bool {
     character.is_ascii_graphic()
+}
+
+/// Extends a filtered key-path end over the apostrophe run following it.
+///
+/// The pin's DP propagates `'` byte-for-byte from any reachable position
+/// (`pinyin_parser2.cpp:237-251`) and `final_step` answers the
+/// consistent-chain length, so bytes of a trailing or standalone run are
+/// consumed even though no key covers them (`ni'` parses to 3, `'''` to
+/// 3, `nihao'` to 6).
+fn apostrophe_extended(input: &[u8], mut end: usize) -> usize {
+    while input.get(end) == Some(&b'\'') {
+        end += 1;
+    }
+    end
 }
 
 #[cfg(test)]
@@ -2620,6 +2666,67 @@ mod tests {
             .type_pinyin("b#ing")
             .expect("batch typing cannot fail");
         assert_eq!(session.raw_input(), "b#ing");
+    }
+
+    #[test]
+    fn type_pinyin_still_filters_stop_bytes() {
+        // The frozen half of the parse-termination split: `type_pinyin`
+        // keeps its printable-ASCII accept set (F1), so the corpus and
+        // sentence pins that feed through it cannot reach the loosened
+        // `replace_raw` seam — a space never enters `raw` here.
+        let mut session = session();
+        session
+            .type_pinyin("ni hao")
+            .expect("batch typing cannot fail");
+        assert_eq!(session.raw_input(), "nihao");
+    }
+
+    #[test]
+    fn replace_raw_keeps_the_bytes_the_pin_stops_at() {
+        // Class B2: the pin accepts any input string and stops consuming
+        // at the first byte no key matches (pinyin_parser2.cpp:237-328);
+        // the capi parse seam must let those bytes reach the decoder.
+        // Measured on the rebuilt pin: `ni hao` parses 2, `，nihao`
+        // parses 0 (uncovered-surface differential, phase B).
+        let mut session = session();
+        session.replace_raw("ni hao").expect("cannot fail");
+        assert_eq!(session.raw_input(), "ni hao");
+        assert_eq!(session.full_parsed_len(), 2, "the space stops the parse");
+
+        session.replace_raw("\u{ff0c}nihao").expect("cannot fail");
+        assert_eq!(
+            session.full_parsed_len(),
+            0,
+            "the full-width comma stops at byte 0"
+        );
+
+        session.replace_raw("nihao").expect("cannot fail");
+        assert_eq!(session.full_parsed_len(), 5, "clean input unaffected");
+    }
+
+    #[test]
+    fn replace_raw_consumes_trailing_and_standalone_apostrophe_runs() {
+        // The inherited apostrophe class (ledgered on
+        // fix/cursor-offset-normalization, folded into the termination
+        // law): the pin's DP propagation consumes `'` bytes no key
+        // covers — `ni'` parses 3, `nihao'` parses 6, `'''` parses 3
+        // (the F-E-14 table).
+        let mut session = session();
+        session.replace_raw("ni'").expect("cannot fail");
+        assert_eq!(session.full_parsed_len(), 3);
+
+        session.replace_raw("nihao'").expect("cannot fail");
+        assert_eq!(session.full_parsed_len(), 6);
+
+        session.replace_raw("'''").expect("cannot fail");
+        assert_eq!(session.full_parsed_len(), 3);
+
+        session.replace_raw("ni'hao").expect("cannot fail");
+        assert_eq!(
+            session.full_parsed_len(),
+            6,
+            "internal runs stay covered by edges"
+        );
     }
 
     #[test]
