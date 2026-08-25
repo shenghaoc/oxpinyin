@@ -275,3 +275,35 @@ inputs (the pin-built `.so` SIGABRTs).
   `sentence-surface.md` §12 (recommended as a permanent divergence; the
   freeze is the maintainer's call); enumerate with the read-only
   `pinyin-oracle` `sentence-tail` binary.
+
+### Predicted-candidate tie order is the Tkrzw HashDBM bucket walk
+
+- **Upstream source cite:** `src/storage/phrase_large_table3_tkrzwdb.cpp:155-190`
+  (`PhraseLargeTable3::search_suggestion`: `MakeIterator`/`Jump(prefix)`/
+  `Next` over `phrase_index.bin`, a `TkrzwHDB` file); consumed verbatim by
+  `_compute_predicted_prefix_candidates` (`src/pinyin.cpp:2380-2405`) and
+  left in place by `g_array_sort_with_data` — measured on a 178-element
+  array with grouped ties, glib's sort preserves within-tie insertion order
+  (0 inversions).
+- **Mechanism:** the system suggestion phrases are baked with uniform
+  phrase-index counts (measured on model20: 好 177×100+1×200, 的
+  281×100+2×99, 一 587×100+2×99+2×200, 我 167×100+1×200), so the
+  `(length desc, amplified-freq desc)` comparator ties across the whole
+  list and the row order a caller sees is exactly the store's iteration
+  order — the Tkrzw hash bucket walk, one physical file holding all
+  libraries' tokens (27 library switches observed in one prefix's list).
+  Deterministic for a given file and tkrzw version; not expressible as a
+  sort key over (text, token, library).
+- **What oxpinyin does instead:** `SystemDictionary::suggest_after`
+  (`crates/oxpinyin-data/src/dict.rs:196-217`) walks a
+  `BTreeMap<String, Vec<u32>>` in text order; the hash bucket order of a
+  foreign DBM layout is not derivable from any key. Matching the pin's
+  order exactly would mean replicating the Tkrzw hash layout or freezing
+  per-prefix orders as fixture data.
+- **Externally observable:** yes — the row order of
+  `PREDICTED_PREFIX` candidates from
+  `pinyin_guess_predicted_candidates[_with_punctuations]`. Measured on
+  prefix 好 over the matched model20 tables: sets identical after the
+  prefix slice, 174 of 178 rows at different positions
+  (`tools/bisection/pred-order-diff.c`, the moving-number gate for the
+  B1 fix in `docs/findings/uncovered-surface-differentials.md`).

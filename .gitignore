@@ -53,3 +53,4 @@ rustc-ice-*.txt
 user_store.redb
 tools/bisection/fullpin-diff
 /tools/bisection/uncovered-surface-diff
+/tools/bisection/pred-order-diff
