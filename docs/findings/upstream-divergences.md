@@ -456,3 +456,31 @@ Text, candidate type and counts cannot.
   (the W11 bisect abort, the ibus-libpinyin#570 guess-seam pattern,
   and the shared root cause), the guess-seam leading-run answered as
   `LookupOffsetPastSeparator`, and this cursor-helper seam.
+
+### Apostrophe-only input: the pin consumes every byte, the engine consumes none
+
+- **Upstream source cite:** `src/pinyin.cpp` parse path over
+  `FullPinyinParser2` (`src/storage/pinyin_parser2.cpp`): the pin emits a
+  zero `ChewingKey` per `'` separator and counts it in `m_parsed_len` —
+  measured on the pin: `'` → parse_return 1, `''` → 2, `'''` → 3
+  (the table in `oracle-apostrophe-abort.md`, F-E-14).
+- **Mechanism:** the pin's DP walks a separator-only input by emitting
+  zero keys, so an all-apostrophe composition has a non-empty matrix
+  (lone zero keys at every position) and a consumed length equal to the
+  input length.
+- **What oxpinyin does instead:** `SegmentGraph` consumes a leading
+  apostrophe run only as propagation TOWARD a following key — with no
+  key following, no edge is emitted and the consumed length is 0. The
+  cursor laws on top then answer `Ok(0)` where the pin's `_check_offset`
+  aborts over those zero columns (`EngineError::ZeroKeyOffsetCheck`,
+  the entry above); the parse surface itself reports 0 where the pin
+  reports the byte count.
+- **Externally observable:** yes — the `pinyin_parse_more_full_pinyins`
+  return and `pinyin_get_parsed_input_length` differ on apostrophe-only
+  input (pin 1/2/3, oxpinyin 0), and the cursor helpers answer `true, 0`
+  where the pin aborts. This is the parser-stop-consumption surface —
+  class B2 of `uncovered-surface-differentials.md` ("where does the
+  parser stop consuming"), recorded here so B2's closing work INHERITS
+  it instead of rediscovering it; the sibling abort on the same input
+  (`pinyin_get_pinyin_key`) remains F-E-14 in
+  `oracle-apostrophe-abort.md`.
