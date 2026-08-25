@@ -57,17 +57,19 @@ fi
 
 # stderr stays OUT of the compared logs: the oracle writes an
 # unbuffered user.conf diagnostic whose interleaving would corrupt a
-# buffered stdout row and skew the row counts.
-CAPI_LOG="$(mktemp)"
-CAPI_ERR="$(mktemp)"
-ORACLE_LOG="$(mktemp)"
-ORACLE_ERR="$(mktemp)"
+# buffered stdout row and skew the row counts. One private directory
+# holds every intermediate log; the trap removes it on exit.
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+CAPI_LOG="$WORK_DIR/capi.log"
+CAPI_ERR="$WORK_DIR/capi.err"
+ORACLE_LOG="$WORK_DIR/oracle.log"
+ORACLE_ERR="$WORK_DIR/oracle.err"
 if ! ./pred-order-diff "$CAPI_SO" "$SYSTEM" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
     echo "FAIL: pred-order-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     echo "--- driver diagnostics (stderr) ---"
     cat "$CAPI_ERR"
-    rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
     exit 1
 fi
 if ! ./pred-order-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
@@ -75,7 +77,6 @@ if ! ./pred-order-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$ORACLE_E
     cat "$ORACLE_LOG"
     echo "--- driver diagnostics (stderr) ---"
     cat "$ORACLE_ERR"
-    rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
     exit 1
 fi
 
@@ -84,22 +85,22 @@ total=0
 rows=0
 status=0
 for tag in hao de yi ni zhongguo wo shi le; do
-    grep "^pred-$tag:" "$ORACLE_LOG" > "/tmp/pred-order-oracle-$tag" || true
-    grep "^pred-$tag:" "$CAPI_LOG" > "/tmp/pred-order-capi-$tag" || true
-    n=$(wc -l < "/tmp/pred-order-oracle-$tag")
+    oracle_rows="$WORK_DIR/pred-order-oracle-$tag"
+    capi_rows="$WORK_DIR/pred-order-capi-$tag"
+    grep "^pred-$tag:" "$ORACLE_LOG" > "$oracle_rows" || true
+    grep "^pred-$tag:" "$CAPI_LOG" > "$capi_rows" || true
+    n=$(wc -l < "$oracle_rows")
     if [[ "$n" -eq 0 ]]; then
         echo "$tag: no oracle rows (prefix inactive?)"
         status=1
         continue
     fi
-    mismatches=$(paste -d/ "/tmp/pred-order-oracle-$tag" \
-        "/tmp/pred-order-capi-$tag" | awk -F/ '$1 != $2 { c++ } END { print c+0 }')
+    mismatches=$(paste -d/ "$oracle_rows" \
+        "$capi_rows" | awk -F/ '$1 != $2 { c++ } END { print c+0 }')
     echo "$tag: ${mismatches}/${n} rows at different positions"
     total=$((total + mismatches))
     rows=$((rows + n))
-    rm -f "/tmp/pred-order-oracle-$tag" "/tmp/pred-order-capi-$tag"
 done
-rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
 
 if (( status != 0 )); then
     echo "FAIL: a prefix produced no oracle rows"

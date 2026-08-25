@@ -61,14 +61,21 @@ typedef uint8_t guint8;
 #define DEFAULT_SORT ((guint)0x1e) /* SORT_BY_PHRASE_LENGTH|PINYIN|FREQUENCY */
 #define PAGE_SIZE ((guint)5)       /* fork default, PYPConfig.cc:148 */
 
-/* The frozen parity option word (docs/findings/option-bits.md): USE_TONE
- * | PINYIN_INCOMPLETE | 0x80 | 0x100. The two libraries' bare defaults
+/* The frozen parity option word (docs/findings/option-bits.md):
+ * PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE (the
+ * word carries no USE_TONE bit). The two libraries' bare defaults
  * differ (the capi instance starts at PINYIN_INCOMPLETE, the oracle at
  * USE_TONE), so the driver sets this word on both sides first — without
  * it a default-config artefact would masquerade as a divergence. */
 #define PARITY_OPTIONS ((guint)0x18a)
+#define USE_TONE ((guint)1 << 5)
 #define FORCE_TONE ((guint)1 << 6)
 #define DYNAMIC_ADJUST ((guint)1 << 9)
+/* Composite option profiles: the parity word plus one bit each
+ * (0x1ca, 0x38a), and USE_TONE|FORCE_TONE (0x60). */
+#define PARITY_FORCE_TONE (PARITY_OPTIONS | FORCE_TONE)
+#define PARITY_DYNAMIC_ADJUST (PARITY_OPTIONS | DYNAMIC_ADJUST)
+#define USE_TONE_FORCE_TONE (USE_TONE | FORCE_TONE)
 
 /* ── Function pointer types ───────────────────────────────────────────── */
 
@@ -771,8 +778,8 @@ int main(int argc, char **argv) {
     /* Phase C — option profiles. */
     {
         /* Control: the parity word must hold (validates the harness). */
-        if (opt_profile_input(&s, ctx, inst, 0x18a, "nihao", 0) ||
-            opt_profile_input(&s, ctx, inst, 0x18a, "nihao", 2))
+        if (opt_profile_input(&s, ctx, inst, PARITY_OPTIONS, "nihao", 0) ||
+            opt_profile_input(&s, ctx, inst, PARITY_OPTIONS, "nihao", 2))
             goto fail_inst;
         if (!s.reset(inst)) {
             fprintf(stderr, "opt reset failed\n");
@@ -780,9 +787,9 @@ int main(int argc, char **argv) {
         }
         /* DYNAMIC_ADJUST bit-SET: the bigram term folds into candidate
          * frequency (option-bits.md, deferred #99 on the engine side). */
-        if (opt_profile_input(&s, ctx, inst, 0x38a, "nihao", 0) ||
-            opt_profile_input(&s, ctx, inst, 0x38a, "nihao", 2) ||
-            opt_profile_input(&s, ctx, inst, 0x38a, "nihaoshijie", 5))
+        if (opt_profile_input(&s, ctx, inst, PARITY_DYNAMIC_ADJUST, "nihao", 0) ||
+            opt_profile_input(&s, ctx, inst, PARITY_DYNAMIC_ADJUST, "nihao", 2) ||
+            opt_profile_input(&s, ctx, inst, PARITY_DYNAMIC_ADJUST, "nihaoshijie", 5))
             goto fail_inst;
         if (!s.reset(inst)) {
             fprintf(stderr, "opt reset failed\n");
@@ -795,10 +802,10 @@ int main(int argc, char **argv) {
             guint word;
             const char *input;
         } tone_inputs[] = {
-            {0x1ca, "ni3hao3"},  {0x1ca, "nihao"},  {0x1ca, "zai4"},
-            {0x1ca, "zhuang4"},  {0x1ca, "zai6"},   {0x1ca, "ni3"},
-            {0x1ca, "shi4jie4"}, {0x60, "ni3hao3"}, {0x60, "nihao"},
-            {0x60, "zai4"},      {0x60, "zai6"},
+            {PARITY_FORCE_TONE, "ni3hao3"},  {PARITY_FORCE_TONE, "nihao"},  {PARITY_FORCE_TONE, "zai4"},
+            {PARITY_FORCE_TONE, "zhuang4"},  {PARITY_FORCE_TONE, "zai6"},   {PARITY_FORCE_TONE, "ni3"},
+            {PARITY_FORCE_TONE, "shi4jie4"}, {USE_TONE_FORCE_TONE, "ni3hao3"}, {USE_TONE_FORCE_TONE, "nihao"},
+            {USE_TONE_FORCE_TONE, "zai4"},      {USE_TONE_FORCE_TONE, "zai6"},
         };
         for (size_t i = 0; i < sizeof(tone_inputs) / sizeof(tone_inputs[0]); i++) {
             if (opt_profile_input(&s, ctx, inst, tone_inputs[i].word,

@@ -85,10 +85,14 @@ More than one agent may hold this checkout. Never switch the shared
 checkout's branch or touch its working tree for your own work when it
 sits on another workstream's branch (check `git branch --show-current`
 first — a branch you did not create means someone else is mid-flight).
-Do your work in a detached worktree — `git worktree add /tmp/<name>
-<branch>` — commit there, `git worktree remove` when done, and leave
-the shared checkout exactly as found. The shim.cc collision came from
-two agents assuming sole ownership of one tree.
+Do your work in a worktree, not the shared checkout — commit there,
+`git worktree remove` when done, and leave the shared checkout exactly
+as found. Checking out an existing branch is `git worktree add
+/tmp/<name> <branch>`; a new branch needs `-b` (`git worktree add -b
+<branch> /tmp/<name>`); a truly detached worktree needs `--detach` with
+a commit (`git worktree add --detach /tmp/<name> <commit>`). The
+shim.cc collision came from two agents assuming sole ownership of one
+tree.
 
 ## Rebase discipline
 
