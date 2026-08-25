@@ -48,6 +48,7 @@
 mod candidate;
 mod config;
 mod constraint;
+mod cursor;
 mod error;
 mod key;
 mod nbest;
@@ -59,6 +60,10 @@ pub use candidate::{Candidate, CandidateKind, CandidateList};
 pub use config::{
     Config, ConfigError, ConfigLayer, ConfigSource, ConfigValue, EmptyConfigSource,
     UPSTREAM_DEFAULT_COUNT, merge,
+};
+pub use cursor::{
+    left_word_offset, left_word_offset_over_spans, lookup_offset_for_cursor,
+    lookup_offset_over_spans, right_word_offset, right_word_offset_over_spans,
 };
 pub use error::EngineError;
 pub use key::{KeyInput, LogicalKey, Modifiers};

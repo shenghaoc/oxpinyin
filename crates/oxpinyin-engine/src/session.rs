@@ -1238,6 +1238,28 @@ where
         normalize_lookup_offset(self.raw.as_bytes(), offset)
     }
 
+    /// Normalizes a user cursor position to a lookup offset over the
+    /// session's own buffer and options — the `pinyin_get_pinyin_offset`
+    /// law ([`crate::lookup_offset_for_cursor`]).
+    pub fn lookup_offset_for_cursor(&self, cursor: usize) -> Result<usize, EngineError> {
+        crate::cursor::lookup_offset_for_cursor(self.raw.as_bytes(), self.settings.options, cursor)
+    }
+
+    /// The word-level left move over the session's own buffer and options
+    /// — the `pinyin_get_left_pinyin_offset` law
+    /// ([`crate::left_word_offset`]).
+    pub fn left_word_offset(&self, offset: usize) -> Result<usize, EngineError> {
+        crate::cursor::left_word_offset(self.raw.as_bytes(), self.settings.options, offset)
+    }
+
+    /// The word-level right move over the session's own buffer and options
+    /// — the `pinyin_get_right_pinyin_offset` law
+    /// ([`crate::right_word_offset`]). `Ok(None)` is the pin's graceful
+    /// false: no key starts at the position.
+    pub fn right_word_offset(&self, offset: usize) -> Result<Option<usize>, EngineError> {
+        crate::cursor::right_word_offset(self.raw.as_bytes(), self.settings.options, offset)
+    }
+
     /// Whether a re-parse of `original` continues the current composition
     /// (`CapiInstance::begin_parse`'s rule): the composition is open —
     /// not completed by a selection — and the buffer evolved from
