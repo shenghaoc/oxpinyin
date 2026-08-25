@@ -340,6 +340,21 @@ impl SharedLm {
             .count_delta(prev, token)
             .map_err(|error| LmError::User(error.to_string()))
     }
+
+    /// The phrase-index total the pin's amplified law divides by, as the
+    /// pinned normal path constructs it (`session.rs:1409-1416`): the LM
+    /// total with user extra (`None` without real unigrams → 0) plus the
+    /// phrase-index item count — the reproduction of the pin's
+    /// `get_phrase_index_total_freq()`. The pin's predicted-candidate
+    /// branch divides by the same quantity, live per call
+    /// (`pinyin.cpp:1813-1814`), so this must not be snapshotted.
+    pub(crate) fn amplified_total(&self, item_count: u64) -> u64 {
+        <Self as LanguageModel>::unigram_total(self)
+            .ok()
+            .flatten()
+            .unwrap_or(0)
+            .saturating_add(item_count)
+    }
 }
 
 impl LanguageModel for SharedLm {
@@ -586,6 +601,7 @@ impl CapiContext {
             parsed_len: 0,
             user: self.user.clone(),
             dict: self.dict.clone()?,
+            lm: self.lm.clone()?,
             incomplete: Arc::clone(&self.incomplete),
             double_scheme: Arc::clone(&self.double_scheme),
             zhuyin_scheme: Arc::clone(&self.zhuyin_scheme),
@@ -811,6 +827,11 @@ pub(crate) struct CapiInstance {
     pub(crate) user: Option<UserStore>,
     /// Shared dictionary (system + user-file + addon set) for prediction.
     pub(crate) dict: SharedDict,
+    /// Clone of the context's language model, for the predicted-candidate
+    /// frequency key: the amplified-law total must be read live per call
+    /// (training changes it), like the pin's
+    /// `get_phrase_index_total_freq()` read (`pinyin.cpp:1813-1814`).
+    pub(crate) lm: SharedLm,
     /// Shared live `PINYIN_INCOMPLETE` flag from the owning context.
     pub(crate) incomplete: Arc<AtomicBool>,
     /// Shared live double-pinyin scheme from the owning context.

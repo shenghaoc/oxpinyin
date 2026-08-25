@@ -359,3 +359,36 @@ fn predicted_bigram_filter_drops_9_keeps_10() {
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
+
+/// The pin slices the predicted prefix candidate's phrase string from
+/// `m_begin = prefix_len` (`pinyin.cpp:1976-1980, 2018-2023`): the user
+/// already committed the prefix, so the suggestion must carry only the
+/// remainder — both frontends commit the library string verbatim
+/// (`docs/findings/uncovered-surface-differentials.md` B1).
+#[test]
+fn predicted_prefix_candidates_slice_the_prefix_from_the_text() {
+    let user_dir = TempUserDir::new("predict-slice");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let prefix = cstr("\u{4e2d}"); // 中
+    assert!(pinyin_guess_predicted_candidates_with_punctuations(
+        instance,
+        prefix.as_ptr()
+    ));
+    // SAFETY: live instance after guess_predicted.
+    let inst = unsafe { instance_ref(instance) };
+    let suggestions: Vec<&str> = inst
+        .candidates
+        .iter()
+        .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)
+        .map(|c| c.text.to_str().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        suggestions,
+        ["\u{56fd}"],
+        "中国 suggests 国: the prefix 中 is sliced, not part of the text"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}

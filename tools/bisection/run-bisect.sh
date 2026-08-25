@@ -53,11 +53,18 @@ echo ""
 # ── Mode 1: Run against oxpinyin-capi ─────────────────────────────────────
 
 echo "--- running against oxpinyin-capi ---"
+# stderr stays OUT of the compared log: an unbuffered driver diagnostic
+# interleaving into buffered stdout corrupts a compared row (the same
+# artifact run-pred-order-diff.sh measured turning a 178-row count into
+# 177), and a stderr-only line on one side is a spurious diff row.
 CAPI_LOG="$(mktemp)"
-if ! ./bisect "$CAPI_SO" "$CAPI_DATA" > "$CAPI_LOG" 2>&1; then
+CAPI_ERR="$(mktemp)"
+if ! ./bisect "$CAPI_SO" "$CAPI_DATA" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
     echo "FAIL: bisect crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
-    rm -f "$CAPI_LOG"
+    echo "--- driver diagnostics (stderr) ---"
+    cat "$CAPI_ERR"
+    rm -f "$CAPI_LOG" "$CAPI_ERR"
     exit 1
 fi
 echo "oxpinyin-capi: ok"
@@ -166,10 +173,13 @@ ORACLE_DATA="${2:-}"
 if [ -n "$ORACLE_SO" ] && [ -n "$ORACLE_DATA" ]; then
     echo "--- running against oracle ---"
     ORACLE_LOG="$(mktemp)"
-    if ! ./bisect "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2>&1; then
+    ORACLE_ERR="$(mktemp)"
+    if ! ./bisect "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
         echo "FAIL: bisect crashed against oracle"
         cat "$ORACLE_LOG"
-        rm -f "$CAPI_LOG" "$ORACLE_LOG"
+        echo "--- driver diagnostics (stderr) ---"
+        cat "$ORACLE_ERR"
+        rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
         exit 1
     fi
     echo "oracle: ok"
@@ -185,12 +195,13 @@ if [ -n "$ORACLE_SO" ] && [ -n "$ORACLE_DATA" ]; then
     else
         echo "DIVERGENCE: outputs differ"
         diff -u "${ORACLE_LOG}.body" "${CAPI_LOG}.body" || true
-        rm -f "$CAPI_LOG" "$ORACLE_LOG" "${CAPI_LOG}.body" "${ORACLE_LOG}.body"
+        rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR" \
+            "${CAPI_LOG}.body" "${ORACLE_LOG}.body"
         exit 2
     fi
-    rm -f "$ORACLE_LOG" "${ORACLE_LOG}.body"
+    rm -f "$ORACLE_LOG" "$ORACLE_ERR" "${ORACLE_LOG}.body"
 fi
 
-rm -f "$CAPI_LOG" "${CAPI_LOG}.body"
+rm -f "$CAPI_LOG" "$CAPI_ERR" "${CAPI_LOG}.body"
 echo ""
 echo "bisection: PASS"
