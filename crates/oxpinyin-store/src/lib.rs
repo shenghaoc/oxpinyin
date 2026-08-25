@@ -1028,8 +1028,8 @@ mod tests {
         drop(db);
     }
 
-    /// Removes a tkrzw store file on drop, so a panicking test leaves
-    /// nothing behind in `std::env::temp_dir()`.
+    /// Removes a tkrzw store file and its `-lock` sidecar on drop, so a
+    /// panicking test leaves nothing behind in `std::env::temp_dir()`.
     #[cfg(feature = "tkrzw")]
     struct RemoveTkrzw(std::path::PathBuf);
 
@@ -1037,6 +1037,9 @@ mod tests {
     impl Drop for RemoveTkrzw {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
+            let mut lock = self.0.clone().into_os_string();
+            lock.push("-lock");
+            let _ = std::fs::remove_file(std::path::PathBuf::from(lock));
         }
     }
 
