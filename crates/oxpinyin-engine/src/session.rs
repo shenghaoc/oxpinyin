@@ -464,9 +464,24 @@ where
         // starts at `anchor` and advances by the candidate's own byte span.
         let constraint_start = anchor;
         let constraint_end = self.next_boundary(anchor.saturating_add(advance));
-        if candidate.nbest_row().is_some() {
-            self.selected = text.clone();
+        // The raw bytes between the composition offset and the window anchor
+        // were typed without being selected. For a re-anchored selection
+        // (anchor > composition offset) they would otherwise be dropped from
+        // the committed/preedit text — the same gap the constraint rebuild
+        // preserves (`rebuild_selection_from_constraints`). The composition-
+        // anchored path (anchor == composition offset) has an empty gap.
+        let gap = if anchor > self.consumed {
+            self.raw.get(self.consumed..anchor).unwrap_or("")
         } else {
+            ""
+        };
+        if candidate.nbest_row().is_some() {
+            let mut rebuilt = String::with_capacity(gap.len() + text.len());
+            rebuilt.push_str(gap);
+            rebuilt.push_str(&text);
+            self.selected = rebuilt;
+        } else {
+            self.selected.push_str(gap);
             self.selected.push_str(&text);
         }
         if let Some(token) = token {

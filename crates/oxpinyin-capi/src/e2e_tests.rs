@@ -1280,6 +1280,26 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
     // resolving the index against the composition-anchored cached list
     // instead would select a different row and answer a different cursor.
     assert_eq!(pinyin_choose_candidate(instance, 2, hao), 5);
+
+    // The skipped prefix (the raw bytes [0, 2) before the anchor) is
+    // retained in the committed text: a re-anchored selection must not
+    // drop the typed-but-unselected bytes (the gap
+    // `rebuild_selection_from_constraints` preserves). commit() resets the
+    // session, so it is read last.
+    let committed = {
+        // SAFETY: the instance is live; commit takes &mut and resets.
+        unsafe {
+            crate::state::instance_mut(instance)
+                .session
+                .commit()
+                .expect("commit")
+        }
+    };
+    assert_eq!(
+        committed,
+        "ni".to_owned() + "好",
+        "the typed prefix survives the re-anchored choose"
+    );
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }

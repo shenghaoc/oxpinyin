@@ -392,7 +392,7 @@ pub extern "C" fn pinyin_guess_candidates(
             Some((_, window)) => window,
             None => inst.session.candidates(),
         };
-        for cand in candidates.iter() {
+        for (window_index, cand) in candidates.iter().enumerate() {
             if without_sentence && cand.kind() == oxpinyin_engine::CandidateKind::Sentence {
                 continue;
             }
@@ -424,6 +424,7 @@ pub extern "C" fn pinyin_guess_candidates(
                 nbest_index: cand.nbest_index(),
                 consumed_bytes,
                 token: cand.token(),
+                source_index: window_index,
             });
         }
         true
