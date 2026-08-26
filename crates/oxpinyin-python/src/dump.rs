@@ -31,7 +31,7 @@ pub fn run_corpus(corpus: &Value, system_dir: &Path) -> Result<Value, RunError> 
         .as_array()
         .ok_or_else(|| RunError("corpus has no cases array".to_owned()))?
     {
-        cases.push(run_case(&mut session, case));
+        cases.push(run_case(&mut session, case)?);
     }
 
     Ok(json!({
@@ -55,25 +55,46 @@ impl std::error::Error for RunError {}
 
 /// Resolves a case's effective input: either the literal `input` or
 /// `repeat.unit` repeated `repeat.times` times.
-fn effective_input(case: &Value) -> String {
+///
+/// # Errors
+///
+/// Returns [`RunError`] when `times` cannot convert to a `usize` or the
+/// repeated length overflows — `String::repeat` would panic there, and an
+/// adversarial corpus file must not crash the dump.
+fn effective_input(case: &Value) -> Result<String, RunError> {
     if let Some(input) = case["input"].as_str() {
-        return input.to_owned();
+        return Ok(input.to_owned());
     }
     if let (Some(unit), Some(times)) = (
         case["repeat"]["unit"].as_str(),
         case["repeat"]["times"].as_u64(),
     ) {
-        return unit.repeat(usize::try_from(times).unwrap_or(0));
+        let times = usize::try_from(times)
+            .map_err(|_| RunError(format!("repeat.times {times} exceeds usize")))?;
+        let unit_len = unit.len();
+        let total = unit_len.checked_mul(times).ok_or_else(|| {
+            RunError(format!(
+                "repeated input of {unit_len} bytes x {times} overflows usize"
+            ))
+        })?;
+        // Bounded by MAX_INPUT_BYTES anyway; refuse absurd allocations early.
+        const INPUT_CAP: usize = 1 << 20;
+        if total > INPUT_CAP {
+            return Err(RunError(format!(
+                "repeated input is {total} bytes, past the {INPUT_CAP}-byte corpus cap"
+            )));
+        }
+        return Ok(unit.repeat(times));
     }
-    String::new()
+    Ok(String::new())
 }
 
 /// Drives one corpus case through the session, recording every observable
 /// step. This mirrors the replay procedure documented in the corpus header;
 /// the pytest driver implements the same steps through the binding.
-fn run_case(session: &mut RuntimeSession, case: &Value) -> Value {
+fn run_case(session: &mut RuntimeSession, case: &Value) -> Result<Value, RunError> {
     let name = case["name"].as_str().unwrap_or_default().to_owned();
-    let input = effective_input(case);
+    let input = effective_input(case)?;
     let mut events = Vec::new();
 
     session.reset();
@@ -90,7 +111,7 @@ fn run_case(session: &mut RuntimeSession, case: &Value) -> Value {
         }
         Err(error) => {
             events.push(json!({ "type": "lookup_error", "message": error.to_string() }));
-            return json!({ "name": name, "events": events });
+            return Ok(json!({ "name": name, "events": events }));
         }
     }
 
@@ -171,7 +192,7 @@ fn run_case(session: &mut RuntimeSession, case: &Value) -> Value {
         }
     }
 
-    json!({ "name": name, "events": events })
+    Ok(json!({ "name": name, "events": events }))
 }
 
 /// The stable string for a candidate origin, matching the binding's labels.

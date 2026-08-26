@@ -153,15 +153,17 @@ impl AddonSet {
 
     fn unigram_total(&self) -> Option<u64> {
         if self.loaded.is_empty() {
-            None
-        } else {
-            Some(
-                self.loaded
-                    .values()
-                    .map(SystemDictionary::unigram_total)
-                    .sum(),
-            )
+            return None;
         }
+        // Saturating, like every other total in this crate: `Iterator::sum`
+        // would wrap on release and panic on debug — a profile-dependent
+        // divergence determinism cannot afford.
+        Some(
+            self.loaded
+                .values()
+                .map(SystemDictionary::unigram_total)
+                .fold(0_u64, u64::saturating_add),
+        )
     }
 
     fn is_empty(&self) -> bool {
@@ -678,6 +680,23 @@ mod tests {
         assert_eq!(advanced, Selection::Completed);
         assert_eq!(session.commit().expect("commit"), "你好");
         assert!(!session.is_composing());
+    }
+
+    #[test]
+    fn regular_file_as_user_dir_degrades_to_no_user_state() {
+        let marker = std::env::temp_dir().join(format!(
+            "oxpinyin-runtime-file-user-{}.tmp",
+            std::process::id()
+        ));
+        std::fs::write(&marker, b"not a directory").expect("temp file");
+        let runtime = Runtime::open_fixtures(&w3_dir(), Some(&marker));
+        // A non-directory user path must not fail init (capi contract); it
+        // simply leaves the engine without learning state.
+        if let Err(error) = &runtime {
+            panic!("expected open to succeed over a file user dir: {error}");
+        }
+        assert!(runtime.expect("open").user_store().is_none());
+        std::fs::remove_file(&marker).expect("cleanup temp file");
     }
 
     #[test]

@@ -22,10 +22,12 @@ use pyo3::prelude::*;
 use pyo3::types::PyType;
 
 use oxpinyin_data::{DictError, InterpolationError, LmError};
-use oxpinyin_engine::{CandidateKind, EngineError, KeyOutcome, Preedit, Selection};
+use oxpinyin_engine::{
+    CandidateKind, EmptyConfigSource, EngineError, KeyOutcome, Preedit, Selection,
+};
 
-use crate::runtime::{OpenError, Runtime, RuntimeDict, RuntimeLm};
 use oxpinyin_engine::{CandidateList, Session};
+use oxpinyin_runtime::{OpenError, Runtime, RuntimeDict, RuntimeLm};
 
 create_exception!(
     _native,
@@ -55,6 +57,9 @@ fn open_error(error: OpenError) -> PyErr {
         OpenError::Dict(_) | OpenError::Lm(_) | OpenError::Interpolation(_) => {
             OxpinyinError::new_err(error.to_string())
         }
+        // `OpenError` is #[non_exhaustive]; a future variant is a runtime
+        // failure until this layer grows an explicit exception for it.
+        _ => OxpinyinError::new_err(error.to_string()),
     }
 }
 

@@ -85,7 +85,12 @@ Ordering is the engine's rank order, best first.
 ## Selection workflow (stateful)
 
 ```python
-with oxpinyin.Engine(data_dir, user_dir="~/.local/share/oxpinyin") as engine:
+from pathlib import Path
+
+user_dir = Path("~/.local/share/oxpinyin").expanduser()
+user_dir.mkdir(parents=True, exist_ok=True)
+
+with oxpinyin.Engine(data_dir, user_dir=str(user_dir)) as engine:
     engine.type_pinyin("ni'hao")
     print(engine.preedit)            # current display text
     choice = engine.select(0)        # "continued" or "completed"
@@ -94,6 +99,10 @@ with oxpinyin.Engine(data_dir, user_dir="~/.local/share/oxpinyin") as engine:
     engine.train()                   # learn the recorded sentence
     engine.save()                    # persist user state when modified
 ```
+
+The directory must already exist — as with the native init, an unusable user
+dir silently degrades to "no learning" instead of failing construction, so a
+typo'd path shows up only as `train()` refusing.
 
 Extra surface: `candidates_at(offset)` builds the per-offset window the C ABI
 offers without disturbing engine state; `input`, `composing`,

@@ -14,7 +14,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    let mut args = std::env::args().skip(1);
+    // `args_os`, not `args`: platform-native paths need not be UTF-8, and
+    // `args` panics on them; `PathBuf: From<OsString>` takes them as-is.
+    let mut args = std::env::args_os().skip(1);
     let (corpus_path, system_dir, out_path) =
         match (args.next(), args.next(), args.next(), args.next().is_none()) {
             (Some(c), Some(s), Some(o), true) => {
