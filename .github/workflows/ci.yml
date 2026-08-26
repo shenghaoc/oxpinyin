@@ -13,10 +13,12 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
-# Three jobs:
+# Four jobs:
 #   lint — rustfmt + clippy
 #   test — cargo test for the whole workspace, and the portable crates on
 #          macOS and Windows
+#   python — the oxpinyin Python binding: wheel build, binding tests, and
+#            native-vs-Python parity against the corpus transcript
 #   fuzz — bounded parser fuzz smoke test on a pinned nightly/tool version
 
 jobs:
@@ -50,6 +52,34 @@ jobs:
       # `tools/oracle/build-oracle.sh` plus the exported model20 tables.
       - name: Live-typing differential
         run: tools/bisection/run-live-typing-diff.sh
+
+  # The Python binding: build the real extension (no mocks), run its pytest
+  # suite, which regenerates the pure-Rust transcript via `native-dump` and
+  # byte-compares it against the binding's replay of the same corpus.
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.12'
+      - name: Lint the binding feature set
+        run: cargo clippy --locked -p oxpinyin-python --features bindings --all-targets -- -D warnings
+      - name: Build and install the wheel
+        working-directory: crates/oxpinyin-python
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin pytest
+          pip install .
+      - name: Rust runtime tests
+        run: cargo test --locked -p oxpinyin-python
+      - name: Binding tests and native-vs-Python parity
+        working-directory: crates/oxpinyin-python
+        run: pytest -q
 
   # The portable crates on the other two supported operating systems.
   # structure.md marks core/data/user/engine portable; the oracle harness is

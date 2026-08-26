@@ -1,0 +1,48 @@
+[package]
+name = "oxpinyin-python"
+description = "Python bindings for the oxpinyin pinyin engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+# The lib doubles as the PyO3 extension module (`cdylib`) and a normal rlib
+# the native-parity dump binary links, so the dump provably exercises the
+# same runtime types the binding wraps.
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+oxpinyin-core.workspace = true
+oxpinyin-data.workspace = true
+oxpinyin-engine.workspace = true
+oxpinyin-user.workspace = true
+serde_json = "1"
+
+# Python FFI lands here, behind the opt-in `bindings` feature. Default
+# builds (cargo test/clippy/fmt, the dump binary) never touch Python, so CI
+# jobs without a Python toolchain compile the crate unchanged.
+[dependencies.pyo3]
+version = "0.29"
+optional = true
+features = ["macros"]
+
+[features]
+default = []
+# Build the `oxpinyin._native` extension module. maturin adds
+# `pyo3/extension-module` itself when packaging; keeping it out of the
+# feature means tests can still link executables against this rlib.
+bindings = ["dep:pyo3"]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
+[[bin]]
+name = "native-dump"
+path = "src/bin/native_dump.rs"

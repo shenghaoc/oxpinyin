@@ -1,0 +1,42 @@
+[build-system]
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
+
+[project]
+name = "oxpinyin"
+description = "libpinyin-compatible pinyin engine — candidate lookup for Chinese input, from Python"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = []
+requires-python = ">=3.10"
+authors = [{ name = "Shenghao Chen" }]
+keywords = ["pinyin", "ime", "chinese", "input-method", "libpinyin"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Natural Language :: Chinese (Simplified)",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Rust",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Text Processing :: Linguistic",
+]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/shenghaoc/oxpinyin"
+Issues = "https://github.com/shenghaoc/oxpinyin/issues"
+
+[tool.maturin]
+python-source = "python"
+module-name = "oxpinyin._native"
+features = ["bindings"]
+strip = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests_py"]

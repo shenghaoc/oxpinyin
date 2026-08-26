@@ -23,7 +23,7 @@ cargo test --locked --workspace
 
 | Path | What |
 |---|---|
-| `crates/*` | 12 crates, none stubs (grouped below) |
+| `crates/*` | 13 crates, none stubs (grouped below) |
 | `ROADMAP.md` | Stages, pin, workstream names |
 | `AGENTS.md` | Agent/collaborator contract |
 | `docs/findings/` | Pin, ABI, schema, SPEC inputs |
@@ -32,10 +32,27 @@ cargo test --locked --workspace
 
 | Group | Crates |
 |---|---|
-| Engine / data / capi | `oxpinyin-core`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-capi` |
+| Engine / data / capi | `oxpinyin-core`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-capi`, `oxpinyin-python` |
 | Training toolchain | `oxpinyin-segment`, `oxpinyin-counter`, `oxpinyin-lambda`, `oxpinyin-emitter`, `oxpinyin-corpus` |
 | Tools | `oxpinyin-dictool` |
 | Oracle | `pinyin-oracle` |
+
+## Python
+
+The engine is consumable from Python with no libpinyin install — the same
+Rust implementation the C frontends use, answering libpinyin issue #181:
+
+```python
+import oxpinyin
+
+with oxpinyin.Engine.from_fixture_dir("fixtures/w3") as engine:
+    for candidate in engine.lookup("nihao"):
+        print(candidate.text)   # 你好 first
+```
+
+Build with maturin (`pip install .` inside `crates/oxpinyin-python`) and see
+[docs/python.md](docs/python.md) for data requirements, selection/learning
+workflows, thread-safety and error mapping.
 
 ## Upstream
 

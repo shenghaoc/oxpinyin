@@ -7,6 +7,7 @@ members = [
   "crates/oxpinyin-user",
   "crates/oxpinyin-engine",
   "crates/oxpinyin-capi",
+  "crates/oxpinyin-python",
   "crates/pinyin-oracle",
   "crates/oxpinyin-dictool",
   "crates/oxpinyin-segment",
@@ -33,6 +34,7 @@ all = { level = "deny", priority = -1 }
 
 [workspace.dependencies]
 oxpinyin-core = { path = "crates/oxpinyin-core" }
+oxpinyin-data = { path = "crates/oxpinyin-data" }
 oxpinyin-engine = { path = "crates/oxpinyin-engine" }
 oxpinyin-store = { path = "crates/oxpinyin-store" }
 oxpinyin-user = { path = "crates/oxpinyin-user" }
