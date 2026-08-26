@@ -477,8 +477,12 @@ Text, candidate type and counts cannot.
   reports the byte count.
 - **Externally observable:** yes — the `pinyin_parse_more_full_pinyins`
   return and `pinyin_get_parsed_input_length` differ on apostrophe-only
-  input (pin 1/2/3, oxpinyin 0), and the cursor helpers answer `true, 0`
-  where the pin aborts. This is the parser-stop-consumption surface —
+  input (pin 1/2/3, oxpinyin 0), and the cursor helpers diverge at the
+  abort shapes: `pinyin_get_pinyin_offset` answers `true, 0` (the
+  clamped zero-fill), while `pinyin_get_left_pinyin_offset` and
+  `pinyin_get_right_pinyin_offset` return `false` where the pin
+  aborts (`ZeroKeyOffsetCheck`) — the left helper also answers
+  `true, 0` at offset 0 only. This is the parser-stop-consumption surface —
   class B2 of `uncovered-surface-differentials.md` ("where does the
   parser stop consuming"), recorded here so B2's closing work INHERITS
   it instead of rediscovering it; the sibling abort on the same input
