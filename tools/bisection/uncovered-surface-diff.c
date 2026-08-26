@@ -572,9 +572,12 @@ static int cursor_moves(const struct syms *s, pinyin_instance_t *inst,
      * there for tail cursors of this composition (measured: offset 11
      * aborts, pinyin.cpp:2175 — later upstream turned the assert into
      * `return false`, commit 95e3af7 "Fix _check_offset function"). The
-     * probes below are the smoke-proved-safe cursors; the skipped ones
-     * are printed so the diff still records their offsets. */
-    static const size_t probes[] = {0, 2, 5};
+     * probes below are the smoke-proved-safe cursors. Offset 8 is fully
+     * measurable (get_left(8)=5, get_right(8)=11, both ok), so it is
+     * measured with the rest; offset 11 is not probed — its right move
+     * aborts, a frontend Ctrl+Right there aborts the pinned library, and
+     * that is the pin's landmine, not a divergence to close. */
+    static const size_t probes[] = {0, 2, 5, 8};
     for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
         size_t off = (size_t)-1;
         if (!s->get_pinyin_offset(inst, probes[i], &off)) {
@@ -587,12 +590,6 @@ static int cursor_moves(const struct syms *s, pinyin_instance_t *inst,
         printf("cur:left-right@%zu off=%zu left=%d:%zu right=%d:%zu\n",
                probes[i], off, (int)lok, lok ? left : (size_t)-1, (int)rok,
                rok ? right : (size_t)-1);
-    }
-    for (size_t c = 8; c <= len; c += 3) {
-        size_t off = (size_t)-1;
-        bool ok = s->get_pinyin_offset(inst, c, &off);
-        printf("cur:left-right@%zu skipped off=%d:%zu (pin assert)\n", c,
-               (int)ok, ok ? off : (size_t)-1);
     }
 
     /* Left-arrow walk: cursor from the tail inward, guessing at each
