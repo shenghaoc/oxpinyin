@@ -845,7 +845,15 @@ where
             }
             self.raw.push(character);
         }
+        // A stale consumed from the replaced composition may now sit inside
+        // a multi-byte character of the new raw (`a` selected to consumed 1,
+        // then `，` replaces it). `refresh`/`scan_window` slice
+        // `raw[consumed..]`, so the clamp must land on a char boundary —
+        // the composition restarts from the boundary before it.
         self.consumed = self.consumed.min(self.raw.len());
+        while !self.raw.is_char_boundary(self.consumed) {
+            self.consumed -= 1;
+        }
         self.refresh()?;
         Ok(())
     }
@@ -1591,10 +1599,12 @@ where
     /// [`EngineError::LookupOffsetOutOfRange`] when `offset` exceeds the raw
     /// buffer's one-past-end position — the pin reads its matrix out of
     /// bounds there, so no pinned behaviour exists and the offset is
-    /// refused. An offset equal to one-past-end is valid: `scan_window`
+    /// refused — or when `offset` falls inside a multi-byte character of
+    /// the raw buffer (a mid-character slice has no window under it). An
+    /// offset equal to one-past-end is valid: `scan_window`
     /// answers the terminal sentence rows for it (the pin's reserved slot).
     pub fn candidates_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
-        if offset > self.raw.len() {
+        if offset > self.raw.len() || !self.raw.is_char_boundary(offset) {
             return Err(EngineError::LookupOffsetOutOfRange {
                 offset,
                 len: self.raw.len(),
@@ -4099,5 +4109,37 @@ mod tests {
             ],
             "你 (forced) then 好 (first decoded after the run) train, 你→好 included"
         );
+    }
+
+    #[test]
+    fn replace_raw_walks_consumed_back_to_a_char_boundary() {
+        // A one-byte composition selected to consumed 1, then replaced by
+        // `，` (three bytes): the stale consumed sits inside the character
+        // and `refresh` slices `raw[consumed..]`. The clamp must walk back
+        // to the boundary before it — nothing panics on any input.
+        let mut session = session();
+        session.replace_raw("a").expect("cannot fail");
+        session.select(0).expect("the fallback row selects");
+        session.replace_raw("\u{ff0c}").expect("cannot fail");
+        assert_eq!(session.composition_offset(), 0);
+    }
+
+    #[test]
+    fn candidates_at_rejects_mid_character_offsets() {
+        // The full-width comma occupies bytes 0..3, so offsets 1 and 2 sit
+        // inside it: no window exists under a mid-character slice, and the
+        // offset is refused with the range error instead of panicking.
+        let mut session = session();
+        session.replace_raw("\u{ff0c}nihao").expect("cannot fail");
+        for offset in [1, 2] {
+            assert!(
+                matches!(
+                    session.candidates_at(offset),
+                    Err(EngineError::LookupOffsetOutOfRange { .. })
+                ),
+                "offset {offset} is inside the character and must be refused"
+            );
+        }
+        assert!(session.candidates_at(3).is_ok(), "offset 3 is a boundary");
     }
 }
