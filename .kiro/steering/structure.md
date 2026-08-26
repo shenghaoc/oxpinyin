@@ -11,6 +11,7 @@ inclusion: always
 | oxpinyin-engine | session API — the supported Rust surface | deny | yes | yes |
 | oxpinyin-capi | C ABI subset for the borrowed frontend | allow | Linux | yes |
 | oxpinyin-python | PyO3 binding over the engine session API (Python consumers) | forbid | yes | wheel only |
+| oxpinyin-runtime | concrete assembly shared by consumers (tables+model+user wiring → Session) | forbid | yes | via capi/python |
 | pinyin-oracle | differential harness vs pinned libpinyin | allow | Linux | never |
 | oxpinyin-dictool | conversions; standalone vocab exporter | deny | yes | yes |
 | oxpinyin-corpus | training corpus front-end (zhwiki dump → ngseg raw text) | deny | yes | never |
@@ -18,6 +19,14 @@ inclusion: always
 | oxpinyin-counter | training n-gram counter (`gen_ngram` reproduction) | deny | yes | never |
 | oxpinyin-lambda | training λ estimator (`gen_deleted_ngram` + `estimate_interpolation`) | deny | yes | never |
 | oxpinyin-emitter | training `interpolation2.text` writer (`export_interpolation` reproduction) | deny | yes | never |
+
+**Centralized assembly:** the concrete construction of a decodable engine
+(system tables + unigram model + λ + optional user store + addon/punct
+wiring) lives in exactly one place, `oxpinyin-runtime`; capi,
+python, and future adapters consume it rather than assembling equivalents.
+This is deliberate so native and language-binding paths cannot silently
+diverge. It is glue over `oxpinyin-data`/`-user`/`-engine` public APIs — no
+algorithm belongs there.
 
 **Portability seam:** `oxpinyin-engine`'s session API is framework-neutral —
 abstract `KeyInput`, preedit spans + style enum, candidate iteration;

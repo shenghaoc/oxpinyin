@@ -101,8 +101,10 @@ impl Engine {
         }
         .map_err(open_error)?;
         let user = runtime.user_store();
+        // Defaults-only configuration: the pinned upstream values, exactly
+        // as before the shared-runtime extraction.
         let session = runtime
-            .new_session()
+            .new_session(&EmptyConfigSource)
             .map_err(|error| engine_error(&error))?;
         Ok(Self {
             inner: Arc::new(Mutex::new(EngineInner { session, user })),

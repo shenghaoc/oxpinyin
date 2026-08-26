@@ -1,0 +1,25 @@
+[package]
+name = "oxpinyin-runtime"
+description = "Concrete engine assembly shared by oxpinyin consumers (C ABI, Python, tools)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# Intentionally not published to crates.io while pre-alpha; consumers are the
+# workspace crates.
+publish = false
+
+[dependencies]
+oxpinyin-core.workspace = true
+oxpinyin-data.workspace = true
+oxpinyin-engine.workspace = true
+oxpinyin-user.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }

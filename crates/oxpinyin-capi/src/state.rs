@@ -5,436 +5,40 @@
 //! [`crate::types`] exist only for the generated C header.
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
 
 use oxpinyin_core::{
-    Cost, Dictionary, DoublePinyinParse, DoublePinyinScheme, FullPinyinIndexParse,
-    FullPinyinScheme, LanguageModel, NbestStepCosts, OptionBits, PINYIN_INCOMPLETE, PhraseEntry,
-    PhraseToken, SyllableKey, UserCountDelta, ZhuyinParse, ZhuyinScheme,
+    DoublePinyinParse, DoublePinyinScheme, FullPinyinIndexParse, FullPinyinScheme, OptionBits,
+    PINYIN_INCOMPLETE, PhraseToken, ZhuyinParse, ZhuyinScheme,
 };
-use oxpinyin_data::{BigramLanguageModel, DictError, LmError, PunctTable, SystemDictionary};
 use oxpinyin_engine::{
-    CandidateKind, CandidateList, Config, EngineError, Session, StoragePaths,
-    check_lookup_offset_range, normalize_lookup_offset,
+    CandidateKind, CandidateList, Config, EngineError, StoragePaths, check_lookup_offset_range,
+    normalize_lookup_offset,
 };
+pub(crate) use oxpinyin_runtime::USER_STORE_FILE;
+use oxpinyin_runtime::{Runtime, RuntimeSession};
+pub(crate) use oxpinyin_runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
 use oxpinyin_user::{
-    ExportedPhrase, NETWORK_DICTIONARY, PinyinKey, SENTENCE_START, USER_DICTIONARY, UserLookup,
-    UserStore, is_user_file_token,
+    ExportedPhrase, NETWORK_DICTIONARY, SENTENCE_START, USER_DICTIONARY, UserStore,
+    is_user_file_token,
 };
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
-/// File name of the redb user store under the user data directory.
-///
-/// T3 opens it (the training entry points need somewhere to write); T5 owns
-/// the save cycle behind it: `pinyin_save` gates on the §4 `m_modified`
-/// flag and compacts, while durability is redb's per-commit guarantee —
-/// there is no `.tmp`/rename dance, so this single file is the whole
-/// on-disk contract.
-pub(crate) const USER_STORE_FILE: &str = "user_store.redb";
-
-// ── Shared backends ─────────────────────────────────────────────────────
-//
-// Context and instance both hold `Arc` clones. Instances must not borrow
-// the context as `'static`: `pinyin_fini` drops the context Box while
-// instances may still be alive, and a `'static` reference would then be a
-// use-after-free.
-
-/// Loaded addon libraries, shared by every instance of one context.
-pub(crate) struct AddonSet {
-    loaded: BTreeMap<u8, SystemDictionary>,
-}
-
-impl AddonSet {
-    fn new() -> Self {
-        Self {
-            loaded: BTreeMap::new(),
-        }
-    }
-
-    fn load(&mut self, index: u8, system_dir: &Path) -> bool {
-        if self.loaded.contains_key(&index) {
-            return false;
-        }
-        let pinyin = system_dir.join(format!("addon_{index}_pinyin_index.redb"));
-        let phrase = system_dir.join(format!("addon_{index}_phrase_index.redb"));
-        let Ok(dict) = SystemDictionary::open(&pinyin, &phrase) else {
-            return false;
-        };
-        self.loaded.insert(index, dict);
-        true
-    }
-
-    fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
-        let mut out = Vec::new();
-        self.lookup_into(syllables, &mut out)?;
-        Ok(out)
-    }
-
-    fn lookup_into(
-        &self,
-        syllables: &[SyllableKey],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), DictError> {
-        out.clear();
-        if self.loaded.is_empty() {
-            return Ok(());
-        }
-        // `SystemDictionary::lookup_into` replaces its output vec. One
-        // scratch is filled, drained into `out`, and reused so the addon
-        // path never hits the allocating `Dictionary::lookup` default.
-        let mut scratch = Vec::new();
-        for dict in self.loaded.values() {
-            dict.lookup_into(syllables, &mut scratch)?;
-            out.append(&mut scratch);
-        }
-        Ok(())
-    }
-
-    fn prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
-        for dict in self.loaded.values() {
-            if dict.phrase_prefix_exists(syllables)? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    fn unigram_freq(&self, token: u32) -> Option<u64> {
-        self.loaded
-            .values()
-            .find_map(|dict| dict.unigram_count(token))
-    }
-
-    fn unigram_total(&self) -> Option<u64> {
-        if self.loaded.is_empty() {
-            None
-        } else {
-            Some(
-                self.loaded
-                    .values()
-                    .map(SystemDictionary::unigram_total)
-                    .sum(),
-            )
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.loaded.is_empty()
-    }
-
-    /// The addon phrase item behind `token`: its text, its pronunciations as
-    /// `(key sequence, count)` pairs, and its copied unigram frequency — the
-    /// `get_phrase_item` half of the promotion (`pinyin.cpp:2534-2549`).
-    ///
-    /// `None` when no loaded addon dictionary owns `token`. A pronunciation
-    /// whose spelling does not map back to syllable keys is dropped, the same
-    /// rule the reverse rendering applies.
-    fn phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
-        for dict in self.loaded.values() {
-            let Ok(Some(text)) = dict.phrase_text(token) else {
-                continue;
-            };
-            let Ok(prons) = dict.pronunciations(token) else {
-                continue;
-            };
-            let readings = prons
-                .into_iter()
-                .filter_map(|(pinyin, freq)| Some((pinyin_to_keys(&pinyin)?, freq)))
-                .collect();
-            let unigram = dict.unigram_count(token).unwrap_or(0);
-            return Some(AddonPhraseItem {
-                text,
-                readings,
-                unigram,
-            });
-        }
-        None
-    }
-}
-
-/// A chosen addon phrase item, ready to promote into default nibble 5.
-pub(crate) struct AddonPhraseItem {
-    /// Phrase text.
-    pub(crate) text: String,
-    /// Pronunciations as `(key sequence, count)` pairs.
-    pub(crate) readings: Vec<(Vec<PinyinKey>, u64)>,
-    /// The item's copied unigram frequency (`add_phrase_item`).
-    pub(crate) unigram: u64,
-}
-
-/// Splits a `'`-joined pinyin spelling into [`SyllableKey`] ids, or `None`
-/// when any syllable is not a frozen key.
-fn pinyin_to_keys(pinyin: &str) -> Option<Vec<PinyinKey>> {
-    pinyin
-        .split('\'')
-        .map(|syllable| SyllableKey::from_text(syllable).map(|key| key.index() as PinyinKey))
-        .collect()
-}
-
-struct SharedDictInner {
-    system: SystemDictionary,
-    user: Option<UserStore>,
-    user_lookup: Mutex<Option<(u64, Arc<UserLookup>)>>,
-    addons: Arc<RwLock<AddonSet>>,
-    punct: PunctTable,
-}
-
-/// `Arc` wrapper so instances share the context's dictionary without a
-/// `'static` borrow.
-#[derive(Clone)]
-pub(crate) struct SharedDict(Arc<SharedDictInner>);
-
-impl SharedDict {
-    fn new(
-        system: SystemDictionary,
-        user: Option<UserStore>,
-        addons: Arc<RwLock<AddonSet>>,
-        punct: PunctTable,
-    ) -> Self {
-        Self(Arc::new(SharedDictInner {
-            system,
-            user,
-            user_lookup: Mutex::new(None),
-            addons,
-            punct,
-        }))
-    }
-
-    pub(crate) fn system(&self) -> &SystemDictionary {
-        &self.0.system
-    }
-
-    pub(crate) fn punctuations(&self, token: u32) -> &[String] {
-        self.0.punct.punctuations(token)
-    }
-
-    pub(crate) fn load_addon(&self, index: u8, system_dir: &Path) -> bool {
-        let mut addons = self
-            .0
-            .addons
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        addons.load(index, system_dir)
-    }
-
-    /// The addon phrase item behind `token`, for the choose-promotion path.
-    pub(crate) fn addon_phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
-        let addons = self
-            .0
-            .addons
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        addons.phrase_item(token)
-    }
-
-    fn user_lookup(&self) -> Result<Arc<UserLookup>, DictError> {
-        let Some(store) = self.0.user.as_ref() else {
-            return Ok(Arc::new(UserLookup::empty()));
-        };
-        let mut cache = self
-            .0
-            .user_lookup
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        UserLookup::refresh_in(&mut cache, store)
-            .map_err(|error| DictError::Parse(error.to_string()))?;
-        Ok(cache
-            .as_ref()
-            .map(|(_, lookup)| Arc::clone(lookup))
-            .unwrap_or_else(|| Arc::new(UserLookup::empty())))
-    }
-}
-
-impl Dictionary for SharedDict {
-    type Syllable = SyllableKey;
-    type Entry = PhraseEntry;
-    type Error = DictError;
-
-    fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
-        let mut entries = Vec::new();
-        self.lookup_into(syllables, &mut entries)?;
-        Ok(entries)
-    }
-
-    fn lookup_into(
-        &self,
-        syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
-    ) -> Result<(), Self::Error> {
-        self.0.system.lookup_into(syllables, out)?;
-        out.extend(self.user_lookup()?.lookup(syllables));
-        Ok(())
-    }
-
-    fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
-        if self.0.system.phrase_prefix_exists(syllables)? {
-            return Ok(true);
-        }
-        Ok(self.user_lookup()?.phrase_prefix_exists(syllables))
-    }
-
-    fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
-        let mut entries = Vec::new();
-        self.lookup_addon_into(syllables, &mut entries)?;
-        Ok(entries)
-    }
-
-    fn lookup_addon_into(
-        &self,
-        syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
-    ) -> Result<(), Self::Error> {
-        let addons = self
-            .0
-            .addons
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        addons.lookup_into(syllables, out)
-    }
-
-    fn phrase_prefix_exists_addon(
-        &self,
-        syllables: &[Self::Syllable],
-    ) -> Result<bool, Self::Error> {
-        let addons = self
-            .0
-            .addons
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        addons.prefix_exists(syllables)
-    }
-
-    fn phrase_index_item_count(&self) -> Result<u64, Self::Error> {
-        // System items only: the parity surface the ranking denominator
-        // reproduces runs an empty user store, where this is the whole
-        // facade. A trained store's user items are not folded in.
-        self.0.system.phrase_index_item_count()
-    }
-}
-
-/// `Arc` wrapper so instances share the context's language model without
-/// a `'static` borrow.
-///
-/// The optional [`UserStore`] is the §5 overlay: `score`, `unigram_freq`,
-/// and `nbest_step_costs` saturating-add its counts onto the system model
-/// before the frozen λ blend. `None` (no user dir) and an empty store are
-/// both identity.
-#[derive(Clone)]
-pub(crate) struct SharedLm {
-    inner: Arc<BigramLanguageModel>,
-    user: Option<UserStore>,
-    addons: Arc<RwLock<AddonSet>>,
-}
-
-impl SharedLm {
-    fn user_delta(&self, prev: Option<u32>, token: u32) -> Result<UserCountDelta, LmError> {
-        let Some(store) = self.user.as_ref() else {
-            return Ok(UserCountDelta::ZERO);
-        };
-        store
-            .count_delta(prev, token)
-            .map_err(|error| LmError::User(error.to_string()))
-    }
-
-    /// The phrase-index total the pin's amplified law divides by, as the
-    /// pinned normal path constructs it (`session.rs:1409-1416`): the LM
-    /// total with user extra (`None` without real unigrams → 0) plus the
-    /// phrase-index item count — the reproduction of the pin's
-    /// `get_phrase_index_total_freq()`. The pin's predicted-candidate
-    /// branch divides by the same quantity, live per call
-    /// (`pinyin.cpp:1813-1814`), so this must not be snapshotted.
-    pub(crate) fn amplified_total(&self, item_count: u64) -> u64 {
-        <Self as LanguageModel>::unigram_total(self)
-            .ok()
-            .flatten()
-            .unwrap_or(0)
-            .saturating_add(item_count)
-    }
-}
-
-impl LanguageModel for SharedLm {
-    type Token = PhraseToken;
-    type Error = LmError;
-
-    fn score(
-        &self,
-        history: &[Self::Token],
-        token: &Self::Token,
-        edge_cost: Cost,
-    ) -> Result<Cost, Self::Error> {
-        let delta = self.user_delta(history.last().map(|prev| prev.value()), token.value())?;
-        self.inner
-            .score_with_user_delta(history, token, edge_cost, delta)
-    }
-
-    fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
-        let extra = match self.user.as_ref() {
-            None => 0,
-            Some(store) => store
-                .unigram_delta(token.value())
-                .map_err(|error| LmError::User(error.to_string()))?,
-        };
-        Ok(self
-            .inner
-            .unigram_freq_with_user_delta(token.value(), extra))
-    }
-
-    fn has_real_unigrams(&self) -> bool {
-        self.inner.has_real_unigrams()
-    }
-
-    fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {
-        if !self.inner.has_real_unigrams() {
-            return Ok(None);
-        }
-        let extra = match self.user.as_ref() {
-            None => 0,
-            Some(store) => store
-                .unigram_total()
-                .map_err(|error| LmError::User(error.to_string()))?,
-        };
-        Ok(Some(self.inner.unigram_total().saturating_add(extra)))
-    }
-
-    fn addon_unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
-        let addons = self
-            .addons
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if addons.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(addons.unigram_freq(token.value()).unwrap_or(0)))
-    }
-
-    fn addon_unigram_total(&self) -> Result<Option<u64>, Self::Error> {
-        let addons = self
-            .addons
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        Ok(addons.unigram_total())
-    }
-
-    /// The §5 overlay `score` takes, forwarded into the n-best step costs.
-    fn nbest_step_costs(
-        &self,
-        prev: &Self::Token,
-        token: &Self::Token,
-    ) -> Result<NbestStepCosts, Self::Error> {
-        let delta = self.user_delta(Some(prev.value()), token.value())?;
-        self.inner
-            .nbest_step_costs_with_user_delta(prev, token, delta)
-    }
-}
-
 // ── Context ─────────────────────────────────────────────────────────────
+//
+// The concrete assembly lives in `oxpinyin-runtime` (`SharedDict` /
+// `SharedLm` above are aliases into it), so the C ABI and the Python binding
+// construct engines through one reviewed code path. This file keeps only the
+// C-facing state: live option words, storage/config plumbing around the C
+// contracts, and the instance snapshot machinery.
 
-pub(crate) type CapiSession = Session<SharedDict, SharedLm>;
+/// The session type every C handle wraps: the shared runtime's concrete
+/// session.
+pub(crate) type CapiSession = RuntimeSession;
 
 /// State behind `pinyin_context_t *`.
 ///
@@ -443,8 +47,8 @@ pub(crate) type CapiSession = Session<SharedDict, SharedLm>;
 pub(crate) struct CapiContext {
     pub(crate) paths: StoragePaths,
     pub(crate) config: Config,
-    dict: Option<SharedDict>,
-    lm: Option<SharedLm>,
+    /// The shared concrete assembly; `None` under a user-store-only context.
+    runtime: Option<Runtime>,
     /// The user-learning store, shared by value-clone with every instance.
     ///
     /// `None` when the caller passed an empty user directory — the
@@ -502,55 +106,24 @@ impl CapiContext {
         }
         let paths = StoragePaths::new(user_dir).with_system_dirs([system_dir]);
 
+        // W8 fork-bootstrap wiring and the fixture split both live in the
+        // shared assembly now: the constructor opens the tables, installs λ
+        // from table.conf when present, fails init on a missing model file
+        // (RealOnly) or derives flat fixture counts, degrades an unusable
+        // user dir to "no learning", and wires addons + punctuation.
         let sys = Path::new(system_dir);
-        let dict = SystemDictionary::open(
-            &sys.join("pinyin_index.redb"),
-            &sys.join("phrase_index.redb"),
-        )
-        .ok()?;
-        let mut lm = BigramLanguageModel::open(&sys.join("bigram.redb")).ok()?;
-        // Read λ from the install's table.conf when present (data-formats.md
-        // §3); a real install ships one. Absent (no table.conf in the dir),
-        // the pinned 0.312699 default stands.
-        lm.set_lambda_from_table_conf(&sys.join("table.conf"));
-
-        // W8 fork-bootstrap wiring: the fork's runtime system dir carries
-        // the fetched pinned model as `interpolation2.text`; install its
-        // real phrase-index counts so the candidate construction runs the
-        // pinned three-key order.  A present-but-unparsable file is an init
-        // failure, matching upstream's NULL on load failure.
-        let interpolation2 = sys.join("interpolation2.text");
-        if interpolation2.is_file() {
-            lm.set_unigrams_from_interpolation2(&interpolation2).ok()?;
-        } else {
-            match unigram_source {
-                UnigramSource::RealOnly => return None,
-                UnigramSource::FlatExportForFixtures => lm.set_unigrams_from_dict(&dict),
+        let runtime = match unigram_source {
+            UnigramSource::RealOnly => Runtime::open(sys, Some(Path::new(user_dir))),
+            UnigramSource::FlatExportForFixtures => {
+                Runtime::open_fixtures(sys, Some(Path::new(user_dir)))
             }
         }
-
-        let user = if user_dir.is_empty() {
-            None
-        } else {
-            UserStore::open(&Path::new(user_dir).join(USER_STORE_FILE)).ok()
-        };
-
-        let addons = Arc::new(RwLock::new(AddonSet::new()));
-        let punct = PunctTable::open_optional(&sys.join("punct.redb"));
+        .ok()?;
+        let user = runtime.user_store();
         Some(Self {
             paths,
             config: Config::default(),
-            dict: Some(SharedDict::new(
-                dict,
-                user.clone(),
-                Arc::clone(&addons),
-                punct,
-            )),
-            lm: Some(SharedLm {
-                inner: Arc::new(lm),
-                user: user.clone(),
-                addons,
-            }),
+            runtime: Some(runtime),
             user,
             incomplete: Arc::new(AtomicBool::new(true)),
             double_scheme: Arc::new(AtomicI32::new(DoublePinyinScheme::Ms as i32)),
@@ -575,8 +148,7 @@ impl CapiContext {
         Some(Self {
             paths: StoragePaths::new(user_dir),
             config: Config::default(),
-            dict: None,
-            lm: None,
+            runtime: None,
             user: Some(user),
             incomplete: Arc::new(AtomicBool::new(true)),
             double_scheme: Arc::new(AtomicI32::new(DoublePinyinScheme::Ms as i32)),
@@ -588,21 +160,16 @@ impl CapiContext {
     }
 
     pub(crate) fn alloc_instance(&self) -> Option<CapiInstance> {
-        let session = Session::new(
-            &self.config,
-            self.paths.clone(),
-            self.dict.clone()?,
-            self.lm.clone()?,
-        )
-        .ok()?;
+        let runtime = self.runtime.as_ref()?;
+        let session = runtime.new_session(&self.config).ok()?;
         Some(CapiInstance {
             session,
             candidates: Vec::new(),
             anchored_window: None,
             parsed_len: 0,
             user: self.user.clone(),
-            dict: self.dict.clone()?,
-            lm: self.lm.clone()?,
+            dict: runtime.dict(),
+            lm: runtime.lm(),
             incomplete: Arc::clone(&self.incomplete),
             double_scheme: Arc::clone(&self.double_scheme),
             zhuyin_scheme: Arc::clone(&self.zhuyin_scheme),
@@ -648,13 +215,13 @@ impl CapiContext {
 
     /// Load addon library `index` from the first system data dir.
     pub(crate) fn load_addon(&self, index: u8) -> bool {
-        let Some(dict) = self.dict.as_ref() else {
+        let Some(runtime) = self.runtime.as_ref() else {
             return false;
         };
         let Some(system_dir) = self.paths.system_data_dirs().first() else {
             return false;
         };
-        dict.load_addon(index, system_dir)
+        runtime.load_addon(index, system_dir)
     }
 
     /// §9 phrase-export materialization. [`USER_DICTIONARY`] and
@@ -681,7 +248,7 @@ impl CapiContext {
     /// rows into an incomplete file.
     pub(crate) fn can_render_export_bigrams(&self) -> bool {
         const INITIAL_SEED: u64 = 23 * 3;
-        if self.dict.is_some() {
+        if self.runtime.is_some() {
             return true;
         }
         let Some(store) = self.user.as_ref() else {
@@ -764,7 +331,7 @@ impl CapiContext {
             }
             Some((phrase.text().to_owned(), pinyins))
         } else {
-            let dict = self.dict.as_ref()?;
+            let dict = self.runtime.as_ref()?.dict();
             let text = dict.system().phrase_text(token).ok().flatten()?;
             let pinyins: Vec<String> = dict
                 .system()

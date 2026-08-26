@@ -18,6 +18,7 @@ crate-type = ["rlib", "cdylib"]
 oxpinyin-core.workspace = true
 oxpinyin-data.workspace = true
 oxpinyin-engine.workspace = true
+oxpinyin-runtime.workspace = true
 oxpinyin-user.workspace = true
 serde_json = "1"
 

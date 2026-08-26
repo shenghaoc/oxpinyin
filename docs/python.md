@@ -1,10 +1,10 @@
 # Python API
 
 oxpinyin ships first-class Python bindings (`oxpinyin`) that expose the same
-engine C frontends use. The binding contains no algorithm of its own: every
-candidate list comes from the `oxpinyin-engine` session API through a thin
-PyO3 wrapper, so Python output is bit-identical to native Rust output for
-identical model, data, configuration, input and user state. This is also how
+engine C frontends use. The binding contains no algorithm of its own: candidate lists come from
+`oxpinyin-engine`'s session API through a thin PyO3 wrapper over
+`oxpinyin-runtime` — the same concrete assembly the C ABI consumes, so the
+native, C, and Python paths cannot silently diverge. This is also how
 the libpinyin-side request for a Python binding (libpinyin issue #181) is
 answered — without needing libpinyin installed at all.
 

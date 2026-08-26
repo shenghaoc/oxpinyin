@@ -62,7 +62,8 @@ internal lock and run with the GIL released.
 ## Tests
 
 ```sh
-cargo test -p oxpinyin-python                       # Rust side (runtime)
+cargo test -p oxpinyin-runtime                      # Rust side (shared assembly)
+cargo test -p oxpinyin-python                       # binding crate
 cargo run -p oxpinyin-python --bin native-dump -- \
     parity-corpus.json ../../fixtures/w3 native.json  # native transcript
 pytest                                              # binding + parity vs above

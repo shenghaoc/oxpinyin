@@ -10,7 +10,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::runtime::Runtime;
+use oxpinyin_runtime::{Runtime, RuntimeSession};
 
 /// Runs every case in `corpus` against a fixture-mode runtime over
 /// `system_dir` and returns the transcript document.
@@ -22,7 +22,9 @@ use crate::runtime::Runtime;
 pub fn run_corpus(corpus: &Value, system_dir: &Path) -> Result<Value, RunError> {
     let runtime =
         Runtime::open_fixtures(system_dir, None).map_err(|error| RunError(error.to_string()))?;
-    let mut session = runtime.new_session().map_err(|e| RunError(e.to_string()))?;
+    let mut session = runtime
+        .new_session(&oxpinyin_engine::EmptyConfigSource)
+        .map_err(|e| RunError(e.to_string()))?;
 
     let mut cases = Vec::new();
     for case in corpus["cases"]
@@ -69,7 +71,7 @@ fn effective_input(case: &Value) -> String {
 /// Drives one corpus case through the session, recording every observable
 /// step. This mirrors the replay procedure documented in the corpus header;
 /// the pytest driver implements the same steps through the binding.
-fn run_case(session: &mut super::runtime::RuntimeSession, case: &Value) -> Value {
+fn run_case(session: &mut RuntimeSession, case: &Value) -> Value {
     let name = case["name"].as_str().unwrap_or_default().to_owned();
     let input = effective_input(case);
     let mut events = Vec::new();
@@ -198,7 +200,7 @@ fn snapshot(list: &oxpinyin_engine::CandidateList) -> Vec<Value> {
         .collect()
 }
 
-fn top_texts(session: &super::runtime::RuntimeSession) -> Vec<String> {
+fn top_texts(session: &RuntimeSession) -> Vec<String> {
     session
         .candidates()
         .iter()
