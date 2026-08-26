@@ -42,6 +42,16 @@ pub enum EngineError {
         /// The raw input length the offset may at most equal.
         len: usize,
     },
+    /// A lookup offset fell inside a multi-byte character of the raw
+    /// input — no window exists under a mid-character slice, so the
+    /// anchor is refused rather than rounded (rounding would silently
+    /// answer a neighbouring offset's window).
+    LookupOffsetInsideCharacter {
+        /// The offset the caller asked to look up at.
+        offset: usize,
+        /// The raw input length the offset was range-checked against.
+        len: usize,
+    },
     /// A selection was requested from a window anchored before the
     /// composition offset — a stale cursor behind the selection, whose span
     /// would regress the consumed boundary. Rejected rather than
@@ -100,6 +110,13 @@ impl fmt::Display for EngineError {
                     "lookup offset {offset} is out of range 0..={len}"
                 )
             }
+            Self::LookupOffsetInsideCharacter { offset, len } => {
+                write!(
+                    formatter,
+                    "lookup offset {offset} falls inside a multi-byte character \
+                     of the {len}-byte raw input"
+                )
+            }
             Self::SelectionAnchorBeforeComposition {
                 anchor,
                 composition,
@@ -154,6 +171,10 @@ mod tests {
         assert_eq!(
             EngineError::LookupOffsetOutOfRange { offset: 9, len: 3 }.to_string(),
             "lookup offset 9 is out of range 0..=3"
+        );
+        assert_eq!(
+            EngineError::LookupOffsetInsideCharacter { offset: 1, len: 8 }.to_string(),
+            "lookup offset 1 falls inside a multi-byte character of the 8-byte raw input"
         );
         assert_eq!(
             EngineError::ZeroKeyOffsetCheck { offset: 11 }.to_string(),

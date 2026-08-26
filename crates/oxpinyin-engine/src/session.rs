@@ -1595,17 +1595,24 @@ where
     /// # Errors
     ///
     /// Returns [`EngineError`] when a backend fails during the scan, exactly
-    /// as the anchored [`Session::refresh`] does, and
+    /// as the anchored [`Session::refresh`] does;
     /// [`EngineError::LookupOffsetOutOfRange`] when `offset` exceeds the raw
     /// buffer's one-past-end position — the pin reads its matrix out of
     /// bounds there, so no pinned behaviour exists and the offset is
-    /// refused — or when `offset` falls inside a multi-byte character of
-    /// the raw buffer (a mid-character slice has no window under it). An
-    /// offset equal to one-past-end is valid: `scan_window`
-    /// answers the terminal sentence rows for it (the pin's reserved slot).
+    /// refused — and [`EngineError::LookupOffsetInsideCharacter`] when
+    /// `offset` falls inside a multi-byte character of the raw buffer (no
+    /// window exists under a mid-character slice). An offset equal to
+    /// one-past-end is valid: `scan_window` answers the terminal sentence
+    /// rows for it (the pin's reserved slot).
     pub fn candidates_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
-        if offset > self.raw.len() || !self.raw.is_char_boundary(offset) {
+        if offset > self.raw.len() {
             return Err(EngineError::LookupOffsetOutOfRange {
+                offset,
+                len: self.raw.len(),
+            });
+        }
+        if !self.raw.is_char_boundary(offset) {
+            return Err(EngineError::LookupOffsetInsideCharacter {
                 offset,
                 len: self.raw.len(),
             });
@@ -4128,14 +4135,16 @@ mod tests {
     fn candidates_at_rejects_mid_character_offsets() {
         // The full-width comma occupies bytes 0..3, so offsets 1 and 2 sit
         // inside it: no window exists under a mid-character slice, and the
-        // offset is refused with the range error instead of panicking.
+        // offset is refused with the inside-character error — not rounded
+        // to a neighbour and not the out-of-range error, whose contract is
+        // past-one-past-end only.
         let mut session = session();
         session.replace_raw("\u{ff0c}nihao").expect("cannot fail");
         for offset in [1, 2] {
             assert!(
                 matches!(
                     session.candidates_at(offset),
-                    Err(EngineError::LookupOffsetOutOfRange { .. })
+                    Err(EngineError::LookupOffsetInsideCharacter { .. })
                 ),
                 "offset {offset} is inside the character and must be refused"
             );
