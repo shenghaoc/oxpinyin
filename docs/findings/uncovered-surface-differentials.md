@@ -43,17 +43,19 @@ is made anywhere (zhuyin 7 / double 30 never reach the oracle).
 
 ## Method
 
-One 837-line oracle log against an 857-line capi log (the capi answers
+One 836-line oracle log against an 856-line capi log (the capi answers
 where the pin's FORCE_TONE rejection leaves nothing — class C1 below).
-45 line-aligned change hunks, no pure additions or deletions: 160
-diverging oracle-side log positions, 180 capi-side. Phases, in log order:
+45 line-aligned change hunks, no pure additions or deletions: 161
+diverging oracle-side log positions, 181 capi-side (offset 8 of the
+word-move probes is measured since the harness update). Phases, in log
+order:
 
 | Phase | Lines (oracle) | Surface |
 |---|---:|---|
 | A `page:` | 338 | deep paging: parse shi/yi/ji/nihao, decode, walk pages 0..11 (page size 5, the fork default `PYPConfig.cc:148`) plus the last page, sentence rows, a deep choose at index 10, and a choose of the very last row |
 | B `punct` | 149 | punct-table prediction for 好/的/一/你/中国/我/是/了 (head rows with types, every PRED_PUNCT row, counts) plus punctuation bytes in the composition (`nihao,` `ni,hao` `ni'hao` `ni hao` `ni2hao` `，nihao`) |
 | C `opt:` | 205 | option profiles: `0x18a` control (offsets 0 and 2), `0x38a` (DYNAMIC_ADJUST set, offsets 0/2/5), `0x1ca` (parity+FORCE_TONE, 7 inputs), `0x60` (USE_TONE+FORCE_TONE, 4 inputs) |
-| D `cur:` | 145 | cursor moves on `nihaoshijie`: auxiliary text and lookup offset at every byte cursor 0..11, word-level left/right offsets, the candidate window at every moved cursor (left walk then right walk), and one mid-buffer choose at cursor 5 |
+| D `cur:` | 144 | cursor moves on `nihaoshijie`: auxiliary text and lookup offset at every byte cursor 0..11, word-level left/right offsets (0/2/5/8), the candidate window at every moved cursor (left walk then right walk), and one mid-buffer choose at cursor 5 |
 
 ## Measured agreement (the seams that hold)
 
@@ -99,7 +101,8 @@ both measured above; the mode toggles stay frontend territory.
 
 ## The divergence, enumerated
 
-Six classes over 160 oracle-side positions (180 capi-side).
+Six classes over 161 oracle-side positions (181 capi-side) — offset 8 of the
+word-move probes is measured since the harness update (2026-08-26).
 
 | Class | Surface | Positions (oracle) | Example |
 |---|---|---:|---|
@@ -108,7 +111,7 @@ Six classes over 160 oracle-side positions (180 capi-side).
 | C1 | FORCE_TONE toneless rejection missing | 8 | `opt:0x60-nihao@0:parsed=` 0 vs 5 |
 | D1 | cursor → lookup-offset normalization | 6 | `cur:3 off=` 2 vs 3 |
 | B2 | parse past space / full-width punct bytes | 4 | `punctparse-space-mid:parsed=` 2 vs 5 |
-| D2 | word-move step: syllable vs byte | 3 | `cur:left-right@2 right=` 5 vs 3 |
+| D2 | word-move step: syllable vs byte | 4 | `cur:left-right@2 right=` 5 vs 3 |
 
 ### B1 — predicted-phrase rows not prefix-sliced, head order differs (79 positions)
 
@@ -334,15 +337,15 @@ comma are skipped rather than stopping the parse. The half-width comma
 and the apostrophe agree (both stop/parse identically), so the gap is
 specific to the space and multi-byte (non-ASCII) punctuation bytes.
 
-### D2 — word-move steps: syllable vs byte (3 positions)
+### D2 — word-move steps: syllable vs byte (4 positions)
 
 The pin's word-level cursor moves step **syllable to syllable**:
 `get_left/right_pinyin_offset` walk to the key that ends at / the first
 key that starts after the offset (`pinyin.cpp:3031-3095` at the pin) —
-at offsets 0/2/5 of `nihaoshijie` the (left, right) pairs are
-(0,2)/(0,5)/(2,8). The capi returns `offset±1` bytes (`cursor.rs:118-175`,
-"Provisional"): (0,1)/(1,3)/(4,6). Three probe lines diverge (left at
-offset 0 happens to agree).
+at offsets 0/2/5/8 of `nihaoshijie` the (left, right) pairs are
+(0,2)/(0,5)/(2,8)/(5,11). The capi returns `offset±1` bytes
+(`cursor.rs:118-175`, "Provisional"): (0,1)/(1,3)/(4,6)/(7,9). Four
+probe lines diverge (left at offset 0 happens to agree).
 
 ## Harness notes (pin behaviour, not engine divergences)
 
@@ -350,7 +353,7 @@ offset 0 happens to agree).
   on `nihaoshijie` trips the second `_check_offset` — the one on the
   COMPUTED result (`pinyin.cpp:3090` → `assert` at `:2175` at the pin;
   measured SIGABRT on the first smoke run, re-measured fork-per-probe on
-  the rebuilt pin 2026-08-26). ***Correction (2026-08-26):*** the first
+  the rebuilt pin 2026-08-25). ***Correction (2026-08-26):*** the first
   smoke run attributed the abort to `get_left_pinyin_offset(11)` via
   `pinyin.cpp:3055` — wrong call site. The fork-per-probe measurement
   (every offset in its own child, so the abort is a datum) shows
@@ -363,11 +366,11 @@ offset 0 happens to agree).
   `fix/cursor-offset-normalization` docs record the same correction:
   `oracle-bisect-differential-abort.md` addendum. Upstream fixed this
   after the pin (commit `95e3af7` "Fix _check_offset function" turns the
-  assert into `return false`). The driver probes word moves only at the
-  offsets the smoke run proved safe (0/2/5) and prints the skipped tail
-  offsets with their values — a frontend Ctrl+Right at cursor 11 aborts
-  the pinned library; that is the pin's landmine, not a divergence to
-  close.
+  assert into `return false`). The driver probes word moves at the
+  offsets the smoke run proved safe (0/2/5/8 — offset 8 is fully
+  measurable); offset 11 is not probed, a frontend Ctrl+Right at cursor
+  11 aborts the pinned library, and that is the pin's landmine, not a
+  divergence to close.
 - **DYNAMIC_ADJUST bit-set ranking** (the deferred #99 bigram-fold into
   candidate frequency) is **not** isolated by these probes: at offset 0
   no previous token exists (no gram merge), and the offset-2/5 windows
