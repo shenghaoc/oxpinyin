@@ -464,6 +464,17 @@ where
         // starts at `anchor` and advances by the candidate's own byte span.
         let constraint_start = anchor;
         let constraint_end = self.next_boundary(anchor.saturating_add(advance));
+        // Reject a window anchor before the composition offset: the
+        // candidate's span would regress `self.consumed`, a backward
+        // selection no frontend drives (a stale cursor behind the
+        // selection). Rejected, not reconciled — the gap handling below
+        // covers only the anchor == / > composition-offset shapes.
+        if anchor < self.consumed {
+            return Err(EngineError::SelectionAnchorBeforeComposition {
+                anchor,
+                composition: self.consumed,
+            });
+        }
         // The raw bytes between the composition offset and the window anchor
         // were typed without being selected. For a re-anchored selection
         // (anchor > composition offset) they would otherwise be dropped from
