@@ -18,8 +18,8 @@ use oxpinyin_core::{
 };
 use oxpinyin_data::{BigramLanguageModel, DictError, LmError, PunctTable, SystemDictionary};
 use oxpinyin_engine::{
-    CandidateKind, Config, EngineError, Session, StoragePaths, check_lookup_offset_range,
-    normalize_lookup_offset,
+    CandidateKind, CandidateList, Config, EngineError, Session, StoragePaths,
+    check_lookup_offset_range, normalize_lookup_offset,
 };
 use oxpinyin_user::{
     ExportedPhrase, NETWORK_DICTIONARY, PinyinKey, SENTENCE_START, USER_DICTIONARY, UserLookup,
@@ -598,6 +598,7 @@ impl CapiContext {
         Some(CapiInstance {
             session,
             candidates: Vec::new(),
+            anchored_window: None,
             parsed_len: 0,
             user: self.user.clone(),
             dict: self.dict.clone()?,
@@ -818,6 +819,17 @@ pub(crate) struct CapiInstance {
     /// Snapshotted candidates, rebuilt by `pinyin_guess_candidates`.
     /// `lookup_candidate_t *` pointers borrow into this vec.
     pub(crate) candidates: Vec<CapiCandidate>,
+    /// The re-anchored candidate window from the most recent
+    /// `pinyin_guess_candidates` when it ran at an offset other than the
+    /// composition's own, as `(anchor, window)` — retained so a later
+    /// `pinyin_choose_candidate` resolves its index against the SAME window
+    /// the caller saw (rather than the composition-anchored cached list,
+    /// which would select a different row whenever the two differ) and
+    /// measures the chosen span from that anchor (the candidate's
+    /// `consumed_bytes` is anchor-relative). `None` when the last guess ran
+    /// at the composition offset or under a transformed scheme, where the
+    /// cached list already answers.
+    pub(crate) anchored_window: Option<(usize, CandidateList)>,
     /// Bytes of raw input consumed by the most recent parse call — upstream
     /// `m_parsed_len` (`pinyin.cpp:84`), returned by
     /// `pinyin_get_parsed_input_length` (`pinyin.cpp:1611-1613`).

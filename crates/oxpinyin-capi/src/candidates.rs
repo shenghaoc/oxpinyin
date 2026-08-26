@@ -318,13 +318,29 @@ pub extern "C" fn pinyin_choose_candidate(
         // Addon promotion (`pinyin.cpp:2532-2561`): copy the addon phrase into
         // default nibble 5 and select under the promoted token; otherwise a
         // plain select records the candidate's own token.
+        // Resolve the selection against the window the caller actually saw:
+        // when the last `pinyin_guess_candidates` re-anchored at an offset
+        // other than the composition's own, that window is held in
+        // `anchored_window`, and an index into the composition-anchored
+        // cached list would select a different row.
         let selection = match try_promote_addon(inst, index) {
-            Some(promoted) => inst.session.select_promoted(index, promoted),
-            None => inst.session.select(index),
+            Some(promoted) => match inst.anchored_window.as_ref() {
+                Some((anchor, window)) => inst
+                    .session
+                    .select_anchored_promoted(index, window, *anchor, promoted),
+                None => inst.session.select_promoted(index, promoted),
+            },
+            None => match inst.anchored_window.as_ref() {
+                Some((anchor, window)) => inst.session.select_anchored(index, window, *anchor),
+                None => inst.session.select(index),
+            },
         };
         if selection.is_err() {
             return -1;
         }
+        // The selection refreshed the cached list at the new composition
+        // offset, so a subsequent index is against that refreshed list.
+        inst.anchored_window = None;
         // The candidate's absolute end. The snapshot span is anchored at
         // the session's composition offset and includes any separator run
         // it crossed, while the caller offset may already sit past that
