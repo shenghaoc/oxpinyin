@@ -7,26 +7,61 @@ applicability assessment, expressed in idiomatic Rust tooling.
 
 ## Sources and method
 
-- **Primary reference:** MISRA C:2025 Addendum 6, *Applicability of MISRA
-  C:2025 to the Rust Programming Language* (MISRA, March 2025). The PDF is
-  distributed through MISRA's own download manager and was not directly
-  retrievable during this study (misra.org.uk WAF-blocks automated fetches).
-- **Authoritative distillation used instead:** the Safety-Critical Rust
-  Consortium's published cross-reference
-  (`safety-critical-rust-coding-guidelines/src/appendices/standards-matrices/misra-c-2025-mapping.rst`),
-  which reproduces the Addendum 6 applicability decision for every guideline in
-  three tables: applicable to safe Rust, applicable only in the presence of
-  `unsafe`, and not applicable. Cross-checked against the exploratory
-  223-guideline MISRA→FLS mapping in `rust-lang/goals`
-  `src/2026/safety-critical-lints-in-clippy.md` (223 guidelines; 68 directly
-  applicable; ~50 needing lint support beyond today's Clippy).
+- **Primary source (retrieved and fully parsed):** MISRA C:2025 Addendum 6,
+  *Applicability of MISRA C:2025 to the Rust Programming Language*, March
+  2025, ISBN 978-1-911700-22-7, 9 pages — downloaded from
+  `https://misra.org.uk/app/uploads/2025/03/MISRA-C-2025-ADD6.pdf` (note
+  `app/uploads`, not `apploads`; the latter path 404s/WAF-blocks). Its
+  §3 "Rust Cross Reference" table — all 223 guidelines × (C status,
+  decidability, scope, rationale, two applicability columns, Rust-adjusted
+  category, comment) — was extracted with `pdftotext -layout` and parsed
+  programmatically; the classification columns are reproduced verbatim as
+  facts in `misra-add6-table.csv` (comments are *not* copied — the document
+  is © The MISRA Consortium Limited, all rights reserved; quote-short only).
+- **Independent cross-check:** the Safety-Critical Rust Consortium's
+  cross-reference (Apache-2.0), which re-buckets ADD6's two-column model
+  into three tables. Programmatic set-comparison confirms the buckets used
+  here equal the SCRC tables exactly (see derivation rule below).
+- Also consulted: the exploratory 223-guideline MISRA→FLS mapping in
+  `rust-lang/goals src/2026/safety-critical-lints-in-clippy.md`.
 - Guideline *requirement text* is paraphrased at theme level; the normative
-  text lives in MISRA C:2025 (paywalled). Where the Consortium table carries a
-  comment, it is quoted. Requirement gists below follow the well-known public
-  structure of MISRA C:2012/2025 (§1 environment … §23 miscellaneous); where a
-  gist is uncertain it is deliberately generic rather than invented.
+  text lives in MISRA C:2025 (paywalled). ADD6 itself does not restate the
+  C requirement texts — it is purely an applicability matrix. Comments
+  quoted in the tables below are ADD6's own (via the SCRC copy unless
+  marked). Where a gist is uncertain it is deliberately generic rather
+  than invented.
 
-### Applicability totals (as published by the Consortium, derived from ADD6)
+### The Addendum's own classification model
+
+ADD6 rates each guideline on *two independent applicability axes*:
+
+1. **Rust in general** — "including safe, unsafe, and foreign function
+   interfaces";
+2. **Safe Rust** — "excluding unsafe and extern".
+
+each as **Yes / No / Partial**, and assigns a **Rust-adjusted category**:
+Required, Advisory, **Disapplied** ("compliance is not required … any
+non-compliance may be disregarded"), or N/A — with the explicit note that
+*Mandatory is never used for Rust*. It also carries per-guideline
+**rationale codes** (UB / IDB / CQ / DC), **decidability**
+(Decidable/Undecidable) and **scope** (STU/System) from MISRA C:2025.
+
+The three buckets used throughout this document are *derived* from the two
+columns by exact rule, and the derivation was verified row-by-row against
+the SCRC tables (set equality on all three):
+
+| Bucket | Derivation from ADD6 columns | Count |
+|---|---|---|
+| Table 1 (applies to safe Rust) | Safe-Rust = **Yes** | 61 (16 D + 45 R) |
+| Table 2 (unsafe/FFI-dependent) | general ≠ No **and** Safe-Rust ≠ Yes | 68 (3 D + 65 R) |
+| Table 3 (not applicable) | general = **No** | 94 (3 D + 91 R) |
+| **Total** | | **223** |
+
+Verified distributions (from the parsed table, see the CSV):
+Safe-Rust column = 61 Yes / **18 Partial** / 144 No; Rust category =
+82 Required / 42 Advisory / **5 Disapplied** / 94 n/a.
+
+### Applicability totals
 
 | Table | Meaning | Directives | Rules | Total |
 |---|---|---|---|---|
@@ -59,6 +94,41 @@ which safe Rust + the existing workspace lints already cover.
 
 "oxpinyin today" statements were verified against the working tree at commit
 `2382bdd` (audit details in `oxpinyin-audit.md`).
+
+### Finding: the 18 "Partial for safe Rust" guidelines
+
+The SCRC three-bucket view flattens ADD6's most decision-relevant nuance:
+guidelines whose concern **partially survives in safe Rust** (Safe-Rust
+column = Partial). For oxpinyin these are precisely "safe Rust is not
+enough" — and the list is dominated by the cast/conversion family, which
+independently confirms the profile's cast-lint choice:
+
+> D.5.1 (concurrency), R.1.1, R.5.1, R.5.5, R.5.10 (identifiers / FFI
+> names), R.8.17 (alignment), R.10.5, R.10.8, R.11.1, R.11.8, R.12.2
+> (**the cast/transmute family**), R.14.1 (loop termination), R.20.4,
+> R.20.7 (macro hygiene), R.22.11, R.22.14, R.22.15, R.22.20 (resource
+> ordering that can involve FFI).
+
+### Finding: Rust-adjusted categories differ from the C categories in 48 cases
+
+ADD6 re-categorizes for Rust rather than inheriting MISRA C's severity:
+5 **Disapplied** (R.15.5, R.17.8, R.22.8, R.22.9, R.22.10 — applicable
+in principle, compliance explicitly not required), 16 **Mandatory→Required**
+(the Rust column never uses Mandatory — no deviation-proof rules exist for
+Rust), 6 **Advisory→Required upgrades** (D.1.2 unstable features, D.4.2,
+D.4.13, R.11.4, R.11.5, R.11.11), and 21 **Required→Advisory downgrades**
+(D.4.3, D.4.7, D.4.11, D.4.12, R.2.1, R.3.1, R.5.3, R.5.5, R.5.6, R.5.8,
+R.7.1, R.7.2, R.8.5, R.10.8, R.11.6, R.12.2, R.13.1, R.13.5, R.15.7,
+R.20.7, R.5.10). The "MISRA cat" column in the tables below shows the
+**C** category; where ADD6's Rust-adjusted category differs it matters
+only for deviation bookkeeping, not for the enforcement mapping this
+study proposes.
+
+Rationale-code distribution (parsed): Table 1 = 24 UB / 34 DC / 2 IDB /
+1 CQ (+16 directives n/a); Table 2 = 49 UB / 15 DC / 3 IDB / 1 CQ;
+Table 3 = 41 UB / 50 DC / 3 IDB. The unsafe-only table is UB-dominated —
+exactly why its enforcement collapses onto the SAFETY-comment + review +
+Miri machinery, while Table 1's DC/CQ mass is what lints and docs cover.
 
 ---
 
