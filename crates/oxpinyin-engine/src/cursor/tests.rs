@@ -486,16 +486,26 @@ fn leading_garbage_parses_as_an_incomplete_key() {
 #[test]
 fn apostrophe_only_inputs_follow_the_zero_fill() {
     // The pin parses apostrophe-only input to its full length and places
-    // a lone zero key at every position; oxpinyin's graph consumes 0 for
-    // these, so the same columns come from the tail zero-fill instead.
-    // LEFT/RIGHT agree with the pin (the abort shapes); OFF answers the
-    // clamped 0 where the pin aborts — a parse-derived divergence (the
-    // pin's consumed length includes the apostrophes), not a law gap.
+    // a lone zero key at every consumed position. Before the termination
+    // law (#178) the graph consumed 0 for these, so the columns came from
+    // the tail zero-fill instead and OFF answered the clamped 0 where the
+    // pin aborts — a parse-derived divergence the old expectations
+    // recorded. The law's apostrophe propagation makes `matrix_spans`
+    // report the run-consumed length, so the columns are now the pin's
+    // own and every law agrees with it: LEFT/RIGHT abort as before, and
+    // OFF aborts for every cursor past 0 (cursor 0 clamps below the
+    // zero-run walk and stays 0).
     for input in [b"'".as_slice(), b"''", b"'''"] {
         let len = input.len();
-        for cursor in 0..=len {
-            let got = lookup_offset_for_cursor(input, PARITY, cursor);
-            assert_eq!(got, Ok(0), "{input:?} OFF c={cursor}");
+        assert_eq!(lookup_offset_for_cursor(input, PARITY, 0), Ok(0));
+        for cursor in 1..=len {
+            assert!(
+                matches!(
+                    lookup_offset_for_cursor(input, PARITY, cursor),
+                    Err(EngineError::ZeroKeyOffsetCheck { .. })
+                ),
+                "{input:?} OFF c={cursor}: pin aborts"
+            );
         }
         assert_eq!(left_word_offset(input, PARITY, 0), Ok(0));
         for offset in 1..=len {
