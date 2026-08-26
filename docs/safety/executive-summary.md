@@ -3,9 +3,14 @@
 Working tree `2382bdd`, study date 2026-08-27. Deliverables in this
 directory; nothing outside `docs/safety/` was modified. This is **not** a
 MISRA-compliance claim; the output is a *MISRA C:2025 Addendum 6-derived
-Rust safety profile* (see `misra-rust-mapping.md` for provenance and the
-223-guideline applicability breakdown: 61 safe-Rust-applicable, 68
-unsafe-only, 94 not applicable).
+Rust safety profile*. The Addendum 6 PDF itself was retrieved and parsed
+(working URL `misra.org.uk/app/uploads/2025/03/MISRA-C-2025-ADD6.pdf`;
+classification columns committed as `misra-add6-table.csv`): 223
+guidelines — 61 safe-Rust-applicable, 68 unsafe-only, 94 not applicable —
+with the three buckets verified set-identical to both the primary
+two-column model and the Safety-Critical-Rust-Consortium distillation;
+18 guidelines are *Partial for safe Rust* (cast-family-dominated) and 48
+carry Rust-adjusted categories (see `misra-rust-mapping.md`).
 
 **Headline**: oxpinyin's code is already close to the profile's target
 state — zero unsafe outside three audited crates, 100% SAFETY-comment
@@ -200,6 +205,7 @@ nothing judgment-bearing is deleted.
 | File | Content |
 |---|---|
 | `misra-rust-mapping.md` | ADD6-derived mapping, all 223 guidelines → classes A–L → enforcement |
+| `misra-add6-table.csv` | ADD6 classification columns, machine-extracted from the primary PDF |
 | `tooling-evaluation.md` | every tool evaluated, with measured clippy/Lizard/fuzz data |
 | `oxpinyin-safety-profile.md` | the OXP-SAFE profile, layered, with rollout PRs |
 | `enforcement-matrix.md` | every rule → mechanism → tier |
