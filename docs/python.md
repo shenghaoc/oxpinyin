@@ -14,7 +14,8 @@ Python ≥ 3.10 with a Rust toolchain (the pinned one in `rust-toolchain.toml`
 works):
 
 ```sh
-pip install maturin
+cd crates/oxpinyin-python  # this package lives inside the workspace
+pip install maturin        # only needed for the develop loop below
 maturin develop            # inside an activated virtualenv, or:
 pip install .              # PEP 517 wheel build through maturin
 ```
@@ -141,10 +142,14 @@ constitution. Binding code uses no explicit `unsafe`.
 ## Thread-safety
 
 Engines may be shared across Python threads. Every operation serializes on
-an internal mutex and runs with the GIL released, so concurrent `lookup(...)`
-calls are correct and deterministic (the sequence interleaves, the results do
-not change). This deliberately exceeds what a TSF/IMK main-thread shell
-needs; it costs one lock acquisition per call.
+an internal mutex, so concurrent `lookup(...)` calls are correct and
+deterministic (the sequence interleaves, the results do not change).
+Operations that decode — `lookup`, `type_pinyin`, `select`, `commit`,
+`guess_sentence`, `train`, `save` — release the GIL around the engine call;
+snapshot-style reads (`candidates`, `candidates_at`, `sentences`,
+`sentence`, and the property getters) hold it while guarding. This
+deliberately exceeds what a TSF/IMK main-thread shell needs; it costs one
+lock acquisition per call.
 
 ## Learning
 
@@ -167,11 +172,16 @@ portable CI job covers, but wheel builds there are currently untested.
 
 The corpus lives at `crates/oxpinyin-python/parity-corpus.json` together with
 its replay procedure. One binary (`native-dump`) replays it through the pure
-Rust API; the pytest suite replays it through the binding; the transcripts
-must match byte-for-byte. Because all three DB backends funnel the shipping
-data path through the same redb tables (LMDB/Tkrzw are compile-time
-alternatives behind cargo features), the Python surface inherits backend
-behaviour automatically rather than selecting paths of its own.
+Rust API; the pytest suite replays it through the binding;
+`test_replayed_corpus_matches_the_native_transcript` then asserts structural
+equality of the loaded event objects (not of serialized bytes) per case.
+The shipping data path always uses redb — `oxpinyin-runtime` opens tables
+through `GenericLookupTable<DefaultStore>` and learning through
+`UserStore = GenericUserStore<DefaultStore>`, where
+`DefaultStore = RedbStore`. LMDB and Tkrzw are optional backends behind
+cargo features that `oxpinyin-python` does not enable, so their coverage
+belongs to the separate store/backend differential tests, not to Python
+parity.
 
 ## Deliberate omissions (v0)
 
