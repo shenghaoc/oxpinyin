@@ -409,13 +409,21 @@ where
     /// # Errors
     ///
     /// Same as [`Session::select`]: [`EngineError::CandidateIndexOutOfRange`]
-    /// for an index the given window does not hold.
+    /// for an index the given window does not hold, and
+    /// [`EngineError::LookupOffsetOutOfRange`] for an anchor past the raw
+    /// input's end.
     pub fn select_anchored(
         &mut self,
         index: usize,
         window: &CandidateList,
         anchor: usize,
     ) -> Result<Selection, EngineError> {
+        if anchor > self.raw.len() {
+            return Err(EngineError::LookupOffsetOutOfRange {
+                offset: anchor,
+                len: self.raw.len(),
+            });
+        }
         let candidate = window
             .get(index)
             .ok_or(EngineError::CandidateIndexOutOfRange {
@@ -427,6 +435,10 @@ where
 
     /// [`Session::select_anchored`] with an addon-promotion token override,
     /// mirroring [`Session::select_promoted`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Session::select_anchored`].
     pub fn select_anchored_promoted(
         &mut self,
         index: usize,
@@ -434,6 +446,12 @@ where
         anchor: usize,
         promoted_token: PhraseToken,
     ) -> Result<Selection, EngineError> {
+        if anchor > self.raw.len() {
+            return Err(EngineError::LookupOffsetOutOfRange {
+                offset: anchor,
+                len: self.raw.len(),
+            });
+        }
         let candidate = window
             .get(index)
             .ok_or(EngineError::CandidateIndexOutOfRange {
@@ -487,10 +505,16 @@ where
             ""
         };
         if candidate.nbest_row().is_some() {
-            let mut rebuilt = String::with_capacity(gap.len() + text.len());
-            rebuilt.push_str(gap);
-            rebuilt.push_str(&text);
-            self.selected = rebuilt;
+            // An n-best row is a whole-composition hypothesis: its text
+            // already covers the full input and its span (consumed_bytes)
+            // is the whole composition, so a re-anchored selection must not
+            // prepend the typed-but-unselected gap — that would duplicate
+            // the raw prefix in the committed text (upstream commits the
+            // row's sentence text, pinyin_choose_candidate's NBEST branch
+            // returning matrix.size() - 1). The composition-anchored path
+            // has an empty gap either way. The clone keeps `text`
+            // alive for the constraint write below.
+            self.selected = text.clone();
         } else {
             self.selected.push_str(gap);
             self.selected.push_str(&text);
@@ -3074,6 +3098,48 @@ mod tests {
             session.selected_tokens(),
             [PhraseToken::new(0x102)],
             "the chosen row records its own token path, not the deduped row 1's"
+        );
+    }
+
+    #[test]
+    fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
+        use crate::nbest::NbestRow;
+
+        let mut session = train_session();
+        session.type_pinyin("nihao").expect("typing cannot fail");
+
+        // A single whole-composition sentence hypothesis: its span is the
+        // full input, so selecting it from a re-anchored window must commit
+        // the row's text alone — never the typed-but-unselected gap (which
+        // would duplicate the raw prefix).
+        session.nbest_rows = vec![NbestRow {
+            text: "你好".into(),
+            tokens: vec![PhraseToken::new(0x100), PhraseToken::new(0x101)],
+            spans: Vec::new(),
+            keys: 2,
+            span: 5,
+            cost: 10,
+        }];
+        session.refresh().expect("refresh cannot fail");
+
+        // Re-anchor the window at offset 2 (mid-composition, before any
+        // choose). The n-best row rides the prepend into the window.
+        let window = session.candidates_at(2).expect("offset 2 is in range");
+        let nbest = window
+            .iter()
+            .position(|candidate| candidate.nbest_row() == Some(0))
+            .expect("the sentence row is prepended at a re-anchored offset");
+
+        session
+            .select_anchored(nbest, &window, 2)
+            .expect("selection cannot fail");
+        // The row's span is the whole composition, so the selection consumes
+        // everything; commit() returns the row text with no raw prefix.
+        assert_eq!(
+            session.commit().expect("commit cannot fail"),
+            "你好",
+            "an n-best row from a re-anchored window commits its own text,\n\
+             not the gap-prefixed duplicate"
         );
     }
 
