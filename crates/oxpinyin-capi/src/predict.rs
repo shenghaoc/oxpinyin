@@ -188,18 +188,27 @@ fn append_predicted_prefix(
         return;
     }
     let limit = prefix_len.saturating_mul(2).saturating_add(1);
-    // No pre-sort here: the system rows arrive in the defined prediction
-    // order (the reverse map's text-ascending walk, token-ascending within
-    // one text — `SystemDictionary::suggest_after`), the user rows in the
-    // same order from their own reverse map, and the stable sort below
+    // Merge the system and user seams by TEXT before ranking: both
+    // `suggest_after` results are already text-ascending (the reverse-map
+    // walk, token-ascending within one text), and the defined prediction
+    // order is text-ascending across BOTH seams — a plain concatenation
+    // would put every system row before a user row regardless of text. That
+    // is only text-safe today because the two seams settle in different
+    // (length, frequency) tie groups (system baked > 0, user rows always
+    // baked 0 — user tokens never appear in the system unigram map); merge
+    // instead so a future cross-seam tie group stays text-ascending, with
+    // the system row first when a text is shared. The stable sort below
     // keeps both inside their (length, frequency) tie groups
     // (`upstream-divergences.md`, "Predicted-candidate tie order").
-    let mut suggestions = dict.system().suggest_after(prefix);
-    if let Some(store) = user
+    let system = dict.system().suggest_after(prefix);
+    let user_rows = if let Some(store) = user
         && let Ok(lookup) = oxpinyin_user::UserLookup::from_store(store)
     {
-        suggestions.extend(lookup.suggest_after(prefix));
-    }
+        lookup.suggest_after(prefix)
+    } else {
+        Vec::new()
+    };
+    let suggestions = merge_suggestions(system, user_rows);
     // The pin divides by the phrase-index total, live per call
     // (`pinyin.cpp:1813-1814`); `amplified_total` is the same construction
     // the pinned normal path uses (`session.rs:1409-1416`). The item count
@@ -263,9 +272,39 @@ fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<Strin
     dict.system().phrase_text(token).ok().flatten()
 }
 
+/// Merges the system and user `suggest_after` results by TEXT, preserving
+/// the global text-ascending order across both seams, with the system row
+/// first when the two seams share a text.
+///
+/// Both inputs are already text-ascending (the reverse-map walk); the
+/// merge is the standard two-way merge of two ascending-by-text sequences,
+/// stable so equal-text system rows keep their (token) order and precede the
+/// user row. This is what makes the defined prediction order hold across the
+/// system/user boundary rather than only within each seam
+/// (`upstream-divergences.md`, "Predicted-candidate tie order").
+fn merge_suggestions(
+    system: Vec<(u32, String)>,
+    user_rows: Vec<(u32, String)>,
+) -> Vec<(u32, String)> {
+    let mut merged = Vec::with_capacity(system.len() + user_rows.len());
+    let (mut system_index, mut user_index) = (0, 0);
+    while system_index < system.len() && user_index < user_rows.len() {
+        if system[system_index].1 <= user_rows[user_index].1 {
+            merged.push(system[system_index].clone());
+            system_index += 1;
+        } else {
+            merged.push(user_rows[user_index].clone());
+            user_index += 1;
+        }
+    }
+    merged.extend(system[system_index..].iter().cloned());
+    merged.extend(user_rows[user_index..].iter().cloned());
+    merged
+}
+
 #[cfg(test)]
 mod tests {
-    use super::amplified_frequency;
+    use super::{amplified_frequency, merge_suggestions};
 
     #[test]
     fn amplified_law_mirrors_the_session_pinning_values() {
@@ -289,5 +328,38 @@ mod tests {
     #[test]
     fn amplified_law_zero_total_is_zero() {
         assert_eq!(amplified_frequency(100, 0), 0);
+    }
+    #[test]
+    fn merge_suggestions_interleaves_across_seams_and_keeps_system_first_on_ties() {
+        // The defined order is text-ascending across BOTH seams. A plain
+        // concatenation would put every system row before every user row,
+        // which only survives a (length, frequency) tie group because the
+        // two seams' frequencies never collide today. This exercises the
+        // merge directly: texts from both seams interleave, and a shared
+        // text keeps the system row first.
+        let system = vec![
+            (10, "中华".to_owned()), // zhonghua (华)
+            (20, "中年".to_owned()), // zhongnian (年)
+        ];
+        let user_rows = vec![
+            (901, "中号".to_owned()), // zhonghao (号) — sorts between the two
+            (902, "中年".to_owned()), // same text as the system row 20
+        ];
+        let merged = merge_suggestions(system, user_rows);
+        let texts: Vec<&str> = merged.iter().map(|(_, text)| text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "中华", // 华
+                "中号", // 号 (user) interleaves between the two system rows
+                "中年", // 年 — the system row (token 20) first,
+                "中年", // then the user row (token 902) on the same text,
+            ],
+            "global text-ascending across both seams"
+        );
+        // System-first on the shared text: the lower system token precedes the
+        // user token on that identical text.
+        assert_eq!(merged[2], (20, "中年".to_owned()));
+        assert_eq!(merged[3], (902, "中年".to_owned()));
     }
 }
