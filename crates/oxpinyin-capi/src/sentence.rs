@@ -377,7 +377,15 @@ pub extern "C" fn pinyin_guess_candidates(
         // an index into the cached list would select a different row
         // whenever the two differ. `anchored_window` is set here and a later
         // `pinyin_choose_candidate` resolves its index against it.
-        inst.anchored_window = if transformed || normalized == inst.session.composition_offset() {
+        // Re-anchor only at a normalized offset strictly PAST the
+        // composition offset. A normalized offset equal to it is the
+        // composition-anchored cached list; one BELOW it is a stale cursor
+        // behind the selection, whose anchored span would regress the
+        // composition (rejected — the `select_anchored` guard refuses it)
+        // and is served the cached list instead. Under a transform the
+        // cached list stands (the offset is in the original input's
+        // coordinates `self.raw` does not share).
+        inst.anchored_window = if transformed || normalized <= inst.session.composition_offset() {
             None
         } else {
             match inst.session.candidates_at(normalized) {

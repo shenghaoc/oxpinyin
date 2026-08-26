@@ -42,6 +42,16 @@ pub enum EngineError {
         /// The raw input length the offset may at most equal.
         len: usize,
     },
+    /// A selection was requested from a window anchored before the
+    /// composition offset — a stale cursor behind the selection, whose span
+    /// would regress the consumed boundary. Rejected rather than
+    /// reconciled; no frontend drives a backward selection.
+    SelectionAnchorBeforeComposition {
+        /// The window anchor the caller supplied.
+        anchor: usize,
+        /// The composition offset (the selected boundary) it precedes.
+        composition: usize,
+    },
     /// The dictionary backend failed.
     Dictionary(String),
     /// The language model backend failed.
@@ -76,6 +86,15 @@ impl fmt::Display for EngineError {
                 write!(
                     formatter,
                     "lookup offset {offset} is out of range 0..={len}"
+                )
+            }
+            Self::SelectionAnchorBeforeComposition {
+                anchor,
+                composition,
+            } => {
+                write!(
+                    formatter,
+                    "selection anchor {anchor} precedes the composition offset {composition}"
                 )
             }
             Self::Dictionary(message) => write!(formatter, "dictionary error: {message}"),
