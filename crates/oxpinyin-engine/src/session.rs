@@ -1241,6 +1241,14 @@ where
     /// Normalizes a user cursor position to a lookup offset over the
     /// session's own buffer and options — the `pinyin_get_pinyin_offset`
     /// law ([`crate::lookup_offset_for_cursor`]).
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Graph`] when the buffer cannot be represented as a
+    /// segment graph, and [`EngineError::ZeroKeyOffsetCheck`] where the
+    /// pin's `_check_offset` aborts. A cursor past one-past-end is NOT an
+    /// error: like the pin, the cursor is clamped to the parsed length, so
+    /// there is no out-of-range shape here.
     pub fn lookup_offset_for_cursor(&self, cursor: usize) -> Result<usize, EngineError> {
         crate::cursor::lookup_offset_for_cursor(self.raw.as_bytes(), self.settings.options, cursor)
     }
@@ -1248,6 +1256,16 @@ where
     /// The word-level left move over the session's own buffer and options
     /// — the `pinyin_get_left_pinyin_offset` law
     /// ([`crate::left_word_offset`]).
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Graph`] when the buffer cannot be represented as a
+    /// segment graph; [`EngineError::ZeroKeyOffsetCheck`] where the pin's
+    /// `_check_offset` aborts (an input offset one past a lone zero-key
+    /// column, or the second check on the computed result); and
+    /// [`EngineError::LookupOffsetOutOfRange`] when the offset exceeds the
+    /// buffer's one-past-end position (upstream reads its matrix out of
+    /// bounds there).
     pub fn left_word_offset(&self, offset: usize) -> Result<usize, EngineError> {
         crate::cursor::left_word_offset(self.raw.as_bytes(), self.settings.options, offset)
     }
@@ -1256,6 +1274,16 @@ where
     /// — the `pinyin_get_right_pinyin_offset` law
     /// ([`crate::right_word_offset`]). `Ok(None)` is the pin's graceful
     /// false: no key starts at the position.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Graph`] when the buffer cannot be represented as a
+    /// segment graph; [`EngineError::ZeroKeyOffsetCheck`] where the pin's
+    /// `_check_offset` aborts (an input offset one past a lone zero-key
+    /// column, or the second check on the computed result); and
+    /// [`EngineError::LookupOffsetOutOfRange`] when the offset exceeds the
+    /// buffer's one-past-end position (upstream reads its matrix out of
+    /// bounds there).
     pub fn right_word_offset(&self, offset: usize) -> Result<Option<usize>, EngineError> {
         crate::cursor::right_word_offset(self.raw.as_bytes(), self.settings.options, offset)
     }
