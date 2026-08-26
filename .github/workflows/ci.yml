@@ -71,9 +71,10 @@ jobs:
         run: cargo clippy --locked -p oxpinyin-python --features bindings --all-targets -- -D warnings
       - name: Build and install the wheel
         working-directory: crates/oxpinyin-python
+        # Pinned to the versions validated locally; build-system requires
+        # only bounds maturin for human-driven builds (>=1.8,<2).
         run: |
-          python -m pip install --upgrade pip
-          pip install maturin pytest
+          pip install maturin==1.15.0 pytest==9.1.1
           pip install .
       - name: Rust runtime tests
         run: cargo test --locked -p oxpinyin-python
