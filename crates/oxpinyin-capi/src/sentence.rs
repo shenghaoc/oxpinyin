@@ -371,18 +371,26 @@ pub extern "C" fn pinyin_guess_candidates(
         // differential never drives a transformed scheme).
         let transformed =
             inst.double_parse.is_some() || inst.zhuyin_parse.is_some() || inst.full_parse.is_some();
-        let owned_window;
-        let candidates = if transformed || normalized == inst.session.composition_offset() {
-            inst.session.candidates()
+        // Retain the re-anchored window on the instance: a session's
+        // selection records against the cached (composition-anchored) list,
+        // but the row the caller saw came from the offset-anchored window —
+        // an index into the cached list would select a different row
+        // whenever the two differ. `anchored_window` is set here and a later
+        // `pinyin_choose_candidate` resolves its index against it.
+        inst.anchored_window = if transformed || normalized == inst.session.composition_offset() {
+            None
         } else {
-            owned_window = match inst.session.candidates_at(normalized) {
-                Ok(window) => window,
+            match inst.session.candidates_at(normalized) {
+                Ok(window) => Some((normalized, window)),
                 Err(_) => {
                     inst.candidates.clear();
                     return false;
                 }
-            };
-            &owned_window
+            }
+        };
+        let candidates: &oxpinyin_engine::CandidateList = match inst.anchored_window.as_ref() {
+            Some((_, window)) => window,
+            None => inst.session.candidates(),
         };
         for cand in candidates.iter() {
             if without_sentence && cand.kind() == oxpinyin_engine::CandidateKind::Sentence {

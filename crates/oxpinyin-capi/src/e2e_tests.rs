@@ -1250,7 +1250,36 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
         hua < nian,
         "text order, not token order, inside the user tie group"
     );
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
 
+#[test]
+fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
+    let user_dir = TempUserDir::new("c2-reanchor-choose");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    // The composition is anchored at 0 after a parse. Guessing at offset 2
+    // BEFORE any choose re-anchors the window there (no cached list at 2),
+    // so the rows the caller sees come from the offset-2 window.
+    let _ = candidate(instance, "nihao", 0);
+    assert!(pinyin_guess_candidates(instance, 2, DEFAULT_SORT));
+    let hao = {
+        // SAFETY: live instance immediately after the guess.
+        let inst = unsafe { instance_ref(instance) };
+        let index = inst
+            .candidates
+            .iter()
+            .position(|cd| cd.text.as_bytes() == "好".as_bytes())
+            .expect("好 is offered at offset 2");
+        let mut cand: *mut LookupCandidate = ptr::null_mut();
+        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        cand
+    };
+    // The chosen row's span is anchor-relative (hao covers raw 2..5). With
+    // the fix the composition advances from the ANCHOR (2 + 3 = 5);
+    // resolving the index against the composition-anchored cached list
+    // instead would select a different row and answer a different cursor.
+    assert_eq!(pinyin_choose_candidate(instance, 2, hao), 5);
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }

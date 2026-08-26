@@ -353,7 +353,17 @@ where
     /// current list does not hold — including a stale index left over from an
     /// earlier list — and leaves the session usable.
     pub fn select(&mut self, index: usize) -> Result<Selection, EngineError> {
-        self.select_inner(index, None)
+        // Clone the candidate out of the cached list first: `select_inner`
+        // borrows `self` mutably, so it cannot also borrow `self.candidates`.
+        let candidate =
+            self.candidates
+                .get(index)
+                .cloned()
+                .ok_or(EngineError::CandidateIndexOutOfRange {
+                    index,
+                    len: self.candidates.len(),
+                })?;
+        self.select_inner(self.consumed, &candidate, None)
     }
 
     /// Chooses the candidate at `index`, recording `promoted_token` in the
@@ -373,28 +383,87 @@ where
         index: usize,
         promoted_token: PhraseToken,
     ) -> Result<Selection, EngineError> {
-        self.select_inner(index, Some(promoted_token))
+        let candidate =
+            self.candidates
+                .get(index)
+                .cloned()
+                .ok_or(EngineError::CandidateIndexOutOfRange {
+                    index,
+                    len: self.candidates.len(),
+                })?;
+        self.select_inner(self.consumed, &candidate, Some(promoted_token))
     }
 
-    fn select_inner(
+    /// Chooses the candidate at `index` from an explicit candidate window
+    /// (a re-anchored `candidates_at` list), not the session's cached list.
+    ///
+    /// `pinyin_guess_candidates` at an offset other than the composition's
+    /// own rebuilds the window the caller sees at that offset; a subsequent
+    /// `pinyin_choose_candidate` must resolve its index against that SAME
+    /// window, or it would select a different row from the composition-
+    /// anchored cached list whenever the two differ. The selection record,
+    /// constraint span, and consumed advance are otherwise identical to
+    /// [`Session::select`] — they come from the candidate and the session
+    /// state, not from which list holds the candidate.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Session::select`]: [`EngineError::CandidateIndexOutOfRange`]
+    /// for an index the given window does not hold.
+    pub fn select_anchored(
         &mut self,
         index: usize,
+        window: &CandidateList,
+        anchor: usize,
+    ) -> Result<Selection, EngineError> {
+        let candidate = window
+            .get(index)
+            .ok_or(EngineError::CandidateIndexOutOfRange {
+                index,
+                len: window.len(),
+            })?;
+        self.select_inner(anchor, candidate, None)
+    }
+
+    /// [`Session::select_anchored`] with an addon-promotion token override,
+    /// mirroring [`Session::select_promoted`].
+    pub fn select_anchored_promoted(
+        &mut self,
+        index: usize,
+        window: &CandidateList,
+        anchor: usize,
+        promoted_token: PhraseToken,
+    ) -> Result<Selection, EngineError> {
+        let candidate = window
+            .get(index)
+            .ok_or(EngineError::CandidateIndexOutOfRange {
+                index,
+                len: window.len(),
+            })?;
+        self.select_inner(anchor, candidate, Some(promoted_token))
+    }
+
+    /// Selects the candidate at `index`, which must not alias `self` —
+    /// either an owned clone of a cached candidate (the composition case)
+    /// or a reference into an external window.
+    fn select_inner(
+        &mut self,
+        anchor: usize,
+        candidate: &Candidate,
         token_override: Option<PhraseToken>,
     ) -> Result<Selection, EngineError> {
-        let Some(candidate) = self.candidates.get(index) else {
-            return Err(EngineError::CandidateIndexOutOfRange {
-                index,
-                len: self.candidates.len(),
-            });
-        };
-
         let text = candidate.text().to_owned();
         let advance = candidate.consumed_bytes();
         let token = token_override.or_else(|| candidate.token());
-        // The chosen span in the store's coordinates: the composition
-        // offset before the choose to the boundary it advances to.
-        let constraint_start = self.consumed;
-        let constraint_end = self.next_boundary(self.consumed.saturating_add(advance));
+        // The chosen span in the store's coordinates. For the composition-
+        // anchored cached list, `anchor` is the composition offset and the
+        // candidate's `consumed_bytes` is measured from it; for a re-anchored
+        // window, `anchor` is that window's caller offset and the candidate's
+        // `consumed_bytes` is measured from IT (the pin's `m_begin = start`,
+        // `pinyin.cpp:2227`). Both drifts are the same expression: the span
+        // starts at `anchor` and advances by the candidate's own byte span.
+        let constraint_start = anchor;
+        let constraint_end = self.next_boundary(anchor.saturating_add(advance));
         if candidate.nbest_row().is_some() {
             self.selected = text.clone();
         } else {
@@ -1393,8 +1462,19 @@ where
     /// # Errors
     ///
     /// Returns [`EngineError`] when a backend fails during the scan, exactly
-    /// as the anchored [`Session::refresh`] does.
+    /// as the anchored [`Session::refresh`] does, and
+    /// [`EngineError::LookupOffsetOutOfRange`] when `offset` exceeds the raw
+    /// buffer's one-past-end position — the pin reads its matrix out of
+    /// bounds there, so no pinned behaviour exists and the offset is
+    /// refused. An offset equal to one-past-end is valid: `scan_window`
+    /// answers the terminal sentence rows for it (the pin's reserved slot).
     pub fn candidates_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
+        if offset > self.raw.len() {
+            return Err(EngineError::LookupOffsetOutOfRange {
+                offset,
+                len: self.raw.len(),
+            });
+        }
         let mut items = Vec::new();
         self.scan_window(offset, &mut items)?;
         Ok(CandidateList::from_vec(items))
