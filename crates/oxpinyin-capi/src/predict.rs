@@ -70,6 +70,11 @@ pub(crate) fn guess_predicted(inst: &mut CapiInstance, prefix: &str) -> bool {
             nbest_index: 0,
             consumed_bytes: 0,
             token: Some(oxpinyin_core::PhraseToken::new(item.token)),
+            // Predicted candidates are chosen via
+            // `pinyin_choose_predicted_candidate`, never the anchored-select
+            // path, so the window index is unused here; record the snapshot
+            // position for determinism.
+            source_index: inst.candidates.len(),
         });
     }
     true
@@ -111,6 +116,7 @@ fn prepend_punctuations(inst: &mut CapiInstance, prefixes: &[u32]) {
             nbest_index: 0,
             consumed_bytes: 0,
             token: None,
+            source_index: inst.candidates.len(),
         });
     }
     inst.candidates.extend(rest);

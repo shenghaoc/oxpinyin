@@ -315,24 +315,33 @@ pub extern "C" fn pinyin_choose_candidate(
         else {
             return -1;
         };
-        // Addon promotion (`pinyin.cpp:2532-2561`): copy the addon phrase into
-        // default nibble 5 and select under the promoted token; otherwise a
-        // plain select records the candidate's own token.
+        // `index` is the candidate's position in the SNAPSHOT, which
+        // `try_promote_addon` reads (it indexes `inst.candidates`); the
+        // snapshot may omit entries (sentence rows under
+        // `SORT_WITHOUT_SENTENCE_CANDIDATE`, a `CString` conversion
+        // failure), so that position is NOT the row's position in the
+        // window the `select*` calls index. Select by the candidate's
+        // recorded source index.
+        let addon_token = try_promote_addon(inst, index);
+        let source_index = inst.candidates[index].source_index;
         // Resolve the selection against the window the caller actually saw:
         // when the last `pinyin_guess_candidates` re-anchored at an offset
         // other than the composition's own, that window is held in
         // `anchored_window`, and an index into the composition-anchored
         // cached list would select a different row.
-        let selection = match try_promote_addon(inst, index) {
+        let selection = match addon_token {
             Some(promoted) => match inst.anchored_window.as_ref() {
-                Some((anchor, window)) => inst
-                    .session
-                    .select_anchored_promoted(index, window, *anchor, promoted),
-                None => inst.session.select_promoted(index, promoted),
+                Some((anchor, window)) => {
+                    inst.session
+                        .select_anchored_promoted(source_index, window, *anchor, promoted)
+                }
+                None => inst.session.select_promoted(source_index, promoted),
             },
             None => match inst.anchored_window.as_ref() {
-                Some((anchor, window)) => inst.session.select_anchored(index, window, *anchor),
-                None => inst.session.select(index),
+                Some((anchor, window)) => {
+                    inst.session.select_anchored(source_index, window, *anchor)
+                }
+                None => inst.session.select(source_index),
             },
         };
         if selection.is_err() {

@@ -811,6 +811,13 @@ pub(crate) struct CapiCandidate {
     /// `None` for sentence-level and fallback candidates, which carry no
     /// token and are not trained (§2: only pinned phrases train).
     pub(crate) token: Option<PhraseToken>,
+    /// The index this candidate held in the window it was snapshotted from.
+    /// The snapshot (`Vec<CapiCandidate>`) may omit entries (sentence rows
+    /// under `SORT_WITHOUT_SENTENCE_CANDIDATE`, a `CString` conversion
+    /// failure), so a candidate's position in the snapshot is NOT its
+    /// position in the window; `pinyin_choose_candidate` must select by
+    /// THIS index, which is the one `Session::select[_anchored]` indexes.
+    pub(crate) source_index: usize,
 }
 
 /// State behind `pinyin_instance_t *`.
