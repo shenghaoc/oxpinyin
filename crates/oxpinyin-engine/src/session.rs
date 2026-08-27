@@ -1516,6 +1516,18 @@ where
             return SegmentGraph::build_with_options(remaining, self.settings.options)
                 .map_err(EngineError::Graph);
         }
+        // An anchor strictly inside an exact segment must not decode the
+        // tail segments across the skipped bytes — that would consume
+        // input the anchor excluded (exact `xian'hao` anchored at 2
+        // decoding `hao` over `an'hao`). Refuse instead: an empty exact
+        // graph answers no candidates and a zero parse for this anchor.
+        if self
+            .exact_segments
+            .iter()
+            .any(|segment| segment.start() < anchor && anchor < segment.end())
+        {
+            return SegmentGraph::build_exact(remaining, &[]).map_err(EngineError::Graph);
+        }
         let rebased: Vec<ExactSegment> = self
             .exact_segments
             .iter()
@@ -2695,6 +2707,36 @@ fn apostrophe_extended(input: &[u8], mut end: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_anchor_inside_an_exact_segment_decodes_nothing() {
+        let mut session = session();
+        use oxpinyin_core::graph::ExactSegment;
+        let ni_hao: Vec<ExactSegment> = {
+            let ni = oxpinyin_core::SyllableKey::from_text("ni").expect("ni");
+            let hao = oxpinyin_core::SyllableKey::from_text("hao").expect("hao");
+            vec![
+                ExactSegment::new(0, 2, ni, 0),
+                ExactSegment::new(3, 6, hao, 0),
+            ]
+        };
+        session
+            .replace_raw_exact("ni'hao", &ni_hao)
+            .expect("replace");
+        // Anchor 1 sits inside the `ni` segment: the tail `hao` must not
+        // decode across the skipped `i'` bytes.
+        let raw = session.raw.clone();
+        let graph = session
+            .build_graph_at(1, &raw.as_bytes()[1..])
+            .expect("anchor inside a segment answers an empty graph");
+        assert!(graph.edges().is_empty());
+        assert_eq!(graph.consumed(), 0);
+        // A boundary anchor (2, the end of the first segment) still decodes.
+        let graph = session
+            .build_graph_at(2, &raw.as_bytes()[2..])
+            .expect("boundary anchor builds");
+        assert_eq!(graph.edges().len(), 1);
+    }
+
     use oxpinyin_core::fixture::{FixtureDictionary, FixtureLanguageModel};
     use oxpinyin_core::{
         Cost, Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey,

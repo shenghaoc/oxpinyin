@@ -35,7 +35,8 @@ pub enum GraphError {
     },
     /// [`SegmentGraph::build_exact`] was given segments that do not
     /// describe a walk over the input: out-of-order, overlapping,
-    /// out-of-bounds, or empty spans.
+    /// out-of-bounds, or empty spans, or bytes between adjacent spans
+    /// that are not apostrophe separators.
     ExactSegmentsInvalid,
 }
 
@@ -344,6 +345,9 @@ impl SegmentGraph {
             if segment.end <= segment.start
                 || segment.start < previous_end
                 || segment.end > input.len()
+                || !input[previous_end..segment.start]
+                    .iter()
+                    .all(|byte| *byte == b'\'')
             {
                 return Err(GraphError::ExactSegmentsInvalid);
             }
@@ -847,6 +851,40 @@ mod tests {
             SegmentGraph::build_exact(b"bie", &[ExactSegment::new(2, 2, bie, 0)]),
             Err(GraphError::ExactSegmentsInvalid)
         );
+    }
+
+    #[test]
+    fn exact_graph_rejects_non_apostrophe_gaps() {
+        use super::ExactSegment;
+        let ni = key_of("ni");
+        let hao = key_of("hao");
+        // "nixhao": the gap byte 'x' is not a separator — riding it would
+        // decode hao across unverified input.
+        assert_eq!(
+            SegmentGraph::build_exact(
+                b"nixhao",
+                &[
+                    ExactSegment::new(0, 2, ni, 0),
+                    ExactSegment::new(3, 6, hao, 0)
+                ]
+            ),
+            Err(GraphError::ExactSegmentsInvalid)
+        );
+        // Leading junk is equally refused.
+        assert_eq!(
+            SegmentGraph::build_exact(b"xni", &[ExactSegment::new(1, 3, ni, 0)]),
+            Err(GraphError::ExactSegmentsInvalid)
+        );
+        // A separator run between spans still rides, as in the parsed graph.
+        let graph = SegmentGraph::build_exact(
+            b"ni''hao",
+            &[
+                ExactSegment::new(0, 2, ni, 0),
+                ExactSegment::new(4, 7, hao, 0),
+            ],
+        )
+        .expect("apostrophe gap is a separator ride");
+        assert_eq!(graph.consumed(), 7);
     }
 
     /// Resolves a spelling to its key the way the scheme parsers do.
