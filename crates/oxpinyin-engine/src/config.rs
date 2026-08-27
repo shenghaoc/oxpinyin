@@ -376,8 +376,7 @@ impl ConfigLayer {
         let name = name.into();
         let mut values = BTreeMap::new();
 
-        for (index, raw) in text.lines().enumerate() {
-            let line = index + 1;
+        for (raw, line) in text.lines().zip(1..) {
             let trimmed = raw.trim_end_matches(['\r', ' ']);
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
