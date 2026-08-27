@@ -139,6 +139,13 @@ if [[ -n "${W13_CAPI_SYSTEM:-}" ]]; then
     cp "$W13_CAPI_SYSTEM"/pinyin_index.redb \
        "$W13_CAPI_SYSTEM"/phrase_index.redb \
        "$W13_CAPI_SYSTEM"/bigram.redb "$SYSTEM_TMP"/ 2>/dev/null || true
+    # The real-unigram source: the system dir's own interpolation2.text
+    # when present, else the explicit override. Without it the drivers'
+    # fixture fallback would compare flat-export unigrams against the
+    # oracle's real ones — a data mismatch, not a divergence.
+    if [[ -z "${W13_INTERPOLATION:-}" && -f "$W13_CAPI_SYSTEM/interpolation2.text" ]]; then
+        W13_INTERPOLATION="$W13_CAPI_SYSTEM/interpolation2.text"
+    fi
     if [[ -n "${W13_INTERPOLATION:-}" && -f "$W13_INTERPOLATION" ]]; then
         cp "$W13_INTERPOLATION" "$SYSTEM_TMP/interpolation2.text"
     fi
