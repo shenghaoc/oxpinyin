@@ -135,10 +135,12 @@ re-derives them:
   the schema above with `total == Σ count`
   (`crates/oxpinyin-data/src/lm/tests.rs::invariant_holds_for_every_fixture_entry`),
   plus the same module's 你 → 的 ordering check
-  (`observed_transition_is_cheaper_than_novel`). Successor top-byte and
-  top-successor orderings are not re-run by any committed test; they were
-  checked once at freeze time (§ above) and re-derived per run by the
-  producer's compilation rules.
+  (`observed_transition_is_cheaper_than_novel`). No committed test asserts
+  the successor top-byte and top-successor orderings as explicit
+  invariant checks; when the strict inputs are present, though, the
+  `export_reference` comparison covers them — it compares every serialized
+  bigram row of the freshly compiled table against the frozen
+  oracle-derived reference, successor values and record order included.
 - The dictionary tables' committed bytes are frozen under `fixtures/w3/`
   (checksummed by `fixtures/w3/fixtures.sha256`); their regeneration
   route is the producer above, not a live-oracle round trip.
