@@ -33,7 +33,9 @@ the crate has since been removed — the tables are committed under
 `fixtures/w3/`, frozen). Since 2026-08-27 the same schemas are produced
 **natively from the canonical model20 archive** by `oxpinyin-datagen`
 (`docs/findings/datagen-model20.md`), measured entry-for-entry identical
-to this route's frozen full export; the ABI route above is retired. It drove the additional public functions:
+to this route's frozen full export; the ABI route above is retired (the
+ongoing verification routes are recorded in § Verification below). It drove
+the additional public functions:
 
 - `pinyin_begin_get_phrases` / `pinyin_iterator_has_next_phrase` /
   `pinyin_iterator_get_next_phrase` / `pinyin_end_get_phrases` — enumerate
@@ -117,20 +119,29 @@ top successors resolved via `pinyin_token_get_phrase` are asserted (e.g.
 
 ## Verification
 
-With the exporter removed, the generated tables survive only frozen under
-`fixtures/w3/`, checksummed by `fixtures/w3/fixtures.sha256`; the live-oracle
-round-trip checks retired with the exporter. Ongoing validation reduces to
-the frozen tables' consumers:
+The live-oracle round-trip checks retired with the exporter; the frozen
+tables' own consumers keep validating them, and the native producer
+re-derives them:
 
+- **Regeneration (local)**: `oxpinyin-datagen compile --mini` re-derives
+  the `fixtures/w3/` subset from the canonical model20 archive
+  row-for-row through the store API, and the strict local tier
+  (`OXPINYIN_DATAGEN_STRICT=1`, recipe in
+  `docs/findings/datagen-model20.md`) additionally checks the full
+  compilation against the frozen oracle-derived reference
+  (`export_reference`) and across all three backends
+  (`cross_backend`). CI never touches model20 — these are local gates.
 - **Bigram invariant**: every committed entry of `bigram.redb` parses under
   the schema above with `total == Σ count`
   (`crates/oxpinyin-data/src/lm/tests.rs::invariant_holds_for_every_fixture_entry`),
   plus the same module's 你 → 的 ordering check
   (`observed_transition_is_cheaper_than_novel`). Successor top-byte and
   top-successor orderings are not re-run by any committed test; they were
-  checked once at freeze time (§ above).
-- The dictionary tables have no remaining round-trip check against the
-  live oracle; their contents are frozen under `fixtures/w3/`.
+  checked once at freeze time (§ above) and re-derived per run by the
+  producer's compilation rules.
+- The dictionary tables' committed bytes are frozen under `fixtures/w3/`
+  (checksummed by `fixtures/w3/fixtures.sha256`); their regeneration
+  route is the producer above, not a live-oracle round trip.
 
 ## Why the previous approach was withdrawn
 
