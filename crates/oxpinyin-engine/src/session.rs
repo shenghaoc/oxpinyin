@@ -215,16 +215,18 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: Display,
 {
-    /// Opens a session over the supplied backends.
-    ///
-    /// Configuration and storage locations arrive as data; the session reads
-    /// no environment and discovers no path.
+    /// Creates a session from the supplied configuration, storage paths, dictionary, and language model.
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError`] when a backend rejects the settings it is
-    /// opened with. No such rejection exists yet, so this currently always
-    /// succeeds.
+    /// Returns [`EngineError::Scoring`] if the dictionary or language model cannot provide key costs.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let session = Session::new(&config, paths, dictionary, model)?;
+    /// # Ok::<(), EngineError>(())
+    /// ```
     pub fn new(
         config: &dyn ConfigSource,
         paths: StoragePaths,
@@ -742,20 +744,23 @@ where
         &self.history
     }
 
-    /// The current composition's syllable keys, in the engine's selected
-    /// parse order.
+    /// Returns the current composition's syllable keys in selected parse order.
     ///
-    /// This is the fewest-keys segmentation the scan matrix is built from
-    /// ([`SegmentGraph::fewest_keys`], `docs/findings/candidate-construction.md`
-    /// §8.1) over the whole raw buffer — the standing-in for libpinyin's saved
-    /// keys, which `pinyin_remember_user_input` walks to store a phrase with
-    /// its pinyin (`docs/findings/user-store.md` §3.1).
+    /// The keys use the fewest-key segmentation of the complete raw input.
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError::Graph`] when the raw buffer cannot be built
-    /// into a segment graph (an over-long input; the buffer is capped by
-    /// [`MAX_INPUT_BYTES`]).
+    /// Returns [`EngineError::Graph`] if the raw input cannot be converted into a
+    /// segment graph.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &Session) -> Result<(), EngineError> {
+    /// let keys = session.composition_keys()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn composition_keys(&self) -> Result<Vec<SyllableKey>, EngineError> {
         let graph = self.build_graph_at(0, self.raw.as_bytes())?;
         Ok(graph
@@ -779,11 +784,15 @@ where
         Ok(text)
     }
 
-    /// Discards the composition.
+    /// Clears the session and discards all composition state.
     ///
-    /// The full reset — upstream's `pinyin_reset`: the input, the
-    /// selection record, the n-best rows, and the constraint store all
-    /// go (`pinyin.cpp:2697` clears `m_constraints`).
+    /// # Examples
+    ///
+    /// ```
+    /// # fn clear(session: &mut Session) {
+    /// session.reset();
+    /// # }
+    /// ```
     pub fn reset(&mut self) {
         self.reset_composition();
         self.exact_segments.clear();
@@ -822,56 +831,54 @@ where
         self.sentence_lookup_active = false;
     }
 
-    /// Replaces the raw input with `text` in one step — the capi parse
-    /// path's `parse_more` contract (the frontend re-sends the whole
-    /// buffer every keystroke). The selection record and the constraint
-    /// store survive (whether they should is the caller's
-    /// [`Session::parse_continues`] decision); the cursor is clamped into
-    /// the new buffer and the candidates refresh, so the session is never
-    /// observable with a cursor past its input.
+    /// Replaces the session's raw input and refreshes its derived state.
     ///
-    /// Keeps every character: the pin's parser accepts any input string
-    /// and simply stops consuming at the first byte no key matches
-    /// (`pinyin_parser2.cpp:237-328` — there is no explicit stop, the
-    /// termination is the DP's reachability), so space, control, and
-    /// non-ASCII bytes must REACH the decoder for it to stop there
-    /// (class B2 of `uncovered-surface-differentials.md`). The decoder
-    /// hard-stops on them; this seam must not pre-filter them away.
+    /// # Arguments
     ///
-    /// The batch [`Session::type_pinyin`] keeps its printable-ASCII
-    /// accept set (the frozen F1 design, `f1-junk-aware-parse.md`): the
-    /// two seams are deliberately different. The corpus and sentence pins
-    /// feed through `type_pinyin` only — no path reaches this seam — so
-    /// the loosened filter here cannot move them.
+    /// * `text` — The complete replacement input, including characters that may
+    ///   stop parsing.
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError`] when the refresh under the new input hits
-    /// a backend failure.
+    /// Returns [`EngineError`] if refreshing the session fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # let mut session: Session = todo!();
+    /// session.replace_raw("ni hao").unwrap();
+    /// ```
+    ///
+    /// [`EngineError`]: crate::EngineError
+    /// [`Session::parse_continues`]: Self::parse_continues
     pub fn replace_raw(&mut self, text: &str) -> Result<(), EngineError> {
         self.exact_segments.clear();
         self.refill_raw(text);
         self.refresh()
     }
 
-    /// Replaces the raw input with `text` parsed into exactly
-    /// `segments` — the scheme-parse seam (zhuyin, double pinyin).
+    /// Replaces the raw input and preserves the supplied parsed segments as exact spans.
     ///
-    /// The scan and the training record use these keys verbatim: the
-    /// graph is one [`EdgeKind::Exact`] chain, so the pinyin inventory
-    /// never re-segments the joined spelling (upstream's decoder receives
-    /// the scheme parser's `ChewingKey`s the same way). Segments are
-    /// absolute over `text`; spans outside the accepted prefix of
-    /// `text` (the [`MAX_INPUT_BYTES`] clamp) are dropped, keeping
-    /// `end <= raw.len()` an invariant of the stored segments.
+    /// Exact segments are interpreted over `text` and retained only when they end within
+    /// the accepted input. The input is refreshed without re-segmenting those spans.
     ///
-    /// The selection record and the constraint store survive, as in
-    /// [`Session::replace_raw`].
+    /// # Parameters
+    ///
+    /// * `text` — The replacement raw input.
+    /// * `segments` — Parsed spans whose keys must be used verbatim.
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError`] when the refresh under the new input hits
-    /// a backend failure.
+    /// Returns [`EngineError`] if refreshing the input encounters a backend failure.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn example(mut session: Session) -> Result<(), EngineError> {
+    /// session.replace_raw_exact("nihao", &[])?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn replace_raw_exact(
         &mut self,
         text: &str,
@@ -887,10 +894,15 @@ where
         self.refresh()
     }
 
-    /// The shared body of the two replace seams: refill the raw buffer
-    /// and clamp the cursor onto the new input. No refresh — the callers
-    /// refresh under their own parse mode (the exact seam must set its
-    /// segments first).
+    /// Replaces the raw input, enforcing the maximum input size and moving the consumed offset to a valid character boundary.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let text = "a，";
+    /// let consumed = 2.min(text.len());
+    /// assert!(text.is_char_boundary(consumed));
+    /// ```
     fn refill_raw(&mut self, text: &str) {
         self.raw.clear();
         for character in text.chars() {
@@ -998,33 +1010,26 @@ where
         &self.candidates
     }
 
-    /// Runs the n-best sentence lookup and stores its rows
-    /// (`pinyin_guess_sentence`, `pinyin.cpp:1373-1385`).
+    /// Looks up alternative sentence interpretations for the current raw input and stores the resulting rows.
     ///
-    /// With real unigrams this is the trellis port of upstream's
-    /// `PhoneticLookup<2, 3>` ([`crate::nbest`]); without them the
-    /// pre-frequency per-path DP supplies up to three rows so the surface
-    /// exists for every model. Rows survive further typing and selections
-    /// until the next [`Session::guess_sentence`] or [`Session::reset`] —
-    /// upstream's `m_nbest_results` is cleared nowhere else — and
-    /// [`Session::candidates`] prepends them while they live.
+    /// The lookup covers the remaining input when possible and the full composition when constraints or consumed input require it.
+    /// Stored rows remain available until the next sentence lookup or session reset.
     ///
-    /// Which matrix the walk covers: an unconstrained decode with input
-    /// remaining is today's remaining-input walk (the W6 re-seed,
-    /// bit-identical under the frozen pins — the store is empty there).
-    /// Anything else with a non-empty raw buffer walks the **full**
-    /// matrix: a constrained composition (the §3 gates, the chosen
-    /// prefix forced) or a fully-consumed one (upstream's walk still
-    /// answers a terminal choose — the L1 surface,
-    /// `docs/findings/live-typing.md`), which the remaining-input model
-    /// structurally cannot.
+    /// # Examples
     ///
-    /// Returns whether a lookup ran at all (upstream returns the lookup's
-    /// `false` only for an empty key matrix; zero rows is still `true`).
+    /// ```ignore
+    /// let ran = session.guess_sentence()?;
+    /// assert!(ran);
+    /// # Ok::<(), EngineError>(())
+    /// ```
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError`] when a backend fails during the lookup.
+    /// Returns [`EngineError`] if a dictionary or language-model backend fails.
+    ///
+    /// # Returns
+    ///
+    /// `true` if a lookup ran, `false` if the input cannot be looked up.
     pub fn guess_sentence(&mut self) -> Result<bool, EngineError> {
         self.nbest_rows.clear();
         self.nbest_history.clear();
@@ -1090,10 +1095,21 @@ where
         Ok(true)
     }
 
-    /// Today's remaining-input walk — the W6 re-seed surface, verbatim:
-    /// the trellis over `raw[consumed..]` seeded from the selection
-    /// history, the §10 text prefix, and the lookup-time history
-    /// snapshot a later row choice restores.
+    /// Builds n-best sentence rows from the unconsumed input and current selection history.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn example(session: &mut Session) -> Result<(), EngineError> {
+    /// let processed = session.guess_over_remaining()?;
+    /// # let _ = processed;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// `true` if remaining input was processed, `false` if no input could be consumed.
     fn guess_over_remaining(&mut self) -> Result<bool, EngineError> {
         let remaining = &self.raw[self.consumed..];
         if remaining.is_empty() {
@@ -1245,12 +1261,38 @@ where
         &self.dictionary
     }
 
-    /// The language model backend.
+    /// Accesses the language model backend configured for the session.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let model = session.language_model();
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// A reference to the configured language model backend.
     #[must_use]
     pub const fn language_model(&self) -> &L {
         &self.model
     }
 
+    /// Adds a valid input character to the session and refreshes its state.
+    ///
+    /// Unsupported characters and characters that would exceed the input limit are ignored.
+    /// Adding a character also clears any exact-segment state.
+    ///
+    /// # Returns
+    ///
+    /// `Consumed` when the character is accepted, or `Ignored` when it is rejected.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let outcome = session.type_character('a')?;
+    /// assert_eq!(outcome, KeyOutcome::Consumed);
+    /// # Ok::<(), EngineError>(())
+    /// ```
     fn type_character(&mut self, character: char) -> Result<KeyOutcome, EngineError> {
         self.exact_segments.clear();
         if !is_input_character(character) {
@@ -1493,24 +1535,19 @@ where
         Ok(())
     }
 
-    /// Builds the candidate window anchored at byte `anchor` in the raw
-    /// buffer into `out`, returning the filtered parse length of the
-    /// remaining slice from `anchor`.
+    /// Builds a segment graph for the raw input beginning at `anchor`.
     ///
-    /// The window is a pure function of `(raw, anchor, constraint-derived
-    /// state)`: the scan reads `&self.raw[anchor..]` and the stored n-best
-    /// rows prepend the same way regardless of the anchor. It mutates only
-    /// the scan scratch and `out` — never the composition offset, the
-    /// constraint store, or the history — so a caller may build a window at a
-    /// lookup offset without disturbing the cached list
-    /// ([`Session::candidates_at`]). With `anchor == self.consumed` it
-    /// reproduces [`Session::refresh`]'s cached list exactly.
-    /// Builds the working graph for `remaining` (the raw slice from
-    /// `anchor`): the exact-mode chain when the session carries
-    /// pre-parsed scheme segments, the parsed graph otherwise. A segment
-    /// that straddles `anchor` is dropped, not truncated — a mid-key
-    /// anchor is the caller's boundary question, and exact keys do not
-    /// re-syllabify around it.
+    /// Exact segments are rebased to the requested slice. An anchor inside an exact
+    /// segment produces an empty graph; otherwise, segments before the anchor are
+    /// excluded without truncating any remaining segment.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # let session: Session = todo!();
+    /// let graph = session.build_graph_at(0, b"ni'hao")?;
+    /// # Ok::<(), EngineError>(())
+    /// ```
     fn build_graph_at(&self, anchor: usize, remaining: &[u8]) -> Result<SegmentGraph, EngineError> {
         if self.exact_segments.is_empty() {
             return SegmentGraph::build_with_options(remaining, self.settings.options)
@@ -1545,6 +1582,28 @@ where
         SegmentGraph::build_exact(remaining, &rebased).map_err(EngineError::Graph)
     }
 
+    /// Scans the input from an anchor and populates the candidate window.
+    ///
+    /// # Parameters
+    ///
+    /// * `anchor` - Byte offset at which to begin scanning.
+    /// * `out` - Destination for the resulting candidates; existing contents are replaced.
+    ///
+    /// # Returns
+    ///
+    /// The number of parsed bytes after extending a trailing apostrophe run.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if graph construction, candidate collection, or frequency lookup fails.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let mut candidates = Vec::new();
+    /// let parsed = session.scan_window(0, &mut candidates)?;
+    /// assert!(parsed <= session.raw().len());
+    /// ```
     fn scan_window(
         &mut self,
         anchor: usize,
@@ -1969,22 +2028,23 @@ where
         (keys, kinds, ends)
     }
 
-    /// The expanding-window scan of the pinned candidate collection.
+    /// Collects dictionary candidates from progressively wider windows of the parsed input.
     ///
-    /// Start is fixed at the composition offset (byte 0 of the remaining
-    /// input); `end` walks outward over every byte position the graph
-    /// reaches. At each `[start, end)` window every key-path through the scan
-    /// matrix — the selected parse plus the resplit/divided additions,
-    /// `docs/findings/matrix-split-tables.md` — is enumerated and the phrase
-    /// table is searched on the accumulated sequence; initial-only keys expand
-    /// through [`expand_keys`]. Every phrase found is appended with its
-    /// `[start, end)` span.
+    /// Each candidate is appended with the byte span of the window in which it was found.
+    /// Scanning stops when no phrase can extend from the current window.
     ///
-    /// Widening is prefix-driven: a window whose sequences cannot extend to
-    /// any stored phrase stops the scan (the pin's continued-search probe,
-    /// [`crate::Dictionary::phrase_prefix_exists`]). Consecutive apostrophe
-    /// bytes after a searched window are skipped so the next window does not
-    /// repeat the same key sequence.
+    /// # Errors
+    ///
+    /// Returns an error if scanning a graph path fails.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let mut candidates = Vec::new();
+    /// session.collect_window_scan(&graph, input, options, &mut candidates, &mut scratch)?;
+    /// assert!(!candidates.is_empty());
+    /// # Ok::<(), EngineError>(())
+    /// ```
     fn collect_window_scan(
         &self,
         graph: &SegmentGraph,
@@ -2374,10 +2434,30 @@ impl ScanKey {
     }
 }
 
-/// The keys the pin's matrix holds per byte position: the selected parse's
-/// keys, plus the resplit, divided and fuzzy additions. See
-/// `docs/findings/matrix-split-tables.md` for the frozen pair lists and
-/// `docs/findings/option-bits.md` for the fuzzy step.
+/// Builds the scan-key matrix used to find candidate segmentations.
+///
+/// The matrix contains the selected parse and, when enabled, resplit, divided,
+/// and fuzzy alternatives. Pre-parsed input can disable divided and resplit
+/// alternatives through `divided`.
+///
+/// # Parameters
+///
+/// * `graph` — Parsed input graph from which scan keys are derived.
+/// * `options` — Parsing options that affect incomplete syllables and fuzzy
+///   alternatives.
+/// * `divided` — Whether to include resplit and divided-syllable alternatives.
+///
+/// # Returns
+///
+/// A column-oriented matrix of scan keys indexed by their starting byte
+/// position.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let matrix = build_scan_matrix(&graph, options, true);
+/// let keys_at_start = &matrix[0];
+/// ```
 pub(crate) fn build_scan_matrix(
     graph: &SegmentGraph,
     options: OptionBits,

@@ -133,6 +133,13 @@ static void *load(const char *name, void *handle) {
     return symbol;
 }
 
+/**
+ * Resolves all required pinyin API symbols from a shared object into a
+ * symbol table.
+ *
+ * @param handle Handle to the loaded shared object.
+ * @param s Symbol table to populate.
+ */
 static void resolve_all(void *handle, struct syms *s) {
     s->init = (fn_init)load("pinyin_init", handle);
     s->fini = (fn_fini)load("pinyin_fini", handle);
@@ -399,7 +406,16 @@ static int train_pair(const struct syms *s, pinyin_instance_t *inst, int round,
     return 0;
 }
 
-/* ── Main ─────────────────────────────────────────────────────────────── */
+/**
+ * Runs the differential training, export, persistence, and reopen checks for a
+ * dynamically loaded pinyin implementation.
+ *
+ * @param argc Number of command-line arguments.
+ * @param argv Command-line arguments containing the shared-object path and
+ *             system directory.
+ * @return 0 if all checks succeed, or 1 if validation, initialization, or a
+ *         verification step fails.
+ */
 
 int main(int argc, char **argv) {
     if (argc < 3) {

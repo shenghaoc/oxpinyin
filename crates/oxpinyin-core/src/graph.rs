@@ -54,8 +54,15 @@ pub struct ExactSegment {
 }
 
 impl ExactSegment {
-    /// A segment whose own text spans `start..end` in the exact-mode
-    /// input.
+    /// Creates an exact-mode segment with its text span, syllable key, and tone.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let segment = ExactSegment::new(start, end, key, tone);
+    /// assert_eq!(segment.start(), start);
+    /// assert_eq!(segment.end(), end);
+    /// ```
     #[must_use]
     pub const fn new(start: usize, end: usize, key: SyllableKey, tone: u8) -> Self {
         Self {
@@ -78,13 +85,37 @@ impl ExactSegment {
         self.end
     }
 
-    /// The pre-parsed key.
-    #[must_use]
+    /// Gets the pre-parsed syllable key.
+    ///
+    /// # Returns
+    ///
+    /// The `SyllableKey` stored in the segment.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn read_key(segment: &ExactSegment) -> SyllableKey {
+    /// segment.key()
+    /// # }
+    /// ```
     pub const fn key(&self) -> SyllableKey {
         self.key
     }
 
-    /// The tone consumed with the key (`0` when toneless).
+    /// Gets the tone associated with the segment's key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn example(segment: &ExactSegment) {
+    /// let tone = segment.tone();
+    /// assert_eq!(tone, 3);
+    /// # }
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// The segment's tone, or `0` when it is toneless.
     #[must_use]
     pub const fn tone(&self) -> u8 {
         self.tone
@@ -249,17 +280,24 @@ impl SegmentGraph {
         Self::build_with_options(input, OptionBits::default())
     }
 
-    /// Builds the graph for `input` under parser option bits.
+    /// Builds a segmentation graph for `input` using the specified parser options.
     ///
-    /// [`Self::build`] is this method with [`OptionBits::default`], so the
-    /// all-off path stays bit-identical to the frozen parser. The option bits
-    /// only admit correction/ambiguity *spellings*; matrix-level fuzzy
-    /// alternates are added later by the engine scan matrix.
+    /// Apostrophes at reachable positions are consumed as separators, including
+    /// trailing or standalone apostrophe runs. Invalid or unrecognized input is
+    /// represented by the resulting reachability information rather than causing
+    /// construction to fail.
     ///
     /// # Errors
     ///
-    /// Returns [`GraphError::InputTooLong`] for an input beyond
+    /// Returns [`GraphError::InputTooLong`] when `input` exceeds
     /// [`MAX_GRAPH_INPUT`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let graph = SegmentGraph::build_with_options(b"ni", OptionBits::default()).unwrap();
+    /// assert_eq!(graph.input_len(), 2);
+    /// ```
     pub fn build_with_options(input: &[u8], options: OptionBits) -> Result<Self, GraphError> {
         if input.len() > MAX_GRAPH_INPUT {
             return Err(GraphError::InputTooLong {

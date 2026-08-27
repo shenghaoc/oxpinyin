@@ -292,11 +292,18 @@ pub fn right_word_offset(
     right_word_offset_over_spans(input, parsed, &spans, true, offset)
 }
 
-/// The scan matrix's keys as (syllable start, raw end) spans plus the
-/// graph's consumed length.
+/// Builds key spans from the segmentation graph and reports the graph's consumed input length.
 ///
-/// Columns are indexed by the key's syllable start — the position after any
-/// apostrophe a crossing key rides over — matching the pin's placement.
+/// Columns are indexed by each key's syllable start, including positions after apostrophes
+/// crossed by a key.
+///
+/// # Examples
+///
+/// ```
+/// let (spans, consumed) = matrix_spans(b"nihao", OptionBits::default()).unwrap();
+/// assert!(!spans.is_empty());
+/// assert_eq!(consumed, 5);
+/// ```
 fn matrix_spans(
     input: &[u8],
     options: OptionBits,

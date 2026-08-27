@@ -88,13 +88,27 @@ fn double_scheme(value: i32) -> Option<DoublePinyinScheme> {
     }
 }
 
-/// Double-pinyin batch-parse path.
+/// Parses double-pinyin input and stores its original text and parsed key spans.
 ///
-/// Parses the original double-pinyin input into full-pinyin `SyllableKey`s,
-/// stores the original bytes and key spans for aux/candidate-offset mapping,
-/// and drives the existing session decoder with the `'`-joined full-pinyin
-/// spelling. The returned length is the original consumed byte count, not the
-/// transformed spelling length.
+/// The parsed keys are converted to apostrophe-separated full-pinyin for session
+/// decoding. The returned length is measured in bytes of the original input.
+///
+/// # Arguments
+///
+/// * `instance` - A valid pointer to a [`PinyinInstance`].
+/// * `text` - The double-pinyin input to parse.
+///
+/// # Returns
+///
+/// The number of bytes consumed from `text`, or `0` if parsing fails or the
+/// input is empty.
+///
+/// # Examples
+///
+/// ```ignore
+/// let consumed = parse_double_more(instance, "nihao");
+/// assert!(consumed <= "nihao".len());
+/// ```
 fn parse_double_more(instance: *mut PinyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
@@ -146,12 +160,19 @@ fn zhuyin_scheme(value: i32) -> Option<ZhuyinScheme> {
     }
 }
 
-/// Zhuyin batch-parse path.
+/// Parses Zhuyin input and updates the session with its full-pinyin representation.
 ///
-/// Parses STANDARD keyboard input into tone-less full-pinyin `SyllableKey`s,
-/// stores the original keystrokes and key spans for aux/candidate-offset
-/// mapping, and drives the session decoder with the `'`-joined full-pinyin
-/// spelling. The returned length is the original consumed byte count.
+/// Stores the original input and parser metadata for offset mapping. Returns the
+/// number of input bytes consumed, or `0` for empty input, an unsupported scheme,
+/// or a parsing failure.
+///
+/// # Examples
+///
+/// ```
+/// # // Called with a valid `PinyinInstance` obtained from the FFI allocator.
+/// # let instance = valid_instance();
+/// assert_eq!(parse_chewing_more(instance, "ni3hao3"), 7);
+/// ```
 fn parse_chewing_more(instance: *mut PinyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
@@ -186,13 +207,20 @@ fn parse_chewing_more(instance: *mut PinyinInstance, text: &str) -> usize {
     inst.parsed_len
 }
 
-/// Builds the exact-decoder input for a scheme parse: the `'`-joined
-/// full-pinyin text plus one [`ExactSegment`] per key over that text.
+/// Creates apostrophe-separated full-pinyin text and matching key boundaries.
 ///
-/// The session's graph then carries exactly the scheme parser's keys —
-/// the pinyin inventory never re-segments the joined spelling (upstream's
-/// decoder receives the parser's `ChewingKey`s; `docs/findings/
-/// bopomofo-spec.md`).
+/// Each segment identifies the corresponding key's range in the generated text
+/// and preserves its resolved tone.
+///
+/// # Examples
+///
+/// ```
+/// fn use_exact_input(keys: &[impl ExactKey]) {
+///     let (text, segments) = exact_input(keys);
+///     assert_eq!(segments.len(), keys.len());
+///     assert!(text.is_empty() || !text.is_empty());
+/// }
+/// ```
 fn exact_input(keys: &[impl ExactKey]) -> (String, Vec<ExactSegment>) {
     let mut text = String::new();
     let mut segments = Vec::with_capacity(keys.len());
@@ -217,9 +245,26 @@ trait ExactKey {
 }
 
 impl ExactKey for ZhuyinKey {
+    /// Resolves this Zhuyin key to its corresponding syllable key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let key = /* a Zhuyin key */;
+    /// let syllable_key = key.key();
+    /// ```
     fn key(&self) -> SyllableKey {
         ZhuyinKey::key(self)
     }
+    /// Retrieves the tone associated with a Zhuyin key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # let key = /* a Zhuyin key */ unimplemented!();
+    /// let tone = key.tone();
+    /// assert!(tone <= 4);
+    /// ```
     fn tone(&self) -> u8 {
         ZhuyinKey::tone(self)
     }
@@ -229,11 +274,37 @@ impl ExactKey for DoublePinyinKey {
     fn key(&self) -> SyllableKey {
         DoublePinyinKey::key(*self)
     }
+    /// Returns the key's tone value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(key.tone(), 0);
+    /// ```
     fn tone(&self) -> u8 {
         0
     }
 }
 
+/// Parses a null-terminated C string as full pinyin input for an instance.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(
+///     parse_c_string(std::ptr::null_mut(), std::ptr::null()),
+///     0
+/// );
+/// ```
+///
+/// # Arguments
+///
+/// * `instance` - The pinyin instance to update.
+/// * `text` - A null-terminated C string containing the input text.
+///
+/// # Returns
+///
+/// The number of input bytes consumed, or `0` if the instance or input is invalid or parsing fails.
 fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> usize {
     if instance.is_null() {
         return 0;

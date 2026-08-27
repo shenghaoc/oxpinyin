@@ -108,6 +108,13 @@ static void *resolve_symbol(void *handle, const char *name, int *missing) {
     return sym;
 }
 
+/**
+ * Resolve the required library API symbols and the optional fixture initializer.
+ *
+ * @param handle Dynamic library handle from which to resolve symbols.
+ * @param s Structure that receives the resolved function pointers.
+ * @return Number of required symbols that could not be resolved.
+ */
 static int resolve_all(void *handle, struct symbols *s) {
     int missing = 0;
     s->init = (fn_init)resolve_symbol(handle, "pinyin_init", &missing);
@@ -1124,7 +1131,12 @@ static int verify_keyboard_tables(const struct symbols *s,
     return failures;
 }
 
-/* ── Drive ────────────────────────────────────────────────────────────── */
+/**
+ * Drives a Zhuyin input through parsing, sentence and candidate lookup, auxiliary-text retrieval, and reset operations while reporting each result.
+ * @param s Loaded pinyin API symbols used to process the input.
+ * @param inst Pinyin instance that receives and processes the input.
+ * @param input Zhuyin keystroke sequence to process.
+ */
 
 static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
                         const char *input) {
@@ -1203,6 +1215,13 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
     printf("\n");
 }
 
+/**
+ * Determines whether a named file exists in a directory.
+ *
+ * @param dir Directory containing the file.
+ * @param name File name to check.
+ * @return 1 if the file exists and can be opened for reading, 0 otherwise.
+ */
 static int file_exists(const char *dir, const char *name) {
     char path[4096];
     snprintf(path, sizeof(path), "%s/%s", dir, name);
@@ -1214,6 +1233,13 @@ static int file_exists(const char *dir, const char *name) {
     return 0;
 }
 
+/**
+ * Runs the differential driver for a selected Zhuyin keyboard scheme.
+ *
+ * @param argc Number of command-line arguments.
+ * @param argv Command-line arguments containing the shared object, system directory, and optional scheme.
+ * @return 0 on success, or 1 if arguments are invalid, initialization fails, required symbols are unavailable, or verification fails.
+ */
 int main(int argc, char **argv) {
     int scheme = 1;
     if (argc > 3) {

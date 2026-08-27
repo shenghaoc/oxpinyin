@@ -102,6 +102,13 @@ static void *resolve_symbol(void *handle, const char *name, int *missing) {
     return sym;
 }
 
+/**
+ * Resolves the required libpinyin API symbols and the optional fixture initializer.
+ *
+ * @param handle Shared-library handle from which to resolve symbols.
+ * @param s Symbol table to populate.
+ * @return Number of required symbols that could not be resolved.
+ */
 static int resolve_all(void *handle, struct symbols *s) {
     int missing = 0;
     s->init = (fn_init)resolve_symbol(handle, "pinyin_init", &missing);
@@ -276,7 +283,13 @@ static void derive_corpus(struct corpus *c, int scheme) {
     corpus_add(c, "");
 }
 
-/* ── Drive ────────────────────────────────────────────────────────────── */
+/**
+ * Drives one input through parsing, sentence and candidate lookup, auxiliary-text retrieval, and reset operations, logging each result.
+ *
+ * @param s Resolved library symbols used for the operations.
+ * @param inst Pinyin instance that processes the input.
+ * @param input Input string to process.
+ */
 
 static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
                         const char *input) {
@@ -335,6 +348,13 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
     printf("\n");
 }
 
+/**
+ * Determines whether a file exists in a directory.
+ *
+ * @param dir Directory containing the file.
+ * @param name File name to check.
+ * @return 1 if the file can be opened for reading, 0 otherwise.
+ */
 static int file_exists(const char *dir, const char *name) {
     char path[4096];
     snprintf(path, sizeof(path), "%s/%s", dir, name);
@@ -346,6 +366,16 @@ static int file_exists(const char *dir, const char *name) {
     return 0;
 }
 
+/**
+ * Runs the differential driver for a selected libpinyin full-pinyin scheme.
+ *
+ * @param argc Number of command-line arguments.
+ * @param argv Command-line arguments containing the shared-object path,
+ *             system directory, and optional scheme number.
+ * @return 0 on success, or 1 for invalid arguments, loading failures,
+ *         unavailable symbols, initialization failures, or rejected
+ *         configuration.
+ */
 int main(int argc, char **argv) {
     int scheme = 1;
     if (argc > 3) {
