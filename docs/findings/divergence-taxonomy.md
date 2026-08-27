@@ -45,7 +45,7 @@ the auto-accept budget and is not a triage population.
 `ni@0:2:complete,hao@2:5:complete`; that is our first path; both consume 5 bytes
 with an empty remainder. Rank 0.
 
-*Corpus count:* 9,506 of 10,465.
+*Corpus count:* 9,508 of 10,465.
 
 ### `tie-swap`
 
@@ -90,7 +90,7 @@ pre-correction path set until a separate branch lands.
 parser-termination classes moved two boundary inputs to agreement). This
 is currently the whole substantive parity
 gap, and it has **one** root cause, measured in
-`docs/findings/parser-spec-contradiction-incomplete-keys.md` (483 of 491
+`docs/findings/parser-spec-contradiction-incomplete-keys.md` (481 of 489
 divergences). `path-set` is attributed to us because our path set still
 disagrees with the pin — the SPEC field invariant is corrected; the
 implementation is not yet.
@@ -230,7 +230,7 @@ Measured:
 
 | Class | Count | Share | In budget? |
 |---|---:|---:|---|
-| `output-identical` | 9,506 | 90.84% | no — agreement |
+| `output-identical` | 9,508 | 90.86% | no — agreement |
 | `tie-swap` | 468 | 4.47% | yes — sole auto-accepted divergence class |
 
 `tie-swap` is 468 against a limit of 52 (about 9× over). That number is the
@@ -260,7 +260,7 @@ flags `0x18a`, 10,465 inputs:
 
 | Class | Count |
 |---|---:|
-| `output-identical` | 9,506 |
+| `output-identical` | 9,508 |
 | `tie-swap` | 468 |
 | `path-set` | 483 |
 | `theirs-bug` | 6 |
