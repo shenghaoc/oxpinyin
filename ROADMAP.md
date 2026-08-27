@@ -70,8 +70,18 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
 | W12 | Corpus tail (parity gaps; candidate residual closed 2026-08-22) | oxpinyin-core, oxpinyin-engine, oxpinyin-capi |
 | W13 | Double-pinyin and bopomofo input schemes (feature implementation) | oxpinyin-core, oxpinyin-engine |
 | W14 | Sentence surface (n-best emission, NBEST_MATCH typing, get_sentence) | oxpinyin-capi, oxpinyin-engine |
+| W15 | model20-native runtime-data production, every backend | oxpinyin-datagen, oxpinyin-store |
 
 ### Workstream notes (recorded as decisions settle)
+
+- **W15 is the data pipeline inversion.** Runtime tables are compiled
+  natively from the canonical pinned `model20` archive for every storage
+  backend (redb, LMDB, Tkrzw) — no producer consumes libpinyin-generated
+  runtime data. The retired `oxpinyin-migrate` route (oracle ABI export +
+  verbatim Tkrzw conversion) is proven unnecessary: the native compilation
+  reproduces its frozen full export entry-for-entry, which unparked the
+  five differentials that needed a full system dir. Architecture and
+  equivalence evidence: `docs/findings/datagen-model20.md`.
 
 - **W7 is flat, not a task stack.** One deliverable: classic text-format
   interop via oxpinyin-dictool (import + export). The line-oriented

@@ -73,7 +73,8 @@ impl SegmenterPaths {
     }
 }
 
-/// Locates a complete migrate-export directory.
+/// Locates a complete system-table export directory
+/// (`oxpinyin-datagen compile` output, or the historical export).
 #[must_use]
 pub fn locate_export_dir() -> Option<PathBuf> {
     if let Some(raw) = std::env::var_os(EXPORT_DIR_ENV) {

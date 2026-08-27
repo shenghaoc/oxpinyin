@@ -795,6 +795,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxpinyin-datagen"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-data",
+ "oxpinyin-store",
+ "pinyin-oracle",
+]
+
+[[package]]
 name = "oxpinyin-dictool"
 version = "0.1.0"
 dependencies = [

@@ -1,6 +1,6 @@
 //! Differential parity: Rust counter vs pin-built `gen_ngram`.
 //!
-//! Skips when the migrate export is absent. The committed manifest pins the
+//! Skips when the system-table export is absent. The committed manifest pins the
 //! value-level golden (unigram/bigram counts + an FNV-1a 64-bit checksum of
 //! the full `Counts::dump()`). When the pin training binaries are present,
 //! a live `gen_binary_files → gen_unigram → gen_ngram → export_interpolation`
@@ -27,7 +27,7 @@ fn manifest_path() -> PathBuf {
     repo_root().join("fixtures/w9/counter-ngram.manifest")
 }
 
-/// Runs the Rust counter over the ngseg fixture with the migrate-export
+/// Runs the Rust counter over the ngseg fixture with the system-table export
 /// phrase index as the freq-1 floor seed.
 fn rust_counts() -> Option<Counts> {
     let export = locate_export_dir()?;
@@ -118,7 +118,9 @@ fn parse_manifest(text: &str) -> Manifest {
 #[test]
 fn rust_matches_committed_manifest() {
     let Some(counts) = rust_counts() else {
-        eprintln!("skipping: migrate export not found (PINYIN_EXPORT_DIR / /tmp/oxpinyin-export)");
+        eprintln!(
+            "skipping: system tables not found (PINYIN_EXPORT_DIR | /tmp/oxpinyin-export; produce with oxpinyin-datagen compile)"
+        );
         return;
     };
     let manifest_path = manifest_path();
@@ -270,7 +272,7 @@ fn rust_matches_live_gen_ngram() {
         return;
     };
     let Some(rust) = rust_counts() else {
-        eprintln!("skipping live gen_ngram: migrate export not found");
+        eprintln!("skipping live gen_ngram: system tables not found (oxpinyin-datagen compile)");
         return;
     };
     let fixture = std::fs::read(fixture_ngseg()).expect("fixture");

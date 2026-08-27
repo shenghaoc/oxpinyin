@@ -1,6 +1,6 @@
 //! Differential parity: Rust segmenter vs pin-built `ngseg`.
 //!
-//! Skips when the migrate export or the model20 cache is absent, matching
+//! Skips when the system-table export or the model20 cache is absent, matching
 //! the oracle integration tests. When both are present, the fixture must
 //! match the committed `ngseg` golden. When `PINYIN_NGSEG` (or a known
 //! pin-build path) is present, the golden is also checked against a live
@@ -134,7 +134,7 @@ fn committed_golden_is_well_formed() {
 fn rust_matches_committed_ngseg_golden() {
     let Some(segmenter) = open_segmenter() else {
         eprintln!(
-            "skipping: migrate export or model20 cache not found \
+            "skipping: system-table export or model20 cache not found \
              (PINYIN_EXPORT_DIR / PINYIN_MODEL_DIR)"
         );
         return;

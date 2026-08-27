@@ -13,7 +13,7 @@ Kiro always-loads `.kiro/steering/`; this file wins on any conflict.
 3. No local AI (no client neural/LLM inference).
 4. Nothing panics on any input; public APIs return `Result`.
 5. `unsafe`: `forbid` in oxpinyin-core; `deny` in data/user/engine (documented
-   mmap exception in data only); FFI only in capi/oracle/migrate with
+   mmap exception in data only); FFI only in capi/oracle with
    `// SAFETY:` per block.
 6. Determinism: output is a pure function of (input, user state, config).
 7. No dependency on other pinyin/IME crates; no transpiler dumps. Pin-built
@@ -77,7 +77,7 @@ lints.
 ## Toolchain
 
 `rust-toolchain.toml` is the only supported toolchain. Portable crates:
-Linux/macOS/Windows. Oracle, capi, migrate: Linux-first.
+Linux/macOS/Windows. Oracle, capi: Linux-first.
 
 ## Concurrent sessions
 

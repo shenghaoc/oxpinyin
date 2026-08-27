@@ -8,8 +8,12 @@ Two families, both deterministic against the pinned oracle
   `python3 tools/generate_w3_fixtures.py`.
 - **redb tables** — `pinyin_index.redb`, `phrase_index.redb`,
   `bigram.redb`, `punct.redb`, and the `addon_*.redb` files are **frozen**
-  and no longer regenerated in-tree (the `oxpinyin-migrate` crate that
-  produced them has been removed). Their provenance is recorded below for
+  (committed bytes pinned by `fixtures.sha256`). They were originally
+  produced by the removed `oxpinyin-migrate` exporters; the same mini
+  subset is now reproducible from the canonical model20 archive alone via
+  `oxpinyin-datagen compile --mini` (row-identical through the store API;
+  container bytes depend on the writing redb version — see
+  `docs/findings/datagen-model20.md`). Provenance is recorded below for
   reference.
 
   `pinyin_index.redb` / `phrase_index.redb`: the `--mini` subset of the

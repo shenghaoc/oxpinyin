@@ -23,7 +23,10 @@ oracle-resolved spot checks.
 
 The exporter was `oxpinyin-migrate export` (feature `oracle-ffi`, Linux-first;
 the crate has since been removed — the tables are committed under
-`fixtures/w3/`, frozen). It drove the additional public functions:
+`fixtures/w3/`, frozen). Since 2026-08-27 the same schemas are produced
+**natively from the canonical model20 archive** by `oxpinyin-datagen`
+(`docs/findings/datagen-model20.md`), measured entry-for-entry identical
+to this route's frozen full export; the ABI route above is retired. It drove the additional public functions:
 
 - `pinyin_begin_get_phrases` / `pinyin_iterator_has_next_phrase` /
   `pinyin_iterator_get_next_phrase` / `pinyin_end_get_phrases` — enumerate

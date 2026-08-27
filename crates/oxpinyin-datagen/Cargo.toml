@@ -1,0 +1,33 @@
+[package]
+name = "oxpinyin-datagen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "model20 → oxpinyin runtime tables compiler for every storage backend. Never ships."
+
+[features]
+default = []
+# Enable the LMDB producer (`--backend lmdb`); mirrors oxpinyin-store.
+lmdb = ["oxpinyin-store/lmdb"]
+# Enable the Tkrzw producer (`--backend tkrzw`); mirrors oxpinyin-store.
+tkrzw = ["oxpinyin-store/tkrzw"]
+
+[lints]
+workspace = true
+
+[dependencies]
+oxpinyin-store = { path = "../oxpinyin-store" }
+# Model-cache location and the pinned model20 constants only; the oracle
+# itself (oracle-ffi) is never linked by this crate.
+pinyin-oracle = { path = "../pinyin-oracle", default-features = false }
+
+[dev-dependencies]
+# Loader-level verification of produced tables through the real data path.
+oxpinyin-data = { path = "../oxpinyin-data" }
+
+[[bin]]
+name = "oxpinyin-datagen"
+path = "src/bin/oxpinyin-datagen.rs"
