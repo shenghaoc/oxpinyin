@@ -600,6 +600,18 @@ impl Runtime {
     pub fn load_addon(&self, index: u8, system_dir: &Path) -> bool {
         self.dict.load_addon(index, system_dir)
     }
+
+    /// Loads addon library `index` from this runtime's first configured
+    /// system directory; `false` when the runtime has no system directory,
+    /// the library is already loaded, or its tables do not open. Keeps the
+    /// system-directory resolution here, next to the `paths` it reads,
+    /// rather than duplicated in every embedder.
+    pub fn load_system_addon(&self, index: u8) -> bool {
+        let Some(system_dir) = self.paths.system_data_dirs().first() else {
+            return false;
+        };
+        self.load_addon(index, system_dir)
+    }
 }
 
 fn require_file(path: &Path) -> Result<(), OpenError> {
@@ -732,6 +744,11 @@ mod tests {
         // `None`; with one loaded, the merged answer and the LM total must
         // move by exactly the store's own delta.
         let store_before = store.unigram_total().expect("store total");
+        // Capture the overlay total *before* the observation so the
+        // real-unigram branch measures the delta the observation causes.
+        // Fixture mode has no real unigram table (contract: `None`), so this
+        // stays `None` there and the branch below is skipped.
+        let lm_before = LanguageModel::unigram_total(&runtime.lm()).expect("total query");
         store
             .observe_selection(SENTENCE_START, FIRST_USER_TOKEN)
             .expect("observe a selection");
@@ -745,9 +762,7 @@ mod tests {
             let freq = LanguageModel::unigram_freq(&runtime.lm(), &PhraseToken::new(token))
                 .expect("overlay query");
             assert!(freq.is_some(), "overlay must answer with real unigrams");
-            let lm_before = LanguageModel::unigram_total(&runtime.lm())
-                .expect("total query")
-                .expect("real unigrams");
+            let lm_before = lm_before.expect("real unigrams before observation");
             let lm_after = LanguageModel::unigram_total(&runtime.lm())
                 .expect("total query")
                 .expect("real unigrams");
