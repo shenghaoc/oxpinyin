@@ -45,6 +45,16 @@ pub(crate) type CapiSession = RuntimeSession;
 /// Owns the dictionary and language model. Instances receive `Arc` clones
 /// so they do not borrow the context.
 pub(crate) struct CapiContext {
+    /// Storage locations for this context.
+    ///
+    /// Since the shared-runtime extraction this duplicates `Runtime.paths`:
+    /// both are built from the same `system_dir`/`user_dir` pair, and
+    /// neither is derived from the other. Safe as it stands because this
+    /// copy is read-only and read exactly once, by `load_addon` below —
+    /// there is no write to diverge. It is also not purely redundant: the
+    /// `new_user_only` constructor has no `Runtime` at all, so for that
+    /// context this is the only copy. Whichever way the duplication is
+    /// resolved, it has to keep that case working.
     pub(crate) paths: StoragePaths,
     pub(crate) config: Config,
     /// The shared concrete assembly; `None` under a user-store-only context.
