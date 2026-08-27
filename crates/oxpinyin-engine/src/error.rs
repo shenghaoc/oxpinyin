@@ -42,6 +42,16 @@ pub enum EngineError {
         /// The raw input length the offset may at most equal.
         len: usize,
     },
+    /// A lookup offset fell inside a multi-byte character of the raw
+    /// input — no window exists under a mid-character slice, so the
+    /// anchor is refused rather than rounded (rounding would silently
+    /// answer a neighbouring offset's window).
+    LookupOffsetInsideCharacter {
+        /// The offset the caller asked to look up at.
+        offset: usize,
+        /// The raw input length the offset was range-checked against.
+        len: usize,
+    },
     /// A selection was requested from a window anchored before the
     /// composition offset — a stale cursor behind the selection, whose span
     /// would regress the consumed boundary. Rejected rather than
@@ -51,6 +61,18 @@ pub enum EngineError {
         anchor: usize,
         /// The composition offset (the selected boundary) it precedes.
         composition: usize,
+    },
+    /// A cursor normalization or word move examined an offset one past a
+    /// lone zero-key matrix column — the shape the pin's `_check_offset`
+    /// aborts on (`assert(zero_key != key)`, `pinyin.cpp:2175` at the pin)
+    /// and post-`95e3af7` libpinyin answers with a `false` every caller
+    /// discards (the function then completes with the computed value).
+    /// The engine answers with an error instead, so the C surface returns
+    /// `false` — the no-abort policy, diverging from both upstream arms
+    /// (`docs/findings/upstream-divergences.md`).
+    ZeroKeyOffsetCheck {
+        /// The examined offset whose preceding column holds the lone zero key.
+        offset: usize,
     },
     /// The dictionary backend failed.
     Dictionary(String),
@@ -88,6 +110,13 @@ impl fmt::Display for EngineError {
                     "lookup offset {offset} is out of range 0..={len}"
                 )
             }
+            Self::LookupOffsetInsideCharacter { offset, len } => {
+                write!(
+                    formatter,
+                    "lookup offset {offset} falls inside a multi-byte character \
+                     of the {len}-byte raw input"
+                )
+            }
             Self::SelectionAnchorBeforeComposition {
                 anchor,
                 composition,
@@ -95,6 +124,12 @@ impl fmt::Display for EngineError {
                 write!(
                     formatter,
                     "selection anchor {anchor} precedes the composition offset {composition}"
+                )
+            }
+            Self::ZeroKeyOffsetCheck { offset } => {
+                write!(
+                    formatter,
+                    "offset {offset} sits one past a lone zero-key column"
                 )
             }
             Self::Dictionary(message) => write!(formatter, "dictionary error: {message}"),
@@ -136,6 +171,14 @@ mod tests {
         assert_eq!(
             EngineError::LookupOffsetOutOfRange { offset: 9, len: 3 }.to_string(),
             "lookup offset 9 is out of range 0..=3"
+        );
+        assert_eq!(
+            EngineError::LookupOffsetInsideCharacter { offset: 1, len: 8 }.to_string(),
+            "lookup offset 1 falls inside a multi-byte character of the 8-byte raw input"
+        );
+        assert_eq!(
+            EngineError::ZeroKeyOffsetCheck { offset: 11 }.to_string(),
+            "offset 11 sits one past a lone zero-key column"
         );
     }
 }

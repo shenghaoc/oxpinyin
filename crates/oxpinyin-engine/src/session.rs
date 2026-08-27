@@ -409,13 +409,21 @@ where
     /// # Errors
     ///
     /// Same as [`Session::select`]: [`EngineError::CandidateIndexOutOfRange`]
-    /// for an index the given window does not hold.
+    /// for an index the given window does not hold, and
+    /// [`EngineError::LookupOffsetOutOfRange`] for an anchor past the raw
+    /// input's end.
     pub fn select_anchored(
         &mut self,
         index: usize,
         window: &CandidateList,
         anchor: usize,
     ) -> Result<Selection, EngineError> {
+        if anchor > self.raw.len() {
+            return Err(EngineError::LookupOffsetOutOfRange {
+                offset: anchor,
+                len: self.raw.len(),
+            });
+        }
         let candidate = window
             .get(index)
             .ok_or(EngineError::CandidateIndexOutOfRange {
@@ -427,6 +435,10 @@ where
 
     /// [`Session::select_anchored`] with an addon-promotion token override,
     /// mirroring [`Session::select_promoted`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Session::select_anchored`].
     pub fn select_anchored_promoted(
         &mut self,
         index: usize,
@@ -434,6 +446,12 @@ where
         anchor: usize,
         promoted_token: PhraseToken,
     ) -> Result<Selection, EngineError> {
+        if anchor > self.raw.len() {
+            return Err(EngineError::LookupOffsetOutOfRange {
+                offset: anchor,
+                len: self.raw.len(),
+            });
+        }
         let candidate = window
             .get(index)
             .ok_or(EngineError::CandidateIndexOutOfRange {
@@ -487,10 +505,16 @@ where
             ""
         };
         if candidate.nbest_row().is_some() {
-            let mut rebuilt = String::with_capacity(gap.len() + text.len());
-            rebuilt.push_str(gap);
-            rebuilt.push_str(&text);
-            self.selected = rebuilt;
+            // An n-best row is a whole-composition hypothesis: its text
+            // already covers the full input and its span (consumed_bytes)
+            // is the whole composition, so a re-anchored selection must not
+            // prepend the typed-but-unselected gap — that would duplicate
+            // the raw prefix in the committed text (upstream commits the
+            // row's sentence text, pinyin_choose_candidate's NBEST branch
+            // returning matrix.size() - 1). The composition-anchored path
+            // has an empty gap either way. The clone keeps `text`
+            // alive for the constraint write below.
+            self.selected = text.clone();
         } else {
             self.selected.push_str(gap);
             self.selected.push_str(&text);
@@ -795,6 +819,20 @@ where
     /// the new buffer and the candidates refresh, so the session is never
     /// observable with a cursor past its input.
     ///
+    /// Keeps every character: the pin's parser accepts any input string
+    /// and simply stops consuming at the first byte no key matches
+    /// (`pinyin_parser2.cpp:237-328` — there is no explicit stop, the
+    /// termination is the DP's reachability), so space, control, and
+    /// non-ASCII bytes must REACH the decoder for it to stop there
+    /// (class B2 of `uncovered-surface-differentials.md`). The decoder
+    /// hard-stops on them; this seam must not pre-filter them away.
+    ///
+    /// The batch [`Session::type_pinyin`] keeps its printable-ASCII
+    /// accept set (the frozen F1 design, `f1-junk-aware-parse.md`): the
+    /// two seams are deliberately different. The corpus and sentence pins
+    /// feed through `type_pinyin` only — no path reaches this seam — so
+    /// the loosened filter here cannot move them.
+    ///
     /// # Errors
     ///
     /// Returns [`EngineError`] when the refresh under the new input hits
@@ -802,15 +840,20 @@ where
     pub fn replace_raw(&mut self, text: &str) -> Result<(), EngineError> {
         self.raw.clear();
         for character in text.chars() {
-            if !is_batch_input_character(character) {
-                continue;
-            }
             if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
                 break;
             }
             self.raw.push(character);
         }
+        // A stale consumed from the replaced composition may now sit inside
+        // a multi-byte character of the new raw (`a` selected to consumed 1,
+        // then `，` replaces it). `refresh`/`scan_window` slice
+        // `raw[consumed..]`, so the clamp must land on a char boundary —
+        // the composition restarts from the boundary before it.
         self.consumed = self.consumed.min(self.raw.len());
+        while !self.raw.is_char_boundary(self.consumed) {
+            self.consumed -= 1;
+        }
         self.refresh()?;
         Ok(())
     }
@@ -1238,6 +1281,56 @@ where
         normalize_lookup_offset(self.raw.as_bytes(), offset)
     }
 
+    /// Normalizes a user cursor position to a lookup offset over the
+    /// session's own buffer and options — the `pinyin_get_pinyin_offset`
+    /// law ([`crate::lookup_offset_for_cursor`]).
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Graph`] when the buffer cannot be represented as a
+    /// segment graph, and [`EngineError::ZeroKeyOffsetCheck`] where the
+    /// pin's `_check_offset` aborts. A cursor past one-past-end is NOT an
+    /// error: like the pin, the cursor is clamped to the parsed length, so
+    /// there is no out-of-range shape here.
+    pub fn lookup_offset_for_cursor(&self, cursor: usize) -> Result<usize, EngineError> {
+        crate::cursor::lookup_offset_for_cursor(self.raw.as_bytes(), self.settings.options, cursor)
+    }
+
+    /// The word-level left move over the session's own buffer and options
+    /// — the `pinyin_get_left_pinyin_offset` law
+    /// ([`crate::left_word_offset`]).
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Graph`] when the buffer cannot be represented as a
+    /// segment graph; [`EngineError::ZeroKeyOffsetCheck`] where the pin's
+    /// `_check_offset` aborts (an input offset one past a lone zero-key
+    /// column, or the second check on the computed result); and
+    /// [`EngineError::LookupOffsetOutOfRange`] when the offset exceeds the
+    /// buffer's one-past-end position (upstream reads its matrix out of
+    /// bounds there).
+    pub fn left_word_offset(&self, offset: usize) -> Result<usize, EngineError> {
+        crate::cursor::left_word_offset(self.raw.as_bytes(), self.settings.options, offset)
+    }
+
+    /// The word-level right move over the session's own buffer and options
+    /// — the `pinyin_get_right_pinyin_offset` law
+    /// ([`crate::right_word_offset`]). `Ok(None)` is the pin's graceful
+    /// false: no key starts at the position.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Graph`] when the buffer cannot be represented as a
+    /// segment graph; [`EngineError::ZeroKeyOffsetCheck`] where the pin's
+    /// `_check_offset` aborts (an input offset one past a lone zero-key
+    /// column, or the second check on the computed result); and
+    /// [`EngineError::LookupOffsetOutOfRange`] when the offset exceeds the
+    /// buffer's one-past-end position (upstream reads its matrix out of
+    /// bounds there).
+    pub fn right_word_offset(&self, offset: usize) -> Result<Option<usize>, EngineError> {
+        crate::cursor::right_word_offset(self.raw.as_bytes(), self.settings.options, offset)
+    }
+
     /// Whether a re-parse of `original` continues the current composition
     /// (`CapiInstance::begin_parse`'s rule): the composition is open —
     /// not completed by a selection — and the buffer evolved from
@@ -1279,16 +1372,25 @@ where
     /// the `pinyin_parse_more_*` return and `pinyin_get_parsed_input_length`
     /// value, which are defined over the passed input, never the
     /// remaining slice a mid-composition re-parse decodes from.
+    ///
+    /// Extends the filtered key path over any trailing apostrophe run:
+    /// the pin's DP propagates `'` byte-for-byte from any reachable
+    /// position (`pinyin_parser2.cpp:237-251`) and `final_step` answers
+    /// the consistent-chain length, so a trailing or standalone run is
+    /// consumed even though no key covers it.
     #[must_use]
     pub fn full_parsed_len(&self) -> usize {
         if self.raw.is_empty() {
             return 0;
         }
         match SegmentGraph::build_with_options(self.raw.as_bytes(), self.settings.options) {
-            Ok(graph) => graph
-                .fewest_keys(self.settings.incomplete())
-                .last()
-                .map_or(0, Edge::to),
+            Ok(graph) => apostrophe_extended(
+                self.raw.as_bytes(),
+                graph
+                    .fewest_keys(self.settings.incomplete())
+                    .last()
+                    .map_or(0, Edge::to),
+            ),
             Err(_) => 0,
         }
     }
@@ -1372,10 +1474,15 @@ where
         let remaining = &self.raw[anchor..];
         let graph = SegmentGraph::build_with_options(remaining.as_bytes(), self.settings.options)
             .map_err(EngineError::Graph)?;
-        let parsed_prefix = graph
-            .fewest_keys(self.settings.incomplete())
-            .last()
-            .map_or(0, Edge::to);
+        // The trailing-run extension of `full_parsed_len`, applied to the
+        // remaining slice (the pin's propagation runs on every parse).
+        let parsed_prefix = apostrophe_extended(
+            remaining.as_bytes(),
+            graph
+                .fewest_keys(self.settings.incomplete())
+                .last()
+                .map_or(0, Edge::to),
+        );
 
         // When the model carries the phrase index's real unigram
         // frequencies, the pinned construction runs — the expanding-window
@@ -1488,15 +1595,24 @@ where
     /// # Errors
     ///
     /// Returns [`EngineError`] when a backend fails during the scan, exactly
-    /// as the anchored [`Session::refresh`] does, and
+    /// as the anchored [`Session::refresh`] does;
     /// [`EngineError::LookupOffsetOutOfRange`] when `offset` exceeds the raw
     /// buffer's one-past-end position — the pin reads its matrix out of
     /// bounds there, so no pinned behaviour exists and the offset is
-    /// refused. An offset equal to one-past-end is valid: `scan_window`
-    /// answers the terminal sentence rows for it (the pin's reserved slot).
+    /// refused — and [`EngineError::LookupOffsetInsideCharacter`] when
+    /// `offset` falls inside a multi-byte character of the raw buffer (no
+    /// window exists under a mid-character slice). An offset equal to
+    /// one-past-end is valid: `scan_window` answers the terminal sentence
+    /// rows for it (the pin's reserved slot).
     pub fn candidates_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
         if offset > self.raw.len() {
             return Err(EngineError::LookupOffsetOutOfRange {
+                offset,
+                len: self.raw.len(),
+            });
+        }
+        if !self.raw.is_char_boundary(offset) {
+            return Err(EngineError::LookupOffsetInsideCharacter {
                 offset,
                 len: self.raw.len(),
             });
@@ -2447,14 +2563,35 @@ const fn is_input_character(character: char) -> bool {
     character.is_ascii_lowercase() || character == '\''
 }
 
-/// Whether the batch path ([`Session::type_pinyin`]) accepts `character`.
+/// Whether the engine batch path ([`Session::type_pinyin`]) accepts
+/// `character`.
 ///
-/// Printable ASCII (`0x21..=0x7E`), including junk the parity corpus embeds in
-/// inputs. The decoder (`SegmentGraph`) treats non-`a-z`/`'` bytes as hard
-/// boundaries; see `docs/findings/f1-junk-aware-parse.md`. Space and controls
-/// are excluded so they cannot bypass `LogicalKey::Space` / `Tab` / `Enter`.
+/// Printable ASCII (`0x21..=0x7E`), including junk the parity corpus embeds
+/// in inputs. The decoder (`SegmentGraph`) treats non-`a-z`/`'` bytes as
+/// hard boundaries; see `docs/findings/f1-junk-aware-parse.md`. Space and
+/// controls are excluded so they cannot bypass `LogicalKey::Space` / `Tab`
+/// / `Enter`.
+///
+/// This filter belongs to `type_pinyin` ONLY. The capi parse seam
+/// ([`Session::replace_raw`]) keeps every character so the decoder sees —
+/// and stops at — the bytes the pin stops at; the corpus and sentence
+/// pins never reach that seam.
 const fn is_batch_input_character(character: char) -> bool {
     character.is_ascii_graphic()
+}
+
+/// Extends a filtered key-path end over the apostrophe run following it.
+///
+/// The pin's DP propagates `'` byte-for-byte from any reachable position
+/// (`pinyin_parser2.cpp:237-251`) and `final_step` answers the
+/// consistent-chain length, so bytes of a trailing or standalone run are
+/// consumed even though no key covers them (`ni'` parses to 3, `'''` to
+/// 3, `nihao'` to 6).
+fn apostrophe_extended(input: &[u8], mut end: usize) -> usize {
+    while input.get(end) == Some(&b'\'') {
+        end += 1;
+    }
+    end
 }
 
 #[cfg(test)]
@@ -2546,6 +2683,67 @@ mod tests {
             .type_pinyin("b#ing")
             .expect("batch typing cannot fail");
         assert_eq!(session.raw_input(), "b#ing");
+    }
+
+    #[test]
+    fn type_pinyin_still_filters_stop_bytes() {
+        // The frozen half of the parse-termination split: `type_pinyin`
+        // keeps its printable-ASCII accept set (F1), so the corpus and
+        // sentence pins that feed through it cannot reach the loosened
+        // `replace_raw` seam — a space never enters `raw` here.
+        let mut session = session();
+        session
+            .type_pinyin("ni hao")
+            .expect("batch typing cannot fail");
+        assert_eq!(session.raw_input(), "nihao");
+    }
+
+    #[test]
+    fn replace_raw_keeps_the_bytes_the_pin_stops_at() {
+        // Class B2: the pin accepts any input string and stops consuming
+        // at the first byte no key matches (pinyin_parser2.cpp:237-328);
+        // the capi parse seam must let those bytes reach the decoder.
+        // Measured on the rebuilt pin: `ni hao` parses 2, `，nihao`
+        // parses 0 (uncovered-surface differential, phase B).
+        let mut session = session();
+        session.replace_raw("ni hao").expect("cannot fail");
+        assert_eq!(session.raw_input(), "ni hao");
+        assert_eq!(session.full_parsed_len(), 2, "the space stops the parse");
+
+        session.replace_raw("\u{ff0c}nihao").expect("cannot fail");
+        assert_eq!(
+            session.full_parsed_len(),
+            0,
+            "the full-width comma stops at byte 0"
+        );
+
+        session.replace_raw("nihao").expect("cannot fail");
+        assert_eq!(session.full_parsed_len(), 5, "clean input unaffected");
+    }
+
+    #[test]
+    fn replace_raw_consumes_trailing_and_standalone_apostrophe_runs() {
+        // The inherited apostrophe class (ledgered on
+        // fix/cursor-offset-normalization, folded into the termination
+        // law): the pin's DP propagation consumes `'` bytes no key
+        // covers — `ni'` parses 3, `nihao'` parses 6, `'''` parses 3
+        // (the F-E-14 table).
+        let mut session = session();
+        session.replace_raw("ni'").expect("cannot fail");
+        assert_eq!(session.full_parsed_len(), 3);
+
+        session.replace_raw("nihao'").expect("cannot fail");
+        assert_eq!(session.full_parsed_len(), 6);
+
+        session.replace_raw("'''").expect("cannot fail");
+        assert_eq!(session.full_parsed_len(), 3);
+
+        session.replace_raw("ni'hao").expect("cannot fail");
+        assert_eq!(
+            session.full_parsed_len(),
+            6,
+            "internal runs stay covered by edges"
+        );
     }
 
     #[test]
@@ -3024,6 +3222,48 @@ mod tests {
             session.selected_tokens(),
             [PhraseToken::new(0x102)],
             "the chosen row records its own token path, not the deduped row 1's"
+        );
+    }
+
+    #[test]
+    fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
+        use crate::nbest::NbestRow;
+
+        let mut session = train_session();
+        session.type_pinyin("nihao").expect("typing cannot fail");
+
+        // A single whole-composition sentence hypothesis: its span is the
+        // full input, so selecting it from a re-anchored window must commit
+        // the row's text alone — never the typed-but-unselected gap (which
+        // would duplicate the raw prefix).
+        session.nbest_rows = vec![NbestRow {
+            text: "你好".into(),
+            tokens: vec![PhraseToken::new(0x100), PhraseToken::new(0x101)],
+            spans: Vec::new(),
+            keys: 2,
+            span: 5,
+            cost: 10,
+        }];
+        session.refresh().expect("refresh cannot fail");
+
+        // Re-anchor the window at offset 2 (mid-composition, before any
+        // choose). The n-best row rides the prepend into the window.
+        let window = session.candidates_at(2).expect("offset 2 is in range");
+        let nbest = window
+            .iter()
+            .position(|candidate| candidate.nbest_row() == Some(0))
+            .expect("the sentence row is prepended at a re-anchored offset");
+
+        session
+            .select_anchored(nbest, &window, 2)
+            .expect("selection cannot fail");
+        // The row's span is the whole composition, so the selection consumes
+        // everything; commit() returns the row text with no raw prefix.
+        assert_eq!(
+            session.commit().expect("commit cannot fail"),
+            "你好",
+            "an n-best row from a re-anchored window commits its own text,\n\
+             not the gap-prefixed duplicate"
         );
     }
 
@@ -3876,5 +4116,39 @@ mod tests {
             ],
             "你 (forced) then 好 (first decoded after the run) train, 你→好 included"
         );
+    }
+
+    #[test]
+    fn replace_raw_walks_consumed_back_to_a_char_boundary() {
+        // A one-byte composition selected to consumed 1, then replaced by
+        // `，` (three bytes): the stale consumed sits inside the character
+        // and `refresh` slices `raw[consumed..]`. The clamp must walk back
+        // to the boundary before it — nothing panics on any input.
+        let mut session = session();
+        session.replace_raw("a").expect("cannot fail");
+        session.select(0).expect("the fallback row selects");
+        session.replace_raw("\u{ff0c}").expect("cannot fail");
+        assert_eq!(session.composition_offset(), 0);
+    }
+
+    #[test]
+    fn candidates_at_rejects_mid_character_offsets() {
+        // The full-width comma occupies bytes 0..3, so offsets 1 and 2 sit
+        // inside it: no window exists under a mid-character slice, and the
+        // offset is refused with the inside-character error — not rounded
+        // to a neighbour and not the out-of-range error, whose contract is
+        // past-one-past-end only.
+        let mut session = session();
+        session.replace_raw("\u{ff0c}nihao").expect("cannot fail");
+        for offset in [1, 2] {
+            assert!(
+                matches!(
+                    session.candidates_at(offset),
+                    Err(EngineError::LookupOffsetInsideCharacter { .. })
+                ),
+                "offset {offset} is inside the character and must be refused"
+            );
+        }
+        assert!(session.candidates_at(3).is_ok(), "offset 3 is a boundary");
     }
 }

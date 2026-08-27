@@ -404,6 +404,16 @@ pub extern "C" fn pinyin_guess_candidates(
             if without_sentence && cand.kind() == oxpinyin_engine::CandidateKind::Sentence {
                 continue;
             }
+            // The engine's remaining-raw-input `Fallback` row is the
+            // session-API affordance (`session-api.md`: it keeps `Space`
+            // and `select` meaningful before a decoder result exists) —
+            // the pin has no raw-input fallback: an empty matrix answers
+            // false (`pinyin.cpp:2193`), an empty result answers true
+            // with no rows. The C ABI translates the engine shape, it
+            // does not surface it.
+            if cand.kind() == oxpinyin_engine::CandidateKind::Fallback {
+                continue;
+            }
             let text = match CString::new(cand.text().as_bytes()) {
                 Ok(s) => s,
                 Err(_) => continue,
@@ -434,6 +444,13 @@ pub extern "C" fn pinyin_guess_candidates(
                 token: cand.token(),
                 source_index: window_index,
             });
+        }
+        // The pin's empty-matrix early return (`pinyin.cpp:2193`): a
+        // parse that produced no keys answers false, not an empty list.
+        // A non-empty parse with no candidates (apostrophe-only runs,
+        // unmatchable tails) answers true with zero rows.
+        if inst.candidates.is_empty() && inst.parsed_len == 0 {
+            return false;
         }
         true
     })

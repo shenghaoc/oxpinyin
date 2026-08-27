@@ -1303,3 +1303,136 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
+
+/// Parse-termination gates: C1 (FORCE_TONE) and B2 (stop bytes), plus the
+/// inherited apostrophe class — measured first-hand on the rebuilt pin and
+/// in the uncovered-surface differential's phase-B/phase-C probes.
+#[cfg(test)]
+mod parse_termination {
+    use crate::candidates::pinyin_get_n_candidate;
+    use crate::config::pinyin_set_options;
+    use crate::parse::pinyin_parse_more_full_pinyins;
+    use crate::sentence::{pinyin_guess_candidates, pinyin_guess_sentence};
+    use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
+
+    /// The parity word plus the measured profiles.
+    const PARITY: u32 = 0x18a;
+    const USE_TONE: u32 = 0x20;
+    const FORCE_TONE: u32 = 0x40;
+
+    fn parse_len(
+        context: *mut crate::types::PinyinContext,
+        instance: *mut crate::types::PinyinInstance,
+        word: u32,
+        input: &str,
+    ) -> usize {
+        assert!(pinyin_set_options(context, word));
+        let text = cstr(input);
+        pinyin_parse_more_full_pinyins(instance, text.as_ptr())
+    }
+
+    #[test]
+    fn force_tone_rejects_toneless_input_under_use_tone() {
+        // C1: under USE_TONE|FORCE_TONE (the 0x60 profile) the pin parses
+        // toneless input to 0 bytes — measured on the rebuilt pin:
+        // opt:0x60-nihao@0:parsed=0, opt:0x60-zai6@0:parsed=0, while the
+        // toned opt:0x60-ni3hao3@0:parsed=7.
+        let user_dir = TempUserDir::new("c1-force");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        let word = PARITY | USE_TONE | FORCE_TONE;
+
+        assert_eq!(parse_len(context, instance, word, "nihao"), 0);
+        assert!(
+            !pinyin_guess_sentence(instance),
+            "no sentence on an empty parse"
+        );
+        assert!(
+            !pinyin_guess_candidates(instance, 0, DEFAULT_SORT),
+            "the pin's empty-matrix early return (pinyin.cpp:2193): \
+             no rows and no engine fallback row on an empty parse"
+        );
+        assert_eq!(
+            parse_len(context, instance, word, "zai6"),
+            0,
+            "'6' is not a tone digit"
+        );
+
+        assert_eq!(
+            parse_len(context, instance, word, "ni3hao3"),
+            7,
+            "toned input parses"
+        );
+        assert!(pinyin_guess_sentence(instance));
+        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+        let mut n = 0;
+        assert!(pinyin_get_n_candidate(instance, &mut n));
+        assert!(n > 0, "the toned window is non-empty");
+
+        assert_eq!(parse_len(context, instance, word, "zai4"), 4);
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    #[test]
+    fn force_tone_is_inert_without_use_tone() {
+        // The pin's force-tone check is nested inside the USE_TONE branch
+        // (pinyin_parser2.cpp:176-190), so the 0x1ca shape (parity plus
+        // FORCE_TONE, no USE_TONE) parses exactly like the parity word —
+        // measured opt:0x1ca-* identical to the control.
+        let user_dir = TempUserDir::new("c1-inert");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+        assert_eq!(
+            parse_len(context, instance, PARITY | FORCE_TONE, "nihao"),
+            5
+        );
+        assert_eq!(parse_len(context, instance, PARITY | FORCE_TONE, "zai6"), 3);
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    #[test]
+    fn stop_bytes_terminate_the_parse() {
+        // B2: the pin stops consuming at the first byte no key matches;
+        // the capi parse seam must let those bytes reach the decoder.
+        // Measured: punctparse-space-mid:parsed=2,
+        // punctparse-fullwidth:parsed=0, punctparse-apostrophe-mid:parsed=6.
+        let user_dir = TempUserDir::new("b2-stop");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+        assert_eq!(parse_len(context, instance, PARITY, "ni hao"), 2);
+        assert!(
+            pinyin_guess_sentence(instance),
+            "the ni window still decodes"
+        );
+        assert_eq!(parse_len(context, instance, PARITY, "\u{ff0c}nihao"), 0);
+        assert_eq!(
+            parse_len(context, instance, PARITY, "ni'hao"),
+            6,
+            "internal run unchanged"
+        );
+
+        // The inherited apostrophe class, folded in: trailing and
+        // standalone runs are consumed by the pin's propagation
+        // (F-E-14 table: ni' → 3; nihao' → 6 by the same law).
+        assert_eq!(parse_len(context, instance, PARITY, "nihao'"), 6);
+        assert_eq!(parse_len(context, instance, PARITY, "ni'"), 3);
+        assert_eq!(parse_len(context, instance, PARITY, "'''"), 3);
+        // Apostrophe-only parses hold no keys but are NOT empty parses:
+        // the pin answers true with zero rows there, never the engine's
+        // raw-input fallback row.
+        assert!(pinyin_guess_sentence(instance));
+        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+        let mut n = 0;
+        assert!(pinyin_get_n_candidate(instance, &mut n));
+        assert_eq!(
+            n, 0,
+            "no candidates and no fallback row for a keyless parse"
+        );
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+}
