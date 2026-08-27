@@ -94,10 +94,12 @@ typedef bigram_export_iterator_t *(*fn_begin_bigram)(pinyin_context_t *);
 typedef bool (*fn_bigram_has_next)(bigram_export_iterator_t *);
 typedef bool (*fn_bigram_get_next)(bigram_export_iterator_t *, gchar **, gchar **, gint *);
 typedef void (*fn_end_bigram)(bigram_export_iterator_t *);
+typedef bool (*fn_save)(pinyin_context_t *);
 
 struct syms {
     fn_init init;
     fn_fini fini;
+    fn_save save;
     fn_alloc alloc;
     fn_free_instance free_instance;
     fn_parse parse;
@@ -134,6 +136,7 @@ static void *load(const char *name, void *handle) {
 static void resolve_all(void *handle, struct syms *s) {
     s->init = (fn_init)load("pinyin_init", handle);
     s->fini = (fn_fini)load("pinyin_fini", handle);
+    s->save = (fn_save)load("pinyin_save", handle);
     s->alloc = (fn_alloc)load("pinyin_alloc_instance", handle);
     s->free_instance = (fn_free_instance)load("pinyin_free_instance", handle);
     s->parse = (fn_parse)load("pinyin_parse_more_full_pinyins", handle);
@@ -506,17 +509,79 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* Phase E — persistence: save, tear the context down completely, and
+     * reopen the same user dir in a fresh context. The reopened surface
+     * and export must equal the in-memory ones — the stored/in-memory
+     * interaction the export-only phase cannot see. */
+    if (!s.save(ctx)) {
+        fprintf(stderr, "reopen: pinyin_save failed\n");
+        goto fail_inst;
+    }
+    s.free_instance(inst);
+    s.fini(ctx);
+    inst = NULL;
+    ctx = s.init(argv[2], userdir);
+    if (!ctx) {
+        fprintf(stderr, "reopen: pinyin_init failed\n");
+        goto fail_no_ctx;
+    }
+    inst = s.alloc(ctx);
+    if (!inst) {
+        fprintf(stderr, "reopen: pinyin_alloc_instance failed\n");
+        goto fail_ctx;
+    }
+    if (parse_expect(&s, inst, "nihao", 5) || print_surface(&s, inst, "reopened"))
+        goto fail_inst;
+    {
+        export_iterator_t *iter = s.begin_phrases(ctx, 7 /* USER_DICTIONARY */);
+        if (iter) {
+            while (s.has_next(iter)) {
+                gchar *phrase = NULL;
+                gchar *pinyin = NULL;
+                gint count = -1;
+                if (!s.get_next(iter, &phrase, &pinyin, &count))
+                    break;
+                printf("phrase: %s|%s|%d\n", phrase ? phrase : "(null)",
+                       pinyin ? pinyin : "(null)", (int)count);
+                g_free_fn(phrase);
+                g_free_fn(pinyin);
+            }
+            s.end_phrases(iter);
+        }
+        bigram_export_iterator_t *biter = s.begin_bigram(ctx);
+        if (biter) {
+            while (s.bigram_has_next(biter)) {
+                gchar *phrase = NULL;
+                gchar *pinyin = NULL;
+                gint count = -1;
+                bool more = s.bigram_get_next(biter, &phrase, &pinyin, &count);
+                printf("bigram: %s|%s|%d\n", phrase ? phrase : "(null)",
+                       pinyin ? pinyin : "(null)", (int)count);
+                g_free_fn(phrase);
+                g_free_fn(pinyin);
+                if (!more)
+                    break;
+            }
+            s.end_bigram(biter);
+        }
+    }
+
     s.free_instance(inst);
     s.fini(ctx);
     dlclose(handle);
     rm_rf(userdir);
     return 0;
 
-    /* Shared cleanup: no exit path leaks the mkdtemp userdir. */
+    /* Shared cleanup: no exit path leaks the mkdtemp userdir. The reopen
+     * phase frees and NULLs the instance before re-init, so a failure
+     * after that point must not double-free. */
 fail_inst:
-    s.free_instance(inst);
+    if (inst)
+        s.free_instance(inst);
 fail_ctx:
-    s.fini(ctx);
+    if (ctx)
+        s.fini(ctx);
+fail_no_ctx:
     dlclose(handle);
 fail:
     rm_rf(userdir);
