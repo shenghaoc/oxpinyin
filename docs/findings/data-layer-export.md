@@ -10,16 +10,23 @@ how they are verified. It replaces the withdrawn syllable-encoder approach
 mapping was refuted against the pinned oracle; the refutation evidence is
 summarised at the end so the replacement is legible on its own.
 
-## Approach
+## Approach (historical — how the frozen tables were derived)
 
-Every value in the shipped tables is obtained from the pinned oracle
-(`docs/findings/oracle-environment.md`) **through its public C ABI** — the
-same header subset frozen in `docs/findings/oracle-ffi-seam.md`, extended by
-the export/token functions listed below. No upstream translation unit is
-read, no internal file format of libpinyin is interpreted, with the single
-documented exception of the bigram byte format, which is frozen here from
-observed data and verified by a total mechanical invariant plus
+Every value in the tables frozen under `fixtures/w3/` was obtained from the
+pinned oracle (`docs/findings/oracle-environment.md`) **through its public
+C ABI** — the same header subset frozen in `docs/findings/oracle-ffi-seam.md`,
+extended by the export/token functions listed below. No upstream translation
+unit is read, no internal file format of libpinyin is interpreted, with the
+single documented exception of the bigram byte format, which is frozen here
+from observed data and verified by a total mechanical invariant plus
 oracle-resolved spot checks.
+
+**This route is retired as a producer.** Since 2026-08-27 the same schemas
+are produced natively from the canonical model20 archive by
+`oxpinyin-datagen`, measured entry-for-entry identical to this route's
+frozen full export (`docs/findings/datagen-model20.md`) — the derivation of
+record; the ABI route remains documented here because the frozen fixtures
+and this finding's verification record are anchored to it.
 
 The exporter was `oxpinyin-migrate export` (feature `oracle-ffi`, Linux-first;
 the crate has since been removed — the tables are committed under
