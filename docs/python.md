@@ -171,11 +171,11 @@ call, so the batch-query workflow needs no caller-side locking.
 
 Operations that decode — `lookup`, `type_pinyin`, `select`, `commit`,
 `guess_sentence`, `train`, `save`, `candidates_at`, and the `parsed_len`
-property — release the GIL around the engine call; snapshot-style reads
-(`candidates`, `sentences`, `sentence`, and the remaining property getters)
-hold it while guarding. `parsed_len` sits with the decoders because
-`Session::full_parsed_len` rebuilds the segment graph on every call rather
-than reading a stored value. Sharing one
+property — release the GIL around the engine call, as does `reset`;
+snapshot-style reads (`candidates`, `sentences`, `sentence`, and the
+remaining property getters) hold it while guarding. `parsed_len` sits with
+the decoders because `Session::full_parsed_len` rebuilds the segment graph
+on every call rather than reading a stored value. Sharing one
 engine at all deliberately exceeds what a TSF/IMK main-thread shell needs;
 it costs one lock acquisition per call.
 
