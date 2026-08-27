@@ -141,15 +141,38 @@ constitution. Binding code uses no explicit `unsafe`.
 
 ## Thread-safety
 
-Engines may be shared across Python threads. Every operation serializes on
-an internal mutex, so concurrent `lookup(...)` calls are correct and
-deterministic (the sequence interleaves, the results do not change).
+Engines may be shared across Python threads: every call takes an internal
+mutex, so calls from different threads serialize rather than interleave.
+
+**The guarantee is per call, and only per call.** One call — `lookup(...)`,
+`select(...)`, a property read — takes the lock, does its work and releases
+it, so it sees a consistent session and returns a snapshot nothing can
+mutate afterwards. A *sequence* of calls is not atomic, because the lock is
+released between them:
+
+```python
+engine.lookup("nihao")
+print(engine.preedit)      # not necessarily the preedit for "nihao"
+```
+
+Another thread's `lookup` can land in that gap. Under a GIL the gap was
+narrow enough to miss; without one it is a live footgun. It is also why
+`test_shared_engine_is_thread_safe` reads `composition_offset` and `preedit`
+between lookups without asserting on them — those values mean something only
+to a thread that owns the engine for the whole sequence.
+
+A caller needing a consistent view across several members must therefore
+either hold its own lock around the whole sequence, or give each thread its
+own private `Engine`. `lookup(...)` is shaped to avoid the question
+entirely: it resets, types and returns the candidate list inside one locked
+call, so the batch-query workflow needs no caller-side locking.
+
 Operations that decode — `lookup`, `type_pinyin`, `select`, `commit`,
 `guess_sentence`, `train`, `save`, `candidates_at` — release the GIL around
 the engine call; snapshot-style reads (`candidates`, `sentences`,
-`sentence`, and the property getters) hold it while guarding. This
-deliberately exceeds what a TSF/IMK main-thread shell needs; it costs one
-lock acquisition per call.
+`sentence`, and the property getters) hold it while guarding. Sharing one
+engine at all deliberately exceeds what a TSF/IMK main-thread shell needs;
+it costs one lock acquisition per call.
 
 ## Learning
 
