@@ -1,7 +1,10 @@
 # Error-handling audit
 
-Date: 2026-08-19 · Status: characterization. No API reshape. Pins must not
-move.
+Date: 2026-08-19; re-verified 2026-08-28 against `origin/main` (`64170b3`)
+— the crate-by-crate inventory below holds unchanged on that tree (no
+library/C-ABI panic path; `EngineError` / `TableError` / `UserStoreError`
+match the documented shapes; neither `thiserror` nor `anyhow` is present).
+Status: characterization. No API reshape. Pins must not move.
 
 Workspace-wide inventory of how failures are represented, against the Aug
 2026 practice: `thiserror` 2.x in library crates, `anyhow` 1.x only at
