@@ -88,14 +88,14 @@ impl UserLookup {
         store: &UserStore,
     ) -> Result<(), UserStoreError> {
         let generation = store.generation();
-        match cache {
-            Some((seen, _)) if *seen == generation => Ok(()),
-            _ => {
-                let lookup = Self::from_store(store)?;
-                *cache = Some((generation, Arc::new(lookup)));
-                Ok(())
-            }
+        if let Some((seen, _)) = cache.as_ref()
+            && *seen == generation
+        {
+            return Ok(());
         }
+        let lookup = Self::from_store(store)?;
+        *cache = Some((generation, Arc::new(lookup)));
+        Ok(())
     }
 
     /// Store generation this snapshot was built against.
@@ -174,53 +174,48 @@ impl UserLookup {
 }
 
 fn index_key(syllables: &[SyllableKey]) -> String {
-    let mut key = String::new();
-    for (position, syllable) in syllables.iter().enumerate() {
-        if position > 0 {
-            key.push('\'');
-        }
-        key.push_str(syllable.text());
-    }
-    key
+    join_with_apostrophe(syllables.iter().map(|syllable| syllable.text()))
 }
 
 fn initial_key(syllables: &[SyllableKey]) -> String {
-    let mut key = String::new();
-    for (position, syllable) in syllables.iter().enumerate() {
-        if position > 0 {
-            key.push('\'');
-        }
-        match syllable_initial(syllable.text()) {
-            Some(initial) => key.push_str(initial),
-            None => key.push('0'),
-        }
-    }
-    key
+    join_with_apostrophe(
+        syllables
+            .iter()
+            .map(|syllable| syllable_initial(syllable.text()).unwrap_or("0")),
+    )
 }
 
 fn initial_of(pinyin: &str) -> String {
-    let mut initial = String::new();
-    for (position, syllable) in pinyin.split('\'').enumerate() {
-        if position > 0 {
-            initial.push('\'');
-        }
-        match syllable_initial(syllable) {
-            Some(prefix) => initial.push_str(prefix),
-            None => initial.push('0'),
-        }
+    join_with_apostrophe(
+        pinyin
+            .split('\'')
+            .map(|syllable| syllable_initial(syllable).unwrap_or("0")),
+    )
+}
+
+fn join_with_apostrophe<I, S>(parts: I) -> String
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut parts = parts.into_iter();
+    let Some(first) = parts.next() else {
+        return String::new();
+    };
+    let mut joined = String::from(first.as_ref());
+    for part in parts {
+        joined.push('\'');
+        joined.push_str(part.as_ref());
     }
-    initial
+    joined
 }
 
 fn prefix_probe(sorted: &[String], joined: &str) -> bool {
     match sorted.binary_search_by(|candidate| candidate.as_str().cmp(joined)) {
         Ok(_) => true,
-        Err(index) => {
-            sorted
-                .get(index)
-                .is_some_and(|candidate| candidate.starts_with(joined))
-                && sorted[index].as_bytes().get(joined.len()) == Some(&b'\'')
-        }
+        Err(index) => sorted.get(index).is_some_and(|candidate| {
+            candidate.starts_with(joined) && candidate.as_bytes().get(joined.len()) == Some(&b'\'')
+        }),
     }
 }
 

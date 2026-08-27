@@ -143,9 +143,7 @@ pub(crate) fn next_user_token_after(token: Token) -> Option<Token> {
 #[must_use]
 pub(crate) fn encode_keys(keys: &[PinyinKey]) -> Vec<u8> {
     let mut out = Vec::with_capacity(keys.len().saturating_mul(2));
-    for key in keys {
-        out.extend_from_slice(&key.to_le_bytes());
-    }
+    out.extend(keys.iter().flat_map(|key| key.to_le_bytes()));
     out
 }
 
@@ -185,11 +183,11 @@ impl UserPronunciation {
     /// an unrenderable key is skipped identically on both surfaces.
     #[must_use]
     pub fn render_pinyin(&self) -> Option<String> {
-        let mut parts = Vec::with_capacity(self.keys.len());
-        for key in &self.keys {
-            parts.push(SyllableKey::from_index(usize::from(*key))?.text());
-        }
-        Some(parts.join("'"))
+        self.keys
+            .iter()
+            .map(|key| SyllableKey::from_index(usize::from(*key)).map(SyllableKey::text))
+            .collect::<Option<Vec<_>>>()
+            .map(|parts| parts.join("'"))
     }
 
     pub(crate) fn new(keys: Vec<PinyinKey>, count: u64) -> Self {
