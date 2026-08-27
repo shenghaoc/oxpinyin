@@ -163,10 +163,10 @@ storage.
 
 ## Supported platforms
 
-Any platform PyO3 + maturin build for (CPython 3.10–3.14, built with the
-stable `abi3`-style single extension). CI exercises Linux; macOS and Windows
-run the same portable crates (`oxpinyin-core/data/user/engine`) that the
-portable CI job covers, but wheel builds there are currently untested.
+Any platform PyO3 + maturin build for (CPython 3.10–3.14). CI exercises
+Linux; macOS and Windows run the same portable crates
+(`oxpinyin-core/data/user/engine`) that the portable CI job covers, but
+wheel builds there are currently untested.
 
 CI covers exactly one interpreter: free-threaded CPython 3.15.0-rc.1 on
 Linux, pinned by exact version. That is the platform this binding is written
