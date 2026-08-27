@@ -22,15 +22,23 @@ use oxpinyin_runtime::{Runtime, RuntimeSession};
 pub fn run_corpus(corpus: &Value, system_dir: &Path) -> Result<Value, RunError> {
     let runtime =
         Runtime::open_fixtures(system_dir, None).map_err(|error| RunError(error.to_string()))?;
-    let mut session = runtime
-        .new_session(&oxpinyin_engine::EmptyConfigSource)
-        .map_err(|e| RunError(e.to_string()))?;
 
     let mut cases = Vec::new();
     for case in corpus["cases"]
         .as_array()
         .ok_or_else(|| RunError("corpus has no cases array".to_owned()))?
     {
+        // A fresh session per case, because the pytest driver builds a fresh
+        // `Engine` per case. Reusing one session here would leave this side
+        // carrying residue from cases 1..N-1 while the Python side starts
+        // virgin: the native transcript would be corpus-order-dependent when
+        // the replayed one is not, and a future divergence could not be told
+        // apart from an incomplete `reset()`. The `Runtime` stays shared —
+        // sessions share the table handles, so this costs one session
+        // construction per case, not a table reopen.
+        let mut session = runtime
+            .new_session(&oxpinyin_engine::EmptyConfigSource)
+            .map_err(|e| RunError(e.to_string()))?;
         cases.push(run_case(&mut session, case)?);
     }
 
