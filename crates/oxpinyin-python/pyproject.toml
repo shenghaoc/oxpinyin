@@ -1,0 +1,48 @@
+[build-system]
+requires = ["maturin>=1.8,<2"]
+build-backend = "maturin"
+
+[project]
+name = "oxpinyin"
+description = "libpinyin-compatible pinyin engine — candidate lookup for Chinese input, from Python"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+# The GPL requires the licence text to travel with the work, so the built
+# wheel has to carry it. An explicit empty list here suppressed PEP 639's
+# default glob, and the repository's LICENSE sits two levels up where the
+# wheel build cannot see it, so the wheel shipped none at all.
+#
+# `LICENSE` beside this file is a byte-for-byte copy of the repository root
+# one, not a symlink: a checkout without symlink support would materialise
+# the link as a 13-byte text file and the build would ship *that* as the
+# licence — silently, which is the same compliance defect in a new costume.
+# Keep the two in step if the project ever relicenses.
+license-files = ["LICENSE"]
+requires-python = ">=3.14"
+authors = [{ name = "Shenghao Chen" }]
+keywords = ["pinyin", "ime", "chinese", "input-method", "libpinyin"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Natural Language :: Chinese (Simplified)",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Rust",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Text Processing :: Linguistic",
+]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/shenghaoc/oxpinyin"
+Issues = "https://github.com/shenghaoc/oxpinyin/issues"
+
+[tool.maturin]
+python-source = "python"
+module-name = "oxpinyin._native"
+features = ["bindings"]
+strip = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests_py"]

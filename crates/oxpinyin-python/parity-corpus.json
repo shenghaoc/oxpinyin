@@ -1,0 +1,102 @@
+{
+  "schema": "oxpinyin-parity-corpus-v1",
+  "replay_procedure": [
+    "A case may specify either input (a literal string) or repeat {unit, times}; the effective input is unit repeated times times. Both drivers must resolve it identically.",
+    "For every case: open a fresh fixture-mode engine over fixtures/w3 (no user dir).",
+    "1. lookup(input): reset the engine, type the input as one batch string, record input/composing/parsed_len and the full candidate list (text, kind, consumed_keys, consumed_bytes, cost, nbest_index).",
+    "2. If guess_sentence is true: run guess_sentence(); record whether the lookup ran, every sentence row's text, and the first 8 candidate texts after the rows prepend.",
+    "3. If candidates_at is set: build the re-anchored window at that byte offset; record text/kind/consumed_bytes for each candidate in it.",
+    "4. For every index in select: select that index of the CURRENT window; record result ('continued'/'completed'), composition_offset, preedit, composing, first 8 candidate texts after the selection, and — when completed — the commit() text. Stop after a selection completes.",
+    "A transcript event records exactly what the API returned at that step; on both sides (Rust native-dump binary and Python binding) the steps are identical and deterministic."
+  ],
+  "cases": [
+    {
+      "name": "empty-input",
+      "input": ""
+    },
+    {
+      "name": "nihao",
+      "input": "nihao"
+    },
+    {
+      "name": "nihao-apostrophe",
+      "input": "ni'hao"
+    },
+    {
+      "name": "single-ni",
+      "input": "ni"
+    },
+    {
+      "name": "incomplete-nih",
+      "input": "ni'h"
+    },
+    {
+      "name": "longer-phrase",
+      "input": "nihenhao"
+    },
+    {
+      "name": "ambiguous-split",
+      "input": "ninihai"
+    },
+    {
+      "name": "repeated-syllable",
+      "input": "nini"
+    },
+    {
+      "name": "filtered-digits",
+      "input": "9nihao9"
+    },
+    {
+      "name": "input-over-cap",
+      "repeat": {
+        "unit": "nihao",
+        "times": 900
+      }
+    },
+    {
+      "name": "filtered-space-punct",
+      "input": "nih ao!"
+    },
+    {
+      "name": "unicode-filtered",
+      "input": "nǐ hǎo"
+    },
+    {
+      "name": "nihao-guess-sentence",
+      "input": "nihao",
+      "guess_sentence": true
+    },
+    {
+      "name": "ninh-guess-sentence-empty-candidates",
+      "input": "nin",
+      "guess_sentence": true
+    },
+    {
+      "name": "nini-candidates-at-offset-2",
+      "input": "nini",
+      "candidates_at": 2
+    },
+    {
+      "name": "select-first-completes",
+      "input": "nihao",
+      "select": [
+        0
+      ]
+    },
+    {
+      "name": "select-second-then-commit",
+      "input": "nihao",
+      "select": [
+        1
+      ]
+    },
+    {
+      "name": "select-continues-across-windows",
+      "input": "ninihai",
+      "select": [
+        0,
+        0
+      ]
+    }
+  ]
+}
