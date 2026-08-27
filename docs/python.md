@@ -217,6 +217,18 @@ cargo features that `oxpinyin-python` does not enable, so their coverage
 belongs to the separate store/backend differential tests, not to Python
 parity.
 
+Known gap: no corpus case opens a `user_dir`. All 18 cases run against
+`fixtures/w3` with user learning off, on both sides — `native-dump` calls
+`Runtime::open_fixtures(system_dir, None)` and the pytest driver calls
+`Engine.from_fixture_dir(system_dir)` with `user_dir` defaulting to `None`
+— so the user-overlay ranking path is never compared native-vs-Python.
+That path is covered *functionally* by
+`test_engine.py::test_train_and_save_persist_user_state`, which proves
+`train()`/`save()` do persist and take effect; what is not covered is that
+the binding and the native API rank an overlaid candidate list
+*identically*. Closing it means adding corpus cases, which changes the
+corpus, so it is recorded here rather than done.
+
 ## Deliberate omissions (v0)
 
 - Addon phrase libraries and the punctuation table remain C-ABI-only.
