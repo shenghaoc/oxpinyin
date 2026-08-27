@@ -10,6 +10,7 @@ inclusion: always
 | oxpinyin-user | redb ACID store; format-version from day one | deny | yes | via engine |
 | oxpinyin-engine | session API — the supported Rust surface | deny | yes | yes |
 | oxpinyin-capi | C ABI subset for the borrowed frontend | allow | Linux | yes |
+| oxpinyin-python | PyO3 binding over the engine session API (Python consumers) | forbid | yes | wheel only |
 | oxpinyin-runtime | concrete assembly shared by consumers (tables+model+user wiring → Session) | forbid | yes | via capi/python |
 | pinyin-oracle | differential harness vs pinned libpinyin | allow | Linux | never |
 | oxpinyin-dictool | conversions; standalone vocab exporter | deny | yes | yes |
@@ -36,7 +37,7 @@ config and storage paths injected as data; no platform services and no
 oxpinyin-capi, never in the engine. Sessions are instance-per-context and
 main-thread-friendly (TSF/IMK/ArkTS models).
 
-**Supported surface:** `oxpinyin-engine` (Rust), `oxpinyin-capi` (C ABI).
+**Supported surface:** `oxpinyin-engine` (Rust), `oxpinyin-capi` (C ABI), and `oxpinyin-python` (PyO3: `Engine`/`Candidate` over the same session API; unsafe is forbidden even at the FFI boundary).
 core/data/user are published to hold names but are internal — no
 stability promise; cargo-public-api snapshots apply to the supported
 surface only. Extension traits (`Dictionary`, `UserModel`,
