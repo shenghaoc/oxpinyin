@@ -34,6 +34,14 @@ struct Options {
 }
 
 impl Default for Options {
+    /// Creates compilation options with the redb backend, all table categories enabled, and mini mode disabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let options = Options::default();
+    /// assert!(!options.mini);
+    /// ```
     fn default() -> Self {
         Self {
             model_dir: None,
@@ -52,6 +60,13 @@ struct Tables {
     punct: bool,
 }
 
+/// Prints the command-line usage message and exits with status code 2.
+///
+/// # Examples
+///
+/// ```no_run
+/// usage();
+/// ```
 fn usage() -> ! {
     eprintln!(
         "usage: oxpinyin-datagen compile [--model-dir DIR] [--out-dir DIR] \
@@ -60,6 +75,18 @@ fn usage() -> ! {
     std::process::exit(2);
 }
 
+/// Parses a comma-separated list of table names into table-selection flags.
+///
+/// # Examples
+///
+/// ```
+/// let tables = parse_tables("system, punct");
+/// assert!(tables.system);
+/// assert!(!tables.addon);
+/// assert!(tables.punct);
+/// ```
+///
+/// Unknown table names terminate the process with a usage error.
 fn parse_tables(value: &str) -> Tables {
     let mut tables = Tables::default();
     for part in value.split(',') {
@@ -73,6 +100,18 @@ fn parse_tables(value: &str) -> Tables {
     tables
 }
 
+/// Parses the `compile` command-line arguments into compilation options.
+///
+/// When no table selection is provided, system, addon, and punctuation tables are enabled.
+/// Invalid commands or options terminate the process after displaying usage information.
+///
+/// # Examples
+///
+/// ```no_run
+/// let options = parse_args();
+/// assert!(options.tables.system);
+/// ```
+fn parse_args() -> Options
 fn parse_args() -> Options {
     let mut options = Options::default();
     let mut args = std::env::args().skip(1);
@@ -106,11 +145,40 @@ fn parse_args() -> Options {
     options
 }
 
+/// Reports a data-generation error and terminates the process with status code 1.
+///
+/// # Examples
+///
+/// ```no_run
+/// # fn example(error: DatagenError) {
+/// fail(error);
+/// # }
+/// ```
 fn fail(error: DatagenError) -> ! {
     eprintln!("oxpinyin-datagen: {error}");
     std::process::exit(1);
 }
 
+/// Resolves the model directory from an explicit path or the configured model cache.
+///
+/// # Parameters
+///
+/// * `explicit` - An optional model directory to use instead of cache discovery.
+///
+/// # Returns
+///
+/// The resolved model directory.
+///
+/// Exits the process if no usable model directory can be found.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+///
+/// let dir = resolve_model_dir(Some(Path::new("models")));
+/// assert_eq!(dir, Path::new("models"));
+/// ```
 fn resolve_model_dir(explicit: Option<&Path>) -> PathBuf {
     if let Some(dir) = explicit {
         return dir.to_path_buf();
@@ -131,6 +199,20 @@ fn resolve_model_dir(explicit: Option<&Path>) -> PathBuf {
     }
 }
 
+/// Writes compiled entries to a backend-specific table file and records the file in the manifest.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Use a compiled entry set to create a table and update its manifest.
+/// write_table(backend, out_dir, "system", &entries, &mut manifest);
+/// ```
+///
+/// # Parameters
+///
+/// * `base` — Base name used to derive the table path.
+/// * `entries` — Compiled records to write.
+/// * `manifest` — Manifest records to which the written table is appended.
 fn write_table(
     backend: Backend,
     out_dir: &Path,
@@ -155,6 +237,18 @@ fn write_table(
     manifest.push(record);
 }
 
+/// Compiles selected model20 data into runtime tables and writes a manifest.
+///
+/// # Examples
+///
+/// ```no_run
+/// let status = main();
+/// assert_eq!(status, std::process::ExitCode::SUCCESS);
+/// ```
+///
+/// # Returns
+///
+/// [`ExitCode::SUCCESS`] after all selected tables and manifest data are written.
 fn main() -> ExitCode {
     let options = parse_args();
     if !options.backend.available() {

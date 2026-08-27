@@ -32,14 +32,22 @@ pub struct Segmenter {
 }
 
 impl Segmenter {
-    /// Opens the phrase index, system bigram, and interpolation2 unigrams.
+    /// Opens the phrase index and model tables to construct a segmenter.
     ///
-    /// `lambda` is the pin's `table.conf` value ([`PINNED_LAMBDA`]) unless
-    /// the caller parsed a different file.
+    /// The supplied `lambda` controls interpolation between the model components.
     ///
     /// # Errors
     ///
-    /// Returns [`SegmentError`] when a table cannot be read.
+    /// Returns [`SegmentError`] if any required table cannot be read.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # let paths = todo!();
+    /// let segmenter = Segmenter::open(&paths, 0.5)?;
+    /// # let _: Segmenter = segmenter;
+    /// # Ok::<(), SegmentError>(())
+    /// ```
     pub fn open(paths: &SegmenterPaths, lambda: f32) -> Result<Self, SegmentError> {
         let lexicon = PhraseLexicon::from_phrase_index(&paths.phrase_index)?;
         let model = SegmentModel::open(&paths.bigram, &paths.interpolation2, &lexicon)?;

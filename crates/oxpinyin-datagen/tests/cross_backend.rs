@@ -17,10 +17,32 @@ use std::path::PathBuf;
 use oxpinyin_datagen::system;
 use oxpinyin_datagen::write::Backend;
 
+/// Checks whether strict mode is enabled through the environment.
+///
+/// # Examples
+///
+/// ```
+/// let strict_mode = strict();
+/// println!("Strict mode enabled: {strict_mode}");
+/// ```
+///
+/// # Returns
+///
+/// `true` if `OXPINYIN_DATAGEN_STRICT` is set, `false` otherwise.
 fn strict() -> bool {
     std::env::var_os("OXPINYIN_DATAGEN_STRICT").is_some()
 }
 
+/// Locates the configured model cache directory.
+///
+/// Returns `None` when no model cache is configured and panics when the configured
+/// directory cannot be used.
+///
+/// # Examples
+///
+/// ```
+/// let _model_directory = model_dir();
+/// ```
 fn model_dir() -> Option<PathBuf> {
     match pinyin_oracle::model_cache::locate_model_dir() {
         Ok(Some(dir)) => Some(dir),
@@ -29,6 +51,21 @@ fn model_dir() -> Option<PathBuf> {
     }
 }
 
+/// Creates a unique temporary directory for a backend test.
+///
+/// Any existing directory at the generated path is removed before the new directory is created.
+///
+/// # Panics
+///
+/// Panics if the directory cannot be created.
+///
+/// # Examples
+///
+/// ```
+/// let dir = temp_dir("redb");
+/// assert!(dir.is_dir());
+/// std::fs::remove_dir_all(dir).unwrap();
+/// ```
 fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "oxpinyin-datagen-cross-{name}-{}-{}",
@@ -132,12 +169,39 @@ fn all_backends_emit_identical_tables() {
 /// an absent one.
 const PROBE_KEYS: [&str; 4] = ["a", "ni'hao", "xi'an", "zzz'zzz"];
 
-/// Loader-level check: `oxpinyin_data`'s generic table type opens each
-/// backend's file and returns the compiled bytes for probe keys.
+/// Verifies that a backend returns the compiled values for representative `pinyin_index` keys.
+///
+/// # Parameters
+///
+/// * `backend` - Backend whose table is checked.
+/// * `out` - Directory containing the backend table.
+/// * `compiled` - Compiled key-value entries used as expected lookup results.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_spot_lookups(backend, output_dir, &compiled_entries);
+/// ```
 fn assert_spot_lookups(backend: Backend, out: &std::path::Path, compiled: &[(Vec<u8>, Vec<u8>)]) {
     use oxpinyin_data::table::GenericLookupTable;
     use oxpinyin_store::ReadStore;
 
+    /// Looks up the standard probe keys in a compiled lookup table.
+    ///
+    /// # Returns
+    ///
+    /// The values associated with `"a"`, `"ni'hao"`, `"xi'an"`, and `"zzz'zzz"`
+    /// in that order. Missing keys are represented by `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use std::path::Path;
+    /// # fn example<S: ReadStore>(path: &Path) {
+    /// let values = probes::<S>(path);
+    /// assert_eq!(values.len(), 4);
+    /// # }
+    /// ```
     fn probes<S: ReadStore>(path: &std::path::Path) -> Vec<Option<Vec<u8>>> {
         let table = GenericLookupTable::<S>::open(path).unwrap();
         ["a", "ni'hao", "xi'an", "zzz'zzz"]

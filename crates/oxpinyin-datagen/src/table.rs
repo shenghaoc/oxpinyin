@@ -26,8 +26,23 @@ pub struct TableRow {
     pub count: u64,
 }
 
-/// Parses one `.table` line; `None` for blank or malformed lines, matching
-/// the upstream `4 != num` skip.
+/// Parses a valid `.table` line into a [`TableRow`].
+///
+/// Blank, comment, malformed, negative-count, and incorrectly fielded lines are skipped.
+///
+/// # Examples
+///
+/// ```
+/// let row = parse_table_line("ni hao 42 10").unwrap();
+/// assert_eq!(row.pinyin, "ni");
+/// assert_eq!(row.phrase, "hao");
+/// assert_eq!(row.token, 42);
+/// assert_eq!(row.count, 10);
+/// ```
+///
+/// # Returns
+///
+/// `Some(TableRow)` for a valid four-field line, or `None` otherwise.
 #[must_use]
 pub fn parse_table_line(line: &str) -> Option<TableRow> {
     let line = line.trim();
@@ -53,11 +68,29 @@ pub fn parse_table_line(line: &str) -> Option<TableRow> {
     })
 }
 
-/// Reads every well-formed row from a `.table` file.
+/// Reads all valid rows from a `.table` file.
+///
+/// Blank, comment, malformed, and negative-count lines are skipped. Lines with
+/// more than four fields produce a parse error.
 ///
 /// # Errors
 ///
-/// Returns [`DatagenError::Io`] when the file cannot be read.
+/// Returns [`DatagenError::Io`] when the file cannot be read, or
+/// [`DatagenError::Parse`] when a non-comment line contains more than four
+/// fields.
+///
+/// # Examples
+///
+/// ```
+/// let path = std::env::temp_dir().join(format!("example-{}.table", std::process::id()));
+/// std::fs::write(&path, "ni3 你 1 2\n").unwrap();
+///
+/// let rows = read_table_file(&path).unwrap();
+/// assert_eq!(rows.len(), 1);
+/// assert_eq!(rows[0].phrase, "你");
+///
+/// std::fs::remove_file(path).unwrap();
+/// ```
 pub fn read_table_file(path: &Path) -> Result<Vec<TableRow>, DatagenError> {
     let text = fs::read_to_string(path)?;
     let mut rows = Vec::new();

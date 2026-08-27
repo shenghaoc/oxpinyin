@@ -25,7 +25,20 @@ pub struct PunctRow {
     pub count: u64,
 }
 
-/// Parses one `fscanf("%u %s %s %ld")` `punct.table` line.
+/// Parses a punctuation-table line into a [`PunctRow`].
+///
+/// Blank lines, comments, malformed lines, and lines with extra fields yield
+/// `None`.
+///
+/// # Examples
+///
+/// ```
+/// let row = parse_punct_line("42 ni ! 10").unwrap();
+/// assert_eq!(row.token, 42);
+/// assert_eq!(row.phrase, "ni");
+/// assert_eq!(row.punct, "!");
+/// assert_eq!(row.count, 10);
+/// ```
 #[must_use]
 pub fn parse_punct_line(line: &str) -> Option<PunctRow> {
     let line = line.trim();
@@ -77,11 +90,36 @@ pub fn read_punct_file(path: &Path) -> Result<Vec<PunctRow>, DatagenError> {
     Ok(rows)
 }
 
-/// Serialises rows into token → NUL-terminated UTF-8 punctuation lists.
+/// Converts punctuation rows into database entries keyed by little-endian token IDs.
 ///
-/// File order is load-bearing (`PunctTableEntry` comments require decreasing
-/// frequency). First-seen punctuation for a token wins; later duplicates are
-/// dropped, matching `append_punctuation`'s `g_strv_contains` skip.
+/// Punctuation is serialized as UTF-8 strings terminated by NUL bytes. For each token,
+/// punctuation retains its first-seen order and later duplicates are omitted.
+///
+/// # Returns
+///
+/// Database entries containing one serialized punctuation list per token.
+///
+/// # Examples
+///
+/// ```
+/// let rows = vec![
+///     PunctRow {
+///         token: 1,
+///         phrase: "a".into(),
+///         punct: ",".into(),
+///         count: 10,
+///     },
+///     PunctRow {
+///         token: 1,
+///         phrase: "a".into(),
+///         punct: ".".into(),
+///         count: 5,
+///     },
+/// ];
+///
+/// let entries = rows_to_entries(&rows);
+/// assert_eq!(entries.len(), 1);
+/// ```
 #[must_use]
 pub fn rows_to_entries(rows: &[PunctRow]) -> Entries {
     let mut by_token: BTreeMap<u32, Vec<String>> = BTreeMap::new();
@@ -104,11 +142,20 @@ pub fn rows_to_entries(rows: &[PunctRow]) -> Entries {
         .collect()
 }
 
-/// Compiles `model_dir/punct.table` into the punctuation table.
+/// Compiles the model's `punct.table` file into punctuation database entries.
 ///
 /// # Errors
 ///
-/// Fails when `punct.table` is missing or contains a malformed line.
+/// Returns an error if `punct.table` is missing or contains a malformed line.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+///
+/// let result = compile(Path::new("model"));
+/// assert!(result.is_ok() || result.is_err());
+/// ```
 pub fn compile(model_dir: &Path) -> Result<Entries, DatagenError> {
     let table_path = model_dir.join("punct.table");
     if !table_path.is_file() {

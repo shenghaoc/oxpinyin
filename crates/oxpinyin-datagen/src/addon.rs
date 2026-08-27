@@ -58,12 +58,24 @@ pub struct AddonTables {
     pub phrase_index: Entries,
 }
 
-/// Compiles every addon `.table` in `model_dir`.
+/// Compiles the selected addon `.table` files from `model_dir`.
+///
+/// `Subset::Full` compiles all configured addon libraries. `Subset::MiniFixture`
+/// compiles only the fixture library and retains its configured pinyin keys.
 ///
 /// # Errors
 ///
-/// Fails on a missing addon table or a row whose token falls outside the
-/// library's range.
+/// Returns an error if an addon table is missing, cannot be read, or contains
+/// a token outside its library's range.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::path::Path;
+///
+/// let tables = compile(Path::new("models"), Subset::MiniFixture)?;
+/// # Ok::<(), DatagenError>(())
+/// ```
 pub fn compile(model_dir: &Path, subset: Subset) -> Result<Vec<AddonTables>, DatagenError> {
     let libraries: &[(u8, &str)] = match subset {
         Subset::Full => ADDON_LIBRARIES,
@@ -101,7 +113,28 @@ pub fn compile(model_dir: &Path, subset: Subset) -> Result<Vec<AddonTables>, Dat
     Ok(out)
 }
 
-/// Serialises rows into the index pair, writer order preserved.
+/// Converts table rows into pinyin and phrase index entries.
+///
+/// Duplicate token readings are aggregated by pinyin and token. Token records
+/// are ordered by descending frequency and then ascending token, while the
+/// first phrase associated with each token is retained. Frequencies exceeding
+/// `u32::MAX` are saturated.
+///
+/// # Examples
+///
+/// ```
+/// let rows = vec![TableRow {
+///     pinyin: "ni".to_owned(),
+///     token: 1,
+///     count: 2,
+///     phrase: "你".to_owned(),
+/// }];
+///
+/// let (pinyin_index, phrase_index) = rows_to_index_entries(&rows);
+///
+/// assert_eq!(pinyin_index.len(), 1);
+/// assert_eq!(phrase_index.len(), 1);
+/// ```
 #[must_use]
 pub fn rows_to_index_entries(rows: &[TableRow]) -> (Entries, Entries) {
     let mut index: BTreeMap<String, BTreeMap<u32, u64>> = BTreeMap::new();

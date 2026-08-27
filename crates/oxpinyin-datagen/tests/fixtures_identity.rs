@@ -20,10 +20,34 @@ use std::path::PathBuf;
 use oxpinyin_datagen::write::Backend;
 use oxpinyin_datagen::{addon, punct, system};
 
+/// Determines whether strict mode is enabled through the `OXPINYIN_DATAGEN_STRICT` environment variable.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(
+///     strict(),
+///     std::env::var_os("OXPINYIN_DATAGEN_STRICT").is_some()
+/// );
+/// ```
 fn strict() -> bool {
     std::env::var_os("OXPINYIN_DATAGEN_STRICT").is_some()
 }
 
+/// Locates the cached model directory when available.
+///
+/// Returns `None` when no model cache is configured. Panics when a configured
+/// model directory cannot be used.
+///
+/// # Examples
+///
+/// ```
+/// let cached_model = model_dir();
+/// if let Some(path) = cached_model {
+///     assert!(path.is_dir());
+/// }
+/// ```
+fn model_dir() -> Option<PathBuf>
 fn model_dir() -> Option<PathBuf> {
     match pinyin_oracle::model_cache::locate_model_dir() {
         Ok(Some(dir)) => Some(dir),
@@ -32,10 +56,36 @@ fn model_dir() -> Option<PathBuf> {
     }
 }
 
+/// Resolves the committed `w3` fixture directory.
+
+///
+
+/// # Examples
+
+///
+
+/// ```
+
+/// let path = fixtures_w3();
+
+/// assert!(path.ends_with("fixtures/w3"));
+
+/// ```
 fn fixtures_w3() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3")
 }
 
+/// Creates a unique temporary directory for generated output.
+///
+/// Any existing directory at the generated path is removed before the new directory is created.
+///
+/// # Examples
+///
+/// ```
+/// let dir = temp_dir("example");
+/// assert!(dir.is_dir());
+/// let _ = std::fs::remove_dir_all(dir);
+/// ```
 fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "oxpinyin-datagen-fixtures-{name}-{}-{}",
@@ -50,6 +100,21 @@ fn temp_dir(name: &str) -> PathBuf {
     dir
 }
 
+/// Compares the rows in a produced Redb table with those in a frozen fixture.
+///
+/// Panics if either table cannot be read, their row counts differ, or any row differs.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::path::Path;
+///
+/// assert_same_rows(
+///     "pinyin",
+///     Path::new("target/produced.redb"),
+///     Path::new("fixtures/w3/pinyin.redb"),
+/// );
+/// ```
 fn assert_same_rows(name: &str, produced: &std::path::Path, frozen: &std::path::Path) {
     let produced = Backend::Redb.read_all(produced).unwrap();
     let frozen = Backend::Redb.read_all(frozen).unwrap();

@@ -41,8 +41,16 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// Serialises the manifest.
-    #[must_use]
+    /// Serializes the manifest as newline-delimited metadata and table fingerprint records.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// let text = manifest.render();
+    /// assert!(text.contains("table=users"));
+    /// ```
+    ///
+    /// Returns the serialized manifest text.
     pub fn render(&self) -> String {
         let mut out = String::new();
         out.push_str(MANIFEST_SCHEMA);
@@ -62,11 +70,28 @@ impl Manifest {
         out
     }
 
-    /// Fingerprints an already-written table file.
+    /// Records the fingerprint and row count of an already-written table file.
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - The table filename to store in the record.
+    /// * `path` - The path to the table file.
+    /// * `records` - The number of rows in the table.
     ///
     /// # Errors
     ///
-    /// I/O failure reading the file back.
+    /// Returns an error if the table file cannot be read.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn example() -> Result<(), DatagenError> {
+    /// let record = Manifest::record_file("words.csv", std::path::Path::new("words.csv"), 42)?;
+    /// assert_eq!(record.file, "words.csv");
+    /// assert_eq!(record.records, 42);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn record_file(file: &str, path: &Path, records: u64) -> Result<TableRecord, DatagenError> {
         let bytes = fs::read(path)?;
         Ok(TableRecord {
@@ -76,11 +101,20 @@ impl Manifest {
         })
     }
 
-    /// Writes the manifest into `out_dir`.
+    /// Writes the rendered manifest to `datagen-manifest.txt` in `out_dir`.
     ///
     /// # Errors
     ///
-    /// I/O failure.
+    /// Returns a [`DatagenError`] if the manifest cannot be written.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use std::path::Path;
+    /// # let manifest = todo!();
+    /// manifest.write_to_dir(Path::new("output"))?;
+    /// # Ok::<(), DatagenError>(())
+    /// ```
     pub fn write_to_dir(&self, out_dir: &Path) -> Result<(), DatagenError> {
         fs::write(out_dir.join(MANIFEST_FILE), self.render())?;
         Ok(())

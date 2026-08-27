@@ -62,7 +62,18 @@ impl SegmenterPaths {
         Ok(Self::from_dirs(&export, &model))
     }
 
-    /// Builds paths from an export directory and a model20 directory.
+    /// Builds paths to the required segmenter files from export and model directories.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    ///
+    /// let paths = SegmenterPaths::from_dirs(
+    ///     Path::new("/data/export"),
+    ///     Path::new("/data/model"),
+    /// );
+    /// ```
     #[must_use]
     pub fn from_dirs(export: &Path, model: &Path) -> Self {
         Self {

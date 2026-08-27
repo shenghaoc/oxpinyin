@@ -41,6 +41,21 @@ fn locate_bin(name: &str) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+/// Finds the data directory specified by an environment variable when it contains
+/// a `table.conf` file and at least one directory entry.
+///
+/// # Examples
+///
+/// ```
+/// if let Some(path) = locate_data("LIBPINYIN_DATA_DIR") {
+///     assert!(path.join("table.conf").is_file());
+/// }
+/// ```
+///
+/// # Returns
+///
+/// The configured data directory, or `None` if the environment variable is
+/// unset or the directory does not contain the required files.
 fn locate_data(name: &str) -> Option<PathBuf> {
     let path = PathBuf::from(std::env::var_os(name)?);
     (path.join("table.conf").is_file()
@@ -162,8 +177,20 @@ impl Drop for PinDir {
     }
 }
 
-/// Parses `estimate_interpolation` stdout: `token:%d lambda:%f` per
-/// context and `average lambda:%f`.
+/// Extracts per-token and average interpolation values from estimator output.
+///
+/// Unrecognized or malformed lines are ignored.
+///
+/// # Examples
+///
+/// ```
+/// let (per_context, average) = parse_estimate_stdout(
+///     "token:1 lambda:0.250000\naverage lambda:0.500000\n",
+/// );
+///
+/// assert_eq!(per_context.get(&1), Some(&"0.250000".to_string()));
+/// assert_eq!(average.as_deref(), Some("0.500000"));
+/// ```
 fn parse_estimate_stdout(text: &str) -> (BTreeMap<u32, String>, Option<String>) {
     let mut per_context = BTreeMap::new();
     let mut average = None;

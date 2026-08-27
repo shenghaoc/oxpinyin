@@ -31,11 +31,18 @@ pub enum Backend {
 }
 
 impl Backend {
-    /// Parses a `--backend` argument.
+    /// Parses a backend name into its corresponding [`Backend`] variant.
     ///
     /// # Errors
     ///
-    /// Unknown backend names.
+    /// Returns a consistency error when `name` is not `redb`, `lmdb`, or `tkrzw`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(Backend::parse("redb")?, Backend::Redb);
+    /// # Ok::<(), DatagenError>(())
+    /// ```
     pub fn parse(name: &str) -> Result<Self, DatagenError> {
         match name {
             "redb" => Ok(Self::Redb),
@@ -47,7 +54,17 @@ impl Backend {
         }
     }
 
-    /// Whether this backend was compiled in (its cargo feature is on).
+    /// Determines whether this backend is enabled in the current build.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the backend is compiled in, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert!(Backend::Redb.available());
+    /// ```
     #[must_use]
     pub fn available(self) -> bool {
         match self {
@@ -57,7 +74,19 @@ impl Backend {
         }
     }
 
-    /// File extension for this backend's tables.
+    /// Identifies the file extension used for tables created by this backend.
+    ///
+    /// # Returns
+    ///
+    /// The backend-specific file extension without a leading period.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(Backend::Redb.extension(), "redb");
+    /// assert_eq!(Backend::Lmdb.extension(), "lmdb");
+    /// assert_eq!(Backend::Tkrzw.extension(), "tkt");
+    /// ```
     #[must_use]
     pub fn extension(self) -> &'static str {
         match self {
@@ -67,8 +96,15 @@ impl Backend {
         }
     }
 
-    /// The cargo feature that compiles this backend in (differs from the
-    /// file extension for Tkrzw).
+    /// Identifies the Cargo feature required to compile this backend.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(Backend::Redb.feature(), "redb");
+    /// assert_eq!(Backend::Lmdb.feature(), "lmdb");
+    /// assert_eq!(Backend::Tkrzw.feature(), "tkrzw");
+    /// ```
     #[must_use]
     pub fn feature(self) -> &'static str {
         match self {
@@ -78,18 +114,36 @@ impl Backend {
         }
     }
 
-    /// Output path for a table base name (e.g. `pinyin_index`).
+    /// Builds the output path for a table base name using this backend's file extension.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    ///
+    /// let path = Backend::Redb.table_path(Path::new("output"), "pinyin_index");
+    /// assert_eq!(path, Path::new("output/pinyin_index.redb"));
+    /// ```
     #[must_use]
     pub fn table_path(self, out_dir: &Path, base: &str) -> PathBuf {
         out_dir.join(format!("{base}.{}", self.extension()))
     }
 
-    /// Writes `entries` to `path` through this backend.
+    /// Writes `entries` to `path` using this backend.
     ///
     /// # Errors
     ///
-    /// Fails if the backend was not compiled in, or on any store or
-    /// verification failure.
+    /// Returns an error if the backend is unavailable, writing fails, or verification
+    /// detects an inconsistency.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let entries = Entries::default();
+    /// let path = std::path::Path::new("target/example.redb");
+    ///
+    /// Backend::Redb.write(path, &entries).unwrap();
+    /// ```
     pub fn write(self, path: &Path, entries: &Entries) -> Result<(), DatagenError> {
         match self {
             Self::Redb => write_with::<oxpinyin_store::RedbStore>(path, entries),
@@ -106,14 +160,31 @@ impl Backend {
         }
     }
 
-    /// Reads every `(key, value)` pair of the table at `path`, in ascending
-    /// key-byte order.
+    /// Reads every `(key, value)` pair from the table at `path` in ascending key-byte order.
     ///
     /// # Errors
     ///
-    /// Fails if the backend was not compiled in, or on any store failure.
+    /// Returns an error if the backend is unavailable or the store cannot be read.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::path::Path;
+    ///
+    /// let entries = Backend::Redb.read_all(Path::new("store.db"))?;
+    /// # Ok::<(), DatagenError>(())
+    /// ```
     pub fn read_all(self, path: &Path) -> Result<Entries, DatagenError> {
         use oxpinyin_store::ReadStore;
+        /// Collects all key-value pairs from a read-only store.
+        ///
+        /// # Examples
+        ///
+        /// ```ignore
+        /// let rows = collect::<ReadOnlyStore>(path)?;
+        /// assert_eq!(rows.len(), 2);
+        /// # Ok::<(), DatagenError>(())
+        /// ```
         fn collect<S: ReadStore>(path: &Path) -> Result<Entries, DatagenError> {
             let store = S::open_read_only(path)?;
             let mut rows: Entries = Vec::new();

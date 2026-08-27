@@ -90,17 +90,25 @@ pub struct SystemStats {
     pub special_tokens: u64,
 }
 
-/// Compiles the system tables from the extracted model20 directory.
+/// Compiles system dictionary and interpolation data into deterministic indexes and statistics.
 ///
-/// `model_dir` must hold the four system `.table` files and
-/// `interpolation2.text` (the fetch cache from `tools/model/fetch-model.sh`
-/// does).
+/// `model_dir` must contain the four system `.table` files and
+/// `interpolation2.text`. The selected `subset` controls whether all data or the
+/// mini fixture's restricted data is retained.
 ///
 /// # Errors
 ///
-/// Fails on missing files, unparsable lines, token/word contradictions
-/// between `interpolation2.text` and the tables, duplicate 2-gram pairs, or
-/// u32 overflow of a bigram total — never silently drops data.
+/// Returns an error for missing or malformed model files, inconsistent token and
+/// phrase data, duplicate bigram pairs, invalid counts, or bigram total overflow.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use std::path::Path;
+/// # use oxpinyin_datagen::system::{compile, Subset};
+/// let (tables, stats) = compile(Path::new("model20"), Subset::Full)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn compile(
     model_dir: &Path,
     subset: Subset,
@@ -332,10 +340,35 @@ enum Section {
     Bigram,
 }
 
-/// Validates one `token word` pair from `interpolation2.text` against the
-/// compiled phrase index, upstream `taglib_validate_token_with_string`
-/// semantics: top-byte-zero tokens are the special table (`<start>`,
-/// null) and pass without a lookup.
+/// Validates a model token and word pair against the compiled phrase index.
+///
+/// Tokens with a zero top byte are accepted as special tokens and increment
+/// `special_tokens`. Other tokens must be present in `phrases` with matching
+/// text.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::BTreeMap;
+///
+/// let mut phrases = BTreeMap::new();
+/// phrases.insert(0x01020304, "hello".to_owned());
+/// let mut special_tokens = 0;
+///
+/// assert!(validate_pair(
+///     &phrases,
+///     "16909060",
+///     "hello",
+///     &mut special_tokens,
+/// ).is_ok());
+/// assert_eq!(special_tokens, 0);
+/// ```
+///
+/// # Errors
+///
+/// Returns an error when the token is not a valid unsigned integer, when a
+/// regular token is missing from `phrases`, or when its associated word differs
+/// from `word`.
 fn validate_pair(
     phrases: &BTreeMap<u32, String>,
     token: &str,
@@ -360,6 +393,22 @@ fn validate_pair(
     }
 }
 
+/// Creates a parse error associated with a source path and line number.
+///
+/// # Examples
+///
+/// ```
+/// let error = bad_line(std::path::Path::new("model.table"), 7, "invalid token");
+///
+/// assert!(matches!(
+///     error,
+///     DatagenError::Parse { line: 7, ref message, .. } if message == "invalid token"
+/// ));
+/// ```
+///
+/// # Returns
+///
+/// A [`DatagenError::Parse`] containing the source path, line number, and message.
 fn bad_line(path: &Path, line: usize, message: &str) -> DatagenError {
     DatagenError::Parse {
         path: path.to_path_buf(),
@@ -385,6 +434,20 @@ mod tests {
         dir
     }
 
+    /// Writes text content to a file.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the file cannot be written.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let path = std::env::temp_dir().join("oxpinyin_write_example.txt");
+    /// write(&path, "hello");
+    /// assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
+    /// std::fs::remove_file(path).unwrap();
+    /// ```
     fn write(path: &std::path::PathBuf, content: &str) {
         std::fs::write(path, content).unwrap();
     }

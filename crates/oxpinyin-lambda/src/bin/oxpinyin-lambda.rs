@@ -34,6 +34,21 @@ fn main() -> ExitCode {
     }
 }
 
+/// Parses command-line options, loads the phrase index, estimates interpolation lambdas, and prints the results.
+///
+/// # Examples
+///
+/// ```no_run
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// run()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Returns
+///
+/// `Ok(())` after printing the estimates, or an error if argument parsing, input
+/// loading, phrase-index loading, counting, or estimation fails.
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut skip_pi_gram = false;
     let mut deleted_path: Option<PathBuf> = None;
@@ -111,6 +126,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Prints command-line usage and option descriptions for the lambda estimation tool.
+///
+/// # Examples
+///
+/// ```
+/// print_help();
+/// ```
 fn print_help() {
     print!(
         "Usage: oxpinyin-lambda [--deleted HELDOUT] [--export-dir DIR] [--skip-pi-gram-training] SYSTEM\n\

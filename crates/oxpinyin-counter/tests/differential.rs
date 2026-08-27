@@ -23,12 +23,28 @@ fn fixture_ngseg() -> PathBuf {
     repo_root().join("fixtures/w9/segmenter-ngseg.txt")
 }
 
+/// Locates the committed counter n-gram manifest.
+///
+/// # Examples
+///
+/// ```
+/// let path = manifest_path();
+/// assert!(path.ends_with("fixtures/w9/counter-ngram.manifest"));
+/// ```
 fn manifest_path() -> PathBuf {
     repo_root().join("fixtures/w9/counter-ngram.manifest")
 }
 
-/// Runs the Rust counter over the ngseg fixture with the system-table export
-/// phrase index as the freq-1 floor seed.
+/// Counts n-grams in the ngseg fixture using the system-table phrase index.
+///
+/// # Examples
+///
+/// ```
+/// let counts = rust_counts();
+/// assert!(counts.is_some());
+/// ```
+///
+/// Returns `None` when the system-table export, phrase index, fixture, or count operation is unavailable.
 fn rust_counts() -> Option<Counts> {
     let export = locate_export_dir()?;
     let lexicon = PhraseLexicon::from_phrase_index(&export.join("phrase_index.redb")).ok()?;

@@ -26,6 +26,20 @@ fn main() -> ExitCode {
     }
 }
 
+/// Runs the command-line interface and writes canonical integer-count output.
+///
+/// # Examples
+///
+/// ```no_run
+/// run()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Returns
+///
+/// `Ok(())` when processing completes successfully; an error if command-line
+/// arguments, the phrase index, input, encoding, counting, or output cannot be
+/// processed.
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut skip_pi_gram = false;
     let mut output: Option<PathBuf> = None;
@@ -90,6 +104,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Prints the command-line usage information and supported options.
+///
+/// # Examples
+///
+/// ```
+/// print_help();
+/// ```
 fn print_help() {
     print!(
         "Usage: oxpinyin-counter [--skip-pi-gram-training] [-o outputfile] [inputfile]\n\

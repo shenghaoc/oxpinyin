@@ -27,6 +27,18 @@ fn main() -> ExitCode {
     }
 }
 
+/// Processes an ngseg token stream and emits interpolation2 grammar text.
+///
+/// The input is read from the specified path or standard input, and the output is
+/// written to the specified path or standard output. The phrase index is loaded
+/// from the configured export directory.
+///
+/// # Examples
+///
+/// ```no_run
+/// let result = run();
+/// assert!(result.is_ok());
+/// ```///
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut skip_pi_gram = false;
     let mut output: Option<PathBuf> = None;
@@ -91,6 +103,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Prints the command-line usage information and supported options.
+///
+/// # Examples
+///
+/// ```
+/// print_help();
+/// ```
 fn print_help() {
     print!(
         "Usage: oxpinyin-emitter [--skip-pi-gram-training] [-o outputfile] [inputfile]\n\

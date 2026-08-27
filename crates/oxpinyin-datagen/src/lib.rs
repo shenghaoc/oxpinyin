@@ -129,6 +129,16 @@ impl fmt::Display for DatagenError {
 }
 
 impl std::error::Error for DatagenError {
+    /// Provides the underlying cause for I/O and storage errors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::error::Error;
+    ///
+    /// let error = DatagenError::Io(std::io::Error::other("read failed"));
+    /// assert!(error.source().is_some());
+    /// ```
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
@@ -139,6 +149,14 @@ impl std::error::Error for DatagenError {
 }
 
 impl From<std::io::Error> for DatagenError {
+    /// Converts an I/O error into a data-generation error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let error = DatagenError::from(std::io::Error::other("read failed"));
+    /// assert!(matches!(error, DatagenError::Io(_)));
+    /// ```
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)
     }
@@ -150,11 +168,33 @@ impl From<oxpinyin_store::StoreError> for DatagenError {
     }
 }
 
-/// FNV-1a 64-bit, dependency-free and deterministic across platforms.
+/// Computes a deterministic 64-bit FNV-1a fingerprint for change detection.
+
 ///
-/// Same construction as the W9 training manifests
-/// (`fixtures/w9/*.manifest`): a change-detection fingerprint, not a
-/// cryptographic digest.
+
+/// This fingerprint is not a cryptographic digest.
+
+///
+
+/// # Examples
+
+///
+
+/// ```
+
+/// assert_eq!(fnv1a64(b""), 0xcbf2_9ce4_8422_2325);
+
+/// assert_eq!(fnv1a64(b"a"), 0xaf63_dc4c_8601_ec8c);
+
+/// ```
+
+///
+
+/// # Returns
+
+///
+
+/// The 64-bit FNV-1a fingerprint of `bytes`.
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for &byte in bytes {

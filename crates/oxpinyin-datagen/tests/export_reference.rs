@@ -16,10 +16,36 @@ use std::path::PathBuf;
 
 use oxpinyin_datagen::system;
 
+/// Checks whether strict data-generation mode is enabled through the environment.
+///
+/// # Examples
+///
+/// ```
+/// let strict_mode = strict();
+/// assert!(strict_mode == true || strict_mode == false);
+/// ```
+///
+/// Returns `true` when `OXPINYIN_DATAGEN_STRICT` is set, and `false` otherwise.
 fn strict() -> bool {
     std::env::var_os("OXPINYIN_DATAGEN_STRICT").is_some()
 }
 
+/// Selects the reference export directory from the environment or the default location.
+///
+/// The `OXPINYIN_DATAGEN_REF_DIR` environment variable takes precedence. When it is
+/// unset, the default directory is used only if it exists.
+///
+/// # Examples
+///
+/// ```
+/// let reference_directory = reference_dir();
+/// assert!(reference_directory.is_none() || reference_directory.is_some());
+/// ```
+///
+/// # Returns
+///
+/// `Some` with the configured or existing default directory, or `None` when no
+/// reference directory is available.
 fn reference_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("OXPINYIN_DATAGEN_REF_DIR") {
         return Some(PathBuf::from(dir));
@@ -28,6 +54,20 @@ fn reference_dir() -> Option<PathBuf> {
     default.is_dir().then_some(default)
 }
 
+/// Locates the cached model directory when it is available.
+///
+/// # Panics
+///
+/// Panics if a configured model directory exists but cannot be used.
+///
+/// # Examples
+///
+/// ```
+/// let model_directory = model_dir();
+/// if let Some(path) = model_directory {
+///     assert!(path.is_dir());
+/// }
+/// ```
 fn model_dir() -> Option<PathBuf> {
     match pinyin_oracle::model_cache::locate_model_dir() {
         Ok(Some(dir)) => Some(dir),
@@ -36,6 +76,19 @@ fn model_dir() -> Option<PathBuf> {
     }
 }
 
+/// Loads all key-value rows from a reference table into an ordered map.
+///
+/// # Examples
+///
+/// ```
+/// let rows = read_reference(std::path::Path::new("reference.redb"));
+/// assert_eq!(rows.get(b"key".as_slice()), Some(&b"value".to_vec()));
+/// ```
+///
+/// # Panics
+///
+/// Panics if the reference table cannot be read.
+///
 fn read_reference(path: &std::path::Path) -> BTreeMap<Vec<u8>, Vec<u8>> {
     let mut rows = BTreeMap::new();
     oxpinyin_data::table::for_each_row(path, |key, value| {
@@ -46,6 +99,22 @@ fn read_reference(path: &std::path::Path) -> BTreeMap<Vec<u8>, Vec<u8>> {
     rows
 }
 
+/// Verifies that compiled table entries exactly match the reference entries.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::BTreeMap;
+///
+/// let compiled = vec![(b"ni".to_vec(), b"你".to_vec())];
+/// let mut reference = BTreeMap::new();
+/// reference.insert(b"ni".to_vec(), b"你".to_vec());
+///
+/// compare("pinyin_index", &compiled, &reference);
+/// ```
+///
+/// `name` identifies the table in assertion messages. `compiled` contains the
+/// generated entries, while `reference` contains the expected entries.
 fn compare(name: &str, compiled: &[(Vec<u8>, Vec<u8>)], reference: &BTreeMap<Vec<u8>, Vec<u8>>) {
     let compiled_map: BTreeMap<&Vec<u8>, &Vec<u8>> = compiled.iter().map(|(k, v)| (k, v)).collect();
     assert_eq!(
