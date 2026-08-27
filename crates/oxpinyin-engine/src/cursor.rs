@@ -303,7 +303,7 @@ fn matrix_spans(
 ) -> Result<(Vec<(usize, usize)>, usize), EngineError> {
     let graph = SegmentGraph::build_with_options(input, options).map_err(EngineError::Graph)?;
     let parsed = graph.consumed();
-    let matrix = build_scan_matrix(&graph, options);
+    let matrix = build_scan_matrix(&graph, options, true);
     let mut spans = Vec::new();
     for column in &matrix {
         for key in column {

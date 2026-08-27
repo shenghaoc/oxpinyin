@@ -235,6 +235,8 @@ mod contract_tests;
 #[cfg(test)]
 mod e2e_tests;
 #[cfg(test)]
+mod exact_scheme_tests;
+#[cfg(test)]
 mod guess_offset_tests;
 #[cfg(test)]
 mod test_support;
