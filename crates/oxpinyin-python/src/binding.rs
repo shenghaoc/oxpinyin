@@ -333,13 +333,16 @@ impl Engine {
 
     /// Candidates anchored at byte `offset` of the raw input, mirroring the
     /// per-offset window the C ABI builds; does not disturb engine state.
-    fn candidates_at(&self, offset: usize) -> PyResult<Vec<PyCandidate>> {
-        let mut guard = self.guard()?;
-        let window = guard
-            .session
-            .candidates_at(offset)
-            .map_err(|error| engine_error(&error))?;
-        Ok(snapshot(&window))
+    ///
+    /// Leaving state undisturbed does not make this a snapshot read:
+    /// `Session::candidates_at` takes `&mut self` and runs `scan_window`, a
+    /// real backend scan. It therefore decodes with the interpreter
+    /// detached, like every other decoding entry point.
+    fn candidates_at(&self, py: Python<'_>, offset: usize) -> PyResult<Vec<PyCandidate>> {
+        self.with_session(py, move |inner| {
+            let window = inner.session.candidates_at(offset)?;
+            Ok(snapshot(&window))
+        })
     }
 
     /// Available sentence rows after :meth:`guess_sentence`, best first.

@@ -145,8 +145,8 @@ Engines may be shared across Python threads. Every operation serializes on
 an internal mutex, so concurrent `lookup(...)` calls are correct and
 deterministic (the sequence interleaves, the results do not change).
 Operations that decode — `lookup`, `type_pinyin`, `select`, `commit`,
-`guess_sentence`, `train`, `save` — release the GIL around the engine call;
-snapshot-style reads (`candidates`, `candidates_at`, `sentences`,
+`guess_sentence`, `train`, `save`, `candidates_at` — release the GIL around
+the engine call; snapshot-style reads (`candidates`, `sentences`,
 `sentence`, and the property getters) hold it while guarding. This
 deliberately exceeds what a TSF/IMK main-thread shell needs; it costs one
 lock acquisition per call.
