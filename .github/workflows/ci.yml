@@ -58,7 +58,7 @@ jobs:
   # suite, which regenerates the pure-Rust transcript via `native-dump` and
   # compares it against the binding's replay of the same corpus. Runs on a
   # free-threaded interpreter, which is what makes the shared-engine
-  # thread-safety test mean anything; see the version pin below.
+  # thread-safety test mean anything; see the version selector below.
   python:
     runs-on: ubuntu-latest
     steps:
@@ -69,42 +69,33 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
-          # Free-threaded, pinned exactly. `test_shared_engine_is_thread_safe`
-          # is near-vacuous under a GIL — the interpreter serialises the
-          # worker loop, so the shared-engine lock is never actually
-          # contended — and free-threaded is the platform this binding is
-          # written for, so it is the one the binding is tested on.
+          # Free-threaded. `test_shared_engine_is_thread_safe` is
+          # near-vacuous under a GIL — the interpreter serialises the worker
+          # loop, so the shared-engine lock is never actually contended — and
+          # free-threaded is the platform this binding is written for, so it
+          # is the one the binding is tested on.
           #
-          # The spelling is forced. There is no `3.15.0t-rc.1`: the `t`
-          # suffix combines only with x.y, x.y.z or x.y-dev, and
-          # `allow-prereleases` takes effect only for a bare x.y range. The
-          # floating forms (`3.15t`, `3.15t-dev`) resolve to whatever
-          # prerelease is current that day, which would make a failure here
-          # unreproducible — this repository pins maturin, pytest, the oracle
-          # image by digest and every action by commit. An exact
-          # free-threaded prerelease pin therefore has to be the semver
-          # string plus the separate `freethreaded` input.
-          python-version: '3.15.0-rc.1'
-          freethreaded: true
-      - name: Confirm the interpreter is free-threaded
+          # `3.14t` is setup-python's free-threaded spelling: the `t` suffix
+          # combines with x.y, x.y.z or x.y-dev. 3.14 has shipped, so this
+          # resolves to the current stable 3.14.x without
+          # `allow-prereleases`.
+          python-version: '3.14t'
+      - name: Verify free-threaded build
         # A silent fallback to a GIL build would leave this job green while
         # proving none of what it exists to prove, so this gates rather than
-        # merely logging.
+        # merely logging. `sys._is_gil_enabled` only exists from 3.13, so it
+        # is probed rather than called outright — a pre-3.13 fallback is
+        # exactly what this guards against, and it should report that rather
+        # than raise AttributeError.
         run: |
-          python -VV
-          python - <<'PY'
+          python -c "
           import sys, sysconfig
-
-          # `sys._is_gil_enabled` only exists from 3.13; getattr keeps the
-          # clear message for the pre-3.13 fallback this check guards against,
-          # instead of an AttributeError traceback.
-          disabled = sysconfig.get_config_var("Py_GIL_DISABLED")
-          enabled = getattr(sys, "_is_gil_enabled", lambda: True)()
-          print("Py_GIL_DISABLED:", disabled)
-          print("sys._is_gil_enabled():", enabled)
-          if disabled != 1 or enabled:
-              raise SystemExit("not a free-threaded interpreter; this job would prove nothing")
-          PY
+          gil = getattr(sys, '_is_gil_enabled', None)
+          disabled = sysconfig.get_config_var('Py_GIL_DISABLED')
+          if gil is None or gil() or not disabled:
+              raise SystemExit('Expected free-threaded build; got GIL-enabled or pre-3.13')
+          print(f'ok: {sys.version}, Py_GIL_DISABLED={disabled}')
+          "
       - name: Lint the binding feature set
         run: cargo clippy --locked -p oxpinyin-python --features bindings --all-targets -- -D warnings
       - name: Build and install the wheel
