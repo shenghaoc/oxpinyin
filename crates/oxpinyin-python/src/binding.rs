@@ -97,8 +97,14 @@ fn lock_error() -> PyErr {
 /// Create with a system data directory holding ``pinyin_index.redb``,
 /// ``phrase_index.redb`` and ``bigram.redb``; pass ``user_dir`` to enable
 /// learning. Usable as a :pykeyword:`with` block, though nothing needs
-/// releasing — see :meth:`close`. Safe to share across threads: calls
-/// serialize on an internal lock and run with the GIL released.
+/// releasing — see :meth:`close`.
+///
+/// Shareable across threads one call at a time: every call takes an internal
+/// lock, so a single call is atomic, but a *sequence* of calls is not — the
+/// lock is released between them, and another thread's call can land in the
+/// gap. Code that needs several members to agree must hold its own lock
+/// around the sequence, or give each thread its own engine. Decoding calls
+/// release the GIL while they run.
 #[pyclass(frozen)]
 pub struct Engine {
     inner: Arc<Mutex<EngineInner>>,
