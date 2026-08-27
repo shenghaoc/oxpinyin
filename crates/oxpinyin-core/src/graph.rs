@@ -33,6 +33,61 @@ pub enum GraphError {
         /// Largest length accepted.
         limit: usize,
     },
+    /// [`SegmentGraph::build_exact`] was given segments that do not
+    /// describe a walk over the input: out-of-order, overlapping,
+    /// out-of-bounds, or empty spans.
+    ExactSegmentsInvalid,
+}
+
+/// One pre-parsed syllable for [`SegmentGraph::build_exact`]: the byte
+/// span of the key's own text and the key itself, with its tone.
+///
+/// The span excludes separator bytes; a separator between two segments
+/// rides on the following edge exactly as in the parsed graph.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExactSegment {
+    start: usize,
+    end: usize,
+    key: SyllableKey,
+    tone: u8,
+}
+
+impl ExactSegment {
+    /// A segment whose own text spans `start..end` in the exact-mode
+    /// input.
+    #[must_use]
+    pub const fn new(start: usize, end: usize, key: SyllableKey, tone: u8) -> Self {
+        Self {
+            start,
+            end,
+            key,
+            tone,
+        }
+    }
+
+    /// Byte offset where the key's own text begins.
+    #[must_use]
+    pub const fn start(&self) -> usize {
+        self.start
+    }
+
+    /// Byte offset one past the key's own text.
+    #[must_use]
+    pub const fn end(&self) -> usize {
+        self.end
+    }
+
+    /// The pre-parsed key.
+    #[must_use]
+    pub const fn key(&self) -> SyllableKey {
+        self.key
+    }
+
+    /// The tone consumed with the key (`0` when toneless).
+    #[must_use]
+    pub const fn tone(&self) -> u8 {
+        self.tone
+    }
 }
 
 impl fmt::Display for GraphError {
@@ -43,6 +98,9 @@ impl fmt::Display for GraphError {
                     formatter,
                     "input of {len} bytes exceeds the {limit}-byte limit"
                 )
+            }
+            Self::ExactSegmentsInvalid => {
+                formatter.write_str("exact segments are not a walk over the input")
             }
         }
     }
@@ -239,6 +297,92 @@ impl SegmentGraph {
             let range = starts[node] as usize..starts[node + 1] as usize;
             for edge in &edges[range] {
                 reachable[edge.to()] = true;
+            }
+        }
+
+        Ok(Self {
+            input_len: input.len(),
+            edges,
+            starts,
+            reachable,
+            consumed,
+        })
+    }
+
+    /// Builds the graph for an already-parsed input: one [`EdgeKind::Exact`]
+    /// edge per [`ExactSegment`], and nothing else.
+    ///
+    /// This is the decoder input for schemes whose keys come from their own
+    /// parser — zhuyin and double pinyin. Upstream's decoder receives those
+    /// exact `ChewingKey`s and never re-segments them, so the joined
+    /// full-pinyin text must not go through [`Self::build_with_options`]:
+    /// the pinyin inventory would re-split ambiguous spellings (`bie` into
+    /// `bi`+`e`) and truncate spellings that exist only in the scheme's own
+    /// index (`den`, `nia`, `eng` — no pinyin key, so the text would
+    /// re-parse as a shorter syllable plus leftovers).
+    ///
+    /// A separator byte between two segments rides on the following edge
+    /// (`from` = the previous segment's end), matching the parsed graph's
+    /// `crosses_separator` convention.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::InputTooLong`] beyond [`MAX_GRAPH_INPUT`] and
+    /// [`GraphError::ExactSegmentsInvalid`] for out-of-order, overlapping,
+    /// out-of-bounds, or empty spans.
+    pub fn build_exact(input: &[u8], segments: &[ExactSegment]) -> Result<Self, GraphError> {
+        if input.len() > MAX_GRAPH_INPUT {
+            return Err(GraphError::InputTooLong {
+                len: input.len(),
+                limit: MAX_GRAPH_INPUT,
+            });
+        }
+
+        let mut edges: Vec<Edge> = Vec::with_capacity(segments.len());
+        let mut previous_end = 0_usize;
+        for (index, segment) in segments.iter().enumerate() {
+            if segment.end <= segment.start
+                || segment.start < previous_end
+                || segment.end > input.len()
+            {
+                return Err(GraphError::ExactSegmentsInvalid);
+            }
+            let from = if index == 0 { 0 } else { previous_end };
+            let (Ok(from), Ok(to), Ok(start)) = (
+                u32::try_from(from),
+                u32::try_from(segment.end),
+                u32::try_from(segment.start),
+            ) else {
+                return Err(GraphError::ExactSegmentsInvalid);
+            };
+            edges.push(Edge {
+                from,
+                to,
+                syllable_start: start,
+                key: segment.key,
+                kind: EdgeKind::Exact,
+                tone: segment.tone,
+            });
+            previous_end = segment.end;
+        }
+
+        let node_count = input.len() + 1;
+        let mut starts = Vec::with_capacity(node_count + 1);
+        let mut cursor = 0_usize;
+        for node in 0..=node_count {
+            while cursor < edges.len() && edges[cursor].from() < node {
+                cursor += 1;
+            }
+            starts.push(u32::try_from(cursor).unwrap_or(u32::MAX));
+        }
+
+        let mut reachable = vec![false; node_count];
+        reachable[0] = true;
+        let mut consumed = 0_usize;
+        for edge in &edges {
+            if reachable[edge.from()] {
+                reachable[edge.to()] = true;
+                consumed = consumed.max(edge.to());
             }
         }
 
@@ -616,6 +760,99 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn exact_graph_has_one_edge_per_segment_and_no_resplits() {
+        use super::ExactSegment;
+        // "bie" pre-parsed as one key: no bi+e edge may appear.
+        let bie = key_of("bie");
+        let graph = SegmentGraph::build_exact(b"bie", &[ExactSegment::new(0, 3, bie, 0)])
+            .expect("valid segments");
+        let edges: Vec<String> = graph
+            .edges()
+            .iter()
+            .map(|edge| {
+                format!(
+                    "{}-{}:{}:{}",
+                    edge.from(),
+                    edge.to(),
+                    edge.key().text(),
+                    edge.kind().as_wire()
+                )
+            })
+            .collect();
+        assert_eq!(edges, ["0-3:bie:exact"]);
+        assert_eq!(graph.consumed(), 3);
+        let walk: Vec<&str> = graph
+            .fewest_keys(false)
+            .iter()
+            .map(|edge| edge.key().text())
+            .collect();
+        assert_eq!(walk, ["bie"]);
+    }
+
+    #[test]
+    fn exact_graph_separator_rides_the_following_edge() {
+        use super::ExactSegment;
+        let ni = key_of("ni");
+        let bie = key_of("bie");
+        let graph = SegmentGraph::build_exact(
+            b"ni'bie",
+            &[
+                ExactSegment::new(0, 2, ni, 0),
+                ExactSegment::new(3, 6, bie, 0),
+            ],
+        )
+        .expect("valid segments");
+        let edges: Vec<String> = graph
+            .edges()
+            .iter()
+            .map(|edge| {
+                format!(
+                    "{}-{}:@{}:{}",
+                    edge.from(),
+                    edge.to(),
+                    edge.syllable_start(),
+                    edge.crosses_separator()
+                )
+            })
+            .collect();
+        assert_eq!(edges, ["0-2:@0:false", "2-6:@3:true"]);
+        assert_eq!(graph.consumed(), 6);
+    }
+
+    #[test]
+    fn exact_graph_rejects_bad_segments() {
+        use super::ExactSegment;
+        let bie = key_of("bie");
+        // Overlapping.
+        assert_eq!(
+            SegmentGraph::build_exact(
+                b"bie",
+                &[
+                    ExactSegment::new(0, 3, bie, 0),
+                    ExactSegment::new(2, 3, bie, 0)
+                ]
+            ),
+            Err(GraphError::ExactSegmentsInvalid)
+        );
+        // Out of bounds.
+        assert_eq!(
+            SegmentGraph::build_exact(b"bie", &[ExactSegment::new(0, 9, bie, 0)]),
+            Err(GraphError::ExactSegmentsInvalid)
+        );
+        // Empty span.
+        assert_eq!(
+            SegmentGraph::build_exact(b"bie", &[ExactSegment::new(2, 2, bie, 0)]),
+            Err(GraphError::ExactSegmentsInvalid)
+        );
+    }
+
+    /// Resolves a spelling to its key the way the scheme parsers do.
+    fn key_of(spelling: &str) -> SyllableKey {
+        super::key_for_spelling(spelling.as_bytes(), OptionBits::default())
+            .expect("the test spellings are canonical")
     }
 
     /// Renders the graph as `from-to:key:kind:tone` under `options`.

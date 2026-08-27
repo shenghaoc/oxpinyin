@@ -5,8 +5,10 @@ use std::ptr;
 
 use std::sync::atomic::Ordering;
 
+use oxpinyin_core::graph::ExactSegment;
 use oxpinyin_core::{
-    DoublePinyinScheme, FullPinyinScheme, USE_TONE, ZHUYIN_INCOMPLETE, ZhuyinScheme,
+    DoublePinyinKey, DoublePinyinScheme, FullPinyinScheme, SyllableKey, USE_TONE,
+    ZHUYIN_INCOMPLETE, ZhuyinKey, ZhuyinScheme,
 };
 
 use crate::ffi::{cstr_to_string, ffi_catch};
@@ -119,8 +121,8 @@ fn parse_double_more(instance: *mut PinyinInstance, text: &str) -> usize {
         return 0;
     }
 
-    let full = parsed.full_pinyin();
-    if !full.is_empty() && inst.session.replace_raw(&full).is_err() {
+    let (full, segments) = exact_input(parsed.keys());
+    if !full.is_empty() && inst.session.replace_raw_exact(&full, &segments).is_err() {
         return 0;
     }
 
@@ -173,8 +175,8 @@ fn parse_chewing_more(instance: *mut PinyinInstance, text: &str) -> usize {
         return 0;
     }
 
-    let full = parsed.full_pinyin();
-    if !full.is_empty() && inst.session.replace_raw(&full).is_err() {
+    let (full, segments) = exact_input(parsed.keys());
+    if !full.is_empty() && inst.session.replace_raw_exact(&full, &segments).is_err() {
         return 0;
     }
 
@@ -182,6 +184,54 @@ fn parse_chewing_more(instance: *mut PinyinInstance, text: &str) -> usize {
     inst.zhuyin_input = text.to_owned();
     inst.zhuyin_parse = Some(parsed);
     inst.parsed_len
+}
+
+/// Builds the exact-decoder input for a scheme parse: the `'`-joined
+/// full-pinyin text plus one [`ExactSegment`] per key over that text.
+///
+/// The session's graph then carries exactly the scheme parser's keys —
+/// the pinyin inventory never re-segments the joined spelling (upstream's
+/// decoder receives the parser's `ChewingKey`s; `docs/findings/
+/// bopomofo-spec.md`).
+fn exact_input(keys: &[impl ExactKey]) -> (String, Vec<ExactSegment>) {
+    let mut text = String::new();
+    let mut segments = Vec::with_capacity(keys.len());
+    for key in keys {
+        if !text.is_empty() {
+            text.push('\'');
+        }
+        let start = text.len();
+        text.push_str(key.key().text());
+        segments.push(ExactSegment::new(start, text.len(), key.key(), key.tone()));
+    }
+    (text, segments)
+}
+
+/// The per-key view [`exact_input`] needs: the resolved syllable and its
+/// tone.
+trait ExactKey {
+    /// The full-pinyin key this scheme key resolved to.
+    fn key(&self) -> SyllableKey;
+    /// The tone consumed with the key, `0` when toneless.
+    fn tone(&self) -> u8;
+}
+
+impl ExactKey for ZhuyinKey {
+    fn key(&self) -> SyllableKey {
+        ZhuyinKey::key(self)
+    }
+    fn tone(&self) -> u8 {
+        ZhuyinKey::tone(self)
+    }
+}
+
+impl ExactKey for DoublePinyinKey {
+    fn key(&self) -> SyllableKey {
+        DoublePinyinKey::key(*self)
+    }
+    fn tone(&self) -> u8 {
+        0
+    }
 }
 
 fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> usize {
