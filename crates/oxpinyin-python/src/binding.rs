@@ -1,6 +1,6 @@
 //! The PyO3 surface: `oxpinyin._native`.
 //!
-//! Everything here is a thin, Python-shaped wrapper over [`crate::runtime`]
+//! Everything here is a thin, Python-shaped wrapper over `oxpinyin-runtime`
 //! and the public `oxpinyin-engine` session API. No engine logic lives in
 //! this file — the invariant the parity tests enforce is that this layer
 //! only translates representations (Rust structs ↔ Python objects) and
