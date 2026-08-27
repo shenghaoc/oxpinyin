@@ -322,9 +322,16 @@ impl Engine {
     }
 
     /// Filtered parse length of the whole raw buffer.
+    ///
+    /// Reads like state, costs like a decode: `Session::full_parsed_len`
+    /// rebuilds the segment graph over the whole raw buffer and runs
+    /// `fewest_keys` on it, every call. It therefore detaches like the other
+    /// graph-building entry points, even though it takes `&self`. The
+    /// `Python<'_>` token is injected by PyO3 and is not part of the
+    /// property's Python signature.
     #[getter]
-    fn parsed_len(&self) -> PyResult<usize> {
-        Ok(self.guard()?.session.full_parsed_len())
+    fn parsed_len(&self, py: Python<'_>) -> PyResult<usize> {
+        self.with_session(py, |inner| Ok(inner.session.full_parsed_len()))
     }
 
     /// What a shell should display: selected text plus the raw remainder.
