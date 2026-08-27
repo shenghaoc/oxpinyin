@@ -573,12 +573,6 @@ impl Runtime {
         )
     }
 
-    /// Storage locations handed to each session.
-    #[must_use]
-    pub fn paths(&self) -> StoragePaths {
-        self.paths.clone()
-    }
-
     /// A handle clone of the merged dictionary backend.
     #[must_use]
     pub fn dict(&self) -> RuntimeDict {
