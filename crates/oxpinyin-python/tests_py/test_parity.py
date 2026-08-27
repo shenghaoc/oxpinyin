@@ -1,12 +1,14 @@
 """Native-vs-Python parity.
 
 Replays the shared corpus through the Python binding and compares the
-transcript byte-for-byte against the one produced by ``native-dump``, which
-runs the same corpus through the pure-Rust public API in a process that
-never touches Python. Any behavioural difference between the two surfaces —
-candidate ordering, metadata, offsets, sentence rows, commit text — shows up
-as a diff here. See the replay procedure documented at the top of
-``parity-corpus.json``.
+transcript against the one produced by ``native-dump``, which runs the same
+corpus through the pure-Rust public API in a process that never touches
+Python. The comparison is structural — both transcripts are loaded as
+Python objects and their ``events`` compared with ``==`` — not a
+byte-comparison of the serialized files. Any behavioural difference between
+the two surfaces — candidate ordering, metadata, offsets, sentence rows,
+commit text — shows up as a diff here. See the replay procedure documented
+at the top of ``parity-corpus.json``.
 """
 
 import json
