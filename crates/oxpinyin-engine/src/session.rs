@@ -13,7 +13,7 @@ use std::collections::HashSet;
 
 use smallvec::SmallVec;
 
-use oxpinyin_core::graph::{Edge, EdgeKind, SegmentGraph};
+use oxpinyin_core::graph::{Edge, EdgeKind, ExactSegment, SegmentGraph};
 use oxpinyin_core::kbest::{DecodedPath, k_best};
 use oxpinyin_core::scoring::{Scorer, ScoringConfig, ScoringError, expand_keys, key_cost_table};
 use oxpinyin_core::{
@@ -142,6 +142,15 @@ pub struct Session<D, L> {
     consumed: usize,
     /// Filtered parse length of the remaining input, from the last refresh.
     parsed_prefix: usize,
+    /// Pre-parsed exact syllables over `raw` — the scheme-parse seam
+    /// (zhuyin, double pinyin). Empty is the full-pinyin mode, where the
+    /// scan parses `raw` itself; non-empty pins the graph to exactly
+    /// these keys, mirroring upstream's decoder receiving the scheme
+    /// parser's `ChewingKey`s (`docs/findings/bopomofo-spec.md` — the
+    /// joined text must never be re-segmented by the pinyin inventory).
+    /// Spans are absolute over the whole `raw` buffer; any input
+    /// replacement re-establishes them wholesale.
+    exact_segments: Vec<ExactSegment>,
     candidates: CandidateList,
     history: Vec<PhraseToken>,
     scoring: ScoringConfig,
@@ -232,6 +241,7 @@ where
             selected: String::new(),
             consumed: 0,
             parsed_prefix: 0,
+            exact_segments: Vec::new(),
             candidates: CandidateList::default(),
             history: Vec::new(),
             scoring: ScoringConfig::default(),
@@ -328,6 +338,7 @@ where
     /// Returns [`EngineError`] when refreshing candidates hits a backend
     /// failure.
     pub fn type_pinyin(&mut self, text: &str) -> Result<KeyOutcome, EngineError> {
+        self.exact_segments.clear();
         let before = self.raw.len();
         for character in text.chars() {
             if !is_batch_input_character(character) {
@@ -746,8 +757,7 @@ where
     /// into a segment graph (an over-long input; the buffer is capped by
     /// [`MAX_INPUT_BYTES`]).
     pub fn composition_keys(&self) -> Result<Vec<SyllableKey>, EngineError> {
-        let graph = SegmentGraph::build_with_options(self.raw.as_bytes(), self.settings.options)
-            .map_err(EngineError::Graph)?;
+        let graph = self.build_graph_at(0, self.raw.as_bytes())?;
         Ok(graph
             .fewest_keys(self.settings.incomplete())
             .into_iter()
@@ -776,6 +786,7 @@ where
     /// go (`pinyin.cpp:2697` clears `m_constraints`).
     pub fn reset(&mut self) {
         self.reset_composition();
+        self.exact_segments.clear();
         self.raw.clear();
         self.selected.clear();
         self.consumed = 0;
@@ -838,6 +849,49 @@ where
     /// Returns [`EngineError`] when the refresh under the new input hits
     /// a backend failure.
     pub fn replace_raw(&mut self, text: &str) -> Result<(), EngineError> {
+        self.exact_segments.clear();
+        self.refill_raw(text);
+        self.refresh()
+    }
+
+    /// Replaces the raw input with `text` parsed into exactly
+    /// `segments` — the scheme-parse seam (zhuyin, double pinyin).
+    ///
+    /// The scan and the training record use these keys verbatim: the
+    /// graph is one [`EdgeKind::Exact`] chain, so the pinyin inventory
+    /// never re-segments the joined spelling (upstream's decoder receives
+    /// the scheme parser's `ChewingKey`s the same way). Segments are
+    /// absolute over `text`; spans outside the accepted prefix of
+    /// `text` (the [`MAX_INPUT_BYTES`] clamp) are dropped, keeping
+    /// `end <= raw.len()` an invariant of the stored segments.
+    ///
+    /// The selection record and the constraint store survive, as in
+    /// [`Session::replace_raw`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the refresh under the new input hits
+    /// a backend failure.
+    pub fn replace_raw_exact(
+        &mut self,
+        text: &str,
+        segments: &[ExactSegment],
+    ) -> Result<(), EngineError> {
+        self.refill_raw(text);
+        let raw_len = self.raw.len();
+        self.exact_segments = segments
+            .iter()
+            .copied()
+            .filter(|segment| segment.end() <= raw_len)
+            .collect();
+        self.refresh()
+    }
+
+    /// The shared body of the two replace seams: refill the raw buffer
+    /// and clamp the cursor onto the new input. No refresh — the callers
+    /// refresh under their own parse mode (the exact seam must set its
+    /// segments first).
+    fn refill_raw(&mut self, text: &str) {
         self.raw.clear();
         for character in text.chars() {
             if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
@@ -854,8 +908,6 @@ where
         while !self.raw.is_char_boundary(self.consumed) {
             self.consumed -= 1;
         }
-        self.refresh()?;
-        Ok(())
     }
 
     /// Filtered parse length of the remaining input after the last refresh.
@@ -991,13 +1043,16 @@ where
             return Ok(false);
         }
 
-        let graph = SegmentGraph::build_with_options(self.raw.as_bytes(), self.settings.options)
-            .map_err(EngineError::Graph)?;
+        let graph = self.build_graph_at(0, self.raw.as_bytes())?;
         let bound = graph.consumed();
         if bound == 0 {
             return Ok(false);
         }
-        let matrix = build_scan_matrix(&graph, self.settings.options);
+        let matrix = build_scan_matrix(
+            &graph,
+            self.settings.options,
+            self.exact_segments.is_empty(),
+        );
 
         // `pinyin_update_constraints`: re-sync the store to the matrix —
         // grow with free cells (forcings survive typing), shrink by
@@ -1045,8 +1100,7 @@ where
             return Ok(false);
         }
 
-        let graph = SegmentGraph::build_with_options(remaining.as_bytes(), self.settings.options)
-            .map_err(EngineError::Graph)?;
+        let graph = self.build_graph_at(self.consumed, remaining.as_bytes())?;
         let bound = graph.consumed();
         if bound == 0 {
             return Ok(false);
@@ -1054,7 +1108,11 @@ where
 
         let offset = self.consumed;
         self.nbest_rows = if self.model.has_real_unigrams() {
-            let matrix = build_scan_matrix(&graph, self.settings.options);
+            let matrix = build_scan_matrix(
+                &graph,
+                self.settings.options,
+                self.exact_segments.is_empty(),
+            );
             crate::nbest::nbest_sentences(
                 &matrix,
                 bound,
@@ -1194,6 +1252,7 @@ where
     }
 
     fn type_character(&mut self, character: char) -> Result<KeyOutcome, EngineError> {
+        self.exact_segments.clear();
         if !is_input_character(character) {
             return Ok(KeyOutcome::Ignored);
         }
@@ -1446,6 +1505,34 @@ where
     /// lookup offset without disturbing the cached list
     /// ([`Session::candidates_at`]). With `anchor == self.consumed` it
     /// reproduces [`Session::refresh`]'s cached list exactly.
+    /// Builds the working graph for `remaining` (the raw slice from
+    /// `anchor`): the exact-mode chain when the session carries
+    /// pre-parsed scheme segments, the parsed graph otherwise. A segment
+    /// that straddles `anchor` is dropped, not truncated — a mid-key
+    /// anchor is the caller's boundary question, and exact keys do not
+    /// re-syllabify around it.
+    fn build_graph_at(&self, anchor: usize, remaining: &[u8]) -> Result<SegmentGraph, EngineError> {
+        if self.exact_segments.is_empty() {
+            return SegmentGraph::build_with_options(remaining, self.settings.options)
+                .map_err(EngineError::Graph);
+        }
+        let rebased: Vec<ExactSegment> = self
+            .exact_segments
+            .iter()
+            .copied()
+            .filter(|segment| segment.start() >= anchor)
+            .map(|segment| {
+                ExactSegment::new(
+                    segment.start() - anchor,
+                    segment.end() - anchor,
+                    segment.key(),
+                    segment.tone(),
+                )
+            })
+            .collect();
+        SegmentGraph::build_exact(remaining, &rebased).map_err(EngineError::Graph)
+    }
+
     fn scan_window(
         &mut self,
         anchor: usize,
@@ -1472,8 +1559,7 @@ where
         let mut window_addon = core::mem::take(&mut self.scratch_window_addon);
 
         let remaining = &self.raw[anchor..];
-        let graph = SegmentGraph::build_with_options(remaining.as_bytes(), self.settings.options)
-            .map_err(EngineError::Graph)?;
+        let graph = self.build_graph_at(anchor, remaining.as_bytes())?;
         // The trailing-run extension of `full_parsed_len`, applied to the
         // remaining slice (the pin's propagation runs on every parse).
         let parsed_prefix = apostrophe_extended(
@@ -1895,7 +1981,7 @@ where
         into: &mut Vec<Candidate>,
         scratch: &mut ScanScratch<'_>,
     ) -> Result<(), EngineError> {
-        let matrix = build_scan_matrix(graph, options);
+        let matrix = build_scan_matrix(graph, options, self.exact_segments.is_empty());
         let bound = graph.consumed();
         let mut end = 1usize;
         while end <= bound {
@@ -2280,7 +2366,11 @@ impl ScanKey {
 /// keys, plus the resplit, divided and fuzzy additions. See
 /// `docs/findings/matrix-split-tables.md` for the frozen pair lists and
 /// `docs/findings/option-bits.md` for the fuzzy step.
-pub(crate) fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Vec<Vec<ScanKey>> {
+pub(crate) fn build_scan_matrix(
+    graph: &SegmentGraph,
+    options: OptionBits,
+    divided: bool,
+) -> Vec<Vec<ScanKey>> {
     let bound = graph.consumed();
     let mut columns: Vec<Vec<ScanKey>> = vec![Vec::new(); bound + 1];
 
@@ -2289,6 +2379,15 @@ pub(crate) fn build_scan_matrix(graph: &SegmentGraph, options: OptionBits) -> Ve
     let selected: Vec<ScanKey> = selected_edges.iter().map(ScanKey::from_edge).collect();
     for scan_key in &selected {
         columns[scan_key.from].push(*scan_key);
+    }
+
+    // The divided/resplit alternates are a full-pinyin-parse artifact:
+    // upstream generates them inside its pinyin parser's matrix fill, so
+    // keys that arrive pre-parsed (the scheme seam — zhuyin, double
+    // pinyin — exact keys) never gain them. The oracle's candidate list
+    // for ㄅㄧㄝ is the bie rows alone, with no bi+e divided pair.
+    if !divided {
+        return columns;
     }
 
     // 2. Resplit pairs along the selected path. A pair only resplits when
@@ -3617,6 +3716,7 @@ mod tests {
         let columns = super::build_scan_matrix(
             &graph,
             OptionBits::from_bits(PINYIN_INCOMPLETE | USE_TONE | PINYIN_AMB_Z_ZH),
+            true,
         );
         let column: Vec<_> = columns[0]
             .iter()
@@ -3629,7 +3729,7 @@ mod tests {
         // member locks it, because the table structs are zero-tone and the
         // pin matches the full ChewingKey.
         let toneless = SegmentGraph::build_with_options(b"anan", incomplete).expect("valid");
-        let columns = super::build_scan_matrix(&toneless, incomplete);
+        let columns = super::build_scan_matrix(&toneless, incomplete, true);
         assert!(
             columns[0]
                 .iter()
@@ -3637,12 +3737,12 @@ mod tests {
         );
 
         let toned_pair = SegmentGraph::build_with_options(b"a4nan", toned).expect("valid");
-        let columns = super::build_scan_matrix(&toned_pair, toned);
+        let columns = super::build_scan_matrix(&toned_pair, toned, true);
         assert!(!columns[0].iter().any(|key| key.key.text() == "an"));
 
         // Divided: "bian" divides toneless; "bian4" carries its tone instead.
         let toneless = SegmentGraph::build_with_options(b"bian", incomplete).expect("valid");
-        let columns = super::build_scan_matrix(&toneless, incomplete);
+        let columns = super::build_scan_matrix(&toneless, incomplete, true);
         assert!(
             columns[0]
                 .iter()
@@ -3650,7 +3750,7 @@ mod tests {
         );
 
         let toned_key = SegmentGraph::build_with_options(b"bian4", toned).expect("valid");
-        let columns = super::build_scan_matrix(&toned_key, toned);
+        let columns = super::build_scan_matrix(&toned_key, toned, true);
         assert!(
             columns[0]
                 .iter()

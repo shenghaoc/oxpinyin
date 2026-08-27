@@ -804,7 +804,7 @@ mod tests {
 
     fn one_column_matrix(text: &str) -> (Vec<Vec<ScanKey>>, usize) {
         let graph = SegmentGraph::build(text.as_bytes()).expect("short input builds");
-        let matrix = build_scan_matrix(&graph, OptionBits::default());
+        let matrix = build_scan_matrix(&graph, OptionBits::default(), true);
         let bound = graph.consumed();
         (matrix, bound)
     }
