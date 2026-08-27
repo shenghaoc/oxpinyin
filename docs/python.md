@@ -1,12 +1,14 @@
 # Python API
 
 oxpinyin ships first-class Python bindings (`oxpinyin`) that expose the same
-engine C frontends use. The binding contains no algorithm of its own: candidate lists come from
-`oxpinyin-engine`'s session API through a thin PyO3 wrapper over
-`oxpinyin-runtime` — the same concrete assembly the C ABI consumes, so the
-native, C, and Python paths cannot silently diverge. This is also how
-the libpinyin-side request for a Python binding (libpinyin issue #181) is
-answered — without needing libpinyin installed at all.
+engine C frontends use. The binding contains no algorithm of its own:
+candidate lists come from `oxpinyin-engine`'s session API through a thin
+PyO3 wrapper over `oxpinyin-runtime` — the same concrete assembly the C ABI
+consumes, so the native, C, and Python paths cannot silently diverge.
+It serves the use case described in
+[libpinyin issue #181](https://github.com/libpinyin/libpinyin/issues/181) —
+call a pinyin engine from Python and get Chinese candidates back — without
+requiring libpinyin.
 
 ## Installation
 

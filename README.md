@@ -40,7 +40,10 @@ cargo test --locked --workspace
 ## Python
 
 The engine is consumable from Python with no libpinyin install — the same
-Rust implementation the C frontends use, answering libpinyin issue #181:
+Rust implementation the C frontends use. It serves the use case described in
+[libpinyin issue #181](https://github.com/libpinyin/libpinyin/issues/181) —
+call a pinyin engine from Python and get Chinese candidates back — without
+requiring libpinyin.
 
 ```python
 import oxpinyin
