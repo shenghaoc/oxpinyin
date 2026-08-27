@@ -168,6 +168,15 @@ stable `abi3`-style single extension). CI exercises Linux; macOS and Windows
 run the same portable crates (`oxpinyin-core/data/user/engine`) that the
 portable CI job covers, but wheel builds there are currently untested.
 
+CI covers exactly one interpreter: free-threaded CPython 3.15.0-rc.1 on
+Linux, pinned by exact version. That is the platform this binding is written
+for — the shared-engine thread-safety test is near-vacuous under a GIL,
+which serialises the worker loop — but it is narrower than what this package
+declares. `requires-python` still says `>=3.10` and the classifiers still
+list 3.10–3.14, so every GIL build, and free-threaded 3.14, are
+declared-but-untested. Narrowing the declaration to match what CI proves is
+a maintainer decision and has not been taken.
+
 ## Testing strategy
 
 The corpus lives at `crates/oxpinyin-python/parity-corpus.json` together with
