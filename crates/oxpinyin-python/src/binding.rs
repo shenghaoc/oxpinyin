@@ -440,7 +440,13 @@ fn snapshot(list: &CandidateList) -> Vec<PyCandidate> {
 }
 
 /// The `oxpinyin._native` extension module.
-#[pymodule]
+///
+/// `gil_used = false` is written out rather than inherited: it is this
+/// module's attestation that it holds no state needing the GIL, and PyO3's
+/// default for it has already flipped once (true through 0.27, false from
+/// 0.28). Stated here, a dependency downgrade cannot quietly re-enable the
+/// GIL process-wide for every importer.
+#[pymodule(gil_used = false)]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Engine>()?;
     module.add_class::<PyCandidate>()?;
