@@ -62,10 +62,15 @@ pub fn read_table_file(path: &Path) -> Result<Vec<TableRow>, DatagenError> {
     let text = fs::read_to_string(path)?;
     let mut rows = Vec::new();
     for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
         // Upstream's fscanf reads four fields and would re-tokenize a
         // fifth as the next row's pinyin; a strict compiler refuses the
-        // line instead (no pinned row carries extra fields).
-        if line.split_whitespace().count() > 4 {
+        // line instead (no pinned row carries extra fields). The check
+        // applies to candidate rows only — comments are skipped above.
+        if trimmed.split_whitespace().count() > 4 {
             return Err(DatagenError::Parse {
                 path: path.to_path_buf(),
                 line: index + 1,

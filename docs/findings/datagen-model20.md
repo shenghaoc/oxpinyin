@@ -109,7 +109,11 @@ tools/model/fetch-model.sh                      # SHA-verified extract
 export PINYIN_MODEL_DIR="$PWD/target/model20/extracted"
 OXPINYIN_DATAGEN_STRICT=1 cargo test -p oxpinyin-datagen            # redb
 OXPINYIN_DATAGEN_STRICT=1 cargo test -p oxpinyin-datagen --features lmdb
-sudo make install  # libtkrzw once, per .github history; then:
+# once, build the pinned libtkrzw 1.0.32 from upstream:
+#   curl -O https://dbmx.net/tkrzw/pkg/tkrzw-1.0.32.tar.gz
+#   echo "d3404dfac6898632b69780c0f0994c5f6ba962191a61c9b0f4b53ba8bb27731c  tkrzw-1.0.32.tar.gz" | sha256sum -c -
+#   tar xzf tkrzw-1.0.32.tar.gz && cd tkrzw-1.0.32 && ./configure && make -j"$(nproc)" && sudo make install && sudo ldconfig
+# (the lean default configure: no zlib/zstd/lz4/lzma); then:
 OXPINYIN_DATAGEN_STRICT=1 cargo test -p oxpinyin-datagen --features tkrzw
 cargo run -p oxpinyin-datagen -- compile --out-dir target/datagen/redb
 # sentence-surface parity over independently produced tables:
