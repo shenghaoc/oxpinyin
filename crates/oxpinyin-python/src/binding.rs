@@ -96,9 +96,9 @@ fn lock_error() -> PyErr {
 ///
 /// Create with a system data directory holding ``pinyin_index.redb``,
 /// ``phrase_index.redb`` and ``bigram.redb``; pass ``user_dir`` to enable
-/// learning. Prefer :pykeyword:`with`, or call :meth:`close`. Safe to share
-/// across threads: calls serialize on an internal lock and run with the GIL
-/// released.
+/// learning. Usable as a :pykeyword:`with` block, though nothing needs
+/// releasing — see :meth:`close`. Safe to share across threads: calls
+/// serialize on an internal lock and run with the GIL released.
 #[pyclass(frozen)]
 pub struct Engine {
     inner: Arc<Mutex<EngineInner>>,
@@ -274,9 +274,13 @@ impl Engine {
         })
     }
 
-    /// Releases the underlying table handles early. Subsequent use of a
-    /// closed engine simply reopens nothing: calls keep working against the
-    /// shared handles until every reference drops.
+    /// Does nothing. Kept so that :pykeyword:`with` blocks and
+    /// explicit-cleanup call styles both work on an engine.
+    ///
+    /// There is no early release to perform: the table handles are shared
+    /// and reference-counted, and they drop when the last reference to them
+    /// does. A "closed" engine is therefore still a working engine — calls
+    /// after :meth:`close` behave exactly as calls before it.
     fn close(&self) {}
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
