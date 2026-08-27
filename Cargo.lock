@@ -755,6 +755,7 @@ dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",
+ "oxpinyin-runtime",
  "oxpinyin-user",
 ]
 
@@ -834,6 +835,16 @@ version = "0.1.0"
 dependencies = [
  "oxpinyin-counter",
  "oxpinyin-segment",
+]
+
+[[package]]
+name = "oxpinyin-runtime"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-core",
+ "oxpinyin-data",
+ "oxpinyin-engine",
+ "oxpinyin-user",
 ]
 
 [[package]]
