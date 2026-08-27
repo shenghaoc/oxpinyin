@@ -3,7 +3,7 @@
 //!
 //! `oxpinyin_data::parse_interpolation2` is the decoder's consumer of
 //! `interpolation2.text`. This gate needs no libpinyin build and no
-//! migrate export: a synthetic [`Counts`] + [`PhraseLexicon`] is enough
+//! system-table export: a synthetic [`Counts`] + [`PhraseLexicon`] is enough
 //! to prove the emitter writes exactly the grammar the parser reads.
 
 use std::path::PathBuf;

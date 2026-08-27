@@ -9,7 +9,7 @@ source of truth and CI respects it. Distribution-packaged Rust is unsupported
 for development; bumps use a dedicated human-reviewed PR.
 
 **unsafe tiers:** core `forbid` · data/user/engine `deny` (documented mmap
-exception, `// SAFETY:` + module soundness note) · capi/oracle/migrate `allow`
+exception, `// SAFETY:` + module soundness note) · capi/oracle `allow`
 at FFI only, `// SAFETY:` on every block.
 
 **Errors:** every public API returns `Result`; nothing panics on any input — a

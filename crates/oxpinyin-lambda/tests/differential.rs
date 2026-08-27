@@ -13,7 +13,7 @@
 //! Two gates, mirroring T1/T2:
 //!
 //! - `rust_lambda_matches_committed_manifest` — recomputes the estimate from
-//!   the migrate export + fixture and checks it against the committed
+//!   the system-table export + fixture and checks it against the committed
 //!   golden (`fixtures/w9/lambda-estimate.manifest`). Skips without the
 //!   export. This is a Rust-internal regression pin: λ is a deterministic
 //!   function of integer counts, so equality is bit-exact.
@@ -138,7 +138,9 @@ fn parse_manifest(text: &str) -> Manifest {
 #[test]
 fn rust_lambda_matches_committed_manifest() {
     let Some(estimate) = rust_estimate() else {
-        eprintln!("skipping: migrate export not found (PINYIN_EXPORT_DIR / /tmp/oxpinyin-export)");
+        eprintln!(
+            "skipping: system tables not found (PINYIN_EXPORT_DIR | /tmp/oxpinyin-export; produce with oxpinyin-datagen compile)"
+        );
         return;
     };
     let path = manifest_path();
@@ -321,7 +323,9 @@ fn rust_lambda_matches_live_estimate_interpolation() {
         return;
     };
     let Some(estimate) = rust_estimate() else {
-        eprintln!("skipping live estimate_interpolation: migrate export not found");
+        eprintln!(
+            "skipping live estimate_interpolation: system tables not found (oxpinyin-datagen compile)"
+        );
         return;
     };
 
