@@ -74,6 +74,7 @@ typedef bool (*fn_reset)(pinyin_instance_t *);
 
 struct symbols {
     fn_init init;
+    fn_init fixture_init;
     fn_fini fini;
     fn_alloc alloc;
     fn_free_instance free_instance;
@@ -104,11 +105,7 @@ static void *resolve_symbol(void *handle, const char *name, int *missing) {
 static int resolve_all(void *handle, struct symbols *s) {
     int missing = 0;
     s->init = (fn_init)resolve_symbol(handle, "pinyin_init", &missing);
-    {
-        fn_init fixture_init = (fn_init)dlsym(handle, "oxpinyin_init_for_fixtures");
-        if (fixture_init)
-            s->init = fixture_init;
-    }
+    s->fixture_init = (fn_init)dlsym(handle, "oxpinyin_init_for_fixtures");
     s->fini = (fn_fini)resolve_symbol(handle, "pinyin_fini", &missing);
     s->alloc = (fn_alloc)resolve_symbol(handle, "pinyin_alloc_instance", &missing);
     s->free_instance = (fn_free_instance)resolve_symbol(handle, "pinyin_free_instance", &missing);
@@ -338,6 +335,17 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
     printf("\n");
 }
 
+static int file_exists(const char *dir, const char *name) {
+    char path[4096];
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    FILE *file = fopen(path, "rb");
+    if (file) {
+        fclose(file);
+        return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     int scheme = 1;
     if (argc > 3) {
@@ -381,7 +389,10 @@ int main(int argc, char **argv) {
     }
 
     const char *user_dir = getenv("SCHEME_DIFF_USER_DIR");
-    pinyin_context_t *ctx = s.init(argv[2], user_dir ? user_dir : "");
+    fn_init init = (s.fixture_init && !file_exists(argv[2], "interpolation2.text"))
+        ? s.fixture_init
+        : s.init;
+    pinyin_context_t *ctx = init(argv[2], user_dir ? user_dir : "");
     if (!ctx) {
         dlclose(handle);
         return 1;
