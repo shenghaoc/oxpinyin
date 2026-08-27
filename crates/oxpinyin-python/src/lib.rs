@@ -10,5 +10,12 @@
 
 pub mod dump;
 
+// The engine lock policy the binding acquires through. Compiled with the
+// binding, and under `cfg(test)` regardless, so `cargo test -p
+// oxpinyin-python` covers the policy without a Python toolchain in the
+// process; skipped entirely otherwise, so it is never dead code.
+#[cfg(any(feature = "bindings", test))]
+mod lock;
+
 #[cfg(feature = "bindings")]
 mod binding;

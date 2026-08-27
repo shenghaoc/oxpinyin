@@ -29,6 +29,8 @@ use oxpinyin_engine::{
 use oxpinyin_engine::{CandidateList, Session};
 use oxpinyin_runtime::{OpenError, Runtime, RuntimeDict, RuntimeLm};
 
+use crate::lock::locked;
+
 create_exception!(
     _native,
     OxpinyinError,
@@ -79,8 +81,13 @@ fn engine_error(error: &EngineError) -> PyErr {
     }
 }
 
-/// Poisoned-mutex recovery refusal: another thread panicked while holding
-/// the lock. The state may still be fine, but refusing beats guessing.
+/// The refusal from [`crate::lock`], in Python terms.
+///
+/// One policy, stated once in that module and applied at every entry point
+/// — mutating and reading alike: a lock poisoned by a panicking operation
+/// is refused, never recovered. `#[pyclass(frozen)]` leaves no way to
+/// rebuild the session in place, so a refused engine stays refused and the
+/// caller opens a new one.
 fn lock_error() -> PyErr {
     OxpinyinError::new_err("engine lock poisoned by a failed operation")
 }
@@ -129,17 +136,20 @@ impl Engine {
         T: Send,
     {
         let inner = Arc::clone(&self.inner);
+        // `None` is `lock::locked`'s refusal: a `PyErr` cannot be built with
+        // the interpreter detached, so the refusal is carried out as an
+        // absent result and turned into one here.
         let outcome = py.detach(move || {
-            let mut guard = inner
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            f(&mut guard)
+            let mut guard = locked(&inner).ok()?;
+            Some(f(&mut guard))
         });
-        outcome.map_err(|error| engine_error(&error))
+        outcome
+            .ok_or_else(lock_error)?
+            .map_err(|error| engine_error(&error))
     }
 
     fn guard(&self) -> Result<MutexGuard<'_, EngineInner>, PyErr> {
-        self.inner.lock().map_err(|_| lock_error())
+        locked(&self.inner).map_err(|_| lock_error())
     }
 }
 
