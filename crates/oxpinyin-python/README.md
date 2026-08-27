@@ -7,7 +7,10 @@ candidate results the native engine produces — the same parser, decoder,
 dictionary and ranking code the C ABI frontends use, with no Python-side
 algorithm of its own and no dependency on a libpinyin installation.
 
-This answers libpinyin issue #181 from the oxpinyin side:
+It serves the use case described in
+[libpinyin issue #181](https://github.com/libpinyin/libpinyin/issues/181) —
+call a pinyin engine from Python and get Chinese candidates back — without
+requiring libpinyin.
 
 ```python
 import oxpinyin
