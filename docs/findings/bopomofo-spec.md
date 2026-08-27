@@ -289,5 +289,55 @@ keystroke is hand-authored. Coverage, re-derived per run:
 
 Gate: `SCHEME_DIFF_PARSE_AUX_ONLY=1 ./run-scheme-diff.sh bopomofo` →
 `PARSE_AUX_IDENTICAL` (re-measured with this corpus; double-pinyin
-PARSE_AUX unchanged). The full-log run still diverges in the documented
-candidate/sentence class only.
+PARSE_AUX unchanged). ~~The full-log run still diverges in the
+documented candidate/sentence class only.~~ Superseded by the exact
+seam below: the full-log run is IDENTICAL.
+
+## The exact seam (2026-08-27) — the full-log divergence closed
+
+Two findings landed together; the full-log bopomofo differential now
+runs IDENTICAL (all 45 corpus inputs, double and full-pinyin schemes
+likewise, tone variant included).
+
+**1. The recorded "documented candidate/sentence class" was partly a
+harness artifact.** The scheme drivers preferred
+`oxpinyin_init_for_fixtures` unconditionally, so the capi side always
+ran the flat-export unigram tier against the oracle's real
+`interpolation2.text` counts — different linguistic datasets. With the
+drivers porting train-diff.c's rule (fixture init only when the system
+dir lacks `interpolation2.text`) and the runner copying the file from
+`W13_CAPI_SYSTEM`, double and full-pinyin went IDENTICAL with no engine
+change at all.
+
+**2. The real bopomofo bug: the joined text was re-segmented.** The
+chewing (and double) parse paths drove the session with the
+`'`-joined full-pinyin *text*, and the session's graph re-parsed it
+through the pinyin inventory. Three families, one cause:
+
+- ambiguous spellings gained extra segmentations (`bie` also walked
+  `[bi][e]`, adding the bi rows and the lone `bi'e` phrase — 41 vs 302
+  candidates on every ㄅㄧㄝ permutation);
+- zhuyin-only spellings (`den zhei nia yai nun eng chua`) exist in no
+  pinyin inventory, so the text re-parsed as a shorter syllable plus
+  leftovers and offered wrong candidates (`ㄉㄣˋ` → 的, `ㄋㄧㄚˊ` → 你啊),
+  where upstream's whole-key lookup is legitimately empty (the model
+  carries zero rows for those spellings — measured against the
+  canonical tables);
+- the scan matrix's divided/resplit alternates are a full-pinyin-parse
+  artifact upstream, and were applied to the scheme keys too.
+
+Fix: `SegmentGraph::build_exact` + `Session::replace_raw_exact` — the
+scheme parsers hand the decoder their exact keys (one `Exact` edge
+chain, spans over the joined text, separators riding as in the parsed
+graph), the scan/sentence/composition-key walks all use it, and
+`build_scan_matrix` generates divided/resplit alternates only for the
+full-pinyin mode. Any other raw mutation (typing, commit, reset, a
+full-pinyin replace) clears the exact chain, so the full-pinyin paths
+are bit-unchanged: the replay pins, the decode differential, and the
+live corpus differential all measured identical before and after.
+
+Regression cover: core tests walk/reject the exact graph; the capi
+tests use the mini tables' deliberate `xian`/`xi'an` pair — zhuyin
+ㄒㄧㄢ must offer the xian rows only, while bare full-pinyin
+`xian` still enumerates its `xi`+`an` segmentation — plus the `den`
+no-truncation case.

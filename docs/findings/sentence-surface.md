@@ -335,7 +335,7 @@ Re-verification:
   residual is the known tie-order class (tail order and decoded-1-best
   near-ties, e.g. `我们`/`我吗`, `最` appearing at rank 5 instead of a
   second NBEST row), the same §3 comparator divergences the direct-Session
-  488/385/370 measurement already prices in. Not chased here.
+  488/385/370 measurement already prices in. Not chased here. (Amended 2026-08-27: with matched unigram data and the exact scheme-key seam — `docs/findings/bopomofo-spec.md` § exact seam — the scheme differentials run IDENTICAL; the double/full share of this residual was a harness data mismatch, the bopomofo share the re-segmentation bug. The §12 direct-Session residual stands as its own measurement.)
 - Pins: default candidates 10177 / 10189 / 94871 of 98930 / absent 1 /
   tie-swaps 1036; sentence surface 488/385/370 — all bit-identical
   (`real_tables_session_reports_parity`, `sentence_surface_reports_parity`).
