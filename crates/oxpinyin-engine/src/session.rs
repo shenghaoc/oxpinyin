@@ -338,7 +338,6 @@ where
     /// Returns [`EngineError`] when refreshing candidates hits a backend
     /// failure.
     pub fn type_pinyin(&mut self, text: &str) -> Result<KeyOutcome, EngineError> {
-        self.exact_segments.clear();
         let before = self.raw.len();
         for character in text.chars() {
             if !is_batch_input_character(character) {
@@ -352,6 +351,9 @@ where
         if self.raw.len() == before {
             return Ok(KeyOutcome::Ignored);
         }
+        // Ignored input leaves an exact (scheme-parsed) composition alone;
+        // only a real buffer change exits exact mode.
+        self.exact_segments.clear();
         self.refresh()?;
         Ok(KeyOutcome::Consumed)
     }
@@ -1252,14 +1254,16 @@ where
     }
 
     fn type_character(&mut self, character: char) -> Result<KeyOutcome, EngineError> {
-        self.exact_segments.clear();
         if !is_input_character(character) {
             return Ok(KeyOutcome::Ignored);
         }
         if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
             return Ok(KeyOutcome::Ignored);
         }
-
+        // The character is accepted: the buffer is about to change, so the
+        // exact chain's absolute spans go now — not before validation, or a
+        // rejected character would silently exit exact mode.
+        self.exact_segments.clear();
         self.raw.push(character);
         self.refresh()?;
         Ok(KeyOutcome::Consumed)
@@ -1267,6 +1271,10 @@ where
 
     fn erase(&mut self) -> Result<KeyOutcome, EngineError> {
         if self.consumed < self.raw.len() {
+            // The buffer is about to shrink: the exact chain's absolute
+            // spans would dangle past the new end. Operations that do not
+            // modify raw leave exact mode alone.
+            self.exact_segments.clear();
             self.raw.pop();
             self.refresh()?;
             return Ok(KeyOutcome::Consumed);
@@ -1442,7 +1450,10 @@ where
         if self.raw.is_empty() {
             return 0;
         }
-        match SegmentGraph::build_with_options(self.raw.as_bytes(), self.settings.options) {
+        // The exact chain drives the length when a scheme parse owns the
+        // buffer: re-segmenting the joined text through the pinyin
+        // inventory would under-report zhuyin-only spellings ("den" → 2).
+        match self.build_graph_at(0, self.raw.as_bytes()) {
             Ok(graph) => apostrophe_extended(
                 self.raw.as_bytes(),
                 graph
@@ -2707,6 +2718,78 @@ fn apostrophe_extended(input: &[u8], mut end: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ignored_type_input_preserves_exact_mode() {
+        let mut session = session();
+        let segments: Vec<oxpinyin_core::graph::ExactSegment> = {
+            use oxpinyin_core::graph::ExactSegment;
+            let ni = oxpinyin_core::SyllableKey::from_text("ni").expect("ni");
+            let hao = oxpinyin_core::SyllableKey::from_text("hao").expect("hao");
+            vec![
+                ExactSegment::new(0, 2, ni, 0),
+                ExactSegment::new(3, 6, hao, 0),
+            ]
+        };
+        session
+            .replace_raw_exact("ni'hao", &segments)
+            .expect("replace");
+        // A batch input whose every character is filtered (the space) is
+        // Ignored and must not exit exact mode.
+        assert_eq!(
+            session.type_pinyin("  ").expect("ignored input"),
+            KeyOutcome::Ignored
+        );
+        assert!(session.exact_segments.len() == 2);
+        // An accepted character does exit exact mode.
+        assert_eq!(
+            session.type_pinyin("h").expect("typed"),
+            KeyOutcome::Consumed
+        );
+        assert!(session.exact_segments.is_empty());
+    }
+
+    #[test]
+    fn a_rejected_character_preserves_exact_mode_and_backspace_clears_it() {
+        let mut session = session();
+        let segments: Vec<oxpinyin_core::graph::ExactSegment> = {
+            use oxpinyin_core::graph::ExactSegment;
+            let ni = oxpinyin_core::SyllableKey::from_text("ni").expect("ni");
+            vec![ExactSegment::new(0, 2, ni, 0)]
+        };
+        session.replace_raw_exact("ni", &segments).expect("replace");
+        // An over-capacity or non-input character is Ignored: exact mode
+        // survives because raw never changed.
+        assert_eq!(
+            session
+                .process_key(&KeyInput::plain(LogicalKey::Backspace))
+                .expect("erase"),
+            KeyOutcome::Consumed
+        );
+        assert!(
+            session.exact_segments.is_empty(),
+            "erase must drop the exact chain"
+        );
+    }
+
+    #[test]
+    fn full_parsed_len_reflects_the_exact_chain() {
+        let mut session = session();
+        let segments: Vec<oxpinyin_core::graph::ExactSegment> = {
+            use oxpinyin_core::graph::ExactSegment;
+            let ni = oxpinyin_core::SyllableKey::from_text("ni").expect("ni");
+            let hao = oxpinyin_core::SyllableKey::from_text("hao").expect("hao");
+            vec![
+                ExactSegment::new(0, 2, ni, 0),
+                ExactSegment::new(3, 6, hao, 0),
+            ]
+        };
+        session
+            .replace_raw_exact("ni'hao", &segments)
+            .expect("replace");
+        assert_eq!(session.full_parsed_len(), 6);
+        assert_eq!(session.parsed_prefix_len(), 6);
+    }
+
     #[test]
     fn an_anchor_inside_an_exact_segment_decodes_nothing() {
         let mut session = session();
