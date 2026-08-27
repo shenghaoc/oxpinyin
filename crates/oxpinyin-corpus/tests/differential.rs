@@ -51,7 +51,7 @@ fn locate_data(name: &str) -> Option<PathBuf> {
     .then_some(path)
 }
 
-/// The Rust trainer chain over the sample. `None` when the migrate
+/// The Rust trainer chain over the sample. `None` when the system-table
 /// export or the model20 cache is absent.
 struct RustChain {
     ngseg_text: String,
@@ -181,14 +181,14 @@ fn parse_estimate_stdout(text: &str) -> (BTreeMap<u32, String>, Option<String>) 
 }
 
 /// The Rust chain alone: T4b's output feeds T1 with zero glue. Skips
-/// without the migrate export / model20 cache; CI-unconditional
+/// without the system-table export / model20 cache; CI-unconditional
 /// otherwise.
 #[test]
 fn rust_chain_consumes_t4b_sample_with_zero_glue() {
     let sample = std::fs::read(sample_path()).expect("committed sample");
     let Some(chain) = run_rust_chain(&sample) else {
         eprintln!(
-            "skipping: migrate export or model20 cache not found \
+            "skipping: system-table export or model20 cache not found \
              (PINYIN_EXPORT_DIR / PINYIN_MODEL_DIR)"
         );
         return;
@@ -257,7 +257,7 @@ fn end_to_end_matches_live_libpinyin_pipeline() {
     };
     let sample = std::fs::read(sample_path()).expect("committed sample");
     let Some(chain) = run_rust_chain(&sample) else {
-        eprintln!("skipping live end-to-end: migrate export / model20 cache not found");
+        eprintln!("skipping live end-to-end: system-table export / model20 cache not found");
         return;
     };
 

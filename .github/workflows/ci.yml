@@ -46,8 +46,11 @@ jobs:
       # The post-choose live-typing/train differential (sentence-surface's
       # §3 machinery). Self-skips unless the pin-built oracle
       # (PINYIN_ORACLE_PREFIX) and a real-unigram system dir
-      # (LIVETYPING_SYSTEM) are present on the runner; locally that is
-      # `tools/oracle/build-oracle.sh` plus the exported model20 tables.
+      # (LIVETYPING_SYSTEM) are present — runner-local only: the model20
+      # archive is non-redistributable and never enters CI, so this and
+      # every model20-dependent check (oxpinyin-datagen's strict tests,
+      # sentence-surface parity) run on a provisioned local machine, never
+      # on GitHub-hosted runners.
       - name: Live-typing differential
         run: tools/bisection/run-live-typing-diff.sh
 

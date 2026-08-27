@@ -50,7 +50,7 @@ impl Segmenter {
         })
     }
 
-    /// Discovers the migrate export and the model20 cache, then opens them
+    /// Discovers the system-table export and the model20 cache, then opens them
     /// with [`PINNED_LAMBDA`] (or `table.conf` when `table_conf` is set).
     ///
     /// # Errors

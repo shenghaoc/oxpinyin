@@ -5,7 +5,7 @@
 //!
 //! - `fixture_emit_roundtrips_through_parse_interpolation2` — T1's
 //!   `segmenter-ngseg.txt` → T2's counter → this crate's emitter →
-//!   `parse_interpolation2`. Skips without the migrate export. Pins N
+//!   `parse_interpolation2`. Skips without the system-table export. Pins N
 //!   unigram records + an FNV-1a checksum of the emitted text against
 //!   `fixtures/w9/interpolation2.manifest`.
 //! - `rust_matches_live_export_interpolation` — skips unless
@@ -126,7 +126,9 @@ fn parse_manifest(text: &str) -> Manifest {
 #[test]
 fn fixture_emit_roundtrips_through_parse_interpolation2() {
     let Some((counts, _lexicon, emitted)) = rust_counts_and_text() else {
-        eprintln!("skipping: migrate export not found (PINYIN_EXPORT_DIR / /tmp/oxpinyin-export)");
+        eprintln!(
+            "skipping: system tables not found (PINYIN_EXPORT_DIR | /tmp/oxpinyin-export; produce with oxpinyin-datagen compile)"
+        );
         return;
     };
 
@@ -304,7 +306,9 @@ fn rust_matches_live_export_interpolation() {
         return;
     };
     let Some((rust, _, emitted)) = rust_counts_and_text() else {
-        eprintln!("skipping live export_interpolation: migrate export not found");
+        eprintln!(
+            "skipping live export_interpolation: system tables not found (oxpinyin-datagen compile)"
+        );
         return;
     };
     let fixture = std::fs::read(fixture_ngseg()).expect("fixture");

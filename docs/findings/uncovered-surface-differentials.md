@@ -410,9 +410,9 @@ vs C2 latent-until-a-frontend-adds-cursor-editing) inverts it:
 
 Also noted in review: the out-of-tree `punct.redb` regeneration this
 measurement needed (the `oxpinyin-migrate` exporter is gone from main)
-is a reproducibility gap every future full-table punct measurement will
-hit again — an argument for pulling the Stage-2 data-prep compiler
-forward.
+was a reproducibility gap — since closed by `oxpinyin-datagen`
+(`docs/findings/datagen-model20.md`): full-table production, punct
+included, is now in-tree from the canonical model20 archive.
 
 ## Scope and pins
 
