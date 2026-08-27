@@ -18,7 +18,7 @@ license = "GPL-3.0-or-later"
 # licence — silently, which is the same compliance defect in a new costume.
 # Keep the two in step if the project ever relicenses.
 license-files = ["LICENSE"]
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 authors = [{ name = "Shenghao Chen" }]
 keywords = ["pinyin", "ime", "chinese", "input-method", "libpinyin"]
 classifiers = [
@@ -27,10 +27,6 @@ classifiers = [
   "Natural Language :: Chinese (Simplified)",
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
   "Programming Language :: Rust",
   "Topic :: Software Development :: Libraries :: Python Modules",

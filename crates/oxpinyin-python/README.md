@@ -22,7 +22,7 @@ for candidate in engine.lookup("nihao"):
 
 ## Install
 
-From a checkout (Rust toolchain required; Python ≥ 3.10):
+From a checkout (Rust toolchain required; free-threaded Python 3.14):
 
 ```sh
 pip install maturin
