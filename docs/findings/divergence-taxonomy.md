@@ -86,7 +86,9 @@ exist. The pin admits an initial-only key at any position and repeatedly.
 correction); the portable parser and `parser-path-set.md` still implement the
 pre-correction path set until a separate branch lands.
 
-*Corpus count:* 485 of 10,465. This is currently the whole substantive parity
+*Corpus count:* 483 of 10,465 (re-measured 2026-08-27 after #178's
+parser-termination classes moved two boundary inputs to agreement). This
+is currently the whole substantive parity
 gap, and it has **one** root cause, measured in
 `docs/findings/parser-spec-contradiction-incomplete-keys.md` (483 of 491
 divergences). `path-set` is attributed to us because our path set still
@@ -260,7 +262,7 @@ flags `0x18a`, 10,465 inputs:
 |---|---:|
 | `output-identical` | 9,506 |
 | `tie-swap` | 468 |
-| `path-set` | 485 |
+| `path-set` | 483 |
 | `theirs-bug` | 6 |
 | `ours-bug` | 0 |
 | `flag-semantics` | 0 |
@@ -278,7 +280,7 @@ it is 10 on the F-C family, which is what that family exists to vary.
    `output-identical` is agreement, not divergence, and is excluded.
 2. **Budget enforcement — report until W4.** Parse-level `tie-swap` (468) is
    the W4 baseline. Report it; do not gate on it until a decoder exists.
-3. **`path-set` attribution.** Confirmed: the 485 sit there because our path
+3. **`path-set` attribution.** Confirmed: the 483 sit there because our path
    set disagrees with the pin. The SPEC field invariant is corrected
    (oracle-driven); path-set enumeration and the parser follow-up are a
    separate branch. Post-implementation `path-set` count is the real S1b
