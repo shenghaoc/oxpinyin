@@ -15,7 +15,7 @@ use oxpinyin_core::{
     PINYIN_INCOMPLETE, PhraseToken, ZhuyinParse, ZhuyinScheme,
 };
 use oxpinyin_engine::{
-    CandidateKind, CandidateList, Config, EngineError, StoragePaths, check_lookup_offset_range,
+    CandidateKind, CandidateList, Config, EngineError, check_lookup_offset_range,
     normalize_lookup_offset,
 };
 pub(crate) use oxpinyin_runtime::USER_STORE_FILE;
@@ -47,17 +47,6 @@ pub(crate) type CapiSession = RuntimeSession;
 /// `user_store()` — so they never borrow the context and stay alive past
 /// `pinyin_fini`.
 pub(crate) struct CapiContext {
-    /// Storage locations for this context.
-    ///
-    /// Since the shared-runtime extraction this duplicates `Runtime.paths`:
-    /// both are built from the same `system_dir`/`user_dir` pair, and
-    /// neither is derived from the other. Safe as it stands because this
-    /// copy is read-only and read exactly once, by `load_addon` below —
-    /// there is no write to diverge. It is also not purely redundant: the
-    /// `new_user_only` constructor has no `Runtime` at all, so for that
-    /// context this is the only copy. Whichever way the duplication is
-    /// resolved, it has to keep that case working.
-    paths: StoragePaths,
     pub(crate) config: Config,
     /// The shared concrete assembly; `None` under a user-store-only context.
     runtime: Option<Runtime>,
@@ -116,7 +105,6 @@ impl CapiContext {
         if system_dir.is_empty() {
             return None;
         }
-        let paths = StoragePaths::new(user_dir).with_system_dirs([system_dir]);
 
         // W8 fork-bootstrap wiring and the fixture split both live in the
         // shared assembly now: the constructor opens the tables, installs λ
@@ -133,7 +121,6 @@ impl CapiContext {
         .ok()?;
         let user = runtime.user_store();
         Some(Self {
-            paths,
             config: Config::default(),
             runtime: Some(runtime),
             user,
@@ -158,7 +145,6 @@ impl CapiContext {
         }
         let user = UserStore::open(&Path::new(user_dir).join(USER_STORE_FILE)).ok()?;
         Some(Self {
-            paths: StoragePaths::new(user_dir),
             config: Config::default(),
             runtime: None,
             user: Some(user),
@@ -225,15 +211,13 @@ impl CapiContext {
         }
     }
 
-    /// Load addon library `index` from the first system data dir.
+    /// Load addon library `index` from the runtime's first system data dir.
+    /// A user-store-only context has no runtime, so it loads nothing.
     pub(crate) fn load_addon(&self, index: u8) -> bool {
-        let Some(runtime) = self.runtime.as_ref() else {
-            return false;
-        };
-        let Some(system_dir) = self.paths.system_data_dirs().first() else {
-            return false;
-        };
-        runtime.load_addon(index, system_dir)
+        match self.runtime.as_ref() {
+            Some(runtime) => runtime.load_system_addon(index),
+            None => false,
+        }
     }
 
     /// §9 phrase-export materialization. [`USER_DICTIONARY`] and
