@@ -103,22 +103,25 @@ fn measured_divergence_counts_are_pinned() {
 
     assert_eq!(
         output.report.agreements,
-        9_974,
+        9_976,
         "agreement count moved\n{}",
         output.report.to_summary()
     );
     assert_eq!(
         output.report.divergences(),
-        491,
+        489,
         "divergence count moved\n{}",
         output.report.to_summary()
     );
 
-    // 483 of the 491 share one root cause: the pin admits initial-only keys at
+    // 481 of the 489 share one root cause: the pin admits initial-only keys at
     // any position and repeatedly, which the frozen parser SPEC forbids. See
-    // docs/findings/parser-spec-contradiction-incomplete-keys.md.
+    // docs/findings/parser-spec-contradiction-incomplete-keys.md. (Re-pinned
+    // after #178's parser-termination classes: two space/full-width boundary
+    // inputs moved to agreement and two consumed-length divergences reclassified
+    // path-absent — measured 2026-08-27.)
     assert_eq!(output.report.reasons.get(&Reason::PathAbsent), Some(&481));
-    assert_eq!(output.report.reasons.get(&Reason::ConsumedLength), Some(&4));
+    assert_eq!(output.report.reasons.get(&Reason::ConsumedLength), Some(&2));
     assert_eq!(output.report.reasons.get(&Reason::OracleSentinel), Some(&6));
 
     // Nothing off-pin, self-inconsistent, or overflowing, and our parser never
@@ -144,7 +147,7 @@ fn the_tie_swap_population_is_measured_not_assumed() {
     let output = run_corpus();
 
     let rank_zero = output.report.ranks.get(&0).copied().unwrap_or_default();
-    assert_eq!(rank_zero, 9_506);
+    assert_eq!(rank_zero, 9_508);
 
     // Agreements at a positive rank: the oracle chose a path we enumerate, just
     // not the one our greedy order puts first. This is the tie-swap population
@@ -270,9 +273,9 @@ fn the_class_roll_up_matches_the_taxonomy_finding() {
             .unwrap_or_default()
     };
 
-    assert_eq!(count("output-identical"), 9_506);
+    assert_eq!(count("output-identical"), 9_508);
     assert_eq!(count("tie-swap"), 468);
-    assert_eq!(count("path-set"), 485);
+    assert_eq!(count("path-set"), 483);
     assert_eq!(count("theirs-bug"), 6);
 
     // ours-bug at zero is the point of recording it: it is the class that must
@@ -304,11 +307,11 @@ fn only_path_set_currently_gates_the_parity_goal() {
         })
         .sum();
 
-    // 485 path-set and zero ours-bug. Every one of the 485 traces to the single
+    // 483 path-set and zero ours-bug. Every one of the 483 traces to the single
     // frozen-SPEC contradiction in
     // docs/findings/parser-spec-contradiction-incomplete-keys.md, so this number
     // is the S1b gap and should collapse once that correction lands.
-    assert_eq!(gating, 485);
+    assert_eq!(gating, 483);
 }
 
 #[test]
@@ -318,9 +321,9 @@ fn the_budget_verdict_is_computed_and_over_under_both_readings() {
 
     assert_eq!(verdict.corpus_size, CORPUS_SIZE);
     assert_eq!(verdict.limit, 52, "0.5% of 10,465");
-    assert_eq!(verdict.output_identical, 9_506);
+    assert_eq!(verdict.output_identical, 9_508);
     assert_eq!(verdict.tie_swap, 468);
-    assert_eq!(verdict.auto_accepted(), 9_974);
+    assert_eq!(verdict.auto_accepted(), 9_976);
 
     // Both readings are over. Recorded as a measurement, not enforced: see the
     // budget section of docs/findings/divergence-taxonomy.md for why parse-level
