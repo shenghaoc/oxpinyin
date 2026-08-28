@@ -270,6 +270,9 @@ bool pinyin_set_zhuyin_scheme(struct pinyin_context_t *context, int _scheme);
 // Load an addon phrase library by index.
 bool pinyin_load_addon_phrase_library(struct pinyin_context_t *context, uint8_t _index);
 
+// Unload an addon phrase library by index.
+bool pinyin_unload_addon_phrase_library(struct pinyin_context_t *context, uint8_t _index);
+
 // Mask out phrase tokens matching a pattern.
 bool pinyin_mask_out(struct pinyin_context_t *context, uint32_t mask, uint32_t value);
 
