@@ -6,6 +6,13 @@
 //! assembly through PyO3 as the `oxpinyin._native` extension module; see
 //! `docs/python.md`. [`dump`] carries the corpus driver shared with the
 //! Python-side parity tests.
+// Constitution §4, mechanically: library builds may not unwrap, expect,
+// or panic. Inline #[cfg(test)] modules are exempt (see the allow below
+// their declaration); tests/, benches/ and examples/ are separate crates.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![warn(missing_docs)]
 
 pub mod dump;

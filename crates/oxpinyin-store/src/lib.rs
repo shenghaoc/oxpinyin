@@ -22,6 +22,13 @@
 //! intentionally not integer order; user big-endian = integer order) are
 //! documented in one place in `docs/findings/store-key-ordering.md`.
 
+// Constitution §4, mechanically: library builds may not unwrap, expect,
+// or panic. Inline #[cfg(test)] modules are exempt (see the allow below
+// their declaration); tests/, benches/ and examples/ are separate crates.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 use std::fmt;
 use std::ops::Bound;
 use std::path::Path;
