@@ -17,8 +17,8 @@ use oxpinyin_core::graph::{Edge, EdgeKind, ExactSegment, SegmentGraph};
 use oxpinyin_core::kbest::{DecodedPath, k_best};
 use oxpinyin_core::scoring::{Scorer, ScoringConfig, ScoringError, expand_keys, key_cost_table};
 use oxpinyin_core::{
-    Completeness, Cost, Dictionary, LanguageModel, OptionBits, PhraseEntry, PhraseToken,
-    SyllableKey, UserModel,
+    Completeness, Cost, Dictionary, LanguageModel, MergedGram, OptionBits, PhraseEntry,
+    PhraseToken, SyllableKey, UserModel,
 };
 
 use crate::candidate::{Candidate, CandidateKind, CandidateList};
@@ -1617,10 +1617,16 @@ where
                 )?;
             }
 
+            // Upstream's Gates 1 and 2 (`pinyin.cpp:2200-2214`), hoisted
+            // out of the candidate loop exactly as the pin hoists them: the
+            // previous token is resolved once, and the system and user grams
+            // are merged once, for the whole guess. Indexing that row per
+            // candidate is Gate 3.
+            let gram = self.dynamic_adjust_gram(anchor)?;
             // The scan's result stands even when it found nothing. Tokens the
             // table lacks rank as zero rather than falling back.
             let frequencies = self
-                .candidate_frequencies(&collected)?
+                .candidate_frequencies(&collected, gram.as_ref())?
                 .unwrap_or_else(|| vec![0; collected.len()]);
             ranked.clear();
             ranked.extend(
@@ -1758,13 +1764,68 @@ where
         dedup_by_text_keep_first(collected);
     }
 
+    /// The previous token at `offset`, as upstream's `_get_previous_token`
+    /// resolves it (`pinyin.cpp:1711-1767`).
+    ///
+    /// At offset 0 upstream answers `sentence_start` and then prefers the
+    /// longest token in `m_prefixes`. `m_prefixes` is populated only by
+    /// `pinyin_guess_sentence_with_prefix`, which neither reference consumer
+    /// calls, so the drop-in surface always takes the `sentence_start`
+    /// answer there.
+    ///
+    /// Above 0 upstream reads the 1-best result — `last_result` here — and
+    /// carries a guard worth reproducing: it inspects `result[offset]` FIRST
+    /// and only walks backwards when that position holds a token. A guess at
+    /// an offset no phrase starts at contributes no bigram term at all.
+    fn previous_token(&self, offset: usize) -> Option<PhraseToken> {
+        if offset == 0 {
+            return Some(PhraseToken::new(crate::nbest::SENTENCE_START));
+        }
+        if self.last_result.is_empty() {
+            return None;
+        }
+        // `result[offset] != null_token`: a phrase must begin here.
+        self.last_result
+            .iter()
+            .any(|span| span.start == offset)
+            .then(|| {
+                self.last_result
+                    .iter()
+                    .filter(|span| span.start < offset)
+                    .max_by_key(|span| span.start)
+                    .map(|span| span.token)
+            })
+            .flatten()
+    }
+
+    /// Upstream's Gates 1 and 2 as one call: resolve the previous token and
+    /// merge its system and user grams, ONCE per candidate guess.
+    ///
+    /// `None` whenever upstream would skip the merge — the bit is clear, no
+    /// previous token, or the model carries no row for it — and the caller
+    /// then contributes no bigram term.
+    fn dynamic_adjust_gram(&self, offset: usize) -> Result<Option<MergedGram>, EngineError> {
+        if !self.settings.options.has_dynamic_adjust() {
+            return Ok(None);
+        }
+        let Some(prev) = self.previous_token(offset) else {
+            return Ok(None);
+        };
+        self.model
+            .merged_successors(&prev)
+            .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))
+    }
+
     /// Per-candidate sort frequencies on the pin's amplified scale, or
     /// `None` when the model carries no real frequency table at all.
     ///
     /// The pinned oracle does not compare raw unigram counts: it truncates
     /// the f32 possibility `(1−λ)·unigram/total` amplified by 2²⁴ into a
-    /// `guint32` (`_compute_frequency_of_items`, `pinyin.cpp:1855-1866`;
-    /// `DYNAMIC_ADJUST` clear ⇒ the bigram term is zero). Near-ties collapse
+    /// `guint32` (`_compute_frequency_of_items`, `pinyin.cpp:1855-1866`).
+    /// `gram` is the row merged once for this guess: `None`, or a row that
+    /// misses the token, contributes a bigram possibility of exactly `0.0`
+    /// and leaves the amplified value bit-identical to the unigram-only
+    /// law. Near-ties collapse
     /// to equal keys under that truncation — the tie class
     /// `docs/findings/corpus-tail.md` calls Class A — and equal keys fall to
     /// the collection order the stable sort keeps. `amplified_frequency`
@@ -1781,6 +1842,7 @@ where
     fn candidate_frequencies(
         &self,
         collected: &[Candidate],
+        gram: Option<&MergedGram>,
     ) -> Result<Option<Vec<u64>>, EngineError> {
         let mut frequencies: Option<Vec<u64>> = None;
         let default_total = self
@@ -1818,7 +1880,23 @@ where
                     .map_err(|error| {
                         EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
                     })?
-                    .map(|count| amplified_frequency(count.saturating_add(1), default_total))
+                    .map(|count| {
+                        // Upstream's Gate 3: the bigram possibility joins the
+                        // unigram term INSIDE the pin's expression, before
+                        // its single truncation. The addon and predicted
+                        // branches above return early in the pin too — they
+                        // carry no bigram term at all.
+                        let bigram = dynamic_adjust_bigram_possibility(
+                            self.settings.options,
+                            gram,
+                            token.value(),
+                        );
+                        amplified_frequency_with_bigram(
+                            count.saturating_add(1),
+                            default_total,
+                            bigram,
+                        )
+                    })
             };
             if let Some(count) = count {
                 let table = frequencies.get_or_insert_with(|| vec![0; collected.len()]);
@@ -1826,7 +1904,7 @@ where
                 // reads FacadePhraseIndex unigrams (including trained user
                 // counts) with no DYNAMIC_ADJUST check. W6-T4's overlay is
                 // that unigram term and stays for both bit states.
-                table[index] = candidate_frequency_sort_key(self.settings.options, count);
+                table[index] = count;
             }
         }
         Ok(frequencies)
@@ -2210,10 +2288,38 @@ const PIN_LAMBDA_F32: f32 = 0.312_699;
 /// `* 256` factors kept as written); any `f64` intermediate or a
 /// pre-combined `* 2²⁴` risks drifting off the tie boundary.
 fn amplified_frequency(unigram: u64, total: u64) -> u64 {
+    amplified_frequency_with_bigram(unigram, total, 0.0)
+}
+
+/// The pin's `BIGRAM_FREQUENCY_DISCOUNT` (`pinyin.cpp:33`).
+const BIGRAM_FREQUENCY_DISCOUNT_F32: f32 = 0.1;
+
+/// [`amplified_frequency`] with the DYNAMIC_ADJUST bigram term folded in,
+/// reproducing the pin's whole expression (`pinyin.cpp:1862-1866`):
+///
+/// ```c
+/// freq = (lambda * bigram_poss * BIGRAM_FREQUENCY_DISCOUNT +
+///         (1 - lambda) * unigram / (gfloat) total_freq) * 256 * 256 * 256;
+/// ```
+///
+/// The two terms are summed **before** the single truncation, which is the
+/// whole reason this is one function rather than an additive term bolted
+/// onto [`amplified_frequency`]'s result: the pin truncates the sum once,
+/// and `trunc(a) + trunc(b)` differs from `trunc(a + b)` by up to one unit.
+/// That unit is not a rounding detail here — the truncation collapses
+/// near-ties into equal comparator keys, so an off-by-one moves candidates
+/// between tie classes and reorders the list.
+///
+/// With `bigram_poss` at `0.0` the first term is exactly `0.0` and
+/// `0.0 + x == x` in IEEE-754, so the DYNAMIC_ADJUST-clear path is
+/// bit-identical to the pre-existing unigram-only law by construction —
+/// not merely by the frozen words happening to leave the bit clear.
+fn amplified_frequency_with_bigram(unigram: u64, total: u64, bigram_poss: f32) -> u64 {
     if total == 0 {
         return 0;
     }
-    let possibility = (1.0_f32 - PIN_LAMBDA_F32) * unigram as f32 / total as f32;
+    let possibility = PIN_LAMBDA_F32 * bigram_poss * BIGRAM_FREQUENCY_DISCOUNT_F32
+        + (1.0_f32 - PIN_LAMBDA_F32) * unigram as f32 / total as f32;
     u64::from((possibility * 256.0 * 256.0 * 256.0) as u32)
 }
 
@@ -2625,15 +2731,22 @@ pub fn check_lookup_offset_range(len: usize, offset: usize) -> Result<usize, Eng
     Ok(offset)
 }
 
-/// Unigram sort key plus the DYNAMIC_ADJUST bigram increment (#99).
-fn candidate_frequency_sort_key(options: OptionBits, unigram: u64) -> u64 {
-    unigram.saturating_add(dynamic_adjust_bigram_term(options))
-}
-
-/// Bit-SET fold of `λ · bigram_poss · DISCOUNT` into RankKey: #99.
-fn dynamic_adjust_bigram_term(options: OptionBits) -> u64 {
-    let _ = options.has_dynamic_adjust();
-    0
+/// The bigram possibility the DYNAMIC_ADJUST term is built from — the pin's
+/// Gate 3 (`pinyin.cpp:1854-1860`).
+///
+/// Zero on any of the three ways upstream skips the term: the bit is clear,
+/// there is no previous token (so no gram was merged), or the merged row's
+/// total is zero. Otherwise `bigram_freq / total` from the row merged once
+/// at guess time.
+fn dynamic_adjust_bigram_possibility(
+    options: OptionBits,
+    gram: Option<&MergedGram>,
+    token: u32,
+) -> f32 {
+    if !options.has_dynamic_adjust() {
+        return 0.0;
+    }
+    gram.map_or(0.0, |row| row.possibility(token))
 }
 
 /// The three sort keys of the pinned candidate construction.
@@ -3567,23 +3680,316 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_adjust_does_not_fold_a_bigram_term_into_the_unigram_sort_key() {
+    fn dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram() {
         use oxpinyin_core::DYNAMIC_ADJUST;
+        use oxpinyin_core::MergedGram;
         use oxpinyin_core::OptionBits;
 
-        let unigram = 1_234;
+        let clear = OptionBits::default();
+        let set = OptionBits::default().with(DYNAMIC_ADJUST, true);
+        // 500 of a 1000-count row: the pin's bigram_freq / total.
+        let gram = MergedGram::new(1_000, vec![(42, 500), (7, 100)]);
+
         assert_eq!(
-            super::candidate_frequency_sort_key(OptionBits::default(), unigram),
-            unigram,
-            "bit-clear omits the bigram term and keeps the unigram sort input"
+            super::dynamic_adjust_bigram_possibility(clear, Some(&gram), 42),
+            0.0,
+            "bit clear omits the term however populated the row is"
         );
         assert_eq!(
-            super::candidate_frequency_sort_key(
-                OptionBits::default().with(DYNAMIC_ADJUST, true),
-                unigram
-            ),
-            unigram,
-            "bit-set leaves the W6-T4 unigram merge intact and does not invent a RankKey bigram"
+            super::dynamic_adjust_bigram_possibility(set, None, 42),
+            0.0,
+            "no previous token means no gram was merged, so no term"
+        );
+        assert_eq!(
+            super::dynamic_adjust_bigram_possibility(set, Some(&gram), 43),
+            0.0,
+            "a token the row misses contributes nothing"
+        );
+        assert_eq!(
+            super::dynamic_adjust_bigram_possibility(set, Some(&gram), 42),
+            0.5,
+            "bit set with a merged row is bigram_freq / total"
+        );
+
+        // The term must actually move the frequency, not merely exist. This
+        // is what a stub cannot satisfy: returning a constant zero
+        // possibility leaves `adjusted` equal to `base`.
+        let (unigram, total) = (1_234_u64, 51_051_831_u64);
+        let base = super::amplified_frequency_with_bigram(unigram, total, 0.0);
+        let adjusted = super::amplified_frequency_with_bigram(unigram, total, 0.5);
+        assert!(
+            adjusted > base,
+            "a non-zero possibility must raise the amplified frequency ({adjusted} vs {base})"
+        );
+        assert_eq!(
+            base,
+            super::amplified_frequency(unigram, total),
+            "the bit-clear path is the pre-existing unigram law exactly"
+        );
+    }
+
+    /// The frozen candidate pins were measured with DYNAMIC_ADJUST clear on
+    /// both sides, which is the whole reason implementing it cannot move
+    /// them. That safety argument is **not** "the term is zero at offset 0"
+    /// — upstream's `_get_previous_token` answers `sentence_start` (1) there,
+    /// not `null_token`, so Gate 2 fires and a real gram is merged. The
+    /// argument is only that the bit is clear in every frozen word.
+    ///
+    /// So this reads the harness's own option words rather than a copy of
+    /// them: adding the bit to a frozen profile fails here instead of
+    /// silently moving pins.
+    #[test]
+    fn no_frozen_option_word_sets_dynamic_adjust() {
+        use std::path::Path;
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/bisection");
+        let mut checked = 0_usize;
+        for entry in std::fs::read_dir(&dir).expect("the bisection harness is in-tree") {
+            let path = entry.expect("readable dir entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("c") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("readable source");
+            for line in source.lines() {
+                let Some(rest) = line.strip_prefix("#define PARITY_OPTIONS") else {
+                    continue;
+                };
+                let hex = rest
+                    .split("0x")
+                    .nth(1)
+                    .expect("PARITY_OPTIONS is written in hex")
+                    .trim_end_matches(|c: char| !c.is_ascii_hexdigit());
+                let word = u32::from_str_radix(hex, 16).expect("parsable hex option word");
+                assert_eq!(
+                    word & 0x200,
+                    0,
+                    "{}: frozen option word 0x{word:x} sets DYNAMIC_ADJUST (1<<9). \
+                     The frozen candidate pins were measured with it clear; setting it \
+                     changes candidate ranking at every offset, including 0.",
+                    path.display()
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked > 0,
+            "found no PARITY_OPTIONS definitions to check — the guard would be vacuous"
+        );
+    }
+
+    /// A system-only facade with a caller-chosen entry count, so a guess's
+    /// merge count can be measured against its candidate count.
+    struct SystemPhrases(Vec<PhraseEntry>);
+
+    impl Dictionary for SystemPhrases {
+        type Entry = PhraseEntry;
+        type Error = EngineError;
+        type Syllable = SyllableKey;
+
+        fn lookup(&self, _syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    /// Fixed unigrams plus one merged bigram row, counting how often the
+    /// engine asks for that row and recording which token it asked about.
+    ///
+    /// The counter is the point: upstream merges ONE gram per
+    /// `pinyin_guess_candidates` and indexes it per candidate
+    /// (`pinyin.cpp:2200-2224`). A count that tracks the candidate list is
+    /// the complexity regression the source policy forbids, and it is
+    /// invisible to any output-only assertion.
+    struct CountingBigrams {
+        unigrams: FixedUnigrams,
+        row: Option<oxpinyin_core::MergedGram>,
+        merges: std::rc::Rc<std::cell::Cell<usize>>,
+        asked_about: std::rc::Rc<std::cell::Cell<u32>>,
+    }
+
+    impl LanguageModel for CountingBigrams {
+        type Error = EngineError;
+        type Token = PhraseToken;
+
+        fn score(
+            &self,
+            history: &[PhraseToken],
+            token: &PhraseToken,
+            edge_cost: Cost,
+        ) -> Result<Cost, EngineError> {
+            self.unigrams.score(history, token, edge_cost)
+        }
+
+        fn has_real_unigrams(&self) -> bool {
+            true
+        }
+
+        fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, EngineError> {
+            self.unigrams.unigram_freq(token)
+        }
+
+        fn unigram_total(&self) -> Result<Option<u64>, EngineError> {
+            self.unigrams.unigram_total()
+        }
+
+        fn addon_unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, EngineError> {
+            self.unigrams.addon_unigram_freq(token)
+        }
+
+        fn addon_unigram_total(&self) -> Result<Option<u64>, EngineError> {
+            self.unigrams.addon_unigram_total()
+        }
+
+        fn merged_successors(
+            &self,
+            prev: &PhraseToken,
+        ) -> Result<Option<oxpinyin_core::MergedGram>, EngineError> {
+            self.merges.set(self.merges.get() + 1);
+            self.asked_about.set(prev.value());
+            Ok(self.row.clone())
+        }
+    }
+
+    /// The three gates end to end through `Session`, which the C-level
+    /// differential cannot demonstrate here: the in-tree `fixtures/w3` mini
+    /// tables answer `no-first-candidate` for nearly every input, so that
+    /// differential self-skips without the oracle and proves nothing on its
+    /// own. This test needs no oracle and no data set.
+    ///
+    /// Gate 1 — the previous token: at offset 0 upstream answers
+    /// `sentence_start` (1), not `null_token`. Gate 2 — one merge per
+    /// guess, never one per candidate. Gate 3 — the possibility joins the
+    /// unigram term inside the pin's single truncation, and only for the
+    /// token the row credits.
+    #[test]
+    fn dynamic_adjust_merges_one_row_per_guess_and_lifts_only_the_credited_token() {
+        use oxpinyin_core::{DYNAMIC_ADJUST, MergedGram, OptionBits, PINYIN_INCOMPLETE};
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        const TEXTS: [&str; 6] = ["系", "统", "习", "题", "集", "锦"];
+        const FIRST: u32 = 0x0100_0001;
+        const SECOND: u32 = 0x0100_0002;
+
+        struct Run {
+            texts: Vec<String>,
+            merges: usize,
+            asked_about: u32,
+        }
+
+        fn run(entries: usize, dynamic: bool, row: Option<MergedGram>) -> Run {
+            let merges = Rc::new(Cell::new(0_usize));
+            let asked_about = Rc::new(Cell::new(u32::MAX));
+            let phrases = (0..entries)
+                .map(|index| {
+                    PhraseEntry::new(
+                        PhraseToken::new(FIRST + u32::try_from(index).expect("small index")),
+                        TEXTS[index].to_owned(),
+                    )
+                })
+                .collect();
+            let mut session = Session::new(
+                &EmptyConfigSource,
+                StoragePaths::new("user"),
+                SystemPhrases(phrases),
+                CountingBigrams {
+                    unigrams: FixedUnigrams {
+                        system: 13,
+                        addon: 0,
+                        total: 51_051_831,
+                        addon_total: 1,
+                    },
+                    row,
+                    merges: Rc::clone(&merges),
+                    asked_about: Rc::clone(&asked_about),
+                },
+            )
+            .expect("Session::new");
+            // Both arms set the same word apart from the one bit, so nothing
+            // else about the parse can differ between them.
+            session
+                .set_options(
+                    OptionBits::default()
+                        .with(PINYIN_INCOMPLETE, true)
+                        .with(DYNAMIC_ADJUST, dynamic),
+                )
+                .expect("set_options");
+            session.type_pinyin("a").expect("typing cannot fail");
+            Run {
+                texts: session
+                    .candidates()
+                    .iter()
+                    .map(|candidate| candidate.text().to_owned())
+                    .collect(),
+                merges: merges.get(),
+                asked_about: asked_about.get(),
+            }
+        }
+
+        // A row that credits the SECOND phrase with half its mass. The
+        // unigram answer is a constant across tokens, so with the bit clear
+        // the two candidates tie on all three RankKeys and hold collection
+        // order; only the bigram term can separate them.
+        let credits_second = || MergedGram::new(1_000, vec![(SECOND, 500)]);
+
+        // Gate 1, bit clear: the model is never consulted at all, and the
+        // order is the pre-existing unigram law's.
+        let clear = run(2, false, Some(credits_second()));
+        assert_eq!(
+            clear.merges, 0,
+            "with the bit clear upstream never reaches the merge, so neither may this"
+        );
+        assert_eq!(
+            clear.texts,
+            ["系", "统"],
+            "the bit-clear order is the frozen unigram-only order"
+        );
+
+        // Gate 1, bit set: offset 0 resolves to `sentence_start`, not a null
+        // token — the premise that offset 0 is safe by construction is false,
+        // and this is the assertion that says so.
+        let no_row = run(2, true, None);
+        assert_eq!(
+            no_row.asked_about,
+            crate::nbest::SENTENCE_START,
+            "offset 0 asks about sentence_start, exactly as `_get_previous_token` answers"
+        );
+        assert_eq!(
+            no_row.texts,
+            ["系", "统"],
+            "a model with no row for the previous token contributes no term"
+        );
+
+        // Gate 3: the credited token overtakes a candidate it ties with on
+        // every other key.
+        let lifted = run(2, true, Some(credits_second()));
+        assert_eq!(
+            lifted.texts,
+            ["统", "系"],
+            "the bigram term must actually move the credited candidate above its tie peer"
+        );
+
+        // Gate 2: the merge count is a property of the guess, not of the
+        // candidate list. Tripling the candidates must not change it.
+        assert!(
+            lifted.merges > 0,
+            "the bit is set and a previous token exists, so a merge must happen"
+        );
+        let wider = run(6, true, Some(credits_second()));
+        assert_eq!(
+            wider.merges,
+            lifted.merges,
+            "merging is once per guess ({} candidates merged {} times, {} candidates merged {} \
+             times): a count that tracks the candidate list is the O(candidates) regression the \
+             source policy forbids",
+            lifted.texts.len(),
+            lifted.merges,
+            wider.texts.len(),
+            wider.merges
+        );
+        assert_eq!(
+            wider.texts.first().map(String::as_str),
+            Some("统"),
+            "the credited token leads a wider list too"
         );
     }
 
@@ -3761,7 +4167,7 @@ mod tests {
             ),
         ];
         let frequencies = session
-            .candidate_frequencies(&collected)
+            .candidate_frequencies(&collected, None)
             .expect("frequency reads cannot fail here");
         assert_eq!(
             frequencies,
