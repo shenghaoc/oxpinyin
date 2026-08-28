@@ -4,6 +4,12 @@ version = "0.0.0"
 publish = false
 edition = "2021"
 
+# The fuzz workspace does not inherit the root workspace's lints (separate
+# workspace). deny rather than forbid: future FFI-driving harnesses (the
+# planned capi-commands target) carry scoped unsafe with SAFETY comments.
+[lints.rust]
+unsafe_code = "deny"
+
 [package.metadata]
 cargo-fuzz = true
 
