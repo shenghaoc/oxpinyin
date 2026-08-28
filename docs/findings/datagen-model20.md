@@ -174,6 +174,22 @@ residual (near-tie tail ordering from upstream's per-step `gfloat`
 accumulation), pending the same maintainer freeze decision; it is reported
 as the divergence it is, not masked.
 
+### The train-dynamic-off persistence phase (2026-08-27)
+
+`train-diff.c` phase 4
+(`TRAINDIFF_REOPEN=1`, always set by the runner's populated leg): save,
+tear the context down, reopen the SAME user dir under the same option
+word, re-probe the candidate window (must equal the in-memory dump per
+side — the remembered user phrases must survive), run one more training
+round with the bit still clear, and export from the reopened context.
+Measured: both engines reopen to the identical window and export
+`你好|ni'hao|414` (the persisted 138 doubled once — a lost state would
+re-seed at 138) plus the remembered `你好|5` / `世界|12` phrases;
+`train-reopened:1` on both. A phase-0.5 `initial@0` probe prints the
+un-populated baseline inside the same run. The runner gains a vacuity
+guard (the reopened probe/train/export lines must exist on both sides)
+and the per-side reopened-equals-in-memory window check.
+
 ## libpinyin capability map (data pipeline)
 
 The acceptance lens for datagen is **libpinyin parity**, not crate

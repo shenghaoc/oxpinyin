@@ -151,6 +151,20 @@ round, full tables): exports identical (3 rows); `nihao@0` and
 still rank (the ungated phrase-index term); trained user bigrams do not
 need to, because the bit is clear.
 
+The populated phase grew a persistence leg (2026-08-27, `train-diff.c`
+phase 4 / `TRAINDIFF_REOPEN=1`, always on in the runner's populated
+leg): save → full context teardown → reopen of the SAME user dir under
+the same word → the reopened window must equal the in-memory one on
+each side → one more training round with the bit still clear → export
+from the reopened context. Measured against the pin on datagen tables:
+both sides export `你好|ni'hao|414` (persisted 138 doubled by the
+subsequent-session round — a lost state would re-seed at 138) plus the
+remembered `你好|5` / `世界|12` rows; `train-reopened:1` both. An
+`initial@0` probe prints the un-populated baseline inside the same run,
+and the runner fails unless the reopened probe/train/export lines exist
+on both sides (the populated phase cannot silently degrade to the empty
+case).
+
 ## Sweep TEXT/ORDER (ABI, top-10)
 
 `run-option-sweep.sh` now diffs parse/aux **and** top-10 candidate

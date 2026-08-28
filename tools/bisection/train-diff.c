@@ -23,6 +23,23 @@
  *                 pronunciation-merge path.
  *   export      — the full phrase and bigram triple sets, once.
  *
+ * TRAINDIFF_DUMP_CANDIDATES additionally prints the read side: the
+ * initial (un-populated) top-10 window before Phase 1 ("initial@0"), and
+ * after all writes the populated windows at offset 0 and after choosing
+ * 你 ("nihao@0" / "after-ni") — the W10 DYNAMIC_ADJUST-clear surface.
+ *
+ * Phase 4 (TRAINDIFF_REOPEN=1) — persistence + subsequent session, the
+ * W10 dynamic-off populated half: pinyin_save, tear the context down
+ * completely, reopen the SAME user dir in a fresh context (same options),
+ * re-probe the candidate surface (the reopened window must equal the
+ * in-memory Phase 2.75 dump — the remembered user phrases persist into
+ * the reopened union), run ONE more training round under the same
+ * DYNAMIC_ADJUST-clear word, and export again from the reopened context
+ * with reopen- prefixed rows. The reopened export is the first export of
+ * its context, so the pin's one-export-per-context rule holds (the
+ * stale-join-buffer segfault below is a repeated-export-in-one-context
+ * defect; nbest-train-diff's Phase E proved the reopen shape safe).
+ *
  * The predicted-candidate path is deliberately absent: the capi's
  * pinyin_guess_predicted_candidates_with_punctuations is a stub returning
  * false, so no predicted candidate can be driven on that side, and the
@@ -30,10 +47,11 @@
  * cannot be made identical across both engines.
  *
  * Usage:
- *   TRAINDIFF_ROUNDS=<n> ./train-diff <path-to-so> <systemdir>
+ *   TRAINDIFF_ROUNDS=<n> [TRAINDIFF_REOPEN=1] ./train-diff <path-to-so> <systemdir>
  */
 
 #define _POSIX_C_SOURCE 200809L
+#include <dirent.h>
 #include <dlfcn.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -63,6 +81,7 @@ typedef char gchar;
 
 typedef pinyin_context_t *(*fn_init)(const char *, const char *);
 typedef void (*fn_fini)(pinyin_context_t *);
+typedef bool (*fn_save)(pinyin_context_t *);
 typedef pinyin_instance_t *(*fn_alloc)(pinyin_context_t *);
 typedef void (*fn_free_instance)(pinyin_instance_t *);
 typedef bool (*fn_set_options)(pinyin_context_t *, uint32_t);
@@ -90,6 +109,7 @@ struct syms {
     fn_init init;
     fn_init fixture_init;
     fn_fini fini;
+    fn_save save;
     fn_alloc alloc;
     fn_free_instance free_instance;
     fn_set_options set_options;
@@ -135,6 +155,7 @@ static void resolve_all(void *handle, struct syms *s) {
     s->init = (fn_init)load("pinyin_init", handle);
     s->fixture_init = (fn_init)dlsym(handle, "oxpinyin_init_for_fixtures");
     s->fini = (fn_fini)load("pinyin_fini", handle);
+    s->save = (fn_save)load("pinyin_save", handle);
     s->alloc = (fn_alloc)load("pinyin_alloc_instance", handle);
     s->free_instance = (fn_free_instance)load("pinyin_free_instance", handle);
     s->set_options = (fn_set_options)load("pinyin_set_options", handle);
@@ -217,10 +238,11 @@ static lookup_candidate_t *find_by_text(const struct syms *s,
 
 /* ── Export dumping ───────────────────────────────────────────────────── */
 
-static void print_phrase_rows(const struct syms *s, pinyin_context_t *ctx) {
+static void print_phrase_rows(const struct syms *s, pinyin_context_t *ctx,
+                              const char *prefix) {
     export_iterator_t *iter = s->begin_phrases(ctx, 7 /* USER_DICTIONARY */);
     if (!iter) {
-        printf("phrase: BEGIN-NULL\n");
+        printf("%sphrase: BEGIN-NULL\n", prefix);
         return;
     }
     while (s->has_next(iter)) {
@@ -228,10 +250,10 @@ static void print_phrase_rows(const struct syms *s, pinyin_context_t *ctx) {
         gchar *pinyin = NULL;
         gint count = -1;
         if (!s->get_next(iter, &phrase, &pinyin, &count)) {
-            printf("phrase: GET-FAILED\n");
+            printf("%sphrase: GET-FAILED\n", prefix);
             break;
         }
-        printf("phrase: %s|%s|%d\n", phrase ? phrase : "(null)",
+        printf("%sphrase: %s|%s|%d\n", prefix, phrase ? phrase : "(null)",
                pinyin ? pinyin : "(null)", (int)count);
         g_free_fn(phrase);
         g_free_fn(pinyin);
@@ -239,10 +261,11 @@ static void print_phrase_rows(const struct syms *s, pinyin_context_t *ctx) {
     s->end_phrases(iter);
 }
 
-static void print_bigram_rows(const struct syms *s, pinyin_context_t *ctx) {
+static void print_bigram_rows(const struct syms *s, pinyin_context_t *ctx,
+                              const char *prefix) {
     bigram_export_iterator_t *iter = s->begin_bigram(ctx);
     if (!iter) {
-        printf("bigram: BEGIN-NULL\n");
+        printf("%sbigram: BEGIN-NULL\n", prefix);
         return;
     }
     /* Upstream's get_next fills the out-params and returns whether MORE rows
@@ -253,12 +276,32 @@ static void print_bigram_rows(const struct syms *s, pinyin_context_t *ctx) {
         gchar *pinyin = NULL;
         gint count = -1;
         s->bigram_get_next(iter, &phrase, &pinyin, &count);
-        printf("bigram: %s|%s|%d\n", phrase ? phrase : "(null)",
+        printf("%sbigram: %s|%s|%d\n", prefix, phrase ? phrase : "(null)",
                pinyin ? pinyin : "(null)", (int)count);
         g_free_fn(phrase);
         g_free_fn(pinyin);
     }
     s->end_bigram(iter);
+}
+
+/* ── Temp userdir cleanup ─────────────────────────────────────────────── */
+
+static void rm_rf(const char *dir) {
+    DIR *d = opendir(dir);
+    if (d) {
+        struct dirent *entry;
+        while ((entry = readdir(d)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+                continue;
+            char path[4096];
+            if (snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name) >=
+                (int)sizeof(path))
+                continue;
+            unlink(path); /* the store writes regular files only */
+        }
+        closedir(d);
+    }
+    rmdir(dir);
 }
 
 /* ── Main ─────────────────────────────────────────────────────────────── */
@@ -306,12 +349,26 @@ int main(int argc, char **argv) {
         fprintf(stderr, "pinyin_alloc_instance failed\n");
         return 1;
     }
+    uint32_t options = 0;
+    bool have_options = false;
     if (getenv("TRAINDIFF_OPTIONS")) {
-        uint32_t options = (uint32_t)strtoul(getenv("TRAINDIFF_OPTIONS"), NULL, 16);
+        options = (uint32_t)strtoul(getenv("TRAINDIFF_OPTIONS"), NULL, 16);
         if (!s.set_options(ctx, options)) {
             fprintf(stderr, "pinyin_set_options failed\n");
             return 1;
         }
+        have_options = true;
+    }
+
+    /* Phase 0.5 — the initial model state (TRAINDIFF_DUMP_CANDIDATES):
+     * the un-populated window over the full system tables, before any
+     * training or remember writes. The populated probes below are only
+     * meaningful against this baseline. */
+    if (getenv("TRAINDIFF_DUMP_CANDIDATES")) {
+        s.parse(inst, "nihao");
+        s.guess(inst, 0, DEFAULT_SORT);
+        print_top10(&s, inst, "initial@0");
+        s.reset(inst);
     }
 
     /* Phase 1 — the doubling sequence on (你 → 好). Each round: parse,
@@ -422,12 +479,117 @@ int main(int argc, char **argv) {
     }
 
     /* Phase 3 — the full triple sets, one export per context. */
-    print_phrase_rows(&s, ctx);
-    print_bigram_rows(&s, ctx);
+    print_phrase_rows(&s, ctx, "");
+    print_bigram_rows(&s, ctx, "");
+
+    /* Phase 4 — persistence + subsequent session (TRAINDIFF_REOPEN): save,
+     * tear the context down completely, reopen the SAME user dir in a
+     * fresh context under the same options, re-probe the candidate
+     * surface, run ONE more training round with DYNAMIC_ADJUST still
+     * clear, and export from the reopened context (reopen- prefixed rows,
+     * the first export of that context). */
+    if (getenv("TRAINDIFF_REOPEN")) {
+        if (!s.save(ctx)) {
+            fprintf(stderr, "reopen: pinyin_save failed\n");
+            goto fail_inst;
+        }
+        s.free_instance(inst);
+        s.fini(ctx);
+        inst = NULL;
+        ctx = NULL;
+        ctx = init(argv[2], userdir);
+        if (!ctx) {
+            fprintf(stderr, "reopen: pinyin_init failed\n");
+            goto fail_no_ctx;
+        }
+        inst = s.alloc(ctx);
+        if (!inst) {
+            fprintf(stderr, "reopen: pinyin_alloc_instance failed\n");
+            goto fail_ctx;
+        }
+        if (have_options && !s.set_options(ctx, options)) {
+            fprintf(stderr, "reopen: pinyin_set_options failed\n");
+            goto fail_inst;
+        }
+
+        /* The read side: the reopened window must equal the in-memory
+         * Phase 2.75 dump (the remembered user phrases persist into the
+         * reopened union). */
+        s.parse(inst, "nihao");
+        s.guess(inst, 0, DEFAULT_SORT);
+        print_top10(&s, inst, "reopened@0");
+
+        lookup_candidate_t *ni = find_by_text(&s, inst, "你");
+        if (!ni) {
+            fprintf(stderr, "reopen: candidate 你 not offered\n");
+            goto fail_inst;
+        }
+        int offset = s.choose(inst, 0, ni);
+        if (offset < 0) {
+            fprintf(stderr, "reopen: choose 你 failed\n");
+            goto fail_inst;
+        }
+        s.guess(inst, (size_t)offset, DEFAULT_SORT);
+        print_top10(&s, inst, "reopened-after-ni");
+        s.reset(inst);
+
+        /* The write side: one more training round in the subsequent
+         * session, the option word unchanged. */
+        s.parse(inst, "nihao");
+        s.sentence(inst);
+        s.guess(inst, 0, DEFAULT_SORT);
+        ni = find_by_text(&s, inst, "你");
+        if (!ni) {
+            fprintf(stderr, "reopen round: candidate 你 not offered\n");
+            goto fail_inst;
+        }
+        offset = s.choose(inst, 0, ni);
+        if (offset < 0) {
+            fprintf(stderr, "reopen round: choose 你 failed\n");
+            goto fail_inst;
+        }
+        s.sentence(inst);
+        s.guess(inst, (size_t)offset, DEFAULT_SORT);
+        lookup_candidate_t *hao = find_by_text(&s, inst, "好");
+        if (!hao) {
+            fprintf(stderr, "reopen round: candidate 好 not offered\n");
+            goto fail_inst;
+        }
+        if (s.choose(inst, (size_t)offset, hao) < 0) {
+            fprintf(stderr, "reopen round: choose 好 failed\n");
+            goto fail_inst;
+        }
+        s.sentence(inst);
+        bool reopened_trained = s.train(inst, 0);
+        printf("train-reopened:%d\n", reopened_trained ? 1 : 0);
+        if (!reopened_trained) {
+            fprintf(stderr, "reopen round: pinyin_train failed\n");
+            goto fail_inst;
+        }
+        s.reset(inst);
+
+        print_phrase_rows(&s, ctx, "reopen-");
+        print_bigram_rows(&s, ctx, "reopen-");
+    }
 
     s.free_instance(inst);
     s.fini(ctx);
     dlclose(handle);
-    rmdir(userdir); /* best-effort: non-empty on success */
+    rm_rf(userdir);
     return 0;
+
+    /* Shared cleanup: no exit path leaks the dlopen handle or the temp
+     * userdir. The reopen phase frees and NULLs the instance and context
+     * before rebuilding them, so a failure after that point must not
+     * release them twice. */
+fail_inst:
+    if (inst)
+        s.free_instance(inst);
+fail_ctx:
+    if (ctx)
+        s.fini(ctx);
+fail_no_ctx:
+    dlclose(handle);
+    rm_rf(userdir);
+    return 1;
 }
