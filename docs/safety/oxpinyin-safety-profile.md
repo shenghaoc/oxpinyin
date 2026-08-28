@@ -95,9 +95,12 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 - `cargo deny --locked check` on every PR, for the root workspace
   (default and `--all-features`) and the fuzz workspace's own graph:
   vulnerabilities = deny; **yanked = deny**; unmaintained advisories are
-  not a level knob in cargo-deny 0.20 — they fail unless recorded as an
-  `ignore` entry in `deny.toml` (the deviation registry, currently one:
-  bincode via heed-types/lmdb, with reason and review-by date), and a CI
+  configurable in cargo-deny 0.20.2
+  (`unmaintained = "workspace" | "transitive" | "all"`), and because
+  `deny.toml` omits the setting the default `unmaintained = "all"`
+  applies — they fail unless recorded as an `ignore` entry in
+  `deny.toml` (the deviation registry, currently one: bincode via
+  heed-types/lmdb, with reason and review-by date), and a CI
   `cargo tree` assertion keeps the default graph bincode-free so the
   global ignore cannot mask it leaking beyond the lmdb path; licenses =
   allow-list (GPL-3.0-or-later + permissive set, NCSA scoped to
