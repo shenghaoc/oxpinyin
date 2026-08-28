@@ -107,13 +107,21 @@ backend name, silently. That is the failure mode to avoid.
 
 `crates/oxpinyin-capi/libpinyin.pc.in` is checked in carrying the exact
 content that has to be installed. What is open is only **how** it gets
-there:
+there. Three options, all of which produce a correct `libpinyin.pc`;
+the choice is entirely about build-system coupling, and is recorded here
+without one being taken:
 
-1. a post-install substitution step in the packaging recipe, overwriting
-   cargo-c's generated file;
-2. a patch to cargo-c adding a custom-variable table (upstreamable — the
-   limitation is general, not oxpinyin-specific);
-3. dropping cargo-c for the `.pc` and installing the template directly.
+| # | Option | Coupling | Notes |
+| --- | --- | --- | --- |
+| i | Post-install substitution script rewriting the installed `.pc` | Packaging owns it; cargo-c untouched | Simplest to land, but the correct file exists only *after* install, so a plain `cargo capi install` is silently wrong — the same empty-variable failure mode, just moved |
+| ii | Patch cargo-c to accept a custom-variable table | Upstream owns it; we wait | The cleanest fix and genuinely upstreamable — a closed field set is the gap, not an oxpinyin-specific need. Any project mirroring an existing C library's `.pc` hits it |
+| iii | Generate the `.pc` in `build.rs` and bypass cargo-c for it | We own it; cargo-c still builds the library | Correct at build time rather than install time, but two generators now write files with the same name and the ordering must be settled |
+
+The failure mode is what makes this worth deciding rather than
+defaulting: a missing pkg-config variable resolves to **the empty string
+with exit status 0**, so fcitx-libpinyin does not fail to configure — it
+configures with an empty system-data path and an empty backend name.
+Option (i) leaves a window in which that is still true.
 
 This is the STOP the brief names ("cargo-c's naming options cannot
 produce the required layout without a wrapper script"). Nothing else in
