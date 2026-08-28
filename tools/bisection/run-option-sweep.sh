@@ -12,13 +12,17 @@
 #                          $HOME/.local/opt/pinyin-oracle)
 #   OPTION_SWEEP_CAPI_DATA oxpinyin-capi system dir. When unset the script
 #                          prefers a full export plus interpolation2.text in
-#                          the sibling model cache, then falls back to
-#                          fixtures/w3.
+#                          the sibling model cache, then OXPINYIN_SYSTEM_DIR
+#                          and the conventional build locations. Unresolvable
+#                          is FATAL, not a silent fixtures/w3 run -- see
+#                          system-dir.sh.
 #
 # Exit codes: 0 = identical or skipped; 1 = build/run failure; 2 = divergence.
 
 set -euo pipefail
 cd "$(dirname "$0")"
+# shellcheck source=tools/bisection/system-dir.sh
+. ./system-dir.sh
 REPO_ROOT="$(cd ../.. && pwd)"
 
 echo "--- building option-sweep driver ---"
@@ -51,7 +55,10 @@ elif [ -f /tmp/oxpinyin-export/pinyin_index.redb ]; then
         fi
     done
 else
-    CAPI_DATA="$REPO_ROOT/fixtures/w3"
+    # No explicit dir and no export cache: resolve or refuse. Falling back
+    # to fixtures/w3 here used to make a real-oracle run report DIVERGENCE
+    # from a data mismatch.
+    CAPI_DATA="$(resolve_system_dir OPTION_SWEEP_CAPI_DATA option-sweep)"
 fi
 
 if [ ! -f "$CAPI_DATA/pinyin_index.redb" ]; then

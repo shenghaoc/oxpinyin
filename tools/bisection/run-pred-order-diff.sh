@@ -48,7 +48,10 @@ if ! grep -q '^pin_ref=libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636
     exit 0
 fi
 
-SYSTEM="${UNCOVERED_SYSTEM:-}"
+# UNCOVERED_SYSTEM first, then OXPINYIN_SYSTEM_DIR -- the one name that
+# works across every differential, so a whole sweep needs one export
+# rather than a different variable per runner (see system-dir.sh).
+SYSTEM="${UNCOVERED_SYSTEM:-${OXPINYIN_SYSTEM_DIR:-}}"
 if [[ -z "$SYSTEM" ]] || ! [[ -f "$SYSTEM/phrase_index.redb" ]]; then
     echo "SKIP: UNCOVERED_SYSTEM must name the five-file system dir"
     echo "  (see run-uncovered-surface-diff.sh)"

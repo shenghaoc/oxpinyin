@@ -78,7 +78,10 @@ if [[ ! -f "$ORACLE_DATA/bigram.db" ]]; then
     exit 0
 fi
 
-CAPI_SYSTEM="${LIVETYPING_SYSTEM:-}"
+# LIVETYPING_SYSTEM first, then OXPINYIN_SYSTEM_DIR -- the one name that
+# works across every differential, so a whole sweep needs one export
+# rather than a different variable per runner (see system-dir.sh).
+CAPI_SYSTEM="${LIVETYPING_SYSTEM:-${OXPINYIN_SYSTEM_DIR:-}}"
 if [[ -z "$CAPI_SYSTEM" ]] || ! [[ -f "$CAPI_SYSTEM/interpolation2.text"     && -f "$CAPI_SYSTEM/pinyin_index.redb"     && -f "$CAPI_SYSTEM/phrase_index.redb"     && -f "$CAPI_SYSTEM/bigram.redb" ]]; then
     echo "SKIP: LIVETYPING_SYSTEM must name a real-unigram system dir"
     echo "  (pinyin_index.redb, phrase_index.redb, bigram.redb, interpolation2.text)"
