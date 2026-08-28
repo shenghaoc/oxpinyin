@@ -20,3 +20,7 @@ bindgen = { workspace = true, optional = true }
 [features]
 lmdb = ["dep:heed"]
 tkrzw = ["dep:bindgen"]
+# Kyoto Cabinet compatibility backend. bindgen is build-time only (it needs
+# libclang); the runtime dependency is the system libkyotocabinet the distro
+# already ships — the same library that wrote the files this reads.
+kyotocabinet = ["dep:bindgen"]
