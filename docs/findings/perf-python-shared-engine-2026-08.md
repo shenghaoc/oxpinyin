@@ -93,12 +93,18 @@ GIL.
 
 So: the free-threaded build is not what would unlock parallelism for this
 binding, and a shared `Engine` is not GIL-equivalent-plus-a-lock — it is
-*worse* than the GIL build's private-engine throughput by the full factor of
-N. The lever is shared-vs-private, not GIL-vs-free-threaded.
+*worse* than the GIL build's private-engine throughput by up to a factor of
+N, but only until private mode saturates the machine's four logical CPUs.
+Past that the gap stops widening: the eight-thread rows above have private at
+~4×, not 8×, so on this hardware the shared penalty tops out near 4× rather
+than growing without bound. The lever is shared-vs-private, not
+GIL-vs-free-threaded.
 
-(This does not make the free-threaded CI pin pointless: it is what makes
-`test_shared_engine_is_thread_safe` actually contend the lock rather than
-watch the interpreter serialise the worker loop.)
+(This does not make the free-threaded CI pin pointless: `Engine.lookup`
+releases the GIL for the native decode, so the shared-`Engine` mutex is
+contended in `test_shared_engine_is_thread_safe` even under a GIL — but
+free-threaded is what lets the rest of the worker loop, the Python-side list
+building and getters, run concurrently instead of serialised behind the GIL.)
 
 ## Result 3 — what a `Runtime`/`Session` split would save
 
@@ -107,14 +113,17 @@ the same fixture:
 
 | Step | Median |
 |---|---:|
-| `Runtime::open_fixtures` + `new_session` (what one `Engine` costs) | 0.806 ms |
+| `Runtime::open_fixtures` + `new_session` (backend + session init) | 0.806 ms |
 | `Runtime::open_fixtures` alone (the table opens) | 0.478 ms |
 | `new_session` over an already-open `Runtime` | 0.313 ms |
 
-Today N private engines pay N × 0.806 ms, of which N × 0.478 ms is the same
-tables opened N times. A shared `Runtime` would pay 0.478 ms once and
-0.313 ms per session, so about **59% of per-additional-engine init is
-redundant today** at this scale.
+This is backend + session initialization only: the full `Engine::open_with`
+also retrieves `runtime.user_store()` and allocates the `EngineInner` behind
+its `Arc<Mutex<…>>`, neither measured here, so 0.806 ms is a lower bound on
+what one `Engine` constructor costs. Of that init, N private engines pay
+N × 0.478 ms opening the same tables N times; a shared `Runtime` would pay
+0.478 ms once and 0.313 ms per session, so about **59% of this backend +
+session init is redundant per additional engine** today at this scale.
 
 Directionally that understates it: the fixture's redb files are ~1 MB each,
 while the real model20 tables are far larger, so the `Runtime` share of the

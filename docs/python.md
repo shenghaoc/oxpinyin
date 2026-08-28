@@ -135,7 +135,7 @@ native behaviour.
 | Corrupt content that parses badly | `ValueError` |
 | Stale/out-of-range candidate index | `IndexError` |
 | Out-of-range lookup offset | `ValueError` |
-| Backend failure (dictionary/model/user store/decode) | `oxpinyin.OxpinyinError` (subclass of `RuntimeError`) |
+| Backend failure (dictionary/model/user-store read or save/decode) | `oxpinyin.OxpinyinError` (subclass of `RuntimeError`) |
 
 Nothing panics across the boundary: PyO3 converts any unwinding into
 `pyo3_runtime.PanicException`, and the underlying crates are panic-free by
@@ -181,13 +181,17 @@ it costs one lock acquisition per call.
 
 ## Learning
 
-With `user_dir` given, `train()` records the composed/sentence history into
-the user store exactly like the native `pinyin_train`, and `save()` persists
-when anything changed (returns `bool`). Without `user_dir`, `train()` refuses
-and `save()` returns `False`. A user directory must already exist; opening it
-is best-effort like the C ABI — failures degrade to "no user state" rather
-than failing construction, so candidate computation never depends on writable
-storage.
+When the user store opens successfully — which needs a usable `user_dir` —
+`train()` records the composed/sentence history into it exactly like the
+native `pinyin_train`, and `save()` persists when anything changed — `True`
+when it wrote, `False` when there was nothing to persist. When it does not
+open — no `user_dir`, or one that cannot be opened — `train()` refuses and
+`save()` returns `False`. `False` is reserved for those "nothing to persist"
+cases (no user store, or an unmodified one); a store-level persistence failure
+raises `OxpinyinError` rather than being swallowed into a `False`. A user
+directory must already exist; opening it is best-effort like the C ABI —
+failures degrade to "no user state" rather than failing construction, so
+candidate computation never depends on writable storage.
 
 ## Supported platforms
 
@@ -196,13 +200,22 @@ exercises Linux; macOS and Windows run the same portable crates
 (`oxpinyin-core/data/user/engine`) that the portable CI job covers, but
 wheel builds there are currently untested.
 
-What is declared is what CI proves. The job runs exactly one interpreter —
-free-threaded CPython 3.14 on Linux — and the package declares exactly that:
-`requires-python = ">=3.14"` with a single
-`Programming Language :: Python :: 3.14` classifier. That is the platform
-this binding is written for; the shared-engine thread-safety test is
-near-vacuous under a GIL, which serialises the worker loop, so GIL builds
-are neither claimed nor tested.
+CI runs exactly one interpreter — free-threaded CPython 3.14 on Linux — and
+it builds from source there (`pip install .` through maturin), so that one
+source-built configuration is the whole of what these tests prove.
+`requires-python = ">=3.14"` only gates where pip will *install* the package;
+it does not describe what a build is binary-compatible with. That is fixed at
+build time by pyo3's stable-ABI settings — `abi3-py310` for standard CPython,
+`abi3t-py315` for the free-threaded build — not inferred from the version
+range. This project publishes and tests no pre-built wheels, so nothing beyond
+the source build on free-threaded 3.14 is claimed here.
+
+Free-threaded 3.14 is the platform this binding is written for. `Engine.lookup`
+runs through `Engine::with_session`, which releases the GIL before it acquires
+the shared-`Engine` mutex and performs the native operation, so the
+shared-engine thread-safety test contends that mutex for real even on a GIL
+build — only the Python-side work outside that detached region stays
+serialized. GIL builds are neither claimed nor tested here.
 
 ## Testing strategy
 
