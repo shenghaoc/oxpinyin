@@ -21,17 +21,69 @@ Ubuntu adds to every package it builds** is not. Debian does not add it.
 | upstream `1.0.27`, `./configure && make` | 1.0.27 | ok | ok | ok |
 | Debian source pkg `1.0.27-1.1`, Debian build flags | 1.0.27 | ok | ok | ok |
 | Debian source pkg `1.0.27-1.1`, Ubuntu build flags | 1.0.27 | ok | **broken** | ok |
+| Debian source pkg `1.0.32-1`, Debian build flags | 1.0.32 | ok | ok | ok |
+| Debian source pkg `1.0.32-1`, Ubuntu build flags | 1.0.32 | ok | **broken** | ok |
+
+The last two rows are the version that matters for both open questions:
+`1.0.32-1` is what Debian uploaded to unstable and what Ubuntu 26.04
+rebuilt as `1.0.32-1build1`. Built with Ubuntu's flags it reproduces
+26.04's shipped failure exactly; built with Debian's, from the same
+tarball on the same machine, it is healthy — 18 GOT relocations kept
+instead of none, comparator byte 1 instead of 255, and the library-API
+probe below green on every row.
 
 "broken" is literal: `tkrzw_dbm_util create x.tkt` succeeds, and every
 subsequent open of that file by the same binary fails with
 `BROKEN_DATA_ERROR: invalid_key_comparator`. HashDBM (`.tkh`) and SkipDBM
 (`.tks`) are unaffected — neither stores a comparator.
 
-Debian sid and Arch could not be measured: this session's egress policy
+Debian sid and Arch could not be run: this session's egress policy
 returns 403 for every Debian and Arch mirror (`deb.debian.org`,
-`geo.mirror.pkgbuild.com`, `fastly.mirror.pkgbuild.com`, and the rest),
-so `apt-get install` and `pacman -Sy` cannot reach a package. See
-"Finishing the matrix" below for the two commands that close it.
+`geo.mirror.pkgbuild.com`, `fastly.mirror.pkgbuild.com`, and the rest —
+inside a container too, and still 403 once the proxy CA is installed, so
+it is policy and not TLS), and neither base image ships tkrzw. What
+*can* be read offline is the one input that decides the outcome — each
+distro's default `LDFLAGS` — and that is settled below.
+
+## What decides it, per distro
+
+The bisection further down reduces the whole question to one bit: does
+this distro link shared libraries with `-Wl,-Bsymbolic-functions`?
+Every distro's answer is readable from primary sources without
+installing tkrzw.
+
+| Distro | Where the default lives | `-Bsymbolic-functions`? |
+| --- | --- | --- |
+| Ubuntu | `Dpkg::Vendor::Ubuntu` line 156 | **yes** — `$flags->prepend('LDFLAGS', ...)` |
+| Debian | `Dpkg::Vendor::Debian` | no — zero occurrences |
+| Devuan, PureOS | their `Dpkg::Vendor::*` | no — zero occurrences |
+| Arch | `/etc/makepkg.conf` (`pacman 7.1.0.r9`) | no |
+
+The dpkg figures are from dpkg's own git at tag **1.23.7** — the exact
+dpkg the `debian:sid-slim` image reports — so this is Debian's file, not
+Ubuntu's copy of it. Ubuntu is the only vendor module of the four that
+mentions the flag at all. Arch's full default is
+
+```
+-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,-z,pack-relative-relocs
+```
+
+and its `-fno-plt` in `CFLAGS` is not a hazard here: it changes how
+calls are routed, not how addresses are taken.
+
+A package can still add the flag itself, and tkrzw's does not. Debian's
+`debian/rules` never sets `LDFLAGS` — the only two mentions are a
+commented-out `DEB_LDFLAGS_MAINT_APPEND` — and the file is *byte
+identical* from `1.0.27-1.1` through `1.0.32-1`, the version Debian
+uploaded to unstable in October 2024 and the one Ubuntu 26.04 rebuilt as
+`1.0.32-1build1`.
+
+So Debian sid and Arch are unrun but not unknown: both feed the correct
+input to the only step that matters. Arch carries the extra caveat that
+this note never confirmed tkrzw is packaged for it at all — if it is
+only in the AUR, `makepkg` still applies the same `/etc/makepkg.conf`.
+"Finishing the matrix" below has the two commands that turn this from
+determined into measured.
 
 ## The mechanism
 
@@ -184,7 +236,7 @@ round-trip, and exits non-zero on a broken build.
 
 ## Finishing the matrix
 
-Debian sid and Arch remain unmeasured only because their mirrors are
+Debian sid and Arch stay unrun only because their mirrors are
 unreachable from here. On a machine with normal egress:
 
 ```sh
@@ -195,12 +247,19 @@ docker run --rm -v "$PWD/tools/tkrzw/distro-probe.sh:/probe.sh:ro" archlinux:lat
   sh -c 'pacman -Sy --noconfirm tkrzw binutils && sh /probe.sh'
 ```
 
-The measured prediction for Debian is "healthy": its build flags carry no
-`-Bsymbolic-functions`, and Debian's own source package built with
-Debian's own flags round-trips correctly here. That inverts the usual
-Debian-upstream-of-Ubuntu reasoning — this is a defect Ubuntu introduces
-in the rebuild, not one it inherits. Arch is untested and unpredicted;
-run the probe.
+Both are expected to print `RESULT : healthy`, on the evidence in "What
+decides it, per distro": neither vendor adds the flag, tkrzw's packaging
+does not either, and the flag is the whole of the fault. Should Debian
+come back broken, the thing to look at is not the packaging but whether
+its buildd flags have changed — `dpkg-buildflags --get LDFLAGS` inside
+the container answers that in one line.
+
+That expectation inverts the usual Debian-upstream-of-Ubuntu reasoning,
+and deliberately so. Ubuntu's `1.0.27-1.1build1` is not a fork of
+Debian's package but a rebuild of it that changed nothing but the
+changelog; the defect enters at rebuild time, from a vendor-wide flag,
+so it cannot have been inherited. A Debian fix would not reach Ubuntu
+either — the flag would still be applied on top.
 
 ## Upstream
 
