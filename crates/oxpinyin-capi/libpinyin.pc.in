@@ -1,0 +1,39 @@
+# libpinyin.pc.in — the complete drop-in pkg-config file.
+#
+# cargo-c generates a libpinyin.pc from [package.metadata.capi.pkg_config],
+# but its generator has a fixed field set (prefix, exec_prefix, includedir,
+# libdir, Name, Description, Version, Requires, Requires.private, Libs,
+# Libs.private, Cflags, Conflicts) and no way to declare custom variables --
+# cargo-c 0.10.25 reads exactly seven keys: name, filename, description,
+# version, requires, requires_private, strip_include_path_components.
+#
+# Four of the real file's variables therefore cannot be emitted:
+# pkgdatadir, database_format, libpinyinincludedir and
+# libpinyin_binary_version. Two of them are read by fcitx-libpinyin at cmake
+# configure time (CMakeLists.txt:12-14, pkg_get_variable), and a missing
+# pkg-config variable resolves to the empty string with exit 0 -- so their
+# absence is a SILENT misconfiguration, not a build failure: the consumer
+# looks for system data at "" and probes an empty backend name.
+#
+# This template is the content that has to be installed. How it gets there --
+# a post-install substitution step, a packaging recipe, or a patch to cargo-c
+# -- is the open decision; see docs/findings/installed-naming.md.
+#
+# Mirrors the real /usr/lib/<triple>/pkgconfig/libpinyin.pc field for field.
+
+prefix=@prefix@
+exec_prefix=${prefix}
+libdir=@libdir@
+includedir=${prefix}/include
+pkgdatadir=@libdir@/libpinyin
+database_format=@DATABASE_FORMAT@
+
+libpinyinincludedir=${includedir}/libpinyin-@VERSION@
+libpinyin_binary_version=@LIBPINYIN_BINARY_VERSION@
+
+Name: libpinyin
+Description: Library to deal with pinyin
+Version: @VERSION@
+Requires: glib-2.0
+Libs: -L${libdir} -lpinyin
+Cflags: -I${libpinyinincludedir}
