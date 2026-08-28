@@ -83,8 +83,22 @@ pub fn open_session_from_env() -> Result<Option<PortSession>, String> {
         .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
     lm.set_unigrams_from_interpolation2(&model_dir.join("interpolation2.text"))
         .map_err(|error| format!("cannot parse interpolation2: {error}"))?;
-    let session = Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm)
+    let mut session = Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm)
         .map_err(|error| format!("cannot create Session: {error}"))?;
+    // The fixture this session is compared against was captured from the
+    // oracle at 0x18a, so the port must run at the same word. It used to
+    // run on the Session default (PINYIN_INCOMPLETE alone); the two
+    // missing table bits changed nothing only while the engine applied
+    // the divided and resplit tables unconditionally. Register #17's
+    // gating makes the word matter, so it is now stated rather than
+    // inherited. `IS_PINYIN` selects the scheme and has no engine bit.
+    session
+        .set_options(oxpinyin_core::OptionBits::from_bits(
+            oxpinyin_core::PINYIN_INCOMPLETE
+                | oxpinyin_core::USE_DIVIDED_TABLE
+                | oxpinyin_core::USE_RESPLIT_TABLE,
+        ))
+        .map_err(|error| format!("cannot set the parity option word: {error}"))?;
     Ok(Some(session))
 }
 

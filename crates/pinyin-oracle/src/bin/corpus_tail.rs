@@ -31,7 +31,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use oxpinyin_core::{OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_UE_VE};
+use oxpinyin_core::{
+    OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_UE_VE,
+    PINYIN_INCOMPLETE, USE_DIVIDED_TABLE, USE_RESPLIT_TABLE,
+};
 use oxpinyin_data::{BigramLanguageModel, SystemDictionary};
 use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use pinyin_oracle::corpus;
@@ -251,7 +254,9 @@ fn run_all_off_tails(env: &mut TailEnv) -> Result<(), String> {
     }
 
     println!("\n== option-word invariance (ours, all-off vs parity word) ==");
-    let parity_word = OptionBits::default().with(oxpinyin_core::PINYIN_INCOMPLETE, true);
+    // The same 0x18a word the corpus pass uses; it was PINYIN_INCOMPLETE
+    // alone here too, which understated what "the parity word" means.
+    let parity_word = PARITY_OPTIONS;
     for input in ALL_OFF_TAIL_INPUTS {
         // Only the fixture-backed rows need this: the invariance is the
         // engine-side half of the argument that the 0x18a fixture row is
@@ -275,6 +280,16 @@ fn run_all_off_tails(env: &mut TailEnv) -> Result<(), String> {
 
     Ok(())
 }
+
+/// The option word the oracle fixture was captured at, minus `IS_PINYIN`
+/// (`1 << 1`), which selects the scheme rather than shaping the parse and
+/// has no engine-side bit.
+///
+/// `0x18a` = `IS_PINYIN | PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
+/// USE_RESPLIT_TABLE`, and it is the word every frozen candidate pin was
+/// measured under.
+const PARITY_OPTIONS: OptionBits =
+    OptionBits::from_bits(PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE);
 
 fn run(env: &mut TailEnv) -> Result<(), String> {
     let corpus_dir = repo_root().join(corpus::CORPUS_DIR);
@@ -300,6 +315,21 @@ fn run(env: &mut TailEnv) -> Result<(), String> {
         };
         total += 1;
         env.session.reset();
+        // Compare at the word the fixture was captured at.
+        //
+        // This used to run on the Session default -- PINYIN_INCOMPLETE
+        // alone -- against a fixture captured at 0x18a. The mismatch was
+        // invisible because the engine applied the divided and resplit
+        // tables unconditionally, so the two missing bits changed nothing.
+        // Gating those tables on their bits (register #17) makes it
+        // visible: 576 of 10,190 inputs lose candidates the fixture has.
+        //
+        // The fix is to state the word, not to widen the engine default:
+        // a default that silently enabled the tables would re-hide exactly
+        // the gating this compares.
+        env.session
+            .set_options(PARITY_OPTIONS)
+            .expect("set_options cannot fail on a reset session");
         let _ = env.session.type_pinyin(input);
         let ours: Vec<String> = env
             .session

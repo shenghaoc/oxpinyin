@@ -24,6 +24,19 @@ pub const USE_TONE: u32 = 1 << 5;
 /// (`docs/findings/upstream-divergences.md`).
 pub const FORCE_TONE: u32 = 1 << 6;
 
+/// `USE_DIVIDED_TABLE = 1U << 7` (`pinyin_custom2.h:38`).
+///
+/// Gates the inner-split expansion: `inner_split_step` returns `false`
+/// immediately when the bit is clear (`phonetic_key_matrix.cpp:171-172`),
+/// so a parse without it never sees `xi'an`-style divisions.
+pub const USE_DIVIDED_TABLE: u32 = 1 << 7;
+
+/// `USE_RESPLIT_TABLE = 1U << 8` (`pinyin_custom2.h:39`).
+///
+/// Gates the resplit expansion the same way (`resplit_step`,
+/// `phonetic_key_matrix.cpp:89-90`; also `pinyin_parser2.cpp:337`).
+pub const USE_RESPLIT_TABLE: u32 = 1 << 8;
+
 /// `DYNAMIC_ADJUST = 1U << 9` (`pinyin_custom2.h:40`).
 pub const DYNAMIC_ADJUST: u32 = 1 << 9;
 
@@ -109,6 +122,18 @@ impl OptionBits {
     #[must_use]
     pub const fn has_incomplete(self) -> bool {
         self.contains(PINYIN_INCOMPLETE)
+    }
+
+    /// Whether `USE_DIVIDED_TABLE` is set.
+    #[must_use]
+    pub const fn has_divided_table(self) -> bool {
+        self.contains(USE_DIVIDED_TABLE)
+    }
+
+    /// Whether `USE_RESPLIT_TABLE` is set.
+    #[must_use]
+    pub const fn has_resplit_table(self) -> bool {
+        self.contains(USE_RESPLIT_TABLE)
     }
 
     /// Whether `DYNAMIC_ADJUST` is set.

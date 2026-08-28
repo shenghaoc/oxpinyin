@@ -2536,8 +2536,16 @@ pub(crate) fn build_scan_matrix(
     // pin fills a zero key at a separator, so its pairs never span one.
     // A toned key never resplits: upstream matches the full ChewingKey
     // (tone included) against zero-tone table structs.
+    // Gated on USE_RESPLIT_TABLE: `resplit_step` returns `false` before it
+    // touches the matrix when the bit is clear
+    // (`phonetic_key_matrix.cpp:89-90`). Register #17; this expansion used
+    // to run unconditionally, which is why a literal `0x0` option word
+    // produced an inventory the pin does not.
     let mut additions: Vec<ScanKey> = Vec::new();
     for pair in selected.windows(2) {
+        if !options.has_resplit_table() {
+            break;
+        }
         if pair[1].from != pair[0].to || pair[0].crosses_separator || pair[1].crosses_separator {
             continue;
         }
@@ -2596,8 +2604,15 @@ pub(crate) fn build_scan_matrix(
             tone: key.tone,
         })
         .collect();
+    // Gated on USE_DIVIDED_TABLE the same way (`inner_split_step`,
+    // `phonetic_key_matrix.cpp:171-172`). The caller's `divided` flag is a
+    // separate, narrower switch (the exact-segment path suppresses the
+    // expansion outright); both must allow it.
     let mut additions: Vec<ScanKey> = Vec::new();
     for scan_key in &snapshot {
+        if !options.has_divided_table() {
+            break;
+        }
         if scan_key.tone != 0 {
             continue;
         }
@@ -4247,10 +4262,21 @@ mod tests {
     #[test]
     fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
         use oxpinyin_core::graph::SegmentGraph;
-        use oxpinyin_core::{OptionBits, PINYIN_AMB_Z_ZH, PINYIN_INCOMPLETE, USE_TONE};
+        use oxpinyin_core::{
+            OptionBits, PINYIN_AMB_Z_ZH, PINYIN_INCOMPLETE, USE_DIVIDED_TABLE, USE_RESPLIT_TABLE,
+            USE_TONE,
+        };
 
-        let incomplete = OptionBits::from_bits(PINYIN_INCOMPLETE);
-        let toned = OptionBits::from_bits(PINYIN_INCOMPLETE | USE_TONE);
+        // The split tables are gated on their own bits (register #17): the
+        // pin's `resplit_step` and `inner_split_step` return before
+        // touching the matrix when the bit is clear. This test exercises
+        // those expansions, so it sets them — as the parity profile and
+        // both reference consumers do. Before the register-#17 revert the
+        // expansions ran unconditionally and this test passed without
+        // them, which is exactly the divergence it now cannot hide.
+        const TABLES: u32 = USE_DIVIDED_TABLE | USE_RESPLIT_TABLE;
+        let incomplete = OptionBits::from_bits(PINYIN_INCOMPLETE | TABLES);
+        let toned = OptionBits::from_bits(PINYIN_INCOMPLETE | USE_TONE | TABLES);
 
         // Fuzzy alternates inherit the tone: upstream copies the whole
         // ChewingKey before swapping the initial
@@ -4258,7 +4284,7 @@ mod tests {
         let graph = SegmentGraph::build_with_options(b"zai4", toned).expect("valid");
         let columns = super::build_scan_matrix(
             &graph,
-            OptionBits::from_bits(PINYIN_INCOMPLETE | USE_TONE | PINYIN_AMB_Z_ZH),
+            OptionBits::from_bits(PINYIN_INCOMPLETE | USE_TONE | PINYIN_AMB_Z_ZH | TABLES),
             true,
         );
         let column: Vec<_> = columns[0]
