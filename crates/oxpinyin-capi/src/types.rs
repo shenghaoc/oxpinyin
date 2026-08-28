@@ -27,11 +27,33 @@ pub struct PinyinInstance;
 /// Opaque lookup candidate (instance-borrowed, transient).
 pub struct LookupCandidate;
 
-/// Opaque chewing key.
-pub struct ChewingKey;
+/// One parsed phonetic key, as the C ABI's opaque `ChewingKey`.
+///
+/// The real library's `_ChewingKey` is a 16-bit packed bitfield of
+/// initial/middle/final/tone (`chewing_key.h:41-55`), and it is the SAME
+/// type for every scheme — full pinyin, double pinyin and zhuyin all parse
+/// into it, and only the renderer differs. Consumers never see the layout:
+/// `chewing_key.h` is not installed, and the shipped `pinyin.h` carries
+/// only `typedef struct _ChewingKey ChewingKey;`, so a consumer holds an
+/// incomplete type. That makes the representation free here, and this one
+/// stores what the renderers actually need.
+pub struct ChewingKey {
+    /// `None` until a `pinyin_get_pinyin_key` call populates the slot; the
+    /// renderers answer `false` on an unpopulated one rather than invent a
+    /// key, which is the pin's `0 == key->get_table_index()` guard.
+    pub(crate) key: Option<&'static str>,
+    pub(crate) tone: u8,
+}
 
-/// Opaque chewing key rest (position span).
-pub struct ChewingKeyRest;
+/// One key's raw input span, as the C ABI's opaque `ChewingKeyRest`.
+///
+/// The pin's `_ChewingKeyRest` is `{ guint16 m_raw_begin; guint16 m_raw_end; }`
+/// with `length() = m_raw_end - m_raw_begin` (`chewing_key.h:97-114`), and
+/// is opaque to consumers for the same reason as [`ChewingKey`].
+pub struct ChewingKeyRest {
+    pub(crate) begin: u16,
+    pub(crate) end: u16,
+}
 
 /// Opaque import iterator.
 pub struct ImportIterator;
