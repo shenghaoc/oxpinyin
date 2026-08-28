@@ -165,8 +165,10 @@ sentinel as the record's value and reports success.
 ## It is not only the CLI
 
 Both defects reach any *client* of the library, which is what makes them
-dangerous for a backend like ours. A client compiled against each build
-(`tools/tkrzw/identity-probe.cc`):
+dangerous for a backend like ours — and defect 1 reaches further than
+that, since row (d) below calls plain `dbm.Remove(key)` and passes no
+sentinel across the boundary at all. A client compiled against each
+build (`tools/tkrzw/identity-probe.cc`):
 
 ```
 ──── client compiled against the Debian-flags libtkrzw ────
@@ -232,6 +234,60 @@ A package can still reintroduce either flag itself, and tkrzw's does
 not: `debian/rules` never sets `LDFLAGS` — its only two mentions are a
 commented-out `DEB_LDFLAGS_MAINT_APPEND` — and the file is byte
 identical from `1.0.27-1.1` through `1.0.32-1`.
+
+## Does anything actually ship against this?
+
+The question that decides how much any of it matters: has a distro
+switched libpinyin from Berkeley DB to tkrzw, where these faults would
+land on a user's dictionary rather than on a command-line tool?
+
+**No, and not yet possible in a released libpinyin.** tkrzw support is
+new in **2.11.91**, the current development series (upstream HEAD
+`2.11.92`, 2026-08-19), announced as `* support tkrzw` in the top NEWS
+entry. Nothing packaged is anywhere near it — Ubuntu carries 2.8.1 in
+noble and questing and 2.10.3 in resolute and stonking.
+
+Nor would it happen by accident. libpinyin's `configure.ac` defaults to
+`DBM="BerkeleyDB"`, and `--with-dbm`'s help string advertises only
+"BerkeleyDB or KyotoCabinet" — `Tkrzw` is handled a few lines further
+down but never mentioned. Debian's packaging then pins it explicitly
+anyway, in `debian/rules`:
+
+```make
+	    --with-dbm=BerkeleyDB \
+```
+
+and the shipped `libpinyin15` depends on `libdb5.3t64`, with no tkrzw
+anywhere in its dependency chain. Arch, Fedora and openSUSE could not be
+checked from here.
+
+Worth knowing before anyone flips that switch, because the exposure is
+not what the file layout suggests:
+
+- **The comparator fault does not reach libpinyin**, even though two of
+  its five tkrzw backends use TreeDBM. It has no `OpenAdvanced`, no
+  `TuningParameters` and no `key_comparator` in `src/` at all, so the
+  comparator stays `nullptr` and is resolved inside libtkrzw where both
+  sides of the comparison are the same copy — row (a) of the probe.
+- **The sentinel fault does.** Three `Remove()` call sites —
+  `ngram_tkrzwdb.cpp:140` (`Bigram::remove`),
+  `punct_table_tkrzwdb.cpp:157`, and `flexible_ngram_tkrzwdb.h:263`
+  (the user n-gram) — would leave the record in place carrying the
+  five-byte `REMOVE` sentinel as its value. That is user-dictionary
+  data.
+- The NOOP-returning processors are safe as written:
+  `KeyCollectProcessor` and `FlexibleKeyCollectProcessor` both run
+  under `ProcessEach(&processor, false)`, and the read-only traversal
+  never writes a return value back.
+
+Which is the general shape of the hazard. The sentinel fault is not a
+client/library boundary problem at all — `dbm.Remove(key)` passes no
+sentinel across anything, and still corrupts, because LTO duplicated
+the literal *inside* libtkrzw. Any consumer is exposed, in any
+language binding, whether or not it ever names a sentinel. The
+comparator fault is the narrower one: it needs a caller that names a
+built-in comparator itself, which is why `tkrzw_dbm_util` trips it and
+libpinyin would not.
 
 ## What this means for us
 
