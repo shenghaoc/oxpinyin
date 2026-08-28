@@ -205,10 +205,13 @@ it builds from source there (`pip install .` through maturin), so that one
 source-built configuration is the whole of what these tests prove.
 `requires-python = ">=3.14"` only gates where pip will *install* the package;
 it does not describe what a build is binary-compatible with. That is fixed at
-build time by pyo3's stable-ABI settings — `abi3-py310` for standard CPython,
-`abi3t-py315` for the free-threaded build — not inferred from the version
-range. This project publishes and tests no pre-built wheels, so nothing beyond
-the source build on free-threaded 3.14 is claimed here.
+build time by pyo3 — and neither stable-ABI feature the crate enables applies
+to the interpreter CI actually builds. `abi3-py310` covers GIL-enabled CPython
+only; `abi3t-py315` takes effect from 3.15 onward, which is why it is enabled
+at all. On free-threaded 3.14 pyo3 selects neither and emits a
+version-specific `cp314t` extension instead of a stable-ABI one. This project
+publishes and tests no pre-built wheels, so nothing beyond the source build on
+free-threaded 3.14 is claimed here.
 
 Free-threaded 3.14 is the platform this binding is written for. `Engine.lookup`
 runs through `Engine::with_session`, which releases the GIL before it acquires
