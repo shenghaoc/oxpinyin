@@ -149,6 +149,7 @@ impl Line {
 
 /// Strips wiki markup from one page's wikitext, producing raw text with
 /// `\n` line breaks. The caller converts and sentence-splits the result.
+#[must_use]
 pub fn strip_wikitext(text: &str) -> String {
     let table_free = remove_tables(text);
     let chars: Vec<char> = table_free.chars().collect();

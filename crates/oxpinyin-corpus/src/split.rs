@@ -39,6 +39,7 @@ const MARKUP_RESIDUE: &[&str] = &["{{", "}}", "[[", "]]", "{|", "|}", "<ref"];
 /// stripped of leading/trailing punctuation, filtered to fragments
 /// containing at least one Han character, and freed of any
 /// [`MARKUP_RESIDUE`].
+#[must_use]
 pub fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut fragment = String::new();

@@ -54,6 +54,7 @@ fn fixed_prefix<const N: usize>(bytes: &[u8]) -> Result<[u8; N], DecodeError> {
 // ── scalars ────────────────────────────────────────────────────────
 
 /// Encode a `u8` value.
+#[must_use]
 pub fn encode_u8(v: u8) -> [u8; 1] {
     [v]
 }
@@ -64,6 +65,7 @@ pub fn decode_u8(bytes: &[u8]) -> Result<u8, DecodeError> {
 }
 
 /// Encode a `Token` (`u32`) as 4 big-endian bytes.
+#[must_use]
 pub fn encode_token(token: Token) -> [u8; 4] {
     token.to_be_bytes()
 }
@@ -74,6 +76,7 @@ pub fn decode_token(bytes: &[u8]) -> Result<Token, DecodeError> {
 }
 
 /// Encode a `u64` value as 8 big-endian bytes.
+#[must_use]
 pub fn encode_u64(v: u64) -> [u8; 8] {
     v.to_be_bytes()
 }
@@ -86,6 +89,7 @@ pub fn decode_u64(bytes: &[u8]) -> Result<u64, DecodeError> {
 // ── identity types ─────────────────────────────────────────────────
 
 /// Encode a `&str` as raw UTF-8 bytes (identity).
+#[must_use]
 pub fn encode_str(s: &str) -> &[u8] {
     s.as_bytes()
 }
@@ -96,11 +100,13 @@ pub fn decode_str(bytes: &[u8]) -> Result<&str, DecodeError> {
 }
 
 /// Encode `&[u8]` (identity — returns the same slice).
+#[must_use]
 pub fn encode_bytes(b: &[u8]) -> &[u8] {
     b
 }
 
 /// Decode `&[u8]` (identity — returns the same slice).
+#[must_use]
 pub fn decode_bytes(b: &[u8]) -> &[u8] {
     b
 }
@@ -108,6 +114,7 @@ pub fn decode_bytes(b: &[u8]) -> &[u8] {
 // ── composite keys ─────────────────────────────────────────────────
 
 /// Encode a `(Token, Token)` key as 8 big-endian bytes.
+#[must_use]
 pub fn encode_token_pair(a: Token, b: Token) -> [u8; 8] {
     let mut out = [0u8; 8];
     out[..4].copy_from_slice(&a.to_be_bytes());
@@ -125,6 +132,7 @@ pub fn decode_token_pair(bytes: &[u8]) -> Result<(Token, Token), DecodeError> {
 }
 
 /// Encode a `(u8, &str)` key: one byte prefix, then raw UTF-8.
+#[must_use]
 pub fn encode_u8_str(v: u8, s: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(1 + s.len());
     out.push(v);
@@ -143,6 +151,7 @@ pub fn decode_u8_str(bytes: &[u8]) -> Result<(u8, &str), DecodeError> {
 }
 
 /// Encode a `(Token, &[u8])` key: 4 BE bytes, then raw tail.
+#[must_use]
 pub fn encode_token_bytes(token: Token, tail: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(4 + tail.len());
     out.extend_from_slice(&token.to_be_bytes());

@@ -276,12 +276,14 @@ impl RuntimeDict {
 
     /// Loads addon library `index` from `system_dir`; `false` when already
     /// loaded or the tables are missing/unopenable.
+    #[must_use]
     pub fn load_addon(&self, index: u8, system_dir: &Path) -> bool {
         let mut addons = self.addons.write().unwrap_or_else(|p| p.into_inner());
         addons.load(index, system_dir)
     }
 
     /// The addon phrase item behind `token`, for the choose-promotion path.
+    #[must_use]
     pub fn addon_phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
         let addons = self.addons.read().unwrap_or_else(|p| p.into_inner());
         addons.phrase_item(token)
@@ -604,6 +606,7 @@ impl Runtime {
 
     /// Loads addon library `index` from `system_dir`; `false` when already
     /// loaded or the library tables do not open.
+    #[must_use]
     pub fn load_addon(&self, index: u8, system_dir: &Path) -> bool {
         self.dict.load_addon(index, system_dir)
     }
@@ -613,6 +616,7 @@ impl Runtime {
     /// the library is already loaded, or its tables do not open. Keeps the
     /// system-directory resolution here, next to the `paths` it reads,
     /// rather than duplicated in every embedder.
+    #[must_use]
     pub fn load_system_addon(&self, index: u8) -> bool {
         let Some(system_dir) = self.paths.system_data_dirs().first() else {
             return false;

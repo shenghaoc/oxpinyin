@@ -163,6 +163,7 @@ impl From<oxpinyin_store::StoreError> for DatagenError {
 /// Same construction as the W9 training manifests
 /// (`fixtures/w9/*.manifest`): a change-detection fingerprint, not a
 /// cryptographic digest.
+#[must_use]
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for &byte in bytes {

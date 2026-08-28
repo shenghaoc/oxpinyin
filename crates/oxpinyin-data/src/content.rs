@@ -388,31 +388,37 @@ impl ContentTable {
     }
 
     /// The per-file magic/checksum value from the header.
+    #[must_use]
     pub fn magic(&self) -> u32 {
         self.magic
     }
 
     /// The format version (always 17).
+    #[must_use]
     pub fn version(&self) -> u32 {
         self.version
     }
 
     /// Maximum phrase_index + 1.
+    #[must_use]
     pub fn capacity(&self) -> u32 {
         self.capacity
     }
 
     /// Number of records in the table.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.records.len()
     }
 
     /// Returns true if the table is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 
     /// Get a record by its 0-based phrase index.
+    #[must_use]
     pub fn get(&self, index: usize) -> Option<&Record> {
         self.records.get(index)
     }
