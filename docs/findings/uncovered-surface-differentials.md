@@ -430,3 +430,25 @@ framing, priorities) is docs-only and re-verified the same way: the
 branch delta vs `origin/main` is `tools/bisection/` + this doc +
 `docs/findings/upstream-divergences.md` + `AGENTS.md` + one
 `.gitignore` line, so no pin can move.
+
+## Amendment (2026-08-27) — every class but B1's order closed; the standing residual measured
+
+The "still-open" list above is the 2026-08-25 state and is closed as
+follows: C1 and B2 by `678f325` (the parser-termination classes; the
+FORCE_TONE double/zhuyin scope boundary is recorded in
+`upstream-divergences.md`), C2 by `a15fc7e` and its review follow-ups
+(`2382bdd`, `6721ab0`, `09e30b2`, `207aecd`, `239070e`, `9dd6018` —
+the offset-anchored window and its anchor contracts; the mid-syllable
+offset residue is likewise recorded, not chased), D1/D2 by `94822ec`
+(the pin's cursor-offset laws). Re-measured on 2026-08-27 against the
+pin over freshly compiled datagen tables: the differential still exits
+2, with **zero non-`PRED_PREFIX` diverging lines** — paging, punct rows,
+every option profile, and all cursor probes agree, and the only
+divergence is B1's head-order window over the predicted rows. The
+discriminator holds: per-prefix row counts equal on all eight prefixes
+(178/283/591/71/126/168/98/56) and the full-list sorted-set diff is
+**0** on every prefix (verified by dumping both engines' complete
+predicted lists), so the standing item remains exactly the recorded
+order divergence — text-ascending by decision, the pin's Tkrzw
+bucket-walk not reproducible without importing the foreign store's
+physical layout (`upstream-divergences.md`).
