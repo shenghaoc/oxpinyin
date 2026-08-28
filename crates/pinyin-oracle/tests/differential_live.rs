@@ -260,9 +260,15 @@ fn a_live_run_is_deterministic() {
 }
 
 #[test]
-fn the_class_roll_up_matches_the_taxonomy_finding() {
-    // The table in docs/findings/divergence-taxonomy.md. Pinned here so the
-    // finding cannot drift from what the classifier actually produces.
+fn the_class_roll_up_pins_the_live_measurement() {
+    // The live class roll-up the classifier actually produces, pinned as a
+    // baseline. The classes are the taxonomy of
+    // docs/findings/divergence-taxonomy.md, but the counts here are the live
+    // post-2026-08-09 measurement, not the finding's frozen table: parser work
+    // landed after that freeze and closed two consumed-length divergences,
+    // moving them into output-identical (the frozen finding keeps the
+    // 2026-08-09 numbers; this test tracks the live ones). The two remaining
+    // consumed-length cases are the initial-only chains at 09-edge.txt:58-59.
     let output = run_corpus();
     let count = |class: &str| {
         output
