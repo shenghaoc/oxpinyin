@@ -142,7 +142,24 @@ impl fmt::Display for EngineError {
     }
 }
 
-impl std::error::Error for EngineError {}
+impl std::error::Error for EngineError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Graph(error) => Some(error),
+            Self::Decode(error) => Some(error),
+            Self::Scoring(error) => Some(error),
+            Self::CandidateIndexOutOfRange { .. }
+            | Self::LookupOffsetPastSeparator { .. }
+            | Self::LookupOffsetOutOfRange { .. }
+            | Self::LookupOffsetInsideCharacter { .. }
+            | Self::SelectionAnchorBeforeComposition { .. }
+            | Self::ZeroKeyOffsetCheck { .. }
+            | Self::Dictionary(_)
+            | Self::LanguageModel(_)
+            | Self::UserModel(_) => None,
+        }
+    }
+}
 
 impl From<GraphError> for EngineError {
     fn from(error: GraphError) -> Self {
@@ -212,5 +229,25 @@ mod tests {
         assert!(matches!(decode, EngineError::Decode(_)));
         let scoring: EngineError = ScoringError::Dictionary("closed".to_owned()).into();
         assert!(matches!(scoring, EngineError::Scoring(_)));
+    }
+
+    #[test]
+    fn wrapped_backend_errors_chain_a_source() {
+        use oxpinyin_core::graph::GraphError;
+        use std::error::Error as _;
+
+        let graph = EngineError::Graph(GraphError::InputTooLong { len: 1, limit: 0 });
+        assert!(graph.source().is_some());
+        // String-erased and index variants terminate the chain.
+        assert!(
+            EngineError::Dictionary("closed".to_owned())
+                .source()
+                .is_none()
+        );
+        assert!(
+            EngineError::CandidateIndexOutOfRange { index: 9, len: 3 }
+                .source()
+                .is_none()
+        );
     }
 }
