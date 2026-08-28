@@ -21,7 +21,7 @@
 //! Float boundary: counts are integers throughout ([`held_out`],
 //! [`oxpinyin_counter`]); floating point (`parameter_t = double`) appears
 //! only inside the EM ([`interpolation`]). Never ships with the engine.
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod error;

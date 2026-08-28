@@ -4,6 +4,7 @@
 //! (`docs/findings/dictool-format.md`) into the oxpinyin user redb store
 //! through the public C ABI import trio and `pinyin_save`.
 
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod context;

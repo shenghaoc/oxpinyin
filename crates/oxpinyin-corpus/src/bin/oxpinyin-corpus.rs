@@ -8,6 +8,7 @@
 //! or no argument reads stdin. Output is one sentence per line, `\n`
 //! only — the exact input format `oxpinyin-segment` reads.
 
+#![forbid(unsafe_code)]
 #![allow(missing_docs)]
 
 use std::fs::File;

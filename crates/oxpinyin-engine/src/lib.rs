@@ -43,6 +43,7 @@
 //! );
 //! # Ok::<(), oxpinyin_engine::EngineError>(())
 //! ```
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod candidate;

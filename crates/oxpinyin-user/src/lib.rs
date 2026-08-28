@@ -17,6 +17,7 @@
 //! the §9 export surface ([`UserStore::export_phrases`] /
 //! [`UserStore::export_bigrams`]) that backs the C ABI's export iterators and
 //! the W6 differential.
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod codec;

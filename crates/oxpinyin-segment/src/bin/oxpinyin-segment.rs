@@ -6,6 +6,7 @@
 //! `/tmp/oxpinyin-export`) and the fetched model20 cache
 //! (`PINYIN_MODEL_DIR` / `tools/model/fetch-model.sh`).
 
+#![forbid(unsafe_code)]
 #![allow(missing_docs)]
 
 use std::fs;
