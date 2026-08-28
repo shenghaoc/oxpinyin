@@ -1,91 +1,77 @@
-# Ubuntu's libtkrzw cannot read a database it writes
+# Ubuntu's libtkrzw silently corrupts records and writes files it cannot read
 
 Date: 2026-08-28 · Status: **investigation finding** (no shipping code
-changed; guidance and a probe added) · Branch:
+changed; guidance and two probes added) · Branch:
 `claude/tkrzw-distro-compat-9o3k8h`.
 
 `oxpinyin-store`'s tkrzw backend already carried a warning that Ubuntu
 noble's `libtkrzw-dev 1.0.27-1.1build1` breaks tkrzw's pointer-identity
 protocol, and that `./configure && make` on the same sources is correct.
-This note establishes *why*, and how far the breakage reaches.
+This note establishes why, and how far it reaches.
 
-The short version: the distro package is fine; **one linker flag that
-Ubuntu adds to every package it builds** is not. Debian does not add it.
+**There are two independent defects, with two different causes.** Both
+come from build flags Ubuntu applies to every package and Debian applies
+to none, both are silent, and neither fixes the other:
+
+| | Cause | Breaks | Symptom |
+| --- | --- | --- | --- |
+| **1** | `-flto` | `RecordProcessor::NOOP` / `REMOVE` — *data* | `Remove()` stores a tombstone instead of deleting; a NOOP processor overwrites the record; `Rebuild` mis-counts |
+| **2** | `-Wl,-Bsymbolic-functions` | the key comparators — *functions* | TreeDBM records comparator type 255 and can never reopen the file |
+
+This matters for the fix: Ubuntu bug [LP #2142937][lp] carries a patch
+that disables LTO, which resolves defect 1 and leaves defect 2 exactly
+as it was. See "Reported" below.
+
+[lp]: https://bugs.launchpad.net/ubuntu/+source/tkrzw/+bug/2142937
 
 ## What was measured
 
-| System | tkrzw | `.tkh` | `.tkt` | `.tks` |
-| --- | --- | --- | --- | --- |
-| Ubuntu 24.04.4 (noble), `1.0.27-1.1build1` | 1.0.27 | ok | **broken** | ok |
-| Ubuntu 26.04.1 (resolute), `1.0.32-1build1` | 1.0.32 | ok | **broken** | ok |
-| upstream `1.0.27`, `./configure && make` | 1.0.27 | ok | ok | ok |
-| Debian source pkg `1.0.27-1.1`, Debian build flags | 1.0.27 | ok | ok | ok |
-| Debian source pkg `1.0.27-1.1`, Ubuntu build flags | 1.0.27 | ok | **broken** | ok |
-| Debian source pkg `1.0.32-1`, Debian build flags | 1.0.32 | ok | ok | ok |
-| Debian source pkg `1.0.32-1`, Ubuntu build flags | 1.0.32 | ok | **broken** | ok |
+| System | tkrzw | `remove` | `.tkt` round-trip |
+| --- | --- | --- | --- |
+| Ubuntu 24.04.4 (noble), `1.0.27-1.1build1` | 1.0.27 | **tombstone** | **unreadable** |
+| Ubuntu 26.04.1 (resolute), `1.0.32-1build1` | 1.0.32 | **tombstone** | **unreadable** |
+| upstream `1.0.27`, `./configure && make` | 1.0.27 | ok | ok |
+| Debian source pkg `1.0.27-1.1`, Debian flags | 1.0.27 | ok | ok |
+| Debian source pkg `1.0.27-1.1`, Ubuntu flags | 1.0.27 | **tombstone** | **unreadable** |
+| Debian source pkg `1.0.32-1`, Debian flags | 1.0.32 | ok | ok |
+| Debian source pkg `1.0.32-1`, Ubuntu flags | 1.0.32 | **tombstone** | **unreadable** |
 
-The last two rows are the version that matters for both open questions:
-`1.0.32-1` is what Debian uploaded to unstable and what Ubuntu 26.04
-rebuilt as `1.0.32-1build1`. Built with Ubuntu's flags it reproduces
-26.04's shipped failure exactly; built with Debian's, from the same
-tarball on the same machine, it is healthy — 18 GOT relocations kept
-instead of none, comparator byte 1 instead of 255, and the library-API
-probe below green on every row.
+`1.0.32-1` is the version that matters for both open questions: it is
+what Debian uploaded to unstable and what Ubuntu 26.04 rebuilt as
+`1.0.32-1build1`. Built with Ubuntu's flags it reproduces 26.04's
+shipped failure exactly; built with Debian's, from the same tarball on
+the same machine, it is clean.
 
-"broken" is literal: `tkrzw_dbm_util create x.tkt` succeeds, and every
-subsequent open of that file by the same binary fails with
-`BROKEN_DATA_ERROR: invalid_key_comparator`. HashDBM (`.tkh`) and SkipDBM
-(`.tks`) are unaffected — neither stores a comparator.
+"unreadable" is literal: `tkrzw_dbm_util create x.tkt` succeeds, and
+every subsequent open of that file by the same binary fails with
+`BROKEN_DATA_ERROR: invalid_key_comparator`. SkipDBM (`.tks`) is
+unaffected by defect 2 — it stores no comparator — but every DBM type is
+exposed to defect 1.
 
-Debian sid and Arch could not be run: this session's egress policy
-returns 403 for every Debian and Arch mirror (`deb.debian.org`,
-`geo.mirror.pkgbuild.com`, `fastly.mirror.pkgbuild.com`, and the rest —
-inside a container too, and still 403 once the proxy CA is installed, so
-it is policy and not TLS), and neither base image ships tkrzw. What
-*can* be read offline is the one input that decides the outcome — each
-distro's default `LDFLAGS` — and that is settled below.
+## The bisection
 
-## What decides it, per distro
+Four real rebuilds of Debian's `tkrzw_1.0.32-1` source package, all with
+`DEB_VENDOR=Ubuntu`, varying only the two flags:
 
-The bisection further down reduces the whole question to one bit: does
-this distro link shared libraries with `-Wl,-Bsymbolic-functions`?
-Every distro's answer is readable from primary sources without
-installing tkrzw.
+| Build | LTO | `-Bsymbolic-functions` | `remove` | `.tkt` | comparator GOT relocs |
+| --- | --- | --- | --- | --- | --- |
+| A — stock Ubuntu | on | on | **tombstone** | **unreadable** | 0 |
+| B — `optimize=-lto` (the LP patch) | off | on | ok | **unreadable** | 0 |
+| C — strip the linker flag only | on | off | **tombstone** | ok | 18 |
+| D — strip both | off | off | ok | ok | 18 |
+| Debian vendor, for reference | off | off | ok | ok | 18 |
 
-| Distro | Where the default lives | `-Bsymbolic-functions`? |
-| --- | --- | --- |
-| Ubuntu | `Dpkg::Vendor::Ubuntu` line 156 | **yes** — `$flags->prepend('LDFLAGS', ...)` |
-| Debian | `Dpkg::Vendor::Debian` | no — zero occurrences |
-| Devuan, PureOS | their `Dpkg::Vendor::*` | no — zero occurrences |
-| Arch | `/etc/makepkg.conf` (`pacman 7.1.0.r9`) | no |
+The two columns are cleanly orthogonal. LTO alone governs `remove`;
+`-Bsymbolic-functions` alone governs the comparator. Row D and the
+Debian reference agree, which is the check that nothing else in
+Ubuntu's flag set is involved.
 
-The dpkg figures are from dpkg's own git at tag **1.23.7** — the exact
-dpkg the `debian:sid-slim` image reports — so this is Debian's file, not
-Ubuntu's copy of it. Ubuntu is the only vendor module of the four that
-mentions the flag at all. Arch's full default is
+An earlier revision of this note claimed `-Bsymbolic-functions` was
+"necessary and sufficient" and called LTO a red herring. That was
+measured only against defect 2, where it holds, and wrongly generalised
+to defect 1. Row C above is the counter-example.
 
-```
--Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,-z,pack-relative-relocs
-```
-
-and its `-fno-plt` in `CFLAGS` is not a hazard here: it changes how
-calls are routed, not how addresses are taken.
-
-A package can still add the flag itself, and tkrzw's does not. Debian's
-`debian/rules` never sets `LDFLAGS` — the only two mentions are a
-commented-out `DEB_LDFLAGS_MAINT_APPEND` — and the file is *byte
-identical* from `1.0.27-1.1` through `1.0.32-1`, the version Debian
-uploaded to unstable in October 2024 and the one Ubuntu 26.04 rebuilt as
-`1.0.32-1build1`.
-
-So Debian sid and Arch are unrun but not unknown: both feed the correct
-input to the only step that matters. Arch carries the extra caveat that
-this note never confirmed tkrzw is packaged for it at all — if it is
-only in the AUR, `makepkg` still applies the same `/etc/makepkg.conf`.
-"Finishing the matrix" below has the two commands that turn this from
-determined into measured.
-
-## The mechanism
+## Defect 2 — the comparators
 
 tkrzw identifies some values by the *address* of a symbol rather than by
 its contents, and says so: `tkrzw_dbm.h` documents that the
@@ -115,8 +101,8 @@ address emits its own COMDAT copy, so `tkrzw_dbm_util` has one and
 `libtkrzw.so` has another. C++ requires the two to compare equal, and
 ELF delivers that by routing the library's address-taking through the
 GOT: a `R_X86_64_GLOB_DAT` relocation the dynamic linker resolves to the
-one canonical definition. A correct build keeps 14 such relocations for
-the comparators; a broken build keeps none.
+one canonical definition. A correct build of 1.0.32 keeps 18 such
+relocations; a broken one keeps none.
 
 `-Wl,-Bsymbolic-functions` is exactly the flag that removes them. It
 binds a shared library's function references to that library's own
@@ -125,70 +111,40 @@ copy, `tkrzw_dbm_util` passes its own copy — and no built-in comparator
 is ever recognised. `--comparator` defaults to `lex`
 (`tkrzw_dbm_util.cc:630`), so *every* `.tkt` the CLI creates records 255.
 
-Ubuntu adds that flag to every package it builds, in the dpkg vendor
-profile itself — `/usr/share/perl5/Dpkg/Vendor/Ubuntu.pm:216`:
+## Defect 1 — the sentinels
 
-```perl
-# Per https://wiki.ubuntu.com/DistCompilerFlags
-$flags->prepend('LDFLAGS', '-Wl,-Bsymbolic-functions');
+`NOOP` and `REMOVE` are not functions but static data, each a
+`string_view` over a five-byte literal (`tkrzw_dbm.cc:25`):
+
+```cpp
+const std::string_view DBM::RecordProcessor::NOOP("\x00\xBE\xEF\x02\x11", 5);
+const std::string_view DBM::RecordProcessor::REMOVE("\x00\xDE\xAD\x02\x11", 5);
 ```
 
-Debian's `Dpkg::Vendor::Debian` does not mention `-Bsymbolic` at all:
+`-Bsymbolic-functions` cannot touch these — it binds functions only —
+and indeed row B above still passes `remove` while failing `.tkt`. What
+breaks them is LTO, and the mechanism is visible in the binary. Counting
+occurrences of each backing literal inside `libtkrzw.so`:
 
 ```
-$ DEB_VENDOR=Debian dpkg-buildflags --get LDFLAGS
--Wl,-z,relro
-$ DEB_VENDOR=Ubuntu dpkg-buildflags --get LDFLAGS
--Wl,-Bsymbolic-functions -flto=auto -ffat-lto-objects -Wl,-z,relro
+A stock Ubuntu (LTO + Bsym)    NOOP=10   REMOVE=11
+B LP patch  (no LTO, Bsym)     NOOP=1    REMOVE=1
+C LTO, no Bsym                 NOOP=10   REMOVE=11
+D neither                      NOOP=1    REMOVE=1
 ```
 
-So the packaging is not at fault, and neither is any Ubuntu delta to it.
-Ubuntu's `1.0.27-1.1build1` is Debian's `1.0.27-1.1` plus one changelog
-stanza that says so in as many words — "No-change rebuild for
-CVE-2024-3094" — and `debian/rules` is nine lines that pass
-`--enable-{zlib,zstd,lz4,lzma}`, set `hardening=+all`, skip the test
-suite, and hand everything else to `dh`. Both builds below use that one
-`.debian.tar.xz`; the only variable is `DEB_VENDOR`.
-
-## The bisection
-
-Building Debian's own `tkrzw_1.0.27-1.1` source package twice on one
-machine, changing only `DEB_VENDOR`:
-
-```
-vendor=Debian  LDFLAGS=-Wl,-z,relro
-  libGOTrelocs=14  libBind=WEAK    key_comp_type=1    get='world'
-
-vendor=Ubuntu  LDFLAGS=-Wl,-Bsymbolic-functions -flto=auto -ffat-lto-objects -Wl,-z,relro
-  libGOTrelocs=0   libBind=GLOBAL  key_comp_type=255  get='OpenAdvanced failed: BROKEN_DATA_ERROR: invalid_key_comparator'
-```
-
-The Ubuntu-vendor build reproduces the shipped package exactly, down to
-the symbol binding. Narrowing to the single flag, twice — once on
-upstream objects with no LTO, once on the Ubuntu-vendor objects with LTO
-held on — relinking the same `.o` files each time:
-
-```
-A. upstream 1.0.27 objects, no LTO
-   no extra LDFLAGS                  GOTrelocs=14  libBind=WEAK    key_comp_type=1
-   + -Wl,-Bsymbolic-functions        GOTrelocs=0   libBind=WEAK    key_comp_type=255
-
-B. Ubuntu-vendor objects, LTO on
-   LTO, WITHOUT -Bsymbolic-functions GOTrelocs=14  libBind=GLOBAL  key_comp_type=1
-   LTO, WITH    -Bsymbolic-functions GOTrelocs=0   libBind=GLOBAL  key_comp_type=255
-```
-
-`-Wl,-Bsymbolic-functions` is necessary and sufficient, in both
-directions and with LTO on or off. LTO is a red herring: it turns the
-comparators' COMDAT `WEAK` binding into `GLOBAL`, which is what makes
-the shipped package look unusual under `nm`, but it does not change the
-outcome on its own.
+Without LTO there is exactly one copy of each, so the exported `NOOP`
+object and every comparison site necessarily agree. With LTO, GCC's
+partitioning gives most partitions their own copy — ten and eleven of
+them — so the address a comparison site was compiled against is not the
+address the exported object carries, and
+`value.data() == NOOP.data()` fails. `Remove` then writes the REMOVE
+sentinel as the record's value and reports success.
 
 ## It is not only the CLI
 
-The same flag breaks all three of tkrzw's pointer-identity sites for any
-*client* of the library, which is what makes it dangerous for a backend
-like ours. A client compiled against each build
+Both defects reach any *client* of the library, which is what makes them
+dangerous for a backend like ours. A client compiled against each build
 (`tools/tkrzw/identity-probe.cc`):
 
 ```
@@ -207,32 +163,134 @@ like ours. A client compiled against each build
 (e) Rebuild()                           : CANCELED_ERROR
 ```
 
-Row (a) is the one piece of good news, and it is why our backend has not
-tripped over the comparator half: leaving `key_comparator` at its
+Row (a) is the one piece of good news: leaving `key_comparator` at its
 `nullptr` default keeps the decision inside the library, where both
 sides of the comparison are the same copy. `oxpinyin-store` installs no
-comparator, so its files stay readable. Rows (c)–(e) it *is* exposed to,
-and they are silent — a `Remove` that stores the sentinel as the value
-looks like a successful write.
+comparator, so defect 2 does not reach its files. Rows (c)–(e) it *is*
+exposed to, and they are silent — a `Remove` that stores the sentinel as
+the value looks like a successful write.
+
+## What decides it, per distro
+
+Each defect reduces to one bit about the distro's defaults, and both
+bits are readable from primary sources without installing tkrzw.
+
+| Distro | Source | `-Bsymbolic-functions` | LTO by default |
+| --- | --- | --- | --- |
+| Ubuntu | `Dpkg::Vendor::Ubuntu:156` | **yes** | **yes** |
+| Debian | `Dpkg::Vendor::Debian` | no | no (opt-in per package) |
+| Devuan, PureOS | their `Dpkg::Vendor::*` | no | no |
+| Arch | `/etc/makepkg.conf` (`pacman 7.1.0.r9`) | no | **yes** (`OPTIONS=(... lto)`) |
+
+The dpkg figures are from dpkg's own git at tag **1.23.7** — the exact
+dpkg the `debian:sid-slim` image reports — so this is Debian's file, not
+Ubuntu's copy of it. Arch's full default `LDFLAGS` are
+
+```
+-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,relro -Wl,-z,now -Wl,-z,pack-relative-relocs
+```
+
+and its `-fno-plt` is not a hazard here: it changes how calls are
+routed, not how addresses are taken.
+
+**Debian should be clean on both counts, and this note predicts Arch is
+clean on defect 2 but exposed to defect 1** — Arch enables LTO globally
+via `OPTIONS=(... lto)`. That is a prediction from the flags, not a
+measurement; the Arch row of the matrix is still unrun, and it is now
+the more interesting of the two.
+
+Neither could be run here: this session's egress policy returns 403 for
+every Debian and Arch mirror (`deb.debian.org`,
+`geo.mirror.pkgbuild.com`, and the rest — inside a container too, and
+still 403 once the proxy CA is installed, so it is policy and not TLS),
+and neither base image ships tkrzw. The Launchpad reporter did run
+Debian, and got the clean result this predicts, on `1.0.32-1+b1` from
+trixie.
+
+A package can still reintroduce either flag itself, and tkrzw's does
+not: `debian/rules` never sets `LDFLAGS` — its only two mentions are a
+commented-out `DEB_LDFLAGS_MAINT_APPEND` — and the file is byte
+identical from `1.0.27-1.1` through `1.0.32-1`.
 
 ## What this means for us
 
 Nothing in `oxpinyin` changes. The tkrzw backend is an evaluation
 subject behind an off-by-default cargo feature, it already requires a
 source build, and `build.rs` already refuses to proceed without one.
-This note updates that guidance in two places: the warning named noble's
-`1.0.27-1.1build1` specifically, and the fault is neither
-version-specific nor noble-specific — every Ubuntu release ships it, and
-26.04's `1.0.32-1build1` fails identically.
+What changed is the guidance: the warning named noble's
+`1.0.27-1.1build1`, and the fault is neither version- nor
+release-specific.
 
-The one-line check, which needs no build and no test database:
+The quickest check on a candidate library, needing no build and no test
+database:
 
 ```sh
-readelf -rW /usr/lib/*/libtkrzw.so.1 | grep -c KeyComparator   # 0 = broken
+readelf -rW /usr/lib/*/libtkrzw.so.1 | grep -c KeyComparator   # 0 = defect 2
 ```
 
-`tools/tkrzw/distro-probe.sh` wraps that plus a write-then-read
-round-trip, and exits non-zero on a broken build.
+`tools/tkrzw/distro-probe.sh` wraps that plus a write-then-read round
+trip; `tools/tkrzw/identity-probe.cc` exercises all three
+pointer-identity sites through the library API, which is what a backend
+actually touches. Both exit non-zero on a broken build.
+
+## Reported
+
+Tracked in Ubuntu as [LP #2142937][lp], filed 2026-02-28 by Georgi
+Georgiev against `src:tkrzw`, from the HashDBM `remove` symptom on
+Ubuntu 25.10. The report correctly identifies it as Ubuntu-specific and
+shows Debian trixie's `1.0.32-1+b1` behaving correctly.
+
+**The patch attached there is incomplete.** It sets
+
+```make
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
+```
+
+which is row B of the bisection: `remove` is fixed, and every TreeDBM
+file the library writes remains unreadable by the library itself. The
+complete fix needs both lines:
+
+```make
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
+export DEB_LDFLAGS_MAINT_STRIP = -Wl,-Bsymbolic-functions
+```
+
+That is row D, which matches the Debian reference build exactly.
+
+Both lines are no-ops on Debian, which enables neither flag, so the
+natural home for them is Debian's `debian/rules`, from which Ubuntu
+syncs — no permanent Ubuntu delta to carry. Two things temper that
+route: `src:tkrzw` is orphaned in Debian (`Maintainer: Debian QA Group
+<packages@qa.debian.org>`, with Boyuan Yang doing QA uploads through
+`1.0.32-1`), so it may need an NMU or a merge request against
+`salsa.debian.org/debian/tkrzw`; and a sync reaches no released Ubuntu
+LTS, so 24.04 and 26.04 need SRUs through the Launchpad bug regardless.
+
+## Upstream
+
+Upstream is unfixed as of `bcaa0fb` (last commit 2026-07-30, so it is
+actively maintained). Both defects are the same underlying decision:
+identifying a value by an address that C++ only guarantees under
+default ELF interposition and a single definition. A distro flag, LTO
+partitioning, a static link of one side, or `dlopen` with `RTLD_LOCAL`
+all break it, and each breaks it silently and on disk; on Windows, where
+each module gets its own copy of an inline function by default, it is
+hard to see how it can hold at all.
+
+The fix is not to move the comparators out of the header. A function
+defined only in the shared library still fails under
+`-Bsymbolic-functions`: the library binds to its own definition while
+the client's address-taking yields a canonical PLT entry in the client.
+Nothing that keeps identifying a comparator by its address is safe. A
+one-byte enum in `TuningParameters` alongside the pointer costs nothing
+and is immune — and the on-disk format is already an enum byte, so only
+the derivation from a pointer has to change. The sentinels want the same
+treatment: a tagged return, or a comparison on contents rather than on
+`data()`.
+
+This is worth reporting upstream separately from the Ubuntu bug, since
+it is a different ask; it is not a Rust-mechanism divergence, so it does
+not belong in `upstream-divergences.md`.
 
 ## Finishing the matrix
 
@@ -247,70 +305,11 @@ docker run --rm -v "$PWD/tools/tkrzw/distro-probe.sh:/probe.sh:ro" archlinux:lat
   sh -c 'pacman -Sy --noconfirm tkrzw binutils && sh /probe.sh'
 ```
 
-Both are expected to print `RESULT : healthy`, on the evidence in "What
-decides it, per distro": neither vendor adds the flag, tkrzw's packaging
-does not either, and the flag is the whole of the fault. Should Debian
-come back broken, the thing to look at is not the packaging but whether
-its buildd flags have changed — `dpkg-buildflags --get LDFLAGS` inside
-the container answers that in one line.
+Debian is expected clean. Arch is the open question: it ships LTO on by
+default, so it should fail the `remove` half while passing the
+comparator half — row C of the bisection.
 
-That expectation inverts the usual Debian-upstream-of-Ubuntu reasoning,
-and deliberately so. Ubuntu's `1.0.27-1.1build1` is not a fork of
-Debian's package but a rebuild of it that changed nothing but the
-changelog; the defect enters at rebuild time, from a vendor-wide flag,
-so it cannot have been inherited. A Debian fix would not reach Ubuntu
-either — the flag would still be applied on top.
-
-## Reported
-
-Tracked in Ubuntu as [LP #2142937][lp] against `src:tkrzw`. That is the
-right venue for the shipped breakage — Ubuntu is where the flag is
-applied and where two supported LTS releases carry a library that
-silently corrupts records — but it is not where the one-line fix most
-naturally lands.
-
-[lp]: https://bugs.launchpad.net/ubuntu/+source/tkrzw/+bug/2142937
-
-The fix belongs in `debian/rules`, which Debian owns and Ubuntu syncs:
-
-```make
-DEB_LDFLAGS_MAINT_STRIP = -Wl,-Bsymbolic-functions
-```
-
-On Debian that line is a no-op — Debian never adds the flag — and on
-the next sync it fixes Ubuntu with no permanent Ubuntu delta to carry.
-Two things temper that route: `src:tkrzw` is orphaned in Debian
-(`Maintainer: Debian QA Group <packages@qa.debian.org>`, with Boyuan
-Yang doing QA uploads through `1.0.32-1`), so it may need an NMU or a
-merge request against `salsa.debian.org/debian/tkrzw`; and a sync does
-not reach released LTS releases, so 24.04 and 26.04 still need SRUs
-through the Launchpad bug regardless.
-
-Neither tracker is reachable from the environment this note was written
-in — `bugs.launchpad.net`, `api.launchpad.net`, and `bugs.debian.org`
-are all 403 at the egress policy — so the state of the report above was
-not read back, and this note records only that it exists.
-
-## Upstream
-
-Upstream is unfixed as of `bcaa0fb` (last commit 2026-07-30, so it is
-actively maintained): the comparators are still `inline` in a header and
-`tkrzw_dbm_tree.cc` still identifies them by pointer. Identifying a
-value by an address that C++ only guarantees under default ELF
-interposition is fragile — a distro flag, a static link of one side, or
-`dlopen` with `RTLD_LOCAL` all break it, and each breaks it silently and
-on disk; on Windows, where each module gets its own copy of an inline
-function by default, it is hard to see how it can hold at all.
-
-The fix is not to move the comparators out of the header. A function
-defined only in the shared library still fails under
-`-Bsymbolic-functions`: the library binds to its own definition while
-the client's address-taking yields a canonical PLT entry in the client.
-Nothing that keeps identifying the comparator by its address is safe. A
-one-byte enum in `TuningParameters` alongside the pointer, or a name
-string, costs nothing and is immune — and the on-disk format is already
-an enum byte, so only the derivation from a pointer has to change.
-
-This is worth reporting upstream separately from the Ubuntu bug, since
-it is a different ask; it is not a Rust-mechanism divergence, so it does
-not belong in `upstream-divergences.md`.
+`distro-probe.sh` covers both halves, and was checked against all four
+rows of the bisection: it reports A broken on both, B broken on the
+comparator only, C broken on `remove` only, and D healthy. A distro that
+prints `RESULT : healthy` has neither defect.
