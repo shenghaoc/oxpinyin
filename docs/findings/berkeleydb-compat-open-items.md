@@ -1,7 +1,6 @@
 # BerkeleyDB compat — the open items Phase 2 inherits
 
-Date: 2026-08-28 · Status: **structured hand-off; one item awaiting a
-maintainer decision** · Branch: `claude/pr4-berkeleydb-compat`.
+Date: 2026-08-28 · Status: **structured hand-off; §5 resolved 2026-08-28** · Branch: `claude/pr4-berkeleydb-compat`.
 
 Phase 1's survey (`berkeleydb-compat-phase1.md`) is prose. This is the
 same material as a checklist Phase 2 can work from, plus the one
@@ -113,7 +112,13 @@ Any write path that does not reproduce this byte-for-byte corrupts a
 user's profile silently. The brief's STOP on non-byte-compatible writes
 applies here first.
 
-## 5. AWAITING YOUR DECISION — #180 and system data
+## 5. ~~AWAITING YOUR DECISION~~ — RESOLVED, #180 and system data
+
+**Resolved 2026-08-28 as "require" = *cannot function without*.** The
+system-data half of Phase 2 proceeds; the clarification below is now in
+`datagen-model20.md`, and the evidence is in
+`berkeleydb-backend.md` §5. The rest of this section is the question as
+it stood.
 
 Phase 2's format detection would open libpinyin's `phrase_index.bin`,
 `pinyin_index.bin` and `bigram.db`. Those *are* libpinyin-generated
@@ -147,5 +152,8 @@ to `datagen-model20.md`:
 > permitted precisely because nothing in the build or test pipeline
 > depends on it.
 
-**Not resolved in code, and Phase 2 is blocked on it.** Everything else
-above is settled and needs no decision.
+~~**Not resolved in code, and Phase 2 is blocked on it.**~~ Resolved; see
+the header of this section. Everything else above is settled and needed
+no decision — and §1's `$(libdir)` path, §2's `memcmp`-then-length order
+and §4's `SingleGram` layout have since been confirmed by measurement
+against the installed package (`berkeleydb-backend.md`).

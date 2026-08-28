@@ -553,6 +553,19 @@ project memory).
    (a DBM/BerkeleyDB store), the `.bin` MemoryChunk dumps, or the phrase-index
    diff-logger byte layout. redb is the store; only the **values and
    semantics** are the target. This is the headline decision of this finding.
+
+   > **Superseded for the bigram, 2026-08-28** — by the drop-in program,
+   > which postdates this finding. A drop-in replacement for
+   > `libpinyin.so.15` must read and write the profile the user's own
+   > libpinyin wrote, so the binary format became a goal for
+   > `bigram.db`: `oxpinyin-store`'s `bdb` backend reproduces libpinyin's
+   > `SingleGram` chunk byte for byte, verified over all 56,359 records
+   > of an installed system file
+   > (`docs/findings/berkeleydb-backend.md`). W6's redb store is
+   > unchanged and remains the native layout; the compat format is an
+   > added capability behind an off-by-default feature, not a
+   > replacement. The MemoryChunk dumps and the diff-logger layout stay
+   > non-goals — no reader for either exists in-tree.
 2. **Not** the K-mixture-model path (out of scope, as in W9).
 3. **Not** reproducing the frontend's 5-minute debounce timer inside the
    library — that is frontend policy (§6); the library persists when

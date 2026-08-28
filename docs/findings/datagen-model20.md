@@ -7,6 +7,22 @@ Date: 2026-08-27 · Status: **recorded / implemented** (`crates/oxpinyin-datagen
 > The canonical linguistic source is the source of truth. No oxpinyin
 > backend may require libpinyin-generated runtime data as its input.
 
+**Clarification (2026-08-28, maintainer decision; see
+`docs/findings/berkeleydb-backend.md` §5):**
+
+> The invariant governs production. No producer may take
+> libpinyin-generated runtime data as its input, and oxpinyin must be
+> able to build every table it needs from the canonical archive alone.
+> It does not govern consumption at runtime: opening a libpinyin-format
+> file that is already on the user's system is a feature of the drop-in,
+> permitted precisely because nothing in the build or test pipeline
+> depends on it.
+
+Recorded because the BerkeleyDB compatibility backend opens the
+`bigram.db` the user's own libpinyin package installed, and "require"
+had to be read one way or the other before it could. Everything below
+this line was already true of production and is unchanged by it.
+
 The canonical source is the pinned `model20.text.tar.gz`
 (`docs/findings/model-provenance.md`; SHA-256
 `59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155`,

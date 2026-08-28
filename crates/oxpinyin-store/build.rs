@@ -1,12 +1,109 @@
-//! Builds the tkrzw C++ shim when the `tkrzw` feature is on.
+//! Builds the optional backends' native glue.
 //!
-//! Off by default: with the feature disabled this script does nothing,
-//! so the default build compiles no C++ and links no extra library.
+//! Both are off by default: with neither feature enabled this script does
+//! nothing, so the default build compiles no C or C++ and links no extra
+//! library.
+//!
+//! * `tkrzw` — compiles the C++ shim through `cxx-build`.
+//! * `bdb` — generates Rust declarations from the system `db.h` with
+//!   bindgen and links the system `libdb`.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     #[cfg(feature = "tkrzw")]
     tkrzw::build();
+    #[cfg(feature = "bdb")]
+    bdb::build();
+}
+
+/// Berkeley DB 5.3 bindings.
+///
+/// # Why bindgen and not a crate
+///
+/// The published `libdb`/`libdb-sys` crates statically link a vendored
+/// Berkeley DB. That is the wrong shape here: the whole point of this
+/// backend is to interoperate with files the user's own libpinyin wrote
+/// through the *system* libdb, so the declarations must describe the
+/// library actually installed, and the link must name it.
+///
+/// # Why generated fresh, not checked in
+///
+/// `DB`, `DBT` and `DBC` are ABI structs whose layout is version-specific.
+/// A checked-in `bindings.rs` would freeze 5.3.28's layout and silently
+/// misread the fields of any other libdb a distro might ship — writing
+/// through a struct whose fields have moved corrupts the user's profile
+/// without any error, which is precisely the failure this backend must
+/// not have. Generating from the installed header makes the layout right
+/// by construction, and the version gate below refuses anything the
+/// format survey did not cover instead of guessing.
+///
+/// The cost is a build-time libclang, which is acceptable because this
+/// backend is opt-in: a build without `--features bdb` needs neither
+/// bindgen nor libdb.
+#[cfg(feature = "bdb")]
+mod bdb {
+    use std::path::PathBuf;
+
+    pub fn build() {
+        println!("cargo:rerun-if-changed=src/bdb/wrapper.h");
+        // Repointing the build at a different libdb must regenerate the
+        // declarations, not reuse the cached ones.
+        println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
+        println!("cargo:rerun-if-env-changed=OXPINYIN_BDB_INCLUDE_DIR");
+        println!("cargo:rerun-if-env-changed=OXPINYIN_BDB_LIB_DIR");
+
+        if let Ok(dir) = std::env::var("OXPINYIN_BDB_LIB_DIR") {
+            println!("cargo:rustc-link-search=native={dir}");
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
+        }
+        // The system Berkeley DB, linked by name. Never a vendored copy:
+        // the files being read were written by this same library.
+        println!("cargo:rustc-link-lib=db");
+
+        let mut builder = bindgen::Builder::default()
+            .header("src/bdb/wrapper.h")
+            // Only the small surface libpinyin itself uses. Every `open`
+            // below passes NULL for both environment and transaction, so
+            // no transaction, environment or secondary-index type is
+            // needed and none is generated.
+            .allowlist_function("db_create")
+            .allowlist_function("db_strerror")
+            .allowlist_function("db_version")
+            .allowlist_type("DB")
+            .allowlist_type("DBC")
+            .allowlist_type("DBT")
+            .allowlist_type("DBTYPE")
+            .allowlist_var("DB_.*")
+            .allowlist_var("DB_VERSION_.*")
+            // No layout tests: they would compile a second copy of every
+            // struct into the crate's test binary for no benefit here,
+            // and this crate's tests exercise the real library instead.
+            .layout_tests(false)
+            .derive_debug(false)
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
+
+        if let Ok(dir) = std::env::var("OXPINYIN_BDB_INCLUDE_DIR") {
+            builder = builder.clang_arg(format!("-I{dir}"));
+        }
+
+        let bindings = match builder.generate() {
+            Ok(bindings) => bindings,
+            Err(error) => panic!(
+                "libdb required: the `bdb` feature needs Berkeley DB 5.3 and its header \
+                 db.h, and bindgen could not read them ({error}). Install the distro's \
+                 development package (Debian/Ubuntu: libdb5.3-dev; Fedora: libdb-devel; \
+                 Arch: db) — the same one libpinyin build-depends on — or point \
+                 OXPINYIN_BDB_INCLUDE_DIR and OXPINYIN_BDB_LIB_DIR at an installation. \
+                 Generating these declarations also needs libclang (Debian/Ubuntu: \
+                 libclang-dev). Build without --features bdb to skip all of it."
+            ),
+        };
+
+        let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
+        bindings
+            .write_to_file(out.join("bdb_bindings.rs"))
+            .expect("write generated Berkeley DB declarations");
+    }
 }
 
 #[cfg(feature = "tkrzw")]

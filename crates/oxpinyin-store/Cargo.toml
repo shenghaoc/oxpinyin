@@ -17,7 +17,12 @@ cxx = { workspace = true, optional = true }
 
 [build-dependencies]
 cxx-build = { workspace = true, optional = true }
+bindgen = { workspace = true, optional = true }
 
 [features]
 lmdb = ["dep:heed"]
 tkrzw = ["dep:cxx", "dep:cxx-build"]
+# Berkeley DB 5.3 compatibility backend. Build-time only dependency on
+# bindgen (which needs libclang); the runtime dependency is the system
+# libdb the distro already ships, linked by name, never vendored.
+bdb = ["dep:bindgen"]

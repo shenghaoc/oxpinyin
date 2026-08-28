@@ -41,6 +41,7 @@ redb = "4"
 heed = "0.22"
 cxx = "1.0.199"
 cxx-build = "1.0.199"
+bindgen = "0.72"
 smallvec = "1.15"
 compact_str = "0.10"
 

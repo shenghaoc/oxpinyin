@@ -16,8 +16,11 @@
 //! `Key for &[u8]` is a byte compare; the LMDB backend sets no integer or
 //! custom comparator (so LMDB's default lexicographic one applies); and the
 //! tkrzw backend installs no comparator, so TreeDBM uses its default
-//! `LexicalKeyComparator` (plain unsigned byte order).  Any further backend
-//! must match that default lexicographic comparator.  The encodings each
+//! `LexicalKeyComparator` (plain unsigned byte order); and the Berkeley DB
+//! backend opens `DB_BTREE` without `set_bt_compare`, exactly as libpinyin
+//! does, so libdb's default `memcmp`-then-shorter-first comparator applies.
+//! Any further backend must match that default lexicographic comparator.
+//! The encodings each
 //! layer chooses on top of this rule (data little-endian = byte order,
 //! intentionally not integer order; user big-endian = integer order) are
 //! documented in one place in `docs/findings/store-key-ordering.md`.
@@ -463,6 +466,11 @@ mod tkrzw;
 #[cfg(feature = "tkrzw")]
 pub use tkrzw::TkrzwStore;
 
+#[cfg(feature = "bdb")]
+pub mod bdb;
+#[cfg(feature = "bdb")]
+pub use bdb::{BdbStore, BigramDb, SingleGram};
+
 // ── error mapping ──────────────────────────────────────────────────
 
 fn map_database_error(e: redb::DatabaseError) -> StoreError {
@@ -527,6 +535,7 @@ mod tests {
     use super::StoreError;
     #[cfg(feature = "tkrzw")]
     use super::TkrzwStore;
+
     use super::WriteStore;
 
     /// Emits the temp-path plumbing every tier group needs.
@@ -1007,6 +1016,11 @@ mod tests {
     #[cfg(feature = "tkrzw")]
     store_write_tests!(tkrzw_write, TkrzwStore, "tkrzw");
 
+    #[cfg(feature = "bdb")]
+    store_read_tests!(bdb_read, BdbStore, BdbStore, "bdb");
+    #[cfg(feature = "bdb")]
+    store_write_tests!(bdb_write, BdbStore, "bdb");
+
     /// Removes the borrowed path on drop, so a panicking test leaves no
     /// file behind in `std::env::temp_dir()`. redb keeps no `-lock` sidecar,
     /// so the single data file is all that needs removing.
@@ -1435,6 +1449,8 @@ mod tests {
         use std::ops::Bound;
         use std::path::Path;
 
+        #[cfg(feature = "bdb")]
+        use super::super::BdbStore;
         #[cfg(feature = "lmdb")]
         use super::super::LmdbStore;
         #[cfg(feature = "tkrzw")]
@@ -1669,6 +1685,17 @@ mod tests {
                     "redb and tkrzw must yield byte-identical for_each sequences",
                 );
             }
+            #[cfg(feature = "bdb")]
+            {
+                let p = TempPath::new(&format!("{tag}-bdb"));
+                assert_eq!(
+                    reference,
+                    insert_and_walk::<BdbStore>(&p.0, keys),
+                    "redb and Berkeley DB must yield byte-identical for_each sequences \
+                     — DB_BTREE's default comparator is memcmp-then-shorter-first, which \
+                     is the store's one rule, and libpinyin sets no other",
+                );
+            }
             reference
         }
 
@@ -1722,6 +1749,15 @@ mod tests {
                     reference,
                     insert_and_range::<TkrzwStore>(&p.0, &keys, &lo, &hi),
                     "redb and tkrzw must yield byte-identical range sequences",
+                );
+            }
+            #[cfg(feature = "bdb")]
+            {
+                let p = TempPath::new("xrange-bdb");
+                assert_eq!(
+                    reference,
+                    insert_and_range::<BdbStore>(&p.0, &keys, &lo, &hi),
+                    "redb and Berkeley DB must yield byte-identical range sequences",
                 );
             }
         }
