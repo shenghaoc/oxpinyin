@@ -13,24 +13,24 @@
 
 use std::os::raw::c_uint;
 
-use crate::candidates::{pinyin_get_candidate, pinyin_get_candidate_string};
-use crate::parse::{pinyin_parse_more_chewings, pinyin_parse_more_full_pinyins};
-use crate::sentence::pinyin_guess_candidates;
-use crate::test_support::{TempUserDir, cstr, open};
-use crate::types::{LookupCandidate, PinyinInstance};
+use pinyin_capi::{
+    LookupCandidate, PinyinInstance, pinyin_get_candidate, pinyin_get_candidate_string,
+    pinyin_get_n_candidate, pinyin_guess_candidates, pinyin_parse_more_chewings,
+    pinyin_parse_more_full_pinyins,
+};
+
+use crate::common::{TempUserDir, cstr, open};
 
 /// Collects the candidate texts for the current composition.
 fn candidate_texts(instance: *mut PinyinInstance) -> Vec<String> {
     assert!(pinyin_guess_candidates(instance, 0, 0x1e));
     let mut count: c_uint = 0;
-    assert!(crate::candidates::pinyin_get_n_candidate(
-        instance, &mut count
-    ));
+    assert!(pinyin_get_n_candidate(instance, &mut count));
     let mut out = Vec::new();
     for index in 0..count {
         let mut cand: *mut LookupCandidate = std::ptr::null_mut();
         assert!(pinyin_get_candidate(instance, index, &mut cand));
-        let mut text: *const crate::types::GChar = std::ptr::null();
+        let mut text: *const pinyin_capi::GChar = std::ptr::null();
         assert!(pinyin_get_candidate_string(instance, cand, &mut text));
         assert!(!text.is_null());
         out.push(
@@ -82,8 +82,8 @@ fn zhuyin_keys_are_not_resegmented_by_the_pinyin_inventory() {
         "full-pinyin xian lost its xi+an segmentation: {full:?}"
     );
 
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
+    pinyin_capi::pinyin_free_instance(instance);
+    pinyin_capi::pinyin_fini(context);
 }
 
 #[test]
@@ -103,6 +103,6 @@ fn zhuyin_only_spellings_do_not_fall_back_to_shorter_pinyin_keys() {
         "den re-parsed as de: {texts:?}"
     );
 
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
+    pinyin_capi::pinyin_free_instance(instance);
+    pinyin_capi::pinyin_fini(context);
 }

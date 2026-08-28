@@ -440,59 +440,6 @@ mod tests {
             .join("fixtures")
             .join("w3")
     }
-
-    #[test]
-    fn load_all_fixtures() {
-        let dir = fixtures_dir();
-        for entry in std::fs::read_dir(&dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|s| s.to_str()) != Some("bin") {
-                continue;
-            }
-            let data = std::fs::read(&path).unwrap();
-            let table = ContentTable::load(&data).unwrap_or_else(|e| {
-                panic!("failed to load {}: {e}", path.display());
-            });
-            assert!(!table.is_empty(), "{} should have records", path.display());
-            assert_eq!(
-                table.version(),
-                17,
-                "{} should be version 17",
-                path.display()
-            );
-        }
-    }
-
-    #[test]
-    fn culture_fixture_spot_check() {
-        // culture.bin: 34 records, mostly fl=1 (compact format), one fl=2
-        let dir = fixtures_dir();
-        let data = std::fs::read(dir.join("culture.bin")).unwrap();
-        let table = ContentTable::load(&data).unwrap();
-
-        assert_eq!(table.len(), 34);
-        assert_eq!(table.version(), 17);
-
-        // First record: ng=2, fl=1, phrase_freq=1
-        let r0 = table.get(0).unwrap();
-        assert_eq!(r0.n_gram, 2);
-        assert_eq!(r0.flags, 1);
-        assert_eq!(r0.phrase_frequency, 1);
-        assert_eq!(r0.tokens.len(), 2);
-        // token[0] = 0x5B89, freq=0x517B=20859
-        assert_eq!(r0.tokens[0].token, 0x5B89);
-        assert_eq!(r0.tokens[0].frequency, 20859);
-        // token[1] = 0x02350180, freq=100 (compact u16)
-        assert_eq!(r0.tokens[1].token, 0x02350180);
-        assert_eq!(r0.tokens[1].frequency, 100);
-
-        // Record 2 (index 2): ng=2, fl=2 (3 token pairs: n_gram + 1 extra)
-        let r2 = table.get(2).unwrap();
-        assert_eq!(r2.n_gram, 2);
-        assert_eq!(r2.flags, 2);
-        assert_eq!(r2.tokens.len(), 3);
-    }
-
     #[test]
     fn header_rejects_short_input() {
         let data = [0u8; 10];

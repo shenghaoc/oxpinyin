@@ -2,7 +2,7 @@
 
 use crate::candidates::{pinyin_choose_candidate, pinyin_get_candidate};
 use crate::config::pinyin_load_addon_phrase_library;
-use crate::context::{oxpinyin_test_set_user_bigram, pinyin_init_for_fixtures};
+use crate::context::{oxpinyin_init_for_fixtures, oxpinyin_test_set_user_bigram};
 use crate::instance::pinyin_alloc_instance;
 use crate::iterators::{
     pinyin_begin_add_phrases, pinyin_end_add_phrases, pinyin_iterator_add_phrase,
@@ -61,7 +61,7 @@ fn addon_library_load_is_idempotent_and_surfaces_addon_candidates() {
         "\\data model interpolation\n\\1-gram\n\\item 1 ok count 1\n",
     );
     let user = TempUserDir::new("addon-load-user");
-    let context = pinyin_init_for_fixtures(
+    let context = oxpinyin_init_for_fixtures(
         cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
         cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
     );
@@ -104,7 +104,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
         "\\data model interpolation\n\\1-gram\n\\item 1 ok count 1\n",
     );
     let user = TempUserDir::new("addon-promote-user");
-    let context = pinyin_init_for_fixtures(
+    let context = oxpinyin_init_for_fixtures(
         cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
         cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
     );
