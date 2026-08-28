@@ -158,6 +158,30 @@ blocks merges beyond the existing fmt/clippy gates.
   shipped artifacts.
 - No re-linting of compiler guarantees.
 
+## Rollout status (PR-1 = #200, PR-2 = #201)
+
+PR-1 (mechanics) landed as 0297afb…1e3dfac plus four review rounds
+(669a4fb, e7a9af8, de4fe53, 8b7d7de): forbid sweep, panic-containment
+denies, workspace must_use/unsafe_op_in_unsafe_fn, clippy.toml,
+FFI-crate SAFETY lints, must_use sweep (23 sites, closing F-10), and
+the hardened deny job (locked graphs incl. the fuzz workspace,
+checksum-verified cargo-deny install, bincode default-graph assertion,
+NCSA scoped to libfuzzer-sys). The fmt-only pre-commit hook and
+.vscode config proposed as PR-1g were dropped in review as unnecessary.
+PR-2 landed as e084a20/6fc7f7e/e5491f6: F-3, F-1/F-2 (+F-9), F-7 with
+regression tests. Full workspace clippy -D warnings and cargo test are
+green. PR-3/PR-4 (nightly lanes, fuzz-target expansion, Kani/mutants
+trials) remain unimplemented.
+
+Mechanics correction discovered during implementation: CI's blanket
+`-D warnings` promotes *every* warn-level lint to a merge blocker, so
+this repository has no soft-warning tier in practice. The workable
+pattern (used throughout PR-1) is: enable a lint at warn **together with**
+zeroing its current hits — existing intentional sites get justified
+`#[allow]`s (deviation records), and any *new* violation blocks CI. The
+cast/docs lint sweeps (107/82 sites) are therefore separate, chunkier
+follow-up PRs, not part of PR-1.
+
 ## Rollout
 
 1. **PR-1 (mechanics)**: per-crate `forbid`/scoped-allow unsafe policy;
