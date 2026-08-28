@@ -176,13 +176,15 @@ pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
     if iter.is_null() {
         return;
     }
-    // SAFETY: `iter` was produced by `pinyin_begin_add_phrases` via
-    // `Box::into_raw`; the caller transfers ownership back here and only
-    // here.
-    let mut handle = unsafe { Box::from_raw(iter.cast::<ImportHandle>()) };
-    if let Some(user) = handle.user.as_mut() {
-        user.mark_modified();
-    }
+    ffi_catch((), || {
+        // SAFETY: `iter` was produced by `pinyin_begin_add_phrases` via
+        // `Box::into_raw`; the caller transfers ownership back here and
+        // only here.
+        let mut handle = unsafe { Box::from_raw(iter.cast::<ImportHandle>()) };
+        if let Some(user) = handle.user.as_mut() {
+            user.mark_modified();
+        }
+    });
 }
 
 // ── Export iterator (unigram phrases) ────────────────────────────────
@@ -299,12 +301,12 @@ pub extern "C" fn pinyin_end_get_phrases(iter: *mut ExportIterator) {
     if iter.is_null() {
         return;
     }
-    // SAFETY: `iter` was produced by `pinyin_begin_get_phrases` via
-    // `Box::into_raw`; the caller transfers ownership back here and only
-    // here.
-    unsafe {
+    ffi_catch((), || unsafe {
+        // SAFETY: `iter` was produced by its begin call via
+        // `Box::into_raw`; the caller transfers ownership back here and
+        // only here.
         drop(Box::from_raw(iter.cast::<ExportHandle>()));
-    }
+    });
 }
 
 // ── Bigram export iterator ───────────────────────────────────────────
@@ -425,10 +427,10 @@ pub extern "C" fn pinyin_end_get_bigram_phrases(iter: *mut BigramExportIterator)
     if iter.is_null() {
         return;
     }
-    // SAFETY: `iter` was produced by `pinyin_begin_get_bigram_phrases` via
-    // `Box::into_raw`; the caller transfers ownership back here and only
-    // here.
-    unsafe {
+    ffi_catch((), || unsafe {
+        // SAFETY: `iter` was produced by its begin call via
+        // `Box::into_raw`; the caller transfers ownership back here and
+        // only here.
         drop(Box::from_raw(iter.cast::<BigramHandle>()));
-    }
+    });
 }
