@@ -10,19 +10,27 @@
 # libtkrzw agreeing on one canonical address per symbol, which ELF normally
 # guarantees by routing the library's address-taking through the GOT.
 #
-# A build that binds those references inside the library at link time — which
-# is what `-Wl,-Bsymbolic-functions` does, and what Ubuntu's dpkg vendor
-# profile adds to every package — breaks that agreement. The symptoms are
-# silent: TreeDBM records the comparator as "custom" (type byte 255) and can
-# never reopen the file, `Remove` stores the REMOVE sentinel as the record's
-# value instead of deleting it, and `Rebuild` aborts with CANCELED_ERROR.
+# Two independent build flags break that agreement, and neither implies the
+# other, so both are checked here:
 #
-# Two checks, either of which is conclusive on its own:
+#   -Wl,-Bsymbolic-functions  binds the library's function references to its
+#     own copies at link time, so no client's comparator pointer ever matches.
+#     TreeDBM then records the comparator as "custom" (type byte 255) and can
+#     never reopen the file.
+#   -flto  gives most LTO partitions their own copy of the NOOP/REMOVE backing
+#     literal, so `value.data() == NOOP.data()` fails. `Remove` stores the
+#     REMOVE sentinel as the record's value instead of deleting it.
+#
+# Ubuntu applies both to every package it builds; Debian applies neither; Arch
+# applies LTO only. See docs/findings/tkrzw-distro-compat.md.
+#
+# Three checks, each conclusive on its own:
 #   static  — count the GOT relocations libtkrzw keeps for the comparators.
 #             Zero means the library resolved them to its own copies, so no
 #             client can ever match them.
 #   dynamic — create a database with the system's own tkrzw_dbm_util and read
 #             it back with the same binary.
+#   remove  — delete a record and check it is actually gone.
 #
 # Exit codes: 0 = healthy, 1 = pointer-identity broken, 2 = tkrzw not found.
 
@@ -81,6 +89,20 @@ for ext in tkh tkt tks; do
     rc=1
   fi
 done
+
+# The NOOP/REMOVE sentinel half, which no amount of comparator health implies:
+# a deleted record must be gone, not present carrying the five-byte sentinel.
+if tkrzw_dbm_util create rm.tkh >/dev/null 2>&1; then
+  tkrzw_dbm_util set rm.tkh alpha one >/dev/null 2>&1
+  tkrzw_dbm_util set rm.tkh bravo two >/dev/null 2>&1
+  tkrzw_dbm_util remove rm.tkh alpha >/dev/null 2>&1
+  if tkrzw_dbm_util list rm.tkh 2>/dev/null | cut -f1 | grep -qx alpha; then
+    echo "remove : BROKEN  the removed record is still present, carrying the REMOVE sentinel"
+    rc=1
+  else
+    echo "remove : ok      the removed record is gone"
+  fi
+fi
 
 # The TreeDBM comparator byte lives at offset 53 of the "TDB" opaque metadata
 # block that TreeDBM keeps inside its HashDBM container: 1 = LexicalKeyComparator
