@@ -6,6 +6,16 @@ The decoder needs a `Dictionary` and a `LanguageModel` to develop against
 before either exists for real. This finding records what that data is, where
 every part of it came from, and what it may not be mistaken for.
 
+## Location (updated 2026-08-29)
+
+The fixture doubles moved from `oxpinyin-core/src/fixture.rs` to the
+dev-only workspace crate `crates/oxpinyin-testsupport`, so the production
+build graph carries no test doubles. The provenance, data, and behavior are
+byte-identical; consumers take
+`use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel}` as an
+ordinary (dev-)dependency. See `docs/testing/upstream-test-coverage.md` for
+the wider test-architecture reorganization.
+
 ## Why not the real thing
 
 Three separate reasons, and each one alone would be enough:

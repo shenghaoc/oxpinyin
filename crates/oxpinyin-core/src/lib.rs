@@ -5,7 +5,6 @@
 #![warn(missing_docs)]
 
 pub mod cost;
-pub mod fixture;
 mod full_pinyin_index;
 pub mod graph;
 pub mod kbest;

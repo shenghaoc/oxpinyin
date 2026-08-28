@@ -15,4 +15,9 @@ smallvec.workspace = true
 compact_str.workspace = true
 
 [dev-dependencies]
+# Fixture-backed Dictionary/LanguageModel doubles for the integration tests.
+# The crate's own cfg(test) unit tests must not import it: the dev-cycle
+# (testsupport depends on core) would build two instances of core and trait
+# impls would not unify.
+oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }

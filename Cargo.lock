@@ -737,6 +737,7 @@ name = "oxpinyin-core"
 version = "0.1.0"
 dependencies = [
  "compact_str",
+ "oxpinyin-testsupport",
  "proptest",
  "smallvec",
 ]
@@ -799,6 +800,7 @@ version = "0.1.0"
 dependencies = [
  "compact_str",
  "oxpinyin-core",
+ "oxpinyin-testsupport",
  "smallvec",
 ]
 
@@ -847,6 +849,13 @@ dependencies = [
  "bindgen",
  "heed",
  "redb",
+]
+
+[[package]]
+name = "oxpinyin-testsupport"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-core",
 ]
 
 [[package]]
@@ -955,6 +964,7 @@ dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",
+ "oxpinyin-testsupport",
  "oxpinyin-user",
 ]
 

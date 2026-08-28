@@ -710,9 +710,9 @@ where
 mod tests {
     use super::{LONG_SENTENCE_PENALTY, NbestRow, Value, loses_to, nbest_sentences};
     use crate::session::ScanKey;
-    use oxpinyin_core::fixture::{FixtureDictionary, FixtureLanguageModel};
     use oxpinyin_core::graph::SegmentGraph;
     use oxpinyin_core::{Cost, LanguageModel, NbestStepCosts, OptionBits, PhraseToken};
+    use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 
     use crate::config::EmptyConfigSource;
     use crate::error::EngineError;

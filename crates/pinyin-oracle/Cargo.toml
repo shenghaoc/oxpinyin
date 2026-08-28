@@ -73,6 +73,8 @@ oxpinyin-data = { path = "../oxpinyin-data" }
 oxpinyin-engine = { path = "../oxpinyin-engine" }
 
 [dev-dependencies]
+# Fixture-backed doubles for the portable decode differential.
+oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 # Integration tests share the same internal crates as the parity tooling.
 criterion = "0.8"
 dhat = "0.3"
