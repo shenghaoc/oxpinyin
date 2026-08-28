@@ -97,17 +97,35 @@ echo "capi data: $CAPI_DATA"
 CAPI_LOG="$(mktemp)"
 ORACLE_LOG="$(mktemp)"
 if ! TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" TRAINDIFF_DUMP_CANDIDATES=1 \
+    TRAINDIFF_REOPEN=1 \
     ./train-diff "$CAPI_SO" "$CAPI_DATA" > "$CAPI_LOG" 2>/dev/null; then
     echo "FAIL: train-diff candidate dump crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     exit 1
 fi
 if ! TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" TRAINDIFF_DUMP_CANDIDATES=1 \
+    TRAINDIFF_REOPEN=1 \
     ./train-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2>/dev/null; then
     echo "FAIL: train-diff candidate dump crashed against the oracle"
     cat "$ORACLE_LOG"
     exit 1
 fi
+
+# Vacuity guard: the populated phase must actually execute on both sides —
+# the reopened probe, the subsequent-session train, and the reopened
+# export, not just the in-memory dump.
+for side in "$ORACLE_LOG" "$CAPI_LOG"; do
+    if ! grep -q '^cand:reopened@0 n=' "$side" || \
+       ! grep -q '^train-reopened:1$' "$side" || \
+       ! grep -q '^reopen-bigram:' "$side" || \
+       ! grep -q '^reopen-phrase:' "$side"; then
+        echo "FAIL: populated persistence phase did not execute"
+        echo "  reopened cand / train / export lines in $(basename "$side"):"
+        grep -cE '^cand:reopened' "$side" || true
+        rm -f "$CAPI_LOG" "$ORACLE_LOG"
+        exit 1
+    fi
+done
 
 if ! diff -u <(grep -E '^cand:' "$ORACLE_LOG") <(grep -E '^cand:' "$CAPI_LOG") > /dev/null; then
     echo "DIVERGENCE: populated-store candidate TEXT/ORDER with DYNAMIC_ADJUST clear"
@@ -116,6 +134,38 @@ if ! diff -u <(grep -E '^cand:' "$ORACLE_LOG") <(grep -E '^cand:' "$CAPI_LOG") >
     exit 2
 fi
 echo "populated-store candidates identical (bit-clear; unigram term ungated, bigram term skipped)"
+
+# The persistence round-trip, per side: the reopened candidate window must
+# equal the in-memory one (labels normalized) — the remembered user phrases
+# must survive the save/reopen on each engine.
+normalize_reopened() {
+    grep -E '^cand:reopened' "$1" | \
+        sed 's/^cand:reopened@0/cand:nihao@0/; s/^cand:reopened-after-ni/cand:after-ni/'
+}
+for side in "$ORACLE_LOG" "$CAPI_LOG"; do
+    if ! diff -u <(grep -E '^cand:(nihao@0|after-ni)' "$side") \
+                  <(normalize_reopened "$side") > /dev/null; then
+        echo "DIVERGENCE: reopened candidate window differs from the in-memory one"
+        diff -u <(grep -E '^cand:(nihao@0|after-ni)' "$side") \
+                <(normalize_reopened "$side") || true
+        rm -f "$CAPI_LOG" "$ORACLE_LOG"
+        exit 2
+    fi
+done
+echo "reopened candidate window equals the in-memory one (both sides)"
+
+# The persisted-state export + the subsequent-session training attempt:
+# cross-engine, sorted (the store's iteration order is not a contract).
+if ! diff -u <(grep -E '^reopen-(phrase|bigram):' "$ORACLE_LOG" | sort) \
+             <(grep -E '^reopen-(phrase|bigram):' "$CAPI_LOG" | sort) > /dev/null; then
+    echo "DIVERGENCE: reopened export triples differ (persistence / subsequent session)"
+    diff -u <(grep -E '^reopen-(phrase|bigram):' "$ORACLE_LOG" | sort) \
+            <(grep -E '^reopen-(phrase|bigram):' "$CAPI_LOG" | sort) || true
+    rm -f "$CAPI_LOG" "$ORACLE_LOG"
+    exit 2
+fi
+echo "reopened export identical (subsequent-session train included):"
+grep -E '^reopen-(phrase|bigram):' "$CAPI_LOG" | sort
 grep -E '^cand:' "$CAPI_LOG"
 rm -f "$CAPI_LOG" "$ORACLE_LOG"
 echo "train-diff dynamic-off: PASS"
