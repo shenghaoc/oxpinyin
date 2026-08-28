@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use oxpinyin_data::{ContentTable, LookupTable, PunctTable};
+use oxpinyin_data::{ContentTable, LoadError, LookupTable, PunctTable};
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -146,4 +146,19 @@ fn iter_all_fixture_files() {
         let entries = table.iter().count();
         assert_eq!(entries as u64, count);
     }
+}
+
+#[test]
+fn a_hostile_record_count_cannot_drive_a_giant_allocation() {
+    // Regression (docs/safety/oxpinyin-audit.md F-3): nitems used to
+    // feed Vec::with_capacity directly, so a ~100-byte file claiming
+    // u32::MAX records aborted the allocator. It must surface as an
+    // ordinary IncompleteRead error instead.
+    let mut data = vec![0_u8; 64];
+    let data_size = ((data.len() - 8) as u32).to_le_bytes(); // data_size
+    data[0..4].copy_from_slice(&data_size);
+    data[8..12].copy_from_slice(&u32::MAX.to_le_bytes()); // nitems
+    data[12..16].copy_from_slice(&17u32.to_le_bytes()); // version
+    let err = ContentTable::load(&data).unwrap_err();
+    assert!(matches!(err, LoadError::IncompleteRead { .. }), "{err:?}");
 }

@@ -364,7 +364,13 @@ impl ContentTable {
         let hdr = parse_header(data)?;
         let ds = data_start(hdr.nitems);
         let mut pos = ds;
-        let mut records = Vec::with_capacity(hdr.nitems as usize);
+        // `nitems` is untrusted: a tiny hostile file claiming ~2^32 records
+        // must not translate into a giant speculative allocation before the
+        // length-checked loop below runs. Every record is at least 6 bytes
+        // (fl=0, ng=0), so the remaining bytes bound how many can exist;
+        // the exact-count check below still rejects the lie.
+        let cap = (hdr.nitems as usize).min(data.len().saturating_sub(ds) / 6);
+        let mut records = Vec::with_capacity(cap);
 
         while pos < data.len() && records.len() < hdr.nitems as usize {
             let (rec, sz) = parse_record(data, pos)?;
