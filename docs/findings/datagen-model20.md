@@ -210,7 +210,10 @@ scheme work (`231267a` + review fixes) landed:
 Backend matrix re-run same day, strict, model dir pointed at the pinned
 extract: `cargo test -p oxpinyin-datagen --features lmdb` and
 `--features tkrzw` green — `all_backends_emit_identical_tables`
-(key/value streams identical through `oxpinyin-data`'s real loader),
+(read-back key/value streams identical across backends and against the
+compiled entries, each through its own store reader; `oxpinyin-data`'s
+real loader is exercised over the four `PROBE_KEYS` — three present
+shapes and one absent — not the whole stream),
 `full_compile_matches_the_oracle_derived_export`, and
 `mini_compile_reproduces_frozen_w3_tables`; `compile --backend lmdb` and
 `--backend tkrzw` both produced full table sets. The C ABI itself stays
