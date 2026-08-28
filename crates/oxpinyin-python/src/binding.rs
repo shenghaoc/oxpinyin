@@ -14,7 +14,7 @@
 //! internal mutex so a released GIL can never expose it to two threads.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 use pyo3::create_exception;
 use pyo3::exceptions::{PyFileNotFoundError, PyIndexError, PyOSError, PyValueError};
@@ -153,10 +153,6 @@ impl Engine {
             .ok_or_else(lock_error)?
             .map_err(|error| engine_error(&error))
     }
-
-    fn guard(&self) -> Result<MutexGuard<'_, EngineInner>, PyErr> {
-        locked(&self.inner).map_err(|_| lock_error())
-    }
 }
 
 #[pymethods]
@@ -249,11 +245,12 @@ impl Engine {
     }
 
     /// The decoded text of n-best row `index`, or ``None``.
-    fn sentence(&self, index: usize) -> PyResult<Option<String>> {
-        let guard = self.guard()?;
+    fn sentence(&self, py: Python<'_>, index: usize) -> PyResult<Option<String>> {
         let index = u8::try_from(index)
             .map_err(|_| PyValueError::new_err("sentence row index exceeds 255"))?;
-        Ok(guard.session.sentence_text(index).map(str::to_owned))
+        self.with_session(py, move |inner| {
+            Ok(inner.session.sentence_text(index).map(str::to_owned))
+        })
     }
 
     /// Trains the recorded history/sentence through the user store.
@@ -270,13 +267,16 @@ impl Engine {
         })
     }
 
-    /// Persists user learning when anything changed; True when saved.
+    /// Persists user learning when anything changed; True when saved,
+    /// False when there is no user store to save. A store-level failure
+    /// propagates as :class:`OxpinyinError` rather than a silent False.
     fn save(&self, py: Python<'_>) -> PyResult<bool> {
         self.with_session(py, |inner| {
             let Some(mut user) = inner.user.clone() else {
                 return Ok(false);
             };
-            Ok(user.save().unwrap_or(false))
+            user.save()
+                .map_err(|error| EngineError::UserModel(error.to_string()))
         })
     }
 
@@ -305,20 +305,20 @@ impl Engine {
 
     /// The raw input typed so far (post-filtering).
     #[getter]
-    fn input(&self) -> PyResult<String> {
-        Ok(self.guard()?.session.raw_input().to_owned())
+    fn input(&self, py: Python<'_>) -> PyResult<String> {
+        self.with_session(py, |inner| Ok(inner.session.raw_input().to_owned()))
     }
 
     /// Whether a composition is in progress.
     #[getter]
-    fn composing(&self) -> PyResult<bool> {
-        Ok(self.guard()?.session.is_composing())
+    fn composing(&self, py: Python<'_>) -> PyResult<bool> {
+        self.with_session(py, |inner| Ok(inner.session.is_composing()))
     }
 
     /// Bytes of raw input already consumed by selections.
     #[getter]
-    fn composition_offset(&self) -> PyResult<usize> {
-        Ok(self.guard()?.session.composition_offset())
+    fn composition_offset(&self, py: Python<'_>) -> PyResult<usize> {
+        self.with_session(py, |inner| Ok(inner.session.composition_offset()))
     }
 
     /// Filtered parse length of the whole raw buffer.
@@ -336,16 +336,17 @@ impl Engine {
 
     /// What a shell should display: selected text plus the raw remainder.
     #[getter]
-    fn preedit(&self) -> PyResult<String> {
-        let preedit: Preedit = self.guard()?.session.preedit();
-        Ok(preedit.text().to_owned())
+    fn preedit(&self, py: Python<'_>) -> PyResult<String> {
+        self.with_session(py, |inner| {
+            let preedit: Preedit = inner.session.preedit();
+            Ok(preedit.text().to_owned())
+        })
     }
 
     /// The current candidates, best first.
     #[getter]
-    fn candidates(&self) -> PyResult<Vec<PyCandidate>> {
-        let guard = self.guard()?;
-        Ok(snapshot(guard.session.candidates()))
+    fn candidates(&self, py: Python<'_>) -> PyResult<Vec<PyCandidate>> {
+        self.with_session(py, |inner| Ok(snapshot(inner.session.candidates())))
     }
 
     /// Candidates anchored at byte `offset` of the raw input, mirroring the
@@ -364,16 +365,17 @@ impl Engine {
 
     /// Available sentence rows after :meth:`guess_sentence`, best first.
     #[getter]
-    fn sentences(&self) -> PyResult<Vec<String>> {
-        let guard = self.guard()?;
-        let mut rows = Vec::new();
-        for index in 0..=u8::MAX {
-            let Some(text) = guard.session.sentence_text(index) else {
-                break;
-            };
-            rows.push(text.to_owned());
-        }
-        Ok(rows)
+    fn sentences(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        self.with_session(py, |inner| {
+            let mut rows = Vec::new();
+            for index in 0..=u8::MAX {
+                let Some(text) = inner.session.sentence_text(index) else {
+                    break;
+                };
+                rows.push(text.to_owned());
+            }
+            Ok(rows)
+        })
     }
 }
 

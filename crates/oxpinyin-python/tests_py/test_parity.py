@@ -115,16 +115,22 @@ def replay_case(case: dict) -> dict:
         except Exception:  # noqa: BLE001 - native side stops silently here
             break
         completed = result == "completed"
+        # Snapshot the post-select state before commit clears the
+        # composition, mirroring native-dump so the transcripts still line up.
+        offset = engine.composition_offset
+        preedit = engine.preedit
+        composing = engine.composing
+        top = top_texts(engine)
         commit_text = engine.commit() if completed else None
         events.append(
             {
                 "type": "select",
                 "index": int(index),
                 "result": result,
-                "offset": engine.composition_offset,
-                "preedit": engine.preedit,
-                "composing": engine.composing,
-                "top_candidate_texts": top_texts(engine),
+                "offset": offset,
+                "preedit": preedit,
+                "composing": composing,
+                "top_candidate_texts": top,
                 "commit": commit_text,
             }
         )
