@@ -126,7 +126,6 @@ require_command() {
 }
 
 require_command tar
-require_command python3
 if [[ -z $local_archive ]]; then
 	require_command curl
 fi
@@ -136,7 +135,10 @@ if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1
 fi
 
 abs_path() {
-	python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$1"
+	case $1 in
+	/*) printf '%s\n' "$1" ;;
+	*) printf '%s/%s\n' "$PWD" "$1" ;;
+	esac
 }
 
 cache_dir=$(abs_path "$cache_dir")
