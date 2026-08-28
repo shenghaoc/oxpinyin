@@ -18,6 +18,14 @@ set -euo pipefail
 # mirror). Environments that run this script must allow that host; there is
 # no vendored copy and no alternate URL.
 #
+# No mirror: docs/findings/model-provenance.md classifies the model20 archive
+# (interpolation2.text + the .table files) as NOT redistributable, so this
+# script never points at a project-owned release asset or any copy the project
+# publishes. This is a LOCAL-ONLY workflow: no CI job downloads the archive —
+# a developer machine fetches it once into the build cache below, verified
+# against MODEL_SHA256, and build-oracle.sh reuses that cache via --model-dir
+# so subsequent local oracle rebuilds never re-fetch.
+#
 # Default cache: <repo>/target/model20/
 #   downloads/model20.text.tar.gz
 #   extracted/{interpolation2.text + seventeen .table files}
