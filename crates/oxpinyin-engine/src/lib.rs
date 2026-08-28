@@ -70,7 +70,7 @@ pub use config::{
     UPSTREAM_DEFAULT_COUNT, merge,
 };
 pub use cursor::{
-    left_word_offset, left_word_offset_over_spans, lookup_offset_for_cursor,
+    MatrixKey, left_word_offset, left_word_offset_over_spans, lookup_offset_for_cursor,
     lookup_offset_over_spans, right_word_offset, right_word_offset_over_spans,
 };
 pub use error::EngineError;

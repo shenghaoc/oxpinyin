@@ -2581,3 +2581,40 @@ pub static ETEN26_ZHUYIN_INDEX: [(&str, &str, &str, u32); ETEN26_ZHUYIN_COUNT] =
     ("ㄩㄥ", "ㄩㄥ", "yong", 0),
     ("ㄫ", "ㄫ", "ng", 0),
 ];
+
+/// The canonical Zhuyin spelling of a full-pinyin syllable, or `None` when
+/// the pinned map holds no row for it.
+///
+/// Upstream renders one `ChewingKey` either way — `get_pinyin_string` and
+/// `get_zhuyin_string` are two views of the same initial/middle/final
+/// triple (`chewing_key.cpp:47-89`). Here the two spellings are related
+/// through the pinned Zhuyin index instead, so this is the lookup that
+/// stands in for `get_zhuyin_string` on a key parsed as pinyin.
+///
+/// The map is keyed by *input* spelling and carries shuffle rows whose
+/// input differs from their canonical form, so the canonical row for a
+/// pinyin is the one whose input equals its canonical spelling — the same
+/// row `ChewingKey::get_zhuyin_string` would render.
+#[must_use]
+pub fn zhuyin_for_pinyin(pinyin: &str) -> Option<&'static str> {
+    ZHUYIN_PINYIN_MAP
+        .iter()
+        .find(|(input, canonical, mapped, _)| *mapped == pinyin && input == canonical)
+        .map(|(_, canonical, _, _)| *canonical)
+}
+
+/// A full-pinyin syllable rendered as Zhuyin with its tone — the pin's
+/// `ChewingKey::get_zhuyin_string` (`chewing_key.cpp:74-89`).
+///
+/// The zero tone and tone 1 render the bare spelling ("for first tone,
+/// usually not display it"); tones 2..5 append their mark from the same
+/// table the Zhuyin parser uses, so there is one tone table in the crate
+/// rather than two that can drift.
+#[must_use]
+pub fn zhuyin_display_for_pinyin(pinyin: &str, tone: u8) -> Option<String> {
+    let spelling = zhuyin_for_pinyin(pinyin)?;
+    if (2..=5).contains(&tone) {
+        return Some(format!("{spelling}{}", crate::scheme::tone_symbol(tone)));
+    }
+    Some(spelling.to_owned())
+}

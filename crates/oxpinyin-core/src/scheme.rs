@@ -1437,7 +1437,7 @@ const CP26_FINALS: &[(u8, &str)] = &[
 /// (`src/storage/zhuyin_table.h:482`).
 const CP26_TONES: &[(u8, u8)] = &[(b' ', 1), (b'd', 4), (b'e', 2), (b'r', 3), (b'y', 5)];
 
-fn tone_symbol(tone: u8) -> &'static str {
+pub(crate) fn tone_symbol(tone: u8) -> &'static str {
     match tone {
         1 => " ",
         2 => "ˊ",

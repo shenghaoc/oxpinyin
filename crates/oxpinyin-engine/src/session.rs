@@ -1398,6 +1398,21 @@ where
         crate::cursor::right_word_offset(self.raw.as_bytes(), self.settings.options, offset)
     }
 
+    /// The composition's scan-matrix keys with their raw byte spans.
+    ///
+    /// The same walk the cursor laws above run — `matrix_spans` is a
+    /// projection of this — so a key answered here and an offset answered
+    /// by [`Session::right_word_offset`] agree by construction. The C ABI's
+    /// `pinyin_get_pinyin_key` family reads this.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Graph`] when the raw buffer cannot be built into a
+    /// segment graph.
+    pub fn matrix_keys(&self) -> Result<(Vec<crate::cursor::MatrixKey>, usize), EngineError> {
+        crate::cursor::matrix_keys(self.raw.as_bytes(), self.settings.options)
+    }
+
     /// Whether a re-parse of `original` continues the current composition
     /// (`CapiInstance::begin_parse`'s rule): the composition is open —
     /// not completed by a selection — and the buffer evolved from
