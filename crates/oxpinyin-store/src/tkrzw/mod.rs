@@ -2,12 +2,10 @@
 //!
 //! Enabled by the `tkrzw` cargo feature. Mirrors libpinyin at `0c5e80e`
 //! (`src/storage/tkrzwdb_utils.h`, `chewing_large_table2_tkrzwdb.cpp`,
-//! `ngram_tkrzwdb.cpp`): the database is tkrzw's TreeDBM, opened with
-//! default tuning and therefore the default `LexicalKeyComparator`. The
-//! binding reaches it through `tkrzw_langc.h` — `tkrzw_dbm_open` with
-//! `dbm=tree` constructs exactly what a default-constructed
-//! `tkrzw::TreeDBM` constructs (a TreeDBM over a MemoryMapParallelFile,
-//! default tuning, no custom comparator), so records sort by plain
+//! `ngram_tkrzwdb.cpp`): the database is tkrzw's TreeDBM. The binding
+//! reaches it through `tkrzw_langc.h` — `tkrzw_dbm_open` with `dbm=tree`
+//! selects TreeDBM, and passing no comparator parameter leaves its
+//! default `LexicalKeyComparator` in place, so records sort by plain
 //! unsigned byte order and oxpinyin's big-endian key codec keeps the
 //! ordering it has under redb and LMDB. No C++ header, class, or
 //! exception ever crosses the ABI.
@@ -323,13 +321,15 @@ impl Drop for Db {
     }
 }
 
-// SAFETY: the handle wraps a PolyDBM over a TreeDBM, and tkrzw
-// documents every DBM operation as thread-safe — the database carries
-// its own locking — so a handle can be moved between threads and
-// shared by reference (which is also what lets the store keep `get`
-// and `write` on `&self`). The last-status channel the error mapping
-// reads is thread-local, so calls from other threads cannot interleave
-// with it.
+// SAFETY: the handle wraps a PolyDBM, whose documented contract is that
+// all operations except Open and Close are thread-safe — the database
+// carries its own locking — so a handle can be moved between threads
+// and shared by reference (which is also what lets the store keep `get`
+// and `write` on `&self`). The two excluded operations cannot race
+// here: `tkrzw_dbm_open` completes before the handle exists to share,
+// and `tkrzw_dbm_close` runs in Drop, which holds the handle
+// exclusively. The last-status channel the error mapping reads is
+// thread-local, so calls from other threads cannot interleave with it.
 unsafe impl Send for Db {}
 unsafe impl Sync for Db {}
 
@@ -372,9 +372,9 @@ fn validate_path(path: &Path) -> Result<(), StoreError> {
 
 fn open(path: &Path, writable: bool) -> Result<TkrzwStore, StoreError> {
     validate_path(path)?;
-    // `dbm=tree` opens exactly what a default-constructed TreeDBM is;
-    // `no_create=true` reproduces OPEN_NO_CREATE, by which a read-only
-    // open fails when the file is missing instead of creating it.
+    // `dbm=tree` selects TreeDBM; `no_create=true` reproduces
+    // OPEN_NO_CREATE, by which a read-only open fails when the file is
+    // missing instead of creating it.
     let params = if writable {
         c"dbm=tree"
     } else {
@@ -680,15 +680,21 @@ fn db_apply(db: &Db, mutations: &[Mutation]) -> Result<(), StoreError> {
             proc_arg: (mutation as *const Mutation).cast_mut().cast::<c_void>(),
         })
         .collect();
+    // The element count crosses the same `int32_t` boundary the key and
+    // value lengths do (`c_len`): a batch larger than `i32::MAX` cannot
+    // be represented, and a wrapped negative count would surface as a
+    // bogus allocation failure inside the C wrapper instead of invalid
+    // input here.
+    let num_pairs = i32::try_from(pairs.len())
+        .map_err(|_| StoreError::InvalidInput("too many buffered mutations for tkrzw"))?;
     // SAFETY: the handle is open and writable (the caller checked
-    // `read_only`); `pairs` outlives the call with `pairs.len()` its
-    // true length, every `key_ptr` points into a `Mutation` that
+    // `read_only`); `pairs` outlives the call with `num_pairs` its true
+    // element count, every `key_ptr` points into a `Mutation` that
     // outlives the call, and the callback honours the contract
     // documented at `apply_one`. writable=true is what applies the
     // batch.
-    let ok = unsafe {
-        ffi::tkrzw_dbm_process_multi(db.0.as_ptr(), pairs.as_mut_ptr(), pairs.len() as i32, true)
-    };
+    let ok =
+        unsafe { ffi::tkrzw_dbm_process_multi(db.0.as_ptr(), pairs.as_mut_ptr(), num_pairs, true) };
     check(ok)
 }
 
