@@ -42,6 +42,15 @@ cp "$CAPI_DATA/pinyin_index.redb" "$CAPI_DATA/phrase_index.redb" "$CAPI_DATA/big
 printf '%s\n' '\data model interpolation' '\1-gram' '\item 1 ok count 1' \
     > "$SYS_DIR/interpolation2.text"
 
+# The built object carries SONAME libpinyin.so.15 (the drop-in identity), so
+# anything that LINKS against it records that name in DT_NEEDED rather than
+# libpinyin_capi.so. Without a matching file on the search path the smoke
+# binary would silently bind to a system libpinyin if one is installed --
+# which is how this gate first caught the change. The symlink makes rpath
+# resolve the SONAME to the build under test, so the gate exercises the
+# drop-in identity instead of working around it.
+ln -sf libpinyin_capi.so "$CAPI_DIR/libpinyin.so.15"
+
 echo "--- compiling C++ smoke TU against pinyin.h ---"
 g++ -std=c++17 -Wall -Wextra -Werror -O2 \
     -I"$REPO_ROOT/crates/oxpinyin-capi" \
@@ -49,6 +58,17 @@ g++ -std=c++17 -Wall -Wextra -Werror -O2 \
     -L"$CAPI_DIR" -Wl,-rpath,"$CAPI_DIR" \
     -lpinyin_capi \
     -o "$BUILD_DIR/cpp-smoke"
+
+needed=$(readelf -d "$BUILD_DIR/cpp-smoke" | sed -n 's/.*Shared library: \[\(libpinyin[^]]*\)\].*/\1/p')
+if [ "$needed" != "libpinyin.so.15" ]; then
+    echo "fatal: smoke binary needs '$needed', expected libpinyin.so.15"
+    exit 1
+fi
+resolved=$(LD_LIBRARY_PATH= ldd "$BUILD_DIR/cpp-smoke" | sed -n 's/.*libpinyin\.so\.15 => \([^ ]*\).*/\1/p')
+case "$resolved" in
+    "$CAPI_DIR"/*) ;;
+    *) echo "fatal: libpinyin.so.15 resolved to '$resolved', not the build under test"; exit 1 ;;
+esac
 
 echo "--- running C++ smoke TU ---"
 "$BUILD_DIR/cpp-smoke" "$SYS_DIR" "$USER_DIR"

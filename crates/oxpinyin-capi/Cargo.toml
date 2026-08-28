@@ -23,6 +23,18 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 # target. cargo-c checks for the *presence* of this feature name; it is never
 # enabled by default, so plain `cargo build`/`--workspace` behaviour is unchanged.
 capi = []
+# Compiles out the three exports outside the consumer union: two fixture
+# hooks and pinyin_set_full_pinyin_scheme, all `dlsym`ed by tools/bisection
+# drivers and called by neither reference consumer. Enabled only when building
+# the shipped drop-in artifact (`cargo capi install --features shipped`), so
+# every in-tree run-*.sh keeps working untouched.
+#
+# Deliberately a subtractive feature, which cargo features usually should not
+# be. The additive spelling (a default-on `harness` feature switched off with
+# --no-default-features) does not work here: cargo-c does not forward
+# --no-default-features to cargo, so the shipped artifact came out carrying the
+# extra symbols. --features IS forwarded, so the restriction has to ride on it.
+shipped = []
 
 [lints.rust]
 unsafe_code = "allow" # FFI + glib marshalling only; // SAFETY: on every block
@@ -71,12 +83,15 @@ name = "oxpinyin"
 filename = "oxpinyin"
 
 [package.metadata.capi.library]
-# The .so basename is part of the compatibility bootstrap: the fork links
-# -lpinyin_capi today, so this must stay `pinyin_capi`.
-name = "pinyin_capi"
-# ABI version, independent of the crate version. cargo-c derives the soname from
-# this version (for 0.minor.patch it emits "0.minor"), yielding
-# libpinyin_capi.so.0.1. Bump only on a deliberate C-ABI break; this field
-# protects the 51-symbol bootstrap contract.
-version = "0.1.0"
+# The INSTALLED artifact is the drop-in replacement: `libpinyin.so.15`, which
+# unmodified consumers already record in DT_NEEDED. The Rust `[lib] name` stays
+# `pinyin_capi` so the in-tree gates keep finding target/debug/libpinyin_capi.so;
+# this field names the installed file, not the build artifact.
+name = "pinyin"
+# ABI version, independent of the crate version, and matched to upstream:
+# libpinyin's configure.ac carries libpinyin_abi_current=15 / abi_revision=0,
+# giving libtool -version-info 15:0 and SONAME libpinyin.so.15. Confirmed with
+# readelf -d on Ubuntu's shipped libpinyin15. Bump only if upstream bumps its
+# ABI current.
+version = "15.0.0"
 versioning = true

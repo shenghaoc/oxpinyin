@@ -104,6 +104,17 @@ impl AddonSet {
         }
     }
 
+    /// Drops addon library `index`, if it is loaded.
+    ///
+    /// The pin's `unload` is unconditional and answers `true` whether or
+    /// not the library was loaded (`pinyin.cpp:124-131`,
+    /// `FacadePhraseIndex::unload`), so this reports success the same way
+    /// rather than distinguishing the two.
+    fn unload(&mut self, index: u8) -> bool {
+        self.loaded.remove(&index);
+        true
+    }
+
     fn load(&mut self, index: u8, system_dir: &Path) -> bool {
         if self.loaded.contains_key(&index) {
             return false;
@@ -272,6 +283,17 @@ impl RuntimeDict {
     pub fn load_addon(&self, index: u8, system_dir: &Path) -> bool {
         let mut addons = self.addons.write().unwrap_or_else(|p| p.into_inner());
         addons.load(index, system_dir)
+    }
+
+    /// Unloads addon library `index`.
+    ///
+    /// Answers `true` whether or not the library was loaded, mirroring the
+    /// pin's unconditional `unload`. The caller applies the pin's
+    /// `index < PHRASE_INDEX_LIBRARY_COUNT` bound: that assertion is an ABI
+    /// availability-class concern, not a runtime one.
+    pub fn unload_addon(&self, index: u8) -> bool {
+        let mut addons = self.addons.write().unwrap_or_else(|p| p.into_inner());
+        addons.unload(index)
     }
 
     /// The addon phrase item behind `token`, for the choose-promotion path.
@@ -657,6 +679,14 @@ impl Runtime {
             return false;
         };
         self.load_addon(index, system_dir)
+    }
+
+    /// Unloads addon library `index` from this runtime's dictionary.
+    ///
+    /// The bound the pin asserts on `index` is the caller's to apply; see
+    /// `RuntimeDict::unload_addon`.
+    pub fn unload_system_addon(&self, index: u8) -> bool {
+        self.dict.unload_addon(index)
     }
 }
 
