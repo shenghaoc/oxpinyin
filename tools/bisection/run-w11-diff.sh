@@ -4,6 +4,11 @@
 # Usage: run-w11-diff.sh <driver-stem> <extra-capi-system-dir-setup>
 #   driver-stem is user-candidate-diff | addon-candidate-diff | predict-diff
 # Env: PINYIN_ORACLE_PREFIX (default $HOME/.local/opt/pinyin-oracle)
+#      CAPI_W11_SYSTEM_DIR, or OXPINYIN_SYSTEM_DIR -- the oxpinyin system
+#      data dir. Required once an oracle is present; see system-dir.sh.
+#      (The variable is CAPI_W11_SYSTEM_DIR, with the _DIR suffix. It was
+#      undocumented here before, and CAPI_W11_SYSTEM -- the name a reader
+#      would guess -- silently did nothing.)
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -38,7 +43,9 @@ if ! grep -q '^pin_ref=libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636
 fi
 echo "oracle: $ORACLE_SO"
 
-CAPI_SYS="${CAPI_W11_SYSTEM_DIR:-$REPO_ROOT/fixtures/w3}"
+# shellcheck source=tools/bisection/system-dir.sh
+. ./system-dir.sh
+CAPI_SYS="$(resolve_system_dir CAPI_W11_SYSTEM_DIR "w11-diff/${STEM}")"
 CAPI_LOG="$(mktemp)"
 ORACLE_LOG="$(mktemp)"
 if ! ./"$STEM" "$CAPI_SO" "$CAPI_SYS" > "$CAPI_LOG" 2> /dev/null; then

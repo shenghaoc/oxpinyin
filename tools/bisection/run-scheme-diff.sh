@@ -19,13 +19,18 @@
 # The capi side is built from the workspace. To compare candidate lists
 # against real model data, set W13_CAPI_SYSTEM to a directory containing
 # pinyin_index.redb/phrase_index.redb/bigram.redb and interpolation2.text;
-# otherwise the committed fixtures/w3 mini tables are used and candidate
+# otherwise resolution falls to OXPINYIN_SYSTEM_DIR and the conventional
+# build locations, and an unresolvable dir is FATAL rather than a silent
+# mini-fixture run (system-dir.sh). Historically the mini tables were used
+# here and candidate
 # lists are expected to differ (the oracle side is the pin model).
 #
 # Exit codes: 0 = identical or skipped; 1 = build/run failure; 2 = divergence.
 
 set -euo pipefail
 cd "$(dirname "$0")"
+# shellcheck source=tools/bisection/system-dir.sh
+. ./system-dir.sh
 REPO_ROOT="$(cd ../.. && pwd)"
 
 SCHEME="${1:-double}"
@@ -133,8 +138,12 @@ SYSTEM_TMP=""
 trap 'rm -rf "$USER_DIR" "$SYSTEM_TMP"' EXIT
 export SCHEME_DIFF_USER_DIR="$USER_DIR"
 
-CAPI_DATA="$REPO_ROOT/fixtures/w3"
-if [[ -n "${W13_CAPI_SYSTEM:-}" ]]; then
+# Resolve or refuse: an unset W13_CAPI_SYSTEM used to leave CAPI_DATA on
+# the mini fixture, which against a real oracle reports DIVERGENCE from a
+# data mismatch rather than from any disagreement.
+W13_SYSTEM_RESOLVED="$(resolve_system_dir W13_CAPI_SYSTEM scheme-diff)"
+if [[ -n "$W13_SYSTEM_RESOLVED" ]]; then
+    W13_CAPI_SYSTEM="$W13_SYSTEM_RESOLVED"
     SYSTEM_TMP="$(mktemp -d)"
     cp "$W13_CAPI_SYSTEM"/pinyin_index.redb \
        "$W13_CAPI_SYSTEM"/phrase_index.redb \
