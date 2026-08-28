@@ -54,7 +54,12 @@ mod tkrzw {
         // The pkg-config lookup below decides the include path, the link
         // path and the embedded rpath; repointing it at a different tkrzw
         // installation must rerun this script, not reuse cached flags.
+        // PKG_CONFIG_LIBDIR replaces the search directory list outright
+        // and PKG_CONFIG_SYSROOT_DIR rewrites every discovered path, so
+        // either one alone can select a different installation.
         println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
+        println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
+        println!("cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR");
 
         let Some(cflags) = pkg_config("--cflags") else {
             panic!(
