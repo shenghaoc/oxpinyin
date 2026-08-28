@@ -17,11 +17,12 @@
 
 use std::ptr;
 
+use oxpinyin_core::phonetic_initial;
 use oxpinyin_engine::EngineError;
 
-use crate::ffi::ffi_catch;
-use crate::state::{CapiInstance, instance_ref};
-use crate::types::{ChewingKeyRest, PinyinInstance};
+use crate::ffi::{ffi_catch, owned_cstr};
+use crate::state::{CapiInstance, instance_mut, instance_ref};
+use crate::types::{ChewingKey, ChewingKeyRest, GChar, PinyinInstance};
 
 /// Get the pinyin key rest at an offset.
 ///
@@ -32,13 +33,13 @@ use crate::types::{ChewingKeyRest, PinyinInstance};
 ///                                 ChewingKeyRest ** key_rest);
 /// ```
 ///
-/// Out-param `key_rest` is instance-borrowed.
-///
-/// Provisional: always returns false (no key-rest data structure yet).
+/// Out-param `key_rest` borrows a per-instance slot, valid until the next
+/// call on the same instance. Answers at exactly the offsets
+/// [`pinyin_get_pinyin_key`] does.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_pinyin_key_rest(
     instance: *mut PinyinInstance,
-    _offset: usize,
+    offset: usize,
     key_rest: *mut *mut ChewingKeyRest,
 ) -> bool {
     if instance.is_null() {
@@ -50,7 +51,24 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
             *key_rest = ptr::null_mut();
         }
     }
-    false
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_mut(instance) };
+        let Some(found) = key_at(inst, offset) else {
+            return false;
+        };
+        inst.key_rest_slot.begin = u16::try_from(found.begin).unwrap_or(u16::MAX);
+        inst.key_rest_slot.end = u16::try_from(found.end).unwrap_or(u16::MAX);
+        if !key_rest.is_null() {
+            // SAFETY: Null-checked above; the slot lives as long as the
+            // instance.
+            unsafe {
+                *key_rest = &raw mut inst.key_rest_slot;
+            }
+        }
+        true
+    })
 }
 
 /// Get the begin/end byte positions of a pinyin key rest.
@@ -63,9 +81,9 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
 ///                                           guint16 * end);
 /// ```
 ///
-/// Either `begin` or `end` may be NULL to skip.
-///
-/// Provisional: always returns false (no key-rest data yet).
+/// Either `begin` or `end` may be NULL to skip. The pin answers `true`
+/// unconditionally and dereferences `key_rest` without a null check
+/// (`pinyin.cpp`); a null one answers `false` here rather than crashing.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_pinyin_key_rest_positions(
     instance: *mut PinyinInstance,
@@ -76,22 +94,189 @@ pub extern "C" fn pinyin_get_pinyin_key_rest_positions(
     if instance.is_null() || key_rest.is_null() {
         return false;
     }
-    if !begin.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *begin = 0;
+    ffi_catch(false, || {
+        // SAFETY: Non-null and produced by `pinyin_get_pinyin_key_rest`.
+        let rest = unsafe { &*key_rest };
+        if !begin.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *begin = rest.begin;
+            }
         }
-    }
-    if !end.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *end = 0;
+        if !end.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *end = rest.end;
+            }
         }
-    }
-    false
+        true
+    })
 }
 
-/// The active parse mode's span source: the coordinate input bytes, its
+/// Get the raw byte length of a pinyin key rest.
+///
+/// # C signature
+/// ```c
+/// bool pinyin_get_pinyin_key_rest_length(pinyin_instance_t * instance,
+///                                        ChewingKeyRest * key_rest,
+///                                        guint16 * length);
+/// ```
+///
+/// The pin's `key_rest->length()` — `m_raw_end - m_raw_begin`
+/// (`chewing_key.h:111-113`) — and, like the pin, `true` whenever it can
+/// answer. fcitx branches on this being 2 to pick its shuangpin rendering
+/// (`eim.cpp:473`).
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_get_pinyin_key_rest_length(
+    instance: *mut PinyinInstance,
+    key_rest: *mut ChewingKeyRest,
+    length: *mut u16,
+) -> bool {
+    if instance.is_null() || key_rest.is_null() {
+        return false;
+    }
+    ffi_catch(false, || {
+        // SAFETY: Non-null and produced by `pinyin_get_pinyin_key_rest`.
+        let rest = unsafe { &*key_rest };
+        if !length.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *length = rest.end.saturating_sub(rest.begin);
+            }
+        }
+        true
+    })
+}
+
+/// Render a pinyin key as its full spelling.
+///
+/// # C signature
+/// ```c
+/// bool pinyin_get_pinyin_string(pinyin_instance_t * instance,
+///                               ChewingKey * key,
+///                               gchar ** utf8_str);
+/// ```
+///
+/// Out-param `utf8_str` is caller-owned (`g_free`). The pin answers
+/// `false` with a NULL out-param for a key whose table index is 0 — the
+/// unset key — which an unpopulated slot reproduces.
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_get_pinyin_string(
+    instance: *mut PinyinInstance,
+    key: *mut ChewingKey,
+    utf8_str: *mut *mut GChar,
+) -> bool {
+    render_key(instance, key, utf8_str, |text, _| Some(text.to_owned()))
+}
+
+/// Render a pinyin key as its Zhuyin spelling.
+///
+/// # C signature
+/// ```c
+/// bool pinyin_get_zhuyin_string(pinyin_instance_t * instance,
+///                               ChewingKey * key,
+///                               gchar ** utf8_str);
+/// ```
+///
+/// Out-param `utf8_str` is caller-owned (`g_free`). fcitx treats a NULL
+/// out-param as its "something like xi'" break condition
+/// (`eim.cpp:512-515`), which the `false` return preserves.
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_get_zhuyin_string(
+    instance: *mut PinyinInstance,
+    key: *mut ChewingKey,
+    utf8_str: *mut *mut GChar,
+) -> bool {
+    render_key(
+        instance,
+        key,
+        utf8_str,
+        oxpinyin_core::zhuyin_display_for_pinyin,
+    )
+}
+
+/// Render a pinyin key as its shengmu / yunmu pair.
+///
+/// # C signature
+/// ```c
+/// bool pinyin_get_pinyin_strings(pinyin_instance_t * instance,
+///                                ChewingKey * key,
+///                                gchar ** shengmu,
+///                                gchar ** yunmu);
+/// ```
+///
+/// Either out-param may be NULL to skip; both are caller-owned
+/// (`g_free`). A syllable with no initial answers an empty shengmu, which
+/// is the case fcitx substitutes an apostrophe for (`eim.cpp:478-479`).
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_get_pinyin_strings(
+    instance: *mut PinyinInstance,
+    key: *mut ChewingKey,
+    shengmu: *mut *mut GChar,
+    yunmu: *mut *mut GChar,
+) -> bool {
+    if instance.is_null() || key.is_null() {
+        return false;
+    }
+    ffi_catch(false, || {
+        // SAFETY: Non-null and produced by `pinyin_get_pinyin_key`.
+        let slot = unsafe { &*key };
+        let Some(text) = slot.key else {
+            return false;
+        };
+        let initial = phonetic_initial(text).unwrap_or("");
+        if !shengmu.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *shengmu = owned_cstr(initial);
+            }
+        }
+        if !yunmu.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *yunmu = owned_cstr(&text[initial.len()..]);
+            }
+        }
+        true
+    })
+}
+
+/// The shared body of the single-string renderers.
+fn render_key(
+    instance: *mut PinyinInstance,
+    key: *mut ChewingKey,
+    utf8_str: *mut *mut GChar,
+    render: impl Fn(&'static str, u8) -> Option<String>,
+) -> bool {
+    if instance.is_null() || key.is_null() {
+        return false;
+    }
+    if !utf8_str.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *utf8_str = ptr::null_mut();
+        }
+    }
+    ffi_catch(false, || {
+        // SAFETY: Non-null and produced by `pinyin_get_pinyin_key`.
+        let slot = unsafe { &*key };
+        let Some(text) = slot.key else {
+            return false;
+        };
+        let Some(rendered) = render(text, slot.tone) else {
+            return false;
+        };
+        if !utf8_str.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *utf8_str = owned_cstr(&rendered);
+            }
+        }
+        true
+    })
+}
+
+/// The active parse mode's span source/// The active parse mode's span source: the coordinate input bytes, its
 /// parsed length, the key spans (start, end), and whether `'` is a zero-key
 /// separator in that mode. `None` for plain full pinyin, whose law runs
 /// over the session's own buffer.
@@ -456,6 +641,280 @@ mod tests {
             instance, 2, &mut right
         ));
         assert_eq!(right, 6);
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+}
+
+// ── The preedit key family ───────────────────────────────────────────────
+//
+// fcitx-libpinyin's preedit renderer (`eim.cpp:419-520`) walks the parsed
+// input calling `pinyin_get_pinyin_key` at each offset, uses a `false`
+// return as its loop terminator, and renders every key through the string
+// functions below. Its loop advances with `pinyin_get_right_pinyin_offset`,
+// so the offsets it asks about are always syllable-aligned; the
+// empty-column `false` path exists for callers that walk byte by byte.
+//
+// `ChewingKey` and `ChewingKeyRest` are opaque to consumers — the shipped
+// `pinyin.h` forward-declares both and `chewing_key.h` is not installed —
+// so what must match the pin is the observable output: the boolean, the
+// two `guint16`s, and the rendered strings.
+
+/// One matrix key at an offset: its canonical pinyin spelling, its tone,
+/// and its raw span.
+///
+/// The spelling rather than a `SyllableKey` because all three renderers
+/// want text, and because the LUOMA / SECONDARY_ZHUYIN index parse carries
+/// a canonical spelling rather than a vocabulary key.
+struct KeyAt {
+    text: &'static str,
+    tone: u8,
+    begin: usize,
+    end: usize,
+}
+
+/// The parse's keys as `(SyllableKey, tone, syllable start, raw end)`, in
+/// the active mode — the same precedence [`span_source`] uses.
+fn mode_keys(inst: &CapiInstance) -> Result<(Vec<KeyAt>, usize), EngineError> {
+    if let Some(parse) = inst.zhuyin_parse.as_ref() {
+        return Ok((
+            parse
+                .keys()
+                .iter()
+                .map(|k| KeyAt {
+                    text: k.key().text(),
+                    tone: k.tone(),
+                    begin: k.start(),
+                    end: k.end(),
+                })
+                .collect(),
+            inst.zhuyin_input.len(),
+        ));
+    }
+    if let Some(parse) = inst.double_parse.as_ref() {
+        return Ok((
+            parse
+                .keys()
+                .iter()
+                .map(|k| KeyAt {
+                    text: k.key().text(),
+                    tone: 0,
+                    begin: k.start(),
+                    end: k.end(),
+                })
+                .collect(),
+            inst.double_input.len(),
+        ));
+    }
+    if let Some(parse) = inst.full_parse.as_ref() {
+        return Ok((
+            parse
+                .keys()
+                .iter()
+                .map(|k| KeyAt {
+                    text: k.canonical(),
+                    tone: k.tone(),
+                    begin: k.start(),
+                    end: k.end(),
+                })
+                .collect(),
+            inst.full_input.len(),
+        ));
+    }
+    let (keys, _) = inst.session.matrix_keys()?;
+    Ok((
+        keys.iter()
+            .map(|k| KeyAt {
+                text: k.key().text(),
+                tone: k.tone(),
+                begin: k.syllable_start(),
+                end: k.end(),
+            })
+            .collect(),
+        inst.session.raw_input().len(),
+    ))
+}
+
+/// The key the pin's `pinyin_get_pinyin_key` answers at `offset`.
+///
+/// The pin's three steps (`pinyin.cpp`): refuse `offset >= matrix.size() - 1`
+/// (the reserved slot), refuse an empty column, then `_compute_pinyin_start`
+/// skips forward over columns holding one lone zero key — a consumed `'`
+/// separator — and the answer is that column's first item.
+fn key_at(inst: &CapiInstance, offset: usize) -> Option<KeyAt> {
+    let (keys, input_len) = mode_keys(inst).ok()?;
+    // matrix.size() is input_len + 1; the last column is the reserved slot.
+    if offset >= input_len {
+        return None;
+    }
+    let raw = inst.session.raw_input().as_bytes();
+    let mut at = offset;
+    loop {
+        if let Some(found) = keys.iter().find(|k| k.begin == at) {
+            return Some(KeyAt {
+                text: found.text,
+                tone: found.tone,
+                begin: found.begin,
+                end: found.end,
+            });
+        }
+        // A lone zero-key column is a consumed separator; the pin walks
+        // past the run. Anything else is an empty mid-syllable column.
+        if raw.get(at).copied() == Some(b'\'') && at + 1 < input_len {
+            at += 1;
+            continue;
+        }
+        return None;
+    }
+}
+
+/// Get the pinyin key at an offset.
+///
+/// # C signature
+/// ```c
+/// bool pinyin_get_pinyin_key(pinyin_instance_t * instance,
+///                            size_t offset,
+///                            ChewingKey ** key);
+/// ```
+///
+/// Out-param `key` borrows a per-instance slot, valid until the next call
+/// on the same instance. The pin hands out a function-local `static`
+/// instead — one process-wide slot — which is observably identical for the
+/// documented use and unsound for any other.
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_get_pinyin_key(
+    instance: *mut PinyinInstance,
+    offset: usize,
+    key: *mut *mut ChewingKey,
+) -> bool {
+    if instance.is_null() {
+        return false;
+    }
+    if !key.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *key = ptr::null_mut();
+        }
+    }
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_mut(instance) };
+        let Some(found) = key_at(inst, offset) else {
+            return false;
+        };
+        inst.key_slot.key = Some(found.text);
+        inst.key_slot.tone = found.tone;
+        if !key.is_null() {
+            // SAFETY: Null-checked above; the slot lives as long as the
+            // instance.
+            unsafe {
+                *key = &raw mut inst.key_slot;
+            }
+        }
+        true
+    })
+}
+
+#[cfg(test)]
+mod preedit_key_tests {
+    use std::ptr;
+
+    use crate::config::pinyin_set_options;
+    use crate::parse::pinyin_parse_more_full_pinyins;
+    use crate::test_support::{TempUserDir, cstr, open};
+    use crate::types::{ChewingKey, ChewingKeyRest};
+
+    const PARITY: u32 = 0x18a;
+
+    /// The renderers allocate with `owned_cstr`; `take_owned_cstr` is the
+    /// matching deallocator, so a leak or a mismatched free would surface
+    /// here rather than in a consumer.
+    fn take(p: *mut crate::types::GChar) -> String {
+        assert!(!p.is_null(), "renderer answered true with a NULL out-param");
+        crate::ffi::take_owned_cstr(p)
+    }
+
+    /// The expectation table established from the pin in
+    /// `docs/findings/preedit-key-accessor-phase1.md` §d: `nihao` parses as
+    /// `ni|hao`, so keys start at byte 0 and byte 2 and every other offset
+    /// answers `false` — offsets 1/3/4 are empty mid-syllable columns and 5
+    /// is the reserved slot (`offset >= matrix.size() - 1`).
+    #[test]
+    fn nihao_preedit_family_matches_the_pin_expectation_table() {
+        let user_dir = TempUserDir::new("preedit-nihao");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        assert!(pinyin_set_options(context, PARITY));
+        let input = cstr("nihao");
+        assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
+
+        let expected: [(usize, &str, u16, u16, &str, &str, &str); 2] = [
+            (0, "ni", 0, 2, "n", "i", "ㄋㄧ"),
+            (2, "hao", 2, 5, "h", "ao", "ㄏㄠ"),
+        ];
+
+        for (offset, pinyin, begin, end, shengmu, yunmu, zhuyin) in expected {
+            let mut key: *mut ChewingKey = ptr::null_mut();
+            assert!(
+                super::pinyin_get_pinyin_key(instance, offset, &raw mut key),
+                "offset {offset} starts a key"
+            );
+            assert!(!key.is_null());
+
+            let mut rest: *mut ChewingKeyRest = ptr::null_mut();
+            assert!(super::pinyin_get_pinyin_key_rest(
+                instance,
+                offset,
+                &raw mut rest
+            ));
+            let (mut b, mut e) = (0_u16, 0_u16);
+            assert!(super::pinyin_get_pinyin_key_rest_positions(
+                instance, rest, &raw mut b, &raw mut e
+            ));
+            assert_eq!((b, e), (begin, end), "raw span at offset {offset}");
+
+            let mut len = 0_u16;
+            assert!(super::pinyin_get_pinyin_key_rest_length(
+                instance,
+                rest,
+                &raw mut len
+            ));
+            assert_eq!(len, end - begin, "rest length at offset {offset}");
+
+            let mut s: *mut crate::types::GChar = ptr::null_mut();
+            assert!(super::pinyin_get_pinyin_string(instance, key, &raw mut s));
+            assert_eq!(take(s), pinyin);
+
+            let (mut sm, mut ym): (*mut crate::types::GChar, *mut crate::types::GChar) =
+                (ptr::null_mut(), ptr::null_mut());
+            assert!(super::pinyin_get_pinyin_strings(
+                instance,
+                key,
+                &raw mut sm,
+                &raw mut ym
+            ));
+            assert_eq!((take(sm), take(ym)), (shengmu.to_owned(), yunmu.to_owned()));
+
+            let mut z: *mut crate::types::GChar = ptr::null_mut();
+            assert!(super::pinyin_get_zhuyin_string(instance, key, &raw mut z));
+            assert_eq!(take(z), zhuyin);
+        }
+
+        for offset in [1_usize, 3, 4, 5] {
+            let mut key: *mut ChewingKey = ptr::null_mut();
+            assert!(
+                !super::pinyin_get_pinyin_key(instance, offset, &raw mut key),
+                "offset {offset} starts no key"
+            );
+            assert!(key.is_null(), "a false answer nulls the out-param");
+            let mut rest: *mut ChewingKeyRest = ptr::null_mut();
+            assert!(!super::pinyin_get_pinyin_key_rest(
+                instance,
+                offset,
+                &raw mut rest
+            ));
+        }
 
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);

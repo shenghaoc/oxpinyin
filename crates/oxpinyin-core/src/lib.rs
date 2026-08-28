@@ -22,6 +22,7 @@ pub mod scoring;
 mod syllables;
 mod vocab;
 mod zhuyin_map;
+pub use zhuyin_map::{zhuyin_display_for_pinyin, zhuyin_for_pinyin};
 
 pub use full_pinyin_index::{
     FullPinyinIndexKey, FullPinyinIndexParse, LUOMA_PINYIN_COUNT, LUOMA_PINYIN_INDEX,
