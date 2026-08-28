@@ -31,6 +31,12 @@ rust-version = "1.97.1"
 [workspace.lints.rust]
 unsafe_code = "deny"
 missing_docs = "warn"
+# unused_must_use is warn-by-default and CI's -D warnings already promotes
+# it; the explicit deny protects local builds that lack the env var.
+# unsafe_op_in_unsafe_fn: warn-by-default in edition 2024 — pinned here so
+# the FFI crates cannot regress it either.
+unused_must_use = "deny"
+unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
