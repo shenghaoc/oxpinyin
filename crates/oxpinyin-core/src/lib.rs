@@ -259,6 +259,71 @@ pub trait UserModel {
     fn observe(&mut self, history: &[Self::Token], token: &Self::Token) -> Result<(), Self::Error>;
 }
 
+/// One `prev → *` bigram row with the user overlay already merged — the
+/// result of upstream's `merge_single_gram` (`pinyin.cpp:2209`).
+///
+/// Loaded **once** per candidate guess and indexed per candidate, which is
+/// the pin's structure: `pinyin_guess_candidates` merges one gram outside
+/// its candidate loop and `_compute_frequency_of_items` then calls
+/// `merged_gram->get_freq(token, ...)` inside it. Merging per candidate
+/// would turn one row load into one per candidate and worsen time without
+/// buying space, which the source policy forbids.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MergedGram {
+    total: u64,
+    records: Vec<(u32, u64)>,
+}
+
+impl MergedGram {
+    /// Builds a row from its total and `(token, count)` records.
+    ///
+    /// Records are sorted by token so [`Self::count`] is a binary search;
+    /// upstream's `SingleGram` keeps its item array sorted by token for the
+    /// same reason (`ngram.cpp:178-196`).
+    #[must_use]
+    pub fn new(total: u64, mut records: Vec<(u32, u64)>) -> Self {
+        records.sort_unstable_by_key(|(token, _)| *token);
+        Self { total, records }
+    }
+
+    /// The row total — upstream's `get_total_freq`.
+    #[must_use]
+    pub const fn total(&self) -> u64 {
+        self.total
+    }
+
+    /// The count stored for `token`, or 0 — upstream's `get_freq`, whose
+    /// out-param stays 0 on a miss.
+    #[must_use]
+    pub fn count(&self, token: u32) -> u64 {
+        self.records
+            .binary_search_by_key(&token, |(stored, _)| *stored)
+            .map_or(0, |index| self.records[index].1)
+    }
+
+    /// `bigram_freq / total` as the pin computes it — `gfloat` division,
+    /// and 0 when the total is 0 (`pinyin.cpp:1855-1857` guards on it).
+    #[must_use]
+    pub fn possibility(&self, token: u32) -> f32 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        self.count(token) as f32 / self.total as f32
+    }
+
+    /// Whether the row carries no records.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    /// Number of records in the row.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+}
+
 /// Deterministic language-model scoring seam.
 ///
 /// Implementations do not panic on caller input. They may combine the supplied
@@ -291,6 +356,23 @@ pub trait LanguageModel {
     /// compiling unchanged (`docs/findings/core-trait-seam.md`: the seam grows
     /// by defaulted methods only).
     fn unigram_freq(&self, _token: &Self::Token) -> Result<Option<u64>, Self::Error> {
+        Ok(None)
+    }
+
+    /// The merged `prev → *` successor row, or `None` when the model has no
+    /// bigram entry for `prev`.
+    ///
+    /// This is upstream's Gate 2 — `m_system_bigram->load` plus
+    /// `m_user_bigram->load` plus `merge_single_gram` — as ONE call. The
+    /// engine invokes it once per candidate guess and indexes the result per
+    /// candidate; an implementor that loads per lookup would reintroduce the
+    /// complexity the single row exists to avoid.
+    ///
+    /// Defaulted to `None` so the frozen implementors keep compiling
+    /// unchanged (`docs/findings/core-trait-seam.md`: the seam grows by
+    /// defaulted methods only). A model answering `None` simply contributes
+    /// no bigram term, which is the DYNAMIC_ADJUST-clear behaviour.
+    fn merged_successors(&self, _prev: &Self::Token) -> Result<Option<MergedGram>, Self::Error> {
         Ok(None)
     }
 
@@ -417,6 +499,9 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
         token: &Self::Token,
     ) -> Result<NbestStepCosts, Self::Error> {
         (**self).nbest_step_costs(prev, token)
+    }
+    fn merged_successors(&self, prev: &Self::Token) -> Result<Option<MergedGram>, Self::Error> {
+        (**self).merged_successors(prev)
     }
 }
 
