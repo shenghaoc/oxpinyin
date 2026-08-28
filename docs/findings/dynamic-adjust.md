@@ -1,8 +1,9 @@
 # DYNAMIC_ADJUST
 
-Date: 2026-08-28 · Status: **implemented (Phase 2). One premise of the
-Phase 1 brief did not hold — see §c; the conclusion survives for a
-different reason.** · Branch: `feat/dynamic-adjust`.
+Date: 2026-08-28 · Status: **implemented (Phase 2), and oracle-verified
+— the frozen pins were re-measured on 2026-08-28 and none moved. One
+premise of the Phase 1 brief did not hold — see §c; the conclusion
+survives for a different reason.** · Branch: `feat/dynamic-adjust`.
 
 Phase 1 (the read-back) is below unchanged; Phase 2 (what was built, and
 what is still unverified) is the last two sections.
@@ -294,10 +295,17 @@ engine-level test rather than the differential — it needs no data set —
 and why the differential's skip message now says so explicitly instead
 of claiming to be the only coverage.
 
-**The frozen pins were not re-measured.** Candidate pins
-(10,190/10,190; top-5-set 10,190; absent 0; order-only 0; prefix-10
-98,930/98,930) and sentence (488/385/379) are measured against the
-oracle, so they are unmeasurable here for the same reason. The
-§c argument says they cannot move — the bit is clear in every frozen
-word, and the bit-clear arithmetic is bit-identical by construction —
-but that is an argument, not a measurement. Re-measure before merging.
+**The frozen pins were not re-measured** *at the time this was written*.
+Candidate pins (10,190/10,190; top-5-set 10,190; absent 0; order-only 0;
+prefix-10 98,930/98,930) and sentence (488/385/379) are measured against
+the oracle, which could not be provisioned then. The §c argument says
+they cannot move — the bit is clear in every frozen word, and the
+bit-clear arithmetic is bit-identical by construction — but that was an
+argument, not a measurement.
+
+> **Measured 2026-08-28 (`docs/findings/dropin-stack-remeasurement.md`).**
+> Oracle provisioning was fixed, and the stack tip was scored against a
+> live pin: **every one of those pins holds exactly**, and every
+> differential agrees with main. The argument above is now a
+> measurement, and the "re-measure before merging" condition is
+> discharged.
