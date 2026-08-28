@@ -70,18 +70,32 @@
 //! tkrzw must be built from source. `DBM::RecordProcessor::NOOP` and
 //! `REMOVE` are sentinels recognised by *pointer* identity — tkrzw's
 //! own header says to compare `your_value.data() == NOOP.data()` — and
-//! Ubuntu noble's `libtkrzw-dev 1.0.27-1.1build1` is built so that a
-//! client and the shared library disagree about those addresses. The
-//! symptom is silent: `Remove` writes the five-byte `REMOVE` sentinel
-//! as the record's value instead of deleting it, a no-op processor
-//! stores `NOOP`'s bytes, and `Rebuild` aborts with `CANCELED_ERROR`
+//! every Ubuntu `libtkrzw` is built so that a client and the shared
+//! library disagree about those addresses. The symptom is silent:
+//! `Remove` writes the five-byte `REMOVE` sentinel as the record's
+//! value instead of deleting it, a no-op processor stores `NOOP`'s
+//! bytes, and `Rebuild` aborts with `CANCELED_ERROR`
 //! (`tkrzw_dbm_hash_impl.cc:424` compares against `NOOP.data()`).
-//! That build's own `tkrzw_dbm_util` cannot reopen a TreeDBM it just
+//! Those builds' own `tkrzw_dbm_util` cannot reopen a TreeDBM it just
 //! created, failing `BROKEN_DATA_ERROR: invalid_key_comparator` — the
-//! same divergence, applied to the comparator function pointer. The
-//! identical 1.0.27 sources built with `./configure && make` behave
-//! correctly, and this backend's tests pass against them; `build.rs`
-//! says as much when the library is missing.
+//! same divergence, applied to the comparator function pointer.
+//!
+//! The cause is not the package but one flag Ubuntu's dpkg vendor
+//! profile adds to every package it builds,
+//! `-Wl,-Bsymbolic-functions`: it binds libtkrzw's references to its
+//! own copies of those header-inline symbols at link time, dropping
+//! the GOT relocations that would otherwise let a client and the
+//! library agree on one address. Debian adds no such flag, and
+//! Debian's own source package built with Debian's flags is correct;
+//! so are the identical sources built with `./configure && make`, and
+//! this backend's tests pass against them. `build.rs` says as much
+//! when the library is missing, and
+//! `docs/findings/tkrzw-distro-compat.md` records the bisection.
+//!
+//! This backend installs no comparator, so the comparator half does
+//! not reach its files — but the `NOOP`/`REMOVE` half does, and it
+//! corrupts data rather than erroring, so a broken library must not be
+//! used even for a quick measurement.
 #![allow(unsafe_code)]
 
 mod bridge;
