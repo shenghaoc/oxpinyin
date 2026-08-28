@@ -1,12 +1,21 @@
 //! tkrzw backend for the store capability tiers, over TreeDBM.
 //!
-//! Enabled by the `tkrzw` cargo feature. Mirrors libpinyin at `0c5e80e`
-//! (`src/storage/tkrzwdb_utils.h`, `chewing_large_table2_tkrzwdb.cpp`,
-//! `ngram_tkrzwdb.cpp`): TreeDBM only, opened with tkrzw's default
-//! tuning and therefore its default `LexicalKeyComparator`. No custom
-//! comparator is installed, so records sort by plain unsigned byte
-//! order and oxpinyin's big-endian key codec keeps the ordering it has
-//! under redb and LMDB.
+//! Enabled by the `tkrzw` cargo feature. Modelled on libpinyin at
+//! `0c5e80e` (`src/storage/tkrzwdb_utils.h`,
+//! `chewing_large_table2_tkrzwdb.cpp`, `ngram_tkrzwdb.cpp`). This
+//! backend is TreeDBM only; libpinyin itself splits by table, TreeDBM
+//! for the chewing and phrase tables and HashDBM plus TinyDBM for the
+//! n-grams. What both share, and what the ordering argument below
+//! rests on, is that neither installs a comparator: libpinyin's tkrzw
+//! sources contain no `OpenAdvanced`, `TuningParameters` or
+//! `key_comparator` at all, so every database is opened with tkrzw's
+//! default tuning and therefore its default `LexicalKeyComparator`.
+//! Records sort by plain unsigned byte order, and oxpinyin's
+//! big-endian key codec keeps the ordering it has under redb and LMDB.
+//!
+//! Installing no comparator is also what keeps both out of the way of
+//! the comparator half of the Ubuntu fault described below — it is
+//! reached only by a caller that names a built-in comparator itself.
 //!
 //! # Zero-copy reads
 //!
