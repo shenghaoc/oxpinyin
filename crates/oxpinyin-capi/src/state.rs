@@ -26,7 +26,7 @@ use oxpinyin_user::{
     UserStore, is_user_file_token,
 };
 
-use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
+use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, PinyinContext, PinyinInstance};
 
 /// File name of the redb user store under the user data directory.
 ///
@@ -643,6 +643,8 @@ impl CapiContext {
         .ok()?;
         Some(CapiInstance {
             session,
+            key_slot: ChewingKey { key: None, tone: 0 },
+            key_rest_slot: ChewingKeyRest { begin: 0, end: 0 },
             candidates: Vec::new(),
             anchored_window: None,
             parsed_len: 0,
@@ -869,6 +871,17 @@ pub(crate) struct CapiCandidate {
 /// State behind `pinyin_instance_t *`.
 pub(crate) struct CapiInstance {
     pub(crate) session: CapiSession,
+    /// Per-instance slots the `pinyin_get_pinyin_key` family hands out as
+    /// `ChewingKey *` / `ChewingKeyRest *`.
+    ///
+    /// The pin returns `&`-of a function-local `static`, so its pointer is
+    /// one process-wide slot every instance and thread overwrites
+    /// (`pinyin.cpp`, `static ChewingKey key;`). Per-instance is observably
+    /// identical for the documented use — the consumer reads the pointer
+    /// before its next call, as fcitx does (`eim.cpp:419-520`) — and does
+    /// not share mutable state across instances.
+    pub(crate) key_slot: ChewingKey,
+    pub(crate) key_rest_slot: ChewingKeyRest,
     /// Snapshotted candidates, rebuilt by `pinyin_guess_candidates`.
     /// `lookup_candidate_t *` pointers borrow into this vec.
     pub(crate) candidates: Vec<CapiCandidate>,

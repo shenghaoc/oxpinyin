@@ -282,16 +282,42 @@ void pinyin_fini(struct pinyin_context_t *context);
 // Save user data.
 bool pinyin_save(struct pinyin_context_t *context);
 
+// Get the pinyin key at an offset.
+bool pinyin_get_pinyin_key(struct pinyin_instance_t *instance,
+                           size_t offset,
+                           struct ChewingKey **key);
+
 // Get the pinyin key rest at an offset.
 bool pinyin_get_pinyin_key_rest(struct pinyin_instance_t *instance,
-                                size_t _offset,
+                                size_t offset,
                                 struct ChewingKeyRest **key_rest);
+
+// Get the raw byte length of a pinyin key rest.
+bool pinyin_get_pinyin_key_rest_length(struct pinyin_instance_t *instance,
+                                       struct ChewingKeyRest *key_rest,
+                                       uint16_t *length);
 
 // Get the begin/end byte positions of a pinyin key rest.
 bool pinyin_get_pinyin_key_rest_positions(struct pinyin_instance_t *instance,
                                           struct ChewingKeyRest *key_rest,
                                           uint16_t *begin,
                                           uint16_t *end);
+
+// Render a pinyin key as its full spelling. Caller frees with g_free.
+bool pinyin_get_pinyin_string(struct pinyin_instance_t *instance,
+                              struct ChewingKey *key,
+                              char **utf8_str);
+
+// Render a pinyin key as its shengmu/yunmu pair. Caller frees with g_free.
+bool pinyin_get_pinyin_strings(struct pinyin_instance_t *instance,
+                               struct ChewingKey *key,
+                               char **shengmu,
+                               char **yunmu);
+
+// Render a pinyin key as its Zhuyin spelling. Caller frees with g_free.
+bool pinyin_get_zhuyin_string(struct pinyin_instance_t *instance,
+                              struct ChewingKey *key,
+                              char **utf8_str);
 
 // Get the lookup offset from a user cursor position.
 bool pinyin_get_pinyin_offset(struct pinyin_instance_t *instance, size_t cursor, size_t *offset);

@@ -48,6 +48,7 @@
 //!   column is empty and no zero keys exist.
 
 use oxpinyin_core::OptionBits;
+use oxpinyin_core::SyllableKey;
 use oxpinyin_core::graph::SegmentGraph;
 
 use crate::error::EngineError;
@@ -301,16 +302,109 @@ fn matrix_spans(
     input: &[u8],
     options: OptionBits,
 ) -> Result<(Vec<(usize, usize)>, usize), EngineError> {
+    let (keys, parsed) = matrix_keys(input, options)?;
+    let spans = keys
+        .iter()
+        .map(|key| (key.syllable_start(), key.end()))
+        .collect();
+    Ok((spans, parsed))
+}
+
+/// One scan-matrix key with the raw byte span it occupies.
+///
+/// The C ABI's `ChewingKey` / `ChewingKeyRest` pair, in engine terms:
+/// [`MatrixKey::key`] and [`MatrixKey::tone`] are what
+/// `pinyin_get_pinyin_string` and its siblings render, and
+/// [`MatrixKey::syllable_start`] / [`MatrixKey::end`] are the pin's
+/// `ChewingKeyRest::m_raw_begin` / `m_raw_end`.
+///
+/// The start is the key's own syllable start, NOT the graph node it
+/// leaves: an apostrophe separator rides on the edge that follows it, so
+/// the node can sit one byte earlier. The pin places a consumed `'` in its
+/// own zero-key column and begins the following key's rest after it
+/// (`pinyin_parser2.cpp:282` sets `m_raw_begin` over the one-pinyin
+/// substring), so the syllable start is the value that matches.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct MatrixKey {
+    key: SyllableKey,
+    tone: u8,
+    syllable_start: usize,
+    end: usize,
+}
+
+impl MatrixKey {
+    /// The syllable this key matched.
+    #[must_use]
+    pub const fn key(self) -> SyllableKey {
+        self.key
+    }
+
+    /// The tone consumed with this key under `USE_TONE`, or 0.
+    #[must_use]
+    pub const fn tone(self) -> u8 {
+        self.tone
+    }
+
+    /// Byte offset where the key's own text begins — the pin's
+    /// `ChewingKeyRest::m_raw_begin`.
+    #[must_use]
+    pub const fn syllable_start(self) -> usize {
+        self.syllable_start
+    }
+
+    /// Byte offset one past the key's last byte — the pin's
+    /// `ChewingKeyRest::m_raw_end`.
+    #[must_use]
+    pub const fn end(self) -> usize {
+        self.end
+    }
+
+    /// Raw byte length — the pin's `ChewingKeyRest::length()`.
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.end - self.syllable_start
+    }
+
+    /// Whether the key covers no bytes.
+    ///
+    /// The scan matrix never holds one; the accessor exists so callers can
+    /// check spans they build themselves.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.syllable_start == self.end
+    }
+}
+
+/// The scan matrix's keys with their spans, plus the graph's consumed
+/// length.
+///
+/// The same walk [`matrix_spans`] projects: keys appear in column order,
+/// and within a column in the matrix's own order, so the first key of a
+/// column is the pin's `matrix.get_item(column, 0, ...)`.
+///
+/// # Errors
+///
+/// [`EngineError::Graph`] when the buffer cannot be built into a segment
+/// graph.
+pub fn matrix_keys(
+    input: &[u8],
+    options: OptionBits,
+) -> Result<(Vec<MatrixKey>, usize), EngineError> {
     let graph = SegmentGraph::build_with_options(input, options).map_err(EngineError::Graph)?;
     let parsed = graph.consumed();
     let matrix = build_scan_matrix(&graph, options, true);
-    let mut spans = Vec::new();
+    let mut keys = Vec::new();
     for column in &matrix {
         for key in column {
-            spans.push((key.syllable_start, key.to));
+            keys.push(MatrixKey {
+                key: key.key,
+                tone: key.tone,
+                syllable_start: key.syllable_start,
+                end: key.to,
+            });
         }
     }
-    Ok((spans, parsed))
+    Ok((keys, parsed))
 }
 
 #[cfg(test)]
