@@ -237,12 +237,19 @@ Known gap: no corpus case opens a `user_dir`. All 18 cases run against
 `Runtime::open_fixtures(system_dir, None)` and the pytest driver calls
 `Engine.from_fixture_dir(system_dir)` with `user_dir` defaulting to `None`
 — so the user-overlay ranking path is never compared native-vs-Python.
-That path is covered *functionally* by
-`test_engine.py::test_train_and_save_persist_user_state`, which proves
-`train()`/`save()` do persist and take effect; what is not covered is that
-the binding and the native API rank an overlaid candidate list
-*identically*. Closing it means adding corpus cases, which changes the
-corpus, so it is recorded here rather than done.
+That path is covered only in part.
+`test_engine.py::test_train_and_save_persist_user_state` exercises
+persistence and reload — `save()` flipping dirty→clean, the store file
+appearing, a second engine over the same `user_dir` loading it and
+serving stable lookups — but it selects candidate 0, the already-top
+entry, so a no-op learning update would pass it too. That an overlay
+*changes* ranking is pinned at the native layer instead, by
+`oxpinyin-capi::e2e_tests::populated_store_cheapens_the_trained_candidate`,
+which asserts the trained token's decoder cost drops strictly below its
+empty-store cost — over the same `Session::train` this binding calls.
+What no test covers is that the binding and the native API rank an
+overlaid candidate list *identically*. Closing that means adding corpus
+cases, which changes the corpus, so it is recorded here rather than done.
 
 ## Deliberate omissions (v0)
 
