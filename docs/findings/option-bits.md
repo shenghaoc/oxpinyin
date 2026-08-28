@@ -157,13 +157,14 @@ leg): save → full context teardown → reopen of the SAME user dir under
 the same word → the reopened window must equal the in-memory one on
 each side → one more training round with the bit still clear → export
 from the reopened context. Measured against the pin on datagen tables:
-both sides export `你好|ni'hao|414` (persisted 138 doubled by the
-subsequent-session round — a lost state would re-seed at 138) plus the
-remembered `你好|5` / `世界|12` rows; `train-reopened:1` both. An
-`initial@0` probe prints the un-populated baseline inside the same run,
-and the runner fails unless the reopened probe/train/export lines exist
-on both sides (the populated phase cannot silently degrade to the empty
-case).
+both sides export `你好|ni'hao|414` (the subsequent-session round adds
+a 276 seed — `2 × 138`, the `user-store.md` §2.1 expansion of the
+persisted count — to that persisted 138; a lost state would re-seed at
+138) plus the remembered `你好|5` / `世界|12` rows; `train-reopened:1`
+both. An `initial@0` probe prints the un-populated baseline inside the
+same run, and the runner fails unless the reopened probe/train/export
+lines exist on both sides (the populated phase cannot silently degrade
+to the empty case).
 
 ## Sweep TEXT/ORDER (ABI, top-10)
 
