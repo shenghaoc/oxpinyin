@@ -35,6 +35,10 @@ skip-tree = []
 [licenses]
 version = 2
 # The project is GPL-3.0-or-later; runtime deps must be GPL-compatible.
+# Workspace members that never publish (the fuzz harness) carry no license
+# field; they are ours, not third-party code.
+private = { ignore = true }
+confidence-threshold = 0.93
 allow = [
     "GPL-3.0-or-later",
     "Apache-2.0",
@@ -52,14 +56,14 @@ allow = [
     "BSL-1.0",
     "OpenSSL",
     "CDLA-Permissive-2.0",
-    # libfuzzer-sys ("(MIT OR Apache-2.0) AND NCSA"); OSI-approved,
-    # FSF-free — only reachable from the fuzz workspace.
-    "NCSA",
 ]
-# Workspace members that never publish (the fuzz harness) carry no
-# license field; they are ours, not third-party code.
-private = { ignore = true }
-confidence-threshold = 0.93
+
+# libfuzzer-sys ("(MIT OR Apache-2.0) AND NCSA") is the only NCSA user in
+# any graph; NCSA itself is OSI-approved and FSF-free, but the allowance is
+# scoped to exactly that crate instead of the global allow list.
+[[licenses.exceptions]]
+allow = ["NCSA"]
+crate = "libfuzzer-sys"
 
 [sources]
 unknown-registry = "deny"
