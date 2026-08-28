@@ -26,21 +26,42 @@ as it was. See "Reported" below.
 
 ## What was measured
 
-| System | tkrzw | `remove` | `.tkt` round-trip |
-| --- | --- | --- | --- |
-| Ubuntu 24.04.4 (noble), `1.0.27-1.1build1` | 1.0.27 | **tombstone** | **unreadable** |
-| Ubuntu 26.04.1 (resolute), `1.0.32-1build1` | 1.0.32 | **tombstone** | **unreadable** |
-| upstream `1.0.27`, `./configure && make` | 1.0.27 | ok | ok |
-| Debian source pkg `1.0.27-1.1`, Debian flags | 1.0.27 | ok | ok |
-| Debian source pkg `1.0.27-1.1`, Ubuntu flags | 1.0.27 | **tombstone** | **unreadable** |
-| Debian source pkg `1.0.32-1`, Debian flags | 1.0.32 | ok | ok |
-| Debian source pkg `1.0.32-1`, Ubuntu flags | 1.0.32 | **tombstone** | **unreadable** |
+Every Ubuntu release that carries tkrzw, checked with
+`tools/tkrzw/distro-probe.sh`:
 
-`1.0.32-1` is the version that matters for both open questions: it is
-what Debian uploaded to unstable and what Ubuntu 26.04 rebuilt as
-`1.0.32-1build1`. Built with Ubuntu's flags it reproduces 26.04's
-shipped failure exactly; built with Debian's, from the same tarball on
-the same machine, it is clean.
+| Ubuntu release | Support | tkrzw package | `remove` | `.tkt` round-trip |
+| --- | --- | --- | --- | --- |
+| 24.04 LTS (noble) | supported | `1.0.27-1.1build1` | **tombstone** | **unreadable** |
+| 25.10 (questing) | EOL July 2026 | `1.0.32-1` | **tombstone** | **unreadable** |
+| 26.04.1 LTS (resolute) | supported | `1.0.32-1build1` | **tombstone** | **unreadable** |
+| 26.10 (stonking, devel) | development | `1.0.32-1build1` | — | — |
+
+Three consecutive releases, two upstream versions, three different
+Debian revision strings, both defects in every one. The development
+series still carries resolute's binary unchanged, so as of this note no
+fix has landed anywhere in Ubuntu.
+
+Questing's row is worth reading twice. Its version string is
+`1.0.32-1` — *identical* to Debian's, with no `buildN` suffix, because
+it is a straight source sync rather than a no-change rebuild. Same
+source, same version string, different binary, because Ubuntu built it.
+The `buildN` suffix is not what marks an affected package; being built
+by Ubuntu is.
+
+And the same source built elsewhere:
+
+| Build | `remove` | `.tkt` round-trip |
+| --- | --- | --- |
+| upstream `1.0.27`, `./configure && make` | ok | ok |
+| Debian source pkg `1.0.27-1.1`, Debian flags | ok | ok |
+| Debian source pkg `1.0.27-1.1`, Ubuntu flags | **tombstone** | **unreadable** |
+| Debian source pkg `1.0.32-1`, Debian flags | ok | ok |
+| Debian source pkg `1.0.32-1`, Ubuntu flags | **tombstone** | **unreadable** |
+
+`1.0.32-1` is the version that matters: it is what Debian uploaded to
+unstable and what Ubuntu ships in questing, resolute and devel. Built
+with Ubuntu's flags it reproduces the shipped failure exactly; built
+with Debian's, from the same tarball on the same machine, it is clean.
 
 "unreadable" is literal: `tkrzw_dbm_util create x.tkt` succeeds, and
 every subsequent open of that file by the same binary fails with
@@ -239,6 +260,16 @@ Tracked in Ubuntu as [LP #2142937][lp], filed 2026-02-28 by Georgi
 Georgiev against `src:tkrzw`, from the HashDBM `remove` symptom on
 Ubuntu 25.10. The report correctly identifies it as Ubuntu-specific and
 shows Debian trixie's `1.0.32-1+b1` behaving correctly.
+
+Two things about it are worth knowing before adding anything. It is
+still New / Undecided / Unassigned six months on, and it was filed
+against **25.10, which reached end of life in July 2026** — an Ubuntu
+bug whose only reproducer is an EOL interim release is easy to leave
+alone. The measurements above answer that directly: the same faults are
+present, unchanged, on 24.04 LTS and 26.04 LTS, and the development
+series still ships resolute's binary, so nothing has been fixed
+anywhere. That, rather than a re-explanation of the mechanism, is what
+the report is missing.
 
 **The patch attached there is incomplete.** It sets
 
