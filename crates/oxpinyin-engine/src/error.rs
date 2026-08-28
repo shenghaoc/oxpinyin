@@ -144,6 +144,24 @@ impl fmt::Display for EngineError {
 
 impl std::error::Error for EngineError {}
 
+impl From<GraphError> for EngineError {
+    fn from(error: GraphError) -> Self {
+        Self::Graph(error)
+    }
+}
+
+impl From<DecodeError> for EngineError {
+    fn from(error: DecodeError) -> Self {
+        Self::Decode(error)
+    }
+}
+
+impl From<ScoringError> for EngineError {
+    fn from(error: ScoringError) -> Self {
+        Self::Scoring(error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::EngineError;
@@ -180,5 +198,19 @@ mod tests {
             EngineError::ZeroKeyOffsetCheck { offset: 11 }.to_string(),
             "offset 11 sits one past a lone zero-key column"
         );
+    }
+
+    #[test]
+    fn core_errors_convert_at_the_engine_boundary() {
+        use oxpinyin_core::graph::GraphError;
+        use oxpinyin_core::kbest::DecodeError;
+        use oxpinyin_core::scoring::ScoringError;
+
+        let graph: EngineError = GraphError::InputTooLong { len: 1, limit: 0 }.into();
+        assert!(matches!(graph, EngineError::Graph(_)));
+        let decode: EngineError = DecodeError::KTooLarge { k: 99, limit: 8 }.into();
+        assert!(matches!(decode, EngineError::Decode(_)));
+        let scoring: EngineError = ScoringError::Dictionary("closed".to_owned()).into();
+        assert!(matches!(scoring, EngineError::Scoring(_)));
     }
 }

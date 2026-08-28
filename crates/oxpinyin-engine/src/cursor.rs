@@ -301,7 +301,7 @@ fn matrix_spans(
     input: &[u8],
     options: OptionBits,
 ) -> Result<(Vec<(usize, usize)>, usize), EngineError> {
-    let graph = SegmentGraph::build_with_options(input, options).map_err(EngineError::Graph)?;
+    let graph = SegmentGraph::build_with_options(input, options)?;
     let parsed = graph.consumed();
     let matrix = build_scan_matrix(&graph, options, true);
     let mut spans = Vec::new();

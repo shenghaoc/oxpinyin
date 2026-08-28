@@ -231,7 +231,7 @@ where
         dictionary: D,
         model: L,
     ) -> Result<Self, EngineError> {
-        let key_costs = key_cost_table(&dictionary, &model).map_err(EngineError::Scoring)?;
+        let key_costs = key_cost_table(&dictionary, &model)?;
         Ok(Self {
             dictionary,
             model,
@@ -1130,7 +1130,7 @@ where
                 &self.model,
                 self.key_costs.clone(),
             );
-            let paths = k_best(&graph, &scorer, SEGMENTATION_K).map_err(EngineError::Decode)?;
+            let paths = k_best(&graph, &scorer, SEGMENTATION_K)?;
             let mut sentences: Vec<(Candidate, Vec<PhraseToken>)> = Vec::new();
             for path in &paths {
                 sentences.extend(self.collect_sentences_with_tokens(&graph, &scorer, path)?);
@@ -1651,7 +1651,7 @@ where
                 &self.model,
                 self.key_costs.clone(),
             );
-            let paths = k_best(&graph, &scorer, SEGMENTATION_K).map_err(EngineError::Decode)?;
+            let paths = k_best(&graph, &scorer, SEGMENTATION_K)?;
             for path in &paths {
                 self.collect_prefix_phrases(&graph, &scorer, path, &mut collected)?;
                 self.collect_sentence(&graph, &scorer, path, &mut collected)?;
@@ -1849,9 +1849,7 @@ where
         // A dictionary phrase never spans more than MAX_PHRASE_KEYS keys, so
         // looking further is both pointless and quadratic in the input.
         for length in 1..=keys.len().min(MAX_PHRASE_KEYS) {
-            let ranked = scorer
-                .rank_phrases(&self.history, &keys[..length], &kinds[..length])
-                .map_err(EngineError::Scoring)?;
+            let ranked = scorer.rank_phrases(&self.history, &keys[..length], &kinds[..length])?;
             for (entry, cost) in ranked {
                 let token = entry.token();
                 into.push(Candidate::new(
@@ -1914,9 +1912,8 @@ where
                 let Some((prefix_cost, prefix_text, prefix_history)) = best[start].clone() else {
                     continue;
                 };
-                let ranked = scorer
-                    .rank_phrases(&prefix_history, &keys[start..end], &kinds[start..end])
-                    .map_err(EngineError::Scoring)?;
+                let ranked =
+                    scorer.rank_phrases(&prefix_history, &keys[start..end], &kinds[start..end])?;
                 let Some((entry, cost)) = ranked.first() else {
                     continue;
                 };
