@@ -52,6 +52,19 @@ if ! grep -q '^pin_ref=libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636
     echo "  expected libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c"
     exit 0
 fi
+# The pin_ref above is prefix-matched (the full value is composite), so pin
+# the runtime inputs it folds in as explicit fields too: a prefix rebuilt
+# against a different model archive or dbm backend must not import-diff as
+# if it were this pin. Expected values come from build-oracle.sh, the same
+# single source the workflow's drift check reads.
+MODEL_SHA256_EXPECTED=$(sed -n 's/^MODEL_SHA256=//p' "$REPO_ROOT/tools/oracle/build-oracle.sh")
+DBM_EXPECTED=$(sed -n 's/.*--with-dbm=\([[:alnum:]]*\).*/\1/p' "$REPO_ROOT/tools/oracle/build-oracle.sh" | head -n1)
+if ! grep -q "^model_sha256=$MODEL_SHA256_EXPECTED" "$PREFIX/oracle-pin.txt" \
+    || ! grep -q "^dbm=$DBM_EXPECTED" "$PREFIX/oracle-pin.txt"; then
+    echo "SKIP: oracle prefix at $PREFIX is off-pin (model/dbm fields)"
+    echo "  expected model_sha256=$MODEL_SHA256_EXPECTED dbm=$DBM_EXPECTED"
+    exit 0
+fi
 if [ ! -f "$ORACLE_DATA/bigram.db" ]; then
     echo "SKIP: oracle data not found at $ORACLE_DATA"
     exit 0

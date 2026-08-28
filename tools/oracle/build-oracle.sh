@@ -16,12 +16,36 @@ IBUS_LIBPINYIN_URL=https://codeload.github.com/libpinyin/ibus-libpinyin/tar.gz/r
 IBUS_LIBPINYIN_ARCHIVE_SHA256=ab6d6cc371e4ec0cda1471ef968e9545de69a404958ecfb4e68545ef4b328646
 MODEL_URL=https://downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz
 MODEL_SHA256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
+# The pinned model20 export inventory (interpolation2.text + seventeen .table
+# files). Keep in lockstep with tools/model/fetch-model.sh and
+# crates/pinyin-oracle/src/model_cache.rs (EXPECTED_MODEL_FILES).
+MODEL_FILES=(
+	art.table
+	culture.table
+	economy.table
+	gb_char.table
+	gbk_char.table
+	geology.table
+	history.table
+	interpolation2.text
+	life.table
+	merged.table
+	nature.table
+	opengram.table
+	people.table
+	punct.table
+	science.table
+	society.table
+	sport.table
+	technology.table
+)
 ORACLE_PIN_REF="libpinyin-$LIBPINYIN_TAG-$LIBPINYIN_SHA+model20-$MODEL_SHA256+dbm-tkrzw"
 
 work_dir=${TMPDIR:-/tmp}/oxpinyin-oracle
 prefix=
 jobs=1
 apply_patches_dir=
+model_dir=
 
 usage() {
 	cat <<'EOF'
@@ -38,6 +62,13 @@ Options:
                        and recorded in oracle-pin.txt so the patched build is
                        distinguishable from the unpatched pin. The install
                        prefix must also differ from the pinned build.
+  --model-dir DIR      Use an already-extracted, SHA-verified model export (the
+                       product of tools/model/fetch-model.sh) instead of
+                       downloading the pinned archive. DIR must contain all
+                       eighteen export files. Reusing a cache does not relax the
+                       SHA-256 check: the archive that produced DIR was verified
+                       against MODEL_SHA256 before extraction. Only the source
+                       of the bytes changes, never whether they are checked.
   -h, --help           Show this help
 
 Build variables CC, CXX, CFLAGS, CXXFLAGS and LDFLAGS are passed through.
@@ -61,6 +92,10 @@ while (($#)); do
 		;;
 	--apply-patches)
 		apply_patches_dir=$2
+		shift 2
+		;;
+	--model-dir)
+		model_dir=$2
 		shift 2
 		;;
 	-h | --help)
@@ -106,13 +141,45 @@ if [[ -d $prefix && -n $(find "$prefix" -mindepth 1 -print -quit) ]]; then
 	exit 1
 fi
 
+if [[ -n $model_dir ]]; then
+	if [[ ! -d $model_dir ]]; then
+		printf '%s\n' "--model-dir is not a directory: $model_dir" >&2
+		exit 1
+	fi
+	missing=
+	for f in "${MODEL_FILES[@]}"; do
+		[[ -f "$model_dir/$f" ]] || missing="$missing $f"
+	done
+	if [[ -n $missing ]]; then
+		printf 'FAIL: --model-dir is missing:%s\n' "$missing" >&2
+		printf 'DIR must hold the verified model20 export (run tools/model/fetch-model.sh)\n' >&2
+		exit 1
+	fi
+	# Require provenance: fetch-model.sh writes a marker recording the
+	# SHA-256 of the archive that produced the extraction. Without it the
+	# bytes could be any eighteen files with the right names. The marker
+	# sits one level above the extracted dir (cache_dir/verified for
+	# cache_dir/extracted/).
+	marker=$model_dir/../verified
+	if [[ ! -f $marker ]] || ! grep -qx "sha256=$MODEL_SHA256" "$marker"; then
+		printf 'FAIL: --model-dir lacks a matching provenance marker\n' >&2
+		printf '  expected sha256=%s in %s\n' "$MODEL_SHA256" "$marker" >&2
+		printf '  run tools/model/fetch-model.sh to produce a verified cache\n' >&2
+		exit 1
+	fi
+fi
+
 mkdir -p "$work_dir/downloads" "$work_dir/src" "$prefix"
 work_dir=$(cd "$work_dir" && pwd)
 prefix=$(cd "$prefix" && pwd)
 
 # Prefer the just-built libraries while retaining pkg-config's system defaults
-# for declared build dependencies. Never inherit caller-provided search paths.
-export PKG_CONFIG_PATH="$prefix/lib/pkgconfig:$prefix/lib64/pkgconfig"
+# for declared build dependencies. Never inherit caller-provided search paths
+# for those prefixes — EXCEPT a caller-supplied base such as
+# PKG_CONFIG_PATH=/usr/local/lib/pkgconfig for a from-tarball libtkrzw:
+# not every distro's pkg-config searches /usr/local by default, so dropping
+# an inherited entry would break exactly that consumer.
+export PKG_CONFIG_PATH="$prefix/lib/pkgconfig:$prefix/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export LD_LIBRARY_PATH="$prefix/lib:$prefix/lib64"
 
 fetch() {
@@ -129,15 +196,37 @@ fetch() {
 
 lib_archive=$(fetch "libpinyin-$LIBPINYIN_TAG.tar.gz" "$LIBPINYIN_URL" "$LIBPINYIN_ARCHIVE_SHA256")
 ibus_archive=$(fetch "ibus-libpinyin-$IBUS_LIBPINYIN_TAG.tar.gz" "$IBUS_LIBPINYIN_URL" "$IBUS_LIBPINYIN_ARCHIVE_SHA256")
-model_archive=$(fetch model20.text.tar.gz "$MODEL_URL" "$MODEL_SHA256")
 
 rm -rf "$work_dir/src/libpinyin-$LIBPINYIN_TAG" "$work_dir/src/ibus-libpinyin-$IBUS_LIBPINYIN_TAG"
 tar -xzf "$lib_archive" -C "$work_dir/src"
 tar -xzf "$ibus_archive" -C "$work_dir/src"
-tar -xzf "$model_archive" -C "$work_dir/src/libpinyin-$LIBPINYIN_TAG/data"
 
 lib_src=$work_dir/src/libpinyin-$LIBPINYIN_TAG
 ibus_src=$work_dir/src/ibus-libpinyin-$IBUS_LIBPINYIN_TAG
+
+# The model data is the 18-file model20 export that build-oracle.sh drops into
+# libpinyin's data dir (make install then ships it to $prefix/lib/libpinyin/data).
+# Prefer a pre-extracted export from tools/model/fetch-model.sh when given, so a
+# rebuild of the oracle does not re-download the archive. The SHA-256 was already
+# verified against MODEL_SHA256 before that export was produced; applying it here
+# changes WHERE the bytes come from, never WHETHER they are checked. With no
+# --model-dir the pinned archive is downloaded and verified, exactly as before.
+model_data_dir=$lib_src/data
+mkdir -p "$model_data_dir"
+if [[ -n $model_dir ]]; then
+	model_dir=$(cd "$model_dir" && pwd)
+	# Copy the validated inventory only: a stray extra file in the cache dir
+	# must not ride into the pinned oracle's data dir, and a subdirectory
+	# would abort cp outright. The 18 names were checked above, so nothing
+	# here can be missing.
+	for f in "${MODEL_FILES[@]}"; do
+		cp "$model_dir/$f" "$model_data_dir/$f"
+	done
+	printf 'reusing pre-extracted model export from %s\n' "$model_dir" >&2
+else
+	model_archive=$(fetch model20.text.tar.gz "$MODEL_URL" "$MODEL_SHA256")
+	tar -xzf "$model_archive" -C "$model_data_dir"
+fi
 
 patch_manifest=
 if [[ -n $apply_patches_dir ]]; then

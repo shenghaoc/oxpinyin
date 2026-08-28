@@ -1,0 +1,18 @@
+schema=oracle-provisioning-pin-v1
+# Composite pin identity for the locally built oracle. Every field mirrors
+# a constant in tools/oracle/build-oracle.sh; tools/bisection runners and
+# developers verify the two sides agree before trusting a prefix. When a
+# pin component changes, update it here and in its owner file in the same
+# commit — a stale prefix must be rebuilt from scratch.
+# libtkrzw is deliberately NOT pinned here: inside the debian:testing
+# container it comes from libtkrzw-dev as part of the rolling build
+# environment (the workflow's provenance record attributes which version
+# each run linked), not the frozen oracle chain.
+libpinyin_tag=2.11.91
+libpinyin_commit=0c5e80e1200f84fab185d1c5bde458b770a0636c
+libpinyin_archive_sha256=eb25890dab0072eb0744c9ee1bc152051143b7bc23aea2a424792a9b1b84bdcb
+ibus_libpinyin_tag=1.16.5
+ibus_libpinyin_commit=2d2cdac0187101aa0cd7ac06694a8340721ddfbb
+ibus_libpinyin_archive_sha256=ab6d6cc371e4ec0cda1471ef968e9545de69a404958ecfb4e68545ef4b328646
+model_archive_sha256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
+dbm=Tkrzw
