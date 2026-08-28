@@ -68,17 +68,19 @@ mod tkrzw {
                  them. Build tkrzw from source (https://dbmx.net/tkrzw/: ./configure \
                  --prefix=DIR && make && make install) and put DIR/lib/pkgconfig on \
                  PKG_CONFIG_PATH, or build without --features tkrzw.\n\n\
-                 Do not use any Ubuntu libtkrzw-dev package. Ubuntu links every package \
-                 with -Wl,-Bsymbolic-functions, which resolves libtkrzw's own references to \
-                 its own copies of the comparators and so breaks tkrzw's pointer-identity \
-                 protocol: removals store DBM::RecordProcessor::REMOVE as the record's \
-                 value, a NOOP processor stores NOOP's bytes, Rebuild fails with \
-                 CANCELED_ERROR, and tkrzw_dbm_util cannot reopen a TreeDBM it created \
+                 Do not use any Ubuntu libtkrzw-dev package. Ubuntu applies two build \
+                 flags that each break tkrzw independently, silently, and in different \
+                 ways; Debian applies neither, and neither fixes the other. (1) -flto \
+                 duplicates the RecordProcessor NOOP/REMOVE backing literals across LTO \
+                 partitions, so Remove() stores a tombstone instead of deleting and a NOOP \
+                 processor overwrites the record. (2) -Wl,-Bsymbolic-functions resolves \
+                 libtkrzw's references to its own copies of the key comparators, so a \
+                 TreeDBM records comparator type 255 and can never be reopened \
                  (BROKEN_DATA_ERROR: invalid_key_comparator). Confirmed on noble's \
-                 1.0.27-1.1build1 and resolute's 1.0.32-1build1; the same sources built \
-                 from source, or with Debian's flags, are correct. Check any candidate \
-                 with `readelf -rW .../libtkrzw.so.1 | grep -c KeyComparator` -- zero means \
-                 broken. Tracked upstream of us as Ubuntu LP #2142937; see \
+                 1.0.27-1.1build1 and resolute's 1.0.32-1build1. Arch enables LTO only, so \
+                 it has defect 1 and not defect 2. Ubuntu LP #2142937 carries a patch that \
+                 disables LTO: it resolves defect 1 and leaves defect 2 exactly as it was. \
+                 Check a candidate with tools/tkrzw/distro-probe.sh, which tests both. See \
                  docs/findings/tkrzw-distro-compat.md."
             );
         };
