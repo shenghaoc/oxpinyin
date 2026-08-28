@@ -44,6 +44,22 @@ def test_lookup_calls_are_independent_queries(make_engine):
     assert engine.composition_offset == 0
 
 
+def test_lookup_resets_selection_and_sentence_state(make_engine):
+    engine = make_engine()
+    engine.lookup("nihao")
+    assert engine.guess_sentence() is True
+    assert engine.sentences
+    assert engine.select(0) == "completed"
+
+    candidates = engine.lookup("ni")
+
+    assert candidates
+    assert engine.input == "ni"
+    assert engine.preedit == "ni"
+    assert engine.composition_offset == 0
+    assert engine.sentences == []
+
+
 def test_stateful_selection_flow(make_engine):
     engine = make_engine()
     assert engine.type_pinyin("ni") is True
@@ -69,6 +85,14 @@ def test_reset_discards_the_composition(make_engine):
     assert engine.composing is False
 
 
+def test_empty_and_ignored_input_are_no_ops(make_engine):
+    engine = make_engine()
+    assert engine.type_pinyin(" 你好\n") is False
+    assert engine.input == ""
+    assert engine.candidates == []
+    assert engine.commit() == ""
+
+
 def test_guess_sentence_and_rows(make_engine):
     engine = make_engine()
     engine.lookup("nihao")
@@ -78,6 +102,15 @@ def test_guess_sentence_and_rows(make_engine):
     assert engine.sentence(9) is None
     # rows prepend to the candidate list head
     assert engine.candidates[0].text == "你好"
+
+
+def test_sentence_index_boundaries_map_cleanly(make_engine):
+    engine = make_engine()
+    assert engine.sentence(255) is None
+    with pytest.raises(ValueError, match="exceeds 255"):
+        engine.sentence(256)
+    with pytest.raises(OverflowError):
+        engine.sentence(-1)
 
 
 def test_parsed_len_and_input_reflect_filtering(make_engine):
@@ -106,6 +139,18 @@ def test_candidates_at_reanchors_without_disturbing_state(make_engine):
         assert candidate.consumed_bytes > 0
     # the cached list and cursor are untouched
     assert engine.composition_offset == 0
+
+
+def test_candidates_at_accepts_one_past_the_last_byte(make_engine):
+    engine = make_engine()
+    engine.type_pinyin("ni")
+    before = [candidate.text for candidate in engine.candidates]
+
+    terminal = engine.candidates_at(len(engine.input))
+
+    assert isinstance(terminal, list)
+    assert [candidate.text for candidate in engine.candidates] == before
+    assert engine.input == "ni"
 
 
 def test_open_errors_map_to_python_exceptions(fixture_w3):
@@ -165,10 +210,21 @@ def test_engines_are_independent(make_engine):
 
 
 def test_context_manager_works(make_engine):
-    with make_engine() as engine:
-        assert engine.lookup("nihao")[0].text == "你好"
-    # close() is also directly callable and idempotent-friendly
-    make_engine().close()
+    engine = make_engine()
+    with engine as entered:
+        assert entered is engine
+        assert entered.lookup("nihao")[0].text == "你好"
+
+    # close() is intentionally a no-op and repeated cleanup stays harmless.
+    engine.close()
+    engine.close()
+    assert engine.lookup("nihao")[0].text == "你好"
+
+
+def test_candidate_instances_are_read_only(make_engine):
+    candidate = make_engine().lookup("nihao")[0]
+    with pytest.raises(AttributeError):
+        candidate.text = "mutated"
 
 
 def test_shared_engine_is_thread_safe(make_engine):
