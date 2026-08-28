@@ -1,0 +1,293 @@
+name: Store backends
+
+# Backend coverage for oxpinyin-store on a rolling toolchain. Two jobs:
+#   - store-features sweeps cargo test across the workspace default build,
+#     --features lmdb, and --features tkrzw (the tkrzw pass builds the C++
+#     shim, the only memory-unsafe layer in the stack, against the distro
+#     libtkrzw).
+#   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan and UBSan.
+#
+# ROLLING TOOLCHAIN, deliberately unpinned: the jobs run inside
+# debian:testing because oxpinyin aims to be a viable libpinyin
+# replacement, and building on the newest toolchain distros actually ship
+# is a property under test, not an accident — libpinyin's own
+# make-check.yml does the same. Debian Testing is the mother distro of
+# one of the two major Linux ecosystems (Ubuntu and derivatives descend
+# from it); RHEL, the other ecosystem's root, is the primary development
+# platform, so CI on Debian Testing covers both lineages. Do NOT pin
+# this image by digest or let a later change "stabilise" it. libtkrzw
+# comes from libtkrzw-dev: part of the rolling build environment,
+# recorded by the provenance step below.
+#
+# The pin-built oracle and the model20 archive are deliberately NOT CI
+# concerns: provisioning them (tools/model/fetch-model.sh,
+# tools/oracle/build-oracle.sh) is a LOCAL workflow, and no CI job may
+# download model20.text.tar.gz or anything like it. The oracle-gated
+# differentials and the model cache live on developer machines only.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .github/workflows/store-backends.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .github/workflows/store-backends.yml
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  DEBIAN_FRONTEND: noninteractive
+
+concurrency:
+  group: store-backends-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  store-features:
+    # Close the backend coverage gap: never build --features tkrzw only
+    # in developer sessions; TkrzwStore is a shipped read+write
+    # backend whose C++ shim is the only memory-unsafe layer in the stack.
+    # The name/feature pairs are scoped with -p because a virtual manifest
+    # rejects a bare --features, and these names exist on exactly one
+    # member (oxpinyin-store) — so -p scoping tests precisely what an
+    # unscoped spelling would if the manifest allowed it.
+    name: store backends (default / lmdb / tkrzw)
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # debian:testing ships a minimal base without bash, python3, or
+      # git; the runner infrastructure and later steps need all three.
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Container jobs run as root over a root-owned checkout, so any later
+      # git invocation would die on dubious ownership (this affected
+      # tracked-path probes in local tooling scripts during development).
+      - name: Register the checkout as a git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          set -euo pipefail
+          channel="$(awk -F'"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain "$channel" \
+                --component clippy --component rustfmt
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          # Visible to THIS step too: GITHUB_PATH only applies to later steps.
+          . "$HOME/.cargo/env"
+
+      - name: Install build dependencies (apt)
+        # libtkrzw-dev: the tkrzw pass builds the C++ shim against the distro
+        # library through pkg-config; the default/lmdb passes are pure Rust.
+        # Debian's libtkrzw-dev builds tkrzw with compression, so tkrzw.pc
+        # demands -llzma -llz4 -lzstd -lz at link time; their -dev packages
+        # must be present or every final link dies.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # Sequential passes over the same target dir: any non-zero exit fails
+      # the step immediately. Feature-switch rebuilds reuse intermediates, so
+      # the marginal cost of the second/third pass is a partial rebuild.
+      - name: Test the store under each backend feature set
+        id: feature-tests
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
+          echo "--- default (workspace sweep) ---"
+          cargo test --locked --workspace
+          echo "--- lmdb ---"
+          cargo test --locked -p oxpinyin-store --features lmdb
+          cargo test --locked -p oxpinyin-user --features lmdb
+          echo "--- tkrzw ---"
+          cargo test --locked -p oxpinyin-store --features tkrzw
+          cargo test --locked -p oxpinyin-user --features tkrzw
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## store-features"
+            echo ""
+            echo "Backend sweeps passed: default (workspace), \`--features lmdb\`, \`--features tkrzw\`."
+            echo ""
+            echo "| Phase | Wall clock |"
+            echo "|---|---:|"
+            echo "| three-feature suite | ${{ steps.feature-tests.outputs.elapsed || '—' }}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  tkrzw-sanitizers:
+    # The shim passes Rust callbacks into tkrzw's visitor dispatch
+    # (db_get/db_scan install Process-full visitors handing borrowed key/value
+    # records to Rust fn pointers valid only for the callback). Panic-unwinding
+    # across that boundary and borrow-escape of those records are the live
+    # hazards, so the feature's own test surface runs instrumented: once per
+    # sanitizer, any finding kills the job. See the test step for how each arm
+    # composes its flags (the mandated -fsanitize=address,undefined pair does
+    # not map 1:1 onto rustc's -Zsanitizer list).
+    name: tkrzw shim under ${{ matrix.sanitizer }}
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+      # ASan requires syscall leeway no other job here needs: Docker's
+      # default seccomp profile blocks personality(2), which turned setarch's
+      # ASLR-off ASan wrapper into EPERM on the previous run. Unconfining
+      # seccomp for THIS matrix alone restores standard sanitizer setups;
+      # everything else stays under stock confinement.
+      options: --security-opt seccomp=unconfined
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+
+    strategy:
+      fail-fast: true
+      matrix:
+        sanitizer: [address, undefined]
+    env:
+      # Beats rust-toolchain.toml's channel pin for this job only: sanitizer
+      # builds require nightly rustc. Everything else keeps the pinned file.
+      RUSTUP_TOOLCHAIN: nightly
+    steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same root-owned-checkout caveat as the store-features job.
+      - name: Register the checkout as a git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install build dependencies (apt)
+        # On Debian, libasan and libubsan ship with gcc and are not separate
+        # packages. libtkrzw-dev provides the distro library the shim
+        # compiles against.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
+
+      - name: Install nightly Rust (sanitizer support)
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain nightly
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          # Visible to THIS step too: GITHUB_PATH only applies to later steps.
+          . "$HOME/.cargo/env"
+          rustc --version
+
+      # No rust-cache here on purpose: the four-crate shim suite compiles in
+      # seconds; a separate sanitizer-flavored cache entry would be pure book-
+      # keeping. (Rust-cache hashes RUSTFLAGS into its key anyway, so even a
+      # future enablement cannot cross-contaminate the unsanitized dep store.)
+      #
+      # Both arms implement the mandated -fsanitize=address,undefined pair
+      # against the surface where those hazards actually live: the memory-
+      # unsafe C++ shim plus the linked runtime. Each arm instruments the shim
+      # translation units (clang-style flags through the cc crate) and injects
+      # its runtime at cargo's final link (-C linker=cc -Clink-arg=...); any
+      # finding traps hard and fails the job — the STOP contract.
+      #
+      # ADDRESS instruments the whole target graph (-Zsanitizer=address;
+      # rustc manages the runtime, so ordering and abort semantics are its
+      # problem, not ours) and the shim gets GCC instrumentation on top via
+      # CFLAGS/CXXFLAGS. UNDEFINED has no -Zsanitizer equivalent (rustc's
+      # option list has never included the value), so it instruments the shim
+      # translation units — the memory-unsafe boundary — and injects libubsan
+      # at cargo's final link. Any finding traps and fails the job.
+      #
+      # Both arms pass an EXPLICIT --target on purpose: without it, cargo
+      # applies RUSTFLAGS to HOST build scripts and proc macros too, which is
+      # how -Zsanitizer=address produced unloadable proc-macro dylibs (E0463
+      # on cxxbridge_macro) and how link-arg flags broke build scripts in
+      # earlier iterations of this step. With --target, host artifacts
+      # compile clean and only the target graph is sanitized. The PREBUILT
+      # STANDARD LIBRARY stays uninstrumented in both arms: -Zbuild-std +
+      # rust-src is a heavier matrix than this job warrants; recorded here
+      # and in docs/findings/upstream-divergences.md.
+      - name: Run the tkrzw feature tests under the sanitizer
+        id: sanitize-tests
+        env:
+          # Indirection on purpose: ${{ }} inside run: bodies is a template-
+          # injection surface; an env binding gives bash a plain variable.
+          SANITIZER: ${{ matrix.sanitizer }}
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
+          triple=$(rustc -vV | sed -n 's/^host: //p')
+          case "$SANITIZER" in
+          address)
+            export RUSTFLAGS="-D warnings -Zsanitizer=address -Cdebuginfo=1"
+            export CFLAGS="-fsanitize=address -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
+            export CXXFLAGS="$CFLAGS"
+            # LeakSanitizer is tuned off by documented choice, not laziness:
+            # the Rust harness holds deliberate process-lifetime allocations
+            # whose ownership crosses the cxx boundary, which LSan
+            # misclassifies, and the hazards under test are misuse of BORROWED
+            # records and unwinding, both of which stay fatal.
+            # abort_on_error=1 closes the last loophole where a report could
+            # print yet the step still go green. setarch -R disables ASLR for
+            # the process tree: GitHub runner kernels' mmap entropy exceeds
+            # what ASan's shadow mapping assumes, and an unprivileged
+            # container cannot lower vm.mmap_rnd_bits itself.
+            export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1
+            setarch "$(uname -m)" -R \
+              cargo test --locked --target "$triple" -p oxpinyin-store --features tkrzw
+            ;;
+          undefined)
+            # No -Zsanitizer=undefined exists; instrument the shim and link
+            # the runtime explicitly (nightly's default linker does not add
+            # it from a bare -fsanitize).
+            export RUSTFLAGS="-D warnings -C linker=cc -Clink-arg=-fsanitize=undefined -Clink-arg=-lubsan"
+            export CFLAGS="-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
+            export CXXFLAGS="$CFLAGS"
+            cargo test --locked --target "$triple" -p oxpinyin-store --features tkrzw
+            ;;
+          *)
+            echo "FAIL: unknown matrix.sanitizer value '$SANITIZER'" >&2
+            exit 2
+            ;;
+          esac
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## tkrzw-sanitizers (${{ matrix.sanitizer }})"
+            echo ""
+            echo "Result: **$([ '${{ job.status }}' = 'success' ] && echo 'clean — zero findings' || echo 'FINDINGS PRESENT — STOP')**"
+            echo ""
+            echo "| Phase | Wall clock |"
+            echo "|---|---:|"
+            echo "| instrumented suite | ${{ steps.sanitize-tests.outputs.elapsed || '—' }}s |"
+          } >> "$GITHUB_STEP_SUMMARY"

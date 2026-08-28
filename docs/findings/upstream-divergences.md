@@ -514,3 +514,23 @@ Text, candidate type and counts cannot.
   double/zhuyin FORCE_TONE differential. The full-pinyin seam itself
   matches the pin (capi e2e `parse_termination` module, harness phase-C
   0x60 probes closed).
+
+## Sanitizer scope on the tkrzw shim CI (2026-08-27)
+
+- **Where:** `.github/workflows/store-backends.yml`, `tkrzw-sanitizers` job.
+- **libpinyin behaviour:** its make-check CI (and any `-fsanitize=address,undefined`
+  build of a C/C++ tree) instruments every translation unit, Rust has no
+  equivalent because there is no Rust in the pin.
+- **oxpinyin behaviour:** the ASan arm runs FULL `-Zsanitizer=address`
+  instrumentation over the target graph (Rust units plus the GCC-instrumented
+  C++ shim), made possible by passing cargo an explicit `--target` so
+  RUSTFLAGS never reaches host build scripts or proc macros — the mechanism
+  that previously made sanitized proc-macro dylibs unloadable (E0463 on
+  `cxxbridge_macro`). The UBSan arm instruments the shim translation units
+  and injects libubsan at the final link, because rustc's `-Zsanitizer` list
+  has never included an `undefined` value. In both arms the prebuilt standard
+  library is uninstrumented (no `-Zbuild-std`).
+- **Externally observable:** none for shipped behavior; this widens or narrows
+  no differential. The residual gaps are toolchain-bound: no
+  `-Zsanitizer=undefined` exists, and std is prebuilt. Revisit when either
+  changes; per source policy, recorded and not chased.
