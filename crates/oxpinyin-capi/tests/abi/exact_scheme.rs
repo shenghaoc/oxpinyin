@@ -33,6 +33,8 @@ fn candidate_texts(instance: *mut PinyinInstance) -> Vec<String> {
         let mut text: *const pinyin_capi::GChar = std::ptr::null();
         assert!(pinyin_get_candidate_string(instance, cand, &mut text));
         assert!(!text.is_null());
+        // SAFETY: `text` was just returned by `pinyin_get_candidate_string`
+        // as a valid, NUL-terminated pointer into the instance snapshot.
         out.push(
             unsafe { std::ffi::CStr::from_ptr(text) }
                 .to_string_lossy()

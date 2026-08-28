@@ -35,6 +35,8 @@ use support::{
     print_pin_header,
 };
 
+// SAFETY: re-declaring libc `free` to release strings the ABI hands to the
+// caller; signature matches the C standard and the header we compile against.
 unsafe extern "C" {
     fn free(ptr: *mut c_void);
 }
@@ -161,6 +163,7 @@ fn guess_sentence_get_sentence(criterion: &mut Criterion) {
                     // SAFETY: `capi.instance` is a live handle for this bench.
                     let reset = unsafe { pinyin_reset(capi.instance) };
                     assert!(reset, "pinyin_reset failed");
+                    // SAFETY: same live handle; `phrase` is a valid CString.
                     let parsed =
                         unsafe { pinyin_parse_more_full_pinyins(capi.instance, phrase.as_ptr()) };
                     assert!(parsed > 0, "PARSE_MEDIUM did not parse");
