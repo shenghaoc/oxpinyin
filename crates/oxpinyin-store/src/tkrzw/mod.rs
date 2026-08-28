@@ -35,7 +35,14 @@
 //! message region is valid only until the next tkrzw call on the same
 //! thread. Statuses map as this backend always has: success to `Ok`,
 //! `SYSTEM_ERROR` to [`StoreError::Io`], everything else to a backend
-//! error carrying the code and message verbatim.
+//! error carrying the code and message verbatim. One registered
+//! divergence: exceptions caught inside the C wrapper report
+//! `SYSTEM_ERROR` — so an allocation failure classifies as
+//! [`StoreError::Io`] — where the retired cxx shim reported
+//! `UNKNOWN_ERROR` (a backend error); the C ABI cannot distinguish the
+//! two `SYSTEM_ERROR` origins. Ruled accepted 2026-08-28; the register
+//! entry with the full analysis is
+//! `docs/findings/tkrzw-langc-exception-classification.md`.
 //!
 //! # One keyspace, many tables
 //!
