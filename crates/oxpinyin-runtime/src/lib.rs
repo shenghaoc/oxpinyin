@@ -12,6 +12,13 @@
 //! parity-tested semantics.
 //!
 //! Pure Rust; no FFI of any kind, `unsafe_code` forbidden.
+// Constitution §4, mechanically: library builds may not unwrap, expect,
+// or panic. Inline #[cfg(test)] modules are exempt (see the allow below
+// their declaration); tests/, benches/ and examples/ are separate crates.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![warn(missing_docs)]
 
 use std::collections::BTreeMap;
