@@ -67,7 +67,18 @@ mod tkrzw {
                  C API header tkrzw_langc.h, and `pkg-config --cflags tkrzw` could not find \
                  them. Build tkrzw from source (https://dbmx.net/tkrzw/: ./configure \
                  --prefix=DIR && make && make install) and put DIR/lib/pkgconfig on \
-                 PKG_CONFIG_PATH, or build without --features tkrzw."
+                 PKG_CONFIG_PATH, or build without --features tkrzw.\n\n\
+                 Do not use any Ubuntu libtkrzw-dev package. Ubuntu links every package \
+                 with -Wl,-Bsymbolic-functions, which resolves libtkrzw's own references to \
+                 its own copies of the comparators and so breaks tkrzw's pointer-identity \
+                 protocol: removals store DBM::RecordProcessor::REMOVE as the record's \
+                 value, a NOOP processor stores NOOP's bytes, Rebuild fails with \
+                 CANCELED_ERROR, and tkrzw_dbm_util cannot reopen a TreeDBM it created \
+                 (BROKEN_DATA_ERROR: invalid_key_comparator). Confirmed on noble's \
+                 1.0.27-1.1build1 and resolute's 1.0.32-1build1; the same sources built \
+                 from source, or with Debian's flags, are correct. Check any candidate \
+                 with `readelf -rW .../libtkrzw.so.1 | grep -c KeyComparator` -- zero means \
+                 broken. See docs/findings/tkrzw-distro-compat.md."
             );
         };
         let Some(libs) = pkg_config("--libs") else {
