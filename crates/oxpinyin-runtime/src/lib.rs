@@ -26,8 +26,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 
 use oxpinyin_core::{
-    Cost, Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey,
-    UserCountDelta,
+    Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseToken,
+    SyllableKey, UserCountDelta,
 };
 use oxpinyin_data::{
     BigramLanguageModel, DictError, InterpolationError, LmError, PunctTable, SystemDictionary,
@@ -395,6 +395,52 @@ impl LanguageModel for RuntimeLm {
         let extra = self.delta(history.last().map(|token| token.value()), token.value())?;
         self.inner
             .score_with_user_delta(history, token, edge_cost, extra)
+    }
+
+    /// Upstream's Gate 2 (`pinyin.cpp:2209-2213`): the system gram and the
+    /// user gram loaded once each and merged, as ONE row the caller indexes
+    /// per candidate.
+    ///
+    /// `merge_single_gram` is additive over both the per-token counts and
+    /// the row totals, which `merge_counts` already encodes for the n-best
+    /// path; this applies it across the whole row instead of one pair at a
+    /// time, so a guess costs two row loads rather than two per candidate.
+    fn merged_successors(&self, prev: &Self::Token) -> Result<Option<MergedGram>, Self::Error> {
+        let system = self.inner.load_successors(prev.value())?;
+        let user = match self.user.as_ref() {
+            None => None,
+            Some(store) => {
+                let rows = store
+                    .bigram_successors(prev.value())
+                    .map_err(|error| LmError::User(error.to_string()))?;
+                let total = store
+                    .bigram_total(prev.value())
+                    .map_err(|error| LmError::User(error.to_string()))?;
+                (!rows.is_empty() || total != 0).then_some((rows, total))
+            }
+        };
+        // `merge_single_gram` answers false when both loads miss, and the
+        // pin then leaves `merged_gram` empty so every possibility is zero.
+        if system.is_none() && user.is_none() {
+            return Ok(None);
+        }
+        let mut counts: BTreeMap<u32, u64> = BTreeMap::new();
+        let mut total: u64 = 0;
+        if let Some(row) = system {
+            total = total.saturating_add(u64::from(row.total));
+            for (token, count) in row.records {
+                let slot = counts.entry(token).or_default();
+                *slot = slot.saturating_add(u64::from(count));
+            }
+        }
+        if let Some((rows, user_total)) = user {
+            total = total.saturating_add(user_total);
+            for (token, count) in rows {
+                let slot = counts.entry(token).or_default();
+                *slot = slot.saturating_add(count);
+            }
+        }
+        Ok(Some(MergedGram::new(total, counts.into_iter().collect())))
     }
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
