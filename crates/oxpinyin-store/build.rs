@@ -61,7 +61,8 @@ mod tkrzw {
                  1.0.27-1.1build1 and resolute's 1.0.32-1build1; the same sources built \
                  from source, or with Debian's flags, are correct. Check any candidate \
                  with `readelf -rW .../libtkrzw.so.1 | grep -c KeyComparator` -- zero means \
-                 broken. See docs/findings/tkrzw-distro-compat.md."
+                 broken. Tracked upstream of us as Ubuntu LP #2142937; see \
+                 docs/findings/tkrzw-distro-compat.md."
             );
         };
         let Some(libs) = pkg_config("--libs") else {

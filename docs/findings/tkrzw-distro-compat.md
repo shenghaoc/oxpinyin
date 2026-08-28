@@ -261,14 +261,56 @@ changelog; the defect enters at rebuild time, from a vendor-wide flag,
 so it cannot have been inherited. A Debian fix would not reach Ubuntu
 either — the flag would still be applied on top.
 
+## Reported
+
+Tracked in Ubuntu as [LP #2142937][lp] against `src:tkrzw`. That is the
+right venue for the shipped breakage — Ubuntu is where the flag is
+applied and where two supported LTS releases carry a library that
+silently corrupts records — but it is not where the one-line fix most
+naturally lands.
+
+[lp]: https://bugs.launchpad.net/ubuntu/+source/tkrzw/+bug/2142937
+
+The fix belongs in `debian/rules`, which Debian owns and Ubuntu syncs:
+
+```make
+DEB_LDFLAGS_MAINT_STRIP = -Wl,-Bsymbolic-functions
+```
+
+On Debian that line is a no-op — Debian never adds the flag — and on
+the next sync it fixes Ubuntu with no permanent Ubuntu delta to carry.
+Two things temper that route: `src:tkrzw` is orphaned in Debian
+(`Maintainer: Debian QA Group <packages@qa.debian.org>`, with Boyuan
+Yang doing QA uploads through `1.0.32-1`), so it may need an NMU or a
+merge request against `salsa.debian.org/debian/tkrzw`; and a sync does
+not reach released LTS releases, so 24.04 and 26.04 still need SRUs
+through the Launchpad bug regardless.
+
+Neither tracker is reachable from the environment this note was written
+in — `bugs.launchpad.net`, `api.launchpad.net`, and `bugs.debian.org`
+are all 403 at the egress policy — so the state of the report above was
+not read back, and this note records only that it exists.
+
 ## Upstream
 
-Upstream is unfixed as of `bcaa0fb`: the comparators are still `inline`
-in a header and `tkrzw_dbm_tree.cc` still identifies them by pointer.
-Identifying a value by an address that C++ only guarantees under
-default ELF interposition is fragile — a distro flag, a static link of
-one side, or `dlopen` with `RTLD_LOCAL` all break it, and each breaks it
-silently and on disk. A one-byte enum in `TuningParameters`, or a name
-string, would cost nothing and be immune. This is worth reporting
-upstream together with the Ubuntu bug; it is not a Rust-mechanism
-divergence, so it does not belong in `upstream-divergences.md`.
+Upstream is unfixed as of `bcaa0fb` (last commit 2026-07-30, so it is
+actively maintained): the comparators are still `inline` in a header and
+`tkrzw_dbm_tree.cc` still identifies them by pointer. Identifying a
+value by an address that C++ only guarantees under default ELF
+interposition is fragile — a distro flag, a static link of one side, or
+`dlopen` with `RTLD_LOCAL` all break it, and each breaks it silently and
+on disk; on Windows, where each module gets its own copy of an inline
+function by default, it is hard to see how it can hold at all.
+
+The fix is not to move the comparators out of the header. A function
+defined only in the shared library still fails under
+`-Bsymbolic-functions`: the library binds to its own definition while
+the client's address-taking yields a canonical PLT entry in the client.
+Nothing that keeps identifying the comparator by its address is safe. A
+one-byte enum in `TuningParameters` alongside the pointer, or a name
+string, costs nothing and is immune — and the on-disk format is already
+an enum byte, so only the derivation from a pointer has to change.
+
+This is worth reporting upstream separately from the Ubuntu bug, since
+it is a different ask; it is not a Rust-mechanism divergence, so it does
+not belong in `upstream-divergences.md`.
