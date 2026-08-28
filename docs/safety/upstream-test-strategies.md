@@ -123,30 +123,36 @@ with the best historical yield for an IME:
    reach. Implementation note: lives in the existing nightly `fuzz/`
    workspace (Linux-only matches the CI fuzz job); the harness itself is
    the one place where fuzz code legitimately links capi. Sanitizers:
-   the pinned cargo-fuzz 0.13.2 compiles targets with
-   `-fsanitize=address` by default, and on Linux ASan's LeakSanitizer is
-   on by default too, so leaks and heap errors surface without extra
-   flags. Native FFI coverage is **planned, not current**: it exists only
-   once this target and its CI command land — today's `parser` target
-   never links the C ABI.
+   the pinned cargo-fuzz 0.13.2 builds targets with its default
+   instrumentation, selected as `-s address` (Sanitizer::Address) — the
+   Rust-side spelling of what lands in RUSTFLAGS — and on Linux the
+   AddressSanitizer build includes LeakSanitizer by default, so leaks and
+   heap errors surface without extra flags. Native FFI coverage is
+   **planned, not current**: it exists only once this target and its CI
+   command land — today's `parser` target never links the C ABI.
    
-   Semantic postconditions to assert per command (define before
-   implementing; reuse the contract expectations in
-   `crates/oxpinyin-capi/src/contract_tests.rs`, which already pins the
-   scheme-setter behavior):
+   Semantic postconditions to assert per command, **for valid command
+   sequences only** (define before implementing; reuse the contract
+   expectations in `crates/oxpinyin-capi/src/contract_tests.rs`, which
+   already pins the scheme-setter behavior):
    - every entry point returns, never aborts (ffi_catch turns panics into
      `false`/`NULL` fallbacks — an abort is a finding);
    - rejected config setters return `false` **and leave instance state
      unchanged** (query a getter before/after to compare);
    - candidate walks after a rejected/failed guess return the pre-failure
      snapshot or an empty list, never garbage pointers;
-   - iterator begin/end: `end` exactly once after `begin` frees; a second
-     `end` or use-after-`end` is UB by contract — the harness must drive
-     those orderings only across a fresh `begin` (the bug classes live in
-     the *caller-visible* mispairings, e.g. `end` without `begin`);
    - fallback parsing: junk bytes into `pinyin_parse_more_*` return the
      parsed-length accounting (0 for nothing consumed) and leave the
      preedit consistent with `pinyin_get_parsed_input_length`.
+   
+   Double-`end` and use-after-`end` are different: the contract makes
+   them UB (the audit's F-6 trust surface), so they are **intentional
+   negative tests**, not postcondition subjects — drive them and judge
+   the outcome through sanitizer observations (any ASan/LSan report is a
+   finding; a clean run under sanitizers is the best available signal,
+   not a proof). Changing the API to require safe fallbacks for those
+   sequences would be a behavioral change to the pinned ABI and is out
+   of scope unless explicitly taken.
 2. **`dict-loader`** — bytes as a `.text`/`.bin` table through
    `oxpinyin-data`'s decode path (the F-3 class), the trieloader
    translated to oxpinyin's formats.

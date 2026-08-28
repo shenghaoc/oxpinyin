@@ -26,7 +26,7 @@ mechanization exists.
 
 | Clause | Disposition |
 |---|---|
-| "Add/upgrade deps without ask" | **assisted**: dependency changes are visible in every PR (Cargo.lock diff) and policy-checked by deny.toml (licenses/advisories/sources), so nothing enters unexamined — but a crates.io addition from an allowed source is not itself flagged; the *ask* is process → stays prose |
+| "Add/upgrade deps without ask" | **assisted**: every dependency change is declared in a Cargo.toml manifest, so the manifest diff in the PR is what makes additions visible; the relevant lockfiles are checked when they change, and deny.toml policy-checks licenses/advisories/sources — but none of that enforces the approval *ask*, which stays prose |
 | "edit frozen SPECs/goldens/CI policy without ask" | **assisted**: golden fixture hashes (existing practice) + CODEOWNERS-style convention; stays prose |
 | "`unsafe` outside allowlisted crates" | **mechanized** (see §5 above) |
 | "silence lints" | **assisted**: `#[allow]`/`--cap-lints` greps in review; a deny-by-default lint surface makes silence *visible* (each allow needs a justification comment per profile) — stays review because legitimate allows exist |
