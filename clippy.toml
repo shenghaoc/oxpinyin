@@ -1,0 +1,4 @@
+# Keep Clippy's suggestion engine (manual-let-else, redundant-field-names,
+# etc.) aligned with the pinned toolchain so local hints never disagree
+# with what CI enforces.
+msrv = "1.97.1"

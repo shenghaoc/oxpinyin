@@ -24,6 +24,8 @@ oracle-ffi = []
 [lints.rust]
 unsafe_code = "allow" # FFI to the real libpinyin; // SAFETY: on every block
 missing_docs = "warn"
+unused_must_use = "deny"
+unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
