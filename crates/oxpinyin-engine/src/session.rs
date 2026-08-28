@@ -2817,11 +2817,11 @@ mod tests {
         assert_eq!(graph.edges().len(), 1);
     }
 
-    use oxpinyin_core::fixture::{FixtureDictionary, FixtureLanguageModel};
     use oxpinyin_core::{
         Cost, Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey,
         UserModel,
     };
+    use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 
     use super::{KeyOutcome, MAX_INPUT_BYTES, Selection, Session};
     use crate::config::EmptyConfigSource;

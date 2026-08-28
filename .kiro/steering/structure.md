@@ -17,6 +17,7 @@ inclusion: always
 | oxpinyin-store | ordered byte-KV seam; redb (default), LMDB, Tkrzw backends | deny | yes | via engine |
 | oxpinyin-datagen | model20 → runtime tables compiler for every backend | deny | yes | never |
 | oxpinyin-corpus | training corpus front-end (zhwiki dump → ngseg raw text) | deny | yes | never |
+| oxpinyin-testsupport | shared test doubles (fixture Dictionary/LanguageModel); dev-only | forbid | yes | never |
 | oxpinyin-segment | training segmenter (`ngseg` reproduction) | deny | yes | never |
 | oxpinyin-counter | training n-gram counter (`gen_ngram` reproduction) | deny | yes | never |
 | oxpinyin-lambda | training λ estimator (`gen_deleted_ngram` + `estimate_interpolation`) | deny | yes | never |

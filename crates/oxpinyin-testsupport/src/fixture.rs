@@ -1,5 +1,6 @@
-// Compiled unconditionally: ~607 lines, no deps, bounded by fixture file size.
-// See fixture-adapters.md.
+// No deps beyond oxpinyin-core; bounded by fixture file size. Originally
+// `oxpinyin-core/src/fixture.rs`; moved to this test-support crate so the
+// production build graph carries no test doubles. See fixture-adapters.md.
 
 //! Fixture-backed [`Dictionary`] and [`LanguageModel`].
 //!
@@ -13,17 +14,16 @@
 //! Parsing takes `&str`, not a path: `oxpinyin-core` performs no I/O. Callers
 //! `include_str!` the fixtures or read them themselves.
 //!
-//! The module is compiled unconditionally rather than hidden behind a cargo
-//! feature. A feature would let `cargo test --workspace` skip these tests
-//! silently whenever nothing happened to enable it, which is a worse trade
-//! than a few hundred lines of parsing that a shipping shell never
-//! constructs.
+//! The doubles live in their own crate, which test crates take as an
+//! ordinary (dev-)dependency. A cargo feature on a shipping crate — the
+//! previous alternative — would let `cargo test --workspace` skip these
+//! tests silently whenever nothing happened to enable it.
 
 use core::fmt;
 use std::collections::BTreeMap;
 
-use crate::cost::{self, UNKNOWN_COST};
-use crate::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
+use oxpinyin_core::cost::{self, UNKNOWN_COST};
+use oxpinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
 
 /// Weight of the bigram term in the interpolated estimate, as a fraction.
 ///
@@ -407,8 +407,8 @@ fn token_field(
 #[cfg(test)]
 mod tests {
     use super::{FixtureDictionary, FixtureError, FixtureLanguageModel};
-    use crate::cost::UNKNOWN_COST;
-    use crate::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
+    use oxpinyin_core::cost::UNKNOWN_COST;
+    use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
 
     const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
     const BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");

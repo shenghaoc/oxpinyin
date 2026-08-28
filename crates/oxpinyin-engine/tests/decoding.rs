@@ -5,11 +5,11 @@
 //! `fixtures/foundation/f-a.txt`, restricted to what the mini vocabulary can
 //! reach.
 
-use oxpinyin_core::fixture::{FixtureDictionary, FixtureLanguageModel};
 use oxpinyin_engine::{
     Candidate, CandidateKind, EmptyConfigSource, KeyInput, LogicalKey, Selection, Session,
     StoragePaths,
 };
+use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 
 const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
 const BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");

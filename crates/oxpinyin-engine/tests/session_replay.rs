@@ -10,11 +10,11 @@
 //! it is Linux-specific: no paths are discovered, no environment is read, no
 //! `cfg(target_os)` appears anywhere beneath it.
 
-use oxpinyin_core::fixture::{FixtureDictionary, FixtureLanguageModel};
 use oxpinyin_core::{Dictionary, SyllableKey};
 use oxpinyin_engine::{
     EmptyConfigSource, EngineError, KeyInput, KeyOutcome, LogicalKey, Session, StoragePaths,
 };
+use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 
 const SCENARIOS: &str = include_str!("../../../fixtures/w4/f-d-session.txt");
 const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");

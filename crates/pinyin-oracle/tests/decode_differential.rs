@@ -14,11 +14,11 @@
 use std::collections::BTreeSet;
 
 use oxpinyin_core::SyllableKey;
-use oxpinyin_core::fixture::{FixtureDictionary, FixtureLanguageModel};
 use oxpinyin_core::graph::SegmentGraph;
 use oxpinyin_core::kbest::k_best;
 use oxpinyin_core::scoring::{Scorer, ScoringConfig};
 use oxpinyin_engine::{EmptyConfigSource, KeyInput, Session, StoragePaths};
+use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 use pinyin_oracle::capture::unescape;
 
 const PATHS: &str = include_str!("../../../fixtures/w4/oracle-paths.txt");
