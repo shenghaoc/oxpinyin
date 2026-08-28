@@ -143,6 +143,26 @@ impl KeyInput {
         }
     }
 
+    /// A keystroke in platform-free terms.
+    ///
+    /// A shell translates its platform events into this shape and hands it to
+    /// [`Session::process_key`](crate::Session::process_key).
+    ///
+    /// ```
+    /// use oxpinyin_engine::{KeyInput, LogicalKey, Modifiers};
+    ///
+    /// // An unmodified character keystroke.
+    /// let n = KeyInput::character('n');
+    /// assert_eq!(n.key(), LogicalKey::Character('n'));
+    ///
+    /// // A non-text key, such as the escape key clearing the composition.
+    /// let escape = KeyInput::plain(LogicalKey::Escape);
+    /// assert_eq!(escape.key(), LogicalKey::Escape);
+    ///
+    /// // A chord carries its modifiers as data.
+    /// let chord = KeyInput::new(LogicalKey::Character('u'), Modifiers::CONTROL, "u");
+    /// assert!(chord.modifiers().contains(Modifiers::CONTROL));
+    /// ```
     /// Builds an unmodified character key press.
     #[must_use]
     pub fn character(character: char) -> Self {
