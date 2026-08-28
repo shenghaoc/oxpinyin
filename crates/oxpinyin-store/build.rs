@@ -51,17 +51,20 @@ mod tkrzw {
                  from source (https://dbmx.net/tkrzw/: ./configure --prefix=DIR && make && \
                  make install) and put DIR/lib/pkgconfig on PKG_CONFIG_PATH, or build \
                  without --features tkrzw.\n\n\
-                 Do not use any Ubuntu libtkrzw-dev package. Ubuntu links every package \
-                 with -Wl,-Bsymbolic-functions, which resolves libtkrzw's own references to \
-                 its own copies of the comparators and so breaks tkrzw's pointer-identity \
-                 protocol: removals store DBM::RecordProcessor::REMOVE as the record's \
-                 value, a NOOP processor stores NOOP's bytes, Rebuild fails with \
-                 CANCELED_ERROR, and tkrzw_dbm_util cannot reopen a TreeDBM it created \
-                 (BROKEN_DATA_ERROR: invalid_key_comparator). Confirmed on noble's \
-                 1.0.27-1.1build1 and resolute's 1.0.32-1build1; the same sources built \
-                 from source, or with Debian's flags, are correct. Check any candidate \
-                 with `readelf -rW .../libtkrzw.so.1 | grep -c KeyComparator` -- zero means \
-                 broken. Tracked upstream of us as Ubuntu LP #2142937; see \
+                 Do not use any Ubuntu libtkrzw-dev package. Ubuntu builds every package \
+                 with two flags that each break tkrzw's pointer-identity protocol, \
+                 independently and silently. -flto duplicates the NOOP/REMOVE backing \
+                 literals across LTO partitions, so removals store \
+                 DBM::RecordProcessor::REMOVE as the record's value and a NOOP processor \
+                 stores NOOP's bytes; -Wl,-Bsymbolic-functions resolves libtkrzw's \
+                 comparator references to its own copies, so tkrzw_dbm_util cannot reopen \
+                 a TreeDBM it created (BROKEN_DATA_ERROR: invalid_key_comparator). \
+                 Confirmed on noble's 1.0.27-1.1build1 and resolute's 1.0.32-1build1. \
+                 Debian enables neither and is correct, as is any ./configure && make \
+                 build. Arch enables LTO only, so it is expected to have the first fault \
+                 and not the second. Run tools/tkrzw/distro-probe.sh against a candidate; \
+                 it checks both. Tracked as Ubuntu LP #2142937, whose attached patch \
+                 disables LTO only and so fixes just the first; see \
                  docs/findings/tkrzw-distro-compat.md."
             );
         };

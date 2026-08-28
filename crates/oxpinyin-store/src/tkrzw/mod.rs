@@ -80,16 +80,18 @@
 //! created, failing `BROKEN_DATA_ERROR: invalid_key_comparator` — the
 //! same divergence, applied to the comparator function pointer.
 //!
-//! The cause is not the package but one flag Ubuntu's dpkg vendor
-//! profile adds to every package it builds,
-//! `-Wl,-Bsymbolic-functions`: it binds libtkrzw's references to its
-//! own copies of those header-inline symbols at link time, dropping
-//! the GOT relocations that would otherwise let a client and the
-//! library agree on one address. Debian adds no such flag, and
-//! Debian's own source package built with Debian's flags is correct;
-//! so are the identical sources built with `./configure && make`, and
-//! this backend's tests pass against them. `build.rs` says as much
-//! when the library is missing, and
+//! The cause is not the package but two flags Ubuntu applies to every
+//! package it builds, which break two different halves of the protocol
+//! independently. `-flto` gives most LTO partitions their own copy of
+//! the `NOOP`/`REMOVE` backing literals, so `value.data() ==
+//! NOOP.data()` fails; `-Wl,-Bsymbolic-functions` binds libtkrzw's
+//! comparator references to its own copies at link time, dropping the
+//! GOT relocations that would otherwise let a client and the library
+//! agree on one address. Neither implies the other: stripping only LTO
+//! fixes `Remove` and leaves every TreeDBM file unreadable. Debian
+//! enables neither and is correct, as are the identical sources built
+//! with `./configure && make`, and this backend's tests pass against
+//! them. `build.rs` says as much when the library is missing, and
 //! `docs/findings/tkrzw-distro-compat.md` records the bisection.
 //!
 //! This backend installs no comparator, so the comparator half does
