@@ -452,3 +452,33 @@ predicted lists), so the standing item remains exactly the recorded
 order divergence — text-ascending by decision, the pin's Tkrzw
 bucket-walk not reproducible without importing the foreign store's
 physical layout (`upstream-divergences.md`).
+
+### What binds that run to model20-59c68e89
+
+`run-uncovered-surface-diff.sh` checks only that `UNCOVERED_SYSTEM`
+holds the five files and that the oracle prefix is on-pin (`:77-92`); it
+never reads a datagen manifest, so the zero-difference result above does
+not by itself establish the system tables' model identity. That identity
+comes from how the dir was provisioned — the `oxpinyin-datagen compile`
+out-dir, which writes all five files the runner wants (`punct.redb`
+included, plus the copied `interpolation2.text`), superseding the
+out-of-tree `punct.redb` assembly the § Reproduction recipe describes:
+
+```bash
+tools/model/fetch-model.sh                      # SHA-verified extract
+export PINYIN_MODEL_DIR="$PWD/target/model20/extracted"
+cargo run -p oxpinyin-datagen -- compile --out-dir target/datagen/redb
+UNCOVERED_SYSTEM="$PWD/target/datagen/redb" \
+tools/bisection/run-uncovered-surface-diff.sh
+```
+
+`fetch-model.sh` aborts unless the archive hashes to its pinned
+`MODEL_SHA256` —
+`59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155` — and
+the compile stamps that same digest into
+`target/datagen/redb/datagen-manifest.txt` as `pin_ref=model20-59c68e89…`
+beside `backend=redb`, `producer=oxpinyin-datagen@<version>` and the
+per-table `records` + `fnv1a64` fingerprints
+(`docs/findings/datagen-model20.md` § Reproducibility). A re-run claiming
+the same model must read that manifest line itself; the runner will not
+do it for you.

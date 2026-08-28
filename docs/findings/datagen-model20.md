@@ -192,7 +192,7 @@ same run. The runner gains a vacuity guard (the reopened
 probe/train/export lines must exist on both sides) and the per-side
 reopened-equals-in-memory window check.
 
-### Re-measured 2026-08-27 — all five surfaces closed on a fresh compile
+### Re-measured 2026-08-27 — all five surfaces on a fresh compile; only B1's order remains
 
 Re-run from a brand-new `compile --out-dir` (manifest-proven redb tables,
 `pin_ref=model20-59c68e89…`) at main `ef473b2`, after the exact-seam
