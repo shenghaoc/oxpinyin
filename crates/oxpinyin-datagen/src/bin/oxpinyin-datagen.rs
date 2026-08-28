@@ -17,6 +17,7 @@
 //! `--mini` reproduces the committed `fixtures/w3/` subset — the
 //! regression recipe, not a shipping path.
 
+#![forbid(unsafe_code)]
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 

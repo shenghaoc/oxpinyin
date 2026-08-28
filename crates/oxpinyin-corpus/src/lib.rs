@@ -13,7 +13,7 @@
 //! oracle. It is verified by well-formedness invariants (tier 1) and the
 //! end-to-end differential through T1→T2→T3→T4a (tier 2). See
 //! `docs/findings/corpus-pipeline.md`. Never ships with the engine.
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod convert;

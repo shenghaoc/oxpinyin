@@ -13,6 +13,7 @@
 //! (the maximal-overlap held-out configuration; see
 //! `docs/findings/lambda-port.md`).
 
+#![forbid(unsafe_code)]
 #![allow(missing_docs)]
 
 use std::fs;

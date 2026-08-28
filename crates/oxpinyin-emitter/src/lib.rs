@@ -11,7 +11,7 @@
 //! read at decode time; `export_interpolation` emits n-gram records
 //! only. A `table.conf` emitter is out of scope (T3 already produces
 //! the λ value).
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod emit;

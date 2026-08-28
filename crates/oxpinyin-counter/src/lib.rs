@@ -6,7 +6,7 @@
 //! produces integer unigram (`token → count`) and bigram
 //! (`(prev, cur) → count`) counts. Never ships with the engine. See
 //! `docs/findings/counter-port.md`.
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod counter;

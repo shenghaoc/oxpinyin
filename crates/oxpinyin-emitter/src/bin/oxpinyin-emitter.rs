@@ -6,6 +6,7 @@
 //! T2's counter (freq-1 floor from `phrase_index.redb`), and writes
 //! `interpolation2.text` in the grammar `parse_interpolation2` reads.
 
+#![forbid(unsafe_code)]
 #![allow(missing_docs)]
 
 use std::fs;

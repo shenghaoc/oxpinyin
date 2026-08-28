@@ -3,7 +3,7 @@
 //! Takes raw UTF-8 (line-oriented) and the pinned system model, and emits
 //! the `token phrase` / `null_token` stream `gen_ngram` consumes. Never
 //! ships with the engine. See `docs/findings/segmenter-port.md`.
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod driver;

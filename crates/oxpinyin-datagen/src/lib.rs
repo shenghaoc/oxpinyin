@@ -62,6 +62,7 @@
 //! duplication. See `docs/findings/datagen-model20.md` for the full
 //! capability map and the equivalence evidence.
 
+#![forbid(unsafe_code)]
 use std::fmt;
 
 pub mod addon;
