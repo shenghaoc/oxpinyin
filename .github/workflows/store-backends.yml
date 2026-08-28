@@ -74,12 +74,12 @@ jobs:
         shell: bash
 
     steps:
-      # debian:testing ships a minimal base without bash, python3, or
-      # git; the runner infrastructure and later steps need all three.
+      # debian:testing ships a minimal base without bash or git; the
+      # runner infrastructure and later steps need both.
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,10 +105,12 @@ jobs:
       - name: Install build dependencies (apt)
         # libtkrzw-dev: the tkrzw pass builds the C++ shim against the distro
         # library through pkg-config; the default/lmdb passes are pure Rust.
+        # libclang-dev: bindgen's runtime dependency for generating tkrzw FFI
+        # bindings from tkrzw_langc.h.
         # Debian's libtkrzw-dev builds tkrzw with compression, so tkrzw.pc
         # demands -llzma -llz4 -lzstd -lz at link time; their -dev packages
         # must be present or every final link dies.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
@@ -192,8 +194,8 @@ jobs:
       - name: Install build dependencies (apt)
         # On Debian, libasan and libubsan ship with gcc and are not separate
         # packages. libtkrzw-dev provides the distro library the shim
-        # compiles against.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
+        # compiles against; libclang-dev is bindgen's runtime dependency.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
 
       - name: Install nightly Rust (sanitizer support)
         run: |
