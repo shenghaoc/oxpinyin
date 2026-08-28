@@ -177,6 +177,14 @@ fn run_case(session: &mut RuntimeSession, case: &Value) -> Result<Value, RunErro
         match session.select(usize::try_from(index).unwrap_or(usize::MAX)) {
             Ok(outcome) => {
                 let completed = matches!(outcome, oxpinyin_engine::Selection::Completed);
+                // Snapshot the post-select state *before* committing: a
+                // completing commit clears the composition, so offset,
+                // preedit, composing and the top texts must be read here to
+                // describe the selection rather than the emptied engine.
+                let offset = session.composition_offset();
+                let preedit = session.preedit().text().to_owned();
+                let composing = session.is_composing();
+                let top = top_texts(session);
                 let commit_text = if completed {
                     session.commit().ok()
                 } else {
@@ -186,10 +194,10 @@ fn run_case(session: &mut RuntimeSession, case: &Value) -> Result<Value, RunErro
                     "type": "select",
                     "index": index,
                     "result": if completed { "completed" } else { "continued" },
-                    "offset": session.composition_offset(),
-                    "preedit": session.preedit().text(),
-                    "composing": session.is_composing(),
-                    "top_candidate_texts": top_texts(session),
+                    "offset": offset,
+                    "preedit": preedit,
+                    "composing": composing,
+                    "top_candidate_texts": top,
                     "commit": commit_text,
                 }));
                 if completed {

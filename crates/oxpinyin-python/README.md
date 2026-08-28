@@ -22,7 +22,8 @@ for candidate in engine.lookup("nihao"):
 
 ## Install
 
-From a checkout (Rust toolchain required; free-threaded Python 3.14):
+From a checkout (Rust toolchain required; standard CPython 3.14 or newer,
+free-threaded CPython 3.15 or newer):
 
 ```sh
 pip install maturin

@@ -72,11 +72,12 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
-          # Free-threaded. `test_shared_engine_is_thread_safe` is
-          # near-vacuous under a GIL — the interpreter serialises the worker
-          # loop, so the shared-engine lock is never actually contended — and
-          # free-threaded is the platform this binding is written for, so it
-          # is the one the binding is tested on.
+          # Free-threaded is the platform this binding is written for, so it
+          # is the one the binding is tested on. `Engine.lookup` detaches the
+          # GIL before it takes the shared-engine mutex, so
+          # `test_shared_engine_is_thread_safe` contends that mutex even under
+          # a GIL; free-threaded is what additionally lets the Python-side
+          # worker loop run concurrently rather than serialised behind the GIL.
           #
           # `3.14t` is setup-python's free-threaded spelling: the `t` suffix
           # combines with x.y, x.y.z or x.y-dev. 3.14 has shipped, so this
@@ -103,11 +104,13 @@ jobs:
         run: cargo clippy --locked -p oxpinyin-python --features bindings --all-targets -- -D warnings
       - name: Build and install the wheel
         working-directory: crates/oxpinyin-python
-        # Pinned to the versions validated locally; build-system requires
-        # only bounds maturin for human-driven builds (>=1.8,<2).
+        # Pinned to the versions validated locally. --no-build-isolation makes
+        # the build use this exact maturin instead of resolving its own from
+        # the build-system requires range (>=1.14,<2) in an isolated env; that
+        # range only bounds human-driven builds.
         run: |
           pip install maturin==1.15.0 pytest==9.1.1
-          pip install .
+          pip install --no-build-isolation .
       - name: Rust runtime tests
         run: cargo test --locked -p oxpinyin-python
       - name: Binding tests and native-vs-Python parity

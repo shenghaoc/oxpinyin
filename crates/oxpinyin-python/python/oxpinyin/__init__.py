@@ -9,8 +9,8 @@ engine produces::
         for candidate in engine.lookup("nihao"):
             print(candidate.text)
 
-See ``docs/python.md`` in the repository for model requirements,
-thread-safety notes, and the full workflow (selection, sentences, learning).
+See this package's ``README.md`` for model requirements, thread-safety
+notes, and the full workflow (selection, sentences, learning).
 """
 
 from oxpinyin._native import (

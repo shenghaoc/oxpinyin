@@ -137,26 +137,23 @@ def test_learning_requires_a_user_dir(make_engine):
     assert engine.save() is False
 
 
-def test_train_and_save_persist_user_state(make_engine, tmp_path, fixture_w3):
+def test_train_and_save_persist_user_state(tmp_path, fixture_w3):
     user_dir = tmp_path / "user-state"
     user_dir.mkdir()  # like capi's TempUserDir: the store opens inside it
     engine = Engine.from_fixture_dir(str(fixture_w3), str(user_dir))
-    try:
-        assert engine.save() is False  # unmodified
-        engine.lookup("nihao")
-        engine.select(0)
-        engine.train()
-        assert engine.save() is True  # dirty → saved
-        assert engine.save() is False  # now clean again
-        assert (user_dir / "user_store.redb").is_file()
+    assert engine.save() is False  # unmodified
+    engine.lookup("nihao")
+    engine.select(0)
+    engine.train()
+    assert engine.save() is True  # dirty → saved
+    assert engine.save() is False  # now clean again
+    assert (user_dir / "user_store.redb").is_file()
 
-        # a second engine over the same user state loads it cleanly
-        reloaded = Engine.from_fixture_dir(str(fixture_w3), str(user_dir))
-        first = [c.text for c in reloaded.lookup("nihao")]
-        second = [c.text for c in reloaded.lookup("nihao")]
-        assert first == second
-    finally:
-        pass
+    # a second engine over the same user state loads it cleanly
+    reloaded = Engine.from_fixture_dir(str(fixture_w3), str(user_dir))
+    first = [c.text for c in reloaded.lookup("nihao")]
+    second = [c.text for c in reloaded.lookup("nihao")]
+    assert first == second
 
 
 def test_engines_are_independent(make_engine):
@@ -184,8 +181,8 @@ def test_shared_engine_is_thread_safe(make_engine):
             for _ in range(40):
                 got = [c.text for c in engine.lookup("nihao")]
                 assert got == expected, "concurrent lookups diverged"
-                engine.composition_offset
-                engine.preedit
+                _ = engine.composition_offset
+                _ = engine.preedit
         except Exception as error:  # noqa: BLE001 - collected below
             errors.append(error)
 
