@@ -192,6 +192,31 @@ same run. The runner gains a vacuity guard (the reopened
 probe/train/export lines must exist on both sides) and the per-side
 reopened-equals-in-memory window check.
 
+### Re-measured 2026-08-27 — all five surfaces closed on a fresh compile
+
+Re-run from a brand-new `compile --out-dir` (manifest-proven redb tables,
+`pin_ref=model20-59c68e89…`) at main `ef473b2`, after the exact-seam
+scheme work (`231267a` + review fixes) landed:
+
+| Differential | Result |
+|---|---|
+| `live-typing` | **IDENTICAL** (full log incl. the bp-* backspace ladder) |
+| `uncovered-surface` (cursor/paging/punct/options — the cursor half of live-typing) | exit 2 with **zero non-PRED_PREFIX diverging lines**; per-prefix predicted-row counts equal and full-list sorted-set diff **0/0/0/0/0/0/0/0** — the order-only B1 residual (`upstream-divergences.md`), nothing else |
+| `nbest-train` | **IDENTICAL** (incl. phase E context-reopen) |
+| `train-dynamic-off` populated | **PASS**, now with the persistence phase (PR #190) |
+| `sentence-surface` parity | **PASS** at the frozen §12 residual 488/385/379 (re-asserted by `sentence_surface_matches_the_declared_residual` over the fresh tables) |
+| `scheme` double / bopomofo / full / full+`SCHEME_DIFF_TONE` | **IDENTICAL** on all four runs — the 2026-08-27 "documented divergence" row above was closed by the exact seam (`bopomofo-spec.md` § exact seam) |
+
+Backend matrix re-run same day, strict, model dir pointed at the pinned
+extract: `cargo test -p oxpinyin-datagen --features lmdb` and
+`--features tkrzw` green — `all_backends_emit_identical_tables`
+(key/value streams identical through `oxpinyin-data`'s real loader),
+`full_compile_matches_the_oracle_derived_export`, and
+`mini_compile_reproduces_frozen_w3_tables`; `compile --backend lmdb` and
+`--backend tkrzw` both produced full table sets. The C ABI itself stays
+on `DefaultStore` (redb) — running it over non-default backends remains
+the deferred Stage-2 interface decision recorded above.
+
 ## libpinyin capability map (data pipeline)
 
 The acceptance lens for datagen is **libpinyin parity**, not crate
