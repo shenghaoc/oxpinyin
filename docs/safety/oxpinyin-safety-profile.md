@@ -92,11 +92,20 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 
 ## Layer 6 — dependency & supply chain (HARD CI GATE)
 
-- `cargo deny check advisories bans licenses sources` on every PR:
-  vulnerabilities = deny; unmaintained/yanked = warn with expiry-dated
-  ignores in `deny.toml` (the deviation registry); licenses allow-list =
-  GPL-3.0-or-later + permissive set; sources = crates.io + github;
-  multiple-versions = warn (informational for Stage-2 size budget).
+- `cargo deny --locked check` on every PR, for the root workspace
+  (default and `--all-features`) and the fuzz workspace's own graph:
+  vulnerabilities = deny; **yanked = deny**; unmaintained advisories are
+  not a level knob in cargo-deny 0.20 — they fail unless recorded as an
+  `ignore` entry in `deny.toml` (the deviation registry, currently one:
+  bincode via heed-types/lmdb, with reason and review-by date), and a CI
+  `cargo tree` assertion keeps the default graph bincode-free so the
+  global ignore cannot mask it leaking beyond the lmdb path; licenses =
+  allow-list (GPL-3.0-or-later + permissive set, NCSA scoped to
+  libfuzzer-sys via `[[licenses.exceptions]]`); **sources = crates.io
+  registry only — git sources disallowed** (`unknown-git = "deny"`,
+  empty `allow-git`); multiple-versions = warn (informational for the
+  Stage-2 size budget). The release tarball that CI executes is
+  checksum-verified before install.
 - No new runtime dependency without ask (constitution) — `deny.toml`
   `bans.deny = [{ name = "..." }]` only if a concrete ban ever becomes
   policy; start empty.

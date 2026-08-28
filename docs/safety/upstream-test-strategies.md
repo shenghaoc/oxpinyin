@@ -137,8 +137,11 @@ with the best historical yield for an IME:
    already pins the scheme-setter behavior):
    - every entry point returns, never aborts (ffi_catch turns panics into
      `false`/`NULL` fallbacks — an abort is a finding);
-   - rejected config setters return `false` **and leave instance state
-     unchanged** (query a getter before/after to compare);
+   - rejected config setters return `false` **and leave the effective
+     parsing behavior unchanged**: probe with a scheme-specific parse
+     (e.g. a double-pinyin key sequence) before and after the rejected
+     setter and compare the instance's parser result — the observable
+     contract is what the decoder sees, not a getter value;
    - candidate walks after a rejected/failed guess return the pre-failure
      snapshot or an empty list, never garbage pointers;
    - fallback parsing: junk bytes into `pinyin_parse_more_*` return the
