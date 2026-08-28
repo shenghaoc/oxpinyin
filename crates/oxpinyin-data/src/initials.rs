@@ -203,6 +203,9 @@ impl InitialAlphabet {
 
 /// Bit shift of slot `position`'s field: slot 0 is the most significant.
 const fn slot_shift(position: usize) -> u32 {
+    // Callers cap `position` at 24 (pack refuses slot >= 25, unpack walks
+    // 0..25); this pins the bound the subtraction relies on.
+    debug_assert!(SLOT_BITS * (position as u32 + 1) <= u128::BITS);
     u128::BITS - SLOT_BITS * (position as u32 + 1)
 }
 

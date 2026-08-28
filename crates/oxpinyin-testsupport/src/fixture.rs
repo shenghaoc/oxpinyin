@@ -306,7 +306,10 @@ impl FixtureLanguageModel {
             let next = token_field(&fields, "next", line, &unigrams)?;
             let count = number(&fields, "count", line)?;
 
-            *totals.entry(previous).or_default() += count;
+            // Saturate like the unigram total above: fixture counts are
+            // untrusted text, and wrapping totals would poison every cost.
+            let current = *totals.entry(previous).or_default();
+            totals.insert(previous, current.saturating_add(count));
             pairs.insert((previous, next), count);
         }
 
@@ -359,11 +362,26 @@ impl FixtureLanguageModel {
             })
             .unwrap_or((0, 1));
 
-        // λ·b/bt + (1 − λ)·u/ut over a common denominator.
+        // λ·b/bt + (1 − λ)·u/ut over a common denominator. The u128
+        // products still overflow when the u64 totals approach their cap,
+        // so mirror the production LM (`data::lm::interpolate_ratio`) and
+        // degrade to UNKNOWN_COST instead of wrapping (audit F-2).
         let (bigram_count, bigram_total) = bigram;
-        let numerator = LAMBDA_NUMERATOR * bigram_count * unigram_total
-            + (LAMBDA_DENOMINATOR - LAMBDA_NUMERATOR) * unigram * bigram_total;
-        let denominator = LAMBDA_DENOMINATOR * bigram_total * unigram_total;
+        let numerator = LAMBDA_NUMERATOR
+            .checked_mul(bigram_count)
+            .and_then(|t| t.checked_mul(unigram_total))
+            .and_then(|t| {
+                (LAMBDA_DENOMINATOR - LAMBDA_NUMERATOR)
+                    .checked_mul(unigram)
+                    .and_then(|u| u.checked_mul(bigram_total))
+                    .and_then(|u| t.checked_add(u))
+            });
+        let denominator = LAMBDA_DENOMINATOR
+            .checked_mul(bigram_total)
+            .and_then(|t| t.checked_mul(unigram_total));
+        let (Some(numerator), Some(denominator)) = (numerator, denominator) else {
+            return UNKNOWN_COST;
+        };
 
         let (numerator, denominator) = cost::reduce_ratio(numerator, denominator);
         cost::surprisal(numerator, denominator)
@@ -406,6 +424,26 @@ fn token_field(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn extreme_counts_saturate_and_degrade_to_unknown_cost() {
+        // Regression (docs/safety/oxpinyin-audit.md F-1/F-2): two
+        // u64::MAX counts sharing a prev used to wrap the bigram total
+        // (overflow panic in debug, silent wrap in release), and the u128
+        // interpolation products overflowed unchecked. Parsing must
+        // saturate the totals and the cost must fall back to
+        // UNKNOWN_COST rather than panic or wrap.
+        let vocab = "token=1\tkeys=ni\ttext=你\tunigram=18446744073709551615\n\
+                     token=2\tkeys=ni\ttext=尼\tunigram=18446744073709551615\n";
+        let bigrams = "prev=1\tnext=2\tcount=18446744073709551615\n\
+                       prev=1\tnext=1\tcount=18446744073709551615\n";
+        let model =
+            FixtureLanguageModel::parse(vocab, bigrams).expect("the extreme-count fixture parses");
+        assert_eq!(
+            model.model_cost(&[PhraseToken::new(1)], &PhraseToken::new(2)),
+            UNKNOWN_COST
+        );
+    }
+
     use super::{FixtureDictionary, FixtureError, FixtureLanguageModel};
     use oxpinyin_core::cost::UNKNOWN_COST;
     use oxpinyin_core::{Dictionary, LanguageModel, PhraseToken, SyllableKey};
