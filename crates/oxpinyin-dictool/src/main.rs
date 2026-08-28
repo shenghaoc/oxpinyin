@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 /// Process the command line and run one command.
-pub fn main() -> ExitCode {
+fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     match command(&args) {
         Ok(()) => ExitCode::SUCCESS,

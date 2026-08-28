@@ -40,6 +40,9 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
+# Grows #[must_use] coverage on value-returning queries (MISRA R.17.7
+# analogue); kept at zero hits — new sites must annotate or consume.
+must_use_candidate = "warn"
 
 [workspace.dependencies]
 oxpinyin-core = { path = "crates/oxpinyin-core" }

@@ -32,6 +32,7 @@ all = { level = "deny", priority = -1 }
 # Mechanizes the "// SAFETY: on every block" constitution clause.
 undocumented_unsafe_blocks = "deny"
 missing_safety_doc = "deny"
+must_use_candidate = "warn"
 
 [[bin]]
 name = "parity-corpus"
