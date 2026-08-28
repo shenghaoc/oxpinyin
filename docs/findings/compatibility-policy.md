@@ -116,6 +116,48 @@ export at all, so a live call would not even link.
 mechanism is a linker version script exposing exactly that set; new
 consumers join it via a documented PR.
 
+## (e) The E2E I/O compatibility rule
+
+The four exceptions say when divergence is permitted. This says what
+compliance *means* everywhere else, and it is the rule the other four are
+exceptions to.
+
+> **E2E I/O COMPATIBILITY RULE:** For every exported symbol in the
+> consumer union, given the same inputs and state, oxpinyin MUST return
+> byte-identical outputs to the pinned libpinyin 2.11.91 at `0c5e80e` —
+> except where one of the four named exceptions (a)/(b)/(c)/(d)
+> explicitly applies. Exporting a symbol that returns a wrong value is
+> worse than not exporting it: the consumer gets a silent wrong answer
+> instead of a link error. **A stub returning `false` is not compliance —
+> it is a defect.**
+>
+> **Corollary:** if implementing a symbol correctly requires an engine
+> change, that engine change is mandatory. The engine serves the ABI, not
+> the other way around.
+>
+> **Verification:** every symbol in the consumer union must have a
+> differential probe that drives it with the same input on both libraries
+> and asserts byte-identical output. A symbol with no probe is
+> unverified, not compliant.
+
+Three consequences worth stating, because each is currently unmet
+somewhere:
+
+1. **The version script is not a compliance mechanism.** Exception (d)
+   decides which symbols are *in* the union; this rule decides what they
+   must *do*. A symbol may be legitimately absent (out of union) or
+   legitimately divergent (a named exception). It may not be present and
+   wrong.
+2. **`pinyin_get_pinyin_key_rest` and `pinyin_get_pinyin_key_rest_positions`
+   are defects today**, not gaps: both are exported and both return
+   `false` unconditionally (`cursor.rs`, "Provisional"). Under this rule
+   they are worse than the five siblings that are simply missing, because
+   a linker error is a diagnosis and a `false` is not.
+3. **Probe coverage is itself a deliverable.** 58 symbols are in the
+   union; the differential suite does not drive all of them. The
+   uncovered ones are unverified rather than compliant, and closing that
+   gap is work, not bookkeeping.
+
 ## The classification table
 
 Every entry in `upstream-divergences.md`, and the one parked entry in
@@ -164,14 +206,25 @@ Reverting it is real work rather than a flag flip: oxpinyin's
 token), while upstream sums **all** paths. The revert has to port the
 all-paths sum, not just re-thread the comparison.
 
-**#16 — why `FORCE_TONE` is class (d) and not a revert target.** The
-double-pinyin parser has a genuinely different `FORCE_TONE` law (a
-length-3 gate not nested under `USE_TONE`,
+**#16 — why `FORCE_TONE` is class (d), and why that is not a criticism
+of the port.** The double-pinyin parser has a genuinely different
+`FORCE_TONE` law (a length-3 gate not nested under `USE_TONE`,
 `pinyin_parser2.cpp:412,448`), and oxpinyin implements only the
 full-pinyin shape. Measured: `FORCE_TONE` appears **zero times** in
 ibus-libpinyin 1.16.5's `src/` and **zero times** in fcitx-libpinyin's
 `src/`. Neither reference consumer can set the bit, so the differing
 law is unreachable through the drop-in surface.
+
+Class (d) here means *correctly out of scope*, not *wrong*. The pin's
+`USE_TONE` branch was ported in #178 and the port is correct and
+internally consistent; the full-pinyin seam matches the pin, and the
+unported double/zhuyin shapes sit outside the consumer boundary rather
+than being an oversight. **This is not a revert target and no work is
+owed on it.** The entry stays in the register only so that a future
+consumer which does set `FORCE_TONE` finds the analysis already done
+instead of rediscovering it — at which point the double/zhuyin law
+enters scope and gets ported with a measured differential, as the (d)
+rule's "until a new consumer demonstrates a need" clause provides.
 
 **#17 — recorded as a revert target, with the evidence against it
 stated.** Both consumers OR the bits unconditionally before every
