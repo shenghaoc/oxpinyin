@@ -5,7 +5,6 @@ use std::os::raw::c_uint;
 use std::path::PathBuf;
 
 use crate::candidates::pinyin_get_candidate;
-use crate::context::pinyin_init_for_fixtures;
 use crate::instance::pinyin_alloc_instance;
 use crate::parse::pinyin_parse_more_full_pinyins;
 use crate::sentence::pinyin_guess_candidates;
@@ -111,7 +110,7 @@ pub(crate) fn candidate(
 pub(crate) fn open(user_dir: &str) -> (*mut PinyinContext, *mut PinyinInstance) {
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
     let user = cstr(user_dir);
-    let context = pinyin_init_for_fixtures(system.as_ptr(), user.as_ptr());
+    let context = crate::context::oxpinyin_init_for_fixtures(system.as_ptr(), user.as_ptr());
     assert!(
         !context.is_null(),
         "fixture init must open the mini fixture"

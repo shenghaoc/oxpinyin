@@ -10,13 +10,13 @@
 
 use std::os::raw::c_int;
 
-use crate::config::{
-    pinyin_set_double_pinyin_scheme, pinyin_set_full_pinyin_scheme, pinyin_set_zhuyin_scheme,
+use pinyin_capi::{
+    GChar, pinyin_parse_more_chewings, pinyin_parse_more_double_pinyins,
+    pinyin_parse_more_full_pinyins, pinyin_set_double_pinyin_scheme, pinyin_set_full_pinyin_scheme,
+    pinyin_set_zhuyin_scheme,
 };
-use crate::parse::pinyin_parse_more_full_pinyins;
-use crate::parse::{pinyin_parse_more_chewings, pinyin_parse_more_double_pinyins};
-use crate::test_support::{TempUserDir, cstr, open};
-use crate::types::GChar;
+
+use crate::common::{TempUserDir, cstr, open};
 
 /// DOUBLE_PINYIN_CUSTOMIZED: upstream aborts inside
 /// `DoublePinyinParser2::set_scheme` (`pinyin_parser2.cpp:611-612`)
@@ -43,8 +43,8 @@ fn double_customized_is_rejected_without_disturbing_the_live_scheme() {
     let ni = cstr("ni");
     assert_eq!(pinyin_parse_more_double_pinyins(instance, ni.as_ptr()), 2);
 
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
+    pinyin_capi::pinyin_free_instance(instance);
+    pinyin_capi::pinyin_fini(context);
 }
 
 /// Out-of-enum double values (0, 7–29, 31+): upstream clears
@@ -76,8 +76,8 @@ fn double_out_of_enum_is_rejected_without_the_fallback_half_mutation() {
         );
     }
 
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
+    pinyin_capi::pinyin_free_instance(instance);
+    pinyin_capi::pinyin_fini(context);
 }
 
 /// ZHUYIN_STANDARD_DVORAK: upstream routes 7 into
@@ -104,8 +104,8 @@ fn zhuyin_standard_dvorak_is_rejected_as_the_fallthrough_abort_slot() {
     let ge = cstr("ge");
     assert_eq!(pinyin_parse_more_chewings(instance, ge.as_ptr()), 2);
 
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
+    pinyin_capi::pinyin_free_instance(instance);
+    pinyin_capi::pinyin_fini(context);
 }
 
 /// Out-of-enum zhuyin values: upstream aborts at the API layer's
@@ -131,8 +131,8 @@ fn zhuyin_out_of_enum_is_rejected_without_the_api_abort() {
         );
     }
 
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
+    pinyin_capi::pinyin_free_instance(instance);
+    pinyin_capi::pinyin_fini(context);
 }
 
 /// Out-of-enum full-pinyin values: upstream aborts inside
@@ -168,8 +168,8 @@ fn full_pinyin_out_of_enum_is_rejected_without_the_abort() {
     assert!(!pinyin_set_full_pinyin_scheme(context, 0));
     assert_eq!(pinyin_parse_more_full_pinyins(instance, luoma.as_ptr()), 4);
 
-    crate::instance::pinyin_free_instance(instance);
-    crate::context::pinyin_fini(context);
+    pinyin_capi::pinyin_free_instance(instance);
+    pinyin_capi::pinyin_fini(context);
 }
 
 /// The full setter contract for every implemented scheme value: 1/2/3
@@ -190,5 +190,5 @@ fn implemented_scheme_values_stick() {
     }
 
     let _: *const GChar = std::ptr::null();
-    crate::context::pinyin_fini(context);
+    pinyin_capi::pinyin_fini(context);
 }

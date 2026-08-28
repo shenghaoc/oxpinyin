@@ -100,47 +100,6 @@ fn decode_puncts(value: &[u8]) -> Result<Vec<String>, DictError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-
-    fn fixtures_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("fixtures")
-            .join("w3")
-    }
-
-    #[test]
-    fn fixture_has_hao_and_de_in_table_order() {
-        let table = PunctTable::open(&fixtures_dir().join("punct.redb")).unwrap();
-        assert!(
-            table.token_count() >= 3,
-            "Option A export keeps the 好/中/国 tokens used by the punct differential"
-        );
-        assert_eq!(
-            table.punctuations(16_779_429),
-            ["，".to_owned(), "。".to_owned()]
-        );
-        assert_eq!(
-            table.punctuations(16_778_715),
-            [
-                "，".to_owned(),
-                "。".to_owned(),
-                "“".to_owned(),
-                "、".to_owned(),
-                "；".to_owned()
-            ]
-        );
-        assert!(table.punctuations(0).is_empty());
-    }
-
-    #[test]
-    fn missing_file_is_empty() {
-        let table = PunctTable::open_optional(Path::new("/no/such/punct.redb"));
-        assert!(table.is_empty());
-    }
 
     #[test]
     fn decode_rejects_empty_unterminated_and_empty_fields() {

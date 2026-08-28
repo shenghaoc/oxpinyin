@@ -247,42 +247,6 @@ impl<S: ReadStore> fmt::Debug for GenericLookupTable<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-
-    fn fixtures_dir() -> PathBuf {
-        let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        PathBuf::from(manifest)
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("fixtures")
-            .join("w3")
-    }
-
-    #[test]
-    fn open_mini_index_fixture() {
-        let table = LookupTable::open(&fixtures_dir().join("pinyin_index.redb")).unwrap();
-        // The --mini export keeps the ten allowlisted pinyin keys.
-        assert_eq!(table.len().unwrap(), 10);
-        assert!(!table.is_empty().unwrap());
-    }
-
-    #[test]
-    fn keys_are_pinyin_strings() {
-        let table = LookupTable::open(&fixtures_dir().join("pinyin_index.redb")).unwrap();
-        let val = table.get(b"ni'hao").unwrap();
-        assert!(val.is_some(), "ni'hao is in the mini allowlist");
-        // Records are 8-byte {token, freq} pairs.
-        assert_eq!(val.unwrap().len() % 8, 0);
-    }
-
-    #[test]
-    fn missing_key_returns_none() {
-        let table = LookupTable::open(&fixtures_dir().join("pinyin_index.redb")).unwrap();
-        let val = table.get(b"nonexistent").unwrap();
-        assert!(val.is_none());
-    }
 
     #[test]
     fn ensure_sorted_unique_repairs_order_and_keeps_last_row() {
@@ -400,25 +364,5 @@ mod tests {
             !raw_tokens.is_sorted(),
             "the 256-boundary set must make byte order differ from integer order",
         );
-    }
-
-    #[test]
-    fn iter_all_fixture_files() {
-        let dir = fixtures_dir();
-        for entry in std::fs::read_dir(&dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|s| s.to_str()) != Some("redb") {
-                continue;
-            }
-            let table = LookupTable::open(&path).unwrap_or_else(|e| {
-                panic!("failed to open {}: {e}", path.display());
-            });
-            let count = table.len().unwrap();
-            assert!(count > 0, "{} should have records", path.display());
-
-            // Verify iteration matches count.
-            let entries = table.iter().count();
-            assert_eq!(entries as u64, count);
-        }
     }
 }

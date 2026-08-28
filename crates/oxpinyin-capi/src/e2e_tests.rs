@@ -25,7 +25,7 @@ use crate::candidates::{
     pinyin_get_candidate, pinyin_is_user_candidate, pinyin_remove_user_candidate, pinyin_train,
 };
 use crate::config::pinyin_mask_out;
-use crate::context::{pinyin_init_for_fixtures, pinyin_save};
+use crate::context::{oxpinyin_init_for_fixtures, pinyin_save};
 use crate::instance::{pinyin_alloc_instance, pinyin_reset};
 use crate::iterators::{
     pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
@@ -241,7 +241,7 @@ fn training_through_the_abi_records_the_pinned_counts() {
 fn training_entry_points_refuse_without_a_user_store() {
     let empty = cstr("");
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
-    let context = pinyin_init_for_fixtures(system.as_ptr(), empty.as_ptr());
+    let context = oxpinyin_init_for_fixtures(system.as_ptr(), empty.as_ptr());
     assert!(
         !context.is_null(),
         "an empty user dir is not an init failure"

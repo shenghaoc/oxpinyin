@@ -61,15 +61,6 @@ pub extern "C" fn oxpinyin_init_for_fixtures(
     init_context(systemdir, userdir, UnigramSource::FlatExportForFixtures)
 }
 
-/// Rust-test alias of [`oxpinyin_init_for_fixtures`].
-#[cfg(test)]
-pub(crate) fn pinyin_init_for_fixtures(
-    systemdir: *const c_char,
-    userdir: *const c_char,
-) -> *mut PinyinContext {
-    oxpinyin_init_for_fixtures(systemdir, userdir)
-}
-
 /// Test-only: overwrite a user-bigram successor count by phrase text.
 ///
 /// Not in `pinyin.h`. Public `pinyin_train` first-seeds 69 (`23 * 3`), so
