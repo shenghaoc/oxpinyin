@@ -54,6 +54,10 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
 /// (3) switch the parse onto their pinned indexes. Other values report
 /// `false` and keep the previous scheme instead of aborting (the
 /// out-of-enum contract-lock is a separate workstream).
+/// Outside the consumer union: compiled out of the shipped artifact
+/// (`--features shipped`) so it exports exactly the union, per exception (d)
+/// of `docs/findings/compatibility-policy.md`.
+#[cfg(not(feature = "shipped"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_full_pinyin_scheme(
     context: *mut PinyinContext,
@@ -167,6 +171,36 @@ pub extern "C" fn pinyin_load_addon_phrase_library(context: *mut PinyinContext, 
         // SAFETY: `context` is non-null and was produced by `pinyin_init`.
         let ctx = unsafe { context_ref(context) };
         ctx.load_addon(index)
+    })
+}
+
+/// Unload an addon phrase library.
+///
+/// # C signature
+/// ```c
+/// bool pinyin_unload_addon_phrase_library(pinyin_context_t * context,
+///                                         guint8 index);
+/// ```
+///
+/// The pin (`pinyin.cpp:124-131`) asserts `index <
+/// PHRASE_INDEX_LIBRARY_COUNT`, calls `m_addon_phrase_index->unload(index)`
+/// and answers `true` unconditionally — including for a library that was
+/// never loaded. This mirrors that, except that the assert becomes `false`
+/// per the availability class of `docs/findings/compatibility-policy.md`.
+///
+/// Live call site: fcitx-libpinyin (`eim.cpp`).
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_unload_addon_phrase_library(
+    context: *mut PinyinContext,
+    index: u8,
+) -> bool {
+    if context.is_null() {
+        return false;
+    }
+    ffi_catch(false, || {
+        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+        let ctx = unsafe { context_ref(context) };
+        ctx.unload_addon(index)
     })
 }
 

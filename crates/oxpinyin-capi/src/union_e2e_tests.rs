@@ -1,7 +1,7 @@
 //! W11 union surface: user/addon candidates and phrase prediction.
 
 use crate::candidates::{pinyin_choose_candidate, pinyin_get_candidate};
-use crate::config::pinyin_load_addon_phrase_library;
+use crate::config::{pinyin_load_addon_phrase_library, pinyin_unload_addon_phrase_library};
 use crate::context::{oxpinyin_test_set_user_bigram, pinyin_init_for_fixtures};
 use crate::instance::pinyin_alloc_instance;
 use crate::iterators::{
@@ -74,6 +74,24 @@ fn addon_library_load_is_idempotent_and_surfaces_addon_candidates() {
     assert!(
         !pinyin_load_addon_phrase_library(context, 15),
         "missing library is false"
+    );
+    // pinyin_unload_addon_phrase_library mirrors the pin (`pinyin.cpp:124-131`):
+    // unconditional `true` in range, including for a library that was never
+    // loaded, and a reload afterwards must succeed again. The pin's
+    // `assert(index < PHRASE_INDEX_LIBRARY_COUNT)` becomes `false` here, per
+    // the availability class of docs/findings/compatibility-policy.md.
+    assert!(pinyin_unload_addon_phrase_library(context, 4));
+    assert!(
+        pinyin_unload_addon_phrase_library(context, 4),
+        "unloading an already-unloaded library is still true, as upstream"
+    );
+    assert!(
+        !pinyin_unload_addon_phrase_library(context, 16),
+        "out of range answers false where the pin asserts"
+    );
+    assert!(
+        pinyin_load_addon_phrase_library(context, 4),
+        "reload after unload succeeds"
     );
 
     let instance = pinyin_alloc_instance(context);

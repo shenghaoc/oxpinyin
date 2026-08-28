@@ -28,6 +28,13 @@ use oxpinyin_user::{
 
 use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, PinyinContext, PinyinInstance};
 
+/// Upstream's phrase-index library count (`novel_types.h:43`, `1<<4`).
+///
+/// The pin asserts an index below this in the addon load/unload path; the
+/// compatibility policy's availability class turns that abort into a
+/// `false`.
+const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
+
 /// File name of the redb user store under the user data directory.
 ///
 /// T3 opens it (the training entry points need somewhere to write); T5 owns
@@ -66,6 +73,17 @@ impl AddonSet {
             return false;
         };
         self.loaded.insert(index, dict);
+        true
+    }
+
+    /// Drops addon library `index`, if it is loaded.
+    ///
+    /// The pin's `unload` is unconditional and answers `true` whether or
+    /// not the library was loaded (`pinyin.cpp:124-131`,
+    /// `FacadePhraseIndex::unload`), so this reports success the same way
+    /// rather than distinguishing the two.
+    fn unload(&mut self, index: u8) -> bool {
+        self.loaded.remove(&index);
         true
     }
 
@@ -220,6 +238,15 @@ impl SharedDict {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         addons.load(index, system_dir)
+    }
+
+    pub(crate) fn unload_addon(&self, index: u8) -> bool {
+        let mut addons = self
+            .0
+            .addons
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        addons.unload(index)
     }
 
     /// The addon phrase item behind `token`, for the choose-promotion path.
@@ -703,6 +730,22 @@ impl CapiContext {
             return false;
         };
         dict.load_addon(index, system_dir)
+    }
+
+    /// Unload addon library `index`.
+    ///
+    /// The pin asserts `index < PHRASE_INDEX_LIBRARY_COUNT`
+    /// (`novel_types.h:43`, 1<<4) and aborts otherwise; per the
+    /// compatibility policy's availability class this answers `false`
+    /// instead. In range, it mirrors the pin's unconditional `true`.
+    pub(crate) fn unload_addon(&self, index: u8) -> bool {
+        if index >= PHRASE_INDEX_LIBRARY_COUNT {
+            return false;
+        }
+        let Some(dict) = self.dict.as_ref() else {
+            return false;
+        };
+        dict.unload_addon(index)
     }
 
     /// §9 phrase-export materialization. [`USER_DICTIONARY`] and
