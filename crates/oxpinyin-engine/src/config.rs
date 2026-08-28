@@ -224,6 +224,25 @@ static UPSTREAM_DEFAULTS: [(&str, Seed); UPSTREAM_DEFAULT_COUNT] = [
 /// pass a layered `Config`, a file-backed test source or its own adapter
 /// without the engine growing a type parameter. The trait grows only by
 /// methods with default implementations.
+/// A source of truth for session settings, read through typed getters
+/// with per-key fallbacks.
+///
+/// [`Config`] is the simplest [`ConfigSource`]: a map that starts from the
+/// pinned upstream defaults.
+///
+/// ```
+/// use oxpinyin_engine::{Config, ConfigSource, ConfigValue};
+///
+/// let mut config = Config::default();
+/// assert_eq!(config.get_int("lookup-table-page-size"), Some(5));
+///
+/// config.set("lookup-table-page-size", ConfigValue::Int(9));
+/// assert_eq!(config.get_int("lookup-table-page-size"), Some(9));
+///
+/// // A missing key reads as `None`, not as a fabricated default.
+/// assert_eq!(config.get_int("no-such-key"), None);
+/// ```
+///
 pub trait ConfigSource {
     /// The value stored for `key`, or `None` when the source does not carry
     /// it.
