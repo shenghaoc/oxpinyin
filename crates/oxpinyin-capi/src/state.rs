@@ -19,6 +19,13 @@ use oxpinyin_engine::{
     normalize_lookup_offset,
 };
 pub(crate) use oxpinyin_runtime::USER_STORE_FILE;
+
+/// Upstream's phrase-index library count (`novel_types.h:43`, `1<<4`).
+///
+/// The pin asserts an index below this in the addon load/unload path; the
+/// compatibility policy's availability class turns that abort into a
+/// `false`.
+const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
 use oxpinyin_runtime::{Runtime, RuntimeSession};
 pub(crate) use oxpinyin_runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
 use oxpinyin_user::{
@@ -218,6 +225,22 @@ impl CapiContext {
     pub(crate) fn load_addon(&self, index: u8) -> bool {
         match self.runtime.as_ref() {
             Some(runtime) => runtime.load_system_addon(index),
+            None => false,
+        }
+    }
+
+    /// Unload addon library `index`.
+    ///
+    /// The pin asserts `index < PHRASE_INDEX_LIBRARY_COUNT`
+    /// (`novel_types.h:43`, 1<<4) and aborts otherwise; per the
+    /// compatibility policy's availability class this answers `false`
+    /// instead. In range, it mirrors the pin's unconditional `true`.
+    pub(crate) fn unload_addon(&self, index: u8) -> bool {
+        if index >= PHRASE_INDEX_LIBRARY_COUNT {
+            return false;
+        }
+        match self.runtime.as_ref() {
+            Some(runtime) => runtime.unload_system_addon(index),
             None => false,
         }
     }

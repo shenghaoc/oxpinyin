@@ -4,7 +4,11 @@ use std::os::raw::c_char;
 use std::ptr;
 
 use crate::ffi::{cstr_to_owned_lossy, ffi_catch};
-use crate::state::{CapiContext, UnigramSource, box_context, context_mut, context_ref};
+use crate::state::{CapiContext, UnigramSource, box_context, context_mut};
+// Only the harness-gated fixture hooks below take a shared context ref; the
+// shipped build (--no-default-features) does not compile them.
+#[cfg(not(feature = "shipped"))]
+use crate::state::context_ref;
 use crate::types::PinyinContext;
 
 fn init_context(
@@ -53,6 +57,10 @@ pub extern "C" fn pinyin_init(
 /// Not in `pinyin.h` and not part of the W8 51-symbol surface. C tools
 /// `dlsym` this name; the public [`pinyin_init`] path never takes the
 /// flat-export fallback.
+/// Outside the consumer union: compiled out of the shipped artifact
+/// (`--features shipped`) so it exports exactly the union, per exception (d)
+/// of `docs/findings/compatibility-policy.md`.
+#[cfg(not(feature = "shipped"))]
 #[unsafe(no_mangle)]
 #[must_use]
 pub extern "C" fn oxpinyin_init_for_fixtures(
@@ -68,6 +76,10 @@ pub extern "C" fn oxpinyin_init_for_fixtures(
 /// the prediction filter edge (`pinyin.cpp:2311`, `:2349-2350`) cannot be
 /// reached through the C ABI. Looks up `prev` and `cur` in the user
 /// phrase index.
+/// Outside the consumer union: compiled out of the shipped artifact
+/// (`--features shipped`) so it exports exactly the union, per exception (d)
+/// of `docs/findings/compatibility-policy.md`.
+#[cfg(not(feature = "shipped"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn oxpinyin_test_set_user_bigram(
     context: *mut PinyinContext,
