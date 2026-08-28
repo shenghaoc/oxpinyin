@@ -13,11 +13,10 @@ workspace = true
 [dependencies]
 redb = { workspace = true }
 heed = { workspace = true, optional = true }
-cxx = { workspace = true, optional = true }
 
 [build-dependencies]
-cxx-build = { workspace = true, optional = true }
+bindgen = { workspace = true, optional = true }
 
 [features]
 lmdb = ["dep:heed"]
-tkrzw = ["dep:cxx", "dep:cxx-build"]
+tkrzw = ["dep:bindgen"]

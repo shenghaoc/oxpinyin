@@ -7,9 +7,8 @@
 //! cargo run -p oxpinyin-store --release --example backend_bench --features lmdb
 //! ```
 //!
-//! The tkrzw column needs a working libtkrzw, which today means one built
-//! from source — see `src/tkrzw/mod.rs` for why the Ubuntu package is not
-//! one:
+//! The tkrzw column needs a working libtkrzw with its C API header
+//! (`tkrzw_langc.h`), discoverable via `pkg-config`:
 //!
 //! ```text
 //! PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig \
