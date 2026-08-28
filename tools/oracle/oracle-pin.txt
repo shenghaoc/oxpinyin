@@ -10,9 +10,26 @@ schema=oracle-provisioning-pin-v1
 # each run linked), not the frozen oracle chain.
 libpinyin_tag=2.11.91
 libpinyin_commit=0c5e80e1200f84fab185d1c5bde458b770a0636c
-libpinyin_archive_sha256=eb25890dab0072eb0744c9ee1bc152051143b7bc23aea2a424792a9b1b84bdcb
 ibus_libpinyin_tag=1.16.5
 ibus_libpinyin_commit=2d2cdac0187101aa0cd7ac06694a8340721ddfbb
-ibus_libpinyin_archive_sha256=ab6d6cc371e4ec0cda1471ef968e9545de69a404958ecfb4e68545ef4b328646
+# Each pinned commit is published as TWO different files, so there are two
+# acceptable archive digests per component -- not two mirrors of one byte
+# stream. build-oracle.sh checks whichever it fetches against that archive's
+# own digest and records the one it used in the built prefix's oracle-pin.txt.
+#
+#   dist   upstream's `make dist` release tarball, served byte-identically by
+#          SourceForge (debian/watch's source) and by the Debian/Ubuntu
+#          archive as the package .orig.tar.gz.
+#   github GitHub's generated archive of the tag -- the original pin source.
+#
+# Both dist tarballs self-certify: their generated ChangeLog begins
+# `commit <sha>` naming the commit pinned above, and 163 of 164 git-tracked
+# files are byte-identical to a clone of that tag (the exception being that
+# generated ChangeLog). docs/findings/oracle-provisioning.md has the
+# measurement.
+libpinyin_archive_sha256_dist=ff3047b19d17b82e26891abbe1bb354a9da3f66393c07c71072de0615e21788c
+libpinyin_archive_sha256_github=eb25890dab0072eb0744c9ee1bc152051143b7bc23aea2a424792a9b1b84bdcb
+ibus_libpinyin_archive_sha256_dist=cc652d48e68b8b03afc5e9e08509676aee89f9d492b9a3897cd028bcc800ce31
+ibus_libpinyin_archive_sha256_github=ab6d6cc371e4ec0cda1471ef968e9545de69a404958ecfb4e68545ef4b328646
 model_archive_sha256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
 dbm=Tkrzw
