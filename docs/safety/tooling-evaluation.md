@@ -508,7 +508,10 @@ truth with CI). Proposing a `pre-commit` that runs `cargo fmt --check` on
 staged `.rs` files only (~0.3s) plus the existing hook. Full `clippy
 --all-targets` (≈ minutes cold) as pre-commit would get `--no-verify`'d into
 oblivion — hooks are a convenience, not a boundary; CI stays authoritative.
-**Verdict: ADOPT (fmt-only pre-commit, documented as bypassable).**
+**Verdict: ADOPT (fmt-only pre-commit, documented as bypassable)** —
+implemented as PR-1g and then **dropped in review** as unnecessary: CI's
+fmt gate is seconds-fast and the hook added no enforcement. The .vscode
+suggestion met the same fate; editors can set it locally.
 
 ## 23. Toolchain / MSRV impact summary
 

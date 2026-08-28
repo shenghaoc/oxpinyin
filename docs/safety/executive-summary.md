@@ -29,7 +29,7 @@ biggest rules to hard failures.
    capi/oracle — makes "SAFETY per block" (195/195 today) enforced, not
    admired.
 3. Panic containment denies (`unwrap_used`, `expect_used`, `panic`,
-   `panic_in_result_fn`) via `cfg_attr(not(test))` in the 6 library crates
+   `panic_in_result_fn`) via `cfg_attr(not(test))` in the eleven library crates (incl. capi, oracle, runtime, python, datagen)
    — locks in the existing zero-panic state at zero churn (measured).
 4. `cargo deny` (advisories/bans/licenses/sources) as the sole supply-chain
    PR gate — closes the only fully unenforced layer.
@@ -67,6 +67,9 @@ biggest rules to hard failures.
 
 ## B. HARD compile/CI failures (proposed)
 
+`must_use_candidate` (warn-level in Cargo, but CI's blanket `-D warnings`
+promotes any new hit to a merge blocker — kept at zero hits) ·
+
 `forbid(unsafe_code)` ×9 crates · undocumented unsafe blocks / missing
 safety docs (capi, oracle) · `unwrap`/`expect`/`panic!` in library crates ·
 dropped `#[must_use]` results · known-vulnerable or yanked dependencies ·
@@ -76,7 +79,7 @@ and quietly covering ~10 MISRA rules).
 
 ## C. Remain WARNINGS
 
-Cast triple (truncation/precision/sign-loss) · `must_use_candidate` ·
+Cast triple (truncation/precision/sign-loss) ·
 `missing_errors_doc`/`missing_panics_doc`/`missing_docs` ·
 `unreadable_literal`, `map_unwrap_or`,
 `redundant_closure_for_method_calls` · duplicate dependency versions ·
@@ -179,7 +182,7 @@ untouched.
 
 PR gate: +~2 min (deny job ~40–90s; extra fuzz smoke ~30s; lint deltas
 ~0). Extended (label): +5–8 min. Nightly: ~30–60 min single runner.
-Release: +~15 min. Local pre-commit: <1 s.
+Release: +~15 min. (The fmt-only pre-commit hook proposed for local runs was dropped in review.)
 
 ## T. What cannot realistically be mechanized
 
