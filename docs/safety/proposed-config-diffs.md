@@ -114,7 +114,8 @@ so the panic-abstinence denies live as a crate attribute that
 +                           clippy::panic, clippy::panic_in_result_fn))]
 ```
 
-Applied to core/engine/user/data/store/segment. Note: if `clippy::panic`
+Applied to the eleven library crates (core/engine/user/data/store/segment
++ runtime/python/datagen/capi/oracle). Note: if `clippy::panic`
 fires on the two commented `assert_eq!` bug-trips in `parser.rs`, they get a
 targeted `#[allow(clippy::panic)]` carrying the existing justification —
 that is the deviation record, not a policy hole. Measured: these crates are
@@ -146,15 +147,16 @@ all-features = false          # audit the default build; feature lanes re-run wi
 [advisories]
 version = 2
 yanked = "deny"
-# Deviation registry: every ignore needs a reason and an expiry (review date).
+# Deviation registry: cargo-deny 0.20's ignore schema takes only `id` and
+# `reason` — the review-by date goes inside the reason string.
 ignore = [
-    # { id = "RUSTSEC-0000-0000", reason = "...", expired = "2026-12-31" },
+    # { id = "RUSTSEC-0000-0000", reason = "...; review by YYYY-MM-DD" },
 ]
 
 [bans]
 multiple-versions = "warn"    # informational: Stage-2 size-budget signal
 deny = []                     # start empty; constitution's "no IME crates" stays a review rule
-highlight = "simplest"
+highlight = "simplest-path"   # 0.20 rejects "simplest"
 
 [licenses]
 version = 2
@@ -214,7 +216,7 @@ stateful `capi-commands` ABI fuzzer (libchewing `fuzzer.rs` shape — drives
 the 55-symbol ABI with adversarial handle lifecycles; runs in the
 Linux-only fuzz job).
 
-## 8. `.githooks/pre-commit` (new, PR-1)
+## 8. `.githooks/pre-commit` — **dropped in review** (PR-1g)
 
 ```sh
 #!/bin/sh
@@ -232,7 +234,7 @@ echo "$staged" | xargs rustfmt --check --edition 2024 >/dev/null 2>&1 || {
 
 (plus keep `core.hooksPath .githooks` as documented in CONTRIBUTING.md)
 
-## 9. `.vscode/settings.json` (PR-1, optional)
+## 9. `.vscode/settings.json` — **dropped in review** (PR-1g)
 
 ```json
 {

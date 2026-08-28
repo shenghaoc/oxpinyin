@@ -122,10 +122,31 @@ with the best historical yield for an IME:
    the FFI conversion/ownership layer that the parser target cannot
    reach. Implementation note: lives in the existing nightly `fuzz/`
    workspace (Linux-only matches the CI fuzz job); the harness itself is
-   the one place where fuzz code legitimately links capi; `ffi_catch`
-   means findings surface as aborts/leaks (ASan/LSan) rather than silent
-   fallbacks — run the soak with `-fsanitize=address` detection enabled by
-   libFuzzer default.
+   the one place where fuzz code legitimately links capi. Sanitizers:
+   the pinned cargo-fuzz 0.13.2 compiles targets with
+   `-fsanitize=address` by default, and on Linux ASan's LeakSanitizer is
+   on by default too, so leaks and heap errors surface without extra
+   flags. Native FFI coverage is **planned, not current**: it exists only
+   once this target and its CI command land — today's `parser` target
+   never links the C ABI.
+   
+   Semantic postconditions to assert per command (define before
+   implementing; reuse the contract expectations in
+   `crates/oxpinyin-capi/src/contract_tests.rs`, which already pins the
+   scheme-setter behavior):
+   - every entry point returns, never aborts (ffi_catch turns panics into
+     `false`/`NULL` fallbacks — an abort is a finding);
+   - rejected config setters return `false` **and leave instance state
+     unchanged** (query a getter before/after to compare);
+   - candidate walks after a rejected/failed guess return the pre-failure
+     snapshot or an empty list, never garbage pointers;
+   - iterator begin/end: `end` exactly once after `begin` frees; a second
+     `end` or use-after-`end` is UB by contract — the harness must drive
+     those orderings only across a fresh `begin` (the bug classes live in
+     the *caller-visible* mispairings, e.g. `end` without `begin`);
+   - fallback parsing: junk bytes into `pinyin_parse_more_*` return the
+     parsed-length accounting (0 for nothing consumed) and leave the
+     preedit consistent with `pinyin_get_parsed_input_length`.
 2. **`dict-loader`** — bytes as a `.text`/`.bin` table through
    `oxpinyin-data`'s decode path (the F-3 class), the trieloader
    translated to oxpinyin's formats.

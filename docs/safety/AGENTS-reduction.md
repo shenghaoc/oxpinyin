@@ -26,7 +26,7 @@ mechanization exists.
 
 | Clause | Disposition |
 |---|---|
-| "Add/upgrade deps without ask" | **assisted**: Cargo.lock diff is visible in every PR; deny.toml sources/bans make *silent* additions impossible; the *ask* is process → stays prose |
+| "Add/upgrade deps without ask" | **assisted**: dependency changes are visible in every PR (Cargo.lock diff) and policy-checked by deny.toml (licenses/advisories/sources), so nothing enters unexamined — but a crates.io addition from an allowed source is not itself flagged; the *ask* is process → stays prose |
 | "edit frozen SPECs/goldens/CI policy without ask" | **assisted**: golden fixture hashes (existing practice) + CODEOWNERS-style convention; stays prose |
 | "`unsafe` outside allowlisted crates" | **mechanized** (see §5 above) |
 | "silence lints" | **assisted**: `#[allow]`/`--cap-lints` greps in review; a deny-by-default lint surface makes silence *visible* (each allow needs a justification comment per profile) — stays review because legitimate allows exist |
@@ -51,9 +51,13 @@ license half; the method text stays.
 
 ```diff
  5. `unsafe`: `forbid` in oxpinyin-core; `deny` in data/user/engine …
-+5. The unsafe allowlist lives in each crate's `[lints]` (forbid everywhere
-+   except capi/oracle and store's lmdb/tkrzw modules); SAFETY-comment
-+   coverage is enforced by Clippy — CI will tell you; this line is context.
++5. The allowlist is mechanical: safe crates carry crate-root
++   `#![forbid(unsafe_code)]` (or `[lints]` tables, as oxpinyin-python and
++   oxpinyin-runtime do); `data` stays `#![deny]` reserving its documented
++   mmap exception; store scopes allows to lmdb.rs/tkrzw; capi/oracle allow
++   with `// SAFETY:` per block, enforced by Clippy's
++   undocumented_unsafe_blocks/missing_safety_doc — CI will tell you; this
++   line is context, not the gate.
 ```
 
 Net effect: roughly 15% of AGENTS.md's normative lines become pointers to

@@ -52,7 +52,13 @@ allow = [
     "BSL-1.0",
     "OpenSSL",
     "CDLA-Permissive-2.0",
+    # libfuzzer-sys ("(MIT OR Apache-2.0) AND NCSA"); OSI-approved,
+    # FSF-free — only reachable from the fuzz workspace.
+    "NCSA",
 ]
+# Workspace members that never publish (the fuzz harness) carry no
+# license field; they are ours, not third-party code.
+private = { ignore = true }
 confidence-threshold = 0.93
 
 [sources]

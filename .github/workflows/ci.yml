@@ -159,15 +159,33 @@ jobs:
       - name: Install pinned cargo-deny
         run: |
           ver=0.20.2
-          curl -sSfL "https://github.com/EmbarkStudios/cargo-deny/releases/download/${ver}/cargo-deny-${ver}-x86_64-unknown-linux-musl.tar.gz" | tar xz
+          # Verify the release archive before executing anything from it:
+          # pin the expected digest and fail the job on mismatch.
+          sum=9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+          curl -sSfL -o cargo-deny.tar.gz "https://github.com/EmbarkStudios/cargo-deny/releases/download/${ver}/cargo-deny-${ver}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${sum}  cargo-deny.tar.gz" | sha256sum -c -
+          tar xzf cargo-deny.tar.gz
           mkdir -p ~/.local/bin
           install -m755 "cargo-deny-${ver}-x86_64-unknown-linux-musl/cargo-deny" ~/.local/bin
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       # Default-feature tree first, then the feature-gated dependency
-      # subtrees (lmdb/tkrzw, oracle-ffi) — one ignore entry in deny.toml
-      # currently covers bincode under `lmdb`.
-      - run: cargo deny --log-level error check
-      - run: cargo deny --all-features --log-level error check
+      # subtrees (lmdb/tkrzw, oracle-ffi). --locked pins both graphs to
+      # the committed lockfiles. The fuzz workspace has its own lock and
+      # its own graph (libfuzzer-sys), checked the same way.
+      - run: cargo deny --locked --log-level error check
+      - run: cargo deny --locked --all-features --log-level error check
+      - run: cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check
+      # The RUSTSEC-2025-0141 (bincode) ignore in deny.toml is justified
+      # by the heed-types path behind the non-default `lmdb` feature.
+      # ignores are global, so assert the default graph stays bincode-free:
+      # if bincode ever leaks into the default build, this fails loudly
+      # instead of being silently masked by the ignore entry.
+      - name: Assert the default graph is bincode-free
+        run: |
+          if cargo tree --workspace -i bincode >/dev/null 2>&1; then
+            echo '::error::bincode is reachable in the default dependency graph; the RUSTSEC-2025-0141 ignore covers the lmdb path only' >&2
+            exit 1
+          fi
 
   fuzz:
     runs-on: ubuntu-latest

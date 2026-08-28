@@ -24,7 +24,7 @@ warning, SCHED = scheduled analysis, REV = human review.
 | Rule | Today | Proposed | Mechanism |
 |---|---|---|---|
 | Public fallible APIs return Result/Option | REV (constitution §4) | REV + partial | type convention; `clippy::result_unit_err` already denied |
-| No `unwrap`/`expect`/`panic!` in library code | factual (0 hits) but unenforced | HGATE | `clippy::unwrap_used`/`expect_used`/`panic`/`panic_in_result_fn` denied at crate root of core/engine/user/data/store/segment; `#![allow]` only inside `#[cfg(test)]` with justification |
+| No `unwrap`/`expect`/`panic!` in library code | factual (0 hits) but unenforced | HGATE | `clippy::unwrap_used`/`expect_used`/`panic`/`panic_in_result_fn` denied at the crate root of the eleven library crates — core/engine/user/data/store/segment plus runtime, python, datagen, capi and pinyin-oracle; `not(test)` exempts inline `#[cfg(test)]` modules (see §J note on why the exemption is deliberate) |
 | Release `assert`s only as documented bug-trips | factual (2, commented) | REV + comment anchor | review checklist keyed on the two `parser.rs` sites |
 | No panic crosses the C ABI | near-factual (`ffi_catch` on 50/55) | HGATE after F-7 | review + contract tests; Rust ≥1.81 abort-at-ABI is backstop, not license |
 | Tests/benches/examples unrestricted | yes | yes | explicit non-goal to lint them |

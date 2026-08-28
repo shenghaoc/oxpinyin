@@ -71,11 +71,12 @@ Safe-Rust column = 61 Yes / **18 Partial** / 144 No; Rust category =
 | | **Total** | **22** | **201** | **223** |
 
 Roughly: for oxpinyin — whose shipped surface is overwhelmingly safe Rust with
-a thin, audited FFI layer — **73% of MISRA C:2025's guidelines are moot by
-language design**, **27% of the unsafe-only remainder collapses onto three
-crates** (`oxpinyin-capi`, `pinyin-oracle`, `oxpinyin-store` behind features),
-and the actionable residue for safe crates is the 61-guideline Table 1, most of
-which safe Rust + the existing workspace lints already cover.
+a thin, audited FFI layer — **42% (94) of MISRA C:2025's guidelines are moot
+by language design** (Table 3), **30% (68) apply only where unsafe/FFI code
+exists and there collapses onto three crates** (`oxpinyin-capi`,
+`pinyin-oracle`, `oxpinyin-store` behind features — Table 2 guidance stays
+live for exactly those), and **27% (61) is the safe-Rust residue of Table 1**,
+most of which safe Rust + the existing workspace lints already cover.
 
 ## Classification scheme
 

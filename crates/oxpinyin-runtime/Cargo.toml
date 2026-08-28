@@ -25,3 +25,6 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
+# Local table: stops workspace inheritance, so restate the
+# workspace-only additions here as well.
+must_use_candidate = "warn"
