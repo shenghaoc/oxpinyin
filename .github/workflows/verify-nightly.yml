@@ -34,6 +34,10 @@ jobs:
       # setarch ASLR-off wrapper below needs.
     container:
       image: debian:testing # deliberately unpinned; see the header comment
+      # The override the comment above exists for: without it Docker's
+      # default seccomp profile blocks personality(2) and setarch -R dies
+      # with EPERM before any target runs.
+      options: --security-opt seccomp=unconfined
     defaults:
       run:
         shell: bash
