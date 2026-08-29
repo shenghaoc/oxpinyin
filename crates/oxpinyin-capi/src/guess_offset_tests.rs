@@ -20,6 +20,7 @@ use crate::parse::{
     pinyin_parse_more_full_pinyins,
 };
 use crate::sentence::pinyin_guess_candidates;
+use crate::sentence::pinyin_guess_sentence;
 use crate::state::instance_ref;
 use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
 use crate::types::{LookupCandidate, PinyinInstance};
@@ -499,6 +500,54 @@ fn a_choose_then_guess_covers_the_remaining_group() {
         at_cursor,
         "ibus's post-separator begin answers the same remaining group"
     );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+#[test]
+fn a_guess_at_a_mid_syllable_offset_answers_the_empty_column() {
+    // The pin's empty matrix column: no key of ni|hao starts at bytes
+    // 1/3/4, so `pinyin_guess_candidates` there answers true — the parse
+    // is non-empty, the empty-matrix refusal does not fire — with no
+    // phrase rows (the suffix re-parse the engine once served must stay
+    // gone), then the stored n-best row alone once a sentence lookup
+    // ran. The syllable start at byte 2 keeps its window throughout
+    // (measured against the pin: nihao@1/3/4 → true n=0 fresh, true n=1
+    // 你好 after `pinyin_guess_sentence`; nihao@2 → the hao window).
+    let user_dir = TempUserDir::new("guess-mid-syllable");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    assert_eq!(parse(instance, "nihao"), 5);
+    for offset in [1usize, 3, 4] {
+        assert!(
+            pinyin_guess_candidates(instance, offset, DEFAULT_SORT),
+            "offset {offset} answers true: the parse is non-empty"
+        );
+        assert_eq!(
+            texts(instance),
+            Vec::<String>::new(),
+            "offset {offset}: no suffix re-parse rows at the empty column"
+        );
+    }
+    assert!(pinyin_guess_candidates(instance, 2, DEFAULT_SORT));
+    assert!(
+        texts(instance).iter().any(|text| text == "\u{597d}"),
+        "offset 2 keeps the hao window"
+    );
+
+    assert!(pinyin_guess_sentence(instance));
+    for offset in [1usize, 3, 4] {
+        assert!(
+            pinyin_guess_candidates(instance, offset, DEFAULT_SORT),
+            "offset {offset} still answers true after the sentence lookup"
+        );
+        assert_eq!(
+            texts(instance),
+            vec!["\u{4f60}\u{597d}".to_owned()],
+            "offset {offset}: the n-best row alone at the empty column"
+        );
+    }
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);

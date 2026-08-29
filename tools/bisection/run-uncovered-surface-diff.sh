@@ -56,13 +56,16 @@ echo "capi: $CAPI_SO"
 
 # Prerequisite, not a warning: every phase's probes only mean something
 # when both sides actually produced that phase's surfaces. A missing page
-# walk, punct prediction, profile probe, or cursor table means the run
-# compared nothing for that surface and must not report IDENTICAL.
+# walk, punct prediction, profile probe, cursor table, or raw-offset probe
+# means the run compared nothing for that surface and must not report
+# IDENTICAL.
 probe_surfaces() {
     grep -q '^page-r0-shi:page=0' "$1" && \
     grep -q '^punct-hao:predict=' "$1" && \
     grep -q '^opt:0x60-ni3hao3@0:parsed=' "$1" && \
-    grep -q '^cur:0 aux=' "$1"
+    grep -q '^cur:0 aux=' "$1" && \
+    grep -q '^raw:nihao@3:guess=1' "$1" && \
+    grep -q '^raw:nihao@3:n=0' "$1"
 }
 
 PREFIX="${PINYIN_ORACLE_PREFIX:-$HOME/.local/opt/pinyin-oracle}"
@@ -123,14 +126,14 @@ echo "oracle: ok"
 
 echo "--- prerequisite: every phase's surface is active on both sides ---"
 if ! probe_surfaces "$CAPI_LOG" || ! probe_surfaces "$ORACLE_LOG"; then
-    echo "FAIL: a phase surface is inactive (paging / punct / profiles / cursor)"
-    echo "  A missing page walk, punct prediction, profile probe, or cursor"
-    echo "  table means that phase compared nothing."
+    echo "FAIL: a phase surface is inactive (paging / punct / profiles / cursor / raw offsets)"
+    echo "  A missing page walk, punct prediction, profile probe, cursor"
+    echo "  table, or raw-offset probe means that phase compared nothing."
     exit 1
 fi
-echo "all four phase surfaces active on both sides"
+echo "all five phase surfaces active on both sides"
 
-echo "--- differential (full log: paging + punct + profiles + cursor) ---"
+echo "--- differential (full log: paging + punct + profiles + cursor + raw offsets) ---"
 diff_status=0
 diff -u "$ORACLE_LOG" "$CAPI_LOG" > /dev/null || diff_status=$?
 if (( diff_status > 1 )); then

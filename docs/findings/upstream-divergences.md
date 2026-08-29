@@ -461,7 +461,7 @@ system row now always precedes the user row, so with a populated user
 store the **token recorded on the surviving dedup row** can differ.
 Text, candidate type and counts cannot.
 
-### Mid-syllable candidate-lookup offset: empty matrix column vs suffix re-parse
+### Mid-syllable candidate-lookup offset: closed — the pin's empty-column law, not the suffix re-parse
 
 - **Upstream source cite:** `src/pinyin.cpp:2224-2262`
   (`pinyin_guess_candidates` anchors `start = offset` and runs
@@ -470,41 +470,69 @@ Text, candidate type and counts cannot.
   only on a lone zero-key column — one past an apostrophe run — never on an
   ordinary mid-syllable offset); `src/pinyin.cpp:3006-3027`
   (`pinyin_get_pinyin_offset` walks the cursor back to the nearest non-empty
-  column before any caller reaches the guess).
-- **Mechanism:** the pin's matrix has one column per input byte, but a column
-  carries a key only where a syllable *begins*; mid-syllable byte positions are
-  empty columns. `search_matrix` from an empty `start` column matches nothing,
-  so `pinyin_guess_candidates` at a mid-syllable offset returns only the
-  prepended n-best sentence rows and no phrase rows — measured on `nihao`
-  (parity word `0x18a`, after `pinyin_guess_sentence`): offset 3 → `n=1` (`你好`
-  alone), offsets 1 and 4 likewise `n=1`. The pin never *aborts* there; only
-  one past a lone apostrophe column trips the `_check_offset` assert. In normal
-  use the pin is never handed a mid-syllable offset — the frontend routes every
-  cursor through `pinyin_get_pinyin_offset`, which snaps it to the syllable
-  start.
-- **What oxpinyin does instead:** the candidate window is rebuilt from the raw
-  byte suffix `&raw[offset..]` (`Session::candidates_at` → `Session::scan_window`,
-  the same construction `refresh` runs at the composition offset), so a
-  mid-syllable offset re-parses the tail as a fresh composition and returns that
-  tail's phrases — measured on `nihao`: offset 3 → `n=106` (`奥/澳/凹/傲/…`, the
-  `ao` re-parse), offset 4 → `n=6` (`哦/噢/…`, the `o` re-parse). At every
-  syllable-aligned offset — the only kind a correct caller produces — the two
-  agree bit-for-bit (`nihao` at offsets 0/2/5 identical, `n=126`/`94`/`1`).
+  column before any caller reaches the guess); `src/storage/phonetic_key_matrix.cpp`
+  (`fill_matrix` puts each chosen key at its raw begin, and `resplit_step` /
+  `inner_split_step` append split keys at interior positions, so a divided
+  syllable's boundary is a live column too); `src/storage/special_table.h`
+  (the frozen divided/resplit pair lists).
+- **Mechanism:** the pin's matrix has one column per input byte. A column
+  carries a key where the chosen parse's syllable begins, plus the split-key
+  halves the two table steps add (`jie` in `nihaoshijie` also carries
+  `ji` + `e`, so byte 10 answers the `e` window — measured fresh `n=190`,
+  阿 first — while mid-chunk bytes 3/4/6 of the same input stay empty), and a
+  zero key at every apostrophe, which `search_matrix` steps over (measured:
+  `ni'hao@2` answers the full `hao` window, `n=93`). `search_matrix` from an
+  empty column matches nothing, so the window there is only the prepended
+  n-best sentence rows over the raw-suffix fallback — measured on `nihao`
+  (parity word `0x18a`): fresh offsets 1/3/4/5 → `true` with `n=0`; after
+  `pinyin_guess_sentence` → `true` with `n=1` (你好 alone); `nihaoshijie`
+  after the sentence lookup → `true` with `n=3` (你好世界/你好时节/你好是届).
+  The pin never *aborts* at a mid-syllable offset; only one past a lone
+  apostrophe column trips the `_check_offset` assert (`ni'hao@3` — the
+  recorded no-pin-behaviour landmine, not a comparable surface). In normal
+  use the pin is never handed a mid-syllable offset — the frontend routes
+  every cursor through `pinyin_get_pinyin_offset`, which snaps it to the
+  syllable start.
+- **What oxpinyin did instead (pre-fix):** the candidate window was rebuilt
+  from the raw byte suffix `&raw[offset..]` (`Session::candidates_at` →
+  `Session::scan_window`), so a mid-syllable offset re-parsed the tail as a
+  fresh composition and returned that tail's phrases — measured on `nihao`:
+  offset 3 → `n=105` phrase rows (`奥/澳/凹/…`, the `ao` re-parse), offset 4 →
+  `n=5` (the `o` re-parse) — where the pin shows the empty-column window.
+  Offsets whose suffix cannot begin a parse (`i`-initial tails: `nihao@1`,
+  `nihaoshijie@1/7/9`) already agreed, because the re-parse found nothing and
+  the C ABI skips the raw-fallback row.
+- **The fix:** `Session::candidates_at` now classifies the anchor before
+  scanning. An anchor a scan-matrix key's syllable starts on — or an
+  apostrophe byte — keeps the offset-anchored scan; any other byte is the
+  pin's empty column, answered as the raw-suffix fallback under the prepended
+  n-best rows with no phrase scan. The classification reuses
+  `build_scan_matrix` — the same matrix model the window scan itself reads
+  (`docs/findings/matrix-split-tables.md`) — so the boundary law and the
+  candidate construction cannot disagree about what the matrix holds.
+  Measured byte-identical against the pin over every byte offset of `nihao`
+  and `nihaoshijie`, fresh and post-sentence, bools included (the driver's
+  phase E: `tools/bisection/uncovered-surface-diff.c`, labels `raw:`), and
+  over the exotic classes: `ni'hao@2` (transparent apostrophe, `n=93`/`94`
+  both sides), `nihaozh@6` and `nihaozhu@6/7` (incomplete `zh`/`zhu` stay one
+  matrix key — empty columns both sides), `shon` under
+  `PINYIN_CORRECT_ON_ONG` (the parse is `s|hong`; bytes 2/3 empty both
+  sides), and `nang`/`shuo` under `PINYIN_AMB_AN_ANG` (single-key parses;
+  every interior byte empty both sides). The prior suffix-re-parse windows
+  (`nihao@3` → `n=105`) are gone. At every syllable-aligned offset — the only
+  kind a correct caller produces — the two engines keep agreeing bit-for-bit.
   Where the pin's `_check_offset` aborts (one past an apostrophe run), oxpinyin
-  returns `false` from `pinyin_guess_candidates` via
+  still normalizes or refuses via
   `CapiInstance::validate_lookup_offset`
   (`Session::normalized_lookup_offset` → `EngineError::LookupOffsetPastSeparator`)
   — the no-abort policy already recorded in `oracle-bisect-differential-abort.md`.
 - **Externally observable:** not in practice — no known frontend passes a
   mid-syllable offset to `pinyin_guess_candidates`; fcitx5-oxpinyin and
-  ibus-libpinyin both snap the cursor with `pinyin_get_pinyin_offset` first, and
-  at a snapped (syllable-aligned) offset the windows are identical. A caller
-  that bypasses the snap and hands a raw mid-syllable offset sees oxpinyin's
-  suffix-re-parse window where the pin shows only the sentence row. The
-  divergence is a language-mechanism residue: oxpinyin builds the window from a
-  re-parsed byte suffix rather than indexing a persisted whole-composition
-  matrix, so it does not model that matrix's empty mid-syllable columns. Per
-  source policy, recorded and not chased.
+  ibus-libpinyin both snap the cursor with `pinyin_get_pinyin_offset` first,
+  and at a snapped (syllable-aligned) offset the windows are identical. A
+  caller that bypasses the snap now sees the pin's empty-column window on
+  both engines. This closes the residue the 2026-08-27 amendment of
+  `uncovered-surface-differentials.md` recorded as not chased.
 
 ### The cursor helpers' `_check_offset` aborts answer `false` — not the pin's abort, not post-`95e3af7` upstream's discarded-`false` true
 

@@ -482,3 +482,52 @@ per-table `records` + `fnv1a64` fingerprints
 (`docs/findings/datagen-model20.md` § Reproducibility). A re-run claiming
 the same model must read that manifest line itself; the runner will not
 do it for you.
+
+## Amendment (2026-08-29) — the C2 mid-syllable residue closed; phase E added
+
+The 2026-08-27 amendment recorded the C2 fix's one standing residue — the
+mid-syllable offset, where the engine re-parsed the byte suffix instead of
+answering the pin's empty matrix column — as "recorded, not chased". That
+residue is now closed, and the driver gained the surface that proves it:
+**phase E** (`raw:` log lines) runs `pinyin_guess_candidates` at every byte
+offset 0..=len of `nihao` and `nihaoshijie`, fresh and after
+`pinyin_guess_sentence`, printing the bool, the window count and the head-4
+rows (the bool is a compared surface — the E2E I/O rule covers it). Inputs
+with apostrophes stay out: one past a lone zero-key column aborts the pinned
+library, the recorded landmine, and is not a comparable surface. Each input
+resets — the pin keeps `m_nbest_results` across a reparse, so a prior
+input's sentence lookup leaks into the next fresh run on the oracle side
+only, and would masquerade as a divergence.
+
+Mechanism, measured first-hand (both engines under the parity word): the
+pin's matrix columns are the chosen parse's syllable starts (`fill_matrix`)
+**plus** the split-key boundaries `resplit_step`/`inner_split_step` append —
+`jie` in `nihaoshijie` also carries `ji` + `e`, so byte 10 answers the
+`e`-family window (`n=190` fresh, 阿 first) while bytes 3/4/6 are empty —
+**plus** a transparent zero key at every apostrophe (`ni'hao@2` answers the
+full `hao` window, `n=93`). The engine's boundary check now reuses
+`build_scan_matrix` — the matrix model the window scan itself reads — so
+the per-offset window law and the candidate construction read one model:
+an anchor a key's syllable starts on, or an apostrophe byte, keeps the
+offset-anchored scan; any other byte answers true with the raw-suffix
+fallback under the stored n-best rows and no phrase scan. Post-sentence,
+the pin's window at an empty column is the n-best rows (`nihaoshijie@3` →
+`n=3`: 你好世界/你好时节/你好是届) — not zero rows — and the engine now
+matches that too.
+
+Re-measured 2026-08-29 against the pin (fresh datagen tables, model
+`model20-59c68e89`): the phase-E sections are byte-identical on every
+probe — 12 per input (6 byte offsets × fresh/post-sentence), bools,
+counts and head rows — and the full differential's only diverging lines
+remain B1's `PRED_PREFIX` head-order window. The
+exotic classes were verified the same way: `ni'hao@2` (transparent
+apostrophe), `nihaozh@6` / `nihaozhu@6,7` (incomplete `zh`/`zhu` stay one
+matrix key), `shon` under `PINYIN_CORRECT_ON_ONG` (the parse is `s|hong`;
+bytes 2/3 empty on both sides), `nang`/`shuo` under `PINYIN_AMB_AN_ANG`
+(single-key parses; every interior byte empty on both sides). The
+`fewest_keys`-vs-pin-matrix design risk did not materialise anywhere
+measured: the chosen-parse boundaries plus the frozen split tables
+reproduce the pin's column occupancy on every probed input, and the
+corpus-scale pins (candidate fixture freshness 10312 inputs / 97442
+triples, sentence residual 488/385/379, live differential 9976/489)
+re-measured unchanged.
