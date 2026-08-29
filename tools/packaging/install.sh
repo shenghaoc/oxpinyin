@@ -115,13 +115,36 @@ if [ -z "$TRIPLE" ]; then
   exit 1
 fi
 
-# The one EXACT path cargo cinstall wrote. No unqualified <profile>-only
-# fallback: cargo cinstall always qualifies by a target selector, so that path
-# could only ever be a stale artifact from a non-targeted `cargo build`, never
-# this run's template.
-BAKED="$TARGET_DIR/$TRIPLE/$PROFILE_DIR/libpinyin.pc.in.baked"
+# build.rs writes the baked template to the mirror next to <profile>/ and,
+# always (a hard write), to the OUT_DIR copy at <profile>/build/<pkg-hash>/out/.
+# Prefer the mirror; if that best-effort write is missing, fall back to the
+# OUT_DIR copy — but stay scoped to THIS target+profile's build tree, never an
+# unqualified whole-target search, and require exactly one candidate so a stale
+# build-hash dir is an ambiguity error rather than a silent wrong pick.
+QUALIFIED_DIR="$TARGET_DIR/$TRIPLE/$PROFILE_DIR"
+BAKED="$QUALIFIED_DIR/libpinyin.pc.in.baked"
 if [ ! -f "$BAKED" ]; then
-  echo "error: baked pkg-config template not found: $BAKED" >&2
+  BAKED=""
+  candidates=()
+  if [ -d "$QUALIFIED_DIR/build" ]; then
+    while IFS= read -r cand; do
+      candidates+=("$cand")
+    done < <(find "$QUALIFIED_DIR/build" -mindepth 3 -maxdepth 3 \
+                  -path '*/out/libpinyin.pc.in.baked' -type f 2>/dev/null)
+  fi
+  if [ "${#candidates[@]}" -eq 1 ]; then
+    BAKED="${candidates[0]}"
+  elif [ "${#candidates[@]}" -gt 1 ]; then
+    echo "error: multiple baked pkg-config templates under $QUALIFIED_DIR/build:" >&2
+    printf '         %s\n' "${candidates[@]}" >&2
+    echo "       remove the stale build dirs (or 'cargo clean') and retry." >&2
+    exit 1
+  fi
+fi
+if [ -z "$BAKED" ] || [ ! -f "$BAKED" ]; then
+  echo "error: baked pkg-config template not found for this build:" >&2
+  echo "         $QUALIFIED_DIR/libpinyin.pc.in.baked" >&2
+  echo "         (nor a unique $QUALIFIED_DIR/build/*/out/libpinyin.pc.in.baked)" >&2
   echo "       (target='$TRIPLE' profile='$PROFILE_DIR' target-dir='$TARGET_DIR')" >&2
   echo "       build.rs writes it during 'cargo cinstall'; check the passthrough args match the build." >&2
   exit 1
