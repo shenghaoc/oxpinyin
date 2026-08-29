@@ -205,9 +205,9 @@ jobs:
   fuzz-soak:      # all targets, -max_total_time split, corpus committed under fuzz/corpus/
   miri:           # cargo +nightly miri test -p oxpinyin-core -p oxpinyin-store (+ corpus replay)
   overflow-lane:  # RUSTFLAGS="-C overflow-checks=y -C debug-assertions=y" cargo test --workspace --release
-  kani:           # trial: 4 harnesses
+  kani:           # dropped — a two-harness trial existed briefly; no Kani release supports the pinned toolchain (the '4 harnesses' figure was never implemented)
   geiger:         # cargo geiger report artifact
-  lizard:         # lizard crates/ -Tlimit 40 (ratchet from current max 38)
+  lizard:         # lizard crates/ -C 40 (ratchet from current max 38; nightly 03:00)
 ```
 
 Fuzz target additions (PR-3, per `upstream-test-strategies.md`):

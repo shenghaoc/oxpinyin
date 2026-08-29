@@ -354,7 +354,7 @@ complexity (data-format ports); `nbest_sentences`/`build_scan_matrix` are
 the parity-critical decoder (refactoring risks divergence from upstream —
 explicitly *not* worth it pre-Stage-2); oracle/dictool are tooling.
 
-**Thresholds**: informational now; propose `-Tlimit 40` (no function exceeds
+**Thresholds**: informational now; the ratchet runs `lizard crates/ -l rust -C 40` (no function exceeds
 CCN 40) as a *scheduled-report* gate with ratchet, never a PR blocker.
 Lizard as a safety proof: REJECT the claim, keep the signal.
 
