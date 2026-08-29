@@ -55,7 +55,9 @@ echo "capi: $CAPI_SO"
 probe_live_surface() {
     grep -q '^live:cursor=' "$1" && \
     grep -q '^round:1 cursor=' "$1" && \
-    grep -q '^probe:after-choose n=[1-9]' "$1"
+    grep -q '^probe:after-choose n=[1-9]' "$1" && \
+    grep -q '^cr:cursor=' "$1" && \
+    grep -q '^cr:clear0=1' "$1"
 }
 
 PREFIX="${PINYIN_ORACLE_PREFIX:-$HOME/.local/opt/pinyin-oracle}"

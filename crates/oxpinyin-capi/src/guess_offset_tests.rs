@@ -9,7 +9,9 @@
 use std::os::raw::{c_int, c_uint};
 use std::ptr;
 
-use crate::candidates::{pinyin_choose_candidate, pinyin_get_candidate, pinyin_get_n_candidate};
+use crate::candidates::{
+    pinyin_choose_candidate, pinyin_clear_constraint, pinyin_get_candidate, pinyin_get_n_candidate,
+};
 use crate::config::{
     pinyin_set_double_pinyin_scheme, pinyin_set_full_pinyin_scheme, pinyin_set_zhuyin_scheme,
 };
@@ -217,11 +219,23 @@ fn a_post_separator_choose_returns_the_candidate_end() {
     );
 
     // Mid-input the end is below the parse length, so a clamp could not
-    // fake it: ni'hao'a, choose 好 at the post-separator offset 3.
+    // fake it — driven on the composition the R5 revert (register #8)
+    // keeps alive: the re-parse of "ni'hao'a" CONTINUES the committed
+    // composition (upstream's parse path never touches the store,
+    // `pinyin.cpp:1497-1517`), so the \u{4f60} and \u{597d} forcings
+    // survive — each probe answers true exactly because they did, and
+    // dropping both re-opens the walk at 0. (The pre-revert rule
+    // re-parsed this shape fresh: the probes answered false and the
+    // head window answered \u{4f60} at offset 0.)
     assert_eq!(parse(instance, "ni'hao'a"), 8);
-    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    let ni = candidate_at(instance, position_of(instance, "\u{4f60}"));
-    assert_eq!(pinyin_choose_candidate(instance, 0, ni), 2);
+    assert!(
+        pinyin_clear_constraint(instance, 0),
+        "the \u{4f60} forcing survived the committed re-parse"
+    );
+    assert!(
+        pinyin_clear_constraint(instance, 3),
+        "the \u{597d} forcing survived the committed re-parse"
+    );
     assert!(pinyin_guess_candidates(instance, 3, DEFAULT_SORT));
     let hao = candidate_at(instance, position_of(instance, "\u{597d}"));
     assert_eq!(
@@ -417,6 +431,20 @@ fn luoma_input_carries_the_full_offset_law() {
     // aborts, oxpinyin refuses).
     assert_eq!(parse(instance, "ni'hao"), 6);
     assert!(!pinyin_guess_candidates(instance, 7, DEFAULT_SORT));
+    // The re-send of the same buffer CONTINUES the committed composition
+    // (the R5 revert, register #8: upstream's parse path never touches
+    // the store, `pinyin.cpp:1497-1517`), so both forcings survive —
+    // each probe answers true exactly because they did. The next parse
+    // DIVERGES ("'ni"), which is the boundary that still starts fresh
+    // and drops the store, so the probes must sit above it.
+    assert!(
+        pinyin_clear_constraint(instance, 0),
+        "the \u{4f60} forcing survived the committed re-send"
+    );
+    assert!(
+        pinyin_clear_constraint(instance, 3),
+        "the \u{597d} forcing survived the committed re-send"
+    );
     assert_eq!(parse(instance, "'ni"), 3);
     assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
     assert!(!pinyin_guess_candidates(instance, 1, DEFAULT_SORT));

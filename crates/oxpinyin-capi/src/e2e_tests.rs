@@ -100,7 +100,12 @@ fn training_through_the_abi_records_the_pinned_counts() {
     );
 
     // A new composition starts fresh at sentence_start: the predecessor is
-    // NOT the previous sentence's last token.
+    // NOT the previous sentence's last token. The fresh start is the
+    // explicit `pinyin_reset` (upstream's frontend reset-on-commit
+    // contract, `pinyin.cpp:2693`): since the R5 revert (register #8) the
+    // engine no longer imitates it — an evolved re-parse continues the
+    // committed composition with its store.
+    crate::instance::pinyin_reset(instance);
     let second = candidate(instance, "nihao", 1);
     let t2 = token_of(instance, second);
     assert_ne!(t1, t2, "distinct candidate indexes carry distinct tokens");
@@ -1091,18 +1096,28 @@ fn the_forcing_survives_a_shrinking_reparse_and_the_retype() {
     crate::context::pinyin_fini(context);
 }
 
-/// The other half of the parse rule: a composition a SELECTION consumed
-/// re-parses fresh — the frontend's reset-between-compositions contract
-/// the #141 cursor flows' pinned tests require. A buffer that shrank to
-/// the cursor is not that shape.
+/// The other half of the parse rule, after the R5 revert (register #8): a
+/// composition a SELECTION consumed still continues when the buffer
+/// evolved from it — upstream's parse path never touches the constraint
+/// store (`pinyin.cpp:1497-1517`) and only `pinyin_reset` clears it
+/// (`pinyin.cpp:2693-2704`), so the pre-revert fresh start (the frontend's
+/// reset-between-compositions contract the #141 cursor flows pinned)
+/// dropped forcings upstream keeps. The window stays anchored at the
+/// stale composition offset, and dropping the surviving forcing re-opens
+/// the walk at 0. A buffer that shrank to the cursor never was that
+/// shape (the open-composition rule above).
 #[test]
-fn a_selection_committed_composition_reparses_fresh() {
+fn a_selection_committed_composition_reparses_with_its_store() {
     let user_dir = TempUserDir::new("constraint-committed");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
     let input = cstr("nihao");
     assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
-    assert!(pinyin_guess_sentence(instance));
+    // No `pinyin_guess_sentence` here: it seeds the W14 n-best rows and
+    // the \u{4f60}\u{597d} the list then offers is their row-0 mirror — a
+    // row-0 choose constrains nothing (exactly upstream), and the
+    // survival probe below would be vacuous. The plain guess offers the
+    // \u{4f60}\u{597d} PHRASE, whose choose writes the forcing.
     assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
     let full_ptr = {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
@@ -1119,9 +1134,22 @@ fn a_selection_committed_composition_reparses_fresh() {
     // Consumes the whole buffer: the commit branch.
     assert_eq!(pinyin_choose_candidate(instance, 0, full_ptr), 5);
 
-    // The next parse starts a fresh composition: the window is anchored
-    // at 0 again, not at the stale cursor.
+    // The next parse CONTINUES the committed composition: the forcing
+    // survives into the new buffer, where the next guess's validate would
+    // drop it if it stopped spelling. It still spells over 0..5, so the
+    // run is live — the probe answers true exactly because the store
+    // survived (the pre-revert rule answered false here).
     let next = cstr("nihaoshijie");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, next.as_ptr()), 11);
+    assert!(
+        pinyin_clear_constraint(instance, 0),
+        "the \u{4f60}\u{597d} forcing survived the committed re-parse"
+    );
+    assert!(!pinyin_clear_constraint(instance, 0), "the run is free now");
+
+    // Dropping the last forcing re-opens the composition at 0: an evolved
+    // re-send keeps it, and the head window answers \u{4f60} again — the
+    // old fresh-start expectation, now reached through the store's death.
     assert_eq!(pinyin_parse_more_full_pinyins(instance, next.as_ptr()), 11);
     assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
     {
@@ -1131,7 +1159,7 @@ fn a_selection_committed_composition_reparses_fresh() {
             inst.candidates
                 .iter()
                 .any(|c| c.text.as_bytes() == "\u{4f60}".as_bytes()),
-            "the fresh composition offers \u{4f60} at offset 0"
+            "the re-opened composition offers \u{4f60} at offset 0"
         );
     }
 

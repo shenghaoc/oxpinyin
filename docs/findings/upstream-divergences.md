@@ -221,34 +221,59 @@ inputs (the pin-built `.so` SIGABRTs).
   possibility divergence is already observable; on model20, not
   reachable at all (see Status).
 
-### Constraints survive every re-parse except the selection-committed one
+### Constraints survive every re-parse except the selection-committed one — CLOSED
 
-- **Upstream source cite:** `src/pinyin.cpp:1497-1533`
+- **Upstream source cite:** `src/pinyin.cpp:1497-1517`
   (`pinyin_parse_more_full_pinyins` never touches `m_constraints`);
-  `src/pinyin.cpp:2697` (`pinyin_reset` clears them).
+  `src/pinyin.cpp:2693-2704` (`pinyin_reset` clears them,
+  `m_constraints->clear()` at :2699).
 - **Mechanism:** upstream's constraints are instance state that survives
   every re-parse — extension, backspace, edit, and a re-parse after the
   composition completed — with `validate_constraint` dropping whatever
   no longer spells at the next guess. There is no engine-visible
   "completed" notion: the cursor is the frontend's own state.
-- **What oxpinyin does instead:** the parse continues an OPEN
-  composition's re-parse when the buffer evolved from the stored one —
-  extension, shrink, or re-send keep the store, the selection record,
-  and the clamped cursor; validate drops what stops spelling, and the
-  record follows. Two shapes start fresh: a composition a SELECTION
-  consumed (the frontend's reset-between-compositions contract, which
-  the #141 cursor flows' pinned tests require and which upstream's
-  frontends perform themselves via `pinyin_reset` on commit), and a
-  divergent buffer — a different string is a different composition,
-  and a stale selection-derived cursor must not mis-anchor the new
-  composition's window before validate could drop the mismatched
-  forcings.
-- **Externally observable:** yes — on a re-parse after a
-  selection-consumed composition without an intervening reset, or on a
-  divergent re-parse of an open composition; neither is a shape
-  upstream's frontends drive (they reset on commit, and mid-composition
-  they re-send the same buffer). The backspace ladder itself is
-  measured identical (`live-typing.md` §"Backspace-after-choose").
+- **What oxpinyin did:** the parse continued an OPEN composition's
+  re-parse when the buffer evolved from the stored one — extension,
+  shrink, or re-send kept the store, the selection record, and the
+  clamped cursor; validate dropped what stops spelling, and the record
+  followed. Two shapes started fresh: a composition a SELECTION
+  consumed (an engine-level emulation of the frontend's
+  reset-on-commit contract the #141 cursor flows pinned), and a
+  divergent buffer.
+- **Audit note (2026-08-29):** an early work order framed this entry as
+  a `pinyin_reset` scope/order question. It never was: the pin's
+  `pinyin_reset` and oxpinyin's `pinyin_reset` (`reset_parse_state` +
+  `Session::reset`) produce identical post-state field for field — both
+  clear the constraint store, and upstream's parse path leaves it
+  untouched. The divergence lived only in `parse_continues`'s
+  selection-committed rule.
+- **Closed** (`fix/revert-r5-constraint-reset`): a selection-committed
+  composition whose buffer evolved from the stored one now CONTINUES —
+  `Session::committed_parse_continues` joins `parse_continues`, and
+  `begin_parse` takes only the composition reset (`reset_composition`),
+  keeping the store and the selection record into the next guess where
+  validate drops what stops spelling. `pinyin_reset` alone clears the
+  store now, exactly upstream. A DIVERGENT buffer still starts fresh:
+  a different string is a different composition, and a stale
+  selection-derived cursor must not mis-anchor the new composition's
+  window before validate could drop the mismatched forcings — a
+  deliberate boundary upstream has no analogue for (its cursor is the
+  frontend's own), not a recorded divergence.
+- **Evidence:** the live-typing differential gained a committed-reparse
+  phase (choose the whole input's phrase — the commit branch — then
+  re-parse an extension with no reset): `pinyin_clear_constraint(0)`
+  answers 1 on both sides post-revert, 0 on the engine pre-revert
+  (DIVERGENT), so the probe flips to IDENTICAL with the change
+  (`live-typing.md`). The frozen pins held bit-identical (candidates
+  10,190/10,190/absent 0/order-only 0/prefix-10 98,930; sentence
+  488/385/379), the scheme sweep is byte-identical to the pre-change
+  baseline (its standing §5 tie class), and the backspace ladder is
+  unchanged (`live-typing.md` §"Backspace-after-choose"). The three
+  #141 cursor flows that pinned the fresh start were re-based onto the
+  continued-store contract (the committed-reparse store test, the
+  post-separator choose law, the Luoma offset law); the
+  training-through-the-ABI flow now takes the explicit `pinyin_reset`
+  a frontend performs.
 
 ### The n-best row-choose cursor answers the whole parse end — CLOSED
 

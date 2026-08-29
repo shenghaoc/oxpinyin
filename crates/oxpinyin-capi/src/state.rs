@@ -512,13 +512,17 @@ impl CapiInstance {
     }
 
     /// Begin a parse of `original` (the caller's input, in the active
-    /// mode's own coordinates): continue the current composition when it
-    /// is open and the buffer evolved from the stored one — extension,
-    /// backspace, or re-send keep the constraint store and the chosen
-    /// cursor, exactly upstream's parse-never-touches-constraints rule,
-    /// with `validate_constraint` dropping what stops spelling at the
-    /// next guess. A selection-consumed composition or a divergent
-    /// buffer starts fresh.
+    /// mode's own coordinates): continue the current composition when the
+    /// buffer evolved from the stored one — extension, backspace, or
+    /// re-send — whether the composition is open (upstream's
+    /// parse-never-touches-constraints rule) or a selection consumed it
+    /// (the R5 revert, register #8: upstream's store survives every
+    /// re-parse and only `pinyin_reset` clears it, `pinyin.cpp:2693-2704`).
+    /// `validate_constraint` drops what stops spelling at the next guess.
+    /// Only a divergent buffer starts fresh: a different string is a
+    /// different composition, and a stale selection-derived cursor must
+    /// not mis-anchor its window before validate could drop the
+    /// mismatched forcings.
     pub(crate) fn begin_parse(&mut self, original: &[u8]) {
         let stored: &[u8] = if self.zhuyin_parse.is_some() {
             self.zhuyin_input.as_bytes()
@@ -530,8 +534,13 @@ impl CapiInstance {
             self.session.raw_input().as_bytes()
         };
         let continues = self.session.parse_continues(stored, original);
+        let committed_continues =
+            !continues && self.session.committed_parse_continues(stored, original);
+        // The committed-continues shape needs exactly `reset_parse_state`:
+        // its `reset_composition` keeps the store and the selection
+        // record, so the full reset below must not run there.
         self.reset_parse_state();
-        if !continues {
+        if !continues && !committed_continues {
             self.session.reset();
         }
     }
