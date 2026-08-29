@@ -4,10 +4,11 @@
 //! LMDB byte-lexicographic comparator, so big-endian encoded keys sort
 //! identically to the redb backend.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use heed::types::Bytes;
 use heed::{Database, EnvFlags, EnvOpenOptions, RwTxn, WithoutTls};
@@ -104,6 +105,55 @@ fn open_env(path: &Path, read_only: bool, map_size: usize) -> Result<Env, StoreE
     })
 }
 
+// ── env sharing ───────────────────────────────────────────────────
+//
+// LMDB (via heed) refuses to open the same environment file twice in one
+// process ("environment already open in this program"), while every other
+// backend tolerates concurrent opens of one path — and the engine's tests
+// and adapters lean on that (many capi tests open the same fixture
+// tables in parallel). This registry restores the common contract for
+// LMDB: one shared `Env` per canonical path, handed out by `Weak`
+// upgrade, dropped (and the path reopenable) when the last store using
+// it goes away — the same shape as `oxpinyin-user`'s store registry.
+
+/// One registry row: the live environment and whether it was opened
+/// writable.
+type EnvSlot = (Weak<Env>, bool);
+
+static OPEN_ENVS: OnceLock<Mutex<HashMap<PathBuf, EnvSlot>>> = OnceLock::new();
+
+/// The canonical registry key for `path` (falls back to the path itself
+/// when it does not exist yet, e.g. `create` of a new file).
+fn env_key(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// One shared environment per path. A read-only request shares any live
+/// env (the store-level `read_only` flag still refuses writes); a
+/// writable request shares only a writable env — an env opened read-only
+/// cannot be upgraded, so that mismatch is refused rather than handed a
+/// handle that cannot write.
+fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Env>, StoreError> {
+    let registry = OPEN_ENVS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = registry.lock().unwrap_or_else(|p| p.into_inner());
+    let key = env_key(path);
+    if let Some((weak, writable)) = map.get(&key)
+        && let Some(env) = weak.upgrade()
+    {
+        if read_only || *writable {
+            return Ok(env);
+        }
+        return Err(StoreError::InvalidInput(
+            "this LMDB file is already open read-only in this process;              close those handles before opening it writable",
+        ));
+    }
+    let env = Arc::new(open_env(path, read_only, map_size)?);
+    // Re-key by the now-existing file so later opens of the same file
+    // through a different spelling collide correctly.
+    map.insert(env_key(path), (Arc::downgrade(&env), !read_only));
+    Ok(env)
+}
+
 // ── store ─────────────────────────────────────────────────────────
 
 /// An LMDB-backed store implementing both capability tiers.
@@ -115,6 +165,11 @@ fn open_env(path: &Path, read_only: bool, map_size: usize) -> Result<Env, StoreE
 /// 33rd distinct table fails with [`StoreError::InvalidInput`]; the redb
 /// backend has no such limit. Keep the total number of distinct table
 /// names at or below 32 for cross-backend parity.
+///
+/// LMDB additionally refuses a second in-process open of the same
+/// environment file; stores therefore share one `Env` per path through a
+/// process-wide registry (see `shared_env`), matching the other backends'
+/// open-many contract.
 pub struct LmdbStore {
     env: Arc<Env>,
     #[allow(dead_code)]
@@ -134,9 +189,9 @@ impl LmdbStore {
     /// [`WriteStore::create`] when the 1 GiB default is too small; use
     /// one consistent ceiling for a given file across processes.
     pub fn create_with_map_size(path: &Path, map_size: usize) -> Result<Self, StoreError> {
-        let env = open_env(path, false, map_size)?;
+        let env = shared_env(path, false, map_size)?;
         Ok(Self {
-            env: Arc::new(env),
+            env,
             path: path.to_path_buf(),
             read_only: false,
         })
@@ -153,9 +208,9 @@ impl LmdbStore {
     /// `map_size` must be a multiple of the system page size; other values
     /// fail with [`StoreError::InvalidInput`].
     pub fn open_read_only_with_map_size(path: &Path, map_size: usize) -> Result<Self, StoreError> {
-        let env = open_env(path, true, map_size)?;
+        let env = shared_env(path, true, map_size)?;
         Ok(Self {
-            env: Arc::new(env),
+            env,
             path: path.to_path_buf(),
             read_only: true,
         })
@@ -164,9 +219,9 @@ impl LmdbStore {
 
 impl ReadStore for LmdbStore {
     fn open_read_only(path: &Path) -> Result<Self, StoreError> {
-        let env = open_env(path, true, MAP_SIZE)?;
+        let env = shared_env(path, true, MAP_SIZE)?;
         Ok(Self {
-            env: Arc::new(env),
+            env,
             path: path.to_path_buf(),
             read_only: true,
         })
@@ -242,9 +297,9 @@ impl ReadStore for LmdbStore {
 
 impl WriteStore for LmdbStore {
     fn create(path: &Path) -> Result<Self, StoreError> {
-        let env = open_env(path, false, MAP_SIZE)?;
+        let env = shared_env(path, false, MAP_SIZE)?;
         Ok(Self {
-            env: Arc::new(env),
+            env,
             path: path.to_path_buf(),
             read_only: false,
         })
