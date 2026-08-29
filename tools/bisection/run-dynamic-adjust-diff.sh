@@ -57,9 +57,10 @@ OUT="$(mktemp -d)"
 trap 'rm -rf "$(dirname "$DRIVER")" "$OUT"' EXIT
 
 run() { # $1 = so, $2 = datadir, $3 = on|off, $4 = out file
-    rm -rf /tmp/dynamic-adjust-diff-user
-    mkdir -p /tmp/dynamic-adjust-diff-user
-    "$DRIVER" "$1" "$2" "$3" > "$4"
+    local userdir="$OUT/user"
+    rm -rf "$userdir"
+    mkdir -p "$userdir"
+    "$DRIVER" "$1" "$2" "$3" "$userdir" > "$4"
 }
 
 echo "--- driving oxpinyin (bit on / off) ---"
