@@ -15,7 +15,9 @@
 #                          the sibling model cache, then OXPINYIN_SYSTEM_DIR
 #                          and the conventional build locations. Unresolvable
 #                          is FATAL, not a silent fixtures/w3 run -- see
-#                          system-dir.sh.
+#                          system-dir.sh. A directory that resolves but lacks
+#                          any of the four required tables is equally FATAL,
+#                          whichever of the three sources it came from.
 #
 # Exit codes: 0 = identical or skipped; 1 = build/run failure; 2 = divergence.
 
@@ -39,8 +41,17 @@ fi
 
 # ── oxpinyin-capi system dir ─────────────────────────────────────────────
 
+# Only the third branch validates on its own: resolve_system_dir already
+# refuses an incomplete directory, and it alone can hand back the opted-in
+# mini fixture, which is incomplete on purpose. The first two build
+# CAPI_DATA themselves, so they have to check it themselves -- an
+# incomplete directory scored against a real oracle reports DIVERGENCE
+# from the data mismatch, which is the failure this whole file exists to
+# stop.
+
 if [ -n "${OPTION_SWEEP_CAPI_DATA:-}" ]; then
     CAPI_DATA="$OPTION_SWEEP_CAPI_DATA"
+    system_dir_require_complete "$CAPI_DATA" OPTION_SWEEP_CAPI_DATA option-sweep
 elif [ -f /tmp/oxpinyin-export/pinyin_index.redb ]; then
     CAPI_DATA="$(mktemp -d /tmp/option-sweep-capi-data-XXXXXX)"
     for table in pinyin_index.redb phrase_index.redb bigram.redb; do
@@ -54,6 +65,33 @@ elif [ -f /tmp/oxpinyin-export/pinyin_index.redb ]; then
             break
         fi
     done
+    # The export cache carries the three tables -- a missing one already
+    # fails the cp under `set -e`. interpolation2.text comes from the model
+    # cache instead, so it is the one file the loop above can silently
+    # leave out. Name where it was looked for rather than routing this
+    # through system_dir_require_complete, whose provenance line lists the
+    # variables, not the two directories that actually built this one.
+    if [ ! -f "$CAPI_DATA/interpolation2.text" ]; then
+        {
+            echo "fatal: option-sweep: the assembled system directory is incomplete."
+            echo "  $CAPI_DATA"
+            echo "  (tables from /tmp/oxpinyin-export)"
+            echo ""
+            echo "Missing:"
+            echo "  interpolation2.text"
+            echo ""
+            echo "Looked for it in:"
+            echo "  \$PINYIN_MODEL_DIR"
+            echo "  $REPO_ROOT/target/model20/extracted"
+            echo ""
+            echo "Its real unigrams are what the oracle scores against. Without it"
+            echo "the comparison is flat-export unigrams versus the pin's real ones"
+            echo "-- a data mismatch that reports as a divergence. Fetch the model"
+            echo "with tools/model/fetch-model.sh, or point OPTION_SWEEP_CAPI_DATA"
+            echo "at a directory that already holds all four files."
+        } >&2
+        exit 3
+    fi
 else
     # No explicit dir and no export cache: resolve or refuse. Falling back
     # to fixtures/w3 here used to make a real-oracle run report DIVERGENCE
@@ -61,10 +99,6 @@ else
     CAPI_DATA="$(resolve_system_dir OPTION_SWEEP_CAPI_DATA option-sweep)"
 fi
 
-if [ ! -f "$CAPI_DATA/pinyin_index.redb" ]; then
-    echo "fatal: capi data not found at $CAPI_DATA"
-    exit 1
-fi
 echo "capi data: $CAPI_DATA"
 
 # ── Oracle (env-gated) ──────────────────────────────────────────────────
