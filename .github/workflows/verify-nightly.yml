@@ -270,10 +270,21 @@ jobs:
   kani:
     runs-on: ubuntu-latest
     continue-on-error: true
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make python3
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Register the checkout as a git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install pinned Kani
         run: |
           ver=kani-0.67.0
@@ -293,11 +304,29 @@ jobs:
   mutants:
     runs-on: ubuntu-latest
     continue-on-error: true
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup show active-toolchain
+      - name: Register the checkout as a git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install the pinned Rust toolchain
+        run: |
+          set -euo pipefail
+          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain "$channel"
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          . "$HOME/.cargo/env"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo install cargo-mutants --locked
       - run: >
@@ -318,11 +347,29 @@ jobs:
   # gate's unit lane to nextest is a one-line follow-up.
   nextest:
     runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup show active-toolchain
+      - name: Register the checkout as a git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install the pinned Rust toolchain
+        run: |
+          set -euo pipefail
+          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain "$channel"
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          . "$HOME/.cargo/env"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install pinned cargo-nextest
         run: |
