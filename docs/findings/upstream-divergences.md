@@ -203,7 +203,7 @@ inputs (the pin-built `.so` SIGABRTs).
   they re-send the same buffer). The backspace ladder itself is
   measured identical (`live-typing.md` §"Backspace-after-choose").
 
-### The n-best row-choose cursor is the row's own end — CLOSED
+### The n-best row-choose cursor answers the whole parse end — CLOSED
 
 - **Upstream source cite:** `src/pinyin.cpp:2511-2519`
   (`pinyin_choose_candidate`'s NBEST branch returns

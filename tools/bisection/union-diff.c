@@ -290,9 +290,20 @@ int main(int argc, char **argv) {
         printf("nbest-cursor: %d\n", cursor);
         /* The corrected post-NBEST flow: the tail slot starts no span, so
          * re-run the sentence lookup under the diff_result forcings, then
-         * train. */
-        printf("nbest-resentence: %s\n", s.sentence(inst) ? "true" : "false");
-        printf("nbest-train: %s\n", s.train(inst, 0) ? "true" : "false");
+         * train. Both must succeed — a matched pair of failures would
+         * otherwise read IDENTICAL with the flow broken. */
+        int resentenced = s.sentence(inst);
+        printf("nbest-resentence: %s\n", resentenced ? "true" : "false");
+        if (!resentenced) {
+            fprintf(stderr, "nbest section: re-sentence failed\n");
+            return 1;
+        }
+        int trained = s.train(inst, 0);
+        printf("nbest-train: %s\n", trained ? "true" : "false");
+        if (!trained) {
+            fprintf(stderr, "nbest section: train failed\n");
+            return 1;
+        }
     }
 
     /* ── 4. train then predict ──────────────────────────────────────── */
