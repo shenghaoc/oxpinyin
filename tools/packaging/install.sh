@@ -41,6 +41,14 @@ usage() {
   exit 2
 }
 
+# Map a cargo profile name to its target subdirectory ('dev' builds into 'debug').
+profile_dir() {
+  case "$1" in
+    dev) echo "debug" ;;
+    *)   echo "$1" ;;
+  esac
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --prefix=*) PREFIX="${1#*=}" ;;
@@ -62,17 +70,56 @@ LIBDIR="${LIBDIR:-$PREFIX/lib}"
 ( cd "$CRATE_DIR" && cargo cinstall --prefix="$PREFIX" --libdir="$LIBDIR" ${EXTRA[@]+"${EXTRA[@]}"} )
 
 # 2. Locate build.rs's baked template, fresh from the cinstall build above.
+#    build.rs mirrors it to <target-dir>[/<triple>]/<profile>/, so the exact
+#    path is derived from the SAME target-dir / --target / profile the build
+#    used — not a broad search that could pick up an unrelated crate's `out`
+#    artifact or a stale profile. Read those from the passthrough args (which
+#    were forwarded to cargo cinstall verbatim); cargo cinstall builds release.
 TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
+TRIPLE=""
+PROFILE_DIR="release"
+i=0
+while [ "$i" -lt "${#EXTRA[@]}" ]; do
+  arg="${EXTRA[$i]}"
+  case "$arg" in
+    --target-dir=*) TARGET_DIR="${arg#*=}" ;;
+    --target-dir)   i=$((i + 1)); TARGET_DIR="${EXTRA[$i]:-$TARGET_DIR}" ;;
+    --target=*)     TRIPLE="${arg#*=}" ;;
+    --target)       i=$((i + 1)); TRIPLE="${EXTRA[$i]:-}" ;;
+    --profile=*)    PROFILE_DIR="$(profile_dir "${arg#*=}")" ;;
+    --profile)      i=$((i + 1)); PROFILE_DIR="$(profile_dir "${EXTRA[$i]:-release}")" ;;
+    --release)      PROFILE_DIR="release" ;;
+    --debug)        PROFILE_DIR="debug" ;;
+  esac
+  i=$((i + 1))
+done
+
+# cargo cinstall always builds under an explicit target triple (cargo-c sets it
+# to rustc.host when --target is absent — build.rs:825-828), so the layout is
+# target/<triple>/<profile>/. Resolve the same triple: --target if given, else
+# $CARGO_BUILD_TARGET, else rustc's host.
+if [ -z "$TRIPLE" ]; then
+  TRIPLE="${CARGO_BUILD_TARGET:-}"
+fi
+if [ -z "$TRIPLE" ]; then
+  TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+fi
+
+# Two EXACT candidates — the triple layout cargo cinstall uses, and a plain
+# no-triple layout as a defensive second — never a broad search that could grab
+# an unrelated crate's `out` artifact or a stale profile.
 BAKED=""
-for cand in "$TARGET_DIR/release/libpinyin.pc.in.baked" "$TARGET_DIR"/*/libpinyin.pc.in.baked; do
+for cand in \
+  "$TARGET_DIR/$TRIPLE/$PROFILE_DIR/libpinyin.pc.in.baked" \
+  "$TARGET_DIR/$PROFILE_DIR/libpinyin.pc.in.baked"; do
   if [ -f "$cand" ]; then BAKED="$cand"; break; fi
 done
 if [ -z "$BAKED" ]; then
-  BAKED="$(find "$TARGET_DIR" -name libpinyin.pc.in.baked -path '*/out/*' 2>/dev/null | head -n1 || true)"
-fi
-if [ -z "$BAKED" ] || [ ! -f "$BAKED" ]; then
-  echo "error: baked pkg-config template (libpinyin.pc.in.baked) not found under $TARGET_DIR" >&2
-  echo "       expected build.rs to have written it during cargo cinstall." >&2
+  echo "error: baked pkg-config template not found. Looked for:" >&2
+  echo "         $TARGET_DIR/$TRIPLE/$PROFILE_DIR/libpinyin.pc.in.baked" >&2
+  echo "         $TARGET_DIR/$PROFILE_DIR/libpinyin.pc.in.baked" >&2
+  echo "       (target='${TRIPLE:-<host>}' profile='$PROFILE_DIR' target-dir='$TARGET_DIR')" >&2
+  echo "       build.rs writes it during 'cargo cinstall'; check the passthrough args match the build." >&2
   exit 1
 fi
 
@@ -80,7 +127,11 @@ fi
 PC_DIR="$LIBDIR/pkgconfig"
 PC_OUT="$PC_DIR/libpinyin.pc"
 mkdir -p "$PC_DIR"
-# '#' delimiter so '/' in paths is literal; prefixes with '#' are not expected.
-sed -e "s#@prefix@#${PREFIX}#g" -e "s#@libdir@#${LIBDIR}#g" "$BAKED" > "$PC_OUT"
+# Escape sed replacement metacharacters — '\', '&', and the '#' delimiter — so a
+# path containing any of them substitutes literally instead of corrupting the
+# file (e.g. '&' would re-insert the match, a bare '#' would end the s-command).
+prefix_esc="$(printf '%s' "$PREFIX" | sed 's/[\\&#]/\\&/g')"
+libdir_esc="$(printf '%s' "$LIBDIR" | sed 's/[\\&#]/\\&/g')"
+sed -e "s#@prefix@#${prefix_esc}#g" -e "s#@libdir@#${libdir_esc}#g" "$BAKED" > "$PC_OUT"
 
 echo "installed complete pkg-config file: $PC_OUT"
