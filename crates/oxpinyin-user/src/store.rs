@@ -282,7 +282,7 @@ pub struct GenericUserStore<S: WriteStore> {
 }
 
 /// Default user store backed by [`DefaultStore`] (the compiled-in
-/// backend: redb by default, the others by explicit feature selection).
+/// backend: Kyoto Cabinet by default, redb under `--no-default-features`).
 pub type UserStore = GenericUserStore<DefaultStore>;
 
 impl<S: WriteStore> Clone for GenericUserStore<S> {

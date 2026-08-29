@@ -18,20 +18,16 @@ heed = { workspace = true, optional = true }
 bindgen = { workspace = true, optional = true }
 
 [features]
-# One backend is compiled in per binary (libpinyin's own model);
-# `DefaultStore` resolves it at compile time with precedence
-# kyotocabinet > tkrzw > lmdb > redb. redb — the pure-Rust portability
-# fallback for platforms without the C libraries — is the default here;
-# the Kyoto Cabinet backend module lands in a stacked PR, at which point
-# the default flips to it.
-default = ["redb"]
+# Kyoto Cabinet is the default backend — the DBM the reference libpinyin
+# builds against on the primary target distros. Exactly one backend is
+# compiled in per binary (libpinyin's own model); `DefaultStore` resolves
+# it at compile time with precedence kyotocabinet > tkrzw > lmdb > redb.
+default = ["kyotocabinet"]
 lmdb = ["dep:heed"]
 tkrzw = ["dep:bindgen"]
-# Kyoto Cabinet backend. Declared so the selection chain is complete;
-# the module itself lands in the stacked PR — building with this feature
-# enabled fails to resolve `KcStore` until then. bindgen is build-time
-# only (it needs libclang); the runtime dependency is the system
-# libkyotocabinet the distro already ships.
+# Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);
+# the runtime dependency is the system libkyotocabinet the distro already
+# ships — the same library that writes the files this reads.
 kyotocabinet = ["dep:bindgen"]
 # Marker for the pure-Rust portability fallback (macOS/Windows — the C
 # backends are Linux-only). redb itself is always compiled as the

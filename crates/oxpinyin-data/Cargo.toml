@@ -20,7 +20,7 @@ compact_str.workspace = true
 [features]
 # Backend selection, forwarded to oxpinyin-store (one backend per binary;
 # see the store's [features] for the model and precedence).
-default = ["redb"]
+default = ["kyotocabinet"]
 kyotocabinet = ["oxpinyin-store/kyotocabinet"]
 tkrzw = ["oxpinyin-store/tkrzw"]
 lmdb = ["oxpinyin-store/lmdb"]

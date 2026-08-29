@@ -15,9 +15,9 @@ workspace = true
 # Backend selection, forwarded through oxpinyin-segment to the chain (one
 # backend per binary; see oxpinyin-store's [features] for the model and
 # precedence): the counter reads `phrase_index.<ext>` in the compiled-in
-# backend's format — redb by default, tkrzw/LMDB behind
-# their features.
-default = ["redb"]
+# backend's format — Kyoto Cabinet by default, redb under
+# --no-default-features.
+default = ["kyotocabinet"]
 kyotocabinet = ["oxpinyin-segment/kyotocabinet"]
 tkrzw = ["oxpinyin-segment/tkrzw"]
 lmdb = ["oxpinyin-segment/lmdb"]
