@@ -50,8 +50,8 @@ Doctest step only if nextest lands. Gates: all hard.
    + corpus replay through the parser target under `-Zmiri`.
 3. **Paranoid release lane**: `RUSTFLAGS="-C overflow-checks=y
    -C debug-assertions=y" cargo test --workspace --release`.
-4. **Kani** (trial): 4 harnesses (cost.rs invariants; table_conf gcd;
-   content decode bounds post-F-3; graph starts monotonicity).
+4. ~~**Kani** (trial)~~ — dropped: no release supports the pinned
+   toolchain (newest bundles nightly 2025-11-21 < 1.97.1).
 5. **cargo-mutants** (trial, weekly cadence within this lane):
    scoped `-p oxpinyin-core` file filters (parser, scheme, scoring) +
    `oxpinyin-user/src/store.rs`.
@@ -88,7 +88,7 @@ libchewing convention), they do not auto-block unless a ratchet exists
 | fuzz soak + corpus | | | ✔ | |
 | Miri | | | ✔ | |
 | overflow release lane | | | ✔ | |
-| Kani | | | ✔ | |
+| Kani | | | dropped | | |
 | cargo-mutants | | | ✔ (weekly) | |
 | llvm-cov | | ✔ (label) | ✔ report | report |
 | geiger | | ✔ report | | ✔ |

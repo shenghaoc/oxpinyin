@@ -110,8 +110,9 @@ re-state these.
   absent-toml policy (already in place).
 - **ADOPT SELECTIVELY**: Miri (core+store only); geiger (scheduled
   report); Lizard (ratchet, report).
-- **TRIAL**: Kani (4 harnesses); cargo-mutants (scoped to core +
-  user/store); `significant_drop_tightening` during Stage-2 profiling.
+- **TRIAL**: cargo-mutants (scoped to core + user/store);
+  `significant_drop_tightening` during Stage-2 profiling. Kani was a
+  trial candidate until dropped for toolchain age (see O).
 - **DEFER**: cargo-audit (redundant with deny's RustSec DB; keep as
   documented local convenience); coverage thresholds (until baseline);
   `redundant_pub_crate` as a signal.
@@ -150,6 +151,10 @@ store default-feature tests (redb is pure Rust) · graph/kbest invariants.
 Not applicable: libpinyin/tkrzw/LMDB C sides.
 
 ## O. Highest-value Kani harnesses
+
+DROPPED (2026-08): no Kani release supports the pinned 1.97.1 toolchain
+(0.67.0, the newest, bundles nightly 2025-11-21); revisit when one does.
+The candidates considered were:
 
 cost.rs `reduce_ratio`/`log2_fixed` postconditions · table_conf gcd/λ
 exactness · content.rs `decode_tokens` bounds-for-all-inputs · graph.rs

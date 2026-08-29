@@ -128,7 +128,7 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 | overflow-checks release test | nightly | `cargo test --release` with `-C overflow-checks -C debug-assertions` |
 | mutation score | weekly (trial) | core parser/scheme/scoring + user/store |
 | coverage report | nightly | llvm-cov, report-only |
-| Kani harnesses | nightly (trial) | cost.rs, table_conf.rs gcd, content.rs decode bounds, graph.rs monotonicity |
+| ~~Kani harnesses~~ | dropped (toolchain age) | — |
 | Lizard | weekly | CCN≤40 ratchet from current max 38 |
 | geiger | weekly | dependency unsafe diff |
 
@@ -195,6 +195,7 @@ follow-up PRs, not part of PR-1.
    (F-10) ended up in PR-1 instead and were closed there (4ea4355).
 3. **PR-3 (lanes)**: scheduled workflow: fuzz expansion + nightly soak,
    Miri, overflow lane, llvm-cov, geiger, Lizard ratchet.
-4. **PR-4 (trials)**: Kani harnesses; scoped cargo-mutants; nextest
-   adoption for the unit lane.
+4. **PR-4 (trials)**: scoped cargo-mutants; nextest adoption for the
+   unit lane. (Kani was scoped here too, then dropped: no release
+   supports the pinned toolchain — see tooling-evaluation §19.)
 5. AGENTS.md shrinks as rules land (see `AGENTS-reduction.md`).

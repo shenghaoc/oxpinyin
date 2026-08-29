@@ -474,7 +474,13 @@ numeric invariants. Concrete candidates grounded in this codebase:
 4. `core/src/graph.rs` — starts-array monotonicity lemma feeding
    `starts[node+1]` indexing safety.
 
-**Verdict: TRIAL (scheduled lane, 3–4 harnesses)**; whole-program
+**Verdict: DROPPED (2026-08, review of PR #212)** — the newest Kani
+release (0.67.0) bundles nightly 2025-11-21, older than the workspace's
+pinned 1.97.1, and Kani is coupled to its bundled rustc, so no
+supporting release exists to select. Harnesses and the nightly job were
+removed rather than shipped as guaranteed-failing coverage. Revisit when
+a Kani release supports the pinned toolchain; the original assessment
+follows.; whole-program
 verification REJECTed by scope. Harnesses double as `debug_assert!`
 documentation.
 
@@ -553,7 +559,7 @@ ephemeral runners.
 | cargo-mutants | dynamic | weak-assertion tests | — | med | hours | TRIAL (scoped) |
 | Lizard | static metric | complexity outliers | safety | 0 | seconds | ADOPT SELECTIVELY (report) |
 | cargo-geiger | static inventory | unsafe in deps | reachability/safety | low | ~2 min | ADOPT SELECTIVELY |
-| Kani | formal | numeric/bounds proofs, panic-freedom (bounded) | everything outside harness | low | lane (min–h) | TRIAL |
+| Kani | formal | numeric/bounds proofs, panic-freedom (bounded) | everything outside harness | low | lane (min–h) | DROPPED (toolchain predates pinned rustc) |
 | Prusti | formal | contracts | — | — | high | REJECT |
 | no-panic | link-time | some panic paths (opt builds) | debug-mode paths, generics | med | small | REJECT |
 | `panic = "abort"` | runtime policy | (crash mode) | panic existence | — | free | REJECT (kills ffi_catch) |
