@@ -461,11 +461,15 @@ where
     Ok(rows)
 }
 
-/// Whether the forced `token` still spells over `[start, end)` under the
+/// Whether any span entry spelling the forced `token` over `[start,
+/// end)` carries a nonzero matched pronunciation count under the
 /// current matrix — the engine-side counterpart of
-/// `validate_constraint`'s `compute_pronunciation_possibility` drop test
-/// (below-`FLT_EPSILON` upstream; "the span search no longer yields the
-/// token" here, the recorded §3 possibility divergence's shape).
+/// `validate_constraint`'s `compute_pronunciation_possibility` drop
+/// test (below-`FLT_EPSILON` upstream; here the `Some((0, _))`
+/// zero-guard from the §3 matched/total work). Recorded equivalent on
+/// model20 data (`docs/findings/upstream-divergences.md`, the
+/// validate_constraint entry): the below-ε boundary is unreachable
+/// there, so the zero test decides both sides.
 ///
 /// # Errors
 ///

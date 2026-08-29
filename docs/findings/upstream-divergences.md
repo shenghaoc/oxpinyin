@@ -155,24 +155,62 @@ inputs (the pin-built `.so` SIGABRTs).
   aborts upstream; the frontend contract (re-guess between choose and
   train) makes the two agree on every driven surface.
 
-### validate_constraint's drop test is the span-search shape
+### validate_constraint's drop test is the span-search shape — CLOSED (academic: equivalent on model20)
 
 - **Upstream source cite:**
-  `src/lookup/phonetic_lookup.cpp:142-168` (`validate_constraint`).
+  `src/lookup/phonetic_lookup.cpp:142-168` (`validate_constraint`);
+  `src/storage/phonetic_key_matrix.cpp:534-601`
+  (`compute_pronunciation_possibility`); `src/storage/phrase_index.h:136-164`
+  (`get_pronunciation_possibility`); `src/storage/pinyin_phrase3.h:68-144`
+  (the loose compare).
 - **Mechanism:** a forcing is dropped when
   `compute_pronunciation_possibility` of the forced token over its span
-  falls below `FLT_EPSILON` under the current matrix.
-- **What oxpinyin does instead:** drops when the span search over the
-  span no longer yields the forced token (`span_finds_token`) — the
-  possibility arithmetic itself is the already-recorded §3 divergence
-  (first path per token, matched/total as a step-cost term), so the
-  below-ε threshold has no bit-faithful port. The cells also carry the
-  chosen phrase's display text where upstream re-fetches by token from
-  the phrase index, so the selection record rebuilds from the store
-  alone.
-- **Externally observable:** only on edits that leave a span
-  marginally spellable — the same inputs where the §3 possibility
-  divergence is already observable.
+  falls below `FLT_EPSILON` (2^-23) under the current matrix. The
+  quantity is a sum over every matrix path that spells the phrase: each
+  complete path contributes the item's matched/total pronunciation
+  share under the loose compare — initials exact, initial-only keys
+  match any middle/final, zero tone matches any tone, fuzzy not
+  handled.
+- **What oxpinyin does instead:** drops when no span entry spelling the
+  forced token carries a nonzero matched count (`span_finds_token`;
+  the `Some((0, _))` zero-guard landed with the §3 matched/total work)
+  — the possibility arithmetic itself is the already-recorded §3
+  divergence (first path per token, matched/total as a step-cost term),
+  so the below-ε threshold has no bit-faithful port. The cells also
+  carry the chosen phrase's display text where upstream re-fetches by
+  token from the phrase index, so the selection record rebuilds from
+  the store alone.
+- **Status:** closed as **academic — equivalent on model20**. The
+  arithmetic differs (upstream sums f32 per-path loose-compare terms;
+  oxpinyin guards on integer zero before any division), but the drop
+  boundary is unreachable on the pinned data, so the two tests produce
+  identical observable behavior. Proof: the threshold implies a
+  per-token pronunciation total above 2^23 = 8,388,608 for any
+  nonzero-but-below-ε share. Scanning the model20 tables: the max
+  per-token total is 2,945,481 (的 — 2,224,855 across its pinyin
+  records plus 720,626 across its punctuated-variant records; the
+  per-library max alone is 2,224,855) and every record frequency is
+  ≥ 1, so every nonzero sum is ≥ 1/2,945,481 ≈ 3.4e-7 > FLT_EPSILON ≈
+  1.19e-7 — a 2.8× margin. Below-ε-but-nonzero cannot occur; the test
+  is equivalently a zero test on both sides. The zero case agrees too:
+  every stored pronunciation in model20 carries zero tone (no tone
+  digits in any table), so the compare's tone rule never blocks; the
+  loose compare's initial-only lenience is mirrored by the span
+  search's partial-key expansion (both initial-exact); and fuzzy
+  alternates are explicit matrix-column keys on both sides, so the
+  all-exact path always matches. No model20 input exists where the pin
+  drops a forcing and oxpinyin keeps it — the E2E I/O rule is
+  satisfied vacuously, and no non-vacuity case is constructible.
+- **Re-opening condition:** if model20 is ever replaced by a corpus
+  whose per-token pronunciation total exceeds 2^23 — or that stores
+  nonzero pronunciation tones — a forced token's share can land below
+  FLT_EPSILON while a span entry still lists it, and this entry becomes
+  a revert target: the fix is the threshold port over the already
+  plumbed matched/total pairs in `span_finds_token`.
+- **Externally observable:** was only ever reachable on edits that
+  leave a span marginally spellable — the same inputs where the §3
+  possibility divergence is already observable; on model20, not
+  reachable at all (see Status).
 
 ### Constraints survive every re-parse except the selection-committed one
 
