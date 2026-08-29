@@ -96,29 +96,33 @@ done
 
 # cargo cinstall always builds under an explicit target triple (cargo-c sets it
 # to rustc.host when --target is absent — build.rs:825-828), so the layout is
-# target/<triple>/<profile>/. Resolve the same triple: --target if given, else
-# $CARGO_BUILD_TARGET, else rustc's host.
+# target/<selector>/<profile>/. Resolve the same selector: --target if given,
+# else $CARGO_BUILD_TARGET, else rustc's host.
 if [ -z "$TRIPLE" ]; then
   TRIPLE="${CARGO_BUILD_TARGET:-}"
 fi
 if [ -z "$TRIPLE" ]; then
   TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
 fi
+# A --target given as a custom spec file (…/foo.json, or foo.json found via
+# RUST_TARGET_PATH) builds under target/<foo>/ — cargo names the dir after the
+# file stem, not the path. Normalize to that stem; a plain triple is unchanged.
+if [ -n "$TRIPLE" ]; then
+  TRIPLE="$(basename -- "$TRIPLE" .json)"
+fi
+if [ -z "$TRIPLE" ]; then
+  echo "error: could not determine the build target (rustc -vV had no 'host:' line)" >&2
+  exit 1
+fi
 
-# Two EXACT candidates — the triple layout cargo cinstall uses, and a plain
-# no-triple layout as a defensive second — never a broad search that could grab
-# an unrelated crate's `out` artifact or a stale profile.
-BAKED=""
-for cand in \
-  "$TARGET_DIR/$TRIPLE/$PROFILE_DIR/libpinyin.pc.in.baked" \
-  "$TARGET_DIR/$PROFILE_DIR/libpinyin.pc.in.baked"; do
-  if [ -f "$cand" ]; then BAKED="$cand"; break; fi
-done
-if [ -z "$BAKED" ]; then
-  echo "error: baked pkg-config template not found. Looked for:" >&2
-  echo "         $TARGET_DIR/$TRIPLE/$PROFILE_DIR/libpinyin.pc.in.baked" >&2
-  echo "         $TARGET_DIR/$PROFILE_DIR/libpinyin.pc.in.baked" >&2
-  echo "       (target='${TRIPLE:-<host>}' profile='$PROFILE_DIR' target-dir='$TARGET_DIR')" >&2
+# The one EXACT path cargo cinstall wrote. No unqualified <profile>-only
+# fallback: cargo cinstall always qualifies by a target selector, so that path
+# could only ever be a stale artifact from a non-targeted `cargo build`, never
+# this run's template.
+BAKED="$TARGET_DIR/$TRIPLE/$PROFILE_DIR/libpinyin.pc.in.baked"
+if [ ! -f "$BAKED" ]; then
+  echo "error: baked pkg-config template not found: $BAKED" >&2
+  echo "       (target='$TRIPLE' profile='$PROFILE_DIR' target-dir='$TARGET_DIR')" >&2
   echo "       build.rs writes it during 'cargo cinstall'; check the passthrough args match the build." >&2
   exit 1
 fi
