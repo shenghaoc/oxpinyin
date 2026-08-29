@@ -314,13 +314,29 @@ pub fn detect(dir: &Path) -> Result<DataLayout, LayoutError> {
 /// This is where to look, not what is there: hand a result to [`detect`].
 #[must_use]
 pub fn system_data_dirs() -> Vec<PathBuf> {
-    // Debian's multiarch tuple. `std::env::consts::ARCH` matches Debian's
-    // name for the targets that matter here; a miss simply means the
-    // candidate does not exist and the next one is tried.
-    let multiarch = format!("lib/{}-linux-gnu", std::env::consts::ARCH);
+    // Debian/Ubuntu multiarch: `<prefix>/lib/<tuple>/libpinyin/data`.
+    // `std::env::consts::ARCH` names the tuple for some targets but not all
+    // (x86 → `i386`, arm → `arm-linux-gnueabihf`), so the constructed guess
+    // below is followed by a scan of `<prefix>/lib` for any `*-linux-gnu*`
+    // subdirectory actually present — which covers those and any future
+    // tuple without hard-coding a list.
+    let multiarch = format!("{}-linux-gnu", std::env::consts::ARCH);
     let mut dirs = Vec::new();
     for prefix in ["/usr", "/usr/local"] {
-        for libdir in [multiarch.as_str(), "lib64", "lib"] {
+        let lib = Path::new(prefix).join("lib");
+        dirs.push(lib.join(&multiarch).join("libpinyin/data"));
+        if let Ok(entries) = std::fs::read_dir(&lib) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if let Some(name) = name.to_str()
+                    && name.contains("-linux-gnu")
+                    && name != multiarch
+                {
+                    dirs.push(lib.join(name).join("libpinyin/data"));
+                }
+            }
+        }
+        for libdir in ["lib64", "lib"] {
             dirs.push(Path::new(prefix).join(libdir).join("libpinyin/data"));
         }
     }
