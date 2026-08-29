@@ -285,14 +285,14 @@ jobs:
           persist-credentials: false
       - name: Register the checkout as a git safe.directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # Official action, pinned by commit SHA per the repo convention for
+      # third-party actions; kani-version keeps the toolchain itself at
+      # 0.67.0. Trust shifts from a hand-rolled curl+digest to the SHA-
+      # pinned action on the official distribution channel.
       - name: Install pinned Kani
-        run: |
-          ver=kani-0.67.0
-          curl -sSfL -o kani.tar.gz "https://github.com/model-checking/kani/releases/download/${ver}/${ver}-x86_64-unknown-linux-gnu.tar.gz"
-          tar xzf kani.tar.gz
-          ./"${ver}-x86_64-unknown-linux-gnu"/install.sh --prefix "$HOME/.kani"
-          echo "$HOME/.kani/bin" >> "$GITHUB_PATH"
-      - run: rustup show active-toolchain
+        uses: model-checking/kani-github-action@f838096619a707b0f6b2118cf435eaccfa33e51f # v1.1
+        with:
+          kani-version: '0.67.0'
       - run: cargo kani -p oxpinyin-core -p oxpinyin-data
 
   # Mutation testing, scoped to where test strength matters most (the
@@ -328,7 +328,7 @@ jobs:
           printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
           . "$HOME/.cargo/env"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo install cargo-mutants --locked
+      - run: cargo install cargo-mutants --version 27.1.0 --locked
       - run: >
           cargo mutants --locked --no-times
           --file crates/oxpinyin-core/src/parser.rs
