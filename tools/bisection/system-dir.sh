@@ -135,7 +135,13 @@ system_dir_require_complete() {
 		printf '\nAll four are required: the three tables plus interpolation2.text,\n'
 		printf 'whose real unigrams are what the oracle scores against. Without it\n'
 		printf 'the comparison is flat-export unigrams versus the pin'"'"'s real ones\n'
-		printf '-- a data mismatch that reports as a divergence.\n'
+		# %s, not a bare format: a format string opening with `--` is read
+		# as options, and the builtin fails with `invalid option`. That
+		# truncates this message, and because the failure lands under
+		# `set -e` before the `exit 3` below, the caller gets status 2 --
+		# which run-option-sweep.sh publishes as DIVERGENCE, the exact
+		# misreading this file exists to prevent.
+		printf '%s\n' '-- a data mismatch that reports as a divergence.'
 	} >&2
 	exit 3
 }
