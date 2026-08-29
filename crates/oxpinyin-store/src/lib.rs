@@ -1498,6 +1498,44 @@ mod tests {
         let _ = std::fs::remove_file(&lock);
     }
 
+    #[cfg(feature = "lmdb")]
+    #[test]
+    fn lmdb_rejects_a_conflicting_map_size_while_the_env_is_live() {
+        // One env is shared per path, and heed can neither reopen a live
+        // environment at a different ceiling nor resize it — so a mismatching
+        // request must fail up front with InvalidInput instead of silently
+        // handing back the live env's ceiling (writes would then hit
+        // MDB_MAP_FULL at runtime against a ceiling the caller never chose).
+        // With the mismatching handle gone, the new ceiling applies.
+        const BIG_MAP: usize = 2 << 30; // 2 GiB, a multiple of the page size
+        const OTHER_MAP: usize = 4 << 30; // 4 GiB, likewise
+        let path = std::env::temp_dir().join(format!(
+            "oxpinyin-store-lmdb-mapconflict-{}.mdb",
+            std::process::id(),
+        ));
+        let _ = std::fs::remove_file(&path);
+        let lock: std::path::PathBuf = {
+            let mut l = path.clone().into_os_string();
+            l.push("-lock");
+            l.into()
+        };
+        let store = LmdbStore::create_with_map_size(&path, BIG_MAP).unwrap();
+        assert!(matches!(
+            LmdbStore::create_with_map_size(&path, OTHER_MAP),
+            Err(StoreError::InvalidInput(
+                "this LMDB file is already open in this process with a different map size; \
+                 close those handles before opening it with this ceiling"
+            ))
+        ));
+        // A matching ceiling still shares the live env.
+        assert!(LmdbStore::open_read_only_with_map_size(&path, BIG_MAP).is_ok());
+        drop(store);
+        let reopened = LmdbStore::create_with_map_size(&path, OTHER_MAP).unwrap();
+        drop(reopened);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&lock);
+    }
+
     // ── cross-backend key-ordering conformance ─────────────────────
     //
     // The byte-order contract must hold *identically* across every

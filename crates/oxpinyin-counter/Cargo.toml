@@ -11,9 +11,23 @@ description = "Training-only n-gram counter reproducing libpinyin gen_ngram. Nev
 [lints]
 workspace = true
 
+[features]
+# Backend selection, forwarded through oxpinyin-segment to the chain (one
+# backend per binary; see oxpinyin-store's [features] for the model and
+# precedence): the counter reads `phrase_index.<ext>` in the compiled-in
+# backend's format — redb by default, tkrzw/LMDB behind
+# their features.
+default = ["redb"]
+kyotocabinet = ["oxpinyin-segment/kyotocabinet"]
+tkrzw = ["oxpinyin-segment/tkrzw"]
+lmdb = ["oxpinyin-segment/lmdb"]
+redb = ["oxpinyin-segment/redb"]
+
 [[bin]]
 name = "oxpinyin-counter"
 path = "src/bin/oxpinyin-counter.rs"
 
 [dependencies]
-oxpinyin-segment = { path = "../oxpinyin-segment" }
+# default-features = false so the backend selection reaches the chain from
+# this crate's features above, not from segment's defaults.
+oxpinyin-segment = { path = "../oxpinyin-segment", default-features = false }

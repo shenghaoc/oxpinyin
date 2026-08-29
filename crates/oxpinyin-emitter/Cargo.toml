@@ -11,13 +11,27 @@ description = "Training-only interpolation2.text emitter reproducing libpinyin e
 [lints]
 workspace = true
 
+[features]
+# Backend selection, forwarded through the training-crate chain (one
+# backend per binary; see oxpinyin-store's [features] for the model and
+# precedence): the emitter reads `phrase_index.<ext>` in the compiled-in
+# backend's format — redb by default, tkrzw/LMDB behind
+# their features.
+default = ["redb"]
+kyotocabinet = ["oxpinyin-segment/kyotocabinet", "oxpinyin-counter/kyotocabinet"]
+tkrzw = ["oxpinyin-segment/tkrzw", "oxpinyin-counter/tkrzw"]
+lmdb = ["oxpinyin-segment/lmdb", "oxpinyin-counter/lmdb"]
+redb = ["oxpinyin-segment/redb", "oxpinyin-counter/redb"]
+
 [[bin]]
 name = "oxpinyin-emitter"
 path = "src/bin/oxpinyin-emitter.rs"
 
 [dependencies]
-oxpinyin-segment = { path = "../oxpinyin-segment" }
-oxpinyin-counter = { path = "../oxpinyin-counter" }
+# default-features = false so the backend selection reaches the chain from
+# this crate's features above, not from the training crates' defaults.
+oxpinyin-segment = { path = "../oxpinyin-segment", default-features = false }
+oxpinyin-counter = { path = "../oxpinyin-counter", default-features = false }
 
 [dev-dependencies]
 # default-features = false so workspace `--no-default-features` runs are not

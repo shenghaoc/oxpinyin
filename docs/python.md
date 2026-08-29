@@ -39,12 +39,16 @@ libpinyin installation:
 
 | File | Required | Purpose |
 |---|---|---|
-| `pinyin_index.redb` | yes | syllable index |
-| `phrase_index.redb` | yes | phrase table |
-| `bigram.redb` | yes | bigram language model |
+| `pinyin_index.<ext>` | yes | syllable index |
+| `phrase_index.<ext>` | yes | phrase table |
+| `bigram.<ext>` | yes | bigram language model |
 | `interpolation2.text` | production mode | real unigram frequencies driving the pinned candidate ranking |
 | `table.conf` | optional | λ override; pinned default otherwise |
-| `user_store.redb` | created in `user_dir` | learning persistence |
+| `user_store.<ext>` | created in `user_dir` | learning persistence |
+
+`<ext>` names the compiled-in backend: `redb` (the default and
+portability fallback), `tkt` with the `tkrzw` feature, `lmdb` with
+`lmdb`.
 
 A directory is converted from libpinyin-format sources by the repository's
 usual toolchain (`tools/model/fetch-model.sh` fetches the pinned model;
@@ -227,13 +231,13 @@ its replay procedure. One binary (`native-dump`) replays it through the pure
 Rust API; the pytest suite replays it through the binding;
 `test_replayed_corpus_matches_the_native_transcript` then asserts structural
 equality of the loaded event objects (not of serialized bytes) per case.
-The shipping data path always uses redb — `oxpinyin-runtime` opens tables
-through `GenericLookupTable<DefaultStore>` and learning through
-`UserStore = GenericUserStore<DefaultStore>`, where
-`DefaultStore = RedbStore`. LMDB and Tkrzw are optional backends behind
-cargo features that `oxpinyin-python` does not enable, so their coverage
-belongs to the separate store/backend differential tests, not to Python
-parity.
+The shipping data path always uses the compiled-in backend —
+`oxpinyin-runtime` opens tables through `GenericLookupTable<DefaultStore>`
+and learning through `UserStore = GenericUserStore<DefaultStore>`, where
+`DefaultStore` resolves to Kyoto Cabinet by default (redb under
+`--no-default-features`; tkrzw and LMDB behind their features). The
+alternates' coverage belongs to the separate store/backend differential
+tests, not to Python parity.
 
 Known gap: no corpus case opens a `user_dir`. All 18 cases run against
 `fixtures/w3` with user learning off, on both sides — `native-dump` calls

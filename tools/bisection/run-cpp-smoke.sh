@@ -23,8 +23,21 @@ if [ ! -f "$CAPI_SO" ]; then
 fi
 
 CAPI_DATA="$REPO_ROOT/fixtures/w3"
-if [ ! -f "$CAPI_DATA/pinyin_index.redb" ]; then
-    echo "fatal: redb tables not found at $CAPI_DATA"
+# The tables' extension names the backend the capi was compiled with (this
+# gate builds the default: redb `.redb`). fixtures/w3 carries every
+# committed set; copy whichever one is complete, preferring the default
+# backend's.
+SYS_EXT=""
+for ext in redb tkt lmdb; do
+    if [ -f "$CAPI_DATA/pinyin_index.$ext" ] \
+        && [ -f "$CAPI_DATA/phrase_index.$ext" ] \
+        && [ -f "$CAPI_DATA/bigram.$ext" ]; then
+        SYS_EXT=$ext
+        break
+    fi
+done
+if [ -z "$SYS_EXT" ]; then
+    echo "fatal: no complete three-table fixture set at $CAPI_DATA"
     exit 1
 fi
 
@@ -38,7 +51,8 @@ mkdir "$USER_DIR"
 # the public ABI rather than the fixture constructor.
 SYS_DIR="$BUILD_DIR/sys"
 mkdir "$SYS_DIR"
-cp "$CAPI_DATA/pinyin_index.redb" "$CAPI_DATA/phrase_index.redb" "$CAPI_DATA/bigram.redb" "$SYS_DIR/"
+cp "$CAPI_DATA/pinyin_index.$SYS_EXT" "$CAPI_DATA/phrase_index.$SYS_EXT" \
+    "$CAPI_DATA/bigram.$SYS_EXT" "$SYS_DIR/"
 printf '%s\n' '\data model interpolation' '\1-gram' '\item 1 ok count 1' \
     > "$SYS_DIR/interpolation2.text"
 

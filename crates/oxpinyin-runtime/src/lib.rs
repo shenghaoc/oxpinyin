@@ -60,8 +60,9 @@ pub enum OpenError {
     /// file.
     Io(PathBuf, std::io::Error),
     /// The production constructor ran where no `interpolation2.text`
-    /// unigram model sits next to the redb tables. The pinned three-key
-    /// candidate ranking needs the real frequencies.
+    /// unigram model sits next to the system tables (whichever backend
+    /// they are in). The pinned three-key candidate ranking needs the
+    /// real frequencies.
     ModelMissing(PathBuf),
     /// The dictionary tables failed to open or parse.
     Dict(DictError),
@@ -556,8 +557,10 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    /// Opens the production configuration: redb tables under `system_dir`,
-    /// real unigrams from `interpolation2.text` next to them, λ from
+    /// Opens the production configuration: the compiled-in backend's
+    /// system tables under `system_dir` (redb `.redb` by default;
+    /// `.tkt`/`.lmdb` behind their features), real unigrams from
+    /// `interpolation2.text` next to them, λ from
     /// `table.conf` when present, and — when `user_dir` is given — the
     /// learning store (its creation or read failure degrades to "no user
     /// state", matching the C ABI so a bad user dir cannot fail init).

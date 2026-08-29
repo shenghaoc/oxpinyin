@@ -144,13 +144,12 @@ mod tkrzw {
                 // case, since the library often has to be made by hand —
                 // would otherwise link but fail to start.
                 //
-                // The unscoped rustc-link-arg reaches every binary cargo
-                // links in this graph (workspace bins, tests, benches),
-                // so they run without environment setup. That rpath is a
-                // convenience, not the contract: code that consumes the
-                // backend outside such a build, or strips runpaths from
-                // its artifacts, must make the library findable itself
-                // via LD_LIBRARY_PATH or its own rpath setting.
+                // Package-scoped, like every build-script
+                // `rustc-link-arg`: this rpath lands on the targets cargo
+                // builds from THIS package — its lib and its own test
+                // artifacts — not on other packages' binaries, which must
+                // make the library findable themselves via LD_LIBRARY_PATH
+                // or their own rpath setting.
                 println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
             }
         }

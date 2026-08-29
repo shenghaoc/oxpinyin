@@ -1,10 +1,11 @@
-//! Character-domain phrase table built from `phrase_index.redb`.
+//! Character-domain phrase table built from the `phrase_index` table
+//! (compiled-in backend's format).
 //!
 //! `ngseg` classifies a run as segmentable by
 //! `FacadePhraseTable3::search(1, char, tokens) & SEARCH_OK`
 //! (`utils/segment/ngseg.cpp:204-210`). The Rust export has no character
 //! trie; the same answer is an exact lookup of the one-character phrase
-//! text in the inverted `phrase_index.redb` map. `SEARCH_CONTINUED` is
+//! text in the inverted `phrase_index` map. `SEARCH_CONTINUED` is
 //! "a stored phrase is a strict extension of this span".
 
 use std::collections::{HashMap, HashSet};
@@ -26,7 +27,8 @@ pub struct PhraseLexicon {
 }
 
 impl PhraseLexicon {
-    /// Builds the inverted index from `phrase_index.redb` (`token → UTF-8`).
+    /// Builds the inverted index from the `phrase_index` table in the
+    /// compiled-in backend's format (`token → UTF-8`).
     ///
     /// # Errors
     ///

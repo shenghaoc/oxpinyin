@@ -4,7 +4,8 @@
 //!
 //! Reads the ngseg segmented-token stream (T1's output) and emits the
 //! canonical integer-count dump. The freq-1 floor comes from
-//! `phrase_index.redb` (`PINYIN_EXPORT_DIR` / `/tmp/oxpinyin-export`).
+//! the `phrase_index` table in the compiled-in backend's format
+//! (`PINYIN_EXPORT_DIR` / `/tmp/oxpinyin-export`).
 
 #![forbid(unsafe_code)]
 #![allow(missing_docs)]

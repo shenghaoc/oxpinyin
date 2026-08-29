@@ -1,7 +1,8 @@
 //! Scoring-model data the segmenter reads through the existing loaders.
 //!
-//! Bigrams come from [`oxpinyin_data::BigramLanguageModel`] (`bigram.redb`,
-//! the verbatim export of the pin's `SYSTEM_BIGRAM`). Unigrams come from
+//! Bigrams come from [`oxpinyin_data::BigramLanguageModel`] (the
+//! `bigram` table in the compiled-in backend's format, the verbatim
+//! export of the pin's `SYSTEM_BIGRAM`). Unigrams come from
 //! [`oxpinyin_data::parse_interpolation2`] plus the `gen_unigram` freq-1 floor
 //! that the pin applies when it builds `phrase_index.bin`
 //! (`utils/training/gen_unigram.cpp:45-68`, run from `data/Makefile.am:62`).
@@ -115,7 +116,7 @@ impl SegmentModel {
     ///
     /// # Errors
     ///
-    /// Returns [`SegmentError`] when the redb-backed store fails.
+    /// Returns [`SegmentError`] when the store backend fails.
     pub fn successors(&self, prev: u32) -> Result<Option<BigramRow>, SegmentError> {
         match &self.bigram {
             BigramStore::Table(table) => Ok(table.load_successors(prev)?),

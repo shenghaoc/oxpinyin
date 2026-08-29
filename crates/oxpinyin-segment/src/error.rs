@@ -10,7 +10,7 @@ use oxpinyin_data::{InterpolationError, LmError, TableError};
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum SegmentError {
-    /// A redb table could not be opened or read.
+    /// A system table could not be opened or read.
     Table(TableError),
     /// The system bigram could not be opened or parsed.
     LanguageModel(LmError),

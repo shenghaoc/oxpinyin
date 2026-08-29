@@ -116,9 +116,12 @@ fn open_env(path: &Path, read_only: bool, map_size: usize) -> Result<Env, StoreE
 // upgrade, dropped (and the path reopenable) when the last store using
 // it goes away — the same shape as `oxpinyin-user`'s store registry.
 
-/// One registry row: the live environment and whether it was opened
-/// writable.
-type EnvSlot = (Weak<Env>, bool);
+/// One registry row: the live environment, whether it was opened
+/// writable, and the map-size ceiling it was opened with — heed can
+/// neither reopen a live environment at a different ceiling nor resize
+/// it, so a mismatching request must be refused rather than silently
+/// handed the live ceiling.
+type EnvSlot = (Weak<Env>, bool, usize);
 
 static OPEN_ENVS: OnceLock<Mutex<HashMap<PathBuf, EnvSlot>>> = OnceLock::new();
 
@@ -128,30 +131,98 @@ fn env_key(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// A re-open raced the previous environment's teardown. heed keeps a
+/// process-global registry of open environments keyed by canonical path
+/// (`heed::EnvOpenOptions::open` refuses a second open with
+/// `EnvAlreadyOpened`) and removes the entry in `EnvInner::drop` —
+/// **before** calling `mdb_env_close`, and after a wait on that
+/// registry's single write lock. Two consequences for this registry:
+///
+/// * Between our `Weak` dying and heed removing its entry, a re-open of
+///   the same path fails spuriously. Every open in this crate funnels
+///   through `shared_env`, so a live conflicting environment cannot
+///   exist and the failure is always transient — retry, never surface it.
+/// * After heed removes the entry, `mdb_env_close` may still be running.
+///   heed surfaces that window as `env_closing_event(path)`, and opening
+///   the path while the close is in flight races it inside liblmdb —
+///   observed as heap corruption (`malloc(): unaligned tcache chunk`)
+///   under a newer glibc when parallel capi tests tore down and reopened
+///   the same fixture files. So a re-open WAITS for the effective-close
+///   event first; the retry is only a backstop.
+fn is_transient_reopen(error: &StoreError) -> bool {
+    let StoreError::Backend(inner) = error else {
+        return false;
+    };
+    inner
+        .downcast_ref::<heed::Error>()
+        .is_some_and(|e| matches!(e, heed::Error::EnvAlreadyOpened))
+}
+
 /// One shared environment per path. A read-only request shares any live
 /// env (the store-level `read_only` flag still refuses writes); a
 /// writable request shares only a writable env — an env opened read-only
 /// cannot be upgraded, so that mismatch is refused rather than handed a
-/// handle that cannot write.
+/// handle that cannot write. A live env is shared only at the map size it
+/// was opened with: a different ceiling cannot be applied to it, so that
+/// mismatch is refused too, before the caller grows data past a ceiling
+/// it does not actually hold.
 fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Env>, StoreError> {
     let registry = OPEN_ENVS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut map = registry.lock().unwrap_or_else(|p| p.into_inner());
-    let key = env_key(path);
-    if let Some((weak, writable)) = map.get(&key)
-        && let Some(env) = weak.upgrade()
-    {
-        if read_only || *writable {
-            return Ok(env);
+    // 1ms doubling to 256ms: ~500ms total, orders of magnitude past the
+    // teardown window, while a genuine stuck close still fails in bounded
+    // time rather than hanging the caller.
+    let mut backoff = std::time::Duration::from_millis(1);
+    for attempt in 0..10 {
+        if attempt > 0 {
+            // Sleep without the registry lock: the thread finishing the
+            // old environment's teardown never takes this mutex, and
+            // unrelated paths keep flowing through the registry.
+            std::thread::sleep(backoff);
+            backoff = (backoff * 2).min(std::time::Duration::from_millis(256));
         }
-        return Err(StoreError::InvalidInput(
-            "this LMDB file is already open read-only in this process;              close those handles before opening it writable",
-        ));
+        // A dead Weak does not mean the old environment has finished
+        // closing (see `is_transient_reopen`'s doc): wait for heed's
+        // effective-close event before this thread tries to open the
+        // path. No deadlock is possible — this thread holds no copy of
+        // the environment (its Weak is dead), and the closing thread
+        // never takes this registry's mutex.
+        if let Some(closing) = heed::env_closing_event(env_key(path)) {
+            closing.wait_timeout(std::time::Duration::from_millis(1000));
+        }
+        let mut map = registry.lock().unwrap_or_else(|p| p.into_inner());
+        let key = env_key(path);
+        if let Some((weak, writable, live_map_size)) = map.get(&key)
+            && let Some(env) = weak.upgrade()
+        {
+            if *live_map_size != map_size {
+                return Err(StoreError::InvalidInput(
+                    "this LMDB file is already open in this process with a different map size; close those handles before opening it with this ceiling",
+                ));
+            }
+            if read_only || *writable {
+                return Ok(env);
+            }
+            return Err(StoreError::InvalidInput(
+                "this LMDB file is already open read-only in this process; close those handles before opening it writable",
+            ));
+        }
+        // The open itself happens under the lock, so two first opens of
+        // one path serialize here rather than both reaching heed.
+        match open_env(path, read_only, map_size) {
+            Ok(env) => {
+                let env = Arc::new(env);
+                // Re-key by the now-existing file so later opens of the
+                // same file through a different spelling collide correctly.
+                map.insert(env_key(path), (Arc::downgrade(&env), !read_only, map_size));
+                return Ok(env);
+            }
+            Err(error) if is_transient_reopen(&error) => continue,
+            Err(error) => return Err(error),
+        }
     }
-    let env = Arc::new(open_env(path, read_only, map_size)?);
-    // Re-key by the now-existing file so later opens of the same file
-    // through a different spelling collide correctly.
-    map.insert(env_key(path), (Arc::downgrade(&env), !read_only));
-    Ok(env)
+    Err(StoreError::Backend(Box::new(std::io::Error::other(
+        "LMDB environment teardown did not complete in time to reopen it",
+    ))))
 }
 
 // ── store ─────────────────────────────────────────────────────────

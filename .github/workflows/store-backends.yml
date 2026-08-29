@@ -212,6 +212,10 @@ jobs:
       # keeping. (Rust-cache hashes RUSTFLAGS into its key anyway, so even a
       # future enablement cannot cross-contaminate the unsanitized dep store.)
       #
+      # Both arms build with --no-default-features --features tkrzw so the
+      # instrumented binary is pure tkrzw — the backend whose shim the
+      # instrumentation exists to check.
+      #
       # Both arms implement the mandated -fsanitize=address,undefined pair
       # against the surface where those hazards actually live: the memory-
       # unsafe C++ shim plus the linked runtime. Each arm instruments the shim
@@ -263,7 +267,7 @@ jobs:
             # container cannot lower vm.mmap_rnd_bits itself.
             export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1
             setarch "$(uname -m)" -R \
-              cargo test --locked --target "$triple" -p oxpinyin-store --features tkrzw
+              cargo test --locked --target "$triple" -p oxpinyin-store --no-default-features --features tkrzw
             ;;
           undefined)
             # No -Zsanitizer=undefined exists; instrument the shim and link
@@ -272,7 +276,7 @@ jobs:
             export RUSTFLAGS="-D warnings -C linker=cc -Clink-arg=-fsanitize=undefined -Clink-arg=-lubsan"
             export CFLAGS="-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
             export CXXFLAGS="$CFLAGS"
-            cargo test --locked --target "$triple" -p oxpinyin-store --features tkrzw
+            cargo test --locked --target "$triple" -p oxpinyin-store --no-default-features --features tkrzw
             ;;
           *)
             echo "FAIL: unknown matrix.sanitizer value '$SANITIZER'" >&2

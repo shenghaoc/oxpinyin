@@ -11,10 +11,24 @@ description = "Training-only deleted-interpolation λ estimator reproducing libp
 [lints]
 workspace = true
 
+[features]
+# Backend selection, forwarded through the training-crate chain (one
+# backend per binary; see oxpinyin-store's [features] for the model and
+# precedence): the λ estimator reads `phrase_index.<ext>` in the
+# compiled-in backend's format — redb by default, tkrzw/LMDB behind
+# their features.
+default = ["redb"]
+kyotocabinet = ["oxpinyin-segment/kyotocabinet", "oxpinyin-counter/kyotocabinet"]
+tkrzw = ["oxpinyin-segment/tkrzw", "oxpinyin-counter/tkrzw"]
+lmdb = ["oxpinyin-segment/lmdb", "oxpinyin-counter/lmdb"]
+redb = ["oxpinyin-segment/redb", "oxpinyin-counter/redb"]
+
 [[bin]]
 name = "oxpinyin-lambda"
 path = "src/bin/oxpinyin-lambda.rs"
 
 [dependencies]
-oxpinyin-segment = { path = "../oxpinyin-segment" }
-oxpinyin-counter = { path = "../oxpinyin-counter" }
+# default-features = false so the backend selection reaches the chain from
+# this crate's features above, not from the training crates' defaults.
+oxpinyin-segment = { path = "../oxpinyin-segment", default-features = false }
+oxpinyin-counter = { path = "../oxpinyin-counter", default-features = false }
