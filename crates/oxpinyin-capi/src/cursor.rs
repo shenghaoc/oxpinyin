@@ -674,9 +674,16 @@ struct KeyAt {
     end: usize,
 }
 
-/// The parse's keys as `(SyllableKey, tone, syllable start, raw end)`, in
-/// the active mode — the same precedence [`span_source`] uses.
-fn mode_keys(inst: &CapiInstance) -> Result<(Vec<KeyAt>, usize), EngineError> {
+/// The parse's keys as `(text, tone, syllable start, raw end)`, the active
+/// mode's own input buffer, and whether `'` is a zero-key separator in that
+/// mode — the same `(input, separators)` dispatch [`span_source`] and
+/// [`CapiInstance::validate_lookup_offset`] make. The key spans are in the
+/// active input's coordinates, so [`key_at`] must walk that same buffer, not
+/// the session's `'`-joined canonical spelling. Zhuyin and double pinyin
+/// carry `'` as content or not at all (`separators` false); plain full
+/// pinyin and the LUOMA / SECONDARY_ZHUYIN index parse consume it as a
+/// separator (`separators` true).
+fn mode_keys(inst: &CapiInstance) -> Result<(Vec<KeyAt>, &[u8], bool), EngineError> {
     if let Some(parse) = inst.zhuyin_parse.as_ref() {
         return Ok((
             parse
@@ -689,7 +696,8 @@ fn mode_keys(inst: &CapiInstance) -> Result<(Vec<KeyAt>, usize), EngineError> {
                     end: k.end(),
                 })
                 .collect(),
-            inst.zhuyin_input.len(),
+            inst.zhuyin_input.as_bytes(),
+            false,
         ));
     }
     if let Some(parse) = inst.double_parse.as_ref() {
@@ -704,7 +712,8 @@ fn mode_keys(inst: &CapiInstance) -> Result<(Vec<KeyAt>, usize), EngineError> {
                     end: k.end(),
                 })
                 .collect(),
-            inst.double_input.len(),
+            inst.double_input.as_bytes(),
+            false,
         ));
     }
     if let Some(parse) = inst.full_parse.as_ref() {
@@ -719,7 +728,8 @@ fn mode_keys(inst: &CapiInstance) -> Result<(Vec<KeyAt>, usize), EngineError> {
                     end: k.end(),
                 })
                 .collect(),
-            inst.full_input.len(),
+            inst.full_input.as_bytes(),
+            true,
         ));
     }
     let (keys, _) = inst.session.matrix_keys()?;
@@ -732,7 +742,8 @@ fn mode_keys(inst: &CapiInstance) -> Result<(Vec<KeyAt>, usize), EngineError> {
                 end: k.end(),
             })
             .collect(),
-        inst.session.raw_input().len(),
+        inst.session.raw_input().as_bytes(),
+        true,
     ))
 }
 
@@ -743,12 +754,14 @@ fn mode_keys(inst: &CapiInstance) -> Result<(Vec<KeyAt>, usize), EngineError> {
 /// skips forward over columns holding one lone zero key — a consumed `'`
 /// separator — and the answer is that column's first item.
 fn key_at(inst: &CapiInstance, offset: usize) -> Option<KeyAt> {
-    let (keys, input_len) = mode_keys(inst).ok()?;
-    // matrix.size() is input_len + 1; the last column is the reserved slot.
-    if offset >= input_len {
+    let (keys, input, separators) = mode_keys(inst).ok()?;
+    // matrix.size() is input.len() + 1; the last column is the reserved slot.
+    // `input` and the key spans share one coordinate space — the active
+    // mode's own buffer — so the separator walk reads it, not the session's
+    // `'`-joined canonical spelling.
+    if offset >= input.len() {
         return None;
     }
-    let raw = inst.session.raw_input().as_bytes();
     let mut at = offset;
     loop {
         if let Some(found) = keys.iter().find(|k| k.begin == at) {
@@ -759,9 +772,11 @@ fn key_at(inst: &CapiInstance, offset: usize) -> Option<KeyAt> {
                 end: found.end,
             });
         }
-        // A lone zero-key column is a consumed separator; the pin walks
-        // past the run. Anything else is an empty mid-syllable column.
-        if raw.get(at).copied() == Some(b'\'') && at + 1 < input_len {
+        // A lone zero-key column is a consumed separator; the pin walks past
+        // the run. Only the separator modes hold one — zhuyin and double
+        // pinyin carry `'` as content or not at all, so their empty columns
+        // end the walk. Anything else is an empty mid-syllable column.
+        if separators && input.get(at).copied() == Some(b'\'') && at + 1 < input.len() {
             at += 1;
             continue;
         }
