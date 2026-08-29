@@ -221,8 +221,18 @@ impl CapiContext {
     }
 
     /// Load addon library `index` from the runtime's first system data dir.
-    /// A user-store-only context has no runtime, so it loads nothing.
+    ///
+    /// The pin's addon phrase index asserts `index < PHRASE_INDEX_LIBRARY_COUNT`
+    /// (`novel_types.h:43`, 1<<4) on the load path as it does on unload; per
+    /// the availability class of `docs/findings/compatibility-policy.md` this
+    /// answers `false` instead — the same bound [`CapiContext::unload_addon`]
+    /// applies. Without it an out-of-range index would silently load a stray
+    /// `addon_{index}_*.redb` on disk rather than being refused. A
+    /// user-store-only context has no runtime, so it loads nothing.
     pub(crate) fn load_addon(&self, index: u8) -> bool {
+        if index >= PHRASE_INDEX_LIBRARY_COUNT {
+            return false;
+        }
         match self.runtime.as_ref() {
             Some(runtime) => runtime.load_system_addon(index),
             None => false,

@@ -6,7 +6,7 @@ use std::ptr;
 use crate::ffi::{cstr_to_owned_lossy, ffi_catch};
 use crate::state::{CapiContext, UnigramSource, box_context, context_mut};
 // Only the harness-gated fixture hooks below take a shared context ref; the
-// shipped build (--no-default-features) does not compile them.
+// shipped build (--features shipped) does not compile them.
 #[cfg(not(feature = "shipped"))]
 use crate::state::context_ref;
 use crate::types::PinyinContext;
