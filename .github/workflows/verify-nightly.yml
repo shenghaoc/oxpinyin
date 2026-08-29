@@ -5,6 +5,11 @@ name: verify-nightly
 # they do not block merges unless a ratchet exists (Lizard's CCN limit is
 # the only ratchet). Trials (Miri, geiger) are continue-on-error until
 # they prove stable.
+#
+# All jobs run in debian:testing containers in the store-backends.yml
+# style: the nightly lanes exist to surface drift early, and the rolling
+# distro toolchain is part of what they exercise. The image is
+# deliberately unpinned — do not "stabilise" it.
 
 on:
   schedule:
@@ -24,11 +29,33 @@ jobs:
   # w3 tables so the decoder starts from valid headers.
   fuzz-soak:
     runs-on: ubuntu-latest
+      # Same ASan leeway as the tkrzw sanitizer job in store-backends.yml:
+      # Docker's default seccomp profile blocks personality(2), which the
+      # setarch ASLR-off wrapper below needs.
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc util-linux
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup toolchain install nightly-2026-08-01 --profile minimal --component rust-src
+      - name: Register the checkout as a git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # One nightly toolchain serves both cargo-fuzz's build and the runs
+      # (cargo install works on nightly; no second toolchain needed).
+      - name: Install the pinned nightly with Rust sources
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain nightly-2026-08-01 --component rust-src
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          . "$HOME/.cargo/env"
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Seed corpora
         run: |
@@ -47,7 +74,11 @@ jobs:
           status=0
           for target in parser dict-loader fixture-model double-pinyin capi-commands; do
             echo "::group::fuzz $target"
-            if ! cargo +nightly-2026-08-01 fuzz run "$target" -- -max_total_time=180 -timeout=15 -max_len=4096; then
+            # setarch -R disables ASLR for the process tree: runner
+            # kernels' mmap entropy exceeds ASan's shadow mapping, and an
+            # unprivileged container cannot lower vm.mmap_rnd_bits itself
+            # (same rationale as store-backends.yml's sanitizer job).
+            if ! setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run "$target" -- -max_total_time=180 -timeout=15 -max_len=4096; then
               status=1
               echo "::error::fuzz target $target failed"
             fi
@@ -59,13 +90,30 @@ jobs:
   # default redb backend). Trial: continue-on-error until it has proven
   # stable on this schedule; FFI crates are out of Miri's reach (C/C++).
   miri:
-    runs-on: ubuntu-latest
     continue-on-error: true
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup toolchain install nightly-2026-08-01 --profile minimal --component miri rust-src
+      - name: Register the checkout as a git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install the pinned nightly with Miri
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain nightly-2026-08-01 --component miri rust-src
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          . "$HOME/.cargo/env"
       - run: cargo +nightly-2026-08-01 miri setup
       - run: cargo +nightly-2026-08-01 miri test -p oxpinyin-core -p oxpinyin-store
 
@@ -75,13 +123,31 @@ jobs:
   # shipped configuration.
   overflow-lane:
     runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    defaults:
+      run:
+        shell: bash
     env:
       RUSTFLAGS: -C overflow-checks=y -C debug-assertions=y -D warnings
     steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup show active-toolchain
+      - name: Register the checkout as a git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install the pinned Rust toolchain
+        run: |
+          set -euo pipefail
+          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain "$channel"
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          . "$HOME/.cargo/env"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo test --locked --workspace --release
 
@@ -90,11 +156,29 @@ jobs:
   # is curl-pinned and checksum-verified like cargo-deny in ci.yml.
   coverage:
     runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup show active-toolchain
+      - name: Register the checkout as a git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install the pinned Rust toolchain
+        run: |
+          set -euo pipefail
+          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain "$channel"
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          . "$HOME/.cargo/env"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install pinned cargo-llvm-cov
         run: |
@@ -116,13 +200,31 @@ jobs:
   # only. Trial (continue-on-error): geiger periodically bit-rots against
   # new rustc versions.
   geiger:
-    runs-on: ubuntu-latest
     continue-on-error: true
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc pkg-config libssl-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: rustup show active-toolchain
+      - name: Register the checkout as a git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install the pinned Rust toolchain
+        run: |
+          set -euo pipefail
+          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain "$channel"
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          . "$HOME/.cargo/env"
       - run: cargo install cargo-geiger --version 0.13.0 --locked
       - run: cargo geiger > geiger-report.txt || cargo geiger --output-format text > geiger-report.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -135,9 +237,23 @@ jobs:
   # to grow past the limit).
   lizard:
     runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl python3-pip
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: pip install lizard==1.17.10
+      - name: Register the checkout as a git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # --break-system-packages: PEP 668 marking; this container is
+      # ephemeral, there is no system Python to protect. 1.24.0 is the
+      # release the ratchet was validated against locally.
+      - run: pip install --break-system-packages lizard==1.24.0
       - run: lizard crates/ -l rust -C 40
