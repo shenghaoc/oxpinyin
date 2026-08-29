@@ -23,6 +23,10 @@
  *      cursor, pinyin_get_pinyin_offset(cursor), the word-level
  *      left/right pinyin offsets, the candidate window at each moved
  *      cursor, and one mid-buffer choose.
+ *   E. raw mid-syllable lookup offsets — pinyin_guess_candidates at every
+ *      byte offset of nihao/nihaoshijie, fresh and after guess_sentence:
+ *      the empty-matrix-column law (true with the n-best rows alone, no
+ *      suffix re-parse) against the pin's search_matrix from that offset.
  *
  * Caller contracts honoured: get_sentence is asked only for proved
  * indices (0, plus NBEST nbest_index rows the window proves, clamped to
@@ -675,6 +679,62 @@ static int cursor_moves(const struct syms *s, pinyin_instance_t *inst,
     return 0;
 }
 
+/* ── Phase E — raw mid-syllable lookup offsets ────────────────────────── */
+
+/* The empty-matrix-column surface the corpus never varied: guess at every
+ * byte offset of the composition, fresh and after guess_sentence. Bytes no
+ * matrix key starts on answer the pin's empty-column law — true with the
+ * n-best rows alone (none fresh), never a suffix re-parse — while syllable
+ * starts keep their windows. Apostrophe inputs stay out: one past a lone
+ * zero-key column aborts the pinned library (the recorded _check_offset
+ * landmine, not a comparable surface). */
+static int raw_offset_input(const struct syms *s, pinyin_instance_t *inst,
+                            const char *input) {
+    char label[72];
+    size_t len = s->parse(inst, input);
+    snprintf(label, sizeof(label), "raw:%s", input);
+    printf("%s:parsed=%zu\n", label, len);
+
+    for (size_t off = 0; off <= len; off++) {
+        char off_label[96];
+        snprintf(off_label, sizeof(off_label), "raw:%s@%zu", input, off);
+        bool ok = s->guess(inst, off, DEFAULT_SORT);
+        printf("%s:guess=%d\n", off_label, (int)ok);
+        if (!ok)
+            continue;
+        guint n = 0;
+        if (!s->getn(inst, &n)) {
+            fprintf(stderr, "%s: get_n_candidate failed\n", off_label);
+            return 1;
+        }
+        printf("%s:n=%u\n", off_label, n);
+        guint hi = n < 4 ? n : 4;
+        if (print_candidate_rows(s, inst, off_label, 0, hi) < 0)
+            return 1;
+    }
+
+    bool guessed = s->sentence(inst);
+    printf("%s:sentence=%d\n", label, (int)guessed);
+    for (size_t off = 0; off <= len; off++) {
+        char off_label[96];
+        snprintf(off_label, sizeof(off_label), "raw:%s+sent@%zu", input, off);
+        bool ok = s->guess(inst, off, DEFAULT_SORT);
+        printf("%s:guess=%d\n", off_label, (int)ok);
+        if (!ok)
+            continue;
+        guint n = 0;
+        if (!s->getn(inst, &n)) {
+            fprintf(stderr, "%s: get_n_candidate failed\n", off_label);
+            return 1;
+        }
+        printf("%s:n=%u\n", off_label, n);
+        guint hi = n < 4 ? n : 4;
+        if (print_candidate_rows(s, inst, off_label, 0, hi) < 0)
+            return 1;
+    }
+    return 0;
+}
+
 /* ── Main ─────────────────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {
@@ -828,6 +888,21 @@ int main(int argc, char **argv) {
         if (!s.reset(inst)) {
             fprintf(stderr, "cursor reset failed\n");
             goto fail_inst;
+        }
+    }
+
+    /* Phase E — raw mid-syllable lookup offsets. Each input resets: a
+     * prior input's guess_sentence leaves n-best rows that the pin keeps
+     * across a reparse, which would masquerade as a divergence. */
+    {
+        static const char *const inputs[] = {"nihao", "nihaoshijie"};
+        for (size_t i = 0; i < sizeof(inputs) / sizeof(inputs[0]); i++) {
+            if (raw_offset_input(&s, inst, inputs[i]))
+                goto fail_inst;
+            if (!s.reset(inst)) {
+                fprintf(stderr, "raw offset reset failed\n");
+                goto fail_inst;
+            }
         }
     }
 

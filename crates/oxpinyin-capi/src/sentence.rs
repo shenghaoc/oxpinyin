@@ -391,6 +391,13 @@ pub extern "C" fn pinyin_guess_candidates(
             match inst.session.candidates_at(normalized) {
                 Ok(window) => Some((normalized, window)),
                 Err(_) => {
+                    // Unreachable for a well-formed plain-pinyin lookup:
+                    // the offset-shaped contracts are refused by
+                    // `validate_lookup_offset` and `candidates_at`'s own
+                    // range/char-boundary checks, and a mid-syllable byte
+                    // is not an error — the window answers the pin's
+                    // empty-column law. The arm remains for genuine
+                    // backend failures during the re-anchored scan.
                     inst.candidates.clear();
                     return false;
                 }

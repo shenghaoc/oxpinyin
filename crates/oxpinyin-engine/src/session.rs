@@ -1809,6 +1809,15 @@ where
     /// cached [`Session::candidates`] already answers, so offset-0 and every
     /// post-choose lookup stay bit-identical.
     ///
+    /// A byte no matrix key starts on — a mid-syllable position of the
+    /// composition's own parse — is one of the pin's empty columns:
+    /// `search_matrix` matches nothing from it for every end, so the
+    /// window there is the raw-suffix fallback under the prepended n-best
+    /// rows, never a re-parse of the suffix (the suffix's own keys are not
+    /// the matrix's). A zero-key (apostrophe) column is not empty: the
+    /// span search steps over it to the next key, so the apostrophe byte
+    /// answers the following key's window.
+    ///
     /// # Errors
     ///
     /// Returns [`EngineError`] when a backend fails during the scan, exactly
@@ -1835,8 +1844,60 @@ where
             });
         }
         let mut items = Vec::new();
+        if offset < self.raw.len() && !self.spans_a_matrix_key(offset)? {
+            items.push(Candidate::new(
+                compact_str::CompactString::from(&self.raw[offset..]),
+                CandidateKind::Fallback,
+                0,
+                self.raw.len() - offset,
+                0,
+                None,
+                None,
+            ));
+            self.prepend_nbest_rows(&mut items);
+            return Ok(CandidateList::from_vec(items));
+        }
         self.scan_window(offset, &mut items)?;
         Ok(CandidateList::from_vec(items))
+    }
+
+    /// Whether `offset` names a column the pin's span search can answer.
+    ///
+    /// The pin's matrix holds the chosen parse's keys at their raw begins
+    /// (`fill_matrix`), plus the split keys `resplit_step` and
+    /// `inner_split_step` append (`docs/findings/matrix-split-tables.md`) —
+    /// `jie` in `nihaoshijie` also carries `ji` + `e`, so byte 10 is a live
+    /// column — and a zero key at every apostrophe, which the span search
+    /// steps over to the following key. The scan's own key set
+    /// ([`build_scan_matrix`]) models exactly that, so a byte some key's
+    /// syllable starts on, or an apostrophe byte, answers; any other byte
+    /// is an empty column. Exact mode has no pin counterpart, so its
+    /// columns stay the exact segments.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Graph`] when the composition cannot be represented
+    /// as a segment graph.
+    fn spans_a_matrix_key(&self, offset: usize) -> Result<bool, EngineError> {
+        if self.raw.as_bytes().get(offset) == Some(&b'\'') {
+            return Ok(true);
+        }
+        if !self.exact_segments.is_empty() {
+            return Ok(self
+                .exact_segments
+                .iter()
+                .any(|segment| segment.start() == offset));
+        }
+        let graph = SegmentGraph::build_with_options(self.raw.as_bytes(), self.settings.options)
+            .map_err(EngineError::Graph)?;
+        // The split alternates are a full-pinyin-parse artifact — the same
+        // law the scan applies (`build_scan_matrix`'s `divided` argument at
+        // the anchored call site) — and exact keys never gain them.
+        let matrix = build_scan_matrix(&graph, self.settings.options, true);
+        Ok(matrix
+            .iter()
+            .flatten()
+            .any(|key| key.syllable_start == offset))
     }
 
     /// Prepends the stored n-best rows onto `collected`, head first, then
@@ -4992,5 +5053,171 @@ mod tests {
             );
         }
         assert!(session.candidates_at(3).is_ok(), "offset 3 is a boundary");
+    }
+
+    #[test]
+    fn candidates_at_mid_syllable_offsets_answer_the_empty_column() {
+        use super::CandidateKind;
+
+        // "nihaoshijie" parses ni|hao|shi|jie: the matrix keys start at
+        // 0/2/5/8, so bytes 1/3/4/6/7/9 are the pin's empty columns —
+        // `search_matrix` matches nothing from them (`pinyin.cpp:2224-2262`),
+        // and the window is the raw-suffix fallback alone, never the suffix
+        // re-parse (offset 3 must not answer the `ao…` window, 6 not the
+        // `h…` window). The syllable starts keep their windows.
+        let mut session = train_session();
+        session
+            .type_pinyin("nihaoshijie")
+            .expect("typing cannot fail");
+        for offset in [1usize, 3, 4, 6, 7, 9] {
+            let window = session
+                .candidates_at(offset)
+                .expect("a mid-syllable offset is in range");
+            assert!(
+                window
+                    .iter()
+                    .all(|cand| cand.kind() == CandidateKind::Fallback),
+                "offset {offset}: only the fallback row, no suffix re-parse"
+            );
+            assert_eq!(
+                window.iter().count(),
+                1,
+                "offset {offset}: the fallback alone"
+            );
+        }
+        assert!(
+            session
+                .candidates_at(2)
+                .expect("offset 2 is a syllable start")
+                .iter()
+                .any(|cand| cand.kind() != CandidateKind::Fallback),
+            "offset 2 keeps the hao window"
+        );
+    }
+
+    #[test]
+    fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
+        use super::CandidateKind;
+        use crate::nbest::NbestRow;
+
+        // The pin prepends `m_nbest_results` whether or not the span search
+        // finds anything, so a post-sentence mid-syllable window is the
+        // n-best rows (measured: `nihaoshijie@3` after `guess_sentence`
+        // answers n=3 on the pin) over the fallback — not an empty list.
+        let mut session = train_session();
+        session
+            .type_pinyin("nihaoshijie")
+            .expect("typing cannot fail");
+        session.nbest_rows = vec![NbestRow {
+            text: "你好世界".into(),
+            tokens: vec![
+                PhraseToken::new(0x100),
+                PhraseToken::new(0x101),
+                PhraseToken::new(0x102),
+            ],
+            spans: Vec::new(),
+            keys: 3,
+            span: 11,
+            cost: 10,
+        }];
+        session.refresh().expect("refresh cannot fail");
+
+        let window = session.candidates_at(3).expect("offset 3 is in range");
+        assert!(
+            window
+                .iter()
+                .any(|cand| cand.kind() == CandidateKind::Sentence && cand.text() == "你好世界"),
+            "the n-best row rides the prepend at the empty column"
+        );
+        assert!(
+            window
+                .iter()
+                .filter(|cand| cand.kind() != CandidateKind::Fallback)
+                .count()
+                == 1,
+            "no phrase rows join the n-best row at the empty column"
+        );
+    }
+
+    #[test]
+    fn candidates_at_the_apostrophe_column_is_transparent() {
+        // `ni'hao` parses ni|hao with the zero-key column at 2; the pin's
+        // span search steps over it (measured: `ni'hao@2` answers the hao
+        // window, n=93), so the apostrophe byte answers the next key's
+        // window instead of collapsing to the empty-column law.
+        let mut session = train_session();
+        session.type_pinyin("ni'hao").expect("typing cannot fail");
+        let at_separator = session
+            .candidates_at(2)
+            .expect("the separator byte is in range");
+        let at_start = session.candidates_at(3).expect("the hao start is in range");
+        assert_eq!(
+            at_separator
+                .iter()
+                .map(|cand| cand.text())
+                .collect::<Vec<_>>(),
+            at_start.iter().map(|cand| cand.text()).collect::<Vec<_>>(),
+            "the zero-key column answers the following key's window"
+        );
+        assert!(
+            !at_separator.is_empty(),
+            "the stepped-over window is the hao window, not the empty column"
+        );
+    }
+
+    #[test]
+    fn candidates_at_an_incomplete_tail_column_stays_empty() {
+        use super::CandidateKind;
+
+        // "nihaozh" under INCOMPLETE keeps `zh` as one matrix key at
+        // 5..7 (measured: `nihaozh@6` answers n-best rows only on the
+        // pin), so byte 6 is an empty column even though the lone suffix
+        // `h` could start a parse of its own.
+        let mut session = train_session();
+        session.type_pinyin("nihaozh").expect("typing cannot fail");
+        let window = session.candidates_at(6).expect("byte 6 is in range");
+        assert!(
+            window
+                .iter()
+                .all(|cand| cand.kind() == CandidateKind::Fallback),
+            "byte 6 inside the `zh` key is an empty column, not an h window"
+        );
+    }
+
+    #[test]
+    fn candidates_at_a_divided_split_column_answers_the_split_window() {
+        // The pin's divided table splits `jie` into `ji` + `e`
+        // (`special_table.h:16`, `inner_split_step` under
+        // `USE_DIVIDED_TABLE`), so byte 10 of `nihaoshijie` — the `e`
+        // half's start — is a live matrix column, and the pin answers the
+        // e-family window there (measured: fresh n=191, 阿 first). The
+        // mid-chunk bytes 3/4/6 stay empty: `hao`/`shi` are not divided
+        // entries. `fangan` resplits `fan`+`gan` into `fang`+`an`
+        // (`resplit_step`), making byte 4 live the same way.
+        let mut session = train_session();
+        session
+            .type_pinyin("nihaoshijie")
+            .expect("typing cannot fail");
+        assert!(
+            session.spans_a_matrix_key(10).expect("byte 10 is in range"),
+            "byte 10 is the ji|e divided-split column"
+        );
+        for offset in [3usize, 4, 6] {
+            assert!(
+                !session.spans_a_matrix_key(offset).expect("in range"),
+                "byte {offset} is an empty column"
+            );
+        }
+
+        let mut session = train_session();
+        session.type_pinyin("fangan").expect("typing cannot fail");
+        assert!(
+            session.spans_a_matrix_key(4).expect("byte 4 is in range"),
+            "byte 4 is the fang|an resplit column"
+        );
+        assert!(
+            !session.spans_a_matrix_key(5).expect("in range"),
+            "byte 5 is an empty column"
+        );
     }
 }
