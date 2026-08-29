@@ -36,7 +36,10 @@
 
 set -u
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/tkrzw-probe.XXXXXX") || exit 2
-trap 'rm -rf "$WORK"' 0 HUP INT TERM
+# Clean the scratch dir on any exit; on a signal, exit non-zero so the
+# EXIT trap runs the cleanup and the interrupt is not swallowed.
+trap 'rm -rf "$WORK"' 0
+trap 'exit 1' HUP INT TERM
 cd "$WORK" || exit 2
 
 distro=$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME")

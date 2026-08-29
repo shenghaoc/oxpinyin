@@ -266,10 +266,11 @@ released into a rolling suite, which is exactly the event this note was
 written to get ahead of.
 
 The full backend matrix, measured 2026-08-29 with
-`tools/tkrzw/libpinyin-backend-probe.sh` — it `ldd`s each distro's
-installed `libpinyin.so` for the linked storage library — and
-corroborated against each build recipe (`debian/rules`, Fedora
-`libpinyin.spec`, Arch `PKGBUILD`, nixpkgs `package.nix`):
+`tools/tkrzw/libpinyin-backend-probe.sh` — it reads each distro's
+installed `libpinyin.so` `DT_NEEDED` entries (`readelf`/`objdump`) for
+the directly linked storage library — and corroborated against each
+build recipe (`debian/rules`, Fedora `libpinyin.spec`, Arch `PKGBUILD`,
+nixpkgs `package.nix`):
 
 | Distro | libpinyin | DBM backend | evidence |
 | --- | --- | --- | --- |
