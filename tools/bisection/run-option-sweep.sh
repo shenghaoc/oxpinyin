@@ -11,9 +11,9 @@
 #   PINYIN_ORACLE_PREFIX   pin-built oracle prefix (default
 #                          $HOME/.local/opt/pinyin-oracle)
 #   OPTION_SWEEP_CAPI_DATA oxpinyin-capi system dir. When unset the script
-#                          prefers a full export plus interpolation2.text in
-#                          the sibling model cache, then OXPINYIN_SYSTEM_DIR
-#                          and the conventional build locations. Unresolvable
+#                          takes OXPINYIN_SYSTEM_DIR, then a full export plus
+#                          interpolation2.text from the sibling model cache,
+#                          then the conventional build locations. Unresolvable
 #                          is FATAL, not a silent fixtures/w3 run -- see
 #                          system-dir.sh. A directory that resolves but lacks
 #                          any of the four required tables is equally FATAL,
@@ -41,18 +41,29 @@ fi
 
 # ── oxpinyin-capi system dir ─────────────────────────────────────────────
 
-# Only the third branch validates on its own: resolve_system_dir already
-# refuses an incomplete directory, and it alone can hand back the opted-in
-# mini fixture, which is incomplete on purpose. The first two answer for
-# their own data -- an incomplete directory scored against a real oracle
-# reports DIVERGENCE from the data mismatch, which is the failure this
-# whole file exists to stop. Every refusal here exits 3: 2 is this
-# script's divergence code, and 1 is a build failure.
+# Three sources, in the order system-dir.sh documents: OPTION_SWEEP_CAPI_DATA,
+# then OXPINYIN_SYSTEM_DIR, then the conventional locations. The
+# /tmp/oxpinyin-export cache gets a branch of its own only because it is the
+# one that needs interpolation2.text grafted on from the model cache -- and
+# that graft must not outrank a directory the operator named, so it stands
+# down when OXPINYIN_SYSTEM_DIR is set and lets resolve_system_dir answer.
+#
+# Every branch validates. The first and third check an explicit path through
+# system_dir_require_complete -- directly here, inside resolve_system_dir
+# there -- while the second checks the two directories it assembles from,
+# since the export cache never holds interpolation2.text. The one exception
+# is deliberate: the opted-in mini fixture comes back from resolve_system_dir
+# unvalidated, being incomplete on purpose.
+#
+# An incomplete directory scored against a real oracle reports DIVERGENCE
+# from the data mismatch, the failure this whole file exists to stop. Every
+# refusal here exits 3: 2 is this script's divergence code, 1 a build failure.
 
 if [ -n "${OPTION_SWEEP_CAPI_DATA:-}" ]; then
     CAPI_DATA="$OPTION_SWEEP_CAPI_DATA"
     system_dir_require_complete "$CAPI_DATA" OPTION_SWEEP_CAPI_DATA option-sweep
-elif [ -f /tmp/oxpinyin-export/pinyin_index.redb ]; then
+elif [ -z "${OXPINYIN_SYSTEM_DIR:-}" ] &&
+     [ -f /tmp/oxpinyin-export/pinyin_index.redb ]; then
     # Resolve both sources before creating or copying anything. This branch
     # is entered on pinyin_index.redb alone, so the other two tables are
     # still unchecked, and letting the cp fail under `set -e` would exit 1
