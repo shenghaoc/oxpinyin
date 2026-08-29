@@ -457,8 +457,76 @@ impl WriteTxn for RedbWriteTxn<'_> {
     }
 }
 
-/// The default store backend.
+// ── The default backend: compile-time selection, libpinyin's model ──
+//
+// libpinyin selects exactly one DBM backend at configure time — `if
+// BERKELEYDB` / `if KYOTOCABINET` / `if TKRZW` in `src/storage/Makefile.am`
+// add one implementation set, and every backend header defines the SAME
+// class names (`PhraseLargeTable3`, `Bigram`, …), so one binary contains
+// one backend and no call site dispatches at runtime. This cfg chain is
+// the Rust equivalent: `DefaultStore` resolves to a single concrete type
+// at compile time, and everything above it is already generic over the
+// store traits.
+//
+// All four backends are equals; the chain order exists only so that
+// cargo's additive feature unification resolves a multi-feature build
+// deterministically (kyotocabinet > tkrzw > lmdb > redb). redb is the
+// no-backend-feature fallback — the pure-Rust portability backend for
+// platforms without the C libraries (macOS, Windows) — and the default
+// here; the `kyotocabinet` arm stays in the chain so the stacked PR that
+// adds the module only flips the default, but building with that feature
+// enabled does not resolve `KcStore` until then.
+
+/// The default store backend — Kyoto Cabinet, when its module is present
+/// (the stacked PR); it matches the DBM the reference libpinyin builds
+/// against on the primary target distros.
+#[cfg(feature = "kyotocabinet")]
+pub type DefaultStore = KcStore;
+
+/// The default store backend — tkrzw, when selected without Kyoto Cabinet.
+#[cfg(all(feature = "tkrzw", not(feature = "kyotocabinet")))]
+pub type DefaultStore = TkrzwStore;
+
+/// The default store backend — LMDB, when selected alone.
+#[cfg(all(
+    feature = "lmdb",
+    not(feature = "kyotocabinet"),
+    not(feature = "tkrzw")
+))]
+pub type DefaultStore = LmdbStore;
+
+/// The default store backend — redb, the pure-Rust portability fallback
+/// when no C-backed backend feature is enabled.
+#[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb")))]
 pub type DefaultStore = RedbStore;
+
+/// File extension for [`DefaultStore`]'s native tables, matching
+/// `oxpinyin-datagen`'s `Backend::extension` convention (one extension per
+/// backend; the store forces its database type through open parameters, so
+/// the extension is naming, not detection).
+#[cfg(feature = "kyotocabinet")]
+pub const DEFAULT_STORE_EXT: &str = "kct";
+/// File extension for [`DefaultStore`]'s native tables (tkrzw TreeDBM).
+#[cfg(all(feature = "tkrzw", not(feature = "kyotocabinet")))]
+pub const DEFAULT_STORE_EXT: &str = "tkt";
+/// File extension for [`DefaultStore`]'s native tables (LMDB).
+#[cfg(all(
+    feature = "lmdb",
+    not(feature = "kyotocabinet"),
+    not(feature = "tkrzw")
+))]
+pub const DEFAULT_STORE_EXT: &str = "lmdb";
+/// File extension for [`DefaultStore`]'s native tables (redb, the
+/// pure-Rust portability fallback).
+#[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb")))]
+pub const DEFAULT_STORE_EXT: &str = "redb";
+
+/// `<stem>.<DEFAULT_STORE_EXT>` — the on-disk name of a native table for
+/// the compiled-in backend.
+#[must_use]
+pub fn default_store_file(stem: &str) -> String {
+    format!("{stem}.{DEFAULT_STORE_EXT}")
+}
 
 #[cfg(feature = "lmdb")]
 mod lmdb;
