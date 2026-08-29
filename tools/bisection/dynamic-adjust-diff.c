@@ -22,7 +22,7 @@
  * nothing. `--mode` selects which word is used; run-dynamic-adjust-diff.sh
  * drives both and enforces the difference.
  *
- * Usage: ./dynamic-adjust-diff <path-to-so> <systemdir> <on|off>
+ * Usage: ./dynamic-adjust-diff <path-to-so> <systemdir> <on|off> <userdir>
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -75,8 +75,8 @@ static const char *const INPUTS[] = {
 };
 
 int main(int argc, char **argv) {
-    if (argc != 4) {
-        fprintf(stderr, "Usage: %s <so> <systemdir> <on|off>\n", argv[0]);
+    if (argc != 5) {
+        fprintf(stderr, "Usage: %s <so> <systemdir> <on|off> <userdir>\n", argv[0]);
         return 1;
     }
     const bool bit_on = strcmp(argv[3], "on") == 0;
@@ -99,7 +99,7 @@ int main(int argc, char **argv) {
     fn_get_str get_str = (fn_get_str)must(h, "pinyin_get_candidate_string");
     fn_choose choose = (fn_choose)must(h, "pinyin_choose_candidate");
 
-    pinyin_context_t *ctx = init(argv[2], "/tmp/dynamic-adjust-diff-user");
+    pinyin_context_t *ctx = init(argv[2], argv[4]);
     if (!ctx) {
         fprintf(stderr, "pinyin_init failed\n");
         return 1;
