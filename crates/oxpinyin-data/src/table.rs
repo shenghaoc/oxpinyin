@@ -7,11 +7,9 @@
 //!
 //! # Portability
 //!
-//! The default backend is redb (see `oxpinyin-store`'s compile-time
-//! selection; it is the pure-Rust portability fallback, and the C-backed
-//! backends are explicit selections until the stacked PR flips the
-//! default).  The committed tables can be read on any platform redb
-//! supports.
+//! The default backend is Kyoto Cabinet (see `oxpinyin-store`'s
+//! compile-time selection; redb is the pure-Rust portability fallback).  The
+//! committed tables can be read on any platform redb supports.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;

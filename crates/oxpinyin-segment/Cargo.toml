@@ -17,9 +17,9 @@ workspace = true
 # segmenter and the training tools built on it name export tables
 # (`phrase_index.<ext>` & co.) in the compiled-in backend's format, so a
 # standalone `cargo run -p oxpinyin-segment` must select the same backend
-# the export was produced with — redb by default, tkrzw/LMDB behind their
-# features.
-default = ["redb"]
+# the export was produced with — Kyoto Cabinet by default, redb under
+# --no-default-features.
+default = ["kyotocabinet"]
 kyotocabinet = ["oxpinyin-data/kyotocabinet"]
 tkrzw = ["oxpinyin-data/tkrzw"]
 lmdb = ["oxpinyin-data/lmdb"]
