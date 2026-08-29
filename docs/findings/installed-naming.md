@@ -1,7 +1,7 @@
 # The installed tree takes libpinyin's name; the source tree keeps ours
 
-Date: 2026-08-28 · Status: **implemented, with one open decision** ·
-Branch: `feat/libpinyin-installed-naming`.
+Date: 2026-08-28 · Status: **implemented** · Branch:
+`feat/libpinyin-installed-naming`.
 
 Precedent is universal — LibreSSL installs `libssl.so`/`libcrypto.so`,
 MariaDB installs `libmysqlclient.so` and `mysqlclient.pc`, Mesa installs
@@ -70,24 +70,28 @@ data actually lives (`@libdir@/libpinyin/data`).
 | `readelf -d libpinyin.so.15.0.0` | `SONAME libpinyin.so.15` |
 | `cc $(pkg-config --cflags --libs libpinyin) test.c` | compiles, links, runs; `DT_NEEDED: libpinyin.so.15` |
 
-## The open decision — four `.pc` variables cargo-c cannot emit
+## The resolution — build.rs generates the `.pc`, a wrapper installs it
 
 `pkgdatadir`, `database_format`, `libpinyinincludedir` and
 `libpinyin_binary_version` are **not producible through cargo-c**. This
-is not a configuration miss; it is a fixed limit, read from cargo-c
-0.10.25's own source:
+is not a configuration miss; it is a fixed limit, verified against
+cargo-c 0.10.24's own source:
 
-- `build.rs:619-666` reads exactly seven keys from
-  `[package.metadata.capi.pkg_config]`: `name`, `filename`,
-  `description`, `version`, `requires`, `requires_private`,
-  `strip_include_path_components`. Anything else in the table is
-  silently ignored — which is how the probe for `pkgdatadir` and
-  `database_format` failed quietly rather than erroring.
-- `pkg_config_gen.rs:61-80`'s `PkgConfig` struct has a closed field set
-  (`prefix`, `exec_prefix`, `includedir`, `libdir`, `name`,
-  `description`, `version`, `requires`, `requires_private`, `libs`,
-  `libs_private`, `cflags`, `conflicts`). There is no custom-variable
-  map to populate.
+- `build.rs:358` — the `PkgConfigCApiConfig` struct has exactly seven
+  fields (`name`, `filename`, `description`, `version`, `requires`,
+  `requires_private`, `strip_include_path_components`) and no
+  custom-variable map. The table is parsed leniently, so extra keys —
+  `generate` included — are silently ignored, which is how the probe for
+  `pkgdatadir` / `database_format` failed quietly rather than erroring.
+- No install prefix reaches build scripts: the crate's only `set_var`
+  calls are `CARGO_C_CARGO` (`config.rs:11`) and `INLINE_C_RS_CFLAGS`
+  (`build.rs:1402`). There is no `CARGO_CAPI_PREFIX` — a build script
+  cannot know `--prefix`.
+- `install.rs:216-220` installs cargo-c's own `.pc` into
+  `<libdir>/pkgconfig` unconditionally and first; `install.rs:233-236`
+  installs build-generated data assets under `datadir`, never the
+  pkg-config dir. A `.pc` a build script writes cannot be routed into
+  place through `cargo cinstall`.
 
 **Why it matters, and why it is worse than a build break.**
 fcitx-libpinyin reads three of these at cmake configure time
@@ -103,29 +107,57 @@ pkg_get_variable(LIBPINYIN_DATABASE_FORMAT "libpinyin" "database_format")
 and a missing pkg-config variable **resolves to the empty string with
 exit status 0** — measured, not assumed. So the consumer does not fail
 to configure; it configures with an empty system-data path and an empty
-backend name, silently. That is the failure mode to avoid.
+backend name, silently. That is the failure mode this closes.
 
-`crates/oxpinyin-capi/libpinyin.pc.in` is checked in carrying the exact
-content that has to be installed. What is open is only **how** it gets
-there. Three options, all of which produce a correct `libpinyin.pc`;
-the choice is entirely about build-system coupling, and is recorded here
-without one being taken:
+**The chosen mechanism — option (iii) with a placement wrapper.** Because
+cargo-c can neither be told to skip its `.pc` (no `generate = false`), be
+handed a build-generated one (data assets land in `datadir`), nor expose
+the prefix to build.rs, the work splits in two:
 
-| # | Option | Coupling | Notes |
-| --- | --- | --- | --- |
-| i | Post-install substitution script rewriting the installed `.pc` | Packaging owns it; cargo-c untouched | Simplest to land, but the correct file exists only *after* install, so a plain `cargo capi install` is silently wrong — the same empty-variable failure mode, just moved |
-| ii | Patch cargo-c to accept a custom-variable table | Upstream owns it; we wait | The cleanest fix and genuinely upstreamable — a closed field set is the gap, not an oxpinyin-specific need. Any project mirroring an existing C library's `.pc` hits it |
-| iii | Generate the `.pc` in `build.rs` and bypass cargo-c for it | We own it; cargo-c still builds the library | Correct at build time rather than install time, but two generators now write files with the same name and the ordering must be settled |
+- **`build.rs` owns the content.** It bakes the build-time fields of
+  `crates/oxpinyin-capi/libpinyin.pc.in` — `@VERSION@` (2.11.91),
+  `@LIBPINYIN_BINARY_VERSION@` (15.0) and `@DATABASE_FORMAT@` — into
+  `libpinyin.pc.in.baked`, dropping the template's `#` header (it
+  describes the source, not the installed file) and leaving the
+  install-time `@prefix@` / `@libdir@` for the wrapper. It writes to
+  `$OUT_DIR` and mirrors the file to `<target>/<profile>/` so the wrapper
+  can read it without discovering the build-hash directory.
+- **`tools/packaging/install.sh` owns placement.** It runs
+  `cargo cinstall --prefix=… --libdir=…`, then substitutes the real
+  `prefix`/`libdir` into the baked template and **overwrites** the
+  incomplete `libpinyin.pc` cargo-c just installed.
 
-The failure mode is what makes this worth deciding rather than
-defaulting: a missing pkg-config variable resolves to **the empty string
-with exit status 0**, so fcitx-libpinyin does not fail to configure — it
-configures with an empty system-data path and an empty backend name.
-Option (i) leaves a window in which that is still true.
+The wrapper is the **supported installation path**. A plain
+`cargo capi install` still leaves cargo-c's incomplete `.pc` — the
+**accepted silent window**: the four variables are absent and
+`pkg_get_variable` reads empty, exactly as before. Use the wrapper for
+any install a consumer will configure against. `Cargo.toml` carries
+`generate = false` for intent and forward compatibility; 0.10.24 ignores
+it (hence the overwrite), but a future cargo-c that honours it would drop
+the redundant first write.
 
-This is the STOP the brief names ("cargo-c's naming options cannot
-produce the required layout without a wrapper script"). Nothing else in
-the naming work depends on the answer.
+**The `database_format` caveat.** build.rs sets it to the active backend
+— `redb` by default (oxpinyin's native store, and until a backend feature
+is forwarded onto `oxpinyin-capi`, the only one reachable here), `LMDB`
+or `Tkrzw` when such a feature is enabled. A packager building the drop-in
+against another engine's data (`KyotoCabinet`, `BerkeleyDB`) must set
+`LIBPINYIN_DATABASE_FORMAT=<name>` at build time; otherwise the variable
+reads `redb` — accurate for oxpinyin's own data, but not what fcitx's
+probe expects when the shipped data is in a different format.
+
+**Gate.** After `tools/packaging/install.sh --prefix=$P` (with
+`PKG_CONFIG_PATH=$P/lib/pkgconfig`):
+
+```console
+$ pkg-config --variable=pkgdatadir libpinyin       → $P/lib/libpinyin
+$ pkg-config --variable=database_format libpinyin  → redb
+$ pkg-config --variable=exec_prefix libpinyin      → $P
+$ pkg-config --libs libpinyin                      → -lpinyin -lglib-2.0
+$ pkg-config --modversion libpinyin                → 2.11.91
+```
+
+All five come back non-empty — the silent misconfiguration the four
+missing variables would otherwise cause is closed on the wrapper path.
 
 ## Notes carried forward
 

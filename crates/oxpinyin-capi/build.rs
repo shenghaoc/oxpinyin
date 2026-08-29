@@ -1,4 +1,5 @@
-//! Link-time stamping of the C ABI's identity.
+//! Link-time stamping of the C ABI's identity, plus the drop-in
+//! `libpinyin.pc` content the packaging wrapper installs.
 //!
 //! # SONAME
 //!
@@ -38,13 +39,113 @@
 //!
 //! Symbol scope is therefore enforced in the source, by `#[cfg]` on the
 //! exports outside the consumer union, not by a linker script.
+//!
+//! # The complete `libpinyin.pc`
+//!
+//! cargo-c 0.10.24 generates a `libpinyin.pc` from
+//! `[package.metadata.capi.pkg_config]`, but its field set is closed and it
+//! cannot emit the four variables real consumers read (`pkgdatadir`,
+//! `database_format`, `libpinyinincludedir`, `libpinyin_binary_version`); it
+//! also exposes no install prefix to build scripts and installs only its own
+//! `.pc` into the pkg-config dir. So this script bakes the build-time-known
+//! fields of `libpinyin.pc.in` into `$OUT_DIR/libpinyin.pc.in.baked`, leaving
+//! the install-time `@prefix@` / `@libdir@` placeholders for the packaging
+//! wrapper (`tools/packaging/install.sh`) to fill after `cargo cinstall`. See
+//! `docs/findings/installed-naming.md` for the full rationale and the
+//! verified cargo-c limits.
+
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+// Mirror `[package.metadata.capi.pkg_config].version` and the libtool
+// `current.revision` behind `[package.metadata.capi.library].version` in
+// Cargo.toml. build.rs cannot read those metadata tables, so keep these in
+// sync with them (and with `header.subdirectory = libpinyin-2.11.91`).
+const PC_VERSION: &str = "2.11.91";
+const PC_BINARY_VERSION: &str = "15.0";
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=libpinyin.pc.in");
+    println!("cargo:rerun-if-env-changed=LIBPINYIN_DATABASE_FORMAT");
 
     // SONAME is an ELF concept. The crate is Linux-first by design but must
     // not fail to build elsewhere.
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libpinyin.so.15");
     }
+
+    bake_pkg_config_template();
+}
+
+/// Bakes the build-time fields of `libpinyin.pc.in` — `@VERSION@`,
+/// `@LIBPINYIN_BINARY_VERSION@`, `@DATABASE_FORMAT@` — leaving the
+/// install-time `@prefix@` / `@libdir@` for the wrapper. Writes the result to
+/// `$OUT_DIR/libpinyin.pc.in.baked` and mirrors it to
+/// `<target>/<profile>/libpinyin.pc.in.baked`, an un-hashed path the wrapper
+/// can read without discovering the build-hash directory.
+fn bake_pkg_config_template() {
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo");
+    let template_path = Path::new(&manifest_dir).join("libpinyin.pc.in");
+    let template = fs::read_to_string(&template_path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", template_path.display()));
+
+    let substituted = template
+        .replace("@VERSION@", PC_VERSION)
+        .replace("@LIBPINYIN_BINARY_VERSION@", PC_BINARY_VERSION)
+        .replace("@DATABASE_FORMAT@", &database_format());
+
+    // Drop the template's `#` header: it documents the source file, not the
+    // installed one, and the real libpinyin.pc carries no such block. The
+    // remaining `key=value` / `Field:` lines (and the blank separators between
+    // them) are what a genuine drop-in ships.
+    let body: String = substituted
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let baked = format!("{}\n", body.trim_start_matches('\n'));
+
+    let out_dir = env::var("OUT_DIR").expect("OUT_DIR is set by cargo");
+    let out_path = Path::new(&out_dir).join("libpinyin.pc.in.baked");
+    fs::write(&out_path, &baked).unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
+
+    // Best-effort mirror to <target>/<profile>; the wrapper falls back to a
+    // `find` under the target dir when this is absent.
+    if let Some(profile_dir) = target_profile_dir(&out_dir) {
+        let _ = fs::write(profile_dir.join("libpinyin.pc.in.baked"), &baked);
+    }
+}
+
+/// The `@DATABASE_FORMAT@` value. An explicit `LIBPINYIN_DATABASE_FORMAT`
+/// wins — a packager shipping data in another engine's format (e.g.
+/// `KyotoCabinet`, `BerkeleyDB`) sets it so fcitx's cmake probe reads the
+/// right backend. Otherwise the active backend feature, defaulting to `redb`:
+/// oxpinyin's native store and, until a backend feature is forwarded onto
+/// this crate, the only one reachable here.
+fn database_format() -> String {
+    if let Ok(explicit) = env::var("LIBPINYIN_DATABASE_FORMAT")
+        && !explicit.trim().is_empty()
+    {
+        return explicit;
+    }
+    // `CARGO_FEATURE_<NAME>` is set for each enabled feature of THIS crate.
+    // No backend feature is forwarded onto oxpinyin-capi today, so these stay
+    // unset and the default holds; the checks keep the mapping correct if one
+    // is wired through later.
+    if env::var_os("CARGO_FEATURE_TKRZW").is_some() {
+        "Tkrzw".to_owned()
+    } else if env::var_os("CARGO_FEATURE_LMDB").is_some() {
+        "LMDB".to_owned()
+    } else {
+        "redb".to_owned()
+    }
+}
+
+/// `<target>/<profile>` derived from `OUT_DIR`, whose shape is
+/// `<target>/<profile>/build/<pkg>-<hash>/out`.
+fn target_profile_dir(out_dir: &str) -> Option<PathBuf> {
+    // out -> <pkg>-<hash> -> build -> <profile>
+    Path::new(out_dir).ancestors().nth(3).map(Path::to_path_buf)
 }

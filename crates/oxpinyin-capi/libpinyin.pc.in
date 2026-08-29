@@ -15,9 +15,10 @@
 # absence is a SILENT misconfiguration, not a build failure: the consumer
 # looks for system data at "" and probes an empty backend name.
 #
-# This template is the content that has to be installed. How it gets there --
-# a post-install substitution step, a packaging recipe, or a patch to cargo-c
-# -- is the open decision; see docs/findings/installed-naming.md.
+# build.rs bakes the build-time fields (@VERSION@, @LIBPINYIN_BINARY_VERSION@,
+# @DATABASE_FORMAT@) and strips this header, leaving @prefix@/@libdir@ for
+# tools/packaging/install.sh to fill after cargo cinstall; see
+# docs/findings/installed-naming.md for why a wrapper is required.
 #
 # Mirrors the real /usr/lib/<triple>/pkgconfig/libpinyin.pc field for field.
 
