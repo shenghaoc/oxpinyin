@@ -203,22 +203,48 @@ inputs (the pin-built `.so` SIGABRTs).
   they re-send the same buffer). The backspace ladder itself is
   measured identical (`live-typing.md` §"Backspace-after-choose").
 
-### The n-best row-choose cursor is the row's own end
+### The n-best row-choose cursor is the row's own end — CLOSED
 
 - **Upstream source cite:** `src/pinyin.cpp:2511-2519`
   (`pinyin_choose_candidate`'s NBEST branch returns
   `matrix.size() - 1` unconditionally).
 - **Mechanism:** choosing any n-best row answers the whole input's parse
   length as the new cursor, whatever span the row's own path covered.
-- **What oxpinyin does instead:** the row candidate's absolute end —
-  the composition offset it actually advances to. The two agree whenever
-  the row's path reaches the parse bound (every real-table surface,
+- **What oxpinyin did instead:** the row candidate's absolute end —
+  the composition offset it actually advanced to. The two agreed whenever
+  the row's path reached the parse bound (every real-table surface,
   including the live-typing differential); a degenerate row that stops
-  early (the mini fixture's single-phrase row) answers its own shorter
-  end.
-- **Externally observable:** yes, but only through a row whose path ends
-  before the parsed input does — none of the pinned surfaces constructs
-  one on real tables.
+  early answered its own shorter end.
+- **Status:** closed by answering `parsed_len` for every
+  `NBEST_MATCH_CANDIDATE` choose — upstream's own value of
+  `matrix.size() - 1`, since `fill_matrix` sizes the matrix to
+  `parsed_len + 1` and no split/fuzzy step resizes it, carried here in
+  the active parse mode's own coordinates (`m_parsed_len`,
+  `pinyin_get_parsed_input_length`) — whatever span the row's path
+  covers (`crates/oxpinyin-capi/src/candidates.rs`). Only the answered
+  cursor changed; the engine's composition state is untouched. Measured:
+  `union-diff.c` grew an NBEST-row section that chooses the fixture's
+  degenerate single-phrase row (imported user phrase 测测 for "cece",
+  pristine train state — the train section's unigram deltas enrich the
+  decode past it, so the section runs first), prints the cursor, and
+  follows the corrected post-NBEST flow — `pinyin_guess_sentence`, then
+  `pinyin_train`, never `pinyin_guess_candidates` at the cursor (the
+  tail slot starts no span on either engine; the old draft's
+  guess-at-the-cursor chain only passed because the old row-own-end
+  answer happened to equal the chosen phrase's extent there). Old answer
+  `nbest-cursor: 4` vs the pin's 9 → `run-union-diff.sh` DIVERGENCE;
+  new answer 9 = 9 → IDENTICAL end to end. live-typing differential
+  IDENTICAL; the frozen candidate and sentence-surface pins
+  bit-identical.
+- **Note:** upstream has no `m_last_index` member (grep over the pinned
+  2.11.91 tree: none) — the returned cursor is the only cursor channel,
+  and the engine session's composition offset keeps its existing
+  internal semantics.
+- **Externally observable:** was — only through a row whose path ends
+  before the parsed input does; the union fixture's imported-phrase
+  composition drives exactly one such single-phrase row on the mini
+  tables, and none of the frozen pin surfaces constructs one on real
+  tables.
 
 ### pinyin_get_sentence asserts a non-empty past-the-rows index
 

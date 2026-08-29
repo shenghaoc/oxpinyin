@@ -2,15 +2,39 @@
  * union-diff.c — W11 union differential driver.
  *
  * One scripted C-ABI sequence against libpinyin_capi.so or the pin-built
- * libpinyin.so. Printed lines are compared exactly. Three sections:
+ * libpinyin.so. Printed lines are compared exactly. Four sections:
  *
  *   1. Import a unique user phrase via the add/iterator/end trio, re-parse,
  *      report the index of that phrase in the candidate list.
  *   2. Load addon library 4 (art); print ADDON_CANDIDATE texts for "erhuang".
- *   3. Train 测测 → 你好, then guess predicted candidates for "测测".
+ *   3. Choose the first NBEST_MATCH row for "cecenihao" and print the
+ *      returned cursor: upstream answers matrix.size() - 1
+ *      unconditionally (pinyin.cpp:2513-2519) — 9 here — whatever span
+ *      the row's own path covered; the capi's single-phrase row ends at 4
+ *      under the old row-own-end answer, which is the divergence this
+ *      section pins shut. Then the corrected post-NBEST flow:
+ *      pinyin_guess_sentence (the lookup at the tail slot starts no span),
+ *      then pinyin_train. This section MUST run before 4: section 4's
+ *      train seeds user unigram deltas that let the mini decode cover the
+ *      whole input, the row stops being single-phrase, and the cursor
+ *      agrees trivially on both engines.
+ *   4. Train 测测 → 你好, then guess predicted candidates for "测测".
  *      Phrase-prediction only: PREDICTED_PUNCTUATION (8) is omitted.
  *      Mini vs full prefix tokens (测) would diverge on punctuation;
- *      that list is compared by punct-diff.c.
+ *      that list is compared by punct-diff.c. The lookup between the two
+ *      chooses anchors at the imported phrase's own extent ("cece", 4
+ *      bytes) — NOT at choose's returned cursor: on the capi the 测测
+ *      candidate is an NBEST row (the typing gap below), so the cursor is
+ *      the whole parse end — the reserved tail slot, where no word
+ *      candidates start by design and the frontend re-runs
+ *      pinyin_guess_sentence instead. An earlier draft guessed at the
+ *      cursor and only worked because the old row-own-end return happened
+ *      to equal the phrase extent there.
+ *
+ * Only data-insensitive shapes are printed: indices, the cursor value,
+ * and call bools. Row texts differ between the mini and full model data
+ * by construction (the same 测测 text is an NBEST row on the mini fixture
+ * and a phrase candidate on the full model — the typing gap below).
  *
  * Sort profile (not the empty-store parity profile, which never trains):
  *   guess:  SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY
@@ -136,6 +160,23 @@ static int index_of_text(const struct syms *s, pinyin_instance_t *inst, const ch
     return -1;
 }
 
+static lookup_candidate_t *find_first_by_type(const struct syms *s,
+                                              pinyin_instance_t *inst,
+                                              int type) {
+    guint n = 0;
+    guint i;
+    s->n_cand(inst, &n);
+    for (i = 0; i < n; i++) {
+        lookup_candidate_t *c = NULL;
+        int t = 0;
+        s->get_cand(inst, i, &c);
+        s->get_type(inst, c, &t);
+        if (t == type)
+            return c;
+    }
+    return NULL;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <so> <systemdir>\n", argv[0]);
@@ -228,7 +269,33 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* ── 3. train then predict ──────────────────────────────────────── */
+    /* ── 3. NBEST row choose: the cursor is the whole parse end ─────── */
+    s.reset(inst);
+    s.parse(inst, "cecenihao");
+    s.sentence(inst);
+    s.guess(inst, 0, GUESS_SORT);
+    {
+        lookup_candidate_t *row = find_first_by_type(&s, inst, NBEST_MATCH_CANDIDATE);
+        if (!row) {
+            fprintf(stderr, "nbest row not offered\n");
+            return 1;
+        }
+        int cursor = s.choose(inst, 0, row);
+        if (cursor < 0) {
+            fprintf(stderr, "choose nbest row failed\n");
+            return 1;
+        }
+        /* matrix.size() - 1 = parsed_len = 9 here (pinyin.cpp:2513-2519),
+         * whatever span the row's own path covered. */
+        printf("nbest-cursor: %d\n", cursor);
+        /* The corrected post-NBEST flow: the tail slot starts no span, so
+         * re-run the sentence lookup under the diff_result forcings, then
+         * train. */
+        printf("nbest-resentence: %s\n", s.sentence(inst) ? "true" : "false");
+        printf("nbest-train: %s\n", s.train(inst, 0) ? "true" : "false");
+    }
+
+    /* ── 4. train then predict ──────────────────────────────────────── */
     s.reset(inst);
     s.parse(inst, "cecenihao");
     s.sentence(inst);
@@ -239,20 +306,26 @@ int main(int argc, char **argv) {
             fprintf(stderr, "测测 not offered for train\n");
             return 1;
         }
-        int cursor = s.choose(inst, 0, first);
-        if (cursor < 0) {
+        /* The returned cursor is deliberately unused. On the capi this
+         * candidate is an NBEST row (the typing gap above), so the cursor
+         * is the whole parse end — the reserved tail slot, where no word
+         * candidates start by design; on the pin it is a phrase candidate
+         * and the cursor is the span end. Either way the next lookup
+         * anchors at the chosen phrase's own extent — the "cece" this
+         * driver imported in section 1. */
+        if (s.choose(inst, 0, first) < 0) {
             fprintf(stderr, "choose 测测 failed\n");
             return 1;
         }
         s.sentence(inst);
-        s.guess(inst, (size_t)cursor, GUESS_SORT);
+        s.guess(inst, strlen("cece"), GUESS_SORT);
         {
             lookup_candidate_t *next = find_by_text(&s, inst, "你好");
             if (!next) {
                 fprintf(stderr, "你好 not offered for train\n");
                 return 1;
             }
-            if (s.choose(inst, (size_t)cursor, next) < 0) {
+            if (s.choose(inst, strlen("cece"), next) < 0) {
                 fprintf(stderr, "choose 你好 failed\n");
                 return 1;
             }
