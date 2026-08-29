@@ -172,7 +172,9 @@ inputs (the pin-built `.so` SIGABRTs).
   match any middle/final, zero tone matches any tone, fuzzy not
   handled.
 - **What oxpinyin does instead:** drops when no span entry spelling the
-  forced token carries a nonzero matched count (`span_finds_token`;
+  forced token carries a kept pronunciation possibility — `None` (no
+  counts, read as possibility 1) or `Some` with a nonzero matched
+  count; only `Some((0, _))` rejects (`span_finds_token`;
   the `Some((0, _))` zero-guard landed with the §3 matched/total work)
   — the possibility arithmetic itself is the already-recorded §3
   divergence (first path per token, matched/total as a step-cost term),
