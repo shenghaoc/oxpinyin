@@ -16,10 +16,16 @@ description = "Differential harness against the source-built libpinyin pin. Neve
 build = "build.rs"
 
 [features]
-default = []
+default = ["redb"]
 # Links the pin-built libpinyin from tools/oracle/build-oracle.sh.
 # Linux-only, and requires the oracle prefix to be present and on-pin.
 oracle-ffi = []
+# Backend selection, forwarded through oxpinyin-data (one backend per
+# binary; see oxpinyin-store's [features] for the model and precedence).
+kyotocabinet = ["oxpinyin-data/kyotocabinet"]
+tkrzw = ["oxpinyin-data/tkrzw"]
+lmdb = ["oxpinyin-data/lmdb"]
+redb = ["oxpinyin-data/redb"]
 
 [lints.rust]
 unsafe_code = "allow" # FFI to the real libpinyin; // SAFETY: on every block
@@ -75,7 +81,9 @@ path = "src/bin/sentence_tail.rs"
 # inventory, and W2-T3 compares against this parser. Not an external dependency.
 oxpinyin-core = { path = "../oxpinyin-core" }
 # Session + exported tables for portable parity tooling (never ships).
-oxpinyin-data = { path = "../oxpinyin-data" }
+# default-features = false so `--no-default-features` builds actually reach
+# the store's backend selection; the [features] block above forwards it.
+oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
 oxpinyin-engine = { path = "../oxpinyin-engine" }
 
 [dev-dependencies]
@@ -87,7 +95,9 @@ dhat = "0.3"
 # Internal workspace crate, dev-only: the `decode_pass_user_store` bench
 # rebuilds oxpinyin-capi's `SharedLm` overlay on the scan harness. Not an
 # external dependency, and pinyin-oracle never ships.
-oxpinyin-user = { path = "../oxpinyin-user" }
+# default-features = false so workspace `--no-default-features` runs are not
+# re-defaulted through this dev edge.
+oxpinyin-user = { path = "../oxpinyin-user", default-features = false }
 
 [[bench]]
 name = "scan_perf"

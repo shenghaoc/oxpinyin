@@ -20,4 +20,6 @@ oxpinyin-segment = { path = "../oxpinyin-segment" }
 oxpinyin-counter = { path = "../oxpinyin-counter" }
 
 [dev-dependencies]
-oxpinyin-data = { path = "../oxpinyin-data" }
+# default-features = false so workspace `--no-default-features` runs are not
+# re-defaulted through this dev edge; unification supplies the backend.
+oxpinyin-data = { path = "../oxpinyin-data", default-features = false }

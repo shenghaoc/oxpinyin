@@ -12,8 +12,19 @@ workspace = true
 
 [dependencies]
 oxpinyin-core = { workspace = true }
+# The workspace table carries default-features = false for this edge; the
+# [features] block below forwards the backend selection.
 oxpinyin-store = { workspace = true }
 compact_str.workspace = true
+
+[features]
+# Backend selection, forwarded to oxpinyin-store (one backend per binary;
+# see the store's [features] for the model and precedence).
+default = ["redb"]
+kyotocabinet = ["oxpinyin-store/kyotocabinet"]
+tkrzw = ["oxpinyin-store/tkrzw"]
+lmdb = ["oxpinyin-store/lmdb"]
+redb = ["oxpinyin-store/redb"]
 
 [dev-dependencies]
 redb = { workspace = true }
