@@ -79,6 +79,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Usage: %s <so> <systemdir> <on|off> <userdir>\n", argv[0]);
         return 1;
     }
+    if (strcmp(argv[3], "on") != 0 && strcmp(argv[3], "off") != 0) {
+        fprintf(stderr, "Usage: %s <so> <systemdir> <on|off> <userdir>\n", argv[0]);
+        return 1;
+    }
     const bool bit_on = strcmp(argv[3], "on") == 0;
     void *h = dlopen(argv[1], RTLD_NOW);
     if (!h) {
