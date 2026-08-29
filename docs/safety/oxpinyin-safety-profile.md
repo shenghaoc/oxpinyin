@@ -57,11 +57,12 @@ record, enforced present-but-not-verified by Clippy, verified by review.
    provable internal invariants may be `debug_assert!`; each surviving
    release `assert` (2 today, in `parser.rs`) carries its "internal bug
    trip" justification comment. Asserts in tests unrestricted.
-4. FFI boundary: `ffi_catch` wraps 50 of the 55 capi entry points. The
-   five exceptions (two trivial scalar writers in `cursor.rs`, three
-   iterator-`end` drops) stay unwrapped until F-7 is fixed — they must
-   remain provably non-panicking (documented at the fn) or gain the
-   wrapper.
+4. FFI boundary: `ffi_catch` wraps 53 of the 55 capi entry points — F-7
+   brought the three iterator-`end` drops under the wrapper. The two
+   remaining unwrapped entry points (the trivial scalar writers
+   `pinyin_get_pinyin_key_rest`/`..._positions` in `cursor.rs`) are
+   intentional: null-check-and-write bodies documented as non-panicking;
+   they gain the wrapper the day that stops holding.
 5. `panic = "abort"` is **not** part of the profile (it would neutralize
    `ffi_catch` for the cdylib). Rust ≥1.81's abort-at-ABI is the backstop
    for *escapes*, which Layer 3.2 makes structurally unlikely.
