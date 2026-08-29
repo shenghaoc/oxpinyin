@@ -33,10 +33,19 @@ NIGHTLY=${OXPINYIN_SANITIZER_TOOLCHAIN:-nightly-2026-08-01}
 TARGET=${OXPINYIN_SANITIZER_TARGET:-x86_64-unknown-linux-gnu}
 
 if ! rustup toolchain list | grep -q "^$NIGHTLY"; then
-	echo "SKIP: $NIGHTLY is not installed."
+	echo "$NIGHTLY is not installed."
 	echo "  install it with: rustup toolchain install $NIGHTLY --profile minimal"
-	echo "  NOTE: this gate did NOT run."
-	exit 0
+	# This gate is load-bearing (see the header), so a missing toolchain is a
+	# failure by default: a silent exit 0 would let CI report a green tick for
+	# a scan that never ran. A caller that means to skip it — e.g. locally
+	# without nightly — opts in explicitly.
+	if [ -n "${OXPINYIN_SANITIZER_ALLOW_SKIP:-}" ]; then
+		echo "  SKIP: OXPINYIN_SANITIZER_ALLOW_SKIP is set; the gate did NOT run."
+		exit 0
+	fi
+	echo "  ERROR: the sanitizer gate cannot run. Install the toolchain, or set"
+	echo "  OXPINYIN_SANITIZER_ALLOW_SKIP=1 to allow skipping it."
+	exit 1
 fi
 
 # A real bigram.db makes the walk cover libpinyin's records rather than a

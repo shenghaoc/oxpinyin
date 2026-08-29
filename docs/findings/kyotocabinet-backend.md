@@ -28,7 +28,7 @@ installed `libpinyin-data` 2.8.1 package's `bigram.db` carries Berkeley
 DB's `DB_HASHMAGIC` (`0x00061561` at offset 12), which
 `oxpinyin_data::layout` now reports directly:
 
-```
+```text
 installed libpinyin data at /usr/lib/x86_64-linux-gnu/libpinyin/data is Berkeley DB (hash)
 ```
 
@@ -84,7 +84,7 @@ database, "otherwise, this function fails" (`kclangc.h:312-320`). Since
 libpinyin's file is called `bigram.db`, that is exactly the failing case.
 Measured on 1.2.80:
 
-```
+```text
 named.kch (correct suffix)         opens
 bigram.db (libpinyin's name)       FAILS: invalid operation
 bigram.db#type=kch                 opens
@@ -137,7 +137,7 @@ installed here, `tools/kc/bdb-to-kc.c` transcribes the installed
 chunks, copied byte for byte with **no Rust in the transcription** — and
 the tests read that:
 
-```
+```text
 transcribed 56359 records (1849609 successor items)
 56359 records, 1849609 successor items, all round-tripped
 counts match the model20-derived 56,359 / 1,849,609
