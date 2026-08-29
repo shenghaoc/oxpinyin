@@ -17,7 +17,7 @@ fn fixtures_dir() -> std::path::PathBuf {
 }
 
 fn model() -> BigramLanguageModel {
-    BigramLanguageModel::open(&fixtures_dir().join("bigram.redb")).unwrap()
+    BigramLanguageModel::open(&fixtures_dir().join(crate::default_store_file("bigram"))).unwrap()
 }
 
 #[test]
@@ -384,7 +384,8 @@ fn nbest_zero_delta_is_bit_identical_to_trait_impl() {
     }
 
     // No unigram table installed: both answers are the empty default.
-    let bare = BigramLanguageModel::open(&fixtures_dir().join("bigram.redb")).unwrap();
+    let bare = BigramLanguageModel::open(&fixtures_dir().join(crate::default_store_file("bigram")))
+        .unwrap();
     let system = bare
         .nbest_step_costs(&PhraseToken::new(NI), &PhraseToken::new(DE))
         .unwrap();

@@ -281,7 +281,8 @@ pub struct GenericUserStore<S: WriteStore> {
     _lease: RegistryLease,
 }
 
-/// Default user store backed by [`DefaultStore`] (redb).
+/// Default user store backed by [`DefaultStore`] (the compiled-in
+/// backend: Kyoto Cabinet by default, redb under `--no-default-features`).
 pub type UserStore = GenericUserStore<DefaultStore>;
 
 impl<S: WriteStore> Clone for GenericUserStore<S> {
@@ -2208,7 +2209,7 @@ mod tests {
         cleanup(&redb_path);
     }
 
-    // ── Registry-specific tests (DefaultStore / redb only) ───────
+    // ── Registry-specific tests (DefaultStore, whichever backend) ───────
 
     fn temp_path(tag: &str) -> std::path::PathBuf {
         let path =

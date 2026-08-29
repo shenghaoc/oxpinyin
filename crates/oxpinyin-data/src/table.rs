@@ -7,7 +7,8 @@
 //!
 //! # Portability
 //!
-//! The default backend is redb, a pure-Rust embedded database.  The
+//! The default backend is Kyoto Cabinet (see `oxpinyin-store`'s
+//! compile-time selection; redb is the pure-Rust portability fallback).  The
 //! committed tables can be read on any platform redb supports.
 
 use std::cmp::Ordering;
@@ -191,7 +192,7 @@ pub struct GenericLookupTable<S: ReadStore> {
     _backend: PhantomData<fn() -> S>,
 }
 
-/// Lookup table over the default backend (redb).
+/// Lookup table over the compiled-in default backend ([`DefaultStore`]).
 pub type LookupTable = GenericLookupTable<DefaultStore>;
 
 impl<S: ReadStore> GenericLookupTable<S> {

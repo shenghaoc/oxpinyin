@@ -29,8 +29,8 @@ fn dict() -> SystemDictionary {
         .join("fixtures")
         .join("w3");
     SystemDictionary::open(
-        &dir.join("pinyin_index.redb"),
-        &dir.join("phrase_index.redb"),
+        &dir.join(oxpinyin_data::default_store_file("pinyin_index")),
+        &dir.join(oxpinyin_data::default_store_file("phrase_index")),
     )
     .unwrap()
 }

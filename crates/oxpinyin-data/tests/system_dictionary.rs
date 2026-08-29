@@ -20,8 +20,8 @@ fn fixtures_dir() -> std::path::PathBuf {
 
 fn dict() -> SystemDictionary {
     SystemDictionary::open(
-        &fixtures_dir().join("pinyin_index.redb"),
-        &fixtures_dir().join("phrase_index.redb"),
+        &fixtures_dir().join(oxpinyin_data::default_store_file("pinyin_index")),
+        &fixtures_dir().join(oxpinyin_data::default_store_file("phrase_index")),
     )
     .unwrap()
 }

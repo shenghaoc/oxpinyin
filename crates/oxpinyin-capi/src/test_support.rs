@@ -53,17 +53,20 @@ impl TempSystemDir {
         ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("temp system dir");
-        for name in [
-            "pinyin_index.redb",
-            "phrase_index.redb",
-            "bigram.redb",
-            "addon_4_pinyin_index.redb",
-            "addon_4_phrase_index.redb",
-            "punct.redb",
+        for stem in [
+            "pinyin_index",
+            "phrase_index",
+            "bigram",
+            "addon_4_pinyin_index",
+            "addon_4_phrase_index",
+            "punct",
         ] {
-            let src = system_dir().join(name);
+            // The fixture set matching the compiled-in backend (`.kct`,
+            // `.redb`, …), so this helper works under every backend gate.
+            let name = oxpinyin_data::default_store_file(stem);
+            let src = system_dir().join(&name);
             if src.is_file() {
-                std::fs::copy(&src, path.join(name)).expect("copy redb table");
+                std::fs::copy(&src, path.join(&name)).expect("copy store table");
             }
         }
         Self { path }

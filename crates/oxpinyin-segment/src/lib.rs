@@ -19,8 +19,11 @@ mod trellis;
 
 pub use driver::{Emitted, segment_bytes, segment_line};
 pub use error::SegmentError;
+// Re-exported so the training-tool binaries name export tables in the
+// compiled-in backend's format without a direct oxpinyin-data edge.
 pub use lexicon::{MAX_PHRASE_LENGTH, PhraseLexicon};
 pub use model::{NULL_TOKEN, PINNED_LAMBDA, SENTENCE_START, SegmentModel, parse_table_conf_lambda};
+pub use oxpinyin_data::default_store_file;
 pub use paths::{
     DEFAULT_EXPORT_DIR, EXPORT_DIR_ENV, EXPORT_FILES, MODEL_CACHE_ENV, MODEL_DIR_ENV, MODEL_FILES,
     SegmenterPaths, load_lambda, locate_export_dir, locate_model_dir,

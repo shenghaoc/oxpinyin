@@ -74,7 +74,8 @@ fn culture_fixture_spot_check() {
 
 #[test]
 fn fixture_has_hao_and_de_in_table_order() {
-    let table = PunctTable::open(&fixtures_dir().join("punct.redb")).unwrap();
+    let table =
+        PunctTable::open(&fixtures_dir().join(oxpinyin_data::default_store_file("punct"))).unwrap();
     assert!(
         table.token_count() >= 3,
         "Option A export keeps the 好/中/国 tokens used by the punct differential"
@@ -106,7 +107,9 @@ fn missing_file_is_empty() {
 
 #[test]
 fn open_mini_index_fixture() {
-    let table = LookupTable::open(&fixtures_dir().join("pinyin_index.redb")).unwrap();
+    let table =
+        LookupTable::open(&fixtures_dir().join(oxpinyin_data::default_store_file("pinyin_index")))
+            .unwrap();
     // The --mini export keeps the ten allowlisted pinyin keys.
     assert_eq!(table.len().unwrap(), 10);
     assert!(!table.is_empty().unwrap());
@@ -114,7 +117,9 @@ fn open_mini_index_fixture() {
 
 #[test]
 fn keys_are_pinyin_strings() {
-    let table = LookupTable::open(&fixtures_dir().join("pinyin_index.redb")).unwrap();
+    let table =
+        LookupTable::open(&fixtures_dir().join(oxpinyin_data::default_store_file("pinyin_index")))
+            .unwrap();
     let val = table.get(b"ni'hao").unwrap();
     assert!(val.is_some(), "ni'hao is in the mini allowlist");
     // Records are 8-byte {token, freq} pairs.
@@ -123,7 +128,9 @@ fn keys_are_pinyin_strings() {
 
 #[test]
 fn missing_key_returns_none() {
-    let table = LookupTable::open(&fixtures_dir().join("pinyin_index.redb")).unwrap();
+    let table =
+        LookupTable::open(&fixtures_dir().join(oxpinyin_data::default_store_file("pinyin_index")))
+            .unwrap();
     let val = table.get(b"nonexistent").unwrap();
     assert!(val.is_none());
 }
@@ -131,9 +138,11 @@ fn missing_key_returns_none() {
 #[test]
 fn iter_all_fixture_files() {
     let dir = fixtures_dir();
+    // Only the compiled-in backend's set is readable by this binary; the
+    // other backends' committed sets belong to their own gate runs.
     for entry in std::fs::read_dir(&dir).unwrap() {
         let path = entry.unwrap().path();
-        if path.extension().and_then(|s| s.to_str()) != Some("redb") {
+        if path.extension().and_then(|s| s.to_str()) != Some(oxpinyin_data::DEFAULT_STORE_EXT) {
             continue;
         }
         let table = LookupTable::open(&path).unwrap_or_else(|e| {
