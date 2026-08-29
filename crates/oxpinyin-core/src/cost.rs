@@ -169,3 +169,25 @@ mod tests {
         assert_eq!(surprisal(numerator, denominator), 2 * COST_PER_BIT);
     }
 }
+
+// Kani harnesses: the `kani` crate is supplied by the Kani toolchain
+// (cargo kani injects it); nothing here compiles into normal builds and
+// no Cargo dependency is involved.
+#[cfg(kani)]
+mod kani_proofs {
+    use super::reduce_ratio;
+
+    /// The invariant `reduce_ratio`'s `unwrap_or` comments rely on: both
+    /// returned halves always fit below 2^63, for arbitrary u128 inputs.
+    /// (Ratio preservation is intentionally not claimed — the shift loop
+    /// trades precision for range by design.)
+    #[kani::proof]
+    #[kani::unwind(140)]
+    fn reduce_ratio_halves_fit_u63() {
+        let numerator: u128 = kani::any();
+        let denominator: u128 = kani::any();
+        let (n, d) = reduce_ratio(numerator, denominator);
+        assert!(u128::from(n) < (1_u128 << 63));
+        assert!(u128::from(d) < (1_u128 << 63));
+    }
+}
