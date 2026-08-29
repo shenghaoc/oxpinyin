@@ -73,12 +73,15 @@ This class is therefore **not** a language-mechanism residue — it is a
 deliberate product decision, and it must be labelled as one rather than
 smuggled in as something Rust forced.
 
-**Justification — MISRA-Rust D.4.1 (Required: minimize panics).** A
-library loaded into a long-lived input-method process must not take the
-process down on caller error. An IME abort loses the user's session,
-not just the call. The guideline's requirement to minimize panics is
-the standard being applied, and constitution item 4 ("nothing panics on
-any input; public APIs return `Result`") is its in-house statement.
+**Justification — MISRA C:2025 Directive 4.1 (Required), applied to
+Rust.** The external standard is Directive 4.1, "Run-time failures shall
+be minimized"; its applicability to Rust — where the run-time failure to
+be minimized is the panic — is established by MISRA C:2025 Addendum 6
+([`MISRA-C-2025-ADD6`](https://misra.org.uk/app/uploads/2025/03/MISRA-C-2025-ADD6.pdf)).
+A library loaded into a long-lived input-method process must not take the
+process down on caller error: an IME abort loses the user's session, not
+just the call. Constitution item 4 ("nothing panics on any input; public
+APIs return `Result`") is the in-house statement of the same rule.
 
 **Obligations on every (c) site:** return `false` (C ABI) or `Err`
 (Rust), *and log the point*. A silently-swallowed abort is not class
@@ -104,6 +107,10 @@ touches are out of scope until a new consumer demonstrates a need.
    `PYPLibPinyinCandidates.cc:151`), giving the 51-symbol W8 contract.
    The 28-symbol complement is §6 of the same document.
 2. **fcitx-libpinyin** — a `src/` call-site grep, dead code excluded.
+   Source identity is **not yet frozen**: unlike ibus above, no tag or
+   commit is recorded here or in `abi-subset.md`. Pinning that release
+   (tag or commit) and freezing fcitx's per-consumer symbol manifest from
+   it is owed before the union below is reproducible for the fcitx half.
 
 **Dead code is not a call site.** Both consumers carry `#if 0` blocks
 naming libpinyin symbols; they do not count. `pinyin_get_pinyin_key`
@@ -137,8 +144,11 @@ exceptions to.
 >
 > **Verification:** every symbol in the consumer union must have a
 > differential probe that drives it with the same input on both libraries
-> and asserts byte-identical output. A symbol with no probe is
-> unverified, not compliant.
+> and asserts byte-identical output — where *output* is the whole
+> observable surface, not just the scalar return: return status,
+> out-parameters and the data they point to, written lengths, and any
+> state transition on the handle. A symbol with no probe is unverified,
+> not compliant.
 
 Three consequences worth stating, because each is currently unmet
 somewhere:
