@@ -32,8 +32,10 @@ copy.
 build-depends on. 5.3.28 is under the **Sleepycat License** (a copyleft
 license, not BSD); Oracle relicensed the 6.x line to AGPLv3, which is why
 the distros checked here — the Debian/Ubuntu family — pin to 5.3.
-Debian's is the same source Ubuntu syncs. Fedora and openSUSE could not
-be checked — their metadata is unreachable
+Ubuntu builds its `libdb5.3` from the Debian `db5.3` **source package** it
+syncs, so the two share the same 5.3.28 upstream and Debian packaging —
+which is why they count as one data point, not two. Fedora and openSUSE
+could not be checked — their metadata is unreachable
 from this environment.
 
 The shim surface needed is small, because libpinyin's own use of BDB is
