@@ -17,7 +17,7 @@ libtool `-version-info 15:0`, and libtool's SONAME is
 `lib<name>.so.(current - age)` with `age = 0`. Confirmed on the shipped
 binary:
 
-```
+```console
 $ readelf -d /usr/lib/x86_64-linux-gnu/libpinyin.so.15 | grep SONAME
  0x000000000000000e (SONAME)  Library soname: [libpinyin.so.15]
 ```
@@ -31,14 +31,14 @@ for the installed file.
 
 The real library defines its symbols **versioned**:
 
-```
+```console
 $ nm -D /usr/lib/x86_64-linux-gnu/libpinyin.so.15 | grep pinyin_init
 0000000000059c150 T pinyin_init@@LIBPINYIN
 ```
 
 so a consumer linked against it records a versioned reference:
 
-```
+```console
 $ readelf -V ./consumer
   000000: Version: 1  File: libpinyin.so.15  Cnt: 1
   0x0010:   Name: LIBPINYIN  Flags: none  Version: 3
@@ -92,7 +92,7 @@ restriction has to ride on it.
 
 Measured on the installed artifact:
 
-```
+```console
 $ cargo capi install --features shipped …
 $ readelf -d libpinyin.so.15.0.0 | grep SONAME     → libpinyin.so.15
 $ nm -D --defined-only … | grep -c 'pinyin_'       → 53
@@ -105,7 +105,7 @@ $ nm -D --defined-only … | grep -c 'pinyin_'       → 53
 The consumer union is 58 symbols; 53 are implemented. The gap is one
 family, and it has one root cause:
 
-```
+```text
 pinyin_get_pinyin_key
 pinyin_get_pinyin_key_rest_length
 pinyin_get_pinyin_string

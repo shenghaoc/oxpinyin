@@ -75,6 +75,10 @@ fn addon_library_load_is_idempotent_and_surfaces_addon_candidates() {
         !pinyin_load_addon_phrase_library(context, 15),
         "missing library is false"
     );
+    assert!(
+        !pinyin_load_addon_phrase_library(context, 16),
+        "out-of-range load answers false where the pin asserts, as unload does"
+    );
     // pinyin_unload_addon_phrase_library mirrors the pin (`pinyin.cpp:124-131`):
     // unconditional `true` in range, including for a library that was never
     // loaded, and a reload afterwards must succeed again. The pin's
