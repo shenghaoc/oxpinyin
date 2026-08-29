@@ -221,7 +221,7 @@ inputs (the pin-built `.so` SIGABRTs).
   possibility divergence is already observable; on model20, not
   reachable at all (see Status).
 
-### Constraints survive every re-parse except the selection-committed one — CLOSED
+### Constraints survive every re-parse — CLOSED
 
 - **Upstream source cite:** `src/pinyin.cpp:1497-1517`
   (`pinyin_parse_more_full_pinyins` never touches `m_constraints`);
