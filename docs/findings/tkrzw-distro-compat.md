@@ -205,7 +205,7 @@ bits are readable from primary sources without installing tkrzw.
 | Devuan, PureOS | their `Dpkg::Vendor::*` | no | no |
 | Arch | `/etc/makepkg.conf` (`pacman 7.1.0.r9`) | no | **yes** (`OPTIONS=(... lto)`) |
 | Fedora | `redhat-rpm-config` | no | **yes** globally, but `tkrzw.spec` sets `%_lto_cflags %{nil}` |
-| RHEL 10 | — | — | does not package tkrzw |
+| RHEL 10 (via EPEL) | EPEL, Fedora spec lineage | no | no (`tkrzw.spec` opts out); not in RHEL's own repos |
 
 The dpkg figures are from dpkg's own git at tag **1.23.7** — the exact
 dpkg the `debian:sid-slim` image reports — so this is Debian's file, not
@@ -388,7 +388,7 @@ LTO/`remove` sentinel; defect 2 is the `-Bsymbolic-functions`/comparator.
 | `.deb` | Ubuntu 26.04 LTS | `1.0.32-1build1` | **broken** | **broken** (type 255, 0 relocs) | **broken** |
 | `.deb` | Debian testing (forky) | `1.0.32-1+b2` | ok | ok (type 1, 18 relocs) | healthy |
 | `.rpm` | Fedora Rawhide | `1.0.32-5.fc45` | ok | ok (type 1, 18 relocs) | healthy |
-| `.rpm` | RHEL 10.2 (UBI10) | not packaged | — | — | n/a |
+| `.rpm` | RHEL 10.2 + EPEL | `1.0.32-2.el10_1` | ok | ok (type 1, 18 relocs) | healthy |
 | Arch | Arch, from source | none packaged | **broken** | ok (type 1, 18 relocs) | **broken (defect 1)** |
 
 - **Ubuntu 26.04 LTS** reproduces both defects exactly as the release
@@ -411,11 +411,16 @@ LTO/`remove` sentinel; defect 2 is the `-Bsymbolic-functions`/comparator.
   get a working build — outside corroboration of the bisection above,
   from a distro that had every reason to keep LTO on. Fedora adds no
   `-Bsymbolic-functions`, so defect 2 never arises. `1.0.32-5.fc45`.
-- **RHEL 10.2** does not package tkrzw at all: `dnf install tkrzw` on
-  `redhat/ubi10:latest` returns *"No match for argument: tkrzw"* — it is
-  in none of BaseOS, AppStream or CodeReady Builder. Measured on the
-  RHEL 10.2 drop-in target itself; EPEL was not checked, but tkrzw is
-  absent from RHEL's own repositories.
+- **RHEL 10.2** carries no tkrzw in its *own* repositories — `dnf
+  install tkrzw` on `redhat/ubi10:latest` returns *"No match for
+  argument: tkrzw"* across BaseOS, AppStream and CodeReady Builder — but
+  **EPEL 10 ships it**, `tkrzw-1.0.32-2.el10_1` (vendor Fedora Project),
+  and that build is **healthy**: 18 comparator relocations, `remove`
+  clean, comparator type 1. EPEL follows the Fedora spec lineage, so it
+  inherits the `%_lto_cflags %{nil}` opt-out, and RHEL adds no
+  `-Bsymbolic-functions` — neither defect arises. A tkrzw backend built
+  against EPEL's libtkrzw on the RHEL 10.2 drop-in target is therefore
+  safe. Measured on that target itself (`crb`/EPEL enabled).
 - **Arch** ships no tkrzw in `core`/`extra` either (`pacman -Ss tkrzw`
   is empty); the only Arch source is the AUR `tkrzw-git`, a stale 2020
   VCS stub (0 votes, building upstream HEAD with a plain
@@ -428,10 +433,10 @@ LTO/`remove` sentinel; defect 2 is the `-Bsymbolic-functions`/comparator.
   disables LTO, which neither the AUR stub nor a plain build does.
 
 This supersedes the earlier "still unrun" note: the mirrors that
-returned 403 in the originating session are reachable here, the two
-`.deb` rows and Fedora were installed straight from each distro's
-archive, and the Arch and RHEL rows are package-absence findings — with
-Arch's defect measured from a source build under the distro's own flags.
+returned 403 in the originating session are reachable here, and the two
+`.deb` rows, Fedora and RHEL-via-EPEL were installed straight from each
+archive. Arch is the one package-absence row, its defect measured from a
+source build under the distro's own flags.
 
 `distro-probe.sh` covers both halves, and was checked against all four
 rows of the bisection: it reports A broken on both, B broken on the
