@@ -35,9 +35,8 @@
 # Exit codes: 0 = healthy, 1 = pointer-identity broken, 2 = tkrzw not found.
 
 set -u
-WORK=${WORK:-/tmp/tkrzw-probe}
-rm -rf "$WORK" 2>/dev/null
-mkdir -p "$WORK" || exit 2
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/tkrzw-probe.XXXXXX") || exit 2
+trap 'rm -rf "$WORK"' 0 HUP INT TERM
 cd "$WORK" || exit 2
 
 distro=$(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME")
