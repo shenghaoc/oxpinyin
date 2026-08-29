@@ -261,3 +261,79 @@ jobs:
       # release the ratchet was validated against locally.
       - run: pip install --break-system-packages lizard==1.24.0
       - run: lizard crates/ -l rust -C 40
+
+  # Kani bounded model checking over the two pure-numeric harnesses
+  # (cost.rs reduce_ratio bound; table_conf gcd non-zero). Trial:
+  # continue-on-error — a failure files an issue for the harness, it does
+  # not gate anything. The kani crate is supplied by the toolchain, so
+  # the harnesses carry no Cargo dependency.
+  kani:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Kani
+        run: |
+          ver=kani-0.67.0
+          curl -sSfL -o kani.tar.gz "https://github.com/model-checking/kani/releases/download/${ver}/${ver}-x86_64-unknown-linux-gnu.tar.gz"
+          tar xzf kani.tar.gz
+          ./"${ver}-x86_64-unknown-linux-gnu"/install.sh --prefix "$HOME/.kani"
+          echo "$HOME/.kani/bin" >> "$GITHUB_PATH"
+      - run: rustup show active-toolchain
+      - run: cargo kani -p oxpinyin-core -p oxpinyin-data
+
+  # Mutation testing, scoped to where test strength matters most (the
+  # study's priority list): core's parsers/scoring and the user-store
+  # persistence cluster. Trial: continue-on-error; the score is evidence
+  # about test strength, not a gate. Scope is spelled as CLI --file
+  # flags because cargo-mutants' config-file keys still move between
+  # releases.
+  mutants:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo install cargo-mutants --locked
+      - run: >
+          cargo mutants --locked --no-times
+          --file crates/oxpinyin-core/src/parser.rs
+          --file crates/oxpinyin-core/src/full_pinyin_index.rs
+          --file crates/oxpinyin-core/src/scheme.rs
+          --file crates/oxpinyin-core/src/scoring.rs
+          --file crates/oxpinyin-user/src/store.rs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: mutants-out
+          path: mutants.out
+
+  # nextest over the whole workspace: proven equivalent locally (751/751
+  # vs cargo test). If this stays green on the schedule, flipping the PR
+  # gate's unit lane to nextest is a one-line follow-up.
+  nextest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install pinned cargo-nextest
+        run: |
+          ver=0.9.143
+          sum=6d891c18105ec2d33f6e441a4f92b7ccab47ba263e22055c8bb66884243f3389
+          curl -sSfL -o cargo-nextest.tar.gz "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${ver}/cargo-nextest-${ver}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${sum}  cargo-nextest.tar.gz" | sha256sum -c -
+          tar xzf cargo-nextest.tar.gz
+          mkdir -p ~/.local/bin
+          install -m755 cargo-nextest ~/.local/bin
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: cargo nextest run --locked --workspace
+      # doctests stay on cargo test (nextest does not run them)
+      - run: cargo test --locked --workspace --doc

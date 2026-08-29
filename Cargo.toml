@@ -30,6 +30,9 @@ rust-version = "1.97.1"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
+# The Kani proof harnesses live under #[cfg(kani)] modules; the cfg is
+# supplied by the Kani toolchain (no Cargo feature, no dependency).
+unexpected_cfgs = { level = "deny", check-cfg = ['cfg(kani)'] }
 missing_docs = "warn"
 # unused_must_use is warn-by-default and CI's -D warnings already promotes
 # it; the explicit deny protects local builds that lack the env var.
