@@ -137,7 +137,7 @@ directory. cargo-c does **not** support custom pkg-config variables, so
 `oxpinyin.pc` carries only `prefix/exec_prefix/libdir/includedir` plus the
 standard `Name/Description/Version/Libs/Cflags/Requires`. Since #84 makes
 `pinyin_init` fail closed on a missing model, consumers need another way to
-find the `.redb` tables and `interpolation2.text`.
+find the store tables (`.kct` by default) and `interpolation2.text`.
 
 **Limitation:** there is no `pkgdatadir` in `oxpinyin.pc`. Consumers locate the
 data as `$(pkg-config --variable=prefix oxpinyin)/share/oxpinyin` (the default
@@ -150,7 +150,7 @@ hand-write the `.pc` wholesale, as that would forfeit cargo-c's relocatable
 Two consequences worth registering:
 
 1. **The data files are not part of this install.** `cargo cinstall` ships only
-   the `.so`/`.a`, `pinyin.h`, and `oxpinyin.pc`. The `.redb` tables and
+   the `.so`/`.a`, `pinyin.h`, and `oxpinyin.pc`. The store tables and
    `interpolation2.text` come from the migrate/data deliverable and must be
    installed separately by the packager.
 2. **The `share/oxpinyin` convention is unenforced.** Nothing installs into it

@@ -74,10 +74,19 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
 
 ### Workstream notes (recorded as decisions settle)
 
+- **Kyoto Cabinet is the default backend** (2026-08-29), replacing redb —
+  matching the DBM the reference libpinyin builds against on the primary
+  target distros. Selection is compile-time (`DefaultStore`, precedence
+  kyotocabinet > tkrzw > lmdb > redb), mirroring libpinyin's own
+  one-backend-per-binary `--with-dbm` model. redb remains fully supported
+  as the pure-Rust portability fallback (`--no-default-features`;
+  macOS/Windows). Native table files carry the backend's extension
+  (`.kct`/`.tkt`/`.lmdb`/`.redb`).
+
 - **W15 is the data pipeline inversion.** Runtime tables are compiled
   natively from the canonical pinned `model20` archive for every storage
-  backend (redb, LMDB, Tkrzw) — no producer consumes libpinyin-generated
-  runtime data. The retired `oxpinyin-migrate` route (oracle ABI export +
+  backend (Kyoto Cabinet, redb, LMDB, Tkrzw) — no producer consumes
+  libpinyin-generated runtime data. The retired `oxpinyin-migrate` route (oracle ABI export +
   verbatim Tkrzw conversion) is proven unnecessary: the native compilation
   reproduces its frozen full export entry-for-entry, which unparked the
   five differentials that needed a full system dir. Architecture and

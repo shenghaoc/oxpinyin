@@ -21,9 +21,10 @@ property of the stored bytes: the store never decodes a key, so it has no
 notion of "integer order". Any meaning a key's bytes carry is imposed by the
 layer that encoded them.
 
-All three backends satisfy exactly this rule:
+All four backends satisfy exactly this rule:
 
-- **redb** (default). The store uses `TableDefinition<&[u8], &[u8]>`. redb's
+- **redb** (the pure-Rust portability fallback, `--no-default-features`).
+  The store uses `TableDefinition<&[u8], &[u8]>`. redb's
   `Key for &[u8]` is `data1.cmp(data2)` — plain lexicographic byte compare
   (`redb-4.1.0/src/types.rs:347`). (redb's *typed* integer keys are a
   different animal: they store `to_le_bytes()` but compare by the *decoded*
@@ -51,7 +52,16 @@ All three backends satisfy exactly this rule:
   `tkrzw/shim.h` and `tkrzw/mod.rs`. It is checked directly by
   `tkrzw_orders_keys_as_unsigned_bytes` (which probes `0x80..=0xff`, the high
   half a *signed*-char comparison would misplace) and, against redb and LMDB,
-  by the three-way equivalence tests below.
+  by the cross-backend equivalence tests below.
+- **Kyoto Cabinet** (feature `kyotocabinet`; the DEFAULT backend). `KcStore`
+  opens a `TreeDB` with no `rcomp` tuning parameter
+  (`crates/oxpinyin-store/src/kyotocabinet/`), so Kyoto Cabinet's default
+  record comparator applies: **`LEXICALCOMP` — byte-wise, shorter key first
+  on a shared prefix** — exactly libpinyin's own configuration
+  (`phrase_large_table3_kyotodb.cpp` and `chewing_large_table2_kyotodb.cpp`
+  install no comparator either). Verified by the same cross-backend
+  conformance suite over keys that cross 256 in the first and in a later
+  element.
 
 **Obligation discharged, and carried forward.** When this note was first
 written, "a new backend must match the default lexicographic comparator" was a

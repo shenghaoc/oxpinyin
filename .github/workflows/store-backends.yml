@@ -1,10 +1,14 @@
 name: Store backends
 
-# Backend coverage for oxpinyin-store on a rolling toolchain. Two jobs:
-#   - store-features sweeps cargo test across the workspace default build,
-#     --features lmdb, and --features tkrzw (the tkrzw pass builds the C++
-#     shim, the only memory-unsafe layer in the stack, against the distro
-#     libtkrzw).
+# Backend coverage for the four store backends on a rolling toolchain.
+# Kyoto Cabinet is the DEFAULT backend (the DBM the reference libpinyin
+# builds against); tkrzw and LMDB are the alternates; redb is the
+# pure-Rust portability fallback (--no-default-features). Two jobs:
+#   - store-features runs the whole workspace test suite under each of the
+#     four backends in turn — every pass decodes real queries through the
+#     fixture tables, not just the store's own unit tests — plus one
+#     multi-feature store build that runs the cross-backend conformance
+#     suite in a single binary.
 #   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan and UBSan.
 #
 # ROLLING TOOLCHAIN, deliberately unpinned: the jobs run inside
@@ -57,14 +61,12 @@ concurrency:
 
 jobs:
   store-features:
-    # Close the backend coverage gap: never build --features tkrzw only
-    # in developer sessions; TkrzwStore is a shipped read+write
-    # backend whose C++ shim is the only memory-unsafe layer in the stack.
-    # The name/feature pairs are scoped with -p because a virtual manifest
-    # rejects a bare --features, and these names exist on exactly one
-    # member (oxpinyin-store) — so -p scoping tests precisely what an
-    # unscoped spelling would if the manifest allowed it.
-    name: store backends (default / lmdb / tkrzw)
+    # Every backend is exercised through the whole workspace — a backend
+    # that "passes" only in the store's own unit tests and never reaches
+    # the decode path does not count. The alternate-backend passes name the
+    # store's feature with member/feature syntax because the root manifest
+    # is virtual.
+    name: store backends (kyotocabinet / redb / tkrzw / lmdb)
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see the header comment
@@ -110,7 +112,9 @@ jobs:
         # Debian's libtkrzw-dev builds tkrzw with compression, so tkrzw.pc
         # demands -llzma -llz4 -lzstd -lz at link time; their -dev packages
         # must be present or every final link dies.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
+        # libkyotocabinet-dev: the default backend links the distro Kyoto
+        # Cabinet; bindgen reads kclangc.h at build time.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
@@ -122,14 +126,16 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          echo "--- default (workspace sweep) ---"
+          echo "--- kyotocabinet (workspace, the default) ---"
           cargo test --locked --workspace
-          echo "--- lmdb ---"
-          cargo test --locked -p oxpinyin-store --features lmdb
-          cargo test --locked -p oxpinyin-user --features lmdb
-          echo "--- tkrzw ---"
-          cargo test --locked -p oxpinyin-store --features tkrzw
-          cargo test --locked -p oxpinyin-user --features tkrzw
+          echo "--- redb (workspace, pure-Rust portability fallback) ---"
+          cargo test --locked --workspace --no-default-features
+          echo "--- tkrzw (workspace) ---"
+          cargo test --locked --workspace --no-default-features --features oxpinyin-store/tkrzw
+          echo "--- lmdb (workspace) ---"
+          cargo test --locked --workspace --no-default-features --features oxpinyin-store/lmdb
+          echo "--- cross-backend conformance (one binary, all backends) ---"
+          cargo test --locked -p oxpinyin-store --features "kyotocabinet,tkrzw,lmdb"
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
@@ -212,10 +218,6 @@ jobs:
       # keeping. (Rust-cache hashes RUSTFLAGS into its key anyway, so even a
       # future enablement cannot cross-contaminate the unsanitized dep store.)
       #
-      # Both arms build with --no-default-features --features tkrzw so the
-      # instrumented binary is pure tkrzw — the backend whose shim the
-      # instrumentation exists to check.
-      #
       # Both arms implement the mandated -fsanitize=address,undefined pair
       # against the surface where those hazards actually live: the memory-
       # unsafe C++ shim plus the linked runtime. Each arm instruments the shim
@@ -267,7 +269,7 @@ jobs:
             # container cannot lower vm.mmap_rnd_bits itself.
             export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1
             setarch "$(uname -m)" -R \
-              cargo test --locked --target "$triple" -p oxpinyin-store --no-default-features --features tkrzw
+              cargo test --locked --target "$triple" -p oxpinyin-store --features tkrzw
             ;;
           undefined)
             # No -Zsanitizer=undefined exists; instrument the shim and link
@@ -276,7 +278,7 @@ jobs:
             export RUSTFLAGS="-D warnings -C linker=cc -Clink-arg=-fsanitize=undefined -Clink-arg=-lubsan"
             export CFLAGS="-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
             export CXXFLAGS="$CFLAGS"
-            cargo test --locked --target "$triple" -p oxpinyin-store --no-default-features --features tkrzw
+            cargo test --locked --target "$triple" -p oxpinyin-store --features tkrzw
             ;;
           *)
             echo "FAIL: unknown matrix.sanitizer value '$SANITIZER'" >&2

@@ -7,14 +7,14 @@ inclusion: always
 |---|---|---|---|---|
 | oxpinyin-core | parser, SegmentGraph, k-best, scoring traits | forbid | yes | via engine |
 | oxpinyin-data | load libpinyin-format tables (D3 route) | deny (+mmap) | yes | via engine |
-| oxpinyin-user | redb ACID store; format-version from day one | deny | yes | via engine |
+| oxpinyin-user | ACID store over DefaultStore; format-version from day one | deny | yes | via engine |
 | oxpinyin-engine | session API — the supported Rust surface | deny | yes | yes |
 | oxpinyin-capi | C ABI subset for the borrowed frontend | allow | Linux | yes |
 | oxpinyin-python | PyO3 binding over the engine session API (Python consumers) | forbid | yes | wheel only |
 | oxpinyin-runtime | concrete assembly shared by consumers (tables+model+user wiring → Session) | forbid | yes | via capi/python |
 | pinyin-oracle | differential harness vs pinned libpinyin | allow | Linux | never |
 | oxpinyin-dictool | conversions; standalone vocab exporter | deny | yes | yes |
-| oxpinyin-store | ordered byte-KV seam; redb (default), LMDB, Tkrzw backends | deny | yes | via engine |
+| oxpinyin-store | ordered byte-KV seam; Kyoto Cabinet (default), Tkrzw, LMDB, redb backends — one per binary, compile-time selected; KC/tkrzw/lmdb are Linux-only C deps, redb is the pure-Rust portability fallback (macOS/Windows CI runs --no-default-features) | deny | yes | via engine |
 | oxpinyin-datagen | model20 → runtime tables compiler for every backend | deny | yes | never |
 | oxpinyin-corpus | training corpus front-end (zhwiki dump → ngseg raw text) | deny | yes | never |
 | oxpinyin-testsupport | shared test doubles (fixture Dictionary/LanguageModel); dev-only | forbid | yes | never |
