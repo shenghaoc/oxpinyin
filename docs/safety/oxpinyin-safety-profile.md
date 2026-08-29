@@ -57,7 +57,7 @@ record, enforced present-but-not-verified by Clippy, verified by review.
    provable internal invariants may be `debug_assert!`; each surviving
    release `assert` (2 today, in `parser.rs`) carries its "internal bug
    trip" justification comment. Asserts in tests unrestricted.
-4. FFI boundary: `ffi_catch` wraps 53 of the 55 capi entry points — F-7
+4. FFI boundary: `ffi_catch` wraps 53 of the 55 C API entry points — F-7
    brought the three iterator-`end` drops under the wrapper. The two
    remaining unwrapped entry points (the trivial scalar writers
    `pinyin_get_pinyin_key_rest`/`..._positions` in `cursor.rs`) are
@@ -86,8 +86,10 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 
 - `rust::unused_must_use = "deny"`.
 - `clippy::must_use_candidate = "warn"`; getters/queries that return values
-  get `#[must_use]` (gap files: `data/content.rs`, `user/codec.rs`, all of
-  `store`).
+  get `#[must_use]`. (Historical — F-10's gap files `data/content.rs`,
+  `user/codec.rs` and `store` were closed in PR-1/#200 (4ea4355): the 23
+  flagged sites gained the attribute and the lint has sat at zero hits
+  since.)
 - Public error enums stay `#[non_exhaustive]`; extension traits grow only by
   defaulted methods (structure.md freeze — unchanged).
 
@@ -161,15 +163,15 @@ blocks merges beyond the existing fmt/clippy gates.
 
 ## Rollout status (PR-1 = #200, PR-2 = #201)
 
-PR-1 (mechanics) landed as 0297afb…1e3dfac plus four review rounds
-(669a4fb, e7a9af8, de4fe53, 8b7d7de): forbid sweep, panic-containment
+PR-1 (mechanics) landed as 94682d5…c3155e5 plus four review rounds
+(4885dc3, 409956e, 8722e79, 16ec7cf): forbid sweep, panic-containment
 denies, workspace must_use/unsafe_op_in_unsafe_fn, clippy.toml,
 FFI-crate SAFETY lints, must_use sweep (23 sites, closing F-10), and
 the hardened deny job (locked graphs incl. the fuzz workspace,
 checksum-verified cargo-deny install, bincode default-graph assertion,
 NCSA scoped to libfuzzer-sys). The fmt-only pre-commit hook and
 .vscode config proposed as PR-1g were dropped in review as unnecessary.
-PR-2 landed as e084a20/6fc7f7e/e5491f6: F-3, F-1/F-2 (+F-9), F-7 with
+PR-2 landed as 3a78c57/9ef92a8/5a10c3d: F-3, F-1/F-2 (+F-9), F-7 with
 regression tests. Full workspace clippy -D warnings and cargo test are
 green. PR-3/PR-4 (nightly lanes, fuzz-target expansion, Kani/mutants
 trials) remain unimplemented.
@@ -188,8 +190,9 @@ follow-up PRs, not part of PR-1.
 1. **PR-1 (mechanics)**: per-crate `forbid`/scoped-allow unsafe policy;
    curated clippy set; `unused_must_use` deny; `unsafe_op_in_unsafe_fn`;
    `deny.toml` + CI job. All measured green except must_use gap fixes.
-2. **PR-2 (hygiene)**: close F-7 (five unwrapped entries), must_use gaps,
-   F-1/F-2/F-3 arithmetic fixes (separate, individually reviewed).
+2. **PR-2 (hygiene)**: close F-7 (five unwrapped entries), F-1/F-2/F-3
+   arithmetic fixes (separate, individually reviewed). The must_use gaps
+   (F-10) ended up in PR-1 instead and were closed there (4ea4355).
 3. **PR-3 (lanes)**: scheduled workflow: fuzz expansion + nightly soak,
    Miri, overflow lane, llvm-cov, geiger, Lizard ratchet.
 4. **PR-4 (trials)**: Kani harnesses; scoped cargo-mutants; nextest
