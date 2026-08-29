@@ -232,14 +232,15 @@ inputs (the pin-built `.so` SIGABRTs).
   composition completed — with `validate_constraint` dropping whatever
   no longer spells at the next guess. There is no engine-visible
   "completed" notion: the cursor is the frontend's own state.
-- **What oxpinyin did:** the parse continued an OPEN composition's
+- **What oxpinyin did (pre-revert — historical, superseded by the
+  Closed bullet below):** the parse continued an OPEN composition's
   re-parse when the buffer evolved from the stored one — extension,
   shrink, or re-send kept the store, the selection record, and the
   clamped cursor; validate dropped what stops spelling, and the record
   followed. Two shapes started fresh: a composition a SELECTION
   consumed (an engine-level emulation of the frontend's
   reset-on-commit contract the #141 cursor flows pinned), and a
-  divergent buffer.
+  divergent buffer. Only the divergent-buffer half survives today.
 - **Audit note (2026-08-29):** an early work order framed this entry as
   a `pinyin_reset` scope/order question. It never was: the pin's
   `pinyin_reset` and oxpinyin's `pinyin_reset` (`reset_parse_state` +
