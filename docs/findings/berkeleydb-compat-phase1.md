@@ -31,8 +31,9 @@ copy.
 `libdb-dev` is a metapackage resolving to it), and it is what libpinyin
 build-depends on. 5.3.28 is under the **Sleepycat License** (a copyleft
 license, not BSD); Oracle relicensed the 6.x line to AGPLv3, which is why
-every distro pins to 5.3. Debian's is the same source Ubuntu syncs.
-Fedora and openSUSE could not be checked — their metadata is unreachable
+the distros checked here — the Debian/Ubuntu family — pin to 5.3.
+Debian's is the same source Ubuntu syncs. Fedora and openSUSE could not
+be checked — their metadata is unreachable
 from this environment.
 
 The shim surface needed is small, because libpinyin's own use of BDB is
