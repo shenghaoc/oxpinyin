@@ -12,11 +12,14 @@
 //!
 //! Keys are ordered by ascending **byte** order (`memcmp` on the raw stored
 //! key bytes) and nothing else — the store never decodes a key, so it has no
-//! notion of integer order.  All three backends satisfy exactly this: redb's
+//! notion of integer order.  All four backends satisfy exactly this: redb's
 //! `Key for &[u8]` is a byte compare; the LMDB backend sets no integer or
 //! custom comparator (so LMDB's default lexicographic one applies); and the
 //! tkrzw backend installs no comparator, so TreeDBM uses its default
-//! `LexicalKeyComparator` (plain unsigned byte order).  Any further backend
+//! `LexicalKeyComparator` (plain unsigned byte order); and the Kyoto Cabinet
+//! backend opens `TreeDB` with no `rcomp` tuning parameter, exactly as
+//! libpinyin does, so Kyoto Cabinet's default `LEXICALCOMP` applies — again
+//! byte order, shorter key first on a shared prefix.  Any further backend
 //! must match that default lexicographic comparator.  The encodings each
 //! layer chooses on top of this rule (data little-endian = byte order,
 //! intentionally not integer order; user big-endian = integer order) are
@@ -470,16 +473,14 @@ impl WriteTxn for RedbWriteTxn<'_> {
 //
 // All four backends are equals; the chain order exists only so that
 // cargo's additive feature unification resolves a multi-feature build
-// deterministically (kyotocabinet > tkrzw > lmdb > redb). redb is the
+// deterministically (kyotocabinet > tkrzw > lmdb > redb). `redb` is the
 // no-backend-feature fallback — the pure-Rust portability backend for
-// platforms without the C libraries (macOS, Windows) — and the default
-// here; the `kyotocabinet` arm stays in the chain so the stacked PR that
-// adds the module only flips the default, but building with that feature
-// enabled does not resolve `KcStore` until then.
+// platforms without the C libraries (macOS, Windows) — selected by
+// building with `--no-default-features` (the `redb` marker feature exists
+// so that intent can be spelled on the command line).
 
-/// The default store backend — Kyoto Cabinet, when its module is present
-/// (the stacked PR); it matches the DBM the reference libpinyin builds
-/// against on the primary target distros.
+/// The default store backend — Kyoto Cabinet, matching the DBM the
+/// reference libpinyin builds against on the primary target distros.
 #[cfg(feature = "kyotocabinet")]
 pub type DefaultStore = KcStore;
 
@@ -537,6 +538,11 @@ pub use lmdb::LmdbStore;
 mod tkrzw;
 #[cfg(feature = "tkrzw")]
 pub use tkrzw::TkrzwStore;
+
+#[cfg(feature = "kyotocabinet")]
+pub mod kyotocabinet;
+#[cfg(feature = "kyotocabinet")]
+pub use kyotocabinet::{BigramDb, KcStore, SingleGram};
 
 // ── error mapping ──────────────────────────────────────────────────
 
@@ -1082,6 +1088,11 @@ mod tests {
     #[cfg(feature = "tkrzw")]
     store_write_tests!(tkrzw_write, TkrzwStore, "tkrzw");
 
+    #[cfg(feature = "kyotocabinet")]
+    store_read_tests!(kc_read, KcStore, KcStore, "kc");
+    #[cfg(feature = "kyotocabinet")]
+    store_write_tests!(kc_write, KcStore, "kc");
+
     /// Removes the borrowed path on drop, so a panicking test leaves no
     /// file behind in `std::env::temp_dir()`. redb keeps no `-lock` sidecar,
     /// so the single data file is all that needs removing.
@@ -1548,6 +1559,8 @@ mod tests {
         use std::ops::Bound;
         use std::path::Path;
 
+        #[cfg(feature = "kyotocabinet")]
+        use super::super::KcStore;
         #[cfg(feature = "lmdb")]
         use super::super::LmdbStore;
         #[cfg(feature = "tkrzw")]
@@ -1782,6 +1795,17 @@ mod tests {
                     "redb and tkrzw must yield byte-identical for_each sequences",
                 );
             }
+            #[cfg(feature = "kyotocabinet")]
+            {
+                let p = TempPath::new(&format!("{tag}-kc"));
+                assert_eq!(
+                    reference,
+                    insert_and_walk::<KcStore>(&p.0, keys),
+                    "redb and Kyoto Cabinet must yield byte-identical for_each \
+                     sequences — TreeDB with no `rcomp` uses LEXICALCOMP, which is \
+                     the store's one rule, and libpinyin sets no comparator",
+                );
+            }
             reference
         }
 
@@ -1835,6 +1859,15 @@ mod tests {
                     reference,
                     insert_and_range::<TkrzwStore>(&p.0, &keys, &lo, &hi),
                     "redb and tkrzw must yield byte-identical range sequences",
+                );
+            }
+            #[cfg(feature = "kyotocabinet")]
+            {
+                let p = TempPath::new("xrange-kc");
+                assert_eq!(
+                    reference,
+                    insert_and_range::<KcStore>(&p.0, &keys, &lo, &hi),
+                    "redb and Kyoto Cabinet must yield byte-identical range sequences",
                 );
             }
         }
