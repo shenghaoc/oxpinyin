@@ -263,7 +263,7 @@ inputs (the pin-built `.so` SIGABRTs).
   including the live-typing differential); a degenerate row that stops
   early answered its own shorter end.
 - **Status:** closed by answering `parsed_len` for every
-  `NBEST_MATCH_CANDIDATE` choose — upstream's own value of
+  `NBEST_MATCH_CANDIDATE` selection — upstream's own value of
   `matrix.size() - 1`, since `fill_matrix` sizes the matrix to
   `parsed_len + 1` and no split/fuzzy step resizes it, carried here in
   the active parse mode's own coordinates (`m_parsed_len`,
