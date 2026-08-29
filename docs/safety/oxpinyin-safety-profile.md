@@ -17,7 +17,7 @@ Every rule below is tagged with an enforcement tier:
 - **HARD CI GATE** — a PR that violates it cannot merge (compile error,
   lint error, or red check).
 - **WARNING** — surfaces in CI as non-blocking noise for the author.
-- **SCHEDULED ANALYSIS** — runs nightly/weekly; findings become issues, not
+- **SCHEDULED ANALYSIS** — runs nightly (verify-nightly, 03:00); findings become issues, not
   merge blocks (unless ratcheted).
 - **HUMAN REVIEW** — remains judgment; the profile's job is to shrink this
   set to what genuinely needs judgment.
@@ -126,11 +126,11 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 | fuzz soak | nightly | all targets, 10–30 min, corpus committed |
 | Miri | nightly | `-p oxpinyin-core -p oxpinyin-store` tests + corpus replay |
 | overflow-checks release test | nightly | `cargo test --release` with `-C overflow-checks -C debug-assertions` |
-| mutation score | weekly (trial) | core parser/scheme/scoring + user/store |
+| mutation score | nightly (trial) | core parser/scheme/scoring + user/store |
 | coverage report | nightly | llvm-cov, report-only |
 | ~~Kani harnesses~~ | dropped (toolchain age) | — |
-| Lizard | weekly | CCN≤40 ratchet from current max 38 |
-| geiger | weekly | dependency unsafe diff |
+| Lizard | nightly | CCN≤40 ratchet from current max 38 |
+| geiger | nightly | dependency unsafe diff |
 
 None of these claim correctness; each is bug-finding machinery pointed at
 the highest-risk surfaces identified in `oxpinyin-audit.md`.
@@ -171,7 +171,7 @@ the hardened deny job (locked graphs incl. the fuzz workspace,
 checksum-verified cargo-deny install, bincode default-graph assertion,
 NCSA scoped to libfuzzer-sys). The fmt-only pre-commit hook and
 .vscode config proposed as PR-1g were dropped in review as unnecessary.
-PR-2 landed as 3a78c57/9ef92a8/5a10c3d: F-3, F-1/F-2 (+F-9), F-7 with
+PR-2 landed as a446b27/51eeb40/8fff932: F-3, F-1/F-2 (+F-9), F-7 with
 regression tests. Full workspace clippy -D warnings and cargo test are
 green. PR-3/PR-4 (nightly lanes, fuzz-target expansion, Kani/mutants
 trials) remain unimplemented.

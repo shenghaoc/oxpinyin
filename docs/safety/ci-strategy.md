@@ -31,7 +31,12 @@ Doctest step only if nextest lands. Gates: all hard.
 - `cargo llvm-cov` report artifact (no threshold; comment on PR when
   labeled `coverage`).
 - `cargo geiger` report artifact (unsafe-in-deps diff vs main).
-- Lizard `--Tlimit 40` report (ratchet vs current max 38).
+- Lizard report with CCN capped at 40 (`lizard crates/ -l rust -C 40`;
+  ratchet vs current max 38).
+
+> STATUS: Tier 2 is documented but **not built** — no label-triggered
+> workflow exists. All three tools above currently run in Tier 3's
+> verify-nightly schedule.
 - Windows/macOS keep today's portable test job; optionally add a
   `--no-default-features` store build to prove the feature-gated unsafe
   crates compile-out of the default path.
@@ -52,7 +57,7 @@ Doctest step only if nextest lands. Gates: all hard.
    -C debug-assertions=y" cargo test --workspace --release`.
 4. ~~**Kani** (trial)~~ — dropped: no release supports the pinned
    toolchain (newest bundles nightly 2025-11-21 < 1.97.1).
-5. **cargo-mutants** (trial, weekly cadence within this lane):
+5. **cargo-mutants** (trial, on the nightly schedule):
    scoped `-p oxpinyin-core` file filters (parser, scheme, scoring) +
    `oxpinyin-user/src/store.rs`.
 
@@ -77,22 +82,22 @@ libchewing convention), they do not auto-block unless a ratchet exists
 
 ## Lane/tool matrix
 
-| Tool | T1 PR | T2 | T3 nightly | T4 release |
+| Tool | T1 PR | T2 (not built) | T3 nightly | T4 (not built) |
 |---|---|---|---|---|
-| fmt / clippy (curated) | ✔ | | | ✔ |
-| nextest/cargo test + doctests | ✔ | | | ✔ |
-| portable tests | ✔ (mac/win) | | | ✔ |
-| C++ smoke + differential | ✔ | | | ✔ |
-| cargo-deny | ✔ | | | ✔ |
+| fmt / clippy (curated) | ✔ | | | planned (T4 not built) |
+| nextest/cargo test + doctests | ✔ | | | planned (T4 not built) |
+| portable tests | ✔ (mac/win) | | | planned (T4 not built) |
+| C++ smoke + differential | ✔ | | | planned (T4 not built) |
+| cargo-deny | ✔ | | | planned (T4 not built) |
 | fuzz smoke | ✔ | | | |
 | fuzz soak + corpus | | | ✔ | |
 | Miri | | | ✔ | |
 | overflow release lane | | | ✔ | |
 | Kani | | | dropped | |
-| cargo-mutants | | | ✔ (weekly) | |
-| llvm-cov | | ✔ (label) | ✔ report | report |
-| geiger | | ✔ report | | ✔ |
-| Lizard ratchet | | ✔ report | ✔ | |
+| cargo-mutants | | | ✔ (nightly schedule) | |
+| llvm-cov | | planned (T2 not built) | ✔ report | planned (T4 not built) |
+| geiger | | planned (T2 not built) | ✔ report | planned (T4 not built) |
+| Lizard ratchet | | planned (T2 not built) | ✔ | |
 
 ## Cost/confidence rationale
 

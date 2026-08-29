@@ -13,11 +13,11 @@ warning, SCHED = scheduled analysis, REV = human review.
 | No uninitialized reads | HG | HG | definite initialization; no `MaybeUninit` in workspace |
 | No null derefs in safe code | HG | HG | references non-null; `Option` checked |
 | No data races | HG | HG | `Send`/`Sync`; only two manual impls (store/tkrzw, documented) |
-| No unsafe outside capi/oracle/store(-features) | HGATE (workspace `deny` + per-crate allows) | HGATE (stronger: `#![forbid]` in 9 crates — core + 8; `data` keeps `deny` reserving its documented mmap exception; store stays deny+scoped-allow) | Cargo `[lints]` + crate-root attributes; `forbid` cannot be re-allowed |
-| Every unsafe block justified | REV (prose) | HGATE | `clippy::undocumented_unsafe_blocks = deny` (capi/oracle/store) |
+| No unsafe outside capi/oracle/store(-features) | HGATE (workspace `deny` + per-crate allows) | HGATE (as landed: crate-root `#![forbid(unsafe_code)]` in 10 crates, manifest-level forbid in oxpinyin-python and oxpinyin-runtime; `data` keeps `deny` reserving its documented mmap exception; store stays deny+scoped module allows) | Cargo `[lints]` + crate-root attributes; `forbid` cannot be re-allowed |
+| Every unsafe block justified | REV (prose) | HGATE | `clippy::undocumented_unsafe_blocks = deny` in oxpinyin-capi and pinyin-oracle only; oxpinyin-store carries no such lint (its scoped module allows are review-covered) |
 | Every `unsafe fn` documented | REV | HGATE | `clippy::missing_safety_doc = deny` |
 | No unsafe ops silently inside `unsafe fn` bodies | not enforced | HGATE | `rust::unsafe_op_in_unsafe_fn = deny` |
-| Dependency unsafe inventoried | not enforced | SCHED | weekly `cargo geiger` diff report |
+| Dependency unsafe inventoried | not enforced | SCHED | scheduled `cargo geiger` report artifact (verify-nightly schedule: daily 03:00; trial, continue-on-error) |
 
 ## B. Panics & failure
 
@@ -34,9 +34,9 @@ warning, SCHED = scheduled analysis, REV = human review.
 
 | Rule | Today | Proposed | Mechanism |
 |---|---|---|---|
-| Checked/saturating ops on score/count merge paths | factual (~100 sites) | REV | review pattern; Kani harnesses prove the four numeric cores |
-| Cast truncation/sign-loss visible | invisible | WARN | `cast_possible_truncation`/`cast_sign_loss`/`cast_precision_loss` (107 sites measured) |
-| FFI narrowing uses `try_from().unwrap_or(clamp)` | mostly (3 bare `as` remain, F-4) | HGATE-style convention | review + cast warnings point at the seams |
+| Checked/saturating ops on score/count merge paths | factual (~100 sites) | REV | review pattern only. The Kani-harness part of this row is absent: no proof harness exists in the tree (the trial was dropped — no Kani release supports the pinned toolchain) |
+| Cast truncation/sign-loss visible | invisible | deferred by decision (PR-1 review round 1) | none: the three cast lints are enabled nowhere in the tree; enabling them is deferred until the ~107-site sweep lands as its own PR |
+| FFI narrowing uses `try_from().unwrap_or(clamp)` | mostly (3 bare `as` remain, F-4) | HGATE-style convention | review only — no cast warnings exist in the tree (see the deferred row above) |
 | Latent overflow in optimized builds surfaces | untested | SCHED | nightly `cargo test --release` with `-C overflow-checks -C debug-assertions` |
 | No release `debug_assert`-only safety checks | factual | REV | audit found zero violations |
 
@@ -46,14 +46,14 @@ warning, SCHED = scheduled analysis, REV = human review.
 |---|---|---|---|
 | `Result`/`Option` never silently dropped | WARN (via CI `-D warnings` → HGATE) | HGATE | `rust::unused_must_use = deny` workspace lints |
 | Value-returning queries are `#[must_use]` | partial (341 attrs; store=0, codec/content gaps) | WARN→HGATE | `clippy::must_use_candidate = warn` + gap fixes; then the deny above bites |
-| Errors documented | partial | WARN | `clippy::missing_errors_doc`, `missing_panics_doc` |
-| Public API stability freezes (non_exhaustive, defaulted methods) | REV + cargo-public-api snapshots (structure.md) | unchanged | existing process |
+| Errors documented | partial | deferred by decision (PR-1 review round 1) | none: the two doc lints are enabled nowhere in the tree; a dedicated sweep is the planned vehicle |
+| Public API stability freezes (non_exhaustive, defaulted methods) | REV (intent recorded in structure.md) | unchanged | review only — no cargo-public-api snapshot or tooling artifact exists in the tree |
 
 ## E. Complexity & maintainability
 
 | Rule | Today | Proposed | Mechanism |
 |---|---|---|---|
-| CCN ≤ 40 per function | factual (max 38) | SCHED ratchet | weekly Lizard `-Tlimit 40`; new >40 blocks the weekly report, not the PR |
+| CCN ≤ 40 per function | factual (max 38) | SCHED ratchet | nightly Lizard `lizard crates/ -l rust -C 40` (schedule: daily 03:00); a new >40 function fails the nightly report, not the PR |
 | user/store.rs quartet refactored | no | roadmap item | flagged by Lizard + mutation priority, not a gate |
 
 ## F. Dependencies & supply chain
@@ -62,29 +62,29 @@ warning, SCHED = scheduled analysis, REV = human review.
 |---|---|---|---|
 | No known-vulnerable deps | unenforced | HGATE | `cargo deny check advisories` per PR (RustSec DB) |
 | License hygiene | unenforced | HGATE | `cargo deny check licenses` (GPL-3.0-or-later + permissive list) |
-| No unexpected sources | unenforced | HGATE | `cargo deny check sources` (crates.io + github) |
+| No unexpected sources | unenforced | HGATE | `cargo deny check sources`: crates.io registry only — git sources are disabled entirely (`allow-git = []`) |
 | Duplicate-version drift visible | unenforced | WARN | `cargo deny check bans multiple-versions = warn` (Stage-2 size signal) |
 | New deps need ask | prose only | prose + geiger/advisory visibility | constitution rule stays (it's a process rule); deny.toml `bans` starts empty |
-| Unmaintained deps tracked | unenforced | WARN + expiry | advisory ignores carry `reason` + `expired` dates in `deny.toml` |
+| Unmaintained deps tracked | unenforced | reviewed ignore entries | advisory ignores in `deny.toml` carry a `reason` string with the review-by date inside it (the 0.20 schema has no expiry field; dates are prose, not a parsed key) |
 
 ## G. Dynamic verification
 
 | Rule | Today | Proposed | Mechanism |
 |---|---|---|---|
-| Parser fuzz smoke per PR | yes (10s) | yes, plus content/codec/scheme targets | cargo-fuzz pinned nightly (existing job) |
+| Parser fuzz smoke per PR | yes (10s) | PR gate: parser target only; the four additional targets run in the nightly soak | cargo-fuzz pinned nightly (existing job) |
 | Corpus replay under Miri | no | SCHED nightly | `cargo +nightly miri test` core/store + corpus |
-| Fuzz soak | no | SCHED nightly | 10–30 min runs, committed corpus |
+| Fuzz soak | no | SCHED nightly | five targets × 3 min; one committed seed (`fuzz/corpus/parser/zhuan`), the rest of the corpus is seeded at run time |
 | Coverage visibility | no | SCHED nightly | cargo-llvm-cov report, no threshold |
-| Mutation score | no | SCHED trial weekly | cargo-mutants scoped to core + user/store |
+| Mutation score | no | SCHED nightly (trial) | cargo-mutants scoped to core + user/store |
 
 ## H. Formal verification
 
 | Rule | Today | Proposed | Mechanism |
 |---|---|---|---|
-| cost.rs shift-loop invariants proven | debug_assert only | SCHED trial | Kani harness 1 |
-| table_conf gcd ≥ 1 / exact λ rationals | invariant comments | SCHED trial | Kani harness 2 |
-| content.rs decode bounds for all byte inputs | length-guard comments | SCHED trial (post F-3 fix) | Kani harness 3 |
-| graph.rs starts monotonicity | loop-structure argument | SCHED trial | Kani harness 4 |
+| cost.rs shift-loop invariants proven | debug_assert only | none | a Kani harness for this existed briefly and was removed by accc645 — no Kani release supports the pinned toolchain; no harness exists in the tree |
+| table_conf gcd ≥ 1 / exact λ rationals | invariant comments | none | a Kani harness for this existed briefly and was removed by accc645 — no Kani release supports the pinned toolchain; no harness exists in the tree |
+| content.rs decode bounds for all byte inputs | length-guard comments | none | never implemented in any commit — this row described a harness that never existed. The coverage that does exist is the dict-loader fuzz target and the F-3 regression test |
+| graph.rs starts monotonicity | loop-structure argument | none | never implemented in any commit — this row described a harness that never existed |
 | Whole-program verification | — | rejected | scope decision |
 
 ## I. Formatting & docs
