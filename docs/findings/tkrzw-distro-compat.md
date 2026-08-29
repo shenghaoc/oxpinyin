@@ -1,4 +1,4 @@
-# Ubuntu's libtkrzw silently corrupts records and writes files it cannot read
+# Debian now ships libpinyin on tkrzw; Ubuntu's tkrzw silently corrupts records
 
 Date: 2026-08-28 (cross-distro matrix measured 2026-08-29) · Status:
 **investigation finding** (no shipping code changed; guidance and two
@@ -7,7 +7,16 @@ probes added) · Branch: `claude/tkrzw-distro-compat-9o3k8h`.
 `oxpinyin-store`'s tkrzw backend already carried a warning that Ubuntu
 noble's `libtkrzw-dev 1.0.27-1.1build1` breaks tkrzw's pointer-identity
 protocol, and that `./configure && make` on the same sources is correct.
-This note establishes why, and how far it reaches.
+This note establishes why, and how far it reaches — and the answer to
+"how far" moved while it was being written.
+
+**The stakes changed: Debian has switched `libpinyin` to the tkrzw
+backend** (`2.11.91-1`, unstable/testing, 2026-08-12), so these faults
+now sit under a shipped input method's user dictionary, not only a
+command-line tool. Debian's own tkrzw is healthy, so no Debian user is
+hit today; the exposure is Ubuntu — its tkrzw is broken on both defects
+below, and it syncs `libpinyin` from Debian. See "Does anything actually
+ship against this?" for the measured per-distro backend matrix.
 
 **There are two independent defects, with two different causes.** Both
 come from build flags Ubuntu applies to every package and Debian applies
