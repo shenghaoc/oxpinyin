@@ -1,8 +1,8 @@
 # Ubuntu's libtkrzw silently corrupts records and writes files it cannot read
 
-Date: 2026-08-28 · Status: **investigation finding** (no shipping code
-changed; guidance and two probes added) · Branch:
-`claude/tkrzw-distro-compat-9o3k8h`.
+Date: 2026-08-28 (cross-distro matrix measured 2026-08-29) · Status:
+**investigation finding** (no shipping code changed; guidance and two
+probes added) · Branch: `claude/tkrzw-distro-compat-9o3k8h`.
 
 `oxpinyin-store`'s tkrzw backend already carried a warning that Ubuntu
 noble's `libtkrzw-dev 1.0.27-1.1build1` breaks tkrzw's pointer-identity
@@ -204,6 +204,8 @@ bits are readable from primary sources without installing tkrzw.
 | Debian | `Dpkg::Vendor::Debian` | no | no (opt-in per package) |
 | Devuan, PureOS | their `Dpkg::Vendor::*` | no | no |
 | Arch | `/etc/makepkg.conf` (`pacman 7.1.0.r9`) | no | **yes** (`OPTIONS=(... lto)`) |
+| Fedora | `redhat-rpm-config` | no | **yes** globally, but `tkrzw.spec` sets `%_lto_cflags %{nil}` |
+| RHEL 10 | — | — | does not package tkrzw |
 
 The dpkg figures are from dpkg's own git at tag **1.23.7** — the exact
 dpkg the `debian:sid-slim` image reports — so this is Debian's file, not
@@ -216,19 +218,14 @@ Ubuntu's copy of it. Arch's full default `LDFLAGS` are
 and its `-fno-plt` is not a hazard here: it changes how calls are
 routed, not how addresses are taken.
 
-**Debian should be clean on both counts, and this note predicts Arch is
-clean on defect 2 but exposed to defect 1** — Arch enables LTO globally
-via `OPTIONS=(... lto)`. That is a prediction from the flags, not a
-measurement; the Arch row of the matrix is still unrun, and it is now
-the more interesting of the two.
-
-Neither could be run here: this session's egress policy returns 403 for
-every Debian and Arch mirror (`deb.debian.org`,
-`geo.mirror.pkgbuild.com`, and the rest — inside a container too, and
-still 403 once the proxy CA is installed, so it is policy and not TLS),
-and neither base image ships tkrzw. The Launchpad reporter did run
-Debian, and got the clean result this predicts, on `1.0.32-1+b1` from
-trixie.
+**Debian is clean on both counts; Arch is clean on defect 2 but exposed
+to defect 1** — Arch enables LTO globally via `OPTIONS=(... lto)`. Both
+are now measured rather than predicted (see "The matrix, measured"
+below): Debian testing probes healthy, and Arch — which packages no
+tkrzw to probe — reproduces defect 1 and not defect 2 from a source
+build under its own flags, exactly as the flag bits say. The Launchpad
+reporter had already run Debian and got the same clean result on
+`1.0.32-1+b1` from trixie.
 
 A package can still reintroduce either flag itself, and tkrzw's does
 not: `debian/rules` never sets `LDFLAGS` — its only two mentions are a
@@ -379,22 +376,62 @@ This is worth reporting upstream separately from the Ubuntu bug, since
 it is a different ask; it is not a Rust-mechanism divergence, so it does
 not belong in `upstream-divergences.md`.
 
-## Finishing the matrix
+## The matrix, measured
 
-Debian sid and Arch stay unrun only because their mirrors are
-unreachable from here. On a machine with normal egress:
+Run on 2026-08-29 with `tools/tkrzw/distro-probe.sh`, one rolling
+container per distro (podman; `:latest` / `testing` tags, deliberately
+unpinned), across the three packaging families. Defect 1 is the
+LTO/`remove` sentinel; defect 2 is the `-Bsymbolic-functions`/comparator.
 
-```sh
-docker run --rm -v "$PWD/tools/tkrzw/distro-probe.sh:/probe.sh:ro" debian:sid-slim \
-  sh -c 'apt-get update -qq && apt-get install -y -qq tkrzw-utils binutils && sh /probe.sh'
+| Family | Distro | tkrzw package | defect 1 (`remove`) | defect 2 (comparator) | RESULT |
+| --- | --- | --- | --- | --- | --- |
+| `.deb` | Ubuntu 26.04 LTS | `1.0.32-1build1` | **broken** | **broken** (type 255, 0 relocs) | **broken** |
+| `.deb` | Debian testing (forky) | `1.0.32-1+b2` | ok | ok (type 1, 18 relocs) | healthy |
+| `.rpm` | Fedora Rawhide | `1.0.32-5.fc45` | ok | ok (type 1, 18 relocs) | healthy |
+| `.rpm` | RHEL 10.2 (UBI10) | not packaged | — | — | n/a |
+| Arch | Arch, from source | none packaged | **broken** | ok (type 1, 18 relocs) | **broken (defect 1)** |
 
-docker run --rm -v "$PWD/tools/tkrzw/distro-probe.sh:/probe.sh:ro" archlinux:latest \
-  sh -c 'pacman -Sy --noconfirm tkrzw binutils && sh /probe.sh'
-```
+- **Ubuntu 26.04 LTS** reproduces both defects exactly as the release
+  row above predicts: `remove` stores the sentinel, the `.tkt`
+  comparator records type 255 and the file will not reopen, and the
+  library keeps zero comparator GOT relocations. `1.0.32-1build1`, live
+  from the archive.
+- **Debian testing** is healthy — the flags prediction, and the same
+  clean result the Launchpad reporter saw on trixie. `1.0.32-1+b2`.
+  `src:tkrzw` is orphaned in Debian (maintained by the Debian QA Group),
+  so it is QA-owned rather than actively maintained — the same status
+  the fix route runs into under "Reported".
+- **Fedora Rawhide** is healthy, and is the most instructive row.
+  Fedora enables LTO by default, so its tkrzw would carry defect 1 like
+  any LTO build — except the package escapes it deliberately:
+  `tkrzw.spec` sets `%global _lto_cflags %{nil}`, with the changelog
+  reason *"Disabled LTO, since it causes test failures on all
+  file-based database tests."* That is an independent maintainer hitting
+  defect 1 through the package's own `make check` and turning LTO off to
+  get a working build — outside corroboration of the bisection above,
+  from a distro that had every reason to keep LTO on. Fedora adds no
+  `-Bsymbolic-functions`, so defect 2 never arises. `1.0.32-5.fc45`.
+- **RHEL 10.2** does not package tkrzw at all: `dnf install tkrzw` on
+  `redhat/ubi10:latest` returns *"No match for argument: tkrzw"* — it is
+  in none of BaseOS, AppStream or CodeReady Builder. Measured on the
+  RHEL 10.2 drop-in target itself; EPEL was not checked, but tkrzw is
+  absent from RHEL's own repositories.
+- **Arch** ships no tkrzw in `core`/`extra` either (`pacman -Ss tkrzw`
+  is empty); the only Arch source is the AUR `tkrzw-git`, a stale 2020
+  VCS stub (0 votes, building upstream HEAD with a plain
+  `./configure && make`). With nothing packaged to probe, tkrzw 1.0.32
+  built from the upstream release under Arch's stock `makepkg.conf`
+  (gcc 16.2.1; `OPTIONS=(... lto)`, no `-Bsymbolic-functions`)
+  reproduces row C of the bisection precisely — `remove` broken,
+  comparator intact. Arch has no distro-wide `_lto_cflags` opt-out, so a
+  tkrzw built there is exposed to defect 1 unless its own PKGBUILD
+  disables LTO, which neither the AUR stub nor a plain build does.
 
-Debian is expected clean. Arch is the open question: it ships LTO on by
-default, so it should fail the `remove` half while passing the
-comparator half — row C of the bisection.
+This supersedes the earlier "still unrun" note: the mirrors that
+returned 403 in the originating session are reachable here, the two
+`.deb` rows and Fedora were installed straight from each distro's
+archive, and the Arch and RHEL rows are package-absence findings — with
+Arch's defect measured from a source build under the distro's own flags.
 
 `distro-probe.sh` covers both halves, and was checked against all four
 rows of the bisection: it reports A broken on both, B broken on the
