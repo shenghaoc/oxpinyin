@@ -20,7 +20,7 @@ oxpinyin-core = { path = "../crates/oxpinyin-core" }
 oxpinyin-data = { path = "../crates/oxpinyin-data" }
 # capi-commands: stateful session fuzzer over the C ABI (libchewing
 # fuzzer.rs shape). Linux-only, matching the fuzz CI job — as is capi.
-oxpinyin-capi = { path = "../crates/oxpinyin-capi" }
+oxpinyin-capi = { path = "../crates/oxpinyin-capi", features = ["fuzz-api"] }
 
 [[bin]]
 name = "parser"

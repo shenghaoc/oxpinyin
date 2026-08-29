@@ -91,6 +91,9 @@ fn cstring_arg(bytes: &[u8]) -> CString {
 fuzz_target!(|data: &[u8]| {
     let session = session();
     let (context, instance) = (session.context, session.instance);
+    // Each fuzz input starts from a clean instance; state still evolves
+    // across the commands within one input.
+    pinyin_reset(instance);
     let mut cursor = 0;
     while cursor < data.len() {
         let command = data[cursor];
@@ -164,8 +167,10 @@ fuzz_target!(|data: &[u8]| {
             }
             // import iterator trio — begin/add/end paired within the command
             7 => {
-                let phrase = cstring_arg(rest);
-                let pinyin = cstring_arg(&rest[rest.len().min(32)..]);
+                // Two disjoint halves of the remaining bytes so both
+                // inputs are non-empty whenever the input allows it.
+                let phrase = cstring_arg(&rest[..rest.len() / 2]);
+                let pinyin = cstring_arg(&rest[rest.len() / 2..]);
                 // SAFETY: live context.
                 let iter: *mut ImportIterator = pinyin_begin_add_phrases(context, 0);
                 if !iter.is_null() {
