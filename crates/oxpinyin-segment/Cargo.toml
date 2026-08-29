@@ -16,4 +16,8 @@ name = "oxpinyin-segment"
 path = "src/bin/oxpinyin-segment.rs"
 
 [dependencies]
-oxpinyin-data = { path = "../oxpinyin-data" }
+# default-features = false so workspace `--no-default-features` builds are
+# not re-defaulted through this edge. This training-only tool selects no
+# backend itself; in a workspace build, feature unification supplies
+# whichever backend the build enabled (redb otherwise).
+oxpinyin-data = { path = "../oxpinyin-data", default-features = false }

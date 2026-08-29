@@ -27,6 +27,17 @@ capi = []
 # the released Rust API surface is unchanged for every consumer that does
 # not opt in (the supported surfaces remain the C ABI and the engine).
 fuzz-api = []
+# Backend selection, forwarded down the chain (one backend per binary; see
+# oxpinyin-store's [features] for the model and precedence).
+default = ["redb"]
+kyotocabinet = [
+    "oxpinyin-runtime/kyotocabinet",
+    "oxpinyin-data/kyotocabinet",
+    "oxpinyin-user/kyotocabinet",
+]
+tkrzw = ["oxpinyin-runtime/tkrzw", "oxpinyin-data/tkrzw", "oxpinyin-user/tkrzw"]
+lmdb = ["oxpinyin-runtime/lmdb", "oxpinyin-data/lmdb", "oxpinyin-user/lmdb"]
+redb = ["oxpinyin-runtime/redb", "oxpinyin-data/redb", "oxpinyin-user/redb"]
 # Compiles out the three exports outside the consumer union: two fixture
 # hooks and pinyin_set_full_pinyin_scheme, all `dlsym`ed by tools/bisection
 # drivers and called by neither reference consumer. Enabled only when building
@@ -55,7 +66,11 @@ must_use_candidate = "warn"
 
 [dependencies]
 oxpinyin-core.workspace = true
-oxpinyin-data = { path = "../oxpinyin-data" }
+# default-features = false on the store-reaching edges (the workspace table
+# carries it for the `workspace = true` ones) so `--no-default-features`
+# builds actually reach the store's backend selection; the [features] block
+# above forwards it.
+oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
 oxpinyin-engine.workspace = true
 oxpinyin-runtime.workspace = true
 oxpinyin-user.workspace = true
@@ -66,7 +81,7 @@ oxpinyin-user.workspace = true
 criterion = "0.8"
 # Direct use in `benches/stage2.rs` (`UserStore::count_delta`). Already a
 # runtime dependency of this crate; restated so the bench crate can import it.
-oxpinyin-user = { path = "../oxpinyin-user" }
+oxpinyin-user = { path = "../oxpinyin-user", default-features = false }
 
 [[bench]]
 name = "stage2"

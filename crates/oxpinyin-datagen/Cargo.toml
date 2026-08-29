@@ -9,7 +9,12 @@ publish = false
 description = "model20 → oxpinyin runtime tables compiler for every storage backend. Never ships."
 
 [features]
+# The tool's backend is chosen per invocation with `--backend`; only the
+# always-compiled redb producer is available by default.
 default = []
+# Enable the Kyoto Cabinet producer (`--backend kyotocabinet`); mirrors
+# oxpinyin-store.
+kyotocabinet = ["oxpinyin-store/kyotocabinet"]
 # Enable the LMDB producer (`--backend lmdb`); mirrors oxpinyin-store.
 lmdb = ["oxpinyin-store/lmdb"]
 # Enable the Tkrzw producer (`--backend tkrzw`); mirrors oxpinyin-store.
@@ -19,14 +24,18 @@ tkrzw = ["oxpinyin-store/tkrzw"]
 workspace = true
 
 [dependencies]
-oxpinyin-store = { path = "../oxpinyin-store" }
+# default-features = false: the producer set is selected by this crate's own
+# features above, never dragged in by the store's default.
+oxpinyin-store = { path = "../oxpinyin-store", default-features = false }
 # Model-cache location and the pinned model20 constants only; the oracle
 # itself (oracle-ffi) is never linked by this crate.
 pinyin-oracle = { path = "../pinyin-oracle", default-features = false }
 
 [dev-dependencies]
 # Loader-level verification of produced tables through the real data path.
-oxpinyin-data = { path = "../oxpinyin-data" }
+# default-features = false so workspace `--no-default-features` runs are not
+# re-defaulted through this dev edge.
+oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
 
 [[bin]]
 name = "oxpinyin-datagen"

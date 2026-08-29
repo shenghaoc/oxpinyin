@@ -16,6 +16,9 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 oxpinyin-core.workspace = true
+# The workspace table carries default-features = false for the
+# store-reaching edges; the [features] block below forwards the backend
+# selection.
 oxpinyin-data.workspace = true
 oxpinyin-engine.workspace = true
 oxpinyin-runtime.workspace = true
@@ -31,7 +34,17 @@ optional = true
 features = ["macros", "abi3-py310", "abi3t-py315"]
 
 [features]
-default = []
+# Backend selection, forwarded down the chain (one backend per binary; see
+# oxpinyin-store's [features] for the model and precedence).
+default = ["redb"]
+kyotocabinet = [
+    "oxpinyin-runtime/kyotocabinet",
+    "oxpinyin-data/kyotocabinet",
+    "oxpinyin-user/kyotocabinet",
+]
+tkrzw = ["oxpinyin-runtime/tkrzw", "oxpinyin-data/tkrzw", "oxpinyin-user/tkrzw"]
+lmdb = ["oxpinyin-runtime/lmdb", "oxpinyin-data/lmdb", "oxpinyin-user/lmdb"]
+redb = ["oxpinyin-runtime/redb", "oxpinyin-data/redb", "oxpinyin-user/redb"]
 # Build the `oxpinyin._native` extension module. maturin adds
 # `pyo3/extension-module` itself when packaging; keeping it out of the
 # feature means tests can still link executables against this rlib.

@@ -11,4 +11,15 @@ description = "Conversions and the standalone vocabulary exporter."
 workspace = true
 
 [dependencies]
-oxpinyin-capi = { path = "../oxpinyin-capi" }
+# default-features = false so `--no-default-features` builds actually reach
+# the store's backend selection; the [features] block below forwards it.
+oxpinyin-capi = { path = "../oxpinyin-capi", default-features = false }
+
+[features]
+# Backend selection, forwarded to the C ABI crate (one backend per binary;
+# see oxpinyin-store's [features] for the model and precedence).
+default = ["redb"]
+kyotocabinet = ["oxpinyin-capi/kyotocabinet"]
+tkrzw = ["oxpinyin-capi/tkrzw"]
+lmdb = ["oxpinyin-capi/lmdb"]
+redb = ["oxpinyin-capi/redb"]
