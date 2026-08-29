@@ -13,10 +13,11 @@ This note establishes why, and how far it reaches — and the answer to
 **The stakes changed: Debian has switched `libpinyin` to the tkrzw
 backend** (`2.11.91-1`, unstable/testing, 2026-08-12), so these faults
 now sit under a shipped input method's user dictionary, not only a
-command-line tool. Debian's own tkrzw is healthy, so no Debian user is
-hit today; the exposure is Ubuntu — its tkrzw is broken on both defects
-below, and it syncs `libpinyin` from Debian. See "Does anything actually
-ship against this?" for the measured per-distro backend matrix.
+command-line tool. Debian's tkrzw package is healthy (measured
+`1.0.32-1+b2`), so that shipped combination is safe today; the exposure
+is Ubuntu, whose tkrzw (`1.0.32-1build1`) is broken on both defects
+below, and which syncs `libpinyin` from Debian. See "Does anything
+actually ship against this?" for the measured per-distro backend matrix.
 
 **There are two independent defects, with two different causes.** Both
 come from build flags Ubuntu applies to every package and Debian applies
@@ -264,9 +265,11 @@ still carry `2.8.1-1` on Berkeley DB — but the switch is real and
 released into a rolling suite, which is exactly the event this note was
 written to get ahead of.
 
-The full backend matrix, measured 2026-08-29 by the storage library each
-distro's `libpinyin.so` links (`ldd`) and corroborated against the build
-recipe:
+The full backend matrix, measured 2026-08-29 with
+`tools/tkrzw/libpinyin-backend-probe.sh` — it `ldd`s each distro's
+installed `libpinyin.so` for the linked storage library — and
+corroborated against each build recipe (`debian/rules`, Fedora
+`libpinyin.spec`, Arch `PKGBUILD`, nixpkgs `package.nix`):
 
 | Distro | libpinyin | DBM backend | evidence |
 | --- | --- | --- | --- |
@@ -323,9 +326,13 @@ libpinyin would not.
 ## What this means for us
 
 Nothing in `oxpinyin` changes. The tkrzw backend is an evaluation
-subject behind an off-by-default cargo feature, it already requires a
-source build, and `build.rs` already refuses to proceed without one.
-What changed is the guidance: the warning named noble's
+subject behind an off-by-default cargo feature. `build.rs` requires
+tkrzw to be discoverable through `pkg-config` — when it is absent the
+build fails with a message that points at a source build and spells out
+the Ubuntu hazard — but it does **not** verify the origin or health of a
+tkrzw that `pkg-config` does find: a broken distro `libtkrzw-dev` on
+`PKG_CONFIG_PATH` would link, which is what `tools/tkrzw/distro-probe.sh`
+is for. What changed is the guidance: the warning named noble's
 `1.0.27-1.1build1`, and the fault is neither version- nor
 release-specific.
 
@@ -425,6 +432,17 @@ Run on 2026-08-29 with `tools/tkrzw/distro-probe.sh`, one rolling
 container per distro (podman; `:latest` / `testing` tags, deliberately
 unpinned), across the three packaging families. Defect 1 is the
 LTO/`remove` sentinel; defect 2 is the `-Bsymbolic-functions`/comparator.
+
+The tags are rolling by design (the newest toolchain a distro ships is a
+property under test), so for reproducibility the images behind this and
+the backend matrix resolved on 2026-08-29 to these digests:
+
+- `ubuntu:26.04` — `sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b`
+- `debian:testing` — `sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9`
+- `fedora:rawhide` — `sha256:029fe4c775d759de3de7ddb3c86f86e32213358bfb2e338e610b01c37da7d6be`
+- `redhat/ubi10:latest` — `sha256:bc5a42833e4c84dbf7a29bcd4a0be414addad69e16210c2f0eb73986b356793c`
+- `archlinux:latest` — `sha256:4bf33b21a715aac0b48ce6e9eaed4782a898eae96f88f5da3635572129c2584a`
+- `opensuse/tumbleweed:latest` — `sha256:b4c13ab3c6225867da7cbf3191a9417cfa5bfc8cdc41d33e115d0ae1c15f44f7`
 
 | Family | Distro | tkrzw package | defect 1 (`remove`) | defect 2 (comparator) | RESULT |
 | --- | --- | --- | --- | --- | --- |
