@@ -20,6 +20,7 @@ pub mod content;
 pub mod dict;
 pub(crate) mod initials;
 pub mod interp;
+pub mod layout;
 pub mod lm;
 pub mod punct;
 pub mod table;
@@ -30,6 +31,7 @@ pub use dict::{DictError, SystemDictionary};
 pub use interp::{
     InterpolationError, UnigramTable, parse_interpolation2, parse_interpolation2_from_reader,
 };
+pub use layout::{DataLayout, Dbm, LayoutError, detect as detect_layout};
 pub use lm::{BigramLanguageModel, BigramRow, LmError, merge_bigram, merge_counts};
 pub use oxpinyin_core::UserCountDelta;
 // The compiled-in backend's native-table extension and filename helper,

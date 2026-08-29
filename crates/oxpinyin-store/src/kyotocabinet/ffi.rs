@@ -474,13 +474,18 @@ impl Record {
 }
 
 impl Cursor<'_> {
-    /// Positions at the first record; `false` when the database is empty.
+    /// Positions at the first record; `Ok(false)` when the database is
+    /// empty. A `false` return is "no record" as well as a genuine failure,
+    /// so — like [`Cursor::next`] — the cursor's own code separates them.
     pub(crate) fn jump(&mut self) -> Result<bool, StoreError> {
         // SAFETY: the cursor handle is live.
-        Ok(unsafe { sys::kccurjump(self.handle) } != 0)
+        if unsafe { sys::kccurjump(self.handle) } != 0 {
+            return Ok(true);
+        }
+        self.positioning_outcome("kccurjump")
     }
 
-    /// Positions at the smallest key at or after `key`; `false` when
+    /// Positions at the smallest key at or after `key`; `Ok(false)` when
     /// there is none.
     ///
     /// Meaningful only on a `TreeDB` — a hash database has no order, and
@@ -489,7 +494,29 @@ impl Cursor<'_> {
         // SAFETY: the cursor handle is live and `key` outlives the call.
         let ok =
             unsafe { sys::kccurjumpkey(self.handle, key.as_ptr().cast::<c_char>(), key.len()) };
-        Ok(ok != 0)
+        if ok != 0 {
+            return Ok(true);
+        }
+        self.positioning_outcome("kccurjumpkey")
+    }
+
+    /// A positioning call (`kccurjump` / `kccurjumpkey`) returned false:
+    /// `Ok(false)` when the cursor's code is "no record" — an empty database
+    /// or a key past the end — otherwise the backend error the code names.
+    /// The same split [`Cursor::next`] makes on a null region, so a genuine
+    /// failure is never silently reported as an empty range.
+    fn positioning_outcome(&self, call: &str) -> Result<bool, StoreError> {
+        // SAFETY: the cursor handle is live.
+        let code = unsafe { sys::kccurecode(self.handle) };
+        if code == no_record_code() {
+            return Ok(false);
+        }
+        // SAFETY: `kcecodename` returns a static NUL-terminated string for
+        // any code.
+        let name = unsafe { CStr::from_ptr(sys::kcecodename(code)) }
+            .to_string_lossy()
+            .into_owned();
+        Err(StoreError::Backend(format!("{call}: {name}").into()))
     }
 
     /// Reads the record at the cursor, then steps past it.

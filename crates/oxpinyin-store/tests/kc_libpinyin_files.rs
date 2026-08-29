@@ -297,9 +297,25 @@ fn a_file_named_bigram_db_opens_despite_having_no_kyoto_suffix() {
         db.put(1, &gram).expect("write");
         db.sync().expect("flush");
     }
-    assert!(
-        !path.with_extension("kch").exists(),
-        "and no .kch file is created alongside it"
+    // `dir` was created fresh above, so bigram.db must be the ONLY file in
+    // it — no `.kch` suffix, and no PolyDB sidecar (`.wal`, a lock file)
+    // either. Inspecting the whole directory catches any unexpected file, not
+    // just the `.kch` one.
+    let mut entries: Vec<String> = std::fs::read_dir(dir)
+        .expect("read the bigram directory")
+        .map(|entry| {
+            entry
+                .expect("directory entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    entries.sort();
+    assert_eq!(
+        entries,
+        vec!["bigram.db".to_string()],
+        "only bigram.db may exist alongside it — no .kch or other sidecar files"
     );
 
     // The file really is a Kyoto Cabinet hash database, by its own magic.

@@ -15,6 +15,29 @@ fn main() {
     kyotocabinet::build();
 }
 
+/// Asks `pkg-config` for one field of `package`, split into individual
+/// flags. Shared by both backend modules; shelling out avoids a
+/// `pkg-config` crate dependency for the handful of calls this script makes.
+/// Kyoto Cabinet does not always install a `.pc` file, so a miss is not
+/// fatal there — the caller falls back to the library name.
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+fn pkg_config(flag: &str, package: &str) -> Option<Vec<String>> {
+    let output = std::process::Command::new("pkg-config")
+        .arg(flag)
+        .arg(package)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
 /// Kyoto Cabinet bindings.
 ///
 /// # Why the C API and not the C++ classes
@@ -46,31 +69,6 @@ fn main() {
 #[cfg(feature = "kyotocabinet")]
 mod kyotocabinet {
     use std::path::PathBuf;
-    use std::process::Command;
-
-    /// Asks `pkg-config` for one field of the `kyotocabinet` package.
-    ///
-    /// Shelling out rather than taking a `pkg-config` crate dependency,
-    /// as the tkrzw branch above does. Kyoto Cabinet does not always
-    /// install a `.pc` file, so a miss is not fatal: the link falls back
-    /// to the library name, which is what a distro package puts on the
-    /// default search path anyway.
-    fn pkg_config(flag: &str) -> Option<Vec<String>> {
-        let output = Command::new("pkg-config")
-            .arg(flag)
-            .arg("kyotocabinet")
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        Some(
-            String::from_utf8_lossy(&output.stdout)
-                .split_whitespace()
-                .map(str::to_owned)
-                .collect(),
-        )
-    }
 
     pub fn build() {
         println!("cargo:rerun-if-changed=src/kyotocabinet/wrapper.h");
@@ -80,7 +78,7 @@ mod kyotocabinet {
         println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
 
         let mut clang_args: Vec<String> = Vec::new();
-        if let Some(cflags) = pkg_config("--cflags") {
+        if let Some(cflags) = super::pkg_config("--cflags", "kyotocabinet") {
             clang_args.extend(cflags);
         }
         if let Ok(dir) = std::env::var("OXPINYIN_KC_INCLUDE_DIR") {
@@ -91,7 +89,7 @@ mod kyotocabinet {
             println!("cargo:rustc-link-search=native={dir}");
             println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
         }
-        match pkg_config("--libs") {
+        match super::pkg_config("--libs", "kyotocabinet") {
             Some(libs) => {
                 for lib in &libs {
                     if let Some(name) = lib.strip_prefix("-l") {
@@ -170,77 +168,6 @@ mod kyotocabinet {
 
 #[cfg(feature = "tkrzw")]
 mod tkrzw {
-    use std::process::Command;
-
-    /// Asks `pkg-config` for one field of the `tkrzw` package.
-    ///
-    /// Splits pkg-config output into flags the way a shell would read it:
-    /// whitespace separates words, a backslash escapes the next character,
-    /// and quotes group — so a pkg-config-escaped path containing spaces
-    /// (`-I/opt/my\ headers`) stays one flag instead of being cut in two.
-    fn split_shell_words(line: &str) -> Vec<String> {
-        let mut words = Vec::new();
-        let mut word = String::new();
-        let mut quote = None;
-        let mut escaped = false;
-        let mut has_word = false;
-        for c in line.chars() {
-            if escaped {
-                word.push(c);
-                escaped = false;
-                has_word = true;
-                continue;
-            }
-            match quote {
-                Some('\'') if c != '\'' => word.push(c),
-                Some(q) if c == q => quote = None,
-                Some(_) => {
-                    if c == '\\' {
-                        escaped = true;
-                    } else {
-                        word.push(c);
-                    }
-                    has_word = true;
-                }
-                None => match c {
-                    '\\' => escaped = true,
-                    '"' | '\'' => {
-                        quote = Some(c);
-                        has_word = true;
-                    }
-                    c if c.is_whitespace() => {
-                        if has_word {
-                            words.push(std::mem::take(&mut word));
-                            has_word = false;
-                        }
-                    }
-                    c => {
-                        word.push(c);
-                        has_word = true;
-                    }
-                },
-            }
-        }
-        if has_word {
-            words.push(word);
-        }
-        words
-    }
-
-    /// Shelling out rather than taking a `pkg-config` crate dependency:
-    /// the two calls below are all this script needs.
-    fn pkg_config(flag: &str) -> Option<Vec<String>> {
-        let output = Command::new("pkg-config")
-            .arg(flag)
-            .arg("tkrzw")
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        Some(split_shell_words(&String::from_utf8_lossy(&output.stdout)))
-    }
-
     /// Locates `tkrzw_langc.h` under the discovered include path, falling
     /// back to the compiler's default include directory. The C API is the
     /// only header this build may bind: no C++ header and no other tkrzw
@@ -268,7 +195,7 @@ mod tkrzw {
         println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
         println!("cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR");
 
-        let Some(cflags) = pkg_config("--cflags") else {
+        let Some(cflags) = super::pkg_config("--cflags", "tkrzw") else {
             panic!(
                 "libtkrzw required: the `tkrzw` feature needs the tkrzw library with its \
                  C API header tkrzw_langc.h, and `pkg-config --cflags tkrzw` could not find \
@@ -291,7 +218,7 @@ mod tkrzw {
                  docs/findings/tkrzw-distro-compat.md."
             );
         };
-        let Some(libs) = pkg_config("--libs") else {
+        let Some(libs) = super::pkg_config("--libs", "tkrzw") else {
             panic!(
                 "libtkrzw required: `pkg-config --cflags tkrzw` succeeded but \
                  `pkg-config --libs tkrzw` did not; the tkrzw installation looks incomplete."

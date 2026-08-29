@@ -61,7 +61,22 @@ if [ "$magic" = "4b430a00" ]; then
 	echo "This is the strong case: a file a Kyoto-Cabinet-built libpinyin wrote."
 	kc_bigram=$bigram
 else
-	echo "$bigram is not Kyoto Cabinet (magic $magic)."
+	# Only a Berkeley DB file can be transcribed by bdb-to-kc; any other DBM
+	# (LMDB, tkrzw, …) is an unsupported layout for this gate, not a BDB file
+	# to convert. Berkeley DB keeps its magic at offset 12 of the metadata
+	# page — DB_HASHMAGIC 0x00061561 in the host's byte order — so it reads as
+	# 61150600 (little-endian) or 00061561 (big-endian). Offset 0 is the
+	# log-sequence number, not a magic, which is why the KC check above and
+	# this one look at different offsets.
+	bdb_magic=$(dd if="$bigram" bs=1 skip=12 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
+	if [ "$bdb_magic" != "61150600" ] && [ "$bdb_magic" != "00061561" ]; then
+		echo "SKIP: $bigram is neither Kyoto Cabinet (offset-0 magic $magic) nor"
+		echo "  Berkeley DB hash (offset-12 magic $bdb_magic). Its DBM layout is not"
+		echo "  supported by this gate, which can only read a Kyoto Cabinet file or"
+		echo "  transcribe a Berkeley DB one. The compatibility gate did NOT run."
+		exit 0
+	fi
+	echo "$bigram is Berkeley DB hash (offset-12 magic $bdb_magic)."
 	echo "Transcribing its records into a Kyoto Cabinet container."
 	echo "WEAKER CASE: this checks that the backend reads libpinyin's records,"
 	echo "not that a Kyoto-Cabinet-built libpinyin wrote this exact file."
