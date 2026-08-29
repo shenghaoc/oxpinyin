@@ -504,15 +504,19 @@ Text, candidate type and counts cannot.
   the C ABI skips the raw-fallback row.
 - **The fix:** `Session::candidates_at` now classifies the anchor before
   scanning. An anchor a scan-matrix key's syllable starts on — or an
-  apostrophe byte — keeps the offset-anchored scan; any other byte is the
-  pin's empty column, answered as the raw-suffix fallback under the prepended
+  apostrophe byte the parse reached — keeps the offset-anchored scan; any
+  other byte (a mid-syllable position, or an apostrophe past a stop byte,
+  outside the matrix) is the pin's empty column, answered as the raw-suffix
+  fallback under the prepended
   n-best rows with no phrase scan. The classification reuses
   `build_scan_matrix` — the same matrix model the window scan itself reads
   (`docs/findings/matrix-split-tables.md`) — so the boundary law and the
   candidate construction cannot disagree about what the matrix holds.
   Measured byte-identical against the pin over every byte offset of `nihao`
-  and `nihaoshijie`, fresh and post-sentence, bools included (the driver's
-  phase E: `tools/bisection/uncovered-surface-diff.c`, labels `raw:`), and
+  and `nihaoshijie`, fresh and post-sentence, on the compared surface — the
+  guess bool, the window count, and each window's first four rows (the
+  driver's
+  phase E: `tools/bisection/uncovered-surface-diff.c`, labels `raw:`) — and
   over the exotic classes: `ni'hao@2` (transparent apostrophe, `n=93`/`94`
   both sides), `nihaozh@6` and `nihaozhu@6/7` (incomplete `zh`/`zhu` stay one
   matrix key — empty columns both sides), `shon` under

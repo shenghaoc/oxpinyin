@@ -1814,9 +1814,11 @@ where
     /// `search_matrix` matches nothing from it for every end, so the
     /// window there is the raw-suffix fallback under the prepended n-best
     /// rows, never a re-parse of the suffix (the suffix's own keys are not
-    /// the matrix's). A zero-key (apostrophe) column is not empty: the
-    /// span search steps over it to the next key, so the apostrophe byte
-    /// answers the following key's window.
+    /// the matrix's). A zero-key (apostrophe) column inside the parse is
+    /// not empty: the span search steps over it to the next key, so that
+    /// apostrophe byte answers the following key's window. An apostrophe
+    /// past a stop byte sits outside the matrix — the pin aborts there —
+    /// and takes the empty-column window like any other unreachable byte.
     ///
     /// # Errors
     ///
@@ -1867,26 +1869,28 @@ where
     /// (`fill_matrix`), plus the split keys `resplit_step` and
     /// `inner_split_step` append (`docs/findings/matrix-split-tables.md`) —
     /// `jie` in `nihaoshijie` also carries `ji` + `e`, so byte 10 is a live
-    /// column — and a zero key at every apostrophe, which the span search
-    /// steps over to the following key. The scan's own key set
-    /// ([`build_scan_matrix`]) models exactly that, so a byte some key's
-    /// syllable starts on, or an apostrophe byte, answers; any other byte
-    /// is an empty column. Exact mode has no pin counterpart, so its
-    /// columns stay the exact segments.
+    /// column — and a zero key at every apostrophe the parse reached, which
+    /// the span search steps over to the following key. The matrix ends at
+    /// the parse: an apostrophe past a stop byte sits outside it entirely
+    /// (the pin aborts there — `ni,'hao@3`, measured SIGABRT — and the
+    /// empty-column window is the no-abort answer). The scan's own key set
+    /// ([`build_scan_matrix`]) models the key columns, so a byte some key's
+    /// syllable starts on, or an in-span apostrophe byte, answers; any other
+    /// byte is an empty column. Exact mode has no pin counterpart, so its
+    /// columns stay the exact segments, and its inputs' apostrophes are all
+    /// in-span by construction (`build_exact` rejects any other gap).
     ///
     /// # Errors
     ///
     /// [`EngineError::Graph`] when the composition cannot be represented
     /// as a segment graph.
     fn spans_a_matrix_key(&self, offset: usize) -> Result<bool, EngineError> {
-        if self.raw.as_bytes().get(offset) == Some(&b'\'') {
-            return Ok(true);
-        }
         if !self.exact_segments.is_empty() {
-            return Ok(self
-                .exact_segments
-                .iter()
-                .any(|segment| segment.start() == offset));
+            return Ok(self.raw.as_bytes().get(offset) == Some(&b'\'')
+                || self
+                    .exact_segments
+                    .iter()
+                    .any(|segment| segment.start() == offset));
         }
         let graph = SegmentGraph::build_with_options(self.raw.as_bytes(), self.settings.options)
             .map_err(EngineError::Graph)?;
@@ -1894,10 +1898,14 @@ where
         // law the scan applies (`build_scan_matrix`'s `divided` argument at
         // the anchored call site) — and exact keys never gain them.
         let matrix = build_scan_matrix(&graph, self.settings.options, true);
-        Ok(matrix
+        if matrix
             .iter()
             .flatten()
-            .any(|key| key.syllable_start == offset))
+            .any(|key| key.syllable_start == offset)
+        {
+            return Ok(true);
+        }
+        Ok(offset < graph.consumed() && self.raw.as_bytes().get(offset) == Some(&b'\''))
     }
 
     /// Prepends the stored n-best rows onto `collected`, head first, then
@@ -5181,6 +5189,39 @@ mod tests {
                 .iter()
                 .all(|cand| cand.kind() == CandidateKind::Fallback),
             "byte 6 inside the `zh` key is an empty column, not an h window"
+        );
+    }
+
+    #[test]
+    fn candidates_at_an_apostrophe_beyond_the_parse_span_stays_empty() {
+        use super::CandidateKind;
+
+        // "ni,'hao" parses only `ni` — the comma stops the parse — so the
+        // apostrophe at byte 3 sits outside the matrix: the pin aborts
+        // there (measured SIGABRT, the same out-of-matrix landmine as one
+        // past a lone zero-key run), and the empty-column window is the
+        // no-abort answer, not a re-parse of the `'hao` suffix. The
+        // in-span apostrophe of `ni'hao` stays transparent.
+        let mut session = train_session();
+        session.replace_raw("ni,'hao").expect("cannot fail");
+        let window = session.candidates_at(3).expect("byte 3 is in range");
+        assert!(
+            window
+                .iter()
+                .all(|cand| cand.kind() == CandidateKind::Fallback),
+            "byte 3 is outside the parse span — no suffix re-parse window"
+        );
+
+        let mut session = train_session();
+        session.replace_raw("ni'hao").expect("cannot fail");
+        let at_separator = session
+            .candidates_at(2)
+            .expect("the in-span separator byte is transparent");
+        assert!(
+            at_separator
+                .iter()
+                .any(|cand| cand.kind() != CandidateKind::Fallback),
+            "the in-span apostrophe keeps the hao window"
         );
     }
 
