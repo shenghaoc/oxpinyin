@@ -905,19 +905,24 @@ where
     /// full spell check the next guess runs. Dropping at the clamp
     /// instead of lazily at the next guess keeps [`Session::commit`]
     /// from answering selection text whose span reached past the current
-    /// input: the record follows the survivors exactly as the guess-path
-    /// validate's rebuild does, and a dropped tail re-opens the
-    /// composition at the survivor end.
+    /// input.
+    ///
+    /// The rebuild runs on EVERY backward clamp, drops or not: the
+    /// record's coverage is the cursor, and a clamped cursor means that
+    /// coverage exceeds the new input even when the store kept all its
+    /// runs — a row-0 n-best choose writes the whole row's text and
+    /// span-end cursor while `diff_result` writes no forcing at all, so
+    /// there is nothing to drop and the record is stale regardless.
+    /// `rebuild_selection_from_constraints` re-derives the record from
+    /// the surviving runs (clearing it when none survive), and a dropped
+    /// tail re-opens the composition at the survivor end.
     fn reconcile_clamped_selection(&mut self, cursor_before: usize) -> Result<(), EngineError> {
         if self.consumed >= cursor_before {
             return Ok(());
         }
-        if self
-            .constraints
-            .validate(self.raw.len() + 1, |_, _, _| Ok(true))?
-        {
-            self.rebuild_selection_from_constraints();
-        }
+        self.constraints
+            .validate(self.raw.len() + 1, |_, _, _| Ok(true))?;
+        self.rebuild_selection_from_constraints();
         Ok(())
     }
 
@@ -4596,6 +4601,64 @@ mod tests {
                 .expect("row 0 exists")
                 .starts_with('\u{4f60}'),
             "the surviving head forcing outlived the clearing and the typing"
+        );
+    }
+
+    /// Review regression: the clamp reconcile must not depend on a
+    /// forcing being dropped. A row-0 n-best choose writes the RECORD
+    /// (the whole row's text, tokens, and span-end cursor) while
+    /// `diff_result` writes no run — the store stays empty. A shrinking
+    /// re-parse then clamps the cursor backward with nothing to drop,
+    /// and the rebuild must run anyway: the record's coverage exceeds
+    /// the new input, and Enter would commit the stale row text for an
+    /// input that can no longer produce it.
+    #[test]
+    fn a_shrinking_reparse_reconciles_a_constraint_free_row_selection() {
+        let mut session = trellis_session();
+        for character in "nihao".chars() {
+            session
+                .process_key(&KeyInput::character(character))
+                .expect("typing cannot fail");
+        }
+        assert!(session.guess_sentence().expect("guess cannot fail"));
+        let row0 = session
+            .candidates()
+            .iter()
+            .position(|candidate| {
+                candidate.kind() == crate::CandidateKind::Sentence
+                    && candidate.nbest_row() == Some(0)
+            })
+            .expect("the row-0 sentence is offered");
+        assert_eq!(
+            session.select(row0).expect("selection cannot fail"),
+            Selection::Completed
+        );
+        assert!(session.selection_committed());
+        assert!(
+            !session.constraints.is_active(),
+            "the row-0 choose wrote no forcing"
+        );
+
+        // The shrinking re-parse: the clamp moves the cursor backward
+        // with an empty store — the rebuild runs regardless.
+        session.replace_raw("ni").expect("replace cannot fail");
+        assert!(
+            session.selected_tokens().is_empty(),
+            "the constraint-free row record reconciled away"
+        );
+        assert_eq!(
+            session.composition_offset(),
+            0,
+            "the composition re-opened at 0"
+        );
+
+        let outcome = session
+            .process_key(&KeyInput::plain(LogicalKey::Enter))
+            .expect("enter on a composing session cannot fail");
+        assert_eq!(
+            outcome,
+            KeyOutcome::Commit("ni".to_owned()),
+            "the commit answers the current input, never the stale row text"
         );
     }
 
