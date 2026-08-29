@@ -57,17 +57,29 @@ real file**, so — like the other ↯ items — they stay an open Phase 2
 confirmation task (the phase-1 survey's STOP list); nothing may depend on
 them until a real BDB confirms them.
 
-**Action for Phase 2:** first run the real-file probe above to
-*establish* the observed raw-byte order — the ABI bit-field layout in
-particular is not knowable a priori — then extend the key-ordering
-contract tests (`docs/findings/store-key-ordering.md`) to encode it. Use
-separate vectors per key: the LE `ucs4_t` bytes for the phrase key and the
-ABI-produced `ChewingKey` bytes for the chewing key, each with values that
-cross a 256 boundary in both the first and a later element. Assert the
-resulting `u32` phrase order and ABI bit-field chewing order — not the
-store's generic ascending-byte rule, which the other backends satisfy by
-construction and which a small-token suite cannot distinguish from these
-orders.
+**Action for Phase 2.** The order is read from the pin's source, not
+observed, and the `ChewingKey` layout in particular is ABI-specific — so
+Phase 2 must *observe it on a real file first*, then codify it. No probe
+exists yet; Phase 2 builds it.
+
+1. **Probe (input, run, record).** *Input:* a phrase/chewing `*.db`
+   B-tree table written by a **BerkeleyDB-built** libpinyin (the
+   Debian/Ubuntu-stable backend), after training a profile so the table
+   holds keys that cross a 256 boundary in both the first and a later
+   element — for the phrase key a `ucs4_t` above `0xFF`, for the chewing
+   key a `ChewingKey` whose 16-bit storage unit exceeds `0xFF`. *Run:*
+   read the keys in storage order — a `DB_BTREE` cursor walk (`->cursor`
+   then `->c_get(DB_NEXT)`, the §4 shim surface) or Berkeley DB's
+   `db_dump`. *Record:* the raw key bytes and the order they came back in,
+   into the fixture the tests below read.
+2. **Codify.** Extend the key-ordering contract tests
+   (`docs/findings/store-key-ordering.md`) to assert *that observed
+   order*, with separate vectors per key — the LE `ucs4_t` bytes for the
+   phrase key and the ABI-produced `ChewingKey` bytes for the chewing key
+   — asserting the `u32` phrase order and the ABI bit-field chewing order,
+   not the store's generic ascending-byte rule, which the other backends
+   satisfy by construction and which a small-token suite cannot
+   distinguish from these orders.
 
 ## 3. The codec simplification is the bigram's half only
 
