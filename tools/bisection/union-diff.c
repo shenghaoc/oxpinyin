@@ -285,8 +285,15 @@ int main(int argc, char **argv) {
             fprintf(stderr, "choose nbest row failed\n");
             return 1;
         }
-        /* matrix.size() - 1 = parsed_len = 9 here (pinyin.cpp:2513-2519),
-         * whatever span the row's own path covered. */
+        /* matrix.size() - 1 = parsed_len here (pinyin.cpp:2513-2519),
+         * whatever span the row's own path covered. Pin the absolute
+         * value: the log diff below cannot catch both engines answering
+         * the same wrong cursor. */
+        if (cursor != (int)strlen("cecenihao")) {
+            fprintf(stderr, "nbest section: cursor %d is not the parse end %zu\n",
+                    cursor, strlen("cecenihao"));
+            return 1;
+        }
         printf("nbest-cursor: %d\n", cursor);
         /* The corrected post-NBEST flow: the tail slot starts no span, so
          * re-run the sentence lookup under the diff_result forcings, then
