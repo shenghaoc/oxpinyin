@@ -224,11 +224,11 @@ static UPSTREAM_DEFAULTS: [(&str, Seed); UPSTREAM_DEFAULT_COUNT] = [
 /// pass a layered `Config`, a file-backed test source or its own adapter
 /// without the engine growing a type parameter. The trait grows only by
 /// methods with default implementations.
-/// A source of truth for session settings, read through typed getters
-/// with per-key fallbacks.
-///
-/// [`Config`] is the simplest [`ConfigSource`]: a map that starts from the
-/// pinned upstream defaults.
+/// A source of truth for session settings, exposed as optional typed
+/// reads: each `get_*` method answers `None` when the key is absent or
+/// holds a value of another type. No fallbacks live here — substituting a
+/// default is the caller's decision, and [`Config::default`] is the
+/// simplest source, a map pre-filled with the pinned upstream values.
 ///
 /// ```
 /// use oxpinyin_engine::{Config, ConfigSource, ConfigValue};

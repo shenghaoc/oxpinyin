@@ -200,24 +200,34 @@ fn a_mid_composition_choice_targets_the_offset_window() {
         !window.is_empty(),
         "the mid-composition window offers candidates"
     );
-    let _ = session.select_anchored(0, &window, offset);
-    // Either outcome keeps a live session with a valid preedit — the
-    // invariant is that the anchored API answered and nothing panicked.
+    session
+        .select_anchored(0, &window, offset)
+        .expect("the anchored selection succeeds over a live window");
+    // The composition stays live and bounded after the anchored choice.
     assert!(session.preedit().text().len() <= full.len() + 8);
 }
 
 #[test]
-fn an_invalid_option_word_is_accepted_and_inert() {
+fn an_option_word_with_undefined_bits_is_accepted_and_inert() {
     // Chewing's config setters reject out-of-enum values; the oxpinyin
-    // option word is a bitset, where unknown bits are inert by contract
-    // (the DYNAMIC_ADJUST gating tests pin the off-behaviour). Setting a
-    // defined bit round-trips through the getter seam.
+    // option word is a bitset, where bits outside the frozen constants
+    // ride along inertly (the DYNAMIC_ADJUST gating tests pin the
+    // off-behaviour of a defined-but-special bit). Setting the word with
+    // the incomplete flag PLUS an undefined low bit must leave the
+    // defined behaviour untouched.
+    let undefined_bit = 1 << 0; // bits 0..2 are outside the frozen set
     let mut session = session();
     session
-        .set_options(OptionBits::from_bits(oxpinyin_core::PINYIN_INCOMPLETE))
-        .expect("option bits accept the incomplete flag");
+        .set_options(OptionBits::from_bits(
+            oxpinyin_core::PINYIN_INCOMPLETE | undefined_bit,
+        ))
+        .expect("the option word accepts undefined bits");
     session
         .set_incomplete_pinyin(true)
         .expect("the option toggles");
-    assert!(session.type_pinyin("ni").is_ok());
+    session.type_pinyin("n").expect("typing");
+    assert!(
+        session.is_composing(),
+        "incomplete pinyin still composes past an initial"
+    );
 }
