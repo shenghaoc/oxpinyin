@@ -57,14 +57,17 @@ real file**, so — like the other ↯ items — they stay an open Phase 2
 confirmation task (the phase-1 survey's STOP list); nothing may depend on
 them until a real BDB confirms them.
 
-**Action for Phase 2:** the key-ordering contract tests
-(`docs/findings/store-key-ordering.md`) must be extended to assert *these
-specific orders* for the BDB B-tree tables — the `u32` order for the
-phrase key and the ABI bit-field order for the chewing key — not the
-store's general ascending-byte rule, which the other backends satisfy by
-construction. Include keys that cross 256 in both the first and a later
-element; a suite that only uses small tokens cannot tell the orders
-apart.
+**Action for Phase 2:** first run the real-file probe above to
+*establish* the observed raw-byte order — the ABI bit-field layout in
+particular is not knowable a priori — then extend the key-ordering
+contract tests (`docs/findings/store-key-ordering.md`) to encode it. Use
+separate vectors per key: the LE `ucs4_t` bytes for the phrase key and the
+ABI-produced `ChewingKey` bytes for the chewing key, each with values that
+cross a 256 boundary in both the first and a later element. Assert the
+resulting `u32` phrase order and ABI bit-field chewing order — not the
+store's generic ascending-byte rule, which the other backends satisfy by
+construction and which a small-token suite cannot distinguish from these
+orders.
 
 ## 3. The codec simplification is the bigram's half only
 
@@ -92,10 +95,12 @@ files the user's own libpinyin wrote through the *system* libdb.
 1.85; the rest are application-specific.
 
 - **Target:** libdb **5.3.28**, under the **Sleepycat License** (copyleft,
-  not BSD; Oracle relicensed the 6.x line to AGPLv3), which is why every
-  distro pins to 5.3. `libdb5.3-dev` / `libdb5.3t64` across noble,
-  resolute and stonking; `libdb-dev` is a metapackage resolving to it,
-  and it is what libpinyin build-depends on. The Sleepycat License's
+  not BSD; Oracle relicensed the 6.x line to AGPLv3), which is why the
+  distros checked here — the Debian/Ubuntu family — pin to 5.3 (Fedora
+  and openSUSE were not reachable from this environment to confirm).
+  `libdb5.3-dev` / `libdb5.3t64` across noble, resolute and stonking;
+  `libdb-dev` is a metapackage resolving to it, and it is what libpinyin
+  build-depends on. The Sleepycat License's
   copyleft/source-availability terms and their interaction with
   oxpinyin's GPL-3.0-or-later through the linked shim are a Phase 2
   licensing item, not settled here.
