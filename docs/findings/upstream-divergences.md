@@ -203,12 +203,19 @@ inputs (the pin-built `.so` SIGABRTs).
   all-exact path always matches. No model20 input exists where the pin
   drops a forcing and oxpinyin keeps it — the E2E I/O rule is
   satisfied vacuously, and no non-vacuity case is constructible.
-- **Re-opening condition:** if model20 is ever replaced by a corpus
-  whose per-token pronunciation total exceeds 2^23 — or that stores
-  nonzero pronunciation tones — a forced token's share can land below
-  FLT_EPSILON while a span entry still lists it, and this entry becomes
-  a revert target: the fix is the threshold port over the already
-  plumbed matched/total pairs in `span_finds_token`.
+- **Re-opening condition:** two corpus changes reopen this entry, with
+  different fixes. A per-token pronunciation total large enough to push
+  a forced token's nonzero share below FLT_EPSILON (a matched count of
+  1 over a total above 2^23 = 8,388,608) makes the threshold — not
+  zero — the drop boundary while a span entry still lists the token:
+  this entry becomes a revert target, and the fix is the threshold port
+  over the already plumbed matched/total pairs in `span_finds_token`.
+  Separate, and not addressed by that port: a corpus storing nonzero
+  pronunciation tones breaks matching parity — the pin's loose compare
+  turns tone-sensitive where the record lookup behind the span entries
+  is tone-blind — so the pin computes a zero sum where oxpinyin's
+  entries still carry matched > 0; addressing it needs tone-aware
+  matching parity, not the ε comparison.
 - **Externally observable:** was only ever reachable on edits that
   leave a span marginally spellable — the same inputs where the §3
   possibility divergence is already observable; on model20, not
