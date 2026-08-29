@@ -73,15 +73,18 @@ This class is therefore **not** a language-mechanism residue — it is a
 deliberate product decision, and it must be labelled as one rather than
 smuggled in as something Rust forced.
 
-**Justification — MISRA C:2025 Directive 4.1 (Required), applied to
-Rust.** The external standard is Directive 4.1, "Run-time failures shall
-be minimized"; its applicability to Rust — where the run-time failure to
-be minimized is the panic — is established by MISRA C:2025 Addendum 6
-([`MISRA-C-2025-ADD6`](https://misra.org.uk/app/uploads/2025/03/MISRA-C-2025-ADD6.pdf)).
-A library loaded into a long-lived input-method process must not take the
-process down on caller error: an IME abort loses the user's session, not
-just the call. Constitution item 4 ("nothing panics on any input; public
-APIs return `Result`") is the in-house statement of the same rule.
+**Justification — MISRA C:2025 guideline D.4.1 (Required), assessed for
+Rust.** MISRA C Directive 4.1, "Run-time failures shall be minimized",
+is category Required. MISRA C:2025 Addendum 6 ("Applicability of MISRA
+C:2025 to the Rust Programming Language", March 2025 —
+[`MISRA-C-2025-ADD6`](https://misra.org.uk/app/uploads/2025/03/MISRA-C-2025-ADD6.pdf))
+assesses D.4.1 as applicable to Rust, keeps its adjusted category
+Required, and records the run-time failure as "often in the form of
+panics". A library loaded into a long-lived input-method process must
+not take the process down on caller error: an IME abort loses the user's
+session, not just the call. Constitution item 4 ("nothing panics on any
+input; public APIs return `Result`") is the in-house statement of the
+same rule.
 
 **Obligations on every (c) site:** return `false` (C ABI) or `Err`
 (Rust), *and log the point*. A silently-swallowed abort is not class
