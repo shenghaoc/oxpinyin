@@ -84,7 +84,7 @@ Open: `m_db->open(m_db, NULL, dbfile, NULL, DB_HASH, db_flags, 0644)`.
 
 The chunk, field by field (`ngram.cpp:31-74`, `:178-196`):
 
-```
+```text
 offset 0 .. 4   guint32  total_freq          native-endian
 offset 4 .. N   SingleGramItem[]             (N-4)/8 entries
                 struct SingleGramItem {      8 bytes, no padding
@@ -179,7 +179,7 @@ and it is the one this survey recommends. Proposed clarification to add to
 > is already on the user's system is a feature of the drop-in, permitted
 > precisely because nothing in the build or test pipeline depends on it.
 
-## STOP — what Phase 2 needs decided
+## STOP — what Phase 2 needs to decide
 
 1. **The #180 clarification above, in writing.** Phase 2's format
    detection is blocked on it.

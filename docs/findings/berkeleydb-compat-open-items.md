@@ -91,7 +91,7 @@ files the user's own libpinyin wrote through the *system* libdb.
 The value stored under each bigram key, field for field
 (`ngram.cpp:31-74`, `:178-196`):
 
-```
+```text
 offset 0 .. 4   guint32  total_freq          native-endian
 offset 4 .. N   SingleGramItem[]             (N-4)/8 entries
                 struct SingleGramItem {      8 bytes, no padding
