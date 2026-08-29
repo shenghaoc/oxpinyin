@@ -15,9 +15,11 @@ Kiro always-loads `.kiro/steering/`; this file wins on any conflict.
 5. `unsafe`: `forbid` in oxpinyin-core; `deny` in data/user/engine (documented
    mmap exception in data only); FFI only in capi/oracle with
    `// SAFETY:` per block. The allowlist is mechanical now: crate-root
-   `#![forbid]`/scoped allows enforce it, and Clippy's
-   `undocumented_unsafe_blocks`/`missing_safety_doc` enforce the SAFETY
-   comments — CI will tell you; this line is context, not the gate.
+   `#![forbid]`/scoped allows enforce it, and two Clippy lints enforce the
+   comments — `undocumented_unsafe_blocks` requires a safety comment on
+   every `unsafe` block, `missing_safety_doc` requires a `# Safety` doc
+   section on every public `unsafe` fn or method — CI will tell you; this
+   line is context, not the gate.
 6. Determinism: output is a pure function of (input, user state, config).
 7. No dependency on other pinyin/IME crates; no transpiler dumps. Pin-built
    libpinyin is a test/migration **subject**, not a linked dependency of

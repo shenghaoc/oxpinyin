@@ -438,6 +438,13 @@ mod tests {
                        prev=1\tnext=1\tcount=18446744073709551615\n";
         let model =
             FixtureLanguageModel::parse(vocab, bigrams).expect("the extreme-count fixture parses");
+        // Pin the saturation itself: a wrapped total would also degrade
+        // to UNKNOWN_COST below, so only this assertion distinguishes
+        // saturating from wrapping.
+        assert_eq!(
+            model.bigram_totals.get(&PhraseToken::new(1)),
+            Some(&u64::MAX)
+        );
         assert_eq!(
             model.model_cost(&[PhraseToken::new(1)], &PhraseToken::new(2)),
             UNKNOWN_COST

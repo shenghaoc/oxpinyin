@@ -57,20 +57,20 @@ Survivors, classified:
 
 ## 4. Findings register
 
-| # | Severity | Location | Finding | Class |
-|---|---|---|---|---|
-| F-1 | medium | `core/src/fixture.rs:309` | unchecked `*totals += count` on u64 bigram totals — crafted fixture overflows (debug panic / release wrap); 16 lines above, the sibling code already uses `saturating_add` | arithmetic, fix | **FIXED** (6fc7f7e: saturating totals)
-| F-2 | medium | `core/src/fixture.rs:364-366` | unchecked u128 products in `model_cost` (`bigram*unigram` totals) — overflow with counts ≥ ~2^63; production twin (`lm/mod.rs interpolate_ratio`) is fully `checked_mul` | arithmetic, fix | **FIXED** (6fc7f7e: checked u128, degrade to UNKNOWN_COST)
-| F-3 | medium | `data/src/content.rs:367` | `Vec::with_capacity(hdr.nitems as usize)` trusts an untrusted u32 header field → ~180-byte file can request ~170 GB (allocator abort = uncatchable DoS); header cross-checks constrain `data_size` but not `nitems` | trust boundary, fix (clamp + validate) | **FIXED** (e084a20: capacity clamp + regression test)
-| F-4 | low | `capi/src/candidates.rs:33,372`, `parse.rs:320` | three bare `as` narrowing casts at the ABI (usize→u32, usize→c_int truncation past 2 GiB, c_char→u8 wrap) — unreachable-in-practice today, unmarked | conversion, clamp + comment |
-| F-5 | low | `user/src/store.rs` quartet | CCN 38/33/31/22 (`add_phrase_in`, `mask_out`, `remove_user_phrase`, `promote_addon_phrase`) — highest-complexity cluster; the natural coverage/mutation priority | complexity, refactor-later |
-| F-6 | low | capi P1/P2 + `ffi.rs:43` | opaque-handle trust surface (stale/double-free handle = UB) and `g_free`≡libc-`free` pairing assumption (true on glibc, would break under custom GLib allocator) | FFI contract, documented residual |
-| F-7 | low | `iterators.rs:175,298,424`, `cursor.rs:25,56` | five entry points without `ffi_catch` (three iterator-`end` that call `mark_modified()` — a panic there would cross the ABI as abort; two trivial writers) | FFI hygiene, small fix | **FIXED** (e5491f6: ffi_catch on all three iterator-ends)
-| F-8 | low | `fuzz/Cargo.toml` | separate workspace, edition 2021, **no `[lints]`** — the fuzz crate does not inherit `unsafe_code = "deny"` (currently moot: zero unsafe there, but the gate is missing) | policy gap, **FIXED** (deny added) |
-| F-9 | info | `initials.rs:205-207` | `slot_shift` would underflow u32 for position ≥ 25; callers cap at 24 — pin with `debug_assert!` | hardening | **FIXED** (6fc7f7e: debug_assert pins the slot bound)
-| F-10 | info | `data/content.rs:391-421`, `user/codec.rs:57-157`, all of `store` | `#[must_use]` gaps (queries/getters/encoders) | hygiene | **FIXED** (fb06fb5: 23-site sweep + must_use_candidate warn)
-| F-11 | info | oracle `live.rs:626-629` | GArray struct-layout read (two public fields) — documented, mitigated by pinned element size | FFI residual |
-| F-12 | info | AGENTS.md vs Cargo | AGENTS/structure.md say "forbid in core, deny elsewhere"; mechanics are workspace-`deny` + inner attributes in 7 crates — engine/user/store/dictool rely on inheritance only; the *distinction* is prose, not Cargo | policy mechanization (this study's PR-1) | **FIXED** (0297afb: per-target forbid closes the prose gap)
+| # | Severity | Location | Finding | Class | Status |
+|---|---|---|---|---|---|
+| F-1 | medium | `core/src/fixture.rs:309` | unchecked `*totals += count` on u64 bigram totals — crafted fixture overflows (debug panic / release wrap); 16 lines above, the sibling code already uses `saturating_add` | arithmetic, fix | **FIXED** (6fc7f7e: saturating totals) |
+| F-2 | medium | `core/src/fixture.rs:364-366` | unchecked u128 products in `model_cost` (`bigram*unigram` totals) — overflow with counts ≥ ~2^63; production twin (`lm/mod.rs interpolate_ratio`) is fully `checked_mul` | arithmetic, fix | **FIXED** (6fc7f7e: checked u128, degrade to UNKNOWN_COST) |
+| F-3 | medium | `data/src/content.rs:367` | `Vec::with_capacity(hdr.nitems as usize)` trusts an untrusted u32 header field → ~180-byte file can request ~170 GB (allocator abort = uncatchable DoS); header cross-checks constrain `data_size` but not `nitems` | trust boundary, fix (clamp + validate) | **FIXED** (e084a20: capacity clamp + regression test) |
+| F-4 | low | `capi/src/candidates.rs:33,372`, `parse.rs:320` | three bare `as` narrowing casts at the ABI (usize→u32, usize→c_int truncation past 2 GiB, c_char→u8 wrap) — unreachable-in-practice today, unmarked | conversion, clamp + comment | open |
+| F-5 | low | `user/src/store.rs` quartet | CCN 38/33/31/22 (`add_phrase_in`, `mask_out`, `remove_user_phrase`, `promote_addon_phrase`) — highest-complexity cluster; the natural coverage/mutation priority | complexity, refactor-later | open (roadmap) |
+| F-6 | low | capi P1/P2 + `ffi.rs:43` | opaque-handle trust surface (stale/double-free handle = UB) and `g_free`≡libc-`free` pairing assumption (true on glibc, would break under custom GLib allocator) | FFI contract | open (documented residual) |
+| F-7 | low | `iterators.rs:175,298,424`, `cursor.rs:25,56` | five entry points without `ffi_catch` (three iterator-`end` that call `mark_modified()` — a panic there would cross the ABI as abort; two trivial writers) | FFI hygiene, small fix | **FIXED** (e5491f6: ffi_catch on all three iterator-ends) |
+| F-8 | low | `fuzz/Cargo.toml` | separate workspace, edition 2021, **no `[lints]`** — the fuzz crate does not inherit `unsafe_code = "deny"` (currently moot: zero unsafe there, but the gate is missing) | policy gap | **FIXED** (deny added) |
+| F-9 | info | `initials.rs:205-207` | `slot_shift` would underflow u32 for position ≥ 25; callers cap at 24 — pin with `debug_assert!` | hardening | **FIXED** (6fc7f7e: debug_assert pins the slot bound) |
+| F-10 | info | `data/content.rs:391-421`, `user/codec.rs:57-157`, all of `store` | `#[must_use]` gaps (queries/getters/encoders) | hygiene | **FIXED** (fb06fb5: 23-site sweep + must_use_candidate warn) |
+| F-11 | info | oracle `live.rs:626-629` | GArray struct-layout read (two public fields) — documented, mitigated by pinned element size | FFI residual | open (documented residual) |
+| F-12 | info | AGENTS.md vs Cargo | AGENTS/structure.md say "forbid in core, deny elsewhere"; mechanics are workspace-`deny` + inner attributes in 7 crates — engine/user/store/dictool rely on inheritance only; the *distinction* is prose, not Cargo | policy mechanization (this study's PR-1) | **FIXED** (0297afb: per-target forbid closes the prose gap) |
 
 No high-severity defects were found. The three medium findings are all in
 fixture/data-ingest paths, not the shipped decode path. Status: F-1, F-2,
