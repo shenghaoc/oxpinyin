@@ -85,6 +85,13 @@ filename = "libpinyin"
 description = "Library to deal with pinyin"
 version = "2.11.91"
 requires = "glib-2.0"
+# Intent: do not let cargo-c own the .pc — the complete file (with pkgdatadir,
+# database_format, libpinyinincludedir, libpinyin_binary_version) is generated
+# by build.rs and placed by tools/packaging/install.sh. cargo-c 0.10.24 has no
+# such key and silently ignores this, so it still writes an incomplete
+# libpinyin.pc that the wrapper OVERWRITES; the flag is kept for intent and for
+# a future cargo-c that honours it. See docs/findings/installed-naming.md.
+generate = false
 
 [package.metadata.capi.library]
 # The INSTALLED artifact is the drop-in replacement: `libpinyin.so.15`, which
