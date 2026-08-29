@@ -65,7 +65,13 @@ probe_surfaces() {
     grep -q '^opt:0x60-ni3hao3@0:parsed=' "$1" && \
     grep -q '^cur:0 aux=' "$1" && \
     grep -q '^raw:nihao@3:guess=1' "$1" && \
-    grep -q '^raw:nihao@3:n=0' "$1"
+    grep -q '^raw:nihao@3:n=0' "$1" && \
+    grep -q '^raw:nihao+sent@3:guess=1' "$1" && \
+    grep -q '^raw:nihao+sent@3:n=1' "$1" && \
+    grep -q '^raw:nihaoshijie@3:guess=1' "$1" && \
+    grep -q '^raw:nihaoshijie@3:n=0' "$1" && \
+    grep -q '^raw:nihaoshijie+sent@3:guess=1' "$1" && \
+    grep -q '^raw:nihaoshijie+sent@3:n=3' "$1"
 }
 
 PREFIX="${PINYIN_ORACLE_PREFIX:-$HOME/.local/opt/pinyin-oracle}"

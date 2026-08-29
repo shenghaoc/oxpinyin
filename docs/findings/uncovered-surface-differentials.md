@@ -517,7 +517,8 @@ matches that too.
 
 Re-measured 2026-08-29 against the pin (fresh datagen tables, model
 `model20-59c68e89`): the phase-E sections are byte-identical on every
-probe — 12 per input (6 byte offsets × fresh/post-sentence), bools,
+probe — 12 for `nihao` and 24 for `nihaoshijie` (their 6 and 12 byte
+offsets × fresh/post-sentence), bools,
 counts and head rows — and the full differential's only diverging lines
 remain B1's `PRED_PREFIX` head-order window. The
 exotic classes were verified the same way: `ni'hao@2` (transparent

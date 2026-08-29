@@ -682,12 +682,14 @@ static int cursor_moves(const struct syms *s, pinyin_instance_t *inst,
 /* ── Phase E — raw mid-syllable lookup offsets ────────────────────────── */
 
 /* The empty-matrix-column surface the corpus never varied: guess at every
- * byte offset of the composition, fresh and after guess_sentence. Bytes no
- * matrix key starts on answer the pin's empty-column law — true with the
- * n-best rows alone (none fresh), never a suffix re-parse — while syllable
- * starts keep their windows. Apostrophe inputs stay out: one past a lone
- * zero-key column aborts the pinned library (the recorded _check_offset
- * landmine, not a comparable surface). */
+ * byte offset of the composition, fresh and after guess_sentence. The
+ * compared surface per offset is the guess bool, the window count, and the
+ * first four rows (rows past the head-4 prefix are not compared — the count
+ * pins the window size). Bytes no matrix key starts on answer the pin's
+ * empty-column law — true with the n-best rows alone (none fresh), never a
+ * suffix re-parse — while syllable starts keep their windows. Apostrophe
+ * inputs stay out: one past a lone zero-key column aborts the pinned
+ * library (the recorded _check_offset landmine, not a comparable surface). */
 static int raw_offset_input(const struct syms *s, pinyin_instance_t *inst,
                             const char *input) {
     char label[72];
