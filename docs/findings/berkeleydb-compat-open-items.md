@@ -62,12 +62,18 @@ observed, and the `ChewingKey` layout in particular is ABI-specific — so
 Phase 2 must *observe it on a real file first*, then codify it. No probe
 exists yet; Phase 2 builds it.
 
-1. **Probe (input, run, record).** *Input:* a phrase/chewing `*.db`
-   B-tree table written by a **BerkeleyDB-built** libpinyin (the
-   Debian/Ubuntu-stable backend), after training a profile so the table
-   holds keys that cross a 256 boundary in both the first and a later
-   element — for the phrase key a `ucs4_t` above `0xFF`, for the chewing
-   key a `ChewingKey` whose 16-bit storage unit exceeds `0xFF`. *Run:*
+1. **Probe (input, run, record).** *Input:* the **user-data** `DB_BTREE`
+   tables from the phase-1 survey's §(c) — `phrase_large_table3_bdb` /
+   `chewing_large_table2_bdb`, the user's `*.db` written by a
+   **BerkeleyDB-built** libpinyin (the Debian/Ubuntu-stable backend). Not
+   the system `phrase_index.bin` / `pinyin_index.bin`: those are
+   `MemoryChunk` images (§(b)), not BDB B-tree tables, and carry no B-tree
+   comparator order — and the only system BDB file, `bigram.db`, is a
+   `DB_HASH`, unordered. Train a profile so the table holds keys that
+   cross a 256 boundary in both the first and a later element — for the
+   phrase key a `ucs4_t` above `0xFF` (any CJK code point already exceeds
+   it), for the chewing key a `ChewingKey` whose 16-bit storage unit
+   exceeds `0xFF`. *Run:*
    read the keys in storage order — a `DB_BTREE` cursor walk (`->cursor`
    then `->c_get(DB_NEXT)`, the §4 shim surface) or Berkeley DB's
    `db_dump`. *Record:* the raw key bytes and the order they came back in,
