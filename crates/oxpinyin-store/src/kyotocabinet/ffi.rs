@@ -18,13 +18,14 @@
 //! [`Cursor`] and [`Buf`] release their resources on an unwind exactly as
 //! on a normal return.
 //!
-//! **`Send`/`Sync`.** [`Db`] holds a raw pointer, so it is `!Send` and
-//! `!Sync` by construction — the compiler derives neither and this module
-//! implements neither. Kyoto Cabinet's `PolyDB` does carry an internal
-//! lock, so a handle *is* usable from several threads; the restriction
-//! here is a deliberate floor, not a limit of the library, and lifting it
-//! is a decision with the same shape as the Berkeley DB backend's (see
-//! `docs/findings/kyotocabinet-backend.md`).
+//! **`Send`/`Sync`.** [`Db`] holds a raw pointer, so the compiler derives
+//! neither — this module supplies both explicitly with `unsafe impl`s,
+//! whose SAFETY note (near the bottom of the module) verifies the
+//! underlying contract against the Kyoto Cabinet 1.2.80 headers, file
+//! and symbol at a time: every operation takes the database object's own
+//! reader-writer lock, transactions serialize on that lock, and the error
+//! state is thread-specific data, not shared state (see
+//! `docs/findings/kyotocabinet-backend.md` for the verification record).
 //!
 //! **Buffer ownership — and why this differs from Berkeley DB.** The
 //! brief for this backend carried Berkeley DB's cursor hazard over
@@ -193,6 +194,50 @@ pub(crate) struct Db {
     handle: *mut sys::KCDB,
     read_only: bool,
 }
+
+// SAFETY: verified against the Kyoto Cabinet 1.2.80 headers (the version
+// floor this backend builds against), file and symbol at a time:
+//
+// * Every record operation this backend issues — `kcdbget`/`kcdbset`/
+//   `kcdbremove` (all `accept` underneath), `kcdbcount`, `kcdbsync`, and
+//   the cursor calls — is documented as "performed atomically and other
+//   threads accessing the same record are blocked" (`kchashdb.h`,
+//   `accept`'s @note; the same note is on `kcpolydb.h`'s and
+//   `kcplantdb.h`'s operations) and implemented by taking the database
+//   object's own reader-writer lock (`RWLock mlock_`, `kchashdb.h` and
+//   `kcplantdb.h` private members; `ScopedRWLock` at the top of every
+//   method body, e.g. HashDB `count`, `synchronize`, and `Cursor::jump`).
+// * `kcdbbegintran` is `begin_transaction(false)`: it takes the writer
+//   lock and spins (`Thread::yield`/`chill`) while another transaction is
+//   live, holding the lock until `kcdbendtran` — so concurrent `write`
+//   transactions serialize inside the library rather than racing, and
+//   readers exclude with the whole transaction window.
+// * The error accessors are NOT shared state: HashDB holds its error as
+//   thread-specific data (`TSD<Error> error_`, `kchashdb.h`; `TSD` in
+//   `kcthread.h` gives each thread its own instance), and TreeDB and
+//   PolyDB forward to that inner database (`Error error() const { return
+//   db_.error(); }` in `kcplantdb.h`; PolyDB's `set_error` delegates when
+//   open). A thread reading `kcdbecode`/`kcdbemsg` therefore observes its
+//   own thread's last failure — no cross-thread race. This wrapper reads
+//   them immediately after the failing call on the same thread, before
+//   any other call could overwrite the slot.
+// * PolyDB's own plain `Error error_` member is touched only in the
+//   TYPEVOID (unopened) state; a handle exists here only after `open`
+//   succeeded, and `kcdbclose`/`kcdbdel` run in `Drop`, which holds the
+//   handle exclusively. Open completes before the handle exists to share.
+// * The class-level contract (`kcdb.h`, `BasicDB`'s @note) forbids two
+//   database objects in one process opening the same file, and sharing a
+//   database object with child processes — cross-thread sharing of one
+//   object is inside the supported model.
+//
+// That is what lets the store keep `get` and `write` on `&self`, and what
+// the user-store registry's `static Mutex<… DefaultStore …>` requires of
+// a default backend. libpinyin itself (`flexible_ngram_kyotodb.h`,
+// `kyotodb_utils.h`) uses the same C++ objects single-threaded with no
+// added locking, so it neither contradicts this nor exercises it — the
+// guarantee is Kyoto Cabinet's own, cited above.
+unsafe impl Send for Db {}
+unsafe impl Sync for Db {}
 
 impl Db {
     /// Opens `path` as `db_type`.

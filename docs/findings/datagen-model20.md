@@ -127,16 +127,24 @@ cargo test -p pinyin-oracle --test sentence_surface_parity -- --nocapture
 
 | Source | Backend | Producer | Output | Oracle comparison |
 |---|---|---|---|---|
-| model20 | redb | `oxpinyin-datagen compile --backend redb` | `*.redb` (engine's default backend; the full runtime path) | libpinyin, behavioral |
+| model20 | Kyoto Cabinet | `oxpinyin-datagen compile --backend kyotocabinet` (needs `--features kyotocabinet`; the workspace-default sweep compiles it in) | `*.kct` (engine's DEFAULT backend; the full runtime path) | libpinyin, via proven-identical tables |
+| model20 | redb | `oxpinyin-datagen compile --backend redb` | `*.redb` (the pure-Rust portability fallback, `--no-default-features`; always compiled) | libpinyin, behavioral |
 | model20 | LMDB | `oxpinyin-datagen compile --backend lmdb` | `*.lmdb` | libpinyin, via proven-identical tables |
 | model20 | Tkrzw | `oxpinyin-datagen compile --backend tkrzw` | `*.tkt` | libpinyin, via proven-identical tables |
 
-The LMDB/Tkrzw rows are proven at the store + loader level
-(`cross_backend` plus the store crate's three-way ordering conformance):
-their key/value streams are identical to redb's by test, so engine
-behavior over them is identical by construction. Running the C ABI itself
-over non-default backends would require switching `DefaultStore` (a
-shipping-interface decision, deferred to Stage 2).
+The non-redb rows are proven at the store level: `cross_backend` reads
+back the full key/value stream through each backend's own store reader
+and the streams are identical, and the store crate's four-way ordering
+conformance pins the walk order. The loader side is spot-checked, not
+streamed: `oxpinyin-data`'s real `GenericLookupTable` runs over
+`cross_backend`'s four `PROBE_KEYS` (three present shapes, one absent).
+Engine behavior over the non-redb backends is therefore identical only
+under the premise that the shared loader code maps identical streams to
+identical tables — the probes verify that wiring; they do not walk the
+whole stream. The behavioral differentials themselves were measured on
+redb tables; the C ABI now runs over whichever backend the build selects
+(the store-backends CI gate sweeps the whole workspace suite under each
+of the four in turn).
 
 ## Reproducibility
 
@@ -216,9 +224,10 @@ real loader is exercised over the four `PROBE_KEYS` — three present
 shapes and one absent — not the whole stream),
 `full_compile_matches_the_oracle_derived_export`, and
 `mini_compile_reproduces_frozen_w3_tables`; `compile --backend lmdb` and
-`--backend tkrzw` both produced full table sets. The C ABI itself stays
-on `DefaultStore` (the compiled-in backend) — running it over the other backends remains
-the deferred Stage-2 interface decision recorded above.
+`--backend tkrzw` both produced full table sets. The C ABI runs on
+`DefaultStore` (the compiled-in backend), which the build now selects —
+the store-backends CI gate exercises the whole workspace suite under
+each backend in turn.
 
 ## libpinyin capability map (data pipeline)
 

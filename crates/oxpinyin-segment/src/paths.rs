@@ -26,8 +26,8 @@ pub const DEFAULT_EXPORT_DIR: &str = "/tmp/oxpinyin-export";
 
 /// Table stems the segmenter needs from the export directory; the
 /// on-disk names carry the compiled-in backend's extension
-/// (`default_store_file` — `phrase_index.redb` under the redb default,
-/// `phrase_index.tkt`/`phrase_index.lmdb` behind their features).
+/// (`default_store_file` — `phrase_index.kct` under the Kyoto Cabinet
+/// default, `phrase_index.redb` under `--no-default-features`, …).
 pub const EXPORT_STEMS: &[&str] = &["phrase_index", "bigram"];
 
 /// Files the segmenter needs from the fetched model20 cache.

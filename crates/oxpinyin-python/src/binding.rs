@@ -96,7 +96,7 @@ fn lock_error() -> PyErr {
 ///
 /// Create with a system data directory holding the ``pinyin_index``,
 /// ``phrase_index`` and ``bigram`` tables in the compiled-in backend's
-/// format (``.redb`` by default); pass ``user_dir`` to enable
+/// format (``.kct`` by default); pass ``user_dir`` to enable
 /// learning. Usable as a :pykeyword:`with` block, though nothing needs
 /// releasing — see :meth:`close`.
 ///

@@ -558,9 +558,10 @@ pub struct Runtime {
 
 impl Runtime {
     /// Opens the production configuration: the compiled-in backend's
-    /// system tables under `system_dir` (redb `.redb` by default;
-    /// `.tkt`/`.lmdb` behind their features), real unigrams from
-    /// `interpolation2.text` next to them, λ from
+    /// system tables under `system_dir` (Kyoto Cabinet `.kct` by default;
+    /// redb `.redb` under `--no-default-features`; `.tkt`/`.lmdb` behind
+    /// their features), real unigrams from `interpolation2.text` next to
+    /// them, λ from
     /// `table.conf` when present, and — when `user_dir` is given — the
     /// learning store (its creation or read failure degrades to "no user
     /// state", matching the C ABI so a bad user dir cannot fail init).

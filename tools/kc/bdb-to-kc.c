@@ -31,6 +31,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+
+/* A failed transcription must not leave a half-written destination that
+ * looks like data: close the handle, release it, and remove the partial
+ * file. Only failure paths after the destination was opened call this;
+ * the success path keeps its explicit close, count, and release. */
+static void drop_destination(KCDB *dst, const char *dest) {
+    kcdbclose(dst);
+    kcdbdel(dst);
+    remove(dest);
+}
 
 int main(int argc, char **argv) {
     if (argc != 3) {
@@ -50,6 +61,22 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* Refuse SOURCE == DEST before the remove() below would unlink the
+     * very file the cursor is about to read: textual equality, and the
+     * two paths naming one inode when the destination already exists
+     * (a symlink or a different spelling counts too). */
+    if (strcmp(argv[1], argv[2]) == 0) {
+        fprintf(stderr, "SOURCE and DEST are the same path: %s\n", argv[1]);
+        return 1;
+    }
+    struct stat sst, dst_st;
+    if (stat(argv[1], &sst) == 0 && stat(argv[2], &dst_st) == 0
+        && sst.st_dev == dst_st.st_dev && sst.st_ino == dst_st.st_ino) {
+        fprintf(stderr, "SOURCE and DEST name the same file: %s, %s\n",
+                argv[1], argv[2]);
+        return 1;
+    }
+
     /* PolyDB picks the class from the suffix and fails on an unknown one,
      * so the #type= override is mandatory for libpinyin's filename. */
     size_t spec_len = strlen(argv[2]) + sizeof("#type=kch");
@@ -62,6 +89,7 @@ int main(int argc, char **argv) {
     if (!dst) { fprintf(stderr, "kcdbnew failed\n"); free(spec); return 1; }
     if (!kcdbopen(dst, spec, KCOWRITER | KCOCREATE)) {
         fprintf(stderr, "kcdbopen %s: %s\n", spec, kcecodename(kcdbecode(dst)));
+        kcdbdel(dst);
         free(spec);
         return 1;
     }
@@ -70,6 +98,8 @@ int main(int argc, char **argv) {
     rc = src->cursor(src, NULL, &cur, 0);
     if (rc != 0 || cur == NULL) {
         fprintf(stderr, "cursor: %s\n", db_strerror(rc));
+        drop_destination(dst, argv[2]);
+        free(spec);
         return 1;
     }
 
@@ -82,11 +112,15 @@ int main(int argc, char **argv) {
             fprintf(stderr, "record %ld has a shape no SingleGram has "
                             "(key %u bytes, value %u bytes)\n",
                     records, (unsigned)key.size, (unsigned)data.size);
+            drop_destination(dst, argv[2]);
+            free(spec);
             return 1;
         }
         if (!kcdbset(dst, (const char *)key.data, key.size,
                      (const char *)data.data, data.size)) {
             fprintf(stderr, "kcdbset: %s\n", kcecodename(kcdbecode(dst)));
+            drop_destination(dst, argv[2]);
+            free(spec);
             return 1;
         }
         records++;
@@ -94,6 +128,8 @@ int main(int argc, char **argv) {
     }
     if (rc != DB_NOTFOUND) {
         fprintf(stderr, "cursor walk: %s\n", db_strerror(rc));
+        drop_destination(dst, argv[2]);
+        free(spec);
         return 1;
     }
 
@@ -101,6 +137,8 @@ int main(int argc, char **argv) {
     src->close(src, 0);
     if (!kcdbsync(dst, 1, NULL, NULL)) {
         fprintf(stderr, "kcdbsync: %s\n", kcecodename(kcdbecode(dst)));
+        drop_destination(dst, argv[2]);
+        free(spec);
         return 1;
     }
     int64_t count = kcdbcount(dst);

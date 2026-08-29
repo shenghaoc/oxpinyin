@@ -184,6 +184,58 @@ memory, memtag, safestack, shadow-call-stack, thread, realtime), so UBSan
 cannot apply to Rust. libkyotocabinet's own internals are not
 instrumented either.
 
+### `Send`/`Sync` verified against the Kyoto Cabinet source (pre-merge)
+
+The `unsafe impl Send/Sync` on the FFI `Db` handle was audited against
+the Kyoto Cabinet 1.2.80 headers before merge — the same treatment the
+tkrzw shim's guarantee gets — because the original SAFETY note asserted
+"PolyDB's internal rwlock" and the error accessors' behavior without
+citations, and one of its two claims turned out to be wrong. Verified,
+file and symbol (all in the installed `libkyotocabinet-dev` headers):
+
+- **Record operations are atomic and lock the whole database object.**
+  `accept` — the primitive under `kcdbget`/`kcdbset`/`kcdbremove` —
+  documents "The operation for each record is performed atomically and
+  other threads accessing the same record are blocked" (`kchashdb.h`,
+  `accept`'s `@note`; the same note recurs on `kcpolydb.h`'s and
+  `kcplantdb.h`'s operations). Implementation: a private
+  `RWLock mlock_` member (`kchashdb.h`, `kcplantdb.h`) taken by a
+  `ScopedRWLock` at the top of every method body — `count`,
+  `synchronize`, and every cursor op (`HashDB::Cursor::jump` takes it
+  writer-scoped; `PlantDB::Cursor::jump` reader-scoped).
+- **Transactions serialize.** `kcdbbegintran` is
+  `begin_transaction(false)`: it takes the writer lock and spins
+  (`Thread::yield`/`chill`) while another transaction is live, holding
+  the lock until `kcdbendtran` (`kchashdb.h` and `kcplantdb.h`,
+  `begin_transaction` bodies). Concurrent `WriteStore::write` calls
+  therefore serialize inside the library.
+- **The error state is thread-specific, not shared — the original SAFETY
+  note was wrong here.** It claimed `kcdbecode`/`kcdbemsg` read
+  per-database state that concurrent failures could misattribute.
+  HashDB actually holds its error as `TSD<Error> error_` (`kchashdb.h`
+  private members; `TSD` in `kcthread.h` constructs a per-thread
+  instance through pthreads TSD), and TreeDB/PolyDB forward to that
+  inner database (`kcplantdb.h`: `Error error() const { return
+  db_.error(); }`; `kcpolydb.h`'s `set_error` delegates whenever the
+  PolyDB is open). Each thread observes its own last failure; there is
+  no cross-thread race and no misattribution. PolyDB's own plain
+  `Error error_` member is reachable only in the unopened (TYPEVOID)
+  state, which this wrapper cannot expose: a handle exists only after
+  `open` succeeded, and close/del run in `Drop` under exclusive
+  ownership.
+- **The class-level contract** (`kcdb.h`, `BasicDB`'s `@note`) forbids
+  two database objects in one process opening the same file, and
+  sharing a database object with *child processes* — cross-thread
+  sharing of one object is inside the supported model.
+
+libpinyin's own Kyoto Cabinet usage
+(`src/storage/flexible_ngram_kyotodb.h`, `src/storage/kyotodb_utils.h`)
+drives the C++ objects single-threaded with plain `get`/`set`/
+`synchronize` and no locking of its own, so it neither contradicts the
+above nor exercises it; the guarantee is Kyoto Cabinet's own. The SAFETY
+note on the impls in `crates/oxpinyin-store/src/kyotocabinet/ffi.rs`
+carries the same citations.
+
 ## Two places this backend is better than the Berkeley DB one
 
 - **Real transactions.** Kyoto Cabinet gives a standalone handle
@@ -238,14 +290,17 @@ feature.
 - **The drop-in test did not run**, and could not: there is no
   Kyoto-Cabinet-built libpinyin on this machine (premise 1), and
   ibus-libpinyin is not installed either. The gate stands unmet.
-- **The frozen candidate and sentence pins were not re-measured.** They
-  are measured against the pin-built oracle, which
-  `tools/oracle/build-oracle.sh` cannot fetch here (`codeload.github.com`
-  answers 403). This change adds a backend behind an off-by-default
-  feature and touches no decode path, so it cannot move them — an
-  argument, not a measurement. **The Ubuntu archive route above may make
-  the oracle provisionable**; that is worth trying before the next
-  measurement is needed.
+- **The frozen candidate and sentence pins were not re-measured — under
+  the now-default Kyoto Cabinet backend or any other.** They are measured
+  against the pin-built oracle, which `tools/oracle/build-oracle.sh`
+  cannot fetch here (`codeload.github.com` answers 403). The exact
+  unmeasured coverage: no pin has been run with `DefaultStore` resolving
+  to Kyoto Cabinet (or redb under `--no-default-features`); the
+  equivalence claim rests on the four-backend conformance suite —
+  identical key/value streams and walk orders, so identical decode by
+  construction — an argument, not a measurement. **The Ubuntu archive
+  route above may make the oracle provisionable**; that is worth trying
+  before the next measurement is needed.
 - **`--features tkrzw` could not be built** — no tkrzw `pkg-config` on
   this machine, and the Ubuntu package is the broken one
   (`tkrzw-distro-compat.md`). Default, `kyotocabinet` and `lmdb` were all

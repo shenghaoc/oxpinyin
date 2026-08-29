@@ -82,8 +82,24 @@ else
 	echo "not that a Kyoto-Cabinet-built libpinyin wrote this exact file."
 	work=$(mktemp -d)
 	trap 'rm -rf "$work"' EXIT
-	gcc -Wall -Wextra -Werror -O2 -o "$work/bdb-to-kc" tools/kc/bdb-to-kc.c \
-		-ldb -lkyotocabinet
+	# The configured compiler if there is one, cc otherwise; Kyoto Cabinet's
+	# include/link flags come from pkg-config when a .pc exists (a custom
+	# prefix needs them), falling back to the bare library name as the
+	# store's build script does.
+	cc_bin=${CC:-cc}
+	if ! kc_flags=$(pkg-config --cflags --libs kyotocabinet 2>/dev/null); then
+		kc_flags="-lkyotocabinet"
+	fi
+	# A compile failure is an environment gap (no compiler, or missing
+	# libdb/Kyoto Cabinet development files), not a compatibility finding —
+	# SKIP like the other unrunnable legs rather than dying under set -e.
+	if ! "$cc_bin" -Wall -Wextra -Werror -O2 -o "$work/bdb-to-kc" \
+		tools/kc/bdb-to-kc.c -ldb $kc_flags; then
+		echo "SKIP: could not compile bdb-to-kc with '$cc_bin' (needs libdb and"
+		echo "  Kyoto Cabinet development files; flags used: $kc_flags)."
+		echo "  The compatibility gate did NOT run."
+		exit 0
+	fi
 	"$work/bdb-to-kc" "$bigram" "$work/bigram.db"
 	kc_bigram=$work/bigram.db
 fi

@@ -64,10 +64,13 @@
 //!
 //! # Threading
 //!
-//! [`KcStore`] is `!Send` and `!Sync`. Kyoto Cabinet's `PolyDB` does its
-//! own locking and would tolerate more, so this is a deliberate floor
-//! rather than a limit of the library — the same decision the Berkeley DB
-//! backend faces, recorded in `docs/findings/kyotocabinet-backend.md`.
+//! [`KcStore`] is `Send + Sync`: Kyoto Cabinet's `PolyDB` carries its own
+//! locking (every access method takes the database's rwlock), and the
+//! `unsafe impl`s on the FFI handle record exactly that contract — see the
+//! SAFETY comment in `ffi.rs`. This is required, not optional, for a
+//! default backend: the user-store registry holds `DefaultStore` behind a
+//! `static Mutex`, and the runtime compile-asserts its handles
+//! `Send + Sync`.
 #![allow(unsafe_code)]
 
 mod ffi;
