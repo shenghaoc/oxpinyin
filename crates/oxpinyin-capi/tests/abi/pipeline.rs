@@ -60,6 +60,8 @@ fn candidate_texts(instance: *mut PinyinInstance) -> Vec<String> {
         out.push(
             // SAFETY: the ABI hands back a NUL-terminated string valid
             // until the next guess on this instance.
+            // SAFETY: handed out by the ABI call above; a valid, NUL-terminated
+            // pointer until the instance's next guess.
             unsafe { CStr::from_ptr(text) }
                 .to_string_lossy()
                 .into_owned(),
@@ -143,6 +145,10 @@ fn the_pinyin_pipeline_guesses_the_sentence_and_candidates() {
     let mut sentence: *mut c_char = std::ptr::null_mut();
     assert!(pinyin_get_sentence(instance, 0, &mut sentence));
     // SAFETY: NUL-terminated string valid until freed.
+    // SAFETY: `sentence` was just handed out by `pinyin_get_sentence`,
+    // a valid NUL-terminated pointer until the next guess.
+    // SAFETY: handed out by the ABI call above; a valid, NUL-terminated
+    // pointer until the instance's next guess.
     let text = unsafe { CStr::from_ptr(sentence) }
         .to_string_lossy()
         .into_owned();
@@ -167,6 +173,8 @@ fn the_zhuyin_pipeline_guesses_a_sentence_from_bopomofo_keys() {
 
     let mut sentence: *mut c_char = std::ptr::null_mut();
     assert!(pinyin_get_sentence(instance, 0, &mut sentence));
+    // SAFETY: handed out by the ABI call above; a valid, NUL-terminated
+    // pointer until the instance's next guess.
     let text = unsafe { CStr::from_ptr(sentence) }
         .to_string_lossy()
         .into_owned();
