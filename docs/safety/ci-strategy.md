@@ -88,7 +88,7 @@ libchewing convention), they do not auto-block unless a ratchet exists
 | fuzz soak + corpus | | | ✔ | |
 | Miri | | | ✔ | |
 | overflow release lane | | | ✔ | |
-| Kani | | | dropped | | |
+| Kani | | | dropped | |
 | cargo-mutants | | | ✔ (weekly) | |
 | llvm-cov | | ✔ (label) | ✔ report | report |
 | geiger | | ✔ report | | ✔ |
@@ -97,7 +97,7 @@ libchewing convention), they do not auto-block unless a ratchet exists
 ## Cost/confidence rationale
 
 - The PR tier stays compile+test dominated; deny/fuzz add ~2 min.
-- Everything interpreting or mutating semantics (Miri/Kani/mutants/soak)
+- Everything interpreting or mutating semantics (Miri/mutants/soak)
   is scheduled: high value, too slow per-PR, zero MSRV impact.
 - Tier 2 exists so contributors can *request* deeper signal without
   making everyone pay for it.

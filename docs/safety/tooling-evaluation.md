@@ -480,8 +480,7 @@ pinned 1.97.1, and Kani is coupled to its bundled rustc, so no
 supporting release exists to select. Harnesses and the nightly job were
 removed rather than shipped as guaranteed-failing coverage. Revisit when
 a Kani release supports the pinned toolchain; the original assessment
-follows.; whole-program
-verification REJECTed by scope. Harnesses double as `debug_assert!`
+follows. Whole-program verification remains rejected by scope. Harnesses double as `debug_assert!`
 documentation.
 
 ## 20. Prusti
