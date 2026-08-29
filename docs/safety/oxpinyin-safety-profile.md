@@ -122,11 +122,11 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 
 | Activity | Cadence | Scope |
 |---|---|---|
-| fuzz smoke | every PR | parser + (new) content/codec/scheme targets, ≤60s |
+| fuzz smoke | every PR | parser target only (10s); the four newer targets run in the nightly soak |
 | fuzz soak | nightly | all targets, 10–30 min, corpus committed |
 | Miri | nightly | `-p oxpinyin-core -p oxpinyin-store` tests + corpus replay |
 | overflow-checks release test | nightly | `cargo test --release` with `-C overflow-checks -C debug-assertions` |
-| mutation score | nightly (trial) | core parser/scheme/scoring + user/store |
+| mutation score | nightly (trial) | core parser/full-pinyin index/scheme/scoring + user/store |
 | coverage report | nightly | llvm-cov, report-only |
 | ~~Kani harnesses~~ | dropped (toolchain age) | — |
 | Lizard | nightly | CCN≤40 ratchet from current max 38 |
@@ -173,8 +173,10 @@ NCSA scoped to libfuzzer-sys). The fmt-only pre-commit hook and
 .vscode config proposed as PR-1g were dropped in review as unnecessary.
 PR-2 landed as a446b27/51eeb40/8fff932: F-3, F-1/F-2 (+F-9), F-7 with
 regression tests. Full workspace clippy -D warnings and cargo test are
-green. PR-3/PR-4 (nightly lanes, fuzz-target expansion, Kani/mutants
-trials) remain unimplemented.
+green. PR-3 landed as #211 (fuzz-target expansion + the verify-nightly
+lanes) and PR-4 as #212 (the cargo-mutants and nextest trial lanes).
+Kani was scoped into PR-4 and then dropped: no Kani release supports
+the pinned toolchain (see tooling-evaluation §19).
 
 Mechanics correction discovered during implementation: CI's blanket
 `-D warnings` promotes *every* warn-level lint to a merge blocker, so
