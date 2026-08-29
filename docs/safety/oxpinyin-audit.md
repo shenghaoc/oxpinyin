@@ -33,7 +33,7 @@ out-param writes (P4, low), malloc/free string marshalling with
 cleanup-on-partial-failure (P5), matched `Box::into_raw`/`from_raw`
 lifecycles (P6). No caller-supplied buffer lengths exist anywhere — the
 classic C ABI overrun class is structurally absent. Panic containment:
-`ffi_catch` (`catch_unwind` → fallback) on 50 of 55 entry points.
+`ffi_catch` (`catch_unwind` → fallback) on 53 of 55 entry points — F-7 brought the three iterator-`end` entry points under the wrapper; the two `cursor.rs` scalar writers stay intentionally unwrapped (documented non-panicking).
 
 ## 3. Panic inventory
 
@@ -112,7 +112,7 @@ unrefactored until Stage 2; oracle/dictool = tooling.
 | Surface | Risk | Current coverage | Proposed addition |
 |---|---|---|---|
 | capi ABI (55 symbols, handle lifecycle) | high residual (F-6/F-7) | contract tests + C++ smoke gate | `capi-commands` fuzz target (libchewing precedent); F-7 fix |
-| data decode (content.rs) | medium (F-3) | unit tests on fixtures | `dict-loader` fuzz target; Kani bounds harness |
+| data decode (content.rs) | medium (F-3) | unit tests on fixtures + F-3 regression test | `dict-loader` fuzz target; a Kani bounds harness remains deferred, conditional on a Kani release supporting the pinned toolchain (trial dropped — see tooling-evaluation §19) |
 | fixture ingest (fixture.rs) | medium (F-1/F-2) | none specific | fixes + regression tests |
 | user/store persistence | medium (F-5) | integration tests | coverage report priority + cargo-mutants scope |
 | core parser/scheme | low (mature) | proptest + fuzz + parity corpus | expanded corpus soak; mutation score |
