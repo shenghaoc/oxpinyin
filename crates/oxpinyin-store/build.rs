@@ -75,7 +75,13 @@ mod kyotocabinet {
         println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
         println!("cargo:rerun-if-env-changed=OXPINYIN_KC_INCLUDE_DIR");
         println!("cargo:rerun-if-env-changed=OXPINYIN_KC_LIB_DIR");
+        // All three pkg-config selectors, as the tkrzw branch tracks:
+        // PKG_CONFIG_LIBDIR replaces the search-directory list outright and
+        // PKG_CONFIG_SYSROOT_DIR rewrites every discovered path, so either one
+        // alone can point pkg-config at a different Kyoto Cabinet.
         println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
+        println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
+        println!("cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR");
 
         let mut clang_args: Vec<String> = Vec::new();
         if let Some(cflags) = super::pkg_config("--cflags", "kyotocabinet") {
