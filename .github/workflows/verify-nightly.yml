@@ -289,11 +289,14 @@ jobs:
       # third-party actions; kani-version keeps the toolchain itself at
       # 0.67.0. Trust shifts from a hand-rolled curl+digest to the SHA-
       # pinned action on the official distribution channel.
-      - name: Install pinned Kani
+      - name: Run pinned Kani over the proof crates
         uses: model-checking/kani-github-action@f838096619a707b0f6b2118cf435eaccfa33e51f # v1.1
         with:
           kani-version: '0.67.0'
-      - run: cargo kani -p oxpinyin-core -p oxpinyin-data
+          # The action runs `cargo-kani` itself; scope it through `args`
+          # so no unscoped workspace pass happens before the intended
+          # package selection.
+          args: -p oxpinyin-core -p oxpinyin-data
 
   # Mutation testing, scoped to where test strength matters most (the
   # study's priority list): core's parsers/scoring and the user-store
@@ -329,8 +332,10 @@ jobs:
           . "$HOME/.cargo/env"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo install cargo-mutants --version 27.1.0 --locked
+      # --locked is not a cargo-mutants option; the supported form passes
+      # it through to Cargo via --cargo-arg.
       - run: >
-          cargo mutants --locked --no-times
+          cargo mutants --no-times --cargo-arg=--locked
           --file crates/oxpinyin-core/src/parser.rs
           --file crates/oxpinyin-core/src/full_pinyin_index.rs
           --file crates/oxpinyin-core/src/scheme.rs
