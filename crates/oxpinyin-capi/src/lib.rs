@@ -162,6 +162,7 @@ pub fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: c_int) -> b
 
 // ── context ─────────────────────────────────────────────
 /// In-process wrapper for the `oxpinyin_init_for_fixtures` ABI symbol (see the C header).
+#[must_use]
 pub fn oxpinyin_init_for_fixtures(
     systemdir: *const c_char,
     userdir: *const c_char,

@@ -54,6 +54,7 @@ pub extern "C" fn pinyin_init(
 /// `dlsym` this name; the public [`pinyin_init`] path never takes the
 /// flat-export fallback.
 #[unsafe(no_mangle)]
+#[must_use]
 pub extern "C" fn oxpinyin_init_for_fixtures(
     systemdir: *const c_char,
     userdir: *const c_char,
