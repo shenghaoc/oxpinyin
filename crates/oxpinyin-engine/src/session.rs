@@ -830,7 +830,11 @@ where
     /// store survive (whether they should is the caller's
     /// [`Session::parse_continues`] decision); the cursor is clamped into
     /// the new buffer and the candidates refresh, so the session is never
-    /// observable with a cursor past its input.
+    /// observable with a cursor past its input. A clamp that cuts the
+    /// buffer below the selection drops the overrun forcings with the
+    /// record following the survivors
+    /// ([`Session::reconcile_clamped_selection`]), so [`Session::commit`]
+    /// answers only text valid for the current input.
     ///
     /// Keeps every character: the pin's parser accepts any input string
     /// and simply stops consuming at the first byte no key matches
@@ -852,7 +856,9 @@ where
     /// a backend failure.
     pub fn replace_raw(&mut self, text: &str) -> Result<(), EngineError> {
         self.exact_segments.clear();
+        let cursor_before = self.consumed;
         self.refill_raw(text);
+        self.reconcile_clamped_selection(cursor_before)?;
         self.refresh()
     }
 
@@ -879,7 +885,9 @@ where
         text: &str,
         segments: &[ExactSegment],
     ) -> Result<(), EngineError> {
+        let cursor_before = self.consumed;
         self.refill_raw(text);
+        self.reconcile_clamped_selection(cursor_before)?;
         let raw_len = self.raw.len();
         self.exact_segments = segments
             .iter()
@@ -887,6 +895,30 @@ where
             .filter(|segment| segment.end() <= raw_len)
             .collect();
         self.refresh()
+    }
+
+    /// Reconciles the selection to a replaced buffer that clamped the
+    /// cursor backward. A backward clamp only happens on a continuing
+    /// re-parse, whose buffer is a prefix of the stored one — so a
+    /// forcing overrunning the new end can no longer spell (its bytes
+    /// are gone), and the bounds-only probe below loses nothing to the
+    /// full spell check the next guess runs. Dropping at the clamp
+    /// instead of lazily at the next guess keeps [`Session::commit`]
+    /// from answering selection text whose span reached past the current
+    /// input: the record follows the survivors exactly as the guess-path
+    /// validate's rebuild does, and a dropped tail re-opens the
+    /// composition at the survivor end.
+    fn reconcile_clamped_selection(&mut self, cursor_before: usize) -> Result<(), EngineError> {
+        if self.consumed >= cursor_before {
+            return Ok(());
+        }
+        if self
+            .constraints
+            .validate(self.raw.len() + 1, |_, _, _| Ok(true))?
+        {
+            self.rebuild_selection_from_constraints();
+        }
+        Ok(())
     }
 
     /// The shared body of the two replace seams: refill the raw buffer

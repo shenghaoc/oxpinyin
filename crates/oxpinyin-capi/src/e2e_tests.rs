@@ -33,7 +33,7 @@ use crate::iterators::{
 };
 use crate::parse::pinyin_parse_more_full_pinyins;
 use crate::sentence::{pinyin_get_sentence, pinyin_guess_candidates, pinyin_guess_sentence};
-use crate::state::{USER_STORE_FILE, instance_ref};
+use crate::state::{USER_STORE_FILE, instance_mut, instance_ref};
 use crate::test_support::{DEFAULT_SORT, TempUserDir, candidate, cstr, open, system_dir};
 use crate::types::{LookupCandidate, PinyinInstance};
 use crate::user_data::pinyin_remember_user_input;
@@ -1162,6 +1162,83 @@ fn a_selection_committed_composition_reparses_with_its_store() {
             "the re-opened composition offers \u{4f60} at offset 0"
         );
     }
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// The R5 continuation must not carry a committed selection past its own
+/// input: choose \u{4f60}\u{597d} for "nihao" (the commit branch), then
+/// re-parse the SHORTER "ni" without a reset. The clamp cut the
+/// composition below the selection, so the surviving forcing overruns
+/// the new input and the record follows the survivors — the same drop
+/// the next guess's validate would apply, applied at the clamp. Enter
+/// then commits text valid for "ni", never the stale \u{4f60}\u{597d}
+/// the pre-fix continuation answered.
+#[test]
+fn a_shrinking_reparse_reconciles_the_committed_selection() {
+    use oxpinyin_engine::{KeyInput, KeyOutcome, LogicalKey};
+
+    let user_dir = TempUserDir::new("constraint-committed-shrink");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    let input = cstr("nihao");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
+    // No `pinyin_guess_sentence`: the rows it seeds would make the
+    // \u{4f60}\u{597d} a row-0 mirror, and a row-0 choose constrains
+    // nothing — the forcing this test reconciles away must exist.
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    let full_ptr = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        let index = inst
+            .candidates
+            .iter()
+            .position(|c| c.text.as_bytes() == "\u{4f60}\u{597d}".as_bytes())
+            .expect("\u{4f60}\u{597d} is offered");
+        let mut cand: *mut LookupCandidate = ptr::null_mut();
+        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        cand
+    };
+    // Consumes the whole buffer: the commit branch.
+    assert_eq!(pinyin_choose_candidate(instance, 0, full_ptr), 5);
+
+    // The shrinking re-parse continues the committed composition (R5,
+    // register #8 — "ni" is a prefix of the stored buffer) and reconciles
+    // it to the shortened buffer.
+    let shrunk = cstr("ni");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, shrunk.as_ptr()), 2);
+    {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        assert!(
+            inst.session.selected_tokens().is_empty(),
+            "the clamped selection reconciled away"
+        );
+        assert_eq!(
+            inst.session.composition_offset(),
+            0,
+            "the composition re-opened at the survivor end"
+        );
+    }
+
+    // Enter commits the raw input — the session's Enter law — and the
+    // committed text is now valid for the two-byte input. The pre-fix
+    // continuation answered the stale \u{4f60}\u{597d} here: a selection
+    // whose span reached past the current input, with the overrun
+    // forcing still live behind it.
+    let outcome = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_mut(instance) };
+        inst.session
+            .process_key(&KeyInput::plain(LogicalKey::Enter))
+            .expect("enter on a composing session cannot fail")
+    };
+    assert_eq!(
+        outcome,
+        KeyOutcome::Commit("ni".to_owned()),
+        "the commit answers text valid for the current input"
+    );
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
