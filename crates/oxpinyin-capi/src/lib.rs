@@ -41,6 +41,7 @@ mod ffi;
 /// (`fuzz/fuzz_targets/capi_commands.rs`) and Rust-side contract tests.
 /// NOT a stable Rust API: the supported surfaces are the C ABI (pinyin.h)
 /// and `oxpinyin-engine`; anything here can change or vanish.
+#[cfg(feature = "fuzz-api")]
 #[allow(missing_docs)]
 pub mod fuzz_api {
     pub use crate::candidates::{

@@ -23,6 +23,10 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 # target. cargo-c checks for the *presence* of this feature name; it is never
 # enabled by default, so plain `cargo build`/`--workspace` behaviour is unchanged.
 capi = []
+# Rust-visible facade for the in-tree fuzz harness only. Off by default:
+# the released Rust API surface is unchanged for every consumer that does
+# not opt in (the supported surfaces remain the C ABI and the engine).
+fuzz-api = []
 
 [lints.rust]
 unsafe_code = "allow" # FFI + glib marshalling only; // SAFETY: on every block

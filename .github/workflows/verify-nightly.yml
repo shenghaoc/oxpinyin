@@ -32,15 +32,28 @@ jobs:
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Seed corpora
         run: |
+          shopt -s nullglob
+          seeds=(fixtures/w3/*.bin)
           mkdir -p fuzz/corpus/dict-loader
-          cp fixtures/w3/*.bin fuzz/corpus/dict-loader/
+          if [ ${#seeds[@]} -gt 0 ]; then
+            cp "${seeds[@]}" fuzz/corpus/dict-loader/
+          else
+            echo '::warning::no fixtures/w3 .bin seeds found; dict-loader starts from an empty corpus'
+          fi
       - name: Soak each target
+        # Every target runs even if an earlier one fails; the accumulated
+        # status is the step's exit code.
         run: |
+          status=0
           for target in parser dict-loader fixture-model double-pinyin capi-commands; do
             echo "::group::fuzz $target"
-            cargo +nightly-2026-08-01 fuzz run "$target" -- -max_total_time=180 -timeout=15 -max_len=4096
+            if ! cargo +nightly-2026-08-01 fuzz run "$target" -- -max_total_time=180 -timeout=15 -max_len=4096; then
+              status=1
+              echo "::error::fuzz target $target failed"
+            fi
             echo "::endgroup::"
           done
+          exit $status
 
   # UB detection for the pure-Rust crates (core's algorithms, store's
   # default redb backend). Trial: continue-on-error until it has proven
@@ -110,7 +123,7 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup show active-toolchain
-      - run: cargo install cargo-geiger --locked
+      - run: cargo install cargo-geiger --version 0.13.0 --locked
       - run: cargo geiger > geiger-report.txt || cargo geiger --output-format text > geiger-report.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

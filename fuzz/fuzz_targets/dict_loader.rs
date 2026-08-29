@@ -18,9 +18,9 @@ fuzz_target!(|data: &[u8]| {
             assert_eq!(a.version(), b.version());
             for index in 0..a.len() {
                 assert_eq!(
-                    a.get(index).is_some(),
-                    b.get(index).is_some(),
-                    "record walk must be deterministic"
+                    a.get(index),
+                    b.get(index),
+                    "decoded records must be deterministic"
                 );
             }
         }
