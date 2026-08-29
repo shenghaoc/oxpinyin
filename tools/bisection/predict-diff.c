@@ -122,13 +122,19 @@ int main(int argc, char **argv) {
             fprintf(stderr, "测测 not offered\n");
             return 1;
         }
-        int cursor = choose(inst, 0, chosen);
-        if (cursor < 0) {
+        /* The returned cursor is deliberately unused. On the capi this
+         * candidate is an NBEST row (the whole-composition hypothesis),
+         * so the cursor is the whole parse end — the reserved tail slot,
+         * where no word candidates start by design; on the pin it is a
+         * phrase candidate and the cursor is the span end. Either way
+         * the next lookup anchors at the chosen phrase's own extent —
+         * the "cece" imported above. */
+        if (choose(inst, 0, chosen) < 0) {
             fprintf(stderr, "choose 测测 failed\n");
             return 1;
         }
         sentence(inst);
-        guess(inst, (size_t)cursor, 0x1e);
+        guess(inst, strlen("cece"), 0x1e);
         {
             guint n2 = 0;
             n_cand(inst, &n2);
@@ -147,7 +153,7 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "你好 not offered\n");
                 return 1;
             }
-            if (choose(inst, (size_t)cursor, next) < 0) {
+            if (choose(inst, strlen("cece"), next) < 0) {
                 fprintf(stderr, "choose 你好 failed\n");
                 return 1;
             }

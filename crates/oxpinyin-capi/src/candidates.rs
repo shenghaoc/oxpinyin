@@ -280,6 +280,19 @@ pub extern "C" fn pinyin_remove_user_candidate(
 /// candidate's span also covers (the ibus idiom commits exactly at
 /// `cursor == length`).
 ///
+/// An `NBEST_MATCH_CANDIDATE` row answers the whole parse end instead
+/// (`pinyin.cpp:2513-2519` returns `matrix.size() - 1` unconditionally):
+/// the reserved tail slot one past the last real matrix column —
+/// `fill_matrix` sizes the matrix to `parsed_len + 1` and no split/fuzzy
+/// step resizes it, so that is `m_parsed_len`, carried here as
+/// [`CapiInstance::parsed_len`] in the active parse mode's own
+/// coordinates — whatever span the row's own path covered. The lookup at
+/// that cursor starts no span, so the next `pinyin_guess_candidates`
+/// there offers no word candidates and the frontend re-runs
+/// `pinyin_guess_sentence` under the forcings `diff_result` wrote
+/// (`docs/findings/upstream-divergences.md`, the closed row-choose-cursor
+/// entry).
+///
 /// Resolves the candidate by pointer identity over the instance's snapshot
 /// and calls `Session::select`, which records the constraint — the selected
 /// token joins the session's sentence record. Per §2.2 the *bigram* training
@@ -359,8 +372,14 @@ pub extern "C" fn pinyin_choose_candidate(
         // are anchored at the caller offset (`m_begin = start`,
         // libpinyin@412f88e3); the post-select composition offset is that
         // same end, mapped back to the transformed seams' original
-        // coordinates through the parse's key spans.
-        let end = if let Some(parse) = inst.zhuyin_parse.as_ref() {
+        // coordinates through the parse's key spans. The sentence-row
+        // branch above answers the parse end before this mapping — a
+        // whole-composition hypothesis consumes the composition.
+        let end = if inst.candidates[index].candidate_type
+            == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+        {
+            inst.parsed_len
+        } else if let Some(parse) = inst.zhuyin_parse.as_ref() {
             crate::sentence::zhuyin_original_offset(parse, inst.session.composition_offset())
         } else if let Some(parse) = inst.double_parse.as_ref() {
             crate::sentence::double_original_offset(parse, inst.session.composition_offset())
