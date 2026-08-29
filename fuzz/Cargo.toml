@@ -16,10 +16,43 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 oxpinyin-core = { path = "../crates/oxpinyin-core" }
+# dict-loader: hostile bytes through the table decoder (audit F-3 class).
+oxpinyin-data = { path = "../crates/oxpinyin-data" }
+# capi-commands: stateful session fuzzer over the C ABI (libchewing
+# fuzzer.rs shape). Linux-only, matching the fuzz CI job — as is capi.
+oxpinyin-capi = { path = "../crates/oxpinyin-capi" }
 
 [[bin]]
 name = "parser"
 path = "fuzz_targets/parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dict-loader"
+path = "fuzz_targets/dict_loader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fixture-model"
+path = "fuzz_targets/fixture_model.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "double-pinyin"
+path = "fuzz_targets/double_pinyin.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "capi-commands"
+path = "fuzz_targets/capi_commands.rs"
 test = false
 doc = false
 bench = false
