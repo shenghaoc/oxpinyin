@@ -504,12 +504,16 @@ pin's matrix columns are the chosen parse's syllable starts (`fill_matrix`)
 **plus** the split-key boundaries `resplit_step`/`inner_split_step` append —
 `jie` in `nihaoshijie` also carries `ji` + `e`, so byte 10 answers the
 `e`-family window (`n=190` fresh, 阿 first) while bytes 3/4/6 are empty —
-**plus** a transparent zero key at every apostrophe (`ni'hao@2` answers the
+**plus** a transparent zero key at every apostrophe the parse reached
+(`ni'hao@2` answers the
 full `hao` window, `n=93`). The engine's boundary check now reuses
 `build_scan_matrix` — the matrix model the window scan itself reads — so
 the per-offset window law and the candidate construction read one model:
-an anchor a key's syllable starts on, or an apostrophe byte, keeps the
-offset-anchored scan; any other byte answers true with the raw-suffix
+an anchor a key's syllable starts on, or an apostrophe byte within the
+parsed span (`offset < graph.consumed()`), keeps the
+offset-anchored scan; any other byte — a mid-syllable position, or an
+apostrophe beyond the consumed span, where the pin's matrix ends (it
+aborts there: `ni,'hao@3`, measured SIGABRT) — answers true with the raw-suffix
 fallback under the stored n-best rows and no phrase scan. Post-sentence,
 the pin's window at an empty column is the n-best rows (`nihaoshijie@3` →
 `n=3`: 你好世界/你好时节/你好是届) — not zero rows — and the engine now
