@@ -238,28 +238,53 @@ The question that decides how much any of it matters: has a distro
 switched libpinyin from Berkeley DB to tkrzw, where these faults would
 land on a user's dictionary rather than on a command-line tool?
 
-**No, and not yet possible in a released libpinyin.** tkrzw support is
-new in **2.11.91**, the current development series (upstream HEAD
-`2.11.92`, 2026-08-19), announced as `* support tkrzw` in the top NEWS
-entry. Nothing packaged is anywhere near it — Ubuntu carries 2.8.1 in
-noble and questing and 2.10.3 in resolute and stonking.
+**Yes — Debian has, as of 2026-08-12.** `libpinyin 2.11.91-1`, in
+unstable and testing (sid, forky), sets `--with-dbm=Tkrzw` in
+`debian/rules` and Build-Depends `libtkrzw-dev`; its shipped
+`libpinyin.so.15` links `libtkrzw.so.1` and depends on
+`libtkrzw1t64 (>= 1.0.32)` — measured, not inferred. The changelog is
+explicit — "Switch from BerkeleyDB to Tkrzw" (Closes: #1119204,
+#993415) — and `debian/NEWS` warns that after "the engine switch from
+BerkeleyDB to Tkrzw ... all previous user data will be lost after the
+upgrade." Upstream only added the Tkrzw option in 2.11.91; its
+`configure.ac` still defaults to `DBM="BerkeleyDB"` and its `--with-dbm`
+help string still names only "BerkeleyDB or KyotoCabinet", so Debian is
+the first distro to select it, by its own choice rather than an upstream
+default that leaked. Debian stable is not affected — trixie and bookworm
+still carry `2.8.1-1` on Berkeley DB — but the switch is real and
+released into a rolling suite, which is exactly the event this note was
+written to get ahead of.
 
-Nor would it happen by accident. libpinyin's `configure.ac` defaults to
-`DBM="BerkeleyDB"`, and `--with-dbm`'s help string advertises only
-"BerkeleyDB or KyotoCabinet" — `Tkrzw` is handled a few lines further
-down but never mentioned. Debian's packaging then pins it explicitly
-anyway, in `debian/rules`:
+The full backend matrix, measured 2026-08-29 by the storage library each
+distro's `libpinyin.so` links (`ldd`) and corroborated against the build
+recipe:
 
-```make
-	    --with-dbm=BerkeleyDB \
-```
+| Distro | libpinyin | DBM backend | evidence |
+| --- | --- | --- | --- |
+| Debian sid / forky | `2.11.91-1` | **Tkrzw** | links `libtkrzw.so.1`; `--with-dbm=Tkrzw` |
+| Debian trixie / bookworm | `2.8.1-1` | Berkeley DB | pre-switch upload |
+| Ubuntu 26.04 LTS | `2.10.3-1` | Berkeley DB | links `libdb-5.3.so` |
+| Fedora Rawhide | `2.11.91` | Kyoto Cabinet | spec `--with-dbm=KyotoCabinet` |
+| RHEL 10 (EPEL) | `2.8.1-9.el10` | Kyoto Cabinet | links `libkyotocabinet.so.16` |
+| Arch | `2.10.3` | Kyoto Cabinet | PKGBUILD `--with-dbm=KyotoCabinet` |
+| openSUSE Tumbleweed | `2.10.3` | Kyoto Cabinet | links `libkyotocabinet.so.16` |
+| NixOS (nixpkgs) | `2.11.91` | Kyoto Cabinet | `package.nix --with-dbm=KyotoCabinet` |
 
-and the shipped `libpinyin15` depends on `libdb5.3t64`, with no tkrzw
-anywhere in its dependency chain. Arch, Fedora and openSUSE could not be
-checked from here.
+Three families, three backends: the RPM/Arch/Nix world is uniformly on
+Kyoto Cabinet, the `.deb` world was on Berkeley DB, and Debian has now
+moved its rolling suites to tkrzw. No *shipped* cell is on tkrzw **and**
+broken at once — yet. Debian's own tkrzw is healthy (the tkrzw matrix
+later in this note), so a Debian sid user gets the switch without the
+defects, losing only the old dictionary the NEWS warns about. The
+dangerous cell is empty by timing alone: **Ubuntu's tkrzw is broken on
+both defects, and Ubuntu tracks Debian.** The release that syncs
+`libpinyin 2.11.91`'s `--with-dbm=Tkrzw` onto Ubuntu's own libtkrzw puts
+defect 1 on every user dictionary — a `Remove` that stores the sentinel
+instead of deleting, silently. This is no longer "before anyone flips
+the switch": the switch is flipped upstream of Ubuntu, and only Ubuntu's
+release cadence is holding it off.
 
-Worth knowing before anyone flips that switch, because the exposure is
-not what the file layout suggests:
+The exposure is not what the file layout suggests:
 
 - **The comparator fault does not reach libpinyin**, even though two of
   its five tkrzw backends use TreeDBM. It has no `OpenAdvanced`, no
@@ -349,6 +374,15 @@ route: `src:tkrzw` is orphaned in Debian (`Maintainer: Debian QA Group
 `1.0.32-1`), so it may need an NMU or a merge request against
 `salsa.debian.org/debian/tkrzw`; and a sync reaches no released Ubuntu
 LTS, so 24.04 and 26.04 need SRUs through the Launchpad bug regardless.
+
+That sync is no longer hypothetical. Boyuan Yang — the same maintainer
+doing tkrzw's QA uploads — switched Debian's `libpinyin` to
+`--with-dbm=Tkrzw` in `2.11.91-1` (unstable, 2026-08-12). The two
+threads now meet in one archive: a libtkrzw that is healthy in Debian
+and broken in Ubuntu, and a libpinyin that has begun writing user
+dictionaries through it. Fixing the tkrzw build before Ubuntu's next
+libpinyin sync is what keeps defect 1 off those dictionaries; after the
+sync, the Launchpad bug stops being about a command-line tool.
 
 ## Upstream
 
