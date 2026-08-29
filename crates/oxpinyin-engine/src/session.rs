@@ -5227,15 +5227,35 @@ mod tests {
 
     #[test]
     fn candidates_at_a_divided_split_column_answers_the_split_window() {
+        use super::CandidateKind;
+
         // The pin's divided table splits `jie` into `ji` + `e`
         // (`special_table.h:16`, `inner_split_step` under
         // `USE_DIVIDED_TABLE`), so byte 10 of `nihaoshijie` — the `e`
         // half's start — is a live matrix column, and the pin answers the
-        // e-family window there (measured: fresh n=191, 阿 first). The
+        // e-family window there (measured: fresh n=190, 阿 first). The
         // mid-chunk bytes 3/4/6 stay empty: `hao`/`shi` are not divided
         // entries. `fangan` resplits `fan`+`gan` into `fang`+`an`
         // (`resplit_step`), making byte 4 live the same way.
-        let mut session = train_session();
+        //
+        // The plain fixture carries no `e`-key token, which would make the
+        // live column indistinguishable from an empty one through
+        // `candidates_at` (both answer the fallback alone), so this test's
+        // session adds one.
+        const SPLIT_VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n\
+                                   token=2\tkeys=hao\ttext=好\tunigram=900\n\
+                                   token=3\tkeys=e\ttext=恶\tunigram=800\n";
+        let split_session = || {
+            Session::new(
+                &EmptyConfigSource,
+                StoragePaths::new("user"),
+                FixtureDictionary::parse(SPLIT_VOCAB).expect("authored fixture"),
+                FixtureLanguageModel::parse(SPLIT_VOCAB, "").expect("authored fixture"),
+            )
+            .expect("the fixtures open")
+        };
+
+        let mut session = split_session();
         session
             .type_pinyin("nihaoshijie")
             .expect("typing cannot fail");
@@ -5250,7 +5270,26 @@ mod tests {
             );
         }
 
-        let mut session = train_session();
+        // Through the public surface: byte 10 answers the e-family window
+        // (the fixture's 恶 row), the mid-chunk offsets stay fallback-only.
+        let e_window = session.candidates_at(10).expect("byte 10 is in range");
+        assert!(
+            e_window
+                .iter()
+                .any(|cand| cand.kind() != CandidateKind::Fallback && cand.text() == "恶"),
+            "byte 10 answers the divided e window"
+        );
+        for offset in [3usize, 4, 6] {
+            let window = session.candidates_at(offset).expect("in range");
+            assert!(
+                window
+                    .iter()
+                    .all(|cand| cand.kind() == CandidateKind::Fallback),
+                "offset {offset} is an empty column — fallback only"
+            );
+        }
+
+        let mut session = split_session();
         session.type_pinyin("fangan").expect("typing cannot fail");
         assert!(
             session.spans_a_matrix_key(4).expect("byte 4 is in range"),
@@ -5259,6 +5298,13 @@ mod tests {
         assert!(
             !session.spans_a_matrix_key(5).expect("in range"),
             "byte 5 is an empty column"
+        );
+        let window = session.candidates_at(5).expect("byte 5 is in range");
+        assert!(
+            window
+                .iter()
+                .all(|cand| cand.kind() == CandidateKind::Fallback),
+            "byte 5 is an empty column — fallback only"
         );
     }
 }
