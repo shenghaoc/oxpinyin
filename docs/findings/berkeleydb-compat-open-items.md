@@ -27,30 +27,44 @@ load-bearing rather than precautionary.
   installed 2.8.1 package (it arrives later). A format detector must not
   require it.
 
-## 2. B-tree key order is `memcmp` over little-endian `u32` arrays
+## 2. B-tree key order is `memcmp` over the keys' raw bytes
 
 Neither `phrase_large_table3_bdb.cpp` nor `chewing_large_table2_bdb.cpp`
 calls `set_bt_compare`, so both use BDB's default B-tree comparator:
-byte-wise `memcmp`, then length.
+byte-wise `memcmp`, then length, over the key's raw in-memory bytes. The
+two tables key on different structs, so the byte layout differs:
 
-The keys are raw in-memory arrays — `phrase_length * sizeof(ucs4_t)` for
-the phrase table, `phrase_length * sizeof(ChewingKey)` for the chewing
-table — so the order is **lexicographic over the little-endian bytes of
-those structs**. Stated plainly because it is easy to get wrong:
+- **Phrase table — `ucs4_t[]`** (`phrase_length * sizeof(ucs4_t)`).
+  `ucs4_t` is a `guint32`, so on the little-endian targets `memcmp`
+  orders it lexicographically over low-byte-first `u32` bytes.
+- **Chewing table — `ChewingKey[]`** (`phrase_length *
+  sizeof(ChewingKey)`). `ChewingKey` is **not** a `u32`: it is
+  libpinyin's 16-bit packed bit-field struct (`chewing_key.h`). Its size
+  and byte layout are fixed by the compiler's bit-field packing and the
+  storage unit's endianness — ABI-dependent — so `memcmp` runs over those
+  raw ABI bytes.
 
-> This is **neither integer order nor big-endian byte order**. It is the
-> raw in-memory bytes of the LE `u32` key structs, compared
-> lexicographically.
+Stated plainly because it is easy to get wrong:
 
-Every element crossing a 256 boundary reorders relative to integer
-order, because the low byte is compared first.
+> This is **neither integer order nor big-endian byte order.** For the
+> phrase table it is the raw LE bytes of a `u32` array; for the chewing
+> table it is the raw ABI bytes of a 16-bit bit-field struct. Neither
+> matches integer order — a `ucs4_t` crossing a 256 boundary reorders
+> because its low byte compares first.
+
+Both orders are read from the pin's source, **not confirmed against a
+real file**, so — like the other ↯ items — they stay an open Phase 2
+confirmation task (the phase-1 survey's STOP list); nothing may depend on
+them until a real BDB confirms them.
 
 **Action for Phase 2:** the key-ordering contract tests
-(`docs/findings/store-key-ordering.md`) must be extended to assert *this
-specific order* for the BDB B-tree tables — not the store's general
-ascending-byte rule, which the other backends satisfy by construction.
-Include keys that cross 256 in both the first and a later element; a
-suite that only uses small tokens cannot tell the two orders apart.
+(`docs/findings/store-key-ordering.md`) must be extended to assert *these
+specific orders* for the BDB B-tree tables — the `u32` order for the
+phrase key and the ABI bit-field order for the chewing key — not the
+store's general ascending-byte rule, which the other backends satisfy by
+construction. Include keys that cross 256 in both the first and a later
+element; a suite that only uses small tokens cannot tell the orders
+apart.
 
 ## 3. The codec simplification is the bigram's half only
 
@@ -77,10 +91,14 @@ files the user's own libpinyin wrote through the *system* libdb.
 `bdb_parser` is a pure-Rust file parser at v0.1.1; `db185` targets DB
 1.85; the rest are application-specific.
 
-- **Target:** libdb **5.3.28**, the last BSD-licensed release, which is
-  why every distro is pinned there. `libdb5.3-dev` / `libdb5.3t64`
-  across noble, resolute and stonking; `libdb-dev` is a metapackage
-  resolving to it, and it is what libpinyin build-depends on.
+- **Target:** libdb **5.3.28**, under the **Sleepycat License** (copyleft,
+  not BSD; Oracle relicensed the 6.x line to AGPLv3), which is why every
+  distro pins to 5.3. `libdb5.3-dev` / `libdb5.3t64` across noble,
+  resolute and stonking; `libdb-dev` is a metapackage resolving to it,
+  and it is what libpinyin build-depends on. The Sleepycat License's
+  copyleft/source-availability terms and their interaction with
+  oxpinyin's GPL-3.0-or-later through the linked shim are a Phase 2
+  licensing item, not settled here.
 - **Shim surface (small — libpinyin uses no transactions, no
   environment, no secondary indices; every `open` passes `NULL` for both
   env and txn):** `db_create`, `->open`, `->close`, `->get`, `->put`,
@@ -147,5 +165,8 @@ to `datagen-model20.md`:
 > permitted precisely because nothing in the build or test pipeline
 > depends on it.
 
-**Not resolved in code, and Phase 2 is blocked on it.** Everything else
-above is settled and needs no decision.
+**Not resolved in code, and Phase 2 is blocked on it** — the one item
+awaiting a maintainer *decision*. Everything else above needs no
+decision, but the ↯ items still carry their Phase 2 *confirmation* tasks
+(notably §2's B-tree order against a real BDB, and the §4 licensing
+review); those are work, not open questions for the maintainer.

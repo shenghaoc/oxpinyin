@@ -29,8 +29,9 @@ copy.
 **Version to target: libdb 5.3.** Confirmed across the Ubuntu series
 (`libdb5.3-dev` and `libdb5.3t64` in noble, resolute and stonking;
 `libdb-dev` is a metapackage resolving to it), and it is what libpinyin
-build-depends on. 5.3.28 is the last BSD-licensed release, which is why
-every distro is pinned there. Debian's is the same source Ubuntu syncs.
+build-depends on. 5.3.28 is under the **Sleepycat License** (a copyleft
+license, not BSD); Oracle relicensed the 6.x line to AGPLv3, which is why
+every distro pins to 5.3. Debian's is the same source Ubuntu syncs.
 Fedora and openSUSE could not be checked — their metadata is unreachable
 from this environment.
 
@@ -109,13 +110,27 @@ No ordering requirement on the *key*: every access is a point
   `size = phrase_length * sizeof(ChewingKey)`; value = the entry chunk.
 
 **↯ Neither calls `set_bt_compare`**, so both use BDB's default B-tree
-comparator. That is a byte-wise `memcmp`-then-length comparison — so the
-key order is **lexicographic over little-endian `u32` arrays**, which is
-neither integer order nor big-endian byte order. Every element crossing a
-256 boundary reorders relative to integer order. This is exactly the
-blind spot the brief flags for the ordering tests, and it must be
-confirmed experimentally against a real file before anything depends on
-it.
+comparator: a byte-wise `memcmp`, then length, over the key's raw
+in-memory bytes. The two tables key on different structs, so the byte
+layout — and therefore the order — differs:
+
+- **Phrase table — `ucs4_t[]`.** `ucs4_t` is a `guint32`, so the key is a
+  `u32` array; on the little-endian targets, `memcmp` orders it
+  lexicographically over low-byte-first `u32` bytes — neither integer
+  order nor big-endian order. A code point crossing a 256 boundary
+  reorders relative to integer order because its low byte compares first.
+- **Chewing table — `ChewingKey[]`.** `ChewingKey` is **not** a `u32`: it
+  is libpinyin's 16-bit packed bit-field struct (`chewing_key.h` —
+  `m_initial` / `m_middle` / `m_final` / …). Its `sizeof` and its
+  in-memory byte layout are fixed by the compiler's bit-field packing and
+  the storage unit's endianness — ABI-dependent — so the `memcmp` runs
+  over those raw ABI bytes, which match no simple integer order of the
+  phonetic fields.
+
+Both orders are read from the pin's source, not from a real file; each is
+the blind spot the brief flags for the ordering tests, and **must be
+confirmed experimentally against a real BDB before anything depends on
+it** (still an open Phase 2 ↯ item, below).
 
 ## (d) Codec simplification — ↯ partly, not wholesale
 
@@ -185,8 +200,10 @@ and it is the one this survey recommends. Proposed clarification to add to
    detection is blocked on it.
 2. **Confirmation of the four ↯ items**, since each changes Phase 2's
    shape: the system dir is under `$(libdir)`, the system bigram is
-   itself BDB, the B-tree order is `memcmp` over little-endian `u32`
-   arrays, and big-endian stays in `codec.rs` for the pronunciation key.
+   itself BDB, the B-tree order is `memcmp` over the keys' raw bytes (LE
+   `u32` for the `ucs4_t` phrase key, an ABI-dependent bit-field layout
+   for the `ChewingKey` chewing key), and big-endian stays in `codec.rs`
+   for the pronunciation key.
 
 Not blocking, but worth deciding with them: `bigram.db` is 25.9 MB of
 system data in a format we would then read through the shim on the
