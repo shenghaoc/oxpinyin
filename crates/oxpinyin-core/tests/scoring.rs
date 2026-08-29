@@ -202,7 +202,7 @@ fn a_failing_backend_is_reported_not_swallowed() {
     struct Broken;
 
     impl Dictionary for Broken {
-        type Entry = crate::PhraseEntry;
+        type Entry = PhraseEntry;
         type Error = &'static str;
         type Syllable = SyllableKey;
 

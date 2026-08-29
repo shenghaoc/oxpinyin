@@ -215,6 +215,25 @@ fn one_phrase_holds_several_readings_and_counts_accumulate_per_reading() {
 }
 
 #[test]
+fn the_same_reading_on_different_texts_yields_distinct_tokens() {
+    // Upstream: 測試 and 側室 share identical bopomofo and coexist as
+    // independent user phrases. oxpinyin allocates one token per phrase
+    // text, so equal key sequences on two texts stay separate entries.
+    let mut store = UserStore::create_standalone(&temp_path("phrase-same-keys")).unwrap();
+    let reading = keys("ce,shi");
+    let a = store.add_phrase("测试", &reading, None).unwrap();
+    let b = store.add_phrase("策士", &reading, None).unwrap();
+    assert_ne!(a, b, "distinct texts allocate distinct tokens");
+
+    let phrase_a = store.phrase(a).unwrap().expect("stored");
+    let phrase_b = store.phrase(b).unwrap().expect("stored");
+    assert_eq!(phrase_a.text(), "测试");
+    assert_eq!(phrase_b.text(), "策士");
+    assert_eq!(phrase_a.pronunciations().len(), 1);
+    assert_eq!(phrase_b.pronunciations().len(), 1);
+}
+
+#[test]
 fn adding_an_existing_phrase_returns_the_same_token() {
     // Upstream chewing has no token exposure; the oxpinyin seam guarantees
     // one token per phrase text, so a re-add is an update, not a duplicate.
