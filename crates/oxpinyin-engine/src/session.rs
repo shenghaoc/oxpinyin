@@ -830,11 +830,12 @@ where
     /// store survive (whether they should is the caller's
     /// [`Session::parse_continues`] decision); the cursor is clamped into
     /// the new buffer and the candidates refresh, so the session is never
-    /// observable with a cursor past its input. A clamp that cuts the
-    /// buffer below the selection drops the overrun forcings with the
-    /// record following the survivors
-    /// ([`Session::reconcile_clamped_selection`]), so [`Session::commit`]
-    /// answers only text valid for the current input.
+    /// observable with a cursor past its input. A replacement that does
+    /// not extend the covered selection span — a clamp below it, or a
+    /// byte divergence inside it — reconciles the store and record
+    /// ([`Session::reconcile_replaced_selection`]), so
+    /// [`Session::commit`] answers only text valid for the current
+    /// input.
     ///
     /// Keeps every character: the pin's parser accepts any input string
     /// and simply stops consuming at the first byte no key matches
@@ -856,9 +857,11 @@ where
     /// a backend failure.
     pub fn replace_raw(&mut self, text: &str) -> Result<(), EngineError> {
         self.exact_segments.clear();
-        let cursor_before = self.consumed;
+        let continuous = self.replacement_extends_selection(text);
         self.refill_raw(text);
-        self.reconcile_clamped_selection(cursor_before)?;
+        if !continuous {
+            self.reconcile_replaced_selection()?;
+        }
         self.refresh()
     }
 
@@ -873,8 +876,9 @@ where
     /// `text` (the [`MAX_INPUT_BYTES`] clamp) are dropped, keeping
     /// `end <= raw.len()` an invariant of the stored segments.
     ///
-    /// The selection record and the constraint store survive, as in
-    /// [`Session::replace_raw`].
+    /// The selection record and the constraint store survive while the
+    /// replacement extends the covered span, and a discontinuous one
+    /// reconciles, exactly as in [`Session::replace_raw`].
     ///
     /// # Errors
     ///
@@ -885,43 +889,63 @@ where
         text: &str,
         segments: &[ExactSegment],
     ) -> Result<(), EngineError> {
-        let cursor_before = self.consumed;
+        let continuous = self.replacement_extends_selection(text);
         self.refill_raw(text);
-        self.reconcile_clamped_selection(cursor_before)?;
         let raw_len = self.raw.len();
         self.exact_segments = segments
             .iter()
             .copied()
             .filter(|segment| segment.end() <= raw_len)
             .collect();
+        if !continuous {
+            self.reconcile_replaced_selection()?;
+        }
         self.refresh()
     }
 
-    /// Reconciles the selection to a replaced buffer that clamped the
-    /// cursor backward. A backward clamp only happens on a continuing
-    /// re-parse, whose buffer is a prefix of the stored one — so a
-    /// forcing overrunning the new end can no longer spell (its bytes
-    /// are gone), and the bounds-only probe below loses nothing to the
-    /// full spell check the next guess runs. Dropping at the clamp
-    /// instead of lazily at the next guess keeps [`Session::commit`]
-    /// from answering selection text whose span reached past the current
-    /// input.
-    ///
-    /// The rebuild runs on EVERY backward clamp, drops or not: the
-    /// record's coverage is the cursor, and a clamped cursor means that
-    /// coverage exceeds the new input even when the store kept all its
-    /// runs — a row-0 n-best choose writes the whole row's text and
-    /// span-end cursor while `diff_result` writes no forcing at all, so
-    /// there is nothing to drop and the record is stale regardless.
-    /// `rebuild_selection_from_constraints` re-derives the record from
-    /// the surviving runs (clearing it when none survive), and a dropped
-    /// tail re-opens the composition at the survivor end.
-    fn reconcile_clamped_selection(&mut self, cursor_before: usize) -> Result<(), EngineError> {
-        if self.consumed >= cursor_before {
+    /// Whether `text` extends the bytes the selection record was built
+    /// over (`raw[..consumed]`) — the continuity retaining the record
+    /// requires. The parse seams' own prefix checks run in the caller's
+    /// coordinates (the scheme parses' original input), while the record
+    /// lives in these canonical bytes: a replacement that passes those
+    /// checks but does not extend the covered span — a scheme switch
+    /// that decodes the same codes to a different spelling, any
+    /// transform divergence — must reconcile, or [`Session::commit`]
+    /// combines the stale selection with the new raw suffix.
+    fn replacement_extends_selection(&self, text: &str) -> bool {
+        text.as_bytes()
+            .starts_with(&self.raw.as_bytes()[..self.consumed])
+    }
+
+    /// Reconciles the selection to a replacement it does not extend:
+    /// the full validate the next guess would run — bounds and spelling
+    /// over the new input's matrix, so a forcing that no longer spells
+    /// under the divergent replacement drops here instead of surviving
+    /// under a stale record — then the record re-derived from the
+    /// surviving runs, whatever the validate dropped. A backward clamp
+    /// is the runs-empty extreme: the whole record goes and the
+    /// composition re-opens at 0. The empty-record parse path pays only
+    /// the continuity check.
+    fn reconcile_replaced_selection(&mut self) -> Result<(), EngineError> {
+        if self.consumed == 0 {
             return Ok(());
         }
-        self.constraints
-            .validate(self.raw.len() + 1, |_, _, _| Ok(true))?;
+        let graph = self.build_graph_at(0, self.raw.as_bytes())?;
+        let bound = graph.consumed();
+        if bound > 0 {
+            let matrix = build_scan_matrix(
+                &graph,
+                self.settings.options,
+                self.exact_segments.is_empty(),
+            );
+            self.constraints.validate(bound + 1, |start, end, token| {
+                crate::nbest::span_finds_token(&matrix, start, end, token, &self.dictionary)
+            })?;
+        } else {
+            // Nothing spells over the replaced buffer: every forcing is
+            // dead and the record with it.
+            self.constraints.clear();
+        }
         self.rebuild_selection_from_constraints();
         Ok(())
     }
@@ -1450,6 +1474,15 @@ where
         crate::cursor::matrix_keys(self.raw.as_bytes(), self.settings.options)
     }
 
+    /// Whether a selection consumed the whole buffer and no rebuild has
+    /// since changed the record — the commit-branch shape the R5 revert
+    /// keeps composing through ([`Session::committed_parse_continues`]).
+    /// A pure query over valid state.
+    #[must_use]
+    pub const fn selection_committed(&self) -> bool {
+        self.selection_committed
+    }
+
     /// Whether a re-parse of `original` continues the current composition
     /// (`CapiInstance::begin_parse`'s rule): the composition is open —
     /// not completed by a selection — and the buffer evolved from
@@ -1466,15 +1499,6 @@ where
     /// cursor must not mis-anchor its window before validate could drop
     /// the mismatched forcings.
     ///
-    /// Whether a selection consumed the whole buffer and no rebuild has
-    /// since changed the record — the commit-branch shape the R5 revert
-    /// keeps composing through ([`Session::committed_parse_continues`]).
-    /// A pure query over valid state.
-    #[must_use]
-    pub const fn selection_committed(&self) -> bool {
-        self.selection_committed
-    }
-
     /// A pure query, not a fallible operation — it reads already-valid
     /// state and cannot fail, so the constitution's `Result` rule for
     /// fallible public APIs does not reach it. The state-changing halves
@@ -4659,6 +4683,60 @@ mod tests {
             outcome,
             KeyOutcome::Commit("ni".to_owned()),
             "the commit answers the current input, never the stale row text"
+        );
+    }
+
+    /// Review regression: the reconcile must fire on canonical
+    /// divergence, not only on a backward clamp. A committed selection
+    /// covers `raw[..consumed]`; a replacement that does not extend
+    /// those bytes — here the same-length "mihao" over "nihao" — leaves
+    /// the cursor unclamped but the selection stale, and the forcing no
+    /// longer spells over the new bytes. The spell-probe validate drops
+    /// it at the replacement and the record follows; Enter commits the
+    /// current input, never the stale \u{4f60}\u{597d}. (Through the
+    /// transformed seams this is the shape a scheme-coordinate
+    /// continuation passing while the canonical spelling diverges — a
+    /// live scheme switch — produces.)
+    #[test]
+    fn a_divergent_replacement_reconciles_the_committed_selection() {
+        let mut session = trellis_session();
+        for character in "nihao".chars() {
+            session
+                .process_key(&KeyInput::character(character))
+                .expect("typing cannot fail");
+        }
+        for token in [1_u32, 2] {
+            let index = session
+                .candidates()
+                .iter()
+                .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
+                .expect("the fixture candidate is offered");
+            session.select(index).expect("selection cannot fail");
+        }
+        assert!(session.selection_committed());
+
+        // Same length, divergent inside the covered span: no clamp, so
+        // only the continuity check can reach the reconcile. The 你 run
+        // no longer spells over "mi" (the spell probe drops it) and the
+        // 好 run overruns the spellable bound (the bounds drop).
+        session.replace_raw("mixxo").expect("replace cannot fail");
+        assert!(
+            session.selected_tokens().is_empty(),
+            "the diverged selection reconciled away"
+        );
+        assert_eq!(
+            session.composition_offset(),
+            0,
+            "the composition re-opened at 0"
+        );
+
+        let outcome = session
+            .process_key(&KeyInput::plain(LogicalKey::Enter))
+            .expect("enter on a composing session cannot fail");
+        assert_eq!(
+            outcome,
+            KeyOutcome::Commit("mixxo".to_owned()),
+            "the commit answers the current input, never the stale selection"
         );
     }
 
