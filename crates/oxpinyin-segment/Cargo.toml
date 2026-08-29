@@ -11,13 +11,26 @@ description = "Training-only Han segmenter reproducing libpinyin ngseg. Never sh
 [lints]
 workspace = true
 
+[features]
+# Backend selection, forwarded to oxpinyin-data (one backend per binary;
+# see oxpinyin-store's [features] for the model and precedence). The
+# segmenter and the training tools built on it name export tables
+# (`phrase_index.<ext>` & co.) in the compiled-in backend's format, so a
+# standalone `cargo run -p oxpinyin-segment` must select the same backend
+# the export was produced with — redb by default, tkrzw/LMDB behind their
+# features.
+default = ["redb"]
+kyotocabinet = ["oxpinyin-data/kyotocabinet"]
+tkrzw = ["oxpinyin-data/tkrzw"]
+lmdb = ["oxpinyin-data/lmdb"]
+redb = ["oxpinyin-data/redb"]
+
 [[bin]]
 name = "oxpinyin-segment"
 path = "src/bin/oxpinyin-segment.rs"
 
 [dependencies]
 # default-features = false so workspace `--no-default-features` builds are
-# not re-defaulted through this edge. This training-only tool selects no
-# backend itself; in a workspace build, feature unification supplies
-# whichever backend the build enabled (redb otherwise).
+# not re-defaulted through this edge; the [features] block above forwards
+# the backend selection instead.
 oxpinyin-data = { path = "../oxpinyin-data", default-features = false }

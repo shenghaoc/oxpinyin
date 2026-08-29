@@ -6,6 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
+use oxpinyin_data::default_store_file;
+
 use crate::error::SegmentError;
 use crate::model::parse_table_conf_lambda;
 
@@ -22,8 +24,11 @@ pub const EXPORT_DIR_ENV: &str = "PINYIN_EXPORT_DIR";
 /// Default export directory used by the oracle integration tests.
 pub const DEFAULT_EXPORT_DIR: &str = "/tmp/oxpinyin-export";
 
-/// Files the segmenter needs from the export directory.
-pub const EXPORT_FILES: &[&str] = &["phrase_index.redb", "bigram.redb"];
+/// Table stems the segmenter needs from the export directory; the
+/// on-disk names carry the compiled-in backend's extension
+/// (`default_store_file` — `phrase_index.redb` under the redb default,
+/// `phrase_index.tkt`/`phrase_index.lmdb` behind their features).
+pub const EXPORT_STEMS: &[&str] = &["phrase_index", "bigram"];
 
 /// Files the segmenter needs from the fetched model20 cache.
 pub const MODEL_FILES: &[&str] = &["interpolation2.text"];
@@ -31,9 +36,11 @@ pub const MODEL_FILES: &[&str] = &["interpolation2.text"];
 /// Locations of the three tables `Segmenter::open` reads.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SegmenterPaths {
-    /// `phrase_index.redb` from the export directory.
+    /// The `phrase_index` table, in the compiled-in backend's format,
+    /// from the export directory.
     pub phrase_index: PathBuf,
-    /// `bigram.redb` from the export directory.
+    /// The `bigram` table, in the compiled-in backend's format, from the
+    /// export directory.
     pub bigram: PathBuf,
     /// `interpolation2.text` from the fetched model20 cache.
     pub interpolation2: PathBuf,
@@ -66,26 +73,27 @@ impl SegmenterPaths {
     #[must_use]
     pub fn from_dirs(export: &Path, model: &Path) -> Self {
         Self {
-            phrase_index: export.join("phrase_index.redb"),
-            bigram: export.join("bigram.redb"),
+            phrase_index: export.join(default_store_file("phrase_index")),
+            bigram: export.join(default_store_file("bigram")),
             interpolation2: model.join("interpolation2.text"),
         }
     }
 }
 
 /// Locates a complete system-table export directory
-/// (`oxpinyin-datagen compile` output, or the historical export).
+/// (`oxpinyin-datagen compile` output, or the historical export) holding
+/// the tables in the compiled-in backend's format.
 #[must_use]
 pub fn locate_export_dir() -> Option<PathBuf> {
     if let Some(raw) = std::env::var_os(EXPORT_DIR_ENV) {
         let path = PathBuf::from(raw);
-        if dir_has(&path, EXPORT_FILES) {
+        if dir_has_tables(&path, EXPORT_STEMS) {
             return Some(path);
         }
         return None;
     }
     let default = PathBuf::from(DEFAULT_EXPORT_DIR);
-    dir_has(&default, EXPORT_FILES).then_some(default)
+    dir_has_tables(&default, EXPORT_STEMS).then_some(default)
 }
 
 /// Locates a complete extracted model20 directory.
@@ -123,6 +131,15 @@ pub fn load_lambda(path: Option<&Path>) -> Option<f32> {
 
 fn dir_has(dir: &Path, names: &[&str]) -> bool {
     dir.is_dir() && names.iter().all(|name| dir.join(name).is_file())
+}
+
+/// `dir_has` over table stems: the checked name of each stem is its
+/// compiled-in-backend form (`phrase_index.kct`, `phrase_index.redb`, …).
+fn dir_has_tables(dir: &Path, stems: &[&str]) -> bool {
+    dir.is_dir()
+        && stems
+            .iter()
+            .all(|stem| dir.join(default_store_file(stem)).is_file())
 }
 
 fn workspace_root() -> Option<PathBuf> {

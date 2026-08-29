@@ -147,7 +147,10 @@ def test_train_and_save_persist_user_state(tmp_path, fixture_w3):
     engine.train()
     assert engine.save() is True  # dirty → saved
     assert engine.save() is False  # now clean again
-    assert (user_dir / "user_store.redb").is_file()
+    # The store file's extension names the compiled-in backend (.kct by
+    # default, .redb under --no-default-features, …); assert a store file
+    # exists without pinning which one.
+    assert any(user_dir.glob("user_store.*"))
 
     # a second engine over the same user state loads it cleanly
     reloaded = Engine.from_fixture_dir(str(fixture_w3), str(user_dir))

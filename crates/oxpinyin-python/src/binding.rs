@@ -96,7 +96,7 @@ fn lock_error() -> PyErr {
 ///
 /// Create with a system data directory holding the ``pinyin_index``,
 /// ``phrase_index`` and ``bigram`` tables in the compiled-in backend's
-/// format (``.kct`` by default); pass ``user_dir`` to enable
+/// format (``.redb`` by default); pass ``user_dir`` to enable
 /// learning. Usable as a :pykeyword:`with` block, though nothing needs
 /// releasing — see :meth:`close`.
 ///
@@ -162,7 +162,8 @@ impl Engine {
     ///
     /// Requires `interpolation2.text` next to the tables (the real-unigram
     /// model the pinned ranking uses); `user_dir`, when given, holds
-    /// ``user_store.redb`` and enables learning.
+    /// ``user_store.<ext>`` (the compiled-in backend's format) and
+    /// enables learning.
     #[new]
     #[pyo3(signature = (system_dir, user_dir=None))]
     fn new(system_dir: PathBuf, user_dir: Option<PathBuf>) -> PyResult<Self> {

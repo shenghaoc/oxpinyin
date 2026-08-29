@@ -80,17 +80,24 @@ if [[ ! -f "$ORACLE_DATA/bigram.db" ]]; then
     exit 0
 fi
 
-# LIVETYPING_SYSTEM first, then OXPINYIN_SYSTEM_DIR -- the one name that
-# works across every differential, so a whole sweep needs one export
-# rather than a different variable per runner (see system-dir.sh).
-CAPI_SYSTEM="${LIVETYPING_SYSTEM:-${OXPINYIN_SYSTEM_DIR:-}}"
+CAPI_SYSTEM="${LIVETYPING_SYSTEM:-}"
 # The tables' extension names the backend the capi was compiled with
-# (.redb default; .tkt/.lmdb behind their features); accept any
-# provisioned form.
-has_table() { [ -f "$CAPI_SYSTEM/$1.redb" ] || [ -f "$CAPI_SYSTEM/$1.tkt" ] || [ -f "$CAPI_SYSTEM/$1.lmdb" ]; }
-if [[ -z "$CAPI_SYSTEM" ]] || ! [[ -f "$CAPI_SYSTEM/interpolation2.text" ]] || ! has_table pinyin_index || ! has_table phrase_index || ! has_table bigram; then
+# (.redb default; .tkt/.lmdb behind their features). All three tables
+# must share ONE extension: the engine opens every table through the
+# single compiled-in backend, so a dir mixing extensions is
+# half-assembled for each backend and would fail mid-run instead of
+# skipping cleanly here.
+has_all_tables() {
+    local ext=$1 t
+    for t in pinyin_index phrase_index bigram; do
+        [[ -f "$CAPI_SYSTEM/$t.$ext" ]] || return 1
+    done
+}
+if [[ -z "$CAPI_SYSTEM" ]] || ! [[ -f "$CAPI_SYSTEM/interpolation2.text" ]] \
+    || ! { has_all_tables redb || has_all_tables tkt || has_all_tables lmdb; }; then
     echo "SKIP: LIVETYPING_SYSTEM must name a real-unigram system dir"
-    echo "  (pinyin_index.{redb|tkt|lmdb}, phrase_index.…, bigram.…, interpolation2.text)"
+    echo "  (pinyin_index, phrase_index and bigram all .redb, all .tkt, or"
+    echo "  all .lmdb, plus interpolation2.text)"
     exit 0
 fi
 # The four-file presence check catches half-assembled dirs; it does NOT bind

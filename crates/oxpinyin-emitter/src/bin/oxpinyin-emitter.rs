@@ -3,7 +3,8 @@
 //! Usage: oxpinyin-emitter [--skip-pi-gram-training] [-o outputfile] [inputfile]
 //!
 //! Reads the ngseg segmented-token stream (T1's output), counts it with
-//! T2's counter (freq-1 floor from `phrase_index.redb`), and writes
+//! T2's counter (freq-1 floor from the `phrase_index` table in the
+//! compiled-in backend's format), and writes
 //! `interpolation2.text` in the grammar `parse_interpolation2` reads.
 
 #![forbid(unsafe_code)]

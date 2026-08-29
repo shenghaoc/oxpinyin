@@ -31,8 +31,10 @@ maturin develop            # inside an activated venv, or:
 pip install .              # builds a wheel through PEP 517 + maturin
 ```
 
-The engine needs converted system data: `pinyin_index.redb`,
-`phrase_index.redb` and `bigram.redb`. The repository's committed mini
+The engine needs converted system data: `pinyin_index`, `phrase_index`
+and `bigram` tables in the compiled-in backend's format — `.redb` by
+default (the portability fallback), `.tkt` with the `tkrzw` feature,
+`.lmdb` with `lmdb`. The repository's committed mini
 fixture (`fixtures/w3`) works through `Engine.from_fixture_dir`; production
 model directories additionally carry `interpolation2.text` (the real-unigram
 model) and are opened with `Engine(system_dir)`. No libpinyin install is
