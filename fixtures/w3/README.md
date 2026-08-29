@@ -6,14 +6,16 @@ Three families, all deterministic against the pinned oracle
 - **Content `.bin` files** (art … technology) — truncated copies of the
   oracle's custom-content tables, regenerated with
   `python3 tools/generate_w3_fixtures.py`.
-- **Alternate-backend tables** — the tkrzw (`.tkt`) and LMDB (`.lmdb`)
-  sets: same recipe as the redb set —
-  `oxpinyin-datagen compile --mini --backend tkrzw|lmdb` — row-identical
-  to it through the store API (the writer verifies every row on
-  read-back), so the multi-backend test gate is self-contained
-  everywhere, including CI, which must never fetch model20. (The Kyoto
-  Cabinet `.kct` set joins in the stacked PR that adds that backend.)
-  All bytes pinned by `fixtures.sha256`.
+- **Kyoto Cabinet tables (`.kct`)** — the default backend's committed set:
+  `pinyin_index.kct`, `phrase_index.kct`, `bigram.kct`, `punct.kct`,
+  `addon_4_pinyin_index.kct`, `addon_4_phrase_index.kct`. Produced by the
+  same recipe as the redb set —
+  `oxpinyin-datagen compile --mini --backend kyotocabinet` — and
+  row-identical to it through the store API (the writer verifies every row
+  on read-back). The tkrzw (`.tkt`) and LMDB (`.lmdb`) sets are committed
+  too — same command, `--backend tkrzw|lmdb` — so the four-backend test
+  gate is self-contained everywhere, including CI, which must never fetch
+  model20. All bytes pinned by `fixtures.sha256`.
 - **redb tables** (the pure-Rust portability backend,
   `--no-default-features`) — `pinyin_index.redb`, `phrase_index.redb`,
   `bigram.redb`, `punct.redb`, and the `addon_*.redb` files are **frozen**
