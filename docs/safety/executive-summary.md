@@ -179,8 +179,8 @@ checklist items already documented at each site.
 ## R. MSRV/toolchain impact
 
 None. Every adopted tool is stable-binary or already wired (pinned
-nightly fuzz job unchanged); Kani/Miri live in scheduled lanes with their
-own toolchains; `rust-version = "1.97.1"` and `rust-toolchain.toml`
+nightly fuzz job unchanged); Miri lives in a scheduled lane with its own
+toolchain; `rust-version = "1.97.1"` and `rust-toolchain.toml`
 untouched.
 
 ## S. Estimated CI cost by tier
