@@ -1422,17 +1422,17 @@ where
     /// next guess, so an open composition's extension, shrink, or
     /// re-send continues it — the cursor may sit mid-buffer, or the
     /// buffer may have shrunk TO the cursor (a backspace that ate the
-    /// tail — still open). Two shapes start fresh: a selection-consumed
-    /// composition (the frontend's reset-between-compositions contract,
-    /// which the #141 cursor flows' pinned tests require) and a
-    /// divergent buffer — a different string is a different composition,
-    /// and a stale selection-derived cursor must not mis-anchor its
-    /// window before validate could drop the mismatched forcings.
+    /// tail — still open). A selection-consumed composition continues
+    /// through [`Session::committed_parse_continues`] (the R5 revert,
+    /// register #8); only a divergent buffer starts fresh — a different
+    /// string is a different composition, and a stale selection-derived
+    /// cursor must not mis-anchor its window before validate could drop
+    /// the mismatched forcings.
     ///
     /// Whether a selection consumed the whole buffer and no rebuild has
-    /// since changed the record — the commit-branch shape that makes the
-    /// next re-parse start fresh (`parse_continues`'s other half). A
-    /// pure query over valid state.
+    /// since changed the record — the commit-branch shape the R5 revert
+    /// keeps composing through ([`Session::committed_parse_continues`]).
+    /// A pure query over valid state.
     #[must_use]
     pub const fn selection_committed(&self) -> bool {
         self.selection_committed
@@ -1446,6 +1446,32 @@ where
     #[must_use]
     pub fn parse_continues(&self, stored: &[u8], original: &[u8]) -> bool {
         !self.selection_committed
+            && !stored.is_empty()
+            && (original.starts_with(stored) || stored.starts_with(original))
+    }
+
+    /// The R5 half of the parse rule (register #8): a SELECTION-committed
+    /// composition whose buffer evolved from the stored one still
+    /// continues — the constraint store and the selection record survive
+    /// into the next guess, where validate drops whatever stops spelling.
+    /// Upstream's parse path never touches `m_constraints`
+    /// (`pinyin.cpp:1497-1517`) and only `pinyin_reset` clears the store
+    /// (`pinyin.cpp:2693-2704`), so a commit no longer ends the
+    /// composition engine-side: the pre-revert rule re-parsed this shape
+    /// fresh — an emulation of the frontend's reset-on-commit contract
+    /// the #141 cursor flows pinned — which dropped forcings upstream
+    /// keeps. The divergence boundary that stays: a DIVERGENT buffer
+    /// answers `false` here and in [`Session::parse_continues`], so it
+    /// alone re-parses fresh.
+    ///
+    /// A pure query, not a fallible operation — it reads already-valid
+    /// state and cannot fail, so the constitution's `Result` rule for
+    /// fallible public APIs does not reach it. The state-changing halves
+    /// of the parse pipeline are the fallible [`Session::replace_raw`]
+    /// and the infallible [`Session::reset_composition`]/[`reset`].
+    #[must_use]
+    pub fn committed_parse_continues(&self, stored: &[u8], original: &[u8]) -> bool {
+        self.selection_committed
             && !stored.is_empty()
             && (original.starts_with(stored) || stored.starts_with(original))
     }

@@ -87,6 +87,7 @@ typedef bool (*fn_getnbest)(pinyin_instance_t *, lookup_candidate_t *, guint8 *)
 typedef bool (*fn_get_sentence)(pinyin_instance_t *, guint8, gchar **);
 typedef int (*fn_choose)(pinyin_instance_t *, size_t, lookup_candidate_t *);
 typedef bool (*fn_train)(pinyin_instance_t *, uint8_t);
+typedef bool (*fn_clear_constraint)(pinyin_instance_t *, size_t);
 typedef bool (*fn_reset)(pinyin_instance_t *);
 typedef bool (*fn_set_options)(pinyin_context_t *, guint);
 typedef export_iterator_t *(*fn_begin_phrases)(pinyin_context_t *, guint);
@@ -114,6 +115,7 @@ struct syms {
     fn_get_sentence get_sentence;
     fn_choose choose;
     fn_train train;
+    fn_clear_constraint clear_constraint;
     fn_reset reset;
     fn_set_options set_options;
     fn_begin_phrases begin_phrases;
@@ -151,6 +153,8 @@ static void resolve_all(void *handle, struct syms *s) {
     s->get_sentence = (fn_get_sentence)load("pinyin_get_sentence", handle);
     s->choose = (fn_choose)load("pinyin_choose_candidate", handle);
     s->train = (fn_train)load("pinyin_train", handle);
+    s->clear_constraint =
+        (fn_clear_constraint)load("pinyin_clear_constraint", handle);
     s->reset = (fn_reset)load("pinyin_reset", handle);
     s->set_options = (fn_set_options)load("pinyin_set_options", handle);
     s->begin_phrases = (fn_begin_phrases)load("pinyin_begin_get_phrases", handle);
@@ -248,6 +252,35 @@ static lookup_candidate_t *find_by_text(const struct syms *s,
     for (guint i = 0; i < count; i++) {
         lookup_candidate_t *cand = NULL;
         if (!s->getc(inst, i, &cand) || !cand)
+            continue;
+        const gchar *text = NULL;
+        s->getstr(inst, cand, &text);
+        if (text && strcmp(text, want) == 0)
+            return cand;
+    }
+    return NULL;
+}
+
+/* find_by_text, skipping NBEST rows: a row-0 choose constrains nothing
+ * on either side (upstream's diff_result writes only the phrases where
+ * the row differs from the 1-best), so a phase that needs a LIVE
+ * forcing must select the phrase candidate, never the row mirror. */
+static lookup_candidate_t *find_phrase_by_text(const struct syms *s,
+                                               pinyin_instance_t *inst,
+                                               const char *want) {
+    guint count = 0;
+    if (!s->getn(inst, &count)) {
+        fprintf(stderr, "find_phrase_by_text: pinyin_get_n_candidate failed\n");
+        return NULL;
+    }
+    for (guint i = 0; i < count; i++) {
+        lookup_candidate_t *cand = NULL;
+        if (!s->getc(inst, i, &cand) || !cand)
+            continue;
+        int type = 0;
+        if (!s->gettype(inst, cand, &type))
+            continue;
+        if (type == 1) /* NBEST */
             continue;
         const gchar *text = NULL;
         s->getstr(inst, cand, &text);
@@ -616,6 +649,64 @@ int main(int argc, char **argv) {
         }
         if (!s.reset(inst)) {
             fprintf(stderr, "backspace: reset failed\n");
+            goto fail_inst;
+        }
+    }
+
+    /* Phase CR — committed re-parse (register #8, the R5 revert). Choose
+     * the whole input's PHRASE (你好 for "nihao": the commit branch),
+     * then WITHOUT an intervening pinyin_reset re-parse an extension of
+     * the buffer and ask the store directly. Upstream's constraint store
+     * survives every re-parse and only pinyin_reset clears it
+     * (pinyin.cpp:1497-1517, 2693-2704), so the committed composition's
+     * forcing is still live in the new buffer: the first
+     * pinyin_clear_constraint answers 1 on both sides and the second
+     * confirms the run is gone. Under the pre-revert rule the engine
+     * re-parsed this shape fresh (the #141-era frontend contract
+     * emulation) and answered 0 — the probe that flips to IDENTICAL
+     * with the revert. The compared surfaces are the parse return and
+     * the two clear returns; the candidate window at an offset behind
+     * the surviving cursor is the capi's composition-anchored seam, not
+     * an R5 surface. No training: the phase leaves the user store
+     * untouched. */
+    {
+        if (parse_expect(&s, inst, "nihao", 5)) {
+            fprintf(stderr, "committed-reparse: pre-choose parse failed\n");
+            goto fail_inst;
+        }
+        /* No pinyin_guess_sentence here: it seeds the n-best rows, the
+         * W14 dedup then drops the same-text phrase candidate, and a
+         * row-0 choose constrains nothing on either side — the forcing
+         * this phase probes would never exist. The plain guess offers
+         * the \xe4\xbd\xa0\xe5\xa5\xbd PHRASE on both sides. */
+        if (!s.guess(inst, 0, DEFAULT_SORT)) {
+            fprintf(stderr, "committed-reparse: pre-choose decode failed\n");
+            goto fail_inst;
+        }
+        lookup_candidate_t *cr_full =
+            find_phrase_by_text(&s, inst,
+                                "\xe4\xbd\xa0\xe5\xa5\xbd" /* 你好 */);
+        if (!cr_full) {
+            fprintf(stderr,
+                    "committed-reparse: phrase candidate 你好 not offered\n");
+            goto fail_inst;
+        }
+        int cr_cursor = s.choose(inst, 0, cr_full);
+        if (cr_cursor < 0) {
+            fprintf(stderr, "committed-reparse: choose 你好 failed\n");
+            goto fail_inst;
+        }
+        printf("cr:cursor=%d\n", cr_cursor);
+        if (parse_expect(&s, inst, "nihaoshijie", 11)) {
+            fprintf(stderr, "committed-reparse: re-parse failed\n");
+            goto fail_inst;
+        }
+        bool cr_clear = s.clear_constraint(inst, 0);
+        printf("cr:clear0=%d\n", (int)cr_clear);
+        bool cr_clear2 = s.clear_constraint(inst, 0);
+        printf("cr:clear0b=%d\n", (int)cr_clear2);
+        if (!s.reset(inst)) {
+            fprintf(stderr, "committed-reparse: reset failed\n");
             goto fail_inst;
         }
     }
