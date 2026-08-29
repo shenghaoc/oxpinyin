@@ -4,6 +4,10 @@
 //! the `token phrase` / `null_token` stream `gen_ngram` consumes. Never
 //! ships with the engine. See `docs/findings/segmenter-port.md`.
 #![forbid(unsafe_code)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![warn(missing_docs)]
 
 mod driver;
