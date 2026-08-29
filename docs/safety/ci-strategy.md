@@ -16,7 +16,7 @@ cargo clippy --locked -p oxpinyin-capi -p pinyin-oracle --all-targets -- -D warn
 cargo nextest run --workspace (or cargo test)  # existing runner, nextest optional
 cargo test --doc                               # only if nextest adopted
 cargo deny check advisories bans licenses sources   # NEW, ~40–90s cold, cacheable DB
-fuzz smoke: parser + dict-loader + scheme (~30–60s aggregate)   # extend existing job
+fuzz smoke: parser target only (~10s)   # existing job; the four newer targets soak nightly
 ```
 
 Rationale per addition: `cargo deny` is the only supply-chain gate (one
@@ -58,8 +58,8 @@ Doctest step only if nextest lands. Gates: all hard.
 4. ~~**Kani** (trial)~~ — dropped: no release supports the pinned
    toolchain (newest bundles nightly 2025-11-21 < 1.97.1).
 5. **cargo-mutants** (trial, on the nightly schedule):
-   scoped `-p oxpinyin-core` file filters (parser, scheme, scoring) +
-   `oxpinyin-user/src/store.rs`.
+   scoped `-p oxpinyin-core` file filters (parser, full-pinyin index,
+   scheme, scoring) + `oxpinyin-user/src/store.rs`.
 
 Failure policy: nightly findings open issues (with libFuzzer repro
 artifacts committed under `fuzz/artifacts/` and regression tests per the
