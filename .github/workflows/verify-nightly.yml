@@ -1,0 +1,130 @@
+name: verify-nightly
+
+# Tier-3 scheduled verification (docs/safety/ci-strategy.md): everything
+# too slow or too nightly for the PR gate. Findings here open issues —
+# they do not block merges unless a ratchet exists (Lizard's CCN limit is
+# the only ratchet). Trials (Miri, geiger) are continue-on-error until
+# they prove stable.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-nightly
+  cancel-in-progress: false
+
+jobs:
+  # All five fuzz targets, 3 minutes each, ASan+LSan on by default with
+  # cargo-fuzz 0.13.2. The dict-loader corpus is seeded from the committed
+  # w3 tables so the decoder starts from valid headers.
+  fuzz-soak:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install nightly-2026-08-01 --profile minimal --component rust-src
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Seed corpora
+        run: |
+          mkdir -p fuzz/corpus/dict-loader
+          cp fixtures/w3/*.bin fuzz/corpus/dict-loader/
+      - name: Soak each target
+        run: |
+          for target in parser dict-loader fixture-model double-pinyin capi-commands; do
+            echo "::group::fuzz $target"
+            cargo +nightly-2026-08-01 fuzz run "$target" -- -max_total_time=180 -timeout=15 -max_len=4096
+            echo "::endgroup::"
+          done
+
+  # UB detection for the pure-Rust crates (core's algorithms, store's
+  # default redb backend). Trial: continue-on-error until it has proven
+  # stable on this schedule; FFI crates are out of Miri's reach (C/C++).
+  miri:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install nightly-2026-08-01 --profile minimal --component miri rust-src
+      - run: cargo +nightly-2026-08-01 miri setup
+      - run: cargo +nightly-2026-08-01 miri test -p oxpinyin-core -p oxpinyin-store
+
+  # Latent-overflow lane: the releaseoptimized codepath with overflow
+  # checks and debug assertions forced on (docs/safety/
+  # tooling-evaluation.md §8) — the "NDEBUG question" as CI, not as
+  # shipped configuration.
+  overflow-lane:
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -C overflow-checks=y -C debug-assertions=y -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo test --locked --workspace --release
+
+  # Coverage report (region/line) as an artifact; no threshold gate —
+  # the baseline is 81.92% lines (measured 2026-08-29). cargo-llvm-cov
+  # is curl-pinned and checksum-verified like cargo-deny in ci.yml.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install pinned cargo-llvm-cov
+        run: |
+          ver=0.9.0
+          sum=bc2122fd7bd9b6d3eb371690ed085f82e5a8bf1851f4645ef521d12ed04b2616
+          curl -sSfL -o cargo-llvm-cov.tar.gz "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v${ver}/cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz"
+          echo "${sum}  cargo-llvm-cov.tar.gz" | sha256sum -c -
+          tar xzf cargo-llvm-cov.tar.gz
+          mkdir -p ~/.local/bin
+          install -m755 cargo-llvm-cov ~/.local/bin
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: cargo llvm-cov --locked --workspace --lcov --output-path lcov.info
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-lcov
+          path: lcov.info
+
+  # Dependency-unsafe inventory, weekly-signal grade: report artifact
+  # only. Trial (continue-on-error): geiger periodically bit-rots against
+  # new rustc versions.
+  geiger:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup show active-toolchain
+      - run: cargo install cargo-geiger --locked
+      - run: cargo geiger > geiger-report.txt || cargo geiger --output-format text > geiger-report.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: geiger-report
+          path: geiger-report.txt
+
+  # Complexity ratchet: no function may exceed CCN 40 (current max is 38,
+  # the user/store.rs quartet — a tracked refactor target, never allowed
+  # to grow past the limit).
+  lizard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: pip install lizard==1.17.10
+      - run: lizard crates/ -l rust -C 40

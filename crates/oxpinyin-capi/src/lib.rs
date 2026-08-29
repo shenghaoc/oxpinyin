@@ -27,9 +27,40 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![allow(unsafe_code)]
+// The entire crate is a pointer-taking C ABI: soundness of these entry
+// points rests on the documented pinyin.h contract (opaque handles,
+// out-params, ownership), not on Rust-side unsafe marking. Exposing the
+// fuzz_api facade makes that pointer-by-contract style lint-visible, so
+// the deviation is recorded here once instead of per function.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 #![warn(missing_docs)]
 
 mod ffi;
+
+/// Rust-visible re-exports for the in-tree fuzz harness
+/// (`fuzz/fuzz_targets/capi_commands.rs`) and Rust-side contract tests.
+/// NOT a stable Rust API: the supported surfaces are the C ABI (pinyin.h)
+/// and `oxpinyin-engine`; anything here can change or vanish.
+#[allow(missing_docs)]
+pub mod fuzz_api {
+    pub use crate::candidates::{
+        pinyin_choose_candidate, pinyin_clear_constraint, pinyin_get_candidate,
+        pinyin_get_candidate_string, pinyin_get_n_candidate, pinyin_train,
+    };
+    pub use crate::config::pinyin_set_double_pinyin_scheme;
+    pub use crate::context::{oxpinyin_init_for_fixtures, pinyin_fini};
+    pub use crate::instance::{pinyin_alloc_instance, pinyin_free_instance, pinyin_reset};
+    pub use crate::iterators::{
+        pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
+        pinyin_end_get_phrases, pinyin_iterator_add_phrase, pinyin_iterator_get_next_phrase,
+        pinyin_iterator_has_next_phrase,
+    };
+    pub use crate::parse::{pinyin_get_parsed_input_length, pinyin_parse_more_full_pinyins};
+    pub use crate::sentence::{pinyin_get_sentence, pinyin_guess_sentence};
+    pub use crate::types::{
+        ExportIterator, GChar, ImportIterator, LookupCandidate, PinyinContext, PinyinInstance,
+    };
+}
 mod state;
 mod types;
 
