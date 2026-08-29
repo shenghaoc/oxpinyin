@@ -43,55 +43,70 @@ fi
 
 # Only the third branch validates on its own: resolve_system_dir already
 # refuses an incomplete directory, and it alone can hand back the opted-in
-# mini fixture, which is incomplete on purpose. The first two build
-# CAPI_DATA themselves, so they have to check it themselves -- an
-# incomplete directory scored against a real oracle reports DIVERGENCE
-# from the data mismatch, which is the failure this whole file exists to
-# stop.
+# mini fixture, which is incomplete on purpose. The first two answer for
+# their own data -- an incomplete directory scored against a real oracle
+# reports DIVERGENCE from the data mismatch, which is the failure this
+# whole file exists to stop. Every refusal here exits 3: 2 is this
+# script's divergence code, and 1 is a build failure.
 
 if [ -n "${OPTION_SWEEP_CAPI_DATA:-}" ]; then
     CAPI_DATA="$OPTION_SWEEP_CAPI_DATA"
     system_dir_require_complete "$CAPI_DATA" OPTION_SWEEP_CAPI_DATA option-sweep
 elif [ -f /tmp/oxpinyin-export/pinyin_index.redb ]; then
-    CAPI_DATA="$(mktemp -d /tmp/option-sweep-capi-data-XXXXXX)"
+    # Resolve both sources before creating or copying anything. This branch
+    # is entered on pinyin_index.redb alone, so the other two tables are
+    # still unchecked, and letting the cp fail under `set -e` would exit 1
+    # with a bare `cp: cannot stat` -- when this is the same incomplete-data
+    # refusal every other branch answers with 3. interpolation2.text is not
+    # an export-cache file at all: the export never holds it, which is the
+    # reason this branch exists, so it is resolved from the model cache and
+    # reported under its own heading.
+    #
+    # Reported together rather than through system_dir_require_complete,
+    # whose provenance line lists the variables -- not the two directories
+    # that actually build this one.
+    missing_tables=()
     for table in pinyin_index.redb phrase_index.redb bigram.redb; do
-        cp "/tmp/oxpinyin-export/$table" "$CAPI_DATA/$table"
+        [ -f "/tmp/oxpinyin-export/$table" ] || missing_tables+=("$table")
     done
+    interp_src=
     for model_dir in \
         ${PINYIN_MODEL_DIR:+"$PINYIN_MODEL_DIR"} \
         "$REPO_ROOT/target/model20/extracted"; do
         if [ -n "$model_dir" ] && [ -f "$model_dir/interpolation2.text" ]; then
-            cp "$model_dir/interpolation2.text" "$CAPI_DATA/interpolation2.text"
+            interp_src="$model_dir/interpolation2.text"
             break
         fi
     done
-    # The export cache carries the three tables -- a missing one already
-    # fails the cp under `set -e`. interpolation2.text comes from the model
-    # cache instead, so it is the one file the loop above can silently
-    # leave out. Name where it was looked for rather than routing this
-    # through system_dir_require_complete, whose provenance line lists the
-    # variables, not the two directories that actually built this one.
-    if [ ! -f "$CAPI_DATA/interpolation2.text" ]; then
+    if [ ${#missing_tables[@]} -ne 0 ] || [ -z "$interp_src" ]; then
         {
-            echo "fatal: option-sweep: the assembled system directory is incomplete."
-            echo "  $CAPI_DATA"
-            echo "  (tables from /tmp/oxpinyin-export)"
+            echo "fatal: option-sweep: cannot assemble a system directory."
+            if [ ${#missing_tables[@]} -ne 0 ]; then
+                echo ""
+                echo "Missing from /tmp/oxpinyin-export:"
+                printf '  %s\n' "${missing_tables[@]}"
+            fi
+            if [ -z "$interp_src" ]; then
+                echo ""
+                echo "No interpolation2.text in:"
+                echo "  \$PINYIN_MODEL_DIR"
+                echo "  $REPO_ROOT/target/model20/extracted"
+            fi
             echo ""
-            echo "Missing:"
-            echo "  interpolation2.text"
-            echo ""
-            echo "Looked for it in:"
-            echo "  \$PINYIN_MODEL_DIR"
-            echo "  $REPO_ROOT/target/model20/extracted"
-            echo ""
-            echo "Its real unigrams are what the oracle scores against. Without it"
-            echo "the comparison is flat-export unigrams versus the pin's real ones"
-            echo "-- a data mismatch that reports as a divergence. Fetch the model"
-            echo "with tools/model/fetch-model.sh, or point OPTION_SWEEP_CAPI_DATA"
-            echo "at a directory that already holds all four files."
+            echo "All four are required: the three tables plus interpolation2.text,"
+            echo "whose real unigrams are what the oracle scores against. Short of"
+            echo "them the comparison is flat-export unigrams versus the pin's real"
+            echo "ones -- a data mismatch that reports as a divergence. Fetch the"
+            echo "model with tools/model/fetch-model.sh, or point"
+            echo "OPTION_SWEEP_CAPI_DATA at a directory that already holds all four."
         } >&2
         exit 3
     fi
+    CAPI_DATA="$(mktemp -d /tmp/option-sweep-capi-data-XXXXXX)"
+    for table in pinyin_index.redb phrase_index.redb bigram.redb; do
+        cp "/tmp/oxpinyin-export/$table" "$CAPI_DATA/$table"
+    done
+    cp "$interp_src" "$CAPI_DATA/interpolation2.text"
 else
     # No explicit dir and no export cache: resolve or refuse. Falling back
     # to fixtures/w3 here used to make a real-oracle run report DIVERGENCE
