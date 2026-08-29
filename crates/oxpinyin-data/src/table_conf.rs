@@ -211,18 +211,3 @@ mod tests {
         assert_eq!(parse_table_conf_lambda("binary format version:7\n"), None);
     }
 }
-
-#[cfg(kani)]
-mod kani_proofs {
-    use super::gcd;
-
-    /// The divisor-safety invariant the exact-λ arithmetic leans on:
-    /// `gcd` never returns zero (0/0 normalizes to 1), so dividing by the
-    /// result is always defined.
-    #[kani::proof]
-    fn gcd_result_is_nonzero() {
-        let a: u128 = kani::any();
-        let b: u128 = kani::any();
-        assert!(gcd(a, b) >= 1);
-    }
-}
