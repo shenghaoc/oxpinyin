@@ -233,6 +233,11 @@ jobs:
       # translation units — the memory-unsafe boundary — and injects libubsan
       # at cargo's final link. Any finding traps and fails the job.
       #
+      # Both arms build with --no-default-features --features tkrzw so
+      # the instrumented binary is pure tkrzw: the kyotocabinet DEFAULT
+      # would drag a second C backend (and its headers) into a build
+      # whose instrumentation exists to catch tkrzw-shim misuse.
+      #
       # Both arms pass an EXPLICIT --target on purpose: without it, cargo
       # applies RUSTFLAGS to HOST build scripts and proc macros too, which is
       # how -Zsanitizer=address produced unloadable proc-macro dylibs (E0463
@@ -269,7 +274,7 @@ jobs:
             # container cannot lower vm.mmap_rnd_bits itself.
             export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1
             setarch "$(uname -m)" -R \
-              cargo test --locked --target "$triple" -p oxpinyin-store --features tkrzw
+              cargo test --locked --target "$triple" -p oxpinyin-store --no-default-features --features tkrzw
             ;;
           undefined)
             # No -Zsanitizer=undefined exists; instrument the shim and link
@@ -278,7 +283,7 @@ jobs:
             export RUSTFLAGS="-D warnings -C linker=cc -Clink-arg=-fsanitize=undefined -Clink-arg=-lubsan"
             export CFLAGS="-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
             export CXXFLAGS="$CFLAGS"
-            cargo test --locked --target "$triple" -p oxpinyin-store --features tkrzw
+            cargo test --locked --target "$triple" -p oxpinyin-store --no-default-features --features tkrzw
             ;;
           *)
             echo "FAIL: unknown matrix.sanitizer value '$SANITIZER'" >&2

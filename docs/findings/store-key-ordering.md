@@ -144,7 +144,9 @@ fixed-width big-endian `prev` prefix brackets exactly the successors of
 `prev`, and they come back in ascending integer `cur` order. `codec.rs`'s
 `order` proptest module already checks this encoding against redb's typed
 `(u32,u32)` compare order; the tests added by this audit extend it to the
-cross-backend and 256-boundary cases, now across all three backends.
+cross-backend and 256-boundary cases across the backends those suites
+compile in (the store suite: all four; the user suite: redb, LMDB and
+tkrzw — see the inventory below).
 
 ## Layer consistency (encode ↔ decode)
 
@@ -168,20 +170,26 @@ key encoding was changed.**
 - `crates/oxpinyin-store/src/lib.rs` — the `tests::key_ordering` module (folded
   into the store suite alongside the per-tier groups, not a separate file):
   every compiled backend yields byte-identical `for_each` and `range`
-  sequences on key sets that cross 256, so under `--features lmdb,tkrzw` this
-  is the full **redb == LMDB == tkrzw** check; plus, redb-only, that swapping
-  an encode site's endianness changes the observed walk order (non-vacuity).
+  sequences on key sets that cross 256 — under the default features that is
+  **redb == Kyoto Cabinet**, and
+  `cargo test -p oxpinyin-store --features "kyotocabinet,tkrzw,lmdb"` (the
+  store-backends CI gate's conformance pass) is the full four-way
+  **redb == Kyoto Cabinet == tkrzw == LMDB** check; plus, redb-only, that
+  swapping an encode site's endianness changes the observed walk order
+  (non-vacuity).
 - `crates/oxpinyin-data/src/table.rs` tests — the load-without-sort invariant:
   the store walk of 256-crossing LE keys is already `LeByteKey`-sorted (fast
   path taken) while the same walk is *not* integer-sorted (a loader assuming
   integer order would break).
 - `crates/oxpinyin-user/src/store.rs` tests — the bigram successor scan
-  returns the complete, correctly ordered successor set across 256 under **all
-  three backends** (the `user_store_tests!` macro now runs for redb, LMDB and
-  tkrzw), and the raw bigram walk is identical across every compiled backend,
-  each backend's own walk asserted to be in integer order. Flipping
-  `encode_token_pair`'s endianness reddens the check on every backend, not just
-  redb — the three-way non-vacuity.
+  returns the complete, correctly ordered successor set across 256 under the
+  `user_store_tests!` macro's arms (**redb, LMDB and tkrzw**; the Kyoto
+  Cabinet backend is covered by the store crate's four-way conformance suite
+  above, not by this macro), and the raw bigram walk is identical across every
+  backend the user crate's cross-backend test compiles in, each backend's own
+  walk asserted to be in integer order. Flipping `encode_token_pair`'s
+  endianness reddens the check on every one of those backends, not just
+  redb.
 
 ## 256-boundary blind spot
 

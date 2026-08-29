@@ -82,11 +82,10 @@ fi
 
 CAPI_SYSTEM="${LIVETYPING_SYSTEM:-}"
 # The tables' extension names the backend the capi was compiled with
-# (.redb default; .tkt/.lmdb behind their features). All three tables
-# must share ONE extension: the engine opens every table through the
-# single compiled-in backend, so a dir mixing extensions is
-# half-assembled for each backend and would fail mid-run instead of
-# skipping cleanly here.
+# (.kct default, .redb portability). All three tables must share ONE
+# extension: the engine opens every table through the single compiled-in
+# backend, so a dir mixing extensions is half-assembled for each backend
+# and would fail mid-run instead of skipping cleanly here.
 has_all_tables() {
     local ext=$1 t
     for t in pinyin_index phrase_index bigram; do
@@ -94,10 +93,10 @@ has_all_tables() {
     done
 }
 if [[ -z "$CAPI_SYSTEM" ]] || ! [[ -f "$CAPI_SYSTEM/interpolation2.text" ]] \
-    || ! { has_all_tables redb || has_all_tables tkt || has_all_tables lmdb; }; then
+    || ! { has_all_tables kct || has_all_tables redb; }; then
     echo "SKIP: LIVETYPING_SYSTEM must name a real-unigram system dir"
-    echo "  (pinyin_index, phrase_index and bigram all .redb, all .tkt, or"
-    echo "  all .lmdb, plus interpolation2.text)"
+    echo "  (pinyin_index, phrase_index and bigram all .kct or all .redb,"
+    echo "  plus interpolation2.text)"
     exit 0
 fi
 # The four-file presence check catches half-assembled dirs; it does NOT bind

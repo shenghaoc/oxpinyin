@@ -1,11 +1,13 @@
-//! Generates the optional backends' bindings.
+//! Generates the C backends' bindings.
 //!
-//! Both are off by default: with neither feature enabled this script does
-//! nothing, so the default build runs no bindgen and links no extra
-//! library.
+//! Kyoto Cabinet is the DEFAULT backend, so a normal build runs bindgen
+//! over `kclangc.h` and links the system libkyotocabinet. With
+//! `--no-default-features` (the redb pure-Rust portability fallback) —
+//! and with no C backend feature enabled — this script does nothing: no
+//! bindgen, no extra library.
 //!
+//! * `kyotocabinet` — the Kyoto Cabinet C API (`kclangc.h`), on by default.
 //! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`).
-//! * `kyotocabinet` — the Kyoto Cabinet C API (`kclangc.h`).
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -65,7 +67,8 @@ fn pkg_config(flag: &str, package: &str) -> Option<Vec<String>> {
 /// by construction, which is what makes the `KCVERSION` gate meaningful
 /// at all. The cost is a build-time libclang, and it is small here
 /// because linking already requires the development package that carries
-/// the header: only libclang is added, and only for an opt-in feature.
+/// the header: only libclang is added, and only when a build compiles a
+/// C backend in (Kyoto Cabinet by default; tkrzw when asked for).
 #[cfg(feature = "kyotocabinet")]
 mod kyotocabinet {
     use std::path::PathBuf;
@@ -91,6 +94,17 @@ mod kyotocabinet {
             clang_args.push(format!("-I{dir}"));
         }
 
+        // A `rustc-link-search` reaches every later link in the graph, but a
+        // build script's `rustc-link-arg` is package-scoped: cargo applies
+        // it only to the targets it builds from THIS package — this crate's
+        // lib and its own test artifacts — never to another package's
+        // binaries. The rpath below therefore covers `cargo test -p
+        // oxpinyin-store` and nothing else; every workspace package that
+        // links a final binary against Kyoto Cabinet (oxpinyin-datagen,
+        // oxpinyin-dictool, and the four training tools) mirrors this
+        // rpath from its own build script. That rpath is a convenience,
+        // not the contract: any other artifact built without it must still
+        // find the library via LD_LIBRARY_PATH or its own rpath setting.
         if let Ok(dir) = std::env::var("OXPINYIN_KC_LIB_DIR") {
             println!("cargo:rustc-link-search=native={dir}");
             println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
@@ -280,17 +294,16 @@ mod tkrzw {
                 println!("cargo:rustc-link-lib={name}");
             } else if let Some(path) = lib.strip_prefix("-L") {
                 println!("cargo:rustc-link-search=native={path}");
-                // A tkrzw outside the default loader path — the usual
-                // case, since the library often has to be made by hand —
-                // would otherwise link but fail to start.
+                // A tkrzw outside the default loader path — the usual case,
+                // since the library often has to be made by hand — would
+                // otherwise link but fail to start.
                 //
-                // The unscoped rustc-link-arg reaches every binary cargo
-                // links in this graph (workspace bins, tests, benches),
-                // so they run without environment setup. That rpath is a
-                // convenience, not the contract: code that consumes the
-                // backend outside such a build, or strips runpaths from
-                // its artifacts, must make the library findable itself
-                // via LD_LIBRARY_PATH or its own rpath setting.
+                // Package-scoped, like every build-script `rustc-link-arg`
+                // (see the Kyoto Cabinet module): this rpath lands on the
+                // targets cargo builds from THIS package — its lib and its
+                // own test artifacts — not on other packages' binaries,
+                // which must make the library findable themselves via
+                // LD_LIBRARY_PATH or their own rpath setting.
                 println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
             }
         }

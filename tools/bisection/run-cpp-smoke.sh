@@ -26,12 +26,13 @@ CAPI_DATA="$REPO_ROOT/fixtures/w3"
 # The tables' extension names the backend the capi was compiled with.
 # OXPINYIN_CAPI_BACKEND_EXT pins it for capi builds that select a backend
 # explicitly (e.g. --features tkrzw); unset, this gate builds the default
-# (redb) and the extension is detected from the committed fixture sets.
+# (Kyoto Cabinet `.kct`) and the extension is detected from the committed
+# fixture sets, preferring the default backend's.
 if [ -n "${OXPINYIN_CAPI_BACKEND_EXT:-}" ]; then
     case "$OXPINYIN_CAPI_BACKEND_EXT" in
-        redb|tkt|lmdb) SYS_EXT=$OXPINYIN_CAPI_BACKEND_EXT ;;
+        kct|redb|tkt|lmdb) SYS_EXT=$OXPINYIN_CAPI_BACKEND_EXT ;;
         *)
-            echo "fatal: OXPINYIN_CAPI_BACKEND_EXT='$OXPINYIN_CAPI_BACKEND_EXT' is not one of: redb tkt lmdb"
+            echo "fatal: OXPINYIN_CAPI_BACKEND_EXT='$OXPINYIN_CAPI_BACKEND_EXT' is not one of: kct redb tkt lmdb"
             exit 1
             ;;
     esac
@@ -43,7 +44,7 @@ if [ -n "${OXPINYIN_CAPI_BACKEND_EXT:-}" ]; then
     done
 else
     SYS_EXT=""
-    for ext in redb tkt lmdb; do
+    for ext in kct redb tkt lmdb; do
         if [ -f "$CAPI_DATA/pinyin_index.$ext" ] \
             && [ -f "$CAPI_DATA/phrase_index.$ext" ] \
             && [ -f "$CAPI_DATA/bigram.$ext" ]; then

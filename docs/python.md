@@ -39,12 +39,16 @@ libpinyin installation:
 
 | File | Required | Purpose |
 |---|---|---|
-| `pinyin_index.redb` | yes | syllable index |
-| `phrase_index.redb` | yes | phrase table |
-| `bigram.redb` | yes | bigram language model |
+| `pinyin_index.<ext>` | yes | syllable index |
+| `phrase_index.<ext>` | yes | phrase table |
+| `bigram.<ext>` | yes | bigram language model |
 | `interpolation2.text` | production mode | real unigram frequencies driving the pinned candidate ranking |
 | `table.conf` | optional | λ override; pinned default otherwise |
-| `user_store.redb` | created in `user_dir` | learning persistence |
+| `user_store.<ext>` | created in `user_dir` | learning persistence |
+
+`<ext>` names the compiled-in backend: `kct` (Kyoto Cabinet, the
+default), `redb` under `--no-default-features` (the portability
+fallback), `tkt` with the `tkrzw` feature, `lmdb` with `lmdb`.
 
 A directory is converted from libpinyin-format sources by the repository's
 usual toolchain (`tools/model/fetch-model.sh` fetches the pinned model;

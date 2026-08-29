@@ -239,6 +239,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install the default backend's C dependencies (apt)
+        # The fuzz targets link the workspace crates with their default
+        # features, so the Kyoto Cabinet default backend compiles in:
+        # bindgen (libclang) reads kclangc.h at build time.
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libkyotocabinet-dev libclang-dev
       - name: Install pinned nightly with Rust sources
         run: rustup toolchain install nightly-2026-08-01 --profile minimal --component rust-src
       - name: Install pinned cargo-fuzz
