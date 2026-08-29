@@ -70,11 +70,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let phrase_index = match export_dir {
-        Some(dir) => dir.join("phrase_index.redb"),
+        Some(dir) => dir.join(oxpinyin_segment::default_store_file("phrase_index")),
         None => locate_export_dir()
-            .map(|dir| dir.join("phrase_index.redb"))
+            .map(|dir| dir.join(oxpinyin_segment::default_store_file("phrase_index")))
             .ok_or(
-                "no system-table export (phrase_index.redb); set --export-dir or PINYIN_EXPORT_DIR",
+                "no system-table export (the phrase_index table); set --export-dir or PINYIN_EXPORT_DIR",
             )?,
     };
     let lexicon = PhraseLexicon::from_phrase_index(&phrase_index)?;
@@ -121,7 +121,7 @@ fn print_help() {
          DELETED_BIGRAM (default: the SYSTEM stream itself).\n\
          \n\
            --deleted FILE      held-out ngseg stream (DELETED_BIGRAM)\n\
-           --export-dir DIR    system-table export (phrase_index.redb) for the freq-1 floor\n\
+           --export-dir DIR    system-table export (the phrase_index table) for the freq-1 floor\n\
            --skip-pi-gram-training\n\
                                drop sentence-start boundary bigrams on both streams\n"
     );

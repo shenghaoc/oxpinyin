@@ -94,8 +94,9 @@ fn lock_error() -> PyErr {
 
 /// One opened oxpinyin engine over converted system data.
 ///
-/// Create with a system data directory holding ``pinyin_index.redb``,
-/// ``phrase_index.redb`` and ``bigram.redb``; pass ``user_dir`` to enable
+/// Create with a system data directory holding the ``pinyin_index``,
+/// ``phrase_index`` and ``bigram`` tables in the compiled-in backend's
+/// format (``.kct`` by default); pass ``user_dir`` to enable
 /// learning. Usable as a :pykeyword:`with` block, though nothing needs
 /// releasing — see :meth:`close`.
 ///

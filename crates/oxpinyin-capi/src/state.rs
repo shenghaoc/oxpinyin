@@ -18,7 +18,7 @@ use oxpinyin_engine::{
     CandidateKind, CandidateList, Config, EngineError, check_lookup_offset_range,
     normalize_lookup_offset,
 };
-pub(crate) use oxpinyin_runtime::USER_STORE_FILE;
+pub(crate) use oxpinyin_runtime::user_store_file;
 
 /// Upstream's phrase-index library count (`novel_types.h:43`, `1<<4`).
 ///
@@ -150,7 +150,7 @@ impl CapiContext {
         if user_dir.is_empty() {
             return None;
         }
-        let user = UserStore::open(&Path::new(user_dir).join(USER_STORE_FILE)).ok()?;
+        let user = UserStore::open(&Path::new(user_dir).join(user_store_file())).ok()?;
         Some(Self {
             config: Config::default(),
             runtime: None,

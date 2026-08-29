@@ -33,7 +33,7 @@ use crate::iterators::{
 };
 use crate::parse::pinyin_parse_more_full_pinyins;
 use crate::sentence::{pinyin_get_sentence, pinyin_guess_candidates, pinyin_guess_sentence};
-use crate::state::{USER_STORE_FILE, instance_mut, instance_ref};
+use crate::state::{instance_mut, instance_ref, user_store_file};
 use crate::test_support::{DEFAULT_SORT, TempUserDir, candidate, cstr, open, system_dir};
 use crate::types::{LookupCandidate, PinyinInstance};
 use crate::user_data::pinyin_remember_user_input;
@@ -436,7 +436,7 @@ fn an_instance_without_a_selection_has_nothing_to_train() {
 fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
     let user_dir = TempUserDir::new("save");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    let store_file = user_dir.path.join(USER_STORE_FILE);
+    let store_file = user_dir.path.join(user_store_file());
 
     // A clean context: pinyin_save is the §4 unmodified no-op (upstream
     // returns false, pinyin.cpp:1136) and leaves the file untouched.
@@ -845,7 +845,7 @@ fn import_pinyin_canonicalizes_unseparated_and_trailing_bytes() {
 #[test]
 fn user_only_bigram_export_fails_when_rows_need_system_tables() {
     let user_dir = TempUserDir::new("user-only-bigram");
-    let store_path = user_dir.path.join(USER_STORE_FILE);
+    let store_path = user_dir.path.join(user_store_file());
     let mut store = UserStore::open(&store_path).expect("open empty store");
     // System tokens (library nibble != 7). One training seed (69) is at
     // the §9 first-seed threshold, so a real export would emit a row.

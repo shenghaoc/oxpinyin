@@ -84,9 +84,13 @@ fi
 # works across every differential, so a whole sweep needs one export
 # rather than a different variable per runner (see system-dir.sh).
 CAPI_SYSTEM="${LIVETYPING_SYSTEM:-${OXPINYIN_SYSTEM_DIR:-}}"
-if [[ -z "$CAPI_SYSTEM" ]] || ! [[ -f "$CAPI_SYSTEM/interpolation2.text"     && -f "$CAPI_SYSTEM/pinyin_index.redb"     && -f "$CAPI_SYSTEM/phrase_index.redb"     && -f "$CAPI_SYSTEM/bigram.redb" ]]; then
+# The tables' extension names the backend the capi was compiled with
+# (.redb default; .tkt/.lmdb behind their features); accept any
+# provisioned form.
+has_table() { [ -f "$CAPI_SYSTEM/$1.redb" ] || [ -f "$CAPI_SYSTEM/$1.tkt" ] || [ -f "$CAPI_SYSTEM/$1.lmdb" ]; }
+if [[ -z "$CAPI_SYSTEM" ]] || ! [[ -f "$CAPI_SYSTEM/interpolation2.text" ]] || ! has_table pinyin_index || ! has_table phrase_index || ! has_table bigram; then
     echo "SKIP: LIVETYPING_SYSTEM must name a real-unigram system dir"
-    echo "  (pinyin_index.redb, phrase_index.redb, bigram.redb, interpolation2.text)"
+    echo "  (pinyin_index.{redb|tkt|lmdb}, phrase_index.…, bigram.…, interpolation2.text)"
     exit 0
 fi
 # The four-file presence check catches half-assembled dirs; it does NOT bind

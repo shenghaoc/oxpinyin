@@ -59,11 +59,11 @@ CAPI_SYS="$(mktemp -d)"
 CAPI_EDGE_USER="$(mktemp -d)"
 ORACLE_EDGE_USER="$(mktemp -d)"
 trap 'rm -rf "$CAPI_SYS" "$CAPI_EDGE_USER" "$ORACLE_EDGE_USER"' EXIT
-cp "$REPO_ROOT/fixtures/w3/pinyin_index.redb" "$CAPI_SYS/"
-cp "$REPO_ROOT/fixtures/w3/phrase_index.redb" "$CAPI_SYS/"
-cp "$REPO_ROOT/fixtures/w3/bigram.redb" "$CAPI_SYS/"
-cp "$REPO_ROOT/fixtures/w3/addon_4_pinyin_index.redb" "$CAPI_SYS/"
-cp "$REPO_ROOT/fixtures/w3/addon_4_phrase_index.redb" "$CAPI_SYS/"
+cp "$REPO_ROOT/fixtures/w3/pinyin_index".* "$CAPI_SYS/"
+cp "$REPO_ROOT/fixtures/w3/phrase_index".* "$CAPI_SYS/"
+cp "$REPO_ROOT/fixtures/w3/bigram".* "$CAPI_SYS/"
+cp "$REPO_ROOT/fixtures/w3/addon_4_pinyin_index".* "$CAPI_SYS/"
+cp "$REPO_ROOT/fixtures/w3/addon_4_phrase_index".* "$CAPI_SYS/"
 printf '%s\n' '\data model interpolation' '\1-gram' '\item 1 ok count 1' \
     > "$CAPI_SYS/interpolation2.text"
 

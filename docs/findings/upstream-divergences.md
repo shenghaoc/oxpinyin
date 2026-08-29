@@ -665,3 +665,26 @@ Text, candidate type and counts cannot.
   no differential. The residual gaps are toolchain-bound: no
   `-Zsanitizer=undefined` exists, and std is prebuilt. Revisit when either
   changes; per source policy, recorded and not chased.
+
+## Native data-file naming under the compile-time backend (2026-08-29)
+
+- **Where:** `oxpinyin-store` (`DefaultStore`/`DEFAULT_STORE_EXT`),
+  `oxpinyin-runtime`'s system/user file names, `oxpinyin-datagen`
+  `Backend::extension`.
+- **libpinyin behaviour:** the DBM backend is chosen at configure time
+  (`--with-dbm`, `if BERKELEYDB/KYOTOCABINET/TKRZW` in
+  `src/storage/Makefile.am`), and the data filenames are backend-INDEPENDENT
+  compile-time constants (`SYSTEM_BIGRAM "bigram.db"`,
+  `SYSTEM_PINYIN_INDEX "pinyin_index.bin"`, … `src/pinyin_internal.h`), so a
+  Kyoto-Cabinet-built libpinyin still writes `bigram.db`.
+- **oxpinyin behaviour:** the same one-backend-per-binary compile-time
+  selection (the `DefaultStore` cfg chain, precedence
+  kyotocabinet > tkrzw > lmdb > redb), but native tables carry the backend's
+  own extension (`pinyin_index.kct`/`.tkt`/`.lmdb`/`.redb`), so a directory
+  self-describes which backend wrote it and mixed deployments cannot
+  misread a file through the wrong engine.
+- **Externally observable:** only in oxpinyin's NATIVE data directories.
+  The libpinyin drop-in/compat path reads libpinyin's own fixed names
+  (`bigram.db`, `*.bin`) unchanged, so no libpinyin consumer sees the
+  difference; recorded because the naming intentionally diverges from the
+  pin's constants rather than mirroring them.

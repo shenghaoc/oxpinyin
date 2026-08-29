@@ -31,12 +31,18 @@ use oxpinyin_core::{
 };
 use oxpinyin_data::{
     BigramLanguageModel, DictError, InterpolationError, LmError, PunctTable, SystemDictionary,
+    default_store_file,
 };
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
 use oxpinyin_user::{PinyinKey, UserLookup, UserStore};
 
-/// File name of the redb user store under the user data directory.
-pub const USER_STORE_FILE: &str = "user_store.redb";
+/// File name of the user store under the user data directory —
+/// `user_store.<ext>`, where the extension names the compiled-in backend
+/// (`kct` Kyoto Cabinet, `tkt` tkrzw, `lmdb` LMDB, `redb` redb).
+#[must_use]
+pub fn user_store_file() -> String {
+    default_store_file("user_store")
+}
 
 // ── Open errors ─────────────────────────────────────────────────────────
 
@@ -126,8 +132,8 @@ impl AddonSet {
         if self.loaded.contains_key(&index) {
             return false;
         }
-        let pinyin = system_dir.join(format!("addon_{index}_pinyin_index.redb"));
-        let phrase = system_dir.join(format!("addon_{index}_phrase_index.redb"));
+        let pinyin = system_dir.join(default_store_file(&format!("addon_{index}_pinyin_index")));
+        let phrase = system_dir.join(default_store_file(&format!("addon_{index}_phrase_index")));
         let Ok(dict) = SystemDictionary::open(&pinyin, &phrase) else {
             return false;
         };
@@ -581,9 +587,9 @@ impl Runtime {
         user_dir: Option<&Path>,
         source: UnigramSource,
     ) -> Result<Self, OpenError> {
-        let pinyin_index = system_dir.join("pinyin_index.redb");
-        let phrase_index = system_dir.join("phrase_index.redb");
-        let bigram = system_dir.join("bigram.redb");
+        let pinyin_index = system_dir.join(default_store_file("pinyin_index"));
+        let phrase_index = system_dir.join(default_store_file("phrase_index"));
+        let bigram = system_dir.join(default_store_file("bigram"));
         require_file(&pinyin_index)?;
         require_file(&phrase_index)?;
         require_file(&bigram)?;
@@ -610,10 +616,10 @@ impl Runtime {
         // upstream-style.
         let user = user_dir
             .filter(|dir| !dir.as_os_str().is_empty())
-            .and_then(|dir| UserStore::open(&dir.join(USER_STORE_FILE)).ok());
+            .and_then(|dir| UserStore::open(&dir.join(user_store_file())).ok());
 
         let addons = Arc::new(RwLock::new(AddonSet::new()));
-        let punct = PunctTable::open_optional(&system_dir.join("punct.redb"));
+        let punct = PunctTable::open_optional(&system_dir.join(default_store_file("punct")));
 
         Ok(Self {
             paths: StoragePaths::new(user_dir.unwrap_or(Path::new("")))

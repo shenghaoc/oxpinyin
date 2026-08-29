@@ -32,6 +32,11 @@ pub use interp::{
 };
 pub use lm::{BigramLanguageModel, BigramRow, LmError, merge_bigram, merge_counts};
 pub use oxpinyin_core::UserCountDelta;
+// The compiled-in backend's native-table extension and filename helper,
+// re-exported so consumers above this crate (runtime, capi, tests) name
+// data files consistently with the backend the build selected —
+// oxpinyin-runtime has no direct store edge.
+pub use oxpinyin_store::{DEFAULT_STORE_EXT, default_store_file};
 pub use punct::PunctTable;
 pub use table::{GenericLookupTable, LookupTable, TableError};
 pub use table_conf::{Lambda, PINNED_LAMBDA, parse_table_conf_lambda, read_table_conf_lambda};
