@@ -63,3 +63,6 @@ __pycache__/
 # maturin editable-install artifacts land the extension next to python-source
 /crates/oxpinyin-python/python/oxpinyin/*.so
 /crates/oxpinyin-python/python/oxpinyin/*.pyd
+
+# LMDB creates a runtime lock file beside each committed .lmdb fixture.
+/fixtures/w3/*.lmdb-lock

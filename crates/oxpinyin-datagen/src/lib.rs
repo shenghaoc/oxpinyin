@@ -57,7 +57,7 @@
 //! part of the shipped library. The runtime loader is `oxpinyin-data`
 //! (equivalent of libpinyin's library-side DB readers); new-model training
 //! is the W9 crate chain (equivalent of the separate trainer repo). The
-//! three backends are instantiations of `oxpinyin-store`'s [`WriteStore`]:
+//! four backends are instantiations of `oxpinyin-store`'s [`WriteStore`]:
 //! one linguistic model, three storage containers, no algorithm
 //! duplication. See `docs/findings/datagen-model20.md` for the full
 //! capability map and the equivalence evidence.

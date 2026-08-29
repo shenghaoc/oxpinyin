@@ -1,12 +1,21 @@
 # W3 mini fixtures
 
-Two families, both deterministic against the pinned oracle
+Three families, all deterministic against the pinned oracle
 (`fixtures/w3/pin-ref.txt`):
 
 - **Content `.bin` files** (art … technology) — truncated copies of the
   oracle's custom-content tables, regenerated with
   `python3 tools/generate_w3_fixtures.py`.
-- **redb tables** — `pinyin_index.redb`, `phrase_index.redb`,
+- **Alternate-backend tables** — the tkrzw (`.tkt`) and LMDB (`.lmdb`)
+  sets: same recipe as the redb set —
+  `oxpinyin-datagen compile --mini --backend tkrzw|lmdb` — row-identical
+  to it through the store API (the writer verifies every row on
+  read-back), so the multi-backend test gate is self-contained
+  everywhere, including CI, which must never fetch model20. (The Kyoto
+  Cabinet `.kct` set joins in the stacked PR that adds that backend.)
+  All bytes pinned by `fixtures.sha256`.
+- **redb tables** (the pure-Rust portability backend,
+  `--no-default-features`) — `pinyin_index.redb`, `phrase_index.redb`,
   `bigram.redb`, `punct.redb`, and the `addon_*.redb` files are **frozen**
   (committed bytes pinned by `fixtures.sha256`). They were originally
   produced by the removed `oxpinyin-migrate` exporters; the same mini

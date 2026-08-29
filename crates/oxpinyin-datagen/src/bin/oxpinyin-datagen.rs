@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! oxpinyin-datagen compile [--model-dir DIR] [--out-dir DIR]
-//!                          [--backend redb|lmdb|tkrzw] [--mini]
+//!                          [--backend redb|lmdb|tkrzw|kyotocabinet] [--mini]
 //!                          [--tables system,addon,punct]
 //! ```
 //!
@@ -56,7 +56,8 @@ struct Tables {
 fn usage() -> ! {
     eprintln!(
         "usage: oxpinyin-datagen compile [--model-dir DIR] [--out-dir DIR] \
-         [--backend redb|lmdb|tkrzw] [--mini] [--tables system,addon,punct]"
+         [--backend redb|lmdb|tkrzw|kyotocabinet] [--mini] \
+         [--tables system,addon,punct]"
     );
     std::process::exit(2);
 }
@@ -162,7 +163,7 @@ fn main() -> ExitCode {
         fail(DatagenError::Consistency(format!(
             "backend {:?} requires rebuilding with --features {}",
             options.backend,
-            options.backend.extension()
+            options.backend.feature()
         )));
     }
     let model_dir = resolve_model_dir(options.model_dir.as_deref());

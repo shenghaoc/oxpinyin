@@ -21,13 +21,17 @@ pub const TABLE: &str = "data";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Backend {
-    /// redb — the default engine backend (`.redb` files).
+    /// redb — the pure-Rust portability backend (`.redb` files); always
+    /// compiled.
     Redb,
     /// LMDB, single-file environments (`.lmdb` files). Requires the `lmdb`
     /// cargo feature.
     Lmdb,
     /// Tkrzw TreeDBM (`.tkt` files). Requires the `tkrzw` cargo feature.
     Tkrzw,
+    /// Kyoto Cabinet TreeDB (`.kct` files). Requires the `kyotocabinet`
+    /// cargo feature.
+    KyotoCabinet,
 }
 
 impl Backend {
@@ -41,8 +45,9 @@ impl Backend {
             "redb" => Ok(Self::Redb),
             "lmdb" => Ok(Self::Lmdb),
             "tkrzw" => Ok(Self::Tkrzw),
+            "kyotocabinet" => Ok(Self::KyotoCabinet),
             other => Err(DatagenError::Consistency(format!(
-                "unknown backend {other:?} (expected redb, lmdb, or tkrzw)"
+                "unknown backend {other:?} (expected redb, lmdb, tkrzw, or kyotocabinet)"
             ))),
         }
     }
@@ -54,6 +59,7 @@ impl Backend {
             Self::Redb => true,
             Self::Lmdb => cfg!(feature = "lmdb"),
             Self::Tkrzw => cfg!(feature = "tkrzw"),
+            Self::KyotoCabinet => cfg!(feature = "kyotocabinet"),
         }
     }
 
@@ -64,6 +70,7 @@ impl Backend {
             Self::Redb => "redb",
             Self::Lmdb => "lmdb",
             Self::Tkrzw => "tkt",
+            Self::KyotoCabinet => "kct",
         }
     }
 
@@ -75,6 +82,7 @@ impl Backend {
             Self::Redb => "redb",
             Self::Lmdb => "lmdb",
             Self::Tkrzw => "tkrzw",
+            Self::KyotoCabinet => "kyotocabinet",
         }
     }
 
@@ -97,6 +105,8 @@ impl Backend {
             Self::Lmdb => write_with::<oxpinyin_store::LmdbStore>(path, entries),
             #[cfg(feature = "tkrzw")]
             Self::Tkrzw => write_with::<oxpinyin_store::TkrzwStore>(path, entries),
+            #[cfg(feature = "kyotocabinet")]
+            Self::KyotoCabinet => write_with::<oxpinyin_store::KcStore>(path, entries),
             #[allow(unreachable_patterns)]
             backend => Err(DatagenError::Consistency(format!(
                 "backend {:?} requires rebuilding this crate with --features {}",
@@ -125,6 +135,8 @@ impl Backend {
         }
         match self {
             Self::Redb => collect::<oxpinyin_store::RedbStore>(path),
+            #[cfg(feature = "kyotocabinet")]
+            Self::KyotoCabinet => collect::<oxpinyin_store::KcStore>(path),
             #[cfg(feature = "lmdb")]
             Self::Lmdb => collect::<oxpinyin_store::LmdbStore>(path),
             #[cfg(feature = "tkrzw")]
