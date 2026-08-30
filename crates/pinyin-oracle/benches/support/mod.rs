@@ -178,7 +178,7 @@ pub fn load_prefix_tables() -> (Box<[String]>, Box<[String]>) {
 /// Heap bytes of a `Box<[String]>`: slice header + each `String`'s buffer.
 pub fn string_table_bytes(keys: &[String]) -> usize {
     let headers = std::mem::size_of_val(keys);
-    let buffers: usize = keys.iter().map(|key| key.capacity()).sum();
+    let buffers: usize = keys.iter().map(std::string::String::capacity).sum();
     headers + buffers
 }
 

@@ -378,7 +378,7 @@ impl CapiContext {
             let pinyins: Vec<String> = phrase
                 .pronunciations()
                 .iter()
-                .filter_map(|pronunciation| pronunciation.render_pinyin())
+                .filter_map(oxpinyin_user::UserPronunciation::render_pinyin)
                 .collect();
             if pinyins.is_empty() {
                 return None;

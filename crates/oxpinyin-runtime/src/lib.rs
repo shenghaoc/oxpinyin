@@ -302,7 +302,7 @@ impl RuntimeDict {
         let mut cache = self
             .user_lookup_cache
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         UserLookup::refresh_in(&mut cache, store)
             .map_err(|error| DictError::Parse(error.to_string()))?;
         Ok(cache.as_ref().map_or_else(
@@ -328,7 +328,10 @@ impl RuntimeDict {
     /// loaded or the tables are missing/unopenable.
     #[must_use]
     pub fn load_addon(&self, index: u8, system_dir: &Path) -> bool {
-        let mut addons = self.addons.write().unwrap_or_else(|p| p.into_inner());
+        let mut addons = self
+            .addons
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         addons.load(index, system_dir)
     }
 
@@ -340,7 +343,10 @@ impl RuntimeDict {
     /// availability-class concern, not a runtime one.
     #[must_use]
     pub fn unload_addon(&self, index: u8) -> bool {
-        let mut addons = self.addons.write().unwrap_or_else(|p| p.into_inner());
+        let mut addons = self
+            .addons
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         addons.unload(index)
     }
 
@@ -561,7 +567,10 @@ impl RuntimeDict {
     /// The addon phrase item behind `token`, for the choose-promotion path.
     #[must_use]
     pub fn addon_phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
-        let addons = self.addons.read().unwrap_or_else(|p| p.into_inner());
+        let addons = self
+            .addons
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         addons.phrase_item(token)
     }
 }
@@ -647,7 +656,10 @@ impl Dictionary for RuntimeDict {
         syllables: &[Self::Syllable],
         out: &mut Vec<Self::Entry>,
     ) -> Result<(), Self::Error> {
-        let addons = self.addons.read().unwrap_or_else(|p| p.into_inner());
+        let addons = self
+            .addons
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         addons.lookup_into(syllables, out)
     }
 
@@ -655,7 +667,10 @@ impl Dictionary for RuntimeDict {
         &self,
         syllables: &[Self::Syllable],
     ) -> Result<bool, Self::Error> {
-        let addons = self.addons.read().unwrap_or_else(|p| p.into_inner());
+        let addons = self
+            .addons
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         addons.prefix_exists(syllables)
     }
 
@@ -791,7 +806,10 @@ impl LanguageModel for RuntimeLm {
     }
 
     fn addon_unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
-        let addons = self.addons.read().unwrap_or_else(|p| p.into_inner());
+        let addons = self
+            .addons
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if addons.is_empty() {
             return Ok(None);
         }
@@ -799,7 +817,10 @@ impl LanguageModel for RuntimeLm {
     }
 
     fn addon_unigram_total(&self) -> Result<Option<u64>, Self::Error> {
-        let addons = self.addons.read().unwrap_or_else(|p| p.into_inner());
+        let addons = self
+            .addons
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(addons.unigram_total())
     }
 

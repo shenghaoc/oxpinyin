@@ -2337,7 +2337,7 @@ where
         let mut end = 1usize;
         while end <= bound {
             // An end position no key starts at is an empty column: widen.
-            let mut continued = matrix.get(end).is_none_or(|column| column.is_empty());
+            let mut continued = matrix.get(end).is_none_or(std::vec::Vec::is_empty);
             scratch.path.clear();
             scratch.window_phrase.clear();
             scratch.window_addon.clear();
@@ -2508,10 +2508,14 @@ fn append_scan_entries(
 /// keeping the first of each reproduces the one-row-per-token array the
 /// pin sorts.
 fn flush_window_batch(batch: &mut Vec<Candidate>, into: &mut Vec<Candidate>) {
-    batch.sort_by_key(|candidate| candidate.token().map_or(u32::MAX, |t| t.value()));
+    batch.sort_by_key(|candidate| {
+        candidate
+            .token()
+            .map_or(u32::MAX, oxpinyin_core::PhraseToken::value)
+    });
     let mut last: Option<u32> = None;
     for candidate in batch.drain(..) {
-        let token = candidate.token().map(|token| token.value());
+        let token = candidate.token().map(oxpinyin_core::PhraseToken::value);
         if token == last {
             continue;
         }
@@ -4321,7 +4325,7 @@ mod tests {
         flush_window_batch(&mut batch, &mut into);
         let tokens: Vec<u32> = into
             .iter()
-            .filter_map(|c| c.token().map(|t| t.value()))
+            .filter_map(|c| c.token().map(oxpinyin_core::PhraseToken::value))
             .collect();
         assert_eq!(tokens, [0x0100_4c41, 0x0300_16df]);
         assert_eq!(
@@ -4474,7 +4478,11 @@ mod tests {
         )
         .expect("Session::new");
         session.type_pinyin("a").expect("typing cannot fail");
-        let texts: Vec<&str> = session.candidates().iter().map(|c| c.text()).collect();
+        let texts: Vec<&str> = session
+            .candidates()
+            .iter()
+            .map(super::super::candidate::Candidate::text)
+            .collect();
         assert_eq!(
             texts,
             ["系", "附"],
@@ -5244,9 +5252,12 @@ mod tests {
         assert_eq!(
             at_separator
                 .iter()
-                .map(|cand| cand.text())
+                .map(super::super::candidate::Candidate::text)
                 .collect::<Vec<_>>(),
-            at_start.iter().map(|cand| cand.text()).collect::<Vec<_>>(),
+            at_start
+                .iter()
+                .map(super::super::candidate::Candidate::text)
+                .collect::<Vec<_>>(),
             "the zero-key column answers the following key's window"
         );
         assert!(

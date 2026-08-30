@@ -285,7 +285,10 @@ fn f_e_12_zhuan_session_replay() {
             .expect("typing cannot fail");
     }
     assert_eq!(
-        session.candidates().get(0).map(|c| c.text()),
+        session
+            .candidates()
+            .get(0)
+            .map(oxpinyin_engine::Candidate::text),
         Some("传"),
         "the pin's first candidate for zhuan"
     );

@@ -292,7 +292,9 @@ mod tests {
         let mut keys = vec![LeByteKey::new(0x00ff), LeByteKey::new(0x0100)];
         keys.sort();
         assert_eq!(
-            keys.into_iter().map(|key| key.token()).collect::<Vec<_>>(),
+            keys.into_iter()
+                .map(super::LeByteKey::token)
+                .collect::<Vec<_>>(),
             [0x0100, 0x00ff]
         );
         assert!(LeByteKey::new(0x0700) < LeByteKey::new(7));

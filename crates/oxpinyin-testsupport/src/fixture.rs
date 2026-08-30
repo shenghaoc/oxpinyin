@@ -484,7 +484,10 @@ mod tests {
     fn lookup_preserves_the_captured_candidate_order() {
         let dictionary = dictionary();
         let entries = dictionary.lookup(&keys("ni")).expect("lookup cannot fail");
-        let texts: Vec<&str> = entries.iter().map(|entry| entry.text()).collect();
+        let texts: Vec<&str> = entries
+            .iter()
+            .map(oxpinyin_core::PhraseEntry::text)
+            .collect();
         assert_eq!(
             texts,
             ["你", "尼", "呢", "泥", "妮", "拟", "逆", "倪", "腻", "溺"]
