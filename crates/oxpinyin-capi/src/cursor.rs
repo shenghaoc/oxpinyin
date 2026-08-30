@@ -554,7 +554,7 @@ mod tests {
             assert!(super::pinyin_get_pinyin_offset(
                 instance,
                 cursor,
-                &mut offset
+                &raw mut offset
             ));
             assert_eq!(offset, expected, "cursor {cursor}");
         }
@@ -564,13 +564,17 @@ mod tests {
             assert!(super::pinyin_get_pinyin_offset(
                 instance,
                 cursor,
-                &mut offset
+                &raw mut offset
             ));
             assert!(super::pinyin_get_left_pinyin_offset(
-                instance, offset, &mut left
+                instance,
+                offset,
+                &raw mut left
             ));
             assert!(super::pinyin_get_right_pinyin_offset(
-                instance, offset, &mut right
+                instance,
+                offset,
+                &raw mut right
             ));
             assert_eq!(
                 (left, right),
@@ -594,23 +598,31 @@ mod tests {
 
         let mut right = usize::MAX;
         assert!(!super::pinyin_get_right_pinyin_offset(
-            instance, 11, &mut right
+            instance,
+            11,
+            &raw mut right
         ));
         for offset in [1, 3, 4, 6, 7, 9] {
             assert!(!super::pinyin_get_right_pinyin_offset(
-                instance, offset, &mut right
+                instance,
+                offset,
+                &raw mut right
             ));
         }
         // The pin answers left=10 at offset 11 (its walk halts at column
         // 10 before the trailing zero) — not an abort shape.
         let mut left = usize::MAX;
         assert!(super::pinyin_get_left_pinyin_offset(
-            instance, 11, &mut left
+            instance,
+            11,
+            &raw mut left
         ));
         assert_eq!(left, 10);
         // Offsets past one-past-end: the range refusal.
         assert!(!super::pinyin_get_left_pinyin_offset(
-            instance, 12, &mut left
+            instance,
+            12,
+            &raw mut left
         ));
 
         crate::instance::pinyin_free_instance(instance);
@@ -627,15 +639,23 @@ mod tests {
         assert_eq!(parse(instance, "ni'hao"), 6);
 
         let mut offset = usize::MAX;
-        assert!(super::pinyin_get_pinyin_offset(instance, 3, &mut offset));
+        assert!(super::pinyin_get_pinyin_offset(
+            instance,
+            3,
+            &raw mut offset
+        ));
         assert_eq!(offset, 2);
         let mut left = usize::MAX;
         assert!(!super::pinyin_get_left_pinyin_offset(
-            instance, 3, &mut left
+            instance,
+            3,
+            &raw mut left
         ));
         let mut right = usize::MAX;
         assert!(super::pinyin_get_right_pinyin_offset(
-            instance, 2, &mut right
+            instance,
+            2,
+            &raw mut right
         ));
         assert_eq!(right, 6);
 

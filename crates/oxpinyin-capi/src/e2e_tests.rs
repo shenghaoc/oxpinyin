@@ -550,9 +550,9 @@ fn drain_phrases(iter: *mut crate::types::ExportIterator) -> Vec<(String, String
         let mut count: std::os::raw::c_int = 0;
         assert!(crate::iterators::pinyin_iterator_get_next_phrase(
             iter,
-            &mut phrase,
-            &mut pinyin,
-            &mut count,
+            &raw mut phrase,
+            &raw mut pinyin,
+            &raw mut count,
         ));
         rows.push((take_exported(phrase), take_exported(pinyin), count));
     }
@@ -568,9 +568,9 @@ fn drain_bigrams(iter: *mut crate::types::BigramExportIterator) -> Vec<(String, 
         let mut count: std::os::raw::c_int = 0;
         assert!(crate::iterators::pinyin_bigram_iterator_get_next_phrase(
             iter,
-            &mut phrase,
-            &mut pinyin,
-            &mut count,
+            &raw mut phrase,
+            &raw mut pinyin,
+            &raw mut count,
         ));
         rows.push((take_exported(phrase), take_exported(pinyin), count));
     }
@@ -784,7 +784,7 @@ fn export_iterators_walk_the_stored_triples() {
         assert!(pinyin_get_candidate(
             instance,
             u32::try_from(index).expect("small candidate index"),
-            &mut cand
+            &raw mut cand
         ));
         (index, cand)
     };
@@ -812,7 +812,7 @@ fn export_iterators_walk_the_stored_triples() {
         assert!(pinyin_get_candidate(
             instance,
             u32::try_from(index).expect("small candidate index"),
-            &mut cand
+            &raw mut cand
         ));
         cand
     };
@@ -926,7 +926,7 @@ fn offset_decode_rows_carry_prefix_context() {
         assert!(pinyin_get_candidate(
             instance,
             u32::try_from(index).expect("small candidate index"),
-            &mut cand
+            &raw mut cand
         ));
         (index, cand)
     };
@@ -936,7 +936,7 @@ fn offset_decode_rows_carry_prefix_context() {
 
     let mut sentence: *mut std::os::raw::c_char = ptr::null_mut();
     assert!(
-        pinyin_get_sentence(instance, 0, &mut sentence),
+        pinyin_get_sentence(instance, 0, &raw mut sentence),
         "remaining input should produce at least one sentence row"
     );
     assert!(!sentence.is_null());
@@ -1002,7 +1002,7 @@ fn the_forcing_survives_the_reparse_and_clears_by_offset() {
         assert!(pinyin_get_candidate(
             instance,
             u32::try_from(index).expect("small candidate index"),
-            &mut cand
+            &raw mut cand
         ));
         cand
     };
@@ -1019,7 +1019,7 @@ fn the_forcing_survives_the_reparse_and_clears_by_offset() {
     assert!(pinyin_guess_sentence(instance));
     let mut sentence: *mut std::os::raw::c_char = ptr::null_mut();
     assert!(
-        pinyin_get_sentence(instance, 0, &mut sentence),
+        pinyin_get_sentence(instance, 0, &raw mut sentence),
         "the extended input decodes rows"
     );
     let sentence_str = crate::ffi::take_owned_cstr(sentence);
@@ -1079,7 +1079,7 @@ fn the_forcing_survives_a_shrinking_reparse_and_the_retype() {
         assert!(pinyin_get_candidate(
             instance,
             u32::try_from(index).expect("small candidate index"),
-            &mut cand
+            &raw mut cand
         ));
         cand
     };
@@ -1156,7 +1156,7 @@ fn a_selection_committed_composition_reparses_with_its_store() {
         assert!(pinyin_get_candidate(
             instance,
             u32::try_from(index).expect("small candidate index"),
-            &mut cand
+            &raw mut cand
         ));
         cand
     };
@@ -1229,7 +1229,7 @@ fn a_shrinking_reparse_reconciles_the_committed_selection() {
         assert!(pinyin_get_candidate(
             instance,
             u32::try_from(index).expect("small candidate index"),
-            &mut cand
+            &raw mut cand
         ));
         cand
     };
@@ -1413,7 +1413,7 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
         assert!(pinyin_get_candidate(
             instance,
             u32::try_from(index).expect("small candidate index"),
-            &mut cand
+            &raw mut cand
         ));
         cand
     };
@@ -1591,7 +1591,7 @@ mod parse_termination {
         assert!(pinyin_guess_sentence(instance));
         assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
         let mut n = 0;
-        assert!(pinyin_get_n_candidate(instance, &mut n));
+        assert!(pinyin_get_n_candidate(instance, &raw mut n));
         assert!(n > 0, "the toned window is non-empty");
 
         assert_eq!(parse_len(context, instance, word, "zai4"), 4);
@@ -1652,7 +1652,7 @@ mod parse_termination {
         assert!(pinyin_guess_sentence(instance));
         assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
         let mut n = 0;
-        assert!(pinyin_get_n_candidate(instance, &mut n));
+        assert!(pinyin_get_n_candidate(instance, &raw mut n));
         assert_eq!(
             n, 0,
             "no candidates and no fallback row for a keyless parse"

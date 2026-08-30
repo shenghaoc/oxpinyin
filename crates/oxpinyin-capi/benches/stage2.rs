@@ -103,7 +103,7 @@ fn guess_candidates(criterion: &mut Criterion) {
                 unsafe {
                     let guessed = pinyin_guess_candidates(capi.instance, 0, W8_SORT as c_uint);
                     let mut count: c_uint = 0;
-                    let _ = pinyin_get_n_candidate(capi.instance, &mut count);
+                    let _ = pinyin_get_n_candidate(capi.instance, &raw mut count);
                     black_box((guessed, count))
                 }
             },
@@ -125,7 +125,7 @@ fn guess_candidates(criterion: &mut Criterion) {
                     let guessed =
                         pinyin_guess_candidates(capi.instance, GUESS_MID_OFFSET, W8_SORT as c_uint);
                     let mut count: c_uint = 0;
-                    let _ = pinyin_get_n_candidate(capi.instance, &mut count);
+                    let _ = pinyin_get_n_candidate(capi.instance, &raw mut count);
                     black_box((guessed, count))
                 }
             },
@@ -139,7 +139,7 @@ fn take_sentence(instance: Instance) -> bool {
     let mut sentence: *mut c_char = std::ptr::null_mut();
     // SAFETY: `instance` is a live handle; `pinyin_get_sentence` writes a
     // malloc'd buffer the caller frees with libc `free`.
-    let ok = unsafe { pinyin_get_sentence(instance, 0, &mut sentence) };
+    let ok = unsafe { pinyin_get_sentence(instance, 0, &raw mut sentence) };
     if !sentence.is_null() {
         // SAFETY: the buffer came from `pinyin_get_sentence` (libc malloc).
         unsafe {

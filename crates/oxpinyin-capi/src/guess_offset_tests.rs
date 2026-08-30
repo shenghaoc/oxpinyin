@@ -52,7 +52,7 @@ fn candidate_at(instance: *mut PinyinInstance, index: usize) -> *mut LookupCandi
         pinyin_get_candidate(
             instance,
             u32::try_from(index).expect("small candidate index"),
-            &mut cand,
+            &raw mut cand,
         ),
         "candidate {index} exists"
     );
@@ -142,7 +142,7 @@ fn a_leading_or_trailing_run_never_walks_off_the_input() {
     assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
     assert!(!pinyin_guess_candidates(instance, 1, DEFAULT_SORT));
     let mut num: c_uint = 77;
-    assert!(pinyin_get_n_candidate(instance, &mut num));
+    assert!(pinyin_get_n_candidate(instance, &raw mut num));
     assert_eq!(num, 0, "a refused guess leaves the freed-list shape");
     assert!(
         pinyin_guess_candidates(instance, 0, DEFAULT_SORT),
@@ -179,7 +179,7 @@ fn an_offset_past_the_parsed_input_is_refused() {
         "an offset past the parsed input is refused"
     );
     let mut num: c_uint = 77;
-    assert!(pinyin_get_n_candidate(instance, &mut num));
+    assert!(pinyin_get_n_candidate(instance, &raw mut num));
     assert_eq!(num, 0, "the refusal leaves no candidates behind");
     assert!(
         pinyin_guess_candidates(instance, 0, DEFAULT_SORT),
@@ -331,7 +331,7 @@ fn double_pinyin_admits_no_zero_key_and_keeps_the_range_law() {
     );
     assert!(!pinyin_guess_candidates(instance, 5, DEFAULT_SORT));
     let mut num: c_uint = 77;
-    assert!(pinyin_get_n_candidate(instance, &mut num));
+    assert!(pinyin_get_n_candidate(instance, &raw mut num));
     assert_eq!(num, 0, "the refusal leaves no candidates behind");
 
     // The choose cursor is the absolute end in original coordinates: the

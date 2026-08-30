@@ -99,7 +99,7 @@ pub fn candidate(instance: *mut PinyinInstance, text: &str, index: c_uint) -> *m
     assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
     let mut cand: *mut LookupCandidate = std::ptr::null_mut();
     assert!(
-        pinyin_get_candidate(instance, index, &mut cand),
+        pinyin_get_candidate(instance, index, &raw mut cand),
         "candidate {index} exists"
     );
     assert!(!cand.is_null());

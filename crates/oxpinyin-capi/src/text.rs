@@ -572,7 +572,9 @@ mod tests {
             );
             let mut aux: *mut GChar = std::ptr::null_mut();
             assert!(super::pinyin_get_full_pinyin_auxiliary_text(
-                instance, cursor, &mut aux
+                instance,
+                cursor,
+                &raw mut aux
             ));
             assert!(!aux.is_null());
             assert_eq!(crate::ffi::take_owned_cstr(aux.cast()), expected);

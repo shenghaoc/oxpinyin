@@ -157,7 +157,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
     assert!(pinyin_get_candidate(
         instance,
         u32::try_from(index).expect("small candidate index"),
-        &mut cand
+        &raw mut cand
     ));
     assert!(!cand.is_null());
     assert!(pinyin_choose_candidate(instance, 0, cand) > 0);
