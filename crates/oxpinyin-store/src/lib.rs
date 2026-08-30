@@ -39,10 +39,58 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
+
+// ── Exactly-one-backend invariant, enforced at compile time ────────────
+//
+// The four store backends (kyotocabinet, redb, lmdb, tkrzw) are peer
+// implementations behind the store's trait surface, and every oxpinyin
+// build has exactly one of them. Cargo features are additive under
+// unification, so a plausible-looking `cargo build --features redb`
+// silently combines redb with the default KC feature — precisely the
+// slide these guards refuse. Every consumer crate forwards its own
+// `{kyotocabinet, redb, lmdb, tkrzw}` features onto this crate, so this
+// one guard suffices for the whole workspace.
+//
+// The zero-backend case is refused too — a build with no backend has no
+// `DefaultStore` type to assemble the runtime around, and the resulting
+// "unresolved type" error a downstream consumer would hit is a worse
+// diagnostic than saying "select a backend" here.
+
+#[cfg(not(any(
+    feature = "kyotocabinet",
+    feature = "redb",
+    feature = "lmdb",
+    feature = "tkrzw",
+)))]
+compile_error!(
+    "oxpinyin-store: no store backend selected. Enable exactly one of \
+     `kyotocabinet` (the default), `redb`, `lmdb`, or `tkrzw`. On the \
+     command line: `cargo build` for the default (KC), or \
+     `cargo build --no-default-features --features {redb|lmdb|tkrzw}` \
+     for a peer."
+);
+
+#[cfg(any(
+    all(feature = "kyotocabinet", feature = "redb"),
+    all(feature = "kyotocabinet", feature = "lmdb"),
+    all(feature = "kyotocabinet", feature = "tkrzw"),
+    all(feature = "redb", feature = "lmdb"),
+    all(feature = "redb", feature = "tkrzw"),
+    all(feature = "lmdb", feature = "tkrzw"),
+))]
+compile_error!(
+    "oxpinyin-store: more than one store backend selected. Exactly one \
+     of `kyotocabinet`, `redb`, `lmdb`, `tkrzw` may be enabled per \
+     build. A build that names an alternate peer must also disable the \
+     workspace's default feature set: \
+     `cargo build --no-default-features --features {redb|lmdb|tkrzw}`."
+);
+
 use std::fmt;
 use std::ops::Bound;
 use std::path::Path;
 
+#[cfg(feature = "redb")]
 use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata, TableHandle};
 
 /// Errors that can occur when opening or scanning a store.
@@ -203,17 +251,10 @@ pub trait WriteStore: ReadStore {
     fn compact(&mut self) -> Result<(), StoreError>;
 }
 
-// ── redb backend ───────────────────────────────────────────────────
-
-enum RedbInner {
-    ReadOnly(redb::ReadOnlyDatabase),
-    ReadWrite(redb::Database),
-}
-
-/// A redb-backed store implementing both capability tiers.
-pub struct RedbStore {
-    inner: RedbInner,
-}
+// ── Shared: table-name validation ──────────────────────────────────
+//
+// Backend-independent: every peer's frame/prefix machinery needs to
+// refuse an empty or NUL-bearing table name up front.
 
 pub(crate) fn validate_table_name(table: &str) -> Result<(), StoreError> {
     if table.is_empty() {
@@ -225,6 +266,21 @@ pub(crate) fn validate_table_name(table: &str) -> Result<(), StoreError> {
     Ok(())
 }
 
+// ── redb backend ───────────────────────────────────────────────────
+
+#[cfg(feature = "redb")]
+enum RedbInner {
+    ReadOnly(redb::ReadOnlyDatabase),
+    ReadWrite(redb::Database),
+}
+
+/// A redb-backed store implementing both capability tiers.
+#[cfg(feature = "redb")]
+pub struct RedbStore {
+    inner: RedbInner,
+}
+
+#[cfg(feature = "redb")]
 fn table_def<'a>(
     table: &'a str,
 ) -> Result<redb::TableDefinition<'a, &'static [u8], &'static [u8]>, StoreError> {
@@ -232,6 +288,7 @@ fn table_def<'a>(
     Ok(redb::TableDefinition::new(table))
 }
 
+#[cfg(feature = "redb")]
 impl RedbStore {
     fn begin_read(&self) -> Result<redb::ReadTransaction, StoreError> {
         match &self.inner {
@@ -244,6 +301,7 @@ impl RedbStore {
 // ── redb shared read helpers ───────────────────────────────────────
 
 /// An absent table is treated as empty (`None`).
+#[cfg(feature = "redb")]
 fn read_get(
     txn: &redb::ReadTransaction,
     table: &str,
@@ -261,6 +319,7 @@ fn read_get(
 }
 
 /// An absent table is treated as empty (no visits).
+#[cfg(feature = "redb")]
 fn read_range(
     txn: &redb::ReadTransaction,
     table: &str,
@@ -283,6 +342,7 @@ fn read_range(
 }
 
 /// An absent table is treated as empty (no visits).
+#[cfg(feature = "redb")]
 fn read_for_each(
     txn: &redb::ReadTransaction,
     table: &str,
@@ -303,6 +363,7 @@ fn read_for_each(
 }
 
 /// An absent table counts as empty.
+#[cfg(feature = "redb")]
 fn read_is_empty(txn: &redb::ReadTransaction, table: &str) -> Result<bool, StoreError> {
     let def = table_def(table)?;
     match txn.open_table(def) {
@@ -312,6 +373,7 @@ fn read_is_empty(txn: &redb::ReadTransaction, table: &str) -> Result<bool, Store
     }
 }
 
+#[cfg(feature = "redb")]
 impl ReadStore for RedbStore {
     fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         let db = redb::Builder::new()
@@ -349,6 +411,7 @@ impl ReadStore for RedbStore {
     }
 }
 
+#[cfg(feature = "redb")]
 impl WriteStore for RedbStore {
     fn create(path: &Path) -> Result<Self, StoreError> {
         let db = redb::Database::create(path).map_err(map_database_error)?;
@@ -394,10 +457,12 @@ impl WriteStore for RedbStore {
 
 // ── redb write-transaction wrapper ─────────────────────────────────
 
+#[cfg(feature = "redb")]
 struct RedbWriteTxn<'txn> {
     txn: &'txn redb::WriteTransaction,
 }
 
+#[cfg(feature = "redb")]
 impl WriteTxn for RedbWriteTxn<'_> {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let def = table_def(table)?;
@@ -482,48 +547,44 @@ impl WriteTxn for RedbWriteTxn<'_> {
 // `--features <backend>` on `--no-default-features` selects that
 // backend's peer implementation instead.
 
+// Each `cfg(feature = ...)` block below is exclusive — the exactly-one-
+// backend guards at the top of this file refuse builds where more than
+// one feature is enabled — so a build compiles at most one `DefaultStore`
+// alias and one `DEFAULT_STORE_EXT` constant.
+
 /// The default store backend — Kyoto Cabinet, the feature enabled in the
 /// workspace's default set.
 #[cfg(feature = "kyotocabinet")]
 pub type DefaultStore = KcStore;
 
-/// The default store backend — tkrzw, selected on a build that enables
-/// the `tkrzw` feature alone (without `kyotocabinet`).
-#[cfg(all(feature = "tkrzw", not(feature = "kyotocabinet")))]
+/// The default store backend — tkrzw, on
+/// `--no-default-features --features tkrzw`.
+#[cfg(feature = "tkrzw")]
 pub type DefaultStore = TkrzwStore;
 
-/// The default store backend — LMDB, selected on a build that enables the
-/// `lmdb` feature alone.
-#[cfg(all(
-    feature = "lmdb",
-    not(feature = "kyotocabinet"),
-    not(feature = "tkrzw")
-))]
+/// The default store backend — LMDB, on
+/// `--no-default-features --features lmdb`.
+#[cfg(feature = "lmdb")]
 pub type DefaultStore = LmdbStore;
 
-/// The default store backend — redb, selected on a build that enables
-/// neither of the C backends.
-#[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb")))]
+/// The default store backend — redb, on
+/// `--no-default-features --features redb`.
+#[cfg(feature = "redb")]
 pub type DefaultStore = RedbStore;
 
-/// File extension for [`DefaultStore`]'s native tables, matching
-/// `oxpinyin-datagen`'s `Backend::extension` convention (one extension per
-/// backend; the store forces its database type through open parameters, so
-/// the extension is naming, not detection).
+/// File extension for [`DefaultStore`]'s native tables — one per peer;
+/// the store forces its database type through open parameters, so the
+/// extension is naming, not detection.
 #[cfg(feature = "kyotocabinet")]
 pub const DEFAULT_STORE_EXT: &str = "kct";
 /// File extension for [`DefaultStore`]'s native tables (tkrzw TreeDBM).
-#[cfg(all(feature = "tkrzw", not(feature = "kyotocabinet")))]
+#[cfg(feature = "tkrzw")]
 pub const DEFAULT_STORE_EXT: &str = "tkt";
 /// File extension for [`DefaultStore`]'s native tables (LMDB).
-#[cfg(all(
-    feature = "lmdb",
-    not(feature = "kyotocabinet"),
-    not(feature = "tkrzw")
-))]
+#[cfg(feature = "lmdb")]
 pub const DEFAULT_STORE_EXT: &str = "lmdb";
 /// File extension for [`DefaultStore`]'s native tables (redb).
-#[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb")))]
+#[cfg(feature = "redb")]
 pub const DEFAULT_STORE_EXT: &str = "redb";
 
 /// `<stem>.<DEFAULT_STORE_EXT>` — the on-disk name of a native table for
@@ -548,8 +609,9 @@ pub mod kyotocabinet;
 #[cfg(feature = "kyotocabinet")]
 pub use kyotocabinet::KcStore;
 
-// ── error mapping ──────────────────────────────────────────────────
+// ── redb error mapping ─────────────────────────────────────────────
 
+#[cfg(feature = "redb")]
 fn map_database_error(e: redb::DatabaseError) -> StoreError {
     match e {
         redb::DatabaseError::Storage(redb::StorageError::Io(io)) => StoreError::Io(io),
@@ -557,6 +619,7 @@ fn map_database_error(e: redb::DatabaseError) -> StoreError {
     }
 }
 
+#[cfg(feature = "redb")]
 fn map_transaction_error(e: redb::TransactionError) -> StoreError {
     match e {
         redb::TransactionError::Storage(redb::StorageError::Io(io)) => StoreError::Io(io),
@@ -564,6 +627,7 @@ fn map_transaction_error(e: redb::TransactionError) -> StoreError {
     }
 }
 
+#[cfg(feature = "redb")]
 fn map_table_error(e: redb::TableError) -> StoreError {
     match e {
         redb::TableError::Storage(redb::StorageError::Io(io)) => StoreError::Io(io),
@@ -571,6 +635,7 @@ fn map_table_error(e: redb::TableError) -> StoreError {
     }
 }
 
+#[cfg(feature = "redb")]
 fn map_storage_error(e: redb::StorageError) -> StoreError {
     match e {
         redb::StorageError::Io(io) => StoreError::Io(io),
@@ -578,6 +643,7 @@ fn map_storage_error(e: redb::StorageError) -> StoreError {
     }
 }
 
+#[cfg(feature = "redb")]
 fn map_commit_error(e: redb::CommitError) -> StoreError {
     match e {
         redb::CommitError::Storage(redb::StorageError::Io(io)) => StoreError::Io(io),
@@ -585,6 +651,7 @@ fn map_commit_error(e: redb::CommitError) -> StoreError {
     }
 }
 
+#[cfg(feature = "redb")]
 fn map_compaction_error(e: redb::CompactionError) -> StoreError {
     match e {
         redb::CompactionError::Storage(redb::StorageError::Io(io)) => StoreError::Io(io),
@@ -596,11 +663,10 @@ fn map_compaction_error(e: redb::CompactionError) -> StoreError {
 
 #[cfg(test)]
 mod tests {
-    // `WriteStore` provides `create`/`write`, used by the always-built
-    // `redb_is_empty_probe_does_not_create_tables` below; keep it in scope
-    // regardless of the backend features. Everything else here is only
-    // referenced by a feature-gated backend test, so each import is gated
-    // the same way to avoid an unused-import warning when it is off.
+    // Each of the four peer backends can produce its own use-line tests
+    // — the imports below are gated to whichever peer is compiled. Under
+    // the exactly-one-backend invariant, at most one peer is enabled per
+    // build, so at most one branch of each `cfg` fires.
     #[cfg(feature = "tkrzw")]
     use std::ops::Bound;
 
@@ -612,6 +678,7 @@ mod tests {
     use super::StoreError;
     #[cfg(feature = "tkrzw")]
     use super::TkrzwStore;
+    #[cfg(any(feature = "redb", feature = "lmdb", feature = "tkrzw"))]
     use super::WriteStore;
 
     /// Emits the temp-path plumbing every tier group needs.
@@ -1078,8 +1145,12 @@ mod tests {
 
     // Every backend offers both tiers, so each runs both groups and is
     // its own fixture writer. A read-only backend would invoke only
-    // `store_read_tests!`.
+    // `store_read_tests!`. Each group is gated by the peer's feature —
+    // the exactly-one-backend guards refuse combined builds, so at most
+    // one of these four groups is ever compiled.
+    #[cfg(feature = "redb")]
     store_read_tests!(redb_read, RedbStore, RedbStore, "redb");
+    #[cfg(feature = "redb")]
     store_write_tests!(redb_write, RedbStore, "redb");
 
     #[cfg(feature = "lmdb")]
@@ -1098,10 +1169,14 @@ mod tests {
     store_write_tests!(kc_write, KcStore, "kc");
 
     /// Removes the borrowed path on drop, so a panicking test leaves no
-    /// file behind in `std::env::temp_dir()`. redb keeps no `-lock` sidecar,
-    /// so the single data file is all that needs removing.
+    /// file behind in `std::env::temp_dir()`. redb keeps no `-lock`
+    /// sidecar, so the single data file is all that needs removing;
+    /// LMDB and tkrzw sidecars are cleaned up separately by their own
+    /// tests. Used by the redb probe and the LMDB concurrency tests.
+    #[cfg(any(feature = "redb", feature = "lmdb"))]
     struct RemoveOnDrop<'a>(&'a std::path::Path);
 
+    #[cfg(any(feature = "redb", feature = "lmdb"))]
     impl Drop for RemoveOnDrop<'_> {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(self.0);
@@ -1121,22 +1196,17 @@ mod tests {
 
     #[test]
     fn default_store_ext_matches_the_compiled_backend() {
-        // Under the workspace's default features KC is on, so the
-        // extension is `.kct`. Each peer selects a different extension:
-        // `.redb`, `.lmdb`, `.tkt`. The order below mirrors
-        // `DefaultStore`'s tie-break chain, so a build that enables
-        // several features still resolves to a single deterministic peer.
+        // Each peer selects a distinct extension. The exactly-one-
+        // backend guards refuse combined builds, so exactly one of the
+        // arms below fires per build — and if none fired, this test
+        // would go unfound (`#[cfg]` gates the whole `#[test]` too).
         #[cfg(feature = "kyotocabinet")]
         assert_eq!(super::DEFAULT_STORE_EXT, "kct");
-        #[cfg(all(feature = "tkrzw", not(feature = "kyotocabinet")))]
+        #[cfg(feature = "tkrzw")]
         assert_eq!(super::DEFAULT_STORE_EXT, "tkt");
-        #[cfg(all(
-            feature = "lmdb",
-            not(feature = "kyotocabinet"),
-            not(feature = "tkrzw")
-        ))]
+        #[cfg(feature = "lmdb")]
         assert_eq!(super::DEFAULT_STORE_EXT, "lmdb");
-        #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb")))]
+        #[cfg(feature = "redb")]
         assert_eq!(super::DEFAULT_STORE_EXT, "redb");
     }
 
@@ -1174,12 +1244,14 @@ mod tests {
         assert_type_eq::<super::KcStore>();
     }
 
-    /// With every C-backend feature off, `DefaultStore` must resolve to
-    /// `RedbStore` — one of the four peer backends, selected by the
-    /// bare `--no-default-features` build.
-    #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb")))]
+    /// `--no-default-features --features redb` resolves `DefaultStore`
+    /// to `RedbStore` — the pure-Rust peer. The exactly-one-backend
+    /// guards at the top of `lib.rs` refuse a build that combines
+    /// `redb` with any of the C peers, so the cfg here only names the
+    /// redb feature.
+    #[cfg(feature = "redb")]
     #[test]
-    fn default_store_is_redb_under_no_backend_features() {
+    fn default_store_is_redb_when_only_redb_is_on() {
         fn assert_type_eq<T>()
         where
             T: 'static,
@@ -1194,9 +1266,9 @@ mod tests {
         assert_type_eq::<super::RedbStore>();
     }
 
-    /// `--no-default-features --features tkrzw` (without KC) resolves
-    /// `DefaultStore` to `TkrzwStore` — the tkrzw peer.
-    #[cfg(all(feature = "tkrzw", not(feature = "kyotocabinet")))]
+    /// `--no-default-features --features tkrzw` resolves `DefaultStore`
+    /// to `TkrzwStore` — the tkrzw peer.
+    #[cfg(feature = "tkrzw")]
     #[test]
     fn default_store_is_tkrzw_when_only_tkrzw_is_on() {
         fn assert_type_eq<T>()
@@ -1213,13 +1285,9 @@ mod tests {
         assert_type_eq::<super::TkrzwStore>();
     }
 
-    /// `--no-default-features --features lmdb` (without KC or tkrzw)
-    /// resolves `DefaultStore` to `LmdbStore` — the LMDB peer.
-    #[cfg(all(
-        feature = "lmdb",
-        not(feature = "kyotocabinet"),
-        not(feature = "tkrzw")
-    ))]
+    /// `--no-default-features --features lmdb` resolves `DefaultStore`
+    /// to `LmdbStore` — the LMDB peer.
+    #[cfg(feature = "lmdb")]
     #[test]
     fn default_store_is_lmdb_when_only_lmdb_is_on() {
         fn assert_type_eq<T>()
@@ -1236,6 +1304,7 @@ mod tests {
         assert_type_eq::<super::LmdbStore>();
     }
 
+    #[cfg(feature = "redb")]
     #[test]
     fn redb_is_empty_probe_does_not_create_tables() {
         use ::redb::ReadableDatabase;
@@ -1797,25 +1866,24 @@ mod tests {
         let _ = std::fs::remove_file(&lock);
     }
 
-    // ── cross-backend key-ordering conformance ─────────────────────
+    // ── per-peer key-ordering conformance ─────────────────────────
     //
     // The byte-order contract must hold *identically* across every
-    // backend, and — the property a small-id fixture cannot see — byte
-    // order must diverge from integer order across the 256 boundary.
-    // These sit here rather than in a per-tier group because they are
-    // cross-cutting: the equivalence tests exercise two or three
-    // backends in one body, comparing whichever are compiled in.
+    // peer backend, and — the property a small-id fixture cannot see —
+    // byte order must diverge from integer order across the 256
+    // boundary. Under the exactly-one-backend invariant the tests
+    // cannot cross-compare two peers in one process, so each build
+    // runs them against its own `DefaultStore`. Running all four peer
+    // builds (KC / redb / LMDB / Tkrzw) through CI gives the same
+    // coverage the earlier in-process three-way check gave: each peer
+    // independently satisfies the byte-order contract, and the
+    // expected walk order is computed mathematically (sort the keys)
+    // rather than borrowed from a reference peer's output.
     mod key_ordering {
         use std::ops::Bound;
         use std::path::Path;
 
-        #[cfg(feature = "kyotocabinet")]
-        use super::super::KcStore;
-        #[cfg(feature = "lmdb")]
-        use super::super::LmdbStore;
-        #[cfg(feature = "tkrzw")]
-        use super::super::TkrzwStore;
-        use super::super::{RedbStore, WriteStore};
+        use super::super::{DefaultStore, WriteStore};
 
         /// Tokens that cross the 256 boundary in the low byte and in
         /// higher bytes, so their little-endian byte order differs from
@@ -1937,16 +2005,25 @@ mod tests {
                 .collect()
         }
 
-        // ── the store contract: byte order, not integer order (redb) ──
+        // ── the store contract: byte order, not integer order ──────
+
+        /// Ascending sort of `keys` by raw byte order — the store's one
+        /// walk-order rule (`docs/findings/store-key-ordering.md`).
+        fn sorted_by_bytes(keys: &[Vec<u8>]) -> Vec<Vec<u8>> {
+            let mut sorted: Vec<Vec<u8>> = keys.to_vec();
+            sorted.sort();
+            sorted
+        }
 
         #[test]
-        fn redb_walks_raw_keys_in_byte_order_and_that_is_not_integer_order() {
-            let path = TempPath::new("redb-byteorder");
-            let rows = insert_and_walk::<RedbStore>(&path.0, &le_keys());
+        fn walks_raw_keys_in_byte_order_and_that_is_not_integer_order() {
+            let path = TempPath::new("byteorder");
+            let rows = insert_and_walk::<DefaultStore>(&path.0, &le_keys());
 
-            let keys: Vec<&[u8]> = rows.iter().map(|(k, _)| k.as_slice()).collect();
-            assert!(
-                keys.windows(2).all(|w| w[0] < w[1]),
+            let keys: Vec<Vec<u8>> = rows.iter().map(|(k, _)| k.clone()).collect();
+            assert_eq!(
+                keys,
+                sorted_by_bytes(&le_keys()),
                 "store walk must be strictly ascending by raw byte order",
             );
 
@@ -1964,23 +2041,24 @@ mod tests {
         }
 
         #[test]
-        fn redb_range_walks_byte_order_across_256() {
-            let path = TempPath::new("redb-range");
+        fn range_walks_byte_order_across_256() {
+            let path = TempPath::new("range");
             let keys = le_keys();
             // A window straddling 256 in byte order: LE(0x0000_0100)
             // (`00 01 00 00`) up to LE(0x0000_00FF) (`FF 00 00 00`).
             let lo = 0x0000_0100_u32.to_le_bytes();
             let hi = 0x0000_00FF_u32.to_le_bytes();
-            let rows = insert_and_range::<RedbStore>(&path.0, &keys, &lo, &hi);
+            let rows = insert_and_range::<DefaultStore>(&path.0, &keys, &lo, &hi);
             assert!(!rows.is_empty(), "the range must match rows");
-            let keys: Vec<&[u8]> = rows.iter().map(|(k, _)| k.as_slice()).collect();
-            assert!(
-                keys.windows(2).all(|w| w[0] < w[1]),
-                "range walk must be strictly ascending by raw byte order",
-            );
-            assert!(
-                keys.iter().all(|k| *k >= &lo[..] && *k < &hi[..]),
-                "range must respect its byte-order bounds",
+            let out: Vec<Vec<u8>> = rows.iter().map(|(k, _)| k.clone()).collect();
+            let expected: Vec<Vec<u8>> = sorted_by_bytes(&keys)
+                .into_iter()
+                .filter(|k| k.as_slice() >= &lo[..] && k.as_slice() < &hi[..])
+                .collect();
+            assert_eq!(
+                out, expected,
+                "range walk must return the ascending byte-ordered slice \
+                 inside its bounds",
             );
         }
 
@@ -1992,8 +2070,8 @@ mod tests {
             // asserting a specific order would go red.
             let path_le = TempPath::new("perturb-le");
             let path_be = TempPath::new("perturb-be");
-            let le = insert_and_walk::<RedbStore>(&path_le.0, &le_keys());
-            let be = insert_and_walk::<RedbStore>(&path_be.0, &be_keys());
+            let le = insert_and_walk::<DefaultStore>(&path_le.0, &le_keys());
+            let be = insert_and_walk::<DefaultStore>(&path_be.0, &be_keys());
 
             let le_tokens: Vec<u32> = le
                 .iter()
@@ -2018,50 +2096,23 @@ mod tests {
             );
         }
 
-        // ── three-way equivalence: redb == LMDB == tkrzw ──────────────
-
-        /// Asserts every compiled backend yields the same `for_each`
-        /// sequence redb does, on `keys`. redb is always present; LMDB and
-        /// tkrzw join when their features are on, so under
-        /// `--features lmdb,tkrzw` this is the full three-way check.
-        fn assert_for_each_identical(tag: &str, keys: &[Vec<u8>]) -> Rows {
-            let redb_path = TempPath::new(&format!("{tag}-redb"));
-            let reference = insert_and_walk::<RedbStore>(&redb_path.0, keys);
-            #[cfg(feature = "lmdb")]
-            {
-                let p = TempPath::new(&format!("{tag}-lmdb"));
-                assert_eq!(
-                    reference,
-                    insert_and_walk::<LmdbStore>(&p.0, keys),
-                    "redb and LMDB must yield byte-identical for_each sequences",
-                );
-            }
-            #[cfg(feature = "tkrzw")]
-            {
-                let p = TempPath::new(&format!("{tag}-tkrzw"));
-                assert_eq!(
-                    reference,
-                    insert_and_walk::<TkrzwStore>(&p.0, keys),
-                    "redb and tkrzw must yield byte-identical for_each sequences",
-                );
-            }
-            #[cfg(feature = "kyotocabinet")]
-            {
-                let p = TempPath::new(&format!("{tag}-kc"));
-                assert_eq!(
-                    reference,
-                    insert_and_walk::<KcStore>(&p.0, keys),
-                    "redb and Kyoto Cabinet must yield byte-identical for_each \
-                     sequences — TreeDB with no `rcomp` uses LEXICALCOMP, which is \
-                     the store's one rule, and libpinyin sets no comparator",
-                );
-            }
-            reference
-        }
+        // ── per-peer equivalence: the current peer walks byte order ──
+        //
+        // Under exactly-one-backend, cross-peer equivalence cannot be
+        // proven in one process. Instead each build proves *its* peer
+        // matches the mathematical byte-ordered sequence; running all
+        // four peer builds through CI proves the four-way equivalence.
 
         #[test]
-        fn for_each_identical_across_backends_le_keys() {
-            let rows = assert_for_each_identical("xback-le", &le_keys());
+        fn for_each_matches_the_byte_ordered_sequence_le_keys() {
+            let path = TempPath::new("xback-le");
+            let rows = insert_and_walk::<DefaultStore>(&path.0, &le_keys());
+            let keys: Vec<Vec<u8>> = rows.iter().map(|(k, _)| k.clone()).collect();
+            assert_eq!(
+                keys,
+                sorted_by_bytes(&le_keys()),
+                "the peer's for_each must be the byte-ordered walk",
+            );
             let tokens: Vec<u32> = rows
                 .iter()
                 .map(|(k, _)| u32::from_le_bytes([k[0], k[1], k[2], k[3]]))
@@ -2073,57 +2124,46 @@ mod tests {
         }
 
         #[test]
-        fn for_each_identical_across_backends_be_keys() {
-            let rows = assert_for_each_identical("xback-be", &be_keys());
+        fn for_each_matches_the_byte_ordered_sequence_be_keys() {
+            let path = TempPath::new("xback-be");
+            let rows = insert_and_walk::<DefaultStore>(&path.0, &be_keys());
+            let keys: Vec<Vec<u8>> = rows.iter().map(|(k, _)| k.clone()).collect();
+            assert_eq!(
+                keys,
+                sorted_by_bytes(&be_keys()),
+                "the peer's for_each must be the byte-ordered walk",
+            );
             let tokens: Vec<u32> = rows
                 .iter()
                 .map(|(k, _)| u32::from_be_bytes([k[0], k[1], k[2], k[3]]))
                 .collect();
             assert!(
                 tokens.is_sorted(),
-                "big-endian keys share integer order across backends",
+                "big-endian keys share integer order across peers",
             );
         }
 
         #[test]
-        fn range_identical_across_backends_across_256() {
+        fn range_matches_the_byte_ordered_slice_across_256() {
             let keys = le_keys();
             let lo = 0x0000_0100_u32.to_le_bytes();
             let hi = 0x0000_00FF_u32.to_le_bytes();
-            let redb_path = TempPath::new("xrange-redb");
-            let reference = insert_and_range::<RedbStore>(&redb_path.0, &keys, &lo, &hi);
-            assert!(!reference.is_empty(), "the range must match rows");
-            #[cfg(feature = "lmdb")]
-            {
-                let p = TempPath::new("xrange-lmdb");
-                assert_eq!(
-                    reference,
-                    insert_and_range::<LmdbStore>(&p.0, &keys, &lo, &hi),
-                    "redb and LMDB must yield byte-identical range sequences",
-                );
-            }
-            #[cfg(feature = "tkrzw")]
-            {
-                let p = TempPath::new("xrange-tkrzw");
-                assert_eq!(
-                    reference,
-                    insert_and_range::<TkrzwStore>(&p.0, &keys, &lo, &hi),
-                    "redb and tkrzw must yield byte-identical range sequences",
-                );
-            }
-            #[cfg(feature = "kyotocabinet")]
-            {
-                let p = TempPath::new("xrange-kc");
-                assert_eq!(
-                    reference,
-                    insert_and_range::<KcStore>(&p.0, &keys, &lo, &hi),
-                    "redb and Kyoto Cabinet must yield byte-identical range sequences",
-                );
-            }
+            let path = TempPath::new("xrange");
+            let rows = insert_and_range::<DefaultStore>(&path.0, &keys, &lo, &hi);
+            assert!(!rows.is_empty(), "the range must match rows");
+            let expected: Vec<Vec<u8>> = sorted_by_bytes(&keys)
+                .into_iter()
+                .filter(|k| k.as_slice() >= &lo[..] && k.as_slice() < &hi[..])
+                .collect();
+            let out: Vec<Vec<u8>> = rows.iter().map(|(k, _)| k.clone()).collect();
+            assert_eq!(
+                out, expected,
+                "range walk must be the ascending byte-ordered slice",
+            );
         }
 
         #[test]
-        fn composite_pair_walk_identical_across_backends() {
+        fn composite_pair_walk_follows_byte_order() {
             // 8-byte (prev, cur) big-endian pairs — the user-store bigram
             // key shape — with both components crossing 256.
             let mut keys: Vec<Vec<u8>> = Vec::new();
@@ -2135,7 +2175,14 @@ mod tests {
                     keys.push(key);
                 }
             }
-            let rows = assert_for_each_identical("xpair", &keys);
+            let path = TempPath::new("xpair");
+            let rows = insert_and_walk::<DefaultStore>(&path.0, &keys);
+            let out: Vec<Vec<u8>> = rows.iter().map(|(k, _)| k.clone()).collect();
+            assert_eq!(
+                out,
+                sorted_by_bytes(&keys),
+                "the peer's for_each must be the byte-ordered walk",
+            );
             let pairs: Vec<(u32, u32)> = rows
                 .iter()
                 .map(|(k, _)| {

@@ -93,10 +93,12 @@ mod tests {
 
     #[test]
     fn manifest_renders_every_field() {
-        // The `Backend::Redb` variant is always compiled and covers the
-        // manifest-rendering contract without depending on any C backend
-        // feature being enabled in this test build; a `Backend::KyotoCabinet`
-        // manifest looks the same shape with a different extension.
+        // The four `Backend` enum variants are always defined (the
+        // exactly-one-backend gate lives on the *implementations*, not
+        // on the enum variants), so `Backend::Redb` is a valid fixture
+        // value here without pulling redb's writer in. The rendered
+        // manifest for any peer has the same shape with the peer's own
+        // extension.
         let manifest = Manifest {
             backend: Backend::Redb,
             model_sha256: "59c68e89".to_owned(),

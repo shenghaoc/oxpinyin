@@ -1,7 +1,9 @@
 # Backend-selection alignment: libpinyin vs oxpinyin
 
-Date: 2026-08-30 · Status: **audit closed; no shipping changes required
-beyond the tests this document exists alongside**.
+Date: 2026-08-30 · Status: **audit closed. One follow-up applied:
+exactly-one-backend is enforced at compile time (see §"Exactly-one
+enforcement" below), closing the last daylight between the intent and
+what cargo's additive feature unification would otherwise let through.**
 
 The goal was architectural alignment of the store-backend selection
 model between libpinyin (the reference implementation) and oxpinyin — not
@@ -72,24 +74,25 @@ build time, where `<peer>` is one of `kyotocabinet`, `redb`, `lmdb`,
 plus the type-identity check for each in
 `crates/oxpinyin-store/src/lib.rs::tests::default_store_is_{kc,redb,lmdb,tkrzw}_...`.
 
-**Difference:** oxpinyin's cargo features are additively unified, so
-`--features "kyotocabinet lmdb"` is a legal command that requests both.
-libpinyin's `AM_CONDITIONAL` selector has no equivalent — one is chosen.
+**Difference:** none, and this section was rewritten in the audit
+follow-up (see "Exactly-one enforcement" below). Cargo features are
+additive under unification, so a bare `--features redb` on a workspace
+that also carries a default `kyotocabinet` will silently enable both.
+That is not the intended model — the intended model is what
+libpinyin's `AM_CONDITIONAL` gives: **exactly one backend selected per
+build**. Two `compile_error!` guards in `oxpinyin-store` enforce that:
+one refuses zero-backend builds, the other refuses any combination of
+two or more. `oxpinyin-store` is the base every store-reaching crate
+transitively depends on, so the workspace-wide invariant follows from
+that one crate's guards.
 
-**Intentional?** The additivity is a property of cargo, not of the
-architecture. It is handled defensively: `DefaultStore` resolves the
-multi-feature case through the fixed chain
-`kyotocabinet > tkrzw > lmdb > redb` — deterministic and documented
-(see `crates/oxpinyin-store/src/lib.rs` §"The default backend"). It is
-not a hierarchy; it is a tie-break for the "user passed several" case,
-which the normal user-facing model does not encourage. The store's own
-regression tests pin this behavior.
-
-**Required change:** none. A stronger rule ("reject at compile time
-when several backend features are enabled") is achievable
-(`compile_error!` behind a `#[cfg(all(...))]` guard) but would break
-the intentional selector for consumers that opt in — the workspace's
-own default feature set uses exactly the additive form to name KC.
+**Required change (applied):** the guards were added; the
+`DefaultStore` and `DEFAULT_STORE_EXT` selectors simplified from a
+precedence chain to one exclusive `#[cfg(feature = "<peer>")]` per
+peer; the `redb` dependency in `oxpinyin-store` moved from an
+always-compiled dep to `optional = true` behind the `redb` feature —
+so a build with a different peer selected does not pull in redb's
+crate at all.
 
 ### 3. Is backend selection build-time or runtime?
 
@@ -204,6 +207,71 @@ consumer sees the same peer the binary was linked against.
 features vs. shared library linkage), but the observed contract is the
 same: one peer chosen at build time, propagated end-to-end.
 
+## Exactly-one enforcement
+
+The audit's original wording, "one peer per build", was true of the
+intent but not quite of the mechanism — cargo's additive feature
+unification would silently combine peers unless something explicitly
+refused. Two `compile_error!` guards at the top of
+`crates/oxpinyin-store/src/lib.rs` supply that refusal:
+
+```rust
+#[cfg(not(any(feature = "kyotocabinet", feature = "redb",
+              feature = "lmdb", feature = "tkrzw")))]
+compile_error!("oxpinyin-store: no store backend selected. ...");
+
+#[cfg(any(
+    all(feature = "kyotocabinet", feature = "redb"),
+    all(feature = "kyotocabinet", feature = "lmdb"),
+    all(feature = "kyotocabinet", feature = "tkrzw"),
+    all(feature = "redb",          feature = "lmdb"),
+    all(feature = "redb",          feature = "tkrzw"),
+    all(feature = "lmdb",          feature = "tkrzw"),
+))]
+compile_error!("oxpinyin-store: more than one store backend selected. ...");
+```
+
+Every store-reaching consumer (`oxpinyin-data`, `oxpinyin-user`,
+`oxpinyin-runtime`, `oxpinyin-capi`, `oxpinyin-python`,
+`oxpinyin-datagen`, `oxpinyin-segment`, `oxpinyin-counter`,
+`oxpinyin-emitter`, `oxpinyin-lambda`, `oxpinyin-dictool`,
+`pinyin-oracle`) transitively depends on `oxpinyin-store`, so the
+guard fires anywhere in the workspace as soon as its features unify
+into a multi-peer combination.
+
+### Supported feature combinations
+
+| Selection | Command | Compiled peer |
+|---|---|---|
+| default | `cargo build` | Kyoto Cabinet |
+| explicit KC | `cargo build --no-default-features --features kyotocabinet` | Kyoto Cabinet |
+| explicit redb | `cargo build --no-default-features --features redb` | redb |
+| explicit LMDB | `cargo build --no-default-features --features lmdb` | LMDB |
+| explicit Tkrzw | `cargo build --no-default-features --features tkrzw` | Tkrzw |
+
+Every other combination fails at compile time.
+
+### Binary and dependency footprint
+
+Because `redb` is now `optional = true` in `oxpinyin-store/Cargo.toml`
+(`redb = ["dep:redb"]`) and each peer's implementation is behind its
+own `#[cfg(feature = "<peer>")]`, a build that selects a non-redb peer
+does not pull in the redb crate or its transitive dependencies at
+all. The same is already true of `heed` (LMDB) and `bindgen`
+(KC/Tkrzw), which have always been optional.
+
+### Verification
+
+`tools/store/backend-matrix.sh` drives the invariant end-to-end:
+
+- The four valid selections each `cargo check --workspace` cleanly.
+- The six pairwise combinations plus one three-way combination are
+  each refused by the *more-than-one* guard, with its own message.
+- The zero-backend build is refused by the *no-backend* guard, with
+  its own message.
+
+Latest run (2026-08-30): **13 passed, 0 failed**.
+
 ## Alignment summary
 
 | Aspect | libpinyin | oxpinyin | Aligned? |
@@ -227,9 +295,6 @@ justified above and covered by tests. Every other axis matches.
 - [x] oxpinyin's backend-selection behavior has been compared against
       it, question by question.
 - [x] Intentional differences are documented (§1, §4).
-- [x] No accidental differences remain to correct — the audit found none
-      that survived the recent compat removal and the peer-language
-      cleanup.
 - [x] KC is the sole default when no backend is specified — proven by
       the type-identity test in `oxpinyin-store` and the
       `Backend::DEFAULT` test in `oxpinyin-datagen`.
@@ -252,3 +317,18 @@ justified above and covered by tests. Every other axis matches.
 - [x] Documentation uses "default", not "canonical/preferred", for KC —
       the "portability fallback" wording was removed in the C1 pass
       that preceded this audit.
+- [x] **Exactly one backend per build, enforced at compile time.**
+      Two `compile_error!` guards in `oxpinyin-store/src/lib.rs` refuse
+      zero-backend and multi-backend builds; the six pairwise plus one
+      three-way combinations plus the zero-backend build are all
+      covered by `tools/store/backend-matrix.sh` (13/13 refusals with
+      the guard's own message).
+- [x] **Binary/dependency footprint does not carry unused DB backends.**
+      The `redb` dependency in `oxpinyin-store` is `optional = true`
+      behind the `redb` feature; `heed` (LMDB) and `bindgen` (KC/Tkrzw)
+      have always been optional. A KC/LMDB/Tkrzw build does not pull
+      in the redb crate.
+- [x] **Backend selection propagates consistently across the workspace.**
+      Every store-reaching crate forwards its own `{kyotocabinet, redb,
+      lmdb, tkrzw}` features down onto `oxpinyin-store`, so the guards
+      fire wherever a multi-peer combination first reaches the store.

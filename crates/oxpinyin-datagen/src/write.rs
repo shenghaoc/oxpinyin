@@ -73,7 +73,7 @@ impl Backend {
     #[must_use]
     pub fn available(self) -> bool {
         match self {
-            Self::Redb => true,
+            Self::Redb => cfg!(feature = "redb"),
             Self::Lmdb => cfg!(feature = "lmdb"),
             Self::Tkrzw => cfg!(feature = "tkrzw"),
             Self::KyotoCabinet => cfg!(feature = "kyotocabinet"),
@@ -117,6 +117,7 @@ impl Backend {
     /// verification failure.
     pub fn write(self, path: &Path, entries: &Entries) -> Result<(), DatagenError> {
         match self {
+            #[cfg(feature = "redb")]
             Self::Redb => write_with::<oxpinyin_store::RedbStore>(path, entries),
             #[cfg(feature = "lmdb")]
             Self::Lmdb => write_with::<oxpinyin_store::LmdbStore>(path, entries),
@@ -151,6 +152,7 @@ impl Backend {
             Ok(rows)
         }
         match self {
+            #[cfg(feature = "redb")]
             Self::Redb => collect::<oxpinyin_store::RedbStore>(path),
             #[cfg(feature = "kyotocabinet")]
             Self::KyotoCabinet => collect::<oxpinyin_store::KcStore>(path),

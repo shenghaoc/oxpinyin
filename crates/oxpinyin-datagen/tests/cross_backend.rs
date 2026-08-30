@@ -53,20 +53,30 @@ fn all_backends_emit_identical_tables() {
         return;
     };
 
-    let mut backends = vec![Backend::Redb];
+    // Exactly-one-backend: the store's compile-time guards refuse a
+    // build that enables more than one peer, so the datagen features
+    // forward exactly one selection down. This test then measures the
+    // single compiled peer against the mathematical byte-ordered
+    // reference — CI running all four peer builds gives the same
+    // four-way equivalence coverage the earlier in-process check gave.
+    let mut backends: Vec<Backend> = Vec::new();
+    if cfg!(feature = "kyotocabinet") {
+        backends.push(Backend::KyotoCabinet);
+    }
+    if cfg!(feature = "redb") {
+        backends.push(Backend::Redb);
+    }
     if cfg!(feature = "lmdb") {
         backends.push(Backend::Lmdb);
     }
     if cfg!(feature = "tkrzw") {
         backends.push(Backend::Tkrzw);
     }
-    if cfg!(feature = "kyotocabinet") {
-        backends.push(Backend::KyotoCabinet);
-    }
-    eprintln!(
-        "backends compiled in: {:?} (enable others with --features lmdb / --features tkrzw / --features kyotocabinet)",
-        backends
+    assert!(
+        !backends.is_empty(),
+        "the exactly-one-backend guard should have selected a peer",
     );
+    eprintln!("compiled peer: {:?}", backends);
 
     let (tables, stats) = system::compile(&model, system::Subset::Full).unwrap();
     eprintln!("stats: {stats:?}");
@@ -150,6 +160,7 @@ fn assert_spot_lookups(backend: Backend, out: &std::path::Path, compiled: &[(Vec
     }
     let path = backend.table_path(out, "pinyin_index");
     let got: Vec<Option<Vec<u8>>> = match backend {
+        #[cfg(feature = "redb")]
         Backend::Redb => probes::<oxpinyin_store::RedbStore>(&path),
         #[cfg(feature = "lmdb")]
         Backend::Lmdb => probes::<oxpinyin_store::LmdbStore>(&path),
