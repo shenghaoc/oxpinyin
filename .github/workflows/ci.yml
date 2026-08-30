@@ -5,6 +5,8 @@
 # Why each path is gated:
 #   - crates/** — any code change
 #   - fuzz/** — the fuzz job uses fuzz/Cargo.toml and fuzz/src/
+#   - tools/** — the test job runs tools/bisection/run-cpp-smoke.sh and
+#     run-live-typing-diff.sh, so bisection-script changes are CI inputs
 #   - Cargo.toml / Cargo.lock — workspace manifest and lockfile: a
 #     dependency or feature change reaches lint, test, python and deny
 #   - deny.toml — the deny job reads this directly
@@ -13,7 +15,6 @@
 #
 # Deliberately NOT gated (changes to these skip CI):
 #   - docs/** — findings, design docs, ROADMAP: no code
-#   - tools/** — bisection scripts, oracle tools: no compiled code
 #   - reference/** — memory safety docs: no code
 #   - .kiro/** — specs and steering: no code
 #   - *.md at the root — README, CHANGELOG: no code
@@ -38,6 +39,7 @@ on:
     paths:
       - crates/**
       - fuzz/**
+      - tools/**
       - Cargo.toml
       - Cargo.lock
       - rust-toolchain.toml
@@ -48,6 +50,7 @@ on:
     paths:
       - crates/**
       - fuzz/**
+      - tools/**
       - Cargo.toml
       - Cargo.lock
       - rust-toolchain.toml
