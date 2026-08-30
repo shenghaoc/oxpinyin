@@ -17,7 +17,6 @@
 
 use std::ptr;
 
-use oxpinyin_core::phonetic_initial;
 use oxpinyin_engine::EngineError;
 
 use crate::ffi::{ffi_catch, owned_cstr};
@@ -166,7 +165,7 @@ pub extern "C" fn pinyin_get_pinyin_string(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    render_key(instance, key, utf8_str, |text, _| Some(text.to_owned()))
+    render_key(instance, key, utf8_str, |key| Some(key.pinyin_spelling().to_owned()))
 }
 
 /// Render a pinyin key as its Zhuyin spelling.
@@ -187,12 +186,7 @@ pub extern "C" fn pinyin_get_zhuyin_string(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    render_key(
-        instance,
-        key,
-        utf8_str,
-        oxpinyin_core::zhuyin_display_for_pinyin,
-    )
+    render_key(instance, key, utf8_str, |key| Some(key.zhuyin_string()))
 }
 
 /// Render a pinyin key as its shengmu / yunmu pair.
@@ -221,20 +215,20 @@ pub extern "C" fn pinyin_get_pinyin_strings(
     ffi_catch(false, || {
         // SAFETY: Non-null and produced by `pinyin_get_pinyin_key`.
         let slot = unsafe { &*key };
-        let Some(text) = slot.key else {
+        let decoded = slot.to_core();
+        if decoded.table_index() == 0 {
             return false;
-        };
-        let initial = phonetic_initial(text).unwrap_or("");
+        }
         if !shengmu.is_null() {
             // SAFETY: Null-checked above.
             unsafe {
-                *shengmu = owned_cstr(initial);
+                *shengmu = owned_cstr(decoded.shengmu_string());
             }
         }
         if !yunmu.is_null() {
             // SAFETY: Null-checked above.
             unsafe {
-                *yunmu = owned_cstr(&text[initial.len()..]);
+                *yunmu = owned_cstr(decoded.yunmu_string());
             }
         }
         true
@@ -246,7 +240,7 @@ fn render_key(
     instance: *mut PinyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl Fn(&'static str, u8) -> Option<String>,
+    render: impl Fn(&oxpinyin_chewing::ChewingKey) -> Option<String>,
 ) -> bool {
     if instance.is_null() || key.is_null() {
         return false;
@@ -260,10 +254,11 @@ fn render_key(
     ffi_catch(false, || {
         // SAFETY: Non-null and produced by `pinyin_get_pinyin_key`.
         let slot = unsafe { &*key };
-        let Some(text) = slot.key else {
+        let decoded = slot.to_core();
+        if decoded.table_index() == 0 {
             return false;
-        };
-        let Some(rendered) = render(text, slot.tone) else {
+        }
+        let Some(rendered) = render(&decoded) else {
             return false;
         };
         if !utf8_str.is_null() {
@@ -819,8 +814,8 @@ pub extern "C" fn pinyin_get_pinyin_key(
         let Some(found) = key_at(inst, offset) else {
             return false;
         };
-        inst.key_slot.key = Some(found.text);
-        inst.key_slot.tone = found.tone;
+        inst.key_slot =
+            ChewingKey::from_spelling(found.text, found.tone).unwrap_or(ChewingKey::ZERO);
         if !key.is_null() {
             // SAFETY: Null-checked above; the slot lives as long as the
             // instance.

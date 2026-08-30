@@ -164,12 +164,13 @@ impl CapiContext {
         })
     }
 
-    pub(crate) fn alloc_instance(&self) -> Option<CapiInstance> {
+    pub(crate) fn alloc_instance(&self, context: *mut PinyinContext) -> Option<CapiInstance> {
         let runtime = self.runtime.as_ref()?;
         let session = runtime.new_session(&self.config).ok()?;
         Some(CapiInstance {
+            context,
             session,
-            key_slot: ChewingKey { key: None, tone: 0 },
+            key_slot: ChewingKey::ZERO,
             key_rest_slot: ChewingKeyRest { begin: 0, end: 0 },
             candidates: Vec::new(),
             anchored_window: None,
@@ -420,6 +421,11 @@ pub(crate) struct CapiCandidate {
 
 /// State behind `pinyin_instance_t *`.
 pub(crate) struct CapiInstance {
+    /// The owning context's C handle, returned by `pinyin_get_context`
+    /// (upstream `pinyin_get_context`, `pinyin.cpp:1358-1360`). A raw
+    /// pointer like every C handle here: no ownership, and using it
+    /// after `pinyin_fini` is the caller's UAF, exactly upstream's.
+    pub(crate) context: *mut PinyinContext,
     pub(crate) session: CapiSession,
     /// Per-instance slots the `pinyin_get_pinyin_key` family hands out as
     /// `ChewingKey *` / `ChewingKeyRest *`.

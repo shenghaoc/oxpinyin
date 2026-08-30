@@ -54,6 +54,7 @@ missing_safety_doc = "deny"
 must_use_candidate = "warn"
 
 [dependencies]
+oxpinyin-chewing = { path = "../oxpinyin-chewing" }
 oxpinyin-core.workspace = true
 oxpinyin-data = { path = "../oxpinyin-data" }
 oxpinyin-engine.workspace = true
