@@ -292,7 +292,7 @@ struct SpanSource<'a> {
 /// as a separator (`separators` true). Plain full pinyin answers `None`.
 fn span_source(inst: &CapiInstance) -> Option<SpanSource<'_>> {
     if let Some(parse) = inst.zhuyin_parse.as_ref() {
-        Some(SpanSource {
+        return Some(SpanSource {
             input: inst.zhuyin_input.as_bytes(),
             parsed: parse.consumed(),
             spans: parse
@@ -301,9 +301,10 @@ fn span_source(inst: &CapiInstance) -> Option<SpanSource<'_>> {
                 .map(|key| (key.start(), key.end()))
                 .collect(),
             separators: false,
-        })
-    } else if let Some(parse) = inst.double_parse.as_ref() {
-        Some(SpanSource {
+        });
+    }
+    if let Some(parse) = inst.double_parse.as_ref() {
+        return Some(SpanSource {
             input: inst.double_input.as_bytes(),
             parsed: parse.consumed(),
             spans: parse
@@ -312,19 +313,18 @@ fn span_source(inst: &CapiInstance) -> Option<SpanSource<'_>> {
                 .map(|key| (key.start(), key.end()))
                 .collect(),
             separators: false,
-        })
-    } else {
-        inst.full_parse.as_ref().map(|parse| SpanSource {
-            input: inst.full_input.as_bytes(),
-            parsed: parse.consumed(),
-            spans: parse
-                .keys()
-                .iter()
-                .map(|key| (key.start(), key.end()))
-                .collect(),
-            separators: true,
-        })
+        });
     }
+    inst.full_parse.as_ref().map(|parse| SpanSource {
+        input: inst.full_input.as_bytes(),
+        parsed: parse.consumed(),
+        spans: parse
+            .keys()
+            .iter()
+            .map(|key| (key.start(), key.end()))
+            .collect(),
+        separators: true,
+    })
 }
 
 /// The cursor → lookup-offset law in the instance's active parse mode.

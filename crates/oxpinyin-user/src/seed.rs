@@ -39,13 +39,11 @@ pub const UNIGRAM_FACTOR: u64 = 7;
 /// clamping to 22080.
 #[must_use]
 pub fn training_seed(prev_count: Option<u64>) -> u64 {
-    match prev_count {
-        None => INITIAL_SEED,
-        Some(freq) => freq
-            .max(INITIAL_SEED)
+    prev_count.map_or(INITIAL_SEED, |freq| {
+        freq.max(INITIAL_SEED)
             .saturating_mul(EXPAND_FACTOR)
-            .min(CEILING_SEED),
-    }
+            .min(CEILING_SEED)
+    })
 }
 
 /// Flat seed for an accepted *predicted* candidate (the

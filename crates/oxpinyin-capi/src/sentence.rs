@@ -468,13 +468,15 @@ pub extern "C" fn pinyin_guess_candidates(
                 Ok(s) => s,
                 Err(_) => continue,
             };
-            let consumed_bytes = if let Some(parse) = zhuyin_parse.as_ref() {
-                zhuyin_original_offset(parse, cand.consumed_bytes())
-            } else if let Some(parse) = double_parse.as_ref() {
-                double_original_offset(parse, cand.consumed_bytes())
-            } else {
-                cand.consumed_bytes()
-            };
+            let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
+                || {
+                    double_parse.as_ref().map_or_else(
+                        || cand.consumed_bytes(),
+                        |parse| double_original_offset(parse, cand.consumed_bytes()),
+                    )
+                },
+                |parse| zhuyin_original_offset(parse, cand.consumed_bytes()),
+            );
             inst.candidates.push(CapiCandidate {
                 text,
                 kind: cand.kind(),

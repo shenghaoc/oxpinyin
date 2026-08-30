@@ -227,19 +227,17 @@ impl CapiContext {
     /// `pinyin.cpp:1133`), otherwise the store's gated save — `false` when
     /// unmodified (`:1136`), `true` after a dirty save.
     pub(crate) fn save_user(&mut self) -> bool {
-        match self.user.as_mut() {
-            None => false,
-            Some(store) => store.save().unwrap_or(false),
-        }
+        self.user
+            .as_mut()
+            .is_some_and(|store| store.save().unwrap_or(false))
     }
 
     /// `pinyin_mask_out`'s body: the store-level deletion, or `false`
     /// without a user store.
     pub(crate) fn mask_out(&mut self, mask: u32, value: u32) -> bool {
-        match self.user.as_mut() {
-            None => false,
-            Some(store) => store.mask_out(mask, value).is_ok(),
-        }
+        self.user
+            .as_mut()
+            .is_some_and(|store| store.mask_out(mask, value).is_ok())
     }
 
     /// Load addon library `index` from the runtime's first system data dir.
@@ -256,10 +254,9 @@ impl CapiContext {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
-        match self.runtime.as_ref() {
-            Some(runtime) => runtime.load_system_addon(index),
-            None => false,
-        }
+        self.runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.load_system_addon(index))
     }
 
     /// Unload addon library `index`.
@@ -272,10 +269,9 @@ impl CapiContext {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
-        match self.runtime.as_ref() {
-            Some(runtime) => runtime.unload_system_addon(index),
-            None => false,
-        }
+        self.runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.unload_system_addon(index))
     }
 
     /// §9 phrase-export materialization. [`USER_DICTIONARY`] and
@@ -604,18 +600,19 @@ impl CapiInstance {
     ///   range refusal against the parsed original length applies.
     pub(crate) fn validate_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
         if let Some(parse) = self.zhuyin_parse.as_ref() {
-            check_lookup_offset_range(parse.consumed(), offset)
-        } else if let Some(parse) = self.double_parse.as_ref() {
-            check_lookup_offset_range(parse.consumed(), offset)
-        } else if let Some(parse) = self.full_parse.as_ref() {
+            return check_lookup_offset_range(parse.consumed(), offset);
+        }
+        if let Some(parse) = self.double_parse.as_ref() {
+            return check_lookup_offset_range(parse.consumed(), offset);
+        }
+        if let Some(parse) = self.full_parse.as_ref() {
             // The min is defensive only: `full_input` and the parse are set
             // together and cleared together, so consumed never exceeds the
             // buffer — but a desync must refuse, not slice-panic.
             let consumed = parse.consumed().min(self.full_input.len());
-            normalize_lookup_offset(&self.full_input.as_bytes()[..consumed], offset)
-        } else {
-            self.session.normalized_lookup_offset(offset)
+            return normalize_lookup_offset(&self.full_input.as_bytes()[..consumed], offset);
         }
+        self.session.normalized_lookup_offset(offset)
     }
 }
 

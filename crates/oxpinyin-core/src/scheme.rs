@@ -2226,16 +2226,13 @@ fn parse_one_cp26_key(
     let count = count_same_chars(&input[index..]);
     if let Some((first, second)) = two_symbols(tables.initials, input[index]) {
         index += count;
-        initial = match second {
-            None => first,
-            Some(second) => {
-                if (count - 1).is_multiple_of(2) {
-                    first
-                } else {
-                    second
-                }
+        initial = second.map_or(first, |second| {
+            if (count - 1).is_multiple_of(2) {
+                first
+            } else {
+                second
             }
-        };
+        });
     }
 
     if index != len {
@@ -2274,16 +2271,13 @@ fn parse_one_cp26_key(
         let count = count_same_chars(&input[index..]);
         if let Some((first, second)) = two_symbols(tables.finals, input[index]) {
             index += count;
-            final_ = match second {
-                None => first,
-                Some(second) => {
-                    if (count - 1).is_multiple_of(2) {
-                        first
-                    } else {
-                        second
-                    }
+            final_ = second.map_or(first, |second| {
+                if (count - 1).is_multiple_of(2) {
+                    first
+                } else {
+                    second
                 }
-            };
+            });
         }
     }
 

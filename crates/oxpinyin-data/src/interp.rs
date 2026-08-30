@@ -218,10 +218,10 @@ fn span_item_line(line: &str) -> ItemLineSpans<'_> {
         let (whitespace, width) = if byte.is_ascii() {
             (char::from(byte).is_whitespace(), 1)
         } else {
-            match line[index..].chars().next() {
-                Some(ch) => (ch.is_whitespace(), ch.len_utf8()),
-                None => (true, 1),
-            }
+            line[index..]
+                .chars()
+                .next()
+                .map_or((true, 1), |ch| (ch.is_whitespace(), ch.len_utf8()))
         };
         if whitespace {
             if let Some(start) = run_start.take() {

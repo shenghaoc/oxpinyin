@@ -139,12 +139,14 @@ impl From<StoreError> for UserStoreError {
 // ── codec helpers ─────────────────────────────────────────────────
 
 fn get_u64(store: &impl ReadStore, table: &str, key: &[u8]) -> Result<Option<u64>, UserStoreError> {
-    match store.get(table, key)? {
-        None => Ok(None),
-        Some(bytes) => codec::decode_u64(&bytes)
-            .map(Some)
-            .map_err(|_| UserStoreError::Decode),
-    }
+    store.get(table, key)?.map_or_else(
+        || Ok(None),
+        |bytes| {
+            codec::decode_u64(&bytes)
+                .map(Some)
+                .map_err(|_| UserStoreError::Decode)
+        },
+    )
 }
 
 fn get_u64_or(
@@ -157,12 +159,14 @@ fn get_u64_or(
 }
 
 fn txn_get_u64(txn: &dyn WriteTxn, table: &str, key: &[u8]) -> Result<Option<u64>, StoreError> {
-    match txn.get(table, key)? {
-        None => Ok(None),
-        Some(bytes) => codec::decode_u64(&bytes)
-            .map(Some)
-            .map_err(|_| StoreError::Backend("corrupt u64 value".into())),
-    }
+    txn.get(table, key)?.map_or_else(
+        || Ok(None),
+        |bytes| {
+            codec::decode_u64(&bytes)
+                .map(Some)
+                .map_err(|_| StoreError::Backend("corrupt u64 value".into()))
+        },
+    )
 }
 
 fn txn_get_u64_or(
@@ -188,10 +192,9 @@ fn bump_unigram_total(txn: &mut dyn WriteTxn, delta: u64) -> Result<(), StoreErr
 /// Pronunciation-range bounds for `token`.
 fn pronunciation_range(token: Token) -> (Bound<Vec<u8>>, Bound<Vec<u8>>) {
     let lo = Bound::Included(codec::encode_token_bytes(token, &[]).to_vec());
-    let hi = match token.checked_add(1) {
-        Some(next) => Bound::Excluded(codec::encode_token_bytes(next, &[]).to_vec()),
-        None => Bound::Unbounded,
-    };
+    let hi = token.checked_add(1).map_or(Bound::Unbounded, |next| {
+        Bound::Excluded(codec::encode_token_bytes(next, &[]).to_vec())
+    });
     (lo, hi)
 }
 
@@ -797,10 +800,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn next_user_token(&self) -> Result<Token, UserStoreError> {
         let db = self.database();
         let alloc_key = codec::encode_u8(ALLOC_CURSOR);
-        match db.get(ALLOC, &alloc_key)? {
-            Some(bytes) => codec::decode_token(&bytes).map_err(|_| UserStoreError::Decode),
-            None => Ok(FIRST_USER_TOKEN),
-        }
+        db.get(ALLOC, &alloc_key)?.map_or_else(
+            || Ok(FIRST_USER_TOKEN),
+            |bytes| codec::decode_token(&bytes).map_err(|_| UserStoreError::Decode),
+        )
     }
 
     /// `m_modified` (§4).
@@ -1116,13 +1119,13 @@ impl<S: WriteStore> GenericUserStore<S> {
                 Ok(Some(has))
             })
             .map_err(UserStoreError::from);
-        match result? {
-            None => Ok(false),
-            Some(has_user_data) => {
+        result?.map_or_else(
+            || Ok(false),
+            |has_user_data| {
                 self.mark_committed_write(db, has_user_data);
                 Ok(true)
-            }
-        }
+            },
+        )
     }
 }
 

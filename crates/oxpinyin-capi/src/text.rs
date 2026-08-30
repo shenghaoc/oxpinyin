@@ -284,20 +284,21 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
             }
             return false;
         }
-        let text = if let Some(parse) = inst.full_parse.as_ref() {
+        let text = inst.full_parse.as_ref().map_or_else(
+            || {
+                full_aux_text(
+                    inst.session.raw_input(),
+                    inst.parsed_len,
+                    cursor,
+                    inst.options(),
+                )
+            },
             // LUOMA / SECONDARY_ZHUYIN: render the stored index parse —
             // canonical spellings (tone digit appended when a tone was
             // parsed, like `ChewingKey::get_pinyin_string`) over raw
             // spans.
-            full_index_aux_text(&inst.full_input, parse, cursor)
-        } else {
-            full_aux_text(
-                inst.session.raw_input(),
-                inst.parsed_len,
-                cursor,
-                inst.options(),
-            )
-        };
+            |parse| full_index_aux_text(&inst.full_input, parse, cursor),
+        );
         if !aux_text.is_null() {
             // SAFETY: Null-checked above. `owned_cstr` returns null on an
             // interior NUL or allocation failure; otherwise ownership
