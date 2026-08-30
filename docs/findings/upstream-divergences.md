@@ -825,3 +825,99 @@ Text, candidate type and counts cannot.
   "Predicted-candidate tie order" entry; these measurements close R1's
   open question by attributing the whole drop-in divergence to that one
   rule, on both real-data backends.
+
+## zhuyin batch `FORCE_TONE` law — CLOSED (implemented in oxpinyin-core)
+
+Initially reported as "parse restrictiveness" by the libzhuyin differential:
+`zhuyin_parse_more_chewings` reported a non-zero `consumed` for toneless
+syllables (`ta`=1, `li`=2, `ju`=2) where the pin reported 0. Root cause was
+**not** the syllable-validation gate — it was the **batch parser ignoring
+`FORCE_TONE`**.
+
+- **Upstream source cite:** `src/zhuyin.cpp:1061` (batch chews pass
+  `context->m_options`), `src/zhuyin.cpp:273` (`zhuyin_init` seeds
+  `USE_TONE | FORCE_TONE`), `src/storage/zhuyin_parser2.cpp:176-180` (Simple
+  `parse_one_key` rejects a toneless syllable under `FORCE_TONE`, nested
+  under `USE_TONE`; `:373,:387` for Discrete; `:602` for CP26).
+- **Mechanism:** with `FORCE_TONE` (part of the pin's zhuyin default), the
+  batch parse rejects a syllable that carries no tone.
+- **What oxpinyin now does:** `oxpinyin_core::ZhuyinParser::parse_with_options`
+  was added (additive — the existing three-argument `parse`, used by the
+  pinyin facade's `pinyin_parse_more_chewings`, is unchanged) to model the
+  pin's option-word batch law. `oxpinyin-zhuyin-capi`'s
+  `zhuyin_parse_more_chewings` passes the caller's full option word, so
+  `FORCE_TONE` is honoured. `KeyProbe` now carries `force_tone` and rejects a
+  toneless match per keyboard family (nested under `USE_TONE` for Simple and
+  CP26, unconditional for Discrete).
+- **Externally observable:** the differential now converges on the batch
+  parse: with `USE_TONE | FORCE_TONE` both sides report `ta`=0, `li`=0,
+  `ju`=0, `su3`=3, `ke3`=3 for the STANDARD keyboard.
+
+## zhuyin candidate-tag grouping + `after(consumed)` terminal offset — engine workstream (type I / class (c))
+
+- **Upstream source cite:** `src/zhuyin.cpp:1272-1291`
+  (`_prepend_sentence_candidates` prepends `m_nbest_results.size()`
+  `BEST_MATCH_CANDIDATE` rows), `src/zhuyin.cpp:1460-1540`
+  (`zhuyin_guess_candidates_after_cursor` returns `true` for a valid lookup
+  into a non-empty matrix even with no candidate spanning the offset),
+  `src/zhuyin.cpp:1542` (`zhuyin_guess_candidates_before_cursor`, same rule).
+- **Mechanism:** (1) the pin prepends exactly `m_nbest_results.size()`
+  sentence rows as `BEST_MATCH_CANDIDATE`, so on `su3` it tags one row
+  `BEST_MATCH` and the rest `AFTER`; the engine's `candidates_at` emits a
+  `Sentence` row per n-best sentence (two for `su3`), so the facade tags the
+  second row `BEST_MATCH` too — candidate set and count identical (125), one
+  label differs (ORDER-ONLY-like). (2) for an offset equal to the consumed
+  length (`after(consumed)`), the pin returns `true` with 0 candidates (the
+  matrix is non-empty); the facade returns `false` because the normalized
+  offset is in original zhuyin-input coordinates while `candidates_at`
+  expects session raw-buffer coordinates.
+- **What oxpinyin does instead:** the facade's 4-value-enum tagging is
+  faithful to the pin's prepend law; the row-count difference is the engine's
+  n-best construction. The `after(consumed)` terminal-offset `false` is class
+  (c) — the pin returns `true`, oxpinyin `false` — and stems from the same
+  candidate-construction gap (coordinate mismatch between the original
+  zhuyin input offset and the session's `'`-joined raw buffer).
+- **Externally observable:** yes — `zhuyin_get_candidate_type` differs on the
+  row after the top match, and `zhuyin_guess_candidates_after_cursor`
+  answers `false` at `offset == consumed` where the pin answers `true`/0.
+- **Classification:** engine workstream (n-best row count) + class (c)
+  (terminal-offset availability). Neither is a facade defect: the candidate
+  set is identical, and the terminal-offset case is not exercised by the
+  pinned differential driver.
+
+## zhuyin before-cursor candidate window — CLOSED (facade fix)
+
+Initially attributed to an engine capability gap, but the root cause was a
+**facade bug**: `zhuyin_guess_candidates_before_cursor` reused the
+composition-anchored cached candidate window rather than building the
+before-cursor span ending at the offset. `before(0)` wrongly returned 125
+word candidates where the pin returns 0 (nothing precedes the first key).
+
+- **What oxpinyin now does:** the facade's before-cursor path takes the
+  composition window and filters to candidates whose consumed span ENDS at
+  the requested original-offset (`snapshot_candidates`'s `before_end`). At
+  offset 0 no span ends there, so the window is empty — matching the pin —
+  and at the terminal offset the preceding word's candidates are returned.
+  `before(0)` returns 0 and `before(consumed)` returns the last word's
+  candidates, matching the pin on the differential.
+
+## zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default
+
+- **Upstream source cite:** `src/zhuyin.cpp:273` (`context->m_options =
+  USE_TONE | FORCE_TONE`; no `ZHUYIN_INCOMPLETE`).
+- **Mechanism:** `zhuyin_init` seeds `USE_TONE | FORCE_TONE` and nothing
+  else. `FORCE_TONE` is honoured by the chewing parser nested inside
+  `USE_TONE` for the Simple / CP26 keyboards and unconditionally for
+  Discrete (`zhuyin_parser2.cpp:178,373,387,602`); `ZHUYIN_INCOMPLETE` is
+  OFF by default.
+- **What oxpinyin does instead:** `CapiContext::open` seeds the same
+  `USE_TONE | FORCE_TONE` word and defaults `incomplete` to `false`
+  (matching the pin). The FORCE_TONE law is delegated to
+  `oxpinyin_core::ZhuyinParser::parse_with_options`, which honours it in the
+  Simple/CP26 (nested) and Discrete (unconditional) shapes — the
+  implementation matches the pin's three shapes.
+- **Externally observable:** no, with the corrected default — the differential
+  was run with the pin's default word (`USE_TONE | FORCE_TONE`, no
+  `ZHUYIN_INCOMPLETE`) and the parse-length gap above is the only residual.
+  Entry kept so a future consumer that sets the bit finds the law already
+  analysed.

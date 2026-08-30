@@ -1768,6 +1768,39 @@ impl ZhuyinParser {
     /// word (`:221`, `:413`).
     #[must_use]
     pub fn parse(&self, input: &[u8], use_tone: bool, allow_incomplete: bool) -> ZhuyinParse {
+        self.parse_detailed(input, use_tone, false, allow_incomplete)
+    }
+
+    /// The batch [`Self::parse`] law driven by the caller's **full option
+    /// word** (`zhuyin_parse_more_chewings`, `zhuyin.cpp:1058-1082`): the
+    /// `use_tone`, `force_tone`, and `allow_incomplete` bits are read off
+    /// the word exactly as upstream's `ZhuyinSimpleParser2` / Discrete /
+    /// CP26 batch parsers read their caller options (`options |= m_options`,
+    /// `zhuyin_parser2.cpp:221,413`), with the parser-owned correction and
+    /// incomplete bits folded in and `FORCE_TONE` honoured per keyboard
+    /// family.
+    ///
+    /// The existing [`Self::parse`] keeps its three-argument shape (the
+    /// pinyin facade's `pinyin_parse_more_chewings` calls it with
+    /// `force_tone` never set); this is the additive seam the zhuyin facade
+    /// uses so it can forward the pin's default `USE_TONE | FORCE_TONE`
+    /// word.
+    #[must_use]
+    pub fn parse_with_options(&self, input: &[u8], options: u32) -> ZhuyinParse {
+        let bits = OptionBits::from_bits(options);
+        let use_tone = bits.contains(USE_TONE);
+        let force_tone = bits.contains(FORCE_TONE);
+        let allow_incomplete = bits.contains(ZHUYIN_INCOMPLETE);
+        self.parse_detailed(input, use_tone, force_tone, allow_incomplete)
+    }
+
+    fn parse_detailed(
+        &self,
+        input: &[u8],
+        use_tone: bool,
+        force_tone: bool,
+        allow_incomplete: bool,
+    ) -> ZhuyinParse {
         let Some(keyboard) = self.scheme.keyboard() else {
             return ZhuyinParse::default();
         };
@@ -1791,6 +1824,7 @@ impl ZhuyinParser {
                         tables,
                         use_tone,
                         options,
+                        force_tone,
                     },
                 )
             }
@@ -1815,6 +1849,7 @@ impl ZhuyinParser {
                         tables,
                         use_tone,
                         options,
+                        force_tone,
                     },
                 )
             }
@@ -1837,6 +1872,7 @@ impl ZhuyinParser {
                         tables,
                         use_tone,
                         options,
+                        force_tone,
                     },
                 )
             }
@@ -1923,6 +1959,9 @@ enum KeyProbe {
         use_tone: bool,
         /// The parser-owned option word.
         options: u32,
+        /// The `FORCE_TONE` option: a toneless match is rejected, nested
+        /// under `USE_TONE` (upstream `zhuyin_parser2.cpp:178`).
+        force_tone: bool,
     },
     /// The Discrete positional-probe path.
     Discrete {
@@ -1932,6 +1971,9 @@ enum KeyProbe {
         use_tone: bool,
         /// The parser-owned option word.
         options: u32,
+        /// The `FORCE_TONE` option: a toneless match is rejected
+        /// unconditionally (upstream `zhuyin_parser2.cpp:373,387`).
+        force_tone: bool,
     },
     /// The CP26 repeat-count path.
     Cp26 {
@@ -1941,6 +1983,9 @@ enum KeyProbe {
         use_tone: bool,
         /// The parser-owned option word.
         options: u32,
+        /// The `FORCE_TONE` option: a toneless match is rejected, nested
+        /// under `USE_TONE` (upstream `zhuyin_parser2.cpp:602`).
+        force_tone: bool,
     },
 }
 
@@ -1951,17 +1996,38 @@ impl KeyProbe {
                 tables,
                 use_tone,
                 options,
-            } => parse_one_zhuyin_key(input, use_tone, options, tables),
+                force_tone,
+            } => {
+                let (key, zhuyin, tone) = parse_one_zhuyin_key(input, use_tone, options, tables)?;
+                if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
+                    return None;
+                }
+                Some((key, zhuyin, tone))
+            }
             Self::Discrete {
                 tables,
                 use_tone,
                 options,
-            } => parse_one_discrete_key(input, use_tone, options, tables),
+                force_tone,
+            } => {
+                let (key, zhuyin, tone) = parse_one_discrete_key(input, use_tone, options, tables)?;
+                if force_tone && tone == CHEWING_ZERO_TONE {
+                    return None;
+                }
+                Some((key, zhuyin, tone))
+            }
             Self::Cp26 {
                 tables,
                 use_tone,
                 options,
-            } => parse_one_cp26_key(input, use_tone, options, tables),
+                force_tone,
+            } => {
+                let (key, zhuyin, tone) = parse_one_cp26_key(input, use_tone, options, tables)?;
+                if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
+                    return None;
+                }
+                Some((key, zhuyin, tone))
+            }
         }
     }
 }

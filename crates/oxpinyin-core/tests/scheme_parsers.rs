@@ -216,6 +216,41 @@ fn incomplete_zhuyin_keystrokes_consume_zero_either_way() {
 }
 
 #[test]
+fn parse_with_options_honours_force_tone_like_the_batch_parser() {
+    // The pin's `zhuyin_parse_more_chewings` passes `context->m_options`
+    // (`zhuyin.cpp:1061`), which `zhuyin_init` seeds `USE_TONE | FORCE_TONE`
+    // (`zhuyin.cpp:273`). The batch `ZhuyinSimpleParser2::parse_one_key`
+    // rejects a toneless syllable under `FORCE_TONE`
+    // (`zhuyin_parser2.cpp:176-180`). `parse_with_options` is the additive
+    // seam that models that law; the plain 3-arg `parse` intentionally does
+    // not (it is the pinyin facade's path, never FORCE_TONE).
+    use oxpinyin_core::{FORCE_TONE, USE_TONE};
+    let parser = ZhuyinParser::new();
+
+    // Toned syllables parse fully (tone is required by FORCE_TONE).
+    let toned = parser.parse_with_options(b"su3", USE_TONE | FORCE_TONE);
+    assert_eq!(toned.consumed(), 3);
+    assert_eq!(toned.keys().len(), 1);
+
+    // Toneless syllables are rejected: a complete syllable with no tone
+    // consumes 0 under FORCE_TONE, exactly as the pin does.
+    for syllables in [&b"li"[..], &b"ju"[..]] {
+        let untoned = parser.parse_with_options(syllables, USE_TONE | FORCE_TONE);
+        assert_eq!(
+            untoned.consumed(),
+            0,
+            "{} must consume 0 under FORCE_TONE",
+            std::str::from_utf8(syllables).unwrap()
+        );
+    }
+
+    // The same toneless syllables DO parse under USE_TONE alone (the pin
+    // without FORCE_TONE accepts them) — verifying FORCE_TONE is the gate.
+    let li = parser.parse_with_options(b"li", USE_TONE);
+    assert_eq!(li.consumed(), 2);
+}
+
+#[test]
 fn hsu_is_a_discrete_keyboard_that_differs_from_dachen() {
     // The HSU layout is a distinct mapping table: at minimum it must not
     // reproduce the dachen reading of the same keystrokes, and its
