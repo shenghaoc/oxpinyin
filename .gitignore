@@ -66,3 +66,7 @@ __pycache__/
 
 # LMDB creates a runtime lock file beside each committed .lmdb fixture.
 /fixtures/w3/*.lmdb-lock
+
+# Container drop-in gates write their cargo targets here (run-dropin-*.sh).
+/target-fedora/
+/target-debian/
