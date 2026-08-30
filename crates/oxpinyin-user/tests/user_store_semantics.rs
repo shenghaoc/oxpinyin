@@ -31,9 +31,12 @@ fn temp_path(tag: &str) -> PathBuf {
 }
 
 fn key(text: &str) -> oxpinyin_user::PinyinKey {
-    SyllableKey::from_text(text)
-        .expect("frozen syllable")
-        .index() as oxpinyin_user::PinyinKey
+    oxpinyin_user::PinyinKey::try_from(
+        SyllableKey::from_text(text)
+            .expect("frozen syllable")
+            .index(),
+    )
+    .expect("frozen syllable inventory fits u16")
 }
 
 fn keys(text: &str) -> Vec<oxpinyin_user::PinyinKey> {

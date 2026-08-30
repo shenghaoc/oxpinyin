@@ -149,11 +149,14 @@ pub extern "C" fn pinyin_iterator_add_phrase(
         let Some(parsed) = FewestKeys::parse(&pinyin) else {
             return false;
         };
-        let keys: Vec<PinyinKey> = parsed
+        let Some(keys) = parsed
             .keys()
             .iter()
-            .map(|key| key.index() as PinyinKey)
-            .collect();
+            .map(|key| PinyinKey::try_from(key.index()).ok())
+            .collect::<Option<Vec<PinyinKey>>>()
+        else {
+            return false;
+        };
         user.add_phrase_in(handle.index, &phrase, &keys, count)
             .is_ok()
     })

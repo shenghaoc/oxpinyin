@@ -244,7 +244,9 @@ pub struct AddonPhraseItem {
 fn pinyin_to_keys(pinyin: &str) -> Option<Vec<PinyinKey>> {
     pinyin
         .split('\'')
-        .map(|syllable| SyllableKey::from_text(syllable).map(|key| key.index() as PinyinKey))
+        .map(|syllable| {
+            SyllableKey::from_text(syllable).and_then(|key| PinyinKey::try_from(key.index()).ok())
+        })
         .collect()
 }
 

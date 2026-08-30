@@ -172,7 +172,7 @@ fn a_hostile_record_count_cannot_drive_a_giant_allocation() {
     // u32::MAX records aborted the allocator. It must surface as an
     // ordinary IncompleteRead error instead.
     let mut data = vec![0_u8; 64];
-    let data_size = ((data.len() - 8) as u32).to_le_bytes(); // data_size
+    let data_size = (u32::try_from(data.len() - 8).unwrap()).to_le_bytes(); // data_size
     data[0..4].copy_from_slice(&data_size);
     data[8..12].copy_from_slice(&u32::MAX.to_le_bytes()); // nitems
     data[12..16].copy_from_slice(&17u32.to_le_bytes()); // version

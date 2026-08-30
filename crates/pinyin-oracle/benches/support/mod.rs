@@ -117,9 +117,10 @@ impl Dictionary for CountingDict<'_> {
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
         let started = std::time::Instant::now();
         let result = self.inner.phrase_prefix_exists(syllables);
-        self.stats
-            .probe_ns
-            .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        self.stats.probe_ns.fetch_add(
+            u64::try_from(started.elapsed().as_nanos()).expect("elapsed nanos fit u64"),
+            Ordering::Relaxed,
+        );
         self.stats.probes.fetch_add(1, Ordering::Relaxed);
         result
     }

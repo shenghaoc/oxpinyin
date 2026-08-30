@@ -240,7 +240,8 @@ mod tests {
     fn lookup_surfaces_user_then_network_by_token() {
         let path = temp_path("order");
         let mut store = UserStore::open(&path).unwrap();
-        let ni = SyllableKey::from_text("ni").unwrap().index() as u16;
+        let ni = u16::try_from(SyllableKey::from_text("ni").unwrap().index())
+            .expect("frozen syllable inventory fits u16");
         store
             .add_phrase_in(USER_DICTIONARY, "你", &[ni], Some(5))
             .unwrap();
