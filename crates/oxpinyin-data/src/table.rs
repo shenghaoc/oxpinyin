@@ -114,8 +114,9 @@ where
     for_each_row_with_store::<DefaultStore, E, F>(path, visit)
 }
 
-/// Like [`for_each_row`] but generic over the store's **read** tier:
-/// loading a system table opens the file read-only and walks it, so a
+/// Like [`for_each_row`] but generic over the store's **read** tier.
+///
+/// Loading a system table opens the file read-only and walks it, so a
 /// backend that offers nothing but [`ReadStore`] can serve this path.
 /// Callers name the backend, e.g.
 /// `for_each_row_with_store::<DefaultStore, _, _>(path, visit)`.

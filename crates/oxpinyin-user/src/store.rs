@@ -36,9 +36,11 @@ use crate::seed;
 pub type Token = u32;
 
 /// One §9 export row for a user phrase: the phrase text, one pronunciation's
-/// `'`-joined pinyin spelling, and that pronunciation's stored count — the
-/// `(phrase, pinyin, count)` triple `pinyin_iterator_get_next_phrase` yields
-/// upstream (`docs/findings/user-store.md` §9).
+/// `'`-joined pinyin spelling, and that pronunciation's stored count.
+///
+/// This is the `(phrase, pinyin, count)` triple
+/// `pinyin_iterator_get_next_phrase` yields upstream
+/// (`docs/findings/user-store.md` §9).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportedPhrase {
     /// Phrase text (UTF-8).

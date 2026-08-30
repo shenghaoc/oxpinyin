@@ -24,8 +24,9 @@ pub const EXPORT_DIR_ENV: &str = "PINYIN_EXPORT_DIR";
 /// Default export directory used by the oracle integration tests.
 pub const DEFAULT_EXPORT_DIR: &str = "/tmp/oxpinyin-export";
 
-/// Table stems the segmenter needs from the export directory; the
-/// on-disk names carry the compiled-in peer backend's extension
+/// Table stems the segmenter needs from the export directory.
+///
+/// The on-disk names carry the compiled-in peer backend's extension
 /// (`default_store_file` — `.kct` for Kyoto Cabinet, `.redb` for redb,
 /// `.lmdb` for LMDB, `.tkt` for tkrzw).
 pub const EXPORT_STEMS: &[&str] = &["phrase_index", "bigram"];

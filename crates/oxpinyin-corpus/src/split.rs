@@ -35,9 +35,10 @@ fn has_han(text: &str) -> bool {
 /// fragments into the corpus.
 const MARKUP_RESIDUE: &[&str] = &["{{", "}}", "[[", "]]", "{|", "|}", "<ref"];
 
-/// Splits cleaned text into one sentence per line. Lines are trimmed,
-/// stripped of leading/trailing punctuation, filtered to fragments
-/// containing at least one Han character, and freed of any
+/// Splits cleaned text into one sentence per line.
+///
+/// Lines are trimmed, stripped of leading/trailing punctuation, filtered
+/// to fragments containing at least one Han character, and freed of any
 /// [`MARKUP_RESIDUE`].
 #[must_use]
 pub fn split_sentences(text: &str) -> Vec<String> {

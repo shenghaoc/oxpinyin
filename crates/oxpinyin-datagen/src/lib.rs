@@ -85,12 +85,14 @@ pub mod system;
 pub mod table;
 pub mod write;
 
-/// One compiled table: `(key, value)` pairs in the frozen writer order —
-/// the exact insertion sequence of the retired `oxpinyin-migrate` writers,
-/// which redb file byte-identity depends on (string-keyed tables and the
-/// bigram in ascending key-byte order; token-keyed dictionary, addon, and
-/// punctuation tables in integer token order). Reading a table back through
-/// any store always yields ascending key-byte order regardless.
+/// One compiled table: `(key, value)` pairs in the frozen writer order.
+///
+/// This is the exact insertion sequence of the retired `oxpinyin-migrate`
+/// writers, which redb file byte-identity depends on (string-keyed tables
+/// and the bigram in ascending key-byte order; token-keyed dictionary,
+/// addon, and punctuation tables in integer token order). Reading a table
+/// back through any store always yields ascending key-byte order
+/// regardless.
 pub type Entries = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// Errors from compiling model20 text or writing a runtime table.
