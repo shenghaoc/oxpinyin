@@ -88,7 +88,7 @@ impl DoublePinyinParse {
 /// HANYU (the frozen [`crate::parser`] surface) stays the default —
 /// `FULL_PINYIN_DEFAULT = FULL_PINYIN_HANYU` and the parser constructor
 /// calls `set_scheme(FULL_PINYIN_DEFAULT)` (`pinyin_parser2.cpp:158-165,
-/// 383-401`). LUOMA and SECONDARY_ZHUYIN switch the parser onto their
+/// 383-401`). LUOMA and `SECONDARY_ZHUYIN` switch the parser onto their
 /// pinned indexes in [`crate::full_pinyin_index`]; the out-of-enum
 /// `abort()` slot is deliberately not modelled here (contract-lock
 /// workstream).
@@ -1067,7 +1067,7 @@ impl DiscreteTables {
     }
 }
 
-/// The DaChen CP26 keyboard's source tables: initial/middle/final symbol
+/// The `DaChen` CP26 keyboard's source tables: initial/middle/final symbol
 /// tables plus tones, ported verbatim from the pinned `zhuyin_table.h`.
 /// The parser is constructor-configured over these and the **global**
 /// index (`ZhuyinDaChenCP26Parser2` has no `set_scheme` and no
@@ -1436,7 +1436,7 @@ const HSU_DVORAK_FINALS: &[(u8, &str)] = &[
 /// (`src/storage/zhuyin_table.h:424`).
 const HSU_DVORAK_TONES: &[(u8, u8)] = &[(b' ', 1), (b'd', 2), (b'f', 3), (b'j', 4), (b's', 5)];
 
-/// DaChen CP26 keyboard initial table, `chewing_dachen_cp26_initials`
+/// `DaChen` CP26 keyboard initial table, `chewing_dachen_cp26_initials`
 /// (`src/storage/zhuyin_table.h:433`); dual keys: ['q', 't', 'w'].
 const CP26_INITIALS: &[(u8, &str)] = &[
     (b'a', "ㄇ"),
@@ -1462,11 +1462,11 @@ const CP26_INITIALS: &[(u8, &str)] = &[
     (b'z', "ㄈ"),
 ];
 
-/// DaChen CP26 keyboard middle table, `chewing_dachen_cp26_middles`
+/// `DaChen` CP26 keyboard middle table, `chewing_dachen_cp26_middles`
 /// (`src/storage/zhuyin_table.h:458`); dual keys: [].
 const CP26_MIDDLES: &[(u8, &str)] = &[(b'j', "ㄨ"), (b'm', "ㄩ"), (b'u', "ㄧ")];
 
-/// DaChen CP26 keyboard final table, `chewing_dachen_cp26_finals`
+/// `DaChen` CP26 keyboard final table, `chewing_dachen_cp26_finals`
 /// (`src/storage/zhuyin_table.h:465`); dual keys: ['i', 'l', 'o', 'p'].
 const CP26_FINALS: &[(u8, &str)] = &[
     (b'b', "ㄝ"),
@@ -1484,7 +1484,7 @@ const CP26_FINALS: &[(u8, &str)] = &[
     (b'u', "ㄚ"),
 ];
 
-/// DaChen CP26 keyboard tone table, `chewing_dachen_cp26_tones`
+/// `DaChen` CP26 keyboard tone table, `chewing_dachen_cp26_tones`
 /// (`src/storage/zhuyin_table.h:482`).
 const CP26_TONES: &[(u8, u8)] = &[(b' ', 1), (b'd', 4), (b'e', 2), (b'r', 3), (b'y', 5)];
 
@@ -1543,9 +1543,9 @@ fn search_zhuyin_index(
 enum Keyboard {
     /// STANDARD, IBM, GINYIEH, ETEN.
     Simple(SimpleTables),
-    /// HSU, ETEN26, HSU_DVORAK.
+    /// HSU, ETEN26, `HSU_DVORAK`.
     Discrete(DiscreteTables),
-    /// DACHEN_CP26.
+    /// `DACHEN_CP26`.
     Cp26(Cp26Tables),
 }
 
@@ -1553,9 +1553,9 @@ enum Keyboard {
 ///
 /// The Simple keyboards (STANDARD, IBM, GINYIEH, ETEN) are implemented
 /// table-driven over the shared [`crate::zhuyin_map`] index; the
-/// Discrete keyboards (HSU, ETEN26, HSU_DVORAK) probe initial/middle/
+/// Discrete keyboards (HSU, ETEN26, `HSU_DVORAK`) probe initial/middle/
 /// final/tone positions against their own tables and indexes; CP26 and
-/// the STANDARD_DVORAK abort slot parse nothing and their setters
+/// the `STANDARD_DVORAK` abort slot parse nothing and their setters
 /// report `false`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ZhuyinParser {
@@ -1596,7 +1596,7 @@ impl ZhuyinScheme {
     /// `ZhuyinDiscreteParser2::set_scheme` (`zhuyin_parser2.cpp:474-490`):
     /// HSU forces `ZHUYIN_CORRECT_HSU` over `hsu_zhuyin_index`, ETEN26
     /// forces `ZHUYIN_CORRECT_ETEN26` over `eten26_zhuyin_index`, and
-    /// HSU_DVORAK forces the HSU bit over the shared `hsu_zhuyin_index`
+    /// `HSU_DVORAK` forces the HSU bit over the shared `hsu_zhuyin_index`
     /// with its own (at this pin byte-identical) key tables.
     fn discrete_tables(self) -> Option<DiscreteTables> {
         match self {
@@ -1672,7 +1672,7 @@ impl ZhuyinParser {
     /// Selects a scheme. The Simple keyboards (STANDARD, IBM, GINYIEH,
     /// ETEN) switch tables the way upstream's `set_scheme` does
     /// (`src/storage/zhuyin_parser2.cpp:271-300`) and the Discrete
-    /// keyboards (HSU, ETEN26, HSU_DVORAK) the way theirs does
+    /// keyboards (HSU, ETEN26, `HSU_DVORAK`) the way theirs does
     /// (`:474-490`) — both minus upstream's aborts; everything else
     /// reports `false` and keeps the current scheme.
     pub fn set_scheme(&mut self, scheme: ZhuyinScheme) -> bool {

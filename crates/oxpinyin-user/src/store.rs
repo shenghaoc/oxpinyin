@@ -2,7 +2,7 @@
 //! phrase index.
 //!
 //! Models the *values* libpinyin records — user bigram counts, phrase-index
-//! unigram deltas, and user-phrase text/pronunciations — not its MemoryChunk
+//! unigram deltas, and user-phrase text/pronunciations — not its `MemoryChunk`
 //! / DBM byte layout (`docs/findings/user-store.md` §4, §10). All counts are
 //! `u64` integers.
 //!

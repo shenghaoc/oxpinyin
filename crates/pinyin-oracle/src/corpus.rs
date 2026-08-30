@@ -81,7 +81,7 @@ impl Stratum {
     }
 }
 
-/// SplitMix64.
+/// `SplitMix64`.
 ///
 /// Chosen for portability and brevity: a dozen lines, no state-initialisation
 /// subtleties, identical output on every supported host.

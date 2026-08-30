@@ -320,7 +320,7 @@ pub enum ZhuyinScheme {
     ZHUYIN_HSU = 2,
     /// IBM layout.
     ZHUYIN_IBM = 3,
-    /// GinYieh layout.
+    /// `GinYieh` layout.
     ZHUYIN_GINYIEH = 4,
     /// Eten layout.
     ZHUYIN_ETEN = 5,
@@ -342,13 +342,13 @@ pub type PinyinOptionT = u32;
 /// `phrase_token_t` — `guint32`.
 pub type PhraseTokenT = u32;
 
-/// `guint` — GLib unsigned int (= `c_uint`).
+/// `guint` — `GLib` unsigned int (= `c_uint`).
 pub type GUint = c_uint;
 
-/// `gint` — GLib signed int (= `c_int`).
+/// `gint` — `GLib` signed int (= `c_int`).
 pub type GInt = c_int;
 
-/// `gchar` — GLib char (= `c_char`).
+/// `gchar` — `GLib` char (= `c_char`).
 pub type GChar = c_char;
 
 /// `null_token` = 0 (`novel_types.h:121`, tag 2.11.91).

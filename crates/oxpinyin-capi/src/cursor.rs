@@ -10,7 +10,7 @@
 //!
 //! Parse-mode dispatch mirrors `CapiInstance::validate_lookup_offset`:
 //! plain full pinyin runs the law over the session's own buffer; LUOMA /
-//! SECONDARY_ZHUYIN run it over the stored original input with the index
+//! `SECONDARY_ZHUYIN` run it over the stored original input with the index
 //! parse's key spans (the pinned index parse consumes `'` as the same
 //! separator); double pinyin and the zhuyin keyboards hold no zero-key
 //! columns, so the law steps their parse's key spans only.
@@ -286,7 +286,7 @@ struct SpanSource<'a> {
 
 /// The mode dispatch shared by [`lookup_offset`], [`left_offset`] and
 /// [`right_offset`]: zhuyin, then double pinyin, then the LUOMA /
-/// SECONDARY_ZHUYIN full-pinyin index — the same precedence as
+/// `SECONDARY_ZHUYIN` full-pinyin index — the same precedence as
 /// `CapiInstance::validate_lookup_offset`. Zhuyin and double pinyin hold
 /// no zero-key columns (`separators` false); the index parse consumes `'`
 /// as a separator (`separators` true). Plain full pinyin answers `None`.
@@ -347,7 +347,7 @@ fn lookup_offset(inst: &CapiInstance, cursor: usize) -> Result<usize, EngineErro
 }
 
 /// The word-level left-move law in the instance's active parse mode —
-/// [lookup_offset]'s mode dispatch applied to the engine's
+/// [`lookup_offset`]'s mode dispatch applied to the engine's
 /// `left_word_offset` law.
 fn left_offset(inst: &CapiInstance, offset: usize) -> Result<usize, EngineError> {
     match span_source(inst) {
@@ -363,7 +363,7 @@ fn left_offset(inst: &CapiInstance, offset: usize) -> Result<usize, EngineError>
 }
 
 /// The word-level right-move law in the instance's active parse mode —
-/// [lookup_offset]'s mode dispatch applied to the engine's
+/// [`lookup_offset`]'s mode dispatch applied to the engine's
 /// `right_word_offset` law. `Ok(None)` is the pin's one graceful
 /// false (`pinyin.cpp:3085-3086`): no key starts at the
 /// (zero-run-skipped) position.
@@ -662,7 +662,7 @@ mod tests {
 /// and its raw span.
 ///
 /// The spelling rather than a `SyllableKey` because all three renderers
-/// want text, and because the LUOMA / SECONDARY_ZHUYIN index parse carries
+/// want text, and because the LUOMA / `SECONDARY_ZHUYIN` index parse carries
 /// a canonical spelling rather than a vocabulary key.
 struct KeyAt {
     text: &'static str,
@@ -678,7 +678,7 @@ struct KeyAt {
 /// active input's coordinates, so [`key_at`] must walk that same buffer, not
 /// the session's `'`-joined canonical spelling. Zhuyin and double pinyin
 /// carry `'` as content or not at all (`separators` false); plain full
-/// pinyin and the LUOMA / SECONDARY_ZHUYIN index parse consume it as a
+/// pinyin and the LUOMA / `SECONDARY_ZHUYIN` index parse consume it as a
 /// separator (`separators` true).
 fn mode_keys(inst: &CapiInstance) -> Result<(Vec<KeyAt>, &[u8], bool), EngineError> {
     if let Some(parse) = inst.zhuyin_parse.as_ref() {

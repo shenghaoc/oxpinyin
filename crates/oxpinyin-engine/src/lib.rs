@@ -1,14 +1,14 @@
 //! Session state machine — the supported Rust surface. Framework-neutral:
-//! abstract KeyInput, injected config/paths, no platform types. Portable.
+//! abstract `KeyInput`, injected config/paths, no platform types. Portable.
 //!
 //! The surface is frozen in `docs/findings/session-api.md`. A shell supplies
 //! platform facts as data — a [`KeyInput`], a [`StoragePaths`], a
 //! [`ConfigSource`] — and receives platform-free results: a [`Preedit`] of
 //! text plus styled spans, and a [`CandidateList`] with checked indexing.
 //!
-//! What is deliberately not here: keysyms, GSettings, path discovery,
+//! What is deliberately not here: keysyms, `GSettings`, path discovery,
 //! `cfg(target_os)`, threading requirements, clocks. Each is a place a
-//! portable API usually leaks. IBus keysym translation lives in
+//! portable API usually leaks. `IBus` keysym translation lives in
 //! `oxpinyin-capi`.
 //!
 //! ```

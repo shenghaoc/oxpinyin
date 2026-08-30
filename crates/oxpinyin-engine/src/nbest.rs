@@ -508,7 +508,7 @@ where
 /// test (below-`FLT_EPSILON` upstream; the zero-guard from the §3
 /// matched/total work). Recorded equivalent on
 /// model20 data (`docs/findings/upstream-divergences.md`, the
-/// validate_constraint entry): the below-ε boundary is unreachable
+/// `validate_constraint` entry): the below-ε boundary is unreachable
 /// there, so the zero test decides both sides.
 ///
 /// # Errors

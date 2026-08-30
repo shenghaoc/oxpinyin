@@ -19,7 +19,7 @@
 //! Without either feature the example runs redb only and prints a note.
 //! `--features tkrzw` runs redb and tkrzw; the two features compose.
 //! Each (backend, scenario) pair runs in a child process (a re-exec of this
-//! binary), so `/proc/self/status` VmHWM measures that pair alone rather
+//! binary), so `/proc/self/status` `VmHWM` measures that pair alone rather
 //! than a process-monotonic high-water mark; the child baseline (runtime
 //! plus binary) is common to both backends, so the redb-vs-lmdb delta is
 //! the signal.  Workload rows derive deterministically from the seed, and
@@ -30,20 +30,20 @@
 //! data checksums); a mismatch aborts instead of printing a comparison.
 //!
 //! Sizes via env vars (defaults in parentheses): `BACKEND_BENCH_N`
-//! (100_000 bigram rows; pron = N/2, phrase = N/4), `BACKEND_BENCH_GETS`
-//! (50_000), `BACKEND_BENCH_PREFIXES` (128), `BACKEND_BENCH_READONLY`
-//! (400_000), `BACKEND_BENCH_SEED`.  The LMDB env map size is fixed at
+//! (`100_000` bigram rows; pron = N/2, phrase = N/4), `BACKEND_BENCH_GETS`
+//! (`50_000`), `BACKEND_BENCH_PREFIXES` (128), `BACKEND_BENCH_READONLY`
+//! (`400_000`), `BACKEND_BENCH_SEED`.  The LMDB env map size is fixed at
 //! 1 GiB by the backend, so very large overrides can exhaust it.
 //!
 //! Compaction is backend-dependent and best-effort: redb rewrites the file
 //! and reclaims pages, LMDB reuses freed pages in place and does not shrink,
-//! and tkrzw rebuilds the TreeDBM into a fresh file, so it reclaims like redb
-//! but pays a full rewrite for it. The save_compact scenario reports timings
+//! and tkrzw rebuilds the `TreeDBM` into a fresh file, so it reclaims like redb
+//! but pays a full rewrite for it. The `save_compact` scenario reports timings
 //! and sizes for every backend; the numbers are not measuring the same
 //! operation, which is the point of reporting them side by side.
 //!
-//! On Unix, on-disk sizes report both apparent length (st_size) and
-//! allocated blocks (st_blocks × 512) of the data file only; allocated is
+//! On Unix, on-disk sizes report both apparent length (`st_size`) and
+//! allocated blocks (`st_blocks` × 512) of the data file only; allocated is
 //! the comparison figure, and apparent >> allocated reveals a sparse file.
 //! On other platforms, allocated bytes are reported as zero (unavailable).
 
@@ -738,7 +738,7 @@ fn remove_db(path: &Path) {
 }
 
 /// (apparent bytes, allocated bytes) of the data file at `path`.  On Unix,
-/// the values are st_size and st_blocks × 512.  Elsewhere, allocation is
+/// the values are `st_size` and `st_blocks` × 512.  Elsewhere, allocation is
 /// unavailable without platform-specific APIs and is reported as zero.
 /// The LMDB `-lock` sidecar is not data and is not counted.
 #[cfg(unix)]

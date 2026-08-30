@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// Pinned SourceForge URL from `docs/findings/model-provenance.md`.
+/// Pinned `SourceForge` URL from `docs/findings/model-provenance.md`.
 pub const MODEL20_URL: &str =
     "https://downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz";
 

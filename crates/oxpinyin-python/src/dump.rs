@@ -1,7 +1,7 @@
 //! Corpus-driven engine runs shared by the two parity surfaces.
 //!
 //! `native-dump` feeds the corpus through this module (pure Rust, no Python)
-//! while the pytest suite replays the same cases through the PyO3 binding,
+//! while the pytest suite replays the same cases through the `PyO3` binding,
 //! then compares the two transcripts structurally (equality of the loaded events). The transcripts are the
 //! whole test: any behavioural difference between the native path and the
 //! bound path shows up as a diff here.

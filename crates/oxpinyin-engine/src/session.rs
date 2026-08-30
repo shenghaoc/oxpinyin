@@ -1,7 +1,7 @@
 //! The session state machine.
 //!
 //! One session per input context. Nothing here is `Send` or `Sync` by
-//! requirement, because the TSF, IMK and ArkTS models all want a
+//! requirement, because the TSF, IMK and `ArkTS` models all want a
 //! main-thread-friendly, instance-per-context object.
 //!
 //! The decoder behind it is parse -> graph -> k-best -> lookup, wired in at
@@ -62,7 +62,7 @@ pub(crate) const MAX_PHRASE_LENGTH: usize = 16;
 /// [`oxpinyin_core::scoring::ScoringConfig::expansion_limit`] which the
 /// pre-frequency fallback shares. Measured over the W2 corpus, the largest
 /// expansion that hits real phrases is a three-initial `q|q|q` span
-/// (14^3 = 2_744 — the pin's `qqq…` offers `请求权`); 4_096 covers it with
+/// (14^3 = `2_744` — the pin's `qqq…` offers `请求权`); `4_096` covers it with
 /// headroom. Larger products yield nothing: no stored phrase matches a
 /// longer all-initial span.
 pub(crate) const SCAN_EXPANSION_LIMIT: usize = 4_096;
@@ -124,7 +124,7 @@ impl Settings {
 /// `L` and nothing else.
 ///
 /// **Keep in sync with `docs/findings/session-api.md`.** That SPEC's
-/// "deliberately absent" list — no keysyms, no GSettings, no path discovery,
+/// "deliberately absent" list — no keysyms, no `GSettings`, no path discovery,
 /// no `cfg(target_os)`, no threading or clock contract — is the freeze this
 /// type implements, and later findings add cross-references to it
 /// (`config-layering.md` for where configuration actually comes from,
@@ -613,7 +613,7 @@ where
     /// run, where propagation stops), and the bigram predecessor advances
     /// over **every** phrase, trained or not. A user who forces 你 for
     /// "ni" and commits the decoded 好 therefore trains 你→好, not just
-    /// sentence_start→你 (the L3 surface, `docs/findings/live-typing.md`).
+    /// `sentence_start→你` (the L3 surface, `docs/findings/live-typing.md`).
     ///
     /// Without a decoded result — the fixture fallback models, or no
     /// lookup since the last reset — the selection history stands in: one
@@ -2548,7 +2548,7 @@ fn amplified_frequency(unigram: u64, total: u64) -> u64 {
 /// The pin's `BIGRAM_FREQUENCY_DISCOUNT` (`pinyin.cpp:33`).
 const BIGRAM_FREQUENCY_DISCOUNT_F32: f32 = 0.1;
 
-/// [`amplified_frequency`] with the DYNAMIC_ADJUST bigram term folded in,
+/// [`amplified_frequency`] with the `DYNAMIC_ADJUST` bigram term folded in,
 /// reproducing the pin's whole expression (`pinyin.cpp:1862-1866`):
 ///
 /// ```c
@@ -2985,7 +2985,7 @@ pub fn check_lookup_offset_range(len: usize, offset: usize) -> Result<usize, Eng
     Ok(offset)
 }
 
-/// The bigram possibility the DYNAMIC_ADJUST term is built from — the pin's
+/// The bigram possibility the `DYNAMIC_ADJUST` term is built from — the pin's
 /// Gate 3 (`pinyin.cpp:1854-1860`).
 ///
 /// Zero on any of the three ways upstream skips the term: the bit is clear,
@@ -3982,7 +3982,7 @@ mod tests {
         );
     }
 
-    /// The frozen candidate pins were measured with DYNAMIC_ADJUST clear on
+    /// The frozen candidate pins were measured with `DYNAMIC_ADJUST` clear on
     /// both sides, which is the whole reason implementing it cannot move
     /// them. That safety argument is **not** "the term is zero at offset 0"
     /// — upstream's `_get_previous_token` answers `sentence_start` (1) there,
@@ -4976,7 +4976,7 @@ mod tests {
     /// outcome: taking the constrained path here would observe nothing.
     /// Review regression: a rank-greater-than-zero row choose on a FRESH
     /// composition records its forcing. The row branch once called
-    /// diff_result on a store that was never sized — `add` refused every
+    /// `diff_result` on a store that was never sized — `add` refused every
     /// span past an empty cell count, and the forcing silently never
     /// landed.
     #[test]

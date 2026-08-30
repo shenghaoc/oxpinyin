@@ -7,7 +7,7 @@
 //! configuration, so Stage 1 runs under the sane default rather than a special
 //! one.
 //!
-//! A GSettings, registry or plist backend is a shell concern and lives
+//! A `GSettings`, registry or plist backend is a shell concern and lives
 //! outside. What a shell has to produce is a [`ConfigLayer`], which it can
 //! also read from a file in the format [`ConfigLayer::parse`] documents.
 //!
@@ -37,18 +37,18 @@ use std::collections::{BTreeMap, btree_map};
 
 /// One configuration value.
 ///
-/// The four variants mirror the GSettings types the frozen upstream schema in
+/// The four variants mirror the `GSettings` types the frozen upstream schema in
 /// `docs/findings/upstream-schema.md` actually uses: `b`, `i`, `x` and `s`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum ConfigValue {
-    /// GSettings `b`.
+    /// `GSettings` `b`.
     Bool(bool),
-    /// GSettings `i`.
+    /// `GSettings` `i`.
     Int(i32),
-    /// GSettings `x`.
+    /// `GSettings` `x`.
     Int64(i64),
-    /// GSettings `s`.
+    /// `GSettings` `s`.
     Text(String),
 }
 
@@ -89,7 +89,7 @@ impl ConfigValue {
         }
     }
 
-    /// The GSettings type letter this value corresponds to.
+    /// The `GSettings` type letter this value corresponds to.
     #[must_use]
     pub const fn type_letter(&self) -> char {
         // Exhaustive on purpose, with no catch-all arm: a new ConfigValue
@@ -378,14 +378,14 @@ impl ConfigLayer {
     ///
     /// One record per line, TAB-separated `key=value` fields, with `key`,
     /// `type` and `value` required. A blank line and a line starting with `#`
-    /// are comments. `type` is the GSettings letter: `b`, `i`, `x` or `s`.
+    /// are comments. `type` is the `GSettings` letter: `b`, `i`, `x` or `s`.
     ///
     /// ```text
     /// key=lookup-table-page-size <TAB> type=i <TAB> value=9
     /// ```
     ///
     /// This is the file backend the replay harness uses for test scenarios,
-    /// and the shape a system drop-in takes on a platform without GSettings.
+    /// and the shape a system drop-in takes on a platform without `GSettings`.
     ///
     /// # Errors
     ///

@@ -18,7 +18,7 @@ use pinyin_capi::{
 
 use crate::common::{TempUserDir, cstr, open};
 
-/// DOUBLE_PINYIN_CUSTOMIZED: upstream aborts inside
+/// `DOUBLE_PINYIN_CUSTOMIZED`: upstream aborts inside
 /// `DoublePinyinParser2::set_scheme` (`pinyin_parser2.cpp:611-612`)
 /// mid-call, after the table pointers for the *current* scheme were
 /// already disturbed. oxpinyin: `false`, nothing changes.
@@ -80,7 +80,7 @@ fn double_out_of_enum_is_rejected_without_the_fallback_half_mutation() {
     pinyin_capi::pinyin_fini(context);
 }
 
-/// ZHUYIN_STANDARD_DVORAK: upstream routes 7 into
+/// `ZHUYIN_STANDARD_DVORAK`: upstream routes 7 into
 /// `ZhuyinSimpleParser2::set_scheme`, which assigns the dvorak tables
 /// and falls through into `default: abort()`
 /// (`zhuyin_parser2.cpp:291-295` — the fallthrough is still present at
