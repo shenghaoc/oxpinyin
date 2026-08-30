@@ -694,6 +694,27 @@ Text, candidate type and counts cannot.
   matches the pin (capi e2e `parse_termination` module, harness phase-C
   0x60 probes closed).
 
+### Empty-string phrase lookup SIGFPEs the pin
+
+- **Upstream source cite:** `pinyin_phrase_segment` →
+  `PhraseLookup::get_best_match` with `sentence_length = 0`
+  (`src/lookup/phrase_lookup.cpp:121-157`), reaching
+  `m_phrase_table->search(0, ...)`; measured SIGFPE (gdb: divide in the
+  search path) on the pin-built oracle.
+- **Mechanism:** a zero-length sentence reaches the span search, which
+  divides by the (zero) span length; upstream never guards the entry
+  point's UTF-8-validated but possibly-empty input.
+- **What oxpinyin does instead:** the span DP over zero characters has
+  one step (the virtual start), the last step is empty, `final_step`
+  answers `false` with a zero-length result — the same shape every
+  failed match takes.
+- **Externally observable:** yes — the pin SIGFPEs on
+  `pinyin_phrase_segment(instance, "")`; oxpinyin answers `false`.
+  Same theirs-bug family as the apostrophe abort (F-E-14) and the
+  SECONDARY_ZHUYIN over-read; report-back candidate for libpinyin.
+  Found while building the Tier-C dict-surface differential
+  (`tools/bisection/dict-surface-diff.c`, which excludes the shape).
+
 ## Sanitizer scope on the tkrzw shim CI (2026-08-27)
 
 - **Where:** `.github/workflows/store-backends.yml`, `tkrzw-sanitizers` job.

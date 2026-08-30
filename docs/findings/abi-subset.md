@@ -903,29 +903,25 @@ contract (the 50 live 1.16.5 call-site symbols in §1 plus
 `pinyin_get_parsed_input_length`, fork commit `2c5baa9`, call site
 `PYPLibPinyinCandidates.cc:151`).
 
-**Supersession (2026-08-29).** The ABI boundary is no longer the W8 fork
-call surface: the maintained target is the **full live upstream ABI,
-79/79** `pinyin_*` symbols, so that once every symbol lands the produced
-`.so` is functionally indistinguishable from libpinyin regardless of
-caller. (`pinyin.h`'s `#if 0`-declared `pinyin_get_raw_full_pinyin`
-stays excluded — it has no implementation and no export in upstream
-itself.) The consumer-union
+**Supersession (2026-08-29), CLOSED (2026-08-30).** The ABI boundary is
+no longer the W8 fork call surface: the maintained target is the **full
+live upstream ABI, 79/79** `pinyin_*` symbols, so the produced `.so` is
+functionally indistinguishable from libpinyin regardless of caller —
+and the target is met: **all 79 symbols are implemented live**
+(`pinyin_get_raw_full_pinyin` stays excluded — `#if 0`-declared with no
+implementation and no export in upstream itself). The consumer-union
 surface below remains the provenance record of what frontends actually
-drove. Landed: `pinyin_clear_constraint` (W8),
+drove. Landed in sequence: `pinyin_clear_constraint` (W8),
 `pinyin_set_full_pinyin_scheme` (#109, W15), the fcitx preedit family
-(#189, 2026-08-28 — `pinyin_get_pinyin_key`, the key-rest trio with real
-bodies for the two former provisional stubs, `pinyin_get_zhuyin_string`,
-`pinyin_get_pinyin_string`, `pinyin_get_pinyin_strings`),
-`pinyin_unload_addon_phrase_library` (fcitx `eim.cpp` call site), and
-the Tier-A remainder — the three single-key parsers,
-`pinyin_get_luoma_pinyin_string`,
-`pinyin_get_secondary_zhuyin_string`, `pinyin_get_pinyin_is_incomplete`,
-`pinyin_get_context` — **66 of 79**. Remaining (13): the Tier-B
-sentence/surface family (`pinyin_guess_predicted_candidates`,
-`pinyin_guess_sentence_with_prefix`, `pinyin_phrase_segment`,
-`pinyin_get_n_phrase`, `pinyin_get_phrase_token`) and the Tier-C
-dictionary introspection family (`pinyin_lookup_tokens`,
-`pinyin_token_get_phrase`, `pinyin_token_get_n_pronunciation`,
+(#189, 2026-08-28), `pinyin_unload_addon_phrase_library` (fcitx call
+site), the Tier-A remainder (single-key parsers, luoma/secondary
+displays, `pinyin_get_pinyin_is_incomplete`, `pinyin_get_context`), the
+Tier-B sentence/surface family (`pinyin_phrase_segment`,
+`pinyin_get_n_phrase`, `pinyin_get_phrase_token`,
+`pinyin_guess_predicted_candidates`,
+`pinyin_guess_sentence_with_prefix`), and the Tier-C dictionary
+introspection family (`pinyin_lookup_tokens`, `pinyin_token_get_phrase`,
+`pinyin_token_get_n_pronunciation`,
 `pinyin_token_get_nth_pronunciation`,
 `pinyin_token_get_unigram_frequency`,
 `pinyin_token_add_unigram_frequency`, `pinyin_load_phrase_library`,
