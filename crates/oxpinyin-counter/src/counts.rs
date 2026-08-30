@@ -103,9 +103,9 @@ mod tests {
     #[test]
     fn dump_round_trips() {
         let mut counts = Counts::default();
-        counts.unigrams.insert(16817937, 5);
-        counts.unigrams.insert(16782711, 3);
-        counts.bigrams.insert((16817937, 16782711), 2);
+        counts.unigrams.insert(16_817_937, 5);
+        counts.unigrams.insert(16_782_711, 3);
+        counts.bigrams.insert((16_817_937, 16_782_711), 2);
         let text = counts.dump();
         assert_eq!(Counts::parse_counter_dump(&text), counts);
     }

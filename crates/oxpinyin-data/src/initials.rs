@@ -311,8 +311,8 @@ mod tests {
         let mut state = 0x2545_f491_4f6c_dd1d_u64;
         let mut next = move || {
             state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
             (state >> 33) as usize
         };
         let alphabet = InitialAlphabet::new();

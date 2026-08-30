@@ -137,7 +137,14 @@ mod tests {
     /// mechanically against T2's validated counter.
     #[test]
     fn matches_counter_bigrams() {
-        let tokens = [16817937_u32, 16782711, 0, 16802309, 16808451, 16802309];
+        let tokens = [
+            16_817_937u32,
+            16_782_711,
+            0,
+            16_802_309,
+            16_808_451,
+            16_802_309,
+        ];
         let deleted = count_deleted_tokens(&tokens, true);
         let counter = oxpinyin_counter::Counter::new(true, std::iter::empty()).count(&tokens);
         assert_eq!(deleted.bigrams, counter.bigrams);

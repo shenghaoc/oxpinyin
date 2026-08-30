@@ -25,7 +25,7 @@ use std::path::Path;
 /// λ recorded for the pinned model in `data-formats.md` §3
 /// (`lambda parameter:0.312699`), as an `f32`. Convenience for logging and
 /// cross-checks; the decoder uses the exact rational [`Lambda::PINNED`].
-pub const PINNED_LAMBDA: f32 = 0.312699;
+pub const PINNED_LAMBDA: f32 = 0.312_699;
 
 /// The bigram interpolation weight λ, an exact rational `numerator /
 /// denominator` in lowest terms with `numerator ≤ denominator` (λ ∈ `[0, 1]`).
@@ -178,7 +178,7 @@ mod tests {
         let exact = Lambda::PINNED.as_f64();
         let approx = f64::from(PINNED_LAMBDA);
         assert!(
-            (exact - approx).abs() < f64::from(f32::EPSILON) * 0.312699,
+            (exact - approx).abs() < f64::from(f32::EPSILON) * 0.312_699,
             "exact {exact} vs f32 {approx}"
         );
     }

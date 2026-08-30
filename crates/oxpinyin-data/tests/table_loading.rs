@@ -60,7 +60,7 @@ fn culture_fixture_spot_check() {
     assert_eq!(r0.tokens[0].token, 0x5B89);
     assert_eq!(r0.tokens[0].frequency, 20859);
     // token[1] = 0x02350180, freq=100 (compact u16)
-    assert_eq!(r0.tokens[1].token, 0x02350180);
+    assert_eq!(r0.tokens[1].token, 0x0235_0180);
     assert_eq!(r0.tokens[1].frequency, 100);
 
     // Record 2 (index 2): ng=2, fl=2 (3 token pairs: n_gram + 1 extra)
