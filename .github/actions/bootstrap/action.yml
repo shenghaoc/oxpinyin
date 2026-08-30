@@ -1,0 +1,85 @@
+name: 'bootstrap'
+description: |-
+  Shared post-checkout bootstrap cluster for this repository's
+  workflows: the checkout registered as a git safe.directory (container
+  jobs run as root over a root-owned checkout), an optional
+  pinned-rustup install (channel read from rust-toolchain.toml, minimal
+  profile), and an optional Swatinem/rust-cache restore/save (its post
+  step runs with the composite's completion).
+
+  The actions/checkout step stays inline in every calling job. A local
+  `./` action introduced by a PR cannot wrap the checkout that would
+  make it visible: pull_request runs resolve it before any checkout
+  exists, so a bootstrap-owned checkout died at step 1 with "Can't find
+  'action.yml'" in every job. Call this right after checkout instead.
+
+  The optional steps default to off, so a bare call is a no-op.
+  Composite-action inputs are strings; the switches take 'true'/'false'.
+
+inputs:
+  safe-directory:
+    description: >-
+      Register the checkout as a git safe.directory. Required in the
+      container jobs, which run as root over a root-owned checkout.
+      String 'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  rustup:
+    description: >-
+      Install the pinned Rust toolchain via rustup: channel awk'd from
+      rust-toolchain.toml, minimal profile, curl'd from sh.rustup.rs.
+      String 'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  rustup-components:
+    description: 'Extra rustup components, space-separated (e.g. "clippy rustfmt").'
+    required: false
+    default: ''
+  rust-cache:
+    description: >-
+      Run Swatinem/rust-cache as the final bootstrap step. String
+      'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  rust-cache-key:
+    description: 'Additional key input for Swatinem/rust-cache.'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # Container jobs run as root over a root-owned checkout, so any later
+    # git invocation would die on dubious ownership (this affected
+    # tracked-path probes in local tooling scripts during development).
+    - name: Register the checkout as a git safe.directory
+      if: inputs.safe-directory == 'true'
+      shell: bash
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+    - name: Install the pinned Rust toolchain
+      if: inputs.rustup == 'true'
+      shell: bash
+      env:
+        # Space-separated component list; empty by default.
+        RUSTUP_COMPONENTS: ${{ inputs.rustup-components }}
+      run: |
+        set -euo pipefail
+        channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+        component_args=()
+        # Intentional word splitting: the input is a space-separated list.
+        # shellcheck disable=SC2086
+        for component in $RUSTUP_COMPONENTS; do
+          component_args+=(--component "$component")
+        done
+        curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+          | sh -s -- -y --profile minimal --default-toolchain "$channel" "${component_args[@]}"
+        printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+        # Visible to THIS step too: GITHUB_PATH only applies to later steps.
+        . "$HOME/.cargo/env"
+
+    # Pinned to the v2.9.2 tag commit (do not bump without re-verifying).
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      if: inputs.rust-cache == 'true'
+      with:
+        key: ${{ inputs.rust-cache-key }}
