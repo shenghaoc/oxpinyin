@@ -126,8 +126,15 @@ int main(int argc, char **argv) {
     fn_fini fini = (fn_fini)must(handle, "pinyin_fini");
     fn_alloc alloc = (fn_alloc)must(handle, "pinyin_alloc_instance");
     fn_free free_i = (fn_free)must(handle, "pinyin_free_instance");
-    fn_predict predict = (fn_predict)must(
+    /* libpinyin < 2.11 (RHEL/Fedora ship 2.8.1) has no
+     * _with_punctuations variant; the plain call emits the same
+     * PREDICTED_PREFIX rows (the punctuations variant only prepends
+     * punctuation rows of a different type, which the type filter below
+     * drops), so falling back keeps the compared row set identical. */
+    fn_predict predict = (fn_predict)dlsym(
         handle, "pinyin_guess_predicted_candidates_with_punctuations");
+    if (!predict)
+        predict = (fn_predict)must(handle, "pinyin_guess_predicted_candidates");
     fn_n n_cand = (fn_n)must(handle, "pinyin_get_n_candidate");
     fn_getc get_cand = (fn_getc)must(handle, "pinyin_get_candidate");
     fn_gettype get_type = (fn_gettype)must(handle, "pinyin_get_candidate_type");
