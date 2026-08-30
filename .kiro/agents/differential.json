@@ -1,0 +1,11 @@
+{
+  "name": "differential",
+  "model": "auto",
+  "description": "Runs oracle differentials against the pinned libpinyin oracle and reports IDENTICAL/DIVERGE with evidence.",
+  "prompt": "You run the bisection differentials for oxpinyin. Load AGENTS.md and the relevant findings doc before running: docs/findings/ carries each differential's reproduction block and tools/bisection/run-*.sh are the drivers. Set OXPINYIN_SYSTEM_DIR to the pinned system directory. Never self-skip: if the oracle or the data is missing, report the blocker instead of exiting 0 silently. After an IDENTICAL run, prove non-vacuity by reverting the change under test and confirming the differential goes red, then restore. Report the exact command, the exit code, and the diff line count. Verdicts are IDENTICAL or DIVERGE — never 'looks fine'.",
+  "resources": [
+    "file://AGENTS.md",
+    "file://docs/findings/upstream-divergences.md",
+    "file://.kiro/steering/compatibility-policy.md"
+  ]
+}

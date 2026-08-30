@@ -1,0 +1,34 @@
+{
+  "hooks": [
+    {
+      "id": "commit-trailer",
+      "name": "commit-trailer",
+      "event": "UserPromptSubmit",
+      "matcher": "*",
+      "matcher_mode": "glob",
+      "command": "printf '%s\\n' 'Reminder (commit-trailer): every commit carries exactly one trailer in the house form AGENT:MODEL, nothing after the model — e.g. Assisted-by: ZCode:GLM-5.3-Flash. Shape enforced by .github/scripts/lint-commits.sh: ^Assisted-by: [[:alnum:]][[:alnum:]._-]*:[[:alnum:]][[:alnum:].+_-]*$ — no slash in either character class, the model token must contain an ASCII letter, no duplicate lines. Never Co-Authored-By for agents.'",
+      "timeout": 10,
+      "enabled": true
+    },
+    {
+      "id": "no-abort",
+      "name": "no-abort",
+      "event": "PostToolUse",
+      "matcher": "fs_write",
+      "matcher_mode": "glob",
+      "command": "printf '%s\\n' 'Reminder (no-abort): if the file just written is under crates/**, check public-facing code for panic!/unwrap()/expect(). Nothing may panic on any input — return false/Result where upstream aborts (exception class (c) in .kiro/steering/compatibility-policy.md). A panic is a defect of the same severity as data loss.'",
+      "timeout": 10,
+      "enabled": true
+    },
+    {
+      "id": "phase-discipline",
+      "name": "phase-discipline",
+      "event": "PostToolUse",
+      "matcher": "fs_write",
+      "matcher_mode": "glob",
+      "command": "printf '%s\\n' 'Reminder (phase-discipline): before implementing under crates/**, Phase 1 (explain-back, no code) must have been confirmed. If the plan was not confirmed yet, STOP and present it — see .kiro/steering/agents-protocol.md and the AGENTS.md STOP conditions: ambiguous task; an interface/ABI/dependency change; a test that cannot pass without breaking the constitution; a SPEC contradicting observed pin behaviour; a frozen-SPEC change without an ask.'",
+      "timeout": 10,
+      "enabled": true
+    }
+  ]
+}
