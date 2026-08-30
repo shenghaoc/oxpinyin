@@ -18,10 +18,10 @@ to structure cost, pushing more correct single-phrase rankings into top-1.
 
 ## Method
 
-Changed the constant `UNIGRAM_TIEBREAK_SCALE` in `crates/oxpinyin-data/src/lm.rs`
+Changed the constant `UNIGRAM_TIEBREAK_SCALE` in `crates/oxpinyin-data/src/lm/mod.rs`
 and re-ran the portable parity test for each value:
 
-```
+```bash
 cargo test --release -p pinyin-oracle --test real_tables_integration -- --nocapture
 ```
 
@@ -58,4 +58,4 @@ empty-history unigram alone.
 ## Implementation constraint
 
 No trait signatures or scoring-spec SPEC were changed. The sweep is local to
-the LM's empty-history branch (`lm.rs:169`).
+the LM's empty-history branch (`lm/mod.rs:441-443`).

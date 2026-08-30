@@ -112,7 +112,7 @@ is an error, not a silent skip.
 
 ## Adapters
 
-`oxpinyin_core::fixture` provides:
+`oxpinyin_testsupport` provides:
 
 - `FixtureDictionary` — `Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>`.
   Lookup is exact on the whole key slice and returns entries in fixture order.
@@ -121,7 +121,7 @@ is an error, not a silent skip.
   interpolated bigram over the same vocabulary, combining the caller's edge
   cost as the frozen seam requires.
 
-Both parse from `&str`. `oxpinyin-core` does no I/O; callers `include_str!`.
+Both parse from `&str`. `oxpinyin-testsupport` does no I/O; callers `include_str!`.
 
 `oxpinyin_core::cost` holds the arithmetic: costs are integers on a fixed-point
 negative-log₂ scale, one bit of surprisal per `COST_PER_BIT`, with an
