@@ -50,7 +50,7 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
 /// libpinyin.ver, never called by ibus-libpinyin 1.16.5, and added to
 /// the oxpinyin surface post-bootstrap. The Rust parameter is `c_int`:
 /// callers may pass any `int`. HANYU (1) is the default and keeps the
-/// frozen full-pinyin parser surface; LUOMA (2) and SECONDARY_ZHUYIN
+/// frozen full-pinyin parser surface; LUOMA (2) and `SECONDARY_ZHUYIN`
 /// (3) switch the parse onto their pinned indexes. Other values report
 /// `false` and keep the previous scheme instead of aborting (the
 /// out-of-enum contract-lock is a separate workstream).
@@ -130,8 +130,8 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
 ///
 /// Every implemented Zhuyin keyboard is table-driven: the Simple
 /// keyboards (STANDARD 1, IBM 3, GINYIEH 4, ETEN 5), the Discrete
-/// keyboards (HSU 2, ETEN26 6, HSU_DVORAK 8), and DACHEN_CP26 9. The
-/// remaining `ZhuyinScheme` header discriminant — the STANDARD_DVORAK
+/// keyboards (HSU 2, ETEN26 6, `HSU_DVORAK` 8), and `DACHEN_CP26` 9. The
+/// remaining `ZhuyinScheme` header discriminant — the `STANDARD_DVORAK`
 /// abort slot — reports `false` and keeps the previous scheme instead
 /// of aborting.
 #[unsafe(no_mangle)]

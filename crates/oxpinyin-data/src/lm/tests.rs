@@ -1,8 +1,8 @@
 use super::*;
 
-/// 你's gb_char token in the pinned model.
+/// 你's `gb_char` token in the pinned model.
 const NI: u32 = 0x0100_1225;
-/// 的's gb_char token in the pinned model.
+/// 的's `gb_char` token in the pinned model.
 const DE: u32 = 0x0100_05db;
 
 fn fixtures_dir() -> std::path::PathBuf {

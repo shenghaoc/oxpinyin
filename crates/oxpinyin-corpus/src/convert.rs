@@ -1,6 +1,6 @@
 //! Traditional → simplified conversion by shelling out to `opencc`.
 //!
-//! Deliberately no new Cargo dependency: OpenCC is the standard
+//! Deliberately no new Cargo dependency: `OpenCC` is the standard
 //! permissively-licensed (Apache-2.0) converter, and calling the
 //! standard `opencc` binary keeps the corpus front-end dependency-free
 //! and portable. The runtime requirement is one documented executable;
@@ -15,7 +15,7 @@ use std::thread;
 use crate::error::CorpusError;
 
 /// Config name passed to `opencc --config`. The `t2s` preset ships with
-/// every OpenCC distribution.
+/// every `OpenCC` distribution.
 pub const DEFAULT_CONFIG: &str = "t2s";
 
 /// An `opencc` converter process factory.

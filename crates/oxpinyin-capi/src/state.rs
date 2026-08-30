@@ -509,7 +509,7 @@ pub(crate) struct CapiInstance {
     /// Shared live full-pinyin scheme from the owning context.
     pub(crate) full_scheme: Arc<AtomicI32>,
     /// Most recent full-pinyin index parse, when the scheme is LUOMA or
-    /// SECONDARY_ZHUYIN and the last parse call was the full-pinyin
+    /// `SECONDARY_ZHUYIN` and the last parse call was the full-pinyin
     /// entry point. Used for aux-text rendering over the raw input.
     pub(crate) full_parse: Option<FullPinyinIndexParse>,
     /// Original full-pinyin input for aux-text cursor mapping.
@@ -585,7 +585,7 @@ impl CapiInstance {
     /// - Plain full pinyin: the full law over the session's raw buffer,
     ///   whose `'` bytes are the matrix's zero-key columns
     ///   ([`Session::normalized_lookup_offset`]).
-    /// - LUOMA / SECONDARY_ZHUYIN: the full law over the consumed prefix
+    /// - LUOMA / `SECONDARY_ZHUYIN`: the full law over the consumed prefix
     ///   of the stored original input — the pinned index parse consumes
     ///   `'` as the same separator, and bytes past its consumed length
     ///   never entered the composition, so they bound the offset range

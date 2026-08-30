@@ -22,7 +22,7 @@
 //! notion of integer order.  All four backends satisfy exactly this: redb's
 //! `Key for &[u8]` is a byte compare; the LMDB backend sets no integer or
 //! custom comparator (so LMDB's default lexicographic one applies); and the
-//! tkrzw backend installs no comparator, so TreeDBM uses its default
+//! tkrzw backend installs no comparator, so `TreeDBM` uses its default
 //! `LexicalKeyComparator` (plain unsigned byte order); and the Kyoto Cabinet
 //! backend opens `TreeDB` with no `rcomp` tuning parameter, exactly as
 //! libpinyin does, so Kyoto Cabinet's default `LEXICALCOMP` applies — again

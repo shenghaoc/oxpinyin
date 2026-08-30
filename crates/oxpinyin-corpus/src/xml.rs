@@ -1,4 +1,4 @@
-//! Minimal streaming extractor for MediaWiki XML export dumps.
+//! Minimal streaming extractor for `MediaWiki` XML export dumps.
 //!
 //! Hand-rolled on purpose: the corpus front-end must not grow a
 //! dependency for what is a two-tag scan (`<page>` … `</page>`, then

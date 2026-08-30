@@ -328,7 +328,7 @@ const PIN_LAMBDA_F32: f32 = 0.312_699;
 /// The pin's candidate `m_freq` for predicted rows: the unigram possibility
 /// `(1−λ)·unigram/total` computed and amplified by 2²⁴ in C `float`
 /// arithmetic, then truncated like the `guint32` assignment
-/// (`pinyin.cpp:1811-1824`, the PREDICTED_PREFIX branch).
+/// (`pinyin.cpp:1811-1824`, the `PREDICTED_PREFIX` branch).
 ///
 /// Mirrors `amplified_frequency` (`session.rs:1835`) exactly — the engine's
 /// copy is private and widening it would change the crate's public surface,

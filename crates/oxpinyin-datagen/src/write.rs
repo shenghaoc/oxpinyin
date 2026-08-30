@@ -35,7 +35,7 @@ pub enum Backend {
     /// LMDB, single-file environments (`.lmdb` files). Requires the `lmdb`
     /// cargo feature.
     Lmdb,
-    /// Tkrzw TreeDBM (`.tkt` files). Requires the `tkrzw` cargo feature.
+    /// Tkrzw `TreeDBM` (`.tkt` files). Requires the `tkrzw` cargo feature.
     Tkrzw,
     /// Kyoto Cabinet TreeDB (`.kct` files). Requires the `kyotocabinet`
     /// cargo feature (on by default — Kyoto Cabinet is the workspace's

@@ -29,16 +29,16 @@
 //! Compare `first_query_ms` and `us_per_cached_query` against
 //! `backend_bench`'s `us_per_get`.
 //!
-//! On Unix, on-disk sizes report both apparent length (st_size) and
-//! allocated blocks (st_blocks × 512) of the data file only; allocated is
+//! On Unix, on-disk sizes report both apparent length (`st_size`) and
+//! allocated blocks (`st_blocks` × 512) of the data file only; allocated is
 //! the comparison figure, and apparent >> allocated reveals a sparse file.
 //! On other platforms, allocated bytes are reported as zero (unavailable).
 //!
 //! Sizes via env vars (defaults in parentheses): `STORE_BENCH_TRAIN`
-//! (5_000 observe_selection calls — each is its own committed write
+//! (`5_000` `observe_selection` calls — each is its own committed write
 //! transaction at the backend's default durability), `STORE_BENCH_READS`
-//! (50_000 count_delta queries), `STORE_BENCH_PREDICTED` (200
-//! observe_predicted acceptances), `STORE_BENCH_SEED`.
+//! (`50_000` `count_delta` queries), `STORE_BENCH_PREDICTED` (200
+//! `observe_predicted` acceptances), `STORE_BENCH_SEED`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -369,7 +369,7 @@ fn remove_db(path: &Path) {
 }
 
 /// (apparent bytes, allocated bytes) of the data file at `path`.  On Unix,
-/// the values are st_size and st_blocks × 512.  Elsewhere, allocation is
+/// the values are `st_size` and `st_blocks` × 512.  Elsewhere, allocation is
 /// unavailable without platform-specific APIs and is reported as zero.
 /// The LMDB `-lock` sidecar is not data and is not counted.
 #[cfg(unix)]

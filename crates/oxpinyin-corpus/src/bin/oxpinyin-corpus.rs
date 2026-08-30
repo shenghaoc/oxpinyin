@@ -3,7 +3,7 @@
 //!
 //! Usage: oxpinyin-corpus [OPTIONS] [inputfile]
 //!
-//! The input is a decompressed MediaWiki XML dump (`Special:Export` or a
+//! The input is a decompressed `MediaWiki` XML dump (`Special:Export` or a
 //! `dumps.wikimedia.org` pages-articles slice after `bzip2 -dc`); `-`
 //! or no argument reads stdin. Output is one sentence per line, `\n`
 //! only — the exact input format `oxpinyin-segment` reads.

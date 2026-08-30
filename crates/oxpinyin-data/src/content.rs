@@ -17,7 +17,7 @@ pub struct TokenPair {
 /// A decoded phrase record from a content file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
-    /// Number of tokens in the phrase (n_gram).
+    /// Number of tokens in the phrase (`n_gram`).
     pub n_gram: u8,
     /// Record layout flags (0–4).
     pub flags: u8,
@@ -61,7 +61,7 @@ pub enum LoadError {
         /// Number of records successfully parsed.
         parsed: u32,
     },
-    /// A record's n_gram or flags value is out of valid range.
+    /// A record's `n_gram` or flags value is out of valid range.
     InvalidRecordHeader {
         /// Byte offset of the record header.
         offset: usize,
@@ -229,7 +229,7 @@ fn record_size(ng: u8, fl: u8, data: &[u8], pos: usize) -> usize {
 
 /// Decode a single record's token pairs.
 ///
-/// `ng` = n_gram, `fl` = flags, `data` points to the record start.
+/// `ng` = `n_gram`, `fl` = flags, `data` points to the record start.
 fn decode_tokens(data: &[u8], ng: u8, fl: u8) -> Vec<TokenPair> {
     let mut tokens = Vec::with_capacity(ng as usize);
     let mut off = 6; // skip [n_gram, flags, freq_u32]
@@ -405,7 +405,7 @@ impl ContentTable {
         self.version
     }
 
-    /// Maximum phrase_index + 1.
+    /// Maximum `phrase_index` + 1.
     #[must_use]
     pub fn capacity(&self) -> u32 {
         self.capacity

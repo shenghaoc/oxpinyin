@@ -47,7 +47,7 @@ impl PunctTable {
 
     /// Opens `path` when it is a readable Option A table; otherwise empty.
     ///
-    /// Missing files and the raw HashDBM convert of `punct.bin` both become
+    /// Missing files and the raw `HashDBM` convert of `punct.bin` both become
     /// empty. Upstream `pinyin_init` ignores a failed `PunctTable::attach`.
     #[must_use]
     pub fn open_optional(path: &Path) -> Self {

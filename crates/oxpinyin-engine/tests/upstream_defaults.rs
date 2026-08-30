@@ -57,7 +57,7 @@ fn unescape(text: &str) -> String {
         .replace("&amp;", "&")
 }
 
-/// Turns a GSettings default literal into the value it denotes.
+/// Turns a `GSettings` default literal into the value it denotes.
 fn decode(letter: &str, text: &str) -> ConfigValue {
     match letter {
         "b" => ConfigValue::Bool(text.parse().expect("a GSettings boolean")),

@@ -1,8 +1,8 @@
 //! Punctuation table: `punct.table` text → token-keyed punctuation lists.
 //!
-//! The raw `punct.bin` convert is not consumable — HashDBM iteration sees
+//! The raw `punct.bin` convert is not consumable — `HashDBM` iteration sees
 //! one 6-byte key, while upstream `PunctTable::attach` opens the same file
-//! as TreeDBM and reads 272 token keys
+//! as `TreeDBM` and reads 272 token keys
 //! (`docs/findings/prediction-punct.md`). This compilation is the same
 //! one the retired `oxpinyin-migrate export-punct` performed (no oracle
 //! involved), restored verbatim from that code.

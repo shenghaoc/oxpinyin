@@ -3,7 +3,7 @@
 //! A logical key, a modifier set and the text the key would commit. No
 //! keysyms, no scancodes, no platform event types: translating
 //! `IBUS_KEY_BackSpace`, a Win32 `WM_KEYDOWN` or an `NSEvent` into a
-//! [`LogicalKey`] is the shell's job, and for IBus it lives in `oxpinyin-capi`.
+//! [`LogicalKey`] is the shell's job, and for `IBus` it lives in `oxpinyin-capi`.
 
 use core::fmt;
 use core::ops::BitOr;

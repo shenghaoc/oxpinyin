@@ -6,11 +6,11 @@
 //! value-identical and the λ estimates agree at the pin's printed
 //! precision.
 //!
-//! Rust chain:   T4b sample → oxpinyin-segment (T1) → count_ngseg (T2) →
-//!               count_deleted + estimate_lambda (T3) → emit_interpolation2 (T4a)
-//! Pin chain:    T4b sample → ngseg → gen_binary_files → gen_unigram →
-//!               gen_ngram → gen_deleted_ngram → estimate_interpolation →
-//!               export_interpolation
+//! Rust chain:   T4b sample → oxpinyin-segment (T1) → `count_ngseg` (T2) →
+//!               `count_deleted` + `estimate_lambda` (T3) → `emit_interpolation2` (T4a)
+//! Pin chain:    T4b sample → ngseg → `gen_binary_files` → `gen_unigram` →
+//!               `gen_ngram` → `gen_deleted_ngram` → `estimate_interpolation` →
+//!               `export_interpolation`
 //!
 //! Env-gated on the same variables the T1–T4a tasks use; skipped (not
 //! failed) when the pin tools or the rust-side tables are absent.

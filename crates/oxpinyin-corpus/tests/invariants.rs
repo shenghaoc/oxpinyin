@@ -36,7 +36,7 @@ const MARKUP_RESIDUE: &[&str] = &[
 
 /// Unambiguous traditional characters: after t2s conversion none of
 /// these may remain. This is a spot-check (the full check would need the
-/// OpenCC dictionary), which is exactly what the task asks for.
+/// `OpenCC` dictionary), which is exactly what the task asks for.
 const TRADITIONAL_SPOT_CHECK: &str = "國學體機發開關說讀話語東車長門間風電馬鳥魚龍點聽寫畫號員錢銀鐵錯鐘紙紅經網頁頂順個們來時會過還裡後頭實傳傷動單塊數對題樂識報務與島從麼見導動員壓歷史樹維類書氣無誤區認領選鐘變轉記統紹條嗎會場議隊縣衛機簡藝質變邊遠鄉鎮鄭勝利應蘇蘭嶼藝術音樂階段戰爭護衛義務讓";
 
 fn read_sample() -> String {
@@ -130,7 +130,7 @@ fn locate_opencc() -> Option<PathBuf> {
 }
 
 /// trad → simp through the real `opencc` binary, when one exists. The
-/// pipeline design shells out; this test pins the seam, not the OpenCC
+/// pipeline design shells out; this test pins the seam, not the `OpenCC`
 /// dictionaries.
 #[test]
 fn converter_turns_traditional_into_simplified_when_opencc_present() {

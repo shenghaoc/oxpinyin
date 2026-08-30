@@ -1,4 +1,4 @@
-//! Pure pinyin algorithms: parsing, SegmentGraph, k-best search, scoring
+//! Pure pinyin algorithms: parsing, `SegmentGraph`, k-best search, scoring
 //! traits. No I/O, no platform deps, no `unsafe`. Internal crate — the
 //! supported public API is `oxpinyin-engine`.
 #![forbid(unsafe_code)]

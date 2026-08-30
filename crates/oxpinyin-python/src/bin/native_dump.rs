@@ -1,7 +1,7 @@
 //! Native-side corpus transcript generator for the Python parity tests.
 //!
 //! Reads a parity corpus (JSON), replays it through the pure-Rust public
-//! API — the same runtime types the PyO3 binding wraps, with no Python in
+//! API — the same runtime types the `PyO3` binding wraps, with no Python in
 //! the process — and writes the transcript document for `tests_py/test_parity.py`
 //! to compare against.
 //!
