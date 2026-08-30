@@ -376,9 +376,12 @@ support (file I/O needs isolation flags). For this workspace:
   the ABI smoke gate and integration tests, not Miri.
 - Cost: nightly-only, ~20–100× slowdown, scheduled lane only.
 
-**Verdict: ADOPT SELECTIVELY (scheduled)** — `cargo +nightly miri test -p
-oxpinyin-core -p oxpinyin-store` plus corpus replay; never claims of global
-UB-freedom (it can't see the C side; that's the ABI smoke gate's job).
+**Verdict: ADOPT SELECTIVELY (scheduled)** — `cargo +nightly miri test
+--no-default-features --features redb -p oxpinyin-core -p oxpinyin-store`
+plus corpus replay; the redb peer is the pure-Rust one Miri can reason
+about, and the C-backed peers are covered by the ABI smoke gate. Never
+claims of global UB-freedom (it can't see the C side; that's the ABI
+smoke gate's job).
 
 ## 14. cargo-audit vs cargo-deny
 

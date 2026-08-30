@@ -212,8 +212,9 @@ impl WriteStore for KcStore {
         match f(&mut txn) {
             Ok(out) => {
                 self.db.end_transaction(true)?;
-                // Push the commit to the operating system, so a reader —
-                // including the user's own libpinyin — sees it.
+                // Push the commit to the operating system, so another
+                // process — or another handle in this one — reading the
+                // database observes it.
                 self.db.sync(false)?;
                 Ok(out)
             }
