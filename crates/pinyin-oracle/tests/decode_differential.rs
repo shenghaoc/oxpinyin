@@ -119,7 +119,10 @@ fn segmentation_differential_over_the_parity_corpus() {
         }
     }
 
-    let share = |count: usize| count as f64 * 100.0 / total as f64;
+    let share = |count: usize| {
+        f64::from(u32::try_from(count).unwrap_or(u32::MAX)) * 100.0
+            / f64::from(u32::try_from(total).unwrap_or(u32::MAX))
+    };
     println!("decode differential — segmentation, W2 parity corpus");
     println!("  compared                {total}");
     println!("  top-1                   {top1:>6}  {:.2}%", share(top1));
@@ -238,7 +241,8 @@ fn candidate_differential_over_the_capture_families() {
         if of == 0 {
             0.0
         } else {
-            count as f64 * 100.0 / of as f64
+            f64::from(u32::try_from(count).unwrap_or(u32::MAX)) * 100.0
+                / f64::from(u32::try_from(of).unwrap_or(u32::MAX))
         }
     };
     println!("decode differential — candidates, F-A and F-C");

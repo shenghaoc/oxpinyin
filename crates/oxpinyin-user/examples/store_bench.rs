@@ -151,7 +151,7 @@ fn train<S: WriteStore>() {
     emit_ms("train_ms", training);
     emit(
         "ms_per_call",
-        training.as_secs_f64() * 1000.0 / cfg.train as f64,
+        training.as_secs_f64() * 1000.0 / f64::from(u32::try_from(cfg.train).unwrap_or(u32::MAX)),
     );
     let (live_apparent, live_alloc) = file_sizes(&path);
     emit("live_apparent_bytes", live_apparent);
@@ -237,7 +237,8 @@ fn read<S: WriteStore>() {
         emit_ms("cached_reads_ms", cached);
         emit(
             "us_per_cached_query",
-            cached.as_secs_f64() * 1e6 / (cfg.reads - 1) as f64,
+            cached.as_secs_f64() * 1e6
+                / f64::from(u32::try_from(cfg.reads - 1).unwrap_or(u32::MAX)),
         );
     }
     emit("predicted", cfg.predicted);
