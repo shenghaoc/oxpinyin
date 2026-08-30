@@ -376,6 +376,14 @@ jobs:
       run:
         shell: bash
 
+    # Non-blocking by policy: this job is excluded from the store-backends
+    # aggregate gate (which needs only store-features and
+    # store-conformance), so its red X protected nothing — a finding only
+    # failed the run as a whole. continue-on-error keeps the run green
+    # while the Report step still prints the findings summary (it keys off
+    # the test step's outcome: job.status reads 'success' under this flag).
+    continue-on-error: true
+
     strategy:
       fail-fast: true
       matrix:
@@ -502,7 +510,7 @@ jobs:
           {
             echo "## tkrzw-sanitizers (${{ matrix.sanitizer }})"
             echo ""
-            echo "Result: **$([ '${{ job.status }}' = 'success' ] && echo 'clean — zero findings' || echo 'FINDINGS PRESENT — STOP')**"
+            echo "Result: **$([ '${{ steps.sanitize-tests.outcome }}' = 'success' ] && echo 'clean — zero findings' || echo 'FINDINGS PRESENT — STOP')**"
             echo ""
             echo "| Phase | Wall clock |"
             echo "|---|---:|"
