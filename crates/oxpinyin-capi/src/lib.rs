@@ -546,7 +546,12 @@ pub fn user_phrase_rows(context: *mut PinyinContext) -> Option<Vec<ExportedPhras
         let mut phrase = std::ptr::null_mut();
         let mut pinyin = std::ptr::null_mut();
         let mut count = 0;
-        if !iterators::pinyin_iterator_get_next_phrase(iter, &mut phrase, &mut pinyin, &mut count) {
+        if !iterators::pinyin_iterator_get_next_phrase(
+            iter,
+            &raw mut phrase,
+            &raw mut pinyin,
+            &raw mut count,
+        ) {
             iterators::pinyin_end_get_phrases(iter);
             return None;
         }
@@ -584,9 +589,9 @@ pub fn user_bigram_rows(context: *mut PinyinContext) -> Option<Vec<ExportedBigra
         let mut count = 0;
         if !iterators::pinyin_bigram_iterator_get_next_phrase(
             iter,
-            &mut phrase,
-            &mut pinyin,
-            &mut count,
+            &raw mut phrase,
+            &raw mut pinyin,
+            &raw mut count,
         ) {
             iterators::pinyin_end_get_bigram_phrases(iter);
             return None;

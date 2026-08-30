@@ -45,13 +45,13 @@ fn open_fixture(user_dir: &str) -> (*mut pinyin_capi::PinyinContext, *mut Pinyin
 fn candidate_texts(instance: *mut PinyinInstance) -> Vec<String> {
     assert!(pinyin_guess_candidates(instance, 0, 0x1e));
     let mut count: c_uint = 0;
-    assert!(pinyin_get_n_candidate(instance, &mut count));
+    assert!(pinyin_get_n_candidate(instance, &raw mut count));
     let mut out = Vec::new();
     for index in 0..count {
         let mut cand: *mut LookupCandidate = std::ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, index, &mut cand));
+        assert!(pinyin_get_candidate(instance, index, &raw mut cand));
         let mut text: *const c_char = std::ptr::null();
-        assert!(pinyin_get_candidate_string(instance, cand, &mut text));
+        assert!(pinyin_get_candidate_string(instance, cand, &raw mut text));
         // Sentence rows can carry no display string; the upstream driver
         // prints `(null)` for those, here they are skipped.
         if text.is_null() {
@@ -85,7 +85,7 @@ fn auxiliary_text_answers_at_every_offset_of_the_parsed_input() {
     for cursor in 0..=len {
         let mut aux: *mut c_char = std::ptr::null_mut();
         assert!(
-            pinyin_capi::pinyin_get_full_pinyin_auxiliary_text(instance, cursor, &mut aux),
+            pinyin_capi::pinyin_get_full_pinyin_auxiliary_text(instance, cursor, &raw mut aux),
             "aux text must answer at offset {cursor}"
         );
         assert!(!aux.is_null(), "aux text at {cursor} is a real string");
@@ -109,7 +109,7 @@ fn the_chewing_pipeline_produces_auxiliary_text_too() {
     for cursor in 0..=len {
         let mut aux: *mut c_char = std::ptr::null_mut();
         assert!(
-            pinyin_capi::pinyin_get_chewing_auxiliary_text(instance, cursor, &mut aux),
+            pinyin_capi::pinyin_get_chewing_auxiliary_text(instance, cursor, &raw mut aux),
             "chewing aux text must answer at offset {cursor}"
         );
         assert!(!aux.is_null());
@@ -143,7 +143,7 @@ fn the_pinyin_pipeline_guesses_the_sentence_and_candidates() {
     // The sentence itself comes from the guess step.
     assert!(pinyin_guess_sentence(instance));
     let mut sentence: *mut c_char = std::ptr::null_mut();
-    assert!(pinyin_get_sentence(instance, 0, &mut sentence));
+    assert!(pinyin_get_sentence(instance, 0, &raw mut sentence));
     // SAFETY: NUL-terminated string valid until freed.
     // SAFETY: `sentence` was just handed out by `pinyin_get_sentence`,
     // a valid NUL-terminated pointer until the next guess.
@@ -172,7 +172,7 @@ fn the_zhuyin_pipeline_guesses_a_sentence_from_bopomofo_keys() {
     assert!(pinyin_guess_sentence(instance));
 
     let mut sentence: *mut c_char = std::ptr::null_mut();
-    assert!(pinyin_get_sentence(instance, 0, &mut sentence));
+    assert!(pinyin_get_sentence(instance, 0, &raw mut sentence));
     // SAFETY: handed out by the ABI call above; a valid, NUL-terminated
     // pointer until the instance's next guess.
     let text = unsafe { CStr::from_ptr(sentence) }
@@ -200,7 +200,7 @@ fn the_train_reset_save_cycle_runs_and_masks_out_clean() {
     // candidate first — what a real session does before train.
     let mut cand: *mut LookupCandidate = std::ptr::null_mut();
     assert!(pinyin_guess_candidates(instance, 0, 0x1e));
-    assert!(pinyin_get_candidate(instance, 0, &mut cand));
+    assert!(pinyin_get_candidate(instance, 0, &raw mut cand));
     assert!(pinyin_choose_candidate(instance, 0, cand) >= 0);
     assert!(pinyin_train(instance, 0));
     assert!(pinyin_reset(instance));

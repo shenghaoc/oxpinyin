@@ -425,7 +425,7 @@ mod tests {
 
         assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
         let mut first = ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, 0, &mut first));
+        assert!(pinyin_get_candidate(instance, 0, &raw mut first));
         assert!(crate::candidates::pinyin_choose_candidate(instance, 0, first) > 0);
         assert_eq!(pinyin_get_parsed_input_length(instance), 5);
 

@@ -302,9 +302,9 @@ mod tests {
     fn first_candidate_text(instance: *mut crate::types::PinyinInstance) -> String {
         assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
         let mut cand = std::ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, 0, &mut cand));
+        assert!(pinyin_get_candidate(instance, 0, &raw mut cand));
         let mut text: *const GChar = std::ptr::null();
-        assert!(pinyin_get_candidate_string(instance, cand, &mut text));
+        assert!(pinyin_get_candidate_string(instance, cand, &raw mut text));
         assert!(!text.is_null());
         // SAFETY: `text` borrows the snapshot until the next guess.
         unsafe { std::ffi::CStr::from_ptr(text) }

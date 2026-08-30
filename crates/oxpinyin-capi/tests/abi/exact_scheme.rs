@@ -25,13 +25,13 @@ use crate::common::{TempUserDir, cstr, open};
 fn candidate_texts(instance: *mut PinyinInstance) -> Vec<String> {
     assert!(pinyin_guess_candidates(instance, 0, 0x1e));
     let mut count: c_uint = 0;
-    assert!(pinyin_get_n_candidate(instance, &mut count));
+    assert!(pinyin_get_n_candidate(instance, &raw mut count));
     let mut out = Vec::new();
     for index in 0..count {
         let mut cand: *mut LookupCandidate = std::ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, index, &mut cand));
+        assert!(pinyin_get_candidate(instance, index, &raw mut cand));
         let mut text: *const pinyin_capi::GChar = std::ptr::null();
-        assert!(pinyin_get_candidate_string(instance, cand, &mut text));
+        assert!(pinyin_get_candidate_string(instance, cand, &raw mut text));
         assert!(!text.is_null());
         // SAFETY: `text` was just returned by `pinyin_get_candidate_string`
         // as a valid, NUL-terminated pointer into the instance snapshot.
