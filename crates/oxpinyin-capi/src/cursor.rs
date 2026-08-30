@@ -165,7 +165,9 @@ pub extern "C" fn pinyin_get_pinyin_string(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    render_key(instance, key, utf8_str, |key| Some(key.pinyin_spelling().to_owned()))
+    // `_ChewingKey::get_pinyin_string` (chewing_key.cpp:47-58): the
+    // canonical spelling, tone digit appended for a non-zero tone.
+    render_key(instance, key, utf8_str, |key| Some(key.pinyin_string()))
 }
 
 /// Render a pinyin key as its Zhuyin spelling.
