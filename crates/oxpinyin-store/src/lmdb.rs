@@ -180,15 +180,6 @@ fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Env>,
             std::thread::sleep(backoff);
             backoff = (backoff * 2).min(std::time::Duration::from_millis(256));
         }
-        // A dead Weak does not mean the old environment has finished
-        // closing (see `is_transient_reopen`'s doc): wait for heed's
-        // effective-close event before this thread tries to open the
-        // path. No deadlock is possible — this thread holds no copy of
-        // the environment (its Weak is dead), and the closing thread
-        // never takes this registry's mutex.
-        if let Some(closing) = heed::env_closing_event(env_key(path)) {
-            closing.wait_timeout(std::time::Duration::from_millis(1000));
-        }
         let mut map = registry.lock().unwrap_or_else(|p| p.into_inner());
         let key = env_key(path);
         if let Some((weak, writable, live_map_size)) = map.get(&key)
@@ -205,6 +196,17 @@ fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Env>,
             return Err(StoreError::InvalidInput(
                 "this LMDB file is already open read-only in this process; close those handles before opening it writable",
             ));
+        }
+        // No live environment for this path. A dead entry does not mean
+        // the old environment has finished closing (see
+        // `is_transient_reopen`'s doc): wait for heed's effective-close
+        // event before this thread tries to open the path. The live path
+        // above returns without waiting it out. No deadlock is possible —
+        // this thread holds no copy of the environment (its Weak is
+        // dead), and the closing thread never takes this registry's
+        // mutex.
+        if let Some(closing) = heed::env_closing_event(env_key(path)) {
+            closing.wait_timeout(std::time::Duration::from_millis(1000));
         }
         // The open itself happens under the lock, so two first opens of
         // one path serialize here rather than both reaching heed.

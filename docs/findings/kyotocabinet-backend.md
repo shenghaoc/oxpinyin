@@ -274,12 +274,15 @@ feature.
   `DefaultStore` in a `static Mutex`, so it must be `Send`, and
   `ci.yml`'s `test-portable` job runs `oxpinyin-data` and `oxpinyin-user`
   on macOS and Windows, where neither library exists.
-- **Item 7's MemoryChunk half.** `phrase_index.bin` (7.8 M) and
-  `pinyin_index.bin` (10.6 M) are libpinyin `MemoryChunk` images, not
-  Kyoto Cabinet files, and no reader for that format exists in this tree.
-  A follow-up PR; `oxpinyin_data::layout` is the seam it plugs into, and
-  it now reports which DBM the directory uses, which that reader will
-  need.
+- **Item 7's MemoryChunk half.** Done by the drop-in read path, not by
+  this backend: `phrase_index.bin` (7.8 M) and `pinyin_index.bin`
+  (10.6 M) are libpinyin `MemoryChunk` images — backend-independent —
+  and `oxpinyin_data::memory_chunk` now reads them (length and checksum
+  enforced with the pin's own acceptance rule, no silent fallback), with
+  `oxpinyin_data::compat` decoding them into the same in-memory model the
+  native tables produce, behind the `oxpinyin_data::layout` seam. The
+  Kyoto Cabinet half of a compat directory is `bigram.db` (plus the two
+  tree indexes, which serve detection only).
 - **The codec simplification.** Unchanged from the Berkeley DB finding:
   correct as analysis, but the user store has no format-version field, so
   changing the native bigram key encoding would misread every existing

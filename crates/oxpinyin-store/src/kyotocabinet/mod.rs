@@ -236,6 +236,12 @@ impl WriteStore for KcStore {
         if self.db.is_read_only() {
             return Err(StoreError::ReadOnly);
         }
+        // Atomicity here is committer-side only: Kyoto Cabinet does not
+        // isolate readers from this transaction. `begin_transaction`
+        // releases its writer lock once the transaction is under way, and
+        // the writes land in the live database before `end_transaction`
+        // commits or rolls them back, so a concurrent reader can observe
+        // intermediate values — including ones a rollback then removes.
         self.db.begin_transaction()?;
         let mut txn = KcTxn { store: self };
         match f(&mut txn) {

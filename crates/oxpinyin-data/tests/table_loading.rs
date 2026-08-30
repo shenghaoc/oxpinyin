@@ -140,11 +140,13 @@ fn iter_all_fixture_files() {
     let dir = fixtures_dir();
     // Only the compiled-in backend's set is readable by this binary; the
     // other backends' committed sets belong to their own gate runs.
+    let mut seen = 0_u32;
     for entry in std::fs::read_dir(&dir).unwrap() {
         let path = entry.unwrap().path();
         if path.extension().and_then(|s| s.to_str()) != Some(oxpinyin_data::DEFAULT_STORE_EXT) {
             continue;
         }
+        seen += 1;
         let table = LookupTable::open(&path).unwrap_or_else(|e| {
             panic!("failed to open {}: {e}", path.display());
         });
@@ -155,6 +157,12 @@ fn iter_all_fixture_files() {
         let entries = table.iter().count();
         assert_eq!(entries as u64, count);
     }
+    assert!(
+        seen > 0,
+        "no .{} fixture in {}: the compiled-in backend's committed set is missing",
+        oxpinyin_data::DEFAULT_STORE_EXT,
+        dir.display()
+    );
 }
 
 #[test]
