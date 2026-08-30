@@ -27,7 +27,7 @@ use crate::error::EngineError;
 /// One constraint cell (`trellis_constraint_t`,
 /// `phonetic_lookup.h:121-137`).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Cell {
+pub enum Cell {
     /// `NO_CONSTRAINT` — a free step.
     None,
     /// `CONSTRAINT_ONESTEP` — `token` is forced over `[start, end)`;
@@ -47,7 +47,7 @@ pub(crate) enum Cell {
 /// the `MatchResult` shape `diff_result` walks (a phrase token at its
 /// start position; the interior positions it covers are null upstream).
 #[derive(Clone, Debug)]
-pub(crate) struct PhraseSpan {
+pub struct PhraseSpan {
     pub(crate) start: usize,
     pub(crate) token: PhraseToken,
     pub(crate) text: CompactString,
@@ -55,7 +55,7 @@ pub(crate) struct PhraseSpan {
 
 /// The constraint array (`ForwardPhoneticConstraints`).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ConstraintStore {
+pub struct ConstraintStore {
     cells: Vec<Cell>,
 }
 

@@ -56,7 +56,7 @@ const MAX_PHRASE_KEYS: usize = 8;
 
 /// Longest key sequence the window scan searches: the pin's phrase-length
 /// cap. Paths beyond it are not searched.
-pub(crate) const MAX_PHRASE_LENGTH: usize = 16;
+pub const MAX_PHRASE_LENGTH: usize = 16;
 
 /// The window scan's own expansion bound, separate from
 /// [`oxpinyin_core::scoring::ScoringConfig::expansion_limit`] which the
@@ -65,7 +65,7 @@ pub(crate) const MAX_PHRASE_LENGTH: usize = 16;
 /// (14^3 = `2_744` — the pin's `qqq…` offers `请求权`); `4_096` covers it with
 /// headroom. Larger products yield nothing: no stored phrase matches a
 /// longer all-initial span.
-pub(crate) const SCAN_EXPANSION_LIMIT: usize = 4_096;
+pub const SCAN_EXPANSION_LIMIT: usize = 4_096;
 
 /// What a session did with a key.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2719,7 +2719,7 @@ struct ScanBuf<'a> {
 /// it ends at and where its own text starts — the two differ from
 /// `from + len` exactly when the key rides over an apostrophe separator.
 #[derive(Clone, Copy)]
-pub(crate) struct ScanKey {
+pub struct ScanKey {
     pub(crate) key: SyllableKey,
     pub(crate) from: usize,
     pub(crate) to: usize,
@@ -2749,7 +2749,7 @@ impl ScanKey {
 /// keys, plus the resplit, divided and fuzzy additions. See
 /// `docs/findings/matrix-split-tables.md` for the frozen pair lists and
 /// `docs/findings/option-bits.md` for the fuzzy step.
-pub(crate) fn build_scan_matrix(
+pub fn build_scan_matrix(
     graph: &SegmentGraph,
     options: OptionBits,
     divided: bool,

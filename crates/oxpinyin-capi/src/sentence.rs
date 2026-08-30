@@ -211,7 +211,7 @@ fn write_owned_sentence(text: &str, sentence: *mut *mut c_char) -> bool {
 /// offset — always lands on a key boundary, so the mapping is exact there;
 /// an offset inside a transformed key is clamped to that key's original
 /// end (the same place a candidate would consume it).
-pub(crate) fn double_original_offset(parse: &DoublePinyinParse, offset: usize) -> usize {
+pub fn double_original_offset(parse: &DoublePinyinParse, offset: usize) -> usize {
     let mut transformed = 0;
     for item in parse.keys() {
         let key_len = item.key().text().len();
@@ -224,7 +224,7 @@ pub(crate) fn double_original_offset(parse: &DoublePinyinParse, offset: usize) -
     parse.consumed()
 }
 
-pub(crate) fn zhuyin_original_offset(parse: &ZhuyinParse, offset: usize) -> usize {
+pub fn zhuyin_original_offset(parse: &ZhuyinParse, offset: usize) -> usize {
     let mut transformed = 0;
     for item in parse.keys() {
         let key_len = item.key().text().len();
@@ -240,7 +240,7 @@ pub(crate) fn zhuyin_original_offset(parse: &ZhuyinParse, offset: usize) -> usiz
 /// The Luoma/secondary-zhuyin sibling of [`double_original_offset`]: the
 /// transformed string is the `'`-joined canonical spellings, and each key
 /// remembers its original byte span (tone digit included).
-pub(crate) fn full_original_offset(parse: &FullPinyinIndexParse, offset: usize) -> usize {
+pub fn full_original_offset(parse: &FullPinyinIndexParse, offset: usize) -> usize {
     let mut transformed = 0;
     for item in parse.keys() {
         let key_len = item.canonical().len();
@@ -258,7 +258,7 @@ pub(crate) fn full_original_offset(parse: &FullPinyinIndexParse, offset: usize) 
 /// first key whose original span ends past `offset`. A key-boundary offset
 /// therefore maps to the next key's start, the position a forced run at
 /// that key would sit at.
-pub(crate) fn double_session_offset(parse: &DoublePinyinParse, offset: usize) -> usize {
+pub fn double_session_offset(parse: &DoublePinyinParse, offset: usize) -> usize {
     let mut transformed = 0;
     for item in parse.keys() {
         if offset < item.end() {
@@ -270,7 +270,7 @@ pub(crate) fn double_session_offset(parse: &DoublePinyinParse, offset: usize) ->
 }
 
 /// [`double_session_offset`]'s zhuyin sibling.
-pub(crate) fn zhuyin_session_offset(parse: &ZhuyinParse, offset: usize) -> usize {
+pub fn zhuyin_session_offset(parse: &ZhuyinParse, offset: usize) -> usize {
     let mut transformed = 0;
     for item in parse.keys() {
         if offset < item.end() {
@@ -282,7 +282,7 @@ pub(crate) fn zhuyin_session_offset(parse: &ZhuyinParse, offset: usize) -> usize
 }
 
 /// [`double_session_offset`]'s Luoma/secondary-zhuyin sibling.
-pub(crate) fn full_session_offset(parse: &FullPinyinIndexParse, offset: usize) -> usize {
+pub fn full_session_offset(parse: &FullPinyinIndexParse, offset: usize) -> usize {
     let mut transformed = 0;
     for item in parse.keys() {
         if offset < item.end() {

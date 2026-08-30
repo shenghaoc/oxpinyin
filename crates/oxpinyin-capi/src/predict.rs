@@ -37,7 +37,7 @@ struct Predicted {
 ///
 /// Returns `false` when the prefix matches no phrase-table suffix (upstream
 /// returns false when `m_prefixes` stays empty).
-pub(crate) fn guess_predicted(inst: &mut CapiInstance, prefix: &str) -> bool {
+pub fn guess_predicted(inst: &mut CapiInstance, prefix: &str) -> bool {
     inst.candidates.clear();
     let prefixes = compute_prefixes(&inst.dict, inst.user.as_ref(), prefix);
     if prefixes.is_empty() {
@@ -119,7 +119,7 @@ pub extern "C" fn pinyin_guess_predicted_candidates(
 ///
 /// Upstream always returns `true` after the prepend, even when the prefix
 /// matched no phrase-table suffix.
-pub(crate) fn guess_predicted_with_punctuations(inst: &mut CapiInstance, prefix: &str) -> bool {
+pub fn guess_predicted_with_punctuations(inst: &mut CapiInstance, prefix: &str) -> bool {
     let prefixes = compute_prefixes(&inst.dict, inst.user.as_ref(), prefix);
     let _ = guess_predicted(inst, prefix);
     prepend_punctuations(inst, &prefixes);

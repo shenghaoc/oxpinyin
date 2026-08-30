@@ -39,7 +39,7 @@ use crate::session::{MAX_PHRASE_LENGTH, SCAN_EXPANSION_LIMIT, ScanKey};
 const NSTORE: usize = 2;
 /// Sentence rows extracted from the tails (`nbest`); also the fallback
 /// DP's row cap.
-pub(crate) const NBEST_ROWS: usize = 3;
+pub const NBEST_ROWS: usize = 3;
 /// Beam width per step (`nbeam`).
 const NBEAM: usize = 32;
 
@@ -48,11 +48,11 @@ const NBEAM: usize = 32;
 const LONG_SENTENCE_PENALTY: Cost = 263;
 
 /// The sentence-start seed token (`novel_types.h`: `sentence_start = 1`).
-pub(crate) const SENTENCE_START: u32 = 1;
+pub const SENTENCE_START: u32 = 1;
 
 /// One decoded sentence row, in tail order (index 0 is the 1-best).
 #[derive(Clone, Debug)]
-pub(crate) struct NbestRow {
+pub struct NbestRow {
     /// Concatenated phrase texts.
     pub(crate) text: CompactString,
     /// The phrase tokens in order — the selection record a chosen row
@@ -329,7 +329,7 @@ struct SpanEntry {
 /// fixed end expanding only the forced token, and free spans break before
 /// ending inside a forced run. `None` — or a store with no forcings — is
 /// today's walk, bit for bit.
-pub(crate) fn nbest_sentences<D, L>(
+pub fn nbest_sentences<D, L>(
     matrix: &[Vec<ScanKey>],
     bound: usize,
     dictionary: &D,
@@ -514,7 +514,7 @@ where
 /// # Errors
 ///
 /// Propagates the dictionary lookup's backend failure.
-pub(crate) fn span_finds_token<D>(
+pub fn span_finds_token<D>(
     matrix: &[Vec<ScanKey>],
     start: usize,
     end: usize,
