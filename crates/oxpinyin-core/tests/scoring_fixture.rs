@@ -185,7 +185,8 @@ fn the_scorer_agrees_with_the_pin_where_the_fixture_covers_it() {
     let rate = if comparable == 0 {
         0.0
     } else {
-        agreed as f64 / comparable as f64
+        f64::from(u32::try_from(agreed).unwrap_or(u32::MAX))
+            / f64::from(u32::try_from(comparable).unwrap_or(u32::MAX))
     };
     println!("scoring fixture pass rate");
     println!("  capture records with candidates    {total}");

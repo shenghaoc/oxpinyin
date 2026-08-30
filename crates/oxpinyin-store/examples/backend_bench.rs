@@ -319,7 +319,10 @@ fn point_get<S: WriteStore>() {
     emit("hits", hits);
     emit("value_sum", value_sum);
     emit_ms("gets_ms", gets);
-    emit("us_per_get", gets.as_secs_f64() * 1e6 / cfg.gets as f64);
+    emit(
+        "us_per_get",
+        gets.as_secs_f64() * 1e6 / f64::from(u32::try_from(cfg.gets).unwrap_or(u32::MAX)),
+    );
     let (live_apparent, live_alloc) = file_sizes(&path);
     emit("live_apparent_bytes", live_apparent);
     emit("live_alloc_bytes", live_alloc);
