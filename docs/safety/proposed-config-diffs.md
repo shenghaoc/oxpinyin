@@ -203,7 +203,7 @@ Nightly lane (new file `verify-nightly.yml`, `schedule: cron: '0 3 * * *'`
 ```yaml
 jobs:
   fuzz-soak:      # all targets, -max_total_time split, corpus committed under fuzz/corpus/
-  miri:           # cargo +nightly miri test -p oxpinyin-core -p oxpinyin-store (+ corpus replay)
+  miri:           # cargo +nightly miri test --no-default-features --features redb -p oxpinyin-core -p oxpinyin-store (+ corpus replay) — redb is the pure-Rust peer Miri can reason about
   overflow-lane:  # RUSTFLAGS="-C overflow-checks=y -C debug-assertions=y" cargo test --workspace --release
   kani:           # dropped — a two-harness trial existed briefly; no Kani release supports the pinned toolchain (the '4 harnesses' figure was never implemented)
   geiger:         # cargo geiger report artifact

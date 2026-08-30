@@ -48,9 +48,11 @@ data toolchain. A libpinyin installation is never linked or read.
 
 `<ext>` names the peer backend the build was compiled against: `kct`
 (Kyoto Cabinet — the default selection), `redb` under
-`--no-default-features --features redb`, `tkt` with `--features tkrzw`,
-`lmdb` with `--features lmdb`. All four backends are first-class; the
-same logical row stream reads back identically under each.
+`--no-default-features --features redb`, `tkt` with
+`--no-default-features --features tkrzw`, `lmdb` with
+`--no-default-features --features lmdb`. All four backends are
+first-class; the same logical row stream reads back identically under
+each.
 
 The pinned model is fetched with `tools/model/fetch-model.sh`, then
 compiled into the tables above by `oxpinyin-datagen compile ...`

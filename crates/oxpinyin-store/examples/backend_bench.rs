@@ -258,9 +258,14 @@ fn run_child(backend: &str, scenario: &str) {
         #[cfg(feature = "tkrzw")]
         "tkrzw" => dispatch::<TkrzwStore>(scenario),
         other => {
+            // Normalize the `kc` alias to the actual cargo feature name.
+            // "kc" is accepted as an input alias on the KC arm, but the
+            // feature that compiles KC in is `kyotocabinet`, so a
+            // suggestion of `--features kc` would be a dead-end.
+            let feat = if other == "kc" { "kyotocabinet" } else { other };
             eprintln!(
                 "backend {other:?} is not compiled into this build; \
-                 rebuild with --no-default-features --features {other}",
+                 rebuild with --no-default-features --features {feat}",
             );
             std::process::exit(2);
         }

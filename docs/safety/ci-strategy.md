@@ -51,8 +51,10 @@ Doctest step only if nextest lands. Gates: all hard.
    F-6/F-7 surface), `dict-loader` (bytes→data decode; F-3 class),
    `scheme` (double-pinyin/config parsing), `codec` (user DB roundtrip +
    hostile bytes).
-2. **Miri**: `cargo +nightly miri test -p oxpinyin-core -p oxpinyin-store`
-   + corpus replay through the parser target under `-Zmiri`.
+2. **Miri**: `cargo +nightly miri test --no-default-features --features redb
+   -p oxpinyin-core -p oxpinyin-store` (redb is the pure-Rust peer Miri
+   can reason about; the C-backed peers are covered by the ABI smoke
+   gate) + corpus replay through the parser target under `-Zmiri`.
 3. **Paranoid release lane**: `RUSTFLAGS="-C overflow-checks=y
    -C debug-assertions=y" cargo test --workspace --release`.
 4. ~~**Kani** (trial)~~ — dropped: no release supports the pinned

@@ -29,8 +29,8 @@ pub const TABLE: &str = "data";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Backend {
-    /// redb (`.redb` files). Always compiled; select it explicitly with
-    /// `--no-default-features --features redb`.
+    /// redb (`.redb` files). Requires the `redb` cargo feature; select
+    /// it with `--no-default-features --features redb`.
     Redb,
     /// LMDB, single-file environments (`.lmdb` files). Requires the `lmdb`
     /// cargo feature.

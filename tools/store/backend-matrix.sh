@@ -23,6 +23,13 @@
 set -u
 cd "$(dirname "$0")/../.."
 
+# One securely-created temp file for every cargo-check log; trap ensures
+# it is removed on any exit path (success, failure, ^C). Predictable
+# names in a shared /tmp are a classic symlink-race surface, even for a
+# dev-tool: mktemp gives an unpredictable path and O_EXCL semantics.
+LOG="$(mktemp -t backend-matrix.XXXXXXXX)"
+trap 'rm -f "$LOG"' EXIT
+
 pass=0
 fail=0
 
@@ -34,12 +41,12 @@ for peer in "" \
     "--no-default-features --features tkrzw"; do
     label=${peer:-default (KC)}
     printf '── valid: %s\n' "$label"
-    if cargo check --locked -p oxpinyin-store $peer >/tmp/backend-matrix-$$.log 2>&1; then
+    if cargo check --locked -p oxpinyin-store $peer >"$LOG" 2>&1; then
         printf '   PASS\n'
         pass=$((pass + 1))
     else
         printf '   FAIL — expected a clean build; tail:\n'
-        tail -20 /tmp/backend-matrix-$$.log | sed 's/^/     /'
+        tail -20 "$LOG" | sed 's/^/     /'
         fail=$((fail + 1))
     fi
 done
@@ -56,33 +63,33 @@ for combo in \
     "kyotocabinet,redb,lmdb"; do
     printf '── invalid: --features %s\n' "$combo"
     if cargo check --locked -p oxpinyin-store --no-default-features --features "$combo" \
-        >/tmp/backend-matrix-$$.log 2>&1; then
+        >"$LOG" 2>&1; then
         printf '   FAIL — the guard did not fire, build succeeded\n'
         fail=$((fail + 1))
-    elif grep -q 'more than one store backend selected' /tmp/backend-matrix-$$.log; then
+    elif grep -q 'more than one store backend selected' "$LOG"; then
         printf '   PASS (refused by the exactly-one-backend guard)\n'
         pass=$((pass + 1))
     else
         printf '   FAIL — build refused for another reason:\n'
-        grep -E 'compile_error|^error' /tmp/backend-matrix-$$.log | head -3 | sed 's/^/     /'
+        grep -E 'compile_error|^error' "$LOG" | head -3 | sed 's/^/     /'
         fail=$((fail + 1))
     fi
 done
 
 printf '── invalid: --no-default-features (zero backends)\n'
-if cargo check --locked -p oxpinyin-store --no-default-features >/tmp/backend-matrix-$$.log 2>&1; then
+if cargo check --locked -p oxpinyin-store --no-default-features >"$LOG" 2>&1; then
     printf '   FAIL — the guard did not fire, build succeeded\n'
     fail=$((fail + 1))
-elif grep -q 'no store backend selected' /tmp/backend-matrix-$$.log; then
+elif grep -q 'no store backend selected' "$LOG"; then
     printf '   PASS (refused by the exactly-one-backend guard)\n'
     pass=$((pass + 1))
 else
     printf '   FAIL — build refused for another reason:\n'
-    grep -E 'compile_error|^error' /tmp/backend-matrix-$$.log | head -3 | sed 's/^/     /'
+    grep -E 'compile_error|^error' "$LOG" | head -3 | sed 's/^/     /'
     fail=$((fail + 1))
 fi
 
-rm -f /tmp/backend-matrix-$$.log
+rm -f "$LOG"
 
 printf '\nsummary: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] && exit 0 || exit 1
