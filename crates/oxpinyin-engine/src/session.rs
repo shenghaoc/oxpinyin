@@ -2933,9 +2933,11 @@ fn keep_first_in_column(columns: &mut [Vec<ScanKey>], by_span: bool) {
 }
 
 /// The lookup-offset law over one coordinate buffer whose `'` bytes are
-/// zero-key separator columns — plain full pinyin's raw buffer, or the
-/// original input of an index-parsed scheme (Luoma, secondary zhuyin),
-/// whose pinned parse consumes `'` as the same separator.
+/// zero-key separator columns.
+///
+/// This is plain full pinyin's raw buffer, or the original input of an
+/// index-parsed scheme (Luoma, secondary zhuyin), whose pinned parse
+/// consumes `'` as the same separator.
 ///
 /// Range first ([`check_lookup_offset_range`]), then the
 /// `_compute_zero_start` walk and the `_check_offset` validation of
@@ -2970,8 +2972,10 @@ pub fn normalize_lookup_offset(input: &[u8], offset: usize) -> Result<usize, Eng
 
 /// The range half of the lookup-offset law: an offset may at most equal
 /// the coordinate buffer's one-past-end position (upstream's reserved
-/// matrix slot). This is the whole law for parse modes whose compositions
-/// hold no zero-key columns (double pinyin, the zhuyin keyboards).
+/// matrix slot).
+///
+/// This is the whole law for parse modes whose compositions hold no
+/// zero-key columns (double pinyin, the zhuyin keyboards).
 ///
 /// # Errors
 ///

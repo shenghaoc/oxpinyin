@@ -455,9 +455,11 @@ fn phrase_lookup(index: &[(LeByteKey, CompactString)], token: u32) -> Option<&st
 }
 
 /// Rebuilds the two prefix-probe tables over `index`: every pinyin key,
-/// and every key projected to its initial sequence (each syllable replaced
-/// by the longest incomplete key that prefixes it — `syllable_initial` —
-/// or a `0` sentinel for vowel-initial syllables), both sorted and
+/// and every key projected to its initial sequence.
+///
+/// The initial projection replaces each syllable with the longest
+/// incomplete key that prefixes it — `syllable_initial` — or a `0`
+/// sentinel for vowel-initial syllables; both tables are sorted and
 /// deduplicated.
 ///
 /// The projection is the one `SystemDictionary::open` runs for its

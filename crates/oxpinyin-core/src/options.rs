@@ -16,9 +16,10 @@ pub const ZHUYIN_INCOMPLETE: u32 = 1 << 4;
 pub const USE_TONE: u32 = 1 << 5;
 
 /// `FORCE_TONE = 1U << 6` (`pinyin_custom2.h:37`). Rejected by the
-/// `pinyin_custom2.h` header mirror in `oxpinyin-capi` (the bit arrives
-/// only through the raw `pinyin_set_options` word); the parser honours it
-/// nested inside `USE_TONE` exactly like the pin
+/// `pinyin_custom2.h` header mirror in `oxpinyin-capi`.
+///
+/// The bit arrives only through the raw `pinyin_set_options` word; the
+/// parser honours it nested inside `USE_TONE` exactly like the pin
 /// (`pinyin_parser2.cpp:176-190`), and nowhere else — the double-pinyin
 /// and zhuyin shapes are a different law, unmeasured here
 /// (`docs/findings/upstream-divergences.md`).

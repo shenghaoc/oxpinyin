@@ -13,10 +13,11 @@
 /// Number of entries in [`LUOMA_PINYIN_INDEX`].
 pub const LUOMA_PINYIN_COUNT: usize = 406;
 
-/// `(input spelling, canonical pinyin)` pairs from `luoma_pinyin_index[]`
-/// (`pinyin_parser_table.h:674`, equal to the `m_luoma_pinyin_str`
-/// column of `content_table`), sorted by spelling — the
-/// binary-search invariant of the pinned table.
+/// `(input spelling, canonical pinyin)` pairs from `luoma_pinyin_index[]`,
+/// sorted by spelling — the binary-search invariant of the pinned table.
+///
+/// Source: `pinyin_parser_table.h:674`, equal to the `m_luoma_pinyin_str`
+/// column of `content_table`.
 pub static LUOMA_PINYIN_INDEX: [(&str, &str); LUOMA_PINYIN_COUNT] = [
     ("a", "a"),
     ("ai", "ai"),
@@ -429,10 +430,11 @@ pub static LUOMA_PINYIN_INDEX: [(&str, &str); LUOMA_PINYIN_COUNT] = [
 /// Number of entries in [`SECONDARY_ZHUYIN_INDEX`].
 pub const SECONDARY_ZHUYIN_COUNT: usize = 406;
 
-/// `(input spelling, canonical pinyin)` pairs from `secondary_zhuyin_index[]`
-/// (`pinyin_parser_table.h:1083`, equal to the `m_secondary_zhuyin_str`
-/// column of `content_table`), sorted by spelling — the
-/// binary-search invariant of the pinned table.
+/// `(input spelling, canonical pinyin)` pairs from `secondary_zhuyin_index[]`,
+/// sorted by spelling — the binary-search invariant of the pinned table.
+///
+/// Source: `pinyin_parser_table.h:1083`, equal to the
+/// `m_secondary_zhuyin_str` column of `content_table`.
 pub static SECONDARY_ZHUYIN_INDEX: [(&str, &str); SECONDARY_ZHUYIN_COUNT] = [
     ("a", "a"),
     ("ai", "ai"),
@@ -974,6 +976,7 @@ fn parse_one_index_key(
 
 /// `FullPinyinParser2::parse` + `final_step` over an index
 /// (`pinyin_parser2.cpp:222-381`): the pinned dynamic program.
+///
 /// Apostrophes hop between segments consuming one byte and no key; every
 /// other position extends up to `max_full_pinyin_length = 7` bytes ahead
 /// (stopping at the next apostrophe); steps relax by longest covered

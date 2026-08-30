@@ -77,9 +77,10 @@ impl DeletedCounts {
 }
 
 /// Counts held-out bigrams over an ngseg token stream, reproducing
-/// `gen_deleted_ngram.cpp:88-121`. `train_pi_gram` mirrors
-/// `--skip-pi-gram-training` (default `true`, boundary bigrams trained
-/// against `sentence_start`).
+/// `gen_deleted_ngram.cpp:88-121`.
+///
+/// `train_pi_gram` mirrors `--skip-pi-gram-training` (default `true`,
+/// boundary bigrams trained against `sentence_start`).
 #[must_use]
 pub fn count_deleted_tokens(tokens: &[u32], train_pi_gram: bool) -> DeletedCounts {
     let mut bigrams: BTreeMap<(u32, u32), u64> = BTreeMap::new();
