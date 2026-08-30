@@ -70,6 +70,9 @@ pub enum OpenError {
     Lm(LmError),
     /// `interpolation2.text` exists but is unreadable or unparsable.
     Interpolation(InterpolationError),
+    /// A detected libpinyin-compat directory failed to load.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    Compat(oxpinyin_data::compat::CompatError),
 }
 
 impl core::fmt::Display for OpenError {
@@ -86,6 +89,8 @@ impl core::fmt::Display for OpenError {
             Self::Dict(error) => write!(f, "dictionary error: {error}"),
             Self::Lm(error) => write!(f, "language model error: {error}"),
             Self::Interpolation(error) => write!(f, "unigram model error: {error}"),
+            #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+            Self::Compat(error) => write!(f, "libpinyin compat data error: {error}"),
         }
     }
 }
@@ -591,6 +596,16 @@ impl Runtime {
         user_dir: Option<&Path>,
         source: UnigramSource,
     ) -> Result<Self, OpenError> {
+        // The libpinyin drop-in: a directory a real libpinyin installed
+        // (its `table.conf` + a recognised `bigram.db`) loads through the
+        // compat converters into the same in-memory model. An
+        // oxpinyin-native directory has neither marker, so this can never
+        // fire on the native layouts.
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        if let Some(layout) = oxpinyin_data::compat::CompatLayout::detect(system_dir) {
+            return Self::open_compat(system_dir, user_dir, &layout);
+        }
+
         let pinyin_index = system_dir.join(default_store_file("pinyin_index"));
         let phrase_index = system_dir.join(default_store_file("phrase_index"));
         let bigram = system_dir.join(default_store_file("bigram"));
@@ -623,6 +638,54 @@ impl Runtime {
             .and_then(|dir| UserStore::open(&dir.join(user_store_file())).ok());
 
         let addons = Arc::new(RwLock::new(AddonSet::new()));
+        let punct = PunctTable::open_optional(&system_dir.join(default_store_file("punct")));
+
+        Ok(Self {
+            paths: StoragePaths::new(user_dir.unwrap_or(Path::new("")))
+                .with_system_dirs([system_dir]),
+            dict: RuntimeDict {
+                system: Arc::new(dict),
+                user: user.clone(),
+                user_lookup_cache: LookupCache::default(),
+                addons: Arc::clone(&addons),
+                punct: Arc::new(punct),
+            },
+            lm: RuntimeLm {
+                inner: Arc::new(lm),
+                user: user.clone(),
+                addons,
+            },
+            user,
+        })
+    }
+
+    /// Opens a detected libpinyin data directory through the compat
+    /// converters: content tables (MemoryChunk `SubPhraseIndex`) become the
+    /// in-memory dictionary rows, `bigram.db` (the install's DBM hash)
+    /// becomes the bigram rows, λ comes from the same `table.conf`, and the
+    /// unigram model is the install's own `PhraseItem` frequencies — real
+    /// counts, so the pinned ranking construction applies. The decode path
+    /// above this constructor is exactly the native one.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    fn open_compat(
+        system_dir: &Path,
+        user_dir: Option<&Path>,
+        layout: &oxpinyin_data::compat::CompatLayout,
+    ) -> Result<Self, OpenError> {
+        let model = oxpinyin_data::compat::load(system_dir, layout).map_err(OpenError::Compat)?;
+        let dict = SystemDictionary::from_compat_rows(model.phrase_rows, model.pinyin_rows);
+        let mut lm = oxpinyin_data::BigramLanguageModel::from_rows(model.bigram_rows);
+        lm.set_lambda_from_table_conf(&system_dir.join("table.conf"));
+        lm.set_unigrams_real(model.unigrams, model.unigram_total);
+
+        let user = user_dir
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .and_then(|dir| UserStore::open(&dir.join(user_store_file())).ok());
+
+        let addons = Arc::new(RwLock::new(AddonSet::new()));
+        // A libpinyin install ships no oxpinyin punct table (its own
+        // `punct.bin` is a 2.11.91-only PunctTable the compat scope leaves
+        // to a follow-up), so the optional open resolves to none.
         let punct = PunctTable::open_optional(&system_dir.join(default_store_file("punct")));
 
         Ok(Self {
