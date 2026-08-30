@@ -683,10 +683,10 @@ impl Runtime {
             .and_then(|dir| UserStore::open(&dir.join(user_store_file())).ok());
 
         let addons = Arc::new(RwLock::new(AddonSet::new()));
-        // A libpinyin install ships no oxpinyin punct table (its own
-        // `punct.bin` is a 2.11.91-only PunctTable the compat scope leaves
-        // to a follow-up), so the optional open resolves to none.
-        let punct = PunctTable::open_optional(&system_dir.join(default_store_file("punct")));
+        // Predicted punctuation rides the install's own `punct.bin` (a
+        // 2.11.91-and-later table; 2.8.1 installs have none, which
+        // `load_punct` answers with an empty table, never an error).
+        let punct = oxpinyin_data::compat::load_punct(system_dir, layout);
 
         Ok(Self {
             paths: StoragePaths::new(user_dir.unwrap_or(Path::new("")))

@@ -27,9 +27,11 @@ set -uo pipefail
 cd "$(dirname "$0")" || { echo "cannot enter the script directory" >&2; exit 2; }
 REPO_ROOT="$(cd ../.. && pwd)" || { echo "cannot resolve the repository root" >&2; exit 2; }
 
-: "${ORACLE_LIB:?set ORACLE_LIB to the real libpinyin .so}"
-: "${SUBJECT_LIB:?set SUBJECT_LIB to the oxpinyin libpinyin_capi.so}"
-: "${OXPINYIN_SYSTEM_DIR:?set OXPINYIN_SYSTEM_DIR to the libpinyin data dir}"
+# Setup failures are status 2, never the shell's own exit: a caller
+# classifies 1 as DIVERGE, so an unset variable must not land there.
+[ -n "${ORACLE_LIB:-}" ] || { echo "set ORACLE_LIB to the real libpinyin .so" >&2; exit 2; }
+[ -n "${SUBJECT_LIB:-}" ] || { echo "set SUBJECT_LIB to the oxpinyin libpinyin_capi.so" >&2; exit 2; }
+[ -n "${OXPINYIN_SYSTEM_DIR:-}" ] || { echo "set OXPINYIN_SYSTEM_DIR to the libpinyin data dir" >&2; exit 2; }
 
 for f in "$ORACLE_LIB" "$SUBJECT_LIB"; do
     [ -f "$f" ] || { echo "missing library: $f" >&2; exit 2; }

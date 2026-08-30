@@ -104,7 +104,9 @@ fn lock_error() -> PyErr {
 /// * libpinyin layout — a directory as installed by the distro's
 ///   ``libpinyin-data`` package (``pinyin_index.bin``, ``phrase_index.bin``,
 ///   the content-table ``.bin`` files and ``bigram.db``), detected by file
-///   header and decoded at load time.
+///   header and decoded at load time; the ``bigram.db`` must come from a
+///   Kyoto-Cabinet- or tkrzw-built libpinyin — a Berkeley-DB-built
+///   directory (RHEL's packaging among them) is refused, not misread.
 ///
 /// Shareable across threads one call at a time: every call takes an internal
 /// lock, so a single call is atomic, but a *sequence* of calls is not — the

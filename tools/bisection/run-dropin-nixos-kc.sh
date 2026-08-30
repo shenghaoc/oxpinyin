@@ -29,11 +29,16 @@
 # Exit: the differential's exit (0 IDENTICAL, 1 DIVERGE, 2 setup failure).
 
 set -euo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.." || { echo "cannot enter the repository root" >&2; exit 2; }
 
 # The named /nix volume caches the downloaded closures across runs —
 # without it every invocation re-fetches the whole toolchain.
-exec podman run --rm --security-opt label=disable \
+# Not exec'd: the container's own statuses (0 IDENTICAL, 1 DIVERGE, 2
+# setup) must pass through, while a podman failure to launch at all —
+# an unpullable image, a missing runtime — maps to the documented
+# setup-failure status 2 instead of leaking podman's own code.
+status=0
+podman run --rm --security-opt label=disable \
     -v "$(pwd)":/src \
     -v oxpinyin-nix-store:/nix \
     docker.io/nixos/nix \
@@ -73,4 +78,8 @@ exec podman run --rm --security-opt label=disable \
         SUBJECT_LIB=$CARGO_TARGET_DIR/release/libpinyin_capi.so \
         OXPINYIN_SYSTEM_DIR="$DATA_DIR" \
             tools/bisection/run-pred-order-nixos-dropin.sh
-    '
+    ' || status=$?
+case $status in
+    0 | 1 | 2) exit $status ;;
+    *) echo "container launch failed (podman status $status)" >&2; exit 2 ;;
+esac

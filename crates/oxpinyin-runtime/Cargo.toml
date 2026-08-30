@@ -29,6 +29,11 @@ tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-user/tkrzw"]
 lmdb = ["oxpinyin-data/lmdb", "oxpinyin-user/lmdb"]
 redb = ["oxpinyin-data/redb", "oxpinyin-user/redb"]
 
+# Test-only: the compat-layout tests build a real `bigram.db` (the
+# detection marker) through the store's public BigramDb writer.
+[dev-dependencies]
+oxpinyin-store.workspace = true
+
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"

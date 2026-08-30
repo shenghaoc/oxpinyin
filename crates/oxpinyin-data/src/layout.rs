@@ -99,16 +99,6 @@ pub enum Dbm {
 }
 
 impl Dbm {
-    /// The cargo feature that reads this format.
-    #[must_use]
-    pub const fn feature(self) -> &'static str {
-        match self {
-            Self::BerkeleyHash => "bdb",
-            Self::KyotoHash | Self::KyotoTree => "kyotocabinet",
-            Self::Tkrzw => "tkrzw",
-        }
-    }
-
     /// A human name for a message.
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -288,10 +278,26 @@ pub fn dbm_of(path: &Path) -> Result<Option<Dbm>, LayoutError> {
 /// message says where to look. [`LayoutError::UnknownDbm`] when a
 /// `bigram.db` is present but was written by an unrecognised library.
 pub fn detect(dir: &Path) -> Result<DataLayout, LayoutError> {
-    let missing_compat: Vec<&'static str> = COMPAT_MARKERS
-        .into_iter()
-        .filter(|name| !dir.join(name).is_file())
-        .collect();
+    let mut missing_compat: Vec<&'static str> = Vec::new();
+    for name in COMPAT_MARKERS {
+        match std::fs::metadata(dir.join(name)) {
+            Ok(meta) if meta.is_file() => {}
+            // Absent is the expected miss; a directory or other
+            // non-file is as good as absent for that marker.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => missing_compat.push(name),
+            Ok(_) => missing_compat.push(name),
+            // Anything else (a permission denial, an EIO on the mount)
+            // is a real I/O failure, not a missing directory: reporting
+            // it as NoData would send the user hunting for files that
+            // are right there.
+            Err(e) => {
+                return Err(LayoutError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("{}: {e}", dir.join(name).display()),
+                )));
+            }
+        }
+    }
 
     if missing_compat.is_empty() {
         // Present is not enough, and the name says nothing: which library
@@ -307,10 +313,23 @@ pub fn detect(dir: &Path) -> Result<DataLayout, LayoutError> {
         };
     }
 
-    let missing_native: Vec<&'static str> = NATIVE_MARKERS
-        .into_iter()
-        .filter(|stem| !dir.join(crate::default_store_file(stem)).is_file())
-        .collect();
+    let mut missing_native: Vec<&'static str> = Vec::new();
+    for stem in NATIVE_MARKERS {
+        match std::fs::metadata(dir.join(crate::default_store_file(stem))) {
+            Ok(meta) if meta.is_file() => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => missing_native.push(stem),
+            Ok(_) => missing_native.push(stem),
+            Err(e) => {
+                return Err(LayoutError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!(
+                        "{}: {e}",
+                        dir.join(crate::default_store_file(stem)).display()
+                    ),
+                )));
+            }
+        }
+    }
     if missing_native.is_empty() {
         return Ok(DataLayout::Native);
     }
@@ -461,8 +480,6 @@ mod tests {
             detect(&kc.0).expect("classify"),
             DataLayout::Compat(Dbm::KyotoHash),
         );
-        assert_eq!(Dbm::BerkeleyHash.feature(), "bdb");
-        assert_eq!(Dbm::KyotoHash.feature(), "kyotocabinet");
     }
 
     #[test]

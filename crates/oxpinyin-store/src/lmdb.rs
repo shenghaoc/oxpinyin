@@ -166,6 +166,30 @@ fn is_transient_reopen(error: &StoreError) -> bool {
 /// was opened with: a different ceiling cannot be applied to it, so that
 /// mismatch is refused too, before the caller grows data past a ceiling
 /// it does not actually hold.
+/// The registry's answer for a live environment: the shared handle, or
+/// the refusing error, or `None` when no live environment exists for
+/// `key`. The caller holds the registry lock; nothing here waits.
+fn live_env(
+    map: &HashMap<PathBuf, EnvSlot>,
+    key: &Path,
+    read_only: bool,
+    map_size: usize,
+) -> Option<Result<Arc<Env>, StoreError>> {
+    let (weak, writable, live_map_size) = map.get(key)?;
+    let env = weak.upgrade()?;
+    if *live_map_size != map_size {
+        return Some(Err(StoreError::InvalidInput(
+            "this LMDB file is already open in this process with a different map size; close those handles before opening it with this ceiling",
+        )));
+    }
+    if read_only || *writable {
+        return Some(Ok(env));
+    }
+    Some(Err(StoreError::InvalidInput(
+        "this LMDB file is already open read-only in this process; close those handles before opening it writable",
+    )))
+}
+
 fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Env>, StoreError> {
     let registry = OPEN_ENVS.get_or_init(|| Mutex::new(HashMap::new()));
     // 1ms doubling to 256ms: ~500ms total, orders of magnitude past the
@@ -180,36 +204,36 @@ fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Env>,
             std::thread::sleep(backoff);
             backoff = (backoff * 2).min(std::time::Duration::from_millis(256));
         }
-        let mut map = registry.lock().unwrap_or_else(|p| p.into_inner());
         let key = env_key(path);
-        if let Some((weak, writable, live_map_size)) = map.get(&key)
-            && let Some(env) = weak.upgrade()
-        {
-            if *live_map_size != map_size {
-                return Err(StoreError::InvalidInput(
-                    "this LMDB file is already open in this process with a different map size; close those handles before opening it with this ceiling",
-                ));
-            }
-            if read_only || *writable {
-                return Ok(env);
-            }
-            return Err(StoreError::InvalidInput(
-                "this LMDB file is already open read-only in this process; close those handles before opening it writable",
-            ));
+        // Fast path: a live environment answers immediately, without
+        // waiting out any close window.
+        if let Some(outcome) = live_env(
+            &registry.lock().unwrap_or_else(|p| p.into_inner()),
+            &key,
+            read_only,
+            map_size,
+        ) {
+            return outcome;
         }
-        // No live environment for this path. A dead entry does not mean
-        // the old environment has finished closing (see
-        // `is_transient_reopen`'s doc): wait for heed's effective-close
-        // event before this thread tries to open the path. The live path
-        // above returns without waiting it out. No deadlock is possible —
-        // this thread holds no copy of the environment (its Weak is
-        // dead), and the closing thread never takes this registry's
-        // mutex.
+        // The lock is released here — the temporary guard above dropped
+        // at the end of that statement — so the wait below never blocks
+        // an unrelated path's lookup. A dead entry does not mean the old
+        // environment has finished closing (see `is_transient_reopen`'s
+        // doc): wait for heed's effective-close event before this thread
+        // tries to open the path. No deadlock is possible — this thread
+        // holds no copy of the environment (its Weak is dead), and the
+        // closing thread never takes this registry's mutex.
         if let Some(closing) = heed::env_closing_event(env_key(path)) {
             closing.wait_timeout(std::time::Duration::from_millis(1000));
         }
-        // The open itself happens under the lock, so two first opens of
-        // one path serialize here rather than both reaching heed.
+        // Re-acquire and re-check first: another thread may have opened
+        // the path while this one waited, and two first opens of one
+        // path must serialize on the registry rather than both reach
+        // heed.
+        let mut map = registry.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(outcome) = live_env(&map, &key, read_only, map_size) {
+            return outcome;
+        }
         match open_env(path, read_only, map_size) {
             Ok(env) => {
                 let env = Arc::new(env);

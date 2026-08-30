@@ -703,7 +703,10 @@ Text, candidate type and counts cannot.
   prepends punctuation rows of a different type; the driver falls back to
   plain `pinyin_guess_predicted_candidates` on libpinyin < 2.11, whose
   enum is a prefix of 2.11.91's — `PREDICTED_PREFIX_CANDIDATE` sits at the
-  same ordinal).
+  same ordinal). The driver also dumps the PREDICTED_PUNCTUATION rows
+  (type 8, from the install's `punct.bin`, present from 2.11 on) as
+  `punct-*` lines, which makes the differential the compat punct reader's
+  gate: those rows appear on the subject only when it reads that file.
 - **Kyoto Cabinet path** (Fedora rawhide container: libpinyin 2.11.91,
   kyotocabinet 1.2.80): oracle 1,571 rows, subject 1,571 rows; sorted row
   SETS byte-identical; 2,562 diff lines of pure reordering. **DIVERGE,
@@ -723,6 +726,16 @@ Text, candidate type and counts cannot.
   just RPM-shaped. Built with nixpkgs' rustc (1.95) under
   `--ignore-rust-version` — rustup toolchains cannot run on a pure Nix
   image — with the differential gating the artifact.
+- **Punct rows, after the compat `punct.bin` reader** (2026-08-30, same
+  differential with the driver's `punct-*` dump): every total rises
+  1,571 → 1,588 on BOTH sides — 17 PREDICTED_PUNCTUATION rows per run
+  (好 ，。; 是 “，：; 了 。，“！; …) — and the punct rows are identical
+  between oracle and subject, order included, on the NixOS KC path
+  (nixpkgs's 405 KB `punct.bin`, a TreeDB) and on the Debian tkrzw path
+  (its own punct.bin, a TreeDBM). The reorder residual stays 2,562
+  pred-row lines; the punct rows add zero divergence. Before the reader,
+  the subject's punct table was always empty on these paths, so these
+  rows could not have appeared at all.
 - **libpinyin behaviour:** predicted candidates come back in the DBM's
   iteration order — backend-dependent, semantically arbitrary, different
   between the KC and tkrzw oracles themselves.

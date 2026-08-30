@@ -53,6 +53,10 @@ pub enum CompatError {
     Backend(String),
     /// The bigram database could not be read.
     Bigram(PathBuf, String),
+    /// The `punct.bin` punctuation table could not be read. Never
+    /// surfaces from [`load_punct`], which degrades to an empty table;
+    /// it names the failure for diagnostics and tests.
+    Punct(PathBuf, String),
 }
 
 impl fmt::Display for CompatError {
@@ -63,6 +67,7 @@ impl fmt::Display for CompatError {
             Self::SubPhrase(path, msg) => write!(f, "{}: {msg}", path.display()),
             Self::Backend(msg) => f.write_str(msg),
             Self::Bigram(path, msg) => write!(f, "{}: {msg}", path.display()),
+            Self::Punct(path, msg) => write!(f, "{}: {msg}", path.display()),
         }
     }
 }
@@ -353,7 +358,15 @@ fn load_bigram_rows(dir: &Path, dbm: Dbm) -> Result<Vec<(u32, BigramRow)>, Compa
         Dbm::KyotoHash | Dbm::KyotoTree => Err(unsupported("Kyoto Cabinet")),
         #[cfg(not(feature = "tkrzw"))]
         Dbm::Tkrzw => Err(unsupported("tkrzw")),
-        Dbm::BerkeleyHash => Err(unsupported("Berkeley DB")),
+        // There is no Berkeley DB feature to rebuild with: no reader for
+        // that container exists in this tree, so the honest message says
+        // so instead of naming a cargo feature that would change nothing.
+        Dbm::BerkeleyHash => Err(CompatError::Backend(format!(
+            "{}: written by Berkeley DB; no reader for that container exists \
+             in this tree — the compat path reads Kyoto Cabinet- and \
+             tkrzw-built libpinyin directories",
+            path.display()
+        ))),
     }
 }
 
@@ -363,6 +376,73 @@ fn gram_row(gram: &oxpinyin_store::single_gram::SingleGram) -> BigramRow {
         total: gram.total(),
         records: gram.items().to_vec(),
     }
+}
+
+// ── punct walker ────────────────────────────────────────────────────
+
+#[cfg(feature = "kyotocabinet")]
+fn walk_punct_kyoto(path: &Path) -> Result<Vec<(u32, Vec<String>)>, CompatError> {
+    let db = oxpinyin_store::PunctDb::open_read_only(path)
+        .map_err(|e| CompatError::Punct(path.to_path_buf(), e.to_string()))?;
+    let mut rows = Vec::new();
+    db.for_each(&mut |token, chunk| {
+        // The visitor's error type is the store's; the Punct wrapper is
+        // applied once, at the boundary below.
+        let puncts = crate::punct::decode_compat_puncts(chunk)
+            .map_err(|e| oxpinyin_store::StoreError::Backend(e.to_string().into()))?;
+        rows.push((token, puncts));
+        Ok(())
+    })
+    .map_err(|e| CompatError::Punct(path.to_path_buf(), e.to_string()))?;
+    Ok(rows)
+}
+
+#[cfg(feature = "tkrzw")]
+fn walk_punct_tkrzw(path: &Path) -> Result<Vec<(u32, Vec<String>)>, CompatError> {
+    let db = oxpinyin_store::TkrzwPunctDb::open_read_only(path)
+        .map_err(|e| CompatError::Punct(path.to_path_buf(), e.to_string()))?;
+    let mut rows = Vec::new();
+    db.for_each(&mut |token, chunk| {
+        let puncts = crate::punct::decode_compat_puncts(chunk)
+            .map_err(|e| oxpinyin_store::StoreError::Backend(e.to_string().into()))?;
+        rows.push((token, puncts));
+        Ok(())
+    })
+    .map_err(|e| CompatError::Punct(path.to_path_buf(), e.to_string()))?;
+    Ok(rows)
+}
+
+/// Loads `punct.bin` — the pin 2.11.91+ system punctuation table,
+/// which `pinyin.cpp:440` attaches `ATTACH_READONLY` at init — into a
+/// [`PunctTable`].
+///
+/// Optional by design: the 2.8.1 installs this drop-in serves predate
+/// the PunctTable and ship no `punct.bin`, so absence is an empty
+/// table. A present but unreadable or malformed table also degrades to
+/// empty — the pin ignores a failed `PunctTable::attach`, and predicted
+/// punctuation must never fail `pinyin_init`. The chunk inside each
+/// value is the same backend-independent UCS4 run every container
+/// carries; only the TreeDB/TreeDBM container differs by build.
+#[must_use]
+pub fn load_punct(dir: &Path, layout: &CompatLayout) -> crate::punct::PunctTable {
+    let path = dir.join("punct.bin");
+    if !path.is_file() {
+        return crate::punct::PunctTable::empty();
+    }
+    let rows = match layout.dbm {
+        #[cfg(feature = "kyotocabinet")]
+        Dbm::KyotoHash | Dbm::KyotoTree => walk_punct_kyoto(&path),
+        #[cfg(feature = "tkrzw")]
+        Dbm::Tkrzw => walk_punct_tkrzw(&path),
+        // No reader for this container in this build — an empty table,
+        // like any other unreadable punct.bin, not an init failure.
+        #[cfg(not(feature = "kyotocabinet"))]
+        Dbm::KyotoHash | Dbm::KyotoTree => Ok(Vec::new()),
+        #[cfg(not(feature = "tkrzw"))]
+        Dbm::Tkrzw => Ok(Vec::new()),
+        Dbm::BerkeleyHash => Ok(Vec::new()),
+    };
+    crate::punct::PunctTable::from_rows(rows.unwrap_or_default())
 }
 
 // ── the loaded model ────────────────────────────────────────────────
@@ -524,6 +604,60 @@ mod tests {
         assert_eq!(items[1].token, (1 << 24) | 2);
         assert_eq!(items[1].text, "好好");
         assert_eq!(items[1].pronunciations, vec![("hao\'hao".to_owned(), 2)]);
+    }
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("oxpinyin-compat-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create");
+        dir
+    }
+
+    #[test]
+    fn load_punct_answers_absence_with_an_empty_table() {
+        // The 2.8.1 layout: no punct.bin at all.
+        let dir = scratch_dir("punct-absent");
+        let layout = CompatLayout {
+            dbm: Dbm::KyotoHash,
+            declared: None,
+            default_tables: Vec::new(),
+        };
+        let punct = load_punct(&dir, &layout);
+        assert!(punct.is_empty());
+        assert_eq!(punct.punctuations(7), Vec::<String>::new());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_punct_degrades_an_unreadable_table_to_empty() {
+        // Present but not a Kyoto Cabinet file: the reader fails, and a
+        // failed punct table is empty — never a failed pinyin_init.
+        let dir = scratch_dir("punct-garbage");
+        std::fs::write(dir.join("punct.bin"), b"not a database at all").expect("write");
+        let layout = CompatLayout {
+            dbm: Dbm::KyotoHash,
+            declared: None,
+            default_tables: Vec::new(),
+        };
+        let punct = load_punct(&dir, &layout);
+        assert!(punct.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_punct_skips_the_berkeley_db_container_it_cannot_read() {
+        // A Berkeley-DB-built punct.bin has no reader in this tree; it
+        // degrades to empty exactly like an unreadable C-backend file.
+        let dir = scratch_dir("punct-bdb");
+        std::fs::write(dir.join("punct.bin"), b"whatever").expect("write");
+        let layout = CompatLayout {
+            dbm: Dbm::BerkeleyHash,
+            declared: None,
+            default_tables: Vec::new(),
+        };
+        assert!(load_punct(&dir, &layout).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

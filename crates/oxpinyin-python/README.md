@@ -38,7 +38,9 @@ under `--no-default-features` (the portability fallback), `.tkt` with the
 `tkrzw` feature, `.lmdb` with `lmdb`. A real libpinyin data directory also
 works: `pinyin_index.bin`, `phrase_index.bin`, the content-table `.bin`
 files and `bigram.db` as installed by the distro's `libpinyin-data`
-package — detected by file header and decoded at load time. The
+package — detected by file header and decoded at load time, when its
+`bigram.db` was written by a backend this build reads (Kyoto Cabinet or
+tkrzw; a Berkeley-DB-built directory is refused, not misread). The
 repository's committed mini
 fixture (`fixtures/w3`) works through `Engine.from_fixture_dir`; production
 model directories additionally carry `interpolation2.text` (the real-unigram
