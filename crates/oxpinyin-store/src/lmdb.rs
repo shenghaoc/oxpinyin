@@ -221,28 +221,44 @@ fn is_transient_reopen(error: &StoreError) -> bool {
         .is_some_and(|e| matches!(e, heed::Error::EnvAlreadyOpened))
 }
 
-/// The registry's answer for a live environment: the shared handle, or
-/// the refusing error, or `None` when no live environment exists for
-/// `key`. The caller holds the registry lock; nothing here waits.
+/// The registry's answer for a live environment: the shared handle
+/// paired with a compatibility check (`Ok(())` on a match, an
+/// [`StoreError::InvalidInput`] refusal on a mismatch), or `None` when
+/// no live environment exists for `key`. The caller holds the registry
+/// lock; nothing here waits.
+///
+/// The handle comes back paired with — never swallowed by — the check
+/// so the caller can release the registry lock before it drops. If a
+/// concurrent thread already dropped its Arc, `weak.upgrade()` here can
+/// hold the LAST strong reference; dropping that Arc while the registry
+/// mutex is held would re-enter [`SharedEnv::drop`], which locks the
+/// same non-reentrant mutex — a self-deadlock that would freeze every
+/// later `shared_env` call and every `SharedEnv::drop` in the process.
 fn live_env(
     map: &HashMap<PathBuf, EnvSlot>,
     key: &Path,
     read_only: bool,
     map_size: usize,
-) -> Option<Result<Arc<SharedEnv>, StoreError>> {
+) -> Option<(Arc<SharedEnv>, Result<(), StoreError>)> {
     let (weak, writable, live_map_size) = map.get(key)?;
     let env = weak.upgrade()?;
     if *live_map_size != map_size {
-        return Some(Err(StoreError::InvalidInput(
-            "this LMDB file is already open in this process with a different map size; close those handles before opening it with this ceiling",
-        )));
+        return Some((
+            env,
+            Err(StoreError::InvalidInput(
+                "this LMDB file is already open in this process with a different map size; close those handles before opening it with this ceiling",
+            )),
+        ));
     }
     if read_only || *writable {
-        return Some(Ok(env));
+        return Some((env, Ok(())));
     }
-    Some(Err(StoreError::InvalidInput(
-        "this LMDB file is already open read-only in this process; close those handles before opening it writable",
-    )))
+    Some((
+        env,
+        Err(StoreError::InvalidInput(
+            "this LMDB file is already open read-only in this process; close those handles before opening it writable",
+        )),
+    ))
 }
 
 /// One shared environment per path. A read-only request shares any live
@@ -279,8 +295,13 @@ fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Share
         }
         let key = env_key(path);
         let mut map = registry.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(outcome) = live_env(&map, &key, read_only, map_size) {
-            return outcome;
+        if let Some((env, check)) = live_env(&map, &key, read_only, map_size) {
+            // Release the registry mutex before `env` can drop: on the
+            // mismatch paths `check` is `Err`, so `env` is dropped when
+            // `check.map(..)` discards it, and that drop must not
+            // re-enter `SharedEnv::drop` while we still hold the mutex.
+            drop(map);
+            return check.map(|()| env);
         }
         match open_env(path, read_only, map_size) {
             Ok(env) => {
