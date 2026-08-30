@@ -92,3 +92,48 @@ that implementation tasks compose without interface drift.
    with no dependencies. 3. WHEN a signature change seems needed after the
    freeze THEN an Architect correction PR SHALL merge before implementation
    resumes.
+
+### Requirement R7: Drop-in replacement surface
+
+**User Story:** As a distributor, I want oxpinyin to install under
+libpinyin's names so that unmodified consumers link against it and run.
+
+1. The cdylib SHALL carry SONAME `libpinyin.so.15` (libtool
+   -version-info 15:0). 2. The header SHALL install under
+   `include/libpinyin-2.11.91/`. 3. The pkg-config file SHALL ship as
+   `libpinyin.pc` exposing `pkgdatadir`, `database_format` and
+   `exec_prefix`. 4. The exported surface SHALL be the 58-symbol consumer
+   union measured from the two reference consumers (#206, 58/58).
+
+### Requirement R8: Compat read path for installed libpinyin data
+
+**User Story:** As a packager, I want oxpinyin to consume the installed
+libpinyin data so that no data conversion ships.
+
+1. WHEN `pinyin_init` is pointed at a libpinyin data directory THEN the
+   runtime SHALL detect the layout (`CompatLayout::detect`) and open the
+   compat path. 2. The reader SHALL parse libpinyin's `MemoryChunk`
+   container (8-byte header: u32 LE length, u32 XOR checksum) and verify
+   the checksum before use. 3. The path SHALL cover Kyoto Cabinet installs
+   (Fedora, NixOS) and tkrzw installs (Debian). 4. On every measured
+   backend the prediction surface SHALL read 1,571/1,571 rows with sorted
+   row sets byte-identical; the residual order-only divergence is R1's and
+   is governed by R9.
+
+### Requirement R9: Output compatibility rule and its four exceptions
+
+**User Story:** As a consumer, I want byte-identical output so that
+replacing the library changes nothing observable.
+
+1. For every consumer-union symbol, given the same inputs and state, the
+   whole observable output SHALL be byte-identical to the pinned libpinyin
+   2.11.91 — return status, out-parameters and the data they point to,
+   written lengths, and handle state transitions. 2. Divergence SHALL be
+   permitted only under the four classes of
+   `docs/findings/compatibility-policy.md`: (a) MATH — platform-dependent
+   floating-point accumulation; (b) MEMORY SAFETY — upstream is UB and
+   Rust structurally prevents reproduction; (c) AVAILABILITY — upstream
+   aborts on caller input, so oxpinyin returns `false`/`Err`; (d) CONSUMER
+   SCOPE — only what the reference consumers call. 3. A symbol that
+   returns a wrong value SHALL be treated as worse than not exporting it:
+   a stub returning `false` is a defect, not compliance.
