@@ -1,6 +1,5 @@
 ---
-inclusion: fileMatch
-fileMatchPattern: '**/*.rs'
+inclusion: always
 ---
 # Rust conventions
 
@@ -18,6 +17,19 @@ panic is a defect of the same severity as data loss. Public error enums are
 
 **Determinism:** engine output is a pure function of (input, user state,
 config). Graphs use index-based arenas.
+
+**Backend selection:** compile-time only, one backend per binary —
+`DefaultStore` resolves through a `#[cfg]` chain (kyotocabinet > tkrzw >
+lmdb > redb), following libpinyin's own `--with-dbm` model. No runtime
+dispatch; redb is the no-feature fallback.
+
+**C struct parsing:** packed upstream structures are parsed by explicit
+byte-offset reads (`u32::from_le_bytes` and friends) into owned fields —
+never by casting a byte slice to a packed struct, never via unaligned
+pointer reads. The reference pattern is `oxpinyin-data/src/memory_chunk.rs`:
+an 8-byte header (u32 LE length, then u32 XOR checksum over the data
+section, mirrored from `memory_chunk.h::get_check_sum`) followed by the
+payload, checksum verified before use.
 
 **Tests:** fixture-first — Lane-P acceptance uses platform-free frozen goldens
 F-A–F-D. F-E is the cross-lane evidence register and may cite Linux-only or
