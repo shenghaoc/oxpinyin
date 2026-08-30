@@ -650,3 +650,47 @@ interpolation output of D.
 | KMM → interpolation | `utils/training/k_mixture_model_to_interpolation.cpp` | 59-217 |
 | correction rate decode | `utils/training/eval_correction_rate.cpp` | 34-215 |
 | taglib line parse | `utils/utils_helper.h` | 27-71 |
+
+---
+
+## 15. Implementation status (updated 2026-08-30)
+
+Landed since this audit was frozen (each an independently-reviewable commit):
+
+| Part | Deliverable | Crate / home | Tests |
+|---|---|---|---|
+| B | `spseg` (fewest-words DP), `mergeseq` (phrase merge) | `oxpinyin-segment` (`spseg`, `mergeseq`, two CLIs) | toy unit + committed-golden differential (W3 table, CI-always) + env-gated live cross-check |
+| C+D | full KMM pipeline — data model, generate, estimate, merge, validate, prune, export/import, →interpolation | `oxpinyin-kmm` (self-contained, one CLI, 8 subcommands) | per-op unit + hand-verified golden + merge-equals-combined + end-to-end from the real segmented corpus |
+| G | punctuation table (`genpunct.py`) | `oxpinyin-punct` (count/merge CLI) | per-stage unit + two-stage golden |
+| H (core) | end-to-end main pipeline on real committed data (segment → KMM → interpolation2.text) with no Python/SQLite/make/libpinyin | `oxpinyin-kmm` integration test over the committed `spseg` fixture | passes on CI |
+
+**Reclassified** (kept, retitled): `oxpinyin-counter` (`gen_ngram`) and
+`oxpinyin-emitter` (`export_interpolation`) are legacy libpinyin utilities
+off the trainer path (§4); `oxpinyin-lambda`'s `estimate_interpolation` EM
+stays on the real path.
+
+**Still to land** (specs frozen above; independently developable):
+
+- **E** evaluator — `estimate_interpolation` λ (reuse `oxpinyin-lambda`'s
+  EM over KMM-derived counts) + `eval_correction_rate` reusing the
+  `oxpinyin-engine` decode round-trip (§7). Needs the runtime-model
+  assembly from a candidate `interpolation2.text` (no `make`).
+- **F** word recognition — prepare/populate/partialword/newword/markpinyin
+  → `oxpinyin-word` (§8). Self-contained; replaces SQLite/FTS3 with ordered
+  Rust maps; needs `words.txt`/`oldwords.txt` derived from the phrase
+  tables.
+- **H (full)** — typed status records, index-file walk, minimum-file-size
+  filter, the native full-pipeline driver, reproducibility harness (§10).
+
+The end-to-end reproduction command for the landed main pipeline:
+
+```sh
+# segment (fewest-words) → KMM candidate → estimate/merge/prune → interpolation2.text
+oxpinyin-spseg --export-dir <export> corpus.txt          > corpus.seg
+oxpinyin-kmm generate --k-mixture-model-file cand.db       corpus.seg
+oxpinyin-kmm estimate --bigram-file cand.db --deleted-bigram-file held.db
+oxpinyin-kmm merge    --result-file merged.db cand.db
+oxpinyin-kmm validate merged.db
+oxpinyin-kmm prune -k 3 --CDF 0.99 merged.db   # (merged.db pruned in place)
+oxpinyin-kmm to-interpolation merged.db        > interpolation2.text
+```

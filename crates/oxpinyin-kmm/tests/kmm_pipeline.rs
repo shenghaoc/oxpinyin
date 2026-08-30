@@ -3,10 +3,18 @@
 //! generate → estimate → merge → validate → prune → export → import →
 //! k_mixture_model_to_interpolation.
 
+use std::path::PathBuf;
+
 use oxpinyin_kmm::{
     DEFAULT_CDF, DEFAULT_PRUNE_K, GenerateParams, KMixtureModel, estimate, export, import,
     kmm_text_to_interpolation, merge_into, prune, validate,
 };
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+}
 
 fn generated(docs: &[&str]) -> KMixtureModel {
     let mut model = KMixtureModel::new();
@@ -84,6 +92,69 @@ fn merge_equals_combined_run() {
 
     assert_eq!(export(&merged), export(&combined));
     validate(&merged).expect("merged validates");
+}
+
+/// End-to-end over a real segmented corpus: consume the committed `spseg`
+/// output (the segment stage's real product over the W3 phrase index) and
+/// run the whole KMM chain — generate → estimate → merge → validate →
+/// prune → export → to-interpolation — with no Python, SQLite, `make`, or
+/// libpinyin. Proves the main training pipeline runs natively (completion
+/// criteria §9, §14).
+#[test]
+fn end_to_end_from_real_segmented_corpus() {
+    let segmented = std::fs::read_to_string(repo_root().join("fixtures/w9/segmenter-spseg-w3.txt"))
+        .expect("committed spseg segmented corpus");
+
+    // generate: one candidate from the whole segmented document.
+    let mut candidate = KMixtureModel::new();
+    candidate
+        .add_document(&segmented, GenerateParams::default())
+        .expect("generate");
+    assert_eq!(candidate.n, 1, "one document");
+    validate(&candidate).expect("generated model validates");
+
+    // estimate against a held-out slice (the first half of the lines).
+    let held_lines: Vec<&str> = segmented
+        .lines()
+        .take(segmented.lines().count() / 2)
+        .collect();
+    let mut deleted = KMixtureModel::new();
+    deleted
+        .add_document(&held_lines.join("\n"), GenerateParams::default())
+        .expect("held-out generate");
+    let score = estimate(&candidate, &deleted).expect("estimate").average;
+    assert!((0.0..=1.0).contains(&score), "lambda {score} out of range");
+
+    // merge one candidate into a fresh result, validate, export round-trip.
+    let mut merged = KMixtureModel::new();
+    merge_into(&mut merged, &candidate).expect("merge");
+    validate(&merged).expect("merged validates");
+    assert_eq!(import(&export(&merged)).expect("import"), merged);
+
+    // prune (CDF 0 keeps everything so the model stays non-empty), then
+    // convert to interpolation2.text.
+    let mut pruned = merged.clone();
+    prune(&mut pruned, DEFAULT_PRUNE_K, 0.0).expect("prune");
+    let interp = kmm_text_to_interpolation(&export(&pruned)).expect("to interpolation");
+
+    // The result is well-formed interpolation2.text: header, both sections,
+    // no <start> unigram, and every unigram/bigram line is `\item …`.
+    assert!(interp.starts_with("\\data model interpolation\n"));
+    assert!(interp.contains("\\1-gram\n"));
+    assert!(interp.contains("\\2-gram\n"));
+    assert!(interp.trim_end().ends_with("\\end"));
+    for line in interp.lines() {
+        if line.starts_with("\\item ") {
+            // No sentence_start (<start>) survives the 1-gram section.
+            let is_unigram_start = line.starts_with("\\item 1 <start> count");
+            assert!(!is_unigram_start, "unigram <start> must be dropped: {line}");
+        }
+    }
+    // There is at least one real interpolation record.
+    assert!(
+        interp.lines().filter(|l| l.starts_with("\\item ")).count() > 0,
+        "the pipeline produced interpolation records"
+    );
 }
 
 /// The default `--CDF 0.99` prune drops every rare pair (each occurs once),
