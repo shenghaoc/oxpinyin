@@ -136,29 +136,46 @@ fn env_key(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// One shared heed environment plus the machinery that keeps its close
-/// serialized against concurrent [`shared_env`] callers.
+/// One shared heed environment plus the machinery that keeps LMDB
+/// operations on it safe to call from many threads at once.
 ///
-/// heed 0.22 holds its own process-global `OPENED_ENV` write lock across
-/// `mdb_env_close`, so a fresh `EnvOpenOptions::open` on the same path
-/// blocks until the close finishes and two closes never overlap inside
-/// liblmdb. What that alone did not cover is our registry's own gap: the
-/// last `Arc<SharedEnv>` drop decrements the strong count to zero
-/// *before* Rust runs this Drop impl, so a concurrent [`shared_env`]
-/// caller can see [`Weak::upgrade`] return `None`, call
-/// [`heed::env_closing_event`] once heed's Drop has removed its entry,
-/// get `None` back, and rush into [`open_env`] before liblmdb has
-/// finished the previous env's teardown work. Under a newer glibc that
-/// window manifested as `malloc(): unaligned tcache chunk detected`
-/// aborts in parallel capi and workspace test runs (main tip `fcf0559`).
+/// Two hazards live here.
 ///
-/// The fix wraps every registry-owned `heed::Env` in this type. Its
-/// [`Drop`] takes the registry mutex, evicts the (dead) entry, and only
-/// then drops the inner env — so heed's `mdb_env_close` runs while we
-/// hold the same mutex that [`shared_env`] takes for its live-check and
-/// its `open_env` call. A concurrent caller either sees the live env on
-/// the fast path or blocks until the close has fully finished, and never
-/// races liblmdb.
+/// The first is our registry's own close/reopen gap. heed 0.22 holds its
+/// own process-global `OPENED_ENV` write lock across `mdb_env_close`, so
+/// a fresh `EnvOpenOptions::open` on the same path blocks until the
+/// close finishes and two closes never overlap inside liblmdb. What
+/// that alone did not cover is that the last `Arc<SharedEnv>` drop
+/// decrements the strong count to zero *before* Rust runs this Drop
+/// impl, so a concurrent [`shared_env`] caller can see
+/// [`Weak::upgrade`] return `None`, call [`heed::env_closing_event`]
+/// once heed's Drop has removed its entry, get `None` back, and rush
+/// into [`open_env`] before liblmdb has finished the previous env's
+/// teardown work. Under a newer glibc that window manifested as
+/// `malloc(): unaligned tcache chunk detected` aborts in parallel capi
+/// and workspace test runs (main tip `fcf0559`). [`Drop`] takes the
+/// registry mutex, evicts the (dead) entry, and only then drops the
+/// inner env — so heed's `mdb_env_close` runs while we hold the same
+/// mutex that [`shared_env`] takes for its live-check and its
+/// `open_env` call. A concurrent caller either sees the live env on
+/// the fast path or blocks until the close has fully finished, and
+/// never races liblmdb.
+///
+/// The second is [`mdb_dbi_open`](http://www.lmdb.tech/doc/group__mdb.html#gac08cad5b096925642ca359a6d6f0562a).
+/// LMDB's own contract: *"A transaction that uses this function must
+/// finish (either commit or abort) before any other transaction in the
+/// process may use this function"* — it writes into the env-wide
+/// `me_dbxs`/`me_dbiseqs` arrays (via a `mt_dbxs` pointer aliased at
+/// txn-begin, `mdb.c:3283`) without any internal locking. heed exposes
+/// [`Env::open_database`]/[`Env::create_database`] as thin wrappers
+/// around it and does not serialize them, so parallel `LmdbStore`
+/// callers (`for_each`, `range`, `get`, `is_empty` — each opens a fresh
+/// read txn and then opens the same table) racing on one env fell into
+/// the same `malloc(): unaligned tcache chunk` window when a concurrent
+/// close later freed `me_dbxs` entries whose writes had crossed. The
+/// [`SharedEnv::open_database`] / [`SharedEnv::create_database`]
+/// wrappers take a per-env [`Mutex`] before delegating, restoring the
+/// pinned single-writer contract.
 struct SharedEnv {
     /// Kept in a [`ManuallyDrop`] so [`Drop::drop`] can run
     /// [`ManuallyDrop::drop`] on it explicitly, before releasing the
@@ -167,6 +184,10 @@ struct SharedEnv {
     /// would be gone.
     inner: ManuallyDrop<Env>,
     key: PathBuf,
+    /// Serializes `mdb_dbi_open` calls on `inner`. Held only across the
+    /// heed `open_database`/`create_database` call itself; released
+    /// before the returned [`Database`] handle is used.
+    dbi_lock: Mutex<()>,
 }
 
 impl Deref for SharedEnv {
@@ -174,6 +195,37 @@ impl Deref for SharedEnv {
 
     fn deref(&self) -> &Env {
         &self.inner
+    }
+}
+
+impl SharedEnv {
+    /// The mutex-serialized [`Env::open_database`] — see the struct
+    /// docstring's second-hazard note for why this must not go through
+    /// heed's bare method.
+    fn open_database(
+        &self,
+        rtxn: &heed::RoTxn<'_, WithoutTls>,
+        name: &str,
+    ) -> Result<Option<Database<Bytes, Bytes>>, heed::Error> {
+        let _guard = self
+            .dbi_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.inner.open_database(rtxn, Some(name))
+    }
+
+    /// The mutex-serialized [`Env::create_database`] — same rationale
+    /// as [`SharedEnv::open_database`], on the write side.
+    fn create_database(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        name: &str,
+    ) -> Result<Database<Bytes, Bytes>, heed::Error> {
+        let _guard = self
+            .dbi_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.inner.create_database(wtxn, Some(name))
     }
 }
 
@@ -308,6 +360,7 @@ fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Share
                 let env = Arc::new(SharedEnv {
                     inner: ManuallyDrop::new(env),
                     key: env_key(path),
+                    dbi_lock: Mutex::new(()),
                 });
                 // Re-key by the now-existing file so later opens of the
                 // same file through a different spelling collide correctly.
@@ -404,7 +457,7 @@ impl ReadStore for LmdbStore {
         let txn = self.env.read_txn().map_err(map_heed_error)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&txn, Some(table))
+            .open_database(&txn, table)
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(None) };
         Ok(db
@@ -418,7 +471,7 @@ impl ReadStore for LmdbStore {
         let txn = self.env.read_txn().map_err(map_heed_error)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&txn, Some(table))
+            .open_database(&txn, table)
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(()) };
         let iter = db.iter(&txn).map_err(map_heed_error)?;
@@ -440,7 +493,7 @@ impl ReadStore for LmdbStore {
         let txn = self.env.read_txn().map_err(map_heed_error)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&txn, Some(table))
+            .open_database(&txn, table)
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(()) };
         if is_empty_upper_bound(hi) {
@@ -460,7 +513,7 @@ impl ReadStore for LmdbStore {
         let txn = self.env.read_txn().map_err(map_heed_error)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&txn, Some(table))
+            .open_database(&txn, table)
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(true) };
         db.is_empty(&txn).map_err(map_heed_error)
@@ -515,7 +568,7 @@ impl WriteStore for LmdbStore {
 // ── write transaction ─────────────────────────────────────────────
 
 struct LmdbWriteTxn<'a> {
-    env: &'a Env,
+    env: &'a SharedEnv,
     txn: RwTxn<'a>,
 }
 
@@ -524,7 +577,7 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         validate_table_name(table)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&self.txn, Some(table))
+            .open_database(&self.txn, table)
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(None) };
         Ok(db
@@ -538,18 +591,18 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         if key.is_empty() || key.len() > MAX_KEY_LEN {
             return Err(StoreError::InvalidInput("key length must be 1..=511 bytes"));
         }
-        let db: Database<Bytes, Bytes> = self
-            .env
-            .create_database(&mut self.txn, Some(table))
-            .map_err(|e| match e {
-                // LMDB caps the environment at MAX_DBS named tables; the
-                // over-limit table name is caller input, so surface it as
-                // InvalidInput rather than an opaque backend error.
-                heed::Error::Mdb(heed::MdbError::DbsFull) => {
-                    StoreError::InvalidInput("too many distinct tables (LMDB caps a store at 32)")
-                }
-                other => map_heed_error(other),
-            })?;
+        let db: Database<Bytes, Bytes> =
+            self.env
+                .create_database(&mut self.txn, table)
+                .map_err(|e| match e {
+                    // LMDB caps the environment at MAX_DBS named tables; the
+                    // over-limit table name is caller input, so surface it as
+                    // InvalidInput rather than an opaque backend error.
+                    heed::Error::Mdb(heed::MdbError::DbsFull) => StoreError::InvalidInput(
+                        "too many distinct tables (LMDB caps a store at 32)",
+                    ),
+                    other => map_heed_error(other),
+                })?;
         db.put(&mut self.txn, key, value).map_err(map_heed_error)?;
         Ok(())
     }
@@ -558,7 +611,7 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         validate_table_name(table)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&self.txn, Some(table))
+            .open_database(&self.txn, table)
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(()) };
         db.delete(&mut self.txn, key).map_err(map_heed_error)?;
@@ -575,7 +628,7 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         validate_table_name(table)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&self.txn, Some(table))
+            .open_database(&self.txn, table)
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(()) };
         if is_empty_upper_bound(hi) {
@@ -594,7 +647,7 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         validate_table_name(table)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&self.txn, Some(table))
+            .open_database(&self.txn, table)
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(()) };
         let iter = db.iter(&self.txn).map_err(map_heed_error)?;
@@ -609,7 +662,7 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         validate_table_name(table)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&self.txn, Some(table))
+            .open_database(&self.txn, table)
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(true) };
         db.is_empty(&self.txn).map_err(map_heed_error)
