@@ -172,8 +172,7 @@ impl SystemDictionary {
                 if entry.token().value() == token {
                     let freq = entry
                         .pronunciation_possibility()
-                        .map(|(matched, _)| matched)
-                        .unwrap_or(0);
+                        .map_or(0, |(matched, _)| matched);
                     out.push((pinyin.to_string(), freq));
                 }
             }
@@ -590,8 +589,7 @@ fn resolve_hits(
             let total = totals
                 .binary_search_by_key(&token, |&(token, _)| token)
                 .ok()
-                .map(|position| totals[position].1)
-                .unwrap_or(0);
+                .map_or(0, |position| totals[position].1);
             PhraseEntry::new(PhraseToken::new(token), text)
                 .with_pronunciation_possibility(u64::from(freq), total)
         })

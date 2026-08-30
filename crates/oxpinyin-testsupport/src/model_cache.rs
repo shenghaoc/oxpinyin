@@ -202,8 +202,7 @@ pub fn locate_model_dir() -> Result<Option<PathBuf>, ModelDirError> {
 #[must_use]
 pub fn export_dir() -> PathBuf {
     let dir = std::env::var_os("PINYIN_EXPORT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp/oxpinyin-export"));
+        .map_or_else(|| PathBuf::from("/tmp/oxpinyin-export"), PathBuf::from);
     for stem in ["pinyin_index", "phrase_index", "bigram"] {
         let name = oxpinyin_store::default_store_file(stem);
         assert!(

@@ -115,8 +115,7 @@ fn main() -> ExitCode {
     for (i, row) in failures.iter().take(WORST_N).enumerate() {
         let rank_s = row
             .our_rank
-            .map(|r| format!("#{r}"))
-            .unwrap_or_else(|| "absent".to_owned());
+            .map_or_else(|| "absent".to_owned(), |r| format!("#{r}"));
         let our_top = row.our_top.as_deref().unwrap_or("(none)");
         // Categorise
         let category = if row.our_rank.is_none() {

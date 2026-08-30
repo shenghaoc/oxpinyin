@@ -19,8 +19,7 @@ impl Scratch {
     fn new(label: &str) -> Self {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_nanos())
-            .unwrap_or(0);
+            .map_or(0, |elapsed| elapsed.as_nanos());
         let dir = std::env::temp_dir().join(format!(
             "oxpinyin-model-{}-{}-{}-{}",
             label,
@@ -182,8 +181,7 @@ mod fetch_script {
             stderr
                 .lines()
                 .find_map(|line| line.trim().strip_prefix("actual:"))
-                .map(str::trim)
-                .unwrap_or(""),
+                .map_or("", str::trim),
             MODEL20_SHA256,
             "actual digest must differ from the pin:\n{stderr}"
         );
