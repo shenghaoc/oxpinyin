@@ -1,0 +1,55 @@
+# cbindgen configuration for oxpinyin-zhuyin-capi.
+# Generates a C header matching libzhuyin's zhuyin.h ABI.
+#
+# The generated header is checked in at crates/oxpinyin-zhuyin-capi/zhuyin.h.
+# Regenerate it after changing any exported signature/enum/alias with:
+#   cbindgen --config cbindgen.toml --crate oxpinyin-zhuyin-capi . > zhuyin.h
+# (run from crates/oxpinyin-zhuyin-capi). The shipped zhuyin.h is the pin's
+# verbatim copy, so generation=false in Cargo.toml keeps it byte-identical.
+
+language = "C"
+include_guard = "ZHUYIN_CAPI_H"
+no_includes = true
+sys_includes = ["stddef.h", "stdbool.h", "stdint.h"]
+
+cpp_compat = true
+
+after_includes = """
+#define PHRASE_MASK 0x00FFFFFF
+#define PHRASE_INDEX_LIBRARY_MASK 0x0F000000
+#define PHRASE_INDEX_MAKE_TOKEN(phrase_index, token)                    \\
+    ( ( (phrase_index<<24) & PHRASE_INDEX_LIBRARY_MASK)|(token & PHRASE_MASK))
+#define ZHUYIN_DEFAULT ZHUYIN_STANDARD
+typedef struct ChewingKey PinyinKey;
+typedef struct ChewingKeyRest PinyinKeyPos;
+"""
+
+documentation = true
+documentation_style = "c99"
+documentation_length = "short"
+style = "both"
+usize_is_size_t = true
+
+[export]
+include = [
+    "ZhuyinContext",
+    "ZhuyinInstance",
+    "LookupCandidate",
+    "ChewingKey",
+    "ChewingKeyRest",
+    "ImportIterator",
+    "lookup_candidate_type_t",
+    "ZhuyinScheme",
+    "FullPinyinScheme",
+]
+
+[export.rename]
+"ZhuyinContext" = "zhuyin_context_t"
+"ZhuyinInstance" = "zhuyin_instance_t"
+"LookupCandidate" = "lookup_candidate_t"
+"ImportIterator" = "import_iterator_t"
+"PinyinOptionT" = "pinyin_option_t"
+"PhraseTokenT" = "phrase_token_t"
+"GUint" = "guint"
+"GInt" = "gint"
+"GChar" = "gchar"

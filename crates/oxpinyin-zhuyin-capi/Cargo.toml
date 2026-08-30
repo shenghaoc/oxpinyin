@@ -1,0 +1,93 @@
+[package]
+name = "oxpinyin-zhuyin-capi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "C ABI of libpinyin's zhuyin facade (libzhuyin.so.15), the --enable-libzhuyin counterpart to libpinyin.so.15. Linux only."
+
+# The ABI namespace mirrors upstream: libzhuyin is a SEPARATE shared object
+# from libpinyin (upstream builds it from `$(pinyin_SOURCES) zhuyin.cpp`
+# with its own version script, src/Makefile.am:108-125 at the pin
+# 0c5e80e1). The Cargo package name is project identity; the built artifact
+# is deliberately `zhuyin_capi` (the checked-in header stays `zhuyin.h` with
+# the exported `zhuyin_*` symbols), and the INSTALLED file is
+# `libzhuyin.so.15` via [package.metadata.capi.library].
+[lib]
+name = "zhuyin_capi"
+# cdylib is the ABI; rlib lets in-tree tools call the same symbols
+# in-process; staticlib is required by cargo-c and shipped alongside.
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+# Declared so cargo-c identifies this crate as the workspace's zhuyin C-API
+# export target (the same mechanism oxpinyin-capi uses).
+capi = []
+# Backend selection, forwarded down the chain (one backend per binary; see
+# oxpinyin-store's [features] for the model and precedence).
+default = ["kyotocabinet"]
+kyotocabinet = [
+    "oxpinyin-runtime/kyotocabinet",
+    "oxpinyin-data/kyotocabinet",
+    "oxpinyin-user/kyotocabinet",
+]
+tkrzw = ["oxpinyin-runtime/tkrzw", "oxpinyin-data/tkrzw", "oxpinyin-user/tkrzw"]
+lmdb = ["oxpinyin-runtime/lmdb", "oxpinyin-data/lmdb", "oxpinyin-user/lmdb"]
+redb = ["oxpinyin-runtime/redb", "oxpinyin-data/redb", "oxpinyin-user/redb"]
+
+[lints.rust]
+unsafe_code = "allow" # FFI + glib marshalling only; // SAFETY: on every block
+missing_docs = "warn"
+unused_must_use = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+# Mechanizes the "// SAFETY: on every block" constitution clause.
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
+must_use_candidate = "warn"
+
+[dependencies]
+oxpinyin-chewing = { path = "../oxpinyin-chewing" }
+oxpinyin-core.workspace = true
+oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
+oxpinyin-engine.workspace = true
+oxpinyin-runtime.workspace = true
+oxpinyin-user.workspace = true
+
+# cargo-c packaging metadata. See docs/packaging.md for the rationale and the
+# upstream libzhuyin.pc.in this mirrors.
+[package.metadata.capi.header]
+# The checked-in zhuyin.h ships verbatim; never regenerate it with cbindgen.
+generation = false
+# The real libzhuyin installs its header under the same version-stamped
+# subdirectory as libpinyin (/usr/include/libpinyin-2.11.91/zhuyin.h).
+subdirectory = "libpinyin-2.11.91"
+
+[package.metadata.capi.install.include]
+asset = [
+    { from = "zhuyin.h", to = "libpinyin-2.11.91" },
+    { from = "zhuyin_custom2.h", to = "libpinyin-2.11.91" },
+]
+
+[package.metadata.capi.pkg_config]
+name = "libzhuyin"
+filename = "libzhuyin"
+description = "Library to deal with zhuyin"
+version = "2.11.91"
+requires = "glib-2.0"
+# cargo-c cannot emit the extra variables real consumers read (database_format,
+# libzhuyinincludedir, libzhuyin_binary_version), so build.rs bakes them and
+# tools/packaging/install.sh fills the install-time prefix — the same wrapper
+# contract oxpinyin-capi uses (docs/findings/installed-naming.md).
+generate = false
+
+[package.metadata.capi.library]
+# The INSTALLED artifact is libzhuyin.so.15, matching upstream's libtool
+# -version-info 15:0 (same ABI current as libpinyin — both read
+# @LT_VERSION_INFO@ in src/Makefile.am:118-121 at the pin).
+name = "zhuyin"
+version = "15.0.0"
+versioning = true

@@ -10,6 +10,7 @@ inclusion: always
 | oxpinyin-user | ACID store over DefaultStore; format-version from day one | deny | yes | via engine |
 | oxpinyin-engine | session API — the supported Rust surface | deny | yes | yes |
 | oxpinyin-capi | C ABI subset for the borrowed frontend | allow | Linux | yes |
+| oxpinyin-zhuyin-capi | C ABI of libpinyin's zhuyin facade — `libzhuyin.so.15`, the `--enable-libzhuyin` counterpart (52 symbols, own SONAME); delegates to the same engine/chewing surface as oxpinyin-capi | allow | Linux | yes |
 | oxpinyin-python | PyO3 binding over the engine session API (Python consumers) | forbid | yes | wheel only |
 | oxpinyin-runtime | concrete assembly shared by consumers (tables+model+user wiring → Session) | forbid | yes | via capi/python |
 | pinyin-oracle | differential harness vs pinned libpinyin | allow | Linux | never |

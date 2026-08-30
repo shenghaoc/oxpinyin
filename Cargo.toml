@@ -19,6 +19,7 @@ members = [
   "crates/oxpinyin-emitter",
   "crates/oxpinyin-corpus",
   "crates/oxpinyin-testsupport",
+  "crates/oxpinyin-zhuyin-capi",
 ]
 
 [workspace.package]
