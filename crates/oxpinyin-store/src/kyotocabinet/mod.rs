@@ -1,63 +1,35 @@
-//! Kyoto Cabinet backend — the libpinyin compatibility route for
-//! distributions that build libpinyin `--with-dbm=KyotoCabinet`.
+//! Kyoto Cabinet backend for the store's peer set.
 //!
-//! Enabled by the `kyotocabinet` cargo feature. Two things live here, and
-//! keeping them apart matters:
+//! Enabled by the `kyotocabinet` cargo feature and — as the workspace's
+//! default selected backend — compiled in on a plain `cargo build`.
+//! [`KcStore`] is a `TreeDB` implementation of the store's two capability
+//! tiers, addressed by `(table, key)` like every other backend.
 //!
-//! * [`KcStore`] — a `TreeDB` implementation of the store's two capability
-//!   tiers, addressed by `(table, key)` like every other backend.
-//! * [`BigramDb`] — raw `HashDB` access to libpinyin's own `bigram.db`,
-//!   keyed by the four native-endian bytes of a `phrase_token_t` and
-//!   valued by a [`SingleGram`] chunk. Deliberately **not** a
-//!   [`ReadStore`]: a hash database has no ordering, so it cannot honour
-//!   `range` or an ordered `for_each`.
+//! # Why every open carries `#type=`
 //!
-//! Which class libpinyin uses for what is read from its source, not
-//! assumed: `ngram_kyotodb.cpp:115` is `m_db = new HashDB`, while
-//! `phrase_large_table3_kyotodb.cpp:102` and
-//! `chewing_large_table2_kyotodb.cpp:87` are `new TreeDB`.
-//!
-//! # The filename problem, and why every open carries `#type=`
-//!
-//! libpinyin's file names are compile-time constants that do **not** vary
-//! with the DBM backend: `SYSTEM_BIGRAM "bigram.db"`, `USER_BIGRAM
-//! "user_bigram.db"` (`src/pinyin_internal.h:56-58`). A
-//! Kyoto-Cabinet-built libpinyin therefore ships no `.kch` or `.kct` file
-//! anywhere — the extensions are Kyoto Cabinet's own convention, not
-//! libpinyin's.
-//!
-//! That collides with the C API, which is `PolyDB` and picks the database
-//! class from the path suffix, failing outright on an unrecognised one
-//! (`kclangc.h:312-320`). Measured on 1.2.80: `kcdbopen(db, "bigram.db",
-//! KCOWRITER|KCOCREATE)` fails with `invalid operation`, and the same
-//! path with `#type=kch` appended succeeds. `PolyDB`'s tuning parameters
-//! (`kcpolydb.h:496-515`) are the escape hatch, and [`ffi::Db::open`]
-//! always uses them. Detection by extension would find nothing; detection
-//! is by file magic instead (`oxpinyin_data::layout`).
+//! The C API is `PolyDB` and picks the database class from the path
+//! suffix, failing outright on an unrecognised one (`kclangc.h:312-320`).
+//! oxpinyin names its native tables `.kct` (the Kyoto Cabinet TreeDB
+//! convention), so the suffix already tells `PolyDB` what to open — but
+//! [`ffi::Db::open`] passes `#type=` explicitly anyway so the class is
+//! never guessed from a filename that came in from a caller.
 //!
 //! # Key ordering
 //!
 //! `TreeDB` with no `rcomp` tuning parameter uses Kyoto Cabinet's default
 //! record comparator, `LEXICALCOMP` — byte-wise, shorter key first on a
-//! shared prefix. libpinyin sets no comparator
-//! (`phrase_large_table3_kyotodb.cpp`, `chewing_large_table2_kyotodb.cpp`
-//! contain no `rcomp`), so that default applies, and it is the store's one
-//! rule exactly. The cross-backend conformance tests in `super` assert
+//! shared prefix. The cross-backend conformance tests in `super` assert
 //! this backend walks identically to redb, LMDB and the others over keys
 //! that cross 256 in the first and in a later element — where byte order
 //! and integer order genuinely differ.
 //!
 //! # Atomicity
 //!
-//! Stronger than the tkrzw and Berkeley DB backends, and worth stating
-//! because it is a real difference rather than a matter of style. Kyoto
-//! Cabinet gives a standalone handle real transactions
+//! Kyoto Cabinet gives a standalone handle real transactions
 //! (`kcdbbegintran`/`kcdbendtran`), so [`WriteStore::write`] is the
 //! library's own transaction rather than a buffered imitation: the
 //! closure's writes go straight to the database inside the transaction,
-//! reads see them, and an `Err` rolls the whole thing back. The Berkeley
-//! DB backend has to buffer precisely because libpinyin's
-//! environment-less opens leave it no transaction to use.
+//! reads see them, and an `Err` rolls the whole thing back.
 //!
 //! Commits use `hard = 0` and then flush: durable against a process
 //! crash, not against power loss.
@@ -67,25 +39,18 @@
 //! [`KcStore`] is `Send + Sync`: Kyoto Cabinet's `PolyDB` carries its own
 //! locking (every access method takes the database's rwlock), and the
 //! `unsafe impl`s on the FFI handle record exactly that contract — see the
-//! SAFETY comment in `ffi.rs`. This is required, not optional, for a
-//! default backend: the user-store registry holds `DefaultStore` behind a
-//! `static Mutex`, and the runtime compile-asserts its handles
-//! `Send + Sync`.
+//! SAFETY comment in `ffi.rs`. This is required for a peer backend that
+//! also serves as the default selection: the user-store registry holds
+//! `DefaultStore` behind a `static Mutex`, and the runtime compile-asserts
+//! its handles `Send + Sync`.
 #![allow(unsafe_code)]
 
 mod ffi;
-/// Re-export: the chunk format is backend-independent (`ngram.cpp` is
-/// unconditional upstream), so it lives at the crate root and the tkrzw
-/// compat reader shares it; this path is kept for existing consumers.
-pub use crate::single_gram;
 
-use std::collections::BTreeSet;
 use std::ops::Bound;
 use std::path::Path;
 
 use crate::{ReadStore, StoreError, Visitor, WriteStore, WriteTxn, validate_table_name};
-
-pub use crate::single_gram::SingleGram;
 
 use ffi::{Db, DbType};
 
@@ -329,288 +294,5 @@ impl WriteTxn for KcTxn<'_> {
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
         self.store.is_empty(table)
-    }
-}
-
-// ── libpinyin's own bigram.db ──────────────────────────────────────
-
-/// libpinyin's `bigram.db` as a Kyoto-Cabinet-built libpinyin writes it:
-/// a `HashDB` keyed by the four native-endian bytes of a
-/// `phrase_token_t`, valued by a whole [`SingleGram`] chunk.
-///
-/// The key encoding is read from the pin, not assumed:
-/// `ngram_kyotodb.cpp:128` is `const char * kbuf = (char *) &index;` with
-/// `sizeof(phrase_token_t)` — byte for byte what the Berkeley DB backend
-/// does at `ngram_bdb.cpp`. The *logical* format is backend-independent;
-/// only the physical container differs.
-///
-/// Blob-per-previous-token, which is upstream's model: every successor of
-/// `prev` lives in one value and every access is a point operation. There
-/// is no ordering contract — a hash database has no order — which is why
-/// this type is not a [`ReadStore`] and offers no `range`.
-///
-/// The same format serves the system `bigram.db` and the user's
-/// `user_bigram.db`; only the open mode differs.
-pub struct BigramDb {
-    db: Db,
-}
-
-impl BigramDb {
-    /// Opens a `bigram.db` as `HashDB`, as `ngram_kyotodb.cpp:115` does.
-    ///
-    /// A read-only open never creates; a writable open creates when the
-    /// file is absent, which is how a user's first training run makes one.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] when Kyoto Cabinet refuses the open — a missing file
-    /// for a read-only open, a file that is not a hash database, or an
-    /// unsupported library version.
-    pub fn open(path: &Path, read_only: bool) -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Db::open(path, DbType::Hash, read_only, !read_only)?,
-        })
-    }
-
-    /// The four raw bytes libpinyin uses as a key.
-    fn key(prev: u32) -> [u8; 4] {
-        prev.to_ne_bytes()
-    }
-
-    /// The gram stored for `prev`, or `None`.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] from Kyoto Cabinet, or from a chunk that does not
-    /// satisfy the layout invariants ([`SingleGram::decode`]).
-    pub fn get(&self, prev: u32) -> Result<Option<SingleGram>, StoreError> {
-        match self.db.get(&Self::key(prev))? {
-            None => Ok(None),
-            Some(bytes) => SingleGram::decode(&bytes).map(Some),
-        }
-    }
-
-    /// The chunk stored for `prev`, undecoded.
-    ///
-    /// The compatibility gate compares what [`SingleGram::encode`]
-    /// produces against the bytes already in the file; ordinary callers
-    /// want [`Self::get`].
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] from Kyoto Cabinet.
-    pub fn raw(&self, prev: u32) -> Result<Option<Vec<u8>>, StoreError> {
-        Ok(self.db.get(&Self::key(prev))?.map(|buf| buf.to_vec()))
-    }
-
-    /// Stores `gram` under `prev`, in libpinyin's byte layout.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] from Kyoto Cabinet, or [`StoreError::ReadOnly`].
-    pub fn put(&self, prev: u32, gram: &SingleGram) -> Result<(), StoreError> {
-        self.db.set(&Self::key(prev), &gram.encode())
-    }
-
-    /// Removes `prev`'s gram; absent is not an error.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] from Kyoto Cabinet, or [`StoreError::ReadOnly`].
-    pub fn remove(&self, prev: u32) -> Result<(), StoreError> {
-        self.db.remove(&Self::key(prev))
-    }
-
-    /// Number of records, which Kyoto Cabinet tracks rather than counts.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] from Kyoto Cabinet.
-    pub fn len(&self) -> Result<u64, StoreError> {
-        self.db.count()
-    }
-
-    /// Whether the database holds no records.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] from Kyoto Cabinet.
-    pub fn is_empty(&self) -> Result<bool, StoreError> {
-        Ok(self.len()? == 0)
-    }
-
-    /// Flushes to the operating system.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] from Kyoto Cabinet.
-    pub fn sync(&self) -> Result<(), StoreError> {
-        self.db.sync(false)
-    }
-
-    /// Visits every `(prev, gram)` record.
-    ///
-    /// The order is the hash database's, which is not key order and
-    /// carries no contract — callers needing an order impose their own.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] from Kyoto Cabinet, from a malformed key, from a
-    /// chunk that fails [`SingleGram::decode`], or whatever `visit`
-    /// returns.
-    pub fn for_each(
-        &self,
-        visit: &mut dyn FnMut(u32, &SingleGram) -> Result<(), StoreError>,
-    ) -> Result<(), StoreError> {
-        let mut cursor = self.db.cursor()?;
-        if !cursor.jump()? {
-            return Ok(());
-        }
-        while let Some(record) = cursor.next()? {
-            let key: [u8; 4] = record.key().try_into().map_err(|_| {
-                StoreError::Backend(
-                    format!(
-                        "corrupt bigram key: {} bytes, expected the 4 of a phrase_token_t",
-                        record.key().len()
-                    )
-                    .into(),
-                )
-            })?;
-            let gram = SingleGram::decode(record.value())?;
-            visit(u32::from_ne_bytes(key), &gram)?;
-        }
-        Ok(())
-    }
-
-    /// Every `prev` token in the database, ascending.
-    ///
-    /// The hash database has no order of its own, so this imposes one —
-    /// which is what makes a Kyoto Cabinet file and a Berkeley DB file
-    /// comparable record for record.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::for_each`].
-    pub fn tokens(&self) -> Result<Vec<u32>, StoreError> {
-        let mut tokens = BTreeSet::new();
-        self.for_each(&mut |prev, _| {
-            tokens.insert(prev);
-            Ok(())
-        })?;
-        Ok(tokens.into_iter().collect())
-    }
-}
-
-// ── libpinyin-compat punct access ───────────────────────────────────
-//
-// A Kyoto-Cabinet-built libpinyin's `punct.bin` is a TreeDB
-// (`punct_table_kyotodb.cpp:62`: `m_db = new TreeDB` in `attach`, which
-// `pinyin.cpp:440` calls with `ATTACH_READONLY` at init), keyed by the
-// four native-endian bytes of a `phrase_token_t` — `load_entry`'s
-// `(char *) &index` with `sizeof(phrase_token_t)` — and valued by the
-// raw `PunctTableEntry::m_chunk` content: `store_entry` writes
-// `m_chunk.begin() .. m_chunk.size()` with no file-header framing. The
-// chunk format itself is backend-independent and decoded one layer up
-// (`oxpinyin_data::punct`); this reader only walks the raw pairs.
-
-/// The visitor [`PunctDb::for_each`] drives: one `(token, chunk)` row,
-/// the chunk bytes undecoded.
-pub type PunctRow<'a> = dyn FnMut(u32, &[u8]) -> Result<(), StoreError> + 'a;
-
-/// Read-only access to a libpinyin `punct.bin` written by a
-/// Kyoto-Cabinet-built libpinyin (TreeDB).
-pub struct PunctDb {
-    db: Db,
-}
-
-impl PunctDb {
-    /// Opens `path` as a `TreeDB`, read-only, as the pin's
-    /// `ATTACH_READONLY` attach does; never creates.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] when Kyoto Cabinet refuses the open — a missing
-    /// file, a file that is not a tree database, or an unsupported
-    /// library version.
-    pub fn open_read_only(path: &Path) -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Db::open(path, DbType::Tree, true, false)?,
-        })
-    }
-
-    /// Visits every `(token, chunk)` record in stored order, the chunk
-    /// bytes undecoded.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] from Kyoto Cabinet, from a malformed key, or
-    /// whatever `visit` returns.
-    pub fn for_each(&self, visit: &mut PunctRow<'_>) -> Result<(), StoreError> {
-        let mut cursor = self.db.cursor()?;
-        if !cursor.jump()? {
-            return Ok(());
-        }
-        while let Some(record) = cursor.next()? {
-            let key: [u8; 4] = record.key().try_into().map_err(|_| {
-                StoreError::Backend(
-                    format!(
-                        "corrupt punct key: {} bytes, expected the 4 of a phrase_token_t",
-                        record.key().len()
-                    )
-                    .into(),
-                )
-            })?;
-            visit(u32::from_ne_bytes(key), record.value())?;
-        }
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Builds a `punct.bin` in the pin's own physical layout — raw
-    /// 4-byte token keys, raw chunk values — through the internal `Db`
-    /// write path, then reads it back through the public reader.
-    #[test]
-    fn punct_db_walks_a_pin_layout_tree_db() {
-        let path =
-            std::env::temp_dir().join(format!("oxpinyin-punctlitewalk-{}.kct", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-
-        // ucs4_t words of "，" and "。" (U+FF0C, U+3002), each string
-        // NUL-terminated, concatenated — the escape() chunk layout.
-        let comma: Vec<u8> = [0xFF0C_u32, 0]
-            .iter()
-            .flat_map(|w| w.to_le_bytes())
-            .collect();
-        let period_comma: Vec<u8> = [0x3002_u32, 0, 0xFF0C_u32, 0]
-            .iter()
-            .flat_map(|w| w.to_le_bytes())
-            .collect();
-
-        {
-            let writer = Db::open(&path, DbType::Tree, false, true).unwrap();
-            writer.set(&7_u32.to_ne_bytes(), &comma).unwrap();
-            writer.set(&42_u32.to_ne_bytes(), &period_comma).unwrap();
-            writer.set(&0x0100_0001_u32.to_ne_bytes(), &[]).unwrap();
-        }
-
-        let db = PunctDb::open_read_only(&path).unwrap();
-        let mut rows: Vec<(u32, Vec<u8>)> = Vec::new();
-        db.for_each(&mut |token, chunk| {
-            rows.push((token, chunk.to_vec()));
-            Ok(())
-        })
-        .unwrap();
-        // Tree order is key-byte order, not token order.
-        rows.sort_by_key(|(token, _)| *token);
-        assert_eq!(rows.len(), 2, "the empty-value record is not walked");
-        assert_eq!(rows[0], (7_u32, comma));
-        assert_eq!(rows[1], (42_u32, period_comma));
-
-        drop(db);
-        let _ = std::fs::remove_file(&path);
     }
 }

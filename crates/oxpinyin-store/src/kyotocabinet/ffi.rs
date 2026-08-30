@@ -123,12 +123,13 @@ fn no_record_code() -> i32 {
 /// Which Kyoto Cabinet class a path opens as.
 ///
 /// The C API is `PolyDB`, which picks the class from the path — see
-/// [`Db::open`] for why that matters so much here.
+/// [`Db::open`] for why that matters so much here. The store's peer
+/// backend opens `TreeDB` for ordered, ranged access; the enum is kept
+/// as an enum so a caller could not open the wrong class by handing a
+/// bare suffix string.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DbType {
-    /// `HashDB`, which libpinyin uses for the n-grams.
-    Hash,
-    /// `TreeDB`, which libpinyin uses for the phrase and chewing tables.
+    /// `TreeDB`, ordered by the record comparator.
     Tree,
 }
 
@@ -136,7 +137,6 @@ impl DbType {
     /// The `#type=` value `PolyDB` recognises for this class.
     const fn tuning(self) -> &'static str {
         match self {
-            Self::Hash => "kch",
             Self::Tree => "kct",
         }
     }
@@ -447,16 +447,6 @@ impl Db {
         Ok(())
     }
 
-    /// Number of records, which Kyoto Cabinet tracks rather than counts.
-    pub(crate) fn count(&self) -> Result<u64, StoreError> {
-        // SAFETY: the handle is live.
-        let count = unsafe { sys::kcdbcount(self.handle) };
-        if count < 0 {
-            return Err(self.error("kcdbcount"));
-        }
-        Ok(count.unsigned_abs())
-    }
-
     /// Opens a cursor, which borrows this database.
     pub(crate) fn cursor(&self) -> Result<Cursor<'_>, StoreError> {
         // SAFETY: the handle is live.
@@ -519,22 +509,8 @@ impl Record {
 }
 
 impl Cursor<'_> {
-    /// Positions at the first record; `Ok(false)` when the database is
-    /// empty. A `false` return is "no record" as well as a genuine failure,
-    /// so — like [`Cursor::next`] — the cursor's own code separates them.
-    pub(crate) fn jump(&mut self) -> Result<bool, StoreError> {
-        // SAFETY: the cursor handle is live.
-        if unsafe { sys::kccurjump(self.handle) } != 0 {
-            return Ok(true);
-        }
-        self.positioning_outcome("kccurjump")
-    }
-
     /// Positions at the smallest key at or after `key`; `Ok(false)` when
     /// there is none.
-    ///
-    /// Meaningful only on a `TreeDB` — a hash database has no order, and
-    /// this backend never asks one for a range.
     pub(crate) fn jump_to(&mut self, key: &[u8]) -> Result<bool, StoreError> {
         // SAFETY: the cursor handle is live and `key` outlives the call.
         let ok =

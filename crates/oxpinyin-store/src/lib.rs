@@ -3,16 +3,17 @@
 //! This crate defines an ordered byte-KV interface split into two
 //! capability tiers — [`ReadStore`] (point get, ranged scan, full scan,
 //! emptiness check) and [`WriteStore`] (creation, atomic multi-table
-//! writes, compaction) — and provides one implementation per supported
-//! backend: [`KcStore`] on Kyoto Cabinet (the native default that mirrors
-//! the DBM the reference libpinyin builds against on the primary target
-//! distros), [`TkrzwStore`] on tkrzw and [`LmdbStore`] on LMDB when their
-//! features are enabled, and the always-compiled [`RedbStore`] backed by
-//! redb as the pure-Rust portability fallback (for platforms without the
-//! C libraries and for `--no-default-features --features redb` builds).
-//! Consumers depend on the narrowest tier they need; the concrete backend
-//! is selected by the [`DefaultStore`] alias, resolved at compile time
-//! from the enabled cargo features.
+//! writes, compaction) — and provides four peer implementations behind
+//! it: [`KcStore`] on Kyoto Cabinet, [`RedbStore`] on redb, [`LmdbStore`]
+//! on LMDB, and [`TkrzwStore`] on tkrzw. All four are first-class and
+//! interchangeable: any oxpinyin binary picks exactly one at compile time
+//! via the cargo features and calls it through the same trait surface,
+//! and a table produced by any of them satisfies the same logical
+//! contract as the others. Kyoto Cabinet is the default *selection* (the
+//! feature enabled when no other is named), not a privileged
+//! implementation. Consumers depend on the narrowest tier they need; the
+//! concrete backend the current build resolves to is the [`DefaultStore`]
+//! alias.
 //!
 //! # Key ordering
 //!
@@ -466,35 +467,33 @@ impl WriteTxn for RedbWriteTxn<'_> {
     }
 }
 
-// ── The default backend: compile-time selection, libpinyin's model ──
+// ── The default backend: compile-time selection ───────────────────────
 //
-// libpinyin selects exactly one DBM backend at configure time — `if
-// BERKELEYDB` / `if KYOTOCABINET` / `if TKRZW` in `src/storage/Makefile.am`
-// add one implementation set, and every backend header defines the SAME
-// class names (`PhraseLargeTable3`, `Bigram`, …), so one binary contains
-// one backend and no call site dispatches at runtime. This cfg chain is
-// the Rust equivalent: `DefaultStore` resolves to a single concrete type
-// at compile time, and everything above it is already generic over the
-// store traits.
-//
-// All four backends are equals; the chain order exists only so that
-// cargo's additive feature unification resolves a multi-feature build
-// deterministically (kyotocabinet > tkrzw > lmdb > redb). `redb` is the
-// no-backend-feature fallback — the pure-Rust portability backend for
-// platforms without the C libraries (macOS, Windows) — selected by
-// building with `--no-default-features` (the `redb` marker feature exists
-// so that intent can be spelled on the command line).
+// One backend per oxpinyin binary. The four backend implementations
+// (Kyoto Cabinet, redb, LMDB, tkrzw) are peers behind the store's trait
+// interface, so `DefaultStore` resolves to a single concrete type at
+// compile time and everything above it is already generic over
+// `ReadStore` / `WriteStore`. The cfg chain below is exactly that
+// selection: it picks the enabled backend feature; a multi-feature build
+// resolves deterministically along the chain order (kyotocabinet > tkrzw
+// > lmdb > redb). The chain order is a tie-break for the additive
+// unification, not a hierarchy — Kyoto Cabinet is only the enabled
+// feature that the workspace's default set carries, and any single
+// `--features <backend>` on `--no-default-features` selects that
+// backend's peer implementation instead.
 
-/// The default store backend — Kyoto Cabinet, matching the DBM the
-/// reference libpinyin builds against on the primary target distros.
+/// The default store backend — Kyoto Cabinet, the feature enabled in the
+/// workspace's default set.
 #[cfg(feature = "kyotocabinet")]
 pub type DefaultStore = KcStore;
 
-/// The default store backend — tkrzw, when selected without Kyoto Cabinet.
+/// The default store backend — tkrzw, selected on a build that enables
+/// the `tkrzw` feature alone (without `kyotocabinet`).
 #[cfg(all(feature = "tkrzw", not(feature = "kyotocabinet")))]
 pub type DefaultStore = TkrzwStore;
 
-/// The default store backend — LMDB, when selected alone.
+/// The default store backend — LMDB, selected on a build that enables the
+/// `lmdb` feature alone.
 #[cfg(all(
     feature = "lmdb",
     not(feature = "kyotocabinet"),
@@ -502,8 +501,8 @@ pub type DefaultStore = TkrzwStore;
 ))]
 pub type DefaultStore = LmdbStore;
 
-/// The default store backend — redb, the pure-Rust portability fallback
-/// when no C-backed backend feature is enabled.
+/// The default store backend — redb, selected on a build that enables
+/// neither of the C backends.
 #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb")))]
 pub type DefaultStore = RedbStore;
 
@@ -523,8 +522,7 @@ pub const DEFAULT_STORE_EXT: &str = "tkt";
     not(feature = "tkrzw")
 ))]
 pub const DEFAULT_STORE_EXT: &str = "lmdb";
-/// File extension for [`DefaultStore`]'s native tables (redb, the
-/// pure-Rust portability fallback).
+/// File extension for [`DefaultStore`]'s native tables (redb).
 #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb")))]
 pub const DEFAULT_STORE_EXT: &str = "redb";
 
@@ -543,15 +541,12 @@ pub use lmdb::LmdbStore;
 #[cfg(feature = "tkrzw")]
 mod tkrzw;
 #[cfg(feature = "tkrzw")]
-pub use tkrzw::{TkrzwBigramDb, TkrzwPunctDb, TkrzwStore};
-
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-pub mod single_gram;
+pub use tkrzw::TkrzwStore;
 
 #[cfg(feature = "kyotocabinet")]
 pub mod kyotocabinet;
 #[cfg(feature = "kyotocabinet")]
-pub use kyotocabinet::{BigramDb, KcStore, PunctDb, SingleGram};
+pub use kyotocabinet::KcStore;
 
 // ── error mapping ──────────────────────────────────────────────────
 
@@ -1115,17 +1110,22 @@ mod tests {
 
     // ── Default-backend policy: mechanical invariants ──────────────────
     //
-    // The workspace policy is: KC is the native default, redb is the explicit
-    // pure-Rust portability fallback. These tests catch any accidental slide
-    // back to "redb default" — a plain string check on DEFAULT_STORE_EXT
-    // pinned to the feature the build is running under, plus a compile-time
-    // type-identity check on DefaultStore.
+    // The workspace policy: the four peer backends (KC, redb, LMDB, tkrzw)
+    // are equal implementations behind the store's trait surface; KC is
+    // the default *selection* (the feature enabled by the workspace's
+    // default set), not a privileged one. These tests catch any accidental
+    // slide back to "redb default" (or any other silent reordering) — a
+    // plain string check on `DEFAULT_STORE_EXT` pinned to the feature the
+    // build is running under, plus a compile-time type-identity check on
+    // `DefaultStore`.
 
     #[test]
     fn default_store_ext_matches_the_compiled_backend() {
-        // Under the workspace's default features KC is on, so the extension
-        // is `.kct`. Under `--no-default-features --features redb` it is
-        // `.redb`. The order below mirrors DefaultStore's precedence chain.
+        // Under the workspace's default features KC is on, so the
+        // extension is `.kct`. Each peer selects a different extension:
+        // `.redb`, `.lmdb`, `.tkt`. The order below mirrors
+        // `DefaultStore`'s tie-break chain, so a build that enables
+        // several features still resolves to a single deterministic peer.
         #[cfg(feature = "kyotocabinet")]
         assert_eq!(super::DEFAULT_STORE_EXT, "kct");
         #[cfg(all(feature = "tkrzw", not(feature = "kyotocabinet")))]
@@ -1154,11 +1154,9 @@ mod tests {
     }
 
     /// `DefaultStore` resolves to `KcStore` when the Kyoto Cabinet feature
-    /// is enabled: the workspace default. The precedence
-    /// (kyotocabinet > tkrzw > lmdb > redb) is stated on
-    /// `oxpinyin_store::DefaultStore`, and the check below is a compile-time
-    /// type identity, so a silent flip elsewhere in the cfg chain would
-    /// fail to build rather than pass silently.
+    /// is enabled — the workspace's default selection. This is a
+    /// compile-time type identity, so a silent flip in the cfg chain
+    /// would fail to build rather than pass silently.
     #[cfg(feature = "kyotocabinet")]
     #[test]
     fn default_store_is_kc_when_kyotocabinet_is_on() {
@@ -1177,7 +1175,8 @@ mod tests {
     }
 
     /// With every C-backend feature off, `DefaultStore` must resolve to
-    /// `RedbStore` — the explicit pure-Rust portability fallback.
+    /// `RedbStore` — one of the four peer backends, selected by the
+    /// bare `--no-default-features` build.
     #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb")))]
     #[test]
     fn default_store_is_redb_under_no_backend_features() {

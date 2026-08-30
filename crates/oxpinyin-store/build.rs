@@ -1,10 +1,12 @@
 //! Generates the C backends' bindings.
 //!
-//! Kyoto Cabinet is the DEFAULT backend, so a normal build runs bindgen
-//! over `kclangc.h` and links the system libkyotocabinet. With
-//! `--no-default-features` (the redb pure-Rust portability fallback) —
-//! and with no C backend feature enabled — this script does nothing: no
-//! bindgen, no extra library.
+//! Kyoto Cabinet is the workspace's default selected backend, so a normal
+//! build runs bindgen over `kclangc.h` and links the system
+//! libkyotocabinet. With `--no-default-features` — and with no C backend
+//! feature enabled — this script does nothing: no bindgen, no extra
+//! library. Selecting a peer backend explicitly
+//! (`--features {redb|lmdb|tkrzw}`) skips the C-binding step for the
+//! ones it does not build.
 //!
 //! * `kyotocabinet` — the Kyoto Cabinet C API (`kclangc.h`), on by default.
 //! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`).

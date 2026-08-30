@@ -136,15 +136,15 @@ any install a consumer will configure against. `Cargo.toml` carries
 it (hence the overwrite), but a future cargo-c that honours it would drop
 the redundant first write.
 
-**The `database_format` caveat.** build.rs sets it to the active backend
-of `oxpinyin-capi`, mirroring `oxpinyin_store::DefaultStore` — `KyotoCabinet`
-by default (the DBM the reference libpinyin builds against on the primary
-target distros), `Tkrzw` / `LMDB` when the corresponding backend feature is
-selected, and `redb` under `--no-default-features --features redb` (the
-pure-Rust portability fallback). A packager shipping data in a specific
-engine's format who wants to override that mapping sets
-`LIBPINYIN_DATABASE_FORMAT=<name>` at build time; otherwise the variable
-reads whatever backend the drop-in was compiled with.
+**The `database_format` caveat.** build.rs sets it to the active peer
+backend of `oxpinyin-capi`, mirroring `oxpinyin_store::DefaultStore` —
+`KyotoCabinet` under the default features (KC is the workspace's default
+selection), and `Tkrzw` / `LMDB` / `redb` when the corresponding peer
+feature is selected via `--no-default-features --features <peer>`. A
+packager shipping data in a specific engine's format who wants to
+override that mapping sets `LIBPINYIN_DATABASE_FORMAT=<name>` at build
+time; otherwise the variable reads whichever peer the library was
+compiled against.
 
 **Gate.** After `tools/packaging/install.sh --prefix=$P` (with
 `PKG_CONFIG_PATH=$P/lib/pkgconfig`):

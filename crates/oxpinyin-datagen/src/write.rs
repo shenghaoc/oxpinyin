@@ -20,35 +20,36 @@ pub const TABLE: &str = "data";
 
 /// A storage backend with a native producer.
 ///
-/// The native default is [`Self::KyotoCabinet`] — it mirrors
-/// `oxpinyin_store::DefaultStore` under the workspace's default feature
-/// set. [`Self::Redb`] is the pure-Rust portability producer, always
-/// compiled so that `--no-default-features --features redb` builds still
-/// have one available producer.
+/// The four variants (Kyoto Cabinet, redb, LMDB, tkrzw) are peer
+/// producers behind the same `WriteStore` trait — the same compiled row
+/// stream reads back identically under each. [`Self::DEFAULT`] is
+/// [`Self::KyotoCabinet`], matching `oxpinyin_store::DefaultStore` under
+/// the workspace's default feature set; it names the selected backend,
+/// not a privileged implementation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Backend {
-    /// redb — the pure-Rust portability backend (`.redb` files); always
-    /// compiled so that a no-C-backend build still has a producer.
+    /// redb (`.redb` files). Always compiled; select it explicitly with
+    /// `--no-default-features --features redb`.
     Redb,
     /// LMDB, single-file environments (`.lmdb` files). Requires the `lmdb`
     /// cargo feature.
     Lmdb,
     /// Tkrzw TreeDBM (`.tkt` files). Requires the `tkrzw` cargo feature.
     Tkrzw,
-    /// Kyoto Cabinet TreeDB (`.kct` files) — the native default that
-    /// matches the DBM the reference libpinyin builds against on the
-    /// primary target distros. Requires the `kyotocabinet` cargo feature
-    /// (on by default).
+    /// Kyoto Cabinet TreeDB (`.kct` files). Requires the `kyotocabinet`
+    /// cargo feature (on by default — Kyoto Cabinet is the workspace's
+    /// default selection).
     KyotoCabinet,
 }
 
 impl Backend {
-    /// The default backend for a normal `oxpinyin-datagen compile` run —
-    /// matches `oxpinyin_store::DefaultStore` under the workspace's
-    /// default feature set. Kept here as an associated constant so the
-    /// binary's `Options::default()` and the workspace runtime cannot
-    /// silently diverge on which backend is "the" default.
+    /// The default selected backend for a normal `oxpinyin-datagen
+    /// compile` run — matches `oxpinyin_store::DefaultStore` under the
+    /// workspace's default feature set. Kept here as an associated
+    /// constant so the binary's `Options::default()` and the workspace
+    /// runtime cannot silently diverge on which peer backend the default
+    /// selection is.
     pub const DEFAULT: Self = Self::KyotoCabinet;
 
     /// Parses a `--backend` argument.

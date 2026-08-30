@@ -148,8 +148,8 @@ class; libchewing `trieloader` precedent) > `scheme`/`codec` > existing
 
 core parser/scheme corpus replay (pure functions) · user codec roundtrip ·
 store tests under `--no-default-features --features redb` (the pure-Rust
-portability backend) · graph/kbest invariants. Not applicable:
-libpinyin/kyotocabinet/tkrzw/LMDB C sides.
+peer backend; Miri covers this one, not the C-backed peers) · graph/kbest
+invariants. Not applicable: libpinyin/kyotocabinet/tkrzw/LMDB C sides.
 
 ## O. Highest-value Kani harnesses
 

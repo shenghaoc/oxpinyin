@@ -205,37 +205,3 @@ fn addon_unigram_totals_stay_none_until_a_library_loads() {
         "the loaded addon library owns items"
     );
 }
-
-/// A libpinyin 2.8.1-style compat directory: the detection markers and
-/// `table.conf`, but no `punct.bin` — 2.8.1 predates the PunctTable.
-/// The drop-in must still initialise, answering every punctuation
-/// lookup with nothing (the same law the container gates exercise
-/// against a real 2.8.1 data dir).
-#[cfg(feature = "kyotocabinet")]
-#[test]
-fn a_281_layout_without_punct_bin_initialises_with_an_empty_punct_table() {
-    let dir = std::env::temp_dir().join(format!("oxpinyin-compat-281-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create compat dir");
-
-    // Detection: a parsable table.conf and a recognised bigram.db.
-    std::fs::write(
-        dir.join("table.conf"),
-        "[libpinyin]\ndatabase format:KyotoCabinet\n",
-    )
-    .expect("write table.conf");
-    // An empty (writable-created) KC hash database carries the magic.
-    let bigram = oxpinyin_store::BigramDb::open(&dir.join("bigram.db"), false)
-        .expect("create empty bigram.db");
-    drop(bigram);
-    // The two tree indexes serve detection only — presence is enough.
-    std::fs::write(dir.join("phrase_index.bin"), b"stub").expect("write");
-    std::fs::write(dir.join("pinyin_index.bin"), b"stub").expect("write");
-    // No punct.bin: 2.8.1 ships none.
-
-    let runtime = Runtime::open(&dir, None).expect("2.8.1 layout initialises");
-    assert!(runtime.dict().punctuations(7).is_empty());
-    assert!(runtime.dict().punctuations(u32::MAX).is_empty());
-
-    let _ = std::fs::remove_dir_all(&dir);
-}

@@ -21,14 +21,11 @@
 #   let 好 decode, commit: the oracle trains 你→好, the engine does not.
 #
 # Env-gated on the pin-built oracle like the train diff
-# (PINYIN_ORACLE_PREFIX, default $HOME/.local/opt/pinyin-oracle). The capi
-# side reads the same physical libpinyin data directory as the oracle
-# (LIVETYPING_SYSTEM, default $ORACLE_DATA — the oracle prefix's
-# lib/libpinyin/data). oxpinyin-runtime's compat layer opens that drop-in
-# directly through its `CompatLayout::detect` marker set (`table.conf` +
-# a recognised `bigram.db`); an oxpinyin-native export (interpolation2.text
-# plus the compiled-in backend's tables such as `.kct` / `.redb`) is also
-# accepted so a pre-built system dir can override. Rounds: LIVETYPING_ROUNDS
+# (PINYIN_ORACLE_PREFIX, default $HOME/.local/opt/pinyin-oracle) and on
+# an oxpinyin-native system directory (LIVETYPING_SYSTEM). The capi side
+# reads that directory through oxpinyin's own peer store backend — Kyoto
+# Cabinet by default (.kct), or one of {redb, lmdb, tkrzw} when the capi
+# was built with the corresponding feature. Rounds: LIVETYPING_ROUNDS
 # (default 3).
 #
 # Exit codes: 0 = identical or skipped; 1 = build/run failure;
@@ -85,45 +82,29 @@ if [[ ! -f "$ORACLE_DATA/bigram.db" ]]; then
     exit 0
 fi
 
-CAPI_SYSTEM="${LIVETYPING_SYSTEM:-$ORACLE_DATA}"
-# Two acceptable shapes for the capi system directory, checked in the same
-# order oxpinyin-runtime does:
-#   1. libpinyin drop-in — the runtime detects it through
-#      `CompatLayout::detect` (crates/oxpinyin-data/src/compat/mod.rs), whose
-#      markers are `table.conf` plus a `bigram.db` with a recognised DBM
-#      magic. This is the default when CAPI_SYSTEM points at $ORACLE_DATA.
-#   2. oxpinyin-native export — interpolation2.text plus the three tables in
-#      the compiled-in backend's format (.kct under the KC default, .redb
-#      under `--no-default-features --features redb`, etc.). All three
-#      tables must share ONE extension: the engine opens every table
-#      through the single compiled-in backend, so a dir mixing extensions
-#      is half-assembled for each backend and would fail mid-run instead of
-#      skipping cleanly here.
-has_all_native_tables() {
+CAPI_SYSTEM="${LIVETYPING_SYSTEM:-}"
+# The tables' extension names the peer backend the capi was compiled
+# against (.kct KC, .redb redb, .lmdb LMDB, .tkt tkrzw). All three tables
+# must share ONE extension: the engine opens every table through the
+# single compiled-in backend, so a dir mixing extensions is
+# half-assembled for each backend and would fail mid-run instead of
+# skipping cleanly here.
+has_all_tables() {
     local ext=$1 t
     for t in pinyin_index phrase_index bigram; do
         [[ -f "$CAPI_SYSTEM/$t.$ext" ]] || return 1
     done
 }
-is_libpinyin_dropin() {
-    # The runtime's compat markers, matched verbatim: `table.conf` (parsable)
-    # and a `bigram.db` whose magic names a DBM the runtime can read.
-    [[ -f "$CAPI_SYSTEM/table.conf" && -f "$CAPI_SYSTEM/bigram.db" ]]
-}
-is_oxpinyin_native() {
-    [[ -f "$CAPI_SYSTEM/interpolation2.text" ]] \
-        && { has_all_native_tables kct || has_all_native_tables redb; }
-}
-if [[ -z "$CAPI_SYSTEM" ]] \
-    || ! { is_libpinyin_dropin || is_oxpinyin_native; }; then
-    echo "SKIP: LIVETYPING_SYSTEM (or the default \$ORACLE_DATA) must name"
-    echo "  either a libpinyin drop-in (table.conf + bigram.db) or an"
-    echo "  oxpinyin-native export (pinyin_index / phrase_index / bigram all"
-    echo "  .kct or all .redb, plus interpolation2.text)."
+if [[ -z "$CAPI_SYSTEM" ]] || ! [[ -f "$CAPI_SYSTEM/interpolation2.text" ]] \
+    || ! { has_all_tables kct || has_all_tables redb || has_all_tables lmdb || has_all_tables tkt; }; then
+    echo "SKIP: LIVETYPING_SYSTEM must name an oxpinyin-native system dir"
+    echo "  (pinyin_index, phrase_index and bigram all in one extension"
+    echo "  matching the capi's compiled backend — .kct / .redb / .lmdb /"
+    echo "  .tkt — plus interpolation2.text)"
     exit 0
 fi
-# The marker check catches half-assembled dirs; it does NOT bind the
-# tables' identity to the oracle pin (a content hash or manifest belongs
+# The four-file presence check catches half-assembled dirs; it does NOT bind
+# the tables' identity to the oracle pin (a content hash or manifest belongs
 # to the parked oracle-provisioning work, where the dir is assembled
 # mechanically instead of by hand).
 

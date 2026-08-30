@@ -5,11 +5,14 @@
 //! `fixtures/w3/` (frozen; no longer regenerated in-tree) per
 //! `docs/findings/data-layer-export.md`.
 //!
-//! # Portability
+//! # Backend selection
 //!
-//! The default backend is Kyoto Cabinet (see `oxpinyin-store`'s
-//! compile-time selection; redb is the pure-Rust portability fallback).  The
-//! committed tables can be read on any platform redb supports.
+//! One peer backend per binary, resolved by `oxpinyin-store`'s
+//! compile-time selection (Kyoto Cabinet is the default; redb, LMDB and
+//! tkrzw are the other peers, each selected with
+//! `--no-default-features --features <peer>`).  The committed fixtures
+//! carry one file per peer's extension so tests can exercise each
+//! independently.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;

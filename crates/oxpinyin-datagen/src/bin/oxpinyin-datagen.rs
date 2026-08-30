@@ -39,10 +39,12 @@ impl Default for Options {
         Self {
             model_dir: None,
             out_dir: None,
-            // Native default from `Backend::DEFAULT` (Kyoto Cabinet),
+            // Default selection from `Backend::DEFAULT` (Kyoto Cabinet),
             // which mirrors `oxpinyin_store::DefaultStore` under the
-            // workspace's default feature set. Redb is reachable through
-            // `--no-default-features --features redb` plus `--backend redb`.
+            // workspace's default feature set. Each of the peer backends
+            // (redb, lmdb, tkrzw) is reachable through the corresponding
+            // `--no-default-features --features <backend>` build plus
+            // `--backend <backend>` at the CLI.
             backend: Backend::DEFAULT,
             mini: false,
             tables: Tables::default(),

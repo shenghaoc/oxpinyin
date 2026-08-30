@@ -23,7 +23,7 @@ layer that encoded them.
 
 All four backends satisfy exactly this rule:
 
-- **redb** (the pure-Rust portability fallback, `--no-default-features`).
+- **redb** (the pure-Rust peer backend; `--no-default-features --features redb`).
   The store uses `TableDefinition<&[u8], &[u8]>`. redb's
   `Key for &[u8]` is `data1.cmp(data2)` — plain lexicographic byte compare
   (`redb-4.1.0/src/types.rs:347`). (redb's *typed* integer keys are a

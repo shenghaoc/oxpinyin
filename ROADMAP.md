@@ -74,14 +74,20 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
 
 ### Workstream notes (recorded as decisions settle)
 
-- **Kyoto Cabinet is the default backend** (2026-08-29), replacing redb —
-  matching the DBM the reference libpinyin builds against on the primary
-  target distros. Selection is compile-time (`DefaultStore`, precedence
-  kyotocabinet > tkrzw > lmdb > redb), mirroring libpinyin's own
-  one-backend-per-binary `--with-dbm` model. redb remains fully supported
-  as the pure-Rust portability fallback (`--no-default-features`;
-  macOS/Windows). Native table files carry the backend's extension
-  (`.kct`/`.tkt`/`.lmdb`/`.redb`).
+- **Kyoto Cabinet is the default selected backend** (2026-08-29). The four
+  supported oxpinyin store backends — Kyoto Cabinet, redb, LMDB, tkrzw —
+  are peer implementations behind one `ReadStore`/`WriteStore` trait
+  surface, and any single build picks one at compile time
+  (`DefaultStore`; chain kyotocabinet > tkrzw > lmdb > redb is a
+  tie-break for cargo's additive feature unification, not a hierarchy).
+  Kyoto Cabinet is the feature enabled in the workspace's default set;
+  the other three are selected explicitly with `--no-default-features
+  --features {redb|lmdb|tkrzw}`. Native table files carry the peer's
+  extension (`.kct`/`.tkt`/`.lmdb`/`.redb`). Switching backends is a
+  storage-format transition — the runtime does not transparently open
+  one backend's files with another, and old backend-specific user data
+  is not carried across the switch. (This matches the model
+  distributions use for libpinyin's own backend transitions.)
 
 - **W15 is the data pipeline inversion.** Runtime tables are compiled
   natively from the canonical pinned `model20` archive for every storage

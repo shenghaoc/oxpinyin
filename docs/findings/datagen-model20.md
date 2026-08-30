@@ -127,10 +127,10 @@ cargo test -p pinyin-oracle --test sentence_surface_parity -- --nocapture
 
 | Source | Backend | Producer | Output | Oracle comparison |
 |---|---|---|---|---|
-| model20 | Kyoto Cabinet | `oxpinyin-datagen compile --backend kyotocabinet` (needs `--features kyotocabinet`; the workspace-default sweep compiles it in) | `*.kct` (engine's DEFAULT backend; the full runtime path) | libpinyin, via proven-identical tables |
-| model20 | redb | `oxpinyin-datagen compile --backend redb` | `*.redb` (the pure-Rust portability fallback, `--no-default-features`; always compiled) | libpinyin, behavioral |
-| model20 | LMDB | `oxpinyin-datagen compile --backend lmdb` | `*.lmdb` | libpinyin, via proven-identical tables |
-| model20 | Tkrzw | `oxpinyin-datagen compile --backend tkrzw` | `*.tkt` | libpinyin, via proven-identical tables |
+| model20 | Kyoto Cabinet | `oxpinyin-datagen compile --backend kyotocabinet` (the default selection: needs `--features kyotocabinet`, which the workspace-default sweep compiles in) | `*.kct` | libpinyin, via proven-identical tables |
+| model20 | redb | `oxpinyin-datagen compile --backend redb` (`--no-default-features --features redb`) | `*.redb` | libpinyin, behavioral |
+| model20 | LMDB | `oxpinyin-datagen compile --backend lmdb` (`--no-default-features --features lmdb`) | `*.lmdb` | libpinyin, via proven-identical tables |
+| model20 | Tkrzw | `oxpinyin-datagen compile --backend tkrzw` (`--no-default-features --features tkrzw`) | `*.tkt` | libpinyin, via proven-identical tables |
 
 The non-redb rows are proven at the store level: `cross_backend` reads
 back the full key/value stream through each backend's own store reader
