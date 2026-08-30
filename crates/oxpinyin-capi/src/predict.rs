@@ -7,12 +7,14 @@
 
 use std::collections::HashSet;
 use std::ffi::CString;
+use std::os::raw::c_char;
 
 use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::UserStore;
 
-use crate::state::{CapiCandidate, CapiInstance, SharedDict, SharedLm};
-use crate::types::lookup_candidate_type_t;
+use crate::ffi::{cstr_to_string, ffi_catch};
+use crate::state::{CapiCandidate, CapiInstance, SharedDict, SharedLm, instance_mut};
+use crate::types::{PinyinInstance, lookup_candidate_type_t};
 
 /// Minimum user-bigram count for a predicted successor.
 ///
@@ -80,7 +82,36 @@ pub(crate) fn guess_predicted(inst: &mut CapiInstance, prefix: &str) -> bool {
     true
 }
 
-/// Phrase prediction plus the punctuation prefix (`pinyin.cpp:2454-2498`).
+/// Guess predicted candidates for a prefix (plain variant).
+///
+/// # C signature
+/// ```c
+/// bool pinyin_guess_predicted_candidates(pinyin_instance_t * instance,
+///                                        const char * prefix);
+/// ```
+///
+/// The same pipeline `_with_punctuations` wraps, without the punctuation
+/// prepend — and with the real retval: `false` when the prefix matches
+/// no phrase-table suffix (`pinyin.cpp:2411-2452`; the `_with_punctuations`
+/// entry discards this retval and always answers `true`).
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_guess_predicted_candidates(
+    instance: *mut PinyinInstance,
+    prefix: *const c_char,
+) -> bool {
+    if instance.is_null() {
+        return false;
+    }
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_mut(instance) };
+        // SAFETY: Null-checked above.
+        let prefix = unsafe { cstr_to_string(prefix) };
+        guess_predicted(inst, &prefix)
+    })
+}
+
 ///
 /// Upstream always returns `true` after the prepend, even when the prefix
 /// matched no phrase-table suffix.
@@ -122,7 +153,11 @@ fn prepend_punctuations(inst: &mut CapiInstance, prefixes: &[u32]) {
     inst.candidates.extend(rest);
 }
 
-fn compute_prefixes(dict: &SharedDict, user: Option<&UserStore>, prefix: &str) -> Vec<u32> {
+pub(crate) fn compute_prefixes(
+    dict: &SharedDict,
+    user: Option<&UserStore>,
+    prefix: &str,
+) -> Vec<u32> {
     let chars: Vec<char> = prefix.chars().collect();
     if chars.is_empty() {
         return Vec::new();

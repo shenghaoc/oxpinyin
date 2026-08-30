@@ -64,6 +64,7 @@ pub mod fuzz_api {
     };
 }
 mod keys;
+mod phrase;
 mod state;
 mod types;
 
@@ -88,7 +89,7 @@ pub use oxpinyin_user::{
 };
 pub use state::ExportedBigramRow;
 pub use types::{ChewingKey, ChewingKeyRest, GChar, LookupCandidate, PinyinInstance};
-pub use types::{ImportIterator, PinyinContext, lookup_candidate_type_t};
+pub use types::{ImportIterator, PhraseTokenT, PinyinContext, lookup_candidate_type_t};
 
 use std::os::raw::{c_char, c_int};
 use types::{GUint, PinyinOptionT};
@@ -361,12 +362,44 @@ pub fn pinyin_guess_candidates(
 pub fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     sentence::pinyin_guess_sentence(instance)
 }
+/// In-process wrapper for the `pinyin_guess_predicted_candidates` ABI symbol (see the C header).
+pub fn pinyin_guess_predicted_candidates(
+    instance: *mut PinyinInstance,
+    prefix: *const c_char,
+) -> bool {
+    predict::pinyin_guess_predicted_candidates(instance, prefix)
+}
+/// In-process wrapper for the `pinyin_guess_sentence_with_prefix` ABI symbol (see the C header).
+pub fn pinyin_guess_sentence_with_prefix(
+    instance: *mut PinyinInstance,
+    prefix: *const c_char,
+) -> bool {
+    sentence::pinyin_guess_sentence_with_prefix(instance, prefix)
+}
 /// In-process wrapper for the `pinyin_guess_predicted_candidates_with_punctuations` ABI symbol (see the C header).
 pub fn pinyin_guess_predicted_candidates_with_punctuations(
     instance: *mut PinyinInstance,
     prefix: *const c_char,
 ) -> bool {
     sentence::pinyin_guess_predicted_candidates_with_punctuations(instance, prefix)
+}
+
+// ── phrase ─────────────────────────────────────────────
+/// In-process wrapper for the `pinyin_get_n_phrase` ABI symbol (see the C header).
+pub fn pinyin_get_n_phrase(instance: *mut PinyinInstance, num: *mut GUint) -> bool {
+    phrase::pinyin_get_n_phrase(instance, num)
+}
+/// In-process wrapper for the `pinyin_get_phrase_token` ABI symbol (see the C header).
+pub fn pinyin_get_phrase_token(
+    instance: *mut PinyinInstance,
+    index: GUint,
+    token: *mut PhraseTokenT,
+) -> bool {
+    phrase::pinyin_get_phrase_token(instance, index, token)
+}
+/// In-process wrapper for the `pinyin_phrase_segment` ABI symbol (see the C header).
+pub fn pinyin_phrase_segment(instance: *mut PinyinInstance, sentence: *const c_char) -> bool {
+    phrase::pinyin_phrase_segment(instance, sentence)
 }
 
 // ── text ─────────────────────────────────────────────
