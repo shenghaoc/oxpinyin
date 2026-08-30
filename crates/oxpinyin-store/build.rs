@@ -32,12 +32,61 @@ fn pkg_config(flag: &str, package: &str) -> Option<Vec<String>> {
     if !output.status.success() {
         return None;
     }
-    Some(
-        String::from_utf8_lossy(&output.stdout)
-            .split_whitespace()
-            .map(str::to_owned)
-            .collect(),
-    )
+    Some(split_shell_words(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// Splits pkg-config output into flags the way a shell would read it:
+/// whitespace separates words, a backslash escapes the next character,
+/// and quotes group — so a pkg-config-escaped path containing spaces
+/// (`-I/opt/my\ headers`) stays one flag instead of being cut in two.
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+fn split_shell_words(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut has_word = false;
+    for c in line.chars() {
+        if escaped {
+            word.push(c);
+            escaped = false;
+            has_word = true;
+            continue;
+        }
+        match quote {
+            Some('\'') if c != '\'' => word.push(c),
+            Some(q) if c == q => quote = None,
+            Some(_) => {
+                if c == '\\' {
+                    escaped = true;
+                } else {
+                    word.push(c);
+                }
+                has_word = true;
+            }
+            None => match c {
+                '\\' => escaped = true,
+                '"' | '\'' => {
+                    quote = Some(c);
+                    has_word = true;
+                }
+                c if c.is_whitespace() => {
+                    if has_word {
+                        words.push(std::mem::take(&mut word));
+                        has_word = false;
+                    }
+                }
+                c => {
+                    word.push(c);
+                    has_word = true;
+                }
+            },
+        }
+    }
+    if has_word {
+        words.push(word);
+    }
+    words
 }
 
 /// Kyoto Cabinet bindings.
