@@ -150,7 +150,7 @@ impl Drop for StandaloneLease {
         };
         let mut stores = registry
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         stores.remove(&self.key);
     }
 }
@@ -169,7 +169,7 @@ pub(crate) fn acquire_standalone(path: &Path) -> Option<StandaloneLease> {
     let mut stores = OPEN_STANDALONE_STORES
         .get_or_init(|| Mutex::new(HashSet::new()))
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if stores.insert(key.clone()) {
         Some(StandaloneLease { key })
     } else {
@@ -181,7 +181,7 @@ pub(crate) fn lock_registry() -> MutexGuard<'static, StoreRegistry> {
     OPEN_STORES
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn drain() {
@@ -193,7 +193,7 @@ fn drain() {
     // is not reentrant; a drop-under-lock would deadlock here.
     let mut reg = registry
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     reg.retain(|_, handle| handle.strong_count() > 0);
     if reg.is_empty() {
         reg.shrink_to_fit();
@@ -208,7 +208,7 @@ pub(crate) fn contains_key(path: &Path) -> bool {
     };
     let reg = registry
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     reg.contains_key(&key)
 }
 

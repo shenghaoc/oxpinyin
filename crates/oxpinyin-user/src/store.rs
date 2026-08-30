@@ -203,8 +203,8 @@ fn collect_pronunciations_from_store(
     let mut out = Vec::new();
     store.range(
         PRONUNCIATION,
-        lo.as_ref().map(|v| v.as_slice()),
-        hi.as_ref().map(|v| v.as_slice()),
+        lo.as_ref().map(std::vec::Vec::as_slice),
+        hi.as_ref().map(std::vec::Vec::as_slice),
         &mut |key, value| {
             let (_, key_bytes) = codec::decode_token_bytes(key)
                 .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
@@ -228,8 +228,8 @@ fn collect_pronunciations_from_txn(
     let mut out = Vec::new();
     txn.range(
         PRONUNCIATION,
-        lo.as_ref().map(|v| v.as_slice()),
-        hi.as_ref().map(|v| v.as_slice()),
+        lo.as_ref().map(std::vec::Vec::as_slice),
+        hi.as_ref().map(std::vec::Vec::as_slice),
         &mut |key, value| {
             let (_, key_bytes) = codec::decode_token_bytes(key)
                 .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
@@ -312,14 +312,14 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.inner
             .db
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn count_cache(&self) -> MutexGuard<'_, Option<CountCache>> {
         self.inner
             .count_cache
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn write_generation(&self) -> u64 {
@@ -1141,7 +1141,7 @@ impl GenericUserStore<DefaultStore> {
     pub fn open(path: &Path) -> Result<Self, UserStoreError> {
         let key = registry::registry_key(path);
         let mut reg = registry::lock_registry();
-        if let Some(inner) = reg.get(&key).and_then(|handle| handle.upgrade()) {
+        if let Some(inner) = reg.get(&key).and_then(std::sync::Weak::upgrade) {
             return Ok(Self {
                 inner,
                 _standalone_lease: None,
