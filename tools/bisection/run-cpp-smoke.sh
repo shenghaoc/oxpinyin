@@ -23,22 +23,38 @@ if [ ! -f "$CAPI_SO" ]; then
 fi
 
 CAPI_DATA="$REPO_ROOT/fixtures/w3"
-# The tables' extension names the backend the capi was compiled with (this
-# gate builds the default: redb `.redb`). fixtures/w3 carries every
-# committed set; copy whichever one is complete, preferring the default
-# backend's.
-SYS_EXT=""
-for ext in redb tkt lmdb; do
-    if [ -f "$CAPI_DATA/pinyin_index.$ext" ] \
-        && [ -f "$CAPI_DATA/phrase_index.$ext" ] \
-        && [ -f "$CAPI_DATA/bigram.$ext" ]; then
-        SYS_EXT=$ext
-        break
+# The tables' extension names the backend the capi was compiled with.
+# OXPINYIN_CAPI_BACKEND_EXT pins it for capi builds that select a backend
+# explicitly (e.g. --features tkrzw); unset, this gate builds the default
+# (redb) and the extension is detected from the committed fixture sets.
+if [ -n "${OXPINYIN_CAPI_BACKEND_EXT:-}" ]; then
+    case "$OXPINYIN_CAPI_BACKEND_EXT" in
+        redb|tkt|lmdb) SYS_EXT=$OXPINYIN_CAPI_BACKEND_EXT ;;
+        *)
+            echo "fatal: OXPINYIN_CAPI_BACKEND_EXT='$OXPINYIN_CAPI_BACKEND_EXT' is not one of: redb tkt lmdb"
+            exit 1
+            ;;
+    esac
+    for t in pinyin_index phrase_index bigram; do
+        if [ ! -f "$CAPI_DATA/$t.$SYS_EXT" ]; then
+            echo "fatal: no $t.$SYS_EXT under $CAPI_DATA for the requested backend"
+            exit 1
+        fi
+    done
+else
+    SYS_EXT=""
+    for ext in redb tkt lmdb; do
+        if [ -f "$CAPI_DATA/pinyin_index.$ext" ] \
+            && [ -f "$CAPI_DATA/phrase_index.$ext" ] \
+            && [ -f "$CAPI_DATA/bigram.$ext" ]; then
+            SYS_EXT=$ext
+            break
+        fi
+    done
+    if [ -z "$SYS_EXT" ]; then
+        echo "fatal: no complete three-table fixture set at $CAPI_DATA and no OXPINYIN_CAPI_BACKEND_EXT override"
+        exit 1
     fi
-done
-if [ -z "$SYS_EXT" ]; then
-    echo "fatal: no complete three-table fixture set at $CAPI_DATA"
-    exit 1
 fi
 
 BUILD_DIR="$(mktemp -d)"
