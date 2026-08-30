@@ -23,8 +23,8 @@ use std::time::{Duration, Instant};
 
 use oxpinyin_core::syllable_initial;
 use oxpinyin_data::{
-    BigramLanguageModel, LookupTable, PunctTable, SystemDictionary, parse_interpolation2,
-    parse_interpolation2_from_reader,
+    BigramLanguageModel, LookupTable, PunctTable, SystemDictionary, default_store_file,
+    parse_interpolation2, parse_interpolation2_from_reader,
 };
 use redb::{ReadableDatabase, ReadableTable};
 
@@ -70,19 +70,19 @@ fn main() {
         }
         "dict" => retain_step("SystemDictionary::open", || {
             SystemDictionary::open(
-                &export.join("pinyin_index.redb"),
-                &export.join("phrase_index.redb"),
+                &export.join(default_store_file("pinyin_index")),
+                &export.join(default_store_file("phrase_index")),
             )
             .expect("dict")
         }),
         "pinyin" => retain_step("LookupTable::open pinyin_index", || {
-            LookupTable::open(&export.join("pinyin_index.redb")).expect("pinyin")
+            LookupTable::open(&export.join(default_store_file("pinyin_index"))).expect("pinyin")
         }),
         "phrase" => retain_step("LookupTable::open phrase_index", || {
-            LookupTable::open(&export.join("phrase_index.redb")).expect("phrase")
+            LookupTable::open(&export.join(default_store_file("phrase_index"))).expect("phrase")
         }),
         "bigram" => retain_step("LookupTable::open bigram", || {
-            LookupTable::open(&export.join("bigram.redb")).expect("bigram")
+            LookupTable::open(&export.join(default_store_file("bigram"))).expect("bigram")
         }),
         "interp" => retain_step("parse_interpolation2", || {
             parse_interpolation2(&interpolation2).expect("interp")
@@ -154,11 +154,11 @@ fn full_capi_state(
     punct: Option<&Path>,
 ) -> (SystemDictionary, BigramLanguageModel, PunctTable) {
     let dict = SystemDictionary::open(
-        &export.join("pinyin_index.redb"),
-        &export.join("phrase_index.redb"),
+        &export.join(default_store_file("pinyin_index")),
+        &export.join(default_store_file("phrase_index")),
     )
     .expect("dict");
-    let mut lm = BigramLanguageModel::open(&export.join("bigram.redb")).expect("lm");
+    let mut lm = BigramLanguageModel::open(&export.join(default_store_file("bigram"))).expect("lm");
     if interpolation2.is_file() {
         lm.set_unigrams_from_interpolation2(interpolation2)
             .expect("interp");
@@ -430,8 +430,10 @@ fn profile_interpolation2(path: &Path, repeats: usize) {
 
 fn profile_dict_derived(export: &Path, repeats: usize) {
     println!("-- SystemDictionary derived maps --");
-    let pinyin = LookupTable::open(&export.join("pinyin_index.redb")).expect("pinyin");
-    let phrase = LookupTable::open(&export.join("phrase_index.redb")).expect("phrase");
+    let pinyin =
+        LookupTable::open(&export.join(default_store_file("pinyin_index"))).expect("pinyin");
+    let phrase =
+        LookupTable::open(&export.join(default_store_file("phrase_index"))).expect("phrase");
 
     let unigrams = median_of(repeats, || {
         let started = Instant::now();
@@ -477,8 +479,8 @@ fn profile_dict_derived(export: &Path, repeats: usize) {
     let open = median_of(repeats, || {
         let started = Instant::now();
         let dict = SystemDictionary::open(
-            &export.join("pinyin_index.redb"),
-            &export.join("phrase_index.redb"),
+            &export.join(default_store_file("pinyin_index")),
+            &export.join(default_store_file("phrase_index")),
         )
         .expect("dict");
         let elapsed = started.elapsed();
@@ -553,13 +555,13 @@ fn cumulative_capi_init(export: &Path, interpolation2: &Path, punct: Option<&Pat
     report("start", &mut prev);
 
     let dict = SystemDictionary::open(
-        &export.join("pinyin_index.redb"),
-        &export.join("phrase_index.redb"),
+        &export.join(default_store_file("pinyin_index")),
+        &export.join(default_store_file("phrase_index")),
     )
     .expect("dict");
     report("SystemDictionary::open", &mut prev);
 
-    let mut lm = BigramLanguageModel::open(&export.join("bigram.redb")).expect("lm");
+    let mut lm = BigramLanguageModel::open(&export.join(default_store_file("bigram"))).expect("lm");
     report("BigramLanguageModel::open (slurp bigram)", &mut prev);
 
     if interpolation2.is_file() {

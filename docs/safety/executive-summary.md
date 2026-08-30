@@ -147,8 +147,9 @@ class; libchewing `trieloader` precedent) > `scheme`/`codec` > existing
 ## N. Highest-value Miri tests
 
 core parser/scheme corpus replay (pure functions) · user codec roundtrip ·
-store default-feature tests (redb is pure Rust) · graph/kbest invariants.
-Not applicable: libpinyin/tkrzw/LMDB C sides.
+store tests under `--no-default-features --features redb` (the pure-Rust
+portability backend) · graph/kbest invariants. Not applicable:
+libpinyin/kyotocabinet/tkrzw/LMDB C sides.
 
 ## O. Highest-value Kani harnesses
 

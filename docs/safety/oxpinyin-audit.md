@@ -117,4 +117,4 @@ unrefactored until Stage 2; oracle/dictool = tooling.
 | user/store persistence | medium (F-5) | integration tests | coverage report priority + cargo-mutants scope |
 | core parser/scheme | low (mature) | proptest + fuzz + parity corpus | expanded corpus soak; mutation score |
 | oracle FFI | low-medium | pinning + differentials | keep; Miri not applicable (C side) |
-| store lmdb/tkrzw | medium (unsafe deps) | feature-gated, off default | geiger inventory; Miri for redb default |
+| store lmdb/tkrzw/kyotocabinet | medium (unsafe deps) | feature-gated; KC is the native default, others explicit | geiger inventory; Miri for the pure-Rust redb backend (the portability fallback) |

@@ -9,9 +9,14 @@ publish = false
 description = "model20 → oxpinyin runtime tables compiler for every storage backend. Never ships."
 
 [features]
-# The tool's backend is chosen per invocation with `--backend`; only the
-# always-compiled redb producer is available by default.
-default = []
+# Kyoto Cabinet is the native default (matching oxpinyin-store) so a plain
+# `cargo run -p oxpinyin-datagen -- compile ...` produces `.kct` tables.
+# redb is always compiled as the pure-Rust portability producer; select it
+# explicitly with `--no-default-features --features redb` (and `--backend
+# redb`). The tool's backend is chosen per invocation with `--backend`;
+# only the producers whose cargo features are enabled are available at
+# runtime.
+default = ["kyotocabinet"]
 # Enable the Kyoto Cabinet producer (`--backend kyotocabinet`); mirrors
 # oxpinyin-store.
 kyotocabinet = ["oxpinyin-store/kyotocabinet"]
@@ -19,6 +24,10 @@ kyotocabinet = ["oxpinyin-store/kyotocabinet"]
 lmdb = ["oxpinyin-store/lmdb"]
 # Enable the Tkrzw producer (`--backend tkrzw`); mirrors oxpinyin-store.
 tkrzw = ["oxpinyin-store/tkrzw"]
+# Marker for the pure-Rust portability producer. redb itself is always
+# compiled as the no-backend-feature fallback; select it with
+# `--no-default-features --features redb`.
+redb = []
 
 [lints]
 workspace = true

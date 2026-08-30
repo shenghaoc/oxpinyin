@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use oxpinyin_data::{BigramLanguageModel, SystemDictionary};
+use oxpinyin_data::{BigramLanguageModel, SystemDictionary, default_store_file};
 use oxpinyin_engine::{Candidate, CandidateKind, EmptyConfigSource, Session, StoragePaths};
 
 /// The concrete port session the measurement drives.
@@ -35,16 +35,18 @@ pub fn repo_root() -> PathBuf {
         .join("..")
 }
 
-/// The exported-table directory, from `PINYIN_EXPORT_DIR` or the default, when
-/// it holds all three redb tables; `None` otherwise (so callers can skip).
+/// The exported-table directory, from `PINYIN_EXPORT_DIR` or the default,
+/// when it holds all three tables in the compiled-in backend's format
+/// (Kyoto Cabinet `.kct` by default; `.redb` under `--no-default-features
+/// --features redb`); `None` otherwise (so callers can skip).
 #[must_use]
 pub fn export_dir() -> Option<PathBuf> {
     let dir = std::env::var_os("PINYIN_EXPORT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new("/tmp/oxpinyin-export").to_path_buf());
-    ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"]
+    ["pinyin_index", "phrase_index", "bigram"]
         .iter()
-        .all(|name| dir.join(name).exists())
+        .all(|stem| dir.join(default_store_file(stem)).exists())
         .then_some(dir)
 }
 
@@ -75,11 +77,11 @@ pub fn open_session_from_env() -> Result<Option<PortSession>, String> {
         Err(error) => return Err(format!("model directory lookup failed: {error}")),
     };
     let dict = SystemDictionary::open(
-        &dir.join("pinyin_index.redb"),
-        &dir.join("phrase_index.redb"),
+        &dir.join(default_store_file("pinyin_index")),
+        &dir.join(default_store_file("phrase_index")),
     )
     .map_err(|error| format!("cannot open SystemDictionary: {error}"))?;
-    let mut lm = BigramLanguageModel::open(&dir.join("bigram.redb"))
+    let mut lm = BigramLanguageModel::open(&dir.join(default_store_file("bigram")))
         .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
     lm.set_unigrams_from_interpolation2(&model_dir.join("interpolation2.text"))
         .map_err(|error| format!("cannot parse interpolation2: {error}"))?;

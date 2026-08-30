@@ -3,10 +3,16 @@
 //! This crate defines an ordered byte-KV interface split into two
 //! capability tiers — [`ReadStore`] (point get, ranged scan, full scan,
 //! emptiness check) and [`WriteStore`] (creation, atomic multi-table
-//! writes, compaction) — and provides a [`RedbStore`] implementation
-//! backed by redb that offers both.  Consumers depend on the narrowest
-//! tier they need; the concrete backend is selected by the
-//! [`DefaultStore`] alias.
+//! writes, compaction) — and provides one implementation per supported
+//! backend: [`KcStore`] on Kyoto Cabinet (the native default that mirrors
+//! the DBM the reference libpinyin builds against on the primary target
+//! distros), [`TkrzwStore`] on tkrzw and [`LmdbStore`] on LMDB when their
+//! features are enabled, and the always-compiled [`RedbStore`] backed by
+//! redb as the pure-Rust portability fallback (for platforms without the
+//! C libraries and for `--no-default-features --features redb` builds).
+//! Consumers depend on the narrowest tier they need; the concrete backend
+//! is selected by the [`DefaultStore`] alias, resolved at compile time
+//! from the enabled cargo features.
 //!
 //! # Key ordering
 //!
@@ -1105,6 +1111,88 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(self.0);
         }
+    }
+
+    // ── Default-backend policy: mechanical invariants ──────────────────
+    //
+    // The workspace policy is: KC is the native default, redb is the explicit
+    // pure-Rust portability fallback. These tests catch any accidental slide
+    // back to "redb default" — a plain string check on DEFAULT_STORE_EXT
+    // pinned to the feature the build is running under, plus a compile-time
+    // type-identity check on DefaultStore.
+
+    #[test]
+    fn default_store_ext_matches_the_compiled_backend() {
+        // Under the workspace's default features KC is on, so the extension
+        // is `.kct`. Under `--no-default-features --features redb` it is
+        // `.redb`. The order below mirrors DefaultStore's precedence chain.
+        #[cfg(feature = "kyotocabinet")]
+        assert_eq!(super::DEFAULT_STORE_EXT, "kct");
+        #[cfg(all(feature = "tkrzw", not(feature = "kyotocabinet")))]
+        assert_eq!(super::DEFAULT_STORE_EXT, "tkt");
+        #[cfg(all(
+            feature = "lmdb",
+            not(feature = "kyotocabinet"),
+            not(feature = "tkrzw")
+        ))]
+        assert_eq!(super::DEFAULT_STORE_EXT, "lmdb");
+        #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb")))]
+        assert_eq!(super::DEFAULT_STORE_EXT, "redb");
+    }
+
+    #[test]
+    fn default_store_file_composes_stem_and_extension() {
+        let native = super::default_store_file("phrase_index");
+        assert!(
+            native.starts_with("phrase_index."),
+            "the stem must be preserved verbatim: got {native:?}"
+        );
+        let dot = native
+            .find('.')
+            .expect("the composed name has an extension");
+        assert_eq!(&native[dot + 1..], super::DEFAULT_STORE_EXT);
+    }
+
+    /// `DefaultStore` resolves to `KcStore` when the Kyoto Cabinet feature
+    /// is enabled: the workspace default. The precedence
+    /// (kyotocabinet > tkrzw > lmdb > redb) is stated on
+    /// `oxpinyin_store::DefaultStore`, and the check below is a compile-time
+    /// type identity, so a silent flip elsewhere in the cfg chain would
+    /// fail to build rather than pass silently.
+    #[cfg(feature = "kyotocabinet")]
+    #[test]
+    fn default_store_is_kc_when_kyotocabinet_is_on() {
+        fn assert_type_eq<T>()
+        where
+            T: 'static,
+            super::DefaultStore: 'static,
+        {
+            assert_eq!(
+                std::any::TypeId::of::<super::DefaultStore>(),
+                std::any::TypeId::of::<T>(),
+                "DefaultStore must resolve to the expected concrete backend"
+            );
+        }
+        assert_type_eq::<super::KcStore>();
+    }
+
+    /// With every C-backend feature off, `DefaultStore` must resolve to
+    /// `RedbStore` — the explicit pure-Rust portability fallback.
+    #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb")))]
+    #[test]
+    fn default_store_is_redb_under_no_backend_features() {
+        fn assert_type_eq<T>()
+        where
+            T: 'static,
+            super::DefaultStore: 'static,
+        {
+            assert_eq!(
+                std::any::TypeId::of::<super::DefaultStore>(),
+                std::any::TypeId::of::<T>(),
+                "DefaultStore must resolve to the expected concrete backend"
+            );
+        }
+        assert_type_eq::<super::RedbStore>();
     }
 
     #[test]
