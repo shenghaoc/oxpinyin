@@ -27,6 +27,22 @@ pub unsafe fn cstr_to_string(ptr: *const c_char) -> String {
         .to_owned()
 }
 
+/// Converts a nullable C string to an owned [`String`], `None` unless the
+/// bytes are valid UTF-8 — the shape `pinyin_phrase_segment` needs,
+/// because the pin's `g_return_val_if_fail(num_of_chars == ucs4_len,
+/// FALSE)` gate (`pinyin.cpp:1450-1452`) rejects exactly the inputs a
+/// lossy conversion would paper over.
+pub(crate) fn cstr_to_strict(ptr: *const c_char) -> Option<String> {
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: Caller guarantees `ptr` is null-terminated when non-null.
+    unsafe { CStr::from_ptr(ptr) }
+        .to_str()
+        .ok()
+        .map(str::to_owned)
+}
+
 /// Safe wrapper for C ABI entry points, which own the null/invalid-UTF-8
 /// contract at the boundary and never let those inputs unwind.
 pub(crate) fn cstr_to_owned_lossy(ptr: *const c_char) -> String {
