@@ -1,10 +1,58 @@
+# Path gates: CI runs only when code or a direct input of one of its jobs
+# changes, so docs-only changes skip lint, test, python, deny and fuzz
+# entirely (mirrors the path gate in store-backends.yml).
+#
+# Why each path is gated:
+#   - crates/** — any code change
+#   - fuzz/** — the fuzz job uses fuzz/Cargo.toml and fuzz/src/
+#   - Cargo.toml / Cargo.lock — workspace manifest and lockfile: a
+#     dependency or feature change reaches lint, test, python and deny
+#   - deny.toml — the deny job reads this directly
+#   - rust-toolchain.toml — a toolchain change affects every job
+#   - .github/workflows/ci.yml — the workflow file itself
+#
+# Deliberately NOT gated (changes to these skip CI):
+#   - docs/** — findings, design docs, ROADMAP: no code
+#   - tools/** — bisection scripts, oracle tools: no compiled code
+#   - reference/** — memory safety docs: no code
+#   - .kiro/** — specs and steering: no code
+#   - *.md at the root — README, CHANGELOG: no code
+#   - .github/workflows/store-backends.yml — store-backends has its own
+#     trigger and its own path gate; ci.yml doesn't need to re-gate on it
+#
+# Branch-protection interaction: on a path-filtered run this workflow
+# never starts and reports no status, so a required status check pointed
+# at a job here would stay "Pending" ("Waiting for status to be
+# reported") and block the PR — GitHub has no setting to waive that;
+# only checks that actually report a status can pass. main currently
+# has no branch protection and no required checks, so nothing blocks
+# docs-only changes today. If required checks are ever added, require
+# an aggregate check from an always-on workflow, never jobs in this
+# path-gated one.
+
 name: CI
 
 on:
   push:
     branches: [main]
+    paths:
+      - crates/**
+      - fuzz/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - deny.toml
+      - .github/workflows/ci.yml
   pull_request:
     branches: [main]
+    paths:
+      - crates/**
+      - fuzz/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - deny.toml
+      - .github/workflows/ci.yml
 
 permissions:
   contents: read
