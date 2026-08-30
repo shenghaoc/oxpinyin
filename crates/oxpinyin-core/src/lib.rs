@@ -144,6 +144,22 @@ pub trait Dictionary {
         Ok(true)
     }
 
+    /// The phrase tokens stored for an exact UTF-8 `text`, the probe
+    /// `pinyin_phrase_segment`'s span DP looks up per character span
+    /// (`PhraseLookup::get_best_match` searches the phrase table per
+    /// span; `phrase_lookup.cpp:135-157` at the pin). Empty for every
+    /// existing implementor except the table-backed dictionaries, which
+    /// answer from their reverse text maps in stored order (system seam
+    /// first, then the user seam — the same merge order as
+    /// [`Dictionary::lookup`]).
+    ///
+    /// Defaulted to empty so existing implementors compile unchanged
+    /// (`docs/findings/core-trait-seam.md`: the seam grows by defaulted
+    /// methods only).
+    fn tokens_for_text(&self, _text: &str) -> Vec<PhraseToken> {
+        Vec::new()
+    }
+
     /// Addon-facade lookup pass, empty for every existing implementor.
     ///
     /// W11: the default facade stays on [`Dictionary::lookup`]; the addon
@@ -214,6 +230,10 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
         (**self).phrase_prefix_exists(syllables)
+    }
+
+    fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
+        (**self).tokens_for_text(text)
     }
 
     fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
