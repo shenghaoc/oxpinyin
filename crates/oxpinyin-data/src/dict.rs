@@ -126,35 +126,6 @@ impl SystemDictionary {
         })
     }
 
-    /// Builds the dictionary from rows a compat loader synthesized (the
-    /// libpinyin drop-in path, `crate::compat`): the same derivation the
-    /// native loader runs, over the same row shapes, so every query above
-    /// behaves identically whichever loader produced the model.
-    #[must_use]
-    pub fn from_compat_rows(
-        phrase_rows: Vec<(u32, String)>,
-        pinyin_rows: Vec<(String, Vec<(u32, u32)>)>,
-    ) -> Self {
-        let mut phrase_index: PhraseIndex = phrase_rows
-            .into_iter()
-            .map(|(token, text)| (LeByteKey::new(token), CompactString::from(text)))
-            .collect();
-        table::ensure_sorted_unique(&mut phrase_index);
-        let rows: PinyinRows = pinyin_rows
-            .into_iter()
-            .map(|(spelling, records)| (Box::from(spelling.as_str()), records))
-            .collect();
-        let derived = derive_pinyin(rows, &phrase_index);
-        Self {
-            pinyin_index: derived.pinyin_index,
-            phrase_index,
-            unigrams: derived.unigrams,
-            unigram_total: derived.unigram_total,
-            initial_keys: derived.initial_keys,
-            text_tokens: OnceLock::new(),
-        }
-    }
-
     /// Number of pinyin keys in the index.
     pub fn key_count(&self) -> Result<u64, DictError> {
         Ok(self.pinyin_index.rows.len() as u64)
@@ -405,8 +376,7 @@ type PinyinRows = Vec<(Box<str>, Vec<(u32, u32)>)>;
 
 /// The shared derivation over staged rows: sort/dedup, aggregate the
 /// unigram counts, project the initial keys, and resolve every record into
-/// the entry arena. Both the native table loader and the libpinyin compat
-/// loader feed this, so the derived model is identical by construction.
+/// the entry arena.
 fn derive_pinyin(mut rows: PinyinRows, phrase_index: &PhraseIndex) -> PinyinDerived {
     table::ensure_sorted_unique(&mut rows);
 

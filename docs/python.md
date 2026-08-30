@@ -34,10 +34,8 @@ binary, so the comparison can never go stale against a golden file.
 
 ## Model and data requirements
 
-The engine opens data in either of two layouts; a libpinyin installation is
-never linked or executed — files are decoded at load time:
-
-**Native oxpinyin layout** — the *converted* oxpinyin data files:
+The engine reads oxpinyin's own data files, produced by the repository's
+data toolchain. A libpinyin installation is never linked or read.
 
 | File | Required | Purpose |
 |---|---|---|
@@ -48,30 +46,28 @@ never linked or executed — files are decoded at load time:
 | `table.conf` | optional | λ override; pinned default otherwise |
 | `user_store.<ext>` | created in `user_dir` | learning persistence |
 
-`<ext>` names the compiled-in backend: `kct` (Kyoto Cabinet, the
-default), `redb` under `--no-default-features` (the portability
-fallback), `tkt` with the `tkrzw` feature, `lmdb` with `lmdb`.
+`<ext>` names the peer backend the build was compiled against: `kct`
+(Kyoto Cabinet — the default selection), `redb` under
+`--no-default-features --features redb`, `tkt` with `--features tkrzw`,
+`lmdb` with `--features lmdb`. All four backends are first-class; the
+same logical row stream reads back identically under each.
 
-**libpinyin layout** — a real libpinyin data directory as installed by the
-distro's `libpinyin-data` package: `pinyin_index.bin`, `phrase_index.bin`,
-the content-table `.bin` files (`gb_char.bin`, `merged.bin`, …),
-`bigram.db` and `table.conf`. The layout is detected by file header, and
-the compat loader converts it to the same in-memory model at open time.
-The directory's `bigram.db` must have been written by a backend this
-build reads — Kyoto Cabinet or tkrzw; a Berkeley-DB-built libpinyin
-directory (RHEL's packaging among them) is refused with an error naming
-the format, never misread. From libpinyin 2.11 on, a compatible
-directory may also carry a `punct.bin` punctuation table; it is read
-for predicted-punctuation rows, and its absence (the 2.8.1 layout) is
-supported — predicted punctuation is simply empty then.
+The pinned model is fetched with `tools/model/fetch-model.sh`, then
+compiled into the tables above by `oxpinyin-datagen compile ...`
+(defaults to the KC backend; pass `--backend {redb|lmdb|tkrzw}` on a
+build enabling that peer). The committed mini fixture `fixtures/w3` has
+no `interpolation2.text`; open it through `Engine.from_fixture_dir`,
+which falls back to flat counts derived from the phrase index. That mode
+exists for development and tests — production engines need the
+real-unigram model, which is why `Engine(system_dir)` raises
+`FileNotFoundError` without it.
 
-A directory is converted from libpinyin-format sources by the repository's
-usual toolchain (`tools/model/fetch-model.sh` fetches the pinned model;
-`oxpinyin-dictool` converts). The committed mini fixture `fixtures/w3` has no
-`interpolation2.text`; open it through `Engine.from_fixture_dir`, which falls
-back to flat counts derived from the phrase index. That mode exists for
-development and tests — production engines need the real-unigram model,
-which is why `Engine(system_dir)` raises `FileNotFoundError` without it.
+**Backend transitions are storage-format migrations, not compatibility
+transitions.** Switching from one peer backend to another (e.g. KC to
+tkrzw) is a rewrite of the on-disk representation: the runtime does not
+transparently open one backend's files with another, and old
+backend-specific user data does not survive the switch. This matches how
+distributions handle libpinyin's own backend transitions.
 
 ## Basic usage
 
@@ -249,10 +245,11 @@ equality of the loaded event objects (not of serialized bytes) per case.
 The shipping data path always uses the compiled-in backend —
 `oxpinyin-runtime` opens tables through `GenericLookupTable<DefaultStore>`
 and learning through `UserStore = GenericUserStore<DefaultStore>`, where
-`DefaultStore` resolves to Kyoto Cabinet by default (redb under
-`--no-default-features`; tkrzw and LMDB behind their features). The
-alternates' coverage belongs to the separate store/backend differential
-tests, not to Python parity.
+`DefaultStore` resolves to whichever peer backend the build was
+compiled against (Kyoto Cabinet under the default features; redb, LMDB,
+or tkrzw when their `--no-default-features --features <peer>` is
+selected). Each peer backend's own coverage belongs to the separate
+store/backend differential tests, not to Python parity.
 
 Known gap: no corpus case opens a `user_dir`. All 18 cases run against
 `fixtures/w3` with user learning off, on both sides — `native-dump` calls

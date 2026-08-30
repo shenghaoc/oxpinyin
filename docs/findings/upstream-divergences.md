@@ -691,8 +691,16 @@ Text, candidate type and counts cannot.
 
 ## R1 measured on the drop-in compat paths — order-only, sets identical (2026-08-30)
 
-- **Where:** `oxpinyin-data/src/compat` (the libpinyin drop-in loader),
-  `tools/bisection/run-pred-order-dropin.sh` and its
+> **SUPERSEDED (see architecture correction).** The libpinyin drop-in /
+> compat loader described in this section has been removed. oxpinyin
+> reads only its own peer-backend tables (KC, redb, LMDB, tkrzw); it does
+> not detect or read libpinyin's on-disk DBM files. The measurements
+> below are preserved as a historical record of what the (removed)
+> compat path did.
+
+- **Where:** the removed `oxpinyin-data/src/compat` module (libpinyin
+  drop-in loader) and its removed
+  `tools/bisection/run-pred-order-dropin.sh` /
   `run-dropin-fedora-kc.sh` / `run-dropin-debian-tkrzw.sh` container
   harnesses.
 - **The measurement:** dual-dlopen differential — the distro's own

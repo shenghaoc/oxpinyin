@@ -21,18 +21,14 @@ oxpinyin-engine.workspace = true
 oxpinyin-user.workspace = true
 
 [features]
-# Backend selection, forwarded down the chain (one backend per binary; see
-# oxpinyin-store's [features] for the model and precedence).
+# Backend selection, forwarded down the chain (one backend per binary;
+# see oxpinyin-store's [features] for the peer model). KC is the default
+# selection.
 default = ["kyotocabinet"]
 kyotocabinet = ["oxpinyin-data/kyotocabinet", "oxpinyin-user/kyotocabinet"]
 tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-user/tkrzw"]
 lmdb = ["oxpinyin-data/lmdb", "oxpinyin-user/lmdb"]
 redb = ["oxpinyin-data/redb", "oxpinyin-user/redb"]
-
-# Test-only: the compat-layout tests build a real `bigram.db` (the
-# detection marker) through the store's public BigramDb writer.
-[dev-dependencies]
-oxpinyin-store.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"

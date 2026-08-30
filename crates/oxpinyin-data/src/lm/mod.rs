@@ -206,39 +206,6 @@ impl BigramLanguageModel {
         })
     }
 
-    /// Builds the model from rows a compat loader synthesized (the
-    /// libpinyin drop-in path): `(prev, successors)` pairs in any order.
-    #[must_use]
-    pub fn from_rows(rows: Vec<(u32, BigramRow)>) -> Self {
-        let mut bigram: Vec<(LeByteKey, BigramRow)> = rows
-            .into_iter()
-            .map(|(prev, row)| (LeByteKey::new(prev), row))
-            .collect();
-        table::ensure_sorted_unique(&mut bigram);
-        Self {
-            bigram,
-            unigrams: None,
-            unigram_total: 0,
-            real_unigrams: false,
-            lambda: Lambda::PINNED,
-        }
-    }
-
-    /// Installs REAL unigram frequencies that did not come from
-    /// `interpolation2.text` — the libpinyin compat path, whose counts are
-    /// the `PhraseItem` headers of the install's own content tables. Sets
-    /// the same real-unigram flag the interpolation2 loader sets, because
-    /// these are the model's actual frequencies, not export-ABI stand-ins.
-    pub fn set_unigrams_real(
-        &mut self,
-        unigrams: std::collections::BTreeMap<u32, u64>,
-        total: u64,
-    ) {
-        self.unigrams = Some(UnigramTable::from_map(unigrams));
-        self.unigram_total = total;
-        self.real_unigrams = true;
-    }
-
     /// The interpolation weight λ currently in effect.
     #[must_use]
     pub const fn lambda(&self) -> Lambda {

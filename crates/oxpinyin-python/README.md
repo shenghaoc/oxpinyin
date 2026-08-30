@@ -31,24 +31,18 @@ maturin develop            # inside an activated venv, or:
 pip install .              # builds a wheel through PEP 517 + maturin
 ```
 
-The engine needs system data in either of two layouts. Native oxpinyin
-data: `pinyin_index`, `phrase_index` and `bigram` tables in the
-compiled-in backend's format — `.kct` by default (Kyoto Cabinet), `.redb`
-under `--no-default-features` (the portability fallback), `.tkt` with the
-`tkrzw` feature, `.lmdb` with `lmdb`. A real libpinyin data directory also
-works: `pinyin_index.bin`, `phrase_index.bin`, the content-table `.bin`
-files and `bigram.db` as installed by the distro's `libpinyin-data`
-package — detected by file header and decoded at load time, when its
-`bigram.db` was written by a backend this build reads (Kyoto Cabinet or
-tkrzw; a Berkeley-DB-built directory is refused, not misread). From
-libpinyin 2.11 on, an optional `punct.bin` enables predicted-punctuation
-rows; its absence (the 2.8.1 layout) is supported and simply yields no
-predicted punctuation. The
-repository's committed mini
-fixture (`fixtures/w3`) works through `Engine.from_fixture_dir`; production
-model directories additionally carry `interpolation2.text` (the real-unigram
-model) and are opened with `Engine(system_dir)`. No libpinyin install is
-required — only these data files.
+The engine needs oxpinyin's own system data: `pinyin_index`,
+`phrase_index` and `bigram` tables in the compiled-in backend's
+format. The four peer backends produce four distinct extensions — `.kct`
+under the default selection (Kyoto Cabinet), `.redb` with
+`--no-default-features --features redb`, `.lmdb` with `--features lmdb`,
+`.tkt` with `--features tkrzw`. Optional `punct.<ext>` adds
+predicted-punctuation rows; its absence simply yields no predicted
+punctuation. The repository's committed mini fixture (`fixtures/w3`) works
+through `Engine.from_fixture_dir`; production model directories
+additionally carry `interpolation2.text` (the real-unigram model) and are
+opened with `Engine(system_dir)`. No libpinyin install is required —
+only these data files.
 
 ## API sketch
 

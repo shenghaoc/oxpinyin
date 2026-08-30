@@ -13,10 +13,10 @@ workspace = true
 
 [features]
 # Backend selection, forwarded through the training-crate chain (one
-# backend per binary; see oxpinyin-store's [features] for the model and
-# precedence): the λ estimator reads `phrase_index.<ext>` in the
-# compiled-in backend's format — Kyoto Cabinet by default, redb under
-# --no-default-features.
+# backend per binary; see oxpinyin-store's [features] for the model): the
+# λ estimator reads `phrase_index.<ext>` in the compiled-in backend's
+# format. The four peer backends match the store's; Kyoto Cabinet is the
+# default selection.
 default = ["kyotocabinet"]
 kyotocabinet = ["oxpinyin-segment/kyotocabinet", "oxpinyin-counter/kyotocabinet"]
 tkrzw = ["oxpinyin-segment/tkrzw", "oxpinyin-counter/tkrzw"]

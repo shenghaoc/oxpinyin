@@ -4,9 +4,8 @@
 //!
 //! The C ABI's `pinyin_init` deliberately collapses every open failure to
 //! NULL; this probe surfaces the underlying [`oxpinyin_runtime::OpenError`]
-//! — which compat step failed, naming the offending file — for a directory
-//! that refuses to open (the drop-in gates use it to report *which* init
-//! step failed).
+//! — which open step failed, naming the offending file — for a directory
+//! that refuses to open.
 
 fn main() {
     let Some(dir) = std::env::args().nth(1) else {

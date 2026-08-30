@@ -13,10 +13,14 @@
 //! pinned model20 ──► libpinyin's own build ──► libpinyin tables ─┐
 //!        │                                                        ├─► differential
 //!        ├──► oxpinyin-datagen (kyotocabinet, default) ► KC tables┤
-//!        ├──► oxpinyin-datagen (tkrzw) ──► Tkrzw tables ─────────┤
-//!        ├──► oxpinyin-datagen (lmdb)  ──► LMDB tables ──────────┤
-//!        └──► oxpinyin-datagen (redb, portability) ► redb tables ┘
+//!        ├──► oxpinyin-datagen (redb)  ──► redb tables  ─────────┤
+//!        ├──► oxpinyin-datagen (lmdb)  ──► LMDB tables  ─────────┤
+//!        └──► oxpinyin-datagen (tkrzw) ──► Tkrzw tables ─────────┘
 //! ```
+//!
+//! The four rows below the libpinyin row are peer producers behind the
+//! same `WriteStore`; the same compiled row stream reads back identically
+//! under each. Kyoto Cabinet is only the default *selection*.
 //!
 //! This replaces the retired `oxpinyin-migrate` route, which exported the
 //! dictionary through the pin-built oracle's C ABI and copied the bigram
