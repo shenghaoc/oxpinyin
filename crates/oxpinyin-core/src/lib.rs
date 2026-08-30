@@ -377,13 +377,13 @@ impl MergedGram {
 
     /// Whether the row carries no records.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 
     /// Number of records in the row.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.records.len()
     }
 }

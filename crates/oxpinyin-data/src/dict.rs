@@ -135,7 +135,7 @@ impl SystemDictionary {
     /// # Errors
     ///
     /// Returns [`DictError`] when the phrase index cannot be read.
-    pub fn key_count(&self) -> Result<u64, DictError> {
+    pub const fn key_count(&self) -> Result<u64, DictError> {
         Ok(self.pinyin_index.rows.len() as u64)
     }
 

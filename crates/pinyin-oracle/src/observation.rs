@@ -279,7 +279,7 @@ impl OracleObservation {
     ///
     /// Returns [`crate::OracleError::ParsedLengthOutOfRange`] when the reported
     /// parsed prefix exceeds the input length.
-    pub fn check_self_consistent(&self) -> Result<(), crate::OracleError> {
+    pub const fn check_self_consistent(&self) -> Result<(), crate::OracleError> {
         if self.parsed_input_length > self.input.len() {
             return Err(crate::OracleError::ParsedLengthOutOfRange {
                 parsed: self.parsed_input_length,

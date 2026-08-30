@@ -532,7 +532,7 @@ fn ascii_text(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| char::from(*byte)).collect()
 }
 
-fn bounded_add(left: usize, right: usize) -> usize {
+const fn bounded_add(left: usize, right: usize) -> usize {
     let sum = left.saturating_add(right);
     if sum > OVER_LIMIT { OVER_LIMIT } else { sum }
 }

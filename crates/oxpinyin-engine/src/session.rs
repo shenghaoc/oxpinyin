@@ -307,7 +307,7 @@ where
     /// Does not recompute the per-key cost table (that depends only on the
     /// dictionary and language model). Intended for constant sweeps and
     /// measurements; interactive shells normally keep [`ScoringConfig::default`].
-    pub fn set_scoring_config(&mut self, config: ScoringConfig) {
+    pub const fn set_scoring_config(&mut self, config: ScoringConfig) {
         self.scoring = config;
     }
 
@@ -595,7 +595,7 @@ where
     }
 
     /// The common tail of [`Session::select_inner`].
-    fn selection_outcome(&self) -> Result<Selection, EngineError> {
+    const fn selection_outcome(&self) -> Result<Selection, EngineError> {
         if self.consumed >= self.raw.len() {
             Ok(Selection::Completed)
         } else {
@@ -1351,7 +1351,7 @@ where
 
     /// Whether a composition is in progress.
     #[must_use]
-    pub fn is_composing(&self) -> bool {
+    pub const fn is_composing(&self) -> bool {
         !self.raw.is_empty()
     }
 
@@ -2733,7 +2733,7 @@ pub struct ScanKey {
 }
 
 impl ScanKey {
-    fn from_edge(edge: &Edge) -> Self {
+    const fn from_edge(edge: &Edge) -> Self {
         Self {
             key: edge.key(),
             from: edge.from(),
@@ -2978,7 +2978,7 @@ pub fn normalize_lookup_offset(input: &[u8], offset: usize) -> Result<usize, Eng
 /// [`EngineError::LookupOffsetOutOfRange`] when `offset > len` — upstream
 /// reads its matrix out of bounds there, so no pinned behaviour exists
 /// and the offset is refused.
-pub fn check_lookup_offset_range(len: usize, offset: usize) -> Result<usize, EngineError> {
+pub const fn check_lookup_offset_range(len: usize, offset: usize) -> Result<usize, EngineError> {
     if offset > len {
         return Err(EngineError::LookupOffsetOutOfRange { offset, len });
     }

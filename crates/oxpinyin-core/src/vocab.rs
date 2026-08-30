@@ -190,7 +190,7 @@ impl SyllableKey {
     /// Present because clippy asks any type with `len` for an `is_empty`, and a
     /// constant answer is more honest than omitting it.
     #[must_use]
-    pub fn is_empty(self) -> bool {
+    pub const fn is_empty(self) -> bool {
         false
     }
 }

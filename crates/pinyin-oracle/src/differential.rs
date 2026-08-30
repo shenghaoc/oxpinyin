@@ -136,7 +136,7 @@ pub enum OurParse {
 impl OurParse {
     /// Number of paths returned, or zero on failure.
     #[must_use]
-    pub fn path_count(&self) -> usize {
+    pub const fn path_count(&self) -> usize {
         match self {
             Self::Paths(paths) => paths.len(),
             Self::Failed(_) => 0,
@@ -363,7 +363,7 @@ pub struct ReplaySource {
 impl ReplaySource {
     /// Builds a replay source from decoded capture records.
     #[must_use]
-    pub fn new(observations: Vec<OracleObservation>) -> Self {
+    pub const fn new(observations: Vec<OracleObservation>) -> Self {
         Self { observations }
     }
 

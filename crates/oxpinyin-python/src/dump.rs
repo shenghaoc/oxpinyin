@@ -212,7 +212,7 @@ fn run_case(session: &mut RuntimeSession, case: &Value) -> Result<Value, RunErro
 }
 
 /// The stable string for a candidate origin, matching the binding's labels.
-fn kind_label(kind: oxpinyin_engine::CandidateKind) -> &'static str {
+const fn kind_label(kind: oxpinyin_engine::CandidateKind) -> &'static str {
     match kind {
         oxpinyin_engine::CandidateKind::Phrase => "phrase",
         oxpinyin_engine::CandidateKind::Addon => "addon",

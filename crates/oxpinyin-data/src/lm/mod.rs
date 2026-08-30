@@ -217,7 +217,7 @@ impl BigramLanguageModel {
     }
 
     /// Sets the interpolation weight λ directly.
-    pub fn set_lambda(&mut self, lambda: Lambda) {
+    pub const fn set_lambda(&mut self, lambda: Lambda) {
         self.lambda = lambda;
     }
 
@@ -289,7 +289,7 @@ impl BigramLanguageModel {
     /// # Errors
     ///
     /// Returns [`LmError`] when the model file cannot be read.
-    pub fn entry_count(&self) -> Result<u64, LmError> {
+    pub const fn entry_count(&self) -> Result<u64, LmError> {
         Ok(self.bigram.len() as u64)
     }
 

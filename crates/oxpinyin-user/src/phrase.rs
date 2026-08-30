@@ -190,7 +190,7 @@ impl UserPronunciation {
             .map(|parts| parts.join("'"))
     }
 
-    pub(crate) fn new(keys: Vec<PinyinKey>, count: u64) -> Self {
+    pub(crate) const fn new(keys: Vec<PinyinKey>, count: u64) -> Self {
         Self { keys, count }
     }
 }
@@ -226,7 +226,11 @@ impl UserPhrase {
         &self.pronunciations
     }
 
-    pub(crate) fn new(token: Token, text: String, pronunciations: Vec<UserPronunciation>) -> Self {
+    pub(crate) const fn new(
+        token: Token,
+        text: String,
+        pronunciations: Vec<UserPronunciation>,
+    ) -> Self {
         Self {
             token,
             text,

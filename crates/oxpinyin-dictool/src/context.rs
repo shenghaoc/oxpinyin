@@ -13,7 +13,7 @@ impl UserImportContext {
         if ptr.is_null() { None } else { Some(Self(ptr)) }
     }
 
-    pub(crate) fn as_ptr(&self) -> *mut PinyinContext {
+    pub(crate) const fn as_ptr(&self) -> *mut PinyinContext {
         self.0
     }
 }

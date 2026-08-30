@@ -19,7 +19,7 @@ pub struct PunctTable {
 impl PunctTable {
     /// An empty table: every lookup returns no punctuation.
     #[must_use]
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             by_token: BTreeMap::new(),
         }

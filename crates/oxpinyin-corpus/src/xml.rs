@@ -255,7 +255,7 @@ impl<R: Read> Scanner<R> {
     }
 
     /// The absolute stream offset of the next unread byte.
-    fn absolute(&self) -> usize {
+    const fn absolute(&self) -> usize {
         self.base + self.pos
     }
 

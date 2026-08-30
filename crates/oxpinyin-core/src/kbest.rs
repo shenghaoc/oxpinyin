@@ -87,13 +87,13 @@ impl DecodedPath {
 
     /// Number of edges.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.edges.len()
     }
 
     /// Whether the path takes no edge at all.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.edges.is_empty()
     }
 }

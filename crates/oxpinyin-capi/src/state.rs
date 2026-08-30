@@ -697,6 +697,6 @@ pub unsafe fn candidate_ref<'a>(ptr: *mut LookupCandidate) -> &'a CapiCandidate 
 }
 
 /// Returns a `*mut LookupCandidate` pointing to a `CapiCandidate`.
-pub fn candidate_ptr(cand: &CapiCandidate) -> *mut LookupCandidate {
+pub const fn candidate_ptr(cand: &CapiCandidate) -> *mut LookupCandidate {
     (cand as *const CapiCandidate as *mut CapiCandidate).cast()
 }
