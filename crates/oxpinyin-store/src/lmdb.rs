@@ -139,13 +139,13 @@ fn env_key(path: &Path) -> PathBuf {
 /// One shared heed environment plus the machinery that keeps LMDB
 /// operations on it safe to call from many threads at once.
 ///
-/// Two hazards live here.
+/// Two independent hazards live here.
 ///
-/// The first is our registry's own close/reopen gap. heed 0.22 holds its
-/// own process-global `OPENED_ENV` write lock across `mdb_env_close`, so
-/// a fresh `EnvOpenOptions::open` on the same path blocks until the
-/// close finishes and two closes never overlap inside liblmdb. What
-/// that alone did not cover is that the last `Arc<SharedEnv>` drop
+/// **Env close/reopen.** heed 0.22 holds its own process-global
+/// `OPENED_ENV` write lock across `mdb_env_close`, so a fresh
+/// `EnvOpenOptions::open` on the same path blocks until the close
+/// finishes and two closes never overlap inside liblmdb. What that
+/// alone did not cover is that the last `Arc<SharedEnv>` drop
 /// decrements the strong count to zero *before* Rust runs this Drop
 /// impl, so a concurrent [`shared_env`] caller can see
 /// [`Weak::upgrade`] return `None`, call [`heed::env_closing_event`]
@@ -161,7 +161,7 @@ fn env_key(path: &Path) -> PathBuf {
 /// the fast path or blocks until the close has fully finished, and
 /// never races liblmdb.
 ///
-/// The second is [`mdb_dbi_open`](http://www.lmdb.tech/doc/group__mdb.html#gac08cad5b096925642ca359a6d6f0562a).
+/// **[`mdb_dbi_open`](http://www.lmdb.tech/doc/group__mdb.html#gac08cad5b096925642ca359a6d6f0562a).**
 /// LMDB's own contract: *"A transaction that uses this function must
 /// finish (either commit or abort) before any other transaction in the
 /// process may use this function"*. Its body writes into the env-wide
@@ -171,28 +171,32 @@ fn env_key(path: &Path) -> PathBuf {
 /// `me_dbxs[i].md_name.mv_data` for every `DB_NEW` slot the aborting
 /// txn opened (`mdb.c:3399-3405`). heed exposes
 /// [`Env::open_database`]/[`Env::create_database`] as thin wrappers
-/// around `mdb_dbi_open` and does not serialize them or the abort. Every
-/// `LmdbStore` op (`get`/`for_each`/`range`/`is_empty` for reads, the
-/// write txn's `put`/`remove` closures for writes) opens a fresh txn and
-/// then opens (or creates) the same table by name, so two threads on one
-/// env would allocate the same unused slot for a first-time open and
-/// the loser's `mdb_txn_end` abort would `free()` the winner's still-in-use
-/// `md_name.mv_data` — the tcache trip surfaced in CI. Even with the
-/// narrower "lock only across `open_database`" wrapper (commit c504428),
-/// the aborting-side of that race stays open: releasing the mutex after
-/// `mdb_dbi_open` returns lets a second thread scan `me_dbxs` while the
-/// first thread's txn drop is freeing entries it wrote.
+/// around it, and every store op — `get`/`for_each`/`range`/`is_empty`
+/// for reads, the write txn's `put`/`remove`/… for writes — would
+/// otherwise re-open the same table by name on every call, colliding
+/// on `me_dbxs` writes when two threads on one env raced (the tcache
+/// trip surfaced in CI). The fix takes LMDB's own hint: *"once the
+/// transaction that called `mdb_dbi_open` successfully commits, the
+/// handle resides in the shared environment and may be used by other
+/// transactions"* — cache the `Database` handle once, reuse it on
+/// every subsequent op without holding any lock. Only the first-time
+/// open/create needs serialization, so [`SharedEnv::dbis`] wraps a
+/// `HashMap` in a [`Mutex`] that is briefly held on cache misses to
+/// call `mdb_dbi_open` and commit the DBI env-wide. After the miss
+/// path caches the handle, later store ops open their txn, use the
+/// cached handle, run their reads or writes, and finish the txn — all
+/// with no lock. That restores LMDB's concurrent-reader model.
 ///
-/// [`SharedEnv::with_dbi_lock`] holds a per-env [`Mutex<()>`] for the
-/// full closure — the caller opens its txn, does its
-/// `open_database`/`create_database` and reads or writes with those
-/// handles, and finishes the txn (commit or abort) inside that closure.
-/// The mutex releases only after all of that, restoring LMDB's pinned
-/// exclusion end to end. Contention stays inside a single env —
-/// unrelated `SharedEnv`s never touch this lock — and stores in this
-/// crate are opened for one lifetime and used sequentially in the
-/// production runtime; the mutex only serializes the parallel-tests
-/// workload the earlier crash surfaced from.
+/// One documented limitation of the current cache design: on
+/// [`WriteStore::write`] abort, tables the closure created through
+/// [`LmdbWriteTxn`] are *not* promoted to the shared cache — they only
+/// land after a successful commit. That's the right behaviour, because
+/// LMDB frees the DBI slot on abort and a cached `Database` would then
+/// point at a freed slot; but it means a callback inside a write
+/// closure that also *creates* a new table on the same store from
+/// another thread races against the write for the initial commit.
+/// oxpinyin's own writers don't do this — all fixture tables are
+/// pre-created and the user store's schema is fixed.
 struct SharedEnv {
     /// Kept in a [`ManuallyDrop`] so [`Drop::drop`] can run
     /// [`ManuallyDrop::drop`] on it explicitly, before releasing the
@@ -201,10 +205,28 @@ struct SharedEnv {
     /// would be gone.
     inner: ManuallyDrop<Env>,
     key: PathBuf,
-    /// Held for the full lifetime of any txn that will call
-    /// `mdb_dbi_open`, which LMDB requires as a per-process single-writer
-    /// on both the open and the txn-end paths.
-    dbi_lock: Mutex<()>,
+    /// One entry per table name a store on this env has ever asked
+    /// for, resolved to its committed [`Database`] handle (or a
+    /// negative cache when the table did not exist at open time). The
+    /// mutex is held only around the first-time `mdb_dbi_open`/commit
+    /// — subsequent lookups take it just long enough to read one
+    /// [`HashMap`] entry.
+    dbis: Mutex<HashMap<String, CachedDb>>,
+}
+
+/// The two cache states [`SharedEnv::dbis`] carries per table.
+#[derive(Copy, Clone)]
+enum CachedDb {
+    /// The table exists env-wide and this is the `mdb_dbi_open`-issued
+    /// handle. `Database<KC, DC>` is [`Copy`] — the wrapper carries
+    /// only the DBI number and the type witnesses — so the same value
+    /// can be handed out to every caller.
+    Present(Database<Bytes, Bytes>),
+    /// The table was probed and did not exist. Cached so repeated
+    /// reads of a missing table don't reopen a txn on every call.
+    /// [`SharedEnv::promote_created`] flips this to [`Present`] the
+    /// moment a write commits the table into being.
+    Absent,
 }
 
 impl Deref for SharedEnv {
@@ -216,18 +238,105 @@ impl Deref for SharedEnv {
 }
 
 impl SharedEnv {
-    /// Runs `f` while holding this env's `dbi_lock`. Callers open their
-    /// txn, open or create the databases they need, do the reads or
-    /// writes on those handles, and let the txn finish (`commit` /
-    /// `abort` / drop) — all *inside* `f`, so the aborting-txn free
-    /// (see the struct docstring's second hazard) can never race
-    /// another thread's `open_database` scan on this env.
-    fn with_dbi_lock<R>(&self, f: impl FnOnce(&Env) -> R) -> R {
-        let _guard = self
-            .dbi_lock
+    /// Return the [`Database`] handle for `name` if it exists, `None`
+    /// on the negative-cache path. On a cache miss opens a private
+    /// read txn, runs `mdb_dbi_open`, commits it (persisting the DBI
+    /// env-wide per the LMDB spec) and caches the outcome. Holds the
+    /// per-env `dbis` mutex only around that miss; later callers hit
+    /// the fast path and take the mutex just long enough to read one
+    /// map entry.
+    fn database(&self, name: &str) -> Result<Option<Database<Bytes, Bytes>>, StoreError> {
+        // Fast path: cached hit or negative cache.
+        {
+            let cache = self
+                .dbis
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(cached) = cache.get(name) {
+                return Ok(match cached {
+                    CachedDb::Present(db) => Some(*db),
+                    CachedDb::Absent => None,
+                });
+            }
+        }
+        // Slow path: warm up under the mutex, then commit the read txn
+        // so the DBI persists env-wide (`mdb_dbis_update`, keep=true).
+        let mut cache = self
+            .dbis
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        f(&self.inner)
+        // Another thread may have raced us into the miss path.
+        if let Some(cached) = cache.get(name) {
+            return Ok(match cached {
+                CachedDb::Present(db) => Some(*db),
+                CachedDb::Absent => None,
+            });
+        }
+        let txn = self.inner.read_txn().map_err(map_heed_error)?;
+        let db: Option<Database<Bytes, Bytes>> = self
+            .inner
+            .open_database(&txn, Some(name))
+            .map_err(map_heed_error)?;
+        txn.commit().map_err(map_heed_error)?;
+        cache.insert(
+            name.to_owned(),
+            match db {
+                Some(d) => CachedDb::Present(d),
+                None => CachedDb::Absent,
+            },
+        );
+        Ok(db)
+    }
+
+    /// The write-side of [`SharedEnv::database`]: return the cached
+    /// [`Database`] if the table is already known (positive cache
+    /// only), else `create_database` on the caller's write txn. The
+    /// returned handle is *not* cached from here — that would leak a
+    /// dangling DBI on abort, since LMDB frees the slot when a `DB_NEW`
+    /// txn ends without commit. [`LmdbWriteTxn`] buffers newly-created
+    /// tables and calls [`SharedEnv::promote_created`] on commit.
+    fn database_for_write(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        name: &str,
+    ) -> Result<Database<Bytes, Bytes>, StoreError> {
+        {
+            let cache = self
+                .dbis
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(CachedDb::Present(db)) = cache.get(name) {
+                return Ok(*db);
+            }
+        }
+        self.inner
+            .create_database(wtxn, Some(name))
+            .map_err(|e| match e {
+                // LMDB caps the environment at MAX_DBS named tables;
+                // the over-limit table name is caller input, so
+                // surface it as InvalidInput rather than an opaque
+                // backend error.
+                heed::Error::Mdb(heed::MdbError::DbsFull) => {
+                    StoreError::InvalidInput("too many distinct tables (LMDB caps a store at 32)")
+                }
+                other => map_heed_error(other),
+            })
+    }
+
+    /// Insert tables a just-committed write txn created into the
+    /// shared cache, so subsequent reads and writes find them on the
+    /// fast path.
+    fn promote_created(&self, entries: &[(String, Database<Bytes, Bytes>)]) {
+        if entries.is_empty() {
+            return;
+        }
+        let mut cache = self
+            .dbis
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for (name, db) in entries {
+            cache.insert(name.clone(), CachedDb::Present(*db));
+        }
     }
 }
 
@@ -362,7 +471,7 @@ fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Share
                 let env = Arc::new(SharedEnv {
                     inner: ManuallyDrop::new(env),
                     key: env_key(path),
-                    dbi_lock: Mutex::new(()),
+                    dbis: Mutex::new(HashMap::new()),
                 });
                 // Re-key by the now-existing file so later opens of the
                 // same file through a different spelling collide correctly.
@@ -456,34 +565,28 @@ impl ReadStore for LmdbStore {
 
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         validate_table_name(table)?;
-        self.env.with_dbi_lock(|env| {
-            let txn = env.read_txn().map_err(map_heed_error)?;
-            let db: Option<Database<Bytes, Bytes>> = env
-                .open_database(&txn, Some(table))
-                .map_err(map_heed_error)?;
-            let Some(db) = db else { return Ok(None) };
-            Ok(db
-                .get(&txn, key)
-                .map_err(map_heed_error)?
-                .map(|v| v.to_vec()))
-        })
+        let Some(db) = self.env.database(table)? else {
+            return Ok(None);
+        };
+        let txn = self.env.read_txn().map_err(map_heed_error)?;
+        Ok(db
+            .get(&txn, key)
+            .map_err(map_heed_error)?
+            .map(|v| v.to_vec()))
     }
 
     fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
         validate_table_name(table)?;
-        self.env.with_dbi_lock(|env| {
-            let txn = env.read_txn().map_err(map_heed_error)?;
-            let db: Option<Database<Bytes, Bytes>> = env
-                .open_database(&txn, Some(table))
-                .map_err(map_heed_error)?;
-            let Some(db) = db else { return Ok(()) };
-            let iter = db.iter(&txn).map_err(map_heed_error)?;
-            for result in iter {
-                let (key, value) = result.map_err(map_heed_error)?;
-                visit(key, value)?;
-            }
-            Ok(())
-        })
+        let Some(db) = self.env.database(table)? else {
+            return Ok(());
+        };
+        let txn = self.env.read_txn().map_err(map_heed_error)?;
+        let iter = db.iter(&txn).map_err(map_heed_error)?;
+        for result in iter {
+            let (key, value) = result.map_err(map_heed_error)?;
+            visit(key, value)?;
+        }
+        Ok(())
     }
 
     fn range(
@@ -497,32 +600,26 @@ impl ReadStore for LmdbStore {
         if is_empty_upper_bound(hi) {
             return Ok(());
         }
-        self.env.with_dbi_lock(|env| {
-            let txn = env.read_txn().map_err(map_heed_error)?;
-            let db: Option<Database<Bytes, Bytes>> = env
-                .open_database(&txn, Some(table))
-                .map_err(map_heed_error)?;
-            let Some(db) = db else { return Ok(()) };
-            let bounds = (normalize_bound(lo), normalize_bound(hi));
-            let iter = db.range(&txn, &bounds).map_err(map_heed_error)?;
-            for result in iter {
-                let (key, value) = result.map_err(map_heed_error)?;
-                visit(key, value)?;
-            }
-            Ok(())
-        })
+        let Some(db) = self.env.database(table)? else {
+            return Ok(());
+        };
+        let txn = self.env.read_txn().map_err(map_heed_error)?;
+        let bounds = (normalize_bound(lo), normalize_bound(hi));
+        let iter = db.range(&txn, &bounds).map_err(map_heed_error)?;
+        for result in iter {
+            let (key, value) = result.map_err(map_heed_error)?;
+            visit(key, value)?;
+        }
+        Ok(())
     }
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
         validate_table_name(table)?;
-        self.env.with_dbi_lock(|env| {
-            let txn = env.read_txn().map_err(map_heed_error)?;
-            let db: Option<Database<Bytes, Bytes>> = env
-                .open_database(&txn, Some(table))
-                .map_err(map_heed_error)?;
-            let Some(db) = db else { return Ok(true) };
-            db.is_empty(&txn).map_err(map_heed_error)
-        })
+        let Some(db) = self.env.database(table)? else {
+            return Ok(true);
+        };
+        let txn = self.env.read_txn().map_err(map_heed_error)?;
+        db.is_empty(&txn).map_err(map_heed_error)
     }
 }
 
@@ -543,20 +640,34 @@ impl WriteStore for LmdbStore {
         if self.read_only {
             return Err(StoreError::ReadOnly);
         }
-        self.env.with_dbi_lock(|env| {
-            let txn = env.write_txn().map_err(map_heed_error)?;
-            let mut wtxn = LmdbWriteTxn { env, txn };
-            match f(&mut wtxn) {
-                Ok(result) => {
-                    wtxn.txn.commit().map_err(map_heed_error)?;
-                    Ok(result)
-                }
-                Err(error) => {
-                    wtxn.txn.abort();
-                    Err(error)
-                }
+        let txn = self.env.write_txn().map_err(map_heed_error)?;
+        let mut wtxn = LmdbWriteTxn {
+            env: &self.env,
+            txn,
+            pending_cache: Vec::new(),
+        };
+        match f(&mut wtxn) {
+            Ok(result) => {
+                let LmdbWriteTxn {
+                    env,
+                    txn,
+                    pending_cache,
+                } = wtxn;
+                txn.commit().map_err(map_heed_error)?;
+                // Only after the write txn's `mdb_txn_end` commits are
+                // the DBIs it opened valid env-wide; promote them into
+                // the shared cache now so subsequent reads and writes
+                // find them on the fast path.
+                env.promote_created(&pending_cache);
+                Ok(result)
             }
-        })
+            Err(error) => {
+                wtxn.txn.abort();
+                // Aborted DBIs were freed by `mdb_txn_end`; do not
+                // touch the shared cache.
+                Err(error)
+            }
+        }
     }
 
     fn compact(&mut self) -> Result<(), StoreError> {
@@ -573,18 +684,47 @@ impl WriteStore for LmdbStore {
 // ── write transaction ─────────────────────────────────────────────
 
 struct LmdbWriteTxn<'a> {
-    env: &'a Env,
+    env: &'a SharedEnv,
     txn: RwTxn<'a>,
+    /// Tables the closure `put`'s into this write txn that were not
+    /// already in the shared cache. Promoted into the cache in
+    /// [`WriteStore::write`] on commit; discarded on abort, because
+    /// LMDB frees a `DB_NEW` DBI when the txn ends without commit.
+    pending_cache: Vec<(String, Database<Bytes, Bytes>)>,
+}
+
+impl LmdbWriteTxn<'_> {
+    /// Look the table up in the shared cache (positive hits only) or
+    /// open it read-only through the write txn without inserting a
+    /// new DBI. Read-side ops on the write txn never need `MDB_CREATE`
+    /// — an absent table just answers "empty" per the trait contract.
+    fn open_existing(&self, table: &str) -> Result<Option<Database<Bytes, Bytes>>, StoreError> {
+        // Positive cache hit: reuse the shared DBI. Ignore Absent —
+        // the write txn might already know a table exists via its own
+        // create in `put`.
+        {
+            let cache = self
+                .env
+                .dbis
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(CachedDb::Present(db)) = cache.get(table) {
+                return Ok(Some(*db));
+            }
+        }
+        self.env
+            .inner
+            .open_database(&self.txn, Some(table))
+            .map_err(map_heed_error)
+    }
 }
 
 impl WriteTxn for LmdbWriteTxn<'_> {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         validate_table_name(table)?;
-        let db: Option<Database<Bytes, Bytes>> = self
-            .env
-            .open_database(&self.txn, Some(table))
-            .map_err(map_heed_error)?;
-        let Some(db) = db else { return Ok(None) };
+        let Some(db) = self.open_existing(table)? else {
+            return Ok(None);
+        };
         Ok(db
             .get(&self.txn, key)
             .map_err(map_heed_error)?
@@ -596,29 +736,31 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         if key.is_empty() || key.len() > MAX_KEY_LEN {
             return Err(StoreError::InvalidInput("key length must be 1..=511 bytes"));
         }
-        let db: Database<Bytes, Bytes> = self
-            .env
-            .create_database(&mut self.txn, Some(table))
-            .map_err(|e| match e {
-                // LMDB caps the environment at MAX_DBS named tables; the
-                // over-limit table name is caller input, so surface it as
-                // InvalidInput rather than an opaque backend error.
-                heed::Error::Mdb(heed::MdbError::DbsFull) => {
-                    StoreError::InvalidInput("too many distinct tables (LMDB caps a store at 32)")
-                }
-                other => map_heed_error(other),
-            })?;
+        let db = self.env.database_for_write(&mut self.txn, table)?;
+        // Newly-created DBIs go into `pending_cache` so the shared
+        // cache is only touched after the write txn commits.
+        {
+            let cache = self
+                .env
+                .dbis
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let already_cached = matches!(cache.get(table), Some(CachedDb::Present(_)));
+            let already_pending = self.pending_cache.iter().any(|(name, _)| name == table);
+            if !already_cached && !already_pending {
+                drop(cache);
+                self.pending_cache.push((table.to_owned(), db));
+            }
+        }
         db.put(&mut self.txn, key, value).map_err(map_heed_error)?;
         Ok(())
     }
 
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         validate_table_name(table)?;
-        let db: Option<Database<Bytes, Bytes>> = self
-            .env
-            .open_database(&self.txn, Some(table))
-            .map_err(map_heed_error)?;
-        let Some(db) = db else { return Ok(()) };
+        let Some(db) = self.open_existing(table)? else {
+            return Ok(());
+        };
         db.delete(&mut self.txn, key).map_err(map_heed_error)?;
         Ok(())
     }
@@ -631,14 +773,12 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         visit: &mut Visitor<'_>,
     ) -> Result<(), StoreError> {
         validate_table_name(table)?;
-        let db: Option<Database<Bytes, Bytes>> = self
-            .env
-            .open_database(&self.txn, Some(table))
-            .map_err(map_heed_error)?;
-        let Some(db) = db else { return Ok(()) };
         if is_empty_upper_bound(hi) {
             return Ok(());
         }
+        let Some(db) = self.open_existing(table)? else {
+            return Ok(());
+        };
         let bounds = (normalize_bound(lo), normalize_bound(hi));
         let iter = db.range(&self.txn, &bounds).map_err(map_heed_error)?;
         for result in iter {
@@ -650,11 +790,9 @@ impl WriteTxn for LmdbWriteTxn<'_> {
 
     fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
         validate_table_name(table)?;
-        let db: Option<Database<Bytes, Bytes>> = self
-            .env
-            .open_database(&self.txn, Some(table))
-            .map_err(map_heed_error)?;
-        let Some(db) = db else { return Ok(()) };
+        let Some(db) = self.open_existing(table)? else {
+            return Ok(());
+        };
         let iter = db.iter(&self.txn).map_err(map_heed_error)?;
         for result in iter {
             let (key, value) = result.map_err(map_heed_error)?;
@@ -665,11 +803,9 @@ impl WriteTxn for LmdbWriteTxn<'_> {
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
         validate_table_name(table)?;
-        let db: Option<Database<Bytes, Bytes>> = self
-            .env
-            .open_database(&self.txn, Some(table))
-            .map_err(map_heed_error)?;
-        let Some(db) = db else { return Ok(true) };
+        let Some(db) = self.open_existing(table)? else {
+            return Ok(true);
+        };
         db.is_empty(&self.txn).map_err(map_heed_error)
     }
 }
