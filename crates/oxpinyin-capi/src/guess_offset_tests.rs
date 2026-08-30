@@ -216,9 +216,13 @@ fn a_post_separator_choose_returns_the_candidate_end() {
          separator-inclusive span"
     );
     let parsed = pinyin_get_parsed_input_length(instance);
-    assert!(cursor as usize <= parsed, "the cursor never overshoots");
+    assert!(
+        usize::try_from(cursor).expect("non-negative cursor") <= parsed,
+        "the cursor never overshoots"
+    );
     assert_eq!(
-        cursor as usize, parsed,
+        usize::try_from(cursor).expect("non-negative cursor"),
+        parsed,
         "the ibus idiom lands in the commit branch (cursor == length), \
          not a further key_rest"
     );
@@ -254,7 +258,7 @@ fn a_post_separator_choose_returns_the_candidate_end() {
     let rest = candidate_at(instance, 0);
     let cursor = pinyin_choose_candidate(instance, 7, rest);
     assert_eq!(
-        cursor as usize,
+        usize::try_from(cursor).expect("non-negative cursor"),
         pinyin_get_parsed_input_length(instance),
         "the final choose lands the commit branch"
     );
@@ -345,7 +349,7 @@ fn double_pinyin_admits_no_zero_key_and_keeps_the_range_law() {
     let cursor = pinyin_choose_candidate(instance, 2, hao);
     assert_eq!(cursor, 4, "the second group ends at its own original end");
     assert_eq!(
-        cursor as usize,
+        usize::try_from(cursor).expect("non-negative cursor"),
         pinyin_get_parsed_input_length(instance),
         "the final choose lands the commit branch"
     );
@@ -379,7 +383,10 @@ fn zhuyin_keyboards_admit_no_zero_key_and_keep_the_range_law() {
     let hao = candidate_at(instance, position_of(instance, "\u{597d}"));
     let cursor = pinyin_choose_candidate(instance, 2, hao);
     assert_eq!(cursor, 4, "the second group ends at its own original end");
-    assert_eq!(cursor as usize, pinyin_get_parsed_input_length(instance));
+    assert_eq!(
+        usize::try_from(cursor).expect("non-negative cursor"),
+        pinyin_get_parsed_input_length(instance)
+    );
 
     // Eten binds `'` to the content symbol \u{3118} (c) — an offset beside
     // it is an ordinary cursor, never normalized away or refused as a
@@ -430,7 +437,10 @@ fn luoma_input_carries_the_full_offset_law() {
         cursor, 6,
         "the post-separator choose answers the absolute end"
     );
-    assert_eq!(cursor as usize, pinyin_get_parsed_input_length(instance));
+    assert_eq!(
+        usize::try_from(cursor).expect("non-negative cursor"),
+        pinyin_get_parsed_input_length(instance)
+    );
 
     // Out of range refused; the leading run cannot normalize (upstream
     // aborts, oxpinyin refuses).

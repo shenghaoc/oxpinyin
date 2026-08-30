@@ -129,7 +129,7 @@ pub extern "C" fn pinyin_iterator_add_phrase(
         let count = if count == -1 {
             None
         } else if count >= 0 {
-            Some(count as u64)
+            Some(u64::try_from(count).unwrap_or(0))
         } else {
             return false;
         };

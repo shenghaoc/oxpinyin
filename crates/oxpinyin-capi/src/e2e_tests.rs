@@ -797,7 +797,7 @@ fn export_iterators_walk_the_stored_triples() {
     // cursor here (ibus's `key_rest(cursor)` idiom).
     assert!(pinyin_guess_candidates(
         instance,
-        ni_cursor as usize,
+        usize::try_from(ni_cursor).expect("non-negative cursor"),
         DEFAULT_SORT
     ));
     let hao_ptr = {

@@ -372,7 +372,7 @@ pub extern "C" fn pinyin_in_chewing_keyboard(
         };
         let use_tone = inst.use_tone.load(Ordering::Relaxed);
         let parser = oxpinyin_core::ZhuyinParser::with_scheme(scheme);
-        let mapped = parser.symbols_for(key as u8, use_tone);
+        let mapped = parser.symbols_for(u8::try_from(key).unwrap_or(0), use_tone);
         if mapped.is_empty() {
             if !symbols.is_null() {
                 // SAFETY: Null-checked above.
