@@ -123,23 +123,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      # Container jobs run as root over a root-owned checkout, so any later
-      # git invocation would die on dubious ownership (this affected
-      # tracked-path probes in local tooling scripts during development).
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(awk -F'"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$channel" \
-                --component clippy --component rustfmt
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          # Visible to THIS step too: GITHUB_PATH only applies to later steps.
-          . "$HOME/.cargo/env"
+      # The bootstrap cluster (safe.directory, pinned toolchain, cache
+      # restore) in one call right after the inline checkout; the
+      # clippy/rustfmt components preserve the toolchain shape this job
+      # always installed. Each backend child
+      # gets a distinct cache identity via the extra key; without it the
+      # four feature configurations would contend one automatic key. Each
+      # runner has its own isolated checkout and target dir — no shared
+      # writable target across the matrix.
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+          rustup-components: clippy rustfmt
+          rust-cache: 'true'
+          rust-cache-key: store-backend-${{ matrix.backend }}
 
       - name: Install build dependencies (apt)
         # Every matrix child installs the full set so each lane is
@@ -155,14 +153,6 @@ jobs:
         # libkyotocabinet-dev: the default backend links the distro Kyoto
         # Cabinet; bindgen reads kclangc.h at build time.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          # Each backend child gets a distinct cache identity; without this the
-          # four feature configurations would contend one automatic key. Each
-          # runner has its own isolated checkout and target dir — no shared
-          # writable target across the matrix.
-          key: store-backend-${{ matrix.backend }}
 
       # This child runs exactly one of four fixed cargo invocations, selected
       # by the matrix backend through a case over a closed set (fail-closed
@@ -263,21 +253,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      # Same root-owned-checkout caveat as the store-features job.
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(awk -F'"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$channel" \
-                --component clippy --component rustfmt
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          # Visible to THIS step too: GITHUB_PATH only applies to later steps.
-          . "$HOME/.cargo/env"
+      # Same bootstrap cluster as the matrix children; the distinct cache
+      # key separates the exactly-one-backend matrix from every backend
+      # child's identity.
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+          rustup-components: clippy rustfmt
+          rust-cache: 'true'
+          rust-cache-key: backend-matrix
 
       - name: Install build dependencies (apt)
         # The matrix `cargo check`s the four valid peer selections in
@@ -290,12 +275,6 @@ jobs:
         # `g_array_append_vals` / `g_array_set_size`, so the shipped
         # `.so` NEEDS `libglib-2.0`.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          # Distinct cache identity from every backend child: this job
-          # `cargo check`s four peer configurations in one script.
-          key: backend-matrix
 
       - name: Exactly-one-backend invariant (13-case matrix)
         id: matrix-test
@@ -414,10 +393,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      # Same root-owned-checkout caveat as the store-features job.
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # Same root-owned-checkout caveat as the store-features job. The
+      # nightly toolchain below stays bespoke (sanitizer builds need
+      # nightly, not the pinned channel), and rust-cache stays off on
+      # purpose — see the note above the test step.
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
 
       - name: Install build dependencies (apt)
         # On Debian, libasan and libubsan ship with gcc and are not separate

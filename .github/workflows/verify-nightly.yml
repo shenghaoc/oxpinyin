@@ -49,8 +49,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
       # One nightly toolchain serves both cargo-fuzz's build and the runs
       # (cargo install works on nightly; no second toolchain needed).
       - name: Install the pinned nightly with Rust sources
@@ -109,8 +110,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
       - name: Install the pinned nightly with Miri
         run: |
           set -euo pipefail
@@ -142,17 +144,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$channel"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+          rust-cache: 'true'
       - run: cargo test --locked --workspace --release
 
   # Coverage report (region/line) as an artifact; no threshold gate —
@@ -173,17 +169,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$channel"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+          rust-cache: 'true'
       - name: Install pinned cargo-llvm-cov
         run: |
           ver=0.9.0
@@ -219,16 +209,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$channel"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
       - run: cargo install cargo-geiger --version 0.13.0 --locked
       - run: cargo geiger > geiger-report.txt || cargo geiger --output-format text > geiger-report.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -254,8 +238,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
       # --break-system-packages: PEP 668 marking; this container is
       # ephemeral, there is no system Python to protect. 1.24.0 is the
       # release the ratchet was validated against locally.
@@ -284,17 +269,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$channel"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+          rust-cache: 'true'
       - name: Install pinned cargo-mutants
         run: |
           ver=27.1.0
@@ -340,17 +319,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$channel"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+          rust-cache: 'true'
       - name: Install pinned cargo-nextest
         run: |
           ver=0.9.143

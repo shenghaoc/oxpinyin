@@ -83,8 +83,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-cache: 'true'
       - run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install the default backend's C dependencies (apt)
         # Kyoto Cabinet is the default store backend; bindgen (libclang) reads
         # kclangc.h at build time. Linux-only jobs install both; the portable
@@ -100,8 +102,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-cache: 'true'
       - run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install the default backend's C dependencies (apt)
         # Kyoto Cabinet is the default store backend; bindgen (libclang) reads
         # kclangc.h at build time. Linux-only jobs install both; the portable
@@ -132,8 +136,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-cache: 'true'
       - run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install the default backend's C dependencies (apt)
         # Kyoto Cabinet is the default store backend; bindgen (libclang) reads
         # kclangc.h at build time. Linux-only jobs install both; the portable
@@ -201,8 +207,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-cache: 'true'
       - run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # KC/tkrzw/lmdb require a C toolchain and Linux system libraries; redb
       # is the pure-Rust peer, selected by disabling the default
       # (kyotocabinet) feature chain and passing --features redb so the
@@ -244,18 +252,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       # cargo-deny shells out to `cargo metadata`, so a cargo binary is
       # required; minimal profile suffices (nothing here compiles code).
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$channel"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
       - name: Install pinned cargo-deny
         run: |
           ver=0.20.2
@@ -293,6 +295,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/bootstrap
       - name: Install the default backend's C dependencies (apt)
         # The fuzz targets link the workspace crates with their default
         # features, so the Kyoto Cabinet default backend compiles in:

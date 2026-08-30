@@ -21,6 +21,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: ./.github/actions/bootstrap
       - name: Lint PR commits against trailer rules
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -43,5 +44,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/bootstrap
       - name: Run linter test harness
         run: tests/lint-commits.test.sh
