@@ -137,37 +137,21 @@ pub extern "C" fn zhuyin_get_pinyin_string(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    if instance.is_null() || key.is_null() || utf8_str.is_null() {
-        return false;
-    }
-    ffi_catch(false, || {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *utf8_str = ptr::null_mut();
-        }
-        // SAFETY: Null-checked above.
-        let slot = unsafe { &*key };
-        let decoded = slot.to_core();
-        if decoded.table_index() == 0 {
-            return false;
-        }
+    // The scheme lives on the shared context atomic, read through the
+    // instance; pass it into the closure so the shared getter can dispatch.
+    display_string_getter(instance, key, utf8_str, |core| {
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let scheme = unsafe { instance_ref(instance) }
             .full_scheme
             .load(Ordering::Relaxed);
-        let rendered = match full_scheme(scheme) {
-            Some(oxpinyin_core::FullPinyinScheme::Luoma) => decoded.luoma_pinyin_string(),
+        match full_scheme(scheme) {
+            Some(oxpinyin_core::FullPinyinScheme::Luoma) => core.luoma_pinyin_string(),
             Some(oxpinyin_core::FullPinyinScheme::SecondaryZhuyin) => {
-                decoded.secondary_zhuyin_string()
+                core.secondary_zhuyin_string()
             }
-            _ => decoded.pinyin_string(),
-        };
-        // SAFETY: Null-checked above.
-        unsafe {
-            *utf8_str = owned_cstr(&rendered);
+            _ => core.pinyin_string(),
         }
-        true
     })
 }
 
@@ -193,10 +177,13 @@ fn display_string_getter(
             return false;
         }
         let rendered = render(core);
+        // Return success only when the allocation succeeded; `owned_cstr`
+        // returns null on an interior NUL or OOM.
+        let owned = owned_cstr(&rendered);
         // SAFETY: Null-checked above.
         unsafe {
-            *utf8_str = owned_cstr(&rendered);
+            *utf8_str = owned;
         }
-        !utf8_str.is_null()
+        !owned.is_null()
     })
 }

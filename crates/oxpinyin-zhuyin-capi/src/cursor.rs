@@ -151,6 +151,13 @@ pub extern "C" fn zhuyin_get_zhuyin_key(
         let Some(found) = key_at(inst, offset) else {
             return false;
         };
+        // `found.text` comes from `mode_keys`, which reads the parsed keys /
+        // the session matrix — always a syllable present in the content table —
+        // so `from_spelling` cannot fail in practice. Keep the fetch-failure
+        // `unwrap_or(ChewingKey::ZERO)` fallback (matching oxpinyin-capi,
+        // cursor.rs) rather than propagating lookup failure: a stale matrix
+        // key is not a reachable state, and the fallback keeps the ABI's
+        // boolean success semantics identical to the pin.
         inst.key_slot =
             ChewingKey::from_spelling(found.text, found.tone).unwrap_or(ChewingKey::ZERO);
         if !key.is_null() {

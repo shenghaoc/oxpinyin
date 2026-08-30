@@ -221,6 +221,15 @@ pub extern "C" fn zhuyin_in_chewing_keyboard(
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
         let Some(scheme) = zhuyin_scheme(inst.zhuyin_scheme.load(Ordering::Relaxed)) else {
+            // Initialize the out-param on the invalid-scheme path, matching
+            // the empty-mapping failure below, so a caller never reads a
+            // stale pointer after a `false` return.
+            if !symbols.is_null() {
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *symbols = std::ptr::null_mut();
+                }
+            }
             return false;
         };
         let use_tone = inst.use_tone.load(Ordering::Relaxed);
