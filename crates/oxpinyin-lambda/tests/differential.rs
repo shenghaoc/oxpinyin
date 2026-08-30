@@ -23,12 +23,12 @@
 //!   `%f` output (six decimals — the tool's entire observable precision).
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::PathBuf;
 
 use oxpinyin_counter::{Counts, count_ngseg, parse_interpolation_dump};
 use oxpinyin_lambda::{DeletedCounts, Lambda, count_deleted, estimate_lambda};
 use oxpinyin_segment::{PhraseLexicon, locate_export_dir};
+use oxpinyin_testsupport::{PinDir, fnv1a64, locate_bin, locate_data, parse_estimate_stdout};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -51,16 +51,6 @@ fn system_fold(full: &str) -> String {
     let lines: Vec<&str> = full.split_inclusive('\n').collect();
     let half = lines.len() / 2;
     lines[..half].concat()
-}
-
-/// FNV-1a 64-bit, dependency-free and deterministic across platforms.
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for &byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
 }
 
 /// The committed golden's shape and value. `average_bits` pins the full-f64
@@ -198,104 +188,6 @@ fn rust_lambda_matches_committed_manifest() {
     );
 }
 
-fn locate_bin(name: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var_os(name)?);
-    path.is_file().then_some(path)
-}
-
-fn locate_data() -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var_os("PINYIN_GEN_NGRAM_DATA")?);
-    (path.join("table.conf").is_file()
-        && path
-            .read_dir()
-            .map(|mut d| d.next().is_some())
-            .unwrap_or(false))
-    .then_some(path)
-}
-
-/// Copies the raw `.table` + `table.conf` into a fresh dir (never the stale
-/// `.bin`/`.db` outputs) and runs one pin command there.
-struct PinDir {
-    dir: PathBuf,
-}
-
-impl PinDir {
-    fn fresh(data: &Path, tag: &str) -> Result<Self, String> {
-        let dir =
-            std::env::temp_dir().join(format!("oxpinyin-lambda-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        for entry in data.read_dir().map_err(|e| e.to_string())?.flatten() {
-            if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if name == "table.conf" || name.ends_with(".table") {
-                    std::fs::copy(entry.path(), dir.join(entry.file_name()))
-                        .map_err(|e| e.to_string())?;
-                }
-            }
-        }
-        Ok(Self { dir })
-    }
-
-    fn run(&self, bin: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>, String> {
-        let mut command = Command::new(bin);
-        command.current_dir(&self.dir).args(args);
-        if stdin.is_some() {
-            command.stdin(Stdio::piped());
-        }
-        let mut child = command
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        if let Some(input) = stdin {
-            use std::io::Write;
-            child
-                .stdin
-                .as_mut()
-                .ok_or("no stdin")?
-                .write_all(input)
-                .map_err(|e| e.to_string())?;
-        }
-        let output = child.wait_with_output().map_err(|e| e.to_string())?;
-        if !output.status.success() {
-            return Err(format!(
-                "{} exited {}: {}",
-                bin.display(),
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(output.stdout)
-    }
-}
-
-impl Drop for PinDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
-/// Parses `estimate_interpolation` stdout: `token:%d lambda:%f` per context
-/// and `average lambda:%f`.
-fn parse_estimate_stdout(text: &str) -> (BTreeMap<u32, String>, Option<String>) {
-    let mut per_context = BTreeMap::new();
-    let mut average = None;
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("token:") {
-            if let Some((token, lambda)) = rest.split_once(" lambda:")
-                && let Ok(token) = token.parse::<u32>()
-            {
-                per_context.insert(token, lambda.trim().to_string());
-            }
-        } else if let Some(rest) = line.strip_prefix("average lambda:") {
-            average = Some(rest.trim().to_string());
-        }
-    }
-    (per_context, average)
-}
-
 #[test]
 fn rust_lambda_matches_live_estimate_interpolation() {
     let (
@@ -321,7 +213,7 @@ fn rust_lambda_matches_live_estimate_interpolation() {
         );
         return;
     };
-    let Some(data) = locate_data() else {
+    let Some(data) = locate_data("PINYIN_GEN_NGRAM_DATA") else {
         eprintln!("skipping live estimate_interpolation: PINYIN_GEN_NGRAM_DATA not set or empty");
         return;
     };

@@ -756,6 +756,7 @@ dependencies = [
  "oxpinyin-emitter",
  "oxpinyin-lambda",
  "oxpinyin-segment",
+ "oxpinyin-testsupport",
 ]
 
 [[package]]
@@ -763,6 +764,7 @@ name = "oxpinyin-counter"
 version = "0.1.0"
 dependencies = [
  "oxpinyin-segment",
+ "oxpinyin-testsupport",
 ]
 
 [[package]]
@@ -798,6 +800,7 @@ dependencies = [
  "oxpinyin-counter",
  "oxpinyin-data",
  "oxpinyin-segment",
+ "oxpinyin-testsupport",
 ]
 
 [[package]]
@@ -816,6 +819,7 @@ version = "0.1.0"
 dependencies = [
  "oxpinyin-counter",
  "oxpinyin-segment",
+ "oxpinyin-testsupport",
 ]
 
 [[package]]
@@ -846,6 +850,7 @@ name = "oxpinyin-segment"
 version = "0.1.0"
 dependencies = [
  "oxpinyin-data",
+ "oxpinyin-testsupport",
 ]
 
 [[package]]

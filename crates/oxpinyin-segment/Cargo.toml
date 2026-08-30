@@ -34,3 +34,8 @@ path = "src/bin/oxpinyin-segment.rs"
 # not re-defaulted through this edge; the [features] block above forwards
 # the backend selection instead.
 oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
+
+[dev-dependencies]
+# Dev-only edge: the differential suite uses the shared `locate_bin` pin
+# binary locator. No shipping code depends on oxpinyin-testsupport.
+oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }

@@ -16,8 +16,8 @@
 //! failed) when the pin tools or the rust-side tables are absent.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::PathBuf;
+use std::process::Command;
 
 use oxpinyin_counter::{count_ngseg, parse_interpolation_dump};
 use oxpinyin_emitter::emit_interpolation2;
@@ -25,6 +25,7 @@ use oxpinyin_lambda::{count_deleted, estimate_lambda};
 use oxpinyin_segment::{
     PINNED_LAMBDA, Segmenter, SegmenterPaths, locate_export_dir, locate_model_dir,
 };
+use oxpinyin_testsupport::{PinDir, locate_bin, locate_data, parse_estimate_stdout};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -34,21 +35,6 @@ fn repo_root() -> PathBuf {
 
 fn sample_path() -> PathBuf {
     repo_root().join("fixtures/w9/corpus-sample.txt")
-}
-
-fn locate_bin(name: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var_os(name)?);
-    path.is_file().then_some(path)
-}
-
-fn locate_data(name: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var_os(name)?);
-    (path.join("table.conf").is_file()
-        && path
-            .read_dir()
-            .map(|mut dir| dir.next().is_some())
-            .unwrap_or(false))
-    .then_some(path)
 }
 
 /// The Rust trainer chain over the sample. `None` when the system-table
@@ -86,98 +72,6 @@ fn run_rust_chain(sample: &[u8]) -> Option<RustChain> {
         per_context,
         average: lambda.average,
     })
-}
-
-/// Copies the raw `.table` + `table.conf` into a fresh dir (never the
-/// stale `.bin`/`.db` outputs) and runs one pin command there.
-struct PinDir {
-    dir: PathBuf,
-}
-
-impl PinDir {
-    fn fresh(data: &Path, tag: &str) -> Result<Self, String> {
-        let dir =
-            std::env::temp_dir().join(format!("oxpinyin-corpus-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-        for entry in data
-            .read_dir()
-            .map_err(|error| error.to_string())?
-            .flatten()
-        {
-            if entry
-                .file_type()
-                .map(|kind| kind.is_file())
-                .unwrap_or(false)
-            {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if name == "table.conf" || name.ends_with(".table") {
-                    std::fs::copy(entry.path(), dir.join(entry.file_name()))
-                        .map_err(|error| error.to_string())?;
-                }
-            }
-        }
-        Ok(Self { dir })
-    }
-
-    fn run(&self, bin: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>, String> {
-        let mut command = Command::new(bin);
-        command.current_dir(&self.dir).args(args);
-        if stdin.is_some() {
-            command.stdin(Stdio::piped());
-        }
-        let mut child = command
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| error.to_string())?;
-        if let Some(input) = stdin {
-            use std::io::Write;
-            child
-                .stdin
-                .as_mut()
-                .ok_or("no stdin")?
-                .write_all(input)
-                .map_err(|error| error.to_string())?;
-        }
-        let output = child
-            .wait_with_output()
-            .map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            return Err(format!(
-                "{} exited {}: {}",
-                bin.display(),
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(output.stdout)
-    }
-}
-
-impl Drop for PinDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
-/// Parses `estimate_interpolation` stdout: `token:%d lambda:%f` per
-/// context and `average lambda:%f`.
-fn parse_estimate_stdout(text: &str) -> (BTreeMap<u32, String>, Option<String>) {
-    let mut per_context = BTreeMap::new();
-    let mut average = None;
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("token:")
-            && let Some((token, lambda)) = rest.split_once(" lambda:")
-            && let Ok(token) = token.parse::<u32>()
-        {
-            per_context.insert(token, lambda.trim().to_string());
-        } else if let Some(rest) = line.strip_prefix("average lambda:") {
-            average = Some(rest.trim().to_string());
-        }
-    }
-    (per_context, average)
 }
 
 /// The Rust chain alone: T4b's output feeds T1 with zero glue. Skips

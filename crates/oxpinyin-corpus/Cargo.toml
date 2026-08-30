@@ -25,3 +25,7 @@ oxpinyin-segment = { path = "../oxpinyin-segment", default-features = false }
 oxpinyin-counter = { path = "../oxpinyin-counter", default-features = false }
 oxpinyin-lambda = { path = "../oxpinyin-lambda", default-features = false }
 oxpinyin-emitter = { path = "../oxpinyin-emitter", default-features = false }
+# Dev-only edge: the end-to-end differential shares the pin-harness
+# helpers (PinDir, locate_bin, parse_estimate_stdout) with the tool
+# suites. No shipping code depends on oxpinyin-testsupport.
+oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
