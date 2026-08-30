@@ -38,6 +38,7 @@ typedef int (*fn_choose)(pinyin_instance_t *, size_t, lookup_candidate_t *);
 typedef bool (*fn_train)(pinyin_instance_t *, uint8_t);
 typedef bool (*fn_sentence)(pinyin_instance_t *);
 typedef bool (*fn_predict)(pinyin_instance_t *, const char *);
+typedef bool (*fn_predict_plain)(pinyin_instance_t *, const char *);
 typedef bool (*fn_n_cand)(pinyin_instance_t *, guint *);
 typedef bool (*fn_get_type)(pinyin_instance_t *, lookup_candidate_t *, int *);
 typedef bool (*fn_get_str)(pinyin_instance_t *, lookup_candidate_t *, const char **);
@@ -78,6 +79,7 @@ int main(int argc, char **argv) {
     fn_train train = (fn_train)must(h, "pinyin_train");
     fn_sentence sentence = (fn_sentence)must(h, "pinyin_guess_sentence");
     fn_predict predict = (fn_predict)must(h, "pinyin_guess_predicted_candidates_with_punctuations");
+    fn_predict predict_plain = (fn_predict_plain)must(h, "pinyin_guess_predicted_candidates");
     fn_n_cand n_cand = (fn_n_cand)must(h, "pinyin_get_n_candidate");
     fn_get_type get_type = (fn_get_type)must(h, "pinyin_get_candidate_type");
     fn_get_str get_str = (fn_get_str)must(h, "pinyin_get_candidate_string");
@@ -163,6 +165,23 @@ int main(int argc, char **argv) {
     if (!train(inst, 0)) {
         fprintf(stderr, "train failed\n");
         return 1;
+    }
+
+    /* Plain variant first (its retval is the pinned contrast: the
+     * with_punctuations entry discards it). Same trained prefix. */
+    bool ok_plain = predict_plain(inst, "测测");
+    printf("predict-plain: %s\n", ok_plain ? "true" : "false");
+    guint n_plain = 0;
+    n_cand(inst, &n_plain);
+    printf("predict-plain: n=%u\n", n_plain);
+    for (guint i = 0; i < n_plain; i++) {
+        lookup_candidate_t *c = NULL;
+        int type = 0;
+        const char *text = NULL;
+        get_cand(inst, i, &c);
+        get_type(inst, c, &type);
+        get_str(inst, c, &text);
+        printf("plain: type=%d %s\n", type, text ? text : "(null)");
     }
 
     bool ok = predict(inst, "测测");
