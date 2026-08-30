@@ -84,13 +84,15 @@ impl core::fmt::Display for ModelDirError {
             Self::NotADirectory { path } => {
                 write!(
                     formatter,
-                    "model export directory {path:?} is not a directory"
+                    "model export directory {} is not a directory",
+                    path.display()
                 )
             }
             Self::Incomplete { path, missing } => write!(
                 formatter,
-                "model export directory {path:?} is missing {missing:?}; \
-                 run tools/model/fetch-model.sh"
+                "model export directory {} is missing {missing:?}; \
+                 run tools/model/fetch-model.sh",
+                path.display()
             ),
         }
     }

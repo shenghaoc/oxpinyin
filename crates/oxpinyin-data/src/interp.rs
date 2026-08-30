@@ -60,7 +60,7 @@ impl fmt::Display for InterpolationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Read { path, source } => {
-                write!(formatter, "cannot read {path:?}: {source}")
+                write!(formatter, "cannot read {}: {source}", path.display())
             }
             Self::Parse { line, detail } => {
                 write!(formatter, "interpolation2.text line {line}: {detail}")
