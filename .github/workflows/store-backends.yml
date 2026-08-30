@@ -177,33 +177,36 @@ jobs:
           set -euo pipefail
           start=$EPOCHSECONDS
           case "$BACKEND" in
-          # Cargo features are additive but do NOT back-propagate:
-          # enabling `oxpinyin-store/<peer>` does not enable the same
-          # peer feature on the crates that consume oxpinyin-store, so
-          # a bare passthrough leaves each consumer's own
-          # `#[cfg(feature = "<peer>")]` code (e.g.
-          # `user_store_tests!(redb, ...)` in oxpinyin-user, the
-          # `Backend::Redb::write()` arm in oxpinyin-datagen) skipped
-          # even though the store is redb. Enable the peer feature on
-          # every workspace crate that exposes it so the whole per-peer
-          # test surface runs. Every consumer's `<peer> =
-          # ["oxpinyin-store/<peer>", ...]` cascade keeps the store's
-          # single-peer selection intact.
+          # `--features <peer>` at `--workspace` scope enables that
+          # feature on every workspace member that declares it, so the
+          # peer selection cascades through each consumer's own
+          # `<peer> = ["oxpinyin-store/<peer>", ...]` forwarder. A
+          # bare passthrough (`--features oxpinyin-store/<peer>`) does
+          # NOT — cargo features do not back-propagate — and would
+          # leave each consumer's own `#[cfg(feature = "<peer>")]`
+          # code (e.g. `user_store_tests!(redb, ...)` in
+          # oxpinyin-user, the `Backend::Redb::write()` arm in
+          # oxpinyin-datagen) skipped even while `DefaultStore`
+          # resolves to the peer. The bare-name form here is the
+          # documented public interface — see
+          # `docs/findings/backend-selection-audit.md`. The
+          # exactly-one-backend invariant is unchanged; the
+          # `backend-matrix` job proves it separately.
           kyotocabinet)
             echo "--- kyotocabinet (workspace, the default backend) ---"
             cargo test --locked --workspace
             ;;
           redb)
             echo "--- redb (workspace, pure-Rust peer) ---"
-            cargo test --locked --workspace --no-default-features --features "oxpinyin-store/redb oxpinyin-data/redb oxpinyin-user/redb oxpinyin-segment/redb oxpinyin-counter/redb oxpinyin-emitter/redb oxpinyin-runtime/redb oxpinyin-lambda/redb oxpinyin-datagen/redb oxpinyin-capi/redb oxpinyin-python/redb oxpinyin-dictool/redb pinyin-oracle/redb"
+            cargo test --locked --workspace --no-default-features --features redb
             ;;
           tkrzw)
             echo "--- tkrzw (workspace) ---"
-            cargo test --locked --workspace --no-default-features --features "oxpinyin-store/tkrzw oxpinyin-data/tkrzw oxpinyin-user/tkrzw oxpinyin-segment/tkrzw oxpinyin-counter/tkrzw oxpinyin-emitter/tkrzw oxpinyin-runtime/tkrzw oxpinyin-lambda/tkrzw oxpinyin-datagen/tkrzw oxpinyin-capi/tkrzw oxpinyin-python/tkrzw oxpinyin-dictool/tkrzw pinyin-oracle/tkrzw"
+            cargo test --locked --workspace --no-default-features --features tkrzw
             ;;
           lmdb)
             echo "--- lmdb (workspace) ---"
-            cargo test --locked --workspace --no-default-features --features "oxpinyin-store/lmdb oxpinyin-data/lmdb oxpinyin-user/lmdb oxpinyin-segment/lmdb oxpinyin-counter/lmdb oxpinyin-emitter/lmdb oxpinyin-runtime/lmdb oxpinyin-lambda/lmdb oxpinyin-datagen/lmdb oxpinyin-capi/lmdb oxpinyin-python/lmdb oxpinyin-dictool/lmdb pinyin-oracle/lmdb"
+            cargo test --locked --workspace --no-default-features --features lmdb
             ;;
           *)
             echo "FAIL: unknown matrix.backend value '$BACKEND'" >&2
