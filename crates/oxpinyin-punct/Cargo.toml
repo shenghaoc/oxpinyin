@@ -1,0 +1,22 @@
+[package]
+name = "oxpinyin-punct"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Training-only punctuation-table generator reproducing the trainer's genpunct.py. Never ships."
+
+[lints]
+workspace = true
+
+# Self-contained: the segmented stream carries each word's token and text,
+# and punctuation is read from the null-token separator lines, so no phrase
+# index and no dependencies are needed.
+
+[[bin]]
+name = "oxpinyin-punct"
+path = "src/bin/oxpinyin-punct.rs"
+
+[dependencies]
