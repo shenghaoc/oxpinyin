@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn atoi_matches_c_for_token_fields() {
-        assert_eq!(atoi("16817937"), 16817937);
+        assert_eq!(atoi("16817937"), 16_817_937);
         assert_eq!(atoi("0"), 0);
         assert_eq!(atoi(""), 0);
         assert_eq!(atoi("12abc"), 12);
@@ -146,13 +146,13 @@ mod tests {
     #[test]
     fn parse_ngseg_reproduces_segmented_lines() {
         let tokens = parse_ngseg("16817937 中国\n0 \n16782711 人\n").unwrap();
-        assert_eq!(tokens, vec![16817937, 0, 16782711]);
+        assert_eq!(tokens, vec![16_817_937, 0, 16_782_711]);
     }
 
     #[test]
     fn parse_ngseg_treats_empty_line_as_null() {
         let tokens = parse_ngseg("16817937 中国\n\n16782711 人\n").unwrap();
-        assert_eq!(tokens, vec![16817937, 0, 16782711]);
+        assert_eq!(tokens, vec![16_817_937, 0, 16_782_711]);
     }
 
     #[test]

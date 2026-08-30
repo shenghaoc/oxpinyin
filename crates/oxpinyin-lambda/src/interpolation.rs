@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn table_conf_value_is_six_decimals() {
         let lambda = super::Lambda {
-            average: 0.3126987654,
+            average: 0.312_698_765_4,
             per_context: vec![],
         };
         assert_eq!(lambda.table_conf_value(), "0.312699");

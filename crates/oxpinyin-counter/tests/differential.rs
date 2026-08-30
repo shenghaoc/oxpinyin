@@ -107,8 +107,8 @@ fn rust_matches_committed_manifest() {
     assert_eq!(checksum, manifest.checksum, "full dump checksum diverged");
 
     // Spot-check corpus-derived counts (not the freq-1 floor).
-    assert_eq!(counts.unigrams.get(&16817937), Some(&5), "中国 count"); // 中国
-    assert_eq!(counts.unigrams.get(&16782711), Some(&3), "人 count"); // 人
+    assert_eq!(counts.unigrams.get(&16_817_937), Some(&5), "中国 count"); // 中国
+    assert_eq!(counts.unigrams.get(&16_782_711), Some(&3), "人 count"); // 人
 
     eprintln!(
         "parity: {} unigrams, {} bigrams, dump checksum {checksum:016x} matches manifest",

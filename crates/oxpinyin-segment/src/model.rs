@@ -20,7 +20,7 @@ use crate::lexicon::PhraseLexicon;
 /// `SystemTableInfo2::load` scans that line with `fscanf(..., "%f")`
 /// (`src/storage/table_info.cpp:220`). The nearest `f32` to the decimal is
 /// the same value `ngseg` then passes to `PhraseLookup`.
-pub const PINNED_LAMBDA: f32 = 0.312699;
+pub const PINNED_LAMBDA: f32 = 0.312_699;
 
 /// `null_token` (`novel_types.h:121`).
 pub const NULL_TOKEN: u32 = 0;
