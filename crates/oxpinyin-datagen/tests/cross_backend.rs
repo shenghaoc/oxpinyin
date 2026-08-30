@@ -1,12 +1,12 @@
-//! The three backend producers must emit semantically identical tables
+//! The four backend producers must emit semantically identical tables
 //! from the same canonical source.
 //!
 //! Compiles the system tables once and writes them through every backend
-//! compiled into this build (redb always; LMDB/Tkrzw behind their cargo
-//! features), then reads each file back through its own store and through
-//! the real loader (`oxpinyin_data::GenericLookupTable<S>`) and asserts
+//! compiled into this build (redb always; LMDB/Tkrzw/Kyoto Cabinet behind
+//! their cargo features), then reads each file back through its own store and
+//! through the real loader (`oxpinyin_data::GenericLookupTable<S>`) and asserts
 //! identical key/value streams and lookups. Combined with the store
-//! crate's three-way ordering conformance tests, this is the backend
+//! crate's cross-backend ordering conformance tests, this is the backend
 //! matrix's data-level row; the engine differential runs on the default
 //! backend over tables proven identical here.
 //!
@@ -60,8 +60,11 @@ fn all_backends_emit_identical_tables() {
     if cfg!(feature = "tkrzw") {
         backends.push(Backend::Tkrzw);
     }
+    if cfg!(feature = "kyotocabinet") {
+        backends.push(Backend::KyotoCabinet);
+    }
     eprintln!(
-        "backends compiled in: {:?} (enable others with --features lmdb / --features tkrzw)",
+        "backends compiled in: {:?} (enable others with --features lmdb / --features tkrzw / --features kyotocabinet)",
         backends
     );
 
@@ -152,6 +155,8 @@ fn assert_spot_lookups(backend: Backend, out: &std::path::Path, compiled: &[(Vec
         Backend::Lmdb => probes::<oxpinyin_store::LmdbStore>(&path),
         #[cfg(feature = "tkrzw")]
         Backend::Tkrzw => probes::<oxpinyin_store::TkrzwStore>(&path),
+        #[cfg(feature = "kyotocabinet")]
+        Backend::KyotoCabinet => probes::<oxpinyin_store::KcStore>(&path),
         #[allow(unreachable_patterns)]
         _ => unreachable!("backend list is built from cfg"),
     };
