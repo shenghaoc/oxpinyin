@@ -1,0 +1,73 @@
+# Validation environment — extends the baseline image with profiling tools.
+#
+# Usage:
+#   docker build -f tools/bisection/Dockerfile.perf-validation -t oxpinyin-validate .
+#   docker run --rm --cap-add SYS_PTRACE -v /tmp/val-out:/out oxpinyin-validate bash
+#
+# Adds strace for file-access tracing and linux-perf for CPU profiling.
+# SYS_PTRACE capability is required for strace inside the container.
+
+FROM debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    autoconf automake autopoint libtool \
+    pkg-config gettext gnome-common \
+    curl ca-certificates \
+    tar \
+    python3 \
+    libglib2.0-dev \
+    libtkrzw-dev \
+    libkyotocabinet-dev \
+    libsqlite3-dev sqlite3 \
+    libclang-dev \
+    libssl-dev \
+    libibus-1.0-dev \
+    util-linux \
+    strace \
+    ltrace \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain 1.97.1 --profile minimal \
+    --component clippy,rustfmt
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN cargo install cargo-c --locked
+
+COPY . /repo
+WORKDIR /repo
+
+RUN bash tools/oracle/build-oracle.sh \
+    --prefix /opt/pinyin-oracle \
+    --jobs "$(nproc)"
+
+RUN bash tools/model/fetch-model.sh
+
+RUN cargo run --locked --release -p oxpinyin-datagen -- compile \
+    --model-dir target/model20/extracted \
+    --out-dir /tmp/oxpinyin-export
+
+# Pre-stage oxpinyin-capi so interactive sessions skip the build
+RUN mkdir -p /tmp/perf-stage && \
+    cargo cinstall --locked --release -p oxpinyin-capi \
+    --destdir=/tmp/perf-stage --prefix=/usr \
+    --manifest-path /repo/Cargo.toml
+
+# Pre-populate the oxpinyin data directory
+RUN mkdir -p /tmp/perf-stage/usr/share/oxpinyin && \
+    cp -L /tmp/oxpinyin-export/pinyin_index.kct \
+          /tmp/oxpinyin-export/phrase_index.kct \
+          /tmp/oxpinyin-export/bigram.kct \
+          /tmp/oxpinyin-export/interpolation2.text \
+          /tmp/perf-stage/usr/share/oxpinyin/
+
+# Build the bisect harness
+RUN gcc -std=gnu11 -Wall -Wextra -Werror -O2 \
+    -o /repo/tools/bisection/bisect \
+    /repo/tools/bisection/bisect.c -ldl
+
+ENV PINYIN_ORACLE_PREFIX=/opt/pinyin-oracle
+ENV PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
+
+CMD ["bash"]
