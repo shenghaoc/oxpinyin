@@ -124,6 +124,30 @@ pub struct ExportIterator;
 /// Opaque bigram export iterator.
 pub struct BigramExportIterator;
 
+/// The library's append view of a caller's `GArray`: the same
+/// documented layout, mutably.
+#[repr(C)]
+pub struct GArrayLayout {
+    /// The element data buffer.
+    pub data: *mut GChar,
+    /// The element count.
+    pub len: u32,
+}
+
+/// glib `GArray` — the caller passes a real glib array; the library
+/// appends through its documented public layout (`data`, `len`), which
+/// `crate::dict`'s appender writes directly (system-allocator buffer,
+/// `g_free`-compatible). Declared pointer-only in the shipped header,
+/// exactly like glib's own headers.
+#[repr(C)]
+pub struct GArray {
+    /// The element data buffer (glib-owned or the library's
+    /// system-allocated buffer).
+    pub data: *mut GChar,
+    /// The element count.
+    pub len: u32,
+}
+
 // ── Enums ────────────────────────────────────────────────────────────
 
 /// `lookup_candidate_type_t` from `pinyin.h`.

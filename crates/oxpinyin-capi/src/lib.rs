@@ -1,5 +1,6 @@
-//! C ABI subset of libpinyin's public API (66 of the 79 live upstream
-//! `pinyin_*` symbols; the target is the full live ABI, 79/79).
+//! C ABI subset of libpinyin's public API (79 of the 79 live upstream
+//! `pinyin_*` symbols — the full live ABI, target closed).
+//!
 //! Every `#[unsafe(no_mangle)] pub extern "C" fn` matches the signature in
 //! `libpinyin/src/pinyin.h` (tag 2.11.91) symbol-for-symbol. The surface is
 //! the fork's 51-symbol W8 bootstrap call set — the 50 pinned ibus-libpinyin
@@ -62,6 +63,7 @@ pub mod fuzz_api {
         ExportIterator, GChar, ImportIterator, LookupCandidate, PinyinContext, PinyinInstance,
     };
 }
+mod dict;
 mod keys;
 mod phrase;
 mod state;
@@ -88,7 +90,7 @@ pub use oxpinyin_user::{
 };
 pub use state::ExportedBigramRow;
 pub use types::{ChewingKey, ChewingKeyRest, GChar, LookupCandidate, PinyinInstance};
-pub use types::{ImportIterator, PhraseTokenT, PinyinContext, lookup_candidate_type_t};
+pub use types::{GArray, ImportIterator, PhraseTokenT, PinyinContext, lookup_candidate_type_t};
 
 use std::os::raw::{c_char, c_int};
 use types::{GUint, PinyinOptionT};
@@ -292,6 +294,66 @@ pub fn pinyin_get_pinyin_strings(
 ) -> bool {
     cursor::pinyin_get_pinyin_strings(instance, key, shengmu, yunmu)
 }
+// ── dict ─────────────────────────────────────────────
+/// In-process wrapper for the `pinyin_token_add_unigram_frequency` ABI symbol (see the C header).
+pub fn pinyin_token_add_unigram_frequency(
+    instance: *mut PinyinInstance,
+    token: PhraseTokenT,
+    delta: GUint,
+) -> bool {
+    dict::pinyin_token_add_unigram_frequency(instance, token, delta)
+}
+/// In-process wrapper for the `pinyin_token_get_n_pronunciation` ABI symbol (see the C header).
+pub fn pinyin_token_get_n_pronunciation(
+    instance: *mut PinyinInstance,
+    token: PhraseTokenT,
+    num: *mut GUint,
+) -> bool {
+    dict::pinyin_token_get_n_pronunciation(instance, token, num)
+}
+/// In-process wrapper for the `pinyin_token_get_nth_pronunciation` ABI symbol (see the C header).
+pub fn pinyin_token_get_nth_pronunciation(
+    instance: *mut PinyinInstance,
+    token: PhraseTokenT,
+    nth: GUint,
+    keys: *mut GArray,
+) -> bool {
+    dict::pinyin_token_get_nth_pronunciation(instance, token, nth, keys)
+}
+/// In-process wrapper for the `pinyin_token_get_phrase` ABI symbol (see the C header).
+pub fn pinyin_token_get_phrase(
+    instance: *mut PinyinInstance,
+    token: PhraseTokenT,
+    len: *mut GUint,
+    utf8_str: *mut *mut GChar,
+) -> bool {
+    dict::pinyin_token_get_phrase(instance, token, len, utf8_str)
+}
+/// In-process wrapper for the `pinyin_token_get_unigram_frequency` ABI symbol (see the C header).
+pub fn pinyin_token_get_unigram_frequency(
+    instance: *mut PinyinInstance,
+    token: PhraseTokenT,
+    freq: *mut GUint,
+) -> bool {
+    dict::pinyin_token_get_unigram_frequency(instance, token, freq)
+}
+/// In-process wrapper for the `pinyin_token_get_nth_pronunciation`'s load sibling - see the C header.
+pub fn pinyin_load_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
+    config::pinyin_load_phrase_library(context, index)
+}
+/// In-process wrapper for the `pinyin_unload_phrase_library` ABI symbol (see the C header).
+pub fn pinyin_unload_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
+    config::pinyin_unload_phrase_library(context, index)
+}
+/// In-process wrapper for the `pinyin_lookup_tokens` ABI symbol (see the C header).
+pub fn pinyin_lookup_tokens(
+    instance: *mut PinyinInstance,
+    phrase: *const c_char,
+    tokenarray: *mut GArray,
+) -> bool {
+    dict::pinyin_lookup_tokens(instance, phrase, tokenarray)
+}
+
 /// In-process wrapper for the `pinyin_get_luoma_pinyin_string` ABI symbol (see the C header).
 pub fn pinyin_get_luoma_pinyin_string(
     instance: *mut PinyinInstance,

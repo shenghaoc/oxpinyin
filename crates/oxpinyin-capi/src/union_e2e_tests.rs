@@ -414,3 +414,82 @@ fn predicted_prefix_candidates_slice_the_prefix_from_the_text() {
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 }
+
+/// The engineered order-flip probe for the Tier-C unigram overlay — an
+/// ARTIFICIAL construction, labeled as such: the fixture tables'
+/// amplified-law total is small, so a large
+/// `pinyin_token_add_unigram_frequency` delta on one predicted
+/// candidate visibly reorders the plain-variant list. On the real
+/// model20 tables the same mechanism shifts nothing observable after
+/// the ×2²⁴ truncation (the real-table differential pins retvals and
+/// freq reads instead). White-box because the prediction surface's
+/// display text is prefix-sliced (the B1 law) — no external caller can
+/// map a candidate row back to its full-phrase token, so the token
+/// comes from the snapshot directly.
+#[test]
+fn tier_c_overlay_delta_flips_predicted_order_on_fixture_scale() {
+    let user_dir = crate::test_support::TempUserDir::new("tier-c-flip");
+    let (context, instance) =
+        crate::test_support::open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    // Plant the trained bigram (first-seed 69 clears the filter of 10).
+    let nihao = std::ffi::CString::new("nihao").expect("no interior NUL");
+    assert_eq!(
+        crate::parse::pinyin_parse_more_full_pinyins(instance, nihao.as_ptr()),
+        5
+    );
+    assert!(crate::sentence::pinyin_guess_candidates(instance, 0, 0x1e));
+    let mut candidate: *mut crate::types::LookupCandidate = std::ptr::null_mut();
+    assert!(pinyin_get_candidate(instance, 0, &mut candidate));
+    assert!(pinyin_choose_candidate(instance, 0, candidate) > 0);
+    assert!(crate::candidates::pinyin_train(instance, 0));
+
+    // The plain variant for prefix 你: rows are the sliced suggestion
+    // texts 们 (from 你们) and 好 (from 你好).
+    let prefix = std::ffi::CString::new("你").expect("no interior NUL");
+    assert!(crate::predict::pinyin_guess_predicted_candidates(
+        instance,
+        prefix.as_ptr()
+    ));
+    // SAFETY: live instance after guess_predicted.
+    let inst = unsafe { instance_ref(instance) };
+    assert!(inst.candidates.len() >= 2, "both suggestion rows present");
+    let before: Vec<String> = inst
+        .candidates
+        .iter()
+        .map(|row| row.text.to_string_lossy().into_owned())
+        .collect();
+    let leader_before = before[0].clone();
+    let trailing_token = inst
+        .candidates
+        .iter()
+        .skip(1)
+        .find_map(|row| row.token)
+        .expect("no trailing row carries a token");
+
+    // The huge engineered delta through the ABI write path.
+    assert!(crate::dict::pinyin_token_add_unigram_frequency(
+        instance,
+        trailing_token.value(),
+        50_000_000
+    ));
+
+    assert!(crate::predict::pinyin_guess_predicted_candidates(
+        instance,
+        prefix.as_ptr()
+    ));
+    // SAFETY: live instance after guess_predicted.
+    let inst = unsafe { instance_ref(instance) };
+    let after: Vec<String> = inst
+        .candidates
+        .iter()
+        .map(|row| row.text.to_string_lossy().into_owned())
+        .collect();
+    assert_ne!(
+        after[0], leader_before,
+        "the engineered delta flipped the predicted order: {before:?} -> {after:?}"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
