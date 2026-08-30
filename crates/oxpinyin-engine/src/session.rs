@@ -1153,6 +1153,88 @@ where
         Ok(true)
     }
 
+    /// Segments an arbitrary already-typed sentence string into its
+    /// best dictionary phrase path — upstream `pinyin_phrase_segment`
+    /// (`pinyin.cpp:1443-1460`), the phrase-lookup span DP over the
+    /// sentence's characters, independent of the live composition.
+    /// Returns `(matched, tokens)` in `m_phrase_result`'s shape:
+    /// character-length, each phrase's token at its span's start
+    /// position, `null_token` between phrases — and, on a failed
+    /// match, the fully sized all-null array (`PhraseLookup::final_step`
+    /// sizes and null-fills before its empty-last-step `false`).
+    ///
+    /// # Errors
+    ///
+    /// Propagates the model's step-cost failures.
+    pub fn phrase_segment(&self, sentence: &str) -> Result<(bool, Vec<PhraseToken>), EngineError> {
+        crate::phrase::phrase_segment(&self.dictionary, &self.model, sentence)
+    }
+
+    /// Guesses a sentence seeded with prefix tokens — upstream
+    /// `pinyin_guess_sentence_with_prefix` (`pinyin.cpp:1426-1441`):
+    /// the prefix tokens join the virtual start as zero-cost initial
+    /// trellis nodes (`fill_prefixes`, `phonetic_lookup.h:244-276`),
+    /// the constraint store validates against the matrix, and the
+    /// ordinary full-matrix decode runs — no remaining-input shortcut.
+    /// The caller supplies the tail-substring tokens (`_compute_prefixes`
+    /// over the prefix text).
+    ///
+    /// # Errors
+    ///
+    /// Propagates engine failures from the decode.
+    pub fn guess_sentence_with_prefix(
+        &mut self,
+        prefix_tokens: &[PhraseToken],
+    ) -> Result<bool, EngineError> {
+        self.nbest_rows.clear();
+        self.nbest_history.clear();
+        self.last_result.clear();
+        self.sentence_lookup_active = true;
+        if self.raw.is_empty() {
+            return Ok(false);
+        }
+        let graph = self.build_graph_at(0, self.raw.as_bytes())?;
+        let bound = graph.consumed();
+        if bound == 0 {
+            return Ok(false);
+        }
+        let matrix = build_scan_matrix(
+            &graph,
+            self.settings.options,
+            self.exact_segments.is_empty(),
+        );
+
+        let mut store = core::mem::take(&mut self.constraints);
+        let dropped = store.validate(bound + 1, |start, end, token| {
+            crate::nbest::span_finds_token(&matrix, start, end, token, &self.dictionary)
+        });
+        self.constraints = store;
+        if dropped? {
+            self.rebuild_selection_from_constraints();
+        }
+
+        // `m_prefixes = [sentence_start] + _compute_prefixes(prefix)`:
+        // every entry seeds a zero-cost initial node.
+        let mut seeds = Vec::with_capacity(prefix_tokens.len() + 1);
+        seeds.push(PhraseToken::new(crate::nbest::SENTENCE_START));
+        seeds.extend_from_slice(prefix_tokens);
+        self.nbest_rows = crate::nbest::nbest_sentences_with_seeds(
+            &matrix,
+            bound,
+            &self.dictionary,
+            &self.model,
+            &seeds,
+            Some(&self.constraints),
+        )?;
+        self.last_result = self
+            .nbest_rows
+            .first()
+            .map_or_else(Vec::new, |row| row.spans.clone());
+
+        self.refresh()?;
+        Ok(true)
+    }
+
     /// Today's remaining-input walk — the W6 re-seed surface, verbatim:
     /// the trellis over `raw[consumed..]` seeded from the selection
     /// history, the §10 text prefix, and the lookup-time history
