@@ -30,6 +30,12 @@ pub enum SegmentError {
     },
     /// A configuration value could not be parsed.
     Config(String),
+    /// A segmented-stream input line was not `token phrase`, or named a
+    /// token absent from the phrase table (`mergeseq` input).
+    MalformedLine {
+        /// What was wrong with the line.
+        detail: String,
+    },
 }
 
 impl fmt::Display for SegmentError {
@@ -43,6 +49,9 @@ impl fmt::Display for SegmentError {
             }
             Self::MissingPath { detail } => write!(formatter, "{detail}"),
             Self::Config(detail) => write!(formatter, "{detail}"),
+            Self::MalformedLine { detail } => {
+                write!(formatter, "malformed segmented line: {detail}")
+            }
         }
     }
 }
@@ -54,7 +63,7 @@ impl std::error::Error for SegmentError {
             Self::LanguageModel(error) => Some(error),
             Self::Interpolation(error) => Some(error),
             Self::Io { source, .. } => Some(source),
-            Self::MissingPath { .. } | Self::Config(_) => None,
+            Self::MissingPath { .. } | Self::Config(_) | Self::MalformedLine { .. } => None,
         }
     }
 }
