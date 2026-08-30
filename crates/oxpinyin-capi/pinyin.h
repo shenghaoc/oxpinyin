@@ -342,6 +342,9 @@ void pinyin_free_instance(struct pinyin_instance_t *instance);
 // Reset the pinyin instance (clear parsing and sentence state).
 bool pinyin_reset(struct pinyin_instance_t *instance);
 
+// Get the pinyin context from the pinyin instance.
+struct pinyin_context_t *pinyin_get_context(struct pinyin_instance_t *instance);
+
 // Begin adding phrases to an index.
 struct import_iterator_t *pinyin_begin_add_phrases(struct pinyin_context_t *context, uint8_t index);
 
@@ -395,6 +398,50 @@ size_t pinyin_parse_more_chewings(struct pinyin_instance_t *instance, const char
 
 // Get the parsed length of the input.
 size_t pinyin_get_parsed_input_length(struct pinyin_instance_t *instance);
+
+// Parse one full pinyin into a key.
+bool pinyin_parse_full_pinyin(struct pinyin_instance_t *instance,
+                              const char *onepinyin,
+                              ChewingKey *onekey);
+
+// Parse one double pinyin into a key.
+bool pinyin_parse_double_pinyin(struct pinyin_instance_t *instance,
+                                const char *onepinyin,
+                                ChewingKey *onekey);
+
+// Parse one chewing (bopomofo) input into a key.
+bool pinyin_parse_chewing(struct pinyin_instance_t *instance,
+                          const char *onechewing,
+                          ChewingKey *onekey);
+
+// Get the zhuyin string of a chewing key.
+bool pinyin_get_zhuyin_string(struct pinyin_instance_t *instance,
+                              ChewingKey *key,
+                              gchar **utf8_str);
+
+// Get the pinyin string of a chewing key.
+bool pinyin_get_pinyin_string(struct pinyin_instance_t *instance,
+                              ChewingKey *key,
+                              gchar **utf8_str);
+
+// Get the luoma pinyin string of a chewing key.
+bool pinyin_get_luoma_pinyin_string(struct pinyin_instance_t *instance,
+                                    ChewingKey *key,
+                                    gchar **utf8_str);
+
+// Get the secondary zhuyin string of a chewing key.
+bool pinyin_get_secondary_zhuyin_string(struct pinyin_instance_t *instance,
+                                        ChewingKey *key,
+                                        gchar **utf8_str);
+
+// Get the shengmu and yunmu strings of a chewing key.
+bool pinyin_get_pinyin_strings(struct pinyin_instance_t *instance,
+                               ChewingKey *key,
+                               gchar **shengmu,
+                               gchar **yunmu);
+
+// Whether a chewing key carries no middle and no final.
+bool pinyin_get_pinyin_is_incomplete(struct pinyin_instance_t *instance, ChewingKey *key);
 
 // Check whether an input key is in the current chewing keyboard scheme.
 bool pinyin_in_chewing_keyboard(struct pinyin_instance_t *instance, char _key, gchar ***symbols);

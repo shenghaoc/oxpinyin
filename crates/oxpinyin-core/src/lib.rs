@@ -38,6 +38,7 @@ pub use options::{
     ZHUYIN_CORRECT_ALL, ZHUYIN_CORRECT_ETEN26, ZHUYIN_CORRECT_HSU, ZHUYIN_CORRECT_SHUFFLE,
     ZHUYIN_INCOMPLETE,
 };
+pub use oxpinyin_chewing::{CHEWING_ZERO_TONE, ChewingKey};
 pub use parser::{
     Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
 };

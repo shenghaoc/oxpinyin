@@ -65,6 +65,7 @@ missing_safety_doc = "deny"
 must_use_candidate = "warn"
 
 [dependencies]
+oxpinyin-chewing = { path = "../oxpinyin-chewing" }
 oxpinyin-core.workspace = true
 # default-features = false on the store-reaching edges (the workspace table
 # carries it for the `workspace = true` ones) so `--no-default-features`

@@ -12,10 +12,12 @@
 
 use crate::SyllableKey;
 use crate::options::{
-    PINYIN_AMB_ALL, ZHUYIN_CORRECT_ALL, ZHUYIN_CORRECT_ETEN26, ZHUYIN_CORRECT_HSU,
-    ZHUYIN_CORRECT_SHUFFLE, ZHUYIN_INCOMPLETE,
+    FORCE_TONE, OptionBits, PINYIN_AMB_ALL, PINYIN_CORRECT_ALL, PINYIN_INCOMPLETE, USE_TONE,
+    ZHUYIN_CORRECT_ALL, ZHUYIN_CORRECT_ETEN26, ZHUYIN_CORRECT_HSU, ZHUYIN_CORRECT_SHUFFLE,
+    ZHUYIN_INCOMPLETE,
 };
 use crate::zhuyin_map::VALID_ZHUYIN_TONES;
+use crate::{CHEWING_ZERO_TONE, ChewingKey};
 
 /// One parsed double-pinyin key: a full-pinyin [`SyllableKey`] and its byte
 /// span in the original two-key (or one-key incomplete) input.
@@ -748,6 +750,51 @@ impl DoublePinyinParser {
             consumed: parsed_len,
         }
     }
+
+    /// Parses one double-pinyin key from the whole of `input`, mirroring
+    /// `DoublePinyinParser2::parse_one_key`
+    /// (`src/storage/pinyin_parser2.cpp:405-530`).
+    ///
+    /// `options` is the caller's option word, with the law the batch
+    /// [`Self::parse`] does not carry: correction and ambiguity bits are
+    /// masked first (`:409`); `FORCE_TONE` requires a three-byte input
+    /// (`:412`); the one-byte incomplete probe runs under
+    /// `PINYIN_INCOMPLETE` (`:418-421`); and the two/three-byte probe
+    /// masks the incomplete bits and forces the `UE_VE`/`V_U`
+    /// corrections (`:433-436` — already [`lookup_pinyin`]'s law), with
+    /// a three-byte input's trailing `1..=5` riding the key as the tone
+    /// under `USE_TONE` (`:439-451`). A two-byte match carries tone
+    /// zero. `None` is the upstream `false`.
+    #[must_use]
+    pub fn parse_one_key(&self, options: u32, input: &[u8]) -> Option<ChewingKey> {
+        let bits = OptionBits::from_bits(options & !(PINYIN_CORRECT_ALL | PINYIN_AMB_ALL));
+        if bits.contains(FORCE_TONE) && input.len() != 3 {
+            return None;
+        }
+        let tables = self.scheme.tables()?;
+        match input.len() {
+            1 => {
+                let syllable =
+                    parse_incomplete(input[0], bits.contains(PINYIN_INCOMPLETE), tables)?;
+                ChewingKey::from_pinyin(syllable.text())
+            }
+            2 | 3 => {
+                let mut tone = 0;
+                if input.len() == 3 {
+                    if !bits.contains(USE_TONE) {
+                        return None;
+                    }
+                    tone = match input[2] {
+                        byte @ b'1'..=b'5' => byte - b'0',
+                        _ => return None,
+                    };
+                }
+                let syllable = parse_two_keys(&input[..2], tables)?;
+                Some(ChewingKey::from_pinyin(syllable.text())?.with_tone(tone))
+            }
+            _ => None,
+        }
+    }
 }
 
 impl Default for DoublePinyinParser {
@@ -815,8 +862,12 @@ fn parse_fallback(input: &[u8], tables: SchemeTables) -> Option<SyllableKey> {
 
 /// `ZhuyinScheme` from `src/storage/pinyin_custom2.h:122-133`.
 ///
-/// The first W13 bopomofo PR scopes STANDARD only; the remaining values are
-/// declared so the ABI setter can report `false` for them instead of aborting.
+/// Eight of the nine keyboards parse ([`ZhuyinParser`]: Standard, Hsu,
+/// Ibm, Ginyieh, Eten, Eten26, HsuDvorak, DachenCp26); `StandardDvorak`
+/// is the one gap — upstream's setter aborts on it
+/// (`zhuyin_parser2.cpp:291-295`, recorded in
+/// `docs/findings/upstream-divergences.md`), and the oxpinyin setters
+/// report `false` there until it becomes a table-addition port.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ZhuyinScheme {
@@ -1835,6 +1886,28 @@ impl ZhuyinParser {
             consumed: parsed_len,
         }
     }
+
+    /// Parses one chewing key from the whole of `input`, mirroring the
+    /// three upstream `parse_one_key` laws — `ZhuyinSimpleParser2`
+    /// (`src/storage/zhuyin_parser2.cpp:162-210`) for the Simple
+    /// keyboards, `ZhuyinDiscreteParser2` (`:335-405`) for the Discrete
+    /// keyboards, and `ZhuyinDaChenCP26Parser2` (`:573-716`) for CP26 —
+    /// through this scheme's [`Keyboard`] probe.
+    ///
+    /// `options` is the caller's option word with the ABI layer's
+    /// `ZHUYIN_CORRECT_ALL` strip already applied (`pinyin.cpp:1621`).
+    /// Unlike the batch [`Self::parse`], no keyboard-owned correction
+    /// bit is forced here and the ambiguity bits are masked (the
+    /// `options &= ~PINYIN_AMB_ALL` at `:165`, `:340`, `:580`).
+    /// `FORCE_TONE` rejects a toneless match — nested under `USE_TONE`
+    /// for Simple and CP26 (`:178`, `:602`), unconditional for Discrete
+    /// (`:373`, `:387`). `None` is the upstream `false`, including the
+    /// out-of-keyboard and assert shapes the no-abort policy renders as
+    /// refusal.
+    #[must_use]
+    pub fn parse_one_key(&self, options: u32, input: &[u8]) -> Option<ChewingKey> {
+        zhuyin_parse_one_key(self.scheme, options, input)
+    }
 }
 
 /// One greedy step of [`ZhuyinParser::parse`], specialised per keyboard
@@ -1891,6 +1964,38 @@ impl KeyProbe {
             } => parse_one_cp26_key(input, use_tone, options, tables),
         }
     }
+}
+
+/// The `ZhuyinParser::parse_one_key` body, split out of the impl so the
+/// keyboard dispatch can borrow the [`Keyboard`] probe per family.
+fn zhuyin_parse_one_key(scheme: ZhuyinScheme, options: u32, input: &[u8]) -> Option<ChewingKey> {
+    let bits = OptionBits::from_bits(options & !PINYIN_AMB_ALL);
+    let use_tone = bits.contains(USE_TONE);
+    let force_tone = bits.contains(FORCE_TONE);
+    let (syllable, tone) = match scheme.keyboard()? {
+        Keyboard::Simple(tables) => {
+            let (key, _, tone) = parse_one_zhuyin_key(input, use_tone, bits.bits(), tables)?;
+            if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
+                return None;
+            }
+            (key, tone)
+        }
+        Keyboard::Discrete(tables) => {
+            let (key, _, tone) = parse_one_discrete_key(input, use_tone, bits.bits(), tables)?;
+            if force_tone && tone == CHEWING_ZERO_TONE {
+                return None;
+            }
+            (key, tone)
+        }
+        Keyboard::Cp26(tables) => {
+            let (key, _, tone) = parse_one_cp26_key(input, use_tone, bits.bits(), tables)?;
+            if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
+                return None;
+            }
+            (key, tone)
+        }
+    };
+    Some(ChewingKey::from_pinyin(syllable.text())?.with_tone(tone))
 }
 
 impl Default for ZhuyinParser {
@@ -2158,10 +2263,128 @@ fn is_valid_zhuyin(key: SyllableKey, tone: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{DoublePinyinParser, DoublePinyinScheme, ZhuyinParser, ZhuyinScheme};
+    use crate::options::{FORCE_TONE, PINYIN_INCOMPLETE, USE_TONE, ZHUYIN_INCOMPLETE};
 
     #[test]
     fn default_scheme_is_ms() {
         assert_eq!(DoublePinyinParser::new().scheme(), DoublePinyinScheme::Ms);
+    }
+
+    /// `DoublePinyinParser2::parse_one_key` on the MS tables: a two-key
+    /// spelling resolves to its syllable with tone zero, a three-key
+    /// input carries the tone only under `USE_TONE`, and `FORCE_TONE`
+    /// demands exactly three bytes.
+    #[test]
+    fn double_one_key_law() {
+        let parser = DoublePinyinParser::with_scheme(DoublePinyinScheme::Ms);
+
+        let key = parser.parse_one_key(0, b"ni").expect("ni parses");
+        assert_eq!(key.pinyin_string(), "ni");
+        assert_eq!(key.tone, 0);
+        assert_eq!(key.shengmu_string(), "n");
+        assert_eq!(key.yunmu_string(), "i");
+
+        // Without USE_TONE the three-byte form is refused.
+        assert_eq!(parser.parse_one_key(0, b"ni3"), None);
+        let toned = parser.parse_one_key(USE_TONE, b"ni3").expect("toned");
+        assert_eq!(toned.pinyin_string(), "ni3");
+
+        // FORCE_TONE: two bytes rejected; a three-byte input already
+        // carries its tone digit, so it passes with the key toned (the
+        // pin's zero-tone check at `pinyin_parser2.cpp:448` is dead —
+        // the digit parse above already refused every non-tone byte).
+        assert_eq!(parser.parse_one_key(FORCE_TONE, b"ni"), None);
+        assert!(
+            parser
+                .parse_one_key(USE_TONE | FORCE_TONE, b"ni3")
+                .is_some()
+        );
+        // A non-tone third byte is refused with or without FORCE_TONE.
+        assert_eq!(parser.parse_one_key(USE_TONE, b"ni9"), None);
+        assert_eq!(parser.parse_one_key(USE_TONE | FORCE_TONE, b"ni9"), None);
+
+        // A four-byte input is refused outright.
+        assert_eq!(parser.parse_one_key(0, b"niha"), None);
+    }
+
+    /// The double one-key incomplete probe under `PINYIN_INCOMPLETE`
+    /// (`z` → the initial-only `z` key on MS), refused without the bit.
+    #[test]
+    fn double_one_key_incomplete_needs_its_bit() {
+        let parser = DoublePinyinParser::with_scheme(DoublePinyinScheme::Ms);
+        assert_eq!(parser.parse_one_key(0, b"z"), None);
+        let key = parser
+            .parse_one_key(PINYIN_INCOMPLETE, b"z")
+            .expect("incomplete z");
+        assert_eq!(key.pinyin_string(), "z");
+        assert_eq!(key.yunmu_string(), "");
+    }
+
+    /// The double one-key second yunmu candidate: MS `oo` enters through
+    /// the zero shengmu (`'` → empty) and lands on `o`, the second of
+    /// `o`'s two yunmu rows (`uo` misses first).
+    #[test]
+    fn double_one_key_tries_the_second_yunmu() {
+        let parser = DoublePinyinParser::with_scheme(DoublePinyinScheme::Ms);
+        let key = parser.parse_one_key(0, b"oo").expect("oo parses");
+        assert_eq!(key.pinyin_string(), "o");
+    }
+
+    /// `ZhuyinSimpleParser2::parse_one_key` on STANDARD: `18` is ㄅㄚ
+    /// (ba), the trailing `3` is tone 3 under `USE_TONE`, and
+    /// `FORCE_TONE` rejects the toneless form while accepting the toned
+    /// one.
+    #[test]
+    fn chewing_one_key_law_on_standard() {
+        let parser = ZhuyinParser::with_scheme(ZhuyinScheme::Standard);
+
+        let key = parser.parse_one_key(0, b"18").expect("ba parses");
+        assert_eq!(key.pinyin_string(), "ba");
+        assert_eq!(key.shengmu_string(), "b");
+        assert_eq!(key.yunmu_string(), "a");
+        assert_eq!(key.zhuyin_string(), "ㄅㄚ");
+
+        // `USE_TONE` alone does not demand a tone: `8` is not a tone
+        // key on STANDARD, nothing is stripped, and the match carries
+        // tone zero. `FORCE_TONE` is what rejects it.
+        let toneless = parser.parse_one_key(USE_TONE, b"18").expect("ba");
+        assert_eq!(toneless.pinyin_string(), "ba");
+        assert_eq!(toneless.tone, 0);
+        let toned = parser.parse_one_key(USE_TONE, b"183").expect("ba3");
+        assert_eq!(toned.pinyin_string(), "ba3");
+        assert_eq!(toned.zhuyin_string(), "ㄅㄚˇ");
+
+        assert_eq!(parser.parse_one_key(USE_TONE | FORCE_TONE, b"18"), None);
+        assert!(
+            parser
+                .parse_one_key(USE_TONE | FORCE_TONE, b"183")
+                .is_some()
+        );
+    }
+
+    /// The chewing incomplete row gate: ㄅ alone resolves to the
+    /// initial-only `b` key only under `ZHUYIN_INCOMPLETE`.
+    #[test]
+    fn chewing_one_key_incomplete_needs_its_bit() {
+        let parser = ZhuyinParser::with_scheme(ZhuyinScheme::Standard);
+        assert_eq!(parser.parse_one_key(0, b"1"), None);
+        let key = parser
+            .parse_one_key(ZHUYIN_INCOMPLETE, b"1")
+            .expect("incomplete b");
+        assert_eq!(key.pinyin_string(), "b");
+    }
+
+    /// Empty input is refused on every keyboard family (upstream reads
+    /// `str[-1]` under `USE_TONE` on the Simple law — the no-abort
+    /// policy refuses instead), and the `StandardDvorak` slot parses
+    /// nothing.
+    #[test]
+    fn chewing_one_key_refuses_empty_and_dvorak() {
+        let standard = ZhuyinParser::with_scheme(ZhuyinScheme::Standard);
+        assert_eq!(standard.parse_one_key(USE_TONE, b""), None);
+        assert_eq!(standard.parse_one_key(0, b""), None);
+        let dvorak = ZhuyinParser::with_scheme(ZhuyinScheme::StandardDvorak);
+        assert_eq!(dvorak.parse_one_key(0, b"18"), None);
     }
 
     #[test]
@@ -2524,7 +2747,6 @@ mod tests {
         use super::VALID_ZHUYIN_TONES;
         use crate::SYLLABLE_KEY_COUNT;
         use crate::SyllableKey;
-
         assert_eq!(VALID_ZHUYIN_TONES.len(), SYLLABLE_KEY_COUNT);
 
         let mask = |spelling: &str| {
