@@ -116,16 +116,18 @@ impl ToolArgs {
 /// When no system-table export can be located; the message names the two
 /// ways to fix it (`--export-dir` or `PINYIN_EXPORT_DIR`).
 pub fn locate_phrase_index(export_dir: Option<&Path>) -> Result<PathBuf, String> {
-    match export_dir {
-        Some(dir) => Ok(dir.join(crate::default_store_file("phrase_index"))),
-        None => crate::locate_export_dir()
-            .map(|dir| dir.join(crate::default_store_file("phrase_index")))
-            .ok_or_else(|| {
-                "no system-table export (the phrase_index table); \
-                 set --export-dir or PINYIN_EXPORT_DIR"
-                    .to_owned()
-            }),
-    }
+    export_dir.map_or_else(
+        || {
+            crate::locate_export_dir()
+                .map(|dir| dir.join(crate::default_store_file("phrase_index")))
+                .ok_or_else(|| {
+                    "no system-table export (the phrase_index table); \
+                     set --export-dir or PINYIN_EXPORT_DIR"
+                        .to_owned()
+                })
+        },
+        |dir| Ok(dir.join(crate::default_store_file("phrase_index"))),
+    )
 }
 
 /// Reads the tool input: the file at `path`, or standard input when `None`.
@@ -150,13 +152,13 @@ pub fn read_input(path: Option<&Path>) -> io::Result<Vec<u8>> {
 ///
 /// Propagates I/O errors from the file write or the stdout write.
 pub fn write_output(path: Option<&Path>, bytes: &[u8]) -> io::Result<()> {
-    match path {
-        Some(path) => std::fs::write(path, bytes),
-        None => {
+    path.map_or_else(
+        || {
             let mut stdout = io::stdout().lock();
             stdout.write_all(bytes)
-        }
-    }
+        },
+        |path| std::fs::write(path, bytes),
+    )
 }
 
 /// Runs one tool body and maps its result onto the process exit code:

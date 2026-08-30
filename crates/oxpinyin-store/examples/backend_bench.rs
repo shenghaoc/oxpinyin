@@ -744,16 +744,10 @@ fn remove_db(path: &Path) {
 #[cfg(unix)]
 fn file_sizes(path: &Path) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt as _;
-    match std::fs::metadata(path) {
-        Ok(meta) => (meta.len(), meta.blocks() * 512),
-        Err(_) => (0, 0),
-    }
+    std::fs::metadata(path).map_or((0, 0), |meta| (meta.len(), meta.blocks() * 512))
 }
 
 #[cfg(not(unix))]
 fn file_sizes(path: &Path) -> (u64, u64) {
-    match std::fs::metadata(path) {
-        Ok(meta) => (meta.len(), 0),
-        Err(_) => (0, 0),
-    }
+    std::fs::metadata(path).map_or((0, 0), |meta| (meta.len(), 0))
 }

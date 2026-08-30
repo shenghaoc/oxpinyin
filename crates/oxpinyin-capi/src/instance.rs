@@ -23,10 +23,7 @@ pub extern "C" fn pinyin_alloc_instance(context: *mut PinyinContext) -> *mut Pin
     ffi_catch(ptr::null_mut(), || {
         // SAFETY: `context` is non-null and was produced by `pinyin_init`.
         let ctx = unsafe { context_ref(context) };
-        match ctx.alloc_instance(context) {
-            Some(inst) => box_instance(inst),
-            None => ptr::null_mut(),
-        }
+        ctx.alloc_instance(context).map_or(ptr::null_mut(), box_instance)
     })
 }
 

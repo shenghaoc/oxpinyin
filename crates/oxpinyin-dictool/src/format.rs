@@ -275,9 +275,11 @@ mod tests {
         let records = parse(text).unwrap();
         let rendered: String = records
             .iter()
-            .map(|record| match record.count {
-                Some(count) => format!("{} {} {}\n", record.phrase, record.pinyin, count),
-                None => format!("{} {}\n", record.phrase, record.pinyin),
+            .map(|record| {
+                record.count.map_or_else(
+                    || format!("{} {}\n", record.phrase, record.pinyin),
+                    |count| format!("{} {} {}\n", record.phrase, record.pinyin, count),
+                )
             })
             .collect();
         assert_eq!(parse(&rendered).unwrap(), records);

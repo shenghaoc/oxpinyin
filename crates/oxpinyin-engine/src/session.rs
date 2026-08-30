@@ -1637,16 +1637,16 @@ where
         // The exact chain drives the length when a scheme parse owns the
         // buffer: re-segmenting the joined text through the pinyin
         // inventory would under-report zhuyin-only spellings ("den" → 2).
-        match self.build_graph_at(0, self.raw.as_bytes()) {
-            Ok(graph) => apostrophe_extended(
-                self.raw.as_bytes(),
-                graph
-                    .fewest_keys(self.settings.incomplete())
-                    .last()
-                    .map_or(0, Edge::to),
-            ),
-            Err(_) => 0,
-        }
+        self.build_graph_at(0, self.raw.as_bytes())
+            .map_or(0, |graph| {
+                apostrophe_extended(
+                    self.raw.as_bytes(),
+                    graph
+                        .fewest_keys(self.settings.incomplete())
+                        .last()
+                        .map_or(0, Edge::to),
+                )
+            })
     }
 
     /// Rounds `offset` up to the next character boundary of the raw input.

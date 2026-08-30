@@ -118,13 +118,13 @@ pub(crate) fn registry_key(path: &Path) -> PathBuf {
             } else {
                 parent.canonicalize().ok()
             };
-            match base {
-                Some(base) => base.join(name),
+            base.map_or_else(
                 // The parent chain does not exist either; keep the key
                 // absolute so a relative input still matches later
                 // absolute lookups of the same not-yet-created file.
-                None => absolutize(path),
-            }
+                || absolutize(path),
+                |base| base.join(name),
+            )
         }
         _ => absolutize(path),
     }

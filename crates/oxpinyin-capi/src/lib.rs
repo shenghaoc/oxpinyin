@@ -522,13 +522,9 @@ pub fn open_user_import_context(user_dir: &std::path::Path) -> *mut PinyinContex
     let Some(user_dir) = user_dir.to_str() else {
         return std::ptr::null_mut();
     };
-    ffi::ffi_catch(
-        std::ptr::null_mut(),
-        || match state::CapiContext::new_user_only(user_dir) {
-            Some(ctx) => state::box_context(ctx),
-            None => std::ptr::null_mut(),
-        },
-    )
+    ffi::ffi_catch(std::ptr::null_mut(), || {
+        state::CapiContext::new_user_only(user_dir).map_or(std::ptr::null_mut(), state::box_context)
+    })
 }
 
 /// Snapshot the user-store phrase rows a migration tool needs for its

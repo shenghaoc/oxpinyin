@@ -26,10 +26,7 @@ fn init_context(
                 CapiContext::new_for_fixtures(&system_dir, &user_dir)
             }
         };
-        match context {
-            Some(ctx) => box_context(ctx),
-            None => ptr::null_mut(),
-        }
+        context.map_or(ptr::null_mut(), box_context)
     })
 }
 
