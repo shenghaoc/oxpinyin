@@ -37,3 +37,7 @@ oxpinyin-counter = { path = "../oxpinyin-counter", default-features = false }
 # default-features = false so workspace `--no-default-features` runs are not
 # re-defaulted through this dev edge; unification supplies the backend.
 oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
+# Dev-only edge: the differential suite shares the pin-harness helpers
+# (fnv1a64, manifest parsing, PinDir) with the other tool suites. No
+# shipping code depends on oxpinyin-testsupport.
+oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }

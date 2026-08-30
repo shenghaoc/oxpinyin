@@ -12,6 +12,10 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod differential;
 pub mod fixture;
 
+pub use differential::{
+    Manifest, PinDir, fnv1a64, locate_bin, locate_data, parse_estimate_stdout, parse_manifest,
+};
 pub use fixture::{FixtureDictionary, FixtureError, FixtureLanguageModel};

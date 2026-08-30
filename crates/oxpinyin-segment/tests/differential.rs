@@ -12,6 +12,7 @@ use std::process::Command;
 use oxpinyin_segment::{
     PINNED_LAMBDA, Segmenter, SegmenterPaths, locate_export_dir, locate_model_dir,
 };
+use oxpinyin_testsupport::locate_bin;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -38,12 +39,6 @@ fn open_segmenter() -> Option<Segmenter> {
             None
         }
     }
-}
-
-fn locate_ngseg() -> Option<PathBuf> {
-    let raw = std::env::var_os("PINYIN_NGSEG")?;
-    let path = PathBuf::from(raw);
-    path.is_file().then_some(path)
 }
 
 fn locate_ngseg_data() -> Option<PathBuf> {
@@ -169,7 +164,7 @@ fn rust_matches_committed_ngseg_golden() {
 
 #[test]
 fn committed_golden_matches_live_ngseg() {
-    let Some(ngseg) = locate_ngseg() else {
+    let Some(ngseg) = locate_bin("PINYIN_NGSEG") else {
         eprintln!("skipping live ngseg: PINYIN_NGSEG not set and pin-build ngseg not found");
         return;
     };
@@ -195,7 +190,7 @@ fn rust_matches_live_ngseg_when_both_exist() {
         eprintln!("skipping live rust-vs-ngseg: tables not found");
         return;
     };
-    let Some(ngseg) = locate_ngseg() else {
+    let Some(ngseg) = locate_bin("PINYIN_NGSEG") else {
         eprintln!("skipping live rust-vs-ngseg: ngseg not found");
         return;
     };

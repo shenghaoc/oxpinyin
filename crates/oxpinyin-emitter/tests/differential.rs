@@ -15,12 +15,12 @@
 //!   no probability fields in the format.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use oxpinyin_counter::{Counts, count_ngseg, parse_interpolation_dump};
 use oxpinyin_data::parse_interpolation2;
 use oxpinyin_emitter::emit_interpolation2;
 use oxpinyin_segment::{PhraseLexicon, locate_export_dir};
+use oxpinyin_testsupport::{PinDir, fnv1a64, locate_bin, locate_data, parse_manifest};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -81,49 +81,6 @@ fn assert_counts_equal(rust: &Counts, live: &Counts) {
             "bigram diverges: pair {pair:?} = rust {rust_count}, export {live_count:?}"
         );
     }
-}
-
-/// FNV-1a 64-bit, dependency-free and deterministic across platforms.
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for &byte in bytes {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
-
-struct Manifest {
-    unigrams: usize,
-    bigrams: usize,
-    checksum: u64,
-}
-
-fn parse_manifest(text: &str) -> Manifest {
-    let mut manifest = Manifest {
-        unigrams: 0,
-        bigrams: 0,
-        checksum: 0,
-    };
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let mut fields = line.split_whitespace();
-        let (Some(key), Some(value)) = (fields.next(), fields.next()) else {
-            continue;
-        };
-        match key {
-            "unigrams" => manifest.unigrams = value.parse().expect("manifest unigrams"),
-            "bigrams" => manifest.bigrams = value.parse().expect("manifest bigrams"),
-            "fnv1a64" => {
-                manifest.checksum = u64::from_str_radix(value, 16).expect("manifest checksum");
-            }
-            _ => {}
-        }
-    }
-    manifest
 }
 
 #[test]
@@ -191,23 +148,6 @@ fn fixture_emit_roundtrips_through_parse_interpolation2() {
     );
 }
 
-fn locate_bin(name: &str) -> Option<PathBuf> {
-    let raw = std::env::var_os(name)?;
-    let path = PathBuf::from(raw);
-    path.is_file().then_some(path)
-}
-
-fn locate_data() -> Option<PathBuf> {
-    let raw = std::env::var_os("PINYIN_GEN_NGRAM_DATA")?;
-    let path = PathBuf::from(raw);
-    (path.join("table.conf").is_file()
-        && path
-            .read_dir()
-            .map(|mut dir| dir.next().is_some())
-            .unwrap_or(false))
-    .then_some(path)
-}
-
 /// Copies the flat data dir into a fresh temp dir and runs the full pin
 /// pipeline there, returning the raw `export_interpolation` stdout.
 fn run_live_export(
@@ -218,68 +158,12 @@ fn run_live_export(
     data: &Path,
     fixture: &[u8],
 ) -> Result<String, String> {
-    let temp = std::env::temp_dir().join(format!("oxpinyin-emitter-live-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&temp);
-    std::fs::create_dir_all(&temp).map_err(|error| error.to_string())?;
+    let pin = PinDir::fresh(data, "emitter-live")?;
 
-    for entry in data
-        .read_dir()
-        .map_err(|error| error.to_string())?
-        .flatten()
-    {
-        if entry
-            .file_type()
-            .map(|kind| kind.is_file())
-            .unwrap_or(false)
-        {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name == "table.conf" || name.ends_with(".table") {
-                let target = temp.join(entry.file_name());
-                std::fs::copy(entry.path(), target).map_err(|error| error.to_string())?;
-            }
-        }
-    }
-
-    let run = |bin: &Path, args: &[&str], stdin: Option<&[u8]>| -> Result<Vec<u8>, String> {
-        let mut command = Command::new(bin);
-        command.current_dir(&temp).args(args);
-        if stdin.is_some() {
-            command.stdin(Stdio::piped());
-        }
-        let mut child = command
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| error.to_string())?;
-        if let Some(input) = stdin {
-            use std::io::Write;
-            child
-                .stdin
-                .as_mut()
-                .ok_or("no stdin")?
-                .write_all(input)
-                .map_err(|error| error.to_string())?;
-        }
-        let output = child
-            .wait_with_output()
-            .map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            return Err(format!(
-                "{} exited {}: {}",
-                bin.display(),
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        Ok(output.stdout)
-    };
-
-    run(gen_binary_files, &["--gen-punct-table"], None)?;
-    run(gen_unigram, &[], None)?;
-    run(gen_ngram, &[], Some(fixture))?;
-    let dump = run(export_interpolation, &[], None)?;
-    let _ = std::fs::remove_dir_all(&temp);
+    pin.run(gen_binary_files, &["--gen-punct-table"], None)?;
+    pin.run(gen_unigram, &[], None)?;
+    pin.run(gen_ngram, &[], Some(fixture))?;
+    let dump = pin.run(export_interpolation, &[], None)?;
 
     let text = String::from_utf8(dump).map_err(|error| error.to_string())?;
     if text.to_ascii_lowercase().contains("lambda") {
@@ -304,7 +188,7 @@ fn rust_matches_live_export_interpolation() {
         );
         return;
     };
-    let Some(data) = locate_data() else {
+    let Some(data) = locate_data("PINYIN_GEN_NGRAM_DATA") else {
         eprintln!("skipping live export_interpolation: PINYIN_GEN_NGRAM_DATA not set or empty");
         return;
     };

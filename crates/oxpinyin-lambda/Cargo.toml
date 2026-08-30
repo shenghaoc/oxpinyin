@@ -32,3 +32,9 @@ path = "src/bin/oxpinyin-lambda.rs"
 # this crate's features above, not from the training crates' defaults.
 oxpinyin-segment = { path = "../oxpinyin-segment", default-features = false }
 oxpinyin-counter = { path = "../oxpinyin-counter", default-features = false }
+
+[dev-dependencies]
+# Dev-only edge: the differential suite shares the pin-harness helpers
+# (fnv1a64, PinDir, parse_estimate_stdout) with the other tool suites. No
+# shipping code depends on oxpinyin-testsupport.
+oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
