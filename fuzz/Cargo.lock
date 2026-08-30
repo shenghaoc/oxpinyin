@@ -215,6 +215,7 @@ dependencies = [
 name = "oxpinyin-capi"
 version = "0.1.0"
 dependencies = [
+ "oxpinyin-chewing",
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",
@@ -223,10 +224,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxpinyin-chewing"
+version = "0.1.0"
+
+[[package]]
 name = "oxpinyin-core"
 version = "0.1.0"
 dependencies = [
  "compact_str",
+ "oxpinyin-chewing",
  "smallvec",
 ]
 

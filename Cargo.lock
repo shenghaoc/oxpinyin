@@ -725,6 +725,7 @@ name = "oxpinyin-capi"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "oxpinyin-chewing",
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",
@@ -741,6 +742,7 @@ name = "oxpinyin-core"
 version = "0.1.0"
 dependencies = [
  "compact_str",
+ "oxpinyin-chewing",
  "oxpinyin-testsupport",
  "proptest",
  "smallvec",
