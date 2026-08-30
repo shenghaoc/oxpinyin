@@ -136,13 +136,12 @@ pub fn locate_phrase_index(export_dir: Option<&Path>) -> Result<PathBuf, String>
 ///
 /// Propagates I/O errors from the file read or the stdin drain.
 pub fn read_input(path: Option<&Path>) -> io::Result<Vec<u8>> {
-    match path {
-        Some(path) => std::fs::read(path),
-        None => {
-            let mut buffer = Vec::new();
-            io::stdin().read_to_end(&mut buffer)?;
-            Ok(buffer)
-        }
+    if let Some(path) = path {
+        std::fs::read(path)
+    } else {
+        let mut buffer = Vec::new();
+        io::stdin().read_to_end(&mut buffer)?;
+        Ok(buffer)
     }
 }
 

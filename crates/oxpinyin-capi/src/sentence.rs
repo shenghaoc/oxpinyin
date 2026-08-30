@@ -144,17 +144,16 @@ pub extern "C" fn pinyin_get_sentence(
             // when held, `false` past the row count or after a lookup that
             // produced none (upstream's `0 == results.size()` false),
             // never the raw form.
-            return match inst.session.sentence_text(index) {
-                Some(decoded) => write_owned_sentence(decoded, sentence),
-                None => {
-                    if !sentence.is_null() {
-                        // SAFETY: Null-checked above.
-                        unsafe {
-                            *sentence = std::ptr::null_mut();
-                        }
+            return if let Some(decoded) = inst.session.sentence_text(index) {
+                write_owned_sentence(decoded, sentence)
+            } else {
+                if !sentence.is_null() {
+                    // SAFETY: Null-checked above.
+                    unsafe {
+                        *sentence = std::ptr::null_mut();
                     }
-                    false
                 }
+                false
             };
         }
         let text = if inst
@@ -382,12 +381,11 @@ pub extern "C" fn pinyin_guess_candidates(
         if !inst.session.is_composing() {
             return false;
         }
-        let normalized = match inst.validate_lookup_offset(offset) {
-            Ok(normalized) => normalized,
-            Err(_) => {
-                inst.candidates.clear();
-                return false;
-            }
+        let normalized = if let Ok(normalized) = inst.validate_lookup_offset(offset) {
+            normalized
+        } else {
+            inst.candidates.clear();
+            return false;
         };
         let without_sentence =
             sort_option & sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE as GUint != 0;
@@ -430,21 +428,18 @@ pub extern "C" fn pinyin_guess_candidates(
         // coordinates `self.raw` does not share).
         inst.anchored_window = if transformed || normalized <= inst.session.composition_offset() {
             None
+        } else if let Ok(window) = inst.session.candidates_at(normalized) {
+            Some((normalized, window))
         } else {
-            match inst.session.candidates_at(normalized) {
-                Ok(window) => Some((normalized, window)),
-                Err(_) => {
-                    // Unreachable for a well-formed plain-pinyin lookup:
-                    // the offset-shaped contracts are refused by
-                    // `validate_lookup_offset` and `candidates_at`'s own
-                    // range/char-boundary checks, and a mid-syllable byte
-                    // is not an error — the window answers the pin's
-                    // empty-column law. The arm remains for genuine
-                    // backend failures during the re-anchored scan.
-                    inst.candidates.clear();
-                    return false;
-                }
-            }
+            // Unreachable for a well-formed plain-pinyin lookup:
+            // the offset-shaped contracts are refused by
+            // `validate_lookup_offset` and `candidates_at`'s own
+            // range/char-boundary checks, and a mid-syllable byte
+            // is not an error — the window answers the pin's
+            // empty-column law. The arm remains for genuine
+            // backend failures during the re-anchored scan.
+            inst.candidates.clear();
+            return false;
         };
         let candidates: &oxpinyin_engine::CandidateList = match inst.anchored_window.as_ref() {
             Some((_, window)) => window,

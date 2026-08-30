@@ -152,17 +152,14 @@ fn getline_lines(input: &[u8]) -> impl Iterator<Item = &[u8]> {
         if rest.is_empty() {
             return None;
         }
-        match rest.iter().position(|&byte| byte == b'\n') {
-            Some(index) => {
-                let line = &rest[..index];
-                rest = &rest[index + 1..];
-                Some(line)
-            }
-            None => {
-                let line = rest;
-                rest = &[];
-                Some(line)
-            }
+        if let Some(index) = rest.iter().position(|&byte| byte == b'\n') {
+            let line = &rest[..index];
+            rest = &rest[index + 1..];
+            Some(line)
+        } else {
+            let line = rest;
+            rest = &[];
+            Some(line)
         }
     })
 }

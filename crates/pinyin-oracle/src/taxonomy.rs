@@ -116,19 +116,18 @@ fn classify_off_pin(pin_ref: &str) -> DivergenceClass {
         Some((code, model, dbm))
     };
 
-    match (split(pin_ref), split(EXPECTED_PIN_REF)) {
-        (Some((code, model, dbm)), Some((want_code, want_model, want_dbm))) => {
-            if code == want_code && dbm == want_dbm && model != want_model {
-                DivergenceClass::DataVersion
-            } else {
-                DivergenceClass::DistroDelta
-            }
-        }
-        _ => {
-            #[cfg(test)]
-            eprintln!("classify_off_pin: unparseable pin_ref: {pin_ref:?}");
+    if let (Some((code, model, dbm)), Some((want_code, want_model, want_dbm))) =
+        (split(pin_ref), split(EXPECTED_PIN_REF))
+    {
+        if code == want_code && dbm == want_dbm && model != want_model {
+            DivergenceClass::DataVersion
+        } else {
             DivergenceClass::DistroDelta
         }
+    } else {
+        #[cfg(test)]
+        eprintln!("classify_off_pin: unparseable pin_ref: {pin_ref:?}");
+        DivergenceClass::DistroDelta
     }
 }
 
