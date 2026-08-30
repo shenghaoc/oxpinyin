@@ -885,21 +885,61 @@ syllables (`ta`=1, `li`=2, `ju`=2) where the pin reported 0. Root cause was
   set is identical, and the terminal-offset case is not exercised by the
   pinned differential driver.
 
-## zhuyin before-cursor candidate window — CLOSED (facade fix)
+## zhuyin before-cursor candidate window — single-syllable CLOSED, multi-syllable engine gap
 
-Initially attributed to an engine capability gap, but the root cause was a
-**facade bug**: `zhuyin_guess_candidates_before_cursor` reused the
-composition-anchored cached candidate window rather than building the
-before-cursor span ending at the offset. `before(0)` wrongly returned 125
-word candidates where the pin returns 0 (nothing precedes the first key).
+The facade's `zhuyin_guess_candidates_before_cursor` originally reused the
+composition-anchored cached candidate window, so `before(0)` wrongly returned
+125 word candidates where the pin returns 0 (nothing precedes the first key).
+That facade bug is fixed, but the fix is **correct only for a single-syllable
+composition**; multi-syllable before-cursor is a genuine engine gap.
 
-- **What oxpinyin now does:** the facade's before-cursor path takes the
-  composition window and filters to candidates whose consumed span ENDS at
-  the requested original-offset (`snapshot_candidates`'s `before_end`). At
-  offset 0 no span ends there, so the window is empty — matching the pin —
-  and at the terminal offset the preceding word's candidates are returned.
-  `before(0)` returns 0 and `before(consumed)` returns the last word's
-  candidates, matching the pin on the differential.
+- **What oxpinyin now does (single-syllable):** the before-cursor path takes
+  the composition window and filters to candidates whose consumed span ENDS
+  at the requested original-offset (`snapshot_candidates`'s `before_end`). At
+  offset 0 no span ends there (empty window, matching the pin); at the
+  terminal offset the syllable's candidates are returned. `before(0)`=0 and
+  `before(consumed)` match the pin on the single-syllable differential corpus.
+- **Multi-syllable (measured on the two-syllable `su3u3`):** `before(3)`
+  (first key boundary) matches the pin (125 on both), but `before(consumed)=5`
+  does NOT — the pin returns 600 (the last key's 597 candidates plus the
+  whole-composition sentence rows), oxpinyin returns 3. Root cause: the
+  engine's forward-anchored `session.candidates()` does not enumerate the
+  trailing keys' candidates, and the facade cannot UNION multiple
+  `candidates_at` windows into one `CandidateList` (the engine does not
+  expose `Candidate`/`CandidateList` construction). Fixing it requires an
+  engine change: a backward-anchored window builder (the pin's
+  `search_matrix` walk over spans ending at the offset).
+- **Externally observable:** yes — `zhuyin_get_n_candidate` differs for
+  `before(consumed)` on a multi-syllable composition. Registered as engine
+  workstream, not a facade defect (the single-syllable ABI surface is
+  correct).
+
+## zhuyin multi-syllable candidate construction — engine workstream
+
+The two-syllable differential input `su3u3` (ㄙㄨˇ ㄩˇ, consumed 5) exposes a
+broader divergence than the `after(consumed)`/tag-gap above: the multi-syllable
+candidate construction itself differs on the count, the phrase set, and the
+tags.
+
+- **Measured (oracle vs oxpinyin on `su3u3`):**
+  - `n_candidates` at `after(0)`: **128 (pin) vs 129 (oxpinyin)** — the first
+    candidate count differs (oxpinyin emits one extra row).
+  - `candidate[1]`: pin `拟议`/`逆夷` at 1-2, oxpinyin `你以` at 1 — the
+    multi-syllable phrase set diverges.
+  - `before(consumed=5)`: **600 (pin) vs 3 (oxpinyin)** — the before-cursor
+    window diverges.
+  - `before(3)` (first key boundary): 125 on both — matches.
+- **Root cause:** the engine's forward-anchored `session.candidates()` builds
+  the composition's candidates from the start; it does not enumerate the
+  trailing keys' candidates (per-key at each position the way the pin's
+  `search_matrix` walk does), and the facade cannot UNION multiple
+  `candidates_at` windows into one `CandidateList` (the engine does not expose
+  `Candidate`/`CandidateList` construction). The candidate TYPE tagging is
+  correct, but the underlying candidate SET/count differs for multi-syllable.
+- **Classification:** engine workstream (the candidate-construction model).
+  Not a facade defect — the single-syllable facade surface is correct, and the
+  facade faithfully translates what the engine provides. The differential
+  corpus documents this as the known multi-syllable gap.
 
 ## zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default
 

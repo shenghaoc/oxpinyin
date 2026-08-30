@@ -169,6 +169,10 @@ static const char *ctype_name(lookup_candidate_type_t t) {
  * diffed. */
 static const char *SYLLABLE_CORPUS[] = {
     "su3",          /* ㄙㄨˇ */
+    "su3u3",        /* ㄙㄨˇ ㄩˇ — two-syllable; exercises before-cursor at the
+                     * terminal offset (the multi-syllable engine gap: the pin
+                     * returns the last syllable's candidates + sentence rows,
+                     * oxpinyin the composition-anchored subset) */
     "zhang",        /* ㄓㄤ (no tone) -- the W13 live row */
     "zhan",         /* ㄓㄢ */
     "n",            /* initial-only ㄋ */
