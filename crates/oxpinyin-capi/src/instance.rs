@@ -4,7 +4,7 @@
 use std::ptr;
 
 use crate::ffi::ffi_catch;
-use crate::state::{CapiInstance, box_instance, context_ref, instance_mut};
+use crate::state::{CapiInstance, box_instance, context_ref, instance_mut, instance_ref};
 use crate::types::{PinyinContext, PinyinInstance};
 
 /// Allocate a new pinyin instance from a context.
@@ -23,10 +23,33 @@ pub extern "C" fn pinyin_alloc_instance(context: *mut PinyinContext) -> *mut Pin
     ffi_catch(ptr::null_mut(), || {
         // SAFETY: `context` is non-null and was produced by `pinyin_init`.
         let ctx = unsafe { context_ref(context) };
-        match ctx.alloc_instance() {
+        match ctx.alloc_instance(context) {
             Some(inst) => box_instance(inst),
             None => ptr::null_mut(),
         }
+    })
+}
+
+/// Get the pinyin context from a pinyin instance.
+///
+/// # C signature
+/// ```c
+/// pinyin_context_t * pinyin_get_context (pinyin_instance_t * instance);
+/// ```
+///
+/// Upstream is a one-line field read (`pinyin.cpp:1358-1360`); the
+/// returned handle is the caller's to keep using under the context's own
+/// lifetime. NULL for a null instance.
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_get_context(instance: *mut PinyinInstance) -> *mut PinyinContext {
+    if instance.is_null() {
+        return ptr::null_mut();
+    }
+    ffi_catch(ptr::null_mut(), || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_ref(instance) };
+        inst.context
     })
 }
 

@@ -2,6 +2,8 @@
 
 use core::fmt;
 
+use crate::options::{FORCE_TONE, USE_TONE};
+use crate::{CHEWING_ZERO_TONE, ChewingKey};
 use crate::{FULL_PINYIN_SYLLABLES, InputParser, MAX_SYLLABLE_LEN, OptionBits, SyllableKey};
 
 const OVER_LIMIT: usize = MAX_PARSE_RESULTS + 1;
@@ -90,6 +92,49 @@ impl FullPinyinParser {
         options: OptionBits,
     ) -> Result<Vec<ParseResult>, ParseError> {
         parse_input(input, options)
+    }
+
+    /// Parses one full-pinyin key from the whole of `input`, mirroring
+    /// `FullPinyinParser2::parse_one_key`
+    /// (`src/storage/pinyin_parser2.cpp:164-214`).
+    ///
+    /// `options` is the caller's option word. Apostrophes are refused
+    /// (upstream asserts them away); under `USE_TONE` a trailing
+    /// `1..=5` is the tone — stripped before the spelling probe and
+    /// written onto the key on a match — and `FORCE_TONE`, nested
+    /// inside `USE_TONE` exactly like the pin, rejects a toneless
+    /// input. The spelling probe covers the whole stripped input, so a
+    /// multi-syllable string such as `nihao` is refused, not matched at
+    /// its first syllable; alias resolution through
+    /// [`SyllableKey::from_option_text`] is the option gate the batch
+    /// path's edges use.
+    ///
+    /// [`None`] is the upstream `false`, including the assert shapes the
+    /// no-abort policy renders as refusal (apostrophes, empty input).
+    #[must_use]
+    pub fn parse_one_key(&self, options: u32, input: &[u8]) -> Option<ChewingKey> {
+        if input.contains(&b'\'') {
+            return None;
+        }
+        let bits = OptionBits::from_bits(options);
+        let mut tone = CHEWING_ZERO_TONE;
+        let mut core = input;
+        if bits.contains(USE_TONE) {
+            if let Some((&last, rest)) = input.split_last()
+                && (b'1'..=b'5').contains(&last)
+            {
+                tone = last - b'0';
+                core = rest;
+            }
+            if bits.contains(FORCE_TONE) && tone == CHEWING_ZERO_TONE {
+                return None;
+            }
+        }
+        let text = core::str::from_utf8(core).ok()?;
+        let syllable = SyllableKey::from_option_text(text, bits)?;
+        let mut key = ChewingKey::from_pinyin(syllable.text())?;
+        key.tone = tone;
+        Some(key)
     }
 }
 
@@ -499,7 +544,71 @@ mod tests {
     use super::{
         Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
     };
+    use crate::ChewingKey;
+    use crate::options::{FORCE_TONE, PINYIN_CORRECT_GN_NG, USE_TONE};
     use crate::{FULL_PINYIN_SYLLABLES, InputParser};
+
+    /// `FullPinyinParser2::parse_one_key`: the whole stripped input is
+    /// one spelling probe — multi-syllable and apostrophe inputs are
+    /// refused, a trailing `1..=5` is the tone under `USE_TONE`, and
+    /// `FORCE_TONE` (nested inside `USE_TONE`) rejects toneless input.
+    /// The crate's `content_table` port covers exactly the frozen
+    /// inventory: every [`SyllableKey`] resolves to a key whose row
+    /// spelling is the key's own, and the packed form round-trips.
+    #[test]
+    fn frozen_inventory_matches_the_chewing_content_table() {
+        for index in 0..crate::SYLLABLE_KEY_COUNT {
+            let syllable = crate::SyllableKey::from_index(index).expect("in range");
+            let key = ChewingKey::from_pinyin(syllable.text()).expect("row exists");
+            assert_eq!(key.pinyin_spelling(), syllable.text());
+            assert_eq!(key.tone, 0);
+            assert_eq!(ChewingKey::from_packed(key.to_packed()), key);
+        }
+    }
+
+    #[test]
+    fn full_pinyin_one_key_law() {
+        let parser = FullPinyinParser;
+
+        let key = parser.parse_one_key(0, b"ni").expect("ni parses");
+        assert_eq!(key.pinyin_string(), "ni");
+
+        // The probe covers the whole input: no forward maximum match.
+        assert_eq!(parser.parse_one_key(0, b"nihao"), None);
+        // Apostrophes are refused (the pin asserts on them).
+        assert_eq!(parser.parse_one_key(0, b"ni'hao"), None);
+        assert_eq!(parser.parse_one_key(0, b""), None);
+
+        // Toneless without USE_TONE; tone carried with it.
+        let toned = parser.parse_one_key(USE_TONE, b"zai4").expect("zai4");
+        assert_eq!(toned.pinyin_string(), "zai4");
+        assert_eq!(parser.parse_one_key(0, b"zai4"), None);
+
+        // FORCE_TONE is dead without USE_TONE, rejects the toneless
+        // `zai` with it, and accepts the toned form.
+        assert!(parser.parse_one_key(FORCE_TONE, b"zai").is_some());
+        assert_eq!(parser.parse_one_key(USE_TONE | FORCE_TONE, b"zai"), None);
+        assert!(
+            parser
+                .parse_one_key(USE_TONE | FORCE_TONE, b"zai4")
+                .is_some()
+        );
+        // `6` is not a tone: the digit stays in the core and fails it.
+        assert_eq!(parser.parse_one_key(USE_TONE, b"zai6"), None);
+
+        // Initial-only keys parse under PINYIN_INCOMPLETE-adjacent
+        // exactness: they are real inventory keys.
+        let b = parser.parse_one_key(0, b"b").expect("initial-only");
+        assert_eq!(b.pinyin_string(), "b");
+        assert_eq!(b.yunmu_string(), "");
+
+        // Correction aliases resolve through the option gate.
+        let ang = parser
+            .parse_one_key(PINYIN_CORRECT_GN_NG, b"agn")
+            .expect("agn corrects");
+        assert_eq!(ang.pinyin_string(), "ang");
+        assert_eq!(parser.parse_one_key(0, b"agn"), None);
+    }
 
     #[test]
     fn complete_paths_follow_frozen_greedy_order() {

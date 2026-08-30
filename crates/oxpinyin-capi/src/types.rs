@@ -35,24 +35,84 @@ pub struct LookupCandidate;
 /// into it, and only the renderer differs. Consumers never see the layout:
 /// `chewing_key.h` is not installed, and the shipped `pinyin.h` carries
 /// only `typedef struct _ChewingKey ChewingKey;`, so a consumer holds an
-/// incomplete type. That makes the representation free here, and this one
-/// stores what the renderers actually need.
+/// incomplete type.
+///
+/// The representation is still upstream's packed word (`#[repr(C)]`,
+/// size and alignment asserted against the bitfield): a caller holding a
+/// vendored `chewing_key.h` allocates exactly these 2 bytes and may copy
+/// keys through the pointer, so this must write and read what upstream
+/// writes and reads — the D1' contract. The renderers decode the word
+/// through [`oxpinyin_chewing::ChewingKey`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChewingKey {
-    /// `None` until a `pinyin_get_pinyin_key` call populates the slot; the
-    /// renderers answer `false` on an unpopulated one rather than invent a
-    /// key, which is the pin's `0 == key->get_table_index()` guard.
-    pub(crate) key: Option<&'static str>,
-    pub(crate) tone: u8,
+    /// Upstream's packed bitfield word — byte-identical to a vendored
+    /// `chewing_key.h` `_ChewingKey` object.
+    pub packed: u16,
+}
+
+const _: () = {
+    assert!(size_of::<ChewingKey>() == 2);
+    assert!(align_of::<ChewingKey>() == 2);
+};
+
+impl ChewingKey {
+    /// The zero key (upstream `ChewingKey()`); the renderers answer
+    /// `false` on it, the pin's `0 == key->get_table_index()` guard.
+    pub const ZERO: Self = Self { packed: 0 };
+
+    /// Packs a canonical spelling (a `content_table` pinyin) and tone
+    /// into the ABI word; `None` for a spelling outside the table.
+    #[must_use]
+    pub(crate) fn from_spelling(text: &str, tone: u8) -> Option<Self> {
+        let key = oxpinyin_chewing::ChewingKey::from_pinyin(text)?;
+        Some(Self {
+            packed: key.with_tone(tone).to_packed(),
+        })
+    }
+
+    /// Packs the core elements into the ABI word.
+    #[must_use]
+    pub(crate) const fn from_core(key: oxpinyin_chewing::ChewingKey) -> Self {
+        Self {
+            packed: key.to_packed(),
+        }
+    }
+
+    /// Decodes the word for the renderers.
+    #[must_use]
+    pub(crate) fn to_core(self) -> oxpinyin_chewing::ChewingKey {
+        oxpinyin_chewing::ChewingKey::from_packed(self.packed)
+    }
 }
 
 /// One key's raw input span, as the C ABI's opaque `ChewingKeyRest`.
 ///
 /// The pin's `_ChewingKeyRest` is `{ guint16 m_raw_begin; guint16 m_raw_end; }`
 /// with `length() = m_raw_end - m_raw_begin` (`chewing_key.h:97-114`), and
-/// is opaque to consumers for the same reason as [`ChewingKey`].
+/// is opaque to consumers for the same reason as [`ChewingKey`]. The
+/// field order and width match that declaration (`#[repr(C)]`, asserted).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChewingKeyRest {
+    /// `m_raw_begin` — the begin of the raw input.
     pub(crate) begin: u16,
+    /// `m_raw_end` — the end of the raw input.
     pub(crate) end: u16,
+}
+
+const _: () = {
+    assert!(size_of::<ChewingKeyRest>() == 4);
+    assert!(align_of::<ChewingKeyRest>() == 2);
+};
+
+impl ChewingKeyRest {
+    /// `_ChewingKeyRest::length` (`chewing_key.h:111-113`):
+    /// `m_raw_end - m_raw_begin`.
+    #[must_use]
+    pub(crate) fn length(self) -> u16 {
+        self.end.wrapping_sub(self.begin)
+    }
 }
 
 /// Opaque import iterator.

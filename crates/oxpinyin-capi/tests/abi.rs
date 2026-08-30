@@ -12,5 +12,7 @@ mod common;
 mod contract;
 #[path = "abi/exact_scheme.rs"]
 mod exact_scheme;
+#[path = "abi/keys.rs"]
+mod keys;
 #[path = "abi/pipeline.rs"]
 mod pipeline;

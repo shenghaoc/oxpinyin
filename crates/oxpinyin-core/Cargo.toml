@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 smallvec.workspace = true
 compact_str.workspace = true
+oxpinyin-chewing = { path = "../oxpinyin-chewing" }
 
 [dev-dependencies]
 # Fixture-backed Dictionary/LanguageModel doubles for the integration tests.
