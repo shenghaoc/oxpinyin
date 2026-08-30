@@ -60,6 +60,11 @@ impl PunctTable {
     /// Builds a table from decoded `(token, puncts)` rows, in table
     /// order; rows with no punctuation are dropped, like [`Self::open`]
     /// skips them.
+    ///
+    /// Only the compat loader builds a table this way; a pure-redb or
+    /// no-backend build has no compat module, so gating keeps this from
+    /// being dead code there.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     pub(crate) fn from_rows(rows: Vec<(u32, Vec<String>)>) -> Self {
         let mut by_token = BTreeMap::new();
         for (token, puncts) in rows {
@@ -121,6 +126,7 @@ fn decode_puncts(value: &[u8]) -> Result<Vec<String>, DictError> {
 /// like every other u32 the compat loader reads (every target libpinyin
 /// ships on is little-endian). An empty blob is a token with no
 /// punctuations.
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
 pub(crate) fn decode_compat_puncts(value: &[u8]) -> Result<Vec<String>, DictError> {
     if !value.len().is_multiple_of(4) {
         return Err(DictError::Parse(
@@ -172,6 +178,7 @@ mod tests {
 
     /// The ucs4_t words of `text` plus the terminating NUL, the way
     /// `punct_table.cpp`'s escape() lays one string into the chunk.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     fn ucs4_string(text: &str) -> Vec<u8> {
         let mut out: Vec<u8> = text
             .chars()
@@ -181,6 +188,7 @@ mod tests {
         out
     }
 
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     #[test]
     fn compat_decode_reads_ucs4_chunks() {
         // Empty chunk: the token exists but has no punctuations.
@@ -197,6 +205,7 @@ mod tests {
         assert_eq!(decode_compat_puncts(&ucs4_string("!")).unwrap(), ["!"]);
     }
 
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     #[test]
     fn compat_decode_rejects_malformed_chunks() {
         // Not a whole number of ucs4_t words.
@@ -216,6 +225,7 @@ mod tests {
         assert!(decode_compat_puncts(&lone_surrogate).is_err());
     }
 
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
     #[test]
     fn from_rows_skips_empty_rows_and_keeps_order() {
         let table = PunctTable::from_rows(vec![

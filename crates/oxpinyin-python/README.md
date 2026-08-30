@@ -40,7 +40,10 @@ works: `pinyin_index.bin`, `phrase_index.bin`, the content-table `.bin`
 files and `bigram.db` as installed by the distro's `libpinyin-data`
 package — detected by file header and decoded at load time, when its
 `bigram.db` was written by a backend this build reads (Kyoto Cabinet or
-tkrzw; a Berkeley-DB-built directory is refused, not misread). The
+tkrzw; a Berkeley-DB-built directory is refused, not misread). From
+libpinyin 2.11 on, an optional `punct.bin` enables predicted-punctuation
+rows; its absence (the 2.8.1 layout) is supported and simply yields no
+predicted punctuation. The
 repository's committed mini
 fixture (`fixtures/w3`) works through `Engine.from_fixture_dir`; production
 model directories additionally carry `interpolation2.text` (the real-unigram

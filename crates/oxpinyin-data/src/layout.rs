@@ -99,6 +99,22 @@ pub enum Dbm {
 }
 
 impl Dbm {
+    /// The cargo feature that reads this format.
+    ///
+    /// A historical value for `BerkeleyHash`: no Berkeley DB reader exists
+    /// in this tree, but `Dbm` is public API (re-exported from
+    /// [`crate::layout`]) and the method has been public since before the
+    /// compat loader, so it stays for downstream compatibility rather than
+    /// silently breaking consumers that match on it.
+    #[must_use]
+    pub const fn feature(self) -> &'static str {
+        match self {
+            Self::BerkeleyHash => "bdb",
+            Self::KyotoHash | Self::KyotoTree => "kyotocabinet",
+            Self::Tkrzw => "tkrzw",
+        }
+    }
+
     /// A human name for a message.
     #[must_use]
     pub const fn label(self) -> &'static str {

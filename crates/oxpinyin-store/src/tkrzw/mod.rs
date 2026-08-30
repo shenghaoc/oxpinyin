@@ -1009,8 +1009,9 @@ impl TkrzwBigramDb {
     /// layout invariants.
     pub fn get(&self, prev: u32) -> Result<Option<crate::single_gram::SingleGram>, StoreError> {
         // libpinyin writes the raw native-endian bytes of the token
-        // (`db_key.data = &index`); the targets are little-endian.
-        let key = prev.to_le_bytes();
+        // (`db_key.data = &index`), so a big-endian target must not
+        // byte-swap it here the way the tree indexes' LE framing would.
+        let key = prev.to_ne_bytes();
         match db_get(&self.db, &key)? {
             None => Ok(None),
             Some(value) => crate::single_gram::SingleGram::decode(&value).map(Some),
@@ -1036,7 +1037,7 @@ impl TkrzwBigramDb {
                 StoreError::Backend(format!("bigram key length {} is not 4", key.len()).into())
             })?;
             let gram = crate::single_gram::SingleGram::decode(value)?;
-            visit(u32::from_le_bytes(bytes), gram)?;
+            visit(u32::from_ne_bytes(bytes), gram)?;
             Ok(true)
         };
         let mut ctx = ScanCtx {
@@ -1144,7 +1145,7 @@ impl TkrzwPunctDb {
                     .into(),
                 )
             })?;
-            visit(u32::from_le_bytes(bytes), value)?;
+            visit(u32::from_ne_bytes(bytes), value)?;
             Ok(true)
         };
         let mut ctx = ScanCtx {
@@ -1226,7 +1227,7 @@ mod tests {
             };
             let db = Db(db);
             let mutation = |key: u32, value: &[u8]| Mutation {
-                key: key.to_le_bytes().to_vec(),
+                key: key.to_ne_bytes().to_vec(),
                 key_size: 4,
                 value: value.to_vec(),
                 value_size: value.len() as i32,
