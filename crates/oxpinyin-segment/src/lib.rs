@@ -13,8 +13,10 @@
 mod driver;
 mod error;
 mod lexicon;
+pub mod mergeseq;
 mod model;
 mod paths;
+pub mod spseg;
 pub mod tool_cli;
 mod trellis;
 
@@ -108,5 +110,23 @@ impl Segmenter {
     /// Returns [`SegmentError`] when a bigram table read fails.
     pub fn segment_bytes(&self, input: &[u8], extra_enter: bool) -> Result<String, SegmentError> {
         segment_bytes(&self.lexicon, &self.model, self.lambda, input, extra_enter)
+    }
+
+    /// Segments a whole file the `spseg` way (fewest-words shortest path).
+    /// Consults only the phrase table; the bigram/λ are ignored.
+    #[must_use]
+    pub fn spseg_bytes(&self, input: &[u8], extra_enter: bool) -> String {
+        spseg::segment_bytes(&self.lexicon, input, extra_enter)
+    }
+
+    /// Merges a segmented token stream into longer dictionary phrases
+    /// (`mergeseq`). Consults only the phrase table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SegmentError::MalformedLine`] when an input line is not a
+    /// `token phrase` record or names an unknown token.
+    pub fn mergeseq_bytes(&self, input: &[u8]) -> Result<String, SegmentError> {
+        mergeseq::merge_bytes(&self.lexicon, input)
     }
 }

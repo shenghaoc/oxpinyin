@@ -29,6 +29,14 @@ redb = ["oxpinyin-data/redb"]
 name = "oxpinyin-segment"
 path = "src/bin/oxpinyin-segment.rs"
 
+[[bin]]
+name = "oxpinyin-spseg"
+path = "src/bin/oxpinyin-spseg.rs"
+
+[[bin]]
+name = "oxpinyin-mergeseq"
+path = "src/bin/oxpinyin-mergeseq.rs"
+
 [dependencies]
 # default-features = false so workspace `--no-default-features` builds are
 # not re-defaulted through this edge; the [features] block above forwards
