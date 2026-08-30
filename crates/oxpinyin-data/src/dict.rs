@@ -22,7 +22,7 @@ use oxpinyin_core::{
     Completeness, Dictionary, PhraseEntry, PhraseToken, SyllableKey, syllable_initial,
 };
 
-use crate::table::{self, LeByteKey, TableError};
+use crate::table::{self, LeByteKey, LookupTable, TableError};
 
 /// The pinyin index as a sorted vector map plus one shared entry arena.
 ///
@@ -437,6 +437,49 @@ fn phrase_lookup(index: &[(LeByteKey, CompactString)], token: u32) -> Option<&st
         .binary_search_by(|(stored, _)| stored.cmp(&needle))
         .ok()
         .map(|position| index[position].1.as_str())
+}
+
+/// Rebuilds the two prefix-probe tables over `index`: every pinyin key,
+/// and every key projected to its initial sequence (each syllable replaced
+/// by the longest incomplete key that prefixes it — `syllable_initial` —
+/// or a `0` sentinel for vowel-initial syllables), both sorted and
+/// deduplicated.
+///
+/// The projection is the one `SystemDictionary::open` runs for its
+/// initial-key probe (the load's `InitialAlphabet` answers the same
+/// question as `syllable_initial` with identical results), exposed here so
+/// the load-profiling example and the scan benches build the tables in
+/// exactly one place. Non-UTF-8 keys are skipped; the exported pinyin
+/// index is UTF-8 by construction.
+#[must_use]
+pub fn build_prefix_tables(index: &LookupTable) -> (Box<[String]>, Box<[String]>) {
+    let mut pinyin_keys = Vec::new();
+    let mut initial_keys = Vec::new();
+    for (key, _) in index.iter() {
+        let Ok(pinyin) = std::str::from_utf8(key).map(str::to_owned) else {
+            continue;
+        };
+        let mut initial = String::new();
+        for (position, syllable) in pinyin.split('\'').enumerate() {
+            if position > 0 {
+                initial.push('\'');
+            }
+            match syllable_initial(syllable) {
+                Some(prefix) => initial.push_str(prefix),
+                None => initial.push('0'),
+            }
+        }
+        pinyin_keys.push(pinyin);
+        initial_keys.push(initial);
+    }
+    pinyin_keys.sort_unstable();
+    pinyin_keys.dedup();
+    initial_keys.sort_unstable();
+    initial_keys.dedup();
+    (
+        pinyin_keys.into_boxed_slice(),
+        initial_keys.into_boxed_slice(),
+    )
 }
 
 struct PinyinDerived {

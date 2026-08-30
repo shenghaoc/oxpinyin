@@ -26,7 +26,7 @@ pub mod table;
 pub mod table_conf;
 
 pub use content::{ContentTable, LoadError, Record, TokenPair};
-pub use dict::{DictError, SystemDictionary};
+pub use dict::{DictError, SystemDictionary, build_prefix_tables};
 pub use interp::{
     InterpolationError, UnigramTable, parse_interpolation2, parse_interpolation2_from_reader,
 };

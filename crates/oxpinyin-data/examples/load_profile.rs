@@ -21,9 +21,9 @@ use std::io::{BufRead, BufReader, Cursor};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use oxpinyin_core::syllable_initial;
 use oxpinyin_data::{
-    BigramLanguageModel, LookupTable, PunctTable, SystemDictionary, default_store_file,
+    BigramLanguageModel, LookupTable, PunctTable, SystemDictionary, build_prefix_tables,
+    default_store_file,
     parse_interpolation2, parse_interpolation2_from_reader,
 };
 use redb::{ReadableDatabase, ReadableTable};
@@ -505,33 +505,6 @@ fn build_unigram_map(index: &LookupTable) -> (BTreeMap<u32, u64>, u64) {
         }
     }
     (map, total)
-}
-
-fn build_prefix_tables(index: &LookupTable) -> (Vec<String>, Vec<String>) {
-    let mut pinyin_keys = Vec::new();
-    let mut initial_keys = Vec::new();
-    for (key, _) in index.iter() {
-        let Ok(pinyin) = std::str::from_utf8(key).map(str::to_owned) else {
-            continue;
-        };
-        let mut initial = String::new();
-        for (position, syllable) in pinyin.split('\'').enumerate() {
-            if position > 0 {
-                initial.push('\'');
-            }
-            match syllable_initial(syllable) {
-                Some(prefix) => initial.push_str(prefix),
-                None => initial.push('0'),
-            }
-        }
-        pinyin_keys.push(pinyin);
-        initial_keys.push(initial);
-    }
-    pinyin_keys.sort_unstable();
-    pinyin_keys.dedup();
-    initial_keys.sort_unstable();
-    initial_keys.dedup();
-    (pinyin_keys, initial_keys)
 }
 
 fn build_text_tokens(index: &LookupTable) -> BTreeMap<String, Vec<u32>> {

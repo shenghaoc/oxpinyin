@@ -172,35 +172,7 @@ where
 pub fn load_prefix_tables() -> (Box<[String]>, Box<[String]>) {
     let export = export_dir();
     let index = LookupTable::open(&export.join("pinyin_index.redb")).expect("pinyin_index");
-    let mut pinyin_keys = Vec::new();
-    let mut initial_keys = Vec::new();
-    for (key, _value) in index.iter() {
-        let pinyin = std::str::from_utf8(key).expect("utf-8 key").to_owned();
-        let mut initial = String::new();
-        for (position, syllable) in pinyin.split('\'').enumerate() {
-            if position > 0 {
-                initial.push('\'');
-            }
-            match syllable_initial(syllable) {
-                Some(prefix) => initial.push_str(prefix),
-                None => initial.push('0'),
-            }
-        }
-        pinyin_keys.push(pinyin);
-        initial_keys.push(initial);
-    }
-    pinyin_keys.sort_unstable();
-    pinyin_keys.dedup();
-    initial_keys.sort_unstable();
-    initial_keys.dedup();
-    (
-        pinyin_keys.into_boxed_slice(),
-        initial_keys.into_boxed_slice(),
-    )
-}
-
-fn syllable_initial(text: &str) -> Option<&'static str> {
-    oxpinyin_core::syllable_initial(text)
+    oxpinyin_data::build_prefix_tables(&index)
 }
 
 /// Heap bytes of a `Box<[String]>`: slice header + each `String`'s buffer.
