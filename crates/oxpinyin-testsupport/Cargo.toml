@@ -12,3 +12,14 @@ workspace = true
 
 [dependencies]
 oxpinyin-core.workspace = true
+# Backend-aware table naming for the fixture export dir; never a
+# dependency of shipping code.
+oxpinyin-store = { workspace = true }
+
+# Forwards the backend selection, matching oxpinyin-data's block.
+[features]
+default = ["kyotocabinet"]
+kyotocabinet = ["oxpinyin-store/kyotocabinet"]
+tkrzw = ["oxpinyin-store/tkrzw"]
+lmdb = ["oxpinyin-store/lmdb"]
+redb = ["oxpinyin-store/redb"]

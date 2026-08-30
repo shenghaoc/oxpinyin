@@ -730,6 +730,7 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-runtime",
+ "oxpinyin-testsupport",
  "oxpinyin-user",
 ]
 
