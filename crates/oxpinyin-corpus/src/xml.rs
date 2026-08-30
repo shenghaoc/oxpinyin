@@ -55,28 +55,28 @@ impl<R: Read> XmlDump<R> {
     /// no `>` or a page has no `</page>` before EOF.
     pub fn next_page(&mut self) -> Result<Option<Page>, CorpusError> {
         if !self.in_page {
-            match self.scanner.find(b"<page")? {
-                None => return Ok(None),
-                Some(_) => {
-                    self.scanner.pos += b"<page".len();
-                    self.scanner.skip_until(b'>')?;
-                    self.page_base = self.scanner.absolute();
-                    self.page.clear();
-                    self.in_page = true;
-                }
+            if self.scanner.find(b"<page")?.is_none() {
+                return Ok(None);
             }
+            self.scanner.pos += b"<page".len();
+            self.scanner.skip_until(b'>')?;
+            self.page_base = self.scanner.absolute();
+            self.page.clear();
+            self.in_page = true;
         }
-        match self.scanner.find_into(b"</page>", &mut self.page)? {
-            None => Err(CorpusError::MalformedXml {
+        if self
+            .scanner
+            .find_into(b"</page>", &mut self.page)?
+            .is_none()
+        {
+            return Err(CorpusError::MalformedXml {
                 detail: "unterminated <page> at end of input".into(),
-            }),
-            Some(_) => {
-                self.scanner.pos += b"</page>".len();
-                self.in_page = false;
-                let block = std::mem::take(&mut self.page);
-                Ok(Some(parse_page(&block, self.page_base)?))
-            }
+            });
         }
+        self.scanner.pos += b"</page>".len();
+        self.in_page = false;
+        let block = std::mem::take(&mut self.page);
+        Ok(Some(parse_page(&block, self.page_base)?))
     }
 }
 
@@ -199,19 +199,15 @@ pub fn decode_entities(input: &[u8]) -> Vec<u8> {
             b"apos" => Some(b'\''),
             _ => None,
         };
-        match named {
-            Some(byte) => out.push(byte),
-            None => match decode_numeric(name).and_then(char::from_u32) {
-                Some(ch) => {
-                    let mut buf = [0_u8; 4];
-                    out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
-                }
-                None => {
-                    out.push(b'&');
-                    out.extend_from_slice(name);
-                    out.push(b';');
-                }
-            },
+        if let Some(byte) = named {
+            out.push(byte);
+        } else if let Some(ch) = decode_numeric(name).and_then(char::from_u32) {
+            let mut buf = [0_u8; 4];
+            out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+        } else {
+            out.push(b'&');
+            out.extend_from_slice(name);
+            out.push(b';');
         }
         rest = &rest[semi + 1..];
     }

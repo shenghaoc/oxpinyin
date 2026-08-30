@@ -86,12 +86,11 @@ fn cases() -> Vec<Case> {
                 .next()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(usize::MAX);
-            match SyllableKey::from_text(text) {
-                Some(key) => keys.push((key, begin)),
-                None => {
-                    usable = false;
-                    break;
-                }
+            if let Some(key) = SyllableKey::from_text(text) {
+                keys.push((key, begin));
+            } else {
+                usable = false;
+                break;
             }
         }
         if !usable || keys.is_empty() {

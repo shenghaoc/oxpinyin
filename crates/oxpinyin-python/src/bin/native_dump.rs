@@ -17,16 +17,14 @@ fn main() -> ExitCode {
     // `args_os`, not `args`: platform-native paths need not be UTF-8, and
     // `args` panics on them; `PathBuf: From<OsString>` takes them as-is.
     let mut args = std::env::args_os().skip(1);
-    let (corpus_path, system_dir, out_path) =
-        match (args.next(), args.next(), args.next(), args.next().is_none()) {
-            (Some(c), Some(s), Some(o), true) => {
-                (PathBuf::from(c), PathBuf::from(s), PathBuf::from(o))
-            }
-            _ => {
-                eprintln!("usage: native-dump <corpus.json> <system-dir> <out.json>");
-                return ExitCode::from(2);
-            }
-        };
+    let (corpus_path, system_dir, out_path) = if let (Some(c), Some(s), Some(o), true) =
+        (args.next(), args.next(), args.next(), args.next().is_none())
+    {
+        (PathBuf::from(c), PathBuf::from(s), PathBuf::from(o))
+    } else {
+        eprintln!("usage: native-dump <corpus.json> <system-dir> <out.json>");
+        return ExitCode::from(2);
+    };
 
     let Ok(corpus_text) = std::fs::read_to_string(&corpus_path) else {
         eprintln!("cannot read corpus {}", corpus_path.display());

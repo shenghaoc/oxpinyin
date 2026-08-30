@@ -586,20 +586,19 @@ where
     };
     for predecessor in beam {
         let key = (predecessor.value.token, entry.token);
-        let step = match costs.get(&key) {
-            Some(step) => *step,
-            None => {
-                let step = model
-                    .nbest_step_costs(
-                        &PhraseToken::new(predecessor.value.token),
-                        &PhraseToken::new(entry.token),
-                    )
-                    .map_err(|error| {
-                        EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-                    })?;
-                costs.insert(key, step);
-                step
-            }
+        let step = if let Some(step) = costs.get(&key) {
+            *step
+        } else {
+            let step = model
+                .nbest_step_costs(
+                    &PhraseToken::new(predecessor.value.token),
+                    &PhraseToken::new(entry.token),
+                )
+                .map_err(|error| {
+                    EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
+                })?;
+            costs.insert(key, step);
+            step
         };
         let push = |mut cost: Cost, trellis: &mut Trellis| {
             if let Some(pron) = pronunciation {

@@ -164,12 +164,11 @@ pub fn strip_wikitext(text: &str) -> String {
         match chars[i] {
             '<' => {
                 if chars[i + 1..].starts_with(&['!', '-', '-']) {
-                    match find_str(&chars, i, "-->") {
-                        Some(end) => i = end + 3,
-                        None => {
-                            line.push('<');
-                            i += 1;
-                        }
+                    if let Some(end) = find_str(&chars, i, "-->") {
+                        i = end + 3;
+                    } else {
+                        line.push('<');
+                        i += 1;
                     }
                 } else if chars[i + 1..].starts_with(&['/']) {
                     if let Some(end) = find_char(&chars, i, '>') {
@@ -205,27 +204,24 @@ pub fn strip_wikitext(text: &str) -> String {
             }
             '{' => {
                 if chars[i + 1..].starts_with(&['{']) {
-                    match scan_template(&chars, i) {
-                        Some((end, template)) => {
-                            let (name, last_arg) = template_parts(template);
-                            if is_kept_template(&name)
-                                && let Some(arg) = last_arg
-                            {
-                                // The kept argument is itself wikitext
-                                // (e.g. `{{lang|la|'''''x'''''}}`):
-                                // strip it recursively; the recursive
-                                // flush's trailing newline is dropped so
-                                // the outer line stays unsplit.
-                                let arg_text: String = arg.iter().collect();
-                                let stripped = strip_wikitext(&arg_text);
-                                line.push_str(stripped.trim_end_matches('\n'));
-                            }
-                            i = end;
+                    if let Some((end, template)) = scan_template(&chars, i) {
+                        let (name, last_arg) = template_parts(template);
+                        if is_kept_template(&name)
+                            && let Some(arg) = last_arg
+                        {
+                            // The kept argument is itself wikitext
+                            // (e.g. `{{lang|la|'''''x'''''}}`):
+                            // strip it recursively; the recursive
+                            // flush's trailing newline is dropped so
+                            // the outer line stays unsplit.
+                            let arg_text: String = arg.iter().collect();
+                            let stripped = strip_wikitext(&arg_text);
+                            line.push_str(stripped.trim_end_matches('\n'));
                         }
-                        None => {
-                            line.push('{');
-                            i += 1;
-                        }
+                        i = end;
+                    } else {
+                        line.push('{');
+                        i += 1;
                     }
                 } else {
                     line.push('{');
