@@ -20,10 +20,11 @@ inclusion: always
 | oxpinyin-datagen | model20 → runtime tables compiler for every backend | deny | yes | never |
 | oxpinyin-corpus | training corpus front-end (zhwiki dump → ngseg raw text) | deny | yes | never |
 | oxpinyin-testsupport | shared test doubles (fixture Dictionary/LanguageModel); dev-only | forbid | yes | never |
-| oxpinyin-segment | training segmenter (`ngseg` reproduction) | deny | yes | never |
-| oxpinyin-counter | training n-gram counter (`gen_ngram` reproduction) | deny | yes | never |
-| oxpinyin-lambda | training λ estimator (`gen_deleted_ngram` + `estimate_interpolation`) | deny | yes | never |
-| oxpinyin-emitter | training `interpolation2.text` writer (`export_interpolation` reproduction) | deny | yes | never |
+| oxpinyin-segment | training segmenter (`ngseg`; `spseg`/`mergeseq` per W9 re-audit) | deny | yes | never |
+| oxpinyin-counter | legacy n-gram counter (`gen_ngram`; off the trainer path — see trainer-parity-audit §4) | deny | yes | never |
+| oxpinyin-lambda | training λ estimator (`estimate_interpolation` EM — on the trainer path via `evaluate.py`; `gen_deleted_ngram` held-out) | deny | yes | never |
+| oxpinyin-emitter | legacy `interpolation2.text` writer (`export_interpolation`; off the trainer path — see trainer-parity-audit §4) | deny | yes | never |
+| oxpinyin-kmm | K-mixture-model pipeline (generate/estimate/merge/validate/prune/export/import/→interpolation) — W9 | deny | yes | never |
 
 **Centralized assembly:** the concrete construction of a decodable engine
 (system tables + unigram model + λ + optional user store + addon/punct

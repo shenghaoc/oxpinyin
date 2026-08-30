@@ -64,7 +64,7 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
 | W6 | User store (redb) | oxpinyin-user |
 | W7 | Classic text-format interop via oxpinyin-dictool (import + export) | oxpinyin-dictool, oxpinyin-capi |
 | W8 | oxpinyin library release + compatibility bootstrap for the ibus-libpinyin fork | oxpinyin-capi |
-| W9 | Training toolchain | oxpinyin-segment, oxpinyin-counter, oxpinyin-lambda, oxpinyin-emitter, oxpinyin-corpus |
+| W9 | Training toolchain — full trainer-workflow parity (KMM in scope; see `docs/findings/trainer-parity-audit.md`) | oxpinyin-segment, oxpinyin-kmm, oxpinyin-eval, oxpinyin-word, oxpinyin-punct, oxpinyin-lambda, oxpinyin-corpus (legacy: oxpinyin-counter, oxpinyin-emitter) |
 | W10 | Option bits: correction, fuzzy/ambiguity, dynamic-adjust gating | oxpinyin-core, oxpinyin-engine |
 | W11 | Phrase-index union at lookup (user, network, addon) | oxpinyin-engine, oxpinyin-data, oxpinyin-user |
 | W12 | Corpus tail (parity gaps; candidate residual closed 2026-08-22) | oxpinyin-core, oxpinyin-engine, oxpinyin-capi |
@@ -168,12 +168,40 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   those numbers are prerequisites for improving against them. Remaining
   work is not W8 — it is W10–W14 below.
 
-- **W9 merged out of numeric order.** W9 is the training toolchain and
-  shipped five stages: segmenter (`ngseg`), counter (`gen_ngram`), λ
-  estimator (`gen_deleted_ngram` + `estimate_interpolation`), emitter
-  (`interpolation2.text` via `export_interpolation`), and the corpus
-  front-end (zhwiki cleaner). Deliberate scope cut: the KMM path is
-  skipped; `interpolation2.text` is the shipped format.
+- **W9 is the training toolchain — full-scope re-audit (2026-08-30).**
+  W9 now targets **complete native-Rust parity with the currently-used
+  libpinyin/trainer workflow**: segmentation (`ngseg`, `spseg`,
+  `mergeseq`), K-mixture-model generation and optimisation (generate →
+  estimate → merge → validate → prune → export → KMM→interpolation),
+  evaluation (`estimate_interpolation` λ + `eval_correction_rate`), word
+  recognition (prepare → populate → partialword → newword → markpinyin),
+  punctuation generation, and the corpus/index/status orchestration that
+  drives them — implemented natively, with no dependency on libpinyin
+  binaries/libraries, the Python trainer scripts, SQLite, or `make` at
+  runtime.
+
+  This **supersedes the earlier deliberate scope cut** that skipped the
+  KMM path. A source-level call-graph re-audit
+  (`docs/findings/trainer-parity-audit.md`, pinned to libpinyin `2.11.91`
+  and trainer `b192737`) shows the trainer's five-stage main pipeline is
+  KMM throughout: `gen_k_mixture_model` is the load-bearing corpus
+  counter, and the shipped `interpolation2.text` is produced by
+  `k_mixture_model_to_interpolation` off a merged-and-pruned KMM — **not**
+  by the legacy `gen_ngram`/`export_interpolation` path.
+
+  First increment shipped the five legacy-path stages — segmenter
+  (`ngseg`), counter (`gen_ngram`), held-out/λ estimator
+  (`gen_deleted_ngram` + `estimate_interpolation`), emitter
+  (`export_interpolation`), corpus front-end (zhwiki cleaner). The
+  re-audit reclassifies `gen_ngram`/`gen_unigram`/`gen_deleted_ngram`/
+  `export_interpolation` as **legacy libpinyin utilities that the trainer
+  does not invoke** (kept, correct, retitled); `estimate_interpolation`'s
+  λ EM stays on the real path inside `evaluate.py`. Remaining scope is
+  decomposed as Parts B–H in the audit: `spseg`/`mergeseq`
+  (`oxpinyin-segment`); the KMM pipeline (`oxpinyin-kmm`); the evaluator
+  (`oxpinyin-eval`, reusing the engine decoder); word recognition
+  (`oxpinyin-word`); punctuation (`oxpinyin-punct`); native end-to-end
+  orchestration.
 
 - **W10–W12 are three parity workstreams, not one.** They have different shapes —
   bounded/mechanical (W10), architectural (W11), open-ended (W12) — and

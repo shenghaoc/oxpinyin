@@ -1,8 +1,24 @@
 # libpinyin training pipeline — algorithm characterization (W9-T0)
 
 Date: 2026-08-14 · Status: **SHOWN-verified against libpinyin 2.11.91 source** ·
-Decision: **W9 reproduces the legacy counting + λ-estimation pipeline; the
-K-mixture-model (KMM) path is out of scope for W9** (see §7).
+Original decision: W9 reproduces the legacy counting + λ-estimation
+pipeline; the K-mixture-model (KMM) path is out of scope for W9 (see §7).
+
+> **SUPERSEDED (2026-08-30) — KMM is now in scope.** The §7 recommendation
+> to skip KMM has been superseded by the full-scope W9 re-audit,
+> `docs/findings/trainer-parity-audit.md`. A source-level call-graph trace
+> shows the trainer's five-stage main pipeline invokes `gen_k_mixture_model`
+> (not `gen_ngram`), and produces the shipped `interpolation2.text` via
+> `k_mixture_model_to_interpolation` off a merged-and-pruned KMM. The
+> legacy path this document characterises (`gen_unigram`/`gen_ngram`/
+> `gen_deleted_ngram`/`export_interpolation`) is **not invoked by the
+> trainer** — it is a set of valid but off-path libpinyin utilities. This
+> document's §2–§5 characterisation of the segmenters, the shared
+> boundary logic, and the `estimate_interpolation` λ EM remains accurate
+> and load-bearing (the λ EM is on the real path inside `evaluate.py`);
+> only the §1 pipeline framing and the §7 KMM-skip decision are
+> superseded. See the re-audit for the KMM data model, formats, and the
+> per-document counting algorithm.
 
 This finding records, with source file + line citations, the exact algorithm a
 later Rust implementation must reproduce to train a model that is
