@@ -282,7 +282,9 @@ feature.
   `oxpinyin_data::compat` decoding them into the same in-memory model the
   native tables produce, behind the `oxpinyin_data::layout` seam. The
   Kyoto Cabinet half of a compat directory is `bigram.db` (plus the two
-  tree indexes, which serve detection only).
+  tree indexes, which serve detection only) and — from libpinyin 2.11,
+  which added the PunctTable — `punct.bin`, a TreeDB the compat punct
+  reader walks the same way.
 - **The codec simplification.** Unchanged from the Berkeley DB finding:
   correct as analysis, but the user store has no format-version field, so
   changing the native bigram key encoding would misread every existing

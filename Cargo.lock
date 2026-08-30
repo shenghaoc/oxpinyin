@@ -832,6 +832,7 @@ dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",
+ "oxpinyin-store",
  "oxpinyin-user",
 ]
 

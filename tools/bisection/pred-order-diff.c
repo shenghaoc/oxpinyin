@@ -8,6 +8,18 @@
  *
  *   pred-<tag>:[i]=<text>
  *
+ * and every PREDICTED_PUNCTUATION_CANDIDATE (type 8) row the same
+ * prediction produced, tagged separately:
+ *
+ *   punct-<tag>:[i]=<text>
+ *
+ * The punct rows are the compat reader's gate: they come from the
+ * install's punct.bin (a 2.11.91+ table), so they appear on both sides
+ * only when the subject reads that file through its compat path. The
+ * prediction must run through the _with_punctuations variant for them
+ * to be emitted at all; on a < 2.11 library the fallback call produces
+ * none and the punct sections are simply empty on both sides.
+ *
  * The runner diffs the two dumps and reports per-prefix position
  * mismatches — a number that moves (baseline, 2026-08-25: 好 174/178;
  * the others recorded in the findings doc) rather than a binary
@@ -73,8 +85,9 @@ static void *must(void *handle, const char *name) {
     return symbol;
 }
 
-/* One prefix: predict, then print every PREDICTED_PREFIX row in list
- * order. Returns 1 on accessor failure. */
+/* One prefix: predict, then print every PREDICTED_PREFIX (pred-*) and
+ * PREDICTED_PUNCTUATION (punct-*) row in list order. Returns 1 on
+ * accessor failure. */
 static int dump_prefix(fn_predict predict, fn_n n_cand, fn_getc get_cand,
                        fn_gettype get_type, fn_getstr get_str,
                        pinyin_instance_t *inst, const char *prefix,
@@ -99,14 +112,15 @@ static int dump_prefix(fn_predict predict, fn_n n_cand, fn_getc get_cand,
             fprintf(stderr, "get_candidate_type(%u) failed for %s\n", i, tag);
             return 1;
         }
-        if (type != 5) /* PREDICTED_PREFIX only */
+        if (type != 5 && type != 8) /* PREDICTED_PREFIX | PREDICTED_PUNCTUATION */
             continue;
         const char *text = NULL;
         if (!get_str(inst, cand, &text)) {
             fprintf(stderr, "get_candidate_string(%u) failed for %s\n", i, tag);
             return 1;
         }
-        printf("pred-%s:[%u]=%s\n", tag, i, text ? text : "(null)");
+        printf("%s-%s:[%u]=%s\n", type == 5 ? "pred" : "punct", tag, i,
+               text ? text : "(null)");
     }
     return 0;
 }

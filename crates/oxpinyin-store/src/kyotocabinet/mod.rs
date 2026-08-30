@@ -500,3 +500,117 @@ impl BigramDb {
         Ok(tokens.into_iter().collect())
     }
 }
+
+// ── libpinyin-compat punct access ───────────────────────────────────
+//
+// A Kyoto-Cabinet-built libpinyin's `punct.bin` is a TreeDB
+// (`punct_table_kyotodb.cpp:62`: `m_db = new TreeDB` in `attach`, which
+// `pinyin.cpp:440` calls with `ATTACH_READONLY` at init), keyed by the
+// four native-endian bytes of a `phrase_token_t` — `load_entry`'s
+// `(char *) &index` with `sizeof(phrase_token_t)` — and valued by the
+// raw `PunctTableEntry::m_chunk` content: `store_entry` writes
+// `m_chunk.begin() .. m_chunk.size()` with no file-header framing. The
+// chunk format itself is backend-independent and decoded one layer up
+// (`oxpinyin_data::punct`); this reader only walks the raw pairs.
+
+/// The visitor [`PunctDb::for_each`] drives: one `(token, chunk)` row,
+/// the chunk bytes undecoded.
+pub type PunctRow<'a> = dyn FnMut(u32, &[u8]) -> Result<(), StoreError> + 'a;
+
+/// Read-only access to a libpinyin `punct.bin` written by a
+/// Kyoto-Cabinet-built libpinyin (TreeDB).
+pub struct PunctDb {
+    db: Db,
+}
+
+impl PunctDb {
+    /// Opens `path` as a `TreeDB`, read-only, as the pin's
+    /// `ATTACH_READONLY` attach does; never creates.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] when Kyoto Cabinet refuses the open — a missing
+    /// file, a file that is not a tree database, or an unsupported
+    /// library version.
+    pub fn open_read_only(path: &Path) -> Result<Self, StoreError> {
+        Ok(Self {
+            db: Db::open(path, DbType::Tree, true, false)?,
+        })
+    }
+
+    /// Visits every `(token, chunk)` record in stored order, the chunk
+    /// bytes undecoded.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] from Kyoto Cabinet, from a malformed key, or
+    /// whatever `visit` returns.
+    pub fn for_each(&self, visit: &mut PunctRow<'_>) -> Result<(), StoreError> {
+        let mut cursor = self.db.cursor()?;
+        if !cursor.jump()? {
+            return Ok(());
+        }
+        while let Some(record) = cursor.next()? {
+            let key: [u8; 4] = record.key().try_into().map_err(|_| {
+                StoreError::Backend(
+                    format!(
+                        "corrupt punct key: {} bytes, expected the 4 of a phrase_token_t",
+                        record.key().len()
+                    )
+                    .into(),
+                )
+            })?;
+            visit(u32::from_ne_bytes(key), record.value())?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds a `punct.bin` in the pin's own physical layout — raw
+    /// 4-byte token keys, raw chunk values — through the internal `Db`
+    /// write path, then reads it back through the public reader.
+    #[test]
+    fn punct_db_walks_a_pin_layout_tree_db() {
+        let path =
+            std::env::temp_dir().join(format!("oxpinyin-punctlitewalk-{}.kct", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        // ucs4_t words of "，" and "。" (U+FF0C, U+3002), each string
+        // NUL-terminated, concatenated — the escape() chunk layout.
+        let comma: Vec<u8> = [0xFF0C_u32, 0]
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+        let period_comma: Vec<u8> = [0x3002_u32, 0, 0xFF0C_u32, 0]
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect();
+
+        {
+            let writer = Db::open(&path, DbType::Tree, false, true).unwrap();
+            writer.set(&7_u32.to_ne_bytes(), &comma).unwrap();
+            writer.set(&42_u32.to_ne_bytes(), &period_comma).unwrap();
+            writer.set(&0x0100_0001_u32.to_ne_bytes(), &[]).unwrap();
+        }
+
+        let db = PunctDb::open_read_only(&path).unwrap();
+        let mut rows: Vec<(u32, Vec<u8>)> = Vec::new();
+        db.for_each(&mut |token, chunk| {
+            rows.push((token, chunk.to_vec()));
+            Ok(())
+        })
+        .unwrap();
+        // Tree order is key-byte order, not token order.
+        rows.sort_by_key(|(token, _)| *token);
+        assert_eq!(rows.len(), 2, "the empty-value record is not walked");
+        assert_eq!(rows[0], (7_u32, comma));
+        assert_eq!(rows[1], (42_u32, period_comma));
+
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+    }
+}

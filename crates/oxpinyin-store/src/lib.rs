@@ -537,7 +537,7 @@ pub use lmdb::LmdbStore;
 #[cfg(feature = "tkrzw")]
 mod tkrzw;
 #[cfg(feature = "tkrzw")]
-pub use tkrzw::{TkrzwBigramDb, TkrzwStore};
+pub use tkrzw::{TkrzwBigramDb, TkrzwPunctDb, TkrzwStore};
 
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
 pub mod single_gram;
@@ -545,7 +545,7 @@ pub mod single_gram;
 #[cfg(feature = "kyotocabinet")]
 pub mod kyotocabinet;
 #[cfg(feature = "kyotocabinet")]
-pub use kyotocabinet::{BigramDb, KcStore, SingleGram};
+pub use kyotocabinet::{BigramDb, KcStore, PunctDb, SingleGram};
 
 // ── error mapping ──────────────────────────────────────────────────
 

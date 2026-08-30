@@ -57,6 +57,10 @@ distro's `libpinyin-data` package: `pinyin_index.bin`, `phrase_index.bin`,
 the content-table `.bin` files (`gb_char.bin`, `merged.bin`, …),
 `bigram.db` and `table.conf`. The layout is detected by file header, and
 the compat loader converts it to the same in-memory model at open time.
+The directory's `bigram.db` must have been written by a backend this
+build reads — Kyoto Cabinet or tkrzw; a Berkeley-DB-built libpinyin
+directory (RHEL's packaging among them) is refused with an error naming
+the format, never misread.
 
 A directory is converted from libpinyin-format sources by the repository's
 usual toolchain (`tools/model/fetch-model.sh` fetches the pinned model;
