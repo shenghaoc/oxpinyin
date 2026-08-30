@@ -17,82 +17,45 @@
 #![allow(missing_docs)]
 
 use std::fs;
-use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use oxpinyin_counter::count_ngseg;
 use oxpinyin_lambda::{count_deleted, estimate_lambda};
-use oxpinyin_segment::{PhraseLexicon, locate_export_dir};
+use oxpinyin_segment::PhraseLexicon;
+use oxpinyin_segment::tool_cli::{self, ToolAction, ToolArgs};
 
 fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("{error}");
-            ExitCode::from(1)
-        }
-    }
+    tool_cli::run(run)
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut skip_pi_gram = false;
+    let mut tool = ToolArgs::default();
     let mut deleted_path: Option<PathBuf> = None;
-    let mut system_path: Option<PathBuf> = None;
-    let mut export_dir: Option<PathBuf> = None;
-
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-h" | "--help" => {
-                print_help();
-                return Ok(());
+    if let ToolAction::Help =
+        tool.parse(std::env::args().skip(1), |tool, flag, rest| match flag {
+            "--skip-pi-gram-training" => {
+                tool.skip_pi_gram = true;
+                Ok(true)
             }
-            "--skip-pi-gram-training" => skip_pi_gram = true,
             "--deleted" | "--deleted-bigram-file" => {
                 deleted_path = Some(PathBuf::from(
-                    args.next().ok_or("missing --deleted argument")?,
+                    rest.next().ok_or("missing --deleted argument")?,
                 ));
+                Ok(true)
             }
-            "--export-dir" => {
-                export_dir = Some(PathBuf::from(args.next().ok_or("missing --export-dir")?));
-            }
-            flag if flag.starts_with('-') => {
-                return Err(format!("unknown option: {flag}").into());
-            }
-            path => {
-                if system_path.is_some() {
-                    return Err("too many arguments".into());
-                }
-                system_path = Some(PathBuf::from(path));
-            }
-        }
+            _ => Ok(false),
+        })?
+    {
+        print_help();
+        return Ok(());
     }
 
-    let phrase_index = match export_dir {
-        Some(dir) => dir.join(oxpinyin_segment::default_store_file("phrase_index")),
-        None => locate_export_dir()
-            .map(|dir| dir.join(oxpinyin_segment::default_store_file("phrase_index")))
-            .ok_or(
-                "no system-table export (the phrase_index table); set --export-dir or PINYIN_EXPORT_DIR",
-            )?,
-    };
+    let phrase_index = tool_cli::locate_phrase_index(tool.export_dir.as_deref())?;
     let lexicon = PhraseLexicon::from_phrase_index(&phrase_index)?;
 
-    let read = |path: &Option<PathBuf>| -> Result<String, Box<dyn std::error::Error>> {
-        let bytes = match path {
-            Some(path) => fs::read(path)?,
-            None => {
-                let mut buf = Vec::new();
-                io::stdin().read_to_end(&mut buf)?;
-                buf
-            }
-        };
-        Ok(String::from_utf8(bytes)?)
-    };
-
-    let system_text = read(&system_path)?;
-    let train_pi_gram = !skip_pi_gram;
+    let system_text = String::from_utf8(tool_cli::read_input(tool.input.as_deref())?)?;
+    let train_pi_gram = !tool.skip_pi_gram;
     let system = count_ngseg(&lexicon, &system_text, train_pi_gram)?;
 
     // Held-out slice: the --deleted file, or the system stream itself.
