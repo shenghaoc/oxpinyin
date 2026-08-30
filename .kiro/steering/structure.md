@@ -33,12 +33,16 @@ algorithm belongs there.
 
 **Drop-in compat path:** `oxpinyin-data` also reads installed libpinyin
 data directly. `src/compat/` (`CompatLayout::detect`) recognises the distro
-layouts — Fedora `/usr/lib64/libpinyin/data`, Debian
-`/usr/lib/<arch>/libpinyin/data`, NixOS profile-symlinked `/nix/store`
-paths — and `src/memory_chunk.rs` parses libpinyin's `MemoryChunk`
-container (8-byte header: u32 LE length + u32 XOR checksum). The runtime
-routes `pinyin_init` through this path when the system dir detects as a
-libpinyin data layout, so distro data is consumed without conversion.
+layouts — Fedora `/usr/lib64/libpinyin/data` and Debian
+`/usr/lib/<arch>/libpinyin/data` via the automatic `system_data_dirs()`
+discovery, NixOS `/nix/store` paths only when the caller supplies the
+directory — and `src/memory_chunk.rs` parses libpinyin's `MemoryChunk`
+container (8-byte header: u32 LE length + u32 XOR checksum). Its DBM
+reads go through the backend: the route requires the kyotocabinet or
+tkrzw feature, and is not available in lmdb-only or redb/no-feature
+builds. The runtime routes `pinyin_init` through this path when the
+system dir detects as a libpinyin data layout, so distro data is consumed
+without conversion.
 
 **Portability seam:** `oxpinyin-engine`'s session API is framework-neutral —
 abstract `KeyInput`, preedit spans + style enum, candidate iteration;
