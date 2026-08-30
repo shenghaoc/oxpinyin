@@ -733,6 +733,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxpinyin-chewing"
+version = "0.1.0"
+
+[[package]]
 name = "oxpinyin-core"
 version = "0.1.0"
 dependencies = [
