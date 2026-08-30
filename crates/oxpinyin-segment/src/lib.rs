@@ -15,6 +15,7 @@ mod error;
 mod lexicon;
 mod model;
 mod paths;
+pub mod tool_cli;
 mod trellis;
 
 pub use driver::{Emitted, segment_bytes, segment_line};

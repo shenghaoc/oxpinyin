@@ -10,85 +10,32 @@
 #![forbid(unsafe_code)]
 #![allow(missing_docs)]
 
-use std::fs;
-use std::io::{self, Read, Write};
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use oxpinyin_counter::count_ngseg;
-use oxpinyin_segment::{PhraseLexicon, locate_export_dir};
+use oxpinyin_segment::PhraseLexicon;
+use oxpinyin_segment::tool_cli::{self, ToolAction, ToolArgs};
 
 fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("{error}");
-            ExitCode::from(1)
-        }
-    }
+    tool_cli::run(run)
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut skip_pi_gram = false;
-    let mut output: Option<PathBuf> = None;
-    let mut input: Option<PathBuf> = None;
-    let mut export_dir: Option<PathBuf> = None;
-
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-h" | "--help" => {
-                print_help();
-                return Ok(());
-            }
-            "--skip-pi-gram-training" => skip_pi_gram = true,
-            "-o" | "--outputfile" => {
-                output = Some(PathBuf::from(args.next().ok_or("missing -o argument")?));
-            }
-            "--export-dir" => {
-                export_dir = Some(PathBuf::from(args.next().ok_or("missing --export-dir")?));
-            }
-            flag if flag.starts_with('-') => {
-                return Err(format!("unknown option: {flag}").into());
-            }
-            path => {
-                if input.is_some() {
-                    return Err("too many arguments".into());
-                }
-                input = Some(PathBuf::from(path));
-            }
-        }
+    let mut tool = ToolArgs::default();
+    if let ToolAction::Help = tool.parse_counting(std::env::args().skip(1))? {
+        print_help();
+        return Ok(());
     }
 
-    let phrase_index = match export_dir {
-        Some(dir) => dir.join(oxpinyin_segment::default_store_file("phrase_index")),
-        None => locate_export_dir()
-            .map(|dir| dir.join(oxpinyin_segment::default_store_file("phrase_index")))
-            .ok_or(
-                "no system-table export (the phrase_index table); set --export-dir or PINYIN_EXPORT_DIR",
-            )?,
-    };
+    let phrase_index = tool_cli::locate_phrase_index(tool.export_dir.as_deref())?;
     let lexicon = PhraseLexicon::from_phrase_index(&phrase_index)?;
 
-    let bytes = match input {
-        Some(path) => fs::read(&path)?,
-        None => {
-            let mut buf = Vec::new();
-            io::stdin().read_to_end(&mut buf)?;
-            buf
-        }
-    };
+    let bytes = tool_cli::read_input(tool.input.as_deref())?;
     let text = std::str::from_utf8(&bytes)?;
-    let counts = count_ngseg(&lexicon, text, !skip_pi_gram)?;
+    let counts = count_ngseg(&lexicon, text, !tool.skip_pi_gram)?;
     let dump = counts.dump();
 
-    match output {
-        Some(path) => fs::write(path, dump.as_bytes())?,
-        None => {
-            let mut stdout = io::stdout().lock();
-            stdout.write_all(dump.as_bytes())?;
-        }
-    }
+    tool_cli::write_output(tool.output.as_deref(), dump.as_bytes())?;
     Ok(())
 }
 
