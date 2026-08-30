@@ -39,7 +39,7 @@ No `EdgeCost`, `Dictionary`, or `LanguageModel` trait signatures were changed.
 
 Portable parity test on `feat/parity-climb-2` after F1 (64% top-1 baseline):
 
-```
+```bash
 cargo test --release -p pinyin-oracle --test real_tables_integration -- --nocapture
 ```
 
@@ -77,4 +77,5 @@ here and the branch retains only the F1 code change (64%/90%/70 floor).
 
 - `crates/oxpinyin-core/src/scoring.rs` — `Scorer`, `key_cost_table`, `EdgeCost`
 - `crates/oxpinyin-core/src/kbest.rs` — `EdgeCost` trait (frozen)
-- `crates/oxpinyin-data/src/lm.rs` — `BigramLanguageModel`, `UNKNOWN_COST`
+- `crates/oxpinyin-data/src/lm/mod.rs` — `BigramLanguageModel`
+- `crates/oxpinyin-core/src/cost.rs` — `UNKNOWN_COST`

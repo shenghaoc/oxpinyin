@@ -242,5 +242,5 @@ no corpus, no model bytes are committed.
 | T1 line rule: one `\n` stripped, never `\r` | `crates/oxpinyin-segment/src/driver.rs:143-164` | SHOWN |
 | T2 consumes T1's stdout text | `oxpinyin_counter::count_ngseg` (LSP hover) | SHOWN |
 | T4a renders `interpolation2.text` | `oxpinyin_emitter::emit_interpolation2` (LSP hover) | SHOWN |
-| λ tolerance: 6 dp byte-identical, `|Δaverage| < 1e-6` | `docs/findings/lambda-port.md` §4.3 | SHOWN |
+| λ tolerance: 6 dp byte-identical, `\|Δaverage\| < 1e-6` | `docs/findings/lambda-port.md` §4.3 | SHOWN |
 | libpinyin corpus prep undocumented; no oracle | W9-T0 `training-algorithm.md` | SHOWN |
