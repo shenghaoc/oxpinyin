@@ -6,7 +6,7 @@
 //!
 //! These are what the decoder is developed and tested against: no installed
 //! oracle, no redb, no W3 dependency, and portable everywhere. The data is
-//! frozen in `fixtures/w4/`, and `docs/findings/fixture-adapters.md` records
+//! frozen in `fixtures/w4/`, and `docs/testing/fixture-adapters.md` records
 //! its provenance — phrase text is captured pinned-oracle output, key
 //! sequences and weights are authored, and no model-archive probability data
 //! is present.

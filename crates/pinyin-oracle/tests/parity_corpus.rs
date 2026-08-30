@@ -82,7 +82,7 @@ fn committed_corpus_meets_the_documented_size_and_counts() {
     let dir = corpus_dir();
     let mut total = 0_usize;
 
-    // Counts frozen in docs/findings/parity-corpus.md.
+    // Counts frozen in docs/testing/parity-corpus.md.
     let documented: &[(&str, usize)] = &[
         ("01-single-syllable.txt", 405),
         ("02-syllable-pairs.txt", 2_000),

@@ -1,6 +1,6 @@
 //! Parser option bits accepted by the oracle.
 //!
-//! Values are frozen in `docs/findings/oracle-ffi-seam.md`, derived from the
+//! Values are frozen in `docs/testing/oracle-ffi-seam.md`, derived from the
 //! `PinyinTableFlag` and `PinyinAmbiguity2` enumerations declared by the pinned
 //! public headers. The [`CAPTURE_DEFAULT`] word equals the `flags` field
 //! recorded in every `fixtures/foundation/f-a.txt` record, which cross-checks
@@ -37,7 +37,7 @@ pub const USE_RESPLIT_TABLE: u32 = 1 << 8;
 
 /// `DYNAMIC_ADJUST` — forbidden by the parity protocol.
 ///
-/// The capture protocol in `docs/findings/capture-fixtures.md` rejects this bit
+/// The capture protocol in `docs/testing/capture-fixtures.md` rejects this bit
 /// outright. Masking it silently would make a run look protocol-clean while
 /// learning was active, so [`OracleFlags::new`] returns an error instead.
 pub const DYNAMIC_ADJUST: u32 = 1 << 9;

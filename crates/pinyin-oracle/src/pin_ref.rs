@@ -4,7 +4,7 @@
 // run-time context check can never drift apart. Keep it free of `use`
 // statements and of anything that depends on crate items.
 
-/// Frozen pin reference from `docs/findings/oracle-environment.md`.
+/// Frozen pin reference from `docs/testing/oracle-environment.md`.
 ///
 /// Identical to `EXPECTED_PIN_REF` in `tools/capture/run-capture.sh`: the
 /// capture harness and the differential harness must agree on the subject.

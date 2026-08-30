@@ -23,7 +23,7 @@ use pinyin_oracle::{
     LiveSource, Oracle, OracleFlags, OraclePrefix, OracleSegment, Taxonomy, taxonomy,
 };
 
-/// Total corpus size, frozen in `docs/findings/parity-corpus.md`.
+/// Total corpus size, frozen in `docs/testing/parity-corpus.md`.
 const CORPUS_SIZE: usize = 10_465;
 
 fn oracle() -> Oracle {
@@ -82,7 +82,7 @@ fn the_whole_corpus_runs_end_to_end_without_aborting() {
     // The acceptance criterion. Reaching the assertions at all means the process
     // survived every input, which is not free: the pin aborts on apostrophe-only
     // input, and the guard in `Session::collect_segments` is what makes this
-    // terminate. See docs/findings/oracle-apostrophe-abort.md.
+    // terminate. See docs/testing/oracle-apostrophe-abort.md.
     let output = run_corpus();
 
     assert_eq!(output.report.total, CORPUS_SIZE);

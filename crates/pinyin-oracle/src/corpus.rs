@@ -1,7 +1,7 @@
 //! Deterministic parity-corpus generation.
 //!
 //! Methodology, byte domain and reproducibility contract are frozen in
-//! `docs/findings/parity-corpus.md`. This module is the implementation of that
+//! `docs/testing/parity-corpus.md`. This module is the implementation of that
 //! finding and is pure: output is a function of the frozen 405-syllable
 //! inventory and [`SEED`] alone. No clock, no entropy, no map iteration order,
 //! no filesystem order.

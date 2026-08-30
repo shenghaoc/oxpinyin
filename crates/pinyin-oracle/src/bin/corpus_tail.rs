@@ -14,7 +14,7 @@
 //!
 //! Read-only, single-threaded, no oracle FFI — the fixture already holds
 //! the pin's answer for every corpus input, so no fresh oracle call is
-//! made. Prints to stdout for capture into `docs/findings/corpus-tail.md`.
+//! made. Prints to stdout for capture into `docs/testing/corpus-tail.md`.
 //!
 //! ```bash
 //! PINYIN_EXPORT_DIR=/tmp/oxpinyin-export \

@@ -1,6 +1,6 @@
 //! Reader and writer for the `pinyin-capture-v1` line format.
 //!
-//! Format frozen in `docs/findings/capture-fixtures.md`. This module turns a
+//! Format frozen in `docs/testing/capture-fixtures.md`. This module turns a
 //! frozen fixture line back into an [`OracleObservation`], which is what lets
 //! the W2-T3 comparison run in portable CI with no oracle installed: the oracle
 //! side is real output the pinned program already produced, not a mock.

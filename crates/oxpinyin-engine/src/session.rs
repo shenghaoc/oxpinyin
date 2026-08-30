@@ -2080,7 +2080,7 @@ where
     /// and leaves the amplified value bit-identical to the unigram-only
     /// law. Near-ties collapse
     /// to equal keys under that truncation — the tie class
-    /// `docs/findings/corpus-tail.md` calls Class A — and equal keys fall to
+    /// `docs/testing/corpus-tail.md` calls Class A — and equal keys fall to
     /// the collection order the stable sort keeps. `amplified_frequency`
     /// reproduces the arithmetic bit-for-bit; the `+1` is the shipped
     /// model20 data identity (every phrase-index item's baked unigram is
@@ -2503,7 +2503,7 @@ fn append_scan_entries(
 /// by token (`_append_items`, `pinyin.cpp:1769-1791`), and its stable
 /// `g_array_sort_with_data` keeps exactly that order for candidates whose
 /// three keys tie — the amplified-frequency collapses of
-/// `docs/findings/corpus-tail.md` Class A. The scan reaches the same
+/// `docs/testing/corpus-tail.md` Class A. The scan reaches the same
 /// tokens through several key-paths; sorting the batch by token and
 /// keeping the first of each reproduces the one-row-per-token array the
 /// pin sorts.
@@ -3053,7 +3053,7 @@ const fn is_input_character(character: char) -> bool {
 ///
 /// Printable ASCII (`0x21..=0x7E`), including junk the parity corpus embeds
 /// in inputs. The decoder (`SegmentGraph`) treats non-`a-z`/`'` bytes as
-/// hard boundaries; see `docs/findings/f1-junk-aware-parse.md`. Space and
+/// hard boundaries; see `docs/testing/f1-junk-aware-parse.md`. Space and
 /// controls are excluded so they cannot bypass `LogicalKey::Space` / `Tab`
 /// / `Enter`.
 ///
@@ -3548,7 +3548,7 @@ mod tests {
     }
 
     /// Authored mini vocabulary for the training tests: two single-key
-    /// phrases, no model bytes (`docs/findings/fixture-adapters.md`).
+    /// phrases, no model bytes (`docs/testing/fixture-adapters.md`).
     const TRAIN_VOCAB: &str =
         "token=1\tkeys=ni\ttext=你\tunigram=1000\ntoken=2\tkeys=hao\ttext=好\tunigram=900\n";
 
@@ -4248,7 +4248,7 @@ mod tests {
         // The denominator is the pin's phrase-index total over model20:
         // interpolation2 sum 50_913_735 + 138_096 items, each item's baked
         // unigram being its interpolation2 count + 1 (probe-verified over
-        // the whole index; `docs/findings/corpus-tail.md` Class A). The
+        // the whole index; `docs/testing/corpus-tail.md` Class A). The
         // values are the amplified keys the 12 top-1 tie-swaps collapse on.
         const PIN_TOTAL: u64 = 51_051_831;
         // 0: the 量比/两笔, 建仓/减仓, 拜倒/白道, 冰坝/并把, 长着/唱着 pairs.

@@ -34,7 +34,7 @@ unsafe extern "C" {
     pub fn pinyin_get_sentence(instance: Instance, index: u8, sentence: *mut *mut c_char) -> bool;
 }
 
-/// Frozen pin reference from `docs/findings/oracle-environment.md`.
+/// Frozen pin reference from `docs/testing/oracle-environment.md`.
 pub const PIN_REF: &str = concat!(
     "libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c",
     "+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155",
