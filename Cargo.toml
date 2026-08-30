@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "crates/oxpinyin-chewing",
   "crates/oxpinyin-core",
   "crates/oxpinyin-data",
   "crates/oxpinyin-store",
