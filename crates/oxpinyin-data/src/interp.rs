@@ -258,7 +258,8 @@ fn close_field<'a>(spans: &mut ItemLineSpans<'a>, line: &'a str, start: usize, e
 /// through the same comparison count than sorting the 16-byte records in
 /// place.
 fn sort_records(records: &mut [(u32, u64)]) {
-    let mut order: Vec<u32> = (0..records.len() as u32).collect();
+    let count = u32::try_from(records.len()).unwrap_or(u32::MAX);
+    let mut order: Vec<u32> = (0..count).collect();
     order.sort_unstable_by_key(|&index| records[index as usize].0);
     let source = records.to_vec();
     for (position, index) in order.into_iter().enumerate() {

@@ -30,7 +30,7 @@ pub extern "C" fn pinyin_get_n_candidate(instance: *mut PinyinInstance, num: *mu
         if !num.is_null() {
             // SAFETY: Null-checked above.
             unsafe {
-                *num = inst.candidates.len() as GUint;
+                *num = GUint::try_from(inst.candidates.len()).unwrap_or(GUint::MAX);
             }
         }
         true
@@ -388,7 +388,7 @@ pub extern "C" fn pinyin_choose_candidate(
         } else {
             inst.session.composition_offset()
         };
-        end as c_int
+        c_int::try_from(end).unwrap_or(c_int::MAX)
     })
 }
 

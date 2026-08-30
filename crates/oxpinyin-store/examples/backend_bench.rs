@@ -643,10 +643,10 @@ fn readonly_row(seed: u64, i: u64) -> ([u8; 8], [u8; 16]) {
     key[4..].copy_from_slice(&u32::try_from(cur).unwrap().to_be_bytes());
     let mut value = [0_u8; 16];
     for (chunk, part) in value.chunks_exact_mut(4).zip([
-        h as u32,
-        (h >> 16) as u32,
-        (h >> 32) as u32,
-        (h >> 48) as u32,
+        u32::try_from(h & 0xFFFF_FFFF).unwrap(),
+        u32::try_from((h >> 16) & 0xFFFF_FFFF).unwrap(),
+        u32::try_from((h >> 32) & 0xFFFF_FFFF).unwrap(),
+        u32::try_from((h >> 48) & 0xFFFF_FFFF).unwrap(),
     ]) {
         chunk.copy_from_slice(&part.to_be_bytes());
     }

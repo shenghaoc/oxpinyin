@@ -297,13 +297,11 @@ pub fn compile(
     let mut bigram_entries: Entries = bigram
         .into_iter()
         .map(|(token, (total, records))| {
-            if total > u64::from(u32::MAX) {
-                return Err(DatagenError::Consistency(format!(
-                    "bigram total for {token:#010x} overflows u32"
-                )));
-            }
+            let total = u32::try_from(total).map_err(|_| {
+                DatagenError::Consistency(format!("bigram total for {token:#010x} overflows u32"))
+            })?;
             let mut value = Vec::with_capacity(4 + records.len() * 8);
-            value.extend_from_slice(&(total as u32).to_le_bytes());
+            value.extend_from_slice(&total.to_le_bytes());
             for (next, count) in records {
                 value.extend_from_slice(&next.to_le_bytes());
                 value.extend_from_slice(&count.to_le_bytes());

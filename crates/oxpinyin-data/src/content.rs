@@ -381,7 +381,7 @@ impl ContentTable {
         if records.len() != hdr.nitems as usize {
             return Err(LoadError::IncompleteRead {
                 expected: hdr.nitems,
-                parsed: records.len() as u32,
+                parsed: u32::try_from(records.len()).unwrap_or(u32::MAX),
             });
         }
 
@@ -463,7 +463,7 @@ mod tests {
     fn header_rejects_wrong_version() {
         let mut data = vec![0u8; 28];
         // Write a plausible data_size
-        let ds = (data.len() - 8) as u32;
+        let ds = u32::try_from(data.len() - 8).unwrap();
         data[0..4].copy_from_slice(&ds.to_le_bytes());
         data[20..24].copy_from_slice(&ds.to_le_bytes());
         // version = 99
