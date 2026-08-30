@@ -283,6 +283,7 @@ register should say so where it currently implies Rust forced them.
 
 PR 5 flips every REVERT TARGET's differential probe from "recorded
 divergence" to "must be IDENTICAL". Entry #12 carries an extra step:
-with BerkeleyDB as the default backend the target order is BDB's
-`DB_HASH` iteration order, which must be established experimentally —
-it is **not** the Tkrzw bucket order the current entry measured.
+Kyoto Cabinet is the reference backend (what distros ship), so the
+target order is KC's physical hash walk, which must be established
+experimentally — it is **not** the Tkrzw bucket order the current entry
+measured.
