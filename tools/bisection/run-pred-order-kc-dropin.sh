@@ -9,7 +9,8 @@ set -euo pipefail
 # before measuring. An unset OXPINYIN_SYSTEM_DIR defers to the inner
 # script's setup failure.
 if [ -n "${OXPINYIN_SYSTEM_DIR:-}" ] && [ -f "${OXPINYIN_SYSTEM_DIR}/bigram.db" ]; then
-    header=$(head -c 9 "${OXPINYIN_SYSTEM_DIR}/bigram.db" | od -An -tx1 | tr -d ' \n')
+    header=$(head -c 9 "${OXPINYIN_SYSTEM_DIR}/bigram.db" | od -An -tx1 | tr -d ' \n') \
+        || { echo "cannot read ${OXPINYIN_SYSTEM_DIR}/bigram.db" >&2; exit 2; }
     case "$header" in
         4b430a00????????30*) : ;;
         *) echo "${OXPINYIN_SYSTEM_DIR}/bigram.db is not a Kyoto Cabinet HashDB (magic 4b430a00, type 0x30 at offset 8)" >&2; exit 2 ;;

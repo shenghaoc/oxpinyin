@@ -60,7 +60,10 @@ the compat loader converts it to the same in-memory model at open time.
 The directory's `bigram.db` must have been written by a backend this
 build reads — Kyoto Cabinet or tkrzw; a Berkeley-DB-built libpinyin
 directory (RHEL's packaging among them) is refused with an error naming
-the format, never misread.
+the format, never misread. From libpinyin 2.11 on, a compatible
+directory may also carry a `punct.bin` punctuation table; it is read
+for predicted-punctuation rows, and its absence (the 2.8.1 layout) is
+supported — predicted punctuation is simply empty then.
 
 A directory is converted from libpinyin-format sources by the repository's
 usual toolchain (`tools/model/fetch-model.sh` fetches the pinned model;

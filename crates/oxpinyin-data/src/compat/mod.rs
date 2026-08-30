@@ -242,6 +242,12 @@ fn parse_sub_phrase_index(
     if !separator(16) || index_two < 1 || !separator(index_two - 1) {
         return Err(framing("missing '#' separator"));
     }
+    // The offsets region must start after the 16-byte header and its
+    // separator, or `data[index_one..]` would read header bytes as offsets
+    // and misparse rather than fail.
+    if index_one < 17 {
+        return Err(framing("offsets region overlaps the header"));
+    }
     if index_three < 1 || index_three > data.len() || !separator(index_three - 1) {
         return Err(framing("content bounds out of range"));
     }
@@ -322,6 +328,10 @@ fn parse_sub_phrase_index(
 
 fn load_bigram_rows(dir: &Path, dbm: Dbm) -> Result<Vec<(u32, BigramRow)>, CompatError> {
     let path = dir.join("bigram.db");
+    // Only reachable from the `#[cfg(not(...))]` fallback arms below. When
+    // both C backends are enabled those arms vanish, leaving the closure
+    // unused — gate it so a combined build does not fail -D warnings.
+    #[cfg(not(all(feature = "kyotocabinet", feature = "tkrzw")))]
     let unsupported = |what: &str| {
         CompatError::Backend(format!(
             "{}: written by {what}; rebuild oxpinyin with the matching backend \
