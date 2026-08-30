@@ -14,6 +14,7 @@
 
 pub mod differential;
 pub mod fixture;
+pub mod model_cache;
 
 pub use differential::{
     Manifest, PinDir, fnv1a64, locate_bin, locate_data, parse_estimate_stdout, parse_manifest,

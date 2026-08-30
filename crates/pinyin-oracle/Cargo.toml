@@ -86,9 +86,12 @@ oxpinyin-core = { path = "../oxpinyin-core" }
 oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
 oxpinyin-engine = { path = "../oxpinyin-engine" }
 
-[dev-dependencies]
-# Fixture-backed doubles for the portable decode differential.
+# Canonical home of the model20-cache locator: pinyin-oracle re-exports
+# `model_cache` from it so its bins, tests, and benches keep
+# `pinyin_oracle::model_cache` without a second copy of the pin constants.
 oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
+
+[dev-dependencies]
 # Integration tests share the same internal crates as the parity tooling.
 criterion = "0.8"
 dhat = "0.3"
