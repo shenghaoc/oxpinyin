@@ -1,0 +1,26 @@
+[package]
+name = "oxpinyin-kmm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Training-only K-mixture-model pipeline reproducing libpinyin's gen/estimate/merge/validate/prune/export/import/to-interpolation. Never ships."
+
+[lints]
+workspace = true
+
+# Self-contained: the segmented-corpus stream carries each token's phrase
+# text (`{token} {phrase}` lines), and the KMM text format carries it too,
+# so the model resolves the export phrase-text column from the data it was
+# built from — no phrase-index table, no store backend, no dependencies.
+# This is an intentional architectural divergence from upstream (which
+# re-derives text from the phrase index at export time); the emitted text
+# is identical because the stream's phrase field is the phrase-index text.
+
+[[bin]]
+name = "oxpinyin-kmm"
+path = "src/bin/oxpinyin-kmm.rs"
+
+[dependencies]
