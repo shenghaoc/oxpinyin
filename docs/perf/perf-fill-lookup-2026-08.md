@@ -1,7 +1,7 @@
 # Stage-2 leftover: `fill_lookup` (2026-08-20)
 
 Status: **measured decode-path change.** Continues
-`docs/findings/perf-stage2-harness-2026-08.md`. Post-#120 Callgrind named
+`docs/perf/perf-stage2-harness-2026-08.md`. Post-#120 Callgrind named
 `SystemDictionary::fill_lookup` as leftover #1 (12.2% self-`Ir`). This
 PR is that scan/insert path in `oxpinyin-data`. Engine/capi call sites
 already used `lookup_into`; they are unchanged. Scratch on `Session`

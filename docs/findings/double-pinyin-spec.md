@@ -12,7 +12,7 @@ leak and must STOP the workstream.
 
 Source identity: libpinyin `2.11.91`, commit
 `0c5e80e1200f84fab185d1c5bde458b770a0636c` (the same pin as
-`docs/findings/oracle-environment.md`).
+`docs/testing/oracle-environment.md`).
 
 ## Scheme ABI
 

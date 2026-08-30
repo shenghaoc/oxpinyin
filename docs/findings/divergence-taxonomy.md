@@ -129,7 +129,7 @@ Each group has two complete segmentations, so the exhaustive path set is
 `ParseError::TooManyAlternatives`. Reason `ours-error`, class `ours-bug`.
 
 Marked constructed because the parity corpus deliberately excludes
-result-bound inputs — see `docs/findings/parity-corpus.md`. The example is
+result-bound inputs — see `docs/testing/parity-corpus.md`. The example is
 reachable and is exercised by a test; it simply does not occur in the corpus.
 
 *Corpus count:* 0.
@@ -147,7 +147,7 @@ have crashed.
 1. Input `'`. The pin reports `parsed_input_length = 1` with no key-matrix
    column, and querying a key trips an `assert()` that reaches `abort()`. The
    harness records `<no-key-columns>@1`. Registered as **F-E-14**; see
-   `docs/findings/oracle-apostrophe-abort.md`.
+   `docs/testing/oracle-apostrophe-abort.md`.
 2. Input `ni'`. The pin yields a key column with no usable pinyin string, and
    the harness records `ni@0:2:complete,<missing-pinyin>@2`. This is catalogue
    row F-E-01 (issue #566) observed live for the first time.
@@ -183,7 +183,7 @@ format.
 `dbm-berkeleydb` in a frozen F-A line yields reason `off-pin`, class
 `distro-delta`. Pinned by a test.
 
-Per `docs/findings/oracle-environment.md` this class is advisory and **never**
+Per `docs/testing/oracle-environment.md` this class is advisory and **never**
 gates S1b. A distribution build can be compared for interest; it cannot be the
 oracle. The classifier's job here is to make sure such a record can never be
 mistaken for a parity result.
@@ -249,7 +249,7 @@ The runner continues to compute and report the budget verdict. It must **not**
 fail a run on `tie-swap` until W4, when our engine makes a choice and
 `tie-swap` acquires its real sense: both sides chose differently among paths
 they both admit. Enforcing it now would mean either a permanently red gate or
-gaming the corpus, and `docs/findings/parity-corpus.md` already refuses to
+gaming the corpus, and `docs/testing/parity-corpus.md` already refuses to
 trim the stratum that exposes ambiguity.
 
 ## Corpus roll-up

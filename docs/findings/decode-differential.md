@@ -22,7 +22,7 @@ change what a parser run measured.
 The segmentation population is the whole W2 parity corpus and is where the
 483 `path-set` divergences and the 468 `tie-swap` baseline live. The candidate
 population is small because F-B was never captured
-(`docs/findings/fixture-adapters.md`); it is what exists.
+(`docs/testing/fixture-adapters.md`); it is what exists.
 
 Both run in portable CI with no oracle build, which is the point of recovering
 the paths in the first place.

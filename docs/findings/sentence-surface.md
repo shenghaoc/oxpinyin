@@ -534,7 +534,7 @@ count + 1, total 51,051,831), and the window scan flushes each window
 token-ascending — the array order the oracle's stable
 `g_array_sort_with_data` keeps for comparator-0 pairs. The W12 Class A
 candidate residual closed to zero (10,190 / 10,190 / 98,930 of 98,930 /
-absent 0 / tie-swaps 0; `docs/findings/corpus-tail.md`,
+absent 0 / tie-swaps 0; `docs/testing/corpus-tail.md`,
 `pin-refreeze-2026-08.md` third amendment).
 
 **This surface:** `loses_to`, the trellis, and the n-best row machinery

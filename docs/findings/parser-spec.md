@@ -236,7 +236,7 @@ consumes at least one byte.
 `09-edge.txt` line 33) → oracle top-1 `你好`; every candidate in the
 oracle's top-10 requires the doubled apostrophe to act as a single
 separator. Before this correction, `ni''hao` was the sole `absent` input in
-the W2 residual (`docs/findings/corpus-tail.md`, W12 Class B).
+the W2 residual (`docs/testing/corpus-tail.md`, W12 Class B).
 
 **Freeze move.** `real_tables_session_reports_parity` re-freezes from
 10,177 / 10,189 / 94,871 of 98,930 / absent 1 to

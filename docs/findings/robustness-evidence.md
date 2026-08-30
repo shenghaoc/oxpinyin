@@ -10,7 +10,7 @@ owning crate or lane belongs to later work. It is not counted as a working
 exploit or a passing regression until the named artifact exists.
 
 Oracle-backed entries use the pin ref frozen in
-`docs/findings/capture-fixtures.md`. Claims stay scoped to the listed trigger;
+`docs/testing/capture-fixtures.md`. Claims stay scoped to the listed trigger;
 no entry supports a blanket claim that Rust code cannot crash.
 
 ## Summary
@@ -192,7 +192,7 @@ no entry supports a blanket claim that Rust code cannot crash.
 ### F-E-14 — pinned oracle aborts on apostrophe-only input
 
 - **Source evidence:** W2-T3 live measurement;
-  `docs/findings/oracle-apostrophe-abort.md`. Same class as F-E-12 (`assert()`
+  `docs/testing/oracle-apostrophe-abort.md`. Same class as F-E-12 (`assert()`
   on user input) on a different path; not a catalogue row in
   `reference/memory-safety-bugs.md`. Same root cause as
   [ibus-libpinyin #570](https://github.com/libpinyin/ibus-libpinyin/issues/570)

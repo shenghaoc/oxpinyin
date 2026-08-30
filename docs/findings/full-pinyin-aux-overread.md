@@ -249,7 +249,7 @@ upstream-submittable one.
     terms. The nearest match on tone/parse territory is
     [#570](https://github.com/libpinyin/ibus-libpinyin/issues/570) —
     unrelated (assert in `_check_offset`, cross-indexed in
-    `docs/findings/oracle-bisect-differential-abort.md`).
+    `docs/testing/oracle-bisect-differential-abort.md`).
   - Fedora Bugzilla (`bugzilla.redhat.com`, components `libpinyin` and
     `ibus-libpinyin`): no hit. Existing crashes filed against those
     components are the ABRT ones already catalogued in

@@ -64,7 +64,7 @@ groups (`docs/findings/parser-spec.md` architect correction log 2026-08-21;
 `docs/findings/parser-spec-contradiction-incomplete-keys.md` decision 3,
 doubled half). `ni''hao` was the sole absent input and the sole top-5 miss;
 its `你好` phrase now surfaces, moving every affected metric by exactly one
-position. Diagnostic details in `docs/findings/corpus-tail.md`.
+position. Diagnostic details in `docs/testing/corpus-tail.md`.
 
 | Metric | Prior pin | Amended pin | Δ |
 |---|---|---|---|
@@ -84,7 +84,7 @@ interpolation2 count + 1, the index total 51,051,831 = interpolation2
 sum + 138,096 items) — and the window scan flushes each window
 token-ascending, the array order GLib's stable sort keeps for
 comparator-0 pairs. `loses_to` and the n-best trellis are untouched.
-Diagnosis and the 12-input table in `docs/findings/corpus-tail.md`
+Diagnosis and the 12-input table in `docs/testing/corpus-tail.md`
 (Class A, CLOSED 2026-08-22).
 
 | Metric | Prior pin | Amended pin | Δ |

@@ -3,7 +3,7 @@
 Status: **measured decode-path change.** This is **keystroke heap** on the
 123-step W8 candidate-cycle. It is not the W8 158× `pinyin_init` / table
 slurp, and it is not `key_cost_table`. Those two still sit at the
-`docs/findings/perf-baseline-2026-08.md` numbers.
+`docs/perf/perf-baseline-2026-08.md` numbers.
 
 Parity pins unchanged. `loses_to` / n-best `sort_by` untouched. No
 bumpalo/typed-arena. Rebased onto main after #117 (`nbest_row` by rank)
@@ -13,7 +13,7 @@ gone on that base; this PR keeps the typed maps and attacks the session
 scratch / CompactString / SmallVec / unused-`k_best` remainder.
 
 Host: same crate-local Criterion/dhat harness as
-`docs/findings/perf-exploration.md`. Release, rustc 1.97.1. Exported tables
+`docs/perf/perf-exploration.md`. Release, rustc 1.97.1. Exported tables
 `/tmp/oxpinyin-export`, model20 cache `target/model20/extracted/`.
 `samply` / `perf` / `cargo-flamegraph` were not installed; the cycle is the
 existing 20-input W8 candidate sequence (`CYCLE_INPUTS`, 123 parse+guess

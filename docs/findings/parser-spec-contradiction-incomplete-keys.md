@@ -104,7 +104,7 @@ and are **not** part of this contradiction:
 |---|---|---|
 | `consumed-length` | `'ni` | oracle consumes 3, skipping a leading apostrophe. Closed 2026-08-21: `parser-path-set.md` now enumerates `[ni@1:3:C]` with an empty remainder, matching the pin. |
 | `consumed-length` | `ni''hao` | oracle consumes all 7 across a doubled apostrophe. Closed 2026-08-21: `parser-path-set.md` now enumerates both `[ni, hao]` and `[ni, ha, o]` with an empty remainder. |
-| `oracle-sentinel` | `'`, `''`, `'''` | abort guard, see `docs/findings/oracle-apostrophe-abort.md`. |
+| `oracle-sentinel` | `'`, `''`, `'''` | abort guard, see `docs/testing/oracle-apostrophe-abort.md`. |
 | `oracle-sentinel` | `ni'`, `ni'!`, `ni'i` | live F-E-01 shape: a key column with no usable pinyin string. |
 
 The apostrophe-tolerance pair is a second, much smaller SPEC-versus-pin
@@ -191,7 +191,7 @@ Next work after W2 merges: **W3** (data loading) and **W4** (`SegmentGraph`
    propagates across every apostrophe at a reachable position,
    including position 0, so `'ni` consumes all three bytes. Details
    in `docs/findings/parser-spec.md` architect correction log
-   (2026-08-21) and `docs/findings/corpus-tail.md`.
+   (2026-08-21) and `docs/testing/corpus-tail.md`.
 4. **F-A / fixture coverage** for non-terminal and repeated partials —
    still open for W4 capture against the graph, not for a foundation
    path-set rewrite.

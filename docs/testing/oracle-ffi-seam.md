@@ -158,8 +158,8 @@ ordering is a compile-time property rather than a review rule.
 
 ## Parity protocol
 
-Carried over verbatim from `docs/findings/capture-fixtures.md` and
-`docs/findings/oracle-environment.md`:
+Carried over verbatim from `docs/testing/capture-fixtures.md` and
+`docs/testing/oracle-environment.md`:
 
 - fresh, empty user directory per run; the harness never calls training,
   remembering, choosing or saving APIs;
