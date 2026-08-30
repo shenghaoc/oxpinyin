@@ -21,8 +21,11 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![warn(missing_docs)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+const GBK_DICTIONARY: u32 = 2;
 use std::sync::{Arc, Mutex, RwLock};
 
 use oxpinyin_core::{
@@ -245,6 +248,15 @@ fn pinyin_to_keys(pinyin: &str) -> Option<Vec<PinyinKey>> {
         .collect()
 }
 
+/// One token's dictionary introspection: the `pinyin_token_*` read
+/// surface's answer, assembled per library seam.
+pub struct TokenIntrospection {
+    /// The phrase text.
+    pub text: String,
+    /// Pronunciations as `(structured keys, count)` pairs.
+    pub pronunciations: Vec<(Vec<PinyinKey>, u64)>,
+}
+
 // ── Merged backends ─────────────────────────────────────────────────────
 
 /// The generation-stamped user-phrase lookup cache shared by clones.
@@ -260,6 +272,26 @@ pub struct RuntimeDict {
     user_lookup_cache: LookupCache,
     addons: Arc<RwLock<AddonSet>>,
     punct: Arc<PunctTable>,
+    /// The `add_unigram_frequency` overlay: in-memory per-token deltas
+    /// over the baked counts. Upstream writes the same deltas into its
+    /// in-memory FacadePhraseIndex and nothing persists them
+    /// (`pinyin_save` flushes user data exclusively), so the overlay is
+    /// the faithful shape: shared per context, gone at fini.
+    unigram_overlay: Arc<Mutex<HashMap<u32, u64>>>,
+    /// The facade-total bump `add_unigram_frequency` applies
+    /// unconditionally once the token's library is loaded
+    /// (`phrase_index.h:632` — before the item-level dispatch, so an
+    /// absent-token add still moves the total). Observable through the
+    /// amplified-law denominator (`pinyin.cpp:1817`).
+    unigram_total_delta: Arc<AtomicU64>,
+    /// The loaded-library mask: bit `n` **set** = library `n` unloaded
+    /// (matches `library_visible` at :344 and the query surface —
+    /// `library_visible_token`, `visible_item_count`, and the
+    /// `unload_library` setter — that all consult it).  Only
+    /// `GBK_DICTIONARY` (2) is ever settable — upstream's
+    /// `pinyin_unload_phrase_library` refuses every other index
+    /// (`pinyin.cpp:464-472`).
+    library_mask: Arc<AtomicU32>,
 }
 
 impl RuntimeDict {
@@ -312,6 +344,220 @@ impl RuntimeDict {
         addons.unload(index)
     }
 
+    /// The library-visibility mask: bit `n` set = library `n` unloaded.
+    /// Only `GBK_DICTIONARY` (2) is ever settable — upstream's
+    /// `pinyin_unload_phrase_library` refuses every other index and
+    /// answers `false` on an already-unloaded one
+    /// (`phrase_index.cpp:260-268`).
+    #[must_use]
+    pub fn unload_library(&self, index: u32) -> bool {
+        if index != GBK_DICTIONARY {
+            return false;
+        }
+        let mask = 1u32 << index;
+        self.library_mask.fetch_or(mask, Ordering::SeqCst) & mask == 0
+    }
+
+    /// Re-loads library `index` after an unload — upstream re-attaches
+    /// the sub-index from disk and answers `true`; already-loaded (mask
+    /// clear) answers `false` (`pinyin.cpp:234-243`). Every other index
+    /// is `false`: the system tables are loaded at init, so upstream's
+    /// already-loaded rule applies there too.
+    #[must_use]
+    pub fn load_library(&self, index: u32) -> bool {
+        // The GBK-reload path alone: the system tables (1, 2, 4) and the
+        // USER_FILE library (7) all load at init (the default-tables loop
+        // includes the USER_DICTIONARY row — measured `load(7)` = false
+        // on the pin), so the already-loaded rule answers `false` for
+        // every index but a GBK that an unload cleared.
+        if index != GBK_DICTIONARY {
+            return false;
+        }
+        self.library_mask
+            .fetch_and(!(1u32 << index), Ordering::SeqCst)
+            & (1u32 << index)
+            != 0
+    }
+
+    /// Whether library `nibble` is visible (not unloaded). Shared
+    /// primitive: `mask == 0` (all libraries loaded) and any nibble
+    /// outside the u32 bit range both answer `true` — those nibbles
+    /// have no bit to be masked off, so they are trivially visible.
+    /// Every other visibility surface (`library_visible_token`,
+    /// `visible_item_count`, `add_unigram_delta`,
+    /// `pinyin_token_add_unigram_frequency` callers) routes through
+    /// this to keep the shift and the `mask == 0` shortcut in one
+    /// place.
+    #[must_use]
+    pub fn library_visible(&self, nibble: u32) -> bool {
+        let mask = self.library_mask.load(Ordering::SeqCst);
+        if mask == 0 || nibble >= 32 {
+            return true;
+        }
+        mask & (1u32 << nibble) == 0
+    }
+
+    /// The in-memory unigram delta for `token`, if the overlay carries
+    /// one. The caller applies its library-loaded rules first.
+    #[must_use]
+    pub fn unigram_delta(&self, token: u32) -> Option<u64> {
+        let overlay = self
+            .unigram_overlay
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        overlay.get(&token).copied()
+    }
+
+    /// Applies `add_unigram_frequency`'s effects for a loaded library:
+    /// the facade-total bump is unconditional (`phrase_index.h:632`,
+    /// before the item dispatch — an absent-token add still moves the
+    /// amplified-law denominator), and the item delta lands only when
+    /// the token exists. Returns whether the token was found. A token
+    /// whose library is unloaded is invisible on both edges: neither
+    /// the total nor the overlay moves, matching the visibility filter
+    /// the rest of the surface honours.
+    #[must_use]
+    pub fn add_unigram_delta(&self, token: u32, delta: u64) -> bool {
+        if !self.library_visible_token(token) {
+            return false;
+        }
+        let found = {
+            let system_found = self.system_unigram_count(token).is_some();
+            let addons = self.addons.read().unwrap_or_else(|p| p.into_inner());
+            let addon_found = addons.unigram_freq(token).is_some();
+            let user_found = self
+                .user
+                .as_ref()
+                .and_then(|store| store.phrase(token).ok())
+                .flatten()
+                .is_some();
+            system_found || addon_found || user_found
+        };
+        // Saturating on both edges: the total is an amplified-law
+        // denominator that would fail catastrophically on a wraparound,
+        // and the per-token overlay entry can pile up under repeated
+        // `add_unigram_frequency` calls. `AtomicU64::fetch_add` wraps
+        // silently even in debug, and the plain `+=` panics in debug
+        // + wraps in release; both replaced with saturating equivalents
+        // so debug and release stay consistent.
+        let _ = self
+            .unigram_total_delta
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |cur| {
+                Some(cur.saturating_add(delta))
+            });
+        if !found {
+            return false;
+        }
+        let mut overlay = self
+            .unigram_overlay
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let entry = overlay.entry(token).or_insert(0);
+        *entry = entry.saturating_add(delta);
+        true
+    }
+
+    /// The overlay total — the amplified-law denominator's live shift
+    /// (`pinyin.cpp:1817` reads the facade total this mirrors).
+    #[must_use]
+    pub fn unigram_total_delta(&self) -> u64 {
+        self.unigram_total_delta.load(Ordering::SeqCst)
+    }
+
+    /// The addon library's stored unigram count for `token`.
+    #[must_use]
+    pub fn addon_unigram_frequency(&self, token: u32) -> Option<u64> {
+        let addons = self.addons.read().unwrap_or_else(|p| p.into_inner());
+        addons.unigram_freq(token)
+    }
+
+    /// The system table's stored (flat) count for `token` — the fallback
+    /// the token-introspection unigram read uses when the LM's real
+    /// unigram table is not installed (the fixture configuration, whose
+    /// LM is seeded from this same map).
+    #[must_use]
+    pub fn system_unigram_count(&self, token: u32) -> Option<u64> {
+        if !self.library_visible_token(token) {
+            return None;
+        }
+        self.system.unigram_count(token)
+    }
+
+    /// The visible item count for the amplified-law denominator:
+    /// `unigram_map` entries whose library is not unloaded. An O(n) scan
+    /// per call is bounded by the table size and only reachable on the
+    /// prediction path.
+    #[must_use]
+    pub fn visible_item_count(&self) -> u64 {
+        if self.library_mask.load(Ordering::SeqCst) == 0 {
+            return self.system.unigram_map().len() as u64;
+        }
+        self.system
+            .unigram_map()
+            .keys()
+            .filter(|&&token| self.library_visible(token >> 24))
+            .count() as u64
+    }
+
+    /// The token's library-nibble visibility, for entry-level filters.
+    #[must_use]
+    pub fn library_visible_token(&self, token: u32) -> bool {
+        self.library_visible(token >> 24)
+    }
+
+    /// `FacadePhraseIndex::get_phrase_item`'s dispatch by library
+    /// nibble, for the token-introspection surface. `None` when the
+    /// library is missing/unloaded (`ERROR_NO_SUB_PHRASE_INDEX`) or the
+    /// token is absent (`ERROR_NO_ITEM`).
+    #[must_use]
+    pub fn token_introspection(&self, token: u32) -> Option<TokenIntrospection> {
+        let nibble = token >> 24;
+        match nibble {
+            1..=4 => {
+                if !self.library_visible(nibble) {
+                    return None;
+                }
+                let text = self.system.phrase_text(token).ok()??;
+                let pronunciations = self.system.pronunciations(token).ok()?;
+                Some(TokenIntrospection {
+                    text,
+                    // Drop only the pronunciations whose spelling can't
+                    // resolve to a `SyllableKey`; keep the rest. A single
+                    // unmappable row used to poison the whole
+                    // introspection via `collect::<Option<Vec<_>>>()?`,
+                    // hiding every valid pronunciation for a token that
+                    // happens to carry one bad spelling.
+                    pronunciations: pronunciations
+                        .into_iter()
+                        .filter_map(|(spelling, freq)| {
+                            pinyin_to_keys(&spelling).map(|keys| (keys, freq))
+                        })
+                        .collect(),
+                })
+            }
+            5 | 6 => {
+                let item = self.addon_phrase_item(token)?;
+                Some(TokenIntrospection {
+                    text: item.text,
+                    pronunciations: item.readings,
+                })
+            }
+            7 => {
+                let store = self.user.as_ref()?;
+                let phrase = store.phrase(token).ok()??;
+                Some(TokenIntrospection {
+                    text: phrase.text().to_owned(),
+                    pronunciations: phrase
+                        .pronunciations()
+                        .iter()
+                        .map(|pronunciation| (pronunciation.keys().to_vec(), pronunciation.count()))
+                        .collect(),
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// The addon phrase item behind `token`, for the choose-promotion path.
     #[must_use]
     pub fn addon_phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
@@ -338,11 +584,31 @@ impl Dictionary for RuntimeDict {
     ) -> Result<(), Self::Error> {
         self.system.lookup_into(syllables, out)?;
         out.extend(self.user_lookup()?.lookup(syllables));
+        if self.library_mask.load(Ordering::SeqCst) != 0 {
+            // An unloaded library's phrases leave every read: upstream
+            // frees the sub-index (`phrase_index.cpp:260-268`), the
+            // mask keeps the monolithic tables resident but invisible.
+            out.retain(|entry| self.library_visible_token(entry.token().value()));
+        }
         Ok(())
     }
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
-        if self.system.phrase_prefix_exists(syllables)? {
+        // A live library mask must hide unloaded entries from the widen
+        // probe too — the CR finding on PR #234. Without this the n-best
+        // decoder keeps extending paths that lead only to invisible
+        // tokens (`pinyin_unload_phrase_library(2)` leaves the underlying
+        // rows resident; only the visibility mask changes). With the
+        // mask clear, the plain probe's fast path stays.
+        let system_extends = if self.library_mask.load(Ordering::SeqCst) == 0 {
+            self.system.phrase_prefix_exists(syllables)?
+        } else {
+            self.system
+                .phrase_prefix_exists_visible(syllables, |token| {
+                    self.library_visible_token(token)
+                })?
+        };
+        if system_extends {
             return Ok(true);
         }
         Ok(self.user_lookup()?.phrase_prefix_exists(syllables))
@@ -357,6 +623,7 @@ impl Dictionary for RuntimeDict {
             .tokens_for_text(text)
             .iter()
             .map(|&token| PhraseToken::new(token))
+            .filter(|token| self.library_visible_token(token.value()))
             .collect();
         if let Ok(lookup) = self.user_lookup() {
             tokens.extend(
@@ -655,6 +922,9 @@ impl Runtime {
                 user_lookup_cache: LookupCache::default(),
                 addons: Arc::clone(&addons),
                 punct: Arc::new(punct),
+                unigram_overlay: Arc::new(Mutex::new(HashMap::new())),
+                unigram_total_delta: Arc::new(AtomicU64::new(0)),
+                library_mask: Arc::new(AtomicU32::new(0)),
             },
             lm: RuntimeLm {
                 inner: Arc::new(lm),
@@ -731,6 +1001,20 @@ impl Runtime {
     #[must_use]
     pub fn unload_system_addon(&self, index: u8) -> bool {
         self.dict.unload_addon(index)
+    }
+
+    /// Loads default library `index` — the GBK-reload path after an
+    /// unload; `false` when already visible.
+    #[must_use]
+    pub fn load_library(&self, index: u32) -> bool {
+        self.dict.load_library(index)
+    }
+
+    /// Unloads default library `index` — GBK-only; `false` for any
+    /// other index or when already unloaded.
+    #[must_use]
+    pub fn unload_library(&self, index: u32) -> bool {
+        self.dict.unload_library(index)
     }
 }
 

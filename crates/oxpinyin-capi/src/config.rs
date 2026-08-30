@@ -204,7 +204,61 @@ pub extern "C" fn pinyin_unload_addon_phrase_library(
     })
 }
 
-/// Mask out phrase tokens matching a pattern.
+/// Load a default phrase library by index.
+///
+/// # C signature
+/// ```c
+/// bool pinyin_load_phrase_library(pinyin_context_t * context,
+///                                 guint8 index);
+/// ```
+///
+/// Upstream answers `false` for an out-of-range index, `false` when the
+/// library is already loaded (the system tables load at init), and
+/// asserts on non-dictionary file types — all `false` here under the
+/// no-abort policy. The only `true` on a healthy context is GBK (2)
+/// after an unload, re-attaching from disk upstream and clearing the
+/// visibility mask here.
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
+    if context.is_null() {
+        return false;
+    }
+    ffi_catch(false, || {
+        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+        let ctx = unsafe { context_ref(context) };
+        match ctx.runtime.as_ref() {
+            Some(runtime) => runtime.load_library(index as u32),
+            None => false,
+        }
+    })
+}
+
+/// Unload a default phrase library by index.
+///
+/// # C signature
+/// ```c
+/// bool pinyin_unload_phrase_library(pinyin_context_t * context,
+///                                   guint8 index);
+/// ```
+///
+/// The GBK-only gate, verbatim: upstream asserts the index in range and
+/// refuses every non-GBK library before unloading
+/// (`pinyin.cpp:464-472`) — `false` here for both shapes (no-abort) —
+/// and answers `true` only for the first unload of a loaded GBK; the
+/// second unload finds the sub-index already gone (`phrase_index.cpp:
+/// 260-268`) and answers `false`.
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
+    if context.is_null() {
+        return false;
+    }
+    ffi_catch(false, || {
+        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+        let ctx = unsafe { context_ref(context) };
+        ctx.unload_phrase_library(index)
+    })
+}
+
 ///
 /// # C signature
 /// ```c

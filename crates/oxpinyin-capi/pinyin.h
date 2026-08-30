@@ -168,6 +168,14 @@ typedef enum ZhuyinScheme {
 // Opaque bigram export iterator.
 typedef struct bigram_export_iterator_t bigram_export_iterator_t;
 
+// Opaque GArray (glib); callers pass a real glib array.
+typedef struct _GArray GArray;
+
+// Upstream carries these through the installed internal headers; here
+// they are typedef'd from the same shapes the rest of this header uses.
+typedef uint32_t phrase_token_t;
+typedef GArray *ChewingKeyVector;
+
 // Opaque chewing key.
 typedef struct ChewingKey ChewingKey;
 
@@ -470,7 +478,38 @@ bool pinyin_get_n_phrase(struct pinyin_instance_t *instance, guint *num);
 
 // Get the phrase token at an index of the phrase result.
 bool pinyin_get_phrase_token(struct pinyin_instance_t *instance, unsigned int _index,
-                             uint32_t *token);
+                             phrase_token_t *token);
+
+// Look up the phrase tokens stored for an exact phrase string.
+bool pinyin_lookup_tokens(struct pinyin_instance_t *instance, const char *_phrase,
+                          GArray *tokenarray);
+
+// Get the phrase text of a token.
+bool pinyin_token_get_phrase(struct pinyin_instance_t *instance, phrase_token_t token,
+                             guint *len, gchar **utf8_str);
+
+// Get the number of pronunciations of a token.
+bool pinyin_token_get_n_pronunciation(struct pinyin_instance_t *instance,
+                                      phrase_token_t token, guint *num);
+
+// Get the nth pronunciation of a token as chewing keys.
+bool pinyin_token_get_nth_pronunciation(struct pinyin_instance_t *instance,
+                                        phrase_token_t token, guint nth,
+                                        ChewingKeyVector keys);
+
+// Get the unigram frequency of a token.
+bool pinyin_token_get_unigram_frequency(struct pinyin_instance_t *instance,
+                                        phrase_token_t token, guint *freq);
+
+// Add a unigram-frequency delta to a token.
+bool pinyin_token_add_unigram_frequency(struct pinyin_instance_t *instance,
+                                        phrase_token_t token, guint delta);
+
+// Load a default phrase library by index.
+bool pinyin_load_phrase_library(struct pinyin_context_t *context, uint8_t _index);
+
+// Unload a default phrase library by index.
+bool pinyin_unload_phrase_library(struct pinyin_context_t *context, uint8_t _index);
 
 // Get character offset from a lookup byte offset within a sentence.
 bool pinyin_get_character_offset(struct pinyin_instance_t *instance,

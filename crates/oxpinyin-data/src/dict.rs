@@ -275,6 +275,49 @@ impl SystemDictionary {
         }
         Ok(())
     }
+
+    /// The `SEARCH_CONTINUED` probe with a per-token visibility filter.
+    ///
+    /// Same shape as [`Dictionary::phrase_prefix_exists`] but the
+    /// complete-key branch answers `true` only when at least one matching
+    /// entry has `visible(token)` — the surface the runtime routes through
+    /// so `pinyin_unload_phrase_library(2)` hides GBK-only extensions from
+    /// the n-best widen probe (`nbest::widen_probe`). The empty and
+    /// partial-key branches keep the plain probe: the initial-key list
+    /// carries no tokens, so filtering there would require walking every
+    /// backing row — a cost that pays only when the caller has a specific
+    /// GBK-only row to hide. With `|_| true` the callback exits on the
+    /// first entry of the first matching row, matching the original
+    /// probe's cost within a constant factor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] for the same reasons the plain probe would
+    /// (never today; the signature preserves parity with the trait
+    /// method).
+    pub fn phrase_prefix_exists_visible(
+        &self,
+        syllables: &[SyllableKey],
+        visible: impl Fn(u32) -> bool,
+    ) -> Result<bool, DictError> {
+        if syllables.is_empty() {
+            return Ok(true);
+        }
+        if syllables
+            .iter()
+            .any(|key| key.completeness() == Completeness::Partial)
+        {
+            return Ok(prefix_probe(
+                &self.initial_keys,
+                &Self::initial_key(syllables),
+            ));
+        }
+        Ok(pinyin_prefix_exists_visible(
+            &self.pinyin_index,
+            &Self::index_key(syllables),
+            visible,
+        ))
+    }
 }
 
 impl Dictionary for SystemDictionary {
@@ -353,6 +396,38 @@ fn pinyin_prefix_exists(index: &PinyinIndex, joined: &str) -> bool {
         key.as_ref() == joined
             || (key.starts_with(joined) && key.as_bytes().get(joined.len()) == Some(&b'\''))
     })
+}
+
+/// The `SEARCH_CONTINUED` probe with a per-token visibility filter over
+/// the sorted vector map.
+///
+/// Walks every row that satisfies the prefix condition (the exact-match
+/// row, plus every subsequent row whose key extends `joined` at a
+/// syllable boundary) and asks the callback about each entry's token,
+/// answering `true` at the first accepted one. A trivially-passing
+/// callback exits after one entry, matching the plain probe's cost
+/// within a constant factor.
+fn pinyin_prefix_exists_visible(
+    index: &PinyinIndex,
+    joined: &str,
+    visible: impl Fn(u32) -> bool,
+) -> bool {
+    let first_at_or_after = index.rows.partition_point(|(key, _)| key.as_ref() < joined);
+    for (key, range) in &index.rows[first_at_or_after..] {
+        let key_matches = key.as_ref() == joined
+            || (key.starts_with(joined) && key.as_bytes().get(joined.len()) == Some(&b'\''));
+        if !key_matches {
+            // Rows are ascending; once the prefix stops matching, no
+            // later row can start with `joined` either.
+            return false;
+        }
+        for entry in &index.entries[range.clone()] {
+            if visible(entry.token().value()) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Exact-token get on the phrase-index vector map.
@@ -597,5 +672,77 @@ mod tests {
         let hits = dict.pinyin_index.hits("ni'hao").expect("fixture key");
         assert!(hits.iter().any(|entry| entry.text() == "你好"));
         assert!(dict.pinyin_index.hits("no'such").is_none());
+    }
+
+    #[test]
+    fn phrase_prefix_exists_visible_filters_by_callback() {
+        // `phrase_prefix_exists_visible` answers `true` only when at
+        // least one matching entry passes the callback. A pass-all
+        // callback preserves the plain probe's answers; a reject-all
+        // callback makes every non-empty prefix invisible; an empty
+        // prefix answers `true` unconditionally — the widen recursion
+        // base case.
+        let dict = dict();
+        let ni_hao = keys("ni,hao");
+        let zhong = keys("zhong");
+        let dead_end = keys("zhuang,zhuang");
+
+        for probe in [&ni_hao[..1], &ni_hao[..], &zhong[..]] {
+            let plain = dict.phrase_prefix_exists(probe).unwrap();
+            let pass_all = dict.phrase_prefix_exists_visible(probe, |_| true).unwrap();
+            assert_eq!(plain, pass_all, "pass-all matches the plain probe");
+            assert!(
+                !dict.phrase_prefix_exists_visible(probe, |_| false).unwrap(),
+                "reject-all callback makes {probe:?} invisible"
+            );
+        }
+        assert!(
+            !dict
+                .phrase_prefix_exists_visible(&dead_end, |_| true)
+                .unwrap(),
+            "dead-end stays false regardless of the callback"
+        );
+        assert!(
+            dict.phrase_prefix_exists_visible(&[], |_| false).unwrap(),
+            "empty prefix trivially matches, callback bypassed"
+        );
+    }
+
+    #[test]
+    fn phrase_prefix_exists_visible_hides_a_prefix_when_every_entry_fails_the_filter() {
+        // The regression the CR flagged on PR #234: a syllable prefix
+        // whose only extending entries are filtered out must answer
+        // `false`, not `true`. The mini fixture has no GBK-only pinyin
+        // row (every GBK-carrying row also carries non-GBK entries),
+        // so we simulate the shape by rejecting every entry that
+        // matches the row and confirming the answer flips. A callback
+        // that keeps every entry preserves the plain answer.
+        let dict = dict();
+        let ni_hao = keys("ni,hao");
+
+        assert!(dict.phrase_prefix_exists(&ni_hao).unwrap());
+        assert!(
+            dict.phrase_prefix_exists_visible(&ni_hao, |_| true)
+                .unwrap()
+        );
+        // A callback that hides GBK still keeps the prefix visible
+        // through the non-GBK entries on the same row — the survival
+        // case the routing preserves on this fixture.
+        assert!(
+            dict.phrase_prefix_exists_visible(&ni_hao, |token| (token >> 24) != 2)
+                .unwrap()
+        );
+        // The synthetic simulation of a GBK-only row: with every
+        // entry hidden, no phrase extends the prefix and the answer
+        // must flip to `false`.
+        assert!(
+            !dict
+                .phrase_prefix_exists_visible(&ni_hao, |_| false)
+                .unwrap()
+        );
+    }
+
+    fn keys(text: &str) -> Vec<SyllableKey> {
+        text.split(',').map(key).collect()
     }
 }
