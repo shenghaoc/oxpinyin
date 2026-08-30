@@ -178,6 +178,14 @@ pub extern "C" fn zhuyin_token_get_nth_pronunciation(
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
+        // The pin clears the caller's array before appending
+        // (`zhuyin.cpp:1793` `g_array_set_size(keys, 0)`), so a stale or
+        // re-used GArray never shows concatenated results on either path.
+        // SAFETY: Null-checked above; `g_array_set_size` on a real glib
+        // GArray updates `len` and preserves its private metadata.
+        unsafe {
+            g_array_set_size(keys, 0);
+        }
         let Some(intro) = inst.dict.token_introspection(token) else {
             return false;
         };

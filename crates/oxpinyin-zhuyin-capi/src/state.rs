@@ -225,6 +225,9 @@ impl CapiInstance {
     pub(crate) fn reset_parse_state(&mut self) {
         self.session.reset_composition();
         self.candidates.clear();
+        // Drop a stale re-anchored window so a later candidate selection
+        // cannot re-read it against a different composition.
+        self.anchored_window = None;
         self.parsed_len = 0;
         self.zhuyin_parse = None;
         self.zhuyin_input.clear();
