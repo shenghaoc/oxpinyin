@@ -10,77 +10,42 @@
 //! upstream where `pinyin_save` flushes user data exclusively.
 //!
 //! The `GArray`-taking symbols (`pinyin_lookup_tokens`,
-//! `pinyin_token_get_nth_pronunciation`) append into the caller's
-//! array through its documented public layout (`data`, `len` —
-//! glib's `GArray` is one of the few glib containers with a public
-//! struct) and the system allocator, `g_free`-compatible like
-//! [`crate::ffi::owned_cstr`].
+//! `pinyin_token_get_nth_pronunciation`) delegate to glib itself —
+//! `g_array_append_vals` grows the array and updates its private
+//! `_GRealArray` metadata (`alloc`, `element_size`, `clear_func`) in
+//! lockstep with the public `data`/`len`. Hand-`realloc`ing the buffer
+//! and bumping `len` (an earlier revision's shortcut) left those private
+//! fields stale, so a downstream `g_array_append_val` from the same
+//! consumer would `g_realloc` from the wrong `alloc` and either truncate
+//! the appended payload or trip `g_array_maybe_expand`'s SIGFPE. Linking
+//! glib is free at the target: every box that runs a libpinyin consumer
+//! already has `libglib-2.0.so.0` resident (upstream `libpinyin.so.15`
+//! records it in `DT_NEEDED`).
 
-use std::os::raw::{c_char, c_void};
+use std::os::raw::{c_char, c_uint, c_void};
 use std::ptr;
 
 use oxpinyin_core::Dictionary;
 
 use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
 use crate::state::instance_ref;
-use crate::types::{GArrayLayout, GChar, GUint, PhraseTokenT, PinyinInstance};
+use crate::types::{GArray, GChar, GUint, PhraseTokenT, PinyinInstance};
 
-// realloc from the host libc — the appender grows the caller's buffer
-// in place (glib's default allocator is the system allocator, so a
-// `g_free`/`g_array_free(…, TRUE)` from the consumer stays paired).
+// glib append/truncate: the caller-side array is a real glib GArray
+// (built with `g_array_new`, torn down with `g_array_free`). These two
+// entry points are the ones that keep the array's private `_GRealArray`
+// metadata consistent with its public `data`/`len` — writing those
+// fields directly would leave `alloc` and `element_size` stale and
+// break the next consumer call. `_vals` copies `len` elements of the
+// array's stored `element_size` from `data`; `_set_size` extends or
+// truncates in place, honouring any `clear_func`.
 unsafe extern "C" {
-    fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void;
-}
-
-/// Appends `bytes` (one or more elements of `element_size`) to the
-/// caller's `GArray`, growing its buffer with libc `realloc` and
-/// bumping `len`. The buffer may start null (a fresh `g_array_new`
-/// array): `realloc(NULL)` is `malloc`. Returns `true` on success and
-/// `false` when `realloc` fails, so the caller surfaces the OOM as
-/// the ABI `false` rather than reporting success with incomplete
-/// output.
-///
-/// # Safety
-///
-/// `array` must be non-null and point to a real `GArray`; `data` must
-/// be null or a buffer allocated with the system allocator.
-#[must_use]
-unsafe fn garray_append(array: *mut GArrayLayout, bytes: &[u8], element_size: usize) -> bool {
-    // SAFETY: the caller guarantees a real GArray.
-    let old_len = unsafe { (*array).len } as usize;
-    let new_bytes = bytes.len();
-    // SAFETY: the caller guarantees a real GArray.
-    let old_buffer = unsafe { (*array).data } as *mut u8;
-    let buffer = if old_buffer.is_null() {
-        // SAFETY: size > 0 (append of at least one element).
-        let fresh = unsafe { realloc(ptr::null_mut(), new_bytes) };
-        fresh as *mut u8
-    } else {
-        // SAFETY: grow the consumer's buffer by the appended bytes.
-        let grown = unsafe {
-            realloc(
-                old_buffer as *mut c_void,
-                old_len * element_size + new_bytes,
-            )
-        };
-        grown as *mut u8
-    };
-    if buffer.is_null() {
-        return false;
-    }
-    // SAFETY: buffer holds old_len*element_size + new_bytes writable
-    // bytes; the appended region is disjoint from the first
-    // old_len*element_size.
-    unsafe {
-        ptr::copy_nonoverlapping(
-            bytes.as_ptr(),
-            buffer.add(old_len * element_size),
-            new_bytes,
-        );
-        (*array).data = buffer.cast::<c_char>();
-        (*array).len = (old_len * element_size + new_bytes) as u32 / element_size as u32;
-    }
-    true
+    fn g_array_append_vals(
+        array: *mut GArray,
+        data: *const c_void,
+        len: c_uint,
+    ) -> *mut GArray;
+    fn g_array_set_size(array: *mut GArray, length: c_uint) -> *mut GArray;
 }
 
 /// Look up the phrase tokens stored for an exact phrase string.
@@ -125,27 +90,27 @@ pub extern "C" fn pinyin_lookup_tokens(
             .collect();
         // `reduce_tokens` clears the caller's array before appending
         // (`phrase_large_table3.h:81`) — an empty result clears too.
-        // SAFETY: Null-checked above; the reset follows the caller's
-        // GArray contract.
+        // SAFETY: Null-checked above; `g_array_set_size` on a real
+        // glib GArray updates `len` and preserves the private
+        // metadata (`alloc`, `element_size`, `clear_func`).
         unsafe {
-            (*tokenarray.cast::<GArrayLayout>()).len = 0;
+            g_array_set_size(tokenarray, 0);
         }
         // The retval is `SEARCH_OK & retval`: exact hits exist.
         if tokens.is_empty() {
             return false;
         }
-        if !tokens.is_empty() {
-            let bytes: Vec<u8> = tokens
-                .iter()
-                .flat_map(|token| token.to_ne_bytes())
-                .collect();
-            // SAFETY: Null-checked above; the append follows the
-            // caller's GArray contract.
-            let appended =
-                unsafe { garray_append(tokenarray.cast::<GArrayLayout>(), &bytes, size_of::<u32>()) };
-            if !appended {
-                return false;
-            }
+        // SAFETY: Null-checked above; `g_array_append_vals` copies
+        // `tokens.len()` elements of the array's stored `element_size`
+        // (guint32, the caller creates the array with element_size=4).
+        // The tokens slice is a live Rust allocation and stays valid
+        // for the duration of the call.
+        unsafe {
+            g_array_append_vals(
+                tokenarray,
+                tokens.as_ptr().cast::<c_void>(),
+                tokens.len() as c_uint,
+            );
         }
         true
     })
@@ -285,7 +250,7 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
             return false;
         };
         // Pack each syllable key into its two-byte chewing-key word.
-        let mut packed: Vec<u8> = Vec::with_capacity(keys_list.len() * 2);
+        let mut packed: Vec<u16> = Vec::with_capacity(keys_list.len());
         for &key in keys_list {
             let Some(syllable) = oxpinyin_core::SyllableKey::from_index(key as usize) else {
                 return false;
@@ -293,17 +258,21 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
             let Some(chewing) = oxpinyin_core::ChewingKey::from_pinyin(syllable.text()) else {
                 return false;
             };
-            packed.extend_from_slice(&chewing.to_packed().to_ne_bytes());
+            packed.push(chewing.to_packed());
         }
         if packed.is_empty() {
             return false;
         }
-        // SAFETY: Null-checked above; the append follows the caller's
-        // GArray contract.
-        let appended =
-            unsafe { garray_append(keys.cast::<GArrayLayout>(), &packed, size_of::<u16>()) };
-        if !appended {
-            return false;
+        // SAFETY: Null-checked above; the caller creates the keys
+        // array with element_size = sizeof(u16) (chewing-key vector,
+        // packed two-byte words). `g_array_append_vals` copies
+        // `packed.len()` such elements from the buffer.
+        unsafe {
+            g_array_append_vals(
+                keys,
+                packed.as_ptr().cast::<c_void>(),
+                packed.len() as c_uint,
+            );
         }
         true
     })

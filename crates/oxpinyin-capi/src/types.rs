@@ -124,25 +124,20 @@ pub struct ExportIterator;
 /// Opaque bigram export iterator.
 pub struct BigramExportIterator;
 
-/// The library's append view of a caller's `GArray`: the same
-/// documented layout, mutably.
-#[repr(C)]
-pub struct GArrayLayout {
-    /// The element data buffer.
-    pub data: *mut GChar,
-    /// The element count.
-    pub len: u32,
-}
-
-/// glib `GArray` — the caller passes a real glib array; the library
-/// appends through its documented public layout (`data`, `len`), which
-/// `crate::dict`'s appender writes directly (system-allocator buffer,
-/// `g_free`-compatible). Declared pointer-only in the shipped header,
-/// exactly like glib's own headers.
+/// glib `GArray` — the caller passes a real glib array (built through
+/// `g_array_new`, torn down through `g_array_free`); the library appends
+/// into it through glib's `g_array_append_vals` and truncates through
+/// `g_array_set_size`, so the array's private `_GRealArray` metadata
+/// (`alloc`, `element_size`, `clear_func`) stays consistent with the
+/// public `data` / `len`. The two public fields are still exposed here
+/// so tests and consumers can peek at the buffer glib owns — that layout
+/// is glib's documented public contract — but nothing in the shipping
+/// library writes them directly. The shipped header declares this
+/// pointer-only (`typedef struct _GArray GArray;`), exactly like glib's
+/// own header.
 #[repr(C)]
 pub struct GArray {
-    /// The element data buffer (glib-owned or the library's
-    /// system-allocated buffer).
+    /// The element data buffer, glib-owned.
     pub data: *mut GChar,
     /// The element count.
     pub len: u32,

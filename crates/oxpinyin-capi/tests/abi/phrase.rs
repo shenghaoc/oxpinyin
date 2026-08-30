@@ -256,47 +256,73 @@ unsafe extern "C" {
     fn libc_free(ptr: *mut core::ffi::c_void);
 }
 
+// The `GArray`-taking library entry points call glib's own
+// `g_array_append_vals`, which dereferences the array's private
+// `_GRealArray` fields — an inline `GArray { data, len }` view has
+// none of those and would crash on the first append. So the tests
+// hold a real glib array from `g_array_new`, freed with
+// `g_array_free`. Linked through `libpinyin_capi.so`'s `libglib-2.0`
+// NEEDED entry.
+unsafe extern "C" {
+    fn g_array_new(
+        zero_terminated: core::ffi::c_int,
+        clear: core::ffi::c_int,
+        element_size: core::ffi::c_uint,
+    ) -> *mut GArray;
+    fn g_array_free(
+        array: *mut GArray,
+        free_segment: core::ffi::c_int,
+    ) -> *mut core::ffi::c_char;
+}
+
 // ── Tier C: dictionary introspection ─────────────────────────────────
 
-/// Builds a fresh empty `GArray` the library appends into, and reads the
-/// u32 elements back out, freeing the library-grown buffer.
+/// A real glib `GArray` of `u32` tokens: the library appends into it
+/// through `g_array_append_vals` and truncates it through
+/// `g_array_set_size`; the test reads the elements back out through the
+/// array's documented public fields.
 struct TokenArray {
-    array: GArray,
+    array: *mut GArray,
 }
 
 impl TokenArray {
     fn new() -> Self {
-        Self {
-            array: GArray {
-                data: std::ptr::null_mut(),
-                len: 0,
-            },
-        }
+        // SAFETY: glib always returns a valid array pointer (or aborts
+        // on OOM, matching upstream libpinyin's own behaviour).
+        let array = unsafe {
+            g_array_new(0, 0, u32::try_from(size_of::<u32>()).expect("u32 fits guint"))
+        };
+        assert!(!array.is_null(), "g_array_new returned null");
+        Self { array }
     }
 
     fn array_ptr(&mut self) -> *mut GArray {
-        &mut self.array
+        self.array
     }
 
     fn elements(&self) -> Vec<u32> {
-        if self.array.data.is_null() || self.array.len == 0 {
+        // SAFETY: the array pointer stays live for the fixture's
+        // lifetime; `data`/`len` are the glib GArray's documented
+        // public fields.
+        let view = unsafe { &*self.array };
+        if view.data.is_null() || view.len == 0 {
             return Vec::new();
         }
         // SAFETY: data points at len consecutive u32 elements written
-        // by the library.
+        // by the library through glib.
         unsafe {
-            std::slice::from_raw_parts(self.array.data.cast::<u32>(), self.array.len as usize)
-                .to_vec()
+            std::slice::from_raw_parts(view.data.cast::<u32>(), view.len as usize).to_vec()
         }
     }
 }
 
 impl Drop for TokenArray {
     fn drop(&mut self) {
-        if !self.array.data.is_null() {
-            // SAFETY: the buffer came from the library's libc realloc.
+        if !self.array.is_null() {
+            // SAFETY: `array` came from `g_array_new`; `free_segment=1`
+            // frees the underlying buffer glib grew.
             unsafe {
-                libc_free(self.array.data.cast());
+                g_array_free(self.array, 1);
             }
         }
     }
@@ -405,30 +431,37 @@ fn token_pronunciation_surface() {
     ));
     assert!(num >= 1);
 
-    let mut keys: GArray = GArray {
-        data: std::ptr::null_mut(),
-        len: 0,
+    // A real glib GArray of `u16` chewing-key words. The library
+    // appends into it via `g_array_append_vals`, which needs the
+    // private `_GRealArray` metadata glib itself sets up.
+    // SAFETY: g_array_new either returns a valid array or aborts (glib
+    // policy, inherited by upstream libpinyin).
+    let keys = unsafe {
+        g_array_new(0, 0, u32::try_from(size_of::<u16>()).expect("u16 fits guint"))
     };
+    assert!(!keys.is_null(), "g_array_new returned null");
     assert!(pinyin_token_get_nth_pronunciation(
         fixture.instance,
         token,
         0,
-        &mut keys
+        keys,
     ));
-    assert!(keys.len >= 2, "你+好: two chewing keys");
-    if !keys.data.is_null() {
-        // SAFETY: the buffer came from the library's libc realloc.
-        unsafe {
-            libc_free(keys.data.cast());
-        }
-    }
+    // SAFETY: keys is live; `len` is glib's public field.
+    let keys_len = unsafe { (*keys).len };
+    assert!(keys_len >= 2, "你+好: two chewing keys");
 
+    // An out-of-range nth answers false. The array is not appended to.
     assert!(!pinyin_token_get_nth_pronunciation(
         fixture.instance,
         token,
         9,
-        &mut keys
+        keys,
     ));
+
+    // SAFETY: keys came from g_array_new; frees the buffer glib grew.
+    unsafe {
+        g_array_free(keys, 1);
+    }
 }
 
 /// `pinyin_token_get_unigram_frequency` / `_add_unigram_frequency`:
