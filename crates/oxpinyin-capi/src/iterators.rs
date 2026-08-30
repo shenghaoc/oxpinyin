@@ -59,10 +59,7 @@ struct ImportHandle {
 /// [`USER_DICTIONARY`] and [`NETWORK_DICTIONARY`] only — oxpinyin's system
 /// phrase indexes are read-only redb tables — so any other index yields a
 /// handle whose adds report `false`.
-pub(crate) fn begin_add_phrases_impl(
-    context: *mut PinyinContext,
-    index: u8,
-) -> *mut ImportIterator {
+pub fn begin_add_phrases_impl(context: *mut PinyinContext, index: u8) -> *mut ImportIterator {
     if context.is_null() {
         return ptr::null_mut();
     }

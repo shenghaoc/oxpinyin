@@ -146,7 +146,7 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
 /// compacts the redb store and clears `m_modified`; durability itself is
 /// redb's per-commit guarantee, so training writes are crash-safe before
 /// any save is issued (`docs/findings/user-store.md` §4).
-pub(crate) fn save_context(context: *mut PinyinContext) -> bool {
+pub fn save_context(context: *mut PinyinContext) -> bool {
     if context.is_null() {
         return false;
     }

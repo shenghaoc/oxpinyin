@@ -45,7 +45,7 @@ pub(crate) fn cstr_to_strict(ptr: *const c_char) -> Option<String> {
 
 /// Safe wrapper for C ABI entry points, which own the null/invalid-UTF-8
 /// contract at the boundary and never let those inputs unwind.
-pub(crate) fn cstr_to_owned_lossy(ptr: *const c_char) -> String {
+pub fn cstr_to_owned_lossy(ptr: *const c_char) -> String {
     // SAFETY: `cstr_to_string` requires a null-terminated pointer when
     // non-null. The only callers are `extern "C"` entry points, whose
     // contract to C is exactly that; a violation is the caller's C-level
@@ -64,7 +64,7 @@ unsafe extern "C" {
 /// Converts one caller-owned export-iterator buffer into a Rust string and
 /// frees it with the matching libc `free` (the iterator allocates with
 /// [`owned_cstr`], i.e. libc `malloc`).
-pub(crate) fn take_owned_cstr(ptr: *mut c_char) -> String {
+pub fn take_owned_cstr(ptr: *mut c_char) -> String {
     if ptr.is_null() {
         return String::new();
     }
@@ -86,7 +86,7 @@ pub(crate) fn take_owned_cstr(ptr: *mut c_char) -> String {
 /// or allocation failure.
 ///
 /// The caller owns the returned pointer and frees it with `g_free`.
-pub(crate) fn owned_cstr(s: &str) -> *mut c_char {
+pub fn owned_cstr(s: &str) -> *mut c_char {
     let cstr = match CString::new(s) {
         Ok(c) => c,
         Err(_) => return ptr::null_mut::<c_char>(),
@@ -109,7 +109,7 @@ pub(crate) fn owned_cstr(s: &str) -> *mut c_char {
 ///
 /// The array and every string are libc `malloc`. Returns null if any
 /// allocation fails (and frees whatever was already allocated).
-pub(crate) fn owned_cstr_list(items: &[impl AsRef<str>]) -> *mut *mut c_char {
+pub fn owned_cstr_list(items: &[impl AsRef<str>]) -> *mut *mut c_char {
     let n = items.len();
     let bytes = n
         .checked_add(1)

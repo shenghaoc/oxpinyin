@@ -46,7 +46,7 @@ impl Step {
 
 /// Best-path tokens at their start offsets, then converted like
 /// `convert_to_utf8(..., "\n", true)` (`src/lookup/lookup.cpp:27-69`).
-pub(crate) fn get_best_match(
+pub fn get_best_match(
     lexicon: &PhraseLexicon,
     model: &SegmentModel,
     lambda: f32,

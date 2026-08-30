@@ -18,7 +18,7 @@ use oxpinyin_engine::{
     CandidateKind, CandidateList, Config, EngineError, check_lookup_offset_range,
     normalize_lookup_offset,
 };
-pub(crate) use oxpinyin_runtime::user_store_file;
+pub use oxpinyin_runtime::user_store_file;
 
 /// Upstream's phrase-index library count (`novel_types.h:43`, `1<<4`).
 ///
@@ -27,7 +27,7 @@ pub(crate) use oxpinyin_runtime::user_store_file;
 /// `false`.
 const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
 use oxpinyin_runtime::{Runtime, RuntimeSession};
-pub(crate) use oxpinyin_runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
+pub use oxpinyin_runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
 use oxpinyin_user::{
     ExportedPhrase, NETWORK_DICTIONARY, SENTENCE_START, USER_DICTIONARY, UserStore,
     is_user_file_token,
@@ -45,7 +45,7 @@ use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, PinyinContext, P
 
 /// The session type every C handle wraps: the shared runtime's concrete
 /// session.
-pub(crate) type CapiSession = RuntimeSession;
+pub type CapiSession = RuntimeSession;
 
 /// State behind `pinyin_context_t *`.
 ///
@@ -53,7 +53,7 @@ pub(crate) type CapiSession = RuntimeSession;
 /// Instances receive cheap handle clones from it — `dict()`, `lm()`,
 /// `user_store()` — so they never borrow the context and stay alive past
 /// `pinyin_fini`.
-pub(crate) struct CapiContext {
+pub struct CapiContext {
     pub(crate) config: Config,
     /// The shared concrete assembly; `None` under a user-store-only context.
     pub(crate) runtime: Option<Runtime>,
@@ -86,7 +86,7 @@ pub(crate) struct CapiContext {
 
 /// Where [`CapiContext::new`] takes unigram counts from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum UnigramSource {
+pub enum UnigramSource {
     /// Require a parsable `interpolation2.text` next to the system
     /// tables (the compiled-in backend's `default_store_file` names).
     RealOnly,
@@ -414,7 +414,7 @@ pub struct ExportedBigramRow {
 
 /// One snapshotted candidate, stored inside `CapiInstance` so that
 /// `lookup_candidate_t *` can borrow into it across C calls.
-pub(crate) struct CapiCandidate {
+pub struct CapiCandidate {
     pub(crate) text: CString,
     pub(crate) kind: CandidateKind,
     pub(crate) candidate_type: crate::types::lookup_candidate_type_t,
@@ -438,7 +438,7 @@ pub(crate) struct CapiCandidate {
 }
 
 /// State behind `pinyin_instance_t *`.
-pub(crate) struct CapiInstance {
+pub struct CapiInstance {
     /// The owning context's C handle, returned by `pinyin_get_context`
     /// (upstream `pinyin_get_context`, `pinyin.cpp:1358-1360`). A raw
     /// pointer like every C handle here: no ownership, and using it
@@ -631,7 +631,7 @@ impl CapiInstance {
 /// The returned reference must not outlive the `Box` (i.e. must not be used
 /// after `pinyin_fini` reconstructs and drops it), and must not be stored in
 /// a `CapiInstance` or any other longer-lived location.
-pub(crate) unsafe fn context_ref<'a>(ptr: *mut PinyinContext) -> &'a CapiContext {
+pub unsafe fn context_ref<'a>(ptr: *mut PinyinContext) -> &'a CapiContext {
     // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
     unsafe { &*(ptr.cast::<CapiContext>()) }
 }
@@ -644,7 +644,7 @@ pub(crate) unsafe fn context_ref<'a>(ptr: *mut PinyinContext) -> &'a CapiContext
 /// No other reference to the same context may exist, and the returned
 /// reference must not outlive the `Box` (i.e. must not be used after
 /// `pinyin_fini` reconstructs and drops it) or be stored in a `CapiInstance`.
-pub(crate) unsafe fn context_mut<'a>(ptr: *mut PinyinContext) -> &'a mut CapiContext {
+pub unsafe fn context_mut<'a>(ptr: *mut PinyinContext) -> &'a mut CapiContext {
     // SAFETY: Caller guarantees the pointer is valid and unique for the chosen lifetime.
     unsafe { &mut *(ptr.cast::<CapiContext>()) }
 }
@@ -657,7 +657,7 @@ pub(crate) unsafe fn context_mut<'a>(ptr: *mut PinyinContext) -> &'a mut CapiCon
 /// The returned reference must not outlive the `Box` (i.e. must not be used
 /// after `pinyin_free_instance` reconstructs and drops it), and must not be
 /// stored in any longer-lived location.
-pub(crate) unsafe fn instance_ref<'a>(ptr: *mut PinyinInstance) -> &'a CapiInstance {
+pub unsafe fn instance_ref<'a>(ptr: *mut PinyinInstance) -> &'a CapiInstance {
     // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
     unsafe { &*(ptr.cast::<CapiInstance>()) }
 }
@@ -670,18 +670,18 @@ pub(crate) unsafe fn instance_ref<'a>(ptr: *mut PinyinInstance) -> &'a CapiInsta
 /// No other reference to the same instance may exist, and the returned
 /// reference must not outlive the `Box` (i.e. must not be used after
 /// `pinyin_free_instance` reconstructs and drops it) or be stored elsewhere.
-pub(crate) unsafe fn instance_mut<'a>(ptr: *mut PinyinInstance) -> &'a mut CapiInstance {
+pub unsafe fn instance_mut<'a>(ptr: *mut PinyinInstance) -> &'a mut CapiInstance {
     // SAFETY: Caller guarantees the pointer is valid and unique for the chosen lifetime.
     unsafe { &mut *(ptr.cast::<CapiInstance>()) }
 }
 
 /// Converts a `CapiContext` into a `*mut PinyinContext` for return to C.
-pub(crate) fn box_context(ctx: CapiContext) -> *mut PinyinContext {
+pub fn box_context(ctx: CapiContext) -> *mut PinyinContext {
     Box::into_raw(Box::new(ctx)).cast()
 }
 
 /// Converts a `CapiInstance` into a `*mut PinyinInstance` for return to C.
-pub(crate) fn box_instance(inst: CapiInstance) -> *mut PinyinInstance {
+pub fn box_instance(inst: CapiInstance) -> *mut PinyinInstance {
     Box::into_raw(Box::new(inst)).cast()
 }
 
@@ -691,12 +691,12 @@ pub(crate) fn box_instance(inst: CapiInstance) -> *mut PinyinInstance {
 ///
 /// `ptr` must be non-null and point into an active `CapiInstance::candidates`
 /// vec (produced by [`candidate_ptr`]).
-pub(crate) unsafe fn candidate_ref<'a>(ptr: *mut LookupCandidate) -> &'a CapiCandidate {
+pub unsafe fn candidate_ref<'a>(ptr: *mut LookupCandidate) -> &'a CapiCandidate {
     // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
     unsafe { &*(ptr.cast::<CapiCandidate>()) }
 }
 
 /// Returns a `*mut LookupCandidate` pointing to a `CapiCandidate`.
-pub(crate) fn candidate_ptr(cand: &CapiCandidate) -> *mut LookupCandidate {
+pub fn candidate_ptr(cand: &CapiCandidate) -> *mut LookupCandidate {
     (cand as *const CapiCandidate as *mut CapiCandidate).cast()
 }

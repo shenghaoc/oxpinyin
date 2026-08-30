@@ -5,7 +5,7 @@ use std::path::Path;
 use pinyin_capi::{PinyinContext, close_user_import_context, open_user_import_context};
 
 /// A [`PinyinContext`] that always calls `pinyin_fini` on drop.
-pub(crate) struct UserImportContext(*mut PinyinContext);
+pub struct UserImportContext(*mut PinyinContext);
 
 impl UserImportContext {
     pub(crate) fn open(user_dir: &Path) -> Option<Self> {

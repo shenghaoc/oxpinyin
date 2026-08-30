@@ -26,10 +26,10 @@ use std::sync::{Mutex, MutexGuard};
 
 /// A lock refused because some earlier operation panicked while holding it.
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct Poisoned;
+pub struct Poisoned;
 
 /// Acquires `mutex` under the module policy: poisoned means refused.
-pub(crate) fn locked<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>, Poisoned> {
+pub fn locked<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>, Poisoned> {
     mutex.lock().map_err(|_| Poisoned)
 }
 

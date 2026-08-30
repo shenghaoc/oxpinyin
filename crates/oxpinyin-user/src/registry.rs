@@ -38,7 +38,7 @@ use crate::store::Token;
 /// decode actually asked about between two writes. An absent row
 /// memoises as `0`, exactly what the store read it replaces returned.
 #[derive(Debug)]
-pub(crate) struct CountCache {
+pub struct CountCache {
     /// The `write_generation` this cache was built for; a mismatch
     /// retires it wholesale.
     pub(crate) generation: u64,
@@ -52,7 +52,7 @@ pub(crate) struct CountCache {
     pub(crate) bigram_total: HashMap<Token, u64>,
 }
 
-pub(crate) struct StoreInner<S: WriteStore> {
+pub struct StoreInner<S: WriteStore> {
     /// Decode-time count memo. Declared before `db` so it is dropped
     /// first (struct fields drop in declaration order).
     pub(crate) count_cache: Mutex<Option<CountCache>>,
@@ -77,7 +77,7 @@ pub(crate) struct StoreInner<S: WriteStore> {
 }
 
 /// Declared last on [`crate::UserStore`] so this runs after the handle `Arc` dies.
-pub(crate) struct RegistryLease;
+pub struct RegistryLease;
 
 impl Drop for RegistryLease {
     fn drop(&mut self) {
@@ -91,7 +91,7 @@ type StandaloneRegistry = HashSet<PathBuf>;
 static OPEN_STORES: OnceLock<Mutex<StoreRegistry>> = OnceLock::new();
 static OPEN_STANDALONE_STORES: OnceLock<Mutex<StandaloneRegistry>> = OnceLock::new();
 
-pub(crate) fn registry_key(path: &Path) -> PathBuf {
+pub fn registry_key(path: &Path) -> PathBuf {
     // An existing file is keyed by its fully canonical path: `.`/`..`
     // segments and any symlink, including the final component, resolve,
     // so every alias of the same file collides into one key.
@@ -139,7 +139,7 @@ fn absolutize(path: &Path) -> PathBuf {
 }
 
 /// Lease held by a standalone store and its clones while its path is live.
-pub(crate) struct StandaloneLease {
+pub struct StandaloneLease {
     key: PathBuf,
 }
 
@@ -164,7 +164,7 @@ impl Drop for StandaloneLease {
 /// live [`crate::GenericUserStore::create_standalone`] observes
 /// [`UserStoreError::AlreadyOpen`] regardless of which alias either
 /// call used.
-pub(crate) fn acquire_standalone(path: &Path) -> Option<StandaloneLease> {
+pub fn acquire_standalone(path: &Path) -> Option<StandaloneLease> {
     let key = registry_key(path);
     let mut stores = OPEN_STANDALONE_STORES
         .get_or_init(|| Mutex::new(HashSet::new()))
@@ -177,7 +177,7 @@ pub(crate) fn acquire_standalone(path: &Path) -> Option<StandaloneLease> {
     }
 }
 
-pub(crate) fn lock_registry() -> MutexGuard<'static, StoreRegistry> {
+pub fn lock_registry() -> MutexGuard<'static, StoreRegistry> {
     OPEN_STORES
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -201,7 +201,7 @@ fn drain() {
 }
 
 #[cfg(test)]
-pub(crate) fn contains_key(path: &Path) -> bool {
+pub fn contains_key(path: &Path) -> bool {
     let key = registry_key(path);
     let Some(registry) = OPEN_STORES.get() else {
         return false;

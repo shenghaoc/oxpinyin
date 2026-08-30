@@ -11,9 +11,9 @@ use crate::sentence::pinyin_guess_candidates;
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
 /// `SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY`.
-pub(crate) const DEFAULT_SORT: c_uint = 0x1e;
+pub const DEFAULT_SORT: c_uint = 0x1e;
 
-pub(crate) fn system_dir() -> PathBuf {
+pub fn system_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
@@ -21,7 +21,7 @@ pub(crate) fn system_dir() -> PathBuf {
         .join("w3")
 }
 
-pub(crate) struct TempUserDir {
+pub struct TempUserDir {
     pub(crate) path: PathBuf,
 }
 
@@ -41,7 +41,7 @@ impl Drop for TempUserDir {
     }
 }
 
-pub(crate) struct TempSystemDir {
+pub struct TempSystemDir {
     pub(crate) path: PathBuf,
 }
 
@@ -83,17 +83,13 @@ impl Drop for TempSystemDir {
     }
 }
 
-pub(crate) fn cstr(value: impl AsRef<str>) -> CString {
+pub fn cstr(value: impl AsRef<str>) -> CString {
     CString::new(value.as_ref().as_bytes()).expect("no interior NUL")
 }
 
 /// Parses `text`, guesses candidates, and returns the pointer to candidate
 /// `index` (borrowed into the instance's snapshot until the next guess).
-pub(crate) fn candidate(
-    instance: *mut PinyinInstance,
-    text: &str,
-    index: c_uint,
-) -> *mut LookupCandidate {
+pub fn candidate(instance: *mut PinyinInstance, text: &str, index: c_uint) -> *mut LookupCandidate {
     let input = cstr(text);
     assert_eq!(
         pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
@@ -110,7 +106,7 @@ pub(crate) fn candidate(
     cand
 }
 
-pub(crate) fn open(user_dir: &str) -> (*mut PinyinContext, *mut PinyinInstance) {
+pub fn open(user_dir: &str) -> (*mut PinyinContext, *mut PinyinInstance) {
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
     let user = cstr(user_dir);
     let context = crate::context::oxpinyin_init_for_fixtures(system.as_ptr(), user.as_ptr());

@@ -33,7 +33,7 @@ const VOWEL_CODE: u128 = 1;
 const FIRST_KEY_CODE: u128 = 2;
 
 /// The per-load projection tables.
-pub(crate) struct InitialAlphabet {
+pub struct InitialAlphabet {
     /// Slot code for a syllable spelling, indexed by its first byte
     /// (`a..=z` → `0..26`) and second byte (`a..=z` → `0..26`, anything
     /// else — including no second byte — → `26`). Unmatched spellings
