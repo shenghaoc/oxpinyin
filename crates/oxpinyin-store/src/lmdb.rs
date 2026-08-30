@@ -203,6 +203,20 @@ fn env_key(path: &Path) -> PathBuf {
 /// are only promoted after the write txn commits (LMDB frees a
 /// `DB_NEW` DBI on abort, so caching earlier would leave a dangling
 /// handle).
+///
+/// One documented nesting restriction: a [`WriteStore::write`]
+/// closure that has already hit a cache miss (and therefore holds
+/// [`Self::dbi_open`] until the txn commits) must not re-enter a
+/// store on the same path with a call that itself hits a cache
+/// miss. `std::sync::Mutex` is not reentrant, so the second
+/// [`Self::lock_dbi_open`] on the same thread would deadlock the
+/// caller. Cache-hit re-entry is fine — it never touches
+/// `dbi_open`. Neither oxpinyin's own writers nor its fixtures do
+/// this: the user store's schema is fixed at first use and every
+/// fixture table is pre-created, so first-use opens happen only on
+/// process startup and never inside a live write closure.
+/// [`LmdbWriteTxn::open_existing`] carries the same warning at the
+/// method level for readers who reach it before this docblock.
 struct SharedEnv {
     /// Kept in a [`ManuallyDrop`] so [`Drop::drop`] can run
     /// [`ManuallyDrop::drop`] on it explicitly, before releasing the
@@ -689,6 +703,15 @@ impl<'a> LmdbWriteTxn<'a> {
     /// before we call `mdb_dbi_open`. First-miss on the txn acquires
     /// the guard; every later miss finds it already held and just
     /// keeps it.
+    ///
+    /// # Nesting
+    ///
+    /// Once this method returns with the guard populated, a nested
+    /// call on the same thread into a store on the same path that
+    /// *also* hits a cache miss will deadlock — `std::sync::Mutex`
+    /// is not reentrant. Cache-hit re-entry is fine. See the
+    /// [`SharedEnv`] docblock for the wider context; oxpinyin's own
+    /// code never nests a fresh-table open inside a write closure.
     fn hold_dbi_open(&self) {
         let mut slot = self.dbi_open_guard.borrow_mut();
         if slot.is_none() {
