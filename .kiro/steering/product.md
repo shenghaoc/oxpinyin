@@ -31,7 +31,9 @@ BerkeleyDB compat path is SHELVED
 
 **Storage.** Four backends, compile-time selected, one per binary: Kyoto
 Cabinet (default), Tkrzw, LMDB (Linux C deps), redb (pure-Rust portability
-fallback for macOS/Windows via `--no-default-features`).
+fallback for macOS/Windows: `--no-default-features --features redb` — the
+`redb` feature forwards down the crate chain to store; plain
+`--no-default-features` also selects it as the no-backend fallback).
 
 **Stage 2** — measured init-time, RAM and binary-size upgrades — has not
 started. **Python:** `oxpinyin-python` serves the engine session API over
