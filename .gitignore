@@ -70,3 +70,4 @@ __pycache__/
 # Container drop-in gates write their cargo targets here (run-dropin-*.sh).
 /target-fedora/
 /target-debian/
+/target-nixos/
