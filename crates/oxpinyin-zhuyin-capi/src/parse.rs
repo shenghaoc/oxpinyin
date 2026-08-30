@@ -5,7 +5,7 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::sync::atomic::Ordering;
 
-use oxpinyin_core::{FullPinyinScheme, USE_TONE, ZHUYIN_INCOMPLETE, ZhuyinKey, ZhuyinScheme};
+use oxpinyin_core::{FullPinyinScheme, USE_TONE, ZhuyinKey, ZhuyinScheme};
 
 use crate::ffi::{cstr_to_string, ffi_catch};
 use crate::state::{instance_mut, instance_ref};
@@ -61,8 +61,11 @@ fn exact_input(keys: &[&ZhuyinKey]) -> (String, Vec<oxpinyin_core::graph::ExactS
 /// Zhuyin batch-parse path (`zhuyin_parse_more_chewings`).
 ///
 /// Mirrors `oxpinyin-capi`'s chewing path, delegating to
-/// [`oxpinyin_core::ZhuyinParser::parse`] and driving the session decoder
-/// with the `'`-joined full-pinyin spelling.
+/// [`oxpinyin_core::ZhuyinParser::parse_with_options`] and driving the session
+/// decoder with the `'`-joined full-pinyin spelling. The caller's full option
+/// word crosses the seam (the pin's `options = context->m_options` at
+/// `zhuyin.cpp:1061`), so `FORCE_TONE` — part of the pin's `USE_TONE |
+/// FORCE_TONE` default — is honoured by the batch law.
 fn parse_chewing_more(instance: *mut ZhuyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
@@ -72,10 +75,12 @@ fn parse_chewing_more(instance: *mut ZhuyinInstance, text: &str) -> usize {
     let Some(scheme) = zhuyin_scheme(inst.zhuyin_scheme.load(Ordering::Relaxed)) else {
         return 0;
     };
-    let use_tone = inst.use_tone.load(Ordering::Relaxed);
-    let allow_incomplete = inst.options().contains(ZHUYIN_INCOMPLETE);
+    // The caller's option word drives the batch law; the parser OR-s its
+    // keyboard correction under `m_options` internally (upstream
+    // `zhuyin_parser2.cpp:221,413`).
+    let options = inst.options().bits();
     let parser = oxpinyin_core::ZhuyinParser::with_scheme(scheme);
-    let parsed = parser.parse(text.as_bytes(), use_tone, allow_incomplete);
+    let parsed = parser.parse_with_options(text.as_bytes(), options);
 
     if text.is_empty() {
         inst.parsed_len = 0;
