@@ -1539,18 +1539,25 @@ mod tests {
         const THREADS: usize = 8;
         const OPS_PER_THREAD: usize = 32;
 
+        // Cleanup on drop — a spawned-thread panic (any assertion
+        // inside the closures) unwinds through `h.join().unwrap()`,
+        // and the trailing manual removes would never run.
+        fn lock_sidecar(path: &std::path::Path) -> std::path::PathBuf {
+            let mut lock = path.to_path_buf().into_os_string();
+            lock.push("-lock");
+            lock.into()
+        }
+
         // Phase 1: existing table, concurrent readers.
         let read_path = std::env::temp_dir().join(format!(
             "oxpinyin-store-lmdb-concurrent-read-{}.mdb",
             std::process::id(),
         ));
-        let read_lock: std::path::PathBuf = {
-            let mut l = read_path.clone().into_os_string();
-            l.push("-lock");
-            l.into()
-        };
+        let read_lock = lock_sidecar(&read_path);
         let _ = std::fs::remove_file(&read_path);
         let _ = std::fs::remove_file(&read_lock);
+        let _read_cleanup = RemoveOnDrop(&read_path);
+        let _read_lock_cleanup = RemoveOnDrop(&read_lock);
         let writer = LmdbStore::create(&read_path).unwrap();
         writer
             .write(|txn| {
@@ -1575,8 +1582,6 @@ mod tests {
         for h in handles {
             h.join().unwrap();
         }
-        let _ = std::fs::remove_file(&read_path);
-        let _ = std::fs::remove_file(&read_lock);
 
         // Phase 2: previously-nonexistent table, concurrent first-time
         // creation from N writers. LMDB serializes write txns on one
@@ -1588,13 +1593,11 @@ mod tests {
             "oxpinyin-store-lmdb-concurrent-write-{}.mdb",
             std::process::id(),
         ));
-        let write_lock: std::path::PathBuf = {
-            let mut l = write_path.clone().into_os_string();
-            l.push("-lock");
-            l.into()
-        };
+        let write_lock = lock_sidecar(&write_path);
         let _ = std::fs::remove_file(&write_path);
         let _ = std::fs::remove_file(&write_lock);
+        let _write_cleanup = RemoveOnDrop(&write_path);
+        let _write_lock_cleanup = RemoveOnDrop(&write_lock);
 
         let path_arc = std::sync::Arc::new(write_path.clone());
         let handles: Vec<_> = (0..THREADS)
@@ -1625,8 +1628,6 @@ mod tests {
             );
         }
         drop(reader);
-        let _ = std::fs::remove_file(&write_path);
-        let _ = std::fs::remove_file(&write_lock);
     }
 
     #[cfg(feature = "lmdb")]
