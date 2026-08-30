@@ -1514,6 +1514,123 @@ mod tests {
 
     #[cfg(feature = "lmdb")]
     #[test]
+    fn lmdb_concurrent_first_open_of_shared_table_survives() {
+        // The whole reason for the DBI-cache: N threads opening the
+        // same env for the first time and hitting the same fresh
+        // `mdb_dbi_open` window used to race on `env->me_dbxs` writes
+        // and trip glibc's tcache check. With the cache in place the
+        // first thread to reach the miss path opens+commits the DBI
+        // env-wide, and every other thread finds it on the fast path
+        // — no double-alloc, no double-free, no crash.
+        //
+        // Split into two phases so both the "existing DBI, concurrent
+        // reads" and the "first-time creation" contracts are exercised:
+        //
+        // 1. Seed a table via one writer, then hammer it from N reader
+        //    threads on N independent stores of the same path — the
+        //    DBI already lives in `me_dbxs` from the seed's commit, so
+        //    every reader's fast-path lookup should return the same
+        //    cached handle and the reads should run concurrently.
+        // 2. Hammer a *fresh* env from N writers all creating the same
+        //    not-yet-existing table concurrently — the write-side
+        //    serializes on heed's one-writer-per-env, but the point
+        //    is that no read-side probe crossing that write's
+        //    `mdb_txn_end` misreads `me_dbxs`.
+        const THREADS: usize = 8;
+        const OPS_PER_THREAD: usize = 32;
+
+        // Phase 1: existing table, concurrent readers.
+        let read_path = std::env::temp_dir().join(format!(
+            "oxpinyin-store-lmdb-concurrent-read-{}.mdb",
+            std::process::id(),
+        ));
+        let read_lock: std::path::PathBuf = {
+            let mut l = read_path.clone().into_os_string();
+            l.push("-lock");
+            l.into()
+        };
+        let _ = std::fs::remove_file(&read_path);
+        let _ = std::fs::remove_file(&read_lock);
+        let writer = LmdbStore::create(&read_path).unwrap();
+        writer
+            .write(|txn| {
+                txn.put("shared", b"k", b"v")?;
+                Ok(())
+            })
+            .unwrap();
+        drop(writer);
+
+        let path_arc = std::sync::Arc::new(read_path.clone());
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let path = std::sync::Arc::clone(&path_arc);
+                std::thread::spawn(move || {
+                    let store = LmdbStore::open_read_only(&path).unwrap();
+                    for _ in 0..OPS_PER_THREAD {
+                        assert_eq!(store.get("shared", b"k").unwrap(), Some(b"v".to_vec()));
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let _ = std::fs::remove_file(&read_path);
+        let _ = std::fs::remove_file(&read_lock);
+
+        // Phase 2: previously-nonexistent table, concurrent first-time
+        // creation from N writers. LMDB serializes write txns on one
+        // env internally; what we're proving is that the cache never
+        // hands out a DBI a write ended up aborting, and that the
+        // first-time creates all wind up naming the same slot after
+        // they've each committed (`me_dbxs["fresh"]` is single-valued).
+        let write_path = std::env::temp_dir().join(format!(
+            "oxpinyin-store-lmdb-concurrent-write-{}.mdb",
+            std::process::id(),
+        ));
+        let write_lock: std::path::PathBuf = {
+            let mut l = write_path.clone().into_os_string();
+            l.push("-lock");
+            l.into()
+        };
+        let _ = std::fs::remove_file(&write_path);
+        let _ = std::fs::remove_file(&write_lock);
+
+        let path_arc = std::sync::Arc::new(write_path.clone());
+        let handles: Vec<_> = (0..THREADS)
+            .map(|tid| {
+                let path = std::sync::Arc::clone(&path_arc);
+                std::thread::spawn(move || {
+                    let store = LmdbStore::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("fresh", &tid.to_be_bytes(), b"v")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        // Every writer's key should be visible after the phase — the
+        // table exists exactly once and all N writes reached it.
+        let reader = LmdbStore::open_read_only(&write_path).unwrap();
+        for tid in 0..THREADS {
+            assert_eq!(
+                reader.get("fresh", &tid.to_be_bytes()).unwrap(),
+                Some(b"v".to_vec()),
+                "writer {tid}'s row did not land",
+            );
+        }
+        drop(reader);
+        let _ = std::fs::remove_file(&write_path);
+        let _ = std::fs::remove_file(&write_lock);
+    }
+
+    #[cfg(feature = "lmdb")]
+    #[test]
     fn lmdb_rejects_a_conflicting_map_size_while_the_env_is_live() {
         // One env is shared per path, and heed can neither reopen a live
         // environment at a different ceiling nor resize it — so a mismatching
