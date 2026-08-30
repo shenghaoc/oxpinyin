@@ -171,6 +171,7 @@ impl CapiContext {
         Some(CapiInstance {
             context,
             session,
+            phrase_result: Vec::new(),
             key_slot: ChewingKey::ZERO,
             key_rest_slot: ChewingKeyRest { begin: 0, end: 0 },
             candidates: Vec::new(),
@@ -429,6 +430,11 @@ pub(crate) struct CapiInstance {
     /// after `pinyin_fini` is the caller's UAF, exactly upstream's.
     pub(crate) context: *mut PinyinContext,
     pub(crate) session: CapiSession,
+    /// `m_phrase_result` (`pinyin.cpp:90`): the phrase-segment span DP's
+    /// output, written by `pinyin_phrase_segment` and read by
+    /// `pinyin_get_n_phrase` / `pinyin_get_phrase_token`. Cleared by
+    /// `pinyin_reset` (`pinyin.cpp:2699`) and by nothing else.
+    pub(crate) phrase_result: Vec<PhraseToken>,
     /// Per-instance slots the `pinyin_get_pinyin_key` family hands out as
     /// `ChewingKey *` / `ChewingKeyRest *`.
     ///

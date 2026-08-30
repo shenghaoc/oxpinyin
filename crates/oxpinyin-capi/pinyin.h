@@ -453,8 +453,24 @@ bool pinyin_guess_sentence(struct pinyin_instance_t *instance);
 bool pinyin_guess_predicted_candidates_with_punctuations(struct pinyin_instance_t *instance,
                                                          const char *_prefix);
 
+// Guess a sentence seeded with prefix tokens.
+bool pinyin_guess_sentence_with_prefix(struct pinyin_instance_t *instance, const char *_prefix);
+
+// Guess predicted candidates for a prefix (plain variant).
+bool pinyin_guess_predicted_candidates(struct pinyin_instance_t *instance, const char *_prefix);
+
 // Get a sentence string from the instance (n-best variant).
 bool pinyin_get_sentence(struct pinyin_instance_t *instance, uint8_t _index, char **sentence);
+
+// Segment an arbitrary sentence string into phrase tokens.
+bool pinyin_phrase_segment(struct pinyin_instance_t *instance, const char *sentence);
+
+// Get the number of phrase tokens in the phrase result.
+bool pinyin_get_n_phrase(struct pinyin_instance_t *instance, guint *num);
+
+// Get the phrase token at an index of the phrase result.
+bool pinyin_get_phrase_token(struct pinyin_instance_t *instance, unsigned int _index,
+                             uint32_t *token);
 
 // Get character offset from a lookup byte offset within a sentence.
 bool pinyin_get_character_offset(struct pinyin_instance_t *instance,
