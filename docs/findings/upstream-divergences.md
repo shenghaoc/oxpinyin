@@ -620,6 +620,35 @@ Text, candidate type and counts cannot.
   (`pinyin_get_pinyin_key`) remains F-E-14 in
   `oracle-apostrophe-abort.md`.
 
+### The single-key surface aborts the pin where oxpinyin answers `false`
+
+- **Upstream source cite:** `FullPinyinParser2::parse_one_key`
+  (`src/storage/pinyin_parser2.cpp:168-170`, the
+  `assert(NULL == strchr(input, '\''))` on apostrophes);
+  `pinyin_unload_addon_phrase_library` (`src/pinyin.cpp:497-499`, the
+  `assert(index < PHRASE_INDEX_LIBRARY_COUNT)`); the empty-input reads
+  under `USE_TONE` (`input[parsed_len - 1]` at
+  `pinyin_parser2.cpp:180` on a zero-length string;
+  `ZhuyinSimpleParser2::parse_one_key`'s `str[len - 1]` at
+  `zhuyin_parser2.cpp:171`).
+- **Mechanism:** the Tier-A single-key ABI surface (`pinyin_parse_full_pinyin`,
+  `pinyin_parse_double_pinyin`, `pinyin_parse_chewing`,
+  `pinyin_unload_addon_phrase_library`) takes arbitrary caller input with
+  no guards; several shapes run the caller straight into an `assert` (or
+  an out-of-bounds read) and the pinned oracle dies — measured first-hand
+  while building `tools/bisection/key-surface-diff.c`: the apostrophe
+  probe SIGABRTs at `pinyin_parser2.cpp:170`, the `index = 16` unload
+  probe SIGABRTs at `pinyin.cpp:499`.
+- **What oxpinyin does instead:** the no-abort policy — apostrophes
+  refuse (`false`, zero key for the full-pinyin entry, which zeroes
+  `*onekey` before its probe exactly like the pin), an out-of-range
+  addon index answers `false`, empty input refuses. All pinned by the
+  Rust ABI suite (`tests/abi/keys.rs`); the differential excludes these
+  shapes with the exclusion documented in the driver.
+- **Externally observable:** yes — upstream SIGABRTs on the same calls
+  oxpinyin answers. Report-back batch: file with the scheme-setter and
+  `_check_offset` assert families.
+
 ### FORCE_TONE is honoured on the full-pinyin seam only — the double/zhuyin shapes are a different, unported law
 
 - **Upstream source cite:** `src/storage/pinyin_parser2.cpp:412` and
@@ -634,15 +663,30 @@ Text, candidate type and counts cannot.
 - **What oxpinyin does instead:** implements the measured surface — the
   full-pinyin law, nested inside `USE_TONE` exactly like the pin
   (`pinyin_parser2.cpp:176-190` ported to `graph.rs::tone_split`) — and
-  leaves the double/zhuyin parsers untouched. The measured C1 surface of
+  leaves the BATCH double/zhuyin parsers untouched. The measured C1 surface of
   the uncovered-surface differential is full-pinyin only; porting the
   scheme-parser shapes unmeasured is exactly what would perturb the
   frozen double/zhuyin scheme sweeps.
-- **Externally observable:** yes — a frontend setting FORCE_TONE on a
-  double-pinyin scheme gets the full-pinyin behaviour (no effect without
-  `USE_TONE` on that seam) rather than the pin's length-3 gate. Recorded
-  as a scope boundary, not an oversight: the port lands with a measured
-  double/zhuyin FORCE_TONE differential. The full-pinyin seam itself
+- **Tier-A amendment (2026-08-29, the one-key seams).** The ABI
+  single-key entries DO carry their scheme laws now:
+  `pinyin_parse_double_pinyin` implements `DoublePinyinParser2::
+  parse_one_key`'s law — the length-3 `FORCE_TONE` gate at
+  `pinyin_parser2.cpp:412` (whose inner zero-tone check at `:448` is
+  dead: the digit parse above it already refuses every non-tone byte) —
+  and `pinyin_parse_chewing` implements the Simple/Discrete/CP26
+  `FORCE_TONE` placements (`zhuyin_parser2.cpp:178` nested under
+  `USE_TONE`; `:373`+`:387` unconditional for Discrete; `:602` nested).
+  Measured: `tools/bisection/run-key-surface-diff.sh` is IDENTICAL
+  against the pin (2,131 probe lines) over the 0x1aa / 0x1ea / 0x1ca
+  profiles across double schemes 1–6 and chewing keyboards
+  1–6, 8, 9. The batch double/zhuyin `parse` surfaces keep the original
+  scope boundary above (their builders are the frozen scheme sweeps).
+- **Externally observable:** on the one-key seams, no longer — both
+  engines answer the same under every FORCE_TONE profile (that was the
+  D3 gate). On the batch double/zhuyin seams, yes — a frontend setting
+  FORCE_TONE gets the full-pinyin behaviour (no effect without
+  `USE_TONE` on that seam) rather than the pin's length-3 gate, as
+  before. The full-pinyin seam itself
   matches the pin (capi e2e `parse_termination` module, harness phase-C
   0x60 probes closed).
 
