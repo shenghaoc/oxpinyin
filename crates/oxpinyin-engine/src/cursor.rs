@@ -179,6 +179,10 @@ fn range_check(input_len: usize, offset: usize) -> Result<(), EngineError> {
 /// non-empty matrix column, extends back over the zero-key run before it,
 /// and validates. The pin never answers false here — it aborts on the
 /// validation shape instead, answered as [`EngineError::ZeroKeyOffsetCheck`].
+///
+/// # Errors
+///
+/// Returns [`EngineError`] when the cursor cannot be resolved against the input and spans.
 pub fn lookup_offset_over_spans(
     input: &[u8],
     parsed_len: usize,
@@ -202,6 +206,10 @@ pub fn lookup_offset_over_spans(
 /// there), zero-start-walks the result, and validates both offsets. The pin
 /// never answers false here — validation aborts are
 /// [`EngineError::ZeroKeyOffsetCheck`].
+///
+/// # Errors
+///
+/// Returns [`EngineError`] when the offset cannot be resolved against the input and spans.
 pub fn left_word_offset_over_spans(
     input: &[u8],
     parsed_len: usize,
@@ -229,6 +237,10 @@ pub fn left_word_offset_over_spans(
 /// `Ok(None)` is the pin's one graceful false: no key starts at the
 /// (zero-run-skipped) position (`pinyin.cpp:3085-3086`). Validation aborts
 /// are [`EngineError::ZeroKeyOffsetCheck`].
+///
+/// # Errors
+///
+/// Returns [`EngineError`] when the offset cannot be resolved against the input and spans.
 pub fn right_word_offset_over_spans(
     input: &[u8],
     parsed_len: usize,
@@ -264,6 +276,10 @@ pub fn right_word_offset_over_spans(
 }
 
 /// [`lookup_offset_over_spans`] over the plain full-pinyin scan matrix.
+///
+/// # Errors
+///
+/// Returns [`EngineError`] when the cursor cannot be resolved against the input.
 pub fn lookup_offset_for_cursor(
     input: &[u8],
     options: OptionBits,
@@ -274,6 +290,10 @@ pub fn lookup_offset_for_cursor(
 }
 
 /// [`left_word_offset_over_spans`] over the plain full-pinyin scan matrix.
+///
+/// # Errors
+///
+/// Returns [`EngineError`] when the offset cannot be resolved against the input.
 pub fn left_word_offset(
     input: &[u8],
     options: OptionBits,
@@ -284,6 +304,10 @@ pub fn left_word_offset(
 }
 
 /// [`right_word_offset_over_spans`] over the plain full-pinyin scan matrix.
+///
+/// # Errors
+///
+/// Returns [`EngineError`] when the offset cannot be resolved against the input.
 pub fn right_word_offset(
     input: &[u8],
     options: OptionBits,

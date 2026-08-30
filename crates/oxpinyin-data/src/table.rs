@@ -200,6 +200,10 @@ pub type LookupTable = GenericLookupTable<DefaultStore>;
 
 impl<S: ReadStore> GenericLookupTable<S> {
     /// Open a store table file for reading.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TableError`] when the file cannot be opened or fails validation.
     pub fn open(path: &Path) -> Result<Self, TableError> {
         let mut entries = BTreeMap::new();
         for_each_row_with_store::<S, _, _>(path, |key, value| {
@@ -216,16 +220,28 @@ impl<S: ReadStore> GenericLookupTable<S> {
     ///
     /// Returns `None` if the key is not present. The bytes are borrowed from
     /// the in-memory map; they are not cloned.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TableError`] when the table cannot be read.
     pub fn get(&self, key: &[u8]) -> Result<Option<&[u8]>, TableError> {
         Ok(self.entries.get(key).map(Vec::as_slice))
     }
 
     /// Return the number of entries in the table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TableError`] when the table cannot be read.
     pub fn len(&self) -> Result<u64, TableError> {
         Ok(self.entries.len() as u64)
     }
 
     /// Returns `true` if the table is empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TableError`] when the table cannot be read.
     pub fn is_empty(&self) -> Result<bool, TableError> {
         Ok(self.entries.is_empty())
     }

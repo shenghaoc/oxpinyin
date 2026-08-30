@@ -105,6 +105,10 @@ pub trait Dictionary {
     type Error;
 
     /// Looks up entries matching `syllables`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error>;
 
     /// [`Self::lookup`] into a caller-owned buffer, which keeps capacity
@@ -113,6 +117,10 @@ pub trait Dictionary {
     /// The default copies [`Self::lookup`]'s vector. Implementors that
     /// already fill a `Vec` should override this and `clear`+`push` into
     /// `out` instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
     fn lookup_into(
         &self,
         syllables: &[Self::Syllable],
@@ -140,6 +148,10 @@ pub trait Dictionary {
     /// every window to the end of the input
     /// (`docs/findings/core-trait-seam.md`: the seam grows by defaulted
     /// methods only).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the dictionary backend cannot evaluate the prefix probe.
     fn phrase_prefix_exists(&self, _syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
         Ok(true)
     }
@@ -167,11 +179,19 @@ pub trait Dictionary {
     /// distinguished from `MERGED_DICTIONARY` by nibble alone
     /// (`docs/findings/phrase-union.md` §6.3). Defaulted so other
     /// implementors compile unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the addon backend cannot serve the lookup.
     fn lookup_addon(&self, _syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
         Ok(Vec::new())
     }
 
     /// [`Self::lookup_addon`] into a caller-owned buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the addon backend cannot serve the lookup.
     fn lookup_addon_into(
         &self,
         syllables: &[Self::Syllable],
@@ -185,6 +205,10 @@ pub trait Dictionary {
 
     /// Addon-facade `SEARCH_CONTINUED` probe, `false` for every existing
     /// implementor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the addon backend cannot evaluate the prefix probe.
     fn phrase_prefix_exists_addon(
         &self,
         _syllables: &[Self::Syllable],
@@ -206,6 +230,10 @@ pub trait Dictionary {
     /// Defaulted so existing implementors compile unchanged
     /// (`docs/findings/core-trait-seam.md`: the seam grows by defaulted
     /// methods only).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the backend cannot report the item count.
     fn phrase_index_item_count(&self) -> Result<u64, Self::Error> {
         Ok(0)
     }
@@ -279,11 +307,19 @@ pub trait UserModel {
     /// model cost would be a new weighting scheme. Implementors that hold
     /// counts expose them as [`UserCountDelta`]; the language model folds
     /// that overlay into the frozen interpolated formula.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the model backend cannot score the transition.
     fn score(&self, history: &[Self::Token], token: &Self::Token) -> Result<Cost, Self::Error>;
 
     /// Records an accepted `token` after `history`.
     ///
     /// Learning-off callers omit this operation entirely.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the model backend cannot record the observation.
     fn observe(&mut self, history: &[Self::Token], token: &Self::Token) -> Result<(), Self::Error>;
 }
 
@@ -366,6 +402,10 @@ pub trait LanguageModel {
 
     /// Returns the model cost for `token` after `history` with `edge_cost`
     /// available for deterministic composition.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the model backend cannot score the transition.
     fn score(
         &self,
         history: &[Self::Token],
@@ -383,6 +423,10 @@ pub trait LanguageModel {
     /// Defaulted so the frozen implementors and any third-party model keep
     /// compiling unchanged (`docs/findings/core-trait-seam.md`: the seam grows
     /// by defaulted methods only).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the model backend cannot read the unigram frequency.
     fn unigram_freq(&self, _token: &Self::Token) -> Result<Option<u64>, Self::Error> {
         Ok(None)
     }
@@ -400,6 +444,10 @@ pub trait LanguageModel {
     /// unchanged (`docs/findings/core-trait-seam.md`: the seam grows by
     /// defaulted methods only). A model answering `None` simply contributes
     /// no bigram term, which is the DYNAMIC_ADJUST-clear behaviour.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the model backend cannot read the merged-gram record.
     fn merged_successors(&self, _prev: &Self::Token) -> Result<Option<MergedGram>, Self::Error> {
         Ok(None)
     }
@@ -419,6 +467,10 @@ pub trait LanguageModel {
     ///
     /// Used only to put addon frequencies on a comparable scale. Defaulted
     /// to `None` so existing implementors compile unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the model backend cannot read the unigram total.
     fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {
         Ok(None)
     }
@@ -428,11 +480,19 @@ pub trait LanguageModel {
     /// `None` means no addon table; `Some(0)` is a loaded-table miss.
     /// Defaulted so existing implementors compile unchanged
     /// (`docs/findings/phrase-union.md` §6.4).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the addon model backend cannot read the unigram frequency.
     fn addon_unigram_freq(&self, _token: &Self::Token) -> Result<Option<u64>, Self::Error> {
         Ok(None)
     }
 
     /// Sum of loaded addon unigrams, when an addon set is loaded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the addon model backend cannot read the unigram total.
     fn addon_unigram_total(&self) -> Result<Option<u64>, Self::Error> {
         Ok(None)
     }
@@ -452,6 +512,10 @@ pub trait LanguageModel {
     /// unigram_poss < DBL_EPSILON` skips the step). A model that answers
     /// `None` overall — the default — carries no n-best cost data, and the
     /// engine's trellis yields no rows for it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the model backend cannot assemble the step costs.
     fn nbest_step_costs(
         &self,
         _prev: &Self::Token,
@@ -545,5 +609,9 @@ pub trait InputParser {
     type Error;
 
     /// Returns every valid segmentation of `input` in frozen path-set order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the input cannot be parsed under the scheme.
     fn parse(&self, input: &[u8]) -> Result<Vec<Self::Parse>, Self::Error>;
 }

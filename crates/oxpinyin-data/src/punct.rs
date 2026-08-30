@@ -26,6 +26,10 @@ impl PunctTable {
     }
 
     /// Opens an Option A `punct.redb`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the punctuation table cannot be opened or fails validation.
     pub fn open(path: &Path) -> Result<Self, DictError> {
         let mut by_token = BTreeMap::new();
         table::for_each_row(path, |key, value| {

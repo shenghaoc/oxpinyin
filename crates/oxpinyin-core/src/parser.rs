@@ -86,6 +86,10 @@ impl FullPinyinParser {
     /// Correction aliases and the parser-table ambiguity aliases become
     /// complete syllables only when their bit is set; matrix-level fuzzy
     /// alternates are not parser paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseError`] when the input violates the scheme's parse rules.
     pub fn parse_with_options(
         &self,
         input: &[u8],
