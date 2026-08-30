@@ -24,8 +24,8 @@
 # Exit: 0 IDENTICAL; 1 DIVERGE (count reported); 2 setup failure.
 
 set -uo pipefail
-cd "$(dirname "$0")"
-REPO_ROOT="$(cd ../.. && pwd)"
+cd "$(dirname "$0")" || { echo "cannot enter the script directory" >&2; exit 2; }
+REPO_ROOT="$(cd ../.. && pwd)" || { echo "cannot resolve the repository root" >&2; exit 2; }
 
 : "${ORACLE_LIB:?set ORACLE_LIB to the real libpinyin .so}"
 : "${SUBJECT_LIB:?set SUBJECT_LIB to the oxpinyin libpinyin_capi.so}"

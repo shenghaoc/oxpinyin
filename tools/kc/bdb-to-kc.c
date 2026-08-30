@@ -142,16 +142,20 @@ int main(int argc, char **argv) {
         return 1;
     }
     int64_t count = kcdbcount(dst);
+    if (count != records) {
+        fprintf(stderr, "destination holds %lld records, source had %ld\n",
+                (long long)count, records);
+        // A failed transcription must not leave a destination that looks
+        // like data (the header's contract).
+        drop_destination(dst, argv[2]);
+        free(spec);
+        return 1;
+    }
     kcdbclose(dst);
     kcdbdel(dst);
     free(spec);
 
     printf("transcribed %ld records (%ld successor items) into %s\n",
            records, items, argv[2]);
-    if (count != records) {
-        fprintf(stderr, "destination holds %lld records, source had %ld\n",
-                (long long)count, records);
-        return 1;
-    }
     return 0;
 }

@@ -44,10 +44,12 @@ use oxpinyin_store::{BigramDb, SingleGram};
 /// Whether `path` is a Kyoto Cabinet hash database, by its own magic:
 /// `KC\n\0` at offset 0 and the `HashDB` type byte at offset 8.
 fn is_kyoto_hash(path: &std::path::Path) -> bool {
-    let Ok(bytes) = std::fs::read(path) else {
+    use std::io::Read as _;
+    let Ok(mut file) = std::fs::File::open(path) else {
         return false;
     };
-    bytes.len() > 8 && bytes[..4] == *b"KC\n\0" && bytes[8] == 0x30
+    let mut head = [0_u8; 9];
+    file.read_exact(&mut head).is_ok() && head[..4] == *b"KC\n\0" && head[8] == 0x30
 }
 
 /// A Kyoto Cabinet `bigram.db`, or `None` with the skip already reported.

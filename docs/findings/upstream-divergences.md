@@ -726,9 +726,10 @@ Text, candidate type and counts cannot.
 - **libpinyin behaviour:** predicted candidates come back in the DBM's
   iteration order — backend-dependent, semantically arbitrary, different
   between the KC and tkrzw oracles themselves.
-- **oxpinyin behaviour:** the defined, build-stable text-ascending order
-  (token-ascending within one text) on every backend and on the compat
-  paths.
+- **oxpinyin behaviour:** the `(length desc, amplified-freq desc)`
+  ranking governs the emitted list; the text-ascending collection order
+  (token-ascending within one text) resolves only the ties that ranking
+  leaves — build-stable on every backend and on the compat paths.
 - **Externally observable:** candidate POSITIONS in the predicted list
   differ; the candidate set does not. Ruled intentional by the
   "Predicted-candidate tie order" entry; these measurements close R1's

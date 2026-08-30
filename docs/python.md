@@ -34,8 +34,10 @@ binary, so the comparison can never go stale against a golden file.
 
 ## Model and data requirements
 
-The engine opens *converted* oxpinyin data files; there is no dependency on a
-libpinyin installation:
+The engine opens data in either of two layouts; a libpinyin installation is
+never linked or executed — files are decoded at load time:
+
+**Native oxpinyin layout** — the *converted* oxpinyin data files:
 
 | File | Required | Purpose |
 |---|---|---|
@@ -49,6 +51,12 @@ libpinyin installation:
 `<ext>` names the compiled-in backend: `kct` (Kyoto Cabinet, the
 default), `redb` under `--no-default-features` (the portability
 fallback), `tkt` with the `tkrzw` feature, `lmdb` with `lmdb`.
+
+**libpinyin layout** — a real libpinyin data directory as installed by the
+distro's `libpinyin-data` package: `pinyin_index.bin`, `phrase_index.bin`,
+the content-table `.bin` files (`gb_char.bin`, `merged.bin`, …),
+`bigram.db` and `table.conf`. The layout is detected by file header, and
+the compat loader converts it to the same in-memory model at open time.
 
 A directory is converted from libpinyin-format sources by the repository's
 usual toolchain (`tools/model/fetch-model.sh` fetches the pinned model;

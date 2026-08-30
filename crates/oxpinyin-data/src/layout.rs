@@ -27,10 +27,12 @@
 //! |---|---|---|
 //! | Berkeley DB Hash | `0x00061561` | offset 12 |
 //! | Kyoto Cabinet | `KC\n\0` then `0x30` (Hash) or `0x31` (Tree) | offsets 0 and 8 |
+//! | tkrzw | `TkrzwHDB\n` | offset 0 |
 //!
-//! Both measured on this machine: the installed `libpinyin-data` package's
-//! 25.9 MB `bigram.db` carries the Berkeley DB magic, and files created by
-//! Kyoto Cabinet 1.2.80 carry `KC\n\0`.
+//! Each measured on this machine: the installed `libpinyin-data` package's
+//! 25.9 MB `bigram.db` carries the Berkeley DB magic, files created by
+//! Kyoto Cabinet 1.2.80 carry `KC\n\0`, and files written by tkrzw 1.0.32
+//! carry `TkrzwHDB\n`.
 //!
 //! # Where libpinyin's data actually is
 //!
@@ -195,10 +197,9 @@ impl fmt::Display for LayoutError {
                 write!(
                     f,
                     "; expected Berkeley DB's {DB_HASH_MAGIC:#010x} at offset 12, or \
-                     Kyoto Cabinet's \"KC\\n\\0\" at offset 0. libpinyin names this file \
-                     bigram.db whichever DBM it was built against, so the name says \
-                     nothing about the format — a third backend (tkrzw) produces a third \
-                     format under the same name"
+                     Kyoto Cabinet's \"KC\\n\\0\" or tkrzw's \"TkrzwHDB\\n\" at offset 0. \
+                     libpinyin names this file bigram.db whichever DBM it was built \
+                     against, so the name says nothing about the format"
                 )
             }
             Self::Io(error) => write!(f, "reading the data directory: {error}"),

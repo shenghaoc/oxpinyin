@@ -227,7 +227,7 @@ impl CapiContext {
     /// (`novel_types.h:43`, 1<<4) on the load path as it does on unload; per
     /// the availability class of `docs/findings/compatibility-policy.md` this
     /// answers `false` instead — the same bound [`CapiContext::unload_addon`]
-    /// applies. Without it an out-of-range index would silently load a stray
+    /// applies. Without it an out-of-range index would silently load a
     /// stray `addon_{index}_*` table on disk (whichever backend's
     /// extension `default_store_file` names) rather than being refused. A
     /// user-store-only context has no runtime, so it loads nothing.

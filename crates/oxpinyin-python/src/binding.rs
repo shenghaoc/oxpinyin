@@ -92,13 +92,19 @@ fn lock_error() -> PyErr {
     OxpinyinError::new_err("engine lock poisoned by a failed operation")
 }
 
-/// One opened oxpinyin engine over converted system data.
+/// One opened oxpinyin engine over oxpinyin or libpinyin system data.
 ///
-/// Create with a system data directory holding the ``pinyin_index``,
-/// ``phrase_index`` and ``bigram`` tables in the compiled-in backend's
-/// format (``.kct`` by default); pass ``user_dir`` to enable
-/// learning. Usable as a :pykeyword:`with` block, though nothing needs
-/// releasing — see :meth:`close`.
+/// Create with a system data directory in either supported layout; pass
+/// ``user_dir`` to enable learning. Usable as a :pykeyword:`with` block,
+/// though nothing needs releasing — see :meth:`close`.
+///
+/// * Native oxpinyin layout — the ``pinyin_index``, ``phrase_index`` and
+///   ``bigram`` tables in the compiled-in backend's format (``.kct`` by
+///   default).
+/// * libpinyin layout — a directory as installed by the distro's
+///   ``libpinyin-data`` package (``pinyin_index.bin``, ``phrase_index.bin``,
+///   the content-table ``.bin`` files and ``bigram.db``), detected by file
+///   header and decoded at load time.
 ///
 /// Shareable across threads one call at a time: every call takes an internal
 /// lock, so a single call is atomic, but a *sequence* of calls is not — the
