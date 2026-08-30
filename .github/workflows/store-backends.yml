@@ -1,25 +1,37 @@
 name: Store backends
 
-# Backend coverage for the four store backends on a rolling toolchain.
-# Kyoto Cabinet is the DEFAULT backend (the DBM the reference libpinyin
-# builds against); tkrzw and LMDB are the alternates; redb is the
-# pure-Rust portability fallback (--no-default-features). Four jobs:
-#   - store-features is a matrix over the four backends. Each child runs
-#     the whole workspace test suite under exactly ONE backend, on its own
-#     runner, so the four sweeps run in PARALLEL (fail-fast: false,
+# Backend coverage for the four peer store backends on a rolling
+# toolchain. The four peers (Kyoto Cabinet, redb, LMDB, tkrzw) are
+# equal implementations behind the store's trait surface; KC is the
+# workspace's default selection. Exactly one peer is compiled per
+# build — the exactly-one-backend invariant is enforced at compile
+# time by two `compile_error!` guards in `crates/oxpinyin-store/src/lib.rs`
+# — so cross-peer equivalence is proven by running the SAME test
+# suite through four separate builds, one per peer.
+#
+# Four jobs:
+#   - store-features is a matrix over the four peer backends. Each child
+#     runs the whole workspace test suite under exactly ONE peer, on its
+#     own runner, so the four sweeps run in PARALLEL (fail-fast: false,
 #     max-parallel: 4) instead of sequentially inside one job. Every pass
 #     decodes real queries through the fixture tables, not just the store's
 #     own unit tests. The matrix value only selects one of four fixed,
 #     repository-controlled cargo invocations (see the case in the test
 #     step); no command is built from untrusted event input.
-#   - store-conformance is an INDEPENDENT job — it has no needs edge to the
+#   - backend-matrix is an INDEPENDENT job — it has no needs edge to the
 #     matrix, so it schedules concurrently with all four backend children.
-#     It runs the cross-backend conformance suite: one oxpinyin-store binary
-#     with kyotocabinet, tkrzw and lmdb compiled in together.
+#     It runs `tools/store/backend-matrix.sh`, which proves the four valid
+#     peer selections each `cargo check --workspace` cleanly AND that
+#     every one of the six pairwise plus one three-way combinations plus
+#     the zero-backend build is refused by the exactly-one-backend
+#     `compile_error!` guards. This is what replaced the old
+#     "cross-backend conformance in one binary" job, which is
+#     architecturally impossible under exactly-one-backend.
 #   - store-backends-gate is the stable aggregate status check. It runs no
-#     tests; it only fails unless every backend child AND store-conformance
-#     succeeded, so branch protection can keep requiring the historical
-#     "store backends (kyotocabinet / redb / tkrzw / lmdb)" context.
+#     tests; it only fails unless every backend child AND the
+#     backend-matrix job succeeded, so branch protection can keep requiring
+#     the historical "store backends (kyotocabinet / redb / tkrzw / lmdb)"
+#     context.
 #   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan and UBSan.
 #
 # ROLLING TOOLCHAIN, deliberately unpinned: the jobs run inside
@@ -205,16 +217,24 @@ jobs:
             echo "| ${BACKEND} | ${{ steps.backend-test.outputs.elapsed || '—' }}s |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  store-conformance:
-    # The cross-backend conformance suite, as its own independent job: one
-    # oxpinyin-store binary with kyotocabinet, tkrzw and lmdb compiled in
-    # together. It has NO needs edge to store-features, so it runs
-    # concurrently with the four backend children rather than after them.
-    name: store conformance (all backends)
+  backend-matrix:
+    # Replaces the historical `store-conformance` job. Under
+    # exactly-one-backend the "one binary with three backends compiled
+    # in" build is architecturally impossible (a `compile_error!` in
+    # `crates/oxpinyin-store/src/lib.rs` refuses it), so the same
+    # `tools/store/backend-matrix.sh` script that developers run locally
+    # runs here instead: it proves the four valid peer selections each
+    # `cargo check --workspace` cleanly AND that every one of the six
+    # pairwise combinations, a three-way combination, and the
+    # zero-backend build are refused by the guards.
+    #
+    # Independent job: no needs edge to store-features, so it runs
+    # concurrently with the four backend children.
+    name: backend-matrix (exactly-one-backend gate)
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see the header comment
-    timeout-minutes: 45
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -245,88 +265,91 @@ jobs:
           . "$HOME/.cargo/env"
 
       - name: Install build dependencies (apt)
-        # The conformance binary compiles kyotocabinet + tkrzw + lmdb together,
-        # so it needs the same C backend headers/libraries as the matrix job.
-        # libkyotocabinet-dev + libtkrzw-dev (+ its compression -dev packages)
-        # and libclang-dev for bindgen; lmdb rides on heed and is pure Rust.
+        # The matrix `cargo check`s the four valid peer selections in
+        # turn, so it needs every peer's build-time C dependencies:
+        # libkyotocabinet-dev + libtkrzw-dev (+ its compression -dev
+        # packages) and libclang-dev for bindgen; lmdb rides on heed and
+        # is pure Rust; redb is pure Rust.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          # Distinct cache identity from every backend child: this is the
-          # all-backends feature configuration, not one of the four.
-          key: store-conformance
+          # Distinct cache identity from every backend child: this job
+          # `cargo check`s four peer configurations in one script.
+          key: backend-matrix
 
-      - name: Cross-backend conformance suite
-        id: conformance-test
+      - name: Exactly-one-backend invariant (13-case matrix)
+        id: matrix-test
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          echo "--- cross-backend conformance (one binary, all backends) ---"
-          cargo test --locked -p oxpinyin-store --features "kyotocabinet,tkrzw,lmdb"
+          tools/store/backend-matrix.sh
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
         if: always()
         run: |
           {
-            echo "## store conformance (all backends)"
+            echo "## backend-matrix (exactly-one-backend gate)"
             echo ""
             echo "Result: **$([ '${{ job.status }}' = 'success' ] && echo 'passed' || echo 'FAILED')**"
             echo ""
-            echo "One oxpinyin-store binary with kyotocabinet, tkrzw and lmdb"
-            echo "compiled in together — the cross-backend conformance suite."
+            echo "\`tools/store/backend-matrix.sh\` — proves the four valid"
+            echo "peer selections each \`cargo check --workspace\` cleanly and"
+            echo "that every multi-peer combination plus the zero-backend"
+            echo "build is refused by the exactly-one-backend guards."
             echo ""
             echo "| Phase | Wall clock |"
             echo "|---|---:|"
-            echo "| conformance suite | ${{ steps.conformance-test.outputs.elapsed || '—' }}s |"
+            echo "| 13-case matrix | ${{ steps.matrix-test.outputs.elapsed || '—' }}s |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   store-backends-gate:
-    # Stable aggregate status check. This preserves the historical job
-    # display name so branch-protection required-status-check contexts keep
-    # resolving after the store-features job became a matrix. It builds and
-    # tests nothing: it only aggregates the results of the four backend
-    # children and the conformance job via the documented
-    # needs.<job>.result semantics. For a matrix upstream, that result is
-    # success only when EVERY matrix child succeeded, and failure if any
-    # child failed — so this gate is red unless all four backends and the
-    # conformance run are green.
+    # Stable aggregate status check. Preserves the historical job
+    # display name so branch-protection required-status-check contexts
+    # keep resolving after the store-features job became a matrix and
+    # after `store-conformance` was replaced by `backend-matrix`. It
+    # builds and tests nothing; it only aggregates the results of the
+    # four backend children and the backend-matrix job via the
+    # documented `needs.<job>.result` semantics. For a matrix upstream,
+    # that result is success only when EVERY matrix child succeeded, and
+    # failure if any child failed — so this gate is red unless all four
+    # peer builds and the exactly-one-backend gate are green.
     name: store backends (kyotocabinet / redb / tkrzw / lmdb)
     runs-on: ubuntu-latest
     if: ${{ always() }}
     needs:
       - store-features
-      - store-conformance
+      - backend-matrix
     defaults:
       run:
         shell: bash
     steps:
-      - name: Aggregate the backend and conformance results
+      - name: Aggregate the backend and matrix results
         # Job results are bound through env rather than spliced into the
         # script body; the values are the closed set
         # success/failure/cancelled/skipped.
         env:
           FEATURES_RESULT: ${{ needs.store-features.result }}
-          CONFORMANCE_RESULT: ${{ needs.store-conformance.result }}
+          MATRIX_RESULT: ${{ needs.backend-matrix.result }}
         run: |
           set -euo pipefail
           echo "store-features (matrix): ${FEATURES_RESULT}"
-          echo "store-conformance:       ${CONFORMANCE_RESULT}"
+          echo "backend-matrix:          ${MATRIX_RESULT}"
           {
             echo "## store backends (aggregate gate)"
             echo ""
             echo "This job runs no tests. It is the stable aggregate status"
-            echo "check that fails unless every backend matrix child AND the"
-            echo "cross-backend conformance job succeeded."
+            echo "check that fails unless every peer matrix child AND the"
+            echo "exactly-one-backend gate succeeded."
             echo ""
             echo "| Upstream job | Result |"
             echo "|---|---|"
-            echo "| store-features (matrix, all four backends) | ${FEATURES_RESULT} |"
-            echo "| store-conformance | ${CONFORMANCE_RESULT} |"
+            echo "| store-features (matrix, all four peers) | ${FEATURES_RESULT} |"
+            echo "| backend-matrix (exactly-one-backend gate) | ${MATRIX_RESULT} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "${FEATURES_RESULT}" != "success" ] || [ "${CONFORMANCE_RESULT}" != "success" ]; then
-            echo "::error::store-backends gate failed: store-features=${FEATURES_RESULT}, store-conformance=${CONFORMANCE_RESULT}" >&2
+          if [ "${FEATURES_RESULT}" != "success" ] || [ "${MATRIX_RESULT}" != "success" ]; then
+            echo "::error::store-backends gate failed: store-features=${FEATURES_RESULT}, backend-matrix=${MATRIX_RESULT}" >&2
             exit 1
           fi
           echo "store-backends gate: all upstream jobs succeeded"
