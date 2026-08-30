@@ -564,7 +564,7 @@ pub fn user_phrase_rows(context: *mut PinyinContext) -> Option<Vec<ExportedPhras
         rows.push(ExportedPhrase {
             text: ffi::take_owned_cstr(phrase),
             pinyin: ffi::take_owned_cstr(pinyin),
-            count: count.max(0) as u64,
+            count: u64::try_from(count).unwrap_or(0),
         });
     }
     iterators::pinyin_end_get_phrases(iter);

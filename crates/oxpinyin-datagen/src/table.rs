@@ -49,7 +49,7 @@ pub fn parse_table_line(line: &str) -> Option<TableRow> {
         pinyin: pinyin.to_owned(),
         phrase: phrase.to_owned(),
         token,
-        count: count as u64,
+        count: u64::try_from(count).unwrap_or(0),
     })
 }
 
