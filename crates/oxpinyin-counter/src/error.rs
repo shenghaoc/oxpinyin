@@ -34,7 +34,9 @@ impl fmt::Display for CounterError {
                 write!(formatter, "segmented line {line} is not `token phrase`")
             }
             Self::Segment(error) => write!(formatter, "phrase index error: {error}"),
-            Self::Io { path, source } => write!(formatter, "cannot read {path:?}: {source}"),
+            Self::Io { path, source } => {
+                write!(formatter, "cannot read {}: {source}", path.display())
+            }
         }
     }
 }

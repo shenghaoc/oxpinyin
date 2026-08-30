@@ -38,7 +38,9 @@ impl fmt::Display for SegmentError {
             Self::Table(error) => write!(formatter, "table error: {error}"),
             Self::LanguageModel(error) => write!(formatter, "language model error: {error}"),
             Self::Interpolation(error) => write!(formatter, "interpolation2 error: {error}"),
-            Self::Io { path, source } => write!(formatter, "cannot read {path:?}: {source}"),
+            Self::Io { path, source } => {
+                write!(formatter, "cannot read {}: {source}", path.display())
+            }
             Self::MissingPath { detail } => write!(formatter, "{detail}"),
             Self::Config(detail) => write!(formatter, "{detail}"),
         }

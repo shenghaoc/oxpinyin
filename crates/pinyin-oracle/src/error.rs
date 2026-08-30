@@ -132,11 +132,16 @@ impl fmt::Display for OracleError {
             Self::ManifestUnreadable { path, source } => {
                 write!(
                     formatter,
-                    "cannot read oracle pin manifest {path:?}: {source}"
+                    "cannot read oracle pin manifest {}: {source}",
+                    path.display()
                 )
             }
             Self::ManifestNotUtf8 { path } => {
-                write!(formatter, "oracle pin manifest {path:?} is not valid UTF-8")
+                write!(
+                    formatter,
+                    "oracle pin manifest {} is not valid UTF-8",
+                    path.display()
+                )
             }
             Self::ManifestFieldMissing { field } => {
                 write!(formatter, "oracle pin manifest omits field {field}")
@@ -153,7 +158,7 @@ impl fmt::Display for OracleError {
                 write!(formatter, "oracle pin manifest repeats field {field}")
             }
             Self::PrefixArtefactMissing { path } => {
-                write!(formatter, "oracle prefix is missing {path:?}")
+                write!(formatter, "oracle prefix is missing {}", path.display())
             }
             Self::PrefixNotFound { tried } => write!(
                 formatter,
@@ -164,14 +169,20 @@ impl fmt::Display for OracleError {
                 write!(formatter, "{what} contains an interior NUL byte")
             }
             Self::PathNotRepresentable { path } => {
-                write!(formatter, "path {path:?} cannot cross the C boundary")
+                write!(
+                    formatter,
+                    "path {} cannot cross the C boundary",
+                    path.display()
+                )
             }
             Self::ContextInitFailed {
                 system_dir,
                 user_dir,
             } => write!(
                 formatter,
-                "pinyin_init failed for system {system_dir:?} and user {user_dir:?}"
+                "pinyin_init failed for system {} and user {}",
+                system_dir.display(),
+                user_dir.display()
             ),
             Self::InstanceAllocFailed => formatter.write_str("pinyin_alloc_instance failed"),
             Self::DynamicAdjustRejected { flags } => write!(

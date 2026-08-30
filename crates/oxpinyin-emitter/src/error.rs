@@ -29,7 +29,9 @@ impl fmt::Display for EmitterError {
         match self {
             Self::Segment(error) => write!(formatter, "phrase index error: {error}"),
             Self::Count(error) => write!(formatter, "count error: {error}"),
-            Self::Io { path, source } => write!(formatter, "cannot write {path:?}: {source}"),
+            Self::Io { path, source } => {
+                write!(formatter, "cannot write {}: {source}", path.display())
+            }
         }
     }
 }

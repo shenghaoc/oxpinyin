@@ -115,8 +115,9 @@ fn main() -> ExitCode {
         .collect();
     if !missing.is_empty() {
         eprintln!(
-            "missing {missing:?} in {dir:?}; copy or symlink the required \
-             tables from the committed fixtures/w3/"
+            "missing {missing:?} in {}; copy or symlink the required \
+             tables from the committed fixtures/w3/",
+            dir.display()
         );
         return ExitCode::from(2);
     }
@@ -126,12 +127,15 @@ fn main() -> ExitCode {
         &dir.join(default_store_file("phrase_index")),
     )
     .unwrap_or_else(|error| {
-        eprintln!("cannot open system dictionary from {dir:?}: {error}");
+        eprintln!(
+            "cannot open system dictionary from {}: {error}",
+            dir.display()
+        );
         std::process::exit(2);
     });
     let mut lm = BigramLanguageModel::open(&dir.join(default_store_file("bigram"))).unwrap_or_else(
         |error| {
-            eprintln!("cannot open bigram model from {dir:?}: {error}");
+            eprintln!("cannot open bigram model from {}: {error}", dir.display());
             std::process::exit(2);
         },
     );
