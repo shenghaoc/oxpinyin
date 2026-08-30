@@ -119,22 +119,26 @@ fn bake_pkg_config_template() {
 }
 
 /// The `@DATABASE_FORMAT@` value. An explicit `LIBPINYIN_DATABASE_FORMAT`
-/// wins — a packager shipping data in another engine's format (e.g.
-/// `KyotoCabinet`) sets it so fcitx's cmake probe reads the
-/// right backend. Otherwise the active backend feature, defaulting to `redb`:
-/// oxpinyin's native store and, until a backend feature is forwarded onto
-/// this crate, the only one reachable here.
+/// wins — a packager shipping data in another engine's format sets it so
+/// fcitx's cmake probe reads the right backend. Otherwise, the active
+/// backend feature of THIS crate, matching `oxpinyin_store::DefaultStore`:
+/// Kyoto Cabinet is on by default (the DBM the reference libpinyin builds
+/// against on the primary target distros), redb is the pure-Rust
+/// portability fallback under `--no-default-features --features redb`.
 fn database_format() -> String {
     if let Ok(explicit) = env::var("LIBPINYIN_DATABASE_FORMAT")
         && !explicit.trim().is_empty()
     {
         return explicit;
     }
-    // `CARGO_FEATURE_<NAME>` is set for each enabled feature of THIS crate.
-    // No backend feature is forwarded onto oxpinyin-capi today, so these stay
-    // unset and the default holds; the checks keep the mapping correct if one
-    // is wired through later.
-    if env::var_os("CARGO_FEATURE_TKRZW").is_some() {
+    // `CARGO_FEATURE_<NAME>` is set for each enabled feature of THIS crate,
+    // which now forwards the backend selection down the chain. The
+    // precedence mirrors `oxpinyin_store::DefaultStore` so a multi-feature
+    // build resolves deterministically (kyotocabinet > tkrzw > lmdb >
+    // redb).
+    if env::var_os("CARGO_FEATURE_KYOTOCABINET").is_some() {
+        "KyotoCabinet".to_owned()
+    } else if env::var_os("CARGO_FEATURE_TKRZW").is_some() {
         "Tkrzw".to_owned()
     } else if env::var_os("CARGO_FEATURE_LMDB").is_some() {
         "LMDB".to_owned()

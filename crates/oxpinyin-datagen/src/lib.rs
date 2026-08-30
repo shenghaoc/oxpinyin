@@ -12,9 +12,10 @@
 //! ```text
 //! pinned model20 ──► libpinyin's own build ──► libpinyin tables ─┐
 //!        │                                                        ├─► differential
-//!        ├──► oxpinyin-datagen (redb)  ──► redb tables ──────────┤
+//!        ├──► oxpinyin-datagen (kyotocabinet, default) ► KC tables┤
+//!        ├──► oxpinyin-datagen (tkrzw) ──► Tkrzw tables ─────────┤
 //!        ├──► oxpinyin-datagen (lmdb)  ──► LMDB tables ──────────┤
-//!        └──► oxpinyin-datagen (tkrzw) ──► Tkrzw tables ─────────┘
+//!        └──► oxpinyin-datagen (redb, portability) ► redb tables ┘
 //! ```
 //!
 //! This replaces the retired `oxpinyin-migrate` route, which exported the
@@ -44,7 +45,8 @@
 //!
 //! Entries are emitted in ascending key-byte order with frozen value
 //! layouts, so repeated runs over the same archive produce identical tables
-//! (byte-identical for redb; key/value-stream identical across backends).
+//! (key/value-stream identical across every backend; the on-disk container
+//! byte layout depends on the writing DBM's own conventions).
 //!
 //! This crate is data-prep tooling for packagers, CI, and differentials; it
 //! never ships in an oxpinyin installation.

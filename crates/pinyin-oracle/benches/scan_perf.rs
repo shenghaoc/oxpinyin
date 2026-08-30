@@ -14,7 +14,9 @@ use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta};
-use oxpinyin_data::{BigramLanguageModel, LmError, SystemDictionary, parse_interpolation2};
+use oxpinyin_data::{
+    BigramLanguageModel, LmError, SystemDictionary, default_store_file, parse_interpolation2,
+};
 use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use oxpinyin_user::{SENTENCE_START, UserStore};
 
@@ -89,20 +91,24 @@ impl LanguageModel for BenchLm<'_> {
 fn load_scoring_tables() -> (SystemDictionary, BigramLanguageModel) {
     let export = harness::export_dir();
     let dict = SystemDictionary::open(
-        &export.join("pinyin_index.redb"),
-        &export.join("phrase_index.redb"),
+        &export.join(default_store_file("pinyin_index")),
+        &export.join(default_store_file("phrase_index")),
     )
     .expect("SystemDictionary opens");
-    let mut lm =
-        BigramLanguageModel::open(&export.join("bigram.redb")).expect("BigramLanguageModel opens");
+    let mut lm = BigramLanguageModel::open(&export.join(default_store_file("bigram")))
+        .expect("BigramLanguageModel opens");
     lm.set_unigrams_from_dict(&dict);
     (dict, lm)
 }
 
 fn bench_store_path(tag: &str) -> TempStorePath {
+    // Suffix follows the compiled-in backend (e.g. `.kct` under the KC
+    // default) — the file is opened through `UserStore`, which uses the
+    // same backend, so the extension is naming only.
     let path = std::env::temp_dir().join(format!(
-        "pinyin-oracle-decode-pass-{tag}-{}.redb",
-        std::process::id()
+        "pinyin-oracle-decode-pass-{tag}-{}.{}",
+        std::process::id(),
+        oxpinyin_data::DEFAULT_STORE_EXT,
     ));
     let _ = std::fs::remove_file(&path);
     TempStorePath(path)

@@ -367,9 +367,13 @@ cases, uninit reads, invalid mem::forget-style leaks under `-Zmiri-track-raw`
 support (file I/O needs isolation flags). For this workspace:
 
 - First-party unsafe is FFI-dominated → largely out of Miri's reach.
-- Reachable valuable targets: `oxpinyin-store` default (redb, pure Rust)
-  tests; the safe-core fuzz corpus replayed under Miri (parser/scheme/
-  codec are pure functions — ideal); `oxpinyin-core` graph/k-best invariants.
+- Reachable valuable targets: `oxpinyin-store` under
+  `--no-default-features --features redb` (the pure-Rust portability
+  backend) tests; the safe-core fuzz corpus replayed under Miri
+  (parser/scheme/codec are pure functions — ideal); `oxpinyin-core`
+  graph/k-best invariants. Miri cannot see the KC/Tkrzw/LMDB C sides —
+  those still ship as the native default here, and their integrity is
+  covered by the ABI smoke gate and integration tests, not Miri.
 - Cost: nightly-only, ~20–100× slowdown, scheduled lane only.
 
 **Verdict: ADOPT SELECTIVELY (scheduled)** — `cargo +nightly miri test -p

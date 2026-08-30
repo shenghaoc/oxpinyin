@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use oxpinyin_core::{OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_UE_VE};
-use oxpinyin_data::{BigramLanguageModel, SystemDictionary};
+use oxpinyin_data::{BigramLanguageModel, SystemDictionary, default_store_file};
 use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use pinyin_oracle::corpus;
 
@@ -65,9 +65,9 @@ fn export_dir() -> Result<PathBuf, String> {
     let dir = std::env::var_os("PINYIN_EXPORT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new("/tmp/oxpinyin-export").to_path_buf());
-    if ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"]
+    if ["pinyin_index", "phrase_index", "bigram"]
         .iter()
-        .all(|name| dir.join(name).exists())
+        .all(|stem| dir.join(default_store_file(stem)).exists())
     {
         Ok(dir)
     } else {
@@ -108,11 +108,11 @@ fn open_env() -> Result<TailEnv, String> {
     };
 
     let dict = SystemDictionary::open(
-        &dir.join("pinyin_index.redb"),
-        &dir.join("phrase_index.redb"),
+        &dir.join(default_store_file("pinyin_index")),
+        &dir.join(default_store_file("phrase_index")),
     )
     .map_err(|error| format!("cannot open SystemDictionary: {error}"))?;
-    let mut lm = BigramLanguageModel::open(&dir.join("bigram.redb"))
+    let mut lm = BigramLanguageModel::open(&dir.join(default_store_file("bigram")))
         .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
     lm.set_unigrams_from_interpolation2(&model_dir.join("interpolation2.text"))
         .map_err(|error| format!("cannot parse interpolation2: {error}"))?;

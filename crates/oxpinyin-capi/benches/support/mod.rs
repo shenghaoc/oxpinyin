@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+use oxpinyin_data::default_store_file;
 use pinyin_capi::{pinyin_fini, pinyin_init};
 
 /// Opaque `pinyin_context_t *`. C ABI symbols are `#[no_mangle]` on the
@@ -91,14 +92,18 @@ pub const GUESS_MID_OFFSET: usize = 5;
 /// System phrase token used by the scan-perf populated-store arm.
 pub const HOT_TOKEN: u32 = 0x0100_1225;
 
-/// `/tmp/oxpinyin-export` or `$PINYIN_EXPORT_DIR`.
+/// `/tmp/oxpinyin-export` or `$PINYIN_EXPORT_DIR`. The tables are opened
+/// through the compiled-in backend, so their extension follows
+/// [`default_store_file`] (`.kct` under the KC default, `.redb` under
+/// `--no-default-features --features redb`, …).
 pub fn export_dir() -> PathBuf {
     let dir = std::env::var_os("PINYIN_EXPORT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp/oxpinyin-export"));
-    for name in ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"] {
+    for stem in ["pinyin_index", "phrase_index", "bigram"] {
+        let name = default_store_file(stem);
         assert!(
-            dir.join(name).is_file(),
+            dir.join(&name).is_file(),
             "exported tables missing at {} ({name}); tables are committed under fixtures/w3/",
             dir.display()
         );
@@ -220,8 +225,10 @@ fn link_or_copy(src: &Path, dst: &Path) {
     });
 }
 
-/// One directory that `pinyin_init` can open: exported redb tables plus
-/// the pinned `interpolation2.text`.
+/// One directory that `pinyin_init` can open: exported tables in the
+/// compiled-in backend's format (`.kct` under the KC default, `.redb`
+/// under `--no-default-features --features redb`, …) plus the pinned
+/// `interpolation2.text`.
 pub fn staged_system_dir() -> &'static Path {
     static STAGED: OnceLock<PathBuf> = OnceLock::new();
     STAGED
@@ -232,8 +239,9 @@ pub fn staged_system_dir() -> &'static Path {
                 std::env::temp_dir().join(format!("oxpinyin-stage2-system-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&staged);
             std::fs::create_dir_all(&staged).expect("stage system dir");
-            for name in ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"] {
-                link_or_copy(&export.join(name), &staged.join(name));
+            for stem in ["pinyin_index", "phrase_index", "bigram"] {
+                let name = default_store_file(stem);
+                link_or_copy(&export.join(&name), &staged.join(&name));
             }
             link_or_copy(
                 &model.join("interpolation2.text"),

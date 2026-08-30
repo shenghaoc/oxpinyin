@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
-use oxpinyin_data::{BigramLanguageModel, LookupTable, SystemDictionary};
+use oxpinyin_data::{BigramLanguageModel, LookupTable, SystemDictionary, default_store_file};
 use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use pinyin_oracle::model_cache;
 
@@ -38,14 +38,18 @@ pub const CYCLE_INPUTS: &[&str] = &[
     "chuaipengdengzaimiu",
 ];
 
-/// `/tmp/oxpinyin-export` or `$PINYIN_EXPORT_DIR`.
+/// `/tmp/oxpinyin-export` or `$PINYIN_EXPORT_DIR`. The tables are opened
+/// through the compiled-in backend, so their extension follows
+/// [`default_store_file`] (`.kct` under the KC default, `.redb` under
+/// `--no-default-features --features redb`, …).
 pub fn export_dir() -> PathBuf {
     let dir = std::env::var_os("PINYIN_EXPORT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp/oxpinyin-export"));
-    for name in ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"] {
+    for stem in ["pinyin_index", "phrase_index", "bigram"] {
+        let name = default_store_file(stem);
         assert!(
-            dir.join(name).is_file(),
+            dir.join(&name).is_file(),
             "exported tables missing at {} ({name}); tables are committed under fixtures/w3/",
             dir.display()
         );
@@ -65,12 +69,12 @@ pub fn load_real_tables() -> (SystemDictionary, BigramLanguageModel) {
     let export = export_dir();
     let model = model_dir();
     let dict = SystemDictionary::open(
-        &export.join("pinyin_index.redb"),
-        &export.join("phrase_index.redb"),
+        &export.join(default_store_file("pinyin_index")),
+        &export.join(default_store_file("phrase_index")),
     )
     .expect("SystemDictionary opens");
-    let mut lm =
-        BigramLanguageModel::open(&export.join("bigram.redb")).expect("BigramLanguageModel opens");
+    let mut lm = BigramLanguageModel::open(&export.join(default_store_file("bigram")))
+        .expect("BigramLanguageModel opens");
     lm.set_unigrams_from_interpolation2(&model.join("interpolation2.text"))
         .expect("interpolation2.text parses");
     assert!(
@@ -184,7 +188,8 @@ where
 /// Rebuilds the two prefix-probe tables the same way `SystemDictionary` does.
 pub fn load_prefix_tables() -> (Box<[String]>, Box<[String]>) {
     let export = export_dir();
-    let index = LookupTable::open(&export.join("pinyin_index.redb")).expect("pinyin_index");
+    let index =
+        LookupTable::open(&export.join(default_store_file("pinyin_index"))).expect("pinyin_index");
     let mut pinyin_keys = Vec::new();
     let mut initial_keys = Vec::new();
     for (key, _value) in index.iter() {

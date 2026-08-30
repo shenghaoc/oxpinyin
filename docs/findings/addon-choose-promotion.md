@@ -60,9 +60,12 @@ facade and records the constraint under the promoted token — and a later
 
 ## 2. oxpinyin mapping
 
-The default facade's writable, persisted phrase index is the redb user store
-(`oxpinyin-user`); nibbles 6/7 already live there and `addon.bin` (nibble 5) is
-a `USER_FILE` of the same facade, so promotion writes there too:
+The default facade's writable, persisted phrase index is the user store
+(`oxpinyin-user`), served by `oxpinyin_store::DefaultStore` — Kyoto Cabinet
+under the workspace's default features, redb under
+`--no-default-features --features redb`; nibbles 6/7 already live there and
+`addon.bin` (nibble 5) is a `USER_FILE` of the same facade, so promotion
+writes there too:
 
 - `UserStore::promote_addon_phrase(text, readings, unigram)`
   (`crates/oxpinyin-user/src/store.rs`) allocates the next nibble-5 token, writes

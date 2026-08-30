@@ -137,20 +137,21 @@ it (hence the overwrite), but a future cargo-c that honours it would drop
 the redundant first write.
 
 **The `database_format` caveat.** build.rs sets it to the active backend
-— `redb` by default (oxpinyin's native store, and until a backend feature
-is forwarded onto `oxpinyin-capi`, the only one reachable here), `LMDB`
-or `Tkrzw` when such a feature is enabled. A packager building the drop-in
-against another engine's data (`KyotoCabinet`, `Tkrzw`) must set
+of `oxpinyin-capi`, mirroring `oxpinyin_store::DefaultStore` — `KyotoCabinet`
+by default (the DBM the reference libpinyin builds against on the primary
+target distros), `Tkrzw` / `LMDB` when the corresponding backend feature is
+selected, and `redb` under `--no-default-features --features redb` (the
+pure-Rust portability fallback). A packager shipping data in a specific
+engine's format who wants to override that mapping sets
 `LIBPINYIN_DATABASE_FORMAT=<name>` at build time; otherwise the variable
-reads `redb` — accurate for oxpinyin's own data, but not what fcitx's
-probe expects when the shipped data is in a different format.
+reads whatever backend the drop-in was compiled with.
 
 **Gate.** After `tools/packaging/install.sh --prefix=$P` (with
 `PKG_CONFIG_PATH=$P/lib/pkgconfig`):
 
 ```console
 $ pkg-config --variable=pkgdatadir libpinyin       → $P/lib/libpinyin
-$ pkg-config --variable=database_format libpinyin  → redb
+$ pkg-config --variable=database_format libpinyin  → KyotoCabinet
 $ pkg-config --variable=exec_prefix libpinyin      → $P
 $ pkg-config --libs libpinyin                      → -lpinyin -lglib-2.0
 $ pkg-config --modversion libpinyin                → 2.11.91

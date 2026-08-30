@@ -15,7 +15,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use oxpinyin_core::scoring::ScoringConfig;
-use oxpinyin_data::{BigramLanguageModel, SystemDictionary};
+use oxpinyin_data::{BigramLanguageModel, SystemDictionary, default_store_file};
 use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use pinyin_oracle::corpus;
 
@@ -108,8 +108,9 @@ fn pct(n: usize, d: usize) -> usize {
 
 fn main() -> ExitCode {
     let dir = Path::new("/tmp/oxpinyin-export");
-    let missing: Vec<&str> = ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"]
+    let missing: Vec<String> = ["pinyin_index", "phrase_index", "bigram"]
         .into_iter()
+        .map(default_store_file)
         .filter(|table| !dir.join(table).is_file())
         .collect();
     if !missing.is_empty() {
@@ -121,17 +122,19 @@ fn main() -> ExitCode {
     }
 
     let dict = SystemDictionary::open(
-        &dir.join("pinyin_index.redb"),
-        &dir.join("phrase_index.redb"),
+        &dir.join(default_store_file("pinyin_index")),
+        &dir.join(default_store_file("phrase_index")),
     )
     .unwrap_or_else(|error| {
         eprintln!("cannot open system dictionary from {dir:?}: {error}");
         std::process::exit(2);
     });
-    let mut lm = BigramLanguageModel::open(&dir.join("bigram.redb")).unwrap_or_else(|error| {
-        eprintln!("cannot open bigram model from {dir:?}: {error}");
-        std::process::exit(2);
-    });
+    let mut lm = BigramLanguageModel::open(&dir.join(default_store_file("bigram"))).unwrap_or_else(
+        |error| {
+            eprintln!("cannot open bigram model from {dir:?}: {error}");
+            std::process::exit(2);
+        },
+    );
     lm.set_unigrams_from_dict(&dict);
     let mut session =
         Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm).expect("session");
