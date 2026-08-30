@@ -88,7 +88,7 @@ at the door.
 
 `pinyin-diff-v1`. One LF-terminated line per corpus input, TAB-separated
 `key=value` fields. Escaping is exactly `pinyin-capture-v1`'s, from
-`docs/findings/capture-fixtures.md`: `\\`, `\t`, `\r`, `\n` and `\xNN` for other
+`docs/testing/capture-fixtures.md`: `\\`, `\t`, `\r`, `\n` and `\xNN` for other
 control bytes. Reusing that convention rather than inventing one means the
 capture fixtures and the differential logs can be read by the same tooling.
 

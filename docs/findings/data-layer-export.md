@@ -13,8 +13,8 @@ summarised at the end so the replacement is legible on its own.
 ## Approach (historical — how the frozen tables were derived)
 
 Every value in the tables frozen under `fixtures/w3/` was obtained from the
-pinned oracle (`docs/findings/oracle-environment.md`) **through its public
-C ABI** — the same header subset frozen in `docs/findings/oracle-ffi-seam.md`,
+pinned oracle (`docs/testing/oracle-environment.md`) **through its public
+C ABI** — the same header subset frozen in `docs/testing/oracle-ffi-seam.md`,
 extended by the export/token functions listed below. No upstream translation
 unit is read, no internal file format of libpinyin is interpreted, with the
 single documented exception of the bigram byte format, which is frozen here

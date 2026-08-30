@@ -3,7 +3,7 @@
 Date: 2026-08-14 · Decision: **no redistribution — build-time fetch permitted** (Branch B: optional vendoring route, not a shipping gate)
 
 This finding records the project shipping decision for the data pinned by
-`docs/findings/oracle-environment.md`. It is a conservative redistribution
+`docs/testing/oracle-environment.md`. It is a conservative redistribution
 classification for this project, not a legal opinion, and it draws the line
 between redistribution and build-time fetch.
 

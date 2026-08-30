@@ -143,7 +143,7 @@ is touched. At freeze time (2026-08-17) the default-profile pins stood at
 12 top-1 misses (10,178 top-1), 0 top-5 misses / 0 absent (10,190 /
 10,178), 1,036 order-only, and 4,058 of 98,930 (94,872 overlap), sentence
 pins 488/385/370. The 2026-08-22 Class A comparator port
-(`docs/findings/corpus-tail.md`) later closed the corpus residual to
+(`docs/testing/corpus-tail.md`) later closed the corpus residual to
 10,190 / 10,190 / 98,930 / absent 0 / tie-swaps 0 — and, re-measured
 2026-08-24, closed these six tails with it; the `e941090`-era prose
 claim that the tails were "unchanged" by the port was made without

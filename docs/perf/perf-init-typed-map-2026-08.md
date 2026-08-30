@@ -1,7 +1,7 @@
 # Stage-2 leftover: init typed-map insert (2026-08-21)
 
 Status: **measured init-path change.** Continues
-`docs/findings/perf-fill-lookup-2026-08.md` (which left the typed-map
+`docs/perf/perf-fill-lookup-2026-08.md` (which left the typed-map
 insert as a note) and #129's typed maps
 (`docs/findings/data-load-audit-2026-08.md`). This PR is
 `oxpinyin-data/src/dict.rs` only. The keystroke path

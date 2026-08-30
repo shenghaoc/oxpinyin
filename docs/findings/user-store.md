@@ -28,7 +28,7 @@ construction (they are design, not upstream fact).
 - oxpinyin: this repo. Paths beginning `crates/` are repo-relative, valid
   against `main` (`4a9a6f0`, post-W9). Reading these used rust-analyzer via the
   LSP (available — see §7).
-- Provenance of the pinned tags: `docs/findings/oracle-environment.md:15-16`.
+- Provenance of the pinned tags: `docs/testing/oracle-environment.md:15-16`.
 
 Constants used throughout (all **SHOWN**):
 

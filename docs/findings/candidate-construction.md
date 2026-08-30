@@ -15,7 +15,7 @@ dedup, measured at top-1 99% / absent 0 (§8; the doubled-apostrophe fix
 2026-08-21 moved absent from 1 to 0).
 
 Baselines and neighbours: `docs/findings/parity-climb-residual.md`,
-`docs/findings/f3-bigram-kbest.md`, `docs/findings/f2-unigram-tiebreak-sweep.md`,
+`docs/testing/f3-bigram-kbest.md`, `docs/testing/f2-unigram-tiebreak-sweep.md`,
 `docs/findings/scoring-spec.md`, `docs/findings/segment-graph.md`,
 `docs/findings/kbest-search.md`, `docs/findings/session-api.md`.
 
@@ -26,7 +26,7 @@ The frozen number every change in this area is measured against, pinned in
 (`real_tables_session_reports_parity`) over `fixtures/w4/oracle-candidates.txt`,
 re-frozen on 2026-08-16 by `docs/findings/pin-refreeze-2026-08.md`, amended
 on 2026-08-21 by the doubled-apostrophe fix, and on 2026-08-22 by the Class A
-comparator tie-law port (`docs/findings/corpus-tail.md`):
+comparator tie-law port (`docs/testing/corpus-tail.md`):
 
 ```text
 compared            10190
@@ -481,7 +481,7 @@ Stage-1 call sites must stay valid. The `Dictionary`, `LanguageModel` (and
    matrix admits. The only accepted exceptions are the already-frozen
    apostrophe residuals: the leading (`'ni`) and doubled (`ni''hao`)
    apostrophe path disagreements (`segment-graph.md`), and the
-   apostrophe-only abort guard (`docs/findings/oracle-apostrophe-abort.md`,
+   apostrophe-only abort guard (`docs/testing/oracle-apostrophe-abort.md`,
    F-E-14). No new exception is introduced.
 2. **Public session API unchanged.** `session-api.md` is frozen: `Candidate`
    (text, kind, `consumed_keys`, `consumed_bytes`, cost), `CandidateList`,
@@ -661,7 +661,7 @@ pinyin.cpp:2881: bool pinyin_get_candidate_nbest_index(...):
 ```
 
 This is the same uncatchable-`abort()` class as
-`docs/findings/oracle-apostrophe-abort.md` (F-E-14), and it is handled the same
+`docs/testing/oracle-apostrophe-abort.md` (F-E-14), and it is handled the same
 way: a guard derived from the *observed* abort, not from upstream layout. The
 capture calls the accessor **only** for `NBEST_MATCH_CANDIDATE`; for every other
 type the n-best index is absent and written `-`. So `nbest_index` is present iff
@@ -823,7 +823,7 @@ tie-swaps               0           (1,030; 1,036 through 2026-08-21; 2026-08-22
 Serial == parallel and debug == release, bit-identical. The candidate
 list now agrees with the pinned oracle bit-identically on every W2
 corpus input at depth 10; the 2026-08-22 closure and its law are
-`docs/findings/corpus-tail.md` Class A (the third amendment of
+`docs/testing/corpus-tail.md` Class A (the third amendment of
 `pin-refreeze-2026-08.md`).
 
 **The frequency key is the pin's amplified scale, not the raw count.**

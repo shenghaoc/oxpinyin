@@ -209,5 +209,5 @@ Observations only — no optimization work in this PR.
   tools/bisection/run-perf-baseline.sh`
 
 Continued by the Stage-2 measurement harness in
-`docs/findings/perf-stage2-harness-2026-08.md` (Criterion groups over the
+`docs/perf/perf-stage2-harness-2026-08.md` (Criterion groups over the
 C ABI, `[profile.profiling]`, `tools/profile/run-w8-cycle.sh`).

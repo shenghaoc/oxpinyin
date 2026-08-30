@@ -1,8 +1,8 @@
 # Stage-2 measurement harness (continues the W8 baseline)
 
 Date: 2026-08-19 · Status: **measurement only — no decode, capi, or core
-behavior changed.** Continues `docs/findings/perf-baseline-2026-08.md` and
-`docs/findings/perf-exploration.md`. This PR is docs/tools only; it must
+behavior changed.** Continues `docs/perf/perf-baseline-2026-08.md` and
+`docs/perf/perf-exploration.md`. This PR is docs/tools only; it must
 not land in the same diff as #120's engine change.
 
 Pin: `libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c` + model20
@@ -72,7 +72,7 @@ is `CString::new` in `pinyin_guess_candidates` (72e6) plus init
 1. **`SystemDictionary::fill_lookup` (12.2% self).** The borrowed phrase
    get (`lookup_into` → `fill_lookup`). This is what is left of
    `LookupTable::get` after the clone site went away. Addressed in
-   `docs/findings/perf-fill-lookup-2026-08.md`.
+   `docs/perf/perf-fill-lookup-2026-08.md`.
 2. **`__memcmp_avx2_movbe` (9.8% self).** No longer the window-scan table
    get. Mostly init typed-map insert and `syllable_initial` prefix
    compare.
