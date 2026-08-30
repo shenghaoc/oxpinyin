@@ -56,7 +56,7 @@ pub(crate) type CapiSession = RuntimeSession;
 pub(crate) struct CapiContext {
     pub(crate) config: Config,
     /// The shared concrete assembly; `None` under a user-store-only context.
-    runtime: Option<Runtime>,
+    pub(crate) runtime: Option<Runtime>,
     /// The user-learning store, shared by value-clone with every instance.
     ///
     /// `None` when the caller passed an empty user directory — the
@@ -193,6 +193,25 @@ impl CapiContext {
             full_parse: None,
             full_input: String::new(),
         })
+    }
+
+    /// `pinyin_load_phrase_library`'s read side: the runtime's
+    /// library-load (mask-clear) rule; `false` without a runtime.
+    pub(crate) fn load_phrase_library(&self, index: u32) -> bool {
+        match self.runtime.as_ref() {
+            Some(runtime) => runtime.load_library(index),
+            None => false,
+        }
+    }
+
+    /// `pinyin_unload_phrase_library`'s read side: GBK-only, first-unload
+    /// `true`; `false` without a runtime (a user-store-only context
+    /// never loaded GBK — upstream's sub-index is NULL there too).
+    pub(crate) fn unload_phrase_library(&self, index: u8) -> bool {
+        match self.runtime.as_ref() {
+            Some(runtime) => runtime.unload_library(index as u32),
+            None => false,
+        }
     }
 
     /// Clone of the context's user store, if this context has one.

@@ -205,3 +205,55 @@ fn addon_unigram_totals_stay_none_until_a_library_loads() {
         "the loaded addon library owns items"
     );
 }
+
+#[test]
+fn phrase_prefix_exists_survives_the_gbk_unload_and_the_reload_restores_the_fast_path() {
+    // The CR-flagged bug on PR #234: `phrase_prefix_exists` used to
+    // return `true` for a syllable prefix whose only extending entries
+    // sit under a library the caller has since unloaded, letting the
+    // n-best widen probe extend paths that lead nowhere visible. The
+    // routing now goes through `phrase_prefix_exists_visible` with the
+    // library-mask callback.
+    //
+    // The pure-GBK hiding is exercised at the `SystemDictionary` unit
+    // test (there is no GBK-only pinyin row in the mini fixture — every
+    // GBK-carrying row carries non-GBK entries too). This test pins the
+    // runtime seam: the survival case must not regress with the mask
+    // armed, and the dead-end guarantee `nbest::widen_probe` needs for
+    // termination must survive both branches (`mask == 0` fast path
+    // and the visibility-filtered probe).
+    let runtime = Runtime::open_fixtures(&w3_dir(), None).expect("open");
+    let dict = runtime.dict();
+
+    let ni_hao: Vec<SyllableKey> = ["ni", "hao"]
+        .iter()
+        .map(|s| SyllableKey::from_text(s).expect("fixture key"))
+        .collect();
+    let dead_end: Vec<SyllableKey> = ["zhuang", "zhuang"]
+        .iter()
+        .map(|s| SyllableKey::from_text(s).expect("fixture key"))
+        .collect();
+
+    // Baseline (mask clear, fast path): `ni` prefixes `ni,hao`, the
+    // full sequence is a stored phrase, and a dead-end sequence
+    // reports no continuation.
+    assert!(dict.phrase_prefix_exists(&ni_hao[..1]).unwrap());
+    assert!(dict.phrase_prefix_exists(&ni_hao[..]).unwrap());
+    assert!(!dict.phrase_prefix_exists(&dead_end).unwrap());
+
+    // Arm the visibility mask by unloading GBK. Answers stay `true`
+    // for `ni,hao` because every mini-fixture row that carries GBK
+    // entries carries non-GBK ones too — the visibility filter finds
+    // a surviving entry. The dead-end sequence must still answer
+    // `false`, so the widen probe still terminates.
+    assert!(runtime.unload_library(2), "first GBK unload arms the mask");
+    assert!(dict.phrase_prefix_exists(&ni_hao[..1]).unwrap());
+    assert!(dict.phrase_prefix_exists(&ni_hao[..]).unwrap());
+    assert!(!dict.phrase_prefix_exists(&dead_end).unwrap());
+
+    // Reload restores the plain probe's fast path.
+    assert!(runtime.load_library(2), "reload clears the mask");
+    assert!(dict.phrase_prefix_exists(&ni_hao[..1]).unwrap());
+    assert!(dict.phrase_prefix_exists(&ni_hao[..]).unwrap());
+    assert!(!dict.phrase_prefix_exists(&dead_end).unwrap());
+}

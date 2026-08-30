@@ -7,16 +7,38 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use pinyin_capi::{
-    LookupCandidate, PinyinContext, PinyinInstance, lookup_candidate_type_t,
+    GArray, LookupCandidate, PinyinContext, PinyinInstance, lookup_candidate_type_t,
     pinyin_choose_candidate, pinyin_fini, pinyin_free_instance, pinyin_get_candidate,
     pinyin_get_candidate_type, pinyin_get_n_candidate, pinyin_get_n_phrase,
     pinyin_get_phrase_token, pinyin_get_sentence, pinyin_guess_candidates,
     pinyin_guess_predicted_candidates, pinyin_guess_predicted_candidates_with_punctuations,
-    pinyin_guess_sentence_with_prefix, pinyin_parse_more_full_pinyins, pinyin_phrase_segment,
-    pinyin_reset, pinyin_train,
+    pinyin_guess_sentence_with_prefix, pinyin_load_phrase_library, pinyin_lookup_tokens,
+    pinyin_parse_more_full_pinyins, pinyin_phrase_segment, pinyin_reset,
+    pinyin_token_add_unigram_frequency, pinyin_token_get_n_pronunciation,
+    pinyin_token_get_nth_pronunciation, pinyin_token_get_phrase,
+    pinyin_token_get_unigram_frequency, pinyin_train, pinyin_unload_phrase_library,
 };
 
 use crate::common::{TempUserDir, cstr, open};
+
+/// Reads a caller-owned string (`g_free`-releasable) and frees it.
+fn take(rendered: *mut pinyin_capi::GChar) -> Option<String> {
+    if rendered.is_null() {
+        return None;
+    }
+    // SAFETY: The getters return a NUL-terminated UTF-8 buffer or null.
+    let text = Some(
+        unsafe { CStr::from_ptr(rendered) }
+            .to_str()
+            .expect("UTF-8 render")
+            .to_owned(),
+    );
+    // SAFETY: The buffer came from the capi's libc-malloc `owned_cstr`.
+    unsafe {
+        libc_free(rendered.cast());
+    }
+    text
+}
 
 struct Fixture {
     context: *mut PinyinContext,
@@ -232,4 +254,295 @@ fn take_sentence(sentence: *mut c_char) -> String {
 unsafe extern "C" {
     #[link_name = "free"]
     fn libc_free(ptr: *mut core::ffi::c_void);
+}
+
+// The `GArray`-taking library entry points call glib's own
+// `g_array_append_vals`, which dereferences the array's private
+// `_GRealArray` fields — an inline `GArray { data, len }` view has
+// none of those and would crash on the first append. So the tests
+// hold a real glib array from `g_array_new`, freed with
+// `g_array_free`. Linked through `libpinyin_capi.so`'s `libglib-2.0`
+// NEEDED entry.
+unsafe extern "C" {
+    fn g_array_new(
+        zero_terminated: core::ffi::c_int,
+        clear: core::ffi::c_int,
+        element_size: core::ffi::c_uint,
+    ) -> *mut GArray;
+    fn g_array_free(array: *mut GArray, free_segment: core::ffi::c_int) -> *mut core::ffi::c_char;
+}
+
+// ── Tier C: dictionary introspection ─────────────────────────────────
+
+/// A real glib `GArray` of `u32` tokens: the library appends into it
+/// through `g_array_append_vals` and truncates it through
+/// `g_array_set_size`; the test reads the elements back out through the
+/// array's documented public fields.
+struct TokenArray {
+    array: *mut GArray,
+}
+
+impl TokenArray {
+    fn new() -> Self {
+        // SAFETY: glib always returns a valid array pointer (or aborts
+        // on OOM, matching upstream libpinyin's own behaviour).
+        let array = unsafe {
+            g_array_new(
+                0,
+                0,
+                u32::try_from(size_of::<u32>()).expect("u32 fits guint"),
+            )
+        };
+        assert!(!array.is_null(), "g_array_new returned null");
+        Self { array }
+    }
+
+    fn array_ptr(&mut self) -> *mut GArray {
+        self.array
+    }
+
+    fn elements(&self) -> Vec<u32> {
+        // SAFETY: the array pointer stays live for the fixture's
+        // lifetime; `data`/`len` are the glib GArray's documented
+        // public fields.
+        let view = unsafe { &*self.array };
+        if view.data.is_null() || view.len == 0 {
+            return Vec::new();
+        }
+        // SAFETY: data points at len consecutive u32 elements written
+        // by the library through glib.
+        unsafe { std::slice::from_raw_parts(view.data.cast::<u32>(), view.len as usize).to_vec() }
+    }
+}
+
+impl Drop for TokenArray {
+    fn drop(&mut self) {
+        if !self.array.is_null() {
+            // SAFETY: `array` came from `g_array_new`; `free_segment=1`
+            // frees the underlying buffer glib grew.
+            unsafe {
+                g_array_free(self.array, 1);
+            }
+        }
+    }
+}
+
+/// `pinyin_lookup_tokens`: 你好 resolves to exactly one token; an
+/// unknown phrase resolves to none; the array is cleared per call.
+#[test]
+fn lookup_tokens_resolves_stored_phrases() {
+    let fixture = Fixture::new("dict-lookup");
+
+    let mut array = TokenArray::new();
+    assert!(pinyin_lookup_tokens(
+        fixture.instance,
+        cstr("你好").as_ptr(),
+        array.array_ptr()
+    ));
+    let tokens = array.elements();
+    assert_eq!(tokens.len(), 1, "你好 resolves to one token");
+
+    // Reuse the same array: it clears per call. ASCII matches no
+    // phrase — and the retval is `SEARCH_OK & retval`, false for a
+    // no-hit span (the array still cleared).
+    assert!(!pinyin_lookup_tokens(
+        fixture.instance,
+        cstr("abyss").as_ptr(),
+        array.array_ptr()
+    ));
+    assert!(array.elements().is_empty());
+
+    // Null tokenarray: refused (the pin dereferences it unguarded).
+    assert!(!pinyin_lookup_tokens(
+        fixture.instance,
+        cstr("你好").as_ptr(),
+        std::ptr::null_mut()
+    ));
+}
+
+/// `pinyin_token_get_phrase` round-trips the lookup: the token found by
+/// text renders back to the same text; an unknown token answers false
+/// with a NULL out-param.
+#[test]
+fn token_get_phrase_round_trips() {
+    let fixture = Fixture::new("dict-phrase");
+
+    let mut array = TokenArray::new();
+    assert!(pinyin_lookup_tokens(
+        fixture.instance,
+        cstr("你好").as_ptr(),
+        array.array_ptr()
+    ));
+    let token = array.elements()[0];
+
+    let mut len: u32 = 0;
+    let mut rendered: *mut pinyin_capi::GChar = std::ptr::null_mut();
+    assert!(pinyin_token_get_phrase(
+        fixture.instance,
+        token,
+        &mut len,
+        &mut rendered
+    ));
+    assert_eq!(len as usize, 2, "len is the character count");
+    assert_eq!(
+        take(rendered).as_deref(),
+        Some("你好"),
+        "the text round-trips"
+    );
+    assert!(pinyin_token_get_phrase(
+        fixture.instance,
+        token,
+        std::ptr::null_mut(),
+        &mut rendered
+    ));
+
+    let unknown = 0x09FF_FFFF;
+    assert!(!pinyin_token_get_phrase(
+        fixture.instance,
+        unknown,
+        &mut len,
+        &mut rendered
+    ));
+    assert!(rendered.is_null());
+}
+
+/// `pinyin_token_get_n_pronunciation` and `_get_nth_pronunciation`:
+/// 你好 carries at least one pronunciation whose keys spell the phrase;
+/// an out-of-range nth answers false (the pin appends garbage there —
+/// the no-abort policy refuses instead).
+#[test]
+fn token_pronunciation_surface() {
+    let fixture = Fixture::new("dict-pron");
+
+    let mut array = TokenArray::new();
+    assert!(pinyin_lookup_tokens(
+        fixture.instance,
+        cstr("你好").as_ptr(),
+        array.array_ptr()
+    ));
+    let token = array.elements()[0];
+
+    let mut num: u32 = 0;
+    assert!(pinyin_token_get_n_pronunciation(
+        fixture.instance,
+        token,
+        &mut num
+    ));
+    assert!(num >= 1);
+
+    // A real glib GArray of `u16` chewing-key words. The library
+    // appends into it via `g_array_append_vals`, which needs the
+    // private `_GRealArray` metadata glib itself sets up.
+    // SAFETY: g_array_new either returns a valid array or aborts (glib
+    // policy, inherited by upstream libpinyin).
+    let keys = unsafe {
+        g_array_new(
+            0,
+            0,
+            u32::try_from(size_of::<u16>()).expect("u16 fits guint"),
+        )
+    };
+    assert!(!keys.is_null(), "g_array_new returned null");
+    assert!(pinyin_token_get_nth_pronunciation(
+        fixture.instance,
+        token,
+        0,
+        keys,
+    ));
+    // SAFETY: keys is live; `len` is glib's public field.
+    let keys_len = unsafe { (*keys).len };
+    assert!(keys_len >= 2, "你+好: two chewing keys");
+
+    // An out-of-range nth answers false. The array is not appended to.
+    assert!(!pinyin_token_get_nth_pronunciation(
+        fixture.instance,
+        token,
+        9,
+        keys,
+    ));
+
+    // SAFETY: keys came from g_array_new; frees the buffer glib grew.
+    unsafe {
+        g_array_free(keys, 1);
+    }
+}
+
+/// `pinyin_token_get_unigram_frequency` / `_add_unigram_frequency`:
+/// read → add → shifted read; an absent-token add answers false.
+#[test]
+fn token_unigram_read_and_overlay_write() {
+    let fixture = Fixture::new("dict-unigram");
+
+    let mut array = TokenArray::new();
+    assert!(pinyin_lookup_tokens(
+        fixture.instance,
+        cstr("你好").as_ptr(),
+        array.array_ptr()
+    ));
+    let token = array.elements()[0];
+
+    let mut freq: u32 = 0;
+    assert!(pinyin_token_get_unigram_frequency(
+        fixture.instance,
+        token,
+        &mut freq
+    ));
+    let before = freq;
+
+    assert!(pinyin_token_add_unigram_frequency(
+        fixture.instance,
+        token,
+        7
+    ));
+    assert!(pinyin_token_get_unigram_frequency(
+        fixture.instance,
+        token,
+        &mut freq
+    ));
+    assert_eq!(freq, before + 7, "the overlay delta lands");
+
+    // Absent token: false, and the read stays absent.
+    let absent = 0x09FF_FFFF;
+    assert!(!pinyin_token_get_unigram_frequency(
+        fixture.instance,
+        absent,
+        &mut freq
+    ));
+    assert!(!pinyin_token_add_unigram_frequency(
+        fixture.instance,
+        absent,
+        3
+    ));
+}
+
+/// The load/unload contract: fresh GBK is already loaded (`load` false),
+/// the first unload answers true, the second false (the sub-index is
+/// gone), and the reload answers true. Non-GBK indexes are refused.
+#[test]
+fn phrase_library_load_unload_contract() {
+    let fixture = Fixture::new("dict-lib");
+
+    assert!(
+        !pinyin_load_phrase_library(fixture.context, 2),
+        "already loaded"
+    );
+    assert!(pinyin_unload_phrase_library(fixture.context, 2));
+    assert!(
+        !pinyin_unload_phrase_library(fixture.context, 2),
+        "already gone"
+    );
+    assert!(pinyin_load_phrase_library(fixture.context, 2), "reload");
+    assert!(
+        !pinyin_load_phrase_library(fixture.context, 2),
+        "loaded again"
+    );
+
+    // Content survives the cycle: 你好 still resolves.
+    let mut array = TokenArray::new();
+    assert!(pinyin_lookup_tokens(
+        fixture.instance,
+        cstr("你好").as_ptr(),
+        array.array_ptr()
+    ));
+    assert_eq!(array.elements().len(), 1);
 }

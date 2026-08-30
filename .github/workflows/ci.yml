@@ -86,7 +86,7 @@ jobs:
         # Kyoto Cabinet is the default store backend; bindgen (libclang) reads
         # kclangc.h at build time. Linux-only jobs install both; the portable
         # job below runs the pure-Rust redb fallback instead.
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libkyotocabinet-dev libclang-dev
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libkyotocabinet-dev libclang-dev libglib2.0-dev pkg-config
       - run: cargo fmt --all --check
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
@@ -103,7 +103,7 @@ jobs:
         # Kyoto Cabinet is the default store backend; bindgen (libclang) reads
         # kclangc.h at build time. Linux-only jobs install both; the portable
         # job below runs the pure-Rust redb fallback instead.
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libkyotocabinet-dev libclang-dev
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libkyotocabinet-dev libclang-dev libglib2.0-dev pkg-config
       - run: cargo test --locked --workspace
       - name: C++ pinyin.h smoke gate
         run: tools/bisection/run-cpp-smoke.sh
@@ -135,7 +135,7 @@ jobs:
         # Kyoto Cabinet is the default store backend; bindgen (libclang) reads
         # kclangc.h at build time. Linux-only jobs install both; the portable
         # job below runs the pure-Rust redb fallback instead.
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libkyotocabinet-dev libclang-dev
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libkyotocabinet-dev libclang-dev libglib2.0-dev pkg-config
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           # Free-threaded is the platform this binding is written for, so it
@@ -294,7 +294,7 @@ jobs:
         # The fuzz targets link the workspace crates with their default
         # features, so the Kyoto Cabinet default backend compiles in:
         # bindgen (libclang) reads kclangc.h at build time.
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libkyotocabinet-dev libclang-dev
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libkyotocabinet-dev libclang-dev libglib2.0-dev pkg-config
       - name: Install pinned nightly with Rust sources
         run: rustup toolchain install nightly-2026-08-01 --profile minimal --component rust-src
       - name: Install pinned cargo-fuzz

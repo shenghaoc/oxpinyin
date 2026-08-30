@@ -154,7 +154,7 @@ jobs:
         # must be present or every final link dies.
         # libkyotocabinet-dev: the default backend links the distro Kyoto
         # Cabinet; bindgen reads kclangc.h at build time.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -284,8 +284,12 @@ jobs:
         # turn, so it needs every peer's build-time C dependencies:
         # libkyotocabinet-dev + libtkrzw-dev (+ its compression -dev
         # packages) and libclang-dev for bindgen; lmdb rides on heed and
-        # is pure Rust; redb is pure Rust.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
+        # is pure Rust; redb is pure Rust. libglib2.0-dev is a Tier-C
+        # requirement: `pinyin_lookup_tokens` /
+        # `pinyin_token_get_nth_pronunciation` delegate to
+        # `g_array_append_vals` / `g_array_set_size`, so the shipped
+        # `.so` NEEDS `libglib-2.0`.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:

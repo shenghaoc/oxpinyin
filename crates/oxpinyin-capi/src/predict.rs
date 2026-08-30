@@ -171,7 +171,18 @@ pub(crate) fn compute_prefixes(
     let mut tokens = Vec::new();
     for length in 1..=max {
         let suffix: String = chars[chars.len() - length..].iter().collect();
-        tokens.extend(dict.system().tokens_for_text(&suffix).iter().copied());
+        // System tokens ride the loaded-library mask: an unloaded library
+        // must not contribute prefix or successor tokens (upstream's
+        // `_get_phrase_item_from_token` refuses them at the item lookup;
+        // filtering here is the closest we get to that gate on the
+        // prefix path).
+        tokens.extend(
+            dict.system()
+                .tokens_for_text(&suffix)
+                .iter()
+                .copied()
+                .filter(|token| dict.library_visible_token(*token)),
+        );
         if let Some(lookup) = user_lookup.as_ref() {
             tokens.extend(lookup.tokens_for_text(&suffix).iter().copied());
         }
@@ -203,6 +214,12 @@ fn append_predicted_bigrams(
         for (token, count) in &successors {
             // pinyin.cpp:2349-2350: skip when `m_count < filter` (10).
             if *count < BIGRAM_FILTER {
+                continue;
+            }
+            // Same library-mask gate as `compute_prefixes`: an unloaded
+            // library's stored rows must not resolve into rendered
+            // successor text.
+            if !dict.library_visible_token(*token) {
                 continue;
             }
             let Some(text) = phrase_text(dict, store, *token) else {
@@ -245,7 +262,12 @@ fn append_predicted_prefix(
     // the system row first when a text is shared. The stable sort below
     // keeps both inside their (length, frequency) tie groups
     // (`upstream-divergences.md`, "Predicted-candidate tie order").
-    let system = dict.system().suggest_after(prefix);
+    let system: Vec<(u32, String)> = dict
+        .system()
+        .suggest_after(prefix)
+        .into_iter()
+        .filter(|(token, _)| dict.library_visible_token(*token))
+        .collect();
     let user_rows = if let Some(store) = user
         && let Ok(lookup) = oxpinyin_user::UserLookup::from_store(store)
     {
@@ -259,7 +281,13 @@ fn append_predicted_prefix(
     // the pinned normal path uses (`session.rs:1409-1416`). The item count
     // leg is `SystemDictionary`'s `phrase_index_item_count`
     // (`dict.rs:302-304`).
-    let total = lm.amplified_total(dict.system().unigram_map().len() as u64);
+    // The visible item count (Tier C's library mask can shrink it) plus
+    // the add_unigram_frequency overlay total — upstream's facade
+    // total_freq shifts by exactly these (`phrase_index.h:632`,
+    // `phrase_index.cpp:264`).
+    let total = lm
+        .amplified_total(dict.visible_item_count())
+        .saturating_add(dict.unigram_total_delta());
     for (token, text) in suggestions {
         // The length gate stays on the FULL phrase: the pin checks
         // `get_phrase_length()` against `prefix_len * 2 + 1` before any
@@ -278,7 +306,13 @@ fn append_predicted_prefix(
         // PREDICTED_PREFIX branch computes `(1−λ)·unigram/total·2²⁴`
         // truncated (`pinyin.cpp:1811-1824`), the same law the normal
         // candidate path pins.
-        let baked = dict.system().unigram_count(token).unwrap_or(0);
+        // The live item count: the baked count plus whatever
+        // `pinyin_token_add_unigram_frequency` overlaid (upstream's
+        // `_compute_frequency_of_items` reads the item through
+        // `get_phrase_item`, which sees the add's write,
+        // `phrase_index.h:632`).
+        let baked = dict.system().unigram_count(token).unwrap_or(0)
+            + dict.unigram_delta(token).unwrap_or(0);
         into.push(Predicted {
             frequency: amplified_frequency(baked, total),
             text: display,

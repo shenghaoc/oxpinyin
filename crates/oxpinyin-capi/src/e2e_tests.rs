@@ -1409,6 +1409,90 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
     crate::context::pinyin_fini(context);
 }
 
+/// The CR-flagged regression on PR #234: `RuntimeDict::phrase_prefix_exists`
+/// used to short-circuit on the plain system probe, ignoring the
+/// library-visibility mask. That leaked GBK-only continuations into
+/// the n-best widen probe after `pinyin_unload_phrase_library(2)`,
+/// and — as a side effect of the shared unload plumbing — kept GBK
+/// candidate rows on the surface after a fresh scan too. This test
+/// pins the surface: the candidate list rescanned after an unload must
+/// carry no GBK-nibble tokens, and the reload must restore them. The
+/// widen-probe path also has to survive the mask armed without
+/// regressing the mixed rows the fixture happens to have.
+#[test]
+fn unloading_gbk_hides_its_tokens_from_the_candidate_surface() {
+    use crate::config::{pinyin_load_phrase_library, pinyin_unload_phrase_library};
+
+    let user_dir = TempUserDir::new("gbk-unload-hides");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    // A GBK-carrying prefix — `ni` — has GBK entries mixed with the
+    // system ones on the fixture's `ni` row. The initial guess must
+    // include at least one GBK candidate.
+    let gbk_before = collect_gbk_candidate_tokens(instance, "ni");
+    assert!(
+        !gbk_before.is_empty(),
+        "the mini fixture must carry at least one GBK candidate under ni"
+    );
+
+    // Unload GBK. A fresh parse re-scans through the visibility mask
+    // (`RuntimeDict::lookup_into` retains only visible tokens); the
+    // rescanned list must carry no GBK-nibble candidate.
+    assert!(pinyin_unload_phrase_library(context, 2));
+    assert!(pinyin_reset(instance));
+    let gbk_after = collect_gbk_candidate_tokens(instance, "ni");
+    assert!(
+        gbk_after.is_empty(),
+        "GBK tokens leaked into candidates after unload: {gbk_after:?}"
+    );
+
+    // The sentence-decode path drives `phrase_prefix_exists` through
+    // the runtime dict. With the mask armed, the widen probe must
+    // still terminate and the fixture's mixed rows must still
+    // support a non-empty sentence — the survival guarantee the fix
+    // preserves.
+    assert!(pinyin_guess_sentence(instance));
+    let mut sentence: *mut std::os::raw::c_char = ptr::null_mut();
+    assert!(pinyin_get_sentence(instance, 0, &mut sentence));
+    assert!(
+        !sentence.is_null(),
+        "sentence decode must yield an n-best row"
+    );
+    let text = crate::ffi::take_owned_cstr(sentence);
+    assert!(!text.is_empty(), "sentence text is not empty");
+
+    // Reload GBK: the entries return to the surface.
+    assert!(pinyin_load_phrase_library(context, 2));
+    assert!(pinyin_reset(instance));
+    let gbk_reloaded = collect_gbk_candidate_tokens(instance, "ni");
+    assert_eq!(
+        gbk_reloaded, gbk_before,
+        "GBK tokens must return in the same order after reload"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// Reset the instance, re-parse `input`, guess a fresh candidate list,
+/// and return the GBK-nibble (nibble 2) tokens that surface.
+fn collect_gbk_candidate_tokens(instance: *mut PinyinInstance, input: &str) -> Vec<u32> {
+    let text = cstr(input);
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, text.as_ptr()),
+        input.len(),
+        "full input parses"
+    );
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    // SAFETY: live instance immediately after the guess.
+    let inst = unsafe { instance_ref(instance) };
+    inst.candidates
+        .iter()
+        .filter_map(|c| c.token.map(|t| t.value()))
+        .filter(|token| (token >> 24) == 2)
+        .collect()
+}
+
 /// Parse-termination gates: C1 (FORCE_TONE) and B2 (stop bytes), plus the
 /// inherited apostrophe class — measured first-hand on the rebuilt pin and
 /// in the uncovered-surface differential's phase-B/phase-C probes.
