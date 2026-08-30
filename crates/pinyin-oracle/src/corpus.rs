@@ -115,7 +115,9 @@ impl SplitMix64 {
         loop {
             let draw = self.next_u64();
             if draw < zone {
-                return (draw % bound_u64) as usize;
+                // The residue is below `bound <= usize::MAX`, so the
+                // conversion cannot fail.
+                return usize::try_from(draw % bound_u64).unwrap_or(0);
             }
         }
     }

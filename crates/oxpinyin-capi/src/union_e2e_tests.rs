@@ -154,7 +154,11 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
 
     // Choose it through the C ABI: this must promote it into default nibble 5.
     let mut cand: *mut crate::types::LookupCandidate = std::ptr::null_mut();
-    assert!(pinyin_get_candidate(instance, index as u32, &mut cand));
+    assert!(pinyin_get_candidate(
+        instance,
+        u32::try_from(index).expect("small candidate index"),
+        &mut cand
+    ));
     assert!(!cand.is_null());
     assert!(pinyin_choose_candidate(instance, 0, cand) > 0);
 

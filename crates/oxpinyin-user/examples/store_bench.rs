@@ -221,8 +221,8 @@ fn read<S: WriteStore>() {
     for i in 0..cfg.predicted as u64 {
         std::hint::black_box(query(&store, cfg.seed, cfg.reads as u64 + i));
         let h = row_hash(cfg.seed ^ 0xD1CE_D000, i);
-        let last = TOKEN_BASE + (h % PREV_DOMAIN as u64) as u32;
-        let cur = TOKEN_BASE + ((h >> 16) % CUR_DOMAIN as u64) as u32;
+        let last = TOKEN_BASE + u32::try_from(h % u64::from(PREV_DOMAIN)).unwrap();
+        let cur = TOKEN_BASE + u32::try_from((h >> 16) % u64::from(CUR_DOMAIN)).unwrap();
         let started = Instant::now();
         seeds += store
             .observe_predicted(last, cur)
@@ -270,8 +270,8 @@ fn train_store<S: WriteStore>(cfg: &Config, path: &Path) -> GenericUserStore<S> 
 
 fn training_pair(seed: u64, i: u64) -> (u32, u32) {
     let h = row_hash(seed, i);
-    let last = TOKEN_BASE + (h % PREV_DOMAIN as u64) as u32;
-    let cur = TOKEN_BASE + ((h >> 16) % CUR_DOMAIN as u64) as u32;
+    let last = TOKEN_BASE + u32::try_from(h % u64::from(PREV_DOMAIN)).unwrap();
+    let cur = TOKEN_BASE + u32::try_from((h >> 16) % u64::from(CUR_DOMAIN)).unwrap();
     (last, cur)
 }
 
@@ -287,11 +287,11 @@ fn row_hash(seed: u64, i: u64) -> u64 {
 
 fn query<S: WriteStore>(store: &GenericUserStore<S>, seed: u64, i: u64) -> u64 {
     let h = row_hash(seed ^ 0xC0FF_EE00, i);
-    let cur = TOKEN_BASE + ((h >> 16) % CUR_DOMAIN as u64) as u32;
+    let cur = TOKEN_BASE + u32::try_from((h >> 16) % u64::from(CUR_DOMAIN)).unwrap();
     let prev = if h.is_multiple_of(5) {
         None
     } else {
-        Some(TOKEN_BASE + (h % PREV_DOMAIN as u64) as u32)
+        Some(TOKEN_BASE + u32::try_from(h % u64::from(PREV_DOMAIN)).unwrap())
     };
     let delta = store.count_delta(prev, cur).expect("count_delta");
     delta.bigram_count + delta.unigram_delta

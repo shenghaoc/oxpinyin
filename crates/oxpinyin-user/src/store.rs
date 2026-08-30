@@ -1785,10 +1785,18 @@ mod tests {
                 fn export_phrases_render_the_pinned_triples() {
                     let path = temp_path("export-phrases");
                     let mut store = Store::create_standalone(&path).unwrap();
-                    let ni = SyllableKey::from_text("ni").expect("frozen key").index() as u16;
-                    let hao = SyllableKey::from_text("hao").expect("frozen key").index() as u16;
-                    let shi = SyllableKey::from_text("shi").expect("frozen key").index() as u16;
-                    let jie = SyllableKey::from_text("jie").expect("frozen key").index() as u16;
+                    let ni =
+                        u16::try_from(SyllableKey::from_text("ni").expect("frozen key").index())
+                            .expect("frozen syllable inventory fits u16");
+                    let hao =
+                        u16::try_from(SyllableKey::from_text("hao").expect("frozen key").index())
+                            .expect("frozen syllable inventory fits u16");
+                    let shi =
+                        u16::try_from(SyllableKey::from_text("shi").expect("frozen key").index())
+                            .expect("frozen syllable inventory fits u16");
+                    let jie =
+                        u16::try_from(SyllableKey::from_text("jie").expect("frozen key").index())
+                            .expect("frozen syllable inventory fits u16");
 
                     store.add_phrase("你好", &[ni, hao], None).unwrap();
                     store.add_phrase("你好", &[ni, hao], Some(7)).unwrap();
@@ -1981,9 +1989,12 @@ mod tests {
                 }
 
                 fn key(text: &str) -> PinyinKey {
-                    SyllableKey::from_text(text)
-                        .expect("frozen syllable")
-                        .index() as PinyinKey
+                    PinyinKey::try_from(
+                        SyllableKey::from_text(text)
+                            .expect("frozen syllable")
+                            .index(),
+                    )
+                    .expect("frozen syllable inventory fits u16")
                 }
 
                 #[test]
@@ -2355,13 +2366,16 @@ mod tests {
     fn memo_maps_reset_at_the_capacity_bound() {
         let db = MemoDb(
             (1..=u64::try_from(COUNT_MEMO_MAX_ENTRIES + 10).unwrap())
-                .map(|t| (codec::encode_token(t as u32).to_vec(), t))
+                .map(|t| (codec::encode_token(u32::try_from(t).unwrap()).to_vec(), t))
                 .collect(),
         );
         let mut cache = CountCache::new(0);
         for token in 1..=COUNT_MEMO_MAX_ENTRIES + 10 {
             let expected = u64::try_from(token).unwrap();
-            assert_eq!(cache.unigram(&db, token as u32).unwrap(), expected);
+            assert_eq!(
+                cache.unigram(&db, u32::try_from(token).unwrap()).unwrap(),
+                expected
+            );
         }
         assert!(
             cache.unigram.len() <= COUNT_MEMO_MAX_ENTRIES,

@@ -6,7 +6,7 @@
 //! caller offset back across the run, refuses — never aborts — when the
 //! run leads the input, and a choose at the caller offset still advances.
 
-use std::os::raw::{c_int, c_uint};
+use std::os::raw::c_uint;
 use std::ptr;
 
 use crate::candidates::{
@@ -49,7 +49,11 @@ fn position_of(instance: *mut PinyinInstance, text: &str) -> usize {
 fn candidate_at(instance: *mut PinyinInstance, index: usize) -> *mut LookupCandidate {
     let mut cand: *mut LookupCandidate = ptr::null_mut();
     assert!(
-        pinyin_get_candidate(instance, index as c_uint, &mut cand),
+        pinyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small candidate index"),
+            &mut cand,
+        ),
         "candidate {index} exists"
     );
     assert!(!cand.is_null());
@@ -96,7 +100,7 @@ fn guess_offset_normalizes_across_the_separator_run() {
         let hao = candidate_at(instance, position_of(instance, "\u{597d}"));
         let cursor = pinyin_choose_candidate(instance, post_run, hao);
         assert!(
-            cursor > post_run as c_int,
+            cursor > i32::try_from(post_run).expect("small input offset"),
             "{input}: choose at the post-separator offset advances (got {cursor})"
         );
 

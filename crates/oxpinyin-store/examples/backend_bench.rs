@@ -488,8 +488,8 @@ fn measure_prefix_scans<S: ReadStore>(store: &S, cfg: &Config) -> (u64, u64, u64
 
         // bigram (prev, *): the successor-set lookup
         let prev = TOKEN_BASE + h % PREV_DOMAIN;
-        let lo = (prev as u32).to_be_bytes();
-        let hi = (prev as u32 + 1).to_be_bytes();
+        let lo = u32::try_from(prev).unwrap().to_be_bytes();
+        let hi = (u32::try_from(prev).unwrap() + 1).to_be_bytes();
         store
             .range(
                 BIGRAM,
@@ -505,8 +505,8 @@ fn measure_prefix_scans<S: ReadStore>(store: &S, cfg: &Config) -> (u64, u64, u64
 
         // pron (token, *): the pronunciation-set lookup
         let token = TOKEN_BASE + (h >> 16) % PRON_TOKEN_DOMAIN;
-        let lo = (token as u32).to_be_bytes();
-        let hi = (token as u32 + 1).to_be_bytes();
+        let lo = u32::try_from(token).unwrap().to_be_bytes();
+        let hi = (u32::try_from(token).unwrap() + 1).to_be_bytes();
         store
             .range(
                 PRON,
@@ -604,8 +604,8 @@ fn bigram_row(seed: u64, i: u64) -> ([u8; 8], [u8; 8]) {
     let prev = TOKEN_BASE + h % PREV_DOMAIN;
     let cur = TOKEN_BASE + (h / PREV_DOMAIN) % CUR_DOMAIN;
     let mut key = [0_u8; 8];
-    key[..4].copy_from_slice(&(prev as u32).to_be_bytes());
-    key[4..].copy_from_slice(&(cur as u32).to_be_bytes());
+    key[..4].copy_from_slice(&u32::try_from(prev).unwrap().to_be_bytes());
+    key[4..].copy_from_slice(&u32::try_from(cur).unwrap().to_be_bytes());
     (key, (1 + h % 97).to_be_bytes())
 }
 
@@ -613,8 +613,8 @@ fn pron_row(seed: u64, i: u64) -> (Vec<u8>, [u8; 8]) {
     let h = row_hash(seed, i ^ 0xA5A5_A5A5);
     let token = TOKEN_BASE + h % PRON_TOKEN_DOMAIN;
     let syllable_count = 1 + h % 3;
-    let mut key = Vec::with_capacity(4 + 2 * syllable_count as usize);
-    key.extend_from_slice(&(token as u32).to_be_bytes());
+    let mut key = Vec::with_capacity(4 + 2 * usize::try_from(syllable_count).unwrap());
+    key.extend_from_slice(&u32::try_from(token).unwrap().to_be_bytes());
     for k in 0..syllable_count {
         let syllable = ((h >> (16 * k + 8)) & 0xFFFF) as u16;
         key.extend_from_slice(&syllable.to_be_bytes());
@@ -626,12 +626,12 @@ fn phrase_row(seed: u64, i: u64) -> ([u8; 4], String) {
     let h = row_hash(seed, i ^ 0x5A5A_5A5A);
     let token = TOKEN_BASE + i % PHRASE_TOKEN_DOMAIN;
     let char_count = 2 + h % 3;
-    let mut text = String::with_capacity(3 * char_count as usize);
+    let mut text = String::with_capacity(3 * usize::try_from(char_count).unwrap());
     for k in 0..char_count {
         let code = 0x4E00 + ((h >> (9 * k + 4)) & 0x1FF);
-        text.push(char::from_u32(code as u32).unwrap_or('词'));
+        text.push(char::from_u32(u32::try_from(code).unwrap()).unwrap_or('词'));
     }
-    ((token as u32).to_be_bytes(), text)
+    (u32::try_from(token).unwrap().to_be_bytes(), text)
 }
 
 fn readonly_row(seed: u64, i: u64) -> ([u8; 8], [u8; 16]) {
@@ -639,8 +639,8 @@ fn readonly_row(seed: u64, i: u64) -> ([u8; 8], [u8; 16]) {
     let prev = TOKEN_BASE + h % 20_000;
     let cur = TOKEN_BASE + (h / 20_000) % 100_000;
     let mut key = [0_u8; 8];
-    key[..4].copy_from_slice(&(prev as u32).to_be_bytes());
-    key[4..].copy_from_slice(&(cur as u32).to_be_bytes());
+    key[..4].copy_from_slice(&u32::try_from(prev).unwrap().to_be_bytes());
+    key[4..].copy_from_slice(&u32::try_from(cur).unwrap().to_be_bytes());
     let mut value = [0_u8; 16];
     for (chunk, part) in value.chunks_exact_mut(4).zip([
         h as u32,
@@ -673,7 +673,7 @@ fn config() -> Config {
     };
     // phrase_row keys on i % PHRASE_TOKEN_DOMAIN, so a phrase workload
     // larger than the token domain would wrap and overwrite its own rows.
-    if cfg.n / 4 > PHRASE_TOKEN_DOMAIN as usize {
+    if cfg.n / 4 > usize::try_from(PHRASE_TOKEN_DOMAIN).unwrap() {
         eprintln!(
             "BACKEND_BENCH_N too large: n/4 = {} exceeds the phrase \
              token domain {PHRASE_TOKEN_DOMAIN}; phrase keys would collide",

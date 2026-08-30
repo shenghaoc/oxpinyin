@@ -96,7 +96,7 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
         .collect();
     let keys: Vec<PinyinKey> = syllables
         .iter()
-        .map(|key| key.index() as PinyinKey)
+        .map(|key| PinyinKey::try_from(key.index()).expect("frozen syllable inventory fits u16"))
         .collect();
 
     // Two scalars for two keys; the pre-add probe proves this phrase

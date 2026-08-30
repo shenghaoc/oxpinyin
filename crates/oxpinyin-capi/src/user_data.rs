@@ -50,11 +50,14 @@ pub extern "C" fn pinyin_remember_user_input(
         let Some(user) = inst.user.as_mut() else {
             return false;
         };
-        let keys: Vec<PinyinKey> = match inst.session.composition_keys() {
-            // Key ids are the dense inventory index (< u16::MAX by
-            // construction: 405 complete + 23 initial keys).
-            Ok(keys) => keys.into_iter().map(|key| key.index() as u16).collect(),
-            Err(_) => return false,
+        // Key ids are the dense inventory index (< u16::MAX by
+        // construction: 405 complete + 23 initial keys).
+        let Some(keys) = inst.session.composition_keys().ok().and_then(|keys| {
+            keys.into_iter()
+                .map(|key| u16::try_from(key.index()).ok())
+                .collect::<Option<Vec<PinyinKey>>>()
+        }) else {
+            return false;
         };
         let count = if count == -1 {
             None

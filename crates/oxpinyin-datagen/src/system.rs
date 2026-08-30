@@ -227,10 +227,8 @@ pub fn compile(
                         let count = count
                             .parse::<i64>()
                             .map_err(|_| bad_line(&text_path, number, "bad count"))?;
-                        if !(0..=i64::from(u32::MAX)).contains(&count) {
-                            return Err(bad_line(&text_path, number, "count out of u32 range"));
-                        }
-                        let count = count as u32;
+                        let count = u32::try_from(count)
+                            .map_err(|_| bad_line(&text_path, number, "count out of u32 range"))?;
                         let entry = bigram.entry(token1).or_default();
                         if entry.1.iter().any(|(next, _)| *next == token2) {
                             return Err(DatagenError::Consistency(format!(

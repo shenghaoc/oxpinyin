@@ -15,7 +15,6 @@
 //! the predicted flat `+69`, remember-as-index-only, and
 //! `InvalidPhrase` → `false`.
 
-use std::os::raw::c_uint;
 use std::ptr;
 
 use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, UserStore};
@@ -776,7 +775,11 @@ fn export_iterators_walk_the_stored_triples() {
             .position(|c| c.text.as_bytes() == "你".as_bytes())
             .expect("你 is offered for ni");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        assert!(pinyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small candidate index"),
+            &mut cand
+        ));
         (index, cand)
     };
     let ni_cursor = pinyin_choose_candidate(instance, 0, ni_ptr);
@@ -800,7 +803,11 @@ fn export_iterators_walk_the_stored_triples() {
             .position(|c| c.text.as_bytes() == "好".as_bytes())
             .expect("好 is offered for hao");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        assert!(pinyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small candidate index"),
+            &mut cand
+        ));
         cand
     };
     assert!(pinyin_choose_candidate(instance, 2, hao_ptr) > 0);
@@ -910,7 +917,11 @@ fn offset_decode_rows_carry_prefix_context() {
             .position(|c| c.text.as_bytes() == "\u{4f60}".as_bytes())
             .expect("\u{4f60} is offered for nihao");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        assert!(pinyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small candidate index"),
+            &mut cand
+        ));
         (index, cand)
     };
     assert!(pinyin_choose_candidate(instance, 0, ni_ptr) > 0);
@@ -982,7 +993,11 @@ fn the_forcing_survives_the_reparse_and_clears_by_offset() {
             .position(|c| c.text.as_bytes() == "\u{4f60}".as_bytes())
             .expect("\u{4f60} is offered for nihao");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        assert!(pinyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small candidate index"),
+            &mut cand
+        ));
         cand
     };
     assert!(pinyin_choose_candidate(instance, 0, ni_ptr) > 0);
@@ -1055,7 +1070,11 @@ fn the_forcing_survives_a_shrinking_reparse_and_the_retype() {
             .position(|c| c.text.as_bytes() == "\u{4f60}".as_bytes())
             .expect("\u{4f60} is offered");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        assert!(pinyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small candidate index"),
+            &mut cand
+        ));
         cand
     };
     assert!(pinyin_choose_candidate(instance, 0, ni_ptr) > 0);
@@ -1128,7 +1147,11 @@ fn a_selection_committed_composition_reparses_with_its_store() {
             .position(|c| c.text.as_bytes() == "\u{4f60}\u{597d}".as_bytes())
             .expect("\u{4f60}\u{597d} is offered");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        assert!(pinyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small candidate index"),
+            &mut cand
+        ));
         cand
     };
     // Consumes the whole buffer: the commit branch.
@@ -1197,7 +1220,11 @@ fn a_shrinking_reparse_reconciles_the_committed_selection() {
             .position(|c| c.text.as_bytes() == "\u{4f60}\u{597d}".as_bytes())
             .expect("\u{4f60}\u{597d} is offered");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        assert!(pinyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small candidate index"),
+            &mut cand
+        ));
         cand
     };
     // Consumes the whole buffer: the commit branch.
@@ -1377,7 +1404,11 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
             .position(|cd| cd.text.as_bytes() == "好".as_bytes())
             .expect("好 is offered at offset 2");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
-        assert!(pinyin_get_candidate(instance, index as c_uint, &mut cand));
+        assert!(pinyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small candidate index"),
+            &mut cand
+        ));
         cand
     };
     // The chosen row's span is anchor-relative (hao covers raw 2..5). With

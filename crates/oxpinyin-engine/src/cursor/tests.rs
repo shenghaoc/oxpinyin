@@ -25,7 +25,7 @@ fn off(input: &[u8], probes: &[(usize, i64)]) {
         let got = lookup_offset_for_cursor(input, PARITY, cursor);
         assert_eq!(
             got,
-            Ok(want as usize),
+            Ok(usize::try_from(want).expect("non-negative probe")),
             "{:?} OFF c={cursor}: pin {want}",
             std::str::from_utf8(input)
         );
@@ -38,7 +38,7 @@ fn left(input: &[u8], probes: &[(usize, i64)]) {
         match want {
             v if v >= 0 => assert_eq!(
                 got,
-                Ok(v as usize),
+                Ok(usize::try_from(v).expect("non-negative probe")),
                 "{:?} LEFT off={offset}: pin {v}",
                 std::str::from_utf8(input)
             ),
@@ -58,7 +58,7 @@ fn right(input: &[u8], probes: &[(usize, i64)]) {
         match want {
             v if v >= 0 => assert_eq!(
                 got,
-                Ok(Some(v as usize)),
+                Ok(Some(usize::try_from(v).expect("non-negative probe"))),
                 "{:?} RIGHT off={offset}: pin {v}",
                 std::str::from_utf8(input)
             ),
