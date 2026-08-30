@@ -204,17 +204,31 @@ fn env_key(path: &Path) -> PathBuf {
 /// `DB_NEW` DBI on abort, so caching earlier would leave a dangling
 /// handle).
 ///
-/// One documented nesting restriction: a [`WriteStore::write`]
-/// closure that has already hit a cache miss (and therefore holds
-/// [`Self::dbi_open`] until the txn commits) must not re-enter a
-/// store on the same path with a call that itself hits a cache
-/// miss. `std::sync::Mutex` is not reentrant, so the second
-/// [`Self::lock_dbi_open`] on the same thread would deadlock the
-/// caller. Cache-hit re-entry is fine — it never touches
-/// `dbi_open`. Neither oxpinyin's own writers nor its fixtures do
-/// this: the user store's schema is fixed at first use and every
-/// fixture table is pre-created, so first-use opens happen only on
-/// process startup and never inside a live write closure.
+/// Two documented nesting restrictions:
+///
+/// 1. **Uncached-table re-entry inside a write closure.** A
+///    [`WriteStore::write`] closure that has already hit a cache
+///    miss (and therefore holds [`Self::dbi_open`] until the txn
+///    commits) must not re-enter a store on the same path with a
+///    read call that itself hits a cache miss. `std::sync::Mutex`
+///    is not reentrant, so the second [`Self::lock_dbi_open`] on
+///    the same thread would deadlock the caller. Cache-hit re-entry
+///    is safe **for reads only** — it never touches `dbi_open`.
+///
+/// 2. **Nested writes on the same path.** A [`WriteStore::write`]
+///    closure that opens a second [`LmdbStore`] on the same path
+///    and calls [`WriteStore::write`] on it blocks on heed's
+///    single-writer lock on the shared env — the outer txn cannot
+///    return and commit while the inner `write_txn()` waits, so
+///    the whole thread deadlocks. This is heed's own single-writer
+///    guarantee, not the DBI-cache serialization, and it holds
+///    even on a cache hit. Nested writes on the same path are
+///    unsupported until the outer transaction completes.
+///
+/// Neither oxpinyin's own writers nor its fixtures hit either case:
+/// the user store's schema is fixed at first use, every fixture
+/// table is pre-created, and no write closure in the tree opens a
+/// second store on the same path from inside itself.
 /// [`LmdbWriteTxn::open_existing`] carries the same warning at the
 /// method level for readers who reach it before this docblock.
 struct SharedEnv {
@@ -709,9 +723,14 @@ impl<'a> LmdbWriteTxn<'a> {
     /// Once this method returns with the guard populated, a nested
     /// call on the same thread into a store on the same path that
     /// *also* hits a cache miss will deadlock — `std::sync::Mutex`
-    /// is not reentrant. Cache-hit re-entry is fine. See the
-    /// [`SharedEnv`] docblock for the wider context; oxpinyin's own
-    /// code never nests a fresh-table open inside a write closure.
+    /// is not reentrant. Cache-hit re-entry is safe **for reads
+    /// only**: a nested [`WriteStore::write`] on the same path
+    /// blocks on heed's single-writer lock regardless of cache
+    /// state, and that deadlock lives in heed, not in
+    /// [`SharedEnv::dbi_open`]. See the [`SharedEnv`] docblock for
+    /// the wider context; oxpinyin's own code neither nests a
+    /// fresh-table open nor nests a write on the same path inside a
+    /// write closure.
     fn hold_dbi_open(&self) {
         let mut slot = self.dbi_open_guard.borrow_mut();
         if slot.is_none() {
