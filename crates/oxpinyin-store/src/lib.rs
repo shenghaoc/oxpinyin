@@ -1194,6 +1194,48 @@ mod tests {
         assert_type_eq::<super::RedbStore>();
     }
 
+    /// `--no-default-features --features tkrzw` (without KC) resolves
+    /// `DefaultStore` to `TkrzwStore` — the tkrzw peer.
+    #[cfg(all(feature = "tkrzw", not(feature = "kyotocabinet")))]
+    #[test]
+    fn default_store_is_tkrzw_when_only_tkrzw_is_on() {
+        fn assert_type_eq<T>()
+        where
+            T: 'static,
+            super::DefaultStore: 'static,
+        {
+            assert_eq!(
+                std::any::TypeId::of::<super::DefaultStore>(),
+                std::any::TypeId::of::<T>(),
+                "DefaultStore must resolve to the expected concrete backend"
+            );
+        }
+        assert_type_eq::<super::TkrzwStore>();
+    }
+
+    /// `--no-default-features --features lmdb` (without KC or tkrzw)
+    /// resolves `DefaultStore` to `LmdbStore` — the LMDB peer.
+    #[cfg(all(
+        feature = "lmdb",
+        not(feature = "kyotocabinet"),
+        not(feature = "tkrzw")
+    ))]
+    #[test]
+    fn default_store_is_lmdb_when_only_lmdb_is_on() {
+        fn assert_type_eq<T>()
+        where
+            T: 'static,
+            super::DefaultStore: 'static,
+        {
+            assert_eq!(
+                std::any::TypeId::of::<super::DefaultStore>(),
+                std::any::TypeId::of::<T>(),
+                "DefaultStore must resolve to the expected concrete backend"
+            );
+        }
+        assert_type_eq::<super::LmdbStore>();
+    }
+
     #[test]
     fn redb_is_empty_probe_does_not_create_tables() {
         use ::redb::ReadableDatabase;
