@@ -182,8 +182,8 @@ jobs:
             cargo test --locked --workspace
             ;;
           redb)
-            echo "--- redb (workspace, pure-Rust portability fallback) ---"
-            cargo test --locked --workspace --no-default-features
+            echo "--- redb (workspace, pure-Rust peer) ---"
+            cargo test --locked --workspace --no-default-features --features oxpinyin-store/redb
             ;;
           tkrzw)
             echo "--- tkrzw (workspace) ---"
