@@ -52,7 +52,7 @@ if ! grep -q "^pin_ref=.*$ORACLE_PIN" "$ORACLE_PREFIX/oracle-pin.txt"; then
     exit 1
 fi
 
-# ── Harness build (installed flags come from oxpinyin.pc below) ──────────
+# ── Harness build (installed flags come from libpinyin.pc below) ──────────
 
 echo "--- building bisect harness ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$SCRIPT_DIR/bisect" \
@@ -61,9 +61,8 @@ echo "build: ok"
 
 # ── Stage the installed oxpinyin-capi tree with cargo-c ─────────────────
 
-if [ -f "$STAGE/usr/lib64/pkgconfig/oxpinyin.pc" ] && \
-   [ -f "$STAGE/usr/lib64/libpinyin_capi.so" ] && \
-   [ "${PERF_REUSE_STAGE:-0}" = "1" ]; then
+STAGED_PC=$(find "$STAGE/usr" -name libpinyin.pc -print -quit 2>/dev/null || true)
+if [ -n "$STAGED_PC" ] && [ "${PERF_REUSE_STAGE:-0}" = "1" ]; then
     echo "--- reusing stage: $STAGE ---"
 else
     echo "--- cargo cinstall oxpinyin-capi -> $STAGE ---"
@@ -71,14 +70,15 @@ else
     cargo cinstall --locked --release -p oxpinyin-capi \
         --destdir="$STAGE" --prefix=/usr \
         --manifest-path "$REPO_ROOT/Cargo.toml"
+    STAGED_PC=$(find "$STAGE/usr" -name libpinyin.pc -print -quit)
 fi
 
-export PKG_CONFIG_PATH="$STAGE/usr/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export PKG_CONFIG_PATH="$(dirname "$STAGED_PC")${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export PKG_CONFIG_SYSROOT_DIR="$STAGE"
-CAPI_CFLAGS=$(pkg-config --cflags oxpinyin)
-CAPI_LIBS=$(pkg-config --libs oxpinyin)
-CAPI_LIBDIR=$(pkg-config --variable=libdir oxpinyin)
-CAPI_SO="$CAPI_LIBDIR/libpinyin_capi.so"
+CAPI_CFLAGS=$(pkg-config --cflags libpinyin)
+CAPI_LIBS=$(pkg-config --libs libpinyin)
+CAPI_LIBDIR=$(pkg-config --variable=libdir libpinyin)
+CAPI_SO="$CAPI_LIBDIR/libpinyin.so"
 CAPI_DATA="$STAGE/usr/share/oxpinyin"
 echo "pkg-config oxpinyin cflags: $CAPI_CFLAGS"
 echo "pkg-config oxpinyin libs:   $CAPI_LIBS"
@@ -87,27 +87,31 @@ echo "installed capi .so:         $CAPI_SO"
 
 # ── Installed data tree (cargo-c ships no data; packager must add it) ────
 
-if [ ! -f "$CAPI_DATA/pinyin_index.redb" ] || [ ! -f "$CAPI_DATA/interpolation2.text" ]; then
+if [ ! -f "$CAPI_DATA/pinyin_index.kct" ] || [ ! -f "$CAPI_DATA/interpolation2.text" ]; then
     echo "--- populating oxpinyin data from export + model cache ---"
     EXPORT_DIR="${PINYIN_EXPORT_DIR:-/tmp/oxpinyin-export}"
     missing=""
-    for table in pinyin_index.redb phrase_index.redb bigram.redb; do
+    for table in pinyin_index.kct phrase_index.kct bigram.kct; do
         [ -f "$EXPORT_DIR/$table" ] || missing="$missing $table"
     done
     [ -z "$missing" ] || {
         echo "fatal: exported table(s)$missing not found at $EXPORT_DIR;" >&2
-        echo "  copy or symlink the required tables from fixtures/w3/" >&2
+        echo "  generate with: cargo run --release -p oxpinyin-datagen -- compile --out-dir DIR" >&2
         exit 1
     }
-    MODEL_DIR=$(PINYIN_MODEL_CACHE="$WORK/model" \
-        "$REPO_ROOT/tools/model/fetch-model.sh" | tail -n 1)
     mkdir -p "$CAPI_DATA"
-    cp -L "$EXPORT_DIR/pinyin_index.redb" \
-          "$EXPORT_DIR/phrase_index.redb" \
-          "$EXPORT_DIR/bigram.redb" "$CAPI_DATA/"
-    cp -L "$MODEL_DIR/interpolation2.text" "$CAPI_DATA/interpolation2.text"
+    cp -L "$EXPORT_DIR/pinyin_index.kct" \
+          "$EXPORT_DIR/phrase_index.kct" \
+          "$EXPORT_DIR/bigram.kct" "$CAPI_DATA/"
+    if [ -f "$EXPORT_DIR/interpolation2.text" ]; then
+        cp -L "$EXPORT_DIR/interpolation2.text" "$CAPI_DATA/interpolation2.text"
+    else
+        MODEL_DIR=$(PINYIN_MODEL_CACHE="$WORK/model" \
+            "$REPO_ROOT/tools/model/fetch-model.sh" | tail -n 1)
+        cp -L "$MODEL_DIR/interpolation2.text" "$CAPI_DATA/interpolation2.text"
+    fi
 fi
-[ -f "$CAPI_DATA/pinyin_index.redb" ] && [ -f "$CAPI_DATA/interpolation2.text" ] || {
+[ -f "$CAPI_DATA/pinyin_index.kct" ] && [ -f "$CAPI_DATA/interpolation2.text" ] || {
     echo "fatal: oxpinyin runtime data incomplete at $CAPI_DATA" >&2
     exit 1
 }
