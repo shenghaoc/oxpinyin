@@ -4,6 +4,7 @@
 //! differential run can report exactly which source, producer, and backend
 //! produced its data (`docs/findings/datagen-model20.md`).
 
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -47,17 +48,15 @@ impl Manifest {
         let mut out = String::new();
         out.push_str(MANIFEST_SCHEMA);
         out.push('\n');
-        out.push_str(&format!("pin_ref=model20-{}\n", self.model_sha256));
-        out.push_str(&format!("backend={}\n", self.backend.extension()));
-        out.push_str(&format!(
-            "producer=oxpinyin-datagen@{}\n",
-            self.producer_version
-        ));
+        let _ = writeln!(out, "pin_ref=model20-{}", self.model_sha256);
+        let _ = writeln!(out, "backend={}", self.backend.extension());
+        let _ = writeln!(out, "producer=oxpinyin-datagen@{}", self.producer_version);
         for table in &self.tables {
-            out.push_str(&format!(
-                "table={} records={} fnv1a64={:016x}\n",
+            let _ = writeln!(
+                out,
+                "table={} records={} fnv1a64={:016x}",
                 table.file, table.records, table.fnv1a64
-            ));
+            );
         }
         out
     }

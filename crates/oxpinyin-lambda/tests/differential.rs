@@ -23,6 +23,7 @@
 //!   `%f` output (six decimals — the tool's entire observable precision).
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use oxpinyin_counter::{Counts, count_ngseg, parse_interpolation_dump};
@@ -95,9 +96,9 @@ fn rust_estimate() -> Option<Estimate> {
 fn lambda_dump(lambda: &Lambda) -> String {
     let mut dump = String::new();
     for (prev, value) in &lambda.per_context {
-        dump.push_str(&format!("token:{prev} lambda:{value:.6}\n"));
+        let _ = writeln!(dump, "token:{prev} lambda:{value:.6}");
     }
-    dump.push_str(&format!("average lambda:{:.6}\n", lambda.average));
+    let _ = writeln!(dump, "average lambda:{:.6}", lambda.average);
     dump
 }
 

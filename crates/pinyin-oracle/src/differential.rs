@@ -12,6 +12,7 @@
 //! because there is no decoder to compare them against yet.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use oxpinyin_core::{Completeness, FullPinyinParser, InputParser, ParseError, ParseResult};
 
@@ -435,31 +436,31 @@ impl RunReport {
     #[must_use]
     pub fn to_summary(&self) -> String {
         let mut out = String::new();
-        out.push_str(&format!("compared      {}\n", self.total));
-        out.push_str(&format!("agreements    {}\n", self.agreements));
-        out.push_str(&format!("divergences   {}\n", self.divergences()));
+        let _ = writeln!(out, "compared      {}", self.total);
+        let _ = writeln!(out, "agreements    {}", self.agreements);
+        let _ = writeln!(out, "divergences   {}", self.divergences());
         if self.unobservable > 0 {
-            out.push_str(&format!("unobservable  {}\n", self.unobservable));
+            let _ = writeln!(out, "unobservable  {}", self.unobservable);
         }
 
         if !self.reasons.is_empty() {
             out.push_str("\nby reason\n");
             for (reason, count) in &self.reasons {
-                out.push_str(&format!("  {:<22} {count}\n", reason.as_wire()));
+                let _ = writeln!(out, "  {:<22} {count}", reason.as_wire());
             }
         }
 
         if !self.classes.is_empty() {
             out.push_str("\nby class\n");
             for (class, count) in &self.classes {
-                out.push_str(&format!("  {class:<22} {count}\n"));
+                let _ = writeln!(out, "  {class:<22} {count}");
             }
         }
 
         if !self.ranks.is_empty() {
             out.push_str("\noracle path rank in our ordered set\n");
             for (rank, count) in &self.ranks {
-                out.push_str(&format!("  {rank:<22} {count}\n"));
+                let _ = writeln!(out, "  {rank:<22} {count}");
             }
         }
         out
