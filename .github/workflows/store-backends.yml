@@ -3,12 +3,23 @@ name: Store backends
 # Backend coverage for the four store backends on a rolling toolchain.
 # Kyoto Cabinet is the DEFAULT backend (the DBM the reference libpinyin
 # builds against); tkrzw and LMDB are the alternates; redb is the
-# pure-Rust portability fallback (--no-default-features). Two jobs:
-#   - store-features runs the whole workspace test suite under each of the
-#     four backends in turn — every pass decodes real queries through the
-#     fixture tables, not just the store's own unit tests — plus one
-#     multi-feature store build that runs the cross-backend conformance
-#     suite in a single binary.
+# pure-Rust portability fallback (--no-default-features). Four jobs:
+#   - store-features is a matrix over the four backends. Each child runs
+#     the whole workspace test suite under exactly ONE backend, on its own
+#     runner, so the four sweeps run in PARALLEL (fail-fast: false,
+#     max-parallel: 4) instead of sequentially inside one job. Every pass
+#     decodes real queries through the fixture tables, not just the store's
+#     own unit tests. The matrix value only selects one of four fixed,
+#     repository-controlled cargo invocations (see the case in the test
+#     step); no command is built from untrusted event input.
+#   - store-conformance is an INDEPENDENT job — it has no needs edge to the
+#     matrix, so it schedules concurrently with all four backend children.
+#     It runs the cross-backend conformance suite: one oxpinyin-store binary
+#     with kyotocabinet, tkrzw and lmdb compiled in together.
+#   - store-backends-gate is the stable aggregate status check. It runs no
+#     tests; it only fails unless every backend child AND store-conformance
+#     succeeded, so branch protection can keep requiring the historical
+#     "store backends (kyotocabinet / redb / tkrzw / lmdb)" context.
 #   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan and UBSan.
 #
 # ROLLING TOOLCHAIN, deliberately unpinned: the jobs run inside
@@ -61,12 +72,14 @@ concurrency:
 
 jobs:
   store-features:
-    # Every backend is exercised through the whole workspace — a backend
-    # that "passes" only in the store's own unit tests and never reaches
-    # the decode path does not count. The alternate-backend passes name the
-    # store's feature with member/feature syntax because the root manifest
-    # is virtual.
-    name: store backends (kyotocabinet / redb / tkrzw / lmdb)
+    # One matrix child per backend, each on its own runner: every backend is
+    # exercised through the whole workspace — a backend that "passes" only in
+    # the store's own unit tests and never reaches the decode path does not
+    # count. The alternate-backend children name the store's feature with
+    # member/feature syntax because the root manifest is virtual. The four
+    # children run in parallel; the historical single-job serialisation of
+    # these sweeps is gone.
+    name: store backend (${{ matrix.backend }})
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see the header comment
@@ -74,6 +87,18 @@ jobs:
     defaults:
       run:
         shell: bash
+
+    strategy:
+      # fail-fast: false so one backend's failure does not cancel the other
+      # three children — every backend's result is reported independently.
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        backend:
+          - kyotocabinet
+          - redb
+          - tkrzw
+          - lmdb
 
     steps:
       # debian:testing ships a minimal base without bash or git; the
@@ -105,8 +130,11 @@ jobs:
           . "$HOME/.cargo/env"
 
       - name: Install build dependencies (apt)
-        # libtkrzw-dev: the tkrzw pass builds the C++ shim against the distro
-        # library through pkg-config; the default/lmdb passes are pure Rust.
+        # Every matrix child installs the full set so each lane is
+        # self-contained regardless of scheduling order; the marginal apt
+        # cost is deliberate (correctness over shaving install seconds).
+        # libtkrzw-dev: the tkrzw child builds the C++ shim against the distro
+        # library through pkg-config; the redb/lmdb children are pure Rust.
         # libclang-dev: bindgen's runtime dependency for generating tkrzw FFI
         # bindings from tkrzw_langc.h.
         # Debian's libtkrzw-dev builds tkrzw with compression, so tkrzw.pc
@@ -117,23 +145,123 @@ jobs:
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Each backend child gets a distinct cache identity; without this the
+          # four feature configurations would contend one automatic key. Each
+          # runner has its own isolated checkout and target dir — no shared
+          # writable target across the matrix.
+          key: store-backend-${{ matrix.backend }}
 
-      # Sequential passes over the same target dir: any non-zero exit fails
-      # the step immediately. Feature-switch rebuilds reuse intermediates, so
-      # the marginal cost of the second/third pass is a partial rebuild.
-      - name: Test the store under each backend feature set
-        id: feature-tests
+      # This child runs exactly one of four fixed cargo invocations, selected
+      # by the matrix backend through a case over a closed set (fail-closed
+      # default). The matrix value is bound to a plain shell variable via env
+      # indirection — ${{ }} inside a run: body is a template-injection
+      # surface — and never spliced into a command.
+      - name: Test the workspace under this backend
+        id: backend-test
+        env:
+          BACKEND: ${{ matrix.backend }}
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          echo "--- kyotocabinet (workspace, the default) ---"
-          cargo test --locked --workspace
-          echo "--- redb (workspace, pure-Rust portability fallback) ---"
-          cargo test --locked --workspace --no-default-features
-          echo "--- tkrzw (workspace) ---"
-          cargo test --locked --workspace --no-default-features --features oxpinyin-store/tkrzw
-          echo "--- lmdb (workspace) ---"
-          cargo test --locked --workspace --no-default-features --features oxpinyin-store/lmdb
+          case "$BACKEND" in
+          kyotocabinet)
+            echo "--- kyotocabinet (workspace, the default backend) ---"
+            cargo test --locked --workspace
+            ;;
+          redb)
+            echo "--- redb (workspace, pure-Rust portability fallback) ---"
+            cargo test --locked --workspace --no-default-features
+            ;;
+          tkrzw)
+            echo "--- tkrzw (workspace) ---"
+            cargo test --locked --workspace --no-default-features --features oxpinyin-store/tkrzw
+            ;;
+          lmdb)
+            echo "--- lmdb (workspace) ---"
+            cargo test --locked --workspace --no-default-features --features oxpinyin-store/lmdb
+            ;;
+          *)
+            echo "FAIL: unknown matrix.backend value '$BACKEND'" >&2
+            exit 2
+            ;;
+          esac
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+
+      - name: Report
+        if: always()
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          {
+            echo "## store backend (${BACKEND})"
+            echo ""
+            echo "Result: **$([ '${{ job.status }}' = 'success' ] && echo 'passed' || echo 'FAILED')**"
+            echo ""
+            echo "Whole-workspace sweep under the ${BACKEND} backend only."
+            echo ""
+            echo "| Backend | Wall clock |"
+            echo "|---|---:|"
+            echo "| ${BACKEND} | ${{ steps.backend-test.outputs.elapsed || '—' }}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  store-conformance:
+    # The cross-backend conformance suite, as its own independent job: one
+    # oxpinyin-store binary with kyotocabinet, tkrzw and lmdb compiled in
+    # together. It has NO needs edge to store-features, so it runs
+    # concurrently with the four backend children rather than after them.
+    name: store conformance (all backends)
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same root-owned-checkout caveat as the store-features job.
+      - name: Register the checkout as a git safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          set -euo pipefail
+          channel="$(awk -F'"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain "$channel" \
+                --component clippy --component rustfmt
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          # Visible to THIS step too: GITHUB_PATH only applies to later steps.
+          . "$HOME/.cargo/env"
+
+      - name: Install build dependencies (apt)
+        # The conformance binary compiles kyotocabinet + tkrzw + lmdb together,
+        # so it needs the same C backend headers/libraries as the matrix job.
+        # libkyotocabinet-dev + libtkrzw-dev (+ its compression -dev packages)
+        # and libclang-dev for bindgen; lmdb rides on heed and is pure Rust.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Distinct cache identity from every backend child: this is the
+          # all-backends feature configuration, not one of the four.
+          key: store-conformance
+
+      - name: Cross-backend conformance suite
+        id: conformance-test
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
           echo "--- cross-backend conformance (one binary, all backends) ---"
           cargo test --locked -p oxpinyin-store --features "kyotocabinet,tkrzw,lmdb"
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
@@ -142,14 +270,66 @@ jobs:
         if: always()
         run: |
           {
-            echo "## store-features"
+            echo "## store conformance (all backends)"
             echo ""
-            echo "Backend sweeps passed: kyotocabinet (default), redb, tkrzw, lmdb."
+            echo "Result: **$([ '${{ job.status }}' = 'success' ] && echo 'passed' || echo 'FAILED')**"
+            echo ""
+            echo "One oxpinyin-store binary with kyotocabinet, tkrzw and lmdb"
+            echo "compiled in together — the cross-backend conformance suite."
             echo ""
             echo "| Phase | Wall clock |"
             echo "|---|---:|"
-            echo "| four-backend suite + conformance | ${{ steps.feature-tests.outputs.elapsed || '—' }}s |"
+            echo "| conformance suite | ${{ steps.conformance-test.outputs.elapsed || '—' }}s |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  store-backends-gate:
+    # Stable aggregate status check. This preserves the historical job
+    # display name so branch-protection required-status-check contexts keep
+    # resolving after the store-features job became a matrix. It builds and
+    # tests nothing: it only aggregates the results of the four backend
+    # children and the conformance job via the documented
+    # needs.<job>.result semantics. For a matrix upstream, that result is
+    # success only when EVERY matrix child succeeded, and failure if any
+    # child failed — so this gate is red unless all four backends and the
+    # conformance run are green.
+    name: store backends (kyotocabinet / redb / tkrzw / lmdb)
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    needs:
+      - store-features
+      - store-conformance
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Aggregate the backend and conformance results
+        # Job results are bound through env rather than spliced into the
+        # script body; the values are the closed set
+        # success/failure/cancelled/skipped.
+        env:
+          FEATURES_RESULT: ${{ needs.store-features.result }}
+          CONFORMANCE_RESULT: ${{ needs.store-conformance.result }}
+        run: |
+          set -euo pipefail
+          echo "store-features (matrix): ${FEATURES_RESULT}"
+          echo "store-conformance:       ${CONFORMANCE_RESULT}"
+          {
+            echo "## store backends (aggregate gate)"
+            echo ""
+            echo "This job runs no tests. It is the stable aggregate status"
+            echo "check that fails unless every backend matrix child AND the"
+            echo "cross-backend conformance job succeeded."
+            echo ""
+            echo "| Upstream job | Result |"
+            echo "|---|---|"
+            echo "| store-features (matrix, all four backends) | ${FEATURES_RESULT} |"
+            echo "| store-conformance | ${CONFORMANCE_RESULT} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${FEATURES_RESULT}" != "success" ] || [ "${CONFORMANCE_RESULT}" != "success" ]; then
+            echo "::error::store-backends gate failed: store-features=${FEATURES_RESULT}, store-conformance=${CONFORMANCE_RESULT}" >&2
+            exit 1
+          fi
+          echo "store-backends gate: all upstream jobs succeeded"
 
   tkrzw-sanitizers:
     # The shim passes Rust callbacks into tkrzw's visitor dispatch
