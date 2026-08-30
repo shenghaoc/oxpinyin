@@ -16,12 +16,15 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+pub mod compat;
 pub mod content;
 pub mod dict;
 pub(crate) mod initials;
 pub mod interp;
 pub mod layout;
 pub mod lm;
+pub mod memory_chunk;
 pub mod punct;
 pub mod table;
 pub mod table_conf;
