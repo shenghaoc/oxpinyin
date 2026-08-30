@@ -1,34 +1,33 @@
-//! End-to-end `GenericUserStore` on redb vs LMDB — identical workloads.
+//! End-to-end `GenericUserStore` bench for the compiled peer backend.
 //!
 //! Measurement only; consumes public APIs and touches no parity code.
-//! Both backends are built via
+//! Under the exactly-one-backend invariant one peer is compiled per
+//! build; this bench measures that peer through
 //! [`GenericUserStore::create_standalone`](oxpinyin_user::GenericUserStore::create_standalone),
-//! so neither goes through the process-global handle registry.  Run in
-//! release, with the LMDB half enabled:
+//! which bypasses the process-global handle registry.  A KC-vs-<peer>
+//! comparison is done by running the same bench in two fresh builds
+//! and reading the two output tables — the cross-peer comparison
+//! historically done in-process is no longer possible in one build.
+//!
+//! Run in release under each peer selection to compare them:
 //!
 //! ```text
-//! cargo run -p oxpinyin-user --release --example store_bench --features lmdb
+//! cargo run -p oxpinyin-user --release --example store_bench
+//! cargo run -p oxpinyin-user --release --example store_bench \
+//!     --no-default-features --features lmdb
 //! ```
 //!
-//! Without `--features lmdb` the example runs redb only and prints a note.
-//! Each (backend, scenario) pair runs in a child process (a re-exec of
-//! this binary) so VmHWM measures that pair alone; the child baseline is
-//! common to both backends.  Training pairs derive deterministically from
-//! the seed, and every scenario body is one generic function over
-//! `S: WriteStore` — both backends see identical operations in order.
+//! Each scenario runs in a child process (a re-exec of this binary) so
+//! VmHWM measures that scenario alone; the child baseline is common to
+//! every scenario.  Training pairs derive deterministically from the
+//! seed, and every scenario body is one generic function over
+//! `S: WriteStore` — the peer set differs only in `S`.
 //!
 //! The point of interest: the decode-time count memo should flatten the
-//! raw storage delta measured by `backend_bench` (point_get / prefix_scan
-//! in `crates/oxpinyin-store/examples/backend_bench.rs`).  Compare
-//! `first_query_ms` and `us_per_cached_query` against `backend_bench`'s
-//! `us_per_get`.
-//!
-//! Note what `us_per_cached_query` measures here.  Query rows are drawn
-//! uniformly from a 512 x 8_192 token space, so the bigram key is almost
-//! always one the memo has not seen — this is the memo's worst case, not
-//! decode's, where a candidate set is rescored keystroke after keystroke.
-//! The unigram, unigram-total and bigram-total lookups still warm quickly,
-//! which is where the gain over a held read view comes from.
+//! raw storage delta measured by `backend_bench` (point_get /
+//! prefix_scan in `crates/oxpinyin-store/examples/backend_bench.rs`).
+//! Compare `first_query_ms` and `us_per_cached_query` against
+//! `backend_bench`'s `us_per_get`.
 //!
 //! On Unix, on-disk sizes report both apparent length (st_size) and
 //! allocated blocks (st_blocks × 512) of the data file only; allocated is
@@ -45,9 +44,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-#[cfg(feature = "lmdb")]
-use oxpinyin_store::LmdbStore;
-use oxpinyin_store::{RedbStore, WriteStore};
+use oxpinyin_store::{DefaultStore, WriteStore};
 use oxpinyin_user::GenericUserStore;
 
 const SCENARIOS: [&str; 3] = ["train", "save", "read"];
@@ -58,54 +55,46 @@ const TOKEN_BASE: u32 = 0x0100_0000;
 const PREV_DOMAIN: u32 = 512;
 const CUR_DOMAIN: u32 = 8_192;
 
+/// The peer this build is measuring, taken from the store's own
+/// extension — one authoritative name (`kct` / `redb` / `lmdb` / `tkt`).
+const PEER_LABEL: &str = oxpinyin_store::DEFAULT_STORE_EXT;
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let arg = |n: usize| args.get(n).map(String::as_str);
-    match (arg(1), arg(2), arg(3)) {
-        (Some("--child"), Some(backend), Some(scenario)) => {
-            run_child(backend, scenario);
-        }
+    match (arg(1), arg(2)) {
+        (Some("--child"), Some(scenario)) => run_child(scenario),
         _ => parent(),
     }
 }
 
-// ── parent: spawn children, print the comparison table ────────────
+// ── parent: spawn one child per scenario, print the table ─────────
 
 fn parent() {
     let cfg = config();
-    println!("store_bench — GenericUserStore end-to-end, redb vs lmdb");
+    println!("store_bench — GenericUserStore end-to-end, peer = {PEER_LABEL}");
     println!(
         "train={}  reads={}  predicted={}  seed={:#x}",
         cfg.train, cfg.reads, cfg.predicted, cfg.seed
     );
-    println!("one fresh process per (backend, scenario); VmHWM per pair");
-    if cfg!(feature = "lmdb") {
-        println!("backends: redb, lmdb");
-    } else {
-        println!("backends: redb only — rebuild with --features lmdb for the comparison");
-    }
+    println!("one fresh process per scenario; VmHWM per scenario");
     println!();
 
     for scenario in SCENARIOS {
-        let redb = spawn_child("redb", scenario);
-        let lmdb = if cfg!(feature = "lmdb") {
-            Some(spawn_child("lmdb", scenario))
-        } else {
-            None
-        };
-        print_block(scenario, &redb, lmdb.as_deref());
+        let rows = spawn_child(scenario);
+        print_block(scenario, &rows);
     }
 }
 
-fn spawn_child(backend: &str, scenario: &str) -> Vec<(String, String)> {
+fn spawn_child(scenario: &str) -> Vec<(String, String)> {
     let exe = std::env::current_exe().expect("current exe");
     let output = Command::new(exe)
-        .args(["--child", backend, scenario])
+        .args(["--child", scenario])
         .output()
         .expect("spawn bench child");
     if !output.status.success() {
         eprintln!(
-            "child {backend}/{scenario} failed:\n{}",
+            "child {PEER_LABEL}/{scenario} failed:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
         std::process::exit(1);
@@ -117,41 +106,19 @@ fn spawn_child(backend: &str, scenario: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn print_block(scenario: &str, redb: &[(String, String)], lmdb: Option<&[(String, String)]>) {
+fn print_block(scenario: &str, rows: &[(String, String)]) {
     println!("── {scenario} ──");
-    println!("  {:<26} {:>14} {:>14}", "metric", "redb", "lmdb");
-    for (key, value) in redb {
-        let lmdb_value = lmdb
-            .and_then(|rows| rows.iter().find(|(k, _)| k == key))
-            .map(|(_, v)| v.as_str())
-            .unwrap_or("-");
-        println!("  {:<26} {:>14} {:>14}", key, value, lmdb_value);
+    println!("  {:<26} {:>14}", "metric", PEER_LABEL);
+    for (key, value) in rows {
+        println!("  {:<26} {:>14}", key, value);
     }
     println!();
 }
 
-// ── child: one (backend, scenario) pair in this process ───────────
+// ── child: one scenario in this process against the compiled peer ─
 
-fn run_child(backend: &str, scenario: &str) {
-    match backend {
-        "redb" => dispatch::<RedbStore>(scenario),
-        "lmdb" => dispatch_lmdb(scenario),
-        other => {
-            eprintln!("unknown backend {other:?}");
-            std::process::exit(2);
-        }
-    }
-}
-
-#[cfg(feature = "lmdb")]
-fn dispatch_lmdb(scenario: &str) {
-    dispatch::<LmdbStore>(scenario);
-}
-
-#[cfg(not(feature = "lmdb"))]
-fn dispatch_lmdb(_scenario: &str) {
-    eprintln!("this build lacks the lmdb feature");
-    std::process::exit(2);
+fn run_child(scenario: &str) {
+    dispatch::<DefaultStore>(scenario);
 }
 
 fn dispatch<S: WriteStore>(scenario: &str) {

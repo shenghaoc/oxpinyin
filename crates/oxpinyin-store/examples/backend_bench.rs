@@ -52,11 +52,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "kyotocabinet")]
+use oxpinyin_store::KcStore;
 #[cfg(feature = "lmdb")]
 use oxpinyin_store::LmdbStore;
+#[cfg(feature = "redb")]
+use oxpinyin_store::RedbStore;
 #[cfg(feature = "tkrzw")]
 use oxpinyin_store::TkrzwStore;
-use oxpinyin_store::{ReadStore, RedbStore, WriteStore};
+use oxpinyin_store::{ReadStore, WriteStore};
 
 const SCENARIOS: [&str; 5] = [
     "bulk_load",
@@ -245,39 +249,22 @@ fn print_block(scenario: &str, redb: &[(String, String)], columns: &[Column]) {
 
 fn run_child(backend: &str, scenario: &str) {
     match backend {
+        #[cfg(feature = "kyotocabinet")]
+        "kc" | "kyotocabinet" => dispatch::<KcStore>(scenario),
+        #[cfg(feature = "redb")]
         "redb" => dispatch::<RedbStore>(scenario),
-        "lmdb" => dispatch_lmdb(scenario),
-        "tkrzw" => dispatch_tkrzw(scenario),
+        #[cfg(feature = "lmdb")]
+        "lmdb" => dispatch::<LmdbStore>(scenario),
+        #[cfg(feature = "tkrzw")]
+        "tkrzw" => dispatch::<TkrzwStore>(scenario),
         other => {
-            eprintln!("unknown backend {other:?}");
+            eprintln!(
+                "backend {other:?} is not compiled into this build; \
+                 rebuild with --no-default-features --features {other}",
+            );
             std::process::exit(2);
         }
     }
-}
-
-#[cfg(feature = "lmdb")]
-fn dispatch_lmdb(scenario: &str) {
-    dispatch::<LmdbStore>(scenario);
-}
-
-#[cfg(not(feature = "lmdb"))]
-fn dispatch_lmdb(_scenario: &str) {
-    eprintln!("this build lacks the lmdb feature");
-    std::process::exit(2);
-}
-
-// tkrzw is a full ReadStore + WriteStore peer, so every scenario runs over
-// it through the same generic `dispatch` as the other two — no scenario
-// knows which backend it is measuring.
-#[cfg(feature = "tkrzw")]
-fn dispatch_tkrzw(scenario: &str) {
-    dispatch::<TkrzwStore>(scenario);
-}
-
-#[cfg(not(feature = "tkrzw"))]
-fn dispatch_tkrzw(_scenario: &str) {
-    eprintln!("this build lacks the tkrzw feature");
-    std::process::exit(2);
 }
 
 fn dispatch<S: WriteStore>(scenario: &str) {

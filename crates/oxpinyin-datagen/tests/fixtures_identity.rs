@@ -12,9 +12,20 @@
 //! themselves are guarded by `fixtures/w3/fixtures.sha256`, which stays
 //! untouched.
 //!
+//! **Gated on the redb peer feature.** Under exactly-one-backend, this
+//! test only compiles when the redb peer is selected
+//! (`--no-default-features --features redb`) — the frozen `.redb`
+//! fixtures the test reads back can only be opened by the redb reader,
+//! and that reader is only compiled when the peer is enabled. The other
+//! three peers have their own frozen fixture sets (`fixtures/w3/*.kct`,
+//! `*.lmdb`, `*.tkt`) which cross_backend.rs exercises through the
+//! compiled peer.
+//!
 //! Requires the model cache (`tools/model/fetch-model.sh`); set
 //! `OXPINYIN_DATAGEN_STRICT=1` to fail instead of skip when it is absent
 //! (CI does).
+#![cfg(feature = "redb")]
+
 use std::path::PathBuf;
 
 use oxpinyin_datagen::write::Backend;

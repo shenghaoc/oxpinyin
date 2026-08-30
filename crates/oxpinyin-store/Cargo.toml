@@ -11,7 +11,7 @@ description = "oxpinyin internal crate — no stability promise; use oxpinyin-en
 workspace = true
 
 [dependencies]
-redb = { workspace = true }
+redb = { workspace = true, optional = true }
 heed = { workspace = true, optional = true }
 
 [build-dependencies]
@@ -20,9 +20,12 @@ bindgen = { workspace = true, optional = true }
 [features]
 # The four backends (kyotocabinet, redb, lmdb, tkrzw) are peer
 # implementations behind the store's `ReadStore`/`WriteStore` traits.
-# Exactly one is compiled in per binary; `DefaultStore` resolves it at
-# compile time along the chain kyotocabinet > tkrzw > lmdb > redb (a
-# tie-break for cargo's additive feature unification, not a hierarchy).
+# **Exactly one** is compiled in per build; a `compile_error!` in
+# `src/lib.rs` refuses builds that enable zero or two-or-more. The
+# corresponding implementation is the only one compiled, so an
+# unselected peer's dependency (redb, heed, bindgen) is not pulled in
+# either.
+#
 # `kyotocabinet` is the enabled feature in the workspace's default set,
 # which is what "default" means here — select any peer explicitly with
 # `--no-default-features --features {kyotocabinet|redb|lmdb|tkrzw}`.
@@ -33,7 +36,7 @@ tkrzw = ["dep:bindgen"]
 # the runtime dependency is the system libkyotocabinet the distro already
 # ships.
 kyotocabinet = ["dep:bindgen"]
-# Marker for the redb backend. redb itself is always compiled as the
-# no-backend-feature selection; this marker exists so intent can be
-# spelled on the command line: `--no-default-features --features redb`.
-redb = []
+# redb, the pure-Rust peer. The `redb` crate itself is optional: no other
+# peer depends on it, so a KC/LMDB/tkrzw build carries none of redb's
+# code or its transitive dependencies.
+redb = ["dep:redb"]

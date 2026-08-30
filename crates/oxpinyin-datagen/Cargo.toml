@@ -25,10 +25,10 @@ kyotocabinet = ["oxpinyin-store/kyotocabinet"]
 lmdb = ["oxpinyin-store/lmdb"]
 # Enable the Tkrzw producer (`--backend tkrzw`); mirrors oxpinyin-store.
 tkrzw = ["oxpinyin-store/tkrzw"]
-# Marker for the redb producer. redb itself is always compiled as the
-# no-backend-feature selection; this marker exists so intent can be
-# spelled on the command line: `--no-default-features --features redb`.
-redb = []
+# The redb peer producer; forwarded to oxpinyin-store, which now gates
+# redb behind the same feature. Select with
+# `--no-default-features --features redb`.
+redb = ["oxpinyin-store/redb"]
 
 [lints]
 workspace = true
