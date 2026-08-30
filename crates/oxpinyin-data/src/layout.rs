@@ -65,6 +65,10 @@ const NATIVE_MARKERS: [&str; 2] = ["phrase_index", "pinyin_index"];
 /// metadata page, in the writing machine's byte order.
 const DB_HASH_MAGIC: u32 = 0x0006_1561;
 
+/// tkrzw's container magic (`tkrzw_dbm_hash.cc` `META_MAGIC_DATA`), at
+/// offset 0 of both HashDBM and TreeDBM files.
+const TKRZW_MAGIC: &[u8; 9] = b"TkrzwHDB\n";
+
 /// Kyoto Cabinet's file magic, at offset 0.
 const KC_MAGIC: [u8; 4] = *b"KC\n\0";
 
@@ -87,6 +91,9 @@ pub enum Dbm {
     KyotoHash,
     /// Kyoto Cabinet, `TreeDB`.
     KyotoTree,
+    /// tkrzw (HashDBM and TreeDBM share one container magic; a TreeDBM
+    /// file is a HashDBM container carrying tree pages).
+    Tkrzw,
 }
 
 impl Dbm {
@@ -96,6 +103,7 @@ impl Dbm {
         match self {
             Self::BerkeleyHash => "bdb",
             Self::KyotoHash | Self::KyotoTree => "kyotocabinet",
+            Self::Tkrzw => "tkrzw",
         }
     }
 
@@ -106,6 +114,7 @@ impl Dbm {
             Self::BerkeleyHash => "Berkeley DB (hash)",
             Self::KyotoHash => "Kyoto Cabinet (hash)",
             Self::KyotoTree => "Kyoto Cabinet (tree)",
+            Self::Tkrzw => "tkrzw",
         }
     }
 }
@@ -235,6 +244,12 @@ pub fn dbm_of_header(header: &[u8; HEADER_BYTES]) -> Option<Dbm> {
     let bdb = u32::from_ne_bytes([header[12], header[13], header[14], header[15]]);
     if bdb == DB_HASH_MAGIC || bdb.swap_bytes() == DB_HASH_MAGIC {
         return Some(Dbm::BerkeleyHash);
+    }
+    // tkrzw: HashDBM's meta magic, which a TreeDBM file also carries
+    // (verified against tkrzw 1.0.32 `tkrzw_dbm_hash.cc` META_MAGIC_DATA
+    // and a written TreeDBM file).
+    if header.len() >= TKRZW_MAGIC.len() && header[..TKRZW_MAGIC.len()] == *TKRZW_MAGIC {
+        return Some(Dbm::Tkrzw);
     }
     if header[..4] == KC_MAGIC {
         return match header[KC_TYPE_AT] {

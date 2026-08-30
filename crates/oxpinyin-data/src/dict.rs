@@ -126,6 +126,35 @@ impl SystemDictionary {
         })
     }
 
+    /// Builds the dictionary from rows a compat loader synthesized (the
+    /// libpinyin drop-in path, `crate::compat`): the same derivation the
+    /// native loader runs, over the same row shapes, so every query above
+    /// behaves identically whichever loader produced the model.
+    #[must_use]
+    pub fn from_compat_rows(
+        phrase_rows: Vec<(u32, String)>,
+        pinyin_rows: Vec<(String, Vec<(u32, u32)>)>,
+    ) -> Self {
+        let mut phrase_index: PhraseIndex = phrase_rows
+            .into_iter()
+            .map(|(token, text)| (LeByteKey::new(token), CompactString::from(text)))
+            .collect();
+        table::ensure_sorted_unique(&mut phrase_index);
+        let rows: PinyinRows = pinyin_rows
+            .into_iter()
+            .map(|(spelling, records)| (Box::from(spelling.as_str()), records))
+            .collect();
+        let derived = derive_pinyin(rows, &phrase_index);
+        Self {
+            pinyin_index: derived.pinyin_index,
+            phrase_index,
+            unigrams: derived.unigrams,
+            unigram_total: derived.unigram_total,
+            initial_keys: derived.initial_keys,
+            text_tokens: OnceLock::new(),
+        }
+    }
+
     /// Number of pinyin keys in the index.
     pub fn key_count(&self) -> Result<u64, DictError> {
         Ok(self.pinyin_index.rows.len() as u64)
@@ -371,54 +400,32 @@ struct PinyinDerived {
     initial_keys: Box<[String]>,
 }
 
-/// Load-time row staging: pinyin key → range into one flat
-/// `{token, freq}` record vec, appended in the walk order `for_each_row`
-/// yields, before `resolve_hits` fans the records out into the arena.
-type RawPinyinRows = Vec<(Box<str>, Range<usize>)>;
+/// Staged rows before derivation: spelling → its `{token, freq}` records.
+type PinyinRows = Vec<(Box<str>, Vec<(u32, u32)>)>;
 
-fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDerived, DictError> {
-    let mut raw: RawPinyinRows = Vec::new();
-    let mut flat_records: Vec<(u32, u32)> = Vec::new();
-    let mut unigrams: BTreeMap<u32, u64> = BTreeMap::new();
-    let mut unigram_total: u64 = 0;
-    // Initial keys stage as packed u128s (order-exact, sort integers) and
-    // decode to strings only once, deduped; a key too long to pack falls
-    // back to the string path and re-sorts the whole list — the export's
-    // longest key is 14 syllables against a 25-slot pack.
+/// The shared derivation over staged rows: sort/dedup, aggregate the
+/// unigram counts, project the initial keys, and resolve every record into
+/// the entry arena. Both the native table loader and the libpinyin compat
+/// loader feed this, so the derived model is identical by construction.
+fn derive_pinyin(mut rows: PinyinRows, phrase_index: &PhraseIndex) -> PinyinDerived {
+    table::ensure_sorted_unique(&mut rows);
+
     let alphabet = crate::initials::InitialAlphabet::new();
     let mut initial_keys: Vec<u128> = Vec::new();
     let mut oversized_initials: Vec<String> = Vec::new();
-
-    table::for_each_row(path, |key, value| {
-        let pinyin = std::str::from_utf8(key)
-            .map_err(|_| DictError::Parse("pinyin index key is not UTF-8".to_owned()))?;
+    let mut unigrams: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut unigram_total: u64 = 0;
+    for (pinyin, records) in &rows {
         match alphabet.pack(pinyin) {
             Some(packed) => initial_keys.push(packed),
             None => oversized_initials.push(alphabet.project(pinyin)),
         }
-
-        if !value.len().is_multiple_of(8) {
-            return Err(DictError::Parse(format!(
-                "index value length {} is not a multiple of 8",
-                value.len()
-            )));
-        }
-        let start = flat_records.len();
-        for chunk in value.chunks_exact(8) {
-            let token = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            let freq = u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
-            flat_records.push((token, freq));
+        for &(token, freq) in records {
             let count = unigrams.entry(token).or_default();
             *count = count.saturating_add(u64::from(freq));
             unigram_total = unigram_total.saturating_add(u64::from(freq));
         }
-        // The row walk is ascending, so this is an append; the order check
-        // below repairs (and keeps the last row per key, as insert did) if a
-        // table ever arrives any other way.
-        raw.push((Box::from(pinyin), start..flat_records.len()));
-        Ok::<(), DictError>(())
-    })?;
-    table::ensure_sorted_unique(&mut raw);
+    }
 
     initial_keys.sort_unstable();
     initial_keys.dedup();
@@ -436,35 +443,54 @@ fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDe
     // Totals are the sum over every pronunciation; resolve after the
     // aggregate pass so each hit carries the item's final unigram, and
     // resolve into one arena so a key's hits stay a contiguous slice.
-    // Totals resolve from a sorted snapshot: the map's in-order walk is
-    // O(n) to build and a binary search per record beats a tree walk.
     let totals: Vec<(u32, u64)> = unigrams
         .iter()
         .map(|(&token, &count)| (token, count))
         .collect();
-    let mut entries: Vec<PhraseEntry> = Vec::with_capacity(flat_records.len());
-    let mut rows: Vec<(Box<str>, Range<usize>)> = Vec::with_capacity(raw.len());
-    for (key, range) in raw {
+    let mut entries: Vec<PhraseEntry> = Vec::new();
+    let mut out_rows: Vec<(Box<str>, Range<usize>)> = Vec::with_capacity(rows.len());
+    for (key, records) in rows {
         let start = entries.len();
-        resolve_hits(&flat_records[range], phrase_index, &totals, &mut entries);
-        rows.push((key, start..entries.len()));
+        resolve_hits(&records, phrase_index, &totals, &mut entries);
+        out_rows.push((key, start..entries.len()));
     }
-    Ok(PinyinDerived {
-        pinyin_index: PinyinIndex { rows, entries },
+    PinyinDerived {
+        pinyin_index: PinyinIndex {
+            rows: out_rows,
+            entries,
+        },
         unigrams,
         unigram_total,
         initial_keys,
-    })
+    }
 }
 
-/// Token → text through `phrase_index` (the reverse half is `phrase_text`).
-/// The full export resolves every token; a mini fixture may omit some,
-/// and those records contribute no candidate rather than failing open.
-///
-/// W14: the record's frequency is the matched pronunciation's share and
-/// the aggregated unigram map holds the item's pronunciation total —
-/// matched/total is upstream's `get_pronunciation_possibility` polyphone
-/// discount. The candidate scan never reads it.
+fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDerived, DictError> {
+    let mut rows: PinyinRows = Vec::new();
+    table::for_each_row(path, |key, value| {
+        let pinyin = std::str::from_utf8(key)
+            .map_err(|_| DictError::Parse("pinyin index key is not UTF-8".to_owned()))?;
+        if !value.len().is_multiple_of(8) {
+            return Err(DictError::Parse(format!(
+                "index value length {} is not a multiple of 8",
+                value.len()
+            )));
+        }
+        let records = value
+            .chunks_exact(8)
+            .map(|chunk| {
+                (
+                    u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
+                    u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
+                )
+            })
+            .collect();
+        rows.push((Box::from(pinyin), records));
+        Ok::<(), DictError>(())
+    })?;
+    Ok(derive_pinyin(rows, phrase_index))
+}
+
 fn resolve_hits(
     records: &[(u32, u32)],
     phrase_index: &PhraseIndex,
