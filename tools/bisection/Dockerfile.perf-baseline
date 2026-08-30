@@ -1,0 +1,58 @@
+# Reproducible Stage-2 performance-baseline environment.
+#
+# Builds both oracle (libpinyin-2.11.91 + Tkrzw) and oxpinyin-capi
+# (Kyoto Cabinet backend) in a single image. Run the benchmark with:
+#
+#   docker build -f tools/bisection/Dockerfile.perf-baseline -t oxpinyin-perf .
+#   docker run --rm -v /tmp/perf-out:/out oxpinyin-perf
+#
+# The container writes JSONL captures and markdown reports to /out.
+
+FROM debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    autoconf automake autopoint libtool \
+    pkg-config gettext gnome-common \
+    curl ca-certificates \
+    tar \
+    python3 \
+    libglib2.0-dev \
+    libtkrzw-dev \
+    libkyotocabinet-dev \
+    libsqlite3-dev sqlite3 \
+    libclang-dev \
+    libssl-dev \
+    libibus-1.0-dev \
+    util-linux \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain 1.97.1 --profile minimal \
+    --component clippy,rustfmt
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN cargo install cargo-c --locked
+
+COPY . /repo
+WORKDIR /repo
+
+RUN bash tools/oracle/build-oracle.sh \
+    --prefix /opt/pinyin-oracle \
+    --jobs "$(nproc)"
+
+RUN bash tools/model/fetch-model.sh
+
+RUN cargo run --locked --release -p oxpinyin-datagen -- compile \
+    --model-dir target/model20/extracted \
+    --out-dir /tmp/oxpinyin-export
+
+ENV PINYIN_ORACLE_PREFIX=/opt/pinyin-oracle
+ENV PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
+ENV PERF_CPU=0
+ENV PERF_RUNS=20
+ENV PERF_CYCLES=8
+ENV PERF_RAM_RUNS=10
+ENV OXPINYIN_PERF_WORK=/out
+
+CMD ["bash", "tools/bisection/run-perf-baseline.sh"]

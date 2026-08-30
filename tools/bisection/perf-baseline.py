@@ -131,7 +131,7 @@ def classify_size(prefix, backend):
         if backend == "oxpinyin":
             if rel.startswith("share/oxpinyin/"):
                 data.append((path, size))
-            elif path.name == "libpinyin_capi.so.0.1.0" or path.name.endswith(".a"):
+            elif ".so" in path.name or path.name.endswith(".a"):
                 code.append((path, size))
             else:
                 other.append((path, size))
