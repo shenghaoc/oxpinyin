@@ -413,6 +413,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// This bypasses [`UserStore::open`]'s shared-handle registry, but a
     /// second live `create_standalone` call for the same path returns
     /// [`UserStoreError::AlreadyOpen`]. Clones share the first handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be created at `path`.
     pub fn create_standalone(path: &Path) -> Result<Self, UserStoreError> {
         let standalone_lease =
             Arc::new(registry::acquire_standalone(path).ok_or(UserStoreError::AlreadyOpen)?);
@@ -426,18 +430,30 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Stored bigram count for `(prev, cur)`; `0` if unrecorded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn bigram_count(&self, prev: Token, cur: Token) -> Result<u64, UserStoreError> {
         let db = self.database();
         get_u64_or(&*db, BIGRAM, &codec::encode_token_pair(prev, cur), 0)
     }
 
     /// Total bigram mass recorded after `prev`; `0` if none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn bigram_total(&self, prev: Token) -> Result<u64, UserStoreError> {
         let db = self.database();
         get_u64_or(&*db, BIGRAM_TOTAL, &codec::encode_token(prev), 0)
     }
 
     /// Overwrite the raw `(prev -> cur)` user-bigram count.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the counters cannot be written.
     pub fn set_bigram_count(
         &mut self,
         prev: Token,
@@ -461,6 +477,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Accumulated phrase-index unigram delta for `token`; `0` if none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn unigram_delta(&self, token: Token) -> Result<u64, UserStoreError> {
         if !self.has_user_data() {
             return Ok(0);
@@ -469,12 +489,20 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Sum of every stored unigram delta; `0` if the store is empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn unigram_total(&self) -> Result<u64, UserStoreError> {
         let db = self.database();
         get_u64_or(&*db, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)
     }
 
     /// One-transaction §5 overlay for scoring `token` after `prev`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn count_delta(
         &self,
         prev: Option<Token>,
@@ -488,6 +516,10 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     /// Record a training selection of `cur` after `last` (the `pinyin_train`
     /// path, §2). Returns the seed applied.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the observation cannot be committed.
     pub fn observe_selection(&mut self, last: Token, cur: Token) -> Result<u64, UserStoreError> {
         let seed = self.update(last, cur, SeedPolicy::Training)?;
         self.inner.dirty.store(true, Ordering::Relaxed);
@@ -497,6 +529,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// Record an accepted *predicted* candidate `cur` after `last` (the
     /// `pinyin_choose_predicted_candidate` path, §2). Returns the seed
     /// applied.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the observation cannot be committed.
     pub fn observe_predicted(&mut self, last: Token, cur: Token) -> Result<u64, UserStoreError> {
         self.update(last, cur, SeedPolicy::Predicted)
     }
@@ -549,6 +585,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Add a user phrase under [`crate::USER_DICTIONARY`] (`_add_phrase`, §3.2).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the phrase cannot be added.
     pub fn add_phrase(
         &mut self,
         phrase: &str,
@@ -559,6 +599,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Add a phrase under `library` (`USER_DICTIONARY` or `NETWORK_DICTIONARY`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the phrase cannot be added.
     pub fn add_phrase_in(
         &mut self,
         library: u8,
@@ -670,6 +714,10 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     /// Promote a chosen addon phrase into the default-facade
     /// [`ADDON_DICTIONARY`] (nibble 5) sub-index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the promotion cannot be written.
     pub fn promote_addon_phrase(
         &mut self,
         phrase: &str,
@@ -748,6 +796,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Phrase text and pronunciations for `token`, if this store owns it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn phrase(&self, token: Token) -> Result<Option<UserPhrase>, UserStoreError> {
         let db = self.database();
         let token_key = codec::encode_token(token);
@@ -762,11 +814,19 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Token already allocated for `phrase` in the user sub-index, if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn token_for_phrase(&self, phrase: &str) -> Result<Option<Token>, UserStoreError> {
         self.token_for_phrase_in(USER_DICTIONARY, phrase)
     }
 
     /// Token already allocated for `phrase` in `library`, if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn token_for_phrase_in(
         &self,
         library: u8,
@@ -797,6 +857,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Next token the store will allocate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn next_user_token(&self) -> Result<Token, UserStoreError> {
         let db = self.database();
         let alloc_key = codec::encode_u8(ALLOC_CURSOR);
@@ -818,11 +882,19 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Every user phrase as §9 export rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn export_phrases(&self) -> Result<Vec<ExportedPhrase>, UserStoreError> {
         self.export_phrases_in(USER_DICTIONARY)
     }
 
     /// Export rows for one `USER_FILE` nibble.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn export_phrases_in(&self, library: u8) -> Result<Vec<ExportedPhrase>, UserStoreError> {
         let db = self.database();
         let mut rows = Vec::new();
@@ -856,6 +928,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Every stored phrase (user and network) with pronunciations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn phrases(&self) -> Result<Vec<UserPhrase>, UserStoreError> {
         let db = self.database();
         let mut tokens_and_texts = Vec::new();
@@ -877,6 +953,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// User-bigram successors of `prev` as `(token, count)` pairs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn bigram_successors(&self, prev: Token) -> Result<Vec<(Token, u64)>, UserStoreError> {
         let db = self.database();
         let lo = codec::encode_token_pair(prev, Token::MIN);
@@ -899,6 +979,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Every stored user-bigram row as `(prev, cur, count)`, raw.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn export_bigrams(&self) -> Result<Vec<(Token, Token, u64)>, UserStoreError> {
         let db = self.database();
         let mut rows = Vec::new();
@@ -914,6 +998,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// The `pinyin_save` write side (§4).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be flushed to disk.
     pub fn save(&mut self) -> Result<bool, UserStoreError> {
         if !self.is_modified() {
             return Ok(false);
@@ -932,6 +1020,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// `pinyin_mask_out`'s store side.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the mask cannot be written.
     pub fn mask_out(&mut self, mask: Token, value: Token) -> Result<(), UserStoreError> {
         let db = self.database();
         let has_user_data = db.write(|txn| {
@@ -1032,6 +1124,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// `pinyin_remove_user_candidate`'s store side (§3.4).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the phrase cannot be removed.
     pub fn remove_user_phrase(&mut self, token: Token) -> Result<bool, UserStoreError> {
         let db = self.database();
         let result: Result<Option<bool>, UserStoreError> = db
@@ -1141,6 +1237,10 @@ impl GenericUserStore<DefaultStore> {
     /// Opening a path that is already open in this process returns a clone of
     /// the live handle (shared counts and shared §4 dirty flag) rather than a
     /// second database handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be opened at `path`.
     pub fn open(path: &Path) -> Result<Self, UserStoreError> {
         let key = registry::registry_key(path);
         let mut reg = registry::lock_registry();

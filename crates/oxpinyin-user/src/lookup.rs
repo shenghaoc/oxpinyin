@@ -30,6 +30,10 @@ impl UserLookup {
     }
 
     /// Builds a lookup from every stored user-file phrase.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn from_store(store: &UserStore) -> Result<Self, UserStoreError> {
         let generation = store.generation();
         let mut exact: BTreeMap<String, Vec<PhraseEntry>> = BTreeMap::new();
@@ -83,6 +87,10 @@ impl UserLookup {
     }
 
     /// Rebuilds `cache` when `store`'s write generation has moved.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn refresh_in(
         cache: &mut Option<(u64, Arc<Self>)>,
         store: &UserStore,

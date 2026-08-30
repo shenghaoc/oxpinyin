@@ -360,6 +360,10 @@ impl ContentTable {
     /// Parse a content file from raw bytes.
     ///
     /// Returns an error if the header is invalid or records cannot be parsed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadError`] when the bytes are not a valid table payload.
     pub fn load(data: &[u8]) -> Result<Self, LoadError> {
         let hdr = parse_header(data)?;
         let ds = data_start(hdr.nitems);

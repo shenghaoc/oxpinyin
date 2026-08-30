@@ -149,6 +149,10 @@ pub type Visitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a;
 /// missing-table condition: an untouched table reads as empty.
 pub trait WriteTxn {
     /// Read a single key from `table`.  Returns `None` if absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend read fails.
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Insert or overwrite `key` → `value` in `table`.
@@ -162,13 +166,25 @@ pub trait WriteTxn {
     /// backend caps a store at 32 named tables and rejects writes to a 33rd
     /// with [`StoreError::InvalidInput`], while the redb backend has no such
     /// limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend write fails.
     fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
 
     /// Remove `key` from `table` (no-op if absent).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend write fails.
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError>;
 
     /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
     /// ascending key-byte order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend scan fails.
     fn range(
         &self,
         table: &str,
@@ -178,12 +194,20 @@ pub trait WriteTxn {
     ) -> Result<(), StoreError>;
 
     /// Visit every row of `table` in ascending key-byte order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend scan fails.
     fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError>;
 
     /// Whether `table` has no rows (an absent table counts as empty).
     ///
     /// Implementations must stop at the first row instead of scanning
     /// the whole table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend read fails.
     fn is_empty(&self, table: &str) -> Result<bool, StoreError>;
 }
 
@@ -196,16 +220,28 @@ pub trait WriteTxn {
 /// to exactly this tier.
 pub trait ReadStore {
     /// Open an existing store file in read-only mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the store cannot be opened read-only.
     fn open_read_only(path: &Path) -> Result<Self, StoreError>
     where
         Self: Sized;
 
     /// Read a single key from `table`.  Returns `None` if absent or the
     /// table does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend read fails.
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
     /// ascending.  An absent table is treated as empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend scan fails.
     fn range(
         &self,
         table: &str,
@@ -217,9 +253,17 @@ pub trait ReadStore {
     /// Visit every `(key, value)` of `table` in ascending key-byte order,
     /// borrowing each row (no per-row clone).  Stops early on visitor
     /// `Err`.  An absent table is treated as empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend scan fails.
     fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError>;
 
     /// Whether `table` has no rows (an absent table counts as empty).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend read fails.
     fn is_empty(&self, table: &str) -> Result<bool, StoreError>;
 }
 
@@ -229,6 +273,10 @@ pub trait ReadStore {
 /// necessarily also provides.
 pub trait WriteStore: ReadStore {
     /// Open or create a store file in read-write mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the store cannot be created.
     fn create(path: &Path) -> Result<Self, StoreError>
     where
         Self: Sized;
@@ -239,6 +287,10 @@ pub trait WriteStore: ReadStore {
     ///
     /// The closure must not call [`WriteStore::write`] again. Backends may
     /// serialize write transactions, so a nested call can block forever.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the transaction or its callback fails.
     fn write<R>(
         &self,
         f: impl FnOnce(&mut dyn WriteTxn) -> Result<R, StoreError>,
@@ -248,6 +300,10 @@ pub trait WriteStore: ReadStore {
     ///
     /// redb rewrites the file and reclaims free pages. LMDB reuses freed pages
     /// in place, so its successful implementation does not shrink the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when compaction fails.
     fn compact(&mut self) -> Result<(), StoreError>;
 }
 

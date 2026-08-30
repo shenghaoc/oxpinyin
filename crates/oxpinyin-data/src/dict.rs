@@ -113,6 +113,10 @@ pub struct SystemDictionary {
 
 impl SystemDictionary {
     /// Opens the system dictionary from the two exported table files.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when either table cannot be opened or fails validation.
     pub fn open(pinyin_index_path: &Path, phrase_index_path: &Path) -> Result<Self, DictError> {
         let phrase_index = load_phrase_index(phrase_index_path)?;
         let derived = load_pinyin_index(pinyin_index_path, &phrase_index)?;
@@ -127,6 +131,10 @@ impl SystemDictionary {
     }
 
     /// Number of pinyin keys in the index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the phrase index cannot be read.
     pub fn key_count(&self) -> Result<u64, DictError> {
         Ok(self.pinyin_index.rows.len() as u64)
     }
@@ -154,6 +162,10 @@ impl SystemDictionary {
     /// This is the reverse half of [`SystemDictionary::lookup`] and backs the
     /// W6-T7 bigram export's text rendering for system tokens
     /// (`docs/findings/user-store.md` §9).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the phrase index cannot be read.
     pub fn phrase_text(&self, token: u32) -> Result<Option<String>, DictError> {
         Ok(phrase_lookup(&self.phrase_index, token).map(str::to_owned))
     }
@@ -165,6 +177,10 @@ impl SystemDictionary {
     /// pinyin table holds one key sequence per pronunciation), so this is the
     /// rendering surface the W6-T7 bigram export needs for system tokens.
     /// The scan is O(index) — an export-time cost, not a decode-path cost.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the phrase index cannot be read.
     pub fn pronunciations(&self, token: u32) -> Result<Vec<(String, u64)>, DictError> {
         let mut out = Vec::new();
         for (pinyin, range) in &self.pinyin_index.rows {

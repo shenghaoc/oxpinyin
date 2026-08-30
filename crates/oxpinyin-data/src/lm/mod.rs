@@ -180,6 +180,10 @@ impl BigramLanguageModel {
     /// λ defaults to [`Lambda::PINNED`] (`0.312699`, `data-formats.md` §3);
     /// override it from a real install's config with
     /// [`Self::set_lambda_from_table_conf`] or [`Self::set_lambda`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LmError`] when the model file cannot be opened or fails validation.
     pub fn open(path: &Path) -> Result<Self, LmError> {
         let mut bigram = Vec::new();
         table::for_each_row(path, |key, value| {
@@ -281,6 +285,10 @@ impl BigramLanguageModel {
     }
 
     /// Number of previous-token entries.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LmError`] when the model file cannot be read.
     pub fn entry_count(&self) -> Result<u64, LmError> {
         Ok(self.bigram.len() as u64)
     }

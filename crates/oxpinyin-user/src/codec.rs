@@ -60,6 +60,10 @@ pub fn encode_u8(v: u8) -> [u8; 1] {
 }
 
 /// Decode a `u8` value.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] when the buffer is too short.
 pub fn decode_u8(bytes: &[u8]) -> Result<u8, DecodeError> {
     Ok(fixed_prefix::<1>(bytes)?[0])
 }
@@ -71,6 +75,10 @@ pub fn encode_token(token: Token) -> [u8; 4] {
 }
 
 /// Decode a `Token` (`u32`) from 4 big-endian bytes.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] when the buffer is too short.
 pub fn decode_token(bytes: &[u8]) -> Result<Token, DecodeError> {
     Ok(Token::from_be_bytes(fixed_prefix::<4>(bytes)?))
 }
@@ -82,6 +90,10 @@ pub fn encode_u64(v: u64) -> [u8; 8] {
 }
 
 /// Decode a `u64` value from 8 big-endian bytes.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] when the buffer is too short.
 pub fn decode_u64(bytes: &[u8]) -> Result<u64, DecodeError> {
     Ok(u64::from_be_bytes(fixed_prefix::<8>(bytes)?))
 }
@@ -95,6 +107,10 @@ pub fn encode_str(s: &str) -> &[u8] {
 }
 
 /// Decode a `&str` from raw UTF-8 bytes (identity).
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] when the buffer is too short or not valid UTF-8.
 pub fn decode_str(bytes: &[u8]) -> Result<&str, DecodeError> {
     std::str::from_utf8(bytes).map_err(|_| DecodeError::InvalidUtf8)
 }
@@ -123,6 +139,10 @@ pub fn encode_token_pair(a: Token, b: Token) -> [u8; 8] {
 }
 
 /// Decode a `(Token, Token)` key from 8 big-endian bytes.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] when the buffer is too short.
 pub fn decode_token_pair(bytes: &[u8]) -> Result<(Token, Token), DecodeError> {
     let [a0, a1, a2, a3, b0, b1, b2, b3] = fixed_prefix::<8>(bytes)?;
     Ok((
@@ -141,6 +161,10 @@ pub fn encode_u8_str(v: u8, s: &str) -> Vec<u8> {
 }
 
 /// Decode a `(u8, &str)` key: one byte prefix, then raw UTF-8.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] when the buffer is too short or the string is not valid UTF-8.
 pub fn decode_u8_str(bytes: &[u8]) -> Result<(u8, &str), DecodeError> {
     let (&v, tail) = bytes.split_first().ok_or(DecodeError::Truncated {
         expected: 1,
@@ -160,6 +184,10 @@ pub fn encode_token_bytes(token: Token, tail: &[u8]) -> Vec<u8> {
 }
 
 /// Decode a `(Token, &[u8])` key: 4 BE bytes, then raw tail.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] when the buffer is too short or the trailing payload is malformed.
 pub fn decode_token_bytes(bytes: &[u8]) -> Result<(Token, &[u8]), DecodeError> {
     let token = Token::from_be_bytes(fixed_prefix::<4>(bytes)?);
     Ok((token, &bytes[4..]))

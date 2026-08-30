@@ -45,6 +45,10 @@ impl PinManifest {
     /// Lines are `key=value`. Blank lines are ignored. A line without `=` is
     /// ignored rather than fatal, so a future recipe may add commentary; a
     /// repeated key is fatal, because its value would be ambiguous.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OracleError`] when the pin text is malformed.
     pub fn parse(text: &str) -> Result<Self, OracleError> {
         let mut fields: Vec<(String, String)> = Vec::new();
 
@@ -68,6 +72,10 @@ impl PinManifest {
     }
 
     /// Reads and parses `oracle-pin.txt` from `prefix`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OracleError`] when the pin files cannot be read from the prefix.
     pub fn read_from_prefix(prefix: &Path) -> Result<Self, OracleError> {
         let path = prefix.join(MANIFEST_FILE_NAME);
         let bytes = std::fs::read(&path).map_err(|source| OracleError::ManifestUnreadable {
@@ -111,6 +119,10 @@ impl PinManifest {
     /// the recorded artefact digests to be present. Digest *values* are
     /// reported for the log; re-hashing the payload is the build recipe's and
     /// `run-capture.sh`'s job and is not repeated here.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OracleError`] when any pinned component fails verification.
     pub fn verify(&self) -> Result<VerifiedPin, OracleError> {
         self.require_eq("schema", MANIFEST_SCHEMA)?;
         self.require_eq("pin_ref", EXPECTED_PIN_REF)?;
@@ -192,6 +204,10 @@ impl OraclePrefix {
     ///
     /// Requires a matching pin manifest, the data-payload manifest, and the
     /// generated data directory the oracle loads its tables from.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OracleError`] when the oracle root cannot be opened or verified.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, OracleError> {
         let root = root.into();
         let pin = PinManifest::read_from_prefix(&root)?.verify()?;
