@@ -1,9 +1,9 @@
+# BerkeleyDB compat — the open items Phase 2 inherits
+
 > **Status: SHELVED.** The BerkeleyDB compat path was deprioritised in
 > favour of the Kyoto Cabinet and tkrzw compat paths (PRs #222, #220, #228).
 > This document preserves the Phase 1 research for reference. The
 > feat/bdb-backend branch on origin holds the incomplete implementation.
-
-# BerkeleyDB compat — the open items Phase 2 inherits
 
 Date: 2026-08-28 · Status: **structured hand-off; one item awaiting a
 maintainer decision** · Branch: `claude/pr4-berkeleydb-compat`.
