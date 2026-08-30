@@ -295,7 +295,18 @@ jobs:
           printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
           . "$HOME/.cargo/env"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo install cargo-mutants --version 27.1.0 --locked
+      - name: Install pinned cargo-mutants
+        run: |
+          ver=27.1.0
+          # Verify the release archive before executing anything from it:
+          # pin the expected digest and fail the job on mismatch.
+          sum=dfe6dc37d0342c891d2829b5a695aa57c2d0edecef7e7d0399a30cc6e206411e
+          curl -sSfL -o cargo-mutants.tar.gz "https://github.com/sourcefrog/cargo-mutants/releases/download/v${ver}/cargo-mutants-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${sum}  cargo-mutants.tar.gz" | sha256sum -c -
+          tar xzf cargo-mutants.tar.gz
+          mkdir -p ~/.local/bin
+          install -m755 cargo-mutants ~/.local/bin
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       # --locked is not a cargo-mutants option; the supported form passes
       # it through to Cargo via --cargo-arg.
       - run: >

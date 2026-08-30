@@ -298,8 +298,23 @@ jobs:
       - name: Install pinned nightly with Rust sources
         run: rustup toolchain install nightly-2026-08-01 --profile minimal --component rust-src
       - name: Install pinned cargo-fuzz
-        run: cargo install cargo-fuzz --version 0.13.2 --locked
+        run: |
+          ver=0.13.2
+          # Verify the release archive before executing anything from it:
+          # pin the expected digest and fail the job on mismatch.
+          sum=b5b704018b63e0f151c17a057ac53b5111e1db545d1b9f72fee79f08a545931c
+          curl -sSfL -o cargo-fuzz.tar.gz "https://github.com/rust-fuzz/cargo-fuzz/releases/download/${ver}/cargo-fuzz-${ver}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${sum}  cargo-fuzz.tar.gz" | sha256sum -c -
+          tar xzf cargo-fuzz.tar.gz
+          mkdir -p ~/.local/bin
+          install -m755 cargo-fuzz ~/.local/bin
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Verify fuzz lockfile
         run: cargo +nightly-2026-08-01 metadata --locked --manifest-path fuzz/Cargo.toml --format-version 1 --no-deps > /dev/null
       - name: Run bounded parser fuzz pass
-        run: cargo +nightly-2026-08-01 fuzz run parser -- -max_total_time=10 -timeout=5 -max_len=4096
+        # The pinned cargo-fuzz release binary is itself a musl build, and
+        # cargo-fuzz defaults the fuzz target to the triple it was built for
+        # (rust-fuzz/cargo-fuzz#398) — pin the runner's gnu triple so the
+        # fuzzers build against the gnu std exactly as they did under the
+        # source-built tool (ASan will not link musl's static libc).
+        run: cargo +nightly-2026-08-01 fuzz run --target x86_64-unknown-linux-gnu parser -- -max_total_time=10 -timeout=5 -max_len=4096
