@@ -688,3 +688,40 @@ Text, candidate type and counts cannot.
   (`bigram.db`, `*.bin`) unchanged, so no libpinyin consumer sees the
   difference; recorded because the naming intentionally diverges from the
   pin's constants rather than mirroring them.
+
+## R1 measured on the drop-in compat paths — order-only, sets identical (2026-08-30)
+
+- **Where:** `oxpinyin-data/src/compat` (the libpinyin drop-in loader),
+  `tools/bisection/run-pred-order-dropin.sh` and its
+  `run-dropin-fedora-kc.sh` / `run-dropin-debian-tkrzw.sh` container
+  harnesses.
+- **The measurement:** dual-dlopen differential — the distro's own
+  libpinyin (the oracle) and oxpinyin's `libpinyin_capi.so` (the subject)
+  each run the eight predicted-prefix probes over the SAME installed
+  `libpinyin-data` directory; PREDICTED_PREFIX rows are compared in order
+  (absolute indices stripped: the subject's `_with_punctuations` API
+  prepends punctuation rows of a different type; the driver falls back to
+  plain `pinyin_guess_predicted_candidates` on libpinyin < 2.11, whose
+  enum is a prefix of 2.11.91's — `PREDICTED_PREFIX_CANDIDATE` sits at the
+  same ordinal).
+- **Kyoto Cabinet path** (Fedora rawhide container: libpinyin 2.11.91,
+  kyotocabinet 1.2.80): oracle 1,571 rows, subject 1,571 rows; sorted row
+  SETS byte-identical; 2,562 diff lines of pure reordering. **DIVERGE,
+  order-only** — exactly the registered "predicted-candidate tie order"
+  divergence below: the pin walks its DBM's physical bucket order, oxpinyin
+  emits the defined text-ascending order. Zero content divergence.
+- **tkrzw path** (Debian testing container: libpinyin 2.11.91-1, the
+  tkrzw build Debian switched to in 2.11.91-1): the same shape — 1,571 =
+  1,571 rows, sets identical, order-only. First measurement on this
+  backend; no prior target existed.
+- **libpinyin behaviour:** predicted candidates come back in the DBM's
+  iteration order — backend-dependent, semantically arbitrary, different
+  between the KC and tkrzw oracles themselves.
+- **oxpinyin behaviour:** the defined, build-stable text-ascending order
+  (token-ascending within one text) on every backend and on the compat
+  paths.
+- **Externally observable:** candidate POSITIONS in the predicted list
+  differ; the candidate set does not. Ruled intentional by the
+  "Predicted-candidate tie order" entry; these measurements close R1's
+  open question by attributing the whole drop-in divergence to that one
+  rule, on both real-data backends.
