@@ -18,6 +18,7 @@ members = [
   "crates/oxpinyin-kmm",
   "crates/oxpinyin-lambda",
   "crates/oxpinyin-punct",
+  "crates/oxpinyin-word",
   "crates/oxpinyin-emitter",
   "crates/oxpinyin-corpus",
   "crates/oxpinyin-testsupport",

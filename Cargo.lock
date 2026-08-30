@@ -893,6 +893,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxpinyin-word"
+version = "0.1.0"
+
+[[package]]
 name = "oxpinyin-zhuyin-capi"
 version = "0.1.0"
 dependencies = [

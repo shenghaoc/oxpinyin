@@ -1,0 +1,23 @@
+[package]
+name = "oxpinyin-word"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Training-only word-recognition pipeline reproducing the trainer's prepare/populate/partialword/newword/markpinyin. Never ships."
+
+[lints]
+workspace = true
+
+# Self-contained: operates on the segmented stream (word texts) plus the
+# dictionary-derived word list and pinyin list the trainer supplies as
+# files; no phrase index, no SQLite, no dependencies. The Python original's
+# per-order SQLite databases and FTS3 phrase index become ordered Rust maps.
+
+[[bin]]
+name = "oxpinyin-word"
+path = "src/bin/oxpinyin-word.rs"
+
+[dependencies]
