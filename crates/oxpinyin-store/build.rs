@@ -317,6 +317,7 @@ mod tkrzw {
             .allowlist_function("tkrzw_dbm_make_iterator")
             .allowlist_function("tkrzw_dbm_iter_free")
             .allowlist_function("tkrzw_dbm_iter_jump")
+            .allowlist_function("tkrzw_dbm_iter_first")
             .allowlist_function("tkrzw_dbm_iter_process")
             .allowlist_function("tkrzw_dbm_iter_next")
             .allowlist_function("tkrzw_get_last_status")

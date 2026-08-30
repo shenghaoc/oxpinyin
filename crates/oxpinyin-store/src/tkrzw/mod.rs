@@ -964,3 +964,121 @@ impl WriteTxn for TkrzwWriteTxn<'_> {
         Ok(empty)
     }
 }
+
+// ── libpinyin-compat bigram access ──────────────────────────────────
+//
+// A tkrzw-built libpinyin's `bigram.db` is a HashDBM (`ngram_tkrzwdb.cpp`
+// mirrors `ngram_bdb.cpp`'s DB_HASH), keyed by the four native-endian
+// bytes of a `phrase_token_t` and valued by a [`crate::single_gram`]
+// chunk. This reader is the tkrzw half of what
+// [`crate::kyotocabinet::BigramDb`] is for Kyoto Cabinet; the chunk
+// format itself is backend-independent.
+
+/// Read-only access to a libpinyin `bigram.db` written by a tkrzw-built
+/// libpinyin (HashDBM).
+pub struct TkrzwBigramDb {
+    db: Db,
+}
+
+impl TkrzwBigramDb {
+    /// Opens `path` as a HashDBM, read-only; fails when the file is
+    /// missing rather than creating it.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] when the file cannot be opened as a HashDBM.
+    pub fn open_read_only(path: &Path) -> Result<Self, StoreError> {
+        validate_path(path)?;
+        let path = CString::new(path.as_os_str().as_encoded_bytes())
+            .map_err(|_| StoreError::InvalidInput("path contains NUL"))?;
+        let params = c"dbm=hash,no_create=true";
+        // SAFETY: both strings outlive the call; a NULL handle is the
+        // documented failure, taken as an error immediately.
+        let db = unsafe { ffi::tkrzw_dbm_open(path.as_ptr(), false, params.as_ptr()) };
+        let Some(db) = NonNull::new(db) else {
+            return Err(status_error());
+        };
+        Ok(Self { db: Db(db) })
+    }
+
+    /// The stored [`crate::single_gram::SingleGram`] for `prev`, or `None`.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] on a backend failure or a chunk that violates the
+    /// layout invariants.
+    pub fn get(&self, prev: u32) -> Result<Option<crate::single_gram::SingleGram>, StoreError> {
+        // libpinyin writes the raw native-endian bytes of the token
+        // (`db_key.data = &index`); the targets are little-endian.
+        let key = prev.to_le_bytes();
+        match db_get(&self.db, &key)? {
+            None => Ok(None),
+            Some(value) => crate::single_gram::SingleGram::decode(&value).map(Some),
+        }
+    }
+
+    /// Visits every `(prev, gram)` record in the database's stored order.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] on a backend failure, a malformed key or chunk, or
+    /// an error returned by `visit`.
+    pub fn for_each(
+        &self,
+        visit: &mut dyn FnMut(u32, crate::single_gram::SingleGram) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        // A HashDBM has no key order, so the walk positions with
+        // `iter_first` (physical order) rather than the tree walk's
+        // lower-bound jump — a jump on a hash looks up one exact key and
+        // would end an empty-key walk immediately.
+        let mut closure = |key: &[u8], value: &[u8]| {
+            let bytes: [u8; 4] = key.try_into().map_err(|_| {
+                StoreError::Backend(format!("bigram key length {} is not 4", key.len()).into())
+            })?;
+            let gram = crate::single_gram::SingleGram::decode(value)?;
+            visit(u32::from_le_bytes(bytes), gram)?;
+            Ok(true)
+        };
+        let mut ctx = ScanCtx {
+            prefix: b"",
+            lo: Bound::Unbounded,
+            hi: Bound::Unbounded,
+            row: &mut closure,
+            error: None,
+            stop: false,
+        };
+        // SAFETY: the handle is open; the iterator is freed by `Iter`'s
+        // Drop before the database can close.
+        let iter = unsafe { ffi::tkrzw_dbm_make_iterator(self.db.0.as_ptr()) };
+        let Some(iter) = NonNull::new(iter) else {
+            return Err(status_error());
+        };
+        let iter = Iter(iter);
+        // SAFETY: the iterator belongs to the open database above.
+        check(unsafe { ffi::tkrzw_dbm_iter_first(iter.0.as_ptr()) })?;
+        loop {
+            // SAFETY: as in `scan` — the callback argument outlives the
+            // call and `walk_row` honours the documented contract.
+            let ok = unsafe {
+                ffi::tkrzw_dbm_iter_process(
+                    iter.0.as_ptr(),
+                    Some(walk_row),
+                    (&mut ctx as *mut ScanCtx<'_, '_>).cast::<c_void>(),
+                    false,
+                )
+            };
+            if check_end(ok)? || ctx.stop {
+                break;
+            }
+            // SAFETY: as above.
+            let ok = unsafe { ffi::tkrzw_dbm_iter_next(iter.0.as_ptr()) };
+            if check_end(ok)? {
+                break;
+            }
+        }
+        match ctx.error.take() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+}

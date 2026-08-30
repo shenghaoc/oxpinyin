@@ -74,7 +74,10 @@
 #![allow(unsafe_code)]
 
 mod ffi;
-pub mod single_gram;
+/// Re-export: the chunk format is backend-independent (`ngram.cpp` is
+/// unconditional upstream), so it lives at the crate root and the tkrzw
+/// compat reader shares it; this path is kept for existing consumers.
+pub use crate::single_gram;
 
 use std::collections::BTreeSet;
 use std::ops::Bound;
@@ -82,7 +85,7 @@ use std::path::Path;
 
 use crate::{ReadStore, StoreError, Visitor, WriteStore, WriteTxn, validate_table_name};
 
-pub use single_gram::SingleGram;
+pub use crate::single_gram::SingleGram;
 
 use ffi::{Db, DbType};
 
