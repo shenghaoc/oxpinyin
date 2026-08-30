@@ -201,15 +201,18 @@ jobs:
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # KC/tkrzw/lmdb require a C toolchain and Linux system libraries; redb
-      # is the pure-Rust portability backend, selected by disabling the
-      # default (kyotocabinet) feature chain.
+      # is the pure-Rust peer, selected by disabling the default
+      # (kyotocabinet) feature chain and passing --features redb so the
+      # exactly-one-backend guard sees exactly one peer.
       - run: >
-          cargo test --locked --no-default-features
+          cargo test --locked --no-default-features --features redb
           -p oxpinyin-core -p oxpinyin-data -p oxpinyin-user -p oxpinyin-engine
-      # Separately and with --no-default-features, so oracle-ffi stays off even
-      # if it ever became a default feature. It links the pin-built libpinyin
-      # and is Linux-only; on this runner it would not build at all.
-      - run: cargo test --locked -p pinyin-oracle --no-default-features
+      # Separately and with --no-default-features --features redb, so
+      # oracle-ffi stays off even if it ever became a default feature — it
+      # links the pin-built libpinyin and is Linux-only; on this runner it
+      # would not build at all — and so the exactly-one-backend guard is
+      # satisfied.
+      - run: cargo test --locked -p pinyin-oracle --no-default-features --features redb
 
   # Supply-chain gate. cargo-deny's advisories check consumes the same
   # RustSec DB cargo-audit uses, so this one job replaces both tools; the
