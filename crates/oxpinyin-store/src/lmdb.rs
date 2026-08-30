@@ -164,18 +164,35 @@ fn env_key(path: &Path) -> PathBuf {
 /// The second is [`mdb_dbi_open`](http://www.lmdb.tech/doc/group__mdb.html#gac08cad5b096925642ca359a6d6f0562a).
 /// LMDB's own contract: *"A transaction that uses this function must
 /// finish (either commit or abort) before any other transaction in the
-/// process may use this function"* — it writes into the env-wide
-/// `me_dbxs`/`me_dbiseqs` arrays (via a `mt_dbxs` pointer aliased at
-/// txn-begin, `mdb.c:3283`) without any internal locking. heed exposes
+/// process may use this function"*. Its body writes into the env-wide
+/// `me_dbxs`/`me_dbiseqs` arrays (through the `mt_dbxs` pointer
+/// `mdb_txn_begin` aliases at `mdb.c:3283`), and its `mdb_txn_end`
+/// counterpart on abort walks the same arrays and `free()`s
+/// `me_dbxs[i].md_name.mv_data` for every `DB_NEW` slot the aborting
+/// txn opened (`mdb.c:3399-3405`). heed exposes
 /// [`Env::open_database`]/[`Env::create_database`] as thin wrappers
-/// around it and does not serialize them, so parallel `LmdbStore`
-/// callers (`for_each`, `range`, `get`, `is_empty` — each opens a fresh
-/// read txn and then opens the same table) racing on one env fell into
-/// the same `malloc(): unaligned tcache chunk` window when a concurrent
-/// close later freed `me_dbxs` entries whose writes had crossed. The
-/// [`SharedEnv::open_database`] / [`SharedEnv::create_database`]
-/// wrappers take a per-env [`Mutex`] before delegating, restoring the
-/// pinned single-writer contract.
+/// around `mdb_dbi_open` and does not serialize them or the abort. Every
+/// `LmdbStore` op (`get`/`for_each`/`range`/`is_empty` for reads, the
+/// write txn's `put`/`remove` closures for writes) opens a fresh txn and
+/// then opens (or creates) the same table by name, so two threads on one
+/// env would allocate the same unused slot for a first-time open and
+/// the loser's `mdb_txn_end` abort would `free()` the winner's still-in-use
+/// `md_name.mv_data` — the tcache trip surfaced in CI. Even with the
+/// narrower "lock only across `open_database`" wrapper (commit c504428),
+/// the aborting-side of that race stays open: releasing the mutex after
+/// `mdb_dbi_open` returns lets a second thread scan `me_dbxs` while the
+/// first thread's txn drop is freeing entries it wrote.
+///
+/// [`SharedEnv::with_dbi_lock`] holds a per-env [`Mutex<()>`] for the
+/// full closure — the caller opens its txn, does its
+/// `open_database`/`create_database` and reads or writes with those
+/// handles, and finishes the txn (commit or abort) inside that closure.
+/// The mutex releases only after all of that, restoring LMDB's pinned
+/// exclusion end to end. Contention stays inside a single env —
+/// unrelated `SharedEnv`s never touch this lock — and stores in this
+/// crate are opened for one lifetime and used sequentially in the
+/// production runtime; the mutex only serializes the parallel-tests
+/// workload the earlier crash surfaced from.
 struct SharedEnv {
     /// Kept in a [`ManuallyDrop`] so [`Drop::drop`] can run
     /// [`ManuallyDrop::drop`] on it explicitly, before releasing the
@@ -184,9 +201,9 @@ struct SharedEnv {
     /// would be gone.
     inner: ManuallyDrop<Env>,
     key: PathBuf,
-    /// Serializes `mdb_dbi_open` calls on `inner`. Held only across the
-    /// heed `open_database`/`create_database` call itself; released
-    /// before the returned [`Database`] handle is used.
+    /// Held for the full lifetime of any txn that will call
+    /// `mdb_dbi_open`, which LMDB requires as a per-process single-writer
+    /// on both the open and the txn-end paths.
     dbi_lock: Mutex<()>,
 }
 
@@ -199,33 +216,18 @@ impl Deref for SharedEnv {
 }
 
 impl SharedEnv {
-    /// The mutex-serialized [`Env::open_database`] — see the struct
-    /// docstring's second-hazard note for why this must not go through
-    /// heed's bare method.
-    fn open_database(
-        &self,
-        rtxn: &heed::RoTxn<'_, WithoutTls>,
-        name: &str,
-    ) -> Result<Option<Database<Bytes, Bytes>>, heed::Error> {
+    /// Runs `f` while holding this env's `dbi_lock`. Callers open their
+    /// txn, open or create the databases they need, do the reads or
+    /// writes on those handles, and let the txn finish (`commit` /
+    /// `abort` / drop) — all *inside* `f`, so the aborting-txn free
+    /// (see the struct docstring's second hazard) can never race
+    /// another thread's `open_database` scan on this env.
+    fn with_dbi_lock<R>(&self, f: impl FnOnce(&Env) -> R) -> R {
         let _guard = self
             .dbi_lock
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.inner.open_database(rtxn, Some(name))
-    }
-
-    /// The mutex-serialized [`Env::create_database`] — same rationale
-    /// as [`SharedEnv::open_database`], on the write side.
-    fn create_database(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        name: &str,
-    ) -> Result<Database<Bytes, Bytes>, heed::Error> {
-        let _guard = self
-            .dbi_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        self.inner.create_database(wtxn, Some(name))
+        f(&self.inner)
     }
 }
 
@@ -454,32 +456,34 @@ impl ReadStore for LmdbStore {
 
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         validate_table_name(table)?;
-        let txn = self.env.read_txn().map_err(map_heed_error)?;
-        let db: Option<Database<Bytes, Bytes>> = self
-            .env
-            .open_database(&txn, table)
-            .map_err(map_heed_error)?;
-        let Some(db) = db else { return Ok(None) };
-        Ok(db
-            .get(&txn, key)
-            .map_err(map_heed_error)?
-            .map(|v| v.to_vec()))
+        self.env.with_dbi_lock(|env| {
+            let txn = env.read_txn().map_err(map_heed_error)?;
+            let db: Option<Database<Bytes, Bytes>> = env
+                .open_database(&txn, Some(table))
+                .map_err(map_heed_error)?;
+            let Some(db) = db else { return Ok(None) };
+            Ok(db
+                .get(&txn, key)
+                .map_err(map_heed_error)?
+                .map(|v| v.to_vec()))
+        })
     }
 
     fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
         validate_table_name(table)?;
-        let txn = self.env.read_txn().map_err(map_heed_error)?;
-        let db: Option<Database<Bytes, Bytes>> = self
-            .env
-            .open_database(&txn, table)
-            .map_err(map_heed_error)?;
-        let Some(db) = db else { return Ok(()) };
-        let iter = db.iter(&txn).map_err(map_heed_error)?;
-        for result in iter {
-            let (key, value) = result.map_err(map_heed_error)?;
-            visit(key, value)?;
-        }
-        Ok(())
+        self.env.with_dbi_lock(|env| {
+            let txn = env.read_txn().map_err(map_heed_error)?;
+            let db: Option<Database<Bytes, Bytes>> = env
+                .open_database(&txn, Some(table))
+                .map_err(map_heed_error)?;
+            let Some(db) = db else { return Ok(()) };
+            let iter = db.iter(&txn).map_err(map_heed_error)?;
+            for result in iter {
+                let (key, value) = result.map_err(map_heed_error)?;
+                visit(key, value)?;
+            }
+            Ok(())
+        })
     }
 
     fn range(
@@ -490,33 +494,35 @@ impl ReadStore for LmdbStore {
         visit: &mut Visitor<'_>,
     ) -> Result<(), StoreError> {
         validate_table_name(table)?;
-        let txn = self.env.read_txn().map_err(map_heed_error)?;
-        let db: Option<Database<Bytes, Bytes>> = self
-            .env
-            .open_database(&txn, table)
-            .map_err(map_heed_error)?;
-        let Some(db) = db else { return Ok(()) };
         if is_empty_upper_bound(hi) {
             return Ok(());
         }
-        let bounds = (normalize_bound(lo), normalize_bound(hi));
-        let iter = db.range(&txn, &bounds).map_err(map_heed_error)?;
-        for result in iter {
-            let (key, value) = result.map_err(map_heed_error)?;
-            visit(key, value)?;
-        }
-        Ok(())
+        self.env.with_dbi_lock(|env| {
+            let txn = env.read_txn().map_err(map_heed_error)?;
+            let db: Option<Database<Bytes, Bytes>> = env
+                .open_database(&txn, Some(table))
+                .map_err(map_heed_error)?;
+            let Some(db) = db else { return Ok(()) };
+            let bounds = (normalize_bound(lo), normalize_bound(hi));
+            let iter = db.range(&txn, &bounds).map_err(map_heed_error)?;
+            for result in iter {
+                let (key, value) = result.map_err(map_heed_error)?;
+                visit(key, value)?;
+            }
+            Ok(())
+        })
     }
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
         validate_table_name(table)?;
-        let txn = self.env.read_txn().map_err(map_heed_error)?;
-        let db: Option<Database<Bytes, Bytes>> = self
-            .env
-            .open_database(&txn, table)
-            .map_err(map_heed_error)?;
-        let Some(db) = db else { return Ok(true) };
-        db.is_empty(&txn).map_err(map_heed_error)
+        self.env.with_dbi_lock(|env| {
+            let txn = env.read_txn().map_err(map_heed_error)?;
+            let db: Option<Database<Bytes, Bytes>> = env
+                .open_database(&txn, Some(table))
+                .map_err(map_heed_error)?;
+            let Some(db) = db else { return Ok(true) };
+            db.is_empty(&txn).map_err(map_heed_error)
+        })
     }
 }
 
@@ -537,21 +543,20 @@ impl WriteStore for LmdbStore {
         if self.read_only {
             return Err(StoreError::ReadOnly);
         }
-        let txn = self.env.write_txn().map_err(map_heed_error)?;
-        let mut wtxn = LmdbWriteTxn {
-            env: &self.env,
-            txn,
-        };
-        match f(&mut wtxn) {
-            Ok(result) => {
-                wtxn.txn.commit().map_err(map_heed_error)?;
-                Ok(result)
+        self.env.with_dbi_lock(|env| {
+            let txn = env.write_txn().map_err(map_heed_error)?;
+            let mut wtxn = LmdbWriteTxn { env, txn };
+            match f(&mut wtxn) {
+                Ok(result) => {
+                    wtxn.txn.commit().map_err(map_heed_error)?;
+                    Ok(result)
+                }
+                Err(error) => {
+                    wtxn.txn.abort();
+                    Err(error)
+                }
             }
-            Err(error) => {
-                wtxn.txn.abort();
-                Err(error)
-            }
-        }
+        })
     }
 
     fn compact(&mut self) -> Result<(), StoreError> {
@@ -568,7 +573,7 @@ impl WriteStore for LmdbStore {
 // ── write transaction ─────────────────────────────────────────────
 
 struct LmdbWriteTxn<'a> {
-    env: &'a SharedEnv,
+    env: &'a Env,
     txn: RwTxn<'a>,
 }
 
@@ -577,7 +582,7 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         validate_table_name(table)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&self.txn, table)
+            .open_database(&self.txn, Some(table))
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(None) };
         Ok(db
@@ -591,18 +596,18 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         if key.is_empty() || key.len() > MAX_KEY_LEN {
             return Err(StoreError::InvalidInput("key length must be 1..=511 bytes"));
         }
-        let db: Database<Bytes, Bytes> =
-            self.env
-                .create_database(&mut self.txn, table)
-                .map_err(|e| match e {
-                    // LMDB caps the environment at MAX_DBS named tables; the
-                    // over-limit table name is caller input, so surface it as
-                    // InvalidInput rather than an opaque backend error.
-                    heed::Error::Mdb(heed::MdbError::DbsFull) => StoreError::InvalidInput(
-                        "too many distinct tables (LMDB caps a store at 32)",
-                    ),
-                    other => map_heed_error(other),
-                })?;
+        let db: Database<Bytes, Bytes> = self
+            .env
+            .create_database(&mut self.txn, Some(table))
+            .map_err(|e| match e {
+                // LMDB caps the environment at MAX_DBS named tables; the
+                // over-limit table name is caller input, so surface it as
+                // InvalidInput rather than an opaque backend error.
+                heed::Error::Mdb(heed::MdbError::DbsFull) => {
+                    StoreError::InvalidInput("too many distinct tables (LMDB caps a store at 32)")
+                }
+                other => map_heed_error(other),
+            })?;
         db.put(&mut self.txn, key, value).map_err(map_heed_error)?;
         Ok(())
     }
@@ -611,7 +616,7 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         validate_table_name(table)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&self.txn, table)
+            .open_database(&self.txn, Some(table))
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(()) };
         db.delete(&mut self.txn, key).map_err(map_heed_error)?;
@@ -628,7 +633,7 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         validate_table_name(table)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&self.txn, table)
+            .open_database(&self.txn, Some(table))
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(()) };
         if is_empty_upper_bound(hi) {
@@ -647,7 +652,7 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         validate_table_name(table)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&self.txn, table)
+            .open_database(&self.txn, Some(table))
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(()) };
         let iter = db.iter(&self.txn).map_err(map_heed_error)?;
@@ -662,7 +667,7 @@ impl WriteTxn for LmdbWriteTxn<'_> {
         validate_table_name(table)?;
         let db: Option<Database<Bytes, Bytes>> = self
             .env
-            .open_database(&self.txn, table)
+            .open_database(&self.txn, Some(table))
             .map_err(map_heed_error)?;
         let Some(db) = db else { return Ok(true) };
         db.is_empty(&self.txn).map_err(map_heed_error)
