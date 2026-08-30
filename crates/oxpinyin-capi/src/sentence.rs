@@ -5,7 +5,7 @@ use std::os::raw::c_char;
 
 use oxpinyin_core::{DoublePinyinParse, FullPinyinIndexParse, ZhuyinParse};
 
-use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
+use crate::ffi::{cstr_to_strict, cstr_to_string, ffi_catch, owned_cstr};
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t, sort_option_t};
 
@@ -32,6 +32,49 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
         inst.session.guess_sentence().unwrap_or(false)
+    })
+}
+
+/// Guess a sentence seeded with prefix tokens.
+///
+/// # C signature
+/// ```c
+/// bool pinyin_guess_sentence_with_prefix(pinyin_instance_t * instance,
+///                                        const char * prefix);
+/// ```
+///
+/// Upstream resets `m_prefixes`, appends the virtual start, appends the
+/// tail-substring tokens `_compute_prefixes` finds for the prefix text
+/// (`pinyin.cpp:1389-1424`), validates the constraint store, and drives
+/// the ordinary full-matrix decode with those seeds
+/// (`pinyin.cpp:1426-1441`). Operates on the existing parse state; the
+/// retval is the decode's.
+#[unsafe(no_mangle)]
+pub extern "C" fn pinyin_guess_sentence_with_prefix(
+    instance: *mut PinyinInstance,
+    prefix: *const c_char,
+) -> bool {
+    if instance.is_null() {
+        return false;
+    }
+    ffi_catch(false, || {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_mut(instance) };
+        // Reject invalid UTF-8 before the prefix-token lookup — same
+        // upstream FALSE gate the sibling prediction seam honours
+        // (`ffi::cstr_to_strict`).
+        let Some(prefix) = cstr_to_strict(prefix) else {
+            return false;
+        };
+        let prefixes = crate::predict::compute_prefixes(&inst.dict, inst.user.as_ref(), &prefix);
+        let prefix_tokens: Vec<oxpinyin_core::PhraseToken> = prefixes
+            .iter()
+            .map(|&token| oxpinyin_core::PhraseToken::new(token))
+            .collect();
+        inst.session
+            .guess_sentence_with_prefix(&prefix_tokens)
+            .unwrap_or(false)
     })
 }
 
