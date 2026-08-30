@@ -161,7 +161,7 @@ fn parse_header(data: &[u8]) -> Result<Header, LoadError> {
     })
 }
 
-fn data_start(nitems: u32) -> usize {
+const fn data_start(nitems: u32) -> usize {
     let sec_entries = nitems.saturating_sub(NGOUPS) as usize;
     let preamble = if sec_entries > 0 { 10 } else { 6 };
     HEADER_SIZE + PRIMARY_IDX_SIZE + sec_entries * 4 + preamble
@@ -170,7 +170,7 @@ fn data_start(nitems: u32) -> usize {
 // ── record parsing ─────────────────────────────────────────────────
 
 /// Size of a simple (non-nested) sub-record: fl ∈ {0, 1, 2}.
-fn sub_record_size(ng: u8, fl: u8) -> usize {
+const fn sub_record_size(ng: u8, fl: u8) -> usize {
     match fl {
         0 => 6 + ng as usize * 8,
         1 => {
@@ -399,31 +399,31 @@ impl ContentTable {
 
     /// The per-file magic/checksum value from the header.
     #[must_use]
-    pub fn magic(&self) -> u32 {
+    pub const fn magic(&self) -> u32 {
         self.magic
     }
 
     /// The format version (always 17).
     #[must_use]
-    pub fn version(&self) -> u32 {
+    pub const fn version(&self) -> u32 {
         self.version
     }
 
     /// Maximum `phrase_index` + 1.
     #[must_use]
-    pub fn capacity(&self) -> u32 {
+    pub const fn capacity(&self) -> u32 {
         self.capacity
     }
 
     /// Number of records in the table.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.records.len()
     }
 
     /// Returns true if the table is empty.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 

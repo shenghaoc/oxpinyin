@@ -71,7 +71,7 @@ impl Backend {
 
     /// Whether this backend was compiled in (its cargo feature is on).
     #[must_use]
-    pub fn available(self) -> bool {
+    pub const fn available(self) -> bool {
         match self {
             Self::Redb => cfg!(feature = "redb"),
             Self::Lmdb => cfg!(feature = "lmdb"),
@@ -82,7 +82,7 @@ impl Backend {
 
     /// File extension for this backend's tables.
     #[must_use]
-    pub fn extension(self) -> &'static str {
+    pub const fn extension(self) -> &'static str {
         match self {
             Self::Redb => "redb",
             Self::Lmdb => "lmdb",
@@ -94,7 +94,7 @@ impl Backend {
     /// The cargo feature that compiles this backend in (differs from the
     /// file extension for Tkrzw).
     #[must_use]
-    pub fn feature(self) -> &'static str {
+    pub const fn feature(self) -> &'static str {
         match self {
             Self::Redb => "redb",
             Self::Lmdb => "lmdb",

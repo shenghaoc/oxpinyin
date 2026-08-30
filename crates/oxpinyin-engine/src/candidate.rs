@@ -146,19 +146,19 @@ impl CandidateList {
 
     /// Swap the live list with `items`, returning the previous buffer so
     /// the session can keep its capacity across keystrokes.
-    pub(crate) fn swap_items(&mut self, items: &mut Vec<Candidate>) {
+    pub(crate) const fn swap_items(&mut self, items: &mut Vec<Candidate>) {
         core::mem::swap(&mut self.items, items);
     }
 
     /// Number of candidates.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.items.len()
     }
 
     /// Whether there are no candidates.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
 

@@ -588,7 +588,7 @@ struct SchemeTables {
 impl DoublePinyinScheme {
     /// The compiled source tables for this scheme, or `None` for
     /// `Customized`.
-    fn tables(self) -> Option<SchemeTables> {
+    const fn tables(self) -> Option<SchemeTables> {
         match self {
             Self::Zrm => Some(SchemeTables {
                 shengmu: &ZRM_SHENG,
@@ -1488,7 +1488,7 @@ const CP26_FINALS: &[(u8, &str)] = &[
 /// (`src/storage/zhuyin_table.h:482`).
 const CP26_TONES: &[(u8, u8)] = &[(b' ', 1), (b'd', 4), (b'e', 2), (b'r', 3), (b'y', 5)];
 
-pub fn tone_symbol(tone: u8) -> &'static str {
+pub const fn tone_symbol(tone: u8) -> &'static str {
     match tone {
         1 => " ",
         2 => "ˊ",
@@ -1629,7 +1629,7 @@ impl ZhuyinScheme {
     }
 
     /// The CP26 tables, `None` for every other scheme.
-    fn cp26_tables(self) -> Option<Cp26Tables> {
+    const fn cp26_tables(self) -> Option<Cp26Tables> {
         match self {
             Self::DachenCp26 => Some(Cp26Tables {
                 initials: CP26_INITIALS,

@@ -275,7 +275,7 @@ fn training_pair(seed: u64, i: u64) -> (u32, u32) {
     (last, cur)
 }
 
-fn mix(mut z: u64) -> u64 {
+const fn mix(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)

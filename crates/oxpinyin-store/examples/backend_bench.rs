@@ -581,7 +581,7 @@ fn count_rows<S: ReadStore>(store: &S, table: &str) -> u64 {
 
 // ── deterministic workload rows ───────────────────────────────────
 
-fn mix(mut z: u64) -> u64 {
+const fn mix(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)

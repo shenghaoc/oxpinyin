@@ -102,7 +102,7 @@ impl Preedit {
 
     /// Whether there is nothing to display.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
 }

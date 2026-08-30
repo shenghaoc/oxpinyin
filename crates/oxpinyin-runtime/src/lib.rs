@@ -115,7 +115,7 @@ struct AddonSet {
 }
 
 impl AddonSet {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             loaded: BTreeMap::new(),
         }

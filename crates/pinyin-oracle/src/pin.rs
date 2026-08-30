@@ -245,7 +245,7 @@ impl OraclePrefix {
 
     /// The verified pin.
     #[must_use]
-    pub fn pin(&self) -> &VerifiedPin {
+    pub const fn pin(&self) -> &VerifiedPin {
         &self.pin
     }
 

@@ -97,7 +97,7 @@ struct Value {
 }
 
 impl Value {
-    fn seed(token: u32) -> Self {
+    const fn seed(token: u32) -> Self {
         Self {
             token,
             prev_token: 0,

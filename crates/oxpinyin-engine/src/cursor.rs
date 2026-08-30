@@ -72,12 +72,12 @@ impl Column {
         self.real.len() + usize::from(self.zero_end.is_some())
     }
 
-    fn is_empty(&self) -> bool {
+    const fn is_empty(&self) -> bool {
         self.real.is_empty() && self.zero_end.is_none()
     }
 
     /// The `_check_offset` shape: exactly one entry, and it is the zero key.
-    fn lone_zero(&self) -> bool {
+    const fn lone_zero(&self) -> bool {
         self.real.is_empty() && self.zero_end.is_some()
     }
 
@@ -162,7 +162,7 @@ fn zero_start_walk(columns: &[Column], mut offset: usize) -> usize {
 /// The range half shared with [`crate::check_lookup_offset_range`]: the pin
 /// reads its matrix out of bounds past one-past-end, so no pinned behaviour
 /// exists there.
-fn range_check(input_len: usize, offset: usize) -> Result<(), EngineError> {
+const fn range_check(input_len: usize, offset: usize) -> Result<(), EngineError> {
     if offset > input_len {
         return Err(EngineError::LookupOffsetOutOfRange {
             offset,

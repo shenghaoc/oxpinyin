@@ -30,7 +30,7 @@ struct Step {
 }
 
 impl Step {
-    fn is_empty(&self) -> bool {
+    const fn is_empty(&self) -> bool {
         self.content.is_empty()
     }
 

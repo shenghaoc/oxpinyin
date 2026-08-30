@@ -55,7 +55,7 @@ fn fixed_prefix<const N: usize>(bytes: &[u8]) -> Result<[u8; N], DecodeError> {
 
 /// Encode a `u8` value.
 #[must_use]
-pub fn encode_u8(v: u8) -> [u8; 1] {
+pub const fn encode_u8(v: u8) -> [u8; 1] {
     [v]
 }
 
@@ -70,7 +70,7 @@ pub fn decode_u8(bytes: &[u8]) -> Result<u8, DecodeError> {
 
 /// Encode a `Token` (`u32`) as 4 big-endian bytes.
 #[must_use]
-pub fn encode_token(token: Token) -> [u8; 4] {
+pub const fn encode_token(token: Token) -> [u8; 4] {
     token.to_be_bytes()
 }
 
@@ -85,7 +85,7 @@ pub fn decode_token(bytes: &[u8]) -> Result<Token, DecodeError> {
 
 /// Encode a `u64` value as 8 big-endian bytes.
 #[must_use]
-pub fn encode_u64(v: u64) -> [u8; 8] {
+pub const fn encode_u64(v: u64) -> [u8; 8] {
     v.to_be_bytes()
 }
 
@@ -102,7 +102,7 @@ pub fn decode_u64(bytes: &[u8]) -> Result<u64, DecodeError> {
 
 /// Encode a `&str` as raw UTF-8 bytes (identity).
 #[must_use]
-pub fn encode_str(s: &str) -> &[u8] {
+pub const fn encode_str(s: &str) -> &[u8] {
     s.as_bytes()
 }
 
@@ -117,13 +117,13 @@ pub fn decode_str(bytes: &[u8]) -> Result<&str, DecodeError> {
 
 /// Encode `&[u8]` (identity — returns the same slice).
 #[must_use]
-pub fn encode_bytes(b: &[u8]) -> &[u8] {
+pub const fn encode_bytes(b: &[u8]) -> &[u8] {
     b
 }
 
 /// Decode `&[u8]` (identity — returns the same slice).
 #[must_use]
-pub fn decode_bytes(b: &[u8]) -> &[u8] {
+pub const fn decode_bytes(b: &[u8]) -> &[u8] {
     b
 }
 

@@ -72,7 +72,7 @@ impl Segmenter {
 
     /// In-memory constructor for tests.
     #[must_use]
-    pub fn from_parts(lexicon: PhraseLexicon, model: SegmentModel, lambda: f32) -> Self {
+    pub const fn from_parts(lexicon: PhraseLexicon, model: SegmentModel, lambda: f32) -> Self {
         Self {
             lexicon,
             model,
