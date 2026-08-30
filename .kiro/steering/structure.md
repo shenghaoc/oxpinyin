@@ -6,7 +6,7 @@ inclusion: always
 | Crate | Role | unsafe | Portable | Ships |
 |---|---|---|---|---|
 | oxpinyin-core | parser, SegmentGraph, k-best, scoring traits | forbid | yes | via engine |
-| oxpinyin-data | load libpinyin-format tables (D3 route) | deny (+mmap) | yes | via engine |
+| oxpinyin-data | load libpinyin-format tables (D3 route); drop-in readers for installed libpinyin data | deny (+mmap) | yes | via engine |
 | oxpinyin-user | ACID store over DefaultStore; format-version from day one | deny | yes | via engine |
 | oxpinyin-engine | session API — the supported Rust surface | deny | yes | yes |
 | oxpinyin-capi | C ABI subset for the borrowed frontend | allow | Linux | yes |
@@ -31,6 +31,15 @@ python, and future adapters consume it rather than assembling equivalents.
 This is deliberate so native and language-binding paths cannot silently
 diverge. It is glue over `oxpinyin-data`/`-user`/`-engine` public APIs — no
 algorithm belongs there.
+
+**Drop-in compat path:** `oxpinyin-data` also reads installed libpinyin
+data directly. `src/compat/` (`CompatLayout::detect`) recognises the distro
+layouts — Fedora `/usr/lib64/libpinyin/data`, Debian
+`/usr/lib/<arch>/libpinyin/data`, NixOS profile-symlinked `/nix/store`
+paths — and `src/memory_chunk.rs` parses libpinyin's `MemoryChunk`
+container (8-byte header: u32 LE length + u32 XOR checksum). The runtime
+routes `pinyin_init` through this path when the system dir detects as a
+libpinyin data layout, so distro data is consumed without conversion.
 
 **Portability seam:** `oxpinyin-engine`'s session API is framework-neutral —
 abstract `KeyInput`, preedit spans + style enum, candidate iteration;
