@@ -27,7 +27,7 @@ exec_prefix=${prefix}
 libdir=${prefix}/lib/x86_64-linux-gnu
 includedir=${prefix}/include
 pkgdatadir=${prefix}/lib/x86_64-linux-gnu/libpinyin
-database_format=BerkeleyDB
+database_format=KyotoCabinet
 
 libpinyinincludedir=${includedir}/libpinyin-2.8.1
 libpinyin_binary_version=15.0
@@ -42,7 +42,7 @@ Cflags: -I${libpinyinincludedir}
 
 Two details worth stating because they are easy to get wrong: the module
 name is **`libpinyin`** while the link flag is **`-lpinyin`** (pkg-config
-name and library name differ), and `database_format` is **`BerkeleyDB`**,
+name and library name differ), and `database_format` is **`KyotoCabinet`**,
 one word, no space.
 
 `pkgdatadir` points at `@libdir@/libpinyin` — one level *above* where the
@@ -140,7 +140,7 @@ the redundant first write.
 — `redb` by default (oxpinyin's native store, and until a backend feature
 is forwarded onto `oxpinyin-capi`, the only one reachable here), `LMDB`
 or `Tkrzw` when such a feature is enabled. A packager building the drop-in
-against another engine's data (`KyotoCabinet`, `BerkeleyDB`) must set
+against another engine's data (`KyotoCabinet`, `Tkrzw`) must set
 `LIBPINYIN_DATABASE_FORMAT=<name>` at build time; otherwise the variable
 reads `redb` — accurate for oxpinyin's own data, but not what fcitx's
 probe expects when the shipped data is in a different format.

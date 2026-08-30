@@ -1,3 +1,8 @@
+> **Status: SHELVED.** The BerkeleyDB compat path was deprioritised in
+> favour of the Kyoto Cabinet and tkrzw compat paths (PRs #222, #220, #228).
+> This survey is preserved for reference. The feat/bdb-backend branch on
+> origin holds the incomplete implementation.
+
 # BerkeleyDB compatibility — Phase 1 survey
 
 Date: 2026-08-28 · Status: **survey; STOP for confirmation before Phase 2**

@@ -120,7 +120,7 @@ fn bake_pkg_config_template() {
 
 /// The `@DATABASE_FORMAT@` value. An explicit `LIBPINYIN_DATABASE_FORMAT`
 /// wins — a packager shipping data in another engine's format (e.g.
-/// `KyotoCabinet`, `BerkeleyDB`) sets it so fcitx's cmake probe reads the
+/// `KyotoCabinet`) sets it so fcitx's cmake probe reads the
 /// right backend. Otherwise the active backend feature, defaulting to `redb`:
 /// oxpinyin's native store and, until a backend feature is forwarded onto
 /// this crate, the only one reachable here.

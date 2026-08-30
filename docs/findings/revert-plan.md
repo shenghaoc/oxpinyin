@@ -38,10 +38,10 @@ land with the measurements.
   `predicted_tie_groups_are_text_ascending_including_user_rows`.
 - **Target:** the pin's store-iteration order — **and it is not the order
   the register measured.** That entry recorded the Tkrzw HashDBM bucket
-  walk. With BerkeleyDB as the default backend the pin's order becomes
-  BDB's `DB_HASH` iteration order over `phrase_index.bin`. It has to be
-  established experimentally on a real file first; nothing about the
-  Tkrzw measurement carries over.
+  walk. Kyoto Cabinet is the reference backend (what distros ship), and
+  the pin's order is KC's physical hash walk. It has to be established
+  experimentally on a real file first; nothing about the Tkrzw
+  measurement carries over.
 - **Probe:** `tools/bisection/pred-order-diff.c` via
   `run-pred-order-diff.sh`, from a recorded-drift constant (177/178 on
   好, 1557/1571 across eight prefixes) to zero. The e2e test's predicate
