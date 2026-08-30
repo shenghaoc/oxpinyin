@@ -8,6 +8,8 @@
 //! Pure and always compiled. The escaping helpers are shared with the
 //! differential logs, so fixtures and logs cannot drift apart.
 
+use std::fmt::Write as _;
+
 use crate::observation::{OracleCompleteness, OracleObservation, OracleSegment};
 use crate::{OracleError, OracleFlags};
 
@@ -37,7 +39,9 @@ pub fn escape(bytes: &[u8]) -> String {
             b'\t' => out.push_str("\\t"),
             b'\n' => out.push_str("\\n"),
             b'\r' => out.push_str("\\r"),
-            0x00..=0x1f | 0x7f..=0xff => out.push_str(&format!("\\x{byte:02x}")),
+            0x00..=0x1f | 0x7f..=0xff => {
+                let _ = write!(out, "\\x{byte:02x}");
+            }
             _ => out.push(char::from(*byte)),
         }
     }
