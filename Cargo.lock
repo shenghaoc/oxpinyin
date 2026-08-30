@@ -875,6 +875,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxpinyin-zhuyin-capi"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-chewing",
+ "oxpinyin-core",
+ "oxpinyin-data",
+ "oxpinyin-engine",
+ "oxpinyin-runtime",
+ "oxpinyin-user",
+]
+
+[[package]]
 name = "page_size"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
