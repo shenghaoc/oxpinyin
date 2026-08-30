@@ -26,6 +26,7 @@ inclusion: always
 | oxpinyin-emitter | legacy `interpolation2.text` writer (`export_interpolation`; off the trainer path — see trainer-parity-audit §4) | deny | yes | never |
 | oxpinyin-kmm | K-mixture-model pipeline (generate/estimate/merge/validate/prune/export/import/→interpolation) — W9 | deny | yes | never |
 | oxpinyin-punct | punctuation-table generator (`genpunct.py` reproduction) — W9 | deny | yes | never |
+| oxpinyin-word | word-recognition pipeline (populate/partialword/newword/markpinyin) — W9 | deny | yes | never |
 
 **Centralized assembly:** the concrete construction of a decodable engine
 (system tables + unigram model + λ + optional user store + addon/punct

@@ -661,6 +661,8 @@ Landed since this audit was frozen (each an independently-reviewable commit):
 |---|---|---|---|
 | B | `spseg` (fewest-words DP), `mergeseq` (phrase merge) | `oxpinyin-segment` (`spseg`, `mergeseq`, two CLIs) | toy unit + committed-golden differential (W3 table, CI-always) + env-gated live cross-check |
 | C+D | full KMM pipeline — data model, generate, estimate, merge, validate, prune, export/import, →interpolation | `oxpinyin-kmm` (self-contained, one CLI, 8 subcommands) | per-op unit + hand-verified golden + merge-equals-combined + end-to-end from the real segmented corpus |
+| G | punctuation table (`genpunct.py`) | `oxpinyin-punct` (count/merge CLI) | per-stage unit + two-stage golden |
+| F | word recognition — populate, partial-word discovery + cross-order merge, new-word entropy filtering, pinyin marking | `oxpinyin-word` (`recognize` CLI) | per-stage unit (incl. the `partition` merge walk) + hand-traced end-to-end golden |
 | H (core) | end-to-end main pipeline on real committed data (segment → KMM → interpolation2.text) with no Python/SQLite/make/libpinyin | `oxpinyin-kmm` integration test over the committed `spseg` fixture | passes on CI |
 
 **Reclassified** (kept, retitled): `oxpinyin-counter` (`gen_ngram`) and
@@ -674,10 +676,6 @@ stays on the real path.
   EM over KMM-derived counts) + `eval_correction_rate` reusing the
   `oxpinyin-engine` decode round-trip (§7). Needs the runtime-model
   assembly from a candidate `interpolation2.text` (no `make`).
-- **F** word recognition — prepare/populate/partialword/newword/markpinyin
-  → `oxpinyin-word` (§8). Self-contained; replaces SQLite/FTS3 with ordered
-  Rust maps; needs `words.txt`/`oldwords.txt` derived from the phrase
-  tables.
 - **H (full)** — typed status records, index-file walk, minimum-file-size
   filter, the native full-pipeline driver, reproducibility harness (§10).
 
