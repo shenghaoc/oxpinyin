@@ -1,0 +1,11 @@
+[package]
+name = "oxpinyin-chewing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The shared chewing-key surface: the packed key, its display renderers, and the frozen content tables."
+
+[lints]
+workspace = true
