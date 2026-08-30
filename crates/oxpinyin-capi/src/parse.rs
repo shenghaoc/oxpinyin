@@ -28,7 +28,7 @@ use crate::types::{GChar, PinyinInstance};
 ///
 /// Resets and clears the candidate snapshot even for empty input, so a
 /// prior composition is discarded and the stored length returns to 0.
-fn full_scheme(value: i32) -> Option<FullPinyinScheme> {
+pub(crate) fn full_scheme(value: i32) -> Option<FullPinyinScheme> {
     match value {
         1 => Some(FullPinyinScheme::Hanyu),
         2 => Some(FullPinyinScheme::Luoma),
@@ -76,7 +76,7 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
     consumed
 }
 
-fn double_scheme(value: i32) -> Option<DoublePinyinScheme> {
+pub(crate) fn double_scheme(value: i32) -> Option<DoublePinyinScheme> {
     match value {
         1 => Some(DoublePinyinScheme::Zrm),
         2 => Some(DoublePinyinScheme::Ms),
@@ -132,7 +132,7 @@ fn parse_double_more(instance: *mut PinyinInstance, text: &str) -> usize {
     inst.parsed_len
 }
 
-fn zhuyin_scheme(value: i32) -> Option<ZhuyinScheme> {
+pub(crate) fn zhuyin_scheme(value: i32) -> Option<ZhuyinScheme> {
     match value {
         1 => Some(ZhuyinScheme::Standard),
         2 => Some(ZhuyinScheme::Hsu),
