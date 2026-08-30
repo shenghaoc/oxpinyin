@@ -348,6 +348,27 @@ impl Dictionary for RuntimeDict {
         Ok(self.user_lookup()?.phrase_prefix_exists(syllables))
     }
 
+    /// Exact-text token lookup across the system and user seams, in that
+    /// order — the merge order `Dictionary::lookup_into` established. The
+    /// phrase-segment span DP consumes this per character span.
+    fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
+        let mut tokens: Vec<PhraseToken> = self
+            .system
+            .tokens_for_text(text)
+            .iter()
+            .map(|&token| PhraseToken::new(token))
+            .collect();
+        if let Ok(lookup) = self.user_lookup() {
+            tokens.extend(
+                lookup
+                    .tokens_for_text(text)
+                    .iter()
+                    .map(|&token| PhraseToken::new(token)),
+            );
+        }
+        tokens
+    }
+
     fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
         let mut entries = Vec::new();
         self.lookup_addon_into(syllables, &mut entries)?;

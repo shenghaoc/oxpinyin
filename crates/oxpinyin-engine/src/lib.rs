@@ -60,6 +60,7 @@ mod cursor;
 mod error;
 mod key;
 mod nbest;
+mod phrase;
 mod preedit;
 mod session;
 mod storage;

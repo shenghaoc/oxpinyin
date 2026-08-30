@@ -164,11 +164,18 @@ struct Trellis {
 }
 
 impl Trellis {
-    fn new(bound: usize, seed_token: u32) -> Self {
+    /// Seeds step 0 with one zero-cost node per token — upstream's
+    /// `fill_prefixes` (`phonetic_lookup.h:244-276`), which inserts
+    /// every `m_prefixes` entry as an initial node at `log(1.0)`.
+    /// `pinyin_guess_sentence_with_prefix` drives this with the prefix
+    /// token list; the single-seed `new` stays the sentence path's law.
+    fn with_seeds(bound: usize, seeds: &[u32]) -> Self {
         let mut nodes = vec![HashMap::new(); bound + 1];
-        let mut seed_values = NodeValues::new();
-        seed_values.push(Value::seed(seed_token));
-        nodes[0].insert(seed_token, seed_values);
+        for &seed_token in seeds {
+            let mut seed_values = NodeValues::new();
+            seed_values.push(Value::seed(seed_token));
+            nodes[0].insert(seed_token, seed_values);
+        }
         Self {
             nodes,
             texts: HashMap::new(),
@@ -336,11 +343,42 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
+    // The sentence path's single-seed law: the constrained decode seeds
+    // the virtual start; the free walk seeds the history's last token.
     let seed = match constraints {
         Some(_) => SENTENCE_START,
         None => history.last().map_or(SENTENCE_START, |token| token.value()),
     };
-    let mut trellis = Trellis::new(bound, seed);
+    nbest_sentences_with_seeds(
+        matrix,
+        bound,
+        dictionary,
+        model,
+        &[PhraseToken::new(seed)],
+        constraints,
+    )
+}
+
+/// The prefix-seeded variant: every seed token becomes a zero-cost
+/// initial node, upstream's `fill_prefixes` over `m_prefixes =
+/// [sentence_start] + _compute_prefixes(prefix)` — the exact shape
+/// `pinyin_guess_sentence_with_prefix` drives.
+pub(crate) fn nbest_sentences_with_seeds<D, L>(
+    matrix: &[Vec<ScanKey>],
+    bound: usize,
+    dictionary: &D,
+    model: &L,
+    seeds: &[PhraseToken],
+    constraints: Option<&ConstraintStore>,
+) -> Result<Vec<NbestRow>, EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: core::fmt::Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: core::fmt::Display,
+{
+    let seed_values: Vec<u32> = seeds.iter().map(|token| token.value()).collect();
+    let mut trellis = Trellis::with_seeds(bound, &seed_values);
     // Memoised step costs: the beam revisits (prev, token) pairs.
     let mut costs: HashMap<(u32, u32), NbestStepCosts> = HashMap::new();
     let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
