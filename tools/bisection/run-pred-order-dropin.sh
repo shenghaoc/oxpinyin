@@ -40,7 +40,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 DRIVER="$WORK/pred-order-diff"
-cc -O2 -Wall -o "$DRIVER" "$REPO_ROOT/tools/bisection/pred-order-diff.c" -ldl \
+"${CC:-cc}" -O2 -Wall -o "$DRIVER" "$REPO_ROOT/tools/bisection/pred-order-diff.c" -ldl \
     || { echo "driver build failed" >&2; exit 2; }
 
 dump() { # $1 = library, $2 = out file, $3 = label

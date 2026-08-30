@@ -714,6 +714,15 @@ Text, candidate type and counts cannot.
   tkrzw build Debian switched to in 2.11.91-1): the same shape — 1,571 =
   1,571 rows, sets identical, order-only. First measurement on this
   backend; no prior target existed.
+- **Kyoto Cabinet path, NixOS packaging** (nixos/nix container:
+  nixpkgs-unstable libpinyin 2.11.91, kyotocabinet 1.2.80, oracle at
+  `/nix/store/…-libpinyin-2.11.91/lib/libpinyin.so.15`): identical to the
+  Fedora measurement — 1,571 = 1,571 rows, sets identical, order-only,
+  the same 2,562 reordered lines. Confirms the compat path is layout-
+  portable (profile-symlinked `/nix/store` paths, no `/usr/lib`), not
+  just RPM-shaped. Built with nixpkgs' rustc (1.95) under
+  `--ignore-rust-version` — rustup toolchains cannot run on a pure Nix
+  image — with the differential gating the artifact.
 - **libpinyin behaviour:** predicted candidates come back in the DBM's
   iteration order — backend-dependent, semantically arbitrary, different
   between the KC and tkrzw oracles themselves.
