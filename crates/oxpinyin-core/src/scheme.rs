@@ -3010,8 +3010,10 @@ mod tests {
             .tones
             .iter()
             .find(|(_, value)| *value == tone)
-            .map(|(key, _)| *key)
-            .unwrap_or_else(|| panic!("no {scheme:?} key spells tone {tone}"));
+            .map_or_else(
+                || panic!("no {scheme:?} key spells tone {tone}"),
+                |(key, _)| *key,
+            );
         keys.push(tone_key);
         keys
     }

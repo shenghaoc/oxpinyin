@@ -345,8 +345,7 @@ impl BigramLanguageModel {
             .records
             .iter()
             .find(|(next_token, _)| *next_token == next)
-            .map(|(_, count)| *count)
-            .unwrap_or(0);
+            .map_or(0, |(_, count)| *count);
         Ok(Some((count, row.total)))
     }
 

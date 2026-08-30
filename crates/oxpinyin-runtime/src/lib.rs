@@ -305,10 +305,10 @@ impl RuntimeDict {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         UserLookup::refresh_in(&mut cache, store)
             .map_err(|error| DictError::Parse(error.to_string()))?;
-        Ok(cache
-            .as_ref()
-            .map(|(_, lookup)| Arc::clone(lookup))
-            .unwrap_or_else(|| Arc::new(UserLookup::empty())))
+        Ok(cache.as_ref().map_or_else(
+            || Arc::new(UserLookup::empty()),
+            |(_, lookup)| Arc::clone(lookup),
+        ))
     }
 
     /// The underlying system table set, without the user overlay.

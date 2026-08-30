@@ -144,9 +144,8 @@ pub fn parse_page(block: &[u8], base: usize) -> Result<Page, CorpusError> {
             // The decoded slice starts just after `<title>` inside the
             // page block; the absolute offset must include it, matching
             // the `<text>` branch above.
-            let open_end = find_bytes(block, b"<title>")
-                .map(|start| start + b"<title>".len())
-                .unwrap_or(0);
+            let open_end =
+                find_bytes(block, b"<title>").map_or(0, |start| start + b"<title>".len());
             String::from_utf8(decoded).map_err(|error| CorpusError::InvalidUtf8 {
                 offset: base + open_end + error.utf8_error().valid_up_to(),
             })?

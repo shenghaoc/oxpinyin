@@ -86,12 +86,8 @@ pub fn locate_bin(name: &str) -> Option<PathBuf> {
 #[must_use]
 pub fn locate_data(name: &str) -> Option<PathBuf> {
     let path = PathBuf::from(std::env::var_os(name)?);
-    (path.join("table.conf").is_file()
-        && path
-            .read_dir()
-            .map(|mut dir| dir.next().is_some())
-            .unwrap_or(false))
-    .then_some(path)
+    (path.join("table.conf").is_file() && path.read_dir().is_ok_and(|mut dir| dir.next().is_some()))
+        .then_some(path)
 }
 
 /// A fresh copy of the pin trainer's flat data dir that one pin command
@@ -122,11 +118,7 @@ impl PinDir {
             .map_err(|error| error.to_string())?
             .flatten()
         {
-            if entry
-                .file_type()
-                .map(|kind| kind.is_file())
-                .unwrap_or(false)
-            {
+            if entry.file_type().is_ok_and(|kind| kind.is_file()) {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
                 if name == "table.conf" || name.ends_with(".table") {
