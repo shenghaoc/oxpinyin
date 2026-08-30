@@ -144,11 +144,11 @@ jobs:
           {
             echo "## store-features"
             echo ""
-            echo "Backend sweeps passed: default (workspace), \`--features lmdb\`, \`--features tkrzw\`."
+            echo "Backend sweeps passed: kyotocabinet (default), redb, tkrzw, lmdb."
             echo ""
             echo "| Phase | Wall clock |"
             echo "|---|---:|"
-            echo "| three-feature suite | ${{ steps.feature-tests.outputs.elapsed || '—' }}s |"
+            echo "| four-backend suite + conformance | ${{ steps.feature-tests.outputs.elapsed || '—' }}s |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   tkrzw-sanitizers:
