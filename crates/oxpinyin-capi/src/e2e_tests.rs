@@ -175,12 +175,18 @@ fn training_through_the_abi_records_the_pinned_counts() {
         assert_eq!(phrase.text(), "你好");
         assert_eq!(phrase.pronunciations().len(), 1);
         // The current composition "nihao" supplies the pronunciation keys.
-        let ni = oxpinyin_core::SyllableKey::from_text("ni")
-            .expect("frozen key")
-            .index() as u16;
-        let hao = oxpinyin_core::SyllableKey::from_text("hao")
-            .expect("frozen key")
-            .index() as u16;
+        let ni = u16::try_from(
+            oxpinyin_core::SyllableKey::from_text("ni")
+                .expect("frozen key")
+                .index(),
+        )
+        .expect("frozen syllable inventory fits u16");
+        let hao = u16::try_from(
+            oxpinyin_core::SyllableKey::from_text("hao")
+                .expect("frozen key")
+                .index(),
+        )
+        .expect("frozen syllable inventory fits u16");
         assert_eq!(phrase.pronunciations()[0].keys(), &[ni, hao]);
         assert_eq!(phrase.pronunciations()[0].count(), 5);
         (
