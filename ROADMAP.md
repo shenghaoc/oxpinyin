@@ -22,7 +22,7 @@ Stage 2 is optional and measurement-gated.
 
 ## Reference pin
 
-Authoritative freeze: `docs/findings/oracle-environment.md`  
+Authoritative freeze: `docs/testing/oracle-environment.md`  
 (libpinyin `2.11.91` / ibus-libpinyin `1.16.5` / model archive SHA-256s).
 
 Build: `tools/oracle/build-oracle.sh` (optional container recipe alongside).
@@ -45,7 +45,7 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
 
 | Need | Output |
 |---|---|
-| Pin + recipe | `docs/findings/oracle-environment.md` (recorded) |
+| Pin + recipe | `docs/testing/oracle-environment.md` (recorded) |
 | Frontend ABI subset | `docs/findings/abi-subset.md` (recorded) |
 | Upstream schema | `docs/findings/upstream-schema.md` (recorded) |
 | Parser / path-set / scoring SPECs | not yet frozen |
@@ -213,7 +213,7 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   tie-swaps and the 1,036 order-only / 4,058 prefix-10 residuals, all one
   species — closed 2026-08-22 by porting the pin's tie law (the amplified
   f32 frequency key and the array order its stable sort keeps,
-  `docs/findings/corpus-tail.md`, `pin-refreeze-2026-08.md` third
+  `docs/testing/corpus-tail.md`, `pin-refreeze-2026-08.md` third
   amendment). The completion criterion was diagnosis-driven, and every
   diagnosed class is now zero. Also parked
   here: the live-typing behaviors the parity sequence doesn't yet

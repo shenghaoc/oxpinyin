@@ -1,6 +1,6 @@
 //! Hand-written declarations for the pinned libpinyin public ABI.
 //!
-//! Frozen in `docs/findings/oracle-ffi-seam.md` against
+//! Frozen in `docs/testing/oracle-ffi-seam.md` against
 //! `include/libpinyin-2.11.91/pinyin.h` with SHA-256
 //! `e1138482d06766163608406fe1083539b21ff8c44ea04f329f3db0c78a312d47`, the
 //! header installed by `tools/oracle/build-oracle.sh` and recorded as

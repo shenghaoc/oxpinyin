@@ -1,4 +1,4 @@
-//! One-shot profiles used by `docs/findings/perf-exploration.md`.
+//! One-shot profiles used by `docs/perf/perf-exploration.md`.
 //!
 //! `cargo bench -p pinyin-oracle --bench alloc_profile -- --dhat` writes
 //! `/tmp/dhat-heap-parity.json` for a full W2 parity `type_pinyin` run. The

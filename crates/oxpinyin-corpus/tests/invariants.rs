@@ -8,7 +8,7 @@
 //! no residual markup syntax, simplified spot-check only, one sentence
 //! per line, non-empty — and that the cleaner reproduces the sample from
 //! the committed XML fixture bit-exactly. See
-//! `docs/findings/corpus-pipeline.md`.
+//! `docs/testing/corpus-pipeline.md`.
 
 use std::io::Cursor;
 use std::path::PathBuf;

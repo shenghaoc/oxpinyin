@@ -9,7 +9,7 @@
 //!    entities, emphasis, headings, list markers.
 //!
 //! The rules are ordinary data engineering, documented in
-//! `docs/findings/corpus-pipeline.md`; the tier-1 invariants
+//! `docs/testing/corpus-pipeline.md`; the tier-1 invariants
 //! (`tests/invariants.rs`) assert no markup syntax survives. Nothing here
 //! is a libpinyin reproduction; libpinyin has no corpus-prep tool.
 

@@ -1,7 +1,7 @@
 //! What the oracle reported for one input.
 //!
 //! These types mirror the `pinyin-capture-v1` record fields frozen in
-//! `docs/findings/capture-fixtures.md`, so a live FFI run and a replayed
+//! `docs/testing/capture-fixtures.md`, so a live FFI run and a replayed
 //! fixture line produce the same value. That equivalence is what lets W2-T3 be
 //! exercised in portable CI against `fixtures/foundation/f-a.txt` while the
 //! same code path drives the real oracle on Linux.
@@ -169,7 +169,7 @@ pub enum OracleSegment {
     /// The oracle reported a non-empty parsed prefix that cannot hold a key, so
     /// the key walk was skipped to avoid a known abort.
     ///
-    /// See `docs/findings/oracle-apostrophe-abort.md`. On the pinned oracle an
+    /// See `docs/testing/oracle-apostrophe-abort.md`. On the pinned oracle an
     /// apostrophe-only input reports `parsed_input_length > 0` while its key
     /// matrix has no columns, and any key query then trips an `assert()` that
     /// reaches `abort()`. Recording this sentinel keeps the input visible as a

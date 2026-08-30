@@ -60,7 +60,7 @@ workflows, thread-safety and error mapping.
 ## Upstream
 
 - Behaviour oracle: [libpinyin](https://github.com/libpinyin/libpinyin) — pin in
-  `docs/findings/oracle-environment.md`
+  `docs/testing/oracle-environment.md`
 - Frontend ABI/settings surface:
   [ibus-libpinyin](https://github.com/libpinyin/ibus-libpinyin)
 

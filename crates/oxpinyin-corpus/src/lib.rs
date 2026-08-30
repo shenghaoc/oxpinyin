@@ -12,7 +12,7 @@
 //! was an undocumented private pipeline, so this stage has no libpinyin
 //! oracle. It is verified by well-formedness invariants (tier 1) and the
 //! end-to-end differential through T1→T2→T3→T4a (tier 2). See
-//! `docs/findings/corpus-pipeline.md`. Never ships with the engine.
+//! `docs/testing/corpus-pipeline.md`. Never ships with the engine.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 

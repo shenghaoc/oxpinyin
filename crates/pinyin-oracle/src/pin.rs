@@ -1,6 +1,6 @@
 //! Pin verification for the source-built oracle prefix.
 //!
-//! `docs/findings/oracle-environment.md` states that W2-T3 and every S1b
+//! `docs/testing/oracle-environment.md` states that W2-T3 and every S1b
 //! parity run load only the shared object produced by
 //! `tools/oracle/build-oracle.sh`. This module is the gate that enforces it.
 //! It is pure: it reads the manifest the recipe writes and decides whether the

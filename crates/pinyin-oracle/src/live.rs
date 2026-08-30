@@ -752,7 +752,7 @@ impl Session<'_> {
             // SAFETY: `text` is a non-null NUL-terminated string owned by the
             // instance and valid until the next mutating call on it. We copy it
             // immediately and never free it, matching the ownership table in
-            // docs/findings/oracle-ffi-seam.md.
+            // docs/testing/oracle-ffi-seam.md.
             let borrowed = unsafe { CStr::from_ptr(text) };
 
             let owned = borrowed
@@ -784,7 +784,7 @@ impl Session<'_> {
             // observed at runtime as
             //   Assertion `NBEST_MATCH_CANDIDATE == candidate->m_candidate_type' failed
             // which reaches abort(), the same uncatchable class as
-            // docs/findings/oracle-apostrophe-abort.md. The index therefore
+            // docs/testing/oracle-apostrophe-abort.md. The index therefore
             // exists only for n-best candidates; for every other type it is
             // `None` (written `-`) and the accessor is not called. This guard is
             // derived from the observed abort, not from reading upstream source.
@@ -828,7 +828,7 @@ impl Session<'_> {
         parsed_len: usize,
         input: &[u8],
     ) -> Result<Vec<OracleSegment>, OracleError> {
-        // Abort guard, see docs/findings/oracle-apostrophe-abort.md. The pinned
+        // Abort guard, see docs/testing/oracle-apostrophe-abort.md. The pinned
         // oracle reports a non-empty parsed prefix for apostrophe-only input
         // while its key matrix has no columns, and a key query then trips an
         // assert() that reaches abort(). A phonetic key is built from an initial

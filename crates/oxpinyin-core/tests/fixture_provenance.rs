@@ -1,6 +1,6 @@
 //! The W4 fixture vocabulary is derived from the frozen captures.
 //!
-//! `docs/findings/fixture-adapters.md` states the rule; this test is what
+//! `docs/testing/fixture-adapters.md` states the rule; this test is what
 //! makes it checkable rather than asserted. Every phrase in
 //! `fixtures/w4/mini-vocab.txt` must be text the pinned oracle actually
 //! emitted in `fixtures/foundation/f-a.txt` or `f-c.txt`, and every unigram

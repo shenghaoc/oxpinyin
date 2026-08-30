@@ -1,5 +1,5 @@
 //! Stateful session fuzzer over the C ABI — the libchewing `fuzzer.rs`
-//! shape (`docs/safety/upstream-test-strategies.md`). Each input byte
+//! shape (`docs/testing/upstream-test-strategies.md`). Each input byte
 //! selects one command from the alphabet below; return values drive
 //! subsequent state, so the harness walks real session lifecycles.
 //!

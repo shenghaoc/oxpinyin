@@ -85,7 +85,7 @@ impl DivergenceClass {
     ///
     /// `theirs-bug` does not: the pin is the subject and we cannot fix it.
     /// `flag-semantics` does not: the two sides were asked different questions.
-    /// `distro-delta` never does, per `docs/findings/oracle-environment.md`.
+    /// `distro-delta` never does, per `docs/testing/oracle-environment.md`.
     #[must_use]
     pub const fn gates_parity(self) -> bool {
         matches!(self, Self::PathSet | Self::OursBug)
