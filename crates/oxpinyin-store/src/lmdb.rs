@@ -6,7 +6,8 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::ops::Bound;
+use std::mem::ManuallyDrop;
+use std::ops::{Bound, Deref};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
@@ -121,9 +122,13 @@ fn open_env(path: &Path, read_only: bool, map_size: usize) -> Result<Env, StoreE
 /// neither reopen a live environment at a different ceiling nor resize
 /// it, so a mismatching request must be refused rather than silently
 /// handed the live ceiling.
-type EnvSlot = (Weak<Env>, bool, usize);
+type EnvSlot = (Weak<SharedEnv>, bool, usize);
 
 static OPEN_ENVS: OnceLock<Mutex<HashMap<PathBuf, EnvSlot>>> = OnceLock::new();
+
+fn open_envs() -> &'static Mutex<HashMap<PathBuf, EnvSlot>> {
+    OPEN_ENVS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// The canonical registry key for `path` (falls back to the path itself
 /// when it does not exist yet, e.g. `create` of a new file).
@@ -131,24 +136,82 @@ fn env_key(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// A re-open raced the previous environment's teardown. heed keeps a
-/// process-global registry of open environments keyed by canonical path
-/// (`heed::EnvOpenOptions::open` refuses a second open with
-/// `EnvAlreadyOpened`) and removes the entry in `EnvInner::drop` —
-/// **before** calling `mdb_env_close`, and after a wait on that
-/// registry's single write lock. Two consequences for this registry:
+/// One shared heed environment plus the machinery that keeps its close
+/// serialized against concurrent [`shared_env`] callers.
 ///
-/// * Between our `Weak` dying and heed removing its entry, a re-open of
-///   the same path fails spuriously. Every open in this crate funnels
-///   through `shared_env`, so a live conflicting environment cannot
-///   exist and the failure is always transient — retry, never surface it.
-/// * After heed removes the entry, `mdb_env_close` may still be running.
-///   heed surfaces that window as `env_closing_event(path)`, and opening
-///   the path while the close is in flight races it inside liblmdb —
-///   observed as heap corruption (`malloc(): unaligned tcache chunk`)
-///   under a newer glibc when parallel capi tests tore down and reopened
-///   the same fixture files. So a re-open WAITS for the effective-close
-///   event first; the retry is only a backstop.
+/// heed 0.22 holds its own process-global `OPENED_ENV` write lock across
+/// `mdb_env_close`, so a fresh `EnvOpenOptions::open` on the same path
+/// blocks until the close finishes and two closes never overlap inside
+/// liblmdb. What that alone did not cover is our registry's own gap: the
+/// last `Arc<SharedEnv>` drop decrements the strong count to zero
+/// *before* Rust runs this Drop impl, so a concurrent [`shared_env`]
+/// caller can see [`Weak::upgrade`] return `None`, call
+/// [`heed::env_closing_event`] once heed's Drop has removed its entry,
+/// get `None` back, and rush into [`open_env`] before liblmdb has
+/// finished the previous env's teardown work. Under a newer glibc that
+/// window manifested as `malloc(): unaligned tcache chunk detected`
+/// aborts in parallel capi and workspace test runs (main tip `fcf0559`).
+///
+/// The fix wraps every registry-owned `heed::Env` in this type. Its
+/// [`Drop`] takes the registry mutex, evicts the (dead) entry, and only
+/// then drops the inner env — so heed's `mdb_env_close` runs while we
+/// hold the same mutex that [`shared_env`] takes for its live-check and
+/// its `open_env` call. A concurrent caller either sees the live env on
+/// the fast path or blocks until the close has fully finished, and never
+/// races liblmdb.
+struct SharedEnv {
+    /// Kept in a [`ManuallyDrop`] so [`Drop::drop`] can run
+    /// [`ManuallyDrop::drop`] on it explicitly, before releasing the
+    /// registry mutex. Without that indirection Rust would drop the
+    /// field after the impl returned and the serialization we rely on
+    /// would be gone.
+    inner: ManuallyDrop<Env>,
+    key: PathBuf,
+}
+
+impl Deref for SharedEnv {
+    type Target = Env;
+
+    fn deref(&self) -> &Env {
+        &self.inner
+    }
+}
+
+#[allow(unsafe_code)]
+impl Drop for SharedEnv {
+    fn drop(&mut self) {
+        let mut map = open_envs()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Evict our own entry only. A concurrent `shared_env` waiting on
+        // this mutex may have already registered a fresh env under the
+        // same key (e.g. after a re-open replaced our dead Weak), and
+        // that entry is not ours to clear.
+        if map
+            .get(&self.key)
+            .is_some_and(|slot| slot.0.strong_count() == 0)
+        {
+            map.remove(&self.key);
+        }
+        // SAFETY: `self` is being dropped and `inner` is not read again.
+        // We drop it here (rather than letting Rust drop it after this
+        // function returns) so heed's `EnvInner::drop` — which calls
+        // `mdb_env_close` — runs while we still hold the registry
+        // mutex. A concurrent `shared_env` caller waits on that mutex,
+        // so it cannot re-enter liblmdb on this or any other path
+        // before the close is fully done.
+        unsafe { ManuallyDrop::drop(&mut self.inner) };
+    }
+}
+
+/// A re-open observed heed's `EnvAlreadyOpened` because our SharedEnv
+/// wrapper's Drop had already evicted our Weak entry but hadn't yet
+/// reached heed's own Drop (both are ordered under our registry mutex,
+/// but the window between "Weak strong count reaches 0" and "our Drop
+/// takes the mutex" is inherent to `Arc`). Every open in this crate
+/// funnels through `shared_env`, so a genuinely-live conflicting env
+/// cannot exist and the failure is always transient — retry, never
+/// surface it.
 fn is_transient_reopen(error: &StoreError) -> bool {
     let StoreError::Backend(inner) = error else {
         return false;
@@ -158,14 +221,6 @@ fn is_transient_reopen(error: &StoreError) -> bool {
         .is_some_and(|e| matches!(e, heed::Error::EnvAlreadyOpened))
 }
 
-/// One shared environment per path. A read-only request shares any live
-/// env (the store-level `read_only` flag still refuses writes); a
-/// writable request shares only a writable env — an env opened read-only
-/// cannot be upgraded, so that mismatch is refused rather than handed a
-/// handle that cannot write. A live env is shared only at the map size it
-/// was opened with: a different ceiling cannot be applied to it, so that
-/// mismatch is refused too, before the caller grows data past a ceiling
-/// it does not actually hold.
 /// The registry's answer for a live environment: the shared handle, or
 /// the refusing error, or `None` when no live environment exists for
 /// `key`. The caller holds the registry lock; nothing here waits.
@@ -174,7 +229,7 @@ fn live_env(
     key: &Path,
     read_only: bool,
     map_size: usize,
-) -> Option<Result<Arc<Env>, StoreError>> {
+) -> Option<Result<Arc<SharedEnv>, StoreError>> {
     let (weak, writable, live_map_size) = map.get(key)?;
     let env = weak.upgrade()?;
     if *live_map_size != map_size {
@@ -190,56 +245,55 @@ fn live_env(
     )))
 }
 
-fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Env>, StoreError> {
-    let registry = OPEN_ENVS.get_or_init(|| Mutex::new(HashMap::new()));
+/// One shared environment per path. A read-only request shares any live
+/// env (the store-level `read_only` flag still refuses writes); a
+/// writable request shares only a writable env — an env opened read-only
+/// cannot be upgraded, so that mismatch is refused rather than handed a
+/// handle that cannot write. A live env is shared only at the map size it
+/// was opened with: a different ceiling cannot be applied to it, so that
+/// mismatch is refused too, before the caller grows data past a ceiling
+/// it does not actually hold.
+///
+/// The whole open sequence — live-env check, then `open_env` on a miss —
+/// runs while the registry mutex is held, so it serializes with
+/// [`SharedEnv::drop`] (which takes the same mutex around heed's own
+/// `mdb_env_close`). A very short backoff loop remains only to absorb
+/// the small `Arc`-decrement/Drop-start window: when a concurrent Arc's
+/// strong count has just reached zero, `Weak::upgrade` already returns
+/// `None` but our Drop has not yet taken the mutex, so a first attempt
+/// can race heed's own drop and come back `EnvAlreadyOpened`. The retry
+/// runs behind the mutex and observes the freshly-evicted slot.
+fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<SharedEnv>, StoreError> {
+    let registry = open_envs();
     // 1ms doubling to 256ms: ~500ms total, orders of magnitude past the
-    // teardown window, while a genuine stuck close still fails in bounded
-    // time rather than hanging the caller.
+    // Arc-decrement window we retry against, while a genuine stuck close
+    // still fails in bounded time rather than hanging the caller.
     let mut backoff = std::time::Duration::from_millis(1);
     for attempt in 0..10 {
         if attempt > 0 {
-            // Sleep without the registry lock: the thread finishing the
-            // old environment's teardown never takes this mutex, and
-            // unrelated paths keep flowing through the registry.
+            // Sleep without the registry lock: the closing thread needs
+            // that mutex to make progress, and unrelated paths keep
+            // flowing through the registry.
             std::thread::sleep(backoff);
             backoff = (backoff * 2).min(std::time::Duration::from_millis(256));
         }
         let key = env_key(path);
-        // Fast path: a live environment answers immediately, without
-        // waiting out any close window.
-        if let Some(outcome) = live_env(
-            &registry.lock().unwrap_or_else(|p| p.into_inner()),
-            &key,
-            read_only,
-            map_size,
-        ) {
-            return outcome;
-        }
-        // The lock is released here — the temporary guard above dropped
-        // at the end of that statement — so the wait below never blocks
-        // an unrelated path's lookup. A dead entry does not mean the old
-        // environment has finished closing (see `is_transient_reopen`'s
-        // doc): wait for heed's effective-close event before this thread
-        // tries to open the path. No deadlock is possible — this thread
-        // holds no copy of the environment (its Weak is dead), and the
-        // closing thread never takes this registry's mutex.
-        if let Some(closing) = heed::env_closing_event(env_key(path)) {
-            closing.wait_timeout(std::time::Duration::from_millis(1000));
-        }
-        // Re-acquire and re-check first: another thread may have opened
-        // the path while this one waited, and two first opens of one
-        // path must serialize on the registry rather than both reach
-        // heed.
         let mut map = registry.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(outcome) = live_env(&map, &key, read_only, map_size) {
             return outcome;
         }
         match open_env(path, read_only, map_size) {
             Ok(env) => {
-                let env = Arc::new(env);
+                let env = Arc::new(SharedEnv {
+                    inner: ManuallyDrop::new(env),
+                    key: env_key(path),
+                });
                 // Re-key by the now-existing file so later opens of the
                 // same file through a different spelling collide correctly.
-                map.insert(env_key(path), (Arc::downgrade(&env), !read_only, map_size));
+                map.insert(
+                    env.key.clone(),
+                    (Arc::downgrade(&env), !read_only, map_size),
+                );
                 return Ok(env);
             }
             Err(error) if is_transient_reopen(&error) => continue,
@@ -268,7 +322,7 @@ fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Env>,
 /// process-wide registry (see `shared_env`), matching the other backends'
 /// open-many contract.
 pub struct LmdbStore {
-    env: Arc<Env>,
+    env: Arc<SharedEnv>,
     #[allow(dead_code)]
     path: PathBuf,
     read_only: bool,
