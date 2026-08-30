@@ -87,7 +87,8 @@ pub(crate) struct CapiContext {
 /// Where [`CapiContext::new`] takes unigram counts from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum UnigramSource {
-    /// Require a parsable `interpolation2.text` next to the redb tables.
+    /// Require a parsable `interpolation2.text` next to the system
+    /// tables (the compiled-in backend's `default_store_file` names).
     RealOnly,
     /// Test fixtures and the W3 mini tables use export-ABI flat counts.
     FlatExportForFixtures,
@@ -227,7 +228,8 @@ impl CapiContext {
     /// the availability class of `docs/findings/compatibility-policy.md` this
     /// answers `false` instead — the same bound [`CapiContext::unload_addon`]
     /// applies. Without it an out-of-range index would silently load a stray
-    /// `addon_{index}_*.redb` on disk rather than being refused. A
+    /// stray `addon_{index}_*` table on disk (whichever backend's
+    /// extension `default_store_file` names) rather than being refused. A
     /// user-store-only context has no runtime, so it loads nothing.
     pub(crate) fn load_addon(&self, index: u8) -> bool {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
