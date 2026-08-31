@@ -34,8 +34,12 @@ safe without the GIL.
 
 #### Acceptance Criteria
 
-1. THE binding SHALL build free-threaded wheels (`abi3-py310` +
-   `abi3t-py315`).
+1. THE binding SHALL declare pyo3's `abi3-py310` + `abi3t-py315`
+   features; on the CI interpreter (free-threaded CPython 3.14t, Linux)
+   neither stable ABI applies — pyo3 emits a version-specific `cp314t`
+   build — and the validated artifact is the source build through maturin
+   (`pip install .`); no pre-built wheels are published or tested
+   (`docs/python.md`).
 2. THE binding SHALL release the GIL around engine work while holding the
    session lock.
 3. THE binding SHALL NOT claim GIL-build support it does not test
