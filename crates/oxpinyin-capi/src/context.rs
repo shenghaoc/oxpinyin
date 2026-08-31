@@ -18,12 +18,12 @@ fn init_context(
 ) -> *mut PinyinContext {
     ffi_catch(ptr::null_mut(), || {
         // SAFETY: Both pointers are C strings from the caller (null OK).
-        let system_dir = cstr_to_owned_lossy(systemdir);
-        let user_dir = cstr_to_owned_lossy(userdir);
+        let system_path = cstr_to_owned_lossy(systemdir);
+        let user_path = cstr_to_owned_lossy(userdir);
         let context = match unigram_source {
-            UnigramSource::RealOnly => CapiContext::new(&system_dir, &user_dir),
+            UnigramSource::RealOnly => CapiContext::new(&system_path, &user_path),
             UnigramSource::FlatExportForFixtures => {
-                CapiContext::new_for_fixtures(&system_dir, &user_dir)
+                CapiContext::new_for_fixtures(&system_path, &user_path)
             }
         };
         context.map_or(ptr::null_mut(), box_context)
