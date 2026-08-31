@@ -15,12 +15,17 @@ oxpinyin from KC to Tkrzw makes init *worse* (106 ms vs 86 ms), not better.
 
 The PR #251 finding that "KC-related operations account for ~89% of
 oxpinyin's initialization time" was correct about *where* the time was
-spent — inside KC library calls. But the controlled experiment shows that
-replacing KC with Tkrzw increases init time by 23%, proving that the
-backend library is not the root cause. The root cause is oxpinyin's
-architectural decision to route all three index tables through a
-general-purpose key-value store with eager initialization, while libpinyin
-uses mmap-backed binary files with lazy page-fault loading for its indexes.
+spent — inside KC library calls. The controlled experiment shows that
+replacing KC with Tkrzw increases init time by 23%, which is consistent
+with the hypothesis that the bottleneck is architectural rather than
+backend-specific, but does not eliminate the init gap. A definitive
+proof would require an ablation isolating eager database initialization
+from the other implementation differences (code paths, data layout,
+table count). What the matrix does establish is that no single backend
+swap resolves the gap: oxpinyin's architecture of routing all index
+tables through a general-purpose key-value store with eager
+initialization is at least a necessary condition, while libpinyin uses
+mmap-backed binary files with lazy page-fault loading for its indexes.
 
 ## Experimental design
 
@@ -141,6 +146,9 @@ data is 32.5 MiB (KC) or 45.7 MiB (Tkrzw) — comparable to libpinyin's
 | Steady cycle | 0.996× | 0.949× |
 | Post-init RSS | 1.348× | 1.053× |
 | Cycle-peak HWM | 1.214× | 1.013× |
+| .so | 1.418× | 0.963× |
+| Data | 1.035× | 0.895× |
+| Total installed | 1.259× | 0.914× |
 
 **Init**: KC adds 8% to libpinyin's init (still <1 ms). For oxpinyin, KC
 is 19% *faster* than Tkrzw (86 ms vs 106 ms). The backend effects are
@@ -162,6 +170,9 @@ effect (~5%).
 | Steady cycle | 1.059× | 1.112× |
 | Post-init RSS | 4.057× | 5.196× |
 | Cycle-peak HWM | 3.697× | 4.432× |
+| .so | 1.526× | 2.247× |
+| Data | 3.049× | 3.524× |
+| Total installed | 2.621× | 3.611× |
 
 The implementation gap is massive for init (~100×) and significant for RAM
 (4–5×), regardless of backend. Steady-state cycle performance is within
@@ -176,6 +187,9 @@ The implementation gap is massive for init (~100×) and significant for RAM
 | Steady cycle | 0.953 |
 | Post-init RSS | 0.781 |
 | Cycle-peak HWM | 0.834 |
+| .so | 0.679 |
+| Data | 0.865 |
+| Total installed | 0.726 |
 
 **Init** (0.752): significant interaction. KC benefits oxpinyin
 (KC/Tkrzw = 0.81) but marginally hurts libpinyin (KC/Tkrzw = 1.08).
