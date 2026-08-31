@@ -19,6 +19,7 @@ members = [
   "crates/oxpinyin-lambda",
   "crates/oxpinyin-punct",
   "crates/oxpinyin-word",
+  "crates/oxpinyin-eval",
   "crates/oxpinyin-emitter",
   "crates/oxpinyin-corpus",
   "crates/oxpinyin-testsupport",
