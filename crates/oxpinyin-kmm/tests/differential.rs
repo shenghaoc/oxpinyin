@@ -33,7 +33,7 @@ use std::process::{Command, Stdio};
 
 use oxpinyin_kmm::{
     DEFAULT_PRUNE_K, GenerateParams, KMixtureModel, estimate, export, import,
-    kmm_text_to_interpolation, merge_into, prune,
+    kmm_text_to_interpolation, merge_into, prune, validate,
 };
 
 // ---- the fixture ----------------------------------------------------------
@@ -425,4 +425,233 @@ fn rust_kmm_matches_pin_to_interpolation() {
         "native to-interpolation matches the pin"
     );
     eprintln!("live parity: native to-interpolation matches the pin");
+}
+
+/// A *complete* segmented corpus for the prune differential. Every real
+/// system token appears as a W1 (no W2-only tokens → the pin's prune
+/// post-processing does not abort), and — crucially — pruning must not empty
+/// any row, or the pin's export aborts reading a header-only entry
+/// (`flexible_ngram_tkrzwdb.h:388`). So a high-count backbone
+/// 中国→你好→世界→中国 (repeated, survives CDF 0.5) carries the model, and one
+/// rare 中国→世界 (pruned) rides on 中国, whose backbone pair 中国→你好 keeps its
+/// row non-empty. Real system tokens (from `spseg`): 中国 16817937, 你好
+/// 16802309, 世界 16808451.
+fn complete_corpus() -> String {
+    let backbone = "16817937 中国\n16802309 你好\n16808451 世界\n16817937 中国\n0 \n";
+    let rare = "16817937 中国\n16808451 世界\n0 \n";
+    format!("{}{rare}", backbone.repeat(4))
+}
+
+/// Two candidate corpora: the real fixture split in half.
+fn corpus_halves() -> (String, String) {
+    let segmented = std::fs::read_to_string(real_segmented_fixture()).expect("fixture");
+    let lines: Vec<&str> = segmented.lines().collect();
+    let half = lines.len() / 2;
+    let mut a = lines[..half].join("\n");
+    a.push('\n');
+    let mut b = lines[half..].join("\n");
+    b.push('\n');
+    (a, b)
+}
+
+#[test]
+fn rust_kmm_matches_pin_merge() {
+    let (Some(gen_bin), Some(export_bin), Some(merge_bin), Some(data)) = (
+        locate_bin("PINYIN_GEN_KMM"),
+        locate_bin("PINYIN_EXPORT_KMM"),
+        locate_bin("PINYIN_MERGE_KMM"),
+        locate_data(),
+    ) else {
+        eprintln!(
+            "skipping live merge differential: set PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, \
+             PINYIN_MERGE_KMM, PINYIN_GEN_NGRAM_DATA"
+        );
+        return;
+    };
+    let (corpus_a, corpus_b) = corpus_halves();
+    let pin = PinDir::fresh(&data, "merge").expect("temp data dir");
+    let gen_one = |seg: &str, name: &str| {
+        let seg_path = pin.path(&format!("{name}.seg"));
+        std::fs::write(&seg_path, seg).expect("write seg");
+        let db = pin.path(&format!("{name}.db"));
+        pin.run(
+            &gen_bin,
+            &[
+                "--k-mixture-model-file",
+                db.to_str().unwrap(),
+                seg_path.to_str().unwrap(),
+            ],
+        )
+        .expect("pin gen");
+        let export_text = String::from_utf8(
+            pin.run(
+                &export_bin,
+                &["--k-mixture-model-file", db.to_str().unwrap()],
+            )
+            .expect("pin export"),
+        )
+        .expect("utf8");
+        (db, export_text)
+    };
+    let (db_a, export_a) = gen_one(&corpus_a, "a");
+    let (db_b, export_b) = gen_one(&corpus_b, "b");
+
+    // Pin merge a.db + b.db → merged.db, export it.
+    let merged_db = pin.path("merged.db");
+    pin.run(
+        &merge_bin,
+        &[
+            "--result-file",
+            merged_db.to_str().unwrap(),
+            db_a.to_str().unwrap(),
+            db_b.to_str().unwrap(),
+        ],
+    )
+    .expect("pin merge");
+    let pin_merged = String::from_utf8(
+        pin.run(
+            &export_bin,
+            &["--k-mixture-model-file", merged_db.to_str().unwrap()],
+        )
+        .expect("pin export merged"),
+    )
+    .expect("utf8");
+
+    // Native: import both pin candidate exports, merge, export.
+    let mut merged = import(&export_a).expect("import a");
+    merge_into(&mut merged, &import(&export_b).expect("import b")).expect("merge");
+
+    assert_eq!(
+        sorted_items(&strip_text(&export(&merged))),
+        sorted_items(&strip_text(&pin_merged)),
+        "native merge must match the pin's merged record set"
+    );
+    eprintln!("live parity: native merge matches the pin");
+}
+
+#[test]
+fn rust_kmm_matches_pin_prune() {
+    let (Some(gen_bin), Some(export_bin), Some(prune_bin), Some(data)) = (
+        locate_bin("PINYIN_GEN_KMM"),
+        locate_bin("PINYIN_EXPORT_KMM"),
+        locate_bin("PINYIN_PRUNE_KMM"),
+        locate_data(),
+    ) else {
+        eprintln!(
+            "skipping live prune differential: set PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, \
+             PINYIN_PRUNE_KMM, PINYIN_GEN_NGRAM_DATA"
+        );
+        return;
+    };
+    // A *complete* corpus (every token appears as a W1) — required because the
+    // pin's prune post-processing asserts every pruned pair's W2 has an array
+    // header (`prune_k_mixture_model.cpp:165`), which W2-only tokens lack: on a
+    // model with W2-only tokens the pin **aborts** (SIGABRT), while the native
+    // prune completes gracefully (its unigram-reduce no-ops on a missing row).
+    // That is a class-(c) availability divergence — the native must not abort
+    // on caller input — and it is exactly why the prune stage needs a complete
+    // corpus to compare byte-for-byte. The chain 中国→你好→世界→中国 keeps every
+    // token a W1; repeats give the pairs enough mass that CDF 0.5 keeps them.
+    let segmented = complete_corpus();
+    let pin = PinDir::fresh(&data, "prune").expect("temp data dir");
+    let seg_path = pin.path("corpus.seg");
+    std::fs::write(&seg_path, &segmented).expect("write seg");
+    let db = pin.path("model.db");
+    pin.run(
+        &gen_bin,
+        &[
+            "--k-mixture-model-file",
+            db.to_str().unwrap(),
+            seg_path.to_str().unwrap(),
+        ],
+    )
+    .expect("pin gen");
+    // Native starts from the pin's candidate export (identical stored state).
+    let candidate_export = String::from_utf8(
+        pin.run(
+            &export_bin,
+            &["--k-mixture-model-file", db.to_str().unwrap()],
+        )
+        .expect("pin export"),
+    )
+    .expect("utf8");
+
+    // Pin prune the .db in place (-k 3 --CDF 0.5), then export.
+    pin.run(
+        &prune_bin,
+        &["-k", "3", "--CDF", "0.5", db.to_str().unwrap()],
+    )
+    .expect("pin prune");
+    let pin_pruned = String::from_utf8(
+        pin.run(
+            &export_bin,
+            &["--k-mixture-model-file", db.to_str().unwrap()],
+        )
+        .expect("pin export pruned"),
+    )
+    .expect("utf8");
+
+    // Native prune the imported candidate with the same parameters.
+    let mut model = import(&candidate_export).expect("import candidate");
+    prune(&mut model, 3, 0.5).expect("native prune");
+
+    assert_eq!(
+        sorted_items(&strip_text(&export(&model))),
+        sorted_items(&strip_text(&pin_pruned)),
+        "native prune must match the pin's pruned record set"
+    );
+    eprintln!("live parity: native prune matches the pin");
+}
+
+#[test]
+fn rust_kmm_matches_pin_validate() {
+    let (Some(gen_bin), Some(export_bin), Some(validate_bin), Some(data)) = (
+        locate_bin("PINYIN_GEN_KMM"),
+        locate_bin("PINYIN_EXPORT_KMM"),
+        locate_bin("PINYIN_VALIDATE_KMM"),
+        locate_data(),
+    ) else {
+        eprintln!(
+            "skipping live validate differential: set PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, \
+             PINYIN_VALIDATE_KMM, PINYIN_GEN_NGRAM_DATA"
+        );
+        return;
+    };
+    let segmented = std::fs::read_to_string(real_segmented_fixture()).expect("fixture");
+    let pin = PinDir::fresh(&data, "validate").expect("temp data dir");
+    let seg_path = pin.path("corpus.seg");
+    std::fs::write(&seg_path, &segmented).expect("write seg");
+    let db = pin.path("model.db");
+    pin.run(
+        &gen_bin,
+        &[
+            "--k-mixture-model-file",
+            db.to_str().unwrap(),
+            seg_path.to_str().unwrap(),
+        ],
+    )
+    .expect("pin gen");
+    let export_text = String::from_utf8(
+        pin.run(
+            &export_bin,
+            &["--k-mixture-model-file", db.to_str().unwrap()],
+        )
+        .expect("pin export"),
+    )
+    .expect("utf8");
+
+    // The pin validate on this small corpus (has W2-only tokens) rejects it.
+    let pin_ok = Command::new(&validate_bin)
+        .current_dir(&pin.dir)
+        .arg(db.to_str().unwrap())
+        .output()
+        .expect("run validate")
+        .status
+        .success();
+    let native_ok = validate(&import(&export_text).expect("import")).is_ok();
+    assert_eq!(
+        native_ok, pin_ok,
+        "native validate verdict must match the pin's (both reject the W2-only model)"
+    );
+    eprintln!("live parity: native validate verdict matches the pin ({pin_ok})");
 }
