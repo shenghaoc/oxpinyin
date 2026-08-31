@@ -83,7 +83,12 @@ printf '%s\n' '\data model interpolation' '\1-gram' '\item 1 ok count 1' \
 ln -sf libpinyin_capi.so "$CAPI_DIR/libpinyin.so.15"
 
 echo "--- compiling C++ smoke TU against pinyin.h ---"
+# pinyin.h -> novel_types.h/pinyin_custom2.h -> <glib.h>, and libpinyin.pc
+# declares `Requires: glib-2.0`. Supply the glib include dirs (or an explicit
+# GLIB_CFLAGS override for constrained builders) so the header tuple resolves.
+GLIB_CFLAGS="${GLIB_CFLAGS:-$(pkg-config --cflags glib-2.0 2>/dev/null)}"
 g++ -std=c++17 -Wall -Wextra -Werror -O2 \
+    $GLIB_CFLAGS \
     -I"$REPO_ROOT/crates/oxpinyin-capi" \
     cpp-smoke.cc \
     -L"$CAPI_DIR" -Wl,-rpath,"$CAPI_DIR" \

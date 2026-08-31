@@ -97,13 +97,21 @@ generation = false
 # The real libpinyin installs its header under a version-stamped subdirectory
 # (/usr/include/libpinyin-2.8.1/pinyin.h on Ubuntu's libpinyin15-dev; no
 # top-level symlink), and its libpinyin.pc points Cflags there. Match it.
+# pinyin.h includes novel_types.h and pinyin_custom2.h (each -> glib.h); both
+# ship beside it verbatim, the closed set upstream installs under the same
+# subdirectory.
 subdirectory = "libpinyin-2.11.91"
 
 [package.metadata.capi.install.include]
 # Ship the existing crate-root header without moving it into assets/. The
 # destination must match `header.subdirectory` above, or Cflags points at a
-# directory the header is not in.
-asset = [{ from = "pinyin.h", to = "libpinyin-2.11.91" }]
+# directory the header is not in. pinyin.h's two companions ship with it so
+# the header resolves standalone — the drop-in installs the closed include set.
+asset = [
+    { from = "pinyin.h", to = "libpinyin-2.11.91" },
+    { from = "novel_types.h", to = "libpinyin-2.11.91" },
+    { from = "pinyin_custom2.h", to = "libpinyin-2.11.91" },
+]
 
 [package.metadata.capi.pkg_config]
 name = "libpinyin"

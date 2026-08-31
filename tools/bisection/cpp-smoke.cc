@@ -10,6 +10,7 @@
 
 #include <pinyin.h>
 
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
