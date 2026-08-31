@@ -38,8 +38,9 @@ and `Kiro:kiro-<id>`.
 
 The shared checkout is never yours: check `git branch --show-current` first
 — a branch you did not create means another session is mid-flight. Work in
-a separate worktree off `origin/main` (`git worktree add -b <branch>
-/tmp/<name> origin/main`), commit there, `git worktree remove` when done.
+a separate worktree (`git worktree add -b <branch> /tmp/<name> <base>`),
+commit there, `git worktree remove` when done. Root work bases on
+`origin/main`; a dependent stack layer bases on its current stack parent.
 Never touch or prune another session's worktree.
 
 ## Merges
