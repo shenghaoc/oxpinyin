@@ -110,7 +110,7 @@ fn print_block(scenario: &str, rows: &[(String, String)]) {
     println!("── {scenario} ──");
     println!("  {:<26} {:>14}", "metric", PEER_LABEL);
     for (key, value) in rows {
-        println!("  {:<26} {:>14}", key, value);
+        println!("  {key:<26} {value:>14}");
     }
     println!();
 }

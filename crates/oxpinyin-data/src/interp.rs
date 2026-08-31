@@ -344,7 +344,7 @@ pub fn parse_interpolation2_from_reader<R: BufRead>(
             .parse::<u64>()
             .map_err(|_| InterpolationError::Parse {
                 line: line_number,
-                detail: format!("unigram count {:?} is not a u64", count_field),
+                detail: format!("unigram count {count_field:?} is not a u64"),
             })?;
         if count == 0 {
             return Err(InterpolationError::Parse {
