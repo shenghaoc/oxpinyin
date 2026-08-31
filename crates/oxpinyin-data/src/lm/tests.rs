@@ -124,7 +124,10 @@ fn invariant_holds_for_every_fixture_entry() {
     let model = model();
     for (key, row) in &model.bigram {
         let prev = key.token();
-        let sum: u64 = row.records.iter().map(|(_, count)| u64::from(*count)).sum();
+        let sum: u64 = model.records[row.records.clone()]
+            .iter()
+            .map(|(_, count)| u64::from(*count))
+            .sum();
         assert_eq!(
             u64::from(row.total),
             sum,
