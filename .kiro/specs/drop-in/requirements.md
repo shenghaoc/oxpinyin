@@ -50,7 +50,7 @@ libpinyin data so that no conversion step ships.
 4. ON every measured backend THE prediction surface SHALL read 1,571/1,571
    rows with sorted row sets byte-identical.
 
-### Requirement 3: Output compatibility under the four exception classes
+### Requirement 3: Output compatibility under the recorded exceptions
 
 **User Story:** As a consumer, I want byte-identical output so that the
 replacement changes nothing observable.
@@ -63,7 +63,13 @@ replacement changes nothing observable.
 2. Divergence SHALL be permitted only under classes (a) MATH, (b) MEMORY
    SAFETY, (c) AVAILABILITY, (d) CONSUMER SCOPE — see
    `docs/findings/compatibility-policy.md`.
-3. A stub returning `false` SHALL be treated as a defect, not compliance.
+3. THE predicted-candidate list order (the exempt surface: the rows of
+   `pinyin_guess_predicted_candidates[_with_punctuations]` /
+   `pinyin_choose_predicted_candidate`) SHALL follow the defined
+   text-ascending order (register R1): the rows' content and sorted sets
+   SHALL be byte-identical, and only the list positions are exempt from
+   the pin-order comparison.
+4. A stub returning `false` SHALL be treated as a defect, not compliance.
 
 ### Requirement 4: Divergences attributed, not hidden
 
@@ -73,6 +79,7 @@ a rule or a plan so that nothing is silently re-frozen.
 #### Acceptance Criteria
 
 1. THE predicted-row order (R1) SHALL follow the defined text-ascending
-   order; the pin's order SHALL be recorded as a constant, never a target.
+   order, per Requirement 3's bounded exception; the pin's order SHALL be
+   recorded as a constant, never a target.
 2. THE BerkeleyDB compat path SHALL remain SHELVED until a consumer needs
    it.

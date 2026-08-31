@@ -120,7 +120,7 @@ libpinyin data so that no data conversion ships.
    row sets byte-identical; the residual order-only divergence is R1's and
    is governed by R9.
 
-### Requirement R9: Output compatibility rule and its four exceptions
+### Requirement R9: Output compatibility rule and its exceptions
 
 **User Story:** As a consumer, I want byte-identical output so that
 replacing the library changes nothing observable.
@@ -134,6 +134,12 @@ replacing the library changes nothing observable.
    floating-point accumulation; (b) MEMORY SAFETY — upstream is UB and
    Rust structurally prevents reproduction; (c) AVAILABILITY — upstream
    aborts on caller input, so oxpinyin returns `false`/`Err`; (d) CONSUMER
-   SCOPE — only what the reference consumers call. 3. A symbol that
+   SCOPE — only what the reference consumers call. 3. One further,
+   explicitly bounded exception is recorded: the predicted-candidate list
+   order follows oxpinyin's defined text-ascending order (register R1,
+   maintainer decision 2026-08-25) — predicted rows' content and their
+   sorted sets SHALL be byte-identical to the pin, and only the list
+   positions are exempt from the pin-order comparison, which the register
+   records as a constant, never a target. 4. A symbol that
    returns a wrong value SHALL be treated as worse than not exporting it:
    a stub returning `false` is a defect, not compliance.

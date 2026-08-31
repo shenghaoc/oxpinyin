@@ -11,9 +11,11 @@ Shipped and documented in `docs/python.md`. Open items below.
   `Engine.from_fixture_dir(...).lookup(...)`.
   _Requirements: 1_
 
-- [x] 2. Free-threaded CPython wheels: `pyo3 0.29` with `abi3-py310` +
-  `abi3t-py315`; the GIL released around engine work while the session
-  lock is held.
+- [x] 2. Free-threaded CPython support: `pyo3 0.29` with `abi3-py310` +
+  `abi3t-py315` declared (neither stable ABI selects on the tested 3.14t
+  interpreter — pyo3 emits a version-specific `cp314t` build); CI
+  validates the source build on free-threaded CPython 3.14t, Linux; the
+  GIL released around engine work while the session lock is held.
   _Requirements: 2_
 
 - [x] 3. The user contract in `docs/python.md`: data requirements,
