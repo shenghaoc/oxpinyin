@@ -23,6 +23,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::ops::Range;
 use std::path::Path;
 
 use oxpinyin_core::cost::{UNKNOWN_COST, reduce_ratio, surprisal};
@@ -146,6 +147,8 @@ pub fn merge_bigram(
 /// One previous-token row of the system bigram.
 ///
 /// `total` is the stored row total and equals `Σ count` over [`records`].
+/// This is the copied-out shape callers hold: the model itself stores every
+/// row's records in one shared arena ([`BigramLanguageModel::records`]).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BigramRow {
     /// Sum of the successor counts.
@@ -154,12 +157,26 @@ pub struct BigramRow {
     pub records: Vec<(u32, u32)>,
 }
 
+/// One stored row's metadata: its total plus the range of its
+/// `(next_token, count)` records inside the shared arena.
+#[derive(Debug)]
+struct BigramRowMeta {
+    /// Sum of the successor counts.
+    total: u32,
+    /// The row's records inside [`BigramLanguageModel::records`], stored order.
+    records: Range<usize>,
+}
+
 /// Bigram language model backed by `bigram.redb`.
 pub struct BigramLanguageModel {
     /// `(previous token, row)` pairs in ascending [`LeByteKey`] order — the
     /// order redb's walk yields for the 4-byte LE keys — searched by binary
     /// search. The append replaces `BTreeMap::insert`'s per-row walk.
-    bigram: Vec<(LeByteKey, BigramRow)>,
+    bigram: Vec<(LeByteKey, BigramRowMeta)>,
+    /// Every `(next_token, count)` record of every row, concatenated in row
+    /// order: one allocation for the whole table instead of one `Vec` per
+    /// row (56,359 rows at the pin export), the `PinyinIndex` arena shape.
+    records: Vec<(u32, u32)>,
     unigrams: Option<UnigramTable>,
     unigram_total: u64,
     /// Whether `unigrams` came from `interpolation2.text`: only the phrase
@@ -185,7 +202,8 @@ impl BigramLanguageModel {
     ///
     /// Returns [`LmError`] when the model file cannot be opened or fails validation.
     pub fn open(path: &Path) -> Result<Self, LmError> {
-        let mut bigram = Vec::new();
+        let mut bigram: Vec<(LeByteKey, BigramRowMeta)> = Vec::new();
+        let mut records: Vec<(u32, u32)> = Vec::new();
         table::for_each_row(path, |key, value| {
             if key.len() != 4 {
                 return Err(LmError::Parse(format!(
@@ -194,15 +212,23 @@ impl BigramLanguageModel {
                 )));
             }
             let prev = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
-            let (total, records) = parse_bigram_value(value)?;
             // Ascending walk order: an append; the order check repairs (and
             // keeps the last row per key, as insert did) on any other input.
-            bigram.push((LeByteKey::new(prev), BigramRow { total, records }));
+            let start = records.len();
+            let total = parse_bigram_value(value, &mut records)?;
+            bigram.push((
+                LeByteKey::new(prev),
+                BigramRowMeta {
+                    total,
+                    records: start..records.len(),
+                },
+            ));
             Ok::<(), LmError>(())
         })?;
         table::ensure_sorted_unique(&mut bigram);
         Ok(Self {
             bigram,
+            records,
             unigrams: None,
             unigram_total: 0,
             real_unigrams: false,
@@ -337,26 +363,35 @@ impl BigramLanguageModel {
     /// Returns [`LmError`] when the table cannot be read or a value does not
     /// parse under the frozen schema.
     pub fn load_successors(&self, prev: u32) -> Result<Option<BigramRow>, LmError> {
+        Ok(self.row(prev).map(|(total, records)| BigramRow {
+            total,
+            records: records.to_vec(),
+        }))
+    }
+
+    /// The stored row for `prev`: its total plus its `(next_token, count)`
+    /// records borrowed from the arena, or `None` when `prev` has no entry.
+    fn row(&self, prev: u32) -> Option<(u32, &[(u32, u32)])> {
         let needle = LeByteKey::new(prev);
-        Ok(self
+        let position = self
             .bigram
             .binary_search_by(|(key, _)| key.cmp(&needle))
-            .ok()
-            .map(|position| self.bigram[position].1.clone()))
+            .ok()?;
+        let (_, meta) = &self.bigram[position];
+        Some((meta.total, &self.records[meta.records.clone()]))
     }
 
     /// Returns `(count, total)` for the `prev → next` transition, or `None`
     /// when `prev` has no bigram entry.
     fn transition(&self, prev: u32, next: u32) -> Result<Option<(u32, u32)>, LmError> {
-        let Some(row) = self.load_successors(prev)? else {
+        let Some((total, records)) = self.row(prev) else {
             return Ok(None);
         };
-        let count = row
-            .records
+        let count = records
             .iter()
             .find(|(next_token, _)| *next_token == next)
             .map_or(0, |(_, count)| *count);
-        Ok(Some((count, row.total)))
+        Ok(Some((count, total)))
     }
 
     /// System `prev → next` counts with the §5 overlay already merged.
@@ -613,8 +648,9 @@ fn ratio_cost((numerator, denominator): (u128, u128)) -> Option<Cost> {
     }
 }
 
-/// Parses a bigram value as `(total, [{next_token, count}])`.
-fn parse_bigram_value(data: &[u8]) -> Result<(u32, Vec<(u32, u32)>), LmError> {
+/// Parses a bigram value as `(total, [{next_token, count}])`, appending the
+/// records to the shared arena and returning the row total.
+fn parse_bigram_value(data: &[u8], records: &mut Vec<(u32, u32)>) -> Result<u32, LmError> {
     if data.len() < 4 || !(data.len() - 4).is_multiple_of(8) {
         return Err(LmError::Parse(format!(
             "bigram value length {} is not 4 + 8n",
@@ -622,16 +658,13 @@ fn parse_bigram_value(data: &[u8]) -> Result<(u32, Vec<(u32, u32)>), LmError> {
         )));
     }
     let total = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-    let records = data[4..]
-        .chunks_exact(8)
-        .map(|chunk| {
-            (
-                u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
-                u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
-            )
-        })
-        .collect();
-    Ok((total, records))
+    records.extend(data[4..].chunks_exact(8).map(|chunk| {
+        (
+            u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
+            u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
+        )
+    }));
+    Ok(total)
 }
 
 #[cfg(test)]
