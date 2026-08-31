@@ -407,7 +407,7 @@ where
                 span_entries(matrix, position, end, &mut path, dictionary, &mut entries)?;
                 if let Some(entry) = entries.iter().find(|entry| entry.token == token.value()) {
                     expand_entry(
-                        Expansion {
+                        &Expansion {
                             entry,
                             beam: &beam,
                             head_seq,
@@ -550,7 +550,7 @@ where
                 continue;
             }
             expand_entry(
-                Expansion {
+                &Expansion {
                     entry: &entry,
                     beam,
                     head_seq,
@@ -603,6 +603,7 @@ where
 
 /// One span expansion over the whole beam: the entry to push, the beam it
 /// rides, and the span it covers.
+#[derive(Clone, Copy)]
 struct Expansion<'a> {
     entry: &'a SpanEntry,
     beam: &'a [BeamEntry],
@@ -616,7 +617,7 @@ struct Expansion<'a> {
 /// branch rides only the beam's head (`search_unigram2` uses
 /// `topresults[0]`); the bigram branch every beam value.
 fn expand_entry<L>(
-    expansion: Expansion<'_>,
+    expansion: &Expansion<'_>,
     model: &L,
     costs: &mut HashMap<(u32, u32), NbestStepCosts>,
     trellis: &mut Trellis,
@@ -625,7 +626,7 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
-    let Expansion {
+    let &Expansion {
         entry,
         beam,
         head_seq,

@@ -301,7 +301,7 @@ mod tests {
         unigrams.insert(10, 10);
         unigrams.insert(11, 10);
         unigrams.insert(12, 100);
-        let model = SegmentModel::memory(unigrams, HashMap::new(), &lexicon);
+        let model = SegmentModel::memory(&unigrams, HashMap::new(), &lexicon);
         (lexicon, model)
     }
 
@@ -321,7 +321,7 @@ mod tests {
         let mut unigrams = HashMap::new();
         unigrams.insert(10, 10);
         unigrams.insert(11, 10);
-        let model = SegmentModel::memory(unigrams, HashMap::new(), &lexicon);
+        let model = SegmentModel::memory(&unigrams, HashMap::new(), &lexicon);
         let chars: Vec<char> = "中国".chars().collect();
         let path = get_best_match(&lexicon, &model, PINNED_LAMBDA, &chars)
             .expect("model cannot fail")

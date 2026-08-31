@@ -65,7 +65,7 @@ impl SegmentModel {
     /// the freq-1 floor is applied over `lexicon`.
     #[must_use]
     pub fn memory(
-        unigrams: HashMap<u32, u64>,
+        unigrams: &HashMap<u32, u64>,
         bigram: HashMap<u32, (u32, HashMap<u32, u32>)>,
         lexicon: &PhraseLexicon,
     ) -> Self {
@@ -167,7 +167,7 @@ mod tests {
         let lexicon = PhraseLexicon::from_pairs(vec![(10, "中".to_owned()), (11, "国".to_owned())]);
         let mut unigrams = HashMap::new();
         unigrams.insert(10, 5);
-        let model = SegmentModel::memory(unigrams, HashMap::new(), &lexicon);
+        let model = SegmentModel::memory(&unigrams, HashMap::new(), &lexicon);
         assert_eq!(model.unigram(10), 6);
         assert_eq!(model.unigram(11), 1);
         assert_eq!(model.unigram(99), 0);

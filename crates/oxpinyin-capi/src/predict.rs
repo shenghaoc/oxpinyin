@@ -275,7 +275,7 @@ fn append_predicted_prefix(
     } else {
         Vec::new()
     };
-    let suggestions = merge_suggestions(system, user_rows);
+    let suggestions = merge_suggestions(&system, &user_rows);
     // The pin divides by the phrase-index total, live per call
     // (`pinyin.cpp:1813-1814`); `amplified_total` is the same construction
     // the pinned normal path uses (`session.rs:1409-1416`). The item count
@@ -361,10 +361,7 @@ fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<Strin
 /// user row. This is what makes the defined prediction order hold across the
 /// system/user boundary rather than only within each seam
 /// (`upstream-divergences.md`, "Predicted-candidate tie order").
-fn merge_suggestions(
-    system: Vec<(u32, String)>,
-    user_rows: Vec<(u32, String)>,
-) -> Vec<(u32, String)> {
+fn merge_suggestions(system: &[(u32, String)], user_rows: &[(u32, String)]) -> Vec<(u32, String)> {
     let mut merged = Vec::with_capacity(system.len() + user_rows.len());
     let (mut system_index, mut user_index) = (0, 0);
     while system_index < system.len() && user_index < user_rows.len() {
@@ -424,7 +421,7 @@ mod tests {
             (901, "中号".to_owned()), // zhonghao (号) — sorts between the two
             (902, "中年".to_owned()), // same text as the system row 20
         ];
-        let merged = merge_suggestions(system, user_rows);
+        let merged = merge_suggestions(&system, &user_rows);
         let texts: Vec<&str> = merged.iter().map(|(_, text)| text.as_str()).collect();
         assert_eq!(
             texts,

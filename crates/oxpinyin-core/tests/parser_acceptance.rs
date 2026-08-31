@@ -14,7 +14,7 @@ const F_A: &str = include_str!("../../../fixtures/foundation/f-a.txt");
 
 #[test]
 fn empty_input_returns_one_empty_segmentation() {
-    assert_parse(b"", vec![result(vec![], b"")]);
+    assert_parse(b"", &[result(vec![], b"")]);
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn single_valid_syllables_parse() {
 fn ambiguous_xian_returns_both_complete_segmentations() {
     assert_parse(
         b"xian",
-        vec![
+        &[
             result(vec![complete("xian", 0, 4)], b""),
             result(vec![complete("xi", 0, 2), complete("an", 2, 4)], b""),
         ],
@@ -59,7 +59,7 @@ fn ambiguous_xian_returns_both_complete_segmentations() {
 fn apostrophe_is_hard_boundary_for_xi_an() {
     assert_parse(
         b"xi'an",
-        vec![result(
+        &[result(
             vec![complete("xi", 0, 2), complete("an", 3, 5)],
             b"",
         )],
@@ -71,22 +71,19 @@ fn trailing_junk_after_valid_prefix_nihx() {
     // Maximal complete+partial prefix is `ni` + `h`; unconsumable `x` is remainder.
     assert_parse(
         b"nihx",
-        vec![result(vec![complete("ni", 0, 2), partial("h", 2, 3)], b"x")],
+        &[result(vec![complete("ni", 0, 2), partial("h", 2, 3)], b"x")],
     );
 }
 
 #[test]
 fn pure_non_pinyin_input() {
     // Leading lowercase letter that is only a partial prefix of some table syllable.
-    assert_parse(b"xyz", vec![result(vec![partial("x", 0, 1)], b"yz")]);
+    assert_parse(b"xyz", &[result(vec![partial("x", 0, 1)], b"yz")]);
     // Digits are unsupported and start the untouched remainder.
-    assert_parse(b"123", vec![result(vec![], b"123")]);
+    assert_parse(b"123", &[result(vec![], b"123")]);
     // Bytes above 0x7F are unsupported and start the untouched remainder.
-    assert_parse(&[0xff], vec![result(vec![], &[0xff])]);
-    assert_parse(
-        &[0x80, 0xc0, 0xff],
-        vec![result(vec![], &[0x80, 0xc0, 0xff])],
-    );
+    assert_parse(&[0xff], &[result(vec![], &[0xff])]);
+    assert_parse(&[0x80, 0xc0, 0xff], &[result(vec![], &[0x80, 0xc0, 0xff])]);
 }
 
 #[test]
@@ -301,7 +298,7 @@ fn assert_path_invariants(
     Ok(())
 }
 
-fn assert_parse(input: &[u8], expected: Vec<ParseResult>) {
+fn assert_parse(input: &[u8], expected: &[ParseResult]) {
     let actual = FullPinyinParser
         .parse(input)
         .expect("structured acceptance cases stay below the path limit");
