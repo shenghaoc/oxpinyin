@@ -38,7 +38,7 @@ and `Kiro:kiro-<id>`.
 
 The shared checkout is never yours: check `git branch --show-current` first
 — a branch you did not create means another session is mid-flight. Work in
-a detached worktree off `origin/main` (`git worktree add -b <branch>
+a separate worktree off `origin/main` (`git worktree add -b <branch>
 /tmp/<name> origin/main`), commit there, `git worktree remove` when done.
 Never touch or prune another session's worktree.
 
@@ -46,8 +46,8 @@ Never touch or prune another session's worktree.
 
 Stacks merge bottom-up through the PR button; restack with `gh stack`.
 Never close a PR. Never rewrite history on a merged branch. Fetch and
-rebase onto the landing tip before every push (`/AGENTS.md` rebase
-discipline).
+rebase onto the landing tip before every push and before any merge
+(`/AGENTS.md` rebase discipline).
 
 ## Output contract
 
