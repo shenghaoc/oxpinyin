@@ -36,8 +36,8 @@ pub struct Estimate {
 /// # Errors
 ///
 /// Returns [`KmmError::Invalid`] when the candidate's magic total freq is
-/// zero (upstream `assert`), or when no context could be scored (the
-/// `average lambda` would be `NaN`).
+/// zero, reproducing upstream's `assert(0 != magic_header.m_total_freq)`
+/// (`:45`) as a class-(c) availability `Err` rather than an abort.
 pub fn estimate(candidate: &KMixtureModel, deleted: &KMixtureModel) -> Result<Estimate, KmmError> {
     if candidate.total_freq == 0 {
         return Err(KmmError::Invalid {
@@ -57,11 +57,13 @@ pub fn estimate(candidate: &KMixtureModel, deleted: &KMixtureModel) -> Result<Es
         lambda_sum += lambda;
     }
 
-    if per_token.is_empty() {
-        return Err(KmmError::Invalid {
-            detail: "no scorable context in the deleted model".to_owned(),
-        });
-    }
+    // Upstream computes `lambda_sum / lambda_count` with no zero guard: an
+    // empty deleted model (no scorable context) yields `0.0 / 0 = NaN`,
+    // printed as `average lambda:nan`. Reproduce that exactly — `0.0 / 0.0`
+    // is NaN in IEEE-754 here too — rather than erroring, which would be a
+    // divergence outside the compatibility policy's four classes. The case
+    // never arises in the real pipeline (the deleted model always carries
+    // scorable contexts); NaN is not a panic, so the `Result` contract holds.
     let average = lambda_sum / per_token.len() as Parameter;
     Ok(Estimate { average, per_token })
 }
@@ -171,5 +173,18 @@ mod tests {
         let candidate = KMixtureModel::new();
         let deleted = model_from("10 甲\n20 乙\n");
         assert!(estimate(&candidate, &deleted).is_err());
+    }
+
+    #[test]
+    fn empty_deleted_model_scores_nan_like_upstream() {
+        // A candidate with content but a deleted model with no scorable
+        // context: upstream computes lambda_sum(0)/lambda_count(0) = NaN and
+        // prints "average lambda:nan". Reproduce that (Ok with NaN), not an
+        // error — the compatibility policy forbids diverging to Err here.
+        let candidate = model_from("10 甲\n20 乙\n");
+        let deleted = KMixtureModel::new(); // no rows → no scorable context
+        let result = estimate(&candidate, &deleted).expect("Ok, not Err");
+        assert!(result.average.is_nan(), "average {}", result.average);
+        assert!(result.per_token.is_empty());
     }
 }
