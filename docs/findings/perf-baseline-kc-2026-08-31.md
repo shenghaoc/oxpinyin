@@ -104,7 +104,11 @@ compact than Tkrzw for this workload.
 
 ### Axis 3 — RAM (PERF_RAM_RUNS=10)
 
-| Backend | post-init RSS | post-init HWM | peak HWM |
+Post-init values are from init-only processes; cycle-peak values are from
+separate cycle processes. The two process groups may show different HWM
+medians due to cross-process variance.
+
+| Backend | post-init RSS | post-init HWM | cycle-peak HWM |
 |---|---:|---:|---:|
 | oracle | 13,324 KiB | 13,324 KiB | 19,108 KiB |
 | oxpinyin | 72,652 KiB | 86,364 KiB | 85,152 KiB |
@@ -112,7 +116,7 @@ compact than Tkrzw for this workload.
 | Metric | oxpinyin/oracle | W8 (redb) ratio |
 |---|---:|---:|
 | post-init RSS | 5.45× | 8.22× |
-| peak HWM | 4.46× | — |
+| cycle-peak HWM | 4.46× | — |
 
 oxpinyin RAM breakdown (post-init):
 
@@ -133,9 +137,10 @@ oxpinyin parses `interpolation2.text` into heap structures.
 | init | 4.3% | [99.3, 103.0] ms |
 | steady cycle | 3.9% | [8.88, 9.27] ms |
 
-All metrics well within the 20% variance gate. The oracle init shows
-high CV (165%) due to one cold-cache outlier (4ms vs median 0.87ms); the
-median is robust.
+The reported oxpinyin init and steady-cycle CVs are well within the 20%
+variance gate. The oracle init shows high CV (165%) due to one cold-cache
+outlier (4 ms vs median 0.87 ms); that metric does not satisfy the gate,
+but the oracle median is robust and the ratio remains meaningful.
 
 ## Reproducibility
 
@@ -177,16 +182,18 @@ while text parsing costs only ~5–13 ms.
 3. **The HWM spike** (72,652 → 86,364 KiB, a 14 MiB transient) during
    init comes from KC tree construction and data structure allocation.
 
-4. **KC tables** load faster than redb in steady-state cycles, but their
-   eager B-tree initialization at open time is the dominant init cost
+4. **KC eager initialization** at open time is the dominant init cost
    (~104 ms). The oracle avoids this via mmap-backed binary files with
-   lazy page-fault loading.
+   lazy page-fault loading. The steady-state improvement from W8 (2.19×
+   → 1.08×) reflects the combined effect of the KC switch and the five
+   perf-branch landings; a controlled KC-vs-redb comparison was not
+   performed.
 
 ## KC vs redb summary
 
 | Metric | redb (W8) | KC (this) | Direction |
 |---|---:|---:|---|
-| init ratio | 158× | ~110× | -30% |
+| init ratio | 158× | ~118× | -25% |
 | steady cycle ratio | 2.19× | 1.08× | **-51%** |
 | cold cycle ratio | 2.06× | 0.99× | **-52%** |
 | post-init RSS ratio | 8.22× | 5.45× | -34% |

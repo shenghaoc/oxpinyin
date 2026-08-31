@@ -33,7 +33,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     --component clippy,rustfmt
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-RUN cargo install cargo-c --locked
+RUN cargo install cargo-c@0.10.25 --locked
 
 COPY . /repo
 WORKDIR /repo
