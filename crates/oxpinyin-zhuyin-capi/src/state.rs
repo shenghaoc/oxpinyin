@@ -89,7 +89,12 @@ impl CapiContext {
 
     pub(crate) fn alloc_instance(&self, context: *mut ZhuyinContext) -> Option<CapiInstance> {
         let runtime = self.runtime.as_ref()?;
-        let session = runtime.new_session(&self.config).ok()?;
+        let mut session = runtime.new_session(&self.config).ok()?;
+        // The zhuyin surface's sentence-row display law: upstream fills every
+        // BEST_MATCH row from `zhuyin_get_sentence` (always the 1-best), so
+        // the observable list carries exactly one sentence row — see
+        // `Session::set_collapse_sentence_rows_to_best`.
+        session.set_collapse_sentence_rows_to_best(true);
         Some(CapiInstance {
             context,
             session,
