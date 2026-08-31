@@ -818,6 +818,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxpinyin-eval"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-core",
+ "oxpinyin-counter",
+ "oxpinyin-data",
+ "oxpinyin-lambda",
+ "oxpinyin-testsupport",
+]
+
+[[package]]
 name = "oxpinyin-kmm"
 version = "0.1.0"
 

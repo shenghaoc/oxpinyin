@@ -1,0 +1,45 @@
+[package]
+name = "oxpinyin-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Training-only correction-rate evaluator reproducing the trainer's evaluate.py + eval_correction_rate. Never ships."
+
+[lints]
+workspace = true
+
+[features]
+# Backend selection forwarded through oxpinyin-data to the store chain (one
+# backend per binary): the real-model path opens the system phrase index and
+# pinyin index in the compiled-in backend's format. Kyoto Cabinet is the
+# default selection; `--no-default-features --features {redb|lmdb|tkrzw}`
+# picks a peer.
+default = ["kyotocabinet"]
+kyotocabinet = [
+    "oxpinyin-data/kyotocabinet",
+    "oxpinyin-counter/kyotocabinet",
+    "oxpinyin-lambda/kyotocabinet",
+]
+tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-counter/tkrzw", "oxpinyin-lambda/tkrzw"]
+lmdb = ["oxpinyin-data/lmdb", "oxpinyin-counter/lmdb", "oxpinyin-lambda/lmdb"]
+redb = ["oxpinyin-data/redb", "oxpinyin-counter/redb", "oxpinyin-lambda/redb"]
+
+[[bin]]
+name = "oxpinyin-eval"
+path = "src/bin/oxpinyin-eval.rs"
+
+[dependencies]
+oxpinyin-core = { path = "../oxpinyin-core" }
+oxpinyin-counter = { path = "../oxpinyin-counter", default-features = false }
+oxpinyin-lambda = { path = "../oxpinyin-lambda", default-features = false }
+# default-features = false so the backend selection reaches the chain from
+# this crate's features above, not from data's defaults. Used for the
+# real-model path (SystemDictionary + token pronunciations) and the exact
+# Lambda rational.
+oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
+
+[dev-dependencies]
+oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
