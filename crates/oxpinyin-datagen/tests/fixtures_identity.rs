@@ -79,9 +79,10 @@ fn assert_same_rows(name: &str, produced: &std::path::Path, frozen: &std::path::
 #[test]
 fn mini_compile_reproduces_frozen_w3_tables() {
     let Some(model) = model_dir() else {
-        if strict() {
-            panic!("OXPINYIN_DATAGEN_STRICT=1 but no model20 cache is present");
-        }
+        assert!(
+            !strict(),
+            "OXPINYIN_DATAGEN_STRICT=1 but no model20 cache is present"
+        );
         eprintln!("skipping: model20 cache absent (run tools/model/fetch-model.sh)");
         return;
     };

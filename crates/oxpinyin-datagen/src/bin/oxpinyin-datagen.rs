@@ -97,7 +97,7 @@ fn parse_args() -> Options {
             "--model-dir" => options.model_dir = Some(PathBuf::from(value(&mut args))),
             "--out-dir" => options.out_dir = Some(PathBuf::from(value(&mut args))),
             "--backend" => {
-                options.backend = Backend::parse(&value(&mut args)).unwrap_or_else(|e| fail(e));
+                options.backend = Backend::parse(&value(&mut args)).unwrap_or_else(|e| fail(&e));
             }
             "--mini" => options.mini = true,
             "--tables" => options.tables = parse_tables(&value(&mut args)),
@@ -114,7 +114,7 @@ fn parse_args() -> Options {
     options
 }
 
-fn fail(error: DatagenError) -> ! {
+fn fail(error: &DatagenError) -> ! {
     eprintln!("oxpinyin-datagen: {error}");
     std::process::exit(1);
 }
@@ -147,7 +147,7 @@ fn write_table(
     manifest: &mut Vec<TableRecord>,
 ) {
     let path = backend.table_path(out_dir, base);
-    backend.write(&path, entries).unwrap_or_else(|e| fail(e));
+    backend.write(&path, entries).unwrap_or_else(|e| fail(&e));
     eprintln!(
         "  {base}.{}: {} records → {}",
         backend.extension(),
@@ -159,14 +159,106 @@ fn write_table(
         &path,
         entries.len() as u64,
     )
-    .unwrap_or_else(|e| fail(e));
+    .unwrap_or_else(|e| fail(&e));
     manifest.push(record);
+}
+
+/// The `--tables system` half: the three compiled system tables plus the
+/// engine's `interpolation2.text` copy.
+fn compile_system(
+    backend: Backend,
+    mini: bool,
+    model_dir: &Path,
+    out_dir: &Path,
+    manifest: &mut Vec<TableRecord>,
+) {
+    let subset = if mini {
+        system::Subset::MiniFixture
+    } else {
+        system::Subset::Full
+    };
+    let (tables, stats) = system::compile(model_dir, subset).unwrap_or_else(|e| fail(&e));
+    eprintln!(
+        "  system: rows {:+?} · {} index keys · {} phrases · {} bigram entries \
+         ({} records, {} special tokens)",
+        stats.library_rows,
+        stats.index_keys,
+        stats.phrases,
+        stats.bigram_entries,
+        stats.bigram_records,
+        stats.special_tokens
+    );
+    write_table(
+        backend,
+        out_dir,
+        "pinyin_index",
+        &tables.pinyin_index,
+        manifest,
+    );
+    write_table(
+        backend,
+        out_dir,
+        "phrase_index",
+        &tables.phrase_index,
+        manifest,
+    );
+    write_table(backend, out_dir, "bigram", &tables.bigram, manifest);
+    // The engine's system dir consumes interpolation2.text directly.
+    let target = out_dir.join("interpolation2.text");
+    std::fs::copy(model_dir.join("interpolation2.text"), &target)
+        .unwrap_or_else(|e| fail(&DatagenError::Io(e)));
+    eprintln!("  interpolation2.text → {}", target.display());
+}
+
+/// The `--tables addon` half: every add-on library's two tables.
+fn compile_addon(
+    backend: Backend,
+    mini: bool,
+    model_dir: &Path,
+    out_dir: &Path,
+    manifest: &mut Vec<TableRecord>,
+) {
+    let subset = if mini {
+        addon::Subset::MiniFixture
+    } else {
+        addon::Subset::Full
+    };
+    let libraries = addon::compile(model_dir, subset).unwrap_or_else(|e| fail(&e));
+    for library in &libraries {
+        write_table(
+            backend,
+            out_dir,
+            &format!("addon_{}_pinyin_index", library.index),
+            &library.pinyin_index,
+            manifest,
+        );
+        write_table(
+            backend,
+            out_dir,
+            &format!("addon_{}_phrase_index", library.index),
+            &library.phrase_index,
+            manifest,
+        );
+    }
+}
+
+/// The `--tables punct` half: the full punctuation table (no mini variant;
+/// the frozen fixtures hold the full table).
+fn compile_punct(
+    backend: Backend,
+    model_dir: &Path,
+    out_dir: &Path,
+    manifest: &mut Vec<TableRecord>,
+) {
+    let entries = punct::compile(model_dir).unwrap_or_else(|e| fail(&e));
+    eprintln!("  punct: {} tokens", entries.len());
+    write_table(backend, out_dir, "punct", &entries, manifest);
 }
 
 fn main() -> ExitCode {
     let options = parse_args();
     if !options.backend.available() {
-        fail(DatagenError::Consistency(format!(
+        fail(&DatagenError::Consistency(format!(
             "backend {:?} requires rebuilding with --features {}",
             options.backend,
             options.backend.feature()
@@ -177,7 +269,7 @@ fn main() -> ExitCode {
         .out_dir
         .unwrap_or_else(|| PathBuf::from("target/datagen").join(options.backend.extension()));
     if let Err(e) = std::fs::create_dir_all(&out_dir) {
-        fail(DatagenError::Io(e));
+        fail(&DatagenError::Io(e));
     }
     eprintln!(
         "compiling model20 from {} → {} (backend {}, mini={})",
@@ -190,81 +282,27 @@ fn main() -> ExitCode {
     let mut manifest = Vec::new();
 
     if options.tables.system {
-        let subset = if options.mini {
-            system::Subset::MiniFixture
-        } else {
-            system::Subset::Full
-        };
-        let (tables, stats) = system::compile(&model_dir, subset).unwrap_or_else(|e| fail(e));
-        eprintln!(
-            "  system: rows {:+?} · {} index keys · {} phrases · {} bigram entries \
-             ({} records, {} special tokens)",
-            stats.library_rows,
-            stats.index_keys,
-            stats.phrases,
-            stats.bigram_entries,
-            stats.bigram_records,
-            stats.special_tokens
-        );
-        write_table(
+        compile_system(
             options.backend,
+            options.mini,
+            &model_dir,
             &out_dir,
-            "pinyin_index",
-            &tables.pinyin_index,
             &mut manifest,
         );
-        write_table(
-            options.backend,
-            &out_dir,
-            "phrase_index",
-            &tables.phrase_index,
-            &mut manifest,
-        );
-        write_table(
-            options.backend,
-            &out_dir,
-            "bigram",
-            &tables.bigram,
-            &mut manifest,
-        );
-        // The engine's system dir consumes interpolation2.text directly.
-        let target = out_dir.join("interpolation2.text");
-        std::fs::copy(model_dir.join("interpolation2.text"), &target).unwrap_or_else(|e| {
-            fail(DatagenError::Io(e));
-        });
-        eprintln!("  interpolation2.text → {}", target.display());
     }
 
     if options.tables.addon {
-        let subset = if options.mini {
-            addon::Subset::MiniFixture
-        } else {
-            addon::Subset::Full
-        };
-        let libraries = addon::compile(&model_dir, subset).unwrap_or_else(|e| fail(e));
-        for library in &libraries {
-            write_table(
-                options.backend,
-                &out_dir,
-                &format!("addon_{}_pinyin_index", library.index),
-                &library.pinyin_index,
-                &mut manifest,
-            );
-            write_table(
-                options.backend,
-                &out_dir,
-                &format!("addon_{}_phrase_index", library.index),
-                &library.phrase_index,
-                &mut manifest,
-            );
-        }
+        compile_addon(
+            options.backend,
+            options.mini,
+            &model_dir,
+            &out_dir,
+            &mut manifest,
+        );
     }
 
     if options.tables.punct {
-        // The frozen fixtures hold the full punct table; no mini variant.
-        let entries = punct::compile(&model_dir).unwrap_or_else(|e| fail(e));
-        eprintln!("  punct: {} tokens", entries.len());
-        write_table(options.backend, &out_dir, "punct", &entries, &mut manifest);
+        compile_punct(options.backend, &model_dir, &out_dir, &mut manifest);
     }
 
     let manifest = Manifest {
@@ -273,7 +311,7 @@ fn main() -> ExitCode {
         producer_version: env!("CARGO_PKG_VERSION").to_owned(),
         tables: manifest,
     };
-    manifest.write_to_dir(&out_dir).unwrap_or_else(|e| fail(e));
+    manifest.write_to_dir(&out_dir).unwrap_or_else(|e| fail(&e));
     eprintln!(
         "wrote {} → {}",
         oxpinyin_datagen::manifest::MANIFEST_FILE,

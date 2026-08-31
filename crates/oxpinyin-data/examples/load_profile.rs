@@ -163,7 +163,8 @@ fn full_capi_state(
         lm.set_unigrams_from_interpolation2(interpolation2)
             .expect("interp");
     }
-    let punct_table = PunctTable::open_optional(punct.unwrap_or(Path::new("/no/such/punct.redb")));
+    let punct_table =
+        PunctTable::open_optional(punct.unwrap_or_else(|| Path::new("/no/such/punct.redb")));
     (dict, lm, punct_table)
 }
 
@@ -543,7 +544,8 @@ fn cumulative_capi_init(export: &Path, interpolation2: &Path, punct: Option<&Pat
         report("set_unigrams_from_interpolation2 skipped", &mut prev);
     }
 
-    let punct_table = PunctTable::open_optional(punct.unwrap_or(Path::new("/no/such/punct.redb")));
+    let punct_table =
+        PunctTable::open_optional(punct.unwrap_or_else(|| Path::new("/no/such/punct.redb")));
     report("PunctTable::open_optional", &mut prev);
 
     drop((dict, lm, punct_table));
@@ -678,9 +680,8 @@ fn median_of(repeats: usize, mut body: impl FnMut() -> Duration) -> String {
 }
 
 fn rss_line() -> String {
-    let status = match std::fs::read_to_string("/proc/self/status") {
-        Ok(text) => text,
-        Err(_) => return "(no /proc)".to_owned(),
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+        return "(no /proc)".to_owned();
     };
     let mut rss = None;
     let mut hwm = None;

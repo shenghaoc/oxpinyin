@@ -22,6 +22,12 @@ use std::path::Path;
 use crate::table::read_table_file;
 use crate::{DatagenError, Entries};
 
+/// Pinyin key (UTF-8 bytes) → freq-desc `(token, summed count)` records.
+type DictionaryIndex = BTreeMap<Vec<u8>, Vec<(u32, u64)>>;
+
+/// Previous token → `(total, successor records)` in file order.
+type BigramGroups = BTreeMap<u32, (u64, Vec<(u32, u32)>)>;
+
 /// The four default-loaded system libraries: token top byte and `.table`
 /// base name (table.conf `default …_DICTIONARY` lines).
 pub const SYSTEM_LIBRARIES: &[(u8, &str)] = &[
@@ -90,24 +96,17 @@ pub struct SystemStats {
     pub special_tokens: u64,
 }
 
-/// Compiles the system tables from the extracted model20 directory.
-///
-/// `model_dir` must hold the four system `.table` files and
-/// `interpolation2.text` (the fetch cache from `tools/model/fetch-model.sh`
-/// does).
+/// Reads the four system `.table` files into the pinyin index (encoded
+/// key → freq-desc token records) and the token → phrase map.
 ///
 /// # Errors
 ///
-/// Fails on missing files, unparsable lines, token/word contradictions
-/// between `interpolation2.text` and the tables, duplicate 2-gram pairs, or
-/// u32 overflow of a bigram total — never silently drops data.
-pub fn compile(
+/// Fails on missing `.table` files, tokens outside their library, a token
+/// re-grouped across the file, or a token naming two different phrases.
+fn read_dictionary(
     model_dir: &Path,
-    subset: Subset,
-) -> Result<(SystemTables, SystemStats), DatagenError> {
-    let mut stats = SystemStats::default();
-
-    // ---- dictionary from the four system .table files -------------------
+    stats: &mut SystemStats,
+) -> Result<(DictionaryIndex, BTreeMap<u32, String>), DatagenError> {
     // BTreeMap over the encoded keys: iteration is ascending key-byte order.
     let mut index: BTreeMap<Vec<u8>, Vec<(u32, u64)>> = BTreeMap::new();
     let mut phrases: BTreeMap<u32, String> = BTreeMap::new();
@@ -166,8 +165,22 @@ pub fn compile(
             }
         }
     }
+    Ok((index, phrases))
+}
 
-    // ---- bigram + 1-gram validation from interpolation2.text ------------
+/// Parses the `\2-gram` section of `interpolation2.text` into per-previous-
+/// token groups (total plus successor records in file order), validating
+/// every `\item` pair against the compiled phrase index.
+///
+/// # Errors
+///
+/// Fails on a missing `interpolation2.text`, malformed or unexpected lines,
+/// token/word contradictions, or duplicate 2-gram pairs.
+fn read_bigrams(
+    model_dir: &Path,
+    phrases: &BTreeMap<u32, String>,
+    stats: &mut SystemStats,
+) -> Result<BigramGroups, DatagenError> {
     // Grouped by previous token; records keep file order within a group.
     let mut bigram: BTreeMap<u32, (u64, Vec<(u32, u32)>)> = BTreeMap::new();
     let text_path = model_dir.join("interpolation2.text");
@@ -201,7 +214,7 @@ pub fn compile(
                         if keyword != "count" {
                             return Err(bad_line(&text_path, number, "expected `count` keyword"));
                         }
-                        validate_pair(&phrases, token, word, &mut stats.special_tokens)
+                        validate_pair(phrases, token, word, &mut stats.special_tokens)
                             .map_err(|m| bad_line(&text_path, number, &m))?;
                         count
                             .parse::<i64>()
@@ -214,9 +227,9 @@ pub fn compile(
                         if keyword != "count" {
                             return Err(bad_line(&text_path, number, "expected `count` keyword"));
                         }
-                        validate_pair(&phrases, token1, word1, &mut stats.special_tokens)
+                        validate_pair(phrases, token1, word1, &mut stats.special_tokens)
                             .map_err(|m| bad_line(&text_path, number, &m))?;
-                        validate_pair(&phrases, token2, word2, &mut stats.special_tokens)
+                        validate_pair(phrases, token2, word2, &mut stats.special_tokens)
                             .map_err(|m| bad_line(&text_path, number, &m))?;
                         let token1 = token1
                             .parse::<u32>()
@@ -252,27 +265,21 @@ pub fn compile(
             }
         }
     }
+    Ok(bigram)
+}
 
-    stats.index_keys = index.len() as u64;
-    stats.phrases = phrases.len() as u64;
-    stats.bigram_entries = bigram.len() as u64;
-    stats.bigram_records = bigram.values().map(|(_, r)| r.len() as u64).sum();
-
-    // ---- optional mini restriction (a strict subset of the full tables) --
-    let mut keep_tokens: Option<std::collections::BTreeSet<u32>> = None;
-    if subset == Subset::MiniFixture {
-        index.retain(|key, _| MINI_KEYS.iter().any(|mini| key == mini.as_bytes()));
-        let kept: std::collections::BTreeSet<u32> = index
-            .values()
-            .flat_map(|records| records.iter().map(|(token, _)| *token))
-            .collect();
-        phrases.retain(|token, _| kept.contains(token));
-        bigram.retain(|token, _| kept.contains(token));
-        keep_tokens = Some(kept);
-    }
-    let _ = keep_tokens;
-
-    // ---- serialise -------------------------------------------------------
+/// Serialises the compiled dictionaries: freq-desc records per pinyin key,
+/// token-ordered phrase rows, and key-byte-ordered bigram rows (the frozen
+/// byte-identity recipe).
+///
+/// # Errors
+///
+/// Fails when a bigram total overflows u32.
+fn serialise(
+    index: DictionaryIndex,
+    phrases: BTreeMap<u32, String>,
+    bigram: BigramGroups,
+) -> Result<(Entries, Entries, Entries), DatagenError> {
     let pinyin_index = index
         .into_iter()
         .map(|(pinyin, mut records)| {
@@ -310,12 +317,55 @@ pub fn compile(
         })
         .collect::<Result<Entries, DatagenError>>()?;
     bigram_entries.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok((pinyin_index, phrase_index, bigram_entries))
+}
+
+/// Compiles the system tables from the extracted model20 directory.
+///
+/// `model_dir` must hold the four system `.table` files and
+/// `interpolation2.text` (the fetch cache from `tools/model/fetch-model.sh`
+/// does).
+///
+/// # Errors
+///
+/// Fails on missing files, unparsable lines, token/word contradictions
+/// between `interpolation2.text` and the tables, duplicate 2-gram pairs, or
+/// u32 overflow of a bigram total — never silently drops data.
+pub fn compile(
+    model_dir: &Path,
+    subset: Subset,
+) -> Result<(SystemTables, SystemStats), DatagenError> {
+    let mut stats = SystemStats::default();
+
+    let (mut index, mut phrases) = read_dictionary(model_dir, &mut stats)?;
+    let mut bigram = read_bigrams(model_dir, &phrases, &mut stats)?;
+
+    stats.index_keys = index.len() as u64;
+    stats.phrases = phrases.len() as u64;
+    stats.bigram_entries = bigram.len() as u64;
+    stats.bigram_records = bigram.values().map(|(_, r)| r.len() as u64).sum();
+
+    // ---- optional mini restriction (a strict subset of the full tables) --
+    let mut keep_tokens: Option<std::collections::BTreeSet<u32>> = None;
+    if subset == Subset::MiniFixture {
+        index.retain(|key, _| MINI_KEYS.iter().any(|mini| key == mini.as_bytes()));
+        let kept: std::collections::BTreeSet<u32> = index
+            .values()
+            .flat_map(|records| records.iter().map(|(token, _)| *token))
+            .collect();
+        phrases.retain(|token, _| kept.contains(token));
+        bigram.retain(|token, _| kept.contains(token));
+        keep_tokens = Some(kept);
+    }
+    let _ = keep_tokens;
+
+    let (pinyin_index, phrase_index, bigram) = serialise(index, phrases, bigram)?;
 
     Ok((
         SystemTables {
             pinyin_index,
             phrase_index,
-            bigram: bigram_entries,
+            bigram,
         },
         stats,
     ))

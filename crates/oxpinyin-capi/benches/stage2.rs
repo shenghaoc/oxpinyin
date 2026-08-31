@@ -173,7 +173,7 @@ fn guess_sentence_get_sentence(criterion: &mut Criterion) {
                     let guessed = unsafe { pinyin_guess_sentence(capi.instance) };
                     let fetched = take_sentence(capi.instance);
                     assert!(guessed && fetched, "full n-best sentence lookup failed");
-                    black_box(())
+                    black_box(());
                 },
                 BatchSize::SmallInput,
             );

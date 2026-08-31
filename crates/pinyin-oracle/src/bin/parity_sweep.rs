@@ -140,13 +140,16 @@ fn main() -> ExitCode {
         },
     );
     lm.set_unigrams_from_dict(&dict);
-    let mut session =
-        Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm).expect("session");
+    Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm).expect("session")
+}
 
-    let fixture = load_fixture();
-    let all_inputs = load_corpus();
-    // Stratified sample: every k-th input with candidates, so short and long
-    // strata both appear (the first N of the corpus is alphabetically short).
+/// Stratified sample: every k-th input with candidates, so short and long
+/// strata both appear (the first N of the corpus is alphabetically short).
+/// Returns the step, the inputs that have candidates, and the sample.
+fn stratified_sample(
+    all_inputs: &[String],
+    fixture: &BTreeMap<String, Vec<String>>,
+) -> (usize, Vec<String>, Vec<String>) {
     let with_cands: Vec<String> = all_inputs
         .iter()
         .filter(|i| fixture.get(*i).is_some_and(|c| !c.is_empty()))
@@ -159,63 +162,67 @@ fn main() -> ExitCode {
         .take(SAMPLE)
         .cloned()
         .collect();
-    eprintln!(
-        "sample size {} (step {step} over {} with candidates)",
-        sample.len(),
-        with_cands.len()
-    );
+    (step, with_cands, sample)
+}
 
-    // Focused grid over the swept region. The full ±50% first pass and its
-    // rankings are recorded in docs/findings/scoring-constant-sweep.md; the
-    // winner it confirmed is the now-frozen default seg=750 inc=999 bonus=1000,
-    // so the `base` baseline trial below is that frozen default rather than the
-    // pre-freeze provisional.
-    let base = ScoringConfig::default();
-    let trials: Vec<(&str, ScoringConfig)> = {
-        let mut v = Vec::new();
-        v.push(("baseline", base));
-        for &(seg, inc, bonus) in &[
-            (500, 1000, 1500),
-            (500, 1500, 2000),
-            (750, 1000, 1500),
-            (750, 1500, 2000),
-            (750, 1000, 1200),
-            (500, 1000, 1200),
-            (500, 1100, 1500),
-            (500, 1400, 1500),
-            (625, 1000, 1500),
-            (625, 1250, 1500),
-            (750, 1250, 1500),
-            (750, 1400, 1500),
-            (500, 999, 1000),
-            (750, 999, 1000),
-            (1000, 1000, 1500),
-            (1000, 1500, 2000),
-        ] {
-            let mut c = base;
-            c.segmentation_penalty = seg;
-            c.incomplete_penalty = inc;
-            c.phrase_key_bonus = bonus;
-            if c.incomplete_penalty >= c.phrase_key_bonus {
-                continue;
-            }
-            v.push(("grid", c));
+/// Focused grid over the swept region. The full ±50% first pass and its
+/// rankings are recorded in docs/findings/scoring-constant-sweep.md; the
+/// winner it confirmed is the now-frozen default seg=750 inc=999 bonus=1000,
+/// so the `base` baseline trial below is that frozen default rather than the
+/// pre-freeze provisional.
+fn build_trials(base: ScoringConfig) -> Vec<(&'static str, ScoringConfig)> {
+    let mut v = Vec::new();
+    v.push(("baseline", base));
+    for &(seg, inc, bonus) in &[
+        (500, 1000, 1500),
+        (500, 1500, 2000),
+        (750, 1000, 1500),
+        (750, 1500, 2000),
+        (750, 1000, 1200),
+        (500, 1000, 1200),
+        (500, 1100, 1500),
+        (500, 1400, 1500),
+        (625, 1000, 1500),
+        (625, 1250, 1500),
+        (750, 1250, 1500),
+        (750, 1400, 1500),
+        (500, 999, 1000),
+        (750, 999, 1000),
+        (1000, 1000, 1500),
+        (1000, 1500, 2000),
+    ] {
+        let mut c = base;
+        c.segmentation_penalty = seg;
+        c.incomplete_penalty = inc;
+        c.phrase_key_bonus = bonus;
+        if c.incomplete_penalty >= c.phrase_key_bonus {
+            continue;
         }
-        v
-    };
+        v.push(("grid", c));
+    }
+    v
+}
 
+/// Runs every trial over the sample, printing one row per trial, and
+/// returns the best config by top-1 together with its label.
+fn sweep(
+    session: &mut Session<SystemDictionary, BigramLanguageModel>,
+    sample: &[String],
+    fixture: &BTreeMap<String, Vec<String>>,
+    trials: &[(&'static str, ScoringConfig)],
+) -> (ScoringConfig, &'static str) {
     let mut best_top1 = 0_usize;
-    let mut best_cfg = base;
+    let mut best_cfg = trials[0].1;
     let mut best_label = "baseline";
 
     eprintln!(
         "{:<8} {:>6} {:>6} {:>6} {:>6}  {:>5} {:>5} {:>5}  detail",
         "kind", "seg", "inc", "bonus", "lm", "top1%", "top5%", "abs%"
     );
-    for (label, cfg) in &trials {
+    for (label, cfg) in trials {
         session.set_scoring_config(*cfg);
         let start = Instant::now();
-        let rates = measure(&mut session, &sample, &fixture);
+        let rates = measure(session, sample, fixture);
         let t1 = pct(rates.top1, rates.total);
         let t5 = pct(rates.top5, rates.total);
         let ab = pct(rates.absent, rates.total);
@@ -247,6 +254,38 @@ fn main() -> ExitCode {
         best_cfg.phrase_key_bonus,
         sample.len()
     );
+    (best_cfg, best_label)
+}
+
+fn main() -> ExitCode {
+    let dir = Path::new("/tmp/oxpinyin-export");
+    let missing: Vec<&str> = ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"]
+        .into_iter()
+        .filter(|table| !dir.join(table).is_file())
+        .collect();
+    if !missing.is_empty() {
+        eprintln!(
+            "missing {missing:?} in {}; copy or symlink the required \
+             tables from the committed fixtures/w3/",
+            dir.display()
+        );
+        return ExitCode::from(2);
+    }
+
+    let mut session = open_session(dir);
+
+    let fixture = load_fixture();
+    let all_inputs = load_corpus();
+    let (step, with_cands, sample) = stratified_sample(&all_inputs, &fixture);
+    eprintln!(
+        "sample size {} (step {step} over {} with candidates)",
+        sample.len(),
+        with_cands.len()
+    );
+
+    let base = ScoringConfig::default();
+    let trials = build_trials(base);
+    let (best_cfg, _best_label) = sweep(&mut session, &sample, &fixture, &trials);
 
     if std::env::var_os("PARITY_SWEEP_FULL").is_some() {
         session.set_scoring_config(best_cfg);

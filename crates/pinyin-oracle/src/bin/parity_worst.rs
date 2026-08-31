@@ -59,17 +59,29 @@ fn main() -> ExitCode {
         let cand = p.next().unwrap_or("").to_owned();
         fixture.entry(input).or_default().push(cand);
     }
+    fixture
+}
 
+fn load_inputs() -> Vec<String> {
     let corpus_dir = repo_root().join(corpus::CORPUS_DIR);
     let mut inputs = Vec::new();
     for stratum in corpus::generate() {
         let bytes = std::fs::read(corpus_dir.join(stratum.file_name)).expect("stratum");
         inputs.extend(corpus::Stratum::parse_file_bytes(&bytes));
     }
+    inputs
+}
 
+/// Types every input and records the ones whose top-1 is not the oracle's
+/// first candidate. Returns the failures and the number of compared inputs.
+fn collect_failures(
+    session: &mut Session<SystemDictionary, BigramLanguageModel>,
+    inputs: &[String],
+    fixture: &BTreeMap<String, Vec<String>>,
+) -> (Vec<Row>, usize) {
     let mut failures: Vec<Row> = Vec::new();
     let mut n = 0_usize;
-    for input in &inputs {
+    for input in inputs {
         let Some(oracle) = fixture.get(input).filter(|c| !c.is_empty()) else {
             continue;
         };
@@ -95,22 +107,28 @@ fn main() -> ExitCode {
             oracle_list: oracle.clone(),
         });
     }
+    (failures, n)
+}
 
-    // Sort: absent last-rank first, then rank descending (worst first).
-    failures.sort_by(|a, b| {
-        let ar = a.our_rank.unwrap_or(10_000);
-        let br = b.our_rank.unwrap_or(10_000);
-        br.cmp(&ar).then_with(|| a.input.cmp(&b.input))
-    });
+/// Category counters accumulated while printing the worst rows.
+struct Categories {
+    wrong_scoring: usize,
+    missing: usize,
+    prefix_only: usize,
+    seg: usize,
+    other: usize,
+}
 
-    eprintln!("compared {n}; top-1 misses {}", failures.len());
-    eprintln!("--- worst {WORST_N} (oracle #1 is our #10+ or absent) ---");
-
-    let mut cat_wrong_scoring = 0_usize;
-    let mut cat_missing = 0_usize;
-    let mut cat_prefix_only = 0_usize;
-    let mut cat_seg = 0_usize;
-    let mut cat_other = 0_usize;
+/// Prints the worst failures with a per-row category and returns the
+/// category counters (printed after the taxonomy, as before).
+fn print_worst(failures: &[Row]) -> Categories {
+    let mut cat = Categories {
+        wrong_scoring: 0,
+        missing: 0,
+        prefix_only: 0,
+        seg: 0,
+        other: 0,
+    };
 
     for (i, row) in failures.iter().take(WORST_N).enumerate() {
         let rank_s = row
@@ -125,17 +143,17 @@ fn main() -> ExitCode {
             if row.our_list.is_empty()
                 || row.our_list.iter().any(|t| t == &row.input || t.is_ascii())
             {
-                cat_missing += 1;
+                cat.missing += 1;
                 "missing-candidate / fallback"
             } else if row
                 .our_list
                 .iter()
                 .any(|t| row.oracle_top.starts_with(t.as_str()) && t != &row.oracle_top)
             {
-                cat_prefix_only += 1;
+                cat.prefix_only += 1;
                 "prefix-only (longer phrase missing or outranked)"
             } else {
-                cat_missing += 1;
+                cat.missing += 1;
                 "missing-candidate"
             }
         } else if row.our_rank.unwrap_or(0) >= 6 {
@@ -144,21 +162,21 @@ fn main() -> ExitCode {
             let oracle_set: BTreeSet<&str> = row.oracle_list.iter().map(String::as_str).collect();
             let overlap = our_set.intersection(&oracle_set).count();
             if overlap >= 3 {
-                cat_wrong_scoring += 1;
+                cat.wrong_scoring += 1;
                 "wrong-scoring (candidate present, shared set large)"
             } else if row
                 .our_top
                 .as_ref()
                 .is_some_and(|t| t.chars().count() != row.oracle_top.chars().count())
             {
-                cat_seg += 1;
+                cat.seg += 1;
                 "wrong-segmentation / length preference"
             } else {
-                cat_wrong_scoring += 1;
+                cat.wrong_scoring += 1;
                 "wrong-scoring"
             }
         } else {
-            cat_other += 1;
+            cat.other += 1;
             "near-miss (rank 2-5)"
         };
 
@@ -178,12 +196,26 @@ fn main() -> ExitCode {
         );
     }
 
-    // Full-miss taxonomy over all top-1 misses
+    cat
+}
+
+/// Prints the accumulated worst-N category counts.
+fn print_worst_categories(cat: &Categories) {
+    eprintln!("--- worst-{WORST_N} category counts ---");
+    eprintln!("  wrong-scoring              {}", cat.wrong_scoring);
+    eprintln!("  missing-candidate          {}", cat.missing);
+    eprintln!("  prefix-only                {}", cat.prefix_only);
+    eprintln!("  wrong-segmentation/length  {}", cat.seg);
+    eprintln!("  near-miss/other            {}", cat.other);
+}
+
+/// Full-miss taxonomy over all top-1 misses.
+fn print_taxonomy(failures: &[Row]) {
     let mut all_absent = 0_usize;
     let mut all_rank_ge10 = 0_usize;
     let mut all_rank_6_9 = 0_usize;
     let mut all_rank_2_5 = 0_usize;
-    for row in &failures {
+    for row in failures {
         match row.our_rank {
             None => all_absent += 1,
             Some(r) if r >= 10 => all_rank_ge10 += 1,
@@ -196,12 +228,40 @@ fn main() -> ExitCode {
     eprintln!("  rank 6-9     {all_rank_6_9}");
     eprintln!("  rank 10+     {all_rank_ge10}");
     eprintln!("  absent       {all_absent}");
-    eprintln!("--- worst-{WORST_N} category counts ---");
-    eprintln!("  wrong-scoring              {cat_wrong_scoring}");
-    eprintln!("  missing-candidate          {cat_missing}");
-    eprintln!("  prefix-only                {cat_prefix_only}");
-    eprintln!("  wrong-segmentation/length  {cat_seg}");
-    eprintln!("  near-miss/other            {cat_other}");
+}
+
+fn main() -> ExitCode {
+    let dir = Path::new("/tmp/oxpinyin-export");
+    if !dir.join("pinyin_index.redb").exists() {
+        eprintln!("missing export tables");
+        return ExitCode::from(2);
+    }
+    let dict = SystemDictionary::open(
+        &dir.join("pinyin_index.redb"),
+        &dir.join("phrase_index.redb"),
+    )
+    .expect("dict");
+    let mut lm = BigramLanguageModel::open(&dir.join("bigram.redb")).expect("lm");
+    lm.set_unigrams_from_dict(&dict);
+    let mut session =
+        Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm).expect("session");
+
+    let fixture = load_fixture();
+    let inputs = load_inputs();
+    let (mut failures, n) = collect_failures(&mut session, &inputs, &fixture);
+
+    // Sort: absent last-rank first, then rank descending (worst first).
+    failures.sort_by(|a, b| {
+        let ar = a.our_rank.unwrap_or(10_000);
+        let br = b.our_rank.unwrap_or(10_000);
+        br.cmp(&ar).then_with(|| a.input.cmp(&b.input))
+    });
+
+    eprintln!("compared {n}; top-1 misses {}", failures.len());
+    eprintln!("--- worst {WORST_N} (oracle #1 is our #10+ or absent) ---");
+    let categories = print_worst(&failures);
+    print_taxonomy(&failures);
+    print_worst_categories(&categories);
 
     ExitCode::SUCCESS
 }

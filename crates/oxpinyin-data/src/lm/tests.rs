@@ -99,12 +99,12 @@ fn a_no_entry_history_floors_instead_of_discounting() {
     // UNKNOWN_COST — the same floor a count-0 next-token gets — never a
     // discounted unigram, which used to rank an unseen transition below a
     // rare but observed one.
+    const NO_ENTRY_PREV: u32 = 0xFFFF_FFFF;
     let mut model = model();
     let mut unigrams = BTreeMap::new();
     unigrams.insert(DE, 100);
     model.set_unigrams(unigrams, 110);
 
-    const NO_ENTRY_PREV: u32 = 0xFFFF_FFFF;
     assert!(
         matches!(model.transition(NO_ENTRY_PREV, DE), Ok(None)),
         "precondition: the previous token must be absent from the bigram"
@@ -312,12 +312,12 @@ fn populated_overlay_lowers_the_interpolated_cost() {
 #[test]
 fn a_user_only_transition_does_not_floor() {
     // System has no row for this prev; the user gram is the merged gram.
+    const NO_ENTRY_PREV: u32 = 0xFFFF_FFFF;
     let mut model = model();
     let mut unigrams = BTreeMap::new();
     unigrams.insert(DE, 100);
     model.set_unigrams(unigrams, 110);
 
-    const NO_ENTRY_PREV: u32 = 0xFFFF_FFFF;
     assert!(
         matches!(model.transition(NO_ENTRY_PREV, DE), Ok(None)),
         "precondition: the previous token must be absent from the system bigram"
@@ -353,6 +353,7 @@ fn nbest_zero_delta_is_bit_identical_to_trait_impl() {
     // Every shape the trait method answers: an observed successor, a
     // count-0 non-successor in an existing row, a prev with no row, and
     // the no-unigram-table default.
+    const NO_ENTRY_PREV: u32 = 0xFFFF_FFFF;
     let mut model = model();
     let mut unigrams = BTreeMap::new();
     unigrams.insert(DE, 50);
@@ -360,7 +361,6 @@ fn nbest_zero_delta_is_bit_identical_to_trait_impl() {
     unigrams.insert(0x0100_0001, 50);
     model.set_unigrams(unigrams, 100);
 
-    const NO_ENTRY_PREV: u32 = 0xFFFF_FFFF;
     for (prev, token) in [
         (NI, DE),
         (NI, 0x0100_0001),
@@ -416,7 +416,7 @@ fn nbest_augmented_delta_merges_into_both_branches() {
     let prev = PhraseToken::new(NI);
     let token = PhraseToken::new(DE);
 
-    let (system_bc, system_bt) = model.transition(NI, DE).unwrap().expect("row exists");
+    let (system_count, system_total) = model.transition(NI, DE).unwrap().expect("row exists");
     let trained = UserCountDelta {
         bigram_count: 69,
         bigram_total: 69,
@@ -432,8 +432,8 @@ fn nbest_augmented_delta_merges_into_both_branches() {
     let expected_blended = interpolate_ratio(
         model.lambda().numerator(),
         model.lambda().denominator(),
-        u128::from(system_bc + 69),
-        u128::from(system_bt) + 69,
+        u128::from(system_count + 69),
+        u128::from(system_total) + 69,
         50 + 483,
         100 + 483,
     )
@@ -466,11 +466,11 @@ fn nbest_user_only_pair_produces_a_blended_step() {
     // BEFORE the presence gate, the blended branch appears where the
     // system-only answer is unigram-only — and its denominator is the
     // user total, not a system one.
+    const NO_ENTRY_PREV: u32 = 0xFFFF_FFFF;
     let mut model = model();
     let mut unigrams = BTreeMap::new();
     unigrams.insert(DE, 100);
     model.set_unigrams(unigrams, 110);
-    const NO_ENTRY_PREV: u32 = 0xFFFF_FFFF;
     assert!(matches!(model.transition(NO_ENTRY_PREV, DE), Ok(None)));
     let prev = PhraseToken::new(NO_ENTRY_PREV);
     let token = PhraseToken::new(DE);
@@ -517,9 +517,9 @@ fn nbest_user_successor_on_existing_row_blends_over_merged_total() {
     // the 你→浩 shape. Merged before the gate, the blended denominator is
     // system_row_total + user_total, not the user total alone (that case
     // is `nbest_user_only_pair_produces_a_blended_step`).
+    const NOVEL: u32 = 0x0100_0001;
     let mut model = model();
     let mut unigrams = BTreeMap::new();
-    const NOVEL: u32 = 0x0100_0001;
     unigrams.insert(NOVEL, 50);
     unigrams.insert(NI, 50);
     model.set_unigrams(unigrams, 100);

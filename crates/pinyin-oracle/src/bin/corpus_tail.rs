@@ -333,7 +333,7 @@ fn run(env: &mut TailEnv) -> Result<(), String> {
             continue;
         }
 
-        let rank_display = our_rank.map_or("absent".to_owned(), |i| format!("#{}", i + 1));
+        let rank_display = our_rank.map_or_else(|| "absent".to_owned(), |i| format!("#{}", i + 1));
         let our_top = ours.first().cloned().unwrap_or_else(|| "(none)".to_owned());
         let row = format!(
             "input={input:?}\toracle_top={oracle_top:?}\tour_top={our_top:?}\tour_rank={rank_display}\n\

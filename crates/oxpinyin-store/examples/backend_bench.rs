@@ -590,7 +590,7 @@ const fn mix(mut z: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-fn row_hash(seed: u64, i: u64) -> u64 {
+const fn row_hash(seed: u64, i: u64) -> u64 {
     mix(seed ^ mix(i))
 }
 
