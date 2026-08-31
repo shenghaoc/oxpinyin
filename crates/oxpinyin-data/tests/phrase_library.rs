@@ -264,6 +264,31 @@ fn chunk_header_and_layout_damage_is_refused() {
 }
 
 #[test]
+fn adversarial_inputs_never_overflow() {
+    // Two shapes found in review, now refused/None at every opt level:
+    //
+    // 1. index_two == index_one (no room even for the offset array's
+    //    separator) used to underflow `index_two - index_one - 1`.
+    let sample = sample();
+    let mut collapsed = sample.clone();
+    let index_two = u32_at(&collapsed[16..20]);
+    collapsed[12..16].copy_from_slice(&index_two.to_le_bytes()); // index_three := index_two
+    // Make index_two equal index_one (17): shift the words.
+    collapsed[8..12].copy_from_slice(&17_u32.to_le_bytes());
+    fix_checksum(&mut collapsed);
+    let path = write_temp("collapsed", &collapsed);
+    assert!(PhraseLibrary::open(&path).is_err());
+    let _ = std::fs::remove_file(&path);
+
+    // 2. A slot whose byte offset overflows usize on multiply.
+    let path = write_temp("sample-again", &sample);
+    let library = PhraseLibrary::open(&path).expect("valid chunk");
+    assert!(library.item_at_slot(usize::MAX / 2).is_none());
+    assert!(library.item_at_slot(usize::MAX).is_none());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn item_damage_answers_no_item_never_panics() {
     // Point slot 4's offset at the last bytes of the entry area, where
     // an item header cannot fit: bounded reads, None answers.
