@@ -15,6 +15,10 @@ use crate::options::{
     PINYIN_AMB_G_K, PINYIN_AMB_IN_ING, PINYIN_AMB_L_N, PINYIN_AMB_L_R, PINYIN_AMB_S_SH,
     PINYIN_AMB_Z_ZH,
 };
+use crate::syllables::{
+    FULL_PINYIN_SYLLABLE_MAP, INCOMPLETE_PINYIN_KEY_MAP, OPTION_ONLY_COMPLETE_SYLLABLE_MAP,
+    ZHUYIN_ONLY_COMPLETE_SYLLABLE_MAP,
+};
 use crate::{
     Completeness, FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
     INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLE_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
@@ -52,18 +56,18 @@ impl SyllableKey {
     /// key.
     ///
     /// Lookup is exact: no case folding, tone stripping or fuzzy matching.
+    /// Membership goes through the generated phf maps (build.rs, from the
+    /// frozen inventories) instead of a linear scan.
     #[must_use]
     pub fn from_text(text: &str) -> Option<Self> {
-        if let Some(index) = FULL_PINYIN_SYLLABLES
-            .iter()
-            .position(|syllable| *syllable == text)
-        {
-            return Self::from_index(index);
-        }
-        INCOMPLETE_PINYIN_KEYS
-            .iter()
-            .position(|key| *key == text)
-            .and_then(|index| Self::from_index(FULL_PINYIN_SYLLABLE_COUNT + index))
+        FULL_PINYIN_SYLLABLE_MAP.get(text).map_or_else(
+            || {
+                INCOMPLETE_PINYIN_KEY_MAP.get(text).and_then(|&index| {
+                    Self::from_index(FULL_PINYIN_SYLLABLE_COUNT + index as usize)
+                })
+            },
+            |&index| Self::from_index(index as usize),
+        )
     }
 
     /// Returns the key for a canonical spelling, including option-only
@@ -76,27 +80,20 @@ impl SyllableKey {
     /// tiers, so tier 4 never becomes a full-pinyin parse target.
     #[must_use]
     pub fn from_canonical_text(text: &str) -> Option<Self> {
-        if let Some(index) = FULL_PINYIN_SYLLABLES
-            .iter()
-            .position(|syllable| *syllable == text)
-        {
-            return Self::from_index(index);
+        if let Some(&index) = FULL_PINYIN_SYLLABLE_MAP.get(text) {
+            return Self::from_index(index as usize);
         }
-        if let Some(index) = INCOMPLETE_PINYIN_KEYS.iter().position(|key| *key == text) {
-            return Self::from_index(FULL_PINYIN_SYLLABLE_COUNT + index);
+        if let Some(&index) = INCOMPLETE_PINYIN_KEY_MAP.get(text) {
+            return Self::from_index(FULL_PINYIN_SYLLABLE_COUNT + index as usize);
         }
         let option_start = FULL_PINYIN_SYLLABLE_COUNT + INCOMPLETE_PINYIN_KEY_COUNT;
-        if let Some(index) = OPTION_ONLY_COMPLETE_SYLLABLES
-            .iter()
-            .position(|syllable| *syllable == text)
-        {
-            return Self::from_index(option_start + index);
+        if let Some(&index) = OPTION_ONLY_COMPLETE_SYLLABLE_MAP.get(text) {
+            return Self::from_index(option_start + index as usize);
         }
         let zhuyin_start = option_start + OPTION_ONLY_COMPLETE_SYLLABLE_COUNT;
-        ZHUYIN_ONLY_COMPLETE_SYLLABLES
-            .iter()
-            .position(|syllable| *syllable == text)
-            .and_then(|index| Self::from_index(zhuyin_start + index))
+        ZHUYIN_ONLY_COMPLETE_SYLLABLE_MAP
+            .get(text)
+            .and_then(|&index| Self::from_index(zhuyin_start + index as usize))
     }
 
     /// Returns the key for `text` under parser option bits.
