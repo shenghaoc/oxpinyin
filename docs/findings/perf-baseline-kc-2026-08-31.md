@@ -1,5 +1,18 @@
 # Stage-2 Performance Baseline — KC Backend (2026-08-31)
 
+> **Superseded in part** by the validation pass
+> (`perf-baseline-kc-validation-2026-08-31.md`). Two corrections:
+>
+> 1. **Init attribution**: the bottleneck is KC B-tree initialization
+>    (~89%), not `interpolation2.text` parsing (~5–11%). Init reads only
+>    2 MiB (1-gram section) of the 80 MiB file.
+> 2. **Shared-object size**: the 0.454× ratio compared a debug-build
+>    oracle against a release-build oxpinyin. Stripped-to-stripped,
+>    oxpinyin is 2.16× larger (1,669 KiB vs 771 KiB).
+>
+> All other measurements (steady cycle, cold cycle, RSS, HWM) are
+> confirmed accurate.
+
 First measured baseline after the Kyoto Cabinet backend switch and five
 perf-branch landings (dict-lm-load, fill-lookup, init-text-slurp,
 init-typed-map, keystroke-heap-alloc). Replaces the blocked audit of the
@@ -69,8 +82,10 @@ transformation from the 2.19× gap measured in W8.
 | runtime data | 2.86× |
 | total install | 2.78× |
 
-Shared object is smaller than the oracle (0.454×, same direction as W8's
-0.40×). Runtime data is 2.86× (improved from W8's 3.48× with redb).
+**Caveat:** the 0.454× shared-object ratio is invalid — the oracle `.so`
+contains debug symbols; see the validation document for the corrected
+stripped-to-stripped comparison (2.16×). Runtime data is 2.86× (improved
+from W8's 3.48× with redb).
 
 oxpinyin runtime data breakdown:
 
@@ -139,29 +154,33 @@ ratio swings) but the absolute oxpinyin init is stable: 100.2 ms vs
 
 ## Initialization bottleneck investigation
 
+> **Superseded.** The attribution below was corrected by the validation
+> pass. The bottleneck is KC B-tree initialization (~89%), not text
+> parsing (~5–11%). See `perf-baseline-kc-validation-2026-08-31.md`.
+
 W8 attributed the 158× init gap to `interpolation2.text` parsing. With
-KC, the gap narrowed to ~110× but the root cause is unchanged:
+KC, the gap narrowed to ~118× (median from raw JSONL; originally
+reported as ~110×). The root cause was **reattributed** by strace +
+data-subset ablation: KC B-tree initialization dominates (~104 ms),
+while text parsing costs only ~5–13 ms.
 
-1. **interpolation2.text** (79.59 MiB raw text) must be parsed on every
-   `pinyin_init`. The oracle pre-compiles this into binary indexes
-   during `make install`; its data directory does not contain the file at
-   all.
+1. **interpolation2.text** — init reads only the 1-gram section
+   (2 MiB / 63,907 entries), not the full 80 MiB file. The 77.6 MiB
+   2-gram section is pre-compiled into KC tables by `oxpinyin-datagen`
+   and never touched at runtime. The oracle does not ship this file at
+   all — `import_interpolation` consumes it at build time.
 
-2. **Absolute improvement**: 586 ms (W8/redb) → 100 ms (KC) = 5.9×
+2. **Absolute improvement**: 586 ms (W8/redb) → 102 ms (KC) = 5.7×
    faster init. This is the cumulative effect of the five perf-branch
    landings.
 
 3. **The HWM spike** (72,652 → 86,364 KiB, a 14 MiB transient) during
-   init comes from the text parser's intermediate allocations being
-   freed after the data structures are built.
+   init comes from KC tree construction and data structure allocation.
 
-4. **KC tables** load faster than redb: KC uses B+ tree files that the
-   OS page cache handles naturally (6,176 KiB RssFile), while redb
-   required explicit deserialization into anonymous memory.
-
-The remaining init budget is dominated by the text parser. Compiling
-`interpolation2.text` into a binary format at datagen time (mirroring
-what libpinyin's `make` does) would eliminate this cost.
+4. **KC tables** load faster than redb in steady-state cycles, but their
+   eager B-tree initialization at open time is the dominant init cost
+   (~104 ms). The oracle avoids this via mmap-backed binary files with
+   lazy page-fault loading.
 
 ## KC vs redb summary
 
@@ -172,16 +191,17 @@ what libpinyin's `make` does) would eliminate this cost.
 | cold cycle ratio | 2.06× | 0.99× | **-52%** |
 | post-init RSS ratio | 8.22× | 5.45× | -34% |
 | data size ratio | 3.48× | 2.86× | -18% |
-| .so size ratio | 0.40× | 0.45× | +13% |
+| .so size ratio (as-installed) | 0.40× | 0.45× | +13% (see caveat) |
 
 The KC switch plus the five perf-branch landings produced a dramatic
 improvement. Steady-cycle performance went from 2.19× (nearly double the
 oracle) to 1.08× (near parity). RAM dropped by a third. Data storage is
 more compact.
 
-The .so size increased slightly (2.38 MiB vs W8's 2.18 MiB on x86_64)
-but this is likely a platform difference (ARM64 vs x86_64) rather than a
-code regression. Both remain well under the oracle's 5.25 MiB.
+The as-installed .so sizes are not directly comparable because the oracle
+contains debug symbols and oxpinyin does not. When both are stripped,
+oxpinyin (1,669 KiB) is 2.16× larger than the oracle (771 KiB). See the
+validation document for the corrected analysis.
 
 ## Infrastructure changes
 
