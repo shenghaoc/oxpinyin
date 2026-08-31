@@ -85,7 +85,7 @@ pub fn get_best_match(
             let (ok, continued, tokens) = lexicon.search(&span);
             if ok {
                 search_bigram2(&mut steps, i, tokens, &ctx)?;
-                search_unigram2(&mut steps, i, tokens, &ctx)?;
+                search_unigram2(&mut steps, i, tokens, &ctx);
             }
             if !continued {
                 break;
@@ -107,19 +107,13 @@ struct ScoreCtx<'a> {
 
 /// `search_unigram2` (`phrase_lookup.cpp:217-253`): expand from the
 /// maximum node only. Ties keep the first-inserted node (`>` not `>=`).
-fn search_unigram2(
-    steps: &mut [Step],
-    nstep: usize,
-    tokens: &[u32],
-    ctx: &ScoreCtx<'_>,
-) -> Result<(), SegmentError> {
+fn search_unigram2(steps: &mut [Step], nstep: usize, tokens: &[u32], ctx: &ScoreCtx<'_>) {
     let Some(max_value) = max_node(&steps[nstep]) else {
-        return Ok(());
+        return;
     };
     for &token in tokens {
         unigram_gen_next_step(steps, nstep, max_value, token, ctx);
     }
-    Ok(())
 }
 
 /// `search_bigram2` (`phrase_lookup.cpp:255-305`): expand from every node

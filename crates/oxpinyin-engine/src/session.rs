@@ -566,7 +566,7 @@ where
             let Some(chosen) = self.nbest_rows.get(usize::from(rank)) else {
                 self.consumed = constraint_end;
                 self.refresh()?;
-                return self.selection_outcome();
+                return Ok(self.selection_outcome());
             };
             if let Some(best) = best {
                 // Upstream validates the store at choose time
@@ -591,15 +591,15 @@ where
         self.selection_committed = constraint_end >= self.raw.len();
         self.refresh()?;
 
-        self.selection_outcome()
+        Ok(self.selection_outcome())
     }
 
     /// The common tail of [`Session::select_inner`].
-    const fn selection_outcome(&self) -> Result<Selection, EngineError> {
+    const fn selection_outcome(&self) -> Selection {
         if self.consumed >= self.raw.len() {
-            Ok(Selection::Completed)
+            Selection::Completed
         } else {
-            Ok(Selection::Continued)
+            Selection::Continued
         }
     }
 
