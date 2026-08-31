@@ -26,7 +26,8 @@ backtracking; returns alternatives (`xian` → [xian] and [xi,an]);
 Traits defined signatures-only: Dictionary, UserModel, LanguageModel,
 InputParser — unsealed, defaulted growth.
 
-**Drop-in compat path (`oxpinyin-data/src/compat/`, `src/memory_chunk.rs`):**
+**Drop-in compat path (`crates/oxpinyin-data/src/compat/`,
+`crates/oxpinyin-data/src/memory_chunk.rs`):**
 `CompatLayout::detect` recognises a real libpinyin data directory —
 `table.conf` (the only file whose absence fails `pinyin_init`; it declares
 the DBM, λ and the default phrase libraries) plus a `bigram.db` whose file
