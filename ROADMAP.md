@@ -89,14 +89,17 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   is not carried across the switch. (This matches the model
   distributions use for libpinyin's own backend transitions.)
 
-- **W15 is the data pipeline inversion.** Runtime tables are compiled
-  natively from the canonical pinned `model20` archive for every storage
-  backend (Kyoto Cabinet, redb, LMDB, Tkrzw) — no producer consumes
-  libpinyin-generated runtime data. The retired `oxpinyin-migrate` route (oracle ABI export +
-  verbatim Tkrzw conversion) is proven unnecessary: the native compilation
-  reproduces its frozen full export entry-for-entry, which unparked the
-  five differentials that needed a full system dir. Architecture and
-  equivalence evidence: `docs/findings/datagen-model20.md`.
+- **W15 LANDED.** The data pipeline inversion is complete: runtime tables
+  are compiled natively from the canonical pinned `model20` archive for every
+  storage backend (Kyoto Cabinet, redb, LMDB, Tkrzw) — no producer consumes
+  libpinyin-generated runtime data. Implemented in `crates/oxpinyin-datagen`
+  (`system.rs`, `table.rs`, `punct.rs`, `addon.rs`, `manifest.rs`, `write.rs`);
+  all four backend producers are feature-gated in `Cargo.toml`. The retired
+  `oxpinyin-migrate` route (oracle ABI export + verbatim Tkrzw conversion) is
+  proven unnecessary: the native compilation reproduces its frozen full export
+  entry-for-entry, which unparked the five differentials that needed a full
+  system dir. Architecture and equivalence evidence:
+  `docs/findings/datagen-model20.md` (Status: recorded / implemented).
 
 - **W7 is flat, not a task stack.** One deliverable: classic text-format
   interop via oxpinyin-dictool (import + export). The line-oriented
@@ -219,26 +222,22 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   here: the live-typing behaviors the parity sequence doesn't yet
   exercise (deep paging, mid-composition edits, punctuation modes).
 
-- **W13 is double-pinyin and bopomofo input schemes.** Previously parked in
-  W12, these are new input schemes (feature implementation), not corpus-tail
-  diagnosis; an open-ended workstream would make their completion criterion
-  meaningless. Completion is feature-driven: each scheme is implemented and
-  verified against the pinned oracle on a scheme-specific differential
-  surface, with its own frozen scheme SPEC rather than W12's open-ended
-  diagnosis criterion.
+- **W13 LANDED (20e6b3a).** Double-pinyin (ZRM/MS/Ziguang/ABC/PYJJ/Xiaohe)
+  and standard bopomofo (Zhuyin) schemes are implemented and verified against
+  the pinned oracle on their scheme-specific differential surfaces. Remaining
+  items: (a) human freeze of `docs/findings/double-pinyin-spec.md`; (b) the
+  FORCE_TONE double-pinyin batch seam (`pinyin_parse_more_double_pinyins`
+  does not yet implement the `pinyin_parser2.cpp:412` length-3 gate), which
+  belongs with the eventual double-pinyin SPEC freeze.
 
-- **W14 is the sentence surface.** Three parts, one root: sentence
-  candidates do not emit with real unigrams loaded (nbest=0; upstream
-  prepends up to N n-best rows and merges/retypes a sentence equal to an
-  existing phrase — 129 = 126 + 3 vs 126 = 126 on the matched-data
-  evidence in #97); the merged rows must be typed NBEST_MATCH; and
-  `pinyin_get_sentence` must return the decoded 1-best, not raw input.
-  Pre-existing full-pinyin ground, present through all scheme paths,
-  masked until now by the W8 parity profile (sort=2 excluded sentence
-  rows; preedit was aux-text-based). The largest single divergence under
-  the fork's default settings. Tracked as #100; starts after the W10/W11
-  stacks land — the fix lives in `candidates.rs`/`sentence.rs`, the
-  collision zone of the open workstreams. Verification: extend the
-  matched-data candidate differential to assert the nbest rows, typing,
-  and `get_sentence` against the pinned oracle; corpus pins unaffected
-  (the corpus profile excludes sentence rows — a pin move is a leak).
+- **W14 LANDED (489e94d, PR #113).** Three parts, all delivered: (a) sentence
+  candidates emit with real unigrams loaded — up to N n-best rows prepended
+  and merged/retyped as NBEST_MATCH per `pinyin.cpp:2290-2298`; (b)
+  `pinyin_get_sentence` returns the decoded n-best text (index 0 = 1-best),
+  not raw input; (c) `SORT_WITHOUT_SENTENCE_CANDIDATE` gating. Corpus
+  candidate pins bit-identical; sentence-surface fixture green (488/496 1-best,
+  385/496 n-best distinct-set). Remaining item: the §12 measured 117-position
+  ordered/first-6 residual (hypothesis selection, trellis-side; documented in
+  `docs/findings/sentence-surface.md`), pending maintainer freeze/decision.
+  The predicted-candidate ordering divergence is recorded as accepted
+  (`docs/findings/sentence-surface.md`) and is not an open implementation task.

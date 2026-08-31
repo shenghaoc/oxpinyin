@@ -649,7 +649,7 @@ Text, candidate type and counts cannot.
   oxpinyin answers. Report-back batch: file with the scheme-setter and
   `_check_offset` assert families.
 
-### FORCE_TONE — scheme-specific: the full-pinyin batch and the double/zhuyin one-key seams honour it; the double/zhuyin batch seams keep the full-pinyin law
+### FORCE_TONE — scheme-specific: full-pinyin batch and all one-key seams honour scheme law; zhuyin batch closed (1671954); double-pinyin batch seam remains
 
 - **Upstream source cite:** `src/storage/pinyin_parser2.cpp:412` and
   `:448` (`DoublePinyinParser2::parse_one_key`: `if (options & FORCE_TONE
@@ -664,7 +664,7 @@ Text, candidate type and counts cannot.
 - **What oxpinyin does instead:** implements the measured surface — the
   full-pinyin law, nested inside `USE_TONE` exactly like the pin
   (`pinyin_parser2.cpp:176-190` ported to `graph.rs::tone_split`) — and
-  leaves the BATCH double/zhuyin parsers untouched. The measured C1 surface of
+  originally left the BATCH double/zhuyin parsers untouched. The measured C1 surface of
   the uncovered-surface differential is full-pinyin only; porting the
   scheme-parser shapes unmeasured is exactly what would perturb the
   frozen double/zhuyin scheme sweeps.
@@ -683,16 +683,27 @@ Text, candidate type and counts cannot.
   the `0x1ea` (`USE_TONE|FORCE_TONE`) and `0x1ca` (FORCE_TONE alone)
   profiles; `0x1aa` (`USE_TONE` alone) and the `0x18a` baseline run for
   regression coverage of the neighbouring seams, not FORCE_TONE. The
-  batch double/zhuyin `parse` surfaces keep the original scope boundary
-  above (their builders are the frozen scheme sweeps).
-- **Externally observable:** on the one-key seams, no longer — both
-  engines answer the same under every FORCE_TONE profile (that was the
-  D3 gate). On the batch double/zhuyin seams, yes — a frontend setting
-  FORCE_TONE gets the full-pinyin behaviour (no effect without
-  `USE_TONE` on that seam) rather than the pin's length-3 gate, as
-  before. The full-pinyin seam itself
-  matches the pin (capi e2e `parse_termination` module, harness phase-C
-  0x60 probes closed).
+  batch double-pinyin `parse` surface keeps the original scope boundary
+  above (its builder is the frozen scheme sweep); the batch zhuyin surface
+  was subsequently closed — see Zhuyin batch amendment below.
+- **Zhuyin batch amendment (1671954, 2026-08-31).** The batch zhuyin
+  `parse` surface (`zhuyin_parse_more_chewings` via `oxpinyin-zhuyin-capi`)
+  now honours `FORCE_TONE` per keyboard family: nested under `USE_TONE`
+  for Simple/CP26, unconditional for Discrete — matching
+  `zhuyin_parser2.cpp:176-180, :373, :387, :602`. Measured: the
+  `tools/bisection/zhuyin-diff.c` differential converges on the batch parse.
+  This closes the zhuyin batch seam. The double-pinyin batch seam
+  (`pinyin_parse_more_double_pinyins`) remains open: the
+  `pinyin_parser2.cpp:412` length-3 gate is not yet implemented on that path
+  and belongs with the eventual double-pinyin SPEC freeze.
+- **Externally observable:** on the one-key seams and the zhuyin batch
+  seam, no longer — all answer identically to the pin under every
+  FORCE_TONE profile (one-key seams: D3 gate; zhuyin batch: 1671954).
+  On the double-pinyin batch seam, yes — `pinyin_parse_more_double_pinyins`
+  with FORCE_TONE set produces the full-pinyin behaviour (effective only
+  inside `USE_TONE`) rather than the pin's length-3 gate
+  (`pinyin_parser2.cpp:412`). The full-pinyin seam itself matches the pin
+  (capi e2e `parse_termination` module, harness phase-C 0x60 probes closed).
 
 ### Empty-string phrase lookup SIGFPEs the pin
 
@@ -883,7 +894,11 @@ syllables (`ta`=1, `li`=2, `ju`=2) where the pin reported 0. Root cause was
 - **Classification:** engine workstream (n-best row count) + class (c)
   (terminal-offset availability). Neither is a facade defect: the candidate
   set is identical, and the terminal-offset case is not exercised by the
-  pinned differential driver.
+  pinned differential driver. The `after(consumed)` coordinate gap and the
+  multi-syllable before-cursor and candidate-construction gaps below share the
+  same root cause: `session.candidates()` is forward-anchored and the facade
+  cannot UNION multiple `candidates_at` windows. One implementation direction
+  covers all three: the backward-anchored window builder; see the next entry.
 
 ## zhuyin before-cursor candidate window — single-syllable CLOSED, multi-syllable engine gap
 
@@ -945,7 +960,11 @@ tags.
 - **Classification:** engine workstream (the candidate-construction model).
   Not a facade defect — the single-syllable facade surface is correct, and the
   facade faithfully translates what the engine provides. The differential
-  corpus documents this as the known multi-syllable gap.
+  corpus documents this as the known multi-syllable gap. This entry, the
+  before-cursor multi-syllable gap above, and the `after(consumed)` / tag
+  grouping entry all share one underlying cause and one implementation
+  direction: the backward-anchored window builder mirroring the pin's
+  `search_matrix` walk over spans ending at the offset.
 
 ## zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default
 
