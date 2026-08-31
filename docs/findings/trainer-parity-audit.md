@@ -175,41 +175,44 @@ Compatibility ground rules (task §2):
 
 ---
 
-## 3. Capability matrix (trainer → OXpinyin)
+## 3. Capability matrix (trainer → OXpinyin) — **final (2026-08-31)**
 
-Status key: **done** shipped & tested · **partial** related code exists,
-gaps noted · **todo** not yet implemented · **home** target crate.
+Status key: **done** implemented & tested · **off-path** valid libpinyin
+util the trainer never invokes · **excluded** deliberate non-port (§11).
+Every capability the main / word-recognition / punctuation pipelines use is
+**done**. Test evidence is in §15's tables; the arithmetic is verified
+line-by-line in `docs/findings/kmm-arithmetic-audit.md`.
 
-| Capability | Trainer entry | libpinyin source | OXpinyin status | Home | Action |
-|---|---|---|---|---|---|
-| ngseg (bigram Viterbi) | `segment.py` | `utils/segment/ngseg.cpp` | **done** | `oxpinyin-segment` | verify residual gaps |
-| spseg (fewest-words DP) | `segment.py --fast` | `utils/segment/spseg.cpp` | **done** | `oxpinyin-segment::spseg` | Part B landed (§15) |
-| mergeseq (phrase merge) | `mergeseq.py` | `utils/segment/mergeseq.cpp` | **done** | `oxpinyin-segment::mergeseq` | Part B landed (§15) |
-| KMM data model | — | `utils/training/k_mixture_model.h` | **done** | `oxpinyin-kmm::model` | Part C+D landed (§15) |
-| KMM generate (per-doc count) | `generate.py` | `gen_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::generate` | Part C+D landed (§15) |
-| KMM estimate (λ score) | `estimate.py` | `estimate_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::estimate` | Part C+D landed (§15) |
-| KMM merge | `tryprune.py` | `merge_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::merge` | Part C+D landed (§15) |
-| KMM validate | `tryprune.py` | `validate_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::validate` | Part C+D landed (§15) |
-| KMM prune | `tryprune.py` | `prune_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::prune` | Part C+D landed (§15) |
-| KMM export (text) | `tryprune.py` | `export_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::text` | Part C+D landed (§15) |
-| KMM import (text) | *(off-path)* | `import_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::text` | Part C+D landed (§15) |
-| KMM → interpolation | `tryprune.py` | `k_mixture_model_to_interpolation.cpp` | **done** | `oxpinyin-kmm::text::kmm_text_to_interpolation` | Part C+D landed (§15) |
-| candidate gather/sort | `estimate.py` | *(Python)* | **todo** | `oxpinyin-kmm` CLI / orchestration | implement (§6.3) |
-| λ estimate (deleted-interp EM) | `evaluate.py` | `estimate_interpolation.cpp` | **partial** | `oxpinyin-lambda` | reuse EM; add KMM-storage entry (§7) |
-| correction rate | `evaluate.py` | `eval_correction_rate.cpp` | **todo** | `oxpinyin-eval` | implement, reuse engine decoder (§7) |
-| eval runtime model build | `evaluate.py` `make` | data Makefile | **partial** | `oxpinyin-data`/`oxpinyin-runtime` | assemble natively (§7) |
-| word: prepare | `prepare.py` | *(Python+SQLite)* | **todo** | `oxpinyin-word` | implement (§8) |
-| word: populate | `populate.py` | *(Python+SQLite)* | **todo** | `oxpinyin-word` | implement (§8) |
-| word: partial word | `partialword.py` | *(Python+SQLite)* | **todo** | `oxpinyin-word` | implement (§8) |
-| word: new word | `newword.py` | *(Python+SQLite)* | **todo** | `oxpinyin-word` | implement (§8) |
-| word: mark pinyin | `markpinyin.py` | *(Python)* | **todo** | `oxpinyin-word` | implement (§8) |
-| punctuation | `genpunct.py` | *(Python)* | **todo** | `oxpinyin-punct` | implement (§9) |
-| corpus index/status | all scripts | `lib/*.py` | **partial** | `oxpinyin-corpus` | typed status + index walk (§10) |
-| category reduce | `reduce.py` | *(Python)* | optional | `oxpinyin-corpus` | implement if workflow uses it (§10) |
-| corpus front-end (zhwiki) | *(external)* | — | **done** | `oxpinyin-corpus` | none |
-| legacy gen_ngram/gen_unigram | *(off-path)* | `gen_ngram.cpp` etc. | **done** | `oxpinyin-counter` | keep; reclassify (§4) |
-| legacy export_interpolation | *(off-path)* | `export_interpolation.cpp` | **done** | `oxpinyin-emitter` | keep; reclassify (§4) |
-| OpenGram dict tools | `tools/*.py` | `gen_pinyin_table.cpp` | obsolete/optional | — | do not port (§11) |
+| Capability | Trainer entry | libpinyin source | Status | Home (implementation) |
+|---|---|---|---|---|
+| ngseg (bigram Viterbi) | `segment.py` | `utils/segment/ngseg.cpp` | **done** | `oxpinyin-segment::segment_bytes` |
+| spseg (fewest-words DP) | `segment.py --fast` | `utils/segment/spseg.cpp` | **done** | `oxpinyin-segment::spseg` |
+| mergeseq (phrase merge) | `mergeseq.py` | `utils/segment/mergeseq.cpp` | **done** | `oxpinyin-segment::mergeseq` |
+| KMM data model | — | `utils/training/k_mixture_model.h` | **done** | `oxpinyin-kmm::model` |
+| KMM generate (per-doc count) | `generate.py` | `gen_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::generate` |
+| KMM estimate (λ score) | `estimate.py` | `estimate_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::estimate` |
+| KMM merge | `tryprune.py` | `merge_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::merge` |
+| KMM validate | `tryprune.py` | `validate_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::validate` |
+| KMM prune | `tryprune.py` | `prune_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::prune` |
+| KMM export/import (text) | `tryprune.py` | `export_/import_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::text` |
+| KMM → interpolation | `tryprune.py` | `k_mixture_model_to_interpolation.cpp` | **done** | `oxpinyin-kmm::text::kmm_text_to_interpolation` |
+| candidate gather/sort/top-N | `estimate.py`, `tryprune.py` | *(Python)* | **done** | `oxpinyin-train::candidate` |
+| λ estimate (deleted-interp EM) | `evaluate.py` | `estimate_interpolation.cpp` | **done** | `oxpinyin-lambda` (reused by `oxpinyin-eval`) |
+| correction rate | `evaluate.py` | `eval_correction_rate.cpp` | **done** | `oxpinyin-eval::decode` |
+| eval runtime model build | `evaluate.py` `make` | data Makefile | **done** | `oxpinyin-eval::model` (native, no `make`) |
+| word: populate/partial/new/mark | `populate/partialword/newword/markpinyin.py` | *(Python+SQLite)* | **done** | `oxpinyin-word` |
+| punctuation | `genpunct.py` | *(Python)* | **done** | `oxpinyin-punct` |
+| corpus index / status / epoch / resume | all scripts | `lib/*.py` | **done** | `oxpinyin-train::{corpus,status,config}` |
+| full-workflow orchestration | the five drivers | *(Python)* | **done** | `oxpinyin-train::{pipeline,workspace}` + `oxpinyin-train` CLI |
+| category reduce | `reduce.py` | *(Python)* | **excluded** | corpus-layout flattening, not on any path (§11.1) |
+| legacy gen_ngram/gen_unigram | *(off-path)* | `gen_ngram.cpp` etc. | **off-path** | `oxpinyin-counter` (kept, §4) |
+| legacy export_interpolation | *(off-path)* | `export_interpolation.cpp` | **off-path** | `oxpinyin-emitter` (kept, §4) |
+| OpenGram dict tools | `tools/*.py` | `gen_pinyin_table.cpp` | **excluded** | external data-source prep (§11) |
+
+`word: prepare` (`prepare.py`) builds the SQLite scaffolding upstream needs
+for its per-order tables; `oxpinyin-word` replaces those tables with ordered
+Rust maps, so the prepare step has no native analogue to port — its work is
+absorbed into the crate's in-memory state (§8, §11).
 
 ---
 
@@ -540,7 +543,7 @@ table; trace and document the exact consumer before freezing the format
 | mergeseq.py | **required** | word-recog corpus prep (alt path) |
 | prepare/populate/partialword/newword/markpinyin.py | **required** | word-recognition pipeline |
 | genpunct.py | **required** | punctuation pipeline |
-| reduce.py | **optional** | category flattening; corpus-layout dependent |
+| reduce.py | **optional** | category flattening; corpus-layout dependent — see §11.1 |
 | lib/{myconfig,utils,dirwalk}.py | **required** | config + status + walk (absorbed into orchestration) |
 | tools/distill,convertopengram,filteropengram,mergepartialopengram,striptones.py | **obsolete/optional** | OpenGram-dictionary prep, external data source, off the supported workflow |
 | tools/merge.py | **optional** | cross-category `recognized.txt` merge |
@@ -548,6 +551,36 @@ table; trace and document the exact consumer before freezing the format
 | gen_ngram/gen_unigram/gen_deleted_ngram, export/import_interpolation, gen_binary_files, gen_zhuyin_table | **off-path** | valid libpinyin utils, not invoked by the trainer |
 
 Historical helpers are **not** ported merely because they exist (task §1).
+
+### 11.1 `reduce.py` classification (task §7) — **optional, not on any path**
+
+Call-graph evidence (pin `trainer/reduce.py` read in full):
+
+- **No caller.** `grep -rn` across `trainer/*.py` finds no `import reduce`
+  and no reference to its functions (`iterateSubDirectory`, `mergeSubIndex`)
+  anywhere but `reduce.py` itself. None of the five main-pipeline drivers,
+  the word-recognition drivers, or `genpunct.py` invoke it. It is a
+  standalone, manually-run CLI.
+- **What it does.** `iterateSubDirectory(origdir, destdir, level)` recurses
+  `level` directory levels into `origdir`; at level ≤ 0 it concatenates every
+  `*.index` file under that subtree (`mergeSubIndex`, a plain `read_file` +
+  `writelines`) into one `<newroot>.index` under `destdir`. It touches only
+  the corpus **index directory layout** — never a model, a segmented file, a
+  KMM, or an evaluation. It is a `find … -name '*.index' | xargs cat`-shaped
+  reshaping of a deep per-category corpus hierarchy into a shallower one.
+- **When it runs.** Before segmentation, once, by a corpus maintainer whose
+  raw corpus is organised in more index levels than they want the pipeline to
+  walk. `segment.py`'s `walkThroughIndex` already recurses the whole index
+  tree, so a corpus already at the desired granularity never needs it.
+
+**Class: optional / corpus-preparation, not part of the training algorithm.**
+Not required (no stage depends on it), not historical/unreachable (it is
+reachable and functional). Its native equivalent is a trivial directory
+concatenation; it is deliberately **not** part of `oxpinyin-train`, which
+consumes a `CorpusIndex` directly (the flattened index files the pipeline
+actually reads). Porting it would add a corpus-layout convenience outside the
+trainer-workflow parity boundary — excluded by the same rule that excludes the
+OpenGram `tools/` helpers.
 
 ---
 
@@ -653,41 +686,54 @@ interpolation output of D.
 
 ---
 
-## 15. Implementation status (updated 2026-08-30)
+## 15. Implementation status (updated 2026-08-31 — **complete**)
 
-Landed since this audit was frozen (each an independently-reviewable commit):
+Every capability the current `libpinyin/trainer` main workflow uses is
+implemented natively in Rust. Each part is an independently-reviewable commit:
 
 | Part | Deliverable | Crate / home | Tests |
 |---|---|---|---|
 | B | `spseg` (fewest-words DP), `mergeseq` (phrase merge) | `oxpinyin-segment` (`spseg`, `mergeseq`, two CLIs) | toy unit + committed-golden differential (W3 table, CI-always) + env-gated live cross-check |
-| C+D | full KMM pipeline — data model, generate, estimate, merge, validate, prune, export/import, →interpolation | `oxpinyin-kmm` (self-contained, one CLI, 8 subcommands) | per-op unit + hand-verified golden + merge-equals-combined + end-to-end from the real segmented corpus |
-| G | punctuation table (`genpunct.py`) | `oxpinyin-punct` (count/merge CLI) | per-stage unit + two-stage golden |
-| F | word recognition — populate, partial-word discovery + cross-order merge, new-word entropy filtering, pinyin marking | `oxpinyin-word` (`recognize` CLI) | per-stage unit (incl. the `partition` merge walk) + hand-traced end-to-end golden |
-| H (core) | end-to-end main pipeline on real committed data (segment → KMM → interpolation2.text) with no Python/SQLite/make/libpinyin | `oxpinyin-kmm` integration test over the committed `spseg` fixture | passes on CI |
+| C+D | full KMM pipeline — data model, generate, estimate, merge, validate, prune, export/import, →interpolation | `oxpinyin-kmm` (self-contained, one CLI, 8 subcommands) | per-op unit + hand-verified golden + merge-equals-combined + end-to-end from the real segmented corpus + **semantic-parity golden + env-gated oracle differential** (`tests/differential.rs`) |
+| C+D audit | line-by-line arithmetic verification vs the six KMM sources | `docs/findings/kmm-arithmetic-audit.md` | term-for-term tables + divergence register (four-class) |
+| E | evaluator — `estimate_interpolation` λ over KMM-derived counts + `eval_correction_rate` decode round-trip, native runtime model, no `make`/libpinyin | `oxpinyin-eval` (`oxpinyin-eval` CLI) | hand-computable homophone fixture + full-flow integration + env-gated `eval_correction_rate` differential |
+| G | punctuation table (`genpunct.py`) | `oxpinyin-punct` (count/merge CLI) | per-stage unit + two-stage golden (segmented → puncts.table) |
+| F | word recognition — populate, partial-word discovery + cross-order merge, new-word entropy filtering, pinyin marking | `oxpinyin-word` (`recognize` CLI) | per-stage unit (incl. the `partition` merge walk) + hand-traced end-to-end golden (→ recognized word + pinyin) |
+| H (core) | end-to-end main pipeline on real committed data (segment → KMM → interpolation2.text) | `oxpinyin-kmm` integration test over the committed `spseg` fixture | passes on CI |
+| **H (full)** | **native trainer orchestrator + `oxpinyin-train`** — typed config/status/epoch/corpus-index/candidate structures, segment → generate (rollover + min-file-size filter) → estimate + gather + sort → merge top N → prune → convert → evaluate, with the on-disk `try<name>` workspace, status files, cleanup, and stage-level resumability | `oxpinyin-train` (`oxpinyin-train` CLI) | typed-structure units + **raw-corpus acceptance test** (raw Han corpus → final interpolation model + λ + correction rate, verifying every stage's on-disk product + resumability) |
 
 **Reclassified** (kept, retitled): `oxpinyin-counter` (`gen_ngram`) and
 `oxpinyin-emitter` (`export_interpolation`) are legacy libpinyin utilities
-off the trainer path (§4); `oxpinyin-lambda`'s `estimate_interpolation` EM
-stays on the real path.
+off the trainer path (§4); `oxpinyin-lambda`'s `estimate_interpolation` EM is
+on the real path (reused by `oxpinyin-eval`).
 
-**Still to land** (specs frozen above; independently developable):
+**Nothing remains** for trainer-workflow parity. The unported helpers are the
+deliberate exclusions of §11 (`reduce.py` corpus-layout flattening; the
+OpenGram `tools/`; the off-path libpinyin utils) — none is invoked by the
+main, word-recognition, or punctuation pipelines.
 
-- **E** evaluator — `estimate_interpolation` λ (reuse `oxpinyin-lambda`'s
-  EM over KMM-derived counts) + `eval_correction_rate` reusing the
-  `oxpinyin-engine` decode round-trip (§7). Needs the runtime-model
-  assembly from a candidate `interpolation2.text` (no `make`).
-- **H (full)** — typed status records, index-file walk, minimum-file-size
-  filter, the native full-pipeline driver, reproducibility harness (§10).
-
-The end-to-end reproduction command for the landed main pipeline:
+### The one native command (H full)
 
 ```sh
-# segment (fewest-words) → KMM candidate → estimate/merge/prune → interpolation2.text
-oxpinyin-spseg --export-dir <export> corpus.txt          > corpus.seg
-oxpinyin-kmm generate --k-mixture-model-file cand.db       corpus.seg
-oxpinyin-kmm estimate --bigram-file cand.db --deleted-bigram-file held.db
-oxpinyin-kmm merge    --result-file merged.db cand.db
-oxpinyin-kmm validate merged.db
-oxpinyin-kmm prune -k 3 --CDF 0.99 merged.db   # (merged.db pruned in place)
-oxpinyin-kmm to-interpolation merged.db        > interpolation2.text
+# raw corpus → segment → generate → estimate → merge/prune → interpolation2.text
+#           → estimate λ → apply λ → correction rate, no Python/make/SQLite/libpinyin
+oxpinyin-train \
+    --text-dir texts/ --model-dir models/ --final-dir finals/ \
+    --index texts/corpus.index --held-out held.segmented --evals evals2.text \
+    --pinyin-index pinyin_index.<ext> --phrase-index phrase_index.<ext> \
+    [--merge 10] [-k 3] [--CDF 0.99] [--fast] NAME
+# → prints "average lambda:<λ>" and "correction rate:<rate>";
+#   writes finals/try<NAME>/interpolation2.text (the final model).
 ```
+
+The individual CLIs remain for stage-wise use (`oxpinyin-spseg`,
+`oxpinyin-kmm <subcommand>`, `oxpinyin-eval`, `oxpinyin-word recognize`,
+`oxpinyin-punct`); `oxpinyin-train` orchestrates the whole main workflow.
+
+### Acceptance tests (task §9) — the three authoritative flows
+
+| Flow | Test | Result |
+|---|---|---|
+| raw corpus → **final interpolation model + λ + correction rate** | `oxpinyin-train/tests/end_to_end.rs::raw_corpus_to_final_model_and_correction_rate` | correction rate 0.5 (中 dominates 钟), λ ∈ [0,1], every stage's on-disk product verified, second run resumes identically |
+| segmented corpus → **recognized words + pinyin** | `oxpinyin-word/tests/word_pipeline.rs::recognizes_the_merged_word_with_combined_pinyin` | `甲乙\tjia'yi\t100` |
+| segmented corpus → **puncts.table** | `oxpinyin-punct/tests/punct_pipeline.rs::two_stage_pipeline_golden` | `10 甲 。 5` after per-index + global prune |
