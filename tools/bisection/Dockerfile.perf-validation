@@ -1,13 +1,13 @@
 # Validation environment — extends the baseline image with profiling tools.
 #
 # Usage:
-#   docker build -f tools/bisection/Dockerfile.perf-validation -t oxpinyin-validate .
+#   docker build --platform linux/arm64 -f tools/bisection/Dockerfile.perf-validation -t oxpinyin-validate .
 #   docker run --rm --cap-add SYS_PTRACE -v /tmp/val-out:/out oxpinyin-validate bash
 #
 # Adds strace for file-access tracing and linux-perf for CPU profiling.
 # SYS_PTRACE capability is required for strace inside the container.
 
-FROM debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
+FROM --platform=linux/arm64 debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
