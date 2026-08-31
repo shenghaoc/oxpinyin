@@ -21,6 +21,7 @@ use std::io::{BufRead, BufReader, Cursor};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use oxpinyin_core::{Dictionary, SyllableKey, syllable_initial};
 use oxpinyin_data::{
     BigramLanguageModel, LookupTable, PunctTable, SystemDictionary, build_prefix_tables,
     default_store_file, parse_interpolation2, parse_interpolation2_from_reader,
@@ -80,6 +81,7 @@ fn main() {
         "phrase" => retain_step("LookupTable::open phrase_index", || {
             LookupTable::open(&export.join(default_store_file("phrase_index"))).expect("phrase")
         }),
+        "lookups" => lookup_profile(&export, repeats),
         "bigram" => retain_step("LookupTable::open bigram", || {
             LookupTable::open(&export.join(default_store_file("bigram"))).expect("bigram")
         }),
@@ -666,6 +668,53 @@ fn report(step: &str, prev: &mut Instant) {
         rss_line()
     );
     *prev = Instant::now();
+}
+
+/// Steady-state lookup timing over the hot decode shapes: one keystroke
+/// cycle's worth of `Dictionary::lookup_into` calls for a spread of key
+/// lengths, plus the `SEARCH_CONTINUED` prefix probe. Median per batch,
+/// so before/after representations compare.
+fn lookup_profile(export: &Path, repeats: usize) {
+    let dict = SystemDictionary::open(
+        &export.join(default_store_file("pinyin_index")),
+        &export.join(default_store_file("phrase_index")),
+    )
+    .expect("dict");
+    let shapes: Vec<Vec<SyllableKey>> = ["ni", "ni'hao", "zhong'guo", "xian", "de"]
+        .into_iter()
+        .map(|spelling| {
+            spelling
+                .split('\'')
+                .map(|syllable| SyllableKey::from_text(syllable).expect("frozen syllable"))
+                .collect()
+        })
+        .collect();
+    let mut scratch = Vec::new();
+    for shape in &shapes {
+        dict.lookup_into(shape, &mut scratch).expect("lookup");
+        println!(
+            "  {:<12} hits={:<5} prefix={}",
+            shape
+                .iter()
+                .map(|key| key.text())
+                .collect::<Vec<_>>()
+                .join("'"),
+            scratch.len(),
+            dict.phrase_prefix_exists(shape).expect("probe")
+        );
+    }
+    let per_batch = median_of(repeats, || {
+        let started = Instant::now();
+        for _ in 0..1000 {
+            for shape in &shapes {
+                dict.lookup_into(shape, &mut scratch).expect("lookup");
+                let _ = black_box(&scratch);
+                let _ = dict.phrase_prefix_exists(shape).expect("probe");
+            }
+        }
+        started.elapsed()
+    });
+    println!("  5000 lookups + 5000 prefix probes: {per_batch}");
 }
 
 fn median_of(repeats: usize, mut body: impl FnMut() -> Duration) -> String {
