@@ -79,11 +79,30 @@ zero delta means every pair was over-cap, and the freshly-created empty row
 is dropped. `magic.m_WC += delta` is overflow-guarded (`:280-284`). Rust:
 `wrapping_sub` for the delta, `checked_add` for the magic WC (skip on
 overflow — the upstream guard returns `false`, i.e. does not add).
-`post_processing_unigram` (`:290-318`): `header.m_freq += freq;
-total_freq += freq` per surviving unigram, `magic.m_total_freq += total`
-overflow-guarded. Rust matches (`wrapping_add` on the per-row/`total`,
-`checked_add` on the magic total). `m_N++` per document: `wrapping_add(1)`
-(upstream has no `m_N` overflow guard).
+`post_processing_unigram` (`:290-318`): `total_freq += freq` per unigram,
+`magic.m_total_freq += total` overflow-guarded, and `header.m_freq += freq`
+**via `set_array_header`**. That last step is backend-dependent, and the
+oracle is pinned to **Tkrzw**: `flexible_ngram_tkrzwdb.h:411-413`'s
+`set_array_header` does `m_db->Get(key)` and returns false when the key is
+absent, so it only ever *updates* an existing single_gram — a token that
+never appears as W1 (no bigram row) gets **no** array header. Its freq counts
+toward `magic.m_total_freq` only. Rust matches: `total` always accumulates,
+`header_freq` updates a row **only when it exists** (`self.grams.get_mut`,
+not `entry().or_default()`) — oracle-verified against pin gen+export
+(`tests/differential.rs`). `m_N++` per document: `wrapping_add(1)` (upstream
+has no `m_N` overflow guard).
+
+> **Oracle-discovered (2026-08-31).** The Kyoto backend's `set_array_header`
+> *creates* the row, so a Kyoto-built pin would store W2-only headers; the
+> Tkrzw-built pin (the oracle) does not. The live `gen`+`export` differential
+> exposed the divergence (the native was creating W2-only headers), and the
+> fix above brings it to Tkrzw parity. A consequence: a small-corpus model
+> with W2-only tokens has `Σ header_freq < magic.m_total_freq`, so `validate`
+> rejects it — the pin's own `validate` rejects the same model identically
+> (exit 61); and merge≠combined on such tokens (the combined single-model run
+> stores a later document's freq against a row an earlier document created,
+> which the per-candidate merge cannot). At real corpus scale every token is a
+> W1, so none of this is observable in the shipped model.
 
 ## 3. `estimate` score (`estimate_k_mixture_model.cpp` → `estimate.rs`)
 
@@ -151,10 +170,14 @@ with identical output, not a divergence; documented in `prune.rs`.
 `export` grammar is byte-identical to `export_k_mixture_model`: the `\data`
 header, `\1-gram` `\item TOKEN WORD count HEADER_WC freq HEADER_FREQ`,
 `\2-gram` `\item T1 W1 T2 W2 count WC T WC N_n_0 N_n_0 n_1 n_1 Mr Mr`
-(note `T ≡ m_WC`), `\end`. Walks are token-ascending (BTreeMap) = DBM
-`get_all_items`/`retrieve_all` order. A record whose token has no phrase
-text is skipped (`taglib_token_to_string → NULL`). `import` is the exact
-inverse. `to-interpolation` (`k_mixture_model_to_interpolation.cpp`) is the
+(note `T ≡ m_WC`), `\end`. The native walks token-ascending (BTreeMap); the
+pin walks in DBM `get_all_items`/`retrieve_all` order, which for the **Tkrzw**
+backend is **hash-iteration order, not token-ascending** (oracle-observed —
+an earlier draft of this audit wrongly claimed they coincide). The KMM `.db`
+is an unordered DBM, so record *order* carries no meaning: the native
+canonicalises to token-ascending, and the live differential compares the
+sorted item *set*, not bytes. A record whose token has no phrase text is
+skipped (`taglib_token_to_string → NULL`). `import` is the exact inverse. `to-interpolation` (`k_mixture_model_to_interpolation.cpp`) is the
 streaming transform: header → `\data model interpolation`; `\1-gram` emits
 `\item TOKEN WORD count FREQ` **from the KMM `freq` field**, dropping
 `sentence_start` and `freq==0`; `\2-gram` emits `\item T1 W1 T2 W2 count WC`.
@@ -174,7 +197,8 @@ ordering. Pinned by `export_grammar_matches_upstream` and
 | D4b | merge magic `m_WC`/`m_total_freq` overflow | `fprintf` + return `false` → `exit(EOVERFLOW)` | `Err` | (c) availability | Same shape: upstream fails the process, oxpinyin returns `Err`. |
 | D4c | prune `remained ∉ [0,1]` | `exit(EDOM)` | `Err(Domain)` | (c) availability | Same shape. |
 | D5 | prune interleave | decide+mutate interleaved | decide-then-apply two-pass | equivalence | Proven identical output (survival reads only constant `m_N` + each pair's own counts). Not a divergence. |
-| D6 | map iteration order | DBM `get_all_items`/`retrieve_all` | BTreeMap ascending | equivalence | DBM order for the flexible bigram *is* token-ascending, and every aggregation is order-independent regardless. Identical output. |
+| D6 | export/serialisation order | Tkrzw `get_all_items` hash order (unordered) | BTreeMap token-ascending (canonical) | canonicalisation | The KMM `.db` is an unordered DBM, so record order is not semantic. The native emits a deterministic token-ascending order; the live differential compares the sorted item *set* (oracle-verified). Not a byte-parity target — matching Tkrzw's hash order is neither possible nor meaningful. |
+| D7 | W2-only unigram header | Tkrzw `set_array_header` no-ops on absent key → no header | native stored all headers → **fixed** to match | defect fixed | Was a real divergence (native created W2-only headers a Kyoto pin would, but the Tkrzw-pinned oracle does not). Now token2-only tokens get no header (`generate.rs`), oracle-verified. |
 
 The one behaviour the audit changed to stay inside the policy: the candidate
 score's empty-deleted-model case. Upstream computes `lambda_sum/lambda_count`
