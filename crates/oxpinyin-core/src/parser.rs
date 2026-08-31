@@ -203,7 +203,7 @@ fn parse_input(input: &[u8], options: OptionBits) -> Result<Vec<ParseResult>, Pa
             return Ok(finish(accumulated, input, remainder_start));
         }
 
-        accumulated = combine(accumulated, group.paths)?;
+        accumulated = combine(accumulated, &group.paths)?;
 
         if !group.complete {
             return Ok(finish(accumulated, input, group_start + group.consumed));
@@ -455,7 +455,7 @@ fn enumerate_fallback_paths(
 
 fn combine(
     left: Vec<Vec<ParsedSyllable>>,
-    right: Vec<Vec<ParsedSyllable>>,
+    right: &[Vec<ParsedSyllable>],
 ) -> Result<Vec<Vec<ParsedSyllable>>, ParseError> {
     let Some(count) = left.len().checked_mul(right.len()) else {
         return Err(too_many_alternatives());
@@ -466,7 +466,7 @@ fn combine(
 
     let mut combined = Vec::with_capacity(count);
     for left_path in left {
-        for right_path in &right {
+        for right_path in right {
             let mut path = Vec::with_capacity(left_path.len() + right_path.len());
             path.extend(left_path.iter().cloned());
             path.extend(right_path.iter().cloned());
@@ -616,11 +616,11 @@ mod tests {
 
     #[test]
     fn complete_paths_follow_frozen_greedy_order() {
-        assert_parse(b"", vec![result(vec![], b"")]);
-        assert_parse(b"ni", vec![result(vec![complete("ni", 0, 2)], b"")]);
+        assert_parse(b"", &[result(vec![], b"")]);
+        assert_parse(b"ni", &[result(vec![complete("ni", 0, 2)], b"")]);
         assert_parse(
             b"nihao",
-            vec![
+            &[
                 result(vec![complete("ni", 0, 2), complete("hao", 2, 5)], b""),
                 result(
                     vec![
@@ -634,14 +634,14 @@ mod tests {
         );
         assert_parse(
             b"xian",
-            vec![
+            &[
                 result(vec![complete("xian", 0, 4)], b""),
                 result(vec![complete("xi", 0, 2), complete("an", 2, 4)], b""),
             ],
         );
         assert_parse(
             b"fangan",
-            vec![
+            &[
                 result(vec![complete("fang", 0, 4), complete("an", 4, 6)], b""),
                 result(vec![complete("fan", 0, 3), complete("gan", 3, 6)], b""),
                 result(
@@ -660,14 +660,14 @@ mod tests {
     fn apostrophes_and_partial_fallback_follow_frozen_boundaries() {
         assert_parse(
             b"xi'an",
-            vec![result(
+            &[result(
                 vec![complete("xi", 0, 2), complete("an", 3, 5)],
                 b"",
             )],
         );
         assert_parse(
             b"chang'an",
-            vec![
+            &[
                 result(vec![complete("chang", 0, 5), complete("an", 6, 8)], b""),
                 result(
                     vec![
@@ -681,22 +681,22 @@ mod tests {
         );
         assert_parse(
             b"nih",
-            vec![result(vec![complete("ni", 0, 2), partial("h", 2, 3)], b"")],
+            &[result(vec![complete("ni", 0, 2), partial("h", 2, 3)], b"")],
         );
         assert_parse(
             b"zhongg",
-            vec![result(
+            &[result(
                 vec![complete("zhong", 0, 5), partial("g", 5, 6)],
                 b"",
             )],
         );
         assert_parse(
             b"ni'h",
-            vec![result(vec![complete("ni", 0, 2), partial("h", 3, 4)], b"")],
+            &[result(vec![complete("ni", 0, 2), partial("h", 3, 4)], b"")],
         );
         assert_parse(
             b"nih'ao",
-            vec![result(
+            &[result(
                 vec![complete("ni", 0, 2), partial("h", 2, 3)],
                 b"'ao",
             )],
@@ -706,7 +706,7 @@ mod tests {
         // the whole input and the right group's own alternates surface.
         assert_parse(
             b"ni''hao",
-            vec![
+            &[
                 result(vec![complete("ni", 0, 2), complete("hao", 4, 7)], b""),
                 result(
                     vec![
@@ -720,8 +720,8 @@ mod tests {
         );
         // Leading apostrophe run: upstream's DP propagates across every
         // `'` at position zero, so `'ni` consumes all three bytes.
-        assert_parse(b"'ni", vec![result(vec![complete("ni", 1, 3)], b"")]);
-        assert_parse(b"''ni", vec![result(vec![complete("ni", 2, 4)], b"")]);
+        assert_parse(b"'ni", &[result(vec![complete("ni", 1, 3)], b"")]);
+        assert_parse(b"''ni", &[result(vec![complete("ni", 2, 4)], b"")]);
     }
 
     #[test]
@@ -742,7 +742,7 @@ mod tests {
         ];
 
         for (input, syllables, remainder) in cases {
-            assert_parse(input, vec![result(syllables.clone(), remainder)]);
+            assert_parse(input, &[result(syllables.clone(), remainder)]);
         }
     }
 
@@ -797,7 +797,7 @@ mod tests {
         );
     }
 
-    fn assert_parse(input: &[u8], expected: Vec<ParseResult>) {
+    fn assert_parse(input: &[u8], expected: &[ParseResult]) {
         let actual = FullPinyinParser
             .parse(input)
             .expect("frozen examples stay below the path limit");

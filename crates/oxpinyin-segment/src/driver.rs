@@ -182,7 +182,7 @@ mod tests {
         unigrams.insert(10, 10);
         unigrams.insert(11, 10);
         unigrams.insert(12, 100);
-        let model = SegmentModel::memory(unigrams, HashMap::new(), &lexicon);
+        let model = SegmentModel::memory(&unigrams, HashMap::new(), &lexicon);
         (lexicon, model)
     }
 
