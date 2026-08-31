@@ -36,7 +36,10 @@ use crate::table::{self, LeByteKey, LookupTable, TableError};
 #[derive(Default)]
 struct PinyinIndex {
     /// `(pinyin key, hits range into `entries`)`, ascending key order.
-    rows: Vec<(Box<str>, Range<usize>)>,
+    /// Keys are inline-backed compact strings: most pinyin keys fit the
+    /// inline storage, so the retained index carries no per-key heap
+    /// allocation.
+    rows: Vec<(CompactString, Range<usize>)>,
     /// Every resolved hit of every row, concatenated in row order.
     entries: Vec<PhraseEntry>,
 }
@@ -45,7 +48,7 @@ impl PinyinIndex {
     /// Exact-key get: the hits slice of `key`, or `None`.
     fn hits(&self, key: &str) -> Option<&[PhraseEntry]> {
         self.rows
-            .binary_search_by(|(stored, _)| stored.as_ref().cmp(key))
+            .binary_search_by(|(stored, _)| stored.as_str().cmp(key))
             .ok()
             .map(|position| &self.entries[self.rows[position].1.clone()])
     }
@@ -406,9 +409,9 @@ fn prefix_probe(sorted: &[String], joined: &str) -> bool {
 fn pinyin_prefix_exists(index: &PinyinIndex, joined: &str) -> bool {
     // First key >= joined; the exact and the boundary-extension hits can
     // only be there, as on the tree's `contains_key` + `range` pair.
-    let first_at_or_after = index.rows.partition_point(|(key, _)| key.as_ref() < joined);
+    let first_at_or_after = index.rows.partition_point(|(key, _)| key.as_str() < joined);
     index.rows.get(first_at_or_after).is_some_and(|(key, _)| {
-        key.as_ref() == joined
+        key.as_str() == joined
             || (key.starts_with(joined) && key.as_bytes().get(joined.len()) == Some(&b'\''))
     })
 }
@@ -427,9 +430,9 @@ fn pinyin_prefix_exists_visible(
     joined: &str,
     visible: impl Fn(u32) -> bool,
 ) -> bool {
-    let first_at_or_after = index.rows.partition_point(|(key, _)| key.as_ref() < joined);
+    let first_at_or_after = index.rows.partition_point(|(key, _)| key.as_str() < joined);
     for (key, range) in &index.rows[first_at_or_after..] {
-        let key_matches = key.as_ref() == joined
+        let key_matches = key.as_str() == joined
             || (key.starts_with(joined) && key.as_bytes().get(joined.len()) == Some(&b'\''));
         if !key_matches {
             // Rows are ascending; once the prefix stops matching, no
@@ -507,11 +510,11 @@ struct PinyinDerived {
 }
 
 /// Staged rows before derivation: spelling → its `{token, freq}` records.
-type PinyinRows = Vec<(Box<str>, Vec<(u32, u32)>)>;
+type PinyinRows = Vec<(CompactString, Vec<(u32, u32)>)>;
 
 /// The resolved `PinyinIndex` payload: the shared entry arena plus each
 /// key's range into it.
-type ResolvedIndex = (Vec<PhraseEntry>, Vec<(Box<str>, Range<usize>)>);
+type ResolvedIndex = (Vec<PhraseEntry>, Vec<(CompactString, Range<usize>)>);
 
 /// The shared derivation over staged rows: sort/dedup, aggregate the
 /// unigram counts, project the initial keys, and resolve every record into
@@ -599,7 +602,7 @@ fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDe
                 )
             })
             .collect();
-        rows.push((Box::from(pinyin), records));
+        rows.push((CompactString::from(pinyin), records));
         Ok::<(), DictError>(())
     })?;
     Ok(derive_pinyin(rows, phrase_index))
@@ -681,7 +684,7 @@ fn resolve_rows(
 
     // Emit row-major in stored order — the arena shape lookups slice.
     let mut entries: Vec<PhraseEntry> = Vec::new();
-    let mut out_rows: Vec<(Box<str>, Range<usize>)> = Vec::with_capacity(rows.len());
+    let mut out_rows: Vec<(CompactString, Range<usize>)> = Vec::with_capacity(rows.len());
     for ((key, records), bounds) in rows.into_iter().zip(bounds) {
         let start = entries.len();
         let offset = bounds.start;
