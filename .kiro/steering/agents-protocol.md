@@ -44,9 +44,11 @@ Never touch or prune another session's worktree.
 
 ## Merges
 
-Stacks merge bottom-up through the PR button; restack with `gh stack`.
-Never close a PR. Never rewrite history on a merged branch. Fetch and
-rebase onto the landing tip before every push and before any merge
+Stacks merge bottom-up through the PR button. Manage stacks with the
+`github/gh-stack` extension (`gh extension install github/gh-stack`);
+`gh stack rebase` restacks — a cascading rebase across the stack. Never
+close a PR. Never rewrite history on a merged branch. Fetch and rebase
+onto the landing tip before every push and before any merge
 (`/AGENTS.md` rebase discipline).
 
 ## Output contract
