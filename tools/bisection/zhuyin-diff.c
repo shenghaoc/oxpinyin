@@ -273,7 +273,11 @@ int main(int argc, char **argv) {
         if (s.get_n_candidate)
             s.get_n_candidate(inst, &n);
         printf("n_candidates: %u\n", n);
-        guint limit = n < 12 ? n : 12;
+        /* The full list, not a head prefix: the n-best row-count divergence
+         * also shifts the phrase tail (a phrase whose text equals a non-first
+         * n-best row is dropped by the pinyin-law dedup where the pin's
+         * zhuyin display law keeps it), so a 12-row dump hides the damage. */
+        guint limit = n;
         for (guint k = 0; k < limit; k++) {
             lookup_candidate_t *cand = NULL;
             if (!s.get_candidate(inst, k, &cand) || !cand) {

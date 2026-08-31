@@ -195,6 +195,11 @@ pub struct Session<D, L> {
     /// `pinyin_train` walks against the constraint store
     /// (`train_result3`). Cleared wherever the rows are.
     last_result: Vec<crate::constraint::PhraseSpan>,
+    /// Whether the prepended sentence rows collapse onto the 1-best row —
+    /// libzhuyin's display law, set per surface via
+    /// [`Session::set_collapse_sentence_rows_to_best`]; off (the pinyin
+    /// surface's one-row-per-sentence law) by default.
+    collapse_sentence_rows_to_best: bool,
     /// Reused across keystrokes: the scan's candidate buffer.
     scratch_collected: Vec<Candidate>,
     /// Reused Schwartzian buffer for the three-key order.
@@ -250,6 +255,7 @@ where
             nbest_rows: Vec::new(),
             nbest_history: Vec::new(),
             sentence_lookup_active: false,
+            collapse_sentence_rows_to_best: false,
             selection_committed: false,
             constraints: crate::constraint::ConstraintStore::default(),
             last_result: Vec::new(),
@@ -1017,6 +1023,29 @@ where
             return Ok(());
         }
         self.refresh()
+    }
+
+    /// Collapses the prepended sentence rows onto the 1-best row — the
+    /// libzhuyin display law. Off by default: the pinyin surface keeps one
+    /// candidate row per n-best sentence.
+    ///
+    /// The two upstream surfaces prepend the same `m_nbest_results.size()`
+    /// rows but fill their strings differently: pinyin fills row `i` through
+    /// `pinyin_get_sentence(instance, m_nbest_index, …)`, keeping one distinct
+    /// string per row (`pinyin.cpp:2004-2007`), while zhuyin fills **every**
+    /// `BEST_MATCH_CANDIDATE` row through `zhuyin_get_sentence`, which always
+    /// reads `get_result(0)` (`zhuyin.cpp:1327-1330`, `:990-995` at the pin
+    /// 0c5e80e1). Identical strings then collide in
+    /// `_remove_duplicated_items_by_phrase_string`, which physically removes
+    /// the duplicates while keeping the BEST_MATCH row
+    /// (`zhuyin.cpp:1425-1438`), so the observable list carries exactly one
+    /// sentence row no matter how many n-best sentences were decoded.
+    /// Prepending only the 1-best row is that pipeline's net effect, and it
+    /// is what keeps the phrase rows upstream keeps: a phrase whose text
+    /// equals a non-first row's own text never collides there (the rows all
+    /// display the 1-best string), so it must not be absorbed here either.
+    pub fn set_collapse_sentence_rows_to_best(&mut self, collapse: bool) {
+        self.collapse_sentence_rows_to_best = collapse;
     }
 
     /// What the shell should display.
@@ -1998,12 +2027,20 @@ where
     /// same string (`pinyin.cpp:2290-2298`, `2058-2126`). Extend-then-
     /// rotate keeps `collected`'s allocation — the session scratch on the
     /// scan path, a fresh small vec on the fully-consumed path.
+    ///
+    /// Under [`Session::set_collapse_sentence_rows_to_best`] only the 1-best
+    /// row is prepended — libzhuyin's display law.
     fn prepend_nbest_rows(&mut self, collected: &mut Vec<Candidate>) {
         if self.nbest_rows.is_empty() {
             return;
         }
-        let nbest_n = self.nbest_rows.len();
-        collected.extend(self.nbest_rows.iter().enumerate().map(|(index, row)| {
+        let rows = if self.collapse_sentence_rows_to_best {
+            &self.nbest_rows[..1]
+        } else {
+            &self.nbest_rows[..]
+        };
+        let nbest_n = rows.len();
+        collected.extend(rows.iter().enumerate().map(|(index, row)| {
             Candidate::new(
                 row.text.clone(),
                 CandidateKind::Sentence,
@@ -5274,6 +5311,71 @@ mod tests {
                 .count()
                 == 1,
             "no phrase rows join the n-best row at the empty column"
+        );
+    }
+
+    #[test]
+    fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
+        use super::CandidateKind;
+        use crate::nbest::NbestRow;
+
+        let row = |text: &str, cost: i64| NbestRow {
+            text: text.into(),
+            tokens: vec![PhraseToken::new(0x100)],
+            spans: Vec::new(),
+            keys: 2,
+            span: 5,
+            cost,
+        };
+
+        // libzhuyin fills every BEST_MATCH row from `zhuyin_get_sentence`
+        // (always `get_result(0)`) and its string dedup removes the
+        // duplicates, so exactly one sentence row is observable regardless of
+        // the decoded n-best count (`zhuyin.cpp:1272-1291`, `1327-1330`,
+        // `1425-1438` at the pin); the pinyin surface keeps one row per
+        // sentence (`pinyin.cpp:2004-2007`).
+        let mut session = train_session();
+        session
+            .type_pinyin("nihaoshijie")
+            .expect("typing cannot fail");
+        session.nbest_rows = vec![row("你好世界", 10), row("你", 12)];
+
+        // Default — the pinyin law: both rows ride the prepend, and the
+        // phrase 你 collides with the second row's own text and is dropped.
+        session.refresh().expect("refresh cannot fail");
+        let sentences: Vec<&str> = session
+            .candidates()
+            .iter()
+            .filter(|cand| cand.kind() == CandidateKind::Sentence)
+            .map(|cand| cand.text())
+            .collect();
+        assert_eq!(sentences, ["你好世界", "你"]);
+        assert!(
+            !session
+                .candidates()
+                .iter()
+                .any(|cand| cand.kind() == CandidateKind::Phrase && cand.text() == "你"),
+            "the phrase colliding with the second row's own text is absorbed"
+        );
+
+        // The zhuyin law: only the 1-best row is prepended, so the phrase
+        // survives — upstream's dedup never sees a second string to collide
+        // it with.
+        session.set_collapse_sentence_rows_to_best(true);
+        session.refresh().expect("refresh cannot fail");
+        let sentences: Vec<&str> = session
+            .candidates()
+            .iter()
+            .filter(|cand| cand.kind() == CandidateKind::Sentence)
+            .map(|cand| cand.text())
+            .collect();
+        assert_eq!(sentences, ["你好世界"]);
+        assert!(
+            session
+                .candidates()
+                .iter()
+                .any(|cand| cand.kind() == CandidateKind::Phrase && cand.text() == "你"),
+            "the phrase survives the collapsed prepend"
         );
     }
 

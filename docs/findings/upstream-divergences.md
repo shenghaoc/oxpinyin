@@ -864,7 +864,7 @@ syllables (`ta`=1, `li`=2, `ju`=2) where the pin reported 0. Root cause was
   parse: with `USE_TONE | FORCE_TONE` both sides report `ta`=0, `li`=0,
   `ju`=0, `su3`=3, `ke3`=3 for the STANDARD keyboard.
 
-## zhuyin candidate-tag grouping + `after(consumed)` terminal offset — engine workstream (type I / class (c))
+## zhuyin candidate-tag grouping + `after(consumed)` terminal offset — tag grouping CLOSED (display-law collapse); terminal offset open (backward-anchored builder)
 
 - **Upstream source cite:** `src/zhuyin.cpp:1272-1291`
   (`_prepend_sentence_candidates` prepends `m_nbest_results.size()`
@@ -899,6 +899,27 @@ syllables (`ta`=1, `li`=2, `ju`=2) where the pin reported 0. Root cause was
   same root cause: `session.candidates()` is forward-anchored and the facade
   cannot UNION multiple `candidates_at` windows. One implementation direction
   covers all three: the backward-anchored window builder; see the next entry.
+
+  (Amended 2026-08-31: the tag-grouping half is CLOSED — the row-count
+  divergence was the **string-fill law**, not the n-best constants. Upstream
+  zhuyin fills every `BEST_MATCH_CANDIDATE` row through `zhuyin_get_sentence`,
+  which always reads `get_result(0)` (`zhuyin.cpp:1327-1330`, `:990-995`),
+  unlike the pinyin surface's per-index `pinyin_get_sentence`
+  (`pinyin.cpp:2004-2007`); identical strings collide in
+  `_remove_duplicated_items_by_phrase_string`, which physically removes the
+  duplicates (`zhuyin.cpp:1425-1438`), so exactly one sentence row is
+  observable regardless of the n-best count. oxpinyin was applying the pinyin
+  per-row law on the zhuyin surface. Fixed scheme-locally: the zhuyin facade
+  sets `Session::set_collapse_sentence_rows_to_best(true)` and the prepend
+  rides only the 1-best row — leaving `NSTORE`/`NBEST_ROWS` (and the shared
+  trellis) untouched. Measured on the full-row differential
+  (`tools/bisection/zhuyin-diff.c` now dumps every row): before the fix 253
+  oracle rows vs 254 oxpinyin rows with `su3` candidate[1] `AFTER`/尼 vs
+  `BEST_MATCH`/尼 and `su3u3` `after(0)` 128 vs 129 with candidate[1]
+  `AFTER`/拟议 vs `BEST_MATCH`/你以 — after the fix the driver is byte-identical
+  (revert-and-check: reverting the two source edits reproduces the 259-line
+  diff). The `after(consumed)` terminal-offset half stays open for the
+  backward-anchored window builder.)
 
 ## zhuyin before-cursor candidate window — single-syllable CLOSED, multi-syllable engine gap
 
@@ -965,6 +986,51 @@ tags.
   grouping entry all share one underlying cause and one implementation
   direction: the backward-anchored window builder mirroring the pin's
   `search_matrix` walk over spans ending at the offset.
+
+  (Amended 2026-08-31: CLOSED — the divergence was the pinyin string-fill law
+  riding the zhuyin surface, not the candidate-construction model: every
+  symptom (count +1, `candidate[1]` TEXT `你以` vs `拟议`, TYPE
+  `BEST_MATCH` vs `AFTER`) traces to the second n-best sentence row
+  surviving where upstream zhuyin's display law collapses all sentence rows
+  onto the 1-best string. See the candidate-tag grouping entry above for the
+  law, the fix shape (`Session::set_collapse_sentence_rows_to_best`, set by
+  the zhuyin facade only), and the measured before/after numbers. The full-row
+  differential is byte-identical after the fix, revert-and-check proven.
+  The `before(consumed)` half of the measured list stays open in the
+  before-cursor entry below — that is the backward-anchored window builder's,
+  not this entry's.)
+
+## zhuyin n-best trellis constants: `PhoneticLookup<1, 1>` vs the engine's `<2, 3>` port — registered, not yet fixed
+
+- **Upstream source cite:** `src/zhuyin.cpp:50` (`PhoneticLookup<1, 1> *
+  m_pinyin_lookup` — `nstore = 1`, `nbest = 1` for libzhuyin) vs
+  `src/pinyin.cpp:55` (`PhoneticLookup<2, 3>` for libpinyin); the beam/tail
+  selection is `src/lookup/phonetic_lookup.h:330-341` (`get_tails` caps the
+  results with `get_top_results<nstore>(nbest, …)`).
+- **Mechanism:** the two upstream surfaces instantiate the same beam search
+  with different constants. libzhuyin keeps ONE value per
+  `(position, token)` trellis node and extracts at most ONE sentence tail;
+  libpinyin keeps two and up to three. The candidate-list half of the
+  observable difference is masked by the zhuyin display law (see the
+  candidate-tag grouping entry — every sentence row displays the 1-best
+  string and the dedup collapses them), but the trellis depth itself (which
+  `(position, token)` values survive pruning, and with them the constraint
+  and training walks' available rows) genuinely differs between the
+  surfaces.
+- **What oxpinyin does instead:** `crates/oxpinyin-engine/src/nbest.rs`
+  hardcodes `NSTORE = 2` / `NBEST_ROWS = 3` — the pinyin instantiation — for
+  both surfaces. Surfaced by the Phase-1 work on the candidate-window
+  builder (2026-08-31); an earlier reading took the constants for the cause
+  of the row-count divergence, which the string-fill law turned out to be.
+- **Externally observable:** not through today's libzhuyin candidate
+  surface (`zhuyin.h` exposes no per-index sentence getter, and the display
+  law collapses the list), so no differential row moves today. It becomes
+  observable through any future per-row sentence access on the zhuyin
+  surface, and the pruning depth is measurable against the pin's
+  constraint/train behaviour. Fix shape when taken: per-surface constants
+  through const generics (the `parse_with_options` additive pattern), NOT a
+  global constant edit — the full-pinyin corpus pins freeze the `<2, 3>`
+  behaviour.
 
 ## zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default
 
