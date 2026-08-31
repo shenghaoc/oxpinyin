@@ -13,9 +13,9 @@ init/RAM reduction) in progress.
 ## Quickstart
 
 ```sh
+# Debian/Ubuntu: apt-get install libkyotocabinet-dev libclang-dev libglib2.0-dev pkg-config
 cargo fmt --all --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
-# Debian/Ubuntu: apt-get install libkyotocabinet-dev libclang-dev libglib2.0-dev pkg-config
 cargo test --locked --workspace
 cargo test --locked --workspace --no-default-features --features redb  # portable fallback
 ```
