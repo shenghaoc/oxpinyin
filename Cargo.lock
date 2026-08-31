@@ -894,6 +894,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxpinyin-train"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-core",
+ "oxpinyin-counter",
+ "oxpinyin-data",
+ "oxpinyin-eval",
+ "oxpinyin-kmm",
+ "oxpinyin-lambda",
+ "oxpinyin-segment",
+ "oxpinyin-testsupport",
+]
+
+[[package]]
 name = "oxpinyin-user"
 version = "0.1.0"
 dependencies = [

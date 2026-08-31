@@ -20,6 +20,7 @@ members = [
   "crates/oxpinyin-punct",
   "crates/oxpinyin-word",
   "crates/oxpinyin-eval",
+  "crates/oxpinyin-train",
   "crates/oxpinyin-emitter",
   "crates/oxpinyin-corpus",
   "crates/oxpinyin-testsupport",
