@@ -1,0 +1,129 @@
+# Reproducible 4-cell performance-matrix environment.
+#
+# Builds all four implementation × backend configurations:
+#   A. libpinyin  + Tkrzw          (upstream oracle pin)
+#   B. libpinyin  + Kyoto Cabinet  (same source, different --with-dbm)
+#   C. oxpinyin   + Tkrzw          (cargo feature: tkrzw)
+#   D. oxpinyin   + Kyoto Cabinet  (cargo feature: kyotocabinet, default)
+#
+# Run the full matrix:
+#   docker build --platform linux/arm64 -f tools/bisection/Dockerfile.perf-matrix -t oxpinyin-matrix .
+#   docker run --rm -v /tmp/matrix-out:/out oxpinyin-matrix
+#
+# Interactive:
+#   docker run --rm -it -v /tmp/matrix-out:/out oxpinyin-matrix bash
+
+FROM --platform=linux/arm64 debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
+
+RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
+    && echo 'deb http://snapshot.debian.org/archive/debian/20260831T000000Z testing main' \
+    > /etc/apt/sources.list
+
+RUN apt-get -o Acquire::Check-Valid-Until=false update \
+    && apt-get install -y --no-install-recommends \
+    build-essential \
+    autoconf automake autopoint libtool \
+    pkg-config gettext gnome-common \
+    curl ca-certificates \
+    tar \
+    python3 \
+    libglib2.0-dev \
+    libtkrzw-dev \
+    libkyotocabinet-dev \
+    liblz4-dev \
+    libzstd-dev \
+    libsqlite3-dev sqlite3 \
+    libclang-dev \
+    libssl-dev \
+    libibus-1.0-dev \
+    util-linux \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 -sSfL \
+    "https://static.rust-lang.org/rustup/archive/1.29.0/aarch64-unknown-linux-gnu/rustup-init" \
+    -o /tmp/rustup-init \
+    && echo "9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792  /tmp/rustup-init" \
+    | sha256sum -c - \
+    && chmod +x /tmp/rustup-init \
+    && /tmp/rustup-init -y --default-toolchain 1.97.1 --profile minimal \
+    --component clippy,rustfmt \
+    && rm /tmp/rustup-init
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN cargo install cargo-c@0.10.25 --locked
+
+COPY . /repo
+WORKDIR /repo
+
+# ── Shared: model data + libpinyin source ────────────────────────────
+
+RUN bash tools/model/fetch-model.sh
+
+RUN curl --fail -L --retry 3 \
+    "https://codeload.github.com/libpinyin/libpinyin/tar.gz/refs/tags/2.11.91" \
+    -o /tmp/libpinyin.tar.gz \
+    && echo "eb25890dab0072eb0744c9ee1bc152051143b7bc23aea2a424792a9b1b84bdcb  /tmp/libpinyin.tar.gz" \
+    | sha256sum -c -
+
+# ── Cell A: libpinyin + Tkrzw ────────────────────────────────────────
+
+RUN mkdir -p /tmp/build-A && tar xzf /tmp/libpinyin.tar.gz -C /tmp/build-A \
+    && cp target/model20/extracted/* /tmp/build-A/libpinyin-2.11.91/data/ \
+    && cd /tmp/build-A/libpinyin-2.11.91 \
+    && autoreconf --force --install \
+    && ./configure --prefix=/opt/libpinyin-tkrzw --disable-static --with-dbm=Tkrzw \
+    && make -j"$(nproc)" && make install \
+    && rm -rf /tmp/build-A
+
+# ── Cell B: libpinyin + Kyoto Cabinet ────────────────────────────────
+
+RUN mkdir -p /tmp/build-B && tar xzf /tmp/libpinyin.tar.gz -C /tmp/build-B \
+    && cp target/model20/extracted/* /tmp/build-B/libpinyin-2.11.91/data/ \
+    && cd /tmp/build-B/libpinyin-2.11.91 \
+    && autoreconf --force --install \
+    && ./configure --prefix=/opt/libpinyin-kc --disable-static --with-dbm=KyotoCabinet \
+    && make -j"$(nproc)" && make install \
+    && rm -rf /tmp/build-B
+
+# ── Cell D: oxpinyin + Kyoto Cabinet (default) ──────────────────────
+
+RUN cargo cinstall --locked --release -p oxpinyin-capi \
+    --destdir=/opt/oxpinyin-kc/stage --prefix=/usr \
+    --manifest-path /repo/Cargo.toml
+
+RUN cargo run --locked --release -p oxpinyin-datagen -- compile \
+    --model-dir target/model20/extracted \
+    --out-dir /opt/oxpinyin-kc/data
+
+# ── Cell C: oxpinyin + Tkrzw ────────────────────────────────────────
+
+RUN cargo cinstall --locked --release -p oxpinyin-capi \
+    --no-default-features --features tkrzw \
+    --destdir=/opt/oxpinyin-tkrzw/stage --prefix=/usr \
+    --manifest-path /repo/Cargo.toml
+
+RUN cargo run --locked --release -p oxpinyin-datagen \
+    --no-default-features --features tkrzw -- compile \
+    --model-dir target/model20/extracted \
+    --backend tkrzw \
+    --out-dir /opt/oxpinyin-tkrzw/data
+
+# ── Strip all .so files for apples-to-apples size comparison ────────
+
+RUN find /opt/libpinyin-tkrzw /opt/libpinyin-kc \
+    /opt/oxpinyin-kc/stage /opt/oxpinyin-tkrzw/stage \
+    -name '*.so*' -type f ! -name '*.py' -exec strip --strip-all {} +
+
+# ── Build the bisect harness ────────────────────────────────────────
+
+RUN gcc -std=gnu11 -Wall -Wextra -Werror -O2 \
+    -o /repo/tools/bisection/bisect \
+    /repo/tools/bisection/bisect.c -ldl
+
+ENV PERF_CPU=0
+ENV PERF_RUNS=20
+ENV PERF_CYCLES=8
+ENV PERF_RAM_RUNS=10
+ENV MATRIX_OUT=/out
+
+CMD ["bash", "tools/bisection/run-perf-matrix.sh"]
