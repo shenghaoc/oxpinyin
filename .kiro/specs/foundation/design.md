@@ -55,3 +55,5 @@ model20 archive is non-redistributable and never enters CI.
 (`abi3-py310` + `abi3t-py315`) and the GIL released around session work.
 
 Out of scope: dictionary loading, LM, decoding, IBus.
+
+**Reference:** [libpinyin wiki](https://github.com/libpinyin/libpinyin/wiki) — architecture, parser internals, and data formats; the authoritative upstream source while the project catches up.
