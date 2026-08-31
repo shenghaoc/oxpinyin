@@ -5,7 +5,7 @@
 //! total and deterministic on every byte sequence.
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin_core::fixture::{FixtureDictionary, FixtureLanguageModel};
+use oxpinyin_testsupport::fixture::{FixtureDictionary, FixtureLanguageModel};
 
 fuzz_target!(|data: &[u8]| {
     // Any prefix is the vocab half; the remainder is the bigram half.
