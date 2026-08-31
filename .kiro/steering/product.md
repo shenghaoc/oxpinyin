@@ -40,3 +40,5 @@ started. **Python:** `oxpinyin-python` serves the engine session API over
 PyO3 (not the C ABI), free-threaded CPython, GIL released. **Frontends:**
 no frontend drives the ABI end-to-end yet; fcitx5-oxpinyin appears in the
 findings as a reference consumer, not a shipped driver.
+
+**Reference:** [libpinyin wiki](https://github.com/libpinyin/libpinyin/wiki) — architecture, data formats and model description; the authoritative upstream source while the project catches up.
