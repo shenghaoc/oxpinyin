@@ -173,6 +173,9 @@ static const char *SYLLABLE_CORPUS[] = {
                      * terminal offset (the multi-syllable engine gap: the pin
                      * returns the last syllable's candidates + sentence rows,
                      * oxpinyin the composition-anchored subset) */
+    "su3u3u3",      /* ㄋㄧˇ ㄧˇ ㄧˇ — three-syllable; the before-cursor walk
+                     * must pool spans ending at each key boundary across
+                     * three syllables */
     "zhang",        /* ㄓㄤ (no tone) -- the W13 live row */
     "zhan",         /* ㄓㄢ */
     "n",            /* initial-only ㄋ */
@@ -182,6 +185,30 @@ static const char *SYLLABLE_CORPUS[] = {
     "nin",          /* ㄋㄧㄣ */
     "hao",          /* ㄏㄠ */
 };
+
+static void dump_candidates(const struct symbols *s, zhuyin_instance_t *inst) {
+    guint n = 0;
+    if (s->get_n_candidate)
+        s->get_n_candidate(inst, &n);
+    printf("n_candidates: %u\n", n);
+    /* The full list, not a head prefix: the n-best row-count divergence
+     * also shifts the phrase tail (a phrase whose text equals a non-first
+     * n-best row is dropped by the pinyin-law dedup where the pin's
+     * zhuyin display law keeps it), so a 12-row dump hides the damage. */
+    for (guint k = 0; k < n; k++) {
+        lookup_candidate_t *cand = NULL;
+        if (!s->get_candidate(inst, k, &cand) || !cand) {
+            printf("  candidate[%u]: FAILED\n", k);
+            continue;
+        }
+        const gchar *text = NULL;
+        s->get_candidate_string(inst, cand, &text);
+        lookup_candidate_type_t ctype = NORMAL_CANDIDATE_AFTER_CURSOR;
+        s->get_candidate_type(inst, cand, &ctype);
+        printf("  candidate[%u]: type=%s text=\"%s\"\n",
+               k, ctype_name(ctype), text ? text : "(null)");
+    }
+}
 
 int main(int argc, char **argv) {
     if (argc < 3) {
@@ -267,34 +294,34 @@ int main(int argc, char **argv) {
                 g_free_fn(sent);
         }
 
-        bool ga = s.guess_after(inst, 0);
-        printf("guess_after_cursor: %s\n", ga ? "true" : "false");
-        guint n = 0;
-        if (s.get_n_candidate)
-            s.get_n_candidate(inst, &n);
-        printf("n_candidates: %u\n", n);
-        /* The full list, not a head prefix: the n-best row-count divergence
-         * also shifts the phrase tail (a phrase whose text equals a non-first
-         * n-best row is dropped by the pinyin-law dedup where the pin's
-         * zhuyin display law keeps it), so a 12-row dump hides the damage. */
-        guint limit = n;
-        for (guint k = 0; k < limit; k++) {
-            lookup_candidate_t *cand = NULL;
-            if (!s.get_candidate(inst, k, &cand) || !cand) {
-                printf("  candidate[%u]: FAILED\n", k);
+        /* The five lookup surfaces, each rebuilding the list and dumping it
+         * in full: after(0), after(consumed), before(0), before(3) (a key
+         * boundary mid-composition; skipped when consumed < 3 so the
+         * oracle's out-of-range matrix read is never poked), and
+         * before(consumed). A guess rebuilds the instance's list wholesale
+         * on both sides (upstream too), so the shared up-front
+         * guess_sentence keeps the sequence symmetric. */
+        const struct lookup_spec {
+            bool before;
+            size_t offset;
+            const char *label;
+        } lookups[] = {
+            {false, 0, "after(0)"},
+            {false, consumed, "after(consumed)"},
+            {true, 0, "before(0)"},
+            {true, 3, "before(3)"},
+            {true, consumed, "before(consumed)"},
+        };
+        for (size_t l = 0; l < sizeof(lookups) / sizeof(lookups[0]); l++) {
+            if (lookups[l].offset > consumed)
                 continue;
-            }
-            const gchar *text = NULL;
-            s.get_candidate_string(inst, cand, &text);
-            lookup_candidate_type_t ctype = NORMAL_CANDIDATE_AFTER_CURSOR;
-            s.get_candidate_type(inst, cand, &ctype);
-            printf("  candidate[%u]: type=%s text=\"%s\"\n",
-                   k, ctype_name(ctype), text ? text : "(null)");
+            bool ok = lookups[l].before
+                          ? s.guess_before(inst, lookups[l].offset)
+                          : s.guess_after(inst, lookups[l].offset);
+            printf("%s: %s\n", lookups[l].label, ok ? "true" : "false");
+            dump_candidates(&s, inst);
         }
 
-        /* Exercise the before-cursor family on the same parse. */
-        bool gb = s.guess_before(inst, consumed != 0 ? consumed : 0);
-        printf("guess_before_cursor: %s\n", gb ? "true" : "false");
         s.reset(inst);
         printf("reset_parsed_len: %zu\n", s.parsed_len(inst));
         printf("\n");

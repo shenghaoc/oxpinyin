@@ -864,7 +864,7 @@ syllables (`ta`=1, `li`=2, `ju`=2) where the pin reported 0. Root cause was
   parse: with `USE_TONE | FORCE_TONE` both sides report `ta`=0, `li`=0,
   `ju`=0, `su3`=3, `ke3`=3 for the STANDARD keyboard.
 
-## zhuyin candidate-tag grouping + `after(consumed)` terminal offset — tag grouping CLOSED (display-law collapse); terminal offset open (backward-anchored builder)
+## zhuyin candidate-tag grouping + `after(consumed)` terminal offset — CLOSED (display-law collapse + builder terminal mapping)
 
 - **Upstream source cite:** `src/zhuyin.cpp:1272-1291`
   (`_prepend_sentence_candidates` prepends `m_nbest_results.size()`
@@ -921,7 +921,18 @@ syllables (`ta`=1, `li`=2, `ju`=2) where the pin reported 0. Root cause was
   diff). The `after(consumed)` terminal-offset half stays open for the
   backward-anchored window builder.)
 
-## zhuyin before-cursor candidate window — single-syllable CLOSED, multi-syllable engine gap
+  (Amended 2026-08-31, second half: the `after(consumed)` terminal offset is
+  CLOSED by the same builder change — the original-offset mapping is now
+  direction- and terminal-aware (`zhuyin_lookup_session_offset`): the
+  terminal lookup answers the session buffer's one-past-end (the pin's
+  reserved slot, where the span walk yields nothing and only the prepended
+  sentence rows answer — `true` with the BEST_MATCH row, measured identical
+  on the extended differential at after(consumed) for every corpus input),
+  closing the class (c) coordinate gap. The tag-grouping and terminal-offset
+  halves of this entry are both closed; see the before-cursor entry for the
+  builder's full measured numbers.)
+
+## zhuyin before-cursor candidate window — CLOSED (backward-anchored window builder)
 
 The facade's `zhuyin_guess_candidates_before_cursor` originally reused the
 composition-anchored cached candidate window, so `before(0)` wrongly returned
@@ -949,6 +960,37 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
   `before(consumed)` on a multi-syllable composition. Registered as engine
   workstream, not a facade defect (the single-syllable ABI surface is
   correct).
+
+  (Amended 2026-08-31: CLOSED — the engine gained the backward-anchored
+  window builder `Session::candidates_ending_at(offset)` (additive, the
+  `parse_with_options` seam pattern): the prefix graph's scan matrix walked
+  per start `0..offset` ascending — the pin's longest-span-first `len` loop
+  (`zhuyin.cpp:1575-1631`) — each span's slice ranked by the three-key order
+  with its own previous-token gram, groups concatenated, the sentence rows
+  prepended, one text dedup. The facade maps the original offset
+  directionally (`zhuyin_lookup_session_offset`): the after family takes the
+  right-key start, the before family the LEFT-KEY END — a mid-composition
+  boundary is the apostrophe byte in the `'`-joined buffer, and upstream's
+  walk answers the left syllable's candidates there — and the terminal
+  offset answers the buffer's one-past-end. Sentence rows are exempt from
+  the facade's before-end filter (the prepend law has no offset condition).
+  Decomposition first, per review — measured on the instrumented oracle at
+  0c5e80e1: `before(5)` on su3u3 = span (0,5) 3 phrase candidates + span
+  (3,5) 597 + mid-syllable starts (1,2,4) no match (empty columns,
+  `SEARCH_NONE`) = 600 phrases, +1 sentence row, −1 string-duplicate → 600;
+  the register's earlier "597 + sentence rows" arithmetic was a
+  simplification, as suspected. Measured differential (the driver now dumps
+  n/TEXT/TYPE in full at after(0), after(consumed), before(0), before(3),
+  before(consumed), over 11 inputs including three-syllable `su3u3u3`):
+  before the fix `before(consumed)` on su3u3 is 3 (oxpinyin) vs 600 (pin)
+  and `before(3)` 1 vs 126; after the fix the extended driver is
+  byte-identical (revert-and-check: reverting the builder and facade edits
+  reproduces a 1728-line diff). Note the surface shift: with
+  `zhuyin_guess_sentence` run before the lookups (the driver's sequence)
+  the pin's `before(3)` on su3u3 is 126 — the 125 in the original
+  measurement was the same walk without the prepended sentence row. The
+  single-syllable surface (su3 `before(consumed)` = 125 both sides) is
+  unchanged.)
 
 ## zhuyin multi-syllable candidate construction — engine workstream
 
