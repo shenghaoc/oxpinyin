@@ -39,6 +39,18 @@ There is no single mmap'ed libpinyin representation standing in for
 all of these structures, and an oxpinyin-side replacement for one is
 not a compatible substitute.
 
+## What this means for current performance
+
+**Nothing in the shipped runtime changed.** The performance results of
+record remain #260's: oxpinyin initializes in ~86 ms (KC) / ~106 ms
+(Tkrzw) at ~69–73 MiB RSS, because the runtime still eagerly loads its
+own store tables. The numbers below are the *withdrawn* iteration's
+measurements, kept only as evidence of where the cost lives. The
+follow-up stack replaces them: P1 (PR #269) delivers the
+`MemoryChunk`/`SubPhraseIndex` reader over libpinyin's real files;
+P2/P3 rewire the system dictionary onto libpinyin's DBMs and chunk
+files; only then is initialization re-measured.
+
 ## 1. The baseline this starts from
 
 PR #260 established that oxpinyin's ~100× initialization gap and 4–5×
