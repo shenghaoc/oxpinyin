@@ -281,7 +281,9 @@ impl BigramLanguageModel {
 
     /// Convenience: installs unigrams from a dictionary's aggregated map.
     pub fn set_unigrams_from_dict(&mut self, dict: &crate::SystemDictionary) {
-        self.set_unigrams(dict.unigram_map().clone(), dict.unigram_total());
+        self.unigrams = Some(UnigramTable::from_records(dict.unigram_records()));
+        self.unigram_total = dict.unigram_total();
+        self.real_unigrams = false;
     }
 
     /// Number of previous-token entries.

@@ -150,6 +150,22 @@ impl UnigramTable {
             total,
         }
     }
+
+    /// Installs records from a dictionary's already-sorted `(token, count)`
+    /// vector — the sorted-records twin of [`Self::from_map`], used by
+    /// [`crate::BigramLanguageModel::set_unigrams_from_dict`] so the
+    /// dictionary's aggregate passes through without a map round-trip.
+    pub(crate) fn from_records(records: &[(u32, u64)]) -> Self {
+        let mut entries: Vec<(u32, u64)> = records.to_vec();
+        entries.sort_unstable_by_key(|&(token, _)| token);
+        let total = entries
+            .iter()
+            .fold(0_u64, |sum, &(_, count)| sum.saturating_add(count));
+        Self {
+            records: entries.into_boxed_slice(),
+            total,
+        }
+    }
 }
 
 /// Parses the `\1-gram` section of an `interpolation2.text` model export.
