@@ -64,12 +64,19 @@ oxpinyin-user.workspace = true
 generation = false
 # The real libzhuyin installs its header under the same version-stamped
 # subdirectory as libpinyin (/usr/include/libpinyin-2.11.91/zhuyin.h).
+# zhuyin.h includes novel_types.h and zhuyin_custom2.h; zhuyin_custom2.h
+# includes pinyin_custom2.h, so all three shipped companions close the set.
 subdirectory = "libpinyin-2.11.91"
 
 [package.metadata.capi.install.include]
 asset = [
     { from = "zhuyin.h", to = "libpinyin-2.11.91" },
     { from = "zhuyin_custom2.h", to = "libpinyin-2.11.91" },
+    # zhuyin.h -> novel_types.h; zhuyin_custom2.h -> pinyin_custom2.h. Both
+    # companions ship so the header resolves standalone (the drop-in installs
+    # the closed include set, matching upstream's libzhuyin install tree).
+    { from = "novel_types.h", to = "libpinyin-2.11.91" },
+    { from = "pinyin_custom2.h", to = "libpinyin-2.11.91" },
 ]
 
 [package.metadata.capi.pkg_config]
