@@ -3,12 +3,12 @@
 # Builds both oracle (libpinyin-2.11.91 + Tkrzw) and oxpinyin-capi
 # (Kyoto Cabinet backend) in a single image. Run the benchmark with:
 #
-#   docker build -f tools/bisection/Dockerfile.perf-baseline -t oxpinyin-perf .
+#   docker build --platform linux/arm64 -f tools/bisection/Dockerfile.perf-baseline -t oxpinyin-perf .
 #   docker run --rm -v /tmp/perf-out:/out oxpinyin-perf
 #
 # The container writes JSONL captures and markdown reports to /out.
 
-FROM debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
+FROM --platform=linux/arm64 debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
