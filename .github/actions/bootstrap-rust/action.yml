@@ -6,6 +6,13 @@ description: |
   build links), registers the checkout as a git safe.directory, and
   installs the Rust toolchain.
 
+  Prerequisite: each caller MUST run a pre-checkout step that installs
+  `git ca-certificates` so that actions/checkout does a proper git clone
+  (creating .git/), not a REST API tarball fallback (which leaves no
+  .git/ — fetch-model.sh's "git would track" guard then misses and the
+  model_fetch::refuses_a_tracked_cache_path test fails). The pre-step
+  is two packages only; the full build-apt line lives here.
+
   The apt package set mirrors store-backends.yml's native-deps step, not
   ci.yml's: ci.yml runs on bare ubuntu-latest (build-essential preinstalled),
   while this action's callers all run inside debian:testing, which ships
