@@ -10,6 +10,23 @@ name: verify-nightly
 # style: the nightly lanes exist to surface drift early, and the rolling
 # distro toolchain is part of what they exercise. The image is
 # deliberately unpinned — do not "stabilise" it.
+#
+# Every Rust-building job follows the same pattern:
+#   1. Pre-checkout apt: install git + ca-certificates so actions/checkout
+#      does a proper git clone (creating .git/). Without this, the bare
+#      debian:testing container has no git, so checkout falls back to the
+#      REST API tarball — which leaves no .git/ and breaks tests that
+#      rely on git rev-parse (model_fetch::refuses_a_tracked_cache_path).
+#   2. actions/checkout (now git is available)
+#   3. .github/actions/bootstrap-rust — the full build-apt line (gcc, g++,
+#      make, libc6-dev, pkg-config, libclang-dev, libkyotocabinet-dev,
+#      libglib2.0-dev) + safe.directory + Rust toolchain install.
+#
+# The composite action is the drift-prevention mechanism: a comment saying
+# "keep in sync" is what failed here — the header comment above made the
+# same claim, and the missing apt step went unnoticed through review and
+# two scheduled runs. store-backends.yml and ci.yml are NOT refactored onto
+# it yet — that is a follow-up.
 
 on:
   schedule:
@@ -42,24 +59,18 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc util-linux
+      - name: Pre-checkout apt (git for actions/checkout)
+        run: apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: ./.github/actions/bootstrap-rust
+        with:
+          toolchain: nightly-2026-08-01
+          rust-components: rust-src
+          extra-apt-packages: util-linux
       # One nightly toolchain serves both cargo-fuzz's build and the runs
       # (cargo install works on nightly; no second toolchain needed).
-      - name: Install the pinned nightly with Rust sources
-        run: |
-          set -euo pipefail
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain nightly-2026-08-01 --component rust-src
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Seed corpora
         run: |
@@ -102,22 +113,17 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
+      - name: Pre-checkout apt (git for actions/checkout)
+        run: apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install the pinned nightly with Miri
-        run: |
-          set -euo pipefail
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain nightly-2026-08-01 --component miri rust-src
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
+      - uses: ./.github/actions/bootstrap-rust
+        with:
+          toolchain: nightly-2026-08-01
+          # rustup-init requires --component repeated per component;
+          # the composite action handles this from the space-separated list.
+          rust-components: miri rust-src
       - run: cargo +nightly-2026-08-01 miri setup
       - run: cargo +nightly-2026-08-01 miri test -p oxpinyin-core -p oxpinyin-store
 
@@ -135,23 +141,12 @@ jobs:
     env:
       RUSTFLAGS: -C overflow-checks=y -C debug-assertions=y -D warnings
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
+      - name: Pre-checkout apt (git for actions/checkout)
+        run: apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$channel"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
+      - uses: ./.github/actions/bootstrap-rust
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo test --locked --workspace --release
 
@@ -166,23 +161,12 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
+      - name: Pre-checkout apt (git for actions/checkout)
+        run: apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$channel"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
+      - uses: ./.github/actions/bootstrap-rust
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install pinned cargo-llvm-cov
         run: |
@@ -212,23 +196,16 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc pkg-config libssl-dev
+      - name: Pre-checkout apt (git for actions/checkout)
+        run: apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$channel"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
+      - uses: ./.github/actions/bootstrap-rust
+        with:
+          # pkg-config is already in the composite action's base set;
+          # libssl-dev is geiger's only extra.
+          extra-apt-packages: libssl-dev
       - run: cargo install cargo-geiger --version 0.13.0 --locked
       - run: cargo geiger > geiger-report.txt || cargo geiger --output-format text > geiger-report.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -277,23 +254,12 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
+      - name: Pre-checkout apt (git for actions/checkout)
+        run: apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$channel"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
+      - uses: ./.github/actions/bootstrap-rust
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo install cargo-mutants --version 27.1.0 --locked
       # --locked is not a cargo-mutants option; the supported form passes
@@ -322,23 +288,12 @@ jobs:
       run:
         shell: bash
     steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
+      - name: Pre-checkout apt (git for actions/checkout)
+        run: apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Register the checkout as a git safe.directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install the pinned Rust toolchain
-        run: |
-          set -euo pipefail
-          channel="$(awk -F '"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain "$channel"
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
+      - uses: ./.github/actions/bootstrap-rust
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install pinned cargo-nextest
         run: |

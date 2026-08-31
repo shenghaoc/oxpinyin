@@ -16,6 +16,9 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 oxpinyin-core = { path = "../crates/oxpinyin-core" }
+# fixture-model: hostile bytes through the fixture dict/LM parsers (audit
+# F-1/F-2 class). The types live in the testsupport crate, not core.
+oxpinyin-testsupport = { path = "../crates/oxpinyin-testsupport" }
 # dict-loader: hostile bytes through the table decoder (audit F-3 class).
 oxpinyin-data = { path = "../crates/oxpinyin-data" }
 # capi-commands: stateful session fuzzer over the C ABI (libchewing

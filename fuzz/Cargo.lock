@@ -262,6 +262,7 @@ dependencies = [
  "oxpinyin-capi",
  "oxpinyin-core",
  "oxpinyin-data",
+ "oxpinyin-testsupport",
 ]
 
 [[package]]
@@ -279,6 +280,13 @@ name = "oxpinyin-store"
 version = "0.1.0"
 dependencies = [
  "bindgen",
+]
+
+[[package]]
+name = "oxpinyin-testsupport"
+version = "0.1.0"
+dependencies = [
+ "oxpinyin-core",
 ]
 
 [[package]]

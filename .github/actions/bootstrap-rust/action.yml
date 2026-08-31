@@ -1,0 +1,97 @@
+name: 'Bootstrap Rust container job'
+description: |
+  Shared bootstrap for every verify-nightly job that builds Rust inside a
+  debian:testing container. Installs the build-apt line (compiler + libc
+  headers + the Kyoto Cabinet native deps the default-feature --workspace
+  build links), registers the checkout as a git safe.directory, and
+  installs the Rust toolchain.
+
+  Prerequisite: each caller MUST run a pre-checkout step that installs
+  `git ca-certificates` so that actions/checkout does a proper git clone
+  (creating .git/), not a REST API tarball fallback (which leaves no
+  .git/ — fetch-model.sh's "git would track" guard then misses and the
+  model_fetch::refuses_a_tracked_cache_path test fails). The pre-step
+  is two packages only; the full build-apt line lives here.
+
+  The apt package set mirrors store-backends.yml's native-deps step, not
+  ci.yml's: ci.yml runs on bare ubuntu-latest (build-essential preinstalled),
+  while this action's callers all run inside debian:testing, which ships
+  nothing. g++ and make are named explicitly because KC is a C++ library and
+  bindgen's build scripts invoke make; libc6-dev is named explicitly even
+  though g++ pulls it transitively (Depends chain g++ → libstdc++-<N>-dev →
+  libc6-dev, verified in-container) so the contract does not break if the
+  transitive edge changes.
+
+  The tkrzw-specific packages (libtkrzw-dev, liblzma-dev, liblz4-dev,
+  libzstd-dev, zlib1g-dev) are deliberately NOT included: the
+  default-feature --workspace build selects the Kyoto Cabinet backend, not
+  tkrzw. Jobs that need tkrzw pass it through extra-apt-packages.
+
+inputs:
+  toolchain:
+    description: 'Rust toolchain to install (e.g. "stable", "nightly-2026-08-01", or "" to read from rust-toolchain.toml)'
+    required: false
+    default: ''
+  rust-components:
+    description: 'Space-separated rustup components to install (e.g. "miri rust-src"); each gets its own --component flag'
+    required: false
+    default: ''
+  extra-apt-packages:
+    description: 'Extra apt packages to append to the install line (e.g. "util-linux" or "libssl-dev")'
+    required: false
+    default: ''
+  install-rust:
+    description: 'Whether to install the Rust toolchain (set to "false" for jobs that do their own)'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install build dependencies (apt)
+      shell: bash
+      env:
+        EXTRA_APT_PACKAGES: ${{ inputs.extra-apt-packages }}
+      run: |
+        set -euo pipefail
+        apt-get update -qq
+        # Base runner essentials + the build-apt line. Packages are named
+        # explicitly (--no-install-recommends) so the set is stable across
+        # apt metadata changes. See the action description for the rationale
+        # behind each package.
+        pkgs="bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev"
+        if [ -n "$EXTRA_APT_PACKAGES" ]; then
+          pkgs="$pkgs $EXTRA_APT_PACKAGES"
+        fi
+        apt-get install -y --no-install-recommends $pkgs
+
+    - name: Register the checkout as a git safe.directory
+      shell: bash
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+    - name: Install the Rust toolchain
+      if: ${{ inputs.install-rust == 'true' }}
+      shell: bash
+      env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
+        RUST_COMPONENTS: ${{ inputs.rust-components }}
+      run: |
+        set -euo pipefail
+        # Build the --component flags: one per word in rust-components.
+        comp_flags=""
+        if [ -n "$RUST_COMPONENTS" ]; then
+          for c in $RUST_COMPONENTS; do
+            comp_flags="$comp_flags --component $c"
+          done
+        fi
+        if [ -z "$TOOLCHAIN" ]; then
+          # Read from rust-toolchain.toml
+          channel="$(awk -F'"' '/^[[:space:]]*channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+        else
+          channel="$TOOLCHAIN"
+        fi
+        curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+          | sh -s -- -y --profile minimal --default-toolchain "$channel" $comp_flags
+        printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+        # Visible to THIS step too: GITHUB_PATH only applies to later steps.
+        . "$HOME/.cargo/env"
