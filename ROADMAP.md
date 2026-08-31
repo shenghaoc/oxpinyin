@@ -180,33 +180,21 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   bundling them would make completion hostage to the least predictable
   member. Same reasoning that flattened W7.
 
-- **W10 is option bits.** Correction (`PINYIN_CORRECT_*`), fuzzy/ambiguity
-  (`PINYIN_AMB_*`), and `DYNAMIC_ADJUST` gating. Correct-pinyin is on by
-  default in the fork's gschema, making this the one true blocker for
-  default-settings parity; fuzzy is default-off but shares the same
-  parser-table machinery. Verification has two shapes: the correction and
-  fuzzy bits are parser-table bits, swept against the pinned oracle via the
-  parse differential; `DYNAMIC_ADJUST` gates the bigram term of candidate
-  frequency at guess time (not training writes) and is verified by the
-  populated-store train-diff. Both are mechanically checkable and
-  bounded in scope.
+- **W10 LANDED (7fca228, ccb52d4, dade719).** Correction
+  (`PINYIN_CORRECT_*`), fuzzy/ambiguity (`PINYIN_AMB_*`), and
+  `DYNAMIC_ADJUST` option bits are implemented. Correction and fuzzy bits
+  feed parser-table selection and are verified against the pinned oracle via
+  the parse differential. `DYNAMIC_ADJUST` gates the bigram term of
+  candidate frequency at guess time; the full three-gate implementation
+  (matching the pin's three call sites) landed in PR #204 (commit
+  217d0c4).
 
-- **W11 is the phrase-index union at lookup.** User, network, and addon
-  phrases don't currently surface in candidates (the W8 parity gate had to
-  empty `network.txt`). Upstream uses two `FacadePhraseIndex` facades
-  (default vs addon), not one 16-way nibble union; oxpinyin's decode reads
-  a single system index. Phase 0 ground:
-  `docs/findings/phrase-union.md`.
-  This is the gap a user notices first — user-dictionary phrases (added via
-  the add-phrase iterators or dictool import) never surface as candidates
-  at all — and it carries real architectural risk: scope it before
-  estimating it. Trained counts already rank existing candidates through
-  W6's additive merge; what is missing is the user-dictionary surface, not
-  ranking. Landing it also un-no-ops `pinyin_load_addon_phrase_library`,
-  and owns the prediction/suggestion gap —
-  `pinyin_guess_predicted_candidates_with_punctuations` and
-  `pinyin_choose_predicted_candidate` — which the gap inventories list as
-  no-ops with no owning workstream.
+- **W11 LANDED (ffb2a22, 9ff0c61, 41227a0, 75d709a).** User, network, and
+  addon phrase union at lookup is implemented: `pinyin_load_addon_phrase_library`
+  is live, and user-dictionary phrases surface as candidates. The prediction
+  gap is also closed — `pinyin_guess_predicted_candidates_with_punctuations`
+  and `pinyin_choose_predicted_candidate` are implemented (PR #111,
+  75d709a). Architecture ground: `docs/findings/phrase-union.md`.
 
 - **W12 is the corpus tail.** Closed 2026-08-22: the candidate surface
   agrees with the pinned oracle bit-identically on every W2 corpus input
