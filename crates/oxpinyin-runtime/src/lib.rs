@@ -492,18 +492,19 @@ impl RuntimeDict {
     }
 
     /// The visible item count for the amplified-law denominator:
-    /// `unigram_map` entries whose library is not unloaded. An O(n) scan
+    /// `unigram_records` entries whose library is not unloaded. An O(n) scan
     /// per call is bounded by the table size and only reachable on the
     /// prediction path.
     #[must_use]
     pub fn visible_item_count(&self) -> u64 {
         if self.library_mask.load(Ordering::SeqCst) == 0 {
-            return self.system.unigram_map().len() as u64;
+            return self.system.unigram_records().len() as u64;
         }
         self.system
-            .unigram_map()
-            .keys()
-            .filter(|&&token| self.library_visible(token >> 24))
+            .unigram_records()
+            .iter()
+            .map(|&(token, _)| token)
+            .filter(|&token| self.library_visible(token >> 24))
             .count() as u64
     }
 

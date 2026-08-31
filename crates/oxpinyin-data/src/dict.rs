@@ -99,7 +99,9 @@ pub struct SystemDictionary {
     /// Phrase token → UTF-8 text.
     phrase_index: PhraseIndex,
     /// Aggregated phrase frequencies across all pinyin keys, for unigram LM.
-    unigrams: BTreeMap<u32, u64>,
+    /// `(token, count)` sorted by token ascending — the [`crate::interp::UnigramTable`]
+    /// shape without its node overhead.
+    unigrams: Box<[(u32, u64)]>,
     unigram_total: u64,
     /// Every pinyin-index key projected to its initial sequence, sorted:
     /// the probe the pin uses when the searched sequence holds an
@@ -148,12 +150,17 @@ impl SystemDictionary {
     /// Frequency of `token` aggregated across all pinyin keys.
     #[must_use]
     pub fn unigram_count(&self, token: u32) -> Option<u64> {
-        self.unigrams.get(&token).copied()
+        let position = self
+            .unigrams
+            .binary_search_by_key(&token, |&(stored, _)| stored)
+            .ok()?;
+        Some(self.unigrams[position].1)
     }
 
-    /// Unigram map for wiring into a [`crate::BigramLanguageModel`].
+    /// Unigram records for wiring into a [`crate::BigramLanguageModel`]:
+    /// `(token, count)` sorted by token ascending.
     #[must_use]
-    pub const fn unigram_map(&self) -> &BTreeMap<u32, u64> {
+    pub fn unigram_records(&self) -> &[(u32, u64)] {
         &self.unigrams
     }
 
@@ -357,7 +364,7 @@ impl Dictionary for SystemDictionary {
     }
 
     fn phrase_index_item_count(&self) -> Result<u64, Self::Error> {
-        Ok(self.unigram_map().len() as u64)
+        Ok(self.unigram_records().len() as u64)
     }
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
@@ -494,7 +501,7 @@ pub fn build_prefix_tables(index: &LookupTable) -> (Box<[String]>, Box<[String]>
 
 struct PinyinDerived {
     pinyin_index: PinyinIndex,
-    unigrams: BTreeMap<u32, u64>,
+    unigrams: Box<[(u32, u64)]>,
     unigram_total: u64,
     initial_keys: Box<[String]>,
 }
@@ -511,19 +518,33 @@ fn derive_pinyin(mut rows: PinyinRows, phrase_index: &PhraseIndex) -> PinyinDeri
     let alphabet = crate::initials::InitialAlphabet::new();
     let mut initial_keys: Vec<u128> = Vec::new();
     let mut oversized_initials: Vec<String> = Vec::new();
-    let mut unigrams: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut unigram_pairs: Vec<(u32, u64)> = Vec::new();
     let mut unigram_total: u64 = 0;
-    for (pinyin, records) in &rows {
+    for (pinyin, pinyin_records) in &rows {
         match alphabet.pack(pinyin) {
             Some(packed) => initial_keys.push(packed),
             None => oversized_initials.push(alphabet.project(pinyin)),
         }
-        for &(token, freq) in records {
-            let count = unigrams.entry(token).or_default();
-            *count = count.saturating_add(u64::from(freq));
+        for &(token, freq) in pinyin_records {
+            unigram_pairs.push((token, u64::from(freq)));
             unigram_total = unigram_total.saturating_add(u64::from(freq));
         }
     }
+
+    // Sort by token and merge same-token counts: the aggregated unigram
+    // map as one sorted vector (the `UnigramTable` shape), skipping the
+    // `BTreeMap`'s per-node allocation and its string-free but still
+    // per-insert O(log n) walk. Frequencies are `u32`, so a token's sum
+    // cannot saturate on any real table and merge order is irrelevant.
+    unigram_pairs.sort_unstable_by_key(|&(token, _)| token);
+    let mut unigrams: Vec<(u32, u64)> = Vec::with_capacity(unigram_pairs.len());
+    for &(token, count) in &unigram_pairs {
+        match unigrams.last_mut() {
+            Some(last) if last.0 == token => last.1 = last.1.saturating_add(count),
+            _ => unigrams.push((token, count)),
+        }
+    }
+    let unigrams = unigrams.into_boxed_slice();
 
     initial_keys.sort_unstable();
     initial_keys.dedup();
@@ -541,15 +562,12 @@ fn derive_pinyin(mut rows: PinyinRows, phrase_index: &PhraseIndex) -> PinyinDeri
     // Totals are the sum over every pronunciation; resolve after the
     // aggregate pass so each hit carries the item's final unigram, and
     // resolve into one arena so a key's hits stay a contiguous slice.
-    let totals: Vec<(u32, u64)> = unigrams
-        .iter()
-        .map(|(&token, &count)| (token, count))
-        .collect();
+    // The merged `unigrams` records are exactly that total table.
     let mut entries: Vec<PhraseEntry> = Vec::new();
     let mut out_rows: Vec<(Box<str>, Range<usize>)> = Vec::with_capacity(rows.len());
     for (key, records) in rows {
         let start = entries.len();
-        resolve_hits(&records, phrase_index, &totals, &mut entries);
+        resolve_hits(&records, phrase_index, &unigrams, &mut entries);
         out_rows.push((key, start..entries.len()));
     }
     PinyinDerived {

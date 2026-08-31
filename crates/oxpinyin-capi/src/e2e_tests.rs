@@ -1361,7 +1361,7 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
     let inst = unsafe { instance_ref(instance) };
     let total = inst
         .lm
-        .amplified_total(inst.dict.system().unigram_map().len() as u64);
+        .amplified_total(inst.dict.system().unigram_records().len() as u64);
     let rows: Vec<(String, usize, u64)> = inst
         .candidates
         .iter()
