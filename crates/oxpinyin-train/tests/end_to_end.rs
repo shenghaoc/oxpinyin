@@ -282,6 +282,114 @@ fn raw_corpus_to_final_model_and_correction_rate() {
     );
 }
 
+// ---- resumability ----------------------------------------------------------
+
+fn write_raw_corpus(temp: &TempDir) {
+    let text_dir = temp.path.join("texts");
+    write(&text_dir.join("a.text"), "中国中国\n中国\n");
+    write(&text_dir.join("b.text"), "中国中\n国中国\n");
+    write(&text_dir.join("c.text"), "中国\n中国中国\n");
+}
+
+/// Full setup + run against the workspace under `temp`, into `try<tryname>`.
+/// Everything the run borrows is constructed here, so nothing escapes.
+fn run_full(
+    temp: &TempDir,
+    tryname: &str,
+) -> Result<oxpinyin_train::TrainOutcome, oxpinyin_train::TrainError> {
+    let index = CorpusIndex::parse("doc a#/a.text\ndoc b#/b.text\ndoc c#/c.text\n").expect("index");
+    let mut scoring_deleted = KMixtureModel::new();
+    scoring_deleted
+        .add_document(HELD_OUT, GenerateParams::default())
+        .expect("scoring deleted");
+    let deleted_counts = count_deleted(HELD_OUT, true).expect("deleted counts");
+    let dictionary = FixtureDictionary::parse(VOCAB).expect("vocab");
+    let source = FixtureSource::new();
+    let eval = EvalInputs {
+        dictionary: &dictionary,
+        source: &source,
+        evals_text: EVALS,
+        deleted: &deleted_counts,
+    };
+    let paths = TrainerPaths {
+        text_dir: temp.path.join("texts"),
+        model_dir: temp.path.join("models"),
+        final_dir: temp.path.join("finals"),
+    };
+    let trainer = Trainer::new(test_config(), paths, SegmentMethod::Ngseg);
+    trainer.run(&segmenter(), &index, &scoring_deleted, &eval, tryname)
+}
+
+#[test]
+fn resume_skips_segmentation_after_the_raw_corpus_is_corrupted() {
+    let temp = TempDir::new("resume-seg");
+    write_raw_corpus(&temp);
+    let first = run_full(&temp, "1").expect("first run");
+
+    // Corrupt a raw document: were the segment stage to run again, the corpus
+    // would change (all 钟, no 中国). The segment stage is epoch-gated, so the
+    // committed `.segmented` is reused and the corrupted raw is never
+    // re-segmented — the result is identical. This is the resume-after-a-stage
+    // guarantee: a completed stage is not redone.
+    write(&temp.path.join("texts/a.text"), "钟钟钟\n");
+    let second = run_full(&temp, "2").expect("second run");
+
+    assert_eq!(
+        second.interpolation2, first.interpolation2,
+        "segment reused"
+    );
+    assert_eq!(second.correction_rate, first.correction_rate);
+    // The segmented file still holds the original 中/国 tokens, not 钟.
+    let segmented =
+        std::fs::read_to_string(temp.path.join("texts/a.text.segmented")).expect("segmented");
+    assert!(segmented.contains("10 中\n") && !segmented.contains("20 钟\n"));
+}
+
+#[test]
+fn a_status_with_a_newer_epoch_is_rejected_not_silently_resumed() {
+    let temp = TempDir::new("resume-epoch");
+    write_raw_corpus(&temp);
+    run_full(&temp, "1").expect("first run");
+
+    // A status file stamped by a *newer* trainer (SegmentEpoch 2 > this build's
+    // 1) must not be silently resumed — the orchestrator refuses it.
+    write(
+        &temp.path.join("texts/a.text.segmented.status"),
+        "{\"SegmentEpoch\": 2}",
+    );
+    let error = run_full(&temp, "2").expect_err("must reject a newer epoch");
+    assert!(
+        matches!(
+            error,
+            oxpinyin_train::TrainError::EpochTooNew {
+                stage: "Segment",
+                found: 2,
+                known: 1
+            }
+        ),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn a_malformed_status_is_an_error_not_a_panic() {
+    let temp = TempDir::new("resume-malformed");
+    write_raw_corpus(&temp);
+    run_full(&temp, "1").expect("first run");
+
+    // A corrupted status file is a typed error, never a panic (constitution
+    // item 4).
+    write(
+        &temp.path.join("texts/a.text.segmented.status"),
+        "not json at all",
+    );
+    let error = run_full(&temp, "2").expect_err("must reject malformed status");
+    assert!(
+        matches!(error, oxpinyin_train::TrainError::Malformed { .. }),
+        "got {error:?}"
+    );
+}
+
 // ---- generate-stage rollover + filter units --------------------------------
 
 fn doc(size: u64) -> SegmentedDoc {
