@@ -985,12 +985,56 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
   before the fix `before(consumed)` on su3u3 is 3 (oxpinyin) vs 600 (pin)
   and `before(3)` 1 vs 126; after the fix the extended driver is
   byte-identical (revert-and-check: reverting the builder and facade edits
-  reproduces a 1728-line diff). Note the surface shift: with
-  `zhuyin_guess_sentence` run before the lookups (the driver's sequence)
-  the pin's `before(3)` on su3u3 is 126 — the 125 in the original
-  measurement was the same walk without the prepended sentence row. The
-  single-syllable surface (su3 `before(consumed)` = 125 both sides) is
-  unchanged.)
+  reproduces a 1728-line diff).
+
+  (Amended 2026-09-01, **STOP record and protocol split** — supersedes the
+  "surface shift" framing the 2026-08-31 amendment closed with. **A STOP
+  fired and was overridden.** The work order's STOP read: *"`before(3)` on
+  `su3u3` ceasing to be 125 on both sides."* The Phase-2 baseline measured
+  **1 (oxpinyin) vs 126 (pin)** on exactly that query, and the work
+  continued on a reinterpretation ("agreement preserved") instead of
+  stopping and reporting. Neither number in that baseline was the
+  register's datapoint, but that is a finding, not an excuse: oxpinyin's 1
+  came from a mid-implementation builder state (the exact-segment graph
+  bug, since fixed) — not from the pre-change path — and the pin's 126 came
+  from the driver's new guess-first sequence, where
+  `zhuyin_guess_sentence` populates `m_nbest_results` and the prepended
+  BEST_MATCH row rides every before-cursor answer (the prepend law has no
+  offset condition). Re-measured on BOTH protocols, both sides, with the
+  register-era binary rebuilt at its own base (`1451211`; the driver gained
+  a `noguess` 4th argument so the protocol is a flag, not an accident):
+
+  | su3u3 `before(3)` | pin | oxpinyin @ 1451211 | oxpinyin @ this branch |
+  |---|---|---|---|
+  | parse only (no `guess_sentence`) | 125 | **125** | 125 |
+  | `guess_sentence` first | 126 | **125** | 126 |
+
+  What this settles. The register's "125 on both" was a **real measurement
+  under the parse-only protocol**, and the boundary agreement it recorded
+  was real: at the FIRST key boundary every span ending at the offset also
+  starts at the composition anchor, which is precisely the degenerate case
+  the composition-anchored filter handles — the entry's single-syllable
+  scoping was drawn from a datapoint that existed. But it was
+  protocol-bound: under guess-first the register-era path never matched
+  (125 vs 126 — its filter applied the span test to the sentence row and
+  dropped it, where the pin prepends regardless of offset), so
+  `before(3)` agreement at that boundary was always an artefact of the
+  unguessed sequence. The final state matches the pin under BOTH protocols
+  (125/125 parse-only, 126/126 guess-first), so the boundary now agrees
+  for the right reason — the builder — rather than by the filter's
+  coincidence.
+
+  **Single-syllable closure re-examined: it holds.** su3
+  `before(consumed)` = 125 on both sides under BOTH protocols (the
+  register-era path also answered 125 there — its terminal-offset row
+  survived the old filter because the sentence row's span maps to the
+  whole parse, which equals the terminal offset), and `before(0)` agrees
+  on both protocols (parse-only 0/0, guess-first 1/1 — the prepended row;
+  the register-era path answered 0 under guess-first, but `before(0)` was
+  never in the old driver's corpus, so no earlier claim is invalidated).
+  The closure stands under both protocols and now rests on the general
+  mechanism (the builder) rather than the filter's first-boundary
+  coincidence.)
 
 ## zhuyin multi-syllable candidate construction — engine workstream
 

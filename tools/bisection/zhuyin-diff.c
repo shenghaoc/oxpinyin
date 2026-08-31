@@ -257,6 +257,16 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* Protocol selection: "noguess" as the 4th argument reproduces the
+     * register's original before(3) measurement shape — parse, then the
+     * lookup battery, with NO zhuyin_guess_sentence in between (the pin's
+     * m_nbest_results stays empty, so nothing is prepended). The default
+     * protocol guesses a sentence first, which is what a real consumer does
+     * and what the standing differential pins. Both protocols are part of
+     * the record: docs/findings/upstream-divergences.md publishes them side
+     * by side for the before(3) boundary. */
+    bool no_guess = argc > 4 && strcmp(argv[4], "noguess") == 0;
+
     for (size_t i = 0; i < sizeof(SYLLABLE_CORPUS) / sizeof(SYLLABLE_CORPUS[0]); i++) {
         const char *input = SYLLABLE_CORPUS[i];
         printf("=== input: \"%s\" ===\n", input);
@@ -283,15 +293,19 @@ int main(int argc, char **argv) {
         printf("parse_chewing: consumed=%zu\n", consumed);
         printf("parsed_input_length: %zu\n", s.parsed_len(inst));
 
-        bool gs = s.guess_sentence(inst);
-        printf("guess_sentence: %s\n", gs ? "true" : "false");
-        if (s.get_sentence) {
-            char *sent = NULL;
-            bool ok = s.get_sentence(inst, &sent);
-            printf("get_sentence: %s text=\"%s\"\n",
-                   ok ? "true" : "false", sent ? sent : "(null)");
-            if (sent)
-                g_free_fn(sent);
+        if (no_guess) {
+            printf("guess_sentence: (skipped — noguess protocol)\n");
+        } else {
+            bool gs = s.guess_sentence(inst);
+            printf("guess_sentence: %s\n", gs ? "true" : "false");
+            if (s.get_sentence) {
+                char *sent = NULL;
+                bool ok = s.get_sentence(inst, &sent);
+                printf("get_sentence: %s text=\"%s\"\n",
+                       ok ? "true" : "false", sent ? sent : "(null)");
+                if (sent)
+                    g_free_fn(sent);
+            }
         }
 
         /* The five lookup surfaces, each rebuilding the list and dumping it
