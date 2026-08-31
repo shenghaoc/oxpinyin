@@ -1024,17 +1024,64 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
   for the right reason — the builder — rather than by the filter's
   coincidence.
 
-  **Single-syllable closure re-examined: it holds.** su3
-  `before(consumed)` = 125 on both sides under BOTH protocols (the
-  register-era path also answered 125 there — its terminal-offset row
-  survived the old filter because the sentence row's span maps to the
-  whole parse, which equals the terminal offset), and `before(0)` agrees
-  on both protocols (parse-only 0/0, guess-first 1/1 — the prepended row;
-  the register-era path answered 0 under guess-first, but `before(0)` was
-  never in the old driver's corpus, so no earlier claim is invalidated).
-  The closure stands under both protocols and now rests on the general
-  mechanism (the builder) rather than the filter's first-boundary
-  coincidence.)
+  **Single-syllable closure re-examined — and one half of its recorded
+  reason corrected.** The entry's closure sentence — "`before(0)`=0 and
+  `before(consumed)` match the pin on the single-syllable differential
+  corpus" — names no protocol, and under the guess-first protocol one half
+  of it was false at the base: `before(0)` answered 0 against the pin's 1
+  (the prepended row the old filter dropped). The same protocol-bound
+  pattern as `before(3)`, a second instance, not a free-standing wrinkle.
+  Re-measured on su3, both protocols, both sides:
+
+  | su3 surface | protocol | pin | oxpinyin @ 1451211 | oxpinyin @ this branch |
+  |---|---|---|---|---|
+  | `before(0)` | parse only | 0 | 0 | 0 |
+  | `before(0)` | guess first | 1 | **0** | 1 |
+  | `before(consumed)` | parse only | 125 | 125 | 125 |
+  | `before(consumed)` | guess first | 125 | 125 | 125 |
+
+  So the closure sentence held in full only under the parse-only protocol;
+  under guess-first only its `before(consumed)` half matched (the
+  terminal-offset row survived the old filter because the sentence row's
+  span maps to the whole parse, which equals the terminal offset).
+  The closure itself stands at the final state under BOTH protocols and
+  now rests on the general mechanism (the builder) rather than the
+  filter's coincidence — but its recorded reason is now protocol-accurate.
+
+  (Amended 2026-09-01, **baseline column re-measured** — the correction
+  the before(3) STOP record forced, applied to the whole A2 baseline.
+  The A2 commit message's baseline cells came from a mid-implementation
+  run and are superseded by this table, measured at the base itself
+  (1451211 rebuilt) under the declared guess-first protocol:
+
+  | su3u3 surface | pin | oxpinyin @ 1451211 | oxpinyin @ this branch |
+  |---|---|---|---|
+  | `after(0)` | true/128 | true/129 | true/128 |
+  | `after(consumed)` | true/1 | true/**2** | true/1 |
+  | `before(0)` | true/1 | true/**0** | true/1 |
+  | `before(3)` | true/126 | true/**125** | true/126 |
+  | `before(consumed)` | true/600 | true/**4** | true/600 |
+
+  Corrections this forces on the record:
+  - The A2 baseline's "`after(consumed)` false vs true" is wrong twice
+    over. At 1451211 the facade answers **true** — with 2 rows, both
+    uncollapsed sentence rows riding the empty-column prepend after the
+    coordinate mismatch landed the lookup on a mid-syllable column of the
+    `'`-joined buffer — not false; and the pin answers true/**1** under
+    this protocol, not true/0 (true/0 is the parse-only shape, which is
+    what the entry's original "pin returns true with 0 candidates"
+    observable measured). The coordinate-mismatch mechanism stands; the
+    recorded observed value was true/2 vs true/1, the tag-grouping
+    divergence itself.
+  - The "3 vs 600" `before(consumed)` cell matches the parse-only shape
+    (re-measured: 3 vs 600 there) and agrees with this entry's original
+    registration, so that cell stands as recorded — but at the declared
+    protocol the base answers **4** (the two uncollapsed sentence rows
+    survive the old filter at the terminal offset; dedup then drops one
+    against a same-string phrase).
+  - The "`before(3)` 1 vs 126" cell was the contaminated one that fired
+    the STOP; the base's measured value at the declared protocol is
+    125, per the table above.)
 
 ## zhuyin multi-syllable candidate construction — engine workstream
 
