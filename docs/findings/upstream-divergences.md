@@ -916,7 +916,7 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
 
 ## zhuyin multi-syllable candidate construction — engine workstream
 
-The two-syllable differential input `su3u3` (ㄙㄨˇ ㄩˇ, consumed 5) exposes a
+The two-syllable differential input `su3u3` (ㄋㄧˇ ㄧˇ, consumed 5) exposes a
 broader divergence than the `after(consumed)`/tag-gap above: the multi-syllable
 candidate construction itself differs on the count, the phrase set, and the
 tags.

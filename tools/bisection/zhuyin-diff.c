@@ -168,8 +168,8 @@ static const char *ctype_name(lookup_candidate_type_t t) {
  * distinct observable; the parsed length and candidate rows are what get
  * diffed. */
 static const char *SYLLABLE_CORPUS[] = {
-    "su3",          /* ㄙㄨˇ */
-    "su3u3",        /* ㄙㄨˇ ㄩˇ — two-syllable; exercises before-cursor at the
+    "su3",          /* ㄋㄧˇ */
+    "su3u3",        /* ㄋㄧˇ ㄧˇ — two-syllable; exercises before-cursor at the
                      * terminal offset (the multi-syllable engine gap: the pin
                      * returns the last syllable's candidates + sentence rows,
                      * oxpinyin the composition-anchored subset) */
@@ -207,7 +207,14 @@ int main(int argc, char **argv) {
         dlclose(handle);
         return 1;
     }
-    s.set_options(ctx, ZHUYIN_FLAGS);
+    bool opts_ok = s.set_options(ctx, ZHUYIN_FLAGS);
+    printf("set_options(0x%x): %s\n", ZHUYIN_FLAGS, opts_ok ? "true" : "false");
+    if (!opts_ok) {
+        fprintf(stderr, "set_options(0x%x) rejected\n", ZHUYIN_FLAGS);
+        s.fini(ctx);
+        dlclose(handle);
+        return 1;
+    }
     bool selected = s.set_chewing_scheme(ctx, 1); /* STANDARD */
     printf("set_chewing_scheme(1): %s\n", selected ? "true" : "false");
     if (!selected) {
