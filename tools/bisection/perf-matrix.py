@@ -278,6 +278,15 @@ def report_factorial(speed_cells, ram_cells, size_cells):
         ox_kc = fn(ram_cells["oxpinyin-kc"])
         ox_tk = fn(ram_cells["oxpinyin-tkrzw"])
         print(f"| {name} | {lp_kc/lp_tk:.3f}× | {ox_kc/ox_tk:.3f}× |")
+    if size_cells:
+        for name, key in [(".so", "so"), ("Data", "data"), ("Total", "total")]:
+            lp_kc = size_cells.get("libpinyin-kc", {}).get(key, 0)
+            lp_tk = size_cells.get("libpinyin-tkrzw", {}).get(key, 0)
+            ox_kc = size_cells.get("oxpinyin-kc", {}).get(key, 0)
+            ox_tk = size_cells.get("oxpinyin-tkrzw", {}).get(key, 0)
+            lp_r = lp_kc / lp_tk if lp_tk else float("nan")
+            ox_r = ox_kc / ox_tk if ox_tk else float("nan")
+            print(f"| {name} | {lp_r:.3f}× | {ox_r:.3f}× |")
 
     print()
     print("### Implementation effect (oxpinyin / libpinyin ratio, holding backend fixed)")
@@ -292,6 +301,15 @@ def report_factorial(speed_cells, ram_cells, size_cells):
         kc = fn(ram_cells["oxpinyin-kc"]) / fn(ram_cells["libpinyin-kc"])
         tk = fn(ram_cells["oxpinyin-tkrzw"]) / fn(ram_cells["libpinyin-tkrzw"])
         print(f"| {name} | {kc:.3f}× | {tk:.3f}× |")
+    if size_cells:
+        for name, key in [(".so", "so"), ("Data", "data"), ("Total", "total")]:
+            ox_kc = size_cells.get("oxpinyin-kc", {}).get(key, 0)
+            lp_kc = size_cells.get("libpinyin-kc", {}).get(key, 0)
+            ox_tk = size_cells.get("oxpinyin-tkrzw", {}).get(key, 0)
+            lp_tk = size_cells.get("libpinyin-tkrzw", {}).get(key, 0)
+            kc_r = ox_kc / lp_kc if lp_kc else float("nan")
+            tk_r = ox_tk / lp_tk if lp_tk else float("nan")
+            print(f"| {name} | {kc_r:.3f}× | {tk_r:.3f}× |")
 
     print()
     print("### Interaction (ratio of ratios)")
@@ -310,6 +328,16 @@ def report_factorial(speed_cells, ram_cells, size_cells):
         lp_ratio = fn(ram_cells["libpinyin-kc"]) / fn(ram_cells["libpinyin-tkrzw"])
         interaction = ox_ratio / lp_ratio if lp_ratio else float("nan")
         print(f"| {name} | {interaction:.3f} |")
+    if size_cells:
+        for name, key in [(".so", "so"), ("Data", "data"), ("Total", "total")]:
+            ox_kc = size_cells.get("oxpinyin-kc", {}).get(key, 0)
+            ox_tk = size_cells.get("oxpinyin-tkrzw", {}).get(key, 0)
+            lp_kc = size_cells.get("libpinyin-kc", {}).get(key, 0)
+            lp_tk = size_cells.get("libpinyin-tkrzw", {}).get(key, 0)
+            ox_r = ox_kc / ox_tk if ox_tk else float("nan")
+            lp_r = lp_kc / lp_tk if lp_tk else float("nan")
+            interaction = ox_r / lp_r if lp_r else float("nan")
+            print(f"| {name} | {interaction:.3f} |")
 
     print()
     print("### Decomposition of the 118.1× init gap")
