@@ -54,8 +54,13 @@ onto the landing tip before every push and before any merge
 
 ## Output contract
 
-Nothing panics on any input: return `false`/`Result` where upstream aborts
-(exception class (c) in `compatibility-policy.md`). Engine output is a
-pure function of (input, user state, config), and E2E I/O is byte-identical
-to the pinned oracle given the same inputs and state — except the four
-named exception classes (a)–(d) in `compatibility-policy.md`.
+Nothing panics on any input, and public APIs return `Result`
+(constitution §4 — the broad rule stands on its own). Separate from it,
+exception class (c) in `compatibility-policy.md` is scoped to
+caller-supplied input: where upstream asserts or aborts on input a caller
+can supply, the C ABI returns `false`/`Err` and logs the point. Class (c)
+does not mask internal invariant failures and does not govern the return
+types of unrelated errors. Engine output is a pure function of (input,
+user state, config), and E2E I/O is byte-identical to the pinned oracle
+given the same inputs and state — except the four named exception classes
+(a)–(d) in `compatibility-policy.md`.
