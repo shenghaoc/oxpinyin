@@ -20,9 +20,9 @@ implementation that would change a frozen SPEC without an ask.
 
 ## Assisted-by trailer
 
-Every agent-assisted commit carries exactly one trailer, house form
-`AGENT:MODEL`, nothing after the model; plain human commits need none. The
-linter enforces the house form when a trailer is present
+Every agent-assisted commit carries exactly one trailer — the full line
+`Assisted-by: AGENT:MODEL`, nothing after the model; plain human commits
+need none. The linter enforces the house form when a trailer is present
 (`.github/scripts/lint-commits.sh`):
 
     ^Assisted-by: [[:alnum:]][[:alnum:]._-]*:[[:alnum:]][[:alnum:].+_-]*$
