@@ -10,7 +10,12 @@
 
 FROM --platform=linux/arm64 debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
+    && echo 'deb https://snapshot.debian.org/archive/debian/20260831T000000Z testing main' \
+    > /etc/apt/sources.list
+
+RUN apt-get -o Acquire::Check-Valid-Until=false update \
+    && apt-get install -y --no-install-recommends \
     build-essential \
     autoconf automake autopoint libtool \
     pkg-config gettext gnome-common \
@@ -27,9 +32,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --default-toolchain 1.97.1 --profile minimal \
-    --component clippy,rustfmt
+RUN curl --proto '=https' --tlsv1.2 -sSfL \
+    "https://static.rust-lang.org/rustup/archive/1.29.0/aarch64-unknown-linux-gnu/rustup-init" \
+    -o /tmp/rustup-init \
+    && echo "9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792  /tmp/rustup-init" \
+    | sha256sum -c - \
+    && chmod +x /tmp/rustup-init \
+    && /tmp/rustup-init -y --default-toolchain 1.97.1 --profile minimal \
+    --component clippy,rustfmt \
+    && rm /tmp/rustup-init
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN cargo install cargo-c@0.10.25 --locked
