@@ -233,6 +233,14 @@ def report_size(labels, size_prefixes, data_dirs):
     return cells
 
 
+def _size_val(size_cells, label, key):
+    cell = size_cells.get(label)
+    if cell is None:
+        return float("nan")
+    v = cell.get(key)
+    return float("nan") if v is None else v
+
+
 def report_factorial(speed_cells, ram_cells, size_cells):
     print()
     print("## Factorial analysis")
@@ -259,8 +267,8 @@ def report_factorial(speed_cells, ram_cells, size_cells):
         vals = [fn(ram_cells[l]) for l in CELL_MATRIX_ORDER]
         print(f"| {name} | {vals[0]:,.0f} | {vals[1]:,.0f} | {vals[2]:,.0f} | {vals[3]:,.0f} |")
     if size_cells:
-        for name, key in [(".so (KiB)", "so"), ("Data (KiB)", "data")]:
-            vals = [size_cells.get(l, {}).get(key, 0) / 1024 for l in CELL_MATRIX_ORDER]
+        for name, key in [(".so (KiB)", "so"), ("Data (KiB)", "data"), ("Total (KiB)", "total")]:
+            vals = [_size_val(size_cells, l, key) / 1024 for l in CELL_MATRIX_ORDER]
             print(f"| {name} | {vals[0]:,.0f} | {vals[1]:,.0f} | {vals[2]:,.0f} | {vals[3]:,.0f} |")
 
     print()
@@ -280,10 +288,10 @@ def report_factorial(speed_cells, ram_cells, size_cells):
         print(f"| {name} | {lp_kc/lp_tk:.3f}× | {ox_kc/ox_tk:.3f}× |")
     if size_cells:
         for name, key in [(".so", "so"), ("Data", "data"), ("Total", "total")]:
-            lp_kc = size_cells.get("libpinyin-kc", {}).get(key, 0)
-            lp_tk = size_cells.get("libpinyin-tkrzw", {}).get(key, 0)
-            ox_kc = size_cells.get("oxpinyin-kc", {}).get(key, 0)
-            ox_tk = size_cells.get("oxpinyin-tkrzw", {}).get(key, 0)
+            lp_kc = _size_val(size_cells, "libpinyin-kc", key)
+            lp_tk = _size_val(size_cells, "libpinyin-tkrzw", key)
+            ox_kc = _size_val(size_cells, "oxpinyin-kc", key)
+            ox_tk = _size_val(size_cells, "oxpinyin-tkrzw", key)
             lp_r = lp_kc / lp_tk if lp_tk else float("nan")
             ox_r = ox_kc / ox_tk if ox_tk else float("nan")
             print(f"| {name} | {lp_r:.3f}× | {ox_r:.3f}× |")
@@ -303,10 +311,10 @@ def report_factorial(speed_cells, ram_cells, size_cells):
         print(f"| {name} | {kc:.3f}× | {tk:.3f}× |")
     if size_cells:
         for name, key in [(".so", "so"), ("Data", "data"), ("Total", "total")]:
-            ox_kc = size_cells.get("oxpinyin-kc", {}).get(key, 0)
-            lp_kc = size_cells.get("libpinyin-kc", {}).get(key, 0)
-            ox_tk = size_cells.get("oxpinyin-tkrzw", {}).get(key, 0)
-            lp_tk = size_cells.get("libpinyin-tkrzw", {}).get(key, 0)
+            ox_kc = _size_val(size_cells, "oxpinyin-kc", key)
+            lp_kc = _size_val(size_cells, "libpinyin-kc", key)
+            ox_tk = _size_val(size_cells, "oxpinyin-tkrzw", key)
+            lp_tk = _size_val(size_cells, "libpinyin-tkrzw", key)
             kc_r = ox_kc / lp_kc if lp_kc else float("nan")
             tk_r = ox_tk / lp_tk if lp_tk else float("nan")
             print(f"| {name} | {kc_r:.3f}× | {tk_r:.3f}× |")
@@ -330,10 +338,10 @@ def report_factorial(speed_cells, ram_cells, size_cells):
         print(f"| {name} | {interaction:.3f} |")
     if size_cells:
         for name, key in [(".so", "so"), ("Data", "data"), ("Total", "total")]:
-            ox_kc = size_cells.get("oxpinyin-kc", {}).get(key, 0)
-            ox_tk = size_cells.get("oxpinyin-tkrzw", {}).get(key, 0)
-            lp_kc = size_cells.get("libpinyin-kc", {}).get(key, 0)
-            lp_tk = size_cells.get("libpinyin-tkrzw", {}).get(key, 0)
+            ox_kc = _size_val(size_cells, "oxpinyin-kc", key)
+            ox_tk = _size_val(size_cells, "oxpinyin-tkrzw", key)
+            lp_kc = _size_val(size_cells, "libpinyin-kc", key)
+            lp_tk = _size_val(size_cells, "libpinyin-tkrzw", key)
             ox_r = ox_kc / ox_tk if ox_tk else float("nan")
             lp_r = lp_kc / lp_tk if lp_tk else float("nan")
             interaction = ox_r / lp_r if lp_r else float("nan")
