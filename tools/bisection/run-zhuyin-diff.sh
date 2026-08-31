@@ -79,14 +79,28 @@ cc -O2 -Wall -Wextra -o "$SCRIPT_DIR/zhuyin-diff" "$SCRIPT_DIR/zhuyin-diff.c" -l
     echo "build failed" >&2; exit 1; }
 
 echo "== running against oracle (data=$ORACLE_DATA) =="
-# The oracle writes benign init diagnostics (e.g. "open user.conf failed")
-# to stderr; only stdout carries the differential surface, so capture stdout
-# and discard stderr for both sides to keep the diff clean.
-"$SCRIPT_DIR/zhuyin-diff" "$ORACLE_SO" "$ORACLE_DATA" "$ORACLE_USER_DIR" > "$SCRIPT_DIR/zhuyin-oracle.log" 2>/dev/null
+# The oracle writes a benign init diagnostic ("open user.conf failed") to
+# stderr on a fresh user dir, so stderr is captured per side rather than
+# merged into the compared stdout log — but it is NOT discarded: a failing
+# side emits its captured diagnostics (the driver's own failure reason)
+# before the script exits.
+if ! "$SCRIPT_DIR/zhuyin-diff" "$ORACLE_SO" "$ORACLE_DATA" "$ORACLE_USER_DIR" \
+        > "$SCRIPT_DIR/zhuyin-oracle.log" 2> "$SCRIPT_DIR/zhuyin-oracle.stderr"; then
+    echo "FAIL: the oracle driver exited nonzero" >&2
+    cat "$SCRIPT_DIR/zhuyin-oracle.stderr" >&2
+    exit 1
+fi
+rm -f "$SCRIPT_DIR/zhuyin-oracle.stderr"
 echo "oracle log lines: $(wc -l < "$SCRIPT_DIR/zhuyin-oracle.log")"
 
 echo "== running against rust facade (data=$RUST_DATA) =="
-"$SCRIPT_DIR/zhuyin-diff" "$RUST_SO" "$RUST_DATA" "$RUST_USER_DIR" > "$SCRIPT_DIR/zhuyin-rust.log" 2>/dev/null
+if ! "$SCRIPT_DIR/zhuyin-diff" "$RUST_SO" "$RUST_DATA" "$RUST_USER_DIR" \
+        > "$SCRIPT_DIR/zhuyin-rust.log" 2> "$SCRIPT_DIR/zhuyin-rust.stderr"; then
+    echo "FAIL: the rust driver exited nonzero" >&2
+    cat "$SCRIPT_DIR/zhuyin-rust.stderr" >&2
+    exit 1
+fi
+rm -f "$SCRIPT_DIR/zhuyin-rust.stderr"
 echo "rust log lines: $(wc -l < "$SCRIPT_DIR/zhuyin-rust.log")"
 
 # Both sides must produce a non-empty log for the diff to mean anything: an
