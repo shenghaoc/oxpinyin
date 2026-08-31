@@ -924,8 +924,11 @@ tags.
 - **Measured (oracle vs oxpinyin on `su3u3`):**
   - `n_candidates` at `after(0)`: **128 (pin) vs 129 (oxpinyin)** — the first
     candidate count differs (oxpinyin emits one extra row).
-  - `candidate[1]`: pin `拟议`/`逆夷` at 1-2, oxpinyin `你以` at 1 — the
+  - `candidate[1]` TEXT: pin `拟议`/`逆夷` at 1-2, oxpinyin `你以` at 1 — the
     multi-syllable phrase set diverges.
+  - `candidate[1]` TYPE: pin `AFTER`, oxpinyin `BEST_MATCH` — oxpinyin carries
+    a second `BEST_MATCH` row (`你以`) where the pin has exactly one sentence
+    row (`你一` at 0).
   - `before(consumed=5)`: **600 (pin) vs 3 (oxpinyin)** — the before-cursor
     window diverges.
   - `before(3)` (first key boundary): 125 on both — matches.
@@ -934,8 +937,11 @@ tags.
   trailing keys' candidates (per-key at each position the way the pin's
   `search_matrix` walk does), and the facade cannot UNION multiple
   `candidates_at` windows into one `CandidateList` (the engine does not expose
-  `Candidate`/`CandidateList` construction). The candidate TYPE tagging is
-  correct, but the underlying candidate SET/count differs for multi-syllable.
+  `Candidate`/`CandidateList` construction). The facade's tagging LAW is
+  faithful to the pin's prepend rule, but the engine feeds it two sentence
+  rows where the pin's `m_nbest_results` holds one, so the observed TYPE
+  values differ as well (`candidate[1]`: `BEST_MATCH`/你以 vs the pin's
+  `AFTER`/拟议).
 - **Classification:** engine workstream (the candidate-construction model).
   Not a facade defect — the single-syllable facade surface is correct, and the
   facade faithfully translates what the engine provides. The differential
