@@ -10,7 +10,7 @@
 FROM --platform=linux/arm64 debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
 
 RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
-    && echo 'deb https://snapshot.debian.org/archive/debian/20260831T000000Z testing main' \
+    && echo 'deb http://snapshot.debian.org/archive/debian/20260831T000000Z testing main' \
     > /etc/apt/sources.list
 
 RUN apt-get -o Acquire::Check-Valid-Until=false update \
