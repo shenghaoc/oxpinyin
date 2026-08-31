@@ -43,8 +43,9 @@ container (8-byte header: u32 LE length + u32 XOR checksum). Its DBM
 reads go through the backend: the route requires the kyotocabinet or
 tkrzw feature, and is not available in lmdb-only or redb/no-feature
 builds. The runtime routes `pinyin_init` through this path when the
-system dir detects as a libpinyin data layout, so distro data is consumed
-without conversion.
+system dir detects as a libpinyin data layout: no on-disk pre-conversion
+and no separate conversion step — the loader converts the data in memory
+at load time.
 
 **Portability seam:** `oxpinyin-engine`'s session API is framework-neutral —
 abstract `KeyInput`, preedit spans + style enum, candidate iteration;
