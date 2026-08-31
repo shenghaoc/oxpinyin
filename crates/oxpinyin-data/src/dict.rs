@@ -201,8 +201,7 @@ impl SystemDictionary {
     pub fn tokens_for_text(&self, text: &str) -> &[u32] {
         self.reverse_text_tokens()
             .get(text)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
+            .map_or(&[], Vec::as_slice)
     }
 
     /// Tokens whose phrase text starts with `prefix` and is longer, when

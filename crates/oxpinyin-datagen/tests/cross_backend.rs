@@ -79,7 +79,7 @@ fn all_backends_emit_identical_tables() {
         !backends.is_empty(),
         "the exactly-one-backend guard should have selected a peer",
     );
-    eprintln!("compiled peer: {:?}", backends);
+    eprintln!("compiled peer: {backends:?}");
 
     let (tables, stats) = system::compile(&model, system::Subset::Full).unwrap();
     eprintln!("stats: {stats:?}");

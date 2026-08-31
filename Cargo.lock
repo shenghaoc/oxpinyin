@@ -868,6 +868,7 @@ name = "oxpinyin-testsupport"
 version = "0.1.0"
 dependencies = [
  "oxpinyin-core",
+ "oxpinyin-store",
 ]
 
 [[package]]
