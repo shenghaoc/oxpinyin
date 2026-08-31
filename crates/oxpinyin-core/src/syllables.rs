@@ -106,19 +106,19 @@ pub static ZHUYIN_ONLY_COMPLETE_SYLLABLES: [&str; ZHUYIN_ONLY_COMPLETE_SYLLABLE_
     "chua", "den", "din", "fe", "kei", "len", "nia", "rua", "yai", "zhei",
 ];
 
+include!(concat!(env!("OUT_DIR"), "/syllable_maps.rs"));
+
 /// A canonical complete syllable spelling, whether it is in the frozen
 /// untuned inventory or an option-only correction target.
 #[must_use]
 pub fn canonical_complete_syllable(text: &str) -> Option<&'static str> {
-    FULL_PINYIN_SYLLABLES
-        .iter()
-        .copied()
-        .find(|syllable| *syllable == text)
+    FULL_PINYIN_SYLLABLE_MAP
+        .get(text)
+        .map(|&index| FULL_PINYIN_SYLLABLES[index as usize])
         .or_else(|| {
-            OPTION_ONLY_COMPLETE_SYLLABLES
-                .iter()
-                .copied()
-                .find(|syllable| *syllable == text)
+            OPTION_ONLY_COMPLETE_SYLLABLE_MAP
+                .get(text)
+                .map(|&index| OPTION_ONLY_COMPLETE_SYLLABLES[index as usize])
         })
 }
 

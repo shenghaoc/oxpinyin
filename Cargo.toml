@@ -64,6 +64,10 @@ heed = "0.22"
 bindgen = "0.72.1"
 smallvec = "1.15"
 compact_str = "0.10"
+# Perfect-hash text lookups over the frozen syllable inventories;
+# oxpinyin-core/build.rs generates the maps, so phf_codegen is build-time only.
+phf = "0.11"
+phf_codegen = "0.11"
 
 # Stage-2 CPU profiles: release speed with enough debug to resolve stacks.
 # `debug = "line-tables-only"` keeps the image small; samply/perf still map
