@@ -381,9 +381,7 @@ pub extern "C" fn pinyin_guess_candidates(
         if !inst.session.is_composing() {
             return false;
         }
-        let normalized = if let Ok(normalized) = inst.validate_lookup_offset(offset) {
-            normalized
-        } else {
+        let Ok(normalized) = inst.validate_lookup_offset(offset) else {
             inst.candidates.clear();
             return false;
         };
@@ -459,9 +457,8 @@ pub extern "C" fn pinyin_guess_candidates(
             if cand.kind() == oxpinyin_engine::CandidateKind::Fallback {
                 continue;
             }
-            let text = match CString::new(cand.text().as_bytes()) {
-                Ok(s) => s,
-                Err(_) => continue,
+            let Ok(text) = CString::new(cand.text().as_bytes()) else {
+                continue;
             };
             let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
                 || {

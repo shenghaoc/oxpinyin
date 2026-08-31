@@ -668,13 +668,11 @@ impl<S: WriteStore> GenericUserStore<S> {
                         None => first_library_token(library),
                     }
                 };
-                let token = match phrase::canonicalize_library_token(library, raw) {
-                    Some(token) => token,
-                    None => return Ok(Err(UserStoreError::TokenSpaceExhausted)),
+                let Some(token) = phrase::canonicalize_library_token(library, raw) else {
+                    return Ok(Err(UserStoreError::TokenSpaceExhausted));
                 };
-                let next = match phrase::next_library_token_after(library, token) {
-                    Some(next) => next,
-                    None => return Ok(Err(UserStoreError::TokenSpaceExhausted)),
+                let Some(next) = phrase::next_library_token_after(library, token) else {
+                    return Ok(Err(UserStoreError::TokenSpaceExhausted));
                 };
                 txn.put(ALLOC, &lib_alloc_key, &codec::encode_token(next))?;
                 if library == USER_DICTIONARY {
@@ -753,13 +751,11 @@ impl<S: WriteStore> GenericUserStore<S> {
                         .map_err(|_| StoreError::Backend("corrupt alloc cursor".into()))?,
                     None => first_library_token(ADDON_DICTIONARY),
                 };
-                let token = match phrase::canonicalize_library_token(ADDON_DICTIONARY, raw) {
-                    Some(token) => token,
-                    None => return Ok(Err(UserStoreError::TokenSpaceExhausted)),
+                let Some(token) = phrase::canonicalize_library_token(ADDON_DICTIONARY, raw) else {
+                    return Ok(Err(UserStoreError::TokenSpaceExhausted));
                 };
-                let next = match phrase::next_library_token_after(ADDON_DICTIONARY, token) {
-                    Some(next) => next,
-                    None => return Ok(Err(UserStoreError::TokenSpaceExhausted)),
+                let Some(next) = phrase::next_library_token_after(ADDON_DICTIONARY, token) else {
+                    return Ok(Err(UserStoreError::TokenSpaceExhausted));
                 };
                 txn.put(ALLOC, &lib_alloc_key, &codec::encode_token(next))?;
 

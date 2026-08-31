@@ -87,9 +87,8 @@ pub fn take_owned_cstr(ptr: *mut c_char) -> String {
 ///
 /// The caller owns the returned pointer and frees it with `g_free`.
 pub fn owned_cstr(s: &str) -> *mut c_char {
-    let cstr = match CString::new(s) {
-        Ok(c) => c,
-        Err(_) => return ptr::null_mut::<c_char>(),
+    let Ok(cstr) = CString::new(s) else {
+        return ptr::null_mut::<c_char>();
     };
     let bytes = cstr.as_bytes_with_nul();
     // SAFETY: `malloc` returns a valid `bytes.len()`-byte allocation or null.
