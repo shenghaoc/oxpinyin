@@ -83,8 +83,12 @@ mod tests {
     fn merging_two_single_document_models_sums_and_maxes() {
         // Same document in two candidate models: merging equals training it
         // twice (two documents), so document frequency doubles and Mr maxes.
-        let a = model_from("10 甲\n20 乙\n");
-        let b = model_from("10 甲\n20 乙\n");
+        // The document cycles 甲→乙→甲 so both tokens appear as a W1 (each has
+        // a stored array header); a W2-only token would get no header under
+        // the pin's Tkrzw backend and the model would then fail `validate`
+        // (see `generate::tests::a_token2_only_token_gets_no_array_header`).
+        let a = model_from("10 甲\n20 乙\n10 甲\n");
+        let b = model_from("10 甲\n20 乙\n10 甲\n");
         let mut merged = a.clone();
         merge_into(&mut merged, &b).expect("merge");
 
@@ -98,25 +102,32 @@ mod tests {
                 mr: 1
             }
         );
-        // Magic invariants hold after merge.
+        // Magic invariants hold after merge (a complete model validates).
         validate(&merged).expect("merged model validates");
     }
 
     #[test]
     fn merge_equals_single_run_over_both_documents() {
-        // Merging per-document candidates must equal counting both docs in
-        // one model (the crux of the candidate-merge stage).
-        let a = model_from("10 甲\n20 乙\n30 丙\n");
-        let b = model_from("20 乙\n30 丙\n10 甲\n");
+        // Merging per-document candidates must equal counting both docs in one
+        // model (the crux of the candidate-merge stage). The invariant holds
+        // when every token appears as a W1 in each document it occurs in — a
+        // token that is W2-only in one candidate but W1 in another breaks it
+        // (its unigram freq is stored in the combined run but not in the
+        // per-candidate merge — exactly as the pin's Tkrzw gen behaves). The
+        // cyclic documents below keep every token a W1, so the invariant holds.
+        let da = "10 甲\n20 乙\n30 丙\n10 甲\n";
+        let db = "20 乙\n30 丙\n10 甲\n20 乙\n";
+        let a = model_from(da);
+        let b = model_from(db);
         let mut merged = a.clone();
         merge_into(&mut merged, &b).expect("merge");
 
         let mut combined = KMixtureModel::new();
         combined
-            .add_document("10 甲\n20 乙\n30 丙\n", GenerateParams::default())
+            .add_document(da, GenerateParams::default())
             .expect("d1");
         combined
-            .add_document("20 乙\n30 丙\n10 甲\n", GenerateParams::default())
+            .add_document(db, GenerateParams::default())
             .expect("d2");
 
         assert_eq!(merged.grams, combined.grams);
