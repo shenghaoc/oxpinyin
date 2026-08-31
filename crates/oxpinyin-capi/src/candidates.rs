@@ -62,25 +62,22 @@ pub extern "C" fn pinyin_get_candidate(
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
         let idx = index as usize;
-        match inst.candidates.get(idx) {
-            Some(cand) => {
-                if !candidate.is_null() {
-                    // SAFETY: Null-checked above.
-                    unsafe {
-                        *candidate = candidate_ptr(cand);
-                    }
+        if let Some(cand) = inst.candidates.get(idx) {
+            if !candidate.is_null() {
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *candidate = candidate_ptr(cand);
                 }
-                true
             }
-            None => {
-                if !candidate.is_null() {
-                    // SAFETY: Null-checked above.
-                    unsafe {
-                        *candidate = std::ptr::null_mut();
-                    }
+            true
+        } else {
+            if !candidate.is_null() {
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *candidate = std::ptr::null_mut();
                 }
-                false
             }
+            false
         }
     })
 }
