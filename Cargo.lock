@@ -813,6 +813,7 @@ dependencies = [
  "compact_str",
  "oxpinyin-core",
  "oxpinyin-testsupport",
+ "rustc-hash 2.1.3",
  "smallvec",
 ]
 
