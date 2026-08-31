@@ -509,6 +509,10 @@ struct PinyinDerived {
 /// Staged rows before derivation: spelling → its `{token, freq}` records.
 type PinyinRows = Vec<(Box<str>, Vec<(u32, u32)>)>;
 
+/// The resolved `PinyinIndex` payload: the shared entry arena plus each
+/// key's range into it.
+type ResolvedIndex = (Vec<PhraseEntry>, Vec<(Box<str>, Range<usize>)>);
+
 /// The shared derivation over staged rows: sort/dedup, aggregate the
 /// unigram counts, project the initial keys, and resolve every record into
 /// the entry arena.
@@ -563,13 +567,7 @@ fn derive_pinyin(mut rows: PinyinRows, phrase_index: &PhraseIndex) -> PinyinDeri
     // aggregate pass so each hit carries the item's final unigram, and
     // resolve into one arena so a key's hits stay a contiguous slice.
     // The merged `unigrams` records are exactly that total table.
-    let mut entries: Vec<PhraseEntry> = Vec::new();
-    let mut out_rows: Vec<(Box<str>, Range<usize>)> = Vec::with_capacity(rows.len());
-    for (key, records) in rows {
-        let start = entries.len();
-        resolve_hits(&records, phrase_index, &unigrams, &mut entries);
-        out_rows.push((key, start..entries.len()));
-    }
+    let (entries, out_rows) = resolve_rows(rows, phrase_index, &unigrams);
     PinyinDerived {
         pinyin_index: PinyinIndex {
             rows: out_rows,
@@ -607,22 +605,101 @@ fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDe
     Ok(derive_pinyin(rows, phrase_index))
 }
 
-fn resolve_hits(
-    records: &[(u32, u32)],
+/// Resolves every staged record into the entry arena by merge-join.
+///
+/// Records are flattened row-major, sorted by token once, then one linear
+/// walk resolves text against the sorted phrase index and totals against
+/// the sorted unigram table — O(R log R + R + P) instead of the per-record
+/// binary searches into `phrase_index` (O(R log P), 17% of open's self
+/// time on the audit profile). Rows then re-read their records in stored
+/// order, so the emitted arena is byte-identical to the per-record search:
+/// row-major, stored order within a row, unresolved records skipped.
+fn resolve_rows(
+    rows: PinyinRows,
     phrase_index: &PhraseIndex,
     totals: &[(u32, u64)],
-    entries: &mut Vec<PhraseEntry>,
-) {
-    entries.extend(records.iter().filter_map(|&(token, freq)| {
-        phrase_lookup(phrase_index, token).map(|text| {
-            let total = totals
-                .binary_search_by_key(&token, |&(token, _)| token)
-                .ok()
-                .map_or(0, |position| totals[position].1);
-            PhraseEntry::new(PhraseToken::new(token), text)
-                .with_pronunciation_possibility(u64::from(freq), total)
-        })
-    }));
+) -> ResolvedIndex {
+    // Flatten the staged records row-major and remember each row's slice.
+    let mut flat: Vec<(u32, u32)> = Vec::new();
+    let mut bounds: Vec<Range<usize>> = Vec::with_capacity(rows.len());
+    for (_, records) in &rows {
+        bounds.push(flat.len()..flat.len() + records.len());
+        flat.extend_from_slice(records);
+    }
+
+    // Token-sorted views of the flat records, one per merge: the phrase
+    // index orders by [`LeByteKey`] (byte-value order), the unigram totals
+    // by numeric token. The two orders differ, so neither merge can reuse
+    // the other's walk. Ties keep no particular order — resolution is
+    // keyed by flat position, so emission order is unaffected.
+    let mut by_byte: Vec<(u32, usize)> = flat
+        .iter()
+        .enumerate()
+        .map(|(position, &(token, _))| (token.swap_bytes(), position))
+        .collect();
+    by_byte.sort_unstable_by_key(|&(swapped, _)| swapped);
+    let mut by_num: Vec<(u32, usize)> = flat
+        .iter()
+        .enumerate()
+        .map(|(position, &(token, _))| (token, position))
+        .collect();
+    by_num.sort_unstable_by_key(|&(token, _)| token);
+
+    // Merge 1: resolve each record's hit in `phrase_index`. `u32::MAX`
+    // marks the miss the old per-record binary search skipped.
+    let mut hits: Vec<(u32, u64)> = vec![(u32::MAX, 0); flat.len()];
+    let mut phrase_at = 0_usize;
+    for &(swapped, position) in &by_byte {
+        let needle = swapped.swap_bytes();
+        while phrase_at < phrase_index.len()
+            && phrase_index[phrase_at].0.token().swap_bytes() < swapped
+        {
+            phrase_at += 1;
+        }
+        if phrase_index
+            .get(phrase_at)
+            .is_some_and(|(key, _)| key.token() == needle)
+        {
+            hits[position].0 = phrase_at as u32;
+        }
+    }
+
+    // Merge 2: attach each record's aggregated unigram total, `0` when
+    // absent — the binary-search fallback the old path kept.
+    let mut total_at = 0_usize;
+    for &(token, position) in &by_num {
+        while total_at < totals.len() && totals[total_at].0 < token {
+            total_at += 1;
+        }
+        if totals
+            .get(total_at)
+            .is_some_and(|&(stored, _)| stored == token)
+        {
+            hits[position].1 = totals[total_at].1;
+        }
+    }
+
+    // Emit row-major in stored order — the arena shape lookups slice.
+    let mut entries: Vec<PhraseEntry> = Vec::new();
+    let mut out_rows: Vec<(Box<str>, Range<usize>)> = Vec::with_capacity(rows.len());
+    for ((key, records), bounds) in rows.into_iter().zip(bounds) {
+        let start = entries.len();
+        let offset = bounds.start;
+        for position in bounds {
+            let (phrase_position, total) = hits[position];
+            if phrase_position == u32::MAX {
+                continue;
+            }
+            let (token, freq) = records[position - offset];
+            let text = phrase_index[phrase_position as usize].1.as_str();
+            entries.push(
+                PhraseEntry::new(PhraseToken::new(token), text)
+                    .with_pronunciation_possibility(u64::from(freq), total),
+            );
+        }
+        out_rows.push((key, start..entries.len()));
+    }
+    (entries, out_rows)
 }
 
 fn load_phrase_index(path: &Path) -> Result<PhraseIndex, DictError> {
