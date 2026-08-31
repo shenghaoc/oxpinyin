@@ -438,7 +438,10 @@ impl PhraseLibrary {
         // `index_one` is 17 in every upstream file (4 words + separator)
         // and carries no alignment requirement — the loader reads u32s
         // at unaligned offsets; only the array's length is u32-sized.
-        if index_two < index_one || index_three < index_two {
+        // `index_two` sits past the offset array's separator, so it is
+        // at least `index_one + 1` even for an empty array (an empty
+        // library's array is zero slots, not a negative one).
+        if index_two <= index_one || index_three < index_two {
             return Err(bad("sub-index sections out of order"));
         }
         if index_three > payload_bytes.len() {
@@ -494,9 +497,15 @@ impl PhraseLibrary {
     }
 
     /// The offset-array entry of a slot, or `None` outside the array.
+    /// Checked arithmetic throughout: a caller-supplied slot of any
+    /// `usize` value answers `None`, never an overflow.
     fn slot_offset(&self, slot: usize) -> Option<u32> {
-        u32_at(self.payload(), self.offsets.start.checked_add(4 * slot)?)
-            .filter(|_| self.offsets.start + 4 * slot + 4 <= self.offsets.end)
+        let start = slot.checked_mul(4)?.checked_add(self.offsets.start)?;
+        let end = start.checked_add(4)?;
+        if end > self.offsets.end {
+            return None;
+        }
+        u32_at(self.payload(), start)
     }
 
     /// `SubPhraseIndex::get_phrase_item`: the item behind `token`'s
