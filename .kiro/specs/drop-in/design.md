@@ -10,7 +10,7 @@ output-compatibility policy that governs every divergence
 
 ## Architecture
 
-```
+```text
 crates/oxpinyin-capi/
   build.rs                 — Linux: -Wl,-soname,libpinyin.so.15; bakes the .pc
   Cargo.toml               — [package.metadata.capi] library { name = "pinyin",
