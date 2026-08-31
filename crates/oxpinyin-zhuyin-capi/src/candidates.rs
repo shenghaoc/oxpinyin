@@ -298,7 +298,12 @@ pub(crate) fn snapshot_candidates(
         // original-offset. At offset 0 no span ends there (nothing precedes
         // the first key), so the before-cursor window is empty — not the whole
         // composition — matching the pin's `guess_candidates_before_cursor`.
+        // The sentence rows are exempt: upstream prepends them regardless of
+        // the offset (`_prepend_sentence_candidates` has no offset condition,
+        // `zhuyin.cpp:1624-1626` at the pin), and a sentence's consumed span
+        // is the whole composition, not a lookup span.
         if let Some(end) = before_end
+            && cand.kind() != CandidateKind::Sentence
             && consumed_bytes != end
         {
             continue;

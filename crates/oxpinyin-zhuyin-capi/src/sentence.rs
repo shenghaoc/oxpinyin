@@ -166,6 +166,45 @@ pub(crate) fn zhuyin_session_offset(parse: &ZhuyinParse, offset: usize) -> usize
     transformed
 }
 
+/// Maps an original zhuyin-input lookup offset to the session raw-buffer
+/// offset for the candidate-guess family. The terminal offset
+/// (`offset == consumed`) maps to the session buffer's one-past-end —
+/// upstream's matrix reserved slot, where the span walk yields nothing and
+/// only the prepended sentence rows answer — which the per-key walk in
+/// [`zhuyin_session_offset`] overruns by one trailing apostrophe.
+///
+/// The mapping is direction-dependent because a key boundary between two
+/// syllables is two session positions at once: the end of the left key
+/// (`'a'`-joined bytes up to the apostrophe) and the start of the right key
+/// (past the apostrophe). The after-cursor family searches spans STARTING
+/// at the offset and takes the right-key start (`zhuyin_session_offset`);
+/// the before-cursor family searches spans ENDING at it and takes the
+/// left-key end — upstream's `search_matrix` walk answers the left
+/// syllable's candidates there (`before(3)` on su3u3: the pin returns the
+/// (0,3) span's 125 rows, measured on the instrumented oracle).
+pub(crate) fn zhuyin_lookup_session_offset(
+    parse: &ZhuyinParse,
+    session_len: usize,
+    offset: usize,
+    before_cursor: bool,
+) -> usize {
+    if offset >= parse.consumed() {
+        return session_len;
+    }
+    if before_cursor {
+        let mut transformed = 0;
+        for item in parse.keys() {
+            let key_len = item.key().text().len();
+            if offset == item.end() {
+                return transformed + key_len;
+            }
+            transformed += key_len + 1; // apostrophe between keys
+        }
+        return session_len;
+    }
+    zhuyin_session_offset(parse, offset)
+}
+
 /// Get character offset from a lookup byte offset within a sentence.
 ///
 /// # C signature
@@ -239,7 +278,7 @@ pub extern "C" fn zhuyin_guess_candidates_before_cursor(
 }
 
 /// The shared candidate-build shell over the engine's `candidates_at` /
-/// cached candidate list.
+/// `candidates_ending_at` / cached candidate list.
 fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor: bool) -> bool {
     if instance.is_null() {
         return false;
@@ -262,24 +301,41 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
             }
         };
         inst.candidates.clear();
-        // The before-cursor entry searches the span ENDING at the offset; the
-        // after-cursor entry searches the span STARTING at it. The composition
-        // window (`session.candidates()`) holds every candidate with its
-        // consumed span; snapshot_candidates filters it to those ENDING at the
-        // normalized offset for the before-cursor path (0 at offset 0 — nothing
-        // precedes the first key — matching the pin). It must NOT reuse the
-        // after-cursor window, which would hand back the whole composition
-        // (before(0) would wrongly return 125). The after-cursor path keeps
-        // the composition-anchored cached list when the offset is at/before
-        // the composition offset.
-        let window_owned: oxpinyin_engine::CandidateList = if before_cursor {
-            inst.session.candidates().clone()
+        // The before-cursor entry searches the spans ENDING at the offset
+        // (the engine's backward-anchored window builder, the pin's
+        // `search_matrix` walk over `(start, offset)`); the after-cursor
+        // entry searches the span STARTING at it. Offsets cross the seam in
+        // the session's `'`-joined raw-buffer coordinates: the original
+        // zhuyin offset maps through `zhuyin_lookup_session_offset`, whose
+        // terminal case answers the buffer's one-past-end (the pin's
+        // reserved slot). The after-cursor path keeps the composition-anchored
+        // cached list when the mapped offset is at/before the composition
+        // offset.
+        let session_offset = if let Some(parse) = inst.zhuyin_parse.as_ref() {
+            crate::sentence::zhuyin_lookup_session_offset(
+                parse,
+                inst.session.raw_input().len(),
+                normalized,
+                before_cursor,
+            )
         } else {
-            inst.anchored_window = if normalized <= inst.session.composition_offset() {
+            normalized
+        };
+        let window_owned: oxpinyin_engine::CandidateList = if before_cursor {
+            inst.anchored_window = None;
+            match inst.session.candidates_ending_at(session_offset) {
+                Ok(window) => window,
+                Err(_) => {
+                    inst.candidates.clear();
+                    return false;
+                }
+            }
+        } else {
+            inst.anchored_window = if session_offset <= inst.session.composition_offset() {
                 None
             } else {
-                match inst.session.candidates_at(normalized) {
-                    Ok(window) => Some((normalized, window)),
+                match inst.session.candidates_at(session_offset) {
+                    Ok(window) => Some((session_offset, window)),
                     Err(_) => {
                         inst.candidates.clear();
                         return false;

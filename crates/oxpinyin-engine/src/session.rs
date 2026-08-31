@@ -1975,6 +1975,184 @@ where
         Ok(CandidateList::from_vec(items))
     }
 
+    /// Builds the candidate window over spans ENDING at byte `offset` in the
+    /// raw buffer — the pin's before-cursor walk
+    /// (`zhuyin_guess_candidates_before_cursor`, `zhuyin.cpp:1542-1629` at
+    /// the pin 0c5e80e1): every key-path from each start `0..offset` to the
+    /// fixed end, enumerated longest-span-first (start ascending — the pin's
+    /// `len` loop), each span's slice ranked by the three-key order exactly
+    /// like the after-cursor windows, the stored n-best rows prepended over
+    /// the whole set, then text dedup keep-first.
+    ///
+    /// Measured decomposition on the pin (su3u3, `before(5)`, the
+    /// instrumented oracle at 0c5e80e1): span (0,5) yields 3 phrase
+    /// candidates, span (3,5) yields 597, the mid-syllable starts (1, 2, 4)
+    /// answer no match (empty columns — `search_matrix` returns
+    /// `SEARCH_NONE` before recursing), 600 phrases total, +1 sentence row,
+    /// −1 string-duplicate phrase → 600. The builder reproduces that walk: a
+    /// start with no matrix column (a mid-syllable byte) contributes nothing
+    /// naturally (no key starts there), and a span ending on an apostrophe
+    /// separator byte answers nothing (upstream's zero-key end column:
+    /// `search_matrix` returns `SEARCH_CONTINUED` with no items,
+    /// `phonetic_key_matrix.cpp:419-423`).
+    ///
+    /// Does not disturb the cached list or any composition state (the
+    /// [`Session::candidates_at`] contract). At offset 0 nothing precedes
+    /// the first key, so the window is the prepended sentence rows alone.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::LookupOffsetOutOfRange`] when `offset` exceeds
+    /// the raw buffer's one-past-end position, and
+    /// [`EngineError::LookupOffsetInsideCharacter`] when it falls inside a
+    /// multi-byte character — the same refusals as
+    /// [`Session::candidates_at`] — plus backend failures during the scan.
+    pub fn candidates_ending_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
+        if offset > self.raw.len() {
+            return Err(EngineError::LookupOffsetOutOfRange {
+                offset,
+                len: self.raw.len(),
+            });
+        }
+        if !self.raw.is_char_boundary(offset) {
+            return Err(EngineError::LookupOffsetInsideCharacter {
+                offset,
+                len: self.raw.len(),
+            });
+        }
+        let mut items = Vec::new();
+        // A span cannot end at the composition start, and an end on an
+        // apostrophe separator byte is upstream's empty end column: the
+        // window is the prepended sentence rows alone.
+        if offset == 0 || self.raw.as_bytes().get(offset - 1) == Some(&b'\'') {
+            self.prepend_nbest_rows(&mut items);
+            return Ok(CandidateList::from_vec(items));
+        }
+        self.scan_window_ending(offset, &mut items)?;
+        Ok(CandidateList::from_vec(items))
+    }
+
+    /// The prefix graph the backward-anchored scan walks: the raw input cut
+    /// to `offset`, with only the exact segments fully inside the cut. A
+    /// key crossing the lookup boundary cannot end within the prefix —
+    /// upstream's matrix keeps such a key but `search_matrix` can only
+    /// report it as overhang (`SEARCH_CONTINUED`), never as a match for
+    /// this end — so dropping it changes no candidate, and keeping it
+    /// (beyond the cut) would poison the graph's own bound. Exact-segment
+    /// coordinates are absolute from the buffer start, so no rebasing is
+    /// needed at anchor 0.
+    fn build_prefix_graph(&self, offset: usize) -> Result<SegmentGraph, EngineError> {
+        let remaining = &self.raw.as_bytes()[..offset];
+        if self.exact_segments.is_empty() {
+            return SegmentGraph::build_with_options(remaining, self.settings.options)
+                .map_err(EngineError::Graph);
+        }
+        let rebased: Vec<ExactSegment> = self
+            .exact_segments
+            .iter()
+            .copied()
+            .filter(|segment| segment.end() <= offset)
+            .collect();
+        SegmentGraph::build_exact(remaining, &rebased).map_err(EngineError::Graph)
+    }
+
+    /// The backward-anchored scan proper: the prefix graph's matrix, every
+    /// live start enumerated ascending (the pin's longest span first), each
+    /// span's batch flushed and ranked with its own previous-token gram (the
+    /// pin resolves `_get_previous_token` per `len` slice), groups appended
+    /// in order, then one text dedup — the pin dedups once, after the
+    /// prepend, and [`Session::prepend_nbest_rows`] re-runs it over the
+    /// joined list.
+    ///
+    /// Returns the filtered parse length of the prefix slice, mirroring
+    /// [`Session::scan_window`]'s return.
+    fn scan_window_ending(
+        &mut self,
+        offset: usize,
+        out: &mut Vec<Candidate>,
+    ) -> Result<usize, EngineError> {
+        out.clear();
+        let graph = self.build_prefix_graph(offset)?;
+        let matrix = build_scan_matrix(
+            &graph,
+            self.settings.options,
+            self.exact_segments.is_empty(),
+        );
+        let bound = graph.consumed().min(offset);
+
+        let mut collected = core::mem::take(&mut self.scratch_collected);
+        collected.clear();
+        let mut path = core::mem::take(&mut self.scratch_path);
+        let mut entries = core::mem::take(&mut self.scratch_entries);
+        let mut ranked = core::mem::take(&mut self.scratch_ranked);
+        let mut window_phrase = core::mem::take(&mut self.scratch_window_phrase);
+        let mut window_addon = core::mem::take(&mut self.scratch_window_addon);
+        let mut group: Vec<Candidate> = Vec::new();
+
+        for start in 0..bound {
+            // An empty column — no key starts here — is the pin's
+            // `SEARCH_NONE` start (`search_matrix`,
+            // `phonetic_key_matrix.cpp:416-418`): the span contributes
+            // nothing and the walk skips it.
+            if matrix.get(start).is_none_or(|column| column.is_empty()) {
+                continue;
+            }
+            let mut continued = false;
+            {
+                let mut buf = ScanBuf {
+                    path: &mut path,
+                    system: &mut window_phrase,
+                    addon: &mut window_addon,
+                    continued: &mut continued,
+                    entries: &mut entries,
+                };
+                self.scan_paths(&matrix, start, offset, &mut buf)?;
+            }
+            group.clear();
+            flush_window_batch(&mut window_phrase, &mut group);
+            flush_window_batch(&mut window_addon, &mut group);
+            if group.is_empty() {
+                continue;
+            }
+            // The pin ranks each `len` slice on its own, with the previous
+            // token resolved at that slice's start.
+            let gram = self.dynamic_adjust_gram(start)?;
+            let frequencies = self
+                .candidate_frequencies(&group, gram.as_ref())?
+                .unwrap_or_else(|| vec![0; group.len()]);
+            ranked.clear();
+            ranked.extend(
+                group
+                    .drain(..)
+                    .zip(frequencies)
+                    .map(|(candidate, frequency)| {
+                        let key = RankKey {
+                            phrase_length: candidate.text().chars().count(),
+                            pinyin_span: candidate.consumed_bytes(),
+                            frequency,
+                        };
+                        (key, candidate)
+                    }),
+            );
+            ranked.sort_by_key(|(key, _)| core::cmp::Reverse(*key));
+            group.extend(ranked.drain(..).map(|(_, candidate)| candidate));
+            collected.append(&mut group);
+        }
+
+        out.append(&mut collected);
+
+        self.scratch_collected = collected;
+        self.scratch_path = path;
+        self.scratch_entries = entries;
+        self.scratch_ranked = ranked;
+        self.scratch_window_phrase = window_phrase;
+        self.scratch_window_addon = window_addon;
+
+        dedup_by_text_keep_first(out);
+        self.prepend_nbest_rows(out);
+        Ok(bound)
+    }
+
     /// Whether `offset` names a column the pin's span search can answer.
     ///
     /// The pin's matrix holds the chosen parse's keys at their raw begins
@@ -5377,6 +5555,58 @@ mod tests {
                 .any(|cand| cand.kind() == CandidateKind::Phrase && cand.text() == "你"),
             "the phrase survives the collapsed prepend"
         );
+    }
+
+    #[test]
+    fn candidates_ending_at_walks_the_spans_that_end_there() {
+        use super::CandidateKind;
+        use crate::nbest::NbestRow;
+
+        // The pin's before-cursor walk answers spans (start, offset) for
+        // every live start, longest first, with the sentence rows prepended
+        // (measured on the instrumented oracle: su3u3 before(3) is the first
+        // syllable's 125 rows plus one BEST_MATCH row).
+        let mut session = train_session();
+        session.type_pinyin("nihao").expect("typing cannot fail");
+
+        let window = session
+            .candidates_ending_at(2)
+            .expect("offset 2 is in range");
+        assert!(
+            window.iter().any(|cand| cand.text() == "你"),
+            "你 ends at 2 and is offered"
+        );
+        assert!(
+            !window.iter().any(|cand| cand.text() == "好"),
+            "好 ends at 5, not 2 — the walk keeps only spans ending at the offset"
+        );
+
+        // Nothing precedes the first key: the window is empty without a
+        // sentence guess (the prepend has no rows to ride).
+        let at_start = session
+            .candidates_ending_at(0)
+            .expect("offset 0 is in range");
+        assert!(at_start.is_empty());
+
+        // A guessed sentence rides the prepend at any offset.
+        session.nbest_rows = vec![NbestRow {
+            text: "你好".into(),
+            tokens: vec![PhraseToken::new(0x100)],
+            spans: Vec::new(),
+            keys: 2,
+            span: 5,
+            cost: 10,
+        }];
+        session.set_collapse_sentence_rows_to_best(true);
+        let window = session
+            .candidates_ending_at(2)
+            .expect("offset 2 is in range");
+        assert_eq!(
+            window.get(0).map(|cand| (cand.kind(), cand.text())),
+            Some((CandidateKind::Sentence, "你好")),
+            "the collapsed sentence row heads the before-cursor window"
+        );
+        assert!(window.iter().any(|cand| cand.text() == "你"));
     }
 
     #[test]
