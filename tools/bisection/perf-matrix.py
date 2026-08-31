@@ -106,19 +106,29 @@ def measure_size(prefix, data_dir):
     so_bytes = 0
     data_bytes = 0
     other_bytes = 0
+    symlink_bytes = 0
     data_files = []
     prefix_p = pathlib.Path(prefix)
+    if not prefix_p.exists():
+        raise FileNotFoundError(f"size prefix does not exist: {prefix}")
     data_p = pathlib.Path(data_dir) if data_dir else None
+    if data_p is not None and not data_p.exists():
+        raise FileNotFoundError(f"data directory does not exist: {data_dir}")
 
-    if data_p and data_p.exists():
+    if data_p:
         for p in data_p.rglob("*"):
-            if p.is_file() and not p.is_symlink():
+            if p.is_symlink():
+                symlink_bytes += os.lstat(p).st_size
+            elif p.is_file():
                 sz = p.stat().st_size
                 data_bytes += sz
                 data_files.append((p.name, sz))
 
     for p in prefix_p.rglob("*"):
-        if p.is_symlink() or not p.is_file():
+        if p.is_symlink():
+            symlink_bytes += os.lstat(p).st_size
+            continue
+        if not p.is_file():
             continue
         if data_p and str(p).startswith(str(data_p)):
             continue
@@ -132,7 +142,8 @@ def measure_size(prefix, data_dir):
         "so": so_bytes,
         "data": data_bytes,
         "other": other_bytes,
-        "total": so_bytes + data_bytes + other_bytes,
+        "symlink_bytes": symlink_bytes,
+        "total": so_bytes + data_bytes + other_bytes + symlink_bytes,
         "data_files": sorted(data_files, key=lambda x: -x[1]),
     }
 
@@ -348,11 +359,11 @@ def report_factorial(speed_cells, ram_cells, size_cells):
             print(f"| {name} | {interaction:.3f} |")
 
     print()
-    print("### Decomposition of the 118.1× init gap")
-    print()
     ox_kc_init = median(ms(speed_cells["oxpinyin-kc"]["init"]))
     lp_tk_init = median(ms(speed_cells["libpinyin-tkrzw"]["init"]))
     cross_ratio = ox_kc_init / lp_tk_init if lp_tk_init else float("nan")
+    print(f"### Decomposition of the {cross_ratio:.1f}× init gap")
+    print()
     print(f"Original cross-comparison (oxpinyin-KC / libpinyin-Tkrzw): {cross_ratio:.1f}×")
     print()
     lp_kc_init = median(ms(speed_cells["libpinyin-kc"]["init"]))
