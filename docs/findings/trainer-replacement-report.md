@@ -106,29 +106,80 @@ None is on the main, word-recognition, or punctuation path.
    `k_mixture_model_to_interpolation` (`oxpinyin-kmm`), pin `ngseg`/`spseg`
    (`oxpinyin-segment`), and pin `estimate_interpolation` (`oxpinyin-lambda`).
 
-### Oracle differential status
+### Evidence levels
 
-The pin binaries and the model20 system data are **not buildable in this
-environment** (no DBM library, no committed system model), so the live oracle
-gates **skip** here with an informative message — as they do in CI. They run
-where an operator sets the `PINYIN_*` binary/data env vars. Committed
-correctness therefore rests on the line-by-line audit, the hand-computable and
-hand-derived goldens, and the semantic invariants; the oracle gates are the
-upgrade path that keeps a golden from silently going stale.
+Three levels of evidence, strongest last, distinguished per stage:
+
+- **Level 1 — source parity.** The Rust is audited term-for-term against the
+  pinned C++/Python source (`kmm-arithmetic-audit.md`, `trainer-parity-audit.md`).
+- **Level 2 — deterministic fixtures.** Hand-derived/hand-computable and
+  committed-golden fixtures reproduce the expected semantics and pin them
+  against regression.
+- **Level 3 — live oracle parity.** The **actual pinned libpinyin 2.11.91**
+  (built here, Tkrzw backend, SHA-verified model20 data) is run and compared
+  against oxpinyin. Achieved for the stages marked ✓ below.
+
+### The oracle was built and the differentials were executed
+
+Contrary to an earlier assessment, the pinned oracle **is** buildable in this
+class of environment. `apt` installs `libtkrzw-dev` + autotools; the pinned
+libpinyin source (`0c5e80e`, tag 2.11.91) builds with `--with-dbm=Tkrzw`; and
+`model20.text.tar.gz` fetched from SourceForge is **SHA-256 bit-identical** to
+the pin (`59c68e89…`). `tools/oracle/run-differentials.sh` wires the built
+utils to the `PINYIN_*` gates. Running it produced:
+
+| Stage | Native | L1 source | L2 golden | L3 live oracle | Result |
+|---|---|---|---|---|---|
+| spseg | ✓ | ✓ | ✓ | **✓** | live: matches pin `spseg` |
+| mergeseq | ✓ | ✓ | ✓ | **✓** | live: matches pin `mergeseq` |
+| ngseg | ✓ | ✓ | ✓ | ✓/gated | Rust == committed golden (bit-identical); live gate additionally needs the compiled system bigram (see below) |
+| KMM generate | ✓ | ✓ | ✓ | **✓** | live: gen+export record set matches pin on the real corpus |
+| KMM export/import | ✓ | ✓ | ✓ | **✓** | live: via gen+export |
+| KMM estimate (candidate score) | ✓ | ✓ | ✓ | ✓* | *deleted-interpolation EM shares the arithmetic proven live for λ below; committed golden |
+| KMM merge | ✓ | ✓ | ✓ | **✓** | live: merged record set matches pin |
+| KMM validate | ✓ | ✓ | ✓ | **✓** | live: verdict matches pin (both reject the W2-only small-corpus model) |
+| KMM prune | ✓ | ✓ | ✓ | **✓** | live: pruned record set matches pin |
+| KMM → interpolation | ✓ | ✓ | ✓ | **✓** | live: byte-identical to pin `k_mixture_model_to_interpolation` |
+| λ (estimate_interpolation) | ✓ | ✓ | ✓ | **✓** | live: DELETED bigrams bit-exact, 153 per-context λ byte-identical at 6dp |
+| ngram counter (gen_ngram) | ✓ | ✓ | ✓ | **✓** | live: 138 096 unigrams value-identical to pin `gen_ngram` |
+| correction rate (evaluator) | ✓ | ✓ | ✓ | gated | needs the compiled system bigram + a matching `evals2.text`; gate present, skips |
+| punctuation | ✓ | ✓ | ✓ | — | no pin oracle path (genpunct is pure Python); golden-verified |
+| word recognition | ✓ | ✓ | ✓ | — | no pin oracle path (pure Python + SQLite); golden-verified |
+| orchestration / raw-corpus E2E | ✓ | ✓ | ✓ | — | pure native wiring; acceptance-tested |
+
+**Oracle-driven correction.** Running the live gate immediately exposed a real
+divergence the fixtures had missed: oxpinyin-kmm stored a `\1-gram` array
+header for every unigram, but the Tkrzw-backed pin's `set_array_header`
+no-ops on a token that never appears as W1, so W2-only tokens get no header
+(their freq counts toward `total_freq` only). `generate.rs` was fixed to match,
+and the export order was reclassified from "matches the DBM order" to
+"token-ascending canonicalisation compared as a set" (the pin's order is
+Tkrzw hash order). See `kmm-arithmetic-audit.md` §2/§6 and the D6/D7 register.
+
+**The one gated live stage — the system bigram.** ngseg-live and
+correction-rate-live both need the compiled `bigram.db`, built by the pin's
+own `import_interpolation` over model20's `interpolation2.text`. In this build
+that step hits an upstream `insert_freq` assertion on the full model20 (a
+pin/data-import nuance, not an oxpinyin issue; the pin's `gen_ngram`,
+`estimate_interpolation`, `spseg`, and all KMM utils run cleanly). ngseg is
+therefore Level-2 (Rust == the committed golden, which was captured from a
+real ngseg), and the evaluator is Level 1+2 with its live gate ready. An
+operator with a working `import_interpolation` supplies `bigram.db` and the
+two gates run.
 
 ## Test counts
 
 | Crate | Tests | Coverage |
 |---|---|---|
 | `oxpinyin-segment` | 36 | spseg/mergeseq/ngseg + differentials |
-| `oxpinyin-kmm` | 39 | per-op units + pipeline golden + semantic parity + oracle gates |
+| `oxpinyin-kmm` | 43 | per-op units + pipeline golden + semantic parity + **5 live oracle gates** |
 | `oxpinyin-eval` | 13 | model/decode/phrases units + full-flow + oracle gate |
 | `oxpinyin-word` | 23 | per-stage units + end-to-end golden |
 | `oxpinyin-punct` | 13 | per-stage units + two-stage golden |
 | `oxpinyin-train` | 25 | config/status/corpus/candidate units + raw-corpus acceptance |
-| `oxpinyin-lambda` | 14 | held-out EM + differential |
-| `oxpinyin-counter` | 13 | ngram counting + differential |
-| **Total** | **176** | all green |
+| `oxpinyin-lambda` | 14 | held-out EM + **live** differential |
+| `oxpinyin-counter` | 13 | ngram counting + **live** differential |
+| **Total** | **180** | all green |
 
 ## Determinism & complexity
 
@@ -138,21 +189,26 @@ token-ascending and candidate sets, sorts, and merges are order-stable
 (`trainer-parity-audit.md` §12). This is the property that makes the
 byte-level goldens and the semantic-parity harness reproducible.
 
-**Benchmarks:** no measured wall-clock comparison against the pin is included
-— the pin is not buildable here, and the trainer crates are offline tools
-where correctness and determinism, not latency, are the Stage-1 target. The
-source policy's constraint ("time and space complexity must never both be
-worsened") is met by construction: the algorithms are the same, with the one
-mechanism trade of ordered maps (O(log n) per access, deterministic) for
-upstream's hash maps (O(1) average, nondeterministic order) — a space/latency
-neutral-to-favourable swap that buys determinism. Measured Stage-2 profiling
-(smaller binary, lower RAM, faster run) is future work, tracked with the rest
-of Stage 2 in `ROADMAP.md`.
+**Benchmarks.** The pin is now built, so a measured comparison is feasible; a
+clean throughput/RAM benchmark still needs a *valid* large corpus. A quick
+smoke run over a 57 600-line synthetic corpus (the real fixture repeated) is
+not that: the pin's `gen_k_mixture_model` aborts on it (the repeated fixture
+concatenates into one document with W2-only tokens), while native
+`oxpinyin-kmm generate` completes in ~6 ms — a robustness data point (native
+does not abort on caller input), not a like-for-like throughput number. So no
+throughput/RAM claim is made here; proper profiling on a real corpus is Stage-2
+work (`ROADMAP.md`). The source policy's constraint ("time and space complexity
+must never both be worsened") is met by construction: the algorithms are the
+same, with the one mechanism trade of ordered maps (O(log n) per access,
+deterministic) for upstream's hash maps (O(1) average, nondeterministic order).
 
 ## Limitations
 
-- **Oracle gates skip in this environment** (no pin build, no system data);
-  they are the CI/operator upgrade path, not committed-here evidence.
+- **Two live gates need the compiled system bigram** (ngseg-live,
+  correction-rate-live). Building it via the pin's own `import_interpolation`
+  over model20 hits an upstream `insert_freq` assertion in this build; ngseg is
+  Level-2 (Rust == committed golden) and the evaluator Level 1+2 until an
+  operator supplies a working `bigram.db`. Every other live gate runs (9 pass).
 - **The `oxpinyin-train` binary needs a system phrase index** for the segment
   and evaluate stages (as the pin does); the in-memory acceptance test builds
   a fixture segmenter to exercise the whole chain without it.
@@ -160,7 +216,7 @@ of Stage 2 in `ROADMAP.md`.
   reloaded), plus the persisted `GenerateStart/End`/`GenerateModelEnd` markers;
   fine-grained mid-generate crash-resume reloads from the last persisted
   candidate boundary rather than mid-document.
-- **No measured benchmarks** (above) — Stage-2 work.
+- **No throughput/RAM benchmark** (above) — Stage-2 work.
 - **`--fast` (spseg) and `--skip-pi-gram-training`** are wired through the
   orchestrator but the acceptance test pins the default (ngseg, pi-gram on)
   path; the spseg path shares the same downstream stages.
