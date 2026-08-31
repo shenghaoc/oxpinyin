@@ -63,7 +63,7 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
             return 0;
         }
         inst.parsed_len = parsed.consumed();
-        inst.full_input = text.to_owned();
+        text.clone_into(&mut inst.full_input);
         inst.full_parse = Some(parsed);
         return inst.parsed_len;
     }
@@ -127,7 +127,7 @@ fn parse_double_more(instance: *mut PinyinInstance, text: &str) -> usize {
     }
 
     inst.parsed_len = parsed.consumed();
-    inst.double_input = text.to_owned();
+    text.clone_into(&mut inst.double_input);
     inst.double_parse = Some(parsed);
     inst.parsed_len
 }
@@ -186,7 +186,7 @@ fn parse_chewing_more(instance: *mut PinyinInstance, text: &str) -> usize {
     }
 
     inst.parsed_len = parsed.consumed();
-    inst.zhuyin_input = text.to_owned();
+    text.clone_into(&mut inst.zhuyin_input);
     inst.zhuyin_parse = Some(parsed);
     inst.parsed_len
 }
