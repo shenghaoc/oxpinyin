@@ -78,3 +78,5 @@ tools/packaging/install.sh         — fills @prefix@/@libdir@ into the .pc
 - The BerkeleyDB compat path — SHELVED
   (`docs/findings/berkeleydb-compat-phase1.md`); the incomplete
   implementation lives on `feat/bdb-backend`.
+
+**Reference:** [libpinyin wiki](https://github.com/libpinyin/libpinyin/wiki) — `MemoryChunk` format, DBM layout, and the data directory structure are documented there.
