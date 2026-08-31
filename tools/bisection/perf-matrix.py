@@ -125,12 +125,12 @@ def measure_size(prefix, data_dir):
                 data_files.append((p.name, sz))
 
     for p in prefix_p.rglob("*"):
+        if data_p and str(p).startswith(str(data_p)):
+            continue
         if p.is_symlink():
             symlink_bytes += os.lstat(p).st_size
             continue
         if not p.is_file():
-            continue
-        if data_p and str(p).startswith(str(data_p)):
             continue
         sz = p.stat().st_size
         if ".so" in p.name:
