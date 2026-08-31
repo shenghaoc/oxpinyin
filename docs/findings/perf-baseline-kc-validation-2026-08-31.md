@@ -96,10 +96,6 @@ When both are stripped, **oxpinyin's shared object is 2.16× larger than the
 oracle's**, not smaller. The baseline's 0.454× figure compared a debug-build
 oracle against a release-build oxpinyin.
 
-The oxpinyin `.so` is still well within the Constitution's install-size budget
-(pinned reference stack +10%), because the `.so` is a small fraction of total
-install size and runtime data is the dominant component for both sides.
-
 ## Strace file-access proof
 
 ### Oracle init opens (strace -f -e trace=openat,read,mmap)
@@ -184,9 +180,11 @@ ddaf4cb4ee8c63223bd5ef59b43778ca19ef66864e4ccde313dd2950dd2e9486
 
 ### KC data files
 
-The three `.kct` files in the staged data directory are byte-identical to
-the `oxpinyin-datagen` export directory. The datagen step is deterministic
-for a given `interpolation2.text` input and the same KC library version.
+Two independent `oxpinyin-datagen compile` runs in clean output
+directories, using the same `interpolation2.text` input and KC library
+version (libkyotocabinet 1.2.80), produce **bit-identical** `.kct` files
+for all three runtime tables (pinyin_index, phrase_index, bigram). The
+datagen step is deterministic.
 
 ### Oracle build reproducibility
 
@@ -195,9 +193,10 @@ Tkrzw `bigram.db` may contain nondeterministic elements (hash seeds,
 allocation order). This is acceptable — the oracle is a fixed pin, not a
 reproducibility target.
 
-## Architecture portability
+## Architecture portability (source-level only)
 
-The benchmark infrastructure contains **no architecture-specific code**:
+Source-level review found **no architecture-specific code** in the
+benchmark infrastructure:
 
 - `run-perf-baseline.sh`: uses `find` for dynamic pkgconfig path discovery
   (handles any `lib/<triplet>/` layout). No hardcoded `lib64/` or
@@ -211,10 +210,16 @@ The benchmark infrastructure contains **no architecture-specific code**:
 The fixes from `15e1b47` are general. An x86_64 build would use
 `lib/x86_64-linux-gnu/` and the dynamic discovery works unchanged.
 
-## W8 semantic equivalence
+**Not verified at runtime:** a linux/amd64 image build, dependency
+resolution, and benchmark execution were not tested. The source-level
+finding reduces but does not eliminate the risk of platform-specific
+issues (e.g., package availability, compiler behavior, KC library
+behavior).
+
+## W8 workload/API sequence
 
 The `bisect --perf` harness drives both oracle and oxpinyin through the
-identical CAPI sequence:
+identical CAPI call sequence:
 
 1. `pinyin_init(systemdir, userdir)` — context creation
 2. `pinyin_alloc_instance(ctx)` — instance allocation
@@ -223,14 +228,15 @@ identical CAPI sequence:
    `pinyin_guess_candidates(inst, ...)` → `pinyin_get_n_candidate(inst, ...)`
 5. `pinyin_free_instance(inst)` → `pinyin_fini(ctx)` — cleanup
 
-The workload is the same keystroke sequence processed the same way. The
-only difference is internal: which storage backend (Tkrzw vs KC) and data
-format (`.bin`/`.db` vs `.kct`/`.text`) backs the CAPI.
-
 This matches the W8 design: same harness, same API surface, same input
 data (model20). The measurement environment differs (Docker/ARM64 vs
 bare-metal/x86_64), but ratios are meaningful because both sides run in
 the same environment.
+
+This verification covers the call sequence and workload shape. It does
+not compare candidate strings, scores, or state transitions between oracle
+and oxpinyin — output equivalence is covered by the bisection differential
+tests, not by this performance harness.
 
 ## Stage-2 conclusion reassessment
 
@@ -273,10 +279,10 @@ These are optimization directions, not changes made in this validation.
 | 3 | Init attribution with measurement | PASS | KC init ~104 ms (89%), text parsing ~5–13 ms (5–11%), I/O ~5 ms. Measured via data-subset ablation with CPU pinning |
 | 4 | File size separated from runtime cost | PASS | 80 MiB file, 2 MiB read, 5 ms I/O. File size ≠ runtime cost |
 | 5 | Oracle artifact investigated | PASS | gen_binary_files + import_interpolation + gen_unigram. Source inspected in libpinyin-2.11.91 |
-| 6 | Build reproducibility tested | PASS | .so bit-identical across two builds; KC data identical to export. Oracle not tested (pin, not target) |
+| 6 | Build reproducibility tested | PASS | .so bit-identical across two builds; KC data bit-identical across two independent datagen runs. Oracle not tested (pin, not target) |
 | 7 | Size comparison semantics validated | PASS | Oracle .so has debug symbols, oxpinyin does not. Stripped: oracle 771 KiB, oxpinyin 1,669 KiB (ratio 2.16×, not 0.454×) |
-| 8 | Architecture portability confirmed | PASS | No arch-specific code in scripts. Dynamic pkgconfig discovery. Harness is pure C/dlopen |
-| 9 | W8 semantic equivalence verified | PASS | Same bisect.c harness, same CAPI sequence, same model20 data. Environment differs (Docker/ARM64 vs bare-metal/x86_64) |
+| 8 | Architecture portability | UNVERIFIED | Source-level review found no arch-specific code; dynamic pkgconfig discovery and pure-C harness are portable. linux/amd64 image build, dependency resolution, and runtime were not tested |
+| 9 | W8 workload/API sequence verified | PASS | Same bisect.c harness, same CAPI call sequence, same model20 data. Candidate strings, scores, and state transitions were not compared between oracle and oxpinyin |
 | 10 | Headline numbers from raw JSONL | PASS | init 118.1×, cold 0.986×, steady 1.079×, RSS 5.45×, HWM 4.46×. Baseline's "~110×" init was imprecise |
 | 11 | Stage-2 conclusion classified | PASS | PARTIALLY PROVEN: bottleneck exists (118.1×) but root cause is KC init, not text parsing |
 | 12 | No production code optimized | PASS | Only measurement scripts, Dockerfile, and documentation modified |

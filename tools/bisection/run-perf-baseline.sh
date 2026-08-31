@@ -87,7 +87,8 @@ echo "installed capi .so:         $CAPI_SO"
 
 # ── Installed data tree (cargo-c ships no data; packager must add it) ────
 
-if [ ! -f "$CAPI_DATA/pinyin_index.kct" ] || [ ! -f "$CAPI_DATA/interpolation2.text" ]; then
+if [ ! -f "$CAPI_DATA/pinyin_index.kct" ] || [ ! -f "$CAPI_DATA/phrase_index.kct" ] \
+   || [ ! -f "$CAPI_DATA/bigram.kct" ] || [ ! -f "$CAPI_DATA/interpolation2.text" ]; then
     echo "--- populating oxpinyin data from export + model cache ---"
     EXPORT_DIR="${PINYIN_EXPORT_DIR:-/tmp/oxpinyin-export}"
     missing=""
@@ -111,10 +112,12 @@ if [ ! -f "$CAPI_DATA/pinyin_index.kct" ] || [ ! -f "$CAPI_DATA/interpolation2.t
         cp -L "$MODEL_DIR/interpolation2.text" "$CAPI_DATA/interpolation2.text"
     fi
 fi
-[ -f "$CAPI_DATA/pinyin_index.kct" ] && [ -f "$CAPI_DATA/interpolation2.text" ] || {
-    echo "fatal: oxpinyin runtime data incomplete at $CAPI_DATA" >&2
-    exit 1
-}
+for _required in pinyin_index.kct phrase_index.kct bigram.kct interpolation2.text; do
+    [ -f "$CAPI_DATA/$_required" ] || {
+        echo "fatal: missing $CAPI_DATA/$_required" >&2
+        exit 1
+    }
+done
 echo "installed capi data:        $CAPI_DATA"
 
 # ── Axis 1: speed, alternating to control drift ──────────────────────────
