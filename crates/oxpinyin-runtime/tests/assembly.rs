@@ -56,7 +56,7 @@ fn opens_the_w3_fixture_and_decodes_nihao() {
 fn production_open_requires_the_interpolation_model() {
     match Runtime::open(&w3_dir(), None) {
         Err(OpenError::ModelMissing(path)) => {
-            assert!(path.ends_with("interpolation2.text"), "{path:?}")
+            assert!(path.ends_with("interpolation2.text"), "{path:?}");
         }
         Err(other) => panic!("expected ModelMissing, got {other}"),
         Ok(_) => panic!("fixture dir must not open in production mode"),

@@ -226,7 +226,7 @@ pub fn pinyin_alloc_instance(context: *mut PinyinContext) -> *mut PinyinInstance
 }
 /// In-process wrapper for the `pinyin_free_instance` ABI symbol (see the C header).
 pub fn pinyin_free_instance(instance: *mut PinyinInstance) {
-    instance::pinyin_free_instance(instance)
+    instance::pinyin_free_instance(instance);
 }
 /// In-process wrapper for the `pinyin_get_context` ABI symbol (see the C header).
 pub fn pinyin_get_context(instance: *mut PinyinInstance) -> *mut PinyinContext {

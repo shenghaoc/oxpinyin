@@ -200,8 +200,8 @@ impl SystemDictionary {
     #[must_use]
     pub fn tokens_for_text(&self, text: &str) -> &[u32] {
         self.reverse_text_tokens()
-            .ok()
-            .and_then(|map| map.get(text).map(Vec::as_slice))
+            .get(text)
+            .map(Vec::as_slice)
             .unwrap_or(&[])
     }
 
@@ -216,9 +216,7 @@ impl SystemDictionary {
     /// build-stable order instead.
     #[must_use]
     pub fn suggest_after(&self, prefix: &str) -> Vec<(u32, String)> {
-        let Ok(map) = self.reverse_text_tokens() else {
-            return Vec::new();
-        };
+        let map = self.reverse_text_tokens();
         if prefix.is_empty() || !map.contains_key(prefix) {
             return Vec::new();
         }
@@ -238,12 +236,12 @@ impl SystemDictionary {
     }
 
     /// The reverse phrase map, built once on first predict/import use.
-    fn reverse_text_tokens(&self) -> Result<&BTreeMap<String, Vec<u32>>, DictError> {
+    fn reverse_text_tokens(&self) -> &BTreeMap<String, Vec<u32>> {
         if let Some(map) = self.text_tokens.get() {
-            return Ok(map);
+            return map;
         }
         let map = build_text_tokens(&self.phrase_index);
-        Ok(self.text_tokens.get_or_init(|| map))
+        self.text_tokens.get_or_init(|| map)
     }
 
     /// The frozen index key for a syllable sequence: texts joined by `'`.

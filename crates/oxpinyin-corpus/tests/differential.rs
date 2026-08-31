@@ -16,7 +16,7 @@
 //! failed) when the pin tools or the rust-side tables are absent.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use oxpinyin_counter::{count_ngseg, parse_interpolation_dump};
@@ -109,58 +109,14 @@ fn rust_chain_consumes_t4b_sample_with_zero_glue() {
     );
 }
 
-/// Full end-to-end differential: T4b sample → rust chain vs pin chain.
-/// Env-gated on the pin tools; reports env-blocked rather than
-/// fabricating a result.
-#[test]
-fn end_to_end_matches_live_libpinyin_pipeline() {
-    let (
-        Some(ngseg),
-        Some(gen_binary_files),
-        Some(gen_unigram),
-        Some(gen_ngram),
-        Some(gen_deleted_ngram),
-        Some(estimate_interpolation),
-        Some(export_interpolation),
-    ) = (
-        locate_bin("PINYIN_NGSEG"),
-        locate_bin("PINYIN_GEN_BINARY_FILES"),
-        locate_bin("PINYIN_GEN_UNIGRAM"),
-        locate_bin("PINYIN_GEN_NGRAM"),
-        locate_bin("PINYIN_GEN_DELETED_NGRAM"),
-        locate_bin("PINYIN_ESTIMATE_INTERPOLATION"),
-        locate_bin("PINYIN_EXPORT_INTERPOLATION"),
-    )
-    else {
-        eprintln!(
-            "skipping live end-to-end: set PINYIN_NGSEG, PINYIN_GEN_BINARY_FILES, \
-             PINYIN_GEN_UNIGRAM, PINYIN_GEN_NGRAM, PINYIN_GEN_DELETED_NGRAM, \
-             PINYIN_ESTIMATE_INTERPOLATION, and PINYIN_EXPORT_INTERPOLATION"
-        );
-        return;
-    };
-    let Some(ngseg_data) = locate_data("PINYIN_NGSEG_DATA") else {
-        eprintln!(
-            "skipping live end-to-end: PINYIN_NGSEG_DATA not set (needs table.conf + bigram.db)"
-        );
-        return;
-    };
-    let Some(training_data) = locate_data("PINYIN_GEN_NGRAM_DATA") else {
-        eprintln!("skipping live end-to-end: PINYIN_GEN_NGRAM_DATA not set or empty");
-        return;
-    };
-    let sample = std::fs::read(sample_path()).expect("committed sample");
-    let Some(chain) = run_rust_chain(&sample) else {
-        eprintln!("skipping live end-to-end: system-table export / model20 cache not found");
-        return;
-    };
-
-    // Pin T1: ngseg over the same sample bytes, in the pin data dir.
+/// Pin T1: ngseg over the same sample bytes, in the pin data dir.
+/// Removes the temp input file afterwards.
+fn pin_ngseg_output(ngseg: &Path, ngseg_data: &Path, sample: &[u8]) -> Vec<u8> {
     let temp = std::env::temp_dir().join(format!("oxpinyin-corpus-input-{}", std::process::id()));
-    std::fs::write(&temp, &sample).expect("write sample for ngseg");
+    std::fs::write(&temp, sample).expect("write sample for ngseg");
     let pin_ngseg = {
-        let output = Command::new(&ngseg)
-            .current_dir(&ngseg_data)
+        let output = Command::new(ngseg)
+            .current_dir(ngseg_data)
             .arg(&temp)
             .output()
             .expect("ngseg runs");
@@ -173,32 +129,60 @@ fn end_to_end_matches_live_libpinyin_pipeline() {
         output.stdout
     };
     let _ = std::fs::remove_file(&temp);
+    pin_ngseg
+}
 
+/// The pin trainer bins the end-to-end run needs, located once.
+struct PinTools {
+    gen_binary_files: PathBuf,
+    gen_unigram: PathBuf,
+    gen_ngram: PathBuf,
+    gen_deleted_ngram: PathBuf,
+    estimate_interpolation: PathBuf,
+    export_interpolation: PathBuf,
+}
+
+/// Pin T2–T4a in a fresh data dir; the pin's `gen_ngram` consumes the
+/// same ngseg stream the Rust side counted.
+fn pin_trainer_outputs(
+    pin: &PinDir,
+    tools: &PinTools,
+    pin_ngseg: &[u8],
+) -> (BTreeMap<u32, String>, Option<String>, Vec<u8>) {
+    pin.run(&tools.gen_binary_files, &["--gen-punct-table"], None)
+        .expect("gen_binary_files");
+    pin.run(&tools.gen_unigram, &[], None).expect("gen_unigram");
+    pin.run(&tools.gen_ngram, &[], Some(pin_ngseg))
+        .expect("gen_ngram");
+    pin.run(&tools.gen_deleted_ngram, &[], Some(pin_ngseg))
+        .expect("gen_deleted_ngram");
+    let estimate = pin
+        .run(&tools.estimate_interpolation, &[], None)
+        .expect("estimate_interpolation");
+    let (pin_per_context, pin_average) =
+        parse_estimate_stdout(&String::from_utf8(estimate).expect("utf8"));
+    let pin_interp = pin
+        .run(&tools.export_interpolation, &[], None)
+        .expect("export_interpolation");
+    (pin_per_context, pin_average, pin_interp)
+}
+
+/// Asserts the two chains agree: ngseg bit-identical, interpolation2.text
+/// value-identical, per-context λ byte-identical at six decimals, and the
+/// average within the pin's printed precision (lambda-port.md).
+fn assert_chains_agree(
+    chain: &RustChain,
+    pin_ngseg: &[u8],
+    pin_per_context: &BTreeMap<u32, String>,
+    pin_average: Option<String>,
+    pin_interp: Vec<u8>,
+) {
     // The join: T1 over T4b's output is byte-identical to ngseg over it.
     assert_eq!(
         chain.ngseg_text.as_bytes(),
         pin_ngseg,
         "T1(segment_bytes) diverges from pin ngseg on the T4b sample"
     );
-
-    // Pin T2–T4a in a fresh data dir; the pin's gen_ngram consumes the
-    // same ngseg stream the Rust side counted.
-    let pin = PinDir::fresh(&training_data, "e2e").expect("temp data dir");
-    pin.run(&gen_binary_files, &["--gen-punct-table"], None)
-        .expect("gen_binary_files");
-    pin.run(&gen_unigram, &[], None).expect("gen_unigram");
-    pin.run(&gen_ngram, &[], Some(&pin_ngseg))
-        .expect("gen_ngram");
-    pin.run(&gen_deleted_ngram, &[], Some(&pin_ngseg))
-        .expect("gen_deleted_ngram");
-    let estimate = pin
-        .run(&estimate_interpolation, &[], None)
-        .expect("estimate_interpolation");
-    let (pin_per_context, pin_average) =
-        parse_estimate_stdout(&String::from_utf8(estimate).expect("utf8"));
-    let pin_interp = pin
-        .run(&export_interpolation, &[], None)
-        .expect("export_interpolation");
 
     // interpolation2.text: value-identical.
     let rust_values = parse_interpolation_dump(&chain.interpolation);
@@ -258,10 +242,78 @@ fn end_to_end_matches_live_libpinyin_pipeline() {
         "average λ: rust {:.17} vs pin {pin_average:.6}, |Δ| = {delta:.3e} ≥ 1e-6",
         chain.average
     );
+}
 
+/// Full end-to-end differential: T4b sample → rust chain vs pin chain.
+/// Env-gated on the pin tools; reports env-blocked rather than
+/// fabricating a result.
+#[test]
+fn end_to_end_matches_live_libpinyin_pipeline() {
+    let (
+        Some(ngseg),
+        Some(gen_binary_files),
+        Some(gen_unigram),
+        Some(gen_ngram),
+        Some(gen_deleted_ngram),
+        Some(estimate_interpolation),
+        Some(export_interpolation),
+    ) = (
+        locate_bin("PINYIN_NGSEG"),
+        locate_bin("PINYIN_GEN_BINARY_FILES"),
+        locate_bin("PINYIN_GEN_UNIGRAM"),
+        locate_bin("PINYIN_GEN_NGRAM"),
+        locate_bin("PINYIN_GEN_DELETED_NGRAM"),
+        locate_bin("PINYIN_ESTIMATE_INTERPOLATION"),
+        locate_bin("PINYIN_EXPORT_INTERPOLATION"),
+    )
+    else {
+        eprintln!(
+            "skipping live end-to-end: set PINYIN_NGSEG, PINYIN_GEN_BINARY_FILES, \
+             PINYIN_GEN_UNIGRAM, PINYIN_GEN_NGRAM, PINYIN_GEN_DELETED_NGRAM, \
+             PINYIN_ESTIMATE_INTERPOLATION, and PINYIN_EXPORT_INTERPOLATION"
+        );
+        return;
+    };
+    let Some(ngseg_data) = locate_data("PINYIN_NGSEG_DATA") else {
+        eprintln!(
+            "skipping live end-to-end: PINYIN_NGSEG_DATA not set (needs table.conf + bigram.db)"
+        );
+        return;
+    };
+    let Some(training_data) = locate_data("PINYIN_GEN_NGRAM_DATA") else {
+        eprintln!("skipping live end-to-end: PINYIN_GEN_NGRAM_DATA not set or empty");
+        return;
+    };
+    let sample = std::fs::read(sample_path()).expect("committed sample");
+    let Some(chain) = run_rust_chain(&sample) else {
+        eprintln!("skipping live end-to-end: system-table export / model20 cache not found");
+        return;
+    };
+
+    let pin_ngseg = pin_ngseg_output(&ngseg, &ngseg_data, &sample);
+
+    let tools = PinTools {
+        gen_binary_files,
+        gen_unigram,
+        gen_ngram,
+        gen_deleted_ngram,
+        estimate_interpolation,
+        export_interpolation,
+    };
+    let pin = PinDir::fresh(&training_data, "e2e").expect("temp data dir");
+    let (pin_per_context, pin_average, pin_interp) = pin_trainer_outputs(&pin, &tools, &pin_ngseg);
+    assert_chains_agree(
+        &chain,
+        &pin_ngseg,
+        &pin_per_context,
+        pin_average,
+        pin_interp,
+    );
+
+    let rust_values = parse_interpolation_dump(&chain.interpolation);
     eprintln!(
         "live end-to-end: ngseg bit-identical; {} unigrams + {} bigrams value-identical; \
-         {} λ contexts byte-identical at 6dp, average λ {:.6} (|Δ| = {delta:.2e})",
+         {} λ contexts byte-identical at 6dp, average λ {:.6}",
         rust_values.unigrams.len(),
         rust_values.bigrams.len(),
         chain.per_context.len(),

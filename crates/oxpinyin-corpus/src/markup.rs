@@ -226,19 +226,21 @@ pub fn strip_wikitext(text: &str) -> String {
 /// nothing is literal. Returns the next index.
 fn on_tag(chars: &[char], i: usize, out: &mut String, line: &mut Line) -> usize {
     if chars[i + 1..].starts_with(&['!', '-', '-']) {
-        if let Some(end) = find_str(chars, i, "-->") {
-            end + 3
-        } else {
-            line.push('<');
-            i + 1
-        }
+        find_str(chars, i, "-->").map_or_else(
+            || {
+                line.push('<');
+                i + 1
+            },
+            |end| end + 3,
+        )
     } else if chars[i + 1..].starts_with(&['/']) {
-        if let Some(end) = find_char(chars, i, '>') {
-            end + 1
-        } else {
-            line.push('<');
-            i + 1
-        }
+        find_char(chars, i, '>').map_or_else(
+            || {
+                line.push('<');
+                i + 1
+            },
+            |end| end + 1,
+        )
     } else if let Some((name, open_end, self_closing)) = scan_tag(chars, i) {
         if self_closing {
             if name == "br" {
@@ -250,12 +252,8 @@ fn on_tag(chars: &[char], i: usize, out: &mut String, line: &mut Line) -> usize 
             open_end
         } else if DROP_CONTENT_TAGS.contains(&name.as_str()) {
             let close = format!("</{name}>");
-            match find_str(chars, open_end, &close) {
-                Some(end) => end + close.len(),
-                // Unclosed: drop the rest of the page rather
-                // than emit markup.
-                None => chars.len(),
-            }
+            // Unclosed: drop the rest of the page rather than emit markup.
+            find_str(chars, open_end, &close).map_or(chars.len(), |end| end + close.len())
         } else {
             open_end
         }

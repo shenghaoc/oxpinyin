@@ -937,7 +937,7 @@ impl Runtime {
         let punct = PunctTable::open_optional(&system_dir.join(default_store_file("punct")));
 
         Ok(Self {
-            paths: StoragePaths::new(user_dir.unwrap_or(Path::new("")))
+            paths: StoragePaths::new(user_dir.unwrap_or_else(|| Path::new("")))
                 .with_system_dirs([system_dir]),
             dict: RuntimeDict {
                 system: Arc::new(dict),

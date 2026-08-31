@@ -3182,8 +3182,8 @@ mod tests {
 
     #[test]
     fn an_anchor_inside_an_exact_segment_decodes_nothing() {
-        let mut session = session();
         use oxpinyin_core::graph::ExactSegment;
+        let mut session = session();
         let ni_hao: Vec<ExactSegment> = {
             let ni = oxpinyin_core::SyllableKey::from_text("ni").expect("ni");
             let hao = oxpinyin_core::SyllableKey::from_text("hao").expect("hao");

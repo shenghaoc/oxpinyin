@@ -50,8 +50,8 @@ fn main() -> ExitCode {
 }
 
 fn run(run_dir: &Path, out: &Path) -> Result<String, String> {
-    let comparisons = read(run_dir.join("comparisons.tsv"))?;
-    let divergences = read(run_dir.join("divergences.tsv"))?;
+    let comparisons = read(&run_dir.join("comparisons.tsv"))?;
+    let divergences = read(&run_dir.join("divergences.tsv"))?;
 
     // input -> the oracle's path, spelled out by the divergence log.
     let mut spelled: BTreeMap<Vec<u8>, String> = BTreeMap::new();
@@ -130,8 +130,8 @@ fn run(run_dir: &Path, out: &Path) -> Result<String, String> {
     ))
 }
 
-fn read(path: PathBuf) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|error| {
+fn read(path: &Path) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|error| {
         format!(
             "cannot read {}: {error}\nrun parity-diff first (see the module docs)",
             path.display()

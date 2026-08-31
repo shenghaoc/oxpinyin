@@ -209,8 +209,7 @@ pub fn write_with<S: WriteStore>(path: &Path, entries: &Entries) -> Result<(), D
             Some((want_key, want_value)) if want_key == key && want_value == value => index += 1,
             Some((want_key, _)) => {
                 mismatch = Some(format!(
-                    "row {index}: key {:02x?} != expected {:02x?}",
-                    key, want_key
+                    "row {index}: key {key:02x?} != expected {want_key:02x?}"
                 ));
                 return Err(oxpinyin_store::StoreError::Backend("mismatch".into()));
             }

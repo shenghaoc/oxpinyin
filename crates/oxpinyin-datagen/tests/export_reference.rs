@@ -86,12 +86,11 @@ fn compare(name: &str, compiled: &[(Vec<u8>, Vec<u8>)], reference: &BTreeMap<Vec
 #[test]
 fn full_compile_matches_the_oracle_derived_export() {
     let (Some(model), Some(reference)) = (model_dir(), reference_dir()) else {
-        if strict() {
-            panic!(
-                "OXPINYIN_DATAGEN_STRICT=1 but model20 cache or export reference \
-                 (OXPINYIN_DATAGEN_REF_DIR | /tmp/oxpinyin-export) is absent"
-            );
-        }
+        assert!(
+            !strict(),
+            "OXPINYIN_DATAGEN_STRICT=1 but model20 cache or export reference \
+             (OXPINYIN_DATAGEN_REF_DIR | /tmp/oxpinyin-export) is absent"
+        );
         eprintln!("skipping: model20 cache or export reference absent");
         return;
     };

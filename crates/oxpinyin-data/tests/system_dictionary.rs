@@ -56,13 +56,13 @@ fn multi_syllable_lookup_is_one_string_key() {
 
 #[test]
 fn apostrophe_keeps_xian_and_xi_an_apart() {
-    let xian = dict().lookup(&[key("xian")]).unwrap();
-    assert!(xian.iter().any(|entry| entry.text() == "现"));
-    assert!(!xian.iter().any(|entry| entry.text() == "西安"));
+    let joined = dict().lookup(&[key("xian")]).unwrap();
+    assert!(joined.iter().any(|entry| entry.text() == "现"));
+    assert!(!joined.iter().any(|entry| entry.text() == "西安"));
 
-    let xi_an = dict().lookup(&[key("xi"), key("an")]).unwrap();
-    assert!(xi_an.iter().any(|entry| entry.text() == "西安"));
-    assert!(!xi_an.iter().any(|entry| entry.text() == "现"));
+    let split = dict().lookup(&[key("xi"), key("an")]).unwrap();
+    assert!(split.iter().any(|entry| entry.text() == "西安"));
+    assert!(!split.iter().any(|entry| entry.text() == "现"));
 }
 
 #[test]

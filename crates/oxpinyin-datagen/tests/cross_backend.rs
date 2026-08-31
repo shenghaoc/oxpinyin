@@ -44,10 +44,14 @@ fn temp_dir(name: &str) -> PathBuf {
 
 #[test]
 fn all_backends_emit_identical_tables() {
+    /// Per-backend read-back: one row set per compiled table.
+    type PerBackend = Vec<oxpinyin_datagen::Entries>;
+
     let Some(model) = model_dir() else {
-        if strict() {
-            panic!("OXPINYIN_DATAGEN_STRICT=1 but no model20 cache is present");
-        }
+        assert!(
+            !strict(),
+            "OXPINYIN_DATAGEN_STRICT=1 but no model20 cache is present"
+        );
         eprintln!("skipping: model20 cache absent (run tools/model/fetch-model.sh)");
         return;
     };
@@ -86,8 +90,6 @@ fn all_backends_emit_identical_tables() {
         ("bigram", &tables.bigram),
     ];
 
-    /// Per-backend read-back: one row set per compiled table.
-    type PerBackend = Vec<oxpinyin_datagen::Entries>;
     let mut baseline: Option<PerBackend> = None;
     for backend in backends {
         let out = temp_dir(backend.extension());
