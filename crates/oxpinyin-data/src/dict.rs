@@ -242,7 +242,7 @@ impl SystemDictionary {
         if let Some(map) = self.text_tokens.get() {
             return Ok(map);
         }
-        let map = build_text_tokens(&self.phrase_index)?;
+        let map = build_text_tokens(&self.phrase_index);
         Ok(self.text_tokens.get_or_init(|| map))
     }
 
@@ -275,20 +275,15 @@ impl SystemDictionary {
         key
     }
 
-    fn fill_lookup(
-        &self,
-        syllables: &[SyllableKey],
-        out: &mut Vec<PhraseEntry>,
-    ) -> Result<(), DictError> {
+    fn fill_lookup(&self, syllables: &[SyllableKey], out: &mut Vec<PhraseEntry>) {
         out.clear();
         if syllables.is_empty() {
-            return Ok(());
+            return;
         }
         let key = Self::index_key(syllables);
         if let Some(hits) = self.pinyin_index.hits(key.as_str()) {
             out.extend_from_slice(hits);
         }
-        Ok(())
     }
 
     /// The `SEARCH_CONTINUED` probe with a per-token visibility filter.
@@ -342,7 +337,7 @@ impl Dictionary for SystemDictionary {
 
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
         let mut entries = Vec::new();
-        self.fill_lookup(syllables, &mut entries)?;
+        self.fill_lookup(syllables, &mut entries);
         Ok(entries)
     }
 
@@ -351,7 +346,8 @@ impl Dictionary for SystemDictionary {
         syllables: &[Self::Syllable],
         out: &mut Vec<Self::Entry>,
     ) -> Result<(), Self::Error> {
-        self.fill_lookup(syllables, out)
+        self.fill_lookup(syllables, out);
+        Ok(())
     }
 
     fn lookup_addon_into(
@@ -632,7 +628,7 @@ fn load_phrase_index(path: &Path) -> Result<PhraseIndex, DictError> {
 }
 
 /// Builds the exact-text → tokens reverse map from the typed phrase index.
-fn build_text_tokens(phrase_index: &PhraseIndex) -> Result<BTreeMap<String, Vec<u32>>, DictError> {
+fn build_text_tokens(phrase_index: &PhraseIndex) -> BTreeMap<String, Vec<u32>> {
     let mut map: BTreeMap<String, Vec<u32>> = BTreeMap::new();
     for (token, text) in phrase_index {
         map.entry(text.to_string()).or_default().push(token.token());
@@ -640,7 +636,7 @@ fn build_text_tokens(phrase_index: &PhraseIndex) -> Result<BTreeMap<String, Vec<
     for tokens in map.values_mut() {
         tokens.sort_unstable();
     }
-    Ok(map)
+    map
 }
 
 #[cfg(test)]
