@@ -23,8 +23,7 @@ use std::time::{Duration, Instant};
 
 use oxpinyin_data::{
     BigramLanguageModel, LookupTable, PunctTable, SystemDictionary, build_prefix_tables,
-    default_store_file,
-    parse_interpolation2, parse_interpolation2_from_reader,
+    default_store_file, parse_interpolation2, parse_interpolation2_from_reader,
 };
 use redb::{ReadableDatabase, ReadableTable};
 

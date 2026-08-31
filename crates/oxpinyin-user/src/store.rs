@@ -2219,6 +2219,13 @@ mod tests {
     /// coverage the earlier in-process check gave.
     #[test]
     fn bigram_walks_and_successors_follow_be_integer_order() {
+        const PREVS: &[Token] = &[
+            0x0000_00FF,
+            0x0000_0100,
+            0x0000_0101,
+            0x0001_0000,
+            SENTENCE_START,
+        ];
         let rows: &[(Token, Token, u64)] = &[
             (0x0000_00FF, 0x0000_0100, 1),
             (0x0000_0100, 0x0000_00FF, 2),
@@ -2227,13 +2234,6 @@ mod tests {
             (0x0000_0101, 0x0000_0100, 5),
             (0x0001_0000, 0x0000_00FF, 6),
             (SENTENCE_START, 0x0000_0100, 7),
-        ];
-        const PREVS: &[Token] = &[
-            0x0000_00FF,
-            0x0000_0100,
-            0x0000_0101,
-            0x0001_0000,
-            SENTENCE_START,
         ];
 
         let path =

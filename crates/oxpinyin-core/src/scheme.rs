@@ -1876,7 +1876,6 @@ impl ZhuyinParser {
                     },
                 )
             }
-            Keyboard::Cp26(tables) => self.cp26_probe(tables, input, use_tone, allow_incomplete),
         };
 
         // max_chewing_dachen26_length = 12 for CP26,
