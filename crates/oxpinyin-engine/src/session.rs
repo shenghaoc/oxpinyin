@@ -2778,6 +2778,43 @@ pub fn build_scan_matrix(
     // pin fills a zero key at a separator, so its pairs never span one.
     // A toned key never resplits: upstream matches the full ChewingKey
     // (tone included) against zero-tone table structs.
+    for addition in &resplit_additions(&selected) {
+        columns[addition.from].push(*addition);
+    }
+
+    // 3. Divided syllables over every key collected so far. The split parts
+    // are measured from the syllable text itself, so a key that rides over
+    // an apostrophe still divides (`bu'tian` offers `补体` from the divided
+    // `ti`, whose span covers the apostrophe plus `t` + `i`). A toned key
+    // never divides: the divided table's structs are zero-tone and upstream
+    // matches the full ChewingKey.
+    for addition in &divided_additions(&columns) {
+        columns[addition.from].push(*addition);
+    }
+
+    // Pre-fuzzy pin: first `SyllableKey` in a column. Fuzzy is off on the
+    // parity word, so this is the all-off / 0x18a matrix.
+    keep_first_in_column(&mut columns, false);
+
+    // 4. `fuzzy_syllable_step`. Upstream `PhoneticTable::append` is a bag
+    // push (`phonetic_key_matrix.h:92-99`); `ChewingKeyRest` is the span
+    // (`chewing_key.h:97-104`). Same key, different `m_raw_end`, coexist.
+    // After fuzzy, keep `(key, to)` so those edges survive; key-only
+    // collapse here is #103. The tone rides the alternate — upstream
+    // copies the whole key before swapping the initial or final
+    // (`phonetic_key_matrix.cpp:250-259`).
+    for addition in &fuzzy_additions(&columns, options) {
+        columns[addition.from].push(*addition);
+    }
+    keep_first_in_column(&mut columns, true);
+
+    columns
+}
+
+/// Phase 2 of [`build_scan_matrix`]: the resplit alternates along the
+/// selected path — two zero-tone keys sharing a boundary with no
+/// apostrophe between them, split through [`RESPLIT_TABLE`].
+fn resplit_additions(selected: &[ScanKey]) -> Vec<ScanKey> {
     let mut additions: Vec<ScanKey> = Vec::new();
     for pair in selected.windows(2) {
         if pair[1].from != pair[0].to || pair[0].crosses_separator || pair[1].crosses_separator {
@@ -2815,16 +2852,12 @@ pub fn build_scan_matrix(
             tone: 0,
         });
     }
-    for addition in &additions {
-        columns[addition.from].push(*addition);
-    }
+    additions
+}
 
-    // 3. Divided syllables over every key collected so far. The split parts
-    // are measured from the syllable text itself, so a key that rides over
-    // an apostrophe still divides (`bu'tian` offers `补体` from the divided
-    // `ti`, whose span covers the apostrophe plus `t` + `i`). A toned key
-    // never divides: the divided table's structs are zero-tone and upstream
-    // matches the full ChewingKey.
+/// Phase 3 of [`build_scan_matrix`]: the divided-syllable alternates for
+/// every zero-tone key collected so far, split through [`DIVIDED_TABLE`].
+fn divided_additions(columns: &[Vec<ScanKey>]) -> Vec<ScanKey> {
     let snapshot: Vec<ScanKey> = columns
         .iter()
         .enumerate()
@@ -2873,21 +2906,12 @@ pub fn build_scan_matrix(
             tone: 0,
         });
     }
-    for addition in &additions {
-        columns[addition.from].push(*addition);
-    }
+    additions
+}
 
-    // Pre-fuzzy pin: first `SyllableKey` in a column. Fuzzy is off on the
-    // parity word, so this is the all-off / 0x18a matrix.
-    keep_first_in_column(&mut columns, false);
-
-    // 4. `fuzzy_syllable_step`. Upstream `PhoneticTable::append` is a bag
-    // push (`phonetic_key_matrix.h:92-99`); `ChewingKeyRest` is the span
-    // (`chewing_key.h:97-104`). Same key, different `m_raw_end`, coexist.
-    // After fuzzy, keep `(key, to)` so those edges survive; key-only
-    // collapse here is #103. The tone rides the alternate — upstream
-    // copies the whole key before swapping the initial or final
-    // (`phonetic_key_matrix.cpp:250-259`).
+/// Phase 4 of [`build_scan_matrix`]: the fuzzy alternates of every key in
+/// the matrix, each riding its source span with the swapped tone.
+fn fuzzy_additions(columns: &[Vec<ScanKey>], options: OptionBits) -> Vec<ScanKey> {
     let snapshot: Vec<(usize, ScanKey)> = columns
         .iter()
         .enumerate()
@@ -2906,12 +2930,7 @@ pub fn build_scan_matrix(
             });
         }
     }
-    for addition in &additions {
-        columns[addition.from].push(*addition);
-    }
-    keep_first_in_column(&mut columns, true);
-
-    columns
+    additions
 }
 
 /// Keep the first column entry. `by_span` false is key-only (pre-fuzzy
@@ -4107,6 +4126,82 @@ mod tests {
         }
     }
 
+    /// The six fixture phrases of the dynamic-adjust probes.
+    const DYNAMIC_ADJUST_TEXTS: [&str; 6] = ["系", "统", "习", "题", "集", "锦"];
+    /// The first fixture token.
+    const DYNAMIC_ADJUST_FIRST: u32 = 0x0100_0001;
+    /// The second fixture token.
+    const DYNAMIC_ADJUST_SECOND: u32 = 0x0100_0002;
+
+    /// One dynamic-adjust probe's observable state: the candidate texts,
+    /// the merge count, and the token the model was asked about.
+    struct DynamicAdjustRun {
+        texts: Vec<String>,
+        merges: usize,
+        asked_about: u32,
+    }
+
+    /// Runs one dynamic-adjust probe: a session over `entries` system
+    /// phrases with the optional merged row, `dynamic` selecting the bit.
+    fn dynamic_adjust_run(
+        entries: usize,
+        dynamic: bool,
+        row: Option<oxpinyin_core::MergedGram>,
+    ) -> DynamicAdjustRun {
+        use oxpinyin_core::{DYNAMIC_ADJUST, OptionBits, PINYIN_INCOMPLETE};
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let merges = Rc::new(Cell::new(0_usize));
+        let asked_about = Rc::new(Cell::new(u32::MAX));
+        let phrases = (0..entries)
+            .map(|index| {
+                PhraseEntry::new(
+                    PhraseToken::new(
+                        DYNAMIC_ADJUST_FIRST + u32::try_from(index).expect("small index"),
+                    ),
+                    DYNAMIC_ADJUST_TEXTS[index].to_owned(),
+                )
+            })
+            .collect();
+        let mut session = Session::new(
+            &EmptyConfigSource,
+            StoragePaths::new("user"),
+            SystemPhrases(phrases),
+            CountingBigrams {
+                unigrams: FixedUnigrams {
+                    system: 13,
+                    addon: 0,
+                    total: 51_051_831,
+                    addon_total: 1,
+                },
+                row,
+                merges: Rc::clone(&merges),
+                asked_about: Rc::clone(&asked_about),
+            },
+        )
+        .expect("Session::new");
+        // Both arms set the same word apart from the one bit, so nothing
+        // else about the parse can differ between them.
+        session
+            .set_options(
+                OptionBits::default()
+                    .with(PINYIN_INCOMPLETE, true)
+                    .with(DYNAMIC_ADJUST, dynamic),
+            )
+            .expect("set_options");
+        session.type_pinyin("a").expect("typing cannot fail");
+        DynamicAdjustRun {
+            texts: session
+                .candidates()
+                .iter()
+                .map(|candidate| candidate.text().to_owned())
+                .collect(),
+            merges: merges.get(),
+            asked_about: asked_about.get(),
+        }
+    }
+
     /// The three gates end to end through `Session`, which the C-level
     /// differential cannot demonstrate here: the in-tree `fixtures/w3` mini
     /// tables answer `no-first-candidate` for nearly every input, so that
@@ -4120,78 +4215,17 @@ mod tests {
     /// token the row credits.
     #[test]
     fn dynamic_adjust_merges_one_row_per_guess_and_lifts_only_the_credited_token() {
-        use oxpinyin_core::{DYNAMIC_ADJUST, MergedGram, OptionBits, PINYIN_INCOMPLETE};
-        use std::cell::Cell;
-        use std::rc::Rc;
-
-        const TEXTS: [&str; 6] = ["系", "统", "习", "题", "集", "锦"];
-        const FIRST: u32 = 0x0100_0001;
-        const SECOND: u32 = 0x0100_0002;
-
-        struct Run {
-            texts: Vec<String>,
-            merges: usize,
-            asked_about: u32,
-        }
-
-        fn run(entries: usize, dynamic: bool, row: Option<MergedGram>) -> Run {
-            let merges = Rc::new(Cell::new(0_usize));
-            let asked_about = Rc::new(Cell::new(u32::MAX));
-            let phrases = (0..entries)
-                .map(|index| {
-                    PhraseEntry::new(
-                        PhraseToken::new(FIRST + u32::try_from(index).expect("small index")),
-                        TEXTS[index].to_owned(),
-                    )
-                })
-                .collect();
-            let mut session = Session::new(
-                &EmptyConfigSource,
-                StoragePaths::new("user"),
-                SystemPhrases(phrases),
-                CountingBigrams {
-                    unigrams: FixedUnigrams {
-                        system: 13,
-                        addon: 0,
-                        total: 51_051_831,
-                        addon_total: 1,
-                    },
-                    row,
-                    merges: Rc::clone(&merges),
-                    asked_about: Rc::clone(&asked_about),
-                },
-            )
-            .expect("Session::new");
-            // Both arms set the same word apart from the one bit, so nothing
-            // else about the parse can differ between them.
-            session
-                .set_options(
-                    OptionBits::default()
-                        .with(PINYIN_INCOMPLETE, true)
-                        .with(DYNAMIC_ADJUST, dynamic),
-                )
-                .expect("set_options");
-            session.type_pinyin("a").expect("typing cannot fail");
-            Run {
-                texts: session
-                    .candidates()
-                    .iter()
-                    .map(|candidate| candidate.text().to_owned())
-                    .collect(),
-                merges: merges.get(),
-                asked_about: asked_about.get(),
-            }
-        }
+        use oxpinyin_core::MergedGram;
 
         // A row that credits the SECOND phrase with half its mass. The
         // unigram answer is a constant across tokens, so with the bit clear
         // the two candidates tie on all three RankKeys and hold collection
         // order; only the bigram term can separate them.
-        let credits_second = || MergedGram::new(1_000, vec![(SECOND, 500)]);
+        let credits_second = || MergedGram::new(1_000, vec![(DYNAMIC_ADJUST_SECOND, 500)]);
 
         // Gate 1, bit clear: the model is never consulted at all, and the
         // order is the pre-existing unigram law's.
-        let clear = run(2, false, Some(credits_second()));
+        let clear = dynamic_adjust_run(2, false, Some(credits_second()));
         assert_eq!(
             clear.merges, 0,
             "with the bit clear upstream never reaches the merge, so neither may this"
@@ -4205,7 +4239,7 @@ mod tests {
         // Gate 1, bit set: offset 0 resolves to `sentence_start`, not a null
         // token — the premise that offset 0 is safe by construction is false,
         // and this is the assertion that says so.
-        let no_row = run(2, true, None);
+        let no_row = dynamic_adjust_run(2, true, None);
         assert_eq!(
             no_row.asked_about,
             crate::nbest::SENTENCE_START,
@@ -4219,7 +4253,7 @@ mod tests {
 
         // Gate 3: the credited token overtakes a candidate it ties with on
         // every other key.
-        let lifted = run(2, true, Some(credits_second()));
+        let lifted = dynamic_adjust_run(2, true, Some(credits_second()));
         assert_eq!(
             lifted.texts,
             ["统", "系"],
@@ -4232,7 +4266,7 @@ mod tests {
             lifted.merges > 0,
             "the bit is set and a previous token exists, so a merge must happen"
         );
-        let wider = run(6, true, Some(credits_second()));
+        let wider = dynamic_adjust_run(6, true, Some(credits_second()));
         assert_eq!(
             wider.merges,
             lifted.merges,

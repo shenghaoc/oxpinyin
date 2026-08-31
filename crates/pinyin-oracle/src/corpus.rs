@@ -329,25 +329,7 @@ pub fn generate() -> Vec<Stratum> {
     strata.push(Stratum {
         file_name: "08-junk.txt",
         description: "unsupported printable bytes at prefix, middle and suffix",
-        inputs: fill(&mut rng, 800, |rng| {
-            let count = rng.between(1, 3);
-            let base = join_syllables(rng, count);
-            let noise = char::from(*rng.pick(&junk));
-            match rng.below(3) {
-                0 => format!("{noise}{base}"),
-                1 => {
-                    let target = rng.between(1, base.len().saturating_sub(1).max(1));
-                    let split = base
-                        .char_indices()
-                        .map(|(index, _)| index)
-                        .find(|index| *index >= target)
-                        .unwrap_or(0);
-                    let (left, right) = base.split_at(split);
-                    format!("{left}{noise}{right}")
-                }
-                _ => format!("{base}{noise}"),
-            }
-        }),
+        inputs: fill(&mut rng, 800, |rng| junk_input(rng, &junk)),
     });
 
     strata.push(Stratum {
@@ -357,6 +339,28 @@ pub fn generate() -> Vec<Stratum> {
     });
 
     strata
+}
+
+/// One junk-stratum input: `count` joined syllables with one junk byte at
+/// prefix, middle, or suffix.
+fn junk_input(rng: &mut SplitMix64, junk: &[u8]) -> String {
+    let count = rng.between(1, 3);
+    let base = join_syllables(rng, count);
+    let noise = char::from(*rng.pick(junk));
+    match rng.below(3) {
+        0 => format!("{noise}{base}"),
+        1 => {
+            let target = rng.between(1, base.len().saturating_sub(1).max(1));
+            let split = base
+                .char_indices()
+                .map(|(index, _)| index)
+                .find(|index| *index >= target)
+                .unwrap_or(0);
+            let (left, right) = base.split_at(split);
+            format!("{left}{noise}{right}")
+        }
+        _ => format!("{base}{noise}"),
+    }
 }
 
 /// Explicit boundary shapes. Fixed, not sampled.
