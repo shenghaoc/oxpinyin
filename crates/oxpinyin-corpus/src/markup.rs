@@ -162,93 +162,9 @@ pub fn strip_wikitext(text: &str) -> String {
     while i < chars.len() {
         let at_line_start = i == 0 || chars[i - 1] == '\n';
         match chars[i] {
-            '<' => {
-                if chars[i + 1..].starts_with(&['!', '-', '-']) {
-                    if let Some(end) = find_str(&chars, i, "-->") {
-                        i = end + 3;
-                    } else {
-                        line.push('<');
-                        i += 1;
-                    }
-                } else if chars[i + 1..].starts_with(&['/']) {
-                    if let Some(end) = find_char(&chars, i, '>') {
-                        i = end + 1;
-                    } else {
-                        line.push('<');
-                        i += 1;
-                    }
-                } else if let Some((name, open_end, self_closing)) = scan_tag(&chars, i) {
-                    if self_closing {
-                        if name == "br" {
-                            flush_line(&mut out, &mut line);
-                        }
-                        i = open_end;
-                    } else if name == "br" {
-                        flush_line(&mut out, &mut line);
-                        i = open_end;
-                    } else if DROP_CONTENT_TAGS.contains(&name.as_str()) {
-                        let close = format!("</{name}>");
-                        match find_str(&chars, open_end, &close) {
-                            Some(end) => i = end + close.len(),
-                            // Unclosed: drop the rest of the page rather
-                            // than emit markup.
-                            None => i = chars.len(),
-                        }
-                    } else {
-                        i = open_end;
-                    }
-                } else {
-                    line.push('<');
-                    i += 1;
-                }
-            }
-            '{' => {
-                if chars[i + 1..].starts_with(&['{']) {
-                    if let Some((end, template)) = scan_template(&chars, i) {
-                        let (name, last_arg) = template_parts(template);
-                        if is_kept_template(&name)
-                            && let Some(arg) = last_arg
-                        {
-                            // The kept argument is itself wikitext
-                            // (e.g. `{{lang|la|'''''x'''''}}`):
-                            // strip it recursively; the recursive
-                            // flush's trailing newline is dropped so
-                            // the outer line stays unsplit.
-                            let arg_text: String = arg.iter().collect();
-                            let stripped = strip_wikitext(&arg_text);
-                            line.push_str(stripped.trim_end_matches('\n'));
-                        }
-                        i = end;
-                    } else {
-                        line.push('{');
-                        i += 1;
-                    }
-                } else {
-                    line.push('{');
-                    i += 1;
-                }
-            }
-            '[' => {
-                if chars[i + 1..].starts_with(&['[']) {
-                    if let Some((end, text)) = scan_link(&chars, i) {
-                        if let Some(text) = text {
-                            line.push_str(&text.iter().collect::<String>());
-                        }
-                        i = end;
-                    } else {
-                        line.push('[');
-                        i += 1;
-                    }
-                } else if let Some((end, text)) = scan_external(&chars, i) {
-                    if let Some(text) = text {
-                        line.push_str(&text.iter().collect::<String>());
-                    }
-                    i = end;
-                } else {
-                    line.push('[');
-                    i += 1;
-                }
-            }
+            '<' => i = on_tag(&chars, i, &mut out, &mut line),
+            '{' => i = on_template(&chars, i, &mut line),
+            '[' => i = on_link(&chars, i, &mut line),
             '\'' => {
                 let run = take_run(&chars, i, '\'');
                 if run >= 2 {
@@ -303,6 +219,105 @@ pub fn strip_wikitext(text: &str) -> String {
     }
     flush_line(&mut out, &mut line);
     out
+}
+
+/// Handles one `<` at `chars[i]`: comments, closing and opening tags with
+/// their content drops, and the `br` line flushes; a bare `<` that starts
+/// nothing is literal. Returns the next index.
+fn on_tag(chars: &[char], i: usize, out: &mut String, line: &mut Line) -> usize {
+    if chars[i + 1..].starts_with(&['!', '-', '-']) {
+        if let Some(end) = find_str(chars, i, "-->") {
+            end + 3
+        } else {
+            line.push('<');
+            i + 1
+        }
+    } else if chars[i + 1..].starts_with(&['/']) {
+        if let Some(end) = find_char(chars, i, '>') {
+            end + 1
+        } else {
+            line.push('<');
+            i + 1
+        }
+    } else if let Some((name, open_end, self_closing)) = scan_tag(chars, i) {
+        if self_closing {
+            if name == "br" {
+                flush_line(out, line);
+            }
+            open_end
+        } else if name == "br" {
+            flush_line(out, line);
+            open_end
+        } else if DROP_CONTENT_TAGS.contains(&name.as_str()) {
+            let close = format!("</{name}>");
+            match find_str(chars, open_end, &close) {
+                Some(end) => end + close.len(),
+                // Unclosed: drop the rest of the page rather
+                // than emit markup.
+                None => chars.len(),
+            }
+        } else {
+            open_end
+        }
+    } else {
+        line.push('<');
+        i + 1
+    }
+}
+
+/// Handles one `{` at `chars[i]`: kept templates contribute their last
+/// argument, recursively stripped; everything else is literal. Returns the
+/// next index.
+fn on_template(chars: &[char], i: usize, line: &mut Line) -> usize {
+    if chars[i + 1..].starts_with(&['{']) {
+        if let Some((end, template)) = scan_template(chars, i) {
+            let (name, last_arg) = template_parts(template);
+            if is_kept_template(&name)
+                && let Some(arg) = last_arg
+            {
+                // The kept argument is itself wikitext
+                // (e.g. `{{lang|la|'''''x'''''}}`):
+                // strip it recursively; the recursive
+                // flush's trailing newline is dropped so
+                // the outer line stays unsplit.
+                let arg_text: String = arg.iter().collect();
+                let stripped = strip_wikitext(&arg_text);
+                line.push_str(stripped.trim_end_matches('\n'));
+            }
+            end
+        } else {
+            line.push('{');
+            i + 1
+        }
+    } else {
+        line.push('{');
+        i + 1
+    }
+}
+
+/// Handles one `[` at `chars[i]`: wiki and external links contribute their
+/// display text; a bare `[` that starts nothing is literal. Returns the
+/// next index.
+fn on_link(chars: &[char], i: usize, line: &mut Line) -> usize {
+    if chars[i + 1..].starts_with(&['[']) {
+        if let Some((end, text)) = scan_link(chars, i) {
+            if let Some(text) = text {
+                line.push_str(&text.iter().collect::<String>());
+            }
+            end
+        } else {
+            line.push('[');
+            i + 1
+        }
+    } else if let Some((end, text)) = scan_external(chars, i) {
+        if let Some(text) = text {
+            line.push_str(&text.iter().collect::<String>());
+        }
+        end
+    } else {
+        line.push('[');
+        i + 1
+    }
 }
 
 /// Emits the pending line and resets it.

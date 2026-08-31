@@ -62,11 +62,10 @@ fn token_of(instance: *mut PinyinInstance, cand: *mut LookupCandidate) -> u32 {
         .value()
 }
 
-#[test]
-fn training_through_the_abi_records_the_pinned_counts() {
-    let user_dir = TempUserDir::new("train");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
+/// The `pinyin_train` leg of the pinned-counts e2e: the doubling seed
+/// sequence (69, 138, 414, …) through the wired path, and the
+/// fresh-composition reset contract (`pinyin.cpp:2693`).
+fn train_records_the_pinned_doubling_sequence(instance: *mut PinyinInstance) {
     // ── pinyin_train: the doubling seed sequence, sentence_start first ──
     let first = candidate(instance, "nihao", 0);
     let t1 = token_of(instance, first);
@@ -115,40 +114,12 @@ fn training_through_the_abi_records_the_pinned_counts() {
         assert_eq!(store.bigram_count(SENTENCE_START, t2).unwrap(), 69);
         assert_eq!(store.bigram_count(t1, t2).unwrap(), 0);
     }
+}
 
-    // ── pinyin_choose_predicted_candidate: flat +69, no doubling ──
-    let predicted = candidate(instance, "zhongguo", 0);
-    let t4 = token_of(instance, predicted);
-    // Nothing selected in this composition yet: predecessor is
-    // sentence_start (upstream's _get_previous_token default).
-    assert!(pinyin_choose_predicted_candidate(instance, predicted));
-    {
-        let store = store_of(instance);
-        assert_eq!(store.bigram_count(SENTENCE_START, t4).unwrap(), 69);
-        assert_eq!(store.unigram_delta(t4).unwrap(), 483);
-    }
-    // Flat again — 138, not the training path's 414.
-    assert!(pinyin_choose_predicted_candidate(instance, predicted));
-    {
-        let store = store_of(instance);
-        assert_eq!(store.bigram_count(SENTENCE_START, t4).unwrap(), 138);
-        assert_eq!(store.unigram_delta(t4).unwrap(), 966);
-    }
-
-    // After a selection in the same composition, the predicted predecessor
-    // is the last selected token.
-    let other = candidate(instance, "zhongguo", 1);
-    let t5 = token_of(instance, other);
-    assert!(pinyin_choose_candidate(instance, 0, other) > 0);
-    assert!(pinyin_choose_predicted_candidate(instance, predicted));
-    assert_eq!(store_of(instance).bigram_count(t5, t4).unwrap(), 69);
-    assert_eq!(
-        store_of(instance).bigram_count(SENTENCE_START, t4).unwrap(),
-        138
-    ); // unchanged
-    assert!(pinyin_choose_predicted_candidate(instance, predicted));
-    assert_eq!(store_of(instance).bigram_count(t5, t4).unwrap(), 138);
-
+/// The `pinyin_remember_user_input` leg of the pinned-counts e2e: index-only
+/// seeding from the live composition, merge onto the same token, and the
+/// invalid-input rejects that leave the index untouched.
+fn remember_user_input_indexes_without_training(instance: *mut PinyinInstance) {
     // ── pinyin_remember_user_input: index-only, no training ──
     assert_eq!(
         pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
@@ -237,6 +208,49 @@ fn training_through_the_abi_records_the_pinned_counts() {
         store_of(instance).next_user_token().unwrap(),
         FIRST_USER_TOKEN + 1
     );
+}
+
+#[test]
+fn training_through_the_abi_records_the_pinned_counts() {
+    let user_dir = TempUserDir::new("train");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    train_records_the_pinned_doubling_sequence(instance);
+
+    // ── pinyin_choose_predicted_candidate: flat +69, no doubling ──
+    let predicted = candidate(instance, "zhongguo", 0);
+    let t4 = token_of(instance, predicted);
+    // Nothing selected in this composition yet: predecessor is
+    // sentence_start (upstream's _get_previous_token default).
+    assert!(pinyin_choose_predicted_candidate(instance, predicted));
+    {
+        let store = store_of(instance);
+        assert_eq!(store.bigram_count(SENTENCE_START, t4).unwrap(), 69);
+        assert_eq!(store.unigram_delta(t4).unwrap(), 483);
+    }
+    // Flat again — 138, not the training path's 414.
+    assert!(pinyin_choose_predicted_candidate(instance, predicted));
+    {
+        let store = store_of(instance);
+        assert_eq!(store.bigram_count(SENTENCE_START, t4).unwrap(), 138);
+        assert_eq!(store.unigram_delta(t4).unwrap(), 966);
+    }
+
+    // After a selection in the same composition, the predicted predecessor
+    // is the last selected token.
+    let other = candidate(instance, "zhongguo", 1);
+    let t5 = token_of(instance, other);
+    assert!(pinyin_choose_candidate(instance, 0, other) > 0);
+    assert!(pinyin_choose_predicted_candidate(instance, predicted));
+    assert_eq!(store_of(instance).bigram_count(t5, t4).unwrap(), 69);
+    assert_eq!(
+        store_of(instance).bigram_count(SENTENCE_START, t4).unwrap(),
+        138
+    ); // unchanged
+    assert!(pinyin_choose_predicted_candidate(instance, predicted));
+    assert_eq!(store_of(instance).bigram_count(t5, t4).unwrap(), 138);
+
+    remember_user_input_indexes_without_training(instance);
 
     // ── pinyin_is_user_candidate: system candidates are not user phrases ──
     // (user phrases enter candidate lists with the T4 decode merge.)
@@ -702,46 +716,10 @@ fn empty_import_batch_arms_modified_and_saves() {
     crate::context::pinyin_fini(context);
 }
 
-#[test]
-fn export_iterators_walk_the_stored_triples() {
-    let user_dir = TempUserDir::new("export");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-
-    // Null-safety and the empty-store shape first.
-    assert!(crate::iterators::pinyin_begin_get_phrases(ptr::null_mut(), 7).is_null());
-    assert!(crate::iterators::pinyin_begin_get_bigram_phrases(ptr::null_mut()).is_null());
-    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(
-        ptr::null_mut()
-    ));
-    assert!(!crate::iterators::pinyin_bigram_iterator_has_next_phrase(
-        ptr::null_mut()
-    ));
-
-    // Remember two phrases; the second reading merges into the first.
-    assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
-        5
-    );
-    assert!(pinyin_remember_user_input(
-        instance,
-        cstr("你好").as_ptr(),
-        -1
-    ));
-    assert!(pinyin_remember_user_input(
-        instance,
-        cstr("你好").as_ptr(),
-        7
-    ));
-    assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, cstr("shijie").as_ptr()),
-        6
-    );
-    assert!(pinyin_remember_user_input(
-        instance,
-        cstr("世界").as_ptr(),
-        3
-    ));
-
+/// The §9 phrase-export leg of the iterator e2e: (phrase, `'`-joined pinyin,
+/// pronunciation count) rows in token order, the exhaustion shape, and the
+/// empty non-user index.
+fn exported_phrase_rows_are_token_ordered(context: *mut crate::types::PinyinContext) {
     // §9 phrase export: (phrase, `'`-joined pinyin, pronunciation count),
     // token order.
     let iter = crate::iterators::pinyin_begin_get_phrases(context, 7);
@@ -769,7 +747,12 @@ fn export_iterators_walk_the_stored_triples() {
     assert!(!system.is_null());
     assert!(!crate::iterators::pinyin_iterator_has_next_phrase(system));
     crate::iterators::pinyin_end_get_phrases(system);
+}
 
+/// Trains one multi-phrase sentence through choose/guess/train: choosing 你
+/// consumes the ni group, the 好 group is guessed at the post-choose cursor
+/// (never offset 0), and the (你 → 好) bigram lands at 69.
+fn train_one_multiphrase_sentence(instance: *mut PinyinInstance) {
     // Train one multi-phrase sentence: (你 → 好) = 69.
     let _ = candidate(instance, "nihao", 0);
     let (_, ni_ptr) = {
@@ -818,6 +801,51 @@ fn export_iterators_walk_the_stored_triples() {
     };
     assert!(pinyin_choose_candidate(instance, 2, hao_ptr) > 0);
     assert!(pinyin_train(instance, 0));
+}
+
+#[test]
+fn export_iterators_walk_the_stored_triples() {
+    let user_dir = TempUserDir::new("export");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    // Null-safety and the empty-store shape first.
+    assert!(crate::iterators::pinyin_begin_get_phrases(ptr::null_mut(), 7).is_null());
+    assert!(crate::iterators::pinyin_begin_get_bigram_phrases(ptr::null_mut()).is_null());
+    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(
+        ptr::null_mut()
+    ));
+    assert!(!crate::iterators::pinyin_bigram_iterator_has_next_phrase(
+        ptr::null_mut()
+    ));
+
+    // Remember two phrases; the second reading merges into the first.
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()),
+        5
+    );
+    assert!(pinyin_remember_user_input(
+        instance,
+        cstr("你好").as_ptr(),
+        -1
+    ));
+    assert!(pinyin_remember_user_input(
+        instance,
+        cstr("你好").as_ptr(),
+        7
+    ));
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("shijie").as_ptr()),
+        6
+    );
+    assert!(pinyin_remember_user_input(
+        instance,
+        cstr("世界").as_ptr(),
+        3
+    ));
+
+    exported_phrase_rows_are_token_ordered(context);
+
+    train_one_multiphrase_sentence(instance);
 
     // §9 bigram export: sentence_start rows skipped; phrase = prev+next
     // text; pinyin = prev'next; count = stored × 2.

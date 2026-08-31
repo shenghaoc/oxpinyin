@@ -424,43 +424,21 @@ where
             continue;
         }
 
-        let mut end = position + 1;
-        let mut widening = true;
-        while end <= bound && widening {
-            if matches!(cell_at(end), Some(Cell::NoSearch { .. })) {
-                // A span may not end inside a forced run.
-                break;
-            }
-            widening = false;
-            let mut path: SmallVec<[SyllableKey; 16]> = SmallVec::new();
-            let mut entries: Vec<SpanEntry> = Vec::new();
-            span_entries(matrix, position, end, &mut path, dictionary, &mut entries)?;
-            widen_probe(matrix, position, end, &mut path, dictionary, &mut widening)?;
-
-            // First path per token wins: equal-cost duplicates from other
-            // paths of the same span would only fill node slots.
-            let mut first_of_token: SmallVec<[u32; 32]> = SmallVec::new();
-            for entry in entries {
-                if !first_of_token.contains(&entry.token) {
-                    first_of_token.push(entry.token);
-                } else {
-                    continue;
-                }
-                expand_entry(
-                    Expansion {
-                        entry: &entry,
-                        beam: &beam,
-                        head_seq,
-                        start: position,
-                        end,
-                    },
-                    model,
-                    &mut costs,
-                    &mut trellis,
-                )?;
-            }
-            end += 1;
-        }
+        let env = NbestEnv {
+            matrix,
+            bound,
+            dictionary,
+            model,
+        };
+        widen_free_span(
+            &env,
+            constraints,
+            position,
+            &beam,
+            head_seq,
+            &mut costs,
+            &mut trellis,
+        )?;
         position += 1;
     }
 
@@ -497,6 +475,96 @@ where
         });
     }
     Ok(rows)
+}
+
+/// The shared, immutable environment of one `nbest_sentences` walk: the
+/// scan matrix and its bound, the dictionary, and the language model.
+struct NbestEnv<'a, D, L> {
+    /// The scan matrix columns.
+    matrix: &'a [Vec<ScanKey>],
+    /// The walk's one-past-end column.
+    bound: usize,
+    /// The lexicon dictionary.
+    dictionary: &'a D,
+    /// The language model.
+    model: &'a L,
+}
+
+/// The free widening walk from `position`: grow the span end one column at
+/// a time while the spans keep widening, never ending inside a forced run,
+/// and expand the first entry per token over the whole beam.
+///
+/// # Errors
+///
+/// Propagates the dictionary lookup's backend failure.
+fn widen_free_span<D, L>(
+    env: &NbestEnv<'_, D, L>,
+    constraints: Option<&ConstraintStore>,
+    position: usize,
+    beam: &[BeamEntry],
+    head_seq: Option<u64>,
+    costs: &mut HashMap<(u32, u32), NbestStepCosts>,
+    trellis: &mut Trellis,
+) -> Result<(), EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: core::fmt::Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: core::fmt::Display,
+{
+    let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
+    let mut end = position + 1;
+    let mut widening = true;
+    while end <= env.bound && widening {
+        if matches!(cell_at(end), Some(Cell::NoSearch { .. })) {
+            // A span may not end inside a forced run.
+            break;
+        }
+        widening = false;
+        let mut path: SmallVec<[SyllableKey; 16]> = SmallVec::new();
+        let mut entries: Vec<SpanEntry> = Vec::new();
+        span_entries(
+            env.matrix,
+            position,
+            end,
+            &mut path,
+            env.dictionary,
+            &mut entries,
+        )?;
+        widen_probe(
+            env.matrix,
+            position,
+            end,
+            &mut path,
+            env.dictionary,
+            &mut widening,
+        )?;
+
+        // First path per token wins: equal-cost duplicates from other
+        // paths of the same span would only fill node slots.
+        let mut first_of_token: SmallVec<[u32; 32]> = SmallVec::new();
+        for entry in entries {
+            if !first_of_token.contains(&entry.token) {
+                first_of_token.push(entry.token);
+            } else {
+                continue;
+            }
+            expand_entry(
+                Expansion {
+                    entry: &entry,
+                    beam,
+                    head_seq,
+                    start: position,
+                    end,
+                },
+                env.model,
+                costs,
+                trellis,
+            )?;
+        }
+        end += 1;
+    }
+    Ok(())
 }
 
 /// Whether the forced `token` still spells over `[start, end)` with a
