@@ -125,7 +125,7 @@ def measure_size(prefix, data_dir):
                 data_files.append((p.name, sz))
 
     for p in prefix_p.rglob("*"):
-        if data_p and str(p).startswith(str(data_p)):
+        if data_p and p.is_relative_to(data_p):
             continue
         if p.is_symlink():
             symlink_bytes += os.lstat(p).st_size
@@ -412,5 +412,30 @@ def main(argv):
     return 0
 
 
+def _test_sibling_directory_not_excluded():
+    """Regression: a sibling directory whose name shares a prefix with
+    data_p (e.g. data-old vs data) must not be excluded from the prefix
+    walk."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        prefix = pathlib.Path(tmp)
+        data = prefix / "data"
+        sibling = prefix / "data-old"
+        data.mkdir()
+        sibling.mkdir()
+        (data / "table.kct").write_bytes(b"x" * 100)
+        (sibling / "leftover.kct").write_bytes(b"x" * 50)
+
+        result = measure_size(str(prefix), str(data))
+        assert result["data"] == 100, f"data should be 100, got {result['data']}"
+        assert result["other"] == 50, (
+            f"sibling file should count as other (50), got {result['other']}"
+        )
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--test":
+        _test_sibling_directory_not_excluded()
+        print("ok")
+        sys.exit(0)
     sys.exit(main(sys.argv[1:]))
