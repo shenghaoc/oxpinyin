@@ -3334,8 +3334,8 @@ mod tests {
 
     #[test]
     fn cp26_display_reports_the_special_and_dual_rows() {
-        let parser = ZhuyinParser::with_scheme(ZhuyinScheme::DachenCp26);
         use super::tone_symbol;
+        let parser = ZhuyinParser::with_scheme(ZhuyinScheme::DachenCp26);
 
         // 'i' reports both final rows plus the display-only ㄧㄚ — the
         // string parse can only produce through the u triple-tap.

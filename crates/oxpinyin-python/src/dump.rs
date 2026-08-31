@@ -77,6 +77,8 @@ fn effective_input(case: &Value) -> Result<String, RunError> {
         case["repeat"]["unit"].as_str(),
         case["repeat"]["times"].as_u64(),
     ) {
+        // Bounded by MAX_INPUT_BYTES anyway; refuse absurd allocations early.
+        const INPUT_CAP: usize = 1 << 20;
         let times = usize::try_from(times)
             .map_err(|_| RunError(format!("repeat.times {times} exceeds usize")))?;
         let unit_len = unit.len();
@@ -85,8 +87,6 @@ fn effective_input(case: &Value) -> Result<String, RunError> {
                 "repeated input of {unit_len} bytes x {times} overflows usize"
             ))
         })?;
-        // Bounded by MAX_INPUT_BYTES anyway; refuse absurd allocations early.
-        const INPUT_CAP: usize = 1 << 20;
         if total > INPUT_CAP {
             return Err(RunError(format!(
                 "repeated input is {total} bytes, past the {INPUT_CAP}-byte corpus cap"

@@ -1736,10 +1736,10 @@ mod tests {
 
                 #[test]
                 fn user_token_is_distinguishable_from_system_token() {
+                    const SYSTEM: Token = 0x0100_0001;
                     let path = temp_path("nibble");
                     let mut store = Store::create_standalone(&path).unwrap();
                     let user = store.add_phrase("词", &[7], None).unwrap();
-                    const SYSTEM: Token = 0x0100_0001;
                     assert!(phrase::is_user_token(user));
                     assert!(!phrase::is_user_token(SYSTEM));
                     cleanup(&path);
