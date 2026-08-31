@@ -527,7 +527,7 @@ where
             // returning matrix.size() - 1). The composition-anchored path
             // has an empty gap either way. The clone keeps `text`
             // alive for the constraint write below.
-            self.selected = text.clone();
+            self.selected.clone_from(&text);
         } else {
             self.selected.push_str(gap);
             self.selected.push_str(&text);

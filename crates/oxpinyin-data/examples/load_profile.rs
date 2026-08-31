@@ -229,7 +229,7 @@ fn interpolation2_shape(path: &Path) {
         let line = buffer.trim_end_matches(['\r', '\n']);
         if line == "\\1-gram" || line == "\\2-gram" || line == "\\end" || line.starts_with("\\data")
         {
-            section = line.to_owned();
+            line.clone_into(&mut section);
         }
         let bytes = n as u64;
         match section.as_str() {
