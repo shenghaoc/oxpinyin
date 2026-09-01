@@ -16,6 +16,7 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
+pub(crate) mod chewing_table;
 pub mod content;
 pub mod dict;
 pub(crate) mod initials;

@@ -722,6 +722,12 @@ fn db_rebuild(db: &Db) -> Result<(), StoreError> {
     check(unsafe { ffi::tkrzw_dbm_rebuild(db.0.as_ptr(), c"".as_ptr()) })
 }
 
+impl crate::RawReadStore for TkrzwStore {
+    fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, crate::StoreError> {
+        db_get(&self.db, key)
+    }
+}
+
 impl ReadStore for TkrzwStore {
     fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         open(path, false)
