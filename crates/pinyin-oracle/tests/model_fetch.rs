@@ -231,8 +231,14 @@ mod fetch_script {
         assert!(!output.status.success());
         assert_no_panic(&output);
         let stderr = stderr_text(&output);
+        // The script refuses a tracked cache path in two branches: when git is
+        // available and the path is not gitignored ("git would track"), and
+        // when the checkout carries no .git (the CI REST-tarball checkout has
+        // none) so the git-ignore check cannot run ("without git ignore
+        // checks"). Both refuse and leave nothing behind; the common prefix
+        // is the refusal sentinel the test pins.
         assert!(
-            stderr.contains("git would track"),
+            stderr.contains("refusing to write model bytes"),
             "must refuse a tracked path:\n{stderr}"
         );
     }

@@ -21,6 +21,12 @@ oxpinyin-data = { path = "../crates/oxpinyin-data" }
 # capi-commands: stateful session fuzzer over the C ABI (libchewing
 # fuzzer.rs shape). Linux-only, matching the fuzz CI job — as is capi.
 oxpinyin-capi = { path = "../crates/oxpinyin-capi", features = ["fuzz-api"] }
+# fixture-model: the fixture Dictionary/LanguageModel doubles live in the
+# test-support crate, not oxpinyin-core (core defines the traits; testsupport
+# holds the in-memory test implementations). Same path-dep pattern as the
+# other workspace crates above — *.workspace = true keys resolve against the
+# crate's own (root) workspace.
+oxpinyin-testsupport = { path = "../crates/oxpinyin-testsupport" }
 
 [[bin]]
 name = "parser"
