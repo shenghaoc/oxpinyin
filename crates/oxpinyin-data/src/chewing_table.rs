@@ -144,6 +144,7 @@ pub(crate) fn decode_items(
 }
 
 /// Encodes a single `PinyinIndexItem2<L>` record into its C++ ABI form.
+#[cfg(test)]
 pub(crate) fn encode_item(item: &PinyinIndexItem) -> Vec<u8> {
     let phrase_length = item.keys.len();
     let stride = item2_stride(phrase_length);
@@ -158,6 +159,7 @@ pub(crate) fn encode_item(item: &PinyinIndexItem) -> Vec<u8> {
 }
 
 /// Encodes a slice of `PinyinIndexItem` records into a DBM value.
+#[cfg(test)]
 pub(crate) fn encode_items(items: &[PinyinIndexItem]) -> Vec<u8> {
     let mut buf = Vec::new();
     for item in items {
