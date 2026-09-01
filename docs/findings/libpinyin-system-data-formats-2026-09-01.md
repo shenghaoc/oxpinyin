@@ -112,7 +112,7 @@ The architectural rule this record enforces:
 > An existing libpinyin data directory is usable by oxpinyin as-is;
 > performance cannot justify a private on-disk format.
 
-> **Why does PR #269 need a new oxpinyin-specific storage format at all?**
+**Why does PR #269 need a new oxpinyin-specific storage format at all?**
 
 **It does not.** There is no technical necessity, and the project's own
 frozen policy forbids the direction:
