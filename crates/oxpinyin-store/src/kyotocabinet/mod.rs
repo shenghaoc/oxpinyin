@@ -187,6 +187,36 @@ impl crate::RawReadStore for KcStore {
     fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, crate::StoreError> {
         Ok(self.db.get(key)?.map(|buf| buf.to_vec()))
     }
+
+    fn range_raw(
+        &self,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+        visit: &mut Visitor<'_>,
+    ) -> Result<(), crate::StoreError> {
+        // One cursor, positioned once and advanced by the step of
+        // `cursor.next()`, exactly as `walk` does for framed tables —
+        // here over the file's bare keyspace.
+        let start = match lo {
+            Bound::Unbounded | Bound::Included(&[]) | Bound::Excluded(&[]) => Vec::new(),
+            Bound::Included(key) | Bound::Excluded(key) => key.to_vec(),
+        };
+        let mut cursor = self.db.cursor()?;
+        if !cursor.jump_to(&start)? {
+            return Ok(());
+        }
+        while let Some(record) = cursor.next()? {
+            let key = record.key();
+            if matches!(lo, Bound::Excluded(bound) if key == bound) {
+                continue;
+            }
+            if !in_bounds(key, Bound::Unbounded, hi) {
+                return Ok(());
+            }
+            visit(key, record.value())?;
+        }
+        Ok(())
+    }
 }
 
 impl WriteStore for KcStore {

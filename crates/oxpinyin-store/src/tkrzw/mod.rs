@@ -726,6 +726,21 @@ impl crate::RawReadStore for TkrzwStore {
     fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, crate::StoreError> {
         db_get(&self.db, key)
     }
+
+    fn range_raw(
+        &self,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+        visit: &mut Visitor<'_>,
+    ) -> Result<(), crate::StoreError> {
+        // `scan` over the file's bare keyspace — an empty prefix leaves
+        // every stored key verbatim, the raw counterpart of the framed
+        // `range` walk.
+        scan(&self.db, &[], lo, hi, &mut |key, value| {
+            visit(key, value)?;
+            Ok(true)
+        })
+    }
 }
 
 impl ReadStore for TkrzwStore {
