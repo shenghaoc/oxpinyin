@@ -364,6 +364,20 @@ pub trait RawReadStore: ReadStore {
     ) -> Result<(), StoreError> {
         self.range(RAW_TABLE, lo, hi, visit)
     }
+
+    /// Opens a hash-DB file in read-only mode (for `bigram.db`).
+    ///
+    /// libpinyin's `bigram.db` uses KC **HashDB** / Tkrzw **HashDBM**,
+    /// while the other DBM files use TreeDB/TreeDBM. The default
+    /// implementation delegates to [`ReadStore::open_read_only`] (correct
+    /// for redb and LMDB, which have no hash/tree distinction). KC and
+    /// Tkrzw override this to select the hash container class.
+    fn open_hash_read_only(path: &std::path::Path) -> Result<Self, StoreError>
+    where
+        Self: Sized,
+    {
+        Self::open_read_only(path)
+    }
 }
 
 // ── Shared: table-name validation ──────────────────────────────────
