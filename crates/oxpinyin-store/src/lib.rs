@@ -328,6 +328,24 @@ pub trait WriteStore: ReadStore {
 pub trait RawReadStore: ReadStore {
     /// Read a single raw key. Returns `None` if absent.
     fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Visit raw (unframed) rows whose keys fall in `[lo, hi]`, ascending
+    /// key-byte order — the ordered-walk half of the raw keyspace that
+    /// [`Self::get_raw`] point-reads. libpinyin's phrase table relies on
+    /// exactly this for its `search_suggestion` continuation walk
+    /// (`phrase_large_table3_tkrzwdb.cpp:155-190`).
+    ///
+    /// Backends without a flat keyspace (redb, LMDB) delegate to the
+    /// well-known [`RAW_TABLE`], the same delegation [`Self::get_raw`]
+    /// uses; KC and Tkrzw walk the file's real keyspace.
+    fn range_raw(
+        &self,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+        visit: &mut Visitor<'_>,
+    ) -> Result<(), StoreError> {
+        self.range(RAW_TABLE, lo, hi, visit)
+    }
 }
 
 // ── Shared: table-name validation ──────────────────────────────────
