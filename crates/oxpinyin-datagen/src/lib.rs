@@ -80,6 +80,7 @@ use std::fmt;
 
 pub mod addon;
 pub mod chunks;
+pub mod libpinyin;
 pub mod manifest;
 pub mod punct;
 pub mod system;
