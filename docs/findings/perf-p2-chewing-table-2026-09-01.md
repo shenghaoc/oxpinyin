@@ -19,7 +19,7 @@ arena. libpinyin's own init is ~0.9 ms for the same data, because its
 
 ## Mini-fixture measurement (10 keys)
 
-```
+```shell
 cargo run --features redb --release --example load_profile -- chewing
 ```
 
