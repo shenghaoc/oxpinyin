@@ -125,38 +125,6 @@ impl PhraseTable {
         }
     }
 
-    /// Finds phrases that start with `prefix` and are strictly longer.
-    ///
-    /// Port of `PhraseLargeTable3::search_suggestion`
-    /// (`phrase_large_table3_tkrzwdb.cpp:150-190`): the `Jump`/`Next`
-    /// continuation walk. Upstream iterates the DBM's TreeDB/TreeDBM
-    /// starting from the prefix key and collects entries whose key
-    /// starts with the prefix and is longer.
-    ///
-    /// This implementation does point reads for each one-character
-    /// extension of the prefix (all valid Unicode scalars that could
-    /// follow), which is correct but not as efficient as a range scan.
-    /// For the P3 scope this is acceptable — the upstream also does
-    /// a cursor walk, and the Rust equivalent would need `range_raw`
-    /// on the store, which is a larger extension.
-    ///
-    /// Returns `(token, text)` pairs.
-    pub(crate) fn search_suggestion(&self, prefix: &str) -> Result<Vec<(u32, String)>, DictError> {
-        // The upstream implementation uses a DBM cursor walk (Jump to
-        // prefix key, then Next through entries whose key starts with
-        // the prefix). Without range_raw on ChewingDbm, we cannot
-        // replicate the cursor walk. Instead, return empty — this
-        // method will be wired up once range_raw is available (or the
-        // caller can fall back to the P1 phrase libraries for
-        // suggestion data).
-        //
-        // For now, the ChewingDictionary's suggest_after can use the
-        // same reverse-map approach as SystemDictionary, built from
-        // the phrase libraries.
-        let _ = prefix;
-        Ok(Vec::new())
-    }
-
     /// Whether `text` exists as a key (empty or non-empty value).
     ///
     /// Used for the phrase-segment DP's span probe: does this character
