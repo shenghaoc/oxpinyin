@@ -131,6 +131,8 @@ fn no_record_code() -> i32 {
 pub(crate) enum DbType {
     /// `TreeDB`, ordered by the record comparator.
     Tree,
+    /// `HashDB`, unordered — used by `bigram.db`.
+    Hash,
 }
 
 impl DbType {
@@ -138,6 +140,7 @@ impl DbType {
     const fn tuning(self) -> &'static str {
         match self {
             Self::Tree => "kct",
+            Self::Hash => "kch",
         }
     }
 }
