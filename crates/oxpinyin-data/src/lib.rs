@@ -24,6 +24,7 @@ pub(crate) mod initials;
 pub mod interp;
 pub mod lm;
 pub mod phrase_library;
+pub(crate) mod phrase_table;
 pub mod punct;
 pub mod table;
 pub mod table_conf;

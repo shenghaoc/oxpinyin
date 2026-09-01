@@ -1,12 +1,16 @@
-//! System dictionary backed by a lazy `ChewingTable` for the pinyin index.
+//! System dictionary backed by lazy DBM readers for the pinyin and phrase
+//! indexes.
 //!
-//! This is the P2 replacement for the eager `PinyinIndex` loading in
-//! [`crate::dict::SystemDictionary`]. Instead of materializing every
-//! pinyin-index record at startup, it opens a `ChewingTable` handle
-//! and does per-keystroke point reads — the same architecture libpinyin
-//! uses, and the reason its init is sub-millisecond.
+//! P2 replaced the eager pinyin-index materialization with a lazy
+//! `ChewingTable`. P3 adds the phrase DBM (`PhraseTable`) for
+//! `tokens_for_text` — direct consumption of libpinyin's
+//! `phrase_index.bin` without converting it to an oxpinyin-specific
+//! format.
 //!
-//! The phrase index (token → text) is still loaded eagerly (P3 scope).
+//! The phrase index (token → text) is still loaded eagerly from the
+//! oxpinyin store fixture for backward compatibility. When a
+//! `PhraseTable` is provided, `tokens_for_text` does a lazy DBM lookup
+//! instead of building a reverse map.
 
 use std::path::Path;
 
@@ -16,28 +20,30 @@ use oxpinyin_store::{DefaultStore, ReadStore};
 
 use crate::chewing_table::{ChewingTable, RawChewingDbm};
 use crate::dict::DictError;
+use crate::phrase_table::PhraseTable;
 use crate::table::{self, LeByteKey, TableError};
 
 type PhraseIndex = Vec<(LeByteKey, CompactString)>;
 
-/// A system dictionary backed by a lazy `ChewingTable`.
+/// A system dictionary backed by lazy `ChewingTable` and `PhraseTable`.
 ///
 /// Lookups convert `SyllableKey` → `ChewingKey` → packed DBM key →
 /// point read → decode `PinyinIndexItem2` → resolve tokens to
 /// `PhraseEntry` from the phrase index.
 ///
-/// Opening this dictionary does NOT scan the pinyin index.
+/// Opening this dictionary does NOT scan the pinyin index or the phrase
+/// DBM.
 pub struct ChewingDictionary {
     chewing_table: ChewingTable,
+    phrase_table: Option<PhraseTable>,
     phrase_index: PhraseIndex,
 }
 
 impl ChewingDictionary {
     /// Opens a chewing dictionary from a pinyin-index DBM and a
-    /// phrase-index store.
+    /// phrase-index store (the legacy token→text table).
     ///
-    /// The pinyin index is opened lazily (no scan). The phrase index
-    /// is loaded eagerly into a sorted vector (P3 scope).
+    /// Both are opened lazily (no scan).
     pub fn open(pinyin_index_path: &Path, phrase_index_path: &Path) -> Result<Self, DictError> {
         let store = DefaultStore::open_read_only(pinyin_index_path).map_err(TableError::from)?;
         let dbm = RawChewingDbm::new(store);
@@ -45,6 +51,36 @@ impl ChewingDictionary {
         let phrase_index = load_phrase_index(phrase_index_path)?;
         Ok(Self {
             chewing_table,
+            phrase_table: None,
+            phrase_index,
+        })
+    }
+
+    /// Opens a chewing dictionary with a phrase DBM for text→tokens
+    /// lookups.
+    ///
+    /// `phrase_dbm_path` is the libpinyin `phrase_index.bin` file (UCS-4
+    /// keys, `u32 token[]` values). When provided, `tokens_for_text`
+    /// does a direct lazy DBM lookup instead of building a reverse map.
+    pub fn open_with_phrase_dbm(
+        pinyin_index_path: &Path,
+        phrase_index_path: &Path,
+        phrase_dbm_path: &Path,
+    ) -> Result<Self, DictError> {
+        let pinyin_store =
+            DefaultStore::open_read_only(pinyin_index_path).map_err(TableError::from)?;
+        let pinyin_dbm = RawChewingDbm::new(pinyin_store);
+        let chewing_table = ChewingTable::new(Box::new(pinyin_dbm));
+
+        let phrase_store =
+            DefaultStore::open_read_only(phrase_dbm_path).map_err(TableError::from)?;
+        let phrase_dbm = RawChewingDbm::new(phrase_store);
+        let phrase_table = PhraseTable::new(Box::new(phrase_dbm));
+
+        let phrase_index = load_phrase_index(phrase_index_path)?;
+        Ok(Self {
+            chewing_table,
+            phrase_table: Some(phrase_table),
             phrase_index,
         })
     }
@@ -53,6 +89,23 @@ impl ChewingDictionary {
     #[must_use]
     pub fn phrase_text(&self, token: u32) -> Option<&str> {
         phrase_lookup(&self.phrase_index, token)
+    }
+
+    /// Tokens whose phrase text is exactly `text`.
+    ///
+    /// When a `PhraseTable` is available (P3), uses a direct DBM lookup.
+    /// Otherwise falls back to scanning the phrase index.
+    pub fn tokens_for_text(&self, text: &str) -> Result<Vec<u32>, DictError> {
+        if let Some(ref pt) = self.phrase_table {
+            return pt.search(text);
+        }
+        let mut tokens = Vec::new();
+        for (key, stored_text) in &self.phrase_index {
+            if stored_text.as_str() == text {
+                tokens.push(key.token());
+            }
+        }
+        Ok(tokens)
     }
 
     fn fill_lookup(
@@ -128,6 +181,14 @@ impl Dictionary for ChewingDictionary {
             self.chewing_table.search(&keys)?
         };
         Ok(result.has_ok() || result.has_continued())
+    }
+
+    fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
+        self.tokens_for_text(text)
+            .unwrap_or_default()
+            .into_iter()
+            .map(PhraseToken::new)
+            .collect()
     }
 }
 
