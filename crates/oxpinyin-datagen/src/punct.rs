@@ -1,11 +1,16 @@
 //! Punctuation table: `punct.table` text → token-keyed punctuation lists.
 //!
-//! The raw `punct.bin` convert is not consumable — `HashDBM` iteration sees
-//! one 6-byte key, while upstream `PunctTable::attach` opens the same file
-//! as `TreeDBM` and reads 272 token keys
-//! (`docs/findings/prediction-punct.md`). This compilation is the same
-//! one the retired `oxpinyin-migrate export-punct` performed (no oracle
-//! involved), restored verbatim from that code.
+//! Two value schemas, one read pass (`rows_to_entries` parses the file
+//! once; each serializer encodes it its own way):
+//!
+//! * **native** ([`rows_to_entries`]) — NUL-separated UTF-8, the frozen
+//!   oxpinyin schema for the redb/LMDB producers and the eager
+//!   `PunctTable` reader.
+//! * **libpinyin** ([`rows_to_entries_ucs4`]) — raw UCS-4 stream, each
+//!   punctuation's codepoints followed by a u32 zero terminator, the
+//!   `PunctTableEntry::escape` layout the KC/Tkrzw producers emit and the
+//!   lazy `LazyPunctTable` reader consumes
+//!   (`docs/findings/bigram-punct-format-2026-09-01.md` §2).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -77,13 +82,11 @@ pub fn read_punct_file(path: &Path) -> Result<Vec<PunctRow>, DatagenError> {
     Ok(rows)
 }
 
-/// Serialises rows into token → NUL-terminated UTF-8 punctuation lists.
-///
-/// File order is load-bearing (`PunctTableEntry` comments require decreasing
-/// frequency). First-seen punctuation for a token wins; later duplicates are
-/// dropped, matching `append_punctuation`'s `g_strv_contains` skip.
-#[must_use]
-pub fn rows_to_entries(rows: &[PunctRow]) -> Entries {
+/// Groups rows into token → first-seen punctuation lists. File order is
+/// load-bearing (`PunctTableEntry` comments require decreasing frequency);
+/// later duplicates are dropped, matching `append_punctuation`'s
+/// `g_strv_contains` skip.
+fn group_rows(rows: &[PunctRow]) -> BTreeMap<u32, Vec<String>> {
     let mut by_token: BTreeMap<u32, Vec<String>> = BTreeMap::new();
     for row in rows {
         let list = by_token.entry(row.token).or_default();
@@ -92,6 +95,13 @@ pub fn rows_to_entries(rows: &[PunctRow]) -> Entries {
         }
     }
     by_token
+}
+
+/// Serialises rows into the native schema: token → NUL-terminated UTF-8
+/// punctuation lists.
+#[must_use]
+pub fn rows_to_entries(rows: &[PunctRow]) -> Entries {
+    group_rows(rows)
         .into_iter()
         .map(|(token, puncts)| {
             let mut value = Vec::new();
@@ -104,12 +114,33 @@ pub fn rows_to_entries(rows: &[PunctRow]) -> Entries {
         .collect()
 }
 
-/// Compiles `model_dir/punct.table` into the punctuation table.
+/// Serialises rows into the libpinyin schema (`PunctTableEntry::escape`,
+/// `punct_table.cpp:40-54`): token → raw UCS-4 stream, each punctuation's
+/// codepoints followed by a u32 zero terminator, successive punctuations
+/// concatenated.
+#[must_use]
+pub fn rows_to_entries_ucs4(rows: &[PunctRow]) -> Entries {
+    group_rows(rows)
+        .into_iter()
+        .map(|(token, puncts)| {
+            let mut value = Vec::new();
+            for punct in puncts {
+                for ch in punct.chars() {
+                    value.extend_from_slice(&u32::from(ch).to_le_bytes());
+                }
+                value.extend_from_slice(&0_u32.to_le_bytes());
+            }
+            (token.to_le_bytes().to_vec(), value)
+        })
+        .collect()
+}
+
+/// Reads `model_dir/punct.table` into rows.
 ///
 /// # Errors
 ///
 /// Fails when `punct.table` is missing or contains a malformed line.
-pub fn compile(model_dir: &Path) -> Result<Entries, DatagenError> {
+pub fn read_rows(model_dir: &Path) -> Result<Vec<PunctRow>, DatagenError> {
     let table_path = model_dir.join("punct.table");
     if !table_path.is_file() {
         return Err(DatagenError::MissingModel {
@@ -117,8 +148,25 @@ pub fn compile(model_dir: &Path) -> Result<Entries, DatagenError> {
             file: "punct.table",
         });
     }
-    let rows = read_punct_file(&table_path)?;
-    Ok(rows_to_entries(&rows))
+    read_punct_file(&table_path)
+}
+
+/// Compiles `model_dir/punct.table` into the native schema table.
+///
+/// # Errors
+///
+/// Fails when `punct.table` is missing or contains a malformed line.
+pub fn compile(model_dir: &Path) -> Result<Entries, DatagenError> {
+    Ok(rows_to_entries(&read_rows(model_dir)?))
+}
+
+/// Compiles `model_dir/punct.table` into the libpinyin schema table.
+///
+/// # Errors
+///
+/// Fails when `punct.table` is missing or contains a malformed line.
+pub fn compile_libpinyin(model_dir: &Path) -> Result<Entries, DatagenError> {
+    Ok(rows_to_entries_ucs4(&read_rows(model_dir)?))
 }
 
 #[cfg(test)]
@@ -132,6 +180,22 @@ mod tests {
         assert_eq!(row.phrase, "的");
         assert_eq!(row.punct, "，");
         assert_eq!(row.count, 275_240);
+    }
+
+    #[test]
+    fn ucs4_encoding_matches_escape_layout() {
+        let rows = [
+            parse_punct_line("16778715 的 ， 275240").unwrap(),
+            parse_punct_line("16778715 的 。 214463").unwrap(),
+        ];
+        let entries = rows_to_entries_ucs4(&rows);
+        // ， = U+FF0C, 。 = U+3002, each zero-terminated as u32.
+        let mut want = Vec::new();
+        want.extend_from_slice(&0xFF0C_u32.to_le_bytes());
+        want.extend_from_slice(&0_u32.to_le_bytes());
+        want.extend_from_slice(&0x3002_u32.to_le_bytes());
+        want.extend_from_slice(&0_u32.to_le_bytes());
+        assert_eq!(entries[0].1, want);
     }
 
     #[test]
