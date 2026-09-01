@@ -217,6 +217,12 @@ impl crate::RawReadStore for KcStore {
         }
         Ok(())
     }
+
+    fn open_hash_read_only(path: &Path) -> Result<Self, crate::StoreError> {
+        Ok(Self {
+            db: Db::open(path, DbType::Hash, true, false)?,
+        })
+    }
 }
 
 impl WriteStore for KcStore {

@@ -16,12 +16,14 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
+pub mod bigram_table;
 pub mod chewing_dict;
 pub(crate) mod chewing_table;
 pub mod content;
 pub mod dict;
 pub(crate) mod initials;
 pub mod interp;
+pub mod lazy_punct;
 pub mod lm;
 pub mod phrase_libraries;
 pub mod phrase_library;
@@ -30,12 +32,14 @@ pub mod punct;
 pub mod table;
 pub mod table_conf;
 
+pub use bigram_table::BigramTable;
 pub use chewing_dict::ChewingDictionary;
 pub use content::{ContentTable, LoadError, Record, TokenPair};
 pub use dict::{DictError, SystemDictionary, build_prefix_tables};
 pub use interp::{
     InterpolationError, UnigramTable, parse_interpolation2, parse_interpolation2_from_reader,
 };
+pub use lazy_punct::LazyPunctTable;
 pub use lm::{BigramLanguageModel, BigramRow, LmError, merge_bigram, merge_counts};
 pub use oxpinyin_core::UserCountDelta;
 // The compiled-in backend's native-table extension and filename helper,
