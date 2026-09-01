@@ -79,7 +79,7 @@
 use std::fmt;
 
 pub mod addon;
-pub mod compat;
+pub mod chunks;
 pub mod manifest;
 pub mod punct;
 pub mod system;
