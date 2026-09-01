@@ -43,6 +43,13 @@ use std::fmt;
 use std::ops::Range;
 use std::path::Path;
 
+#[cfg(not(target_endian = "little"))]
+compile_error!(
+    "phrase_library: the MemoryChunk format uses host-endian fields; \
+     this reader decodes them as little-endian. Big-endian targets are \
+     not supported."
+);
+
 /// `PHRASE_MASK` (`novel_types.h:41`): the library-local token bits a
 /// phrase-index slot is addressed by.
 const PHRASE_MASK: u32 = 0x00FF_FFFF;
@@ -149,7 +156,12 @@ mod map {
         /// parser's call.
         pub(crate) fn open(path: &Path) -> Result<Self, LibraryError> {
             let file = std::fs::File::open(path).map_err(LibraryError::Io)?;
-            let len = file.metadata().map_err(LibraryError::Io)?.len() as usize;
+            let len: usize = file
+                .metadata()
+                .map_err(LibraryError::Io)?
+                .len()
+                .try_into()
+                .map_err(|_| LibraryError::Format("file too large for this platform".to_owned()))?;
             Self::from_file(file, len)
         }
 
