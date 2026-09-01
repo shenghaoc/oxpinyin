@@ -68,6 +68,8 @@ pub enum DictError {
     Table(TableError),
     /// Value bytes did not parse as `{token, freq}` records.
     Parse(String),
+    /// A phrase-library chunk file failed to verify.
+    Library(crate::phrase_library::LibraryError),
 }
 
 impl fmt::Display for DictError {
@@ -75,6 +77,7 @@ impl fmt::Display for DictError {
         match self {
             Self::Table(e) => write!(f, "table error: {e}"),
             Self::Parse(msg) => write!(f, "parse error: {msg}"),
+            Self::Library(e) => write!(f, "phrase library error: {e}"),
         }
     }
 }
@@ -84,6 +87,7 @@ impl std::error::Error for DictError {
         match self {
             Self::Table(e) => Some(e),
             Self::Parse(_) => None,
+            Self::Library(e) => Some(e),
         }
     }
 }
@@ -91,6 +95,12 @@ impl std::error::Error for DictError {
 impl From<TableError> for DictError {
     fn from(e: TableError) -> Self {
         Self::Table(e)
+    }
+}
+
+impl From<crate::phrase_library::LibraryError> for DictError {
+    fn from(e: crate::phrase_library::LibraryError) -> Self {
+        Self::Library(e)
     }
 }
 

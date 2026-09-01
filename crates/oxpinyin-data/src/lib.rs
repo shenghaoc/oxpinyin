@@ -23,6 +23,7 @@ pub mod dict;
 pub(crate) mod initials;
 pub mod interp;
 pub mod lm;
+pub mod phrase_libraries;
 pub mod phrase_library;
 pub(crate) mod phrase_table;
 pub mod punct;
