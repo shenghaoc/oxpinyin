@@ -106,7 +106,7 @@ fn main() {
         other => {
             eprintln!(
                 "unknown mode {other:?}\n\
-                 usage: load_profile [all|inventory|isolated|cumulative|dict|pinyin|phrase|bigram|interp|full|keycosts]"
+                 usage: load_profile [all|inventory|isolated|cumulative|dict|lookups|pinyin|phrase|bigram|interp|full|keycosts]"
             );
             std::process::exit(2);
         }
