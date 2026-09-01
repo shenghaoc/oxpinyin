@@ -12,7 +12,7 @@ use std::path::Path;
 
 use compact_str::CompactString;
 use oxpinyin_core::{ChewingKey, Completeness, Dictionary, PhraseEntry, PhraseToken, SyllableKey};
-use oxpinyin_store::{DefaultStore, RawReadStore, ReadStore};
+use oxpinyin_store::{DefaultStore, ReadStore};
 
 use crate::chewing_table::{ChewingTable, RawChewingDbm};
 use crate::dict::DictError;
@@ -50,6 +50,7 @@ impl ChewingDictionary {
     }
 
     /// Phrase text for `token`, if present.
+    #[must_use]
     pub fn phrase_text(&self, token: u32) -> Option<&str> {
         phrase_lookup(&self.phrase_index, token)
     }
