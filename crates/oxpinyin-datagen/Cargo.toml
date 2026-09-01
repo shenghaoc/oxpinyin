@@ -34,6 +34,8 @@ redb = ["oxpinyin-store/redb"]
 workspace = true
 
 [dependencies]
+# ChewingKey encoding for libpinyin-compatible pinyin index output.
+oxpinyin-core = { workspace = true }
 # default-features = false: the producer set is selected by this crate's own
 # features above, never dragged in by the store's default.
 oxpinyin-store = { path = "../oxpinyin-store", default-features = false }
