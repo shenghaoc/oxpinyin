@@ -114,7 +114,7 @@ unrefactored until Stage 2; oracle/dictool = tooling.
 | capi ABI (55 symbols, handle lifecycle) | high residual (F-6/F-7) | contract tests + C++ smoke gate | `capi-commands` fuzz target (libchewing precedent); F-7 fix |
 | data decode (content.rs) | medium (F-3) | unit tests on fixtures + F-3 regression test | `dict-loader` fuzz target; a Kani bounds harness remains deferred, conditional on a Kani release supporting the pinned toolchain (trial dropped — see tooling-evaluation §19) |
 | fixture ingest (fixture.rs) | medium (F-1/F-2) | none specific | fixes + regression tests |
-| user/store persistence | medium (F-5) | integration tests | coverage report priority + cargo-mutants scope |
+| user/store persistence | medium (F-5) | integration tests | coverage report priority (the cargo-mutants scope was retired 2026-09-01) |
 | core parser/scheme | low (mature) | proptest + fuzz + parity corpus | expanded corpus soak; mutation score |
 | oracle FFI | low-medium | pinning + differentials | keep; Miri not applicable (C side) |
-| store lmdb/tkrzw/kyotocabinet | medium (unsafe deps) | feature-gated; four peer backends, KC is the default selection, the other three explicit | geiger inventory; Miri applies to the pure-Rust redb peer (the C-backed peers are covered by the ABI smoke gate and integration tests) |
+| store lmdb/tkrzw/kyotocabinet | medium (unsafe deps) | feature-gated; four peer backends, KC is the default selection, the other three explicit | the geiger inventory and Miri lanes were retired 2026-09-01; the C-backed peers stay covered by the ABI smoke gate and integration tests |

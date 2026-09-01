@@ -38,7 +38,7 @@ would be cargo-cult). The boundary is the `unsafe` policy (Layer 2) and the
 | data | no unsafe today; one documented future exception (mmap) | keeps `#![deny(unsafe_code)]` + module-scoped allows when/if mmap lands — `forbid` would foreclose the reserved exception, so deny is the deliberate choice |
 | store | unsafe confined to `lmdb.rs` and `tkrzw/*` | workspace `deny` + the existing module-scoped `#![allow(unsafe_code)]` in exactly those files (a module allow is precisely what `forbid` forbids — deny+scoped-allow *is* the minimal trusted region here) |
 | capi, oracle | unsafe allowed, but every block justified & every `unsafe fn` documented | `[lints.clippy] undocumented_unsafe_blocks = "deny"`, `missing_safety_doc = "deny"`, plus `rust::unsafe_op_in_unsafe_fn = "deny"`; `// SAFETY:` prose stays as the human-readable half |
-| all | dependency unsafe inventoried | scheduled `cargo geiger` report; first-party unsafe inventory is the lint structure itself |
+| all | ~~dependency unsafe inventoried~~ **not enforced** (retired 2026-09-01) | first-party unsafe inventory is the lint structure itself; the scheduled `cargo geiger` dependency report was retired 2026-09-01 (`docs/findings/verify-nightly.md`) — no job inventories dependency unsafe today; accepted loss |
 
 Deviation mechanism: none for `forbid` crates (by design — that is the
 point); for capi/oracle/store the `// SAFETY:` comment *is* the deviation
@@ -116,7 +116,8 @@ record, enforced present-but-not-verified by Clippy, verified by review.
   `bans.deny = [{ name = "..." }]` only if a concrete ban ever becomes
   policy; start empty.
 - Optional unsafe deps (`heed`, `cxx`) stay feature-gated and off the
-  default build; geiger report tracks them.
+  default build. *(The geiger report that tracked them was retired
+  2026-09-01.)*
 
 ## Layer 7 — dynamic & formal verification (SCHEDULED ANALYSIS)
 
@@ -124,13 +125,13 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 |---|---|---|
 | fuzz smoke | every PR | parser target only (10s); the four newer targets run in the nightly soak |
 | fuzz soak | nightly | all targets, 10–30 min, corpus committed |
-| Miri | nightly | `-p oxpinyin-core -p oxpinyin-store` tests + corpus replay |
+| ~~Miri~~ | retired 2026-09-01 | — (`docs/findings/verify-nightly.md`) |
 | overflow-checks release test | nightly | `cargo test --release` with `-C overflow-checks -C debug-assertions` |
-| mutation score | nightly (trial) | core parser/full-pinyin index/scheme/scoring + user/store |
+| ~~mutation score~~ | retired 2026-09-01 | — (`docs/findings/verify-nightly.md`) |
 | coverage report | nightly | llvm-cov, report-only |
 | ~~Kani harnesses~~ | dropped (toolchain age) | — |
 | Lizard | nightly | CCN≤40 ratchet from current max 38 |
-| geiger | nightly | dependency unsafe diff |
+| ~~geiger~~ | retired 2026-09-01 | — (`docs/findings/verify-nightly.md`) |
 
 None of these claim correctness; each is bug-finding machinery pointed at
 the highest-risk surfaces identified in `oxpinyin-audit.md`.

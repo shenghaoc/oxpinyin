@@ -17,7 +17,7 @@ warning, SCHED = scheduled analysis, REV = human review.
 | Every unsafe block justified | REV (prose) | HGATE | `clippy::undocumented_unsafe_blocks = deny` in oxpinyin-capi and pinyin-oracle only; oxpinyin-store carries no such lint (its scoped module allows are review-covered) |
 | Every `unsafe fn` documented | REV | HGATE | `clippy::missing_safety_doc = deny` |
 | No unsafe ops silently inside `unsafe fn` bodies | not enforced | HGATE | `rust::unsafe_op_in_unsafe_fn = deny` |
-| Dependency unsafe inventoried | not enforced | SCHED | scheduled `cargo geiger` report artifact (verify-nightly schedule: daily 03:00; trial, continue-on-error) |
+| Dependency unsafe inventoried | not enforced | ~~SCHED~~ retired 2026-09-01 | the scheduled `cargo geiger` report artifact was retired with its lane (`docs/findings/verify-nightly.md`); dependency unsafe is no longer inventoried by any job |
 
 ## B. Panics & failure
 
@@ -64,7 +64,7 @@ warning, SCHED = scheduled analysis, REV = human review.
 | License hygiene | unenforced | HGATE | `cargo deny check licenses` (GPL-3.0-or-later + permissive list) |
 | No unexpected sources | unenforced | HGATE | `cargo deny check sources`: crates.io registry only — git sources are disabled entirely (`allow-git = []`) |
 | Duplicate-version drift visible | unenforced | WARN | `cargo deny check bans multiple-versions = warn` (Stage-2 size signal) |
-| New deps need ask | prose only | prose + geiger/advisory visibility | constitution rule stays (it's a process rule); deny.toml `bans` starts empty |
+| New deps need ask | prose only | prose + advisory visibility | constitution rule stays (it's a process rule); deny.toml `bans` starts empty. *(geiger visibility retired 2026-09-01.)* |
 | Unmaintained deps tracked | unenforced | reviewed ignore entries | advisory ignores in `deny.toml` carry a `reason` string with the review-by date inside it (the 0.20 schema has no expiry field; dates are prose, not a parsed key) |
 
 ## G. Dynamic verification
@@ -72,10 +72,10 @@ warning, SCHED = scheduled analysis, REV = human review.
 | Rule | Today | Proposed | Mechanism |
 |---|---|---|---|
 | Parser fuzz smoke per PR | yes (10s) | PR gate: parser target only; the four additional targets run in the nightly soak | cargo-fuzz pinned nightly (existing job) |
-| Corpus replay under Miri | no | SCHED nightly | `cargo +nightly miri test` core/store + corpus |
+| Corpus replay under Miri | no | ~~SCHED nightly~~ retired 2026-09-01 | the Miri lane was retired (`docs/findings/verify-nightly.md`) |
 | Fuzz soak | no | SCHED nightly | five targets × 3 min; one committed seed (`fuzz/corpus/parser/zhuan`), the rest of the corpus is seeded at run time |
 | Coverage visibility | no | SCHED nightly | cargo-llvm-cov report, no threshold |
-| Mutation score | no | SCHED nightly (trial) | cargo-mutants scoped to core + user/store |
+| Mutation score | no | ~~SCHED nightly (trial)~~ retired 2026-09-01 | the cargo-mutants lane was retired (`docs/findings/verify-nightly.md`) |
 
 ## H. Formal verification
 
