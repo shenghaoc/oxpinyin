@@ -64,7 +64,9 @@ impl ChewingDictionary {
         if syllables.is_empty() {
             return Ok(());
         }
-        let keys = syllables_to_chewing_keys(syllables);
+        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+            return Ok(());
+        };
         let (result, items) = self.chewing_table.search(&keys)?;
         if !result.has_ok() {
             return Ok(());
@@ -114,7 +116,9 @@ impl Dictionary for ChewingDictionary {
         if syllables.is_empty() {
             return Ok(true);
         }
-        let keys = syllables_to_chewing_keys(syllables);
+        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+            return Ok(false);
+        };
         let has_partial = syllables
             .iter()
             .any(|s| s.completeness() == Completeness::Partial);
@@ -127,14 +131,16 @@ impl Dictionary for ChewingDictionary {
     }
 }
 
-/// Converts a `SyllableKey` slice to `ChewingKey` slice.
+/// Converts a `SyllableKey` slice to a `ChewingKey` slice.
 ///
-/// Complete syllables use `ChewingKey::from_pinyin(text)`.
-/// Initial-only (incomplete) syllables use just the initial.
-fn syllables_to_chewing_keys(syllables: &[SyllableKey]) -> Vec<ChewingKey> {
+/// `None` when any syllable cannot be resolved — matching upstream, where
+/// an unrecognized syllable prevents the lookup entirely rather than
+/// substituting a zero key that could collide with prefix markers in the
+/// DBM.
+fn syllables_to_chewing_keys(syllables: &[SyllableKey]) -> Option<Vec<ChewingKey>> {
     syllables
         .iter()
-        .map(|s| ChewingKey::from_pinyin(s.text()).unwrap_or(ChewingKey::ZERO))
+        .map(|s| ChewingKey::from_pinyin(s.text()))
         .collect()
 }
 
