@@ -3,8 +3,12 @@ name: verify-nightly
 # Tier-3 scheduled verification (docs/safety/ci-strategy.md): everything
 # too slow or too nightly for the PR gate. Findings here open issues —
 # they do not block merges unless a ratchet exists (Lizard's CCN limit is
-# the only ratchet). Trials (Miri, geiger) are continue-on-error until
-# they prove stable.
+# the only ratchet).
+#
+# No trial lanes remain: the Miri, cargo-mutants and cargo-geiger jobs
+# were retired on 2026-09-01 (docs/findings/verify-nightly.md). There are
+# no continue-on-error lanes; every job in this workflow must be green.
+# Surviving lanes: fuzz-soak, overflow-lane, coverage, lizard, nextest.
 #
 # All jobs run in debian:testing containers in the store-backends.yml
 # style: the nightly lanes exist to surface drift early, and the rolling
@@ -45,7 +49,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc util-linux
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev util-linux
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -91,38 +95,6 @@ jobs:
           done
           exit $status
 
-  # UB detection for the pure-Rust crates (core's algorithms, store's
-  # default redb backend). Trial: continue-on-error until it has proven
-  # stable on this schedule; FFI crates are out of Miri's reach (C/C++).
-  miri:
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          safe-directory: 'true'
-      - name: Install the pinned nightly with Miri
-        run: |
-          set -euo pipefail
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain nightly-2026-08-01 --component miri rust-src
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-          . "$HOME/.cargo/env"
-      - run: cargo +nightly-2026-08-01 miri setup
-      - run: cargo +nightly-2026-08-01 miri test -p oxpinyin-core -p oxpinyin-store
-
   # Latent-overflow lane: the releaseoptimized codepath with overflow
   # checks and debug assertions forced on (docs/safety/
   # tooling-evaluation.md §8) — the "NDEBUG question" as CI, not as
@@ -140,7 +112,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -165,7 +137,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -189,36 +161,6 @@ jobs:
         with:
           name: coverage-lcov
           path: lcov.info
-
-  # Dependency-unsafe inventory, weekly-signal grade: report artifact
-  # only. Trial (continue-on-error): geiger periodically bit-rots against
-  # new rustc versions.
-  geiger:
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc pkg-config libssl-dev
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          safe-directory: 'true'
-          rustup: 'true'
-      - run: cargo install cargo-geiger --version 0.13.0 --locked
-      - run: cargo geiger > geiger-report.txt || cargo geiger --output-format text > geiger-report.txt
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: geiger-report
-          path: geiger-report.txt
 
   # Complexity ratchet: no function may exceed CCN 40 (current max is 38,
   # the user/store.rs quartet — a tracked refactor target, never allowed
@@ -247,60 +189,6 @@ jobs:
       - run: pip install --break-system-packages lizard==1.24.0
       - run: lizard crates/ -l rust -C 40
 
-  # Mutation testing, scoped to where test strength matters most (the
-  # study's priority list): core's parsers/scoring and the user-store
-  # persistence cluster. Trial: continue-on-error; the score is evidence
-  # about test strength, not a gate. Scope is spelled as CLI --file
-  # flags because cargo-mutants' config-file keys still move between
-  # releases.
-  mutants:
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          safe-directory: 'true'
-          rustup: 'true'
-          rust-cache: 'true'
-      - name: Install pinned cargo-mutants
-        run: |
-          ver=27.1.0
-          # Verify the release archive before executing anything from it:
-          # pin the expected digest and fail the job on mismatch.
-          sum=dfe6dc37d0342c891d2829b5a695aa57c2d0edecef7e7d0399a30cc6e206411e
-          curl -sSfL -o cargo-mutants.tar.gz "https://github.com/sourcefrog/cargo-mutants/releases/download/v${ver}/cargo-mutants-x86_64-unknown-linux-gnu.tar.gz"
-          echo "${sum}  cargo-mutants.tar.gz" | sha256sum -c -
-          tar xzf cargo-mutants.tar.gz
-          mkdir -p ~/.local/bin
-          install -m755 cargo-mutants ~/.local/bin
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      # --locked is not a cargo-mutants option; the supported form passes
-      # it through to Cargo via --cargo-arg.
-      - run: >
-          cargo mutants --no-times --cargo-arg=--locked
-          --file crates/oxpinyin-core/src/parser.rs
-          --file crates/oxpinyin-core/src/full_pinyin_index.rs
-          --file crates/oxpinyin-core/src/scheme.rs
-          --file crates/oxpinyin-core/src/scoring.rs
-          --file crates/oxpinyin-user/src/store.rs
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
-        with:
-          name: mutants-out
-          path: mutants.out
-
   # nextest over the whole workspace: proven equivalent locally (751/751
   # vs cargo test). If this stays green on the schedule, flipping the PR
   # gate's unit lane to nextest is a one-line follow-up.
@@ -315,7 +203,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

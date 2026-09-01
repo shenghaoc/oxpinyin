@@ -109,10 +109,13 @@ re-state these.
   targets); llvm-cov (report-only); nextest (unit lane); rustfmt gate &
   absent-toml policy (already in place).
 - **ADOPT SELECTIVELY**: Miri (core+store only); geiger (scheduled
-  report); Lizard (ratchet, report).
+  report); Lizard (ratchet, report). *(The Miri, geiger and cargo-mutants
+  lanes were retired 2026-09-01 — `docs/findings/verify-nightly.md`; Lizard
+  remains.)*
 - **TRIAL**: cargo-mutants (scoped to core + user/store);
   `significant_drop_tightening` during Stage-2 profiling. Kani was a
-  trial candidate until dropped for toolchain age (see O).
+  trial candidate until dropped for toolchain age (see O). *(cargo-mutants
+  retired 2026-09-01.)*
 - **DEFER**: cargo-audit (redundant with deny's RustSec DB; keep as
   documented local convenience); coverage thresholds (until baseline);
   `redundant_pub_crate` as a signal.

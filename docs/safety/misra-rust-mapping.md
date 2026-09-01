@@ -164,7 +164,7 @@ CI = `.github/workflows/ci.yml`; proposals are specified in
 
 | ID | Theme (gist) | MISRA cat | Class | oxpinyin: today → proposed |
 |---|---|---|---|---|
-| R.1.3 | No undefined/critical unspecified behaviour | Required | A/K | Safe Rust: guaranteed. Unsafe: 100% SAFETY-commented; propose Miri lane for `store` default feature. |
+| R.1.3 | No undefined/critical unspecified behaviour | Required | A/K | Safe Rust: guaranteed. Unsafe: 100% SAFETY-commented (the proposed Miri lane for `store` was built and retired 2026-09-01). |
 | R.1.5 | Avoid deprecated language/library features | Required | B | rustc `deprecated` warn-by-default; CI `RUSTFLAGS: -D warnings` makes it a hard error. ✓ already mechanical. ADD6: "this applies to deprecated APIs". |
 | R.2.1 | No unreachable code | Required | B | rustc `unreachable_code` (warn → error via `-D warnings`). ✓ |
 | R.2.2 | No dead code | Required | B | rustc `dead_code`. ✓ (same mechanism) |
@@ -218,21 +218,21 @@ blocks + 6 `unsafe fn` + 4 `unsafe extern` blocks; 55 exported symbols),
 cxx-generated bridge). Every block carries a `// SAFETY:` comment today
 (195/195 audited) — the mechanical goal is to keep that true without trusting
 prose: `clippy::undocumented_unsafe_blocks`, `clippy::missing_safety_doc`,
-`unsafe_op_in_unsafe_fn`, plus a `cargo-geiger` diff gate (see profile).
+`unsafe_op_in_unsafe_fn` (the `cargo-geiger` diff gate was retired 2026-09-01; see the findings note in the profile).
 
 | Group | IDs | Rust-side meaning | Enforcement (today → proposed) |
 |---|---|---|---|
 | Directives | D.4.2, D.4.3, D.5.1 | commenting/commenting-out discipline, code hygiene, concurrency primitives | Review inside unsafe crates; D.5.1's "not all safe Rust types are race-free" note maps to the two `unsafe impl Send/Sync` in store (justified, documented). |
 | R.1.1, R.5.1, R.5.5, R.5.10, R.20.4, R.20.7 | lexical/name/syntax violations (duplicate names, macro pitfalls, reserved identifiers) | Only reachable via `macro_rules!`/proc-macro or `extern "C"` symbol collision. | Review; `no_mangle` surface is pinned to the checked-in `pinyin.h` (55 symbols) — CI smoke gate already compiles the fork against it. |
 | R.8.3, R.8.5, R.8.6, R.8.15, R.8.17 | declarations compatible with their definitions; parameter type consistency | `extern` blocks must match the C ABI. | Hand-written extern blocks are pinned to header SHA (`pinyin-oracle/src/ffi.rs`); capi is verified by the C++ smoke gate + contract tests. Keep both. |
-| R.9.7 | aggregates not partially initialized | `MaybeUninit` misuse — absent from workspace. | Geiger + review; would be a Miri finding. |
+| R.9.7 | aggregates not partially initialized | `MaybeUninit` misuse — absent from workspace. | Review (the geiger and Miri lanes were retired 2026-09-01; no active tool control). |
 | R.10.5, R.10.8, R.11.1, R.11.2, R.11.5, R.11.6, R.11.8, R.12.2 | pointer/integral conversion and cast discipline | The heart of FFI cast rules (`as`/`transmute`). | `transmute`: zero in workspace. `as`: ~150 numeric casts, concentrated in capi/data. Proposal: `cast_possible_truncation`/`cast_sign_loss`/`cast_precision_loss` at **warn** (58/14/35 hits) with `#[allow]`+justification at FFI seams; `clippy::transmute_*` family already denied via `all`. |
 | R.12.4 | enum/bitfield evaluation | C semantics; "either well-defined or will not occur" (ADD6). | N/A-in-practice. |
 | R.14.1 | `while` controlling-expression termination | Loop termination — general concern, review. | Review; engine loops are input-bounded (`MAX_GRAPH_INPUT = 65_535`). |
 | R.17.9 | non-returning functions passed as callbacks | `!` type enforces (ADD6). | Guaranteed. |
 | R.18.1–R.18.6 | pointer/array arithmetic and bounds | FFI pointer arithmetic. | Audited clean; `ptr::copy_nonoverlapping` with computed sizes only. |
-| R.19.1 | objects not treated as overlapping storage | union/aliasing — Miri's home turf. | Zero unions; Miri lane would prove the store paths. |
-| R.21.3–R.21.10, R.21.12–R.21.21, R.21.24, R.21.26 | std-lib facilities with undefined/dangerous behaviour (`atexit`, signals, setjmp, qsort comparators, stdio internals…) | Reachable only via `extern "C"` re-implementation | None used; geiger/review guard. |
+| R.19.1 | objects not treated as overlapping storage | union/aliasing — Miri's home turf. | Zero unions; review (the Miri lane that would have proven the store paths was retired 2026-09-01). |
+| R.21.3–R.21.10, R.21.12–R.21.21, R.21.24, R.21.26 | std-lib facilities with undefined/dangerous behaviour (`atexit`, signals, setjmp, qsort comparators, stdio internals…) | Reachable only via `extern "C"` re-implementation | None used; review guard (the geiger inventory was retired 2026-09-01). |
 | R.22.1–R.22.12, R.22.14–R.22.17, R.22.20 | resource acquire/release pairing (malloc/free, streams, locks) | The FFI ownership discipline. | Audited: every `malloc`'d string freed by contract (`g_free`), every `Box::into_raw` matched with `from_raw`; ownership rules documented per symbol. Residual risks logged (F-6 glib allocator pairing). |
 
 ## Table 3 — Guidelines not applicable to Rust (94)
@@ -284,5 +284,5 @@ few, because Rust's floor is high:
    largest untracked safe-Rust hazard class; warn-level pedantic cast lints
    plus TryFrom-conversion at FFI seams close it.
 4. **The unsafe-only tables** — collapse onto SAFETY-comment enforcement +
-   geiger inventory + Miri for `store`, all cheaper than the C-world
+   store analysis (the geiger + Miri lanes were retired 2026-09-01), all cheaper than the C-world
    equivalents they replace.

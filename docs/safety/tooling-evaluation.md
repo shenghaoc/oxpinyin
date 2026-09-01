@@ -131,7 +131,7 @@ inheriting the workspace rust lints unless it re-states them
 non-issue: those crates' test code contains no unsafe (fuzz is a separate
 workspace; see finding F-8 — fuzz crate has no lints table at all).
 
-**cargo-geiger (ADOPT SELECTIVELY, scheduled)**: first-party unsafe is already
+**cargo-geiger (RETIRED 2026-09-01; was ADOPT SELECTIVELY, scheduled)** *(`docs/findings/verify-nightly.md`.)*: first-party unsafe is already
 inventoried by the lint structure; geiger's value is the *dependency* unsafe
 inventory (Cargo.lock has 179 packages; `heed`/`cxx`/`libfuzzer-sys` carry
 unsafe; `redb` is pure Rust). Run in a scheduled lane, keep the report as a
@@ -376,7 +376,7 @@ support (file I/O needs isolation flags). For this workspace:
   the ABI smoke gate and integration tests, not Miri.
 - Cost: nightly-only, ~20–100× slowdown, scheduled lane only.
 
-**Verdict: ADOPT SELECTIVELY (scheduled)** — `cargo +nightly miri test
+**Verdict: RETIRED 2026-09-01 (was ADOPT SELECTIVELY, scheduled — `docs/findings/verify-nightly.md`)** — the lane ran `cargo +nightly miri test
 --no-default-features --features redb -p oxpinyin-core -p oxpinyin-store`
 plus corpus replay; the redb peer is the pure-Rust one Miri can reason
 about, and the C-backed peers are covered by the ABI smoke gate. Never
@@ -453,14 +453,17 @@ candidates from the audit: `user/store.rs` quartet (mutations priority),
 
 ## 18. cargo-mutants
 
+*(Lane retired 2026-09-01 — `docs/findings/verify-nightly.md`.)*
+
 Mutates source (flip comparisons, delete statements) and checks which
 mutations survive the test suite — evidence about *test strength*, catching
 the "line covered but assertion-free" false confidence that line coverage
 gives. Cost: dominates everything else here (each mutant ≈ one incremental
 test run); the full workspace is impractical. Scoped to `oxpinyin-core`
 (parser/scheme/scoring) + `oxpinyin-user/src/store.rs` it is a credible
-nightly lane (~1–3h). **Verdict: TRIAL (scheduled, scoped)** — produce a
-score, decide ratchets only after seeing the distribution.
+nightly lane (~1–3h). **Verdict: RETIRED 2026-09-01 (was TRIAL, scheduled,
+scoped)** — the trial produced one score (860 mutants, 113 missed) before
+the lane was retired; no ratchet was ever set.
 
 ## 19. Kani
 
@@ -536,10 +539,10 @@ fate; editors can set `rust-analyzer.check.command` locally.
 | cargo-nextest | stable binary | none | ~10s download |
 | cargo-llvm-cov | stable binary | none | ~30s |
 | cargo-fuzz (exists) | pinned nightly | none (separate workspace) | already wired |
-| Miri | nightly (component) | none | lane-only |
-| cargo-mutants | stable | none | ~20s |
+| Miri | nightly (component) | none | lane-only (lane retired 2026-09-01) |
+| cargo-mutants | stable | none | ~20s (lane retired 2026-09-01) |
 | Kani | bundled toolchain | none | ~2 min (installer) |
-| cargo-geiger | stable | none | ~20s |
+| cargo-geiger | stable | none | ~20s (lane retired 2026-09-01) |
 | Prusti | custom rustc | — | REJECTed |
 | no-panic | crate dep | none | REJECTed (would be a new dep — needs ask) |
 
@@ -560,11 +563,11 @@ ephemeral runners.
 | cargo-audit | static | RustSec | licenses/sources | low | ~40s | DEFER (redundant w/ deny) |
 | cargo-nextest | runtime infra | — (isolation/reporting) | — | 0 | neutral | ADOPT |
 | cargo-fuzz | dynamic | panics/aborts/OOM/timeouts on parsed inputs | correctness | low | 10s PR / 30m nightly | ADOPT (expand) |
-| Miri | dynamic (interp.) | UB in reachable Rust | C-side UB | low | nightly lane | ADOPT SELECTIVELY |
+| Miri | dynamic (interp.) | UB in reachable Rust | C-side UB | low | nightly lane | RETIRED 2026-09-01 (was ADOPT SELECTIVELY) |
 | cargo-llvm-cov | measurement | coverage gaps | correctness | 0 | +3–5 min | ADOPT (report-only) |
-| cargo-mutants | dynamic | weak-assertion tests | — | med | hours | TRIAL (scoped) |
+| cargo-mutants | dynamic | weak-assertion tests | — | med | hours | RETIRED 2026-09-01 (was TRIAL, scoped) |
 | Lizard | static metric | complexity outliers | safety | 0 | seconds | ADOPT SELECTIVELY (report) |
-| cargo-geiger | static inventory | unsafe in deps | reachability/safety | low | ~2 min | ADOPT SELECTIVELY |
+| cargo-geiger | static inventory | unsafe in deps | reachability/safety | low | ~2 min | RETIRED 2026-09-01 (was ADOPT SELECTIVELY) |
 | Kani | formal | numeric/bounds proofs, panic-freedom (bounded) | everything outside harness | low | lane (min–h) | DROPPED (toolchain predates pinned rustc) |
 | Prusti | formal | contracts | — | — | high | REJECT |
 | no-panic | link-time | some panic paths (opt builds) | debug-mode paths, generics | med | small | REJECT |

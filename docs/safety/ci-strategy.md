@@ -30,13 +30,13 @@ Doctest step only if nextest lands. Gates: all hard.
 
 - `cargo llvm-cov` report artifact (no threshold; comment on PR when
   labeled `coverage`).
-- `cargo geiger` report artifact (unsafe-in-deps diff vs main).
+- `cargo geiger` report artifact (unsafe-in-deps diff vs main). *(Retired 2026-09-01 — see `docs/findings/verify-nightly.md`.)*
 - Lizard report with CCN capped at 40 (`lizard crates/ -l rust -C 40`;
   ratchet vs current max 38).
 
 > STATUS: Tier 2 is documented but **not built** — no label-triggered
-> workflow exists. All three tools above currently run in Tier 3's
-> verify-nightly schedule.
+> workflow exists. Of the tools above, llvm-cov and Lizard run in Tier 3's
+> verify-nightly schedule; geiger was retired 2026-09-01.
 - Windows/macOS keep today's portable test job; optionally add a
   `--no-default-features` store build to prove the feature-gated unsafe
   crates compile-out of the default path.
@@ -51,17 +51,19 @@ Doctest step only if nextest lands. Gates: all hard.
    F-6/F-7 surface), `dict-loader` (bytes→data decode; F-3 class),
    `scheme` (double-pinyin/config parsing), `codec` (user DB roundtrip +
    hostile bytes).
-2. **Miri**: `cargo +nightly miri test --no-default-features --features redb
+2. ~~**Miri**: `cargo +nightly miri test --no-default-features --features redb
    -p oxpinyin-core -p oxpinyin-store` (redb is the pure-Rust peer Miri
    can reason about; the C-backed peers are covered by the ABI smoke
-   gate) + corpus replay through the parser target under `-Zmiri`.
+   gate) + corpus replay through the parser target under `-Zmiri`.~~
+   Retired 2026-09-01 (`docs/findings/verify-nightly.md`).
 3. **Paranoid release lane**: `RUSTFLAGS="-C overflow-checks=y
    -C debug-assertions=y" cargo test --workspace --release`.
 4. ~~**Kani** (trial)~~ — dropped: no release supports the pinned
    toolchain (newest bundles nightly 2025-11-21 < 1.97.1).
-5. **cargo-mutants** (trial, on the nightly schedule):
+5. ~~**cargo-mutants** (trial, on the nightly schedule):
    scoped `-p oxpinyin-core` file filters (parser, full-pinyin index,
-   scheme, scoring) + `oxpinyin-user/src/store.rs`.
+   scheme, scoring) + `oxpinyin-user/src/store.rs`.~~
+   Retired 2026-09-01 (`docs/findings/verify-nightly.md`).
 
 Failure policy: nightly findings open issues (with libFuzzer repro
 artifacts committed under `fuzz/artifacts/` and regression tests per the
@@ -70,8 +72,8 @@ libchewing convention), they do not auto-block unless a ratchet exists
 
 ## Tier 4 — RELEASE GATE (tag/manual, ~+15 min)
 
-- Full `cargo deny` (advisories re-checked at tag time), geiger report
-  attached to the release notes.
+- Full `cargo deny` (advisories re-checked at tag time). *(The geiger
+  report attachment was retired with the lane, 2026-09-01.)*
 - Release-profile validation: build the cargo-c artifact, verify the
   exported symbol set equals `pinyin.h`'s 55 (scripted `nm` diff — today
   this is implied by the smoke gate; make it explicit at release).
@@ -93,18 +95,19 @@ libchewing convention), they do not auto-block unless a ratchet exists
 | cargo-deny | ✔ | | | planned (T4 not built) |
 | fuzz smoke | ✔ | | | |
 | fuzz soak + corpus | | | ✔ | |
-| Miri | | | ✔ | |
+| Miri | | | retired 2026-09-01 | |
 | overflow release lane | | | ✔ | |
 | Kani | | | dropped | |
-| cargo-mutants | | | ✔ (nightly schedule) | |
+| cargo-mutants | | | retired 2026-09-01 | |
 | llvm-cov | | planned (T2 not built) | ✔ report | planned (T4 not built) |
-| geiger | | planned (T2 not built) | ✔ report | planned (T4 not built) |
+| geiger | | planned (T2 not built) | retired 2026-09-01 | |
 | Lizard ratchet | | planned (T2 not built) | ✔ | |
 
 ## Cost/confidence rationale
 
 - The PR tier stays compile+test dominated; deny/fuzz add ~2 min.
-- Everything interpreting or mutating semantics (Miri/mutants/soak)
+- Everything interpreting or mutating semantics (the fuzz soak;
+  Miri/mutants were scheduled here until their 2026-09-01 retirement)
   is scheduled: high value, too slow per-PR, zero MSRV impact.
 - Tier 2 exists so contributors can *request* deeper signal without
   making everyone pay for it.
