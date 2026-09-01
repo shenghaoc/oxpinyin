@@ -109,7 +109,7 @@ fn main() {
             retain_step("ChewingDictionary::open", || {
                 oxpinyin_data::ChewingDictionary::open(
                     &export.join(default_store_file("pinyin_index")),
-                    &export.join(default_store_file("phrase_index")),
+                    &export,
                 )
                 .expect("chewing dict")
             });
@@ -741,7 +741,7 @@ fn chewing_lookup_profile(export: &Path, repeats: usize) {
     println!("=== ChewingDictionary steady-state lookups ===");
     let dict = oxpinyin_data::ChewingDictionary::open(
         &export.join(default_store_file("pinyin_index")),
-        &export.join(default_store_file("phrase_index")),
+        export,
     )
     .expect("chewing dict");
     let shapes: Vec<Vec<SyllableKey>> = ["ni", "ni'hao", "zhong'guo", "xian", "de"]

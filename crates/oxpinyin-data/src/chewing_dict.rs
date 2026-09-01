@@ -1,58 +1,68 @@
 //! System dictionary backed by lazy DBM readers for the pinyin and phrase
-//! indexes.
+//! indexes, with token → phrase resolution through the mmap'd phrase
+//! libraries.
 //!
 //! P2 replaced the eager pinyin-index materialization with a lazy
-//! `ChewingTable`. P3 adds the phrase DBM (`PhraseTable`) for
-//! `tokens_for_text` — direct consumption of libpinyin's
-//! `phrase_index.bin` without converting it to an oxpinyin-specific
-//! format.
+//! `ChewingTable`. P3 completes the split upstream itself has:
 //!
-//! The phrase index (token → text) is still loaded eagerly from the
-//! oxpinyin store fixture for backward compatibility. When a
-//! `PhraseTable` is provided, `tokens_for_text` does a lazy DBM lookup
-//! instead of building a reverse map.
+//! * pinyin keys → candidates: the lazy `ChewingTable` over
+//!   `pinyin_index.bin`;
+//! * phrase text → tokens: the lazy [`PhraseTable`] over
+//!   `phrase_index.bin` (`tokens_for_text`);
+//! * token → phrase text / pronunciations / unigram: the P1
+//!   [`crate::phrase_libraries::PhraseLibraries`] facade over the
+//!   mmap'd per-library chunk files (`gb_char.bin` family) — the exact
+//!   seam upstream's `FacadePhraseIndex` covers with its
+//!   `SubPhraseIndex`es.
+//!
+//! Opening this dictionary scans nothing: two DBM handles and (at most)
+//! four chunk-file mappings.
 
 use std::path::Path;
 
-use compact_str::CompactString;
 use oxpinyin_core::{ChewingKey, Completeness, Dictionary, PhraseEntry, PhraseToken, SyllableKey};
 use oxpinyin_store::{DefaultStore, ReadStore};
 
 use crate::chewing_table::{ChewingTable, RawChewingDbm};
 use crate::dict::DictError;
+use crate::phrase_libraries::{PhraseLibraries, SYSTEM_LIBRARY_STEMS};
 use crate::phrase_table::PhraseTable;
-use crate::table::{self, LeByteKey, TableError};
+use crate::table::TableError;
 
-type PhraseIndex = Vec<(LeByteKey, CompactString)>;
-
-/// A system dictionary backed by lazy `ChewingTable` and `PhraseTable`.
+/// A system dictionary backed by lazy `ChewingTable` and `PhraseTable`
+/// readers plus the mmap'd phrase libraries.
 ///
 /// Lookups convert `SyllableKey` → `ChewingKey` → packed DBM key →
 /// point read → decode `PinyinIndexItem2` → resolve tokens to
-/// `PhraseEntry` from the phrase index.
+/// `PhraseEntry` through the phrase libraries.
 ///
-/// Opening this dictionary does NOT scan the pinyin index or the phrase
-/// DBM.
+/// Opening this dictionary does NOT scan the pinyin index, the phrase
+/// DBM, or any chunk file beyond its mmap-time checksum pass.
 pub struct ChewingDictionary {
     chewing_table: ChewingTable,
     phrase_table: Option<PhraseTable>,
-    phrase_index: PhraseIndex,
+    libraries: PhraseLibraries,
 }
 
 impl ChewingDictionary {
     /// Opens a chewing dictionary from a pinyin-index DBM and a
-    /// phrase-index store (the legacy token→text table).
+    /// directory carrying the per-library chunk files.
     ///
-    /// Both are opened lazily (no scan).
-    pub fn open(pinyin_index_path: &Path, phrase_index_path: &Path) -> Result<Self, DictError> {
+    /// Both halves are opened lazily (no scan).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM cannot be opened or a present
+    /// chunk file does not verify.
+    pub fn open(pinyin_index_path: &Path, library_dir: &Path) -> Result<Self, DictError> {
         let store = DefaultStore::open_read_only(pinyin_index_path).map_err(TableError::from)?;
         let dbm = RawChewingDbm::new(store);
         let chewing_table = ChewingTable::new(Box::new(dbm));
-        let phrase_index = load_phrase_index(phrase_index_path)?;
+        let libraries = PhraseLibraries::open(library_dir, SYSTEM_LIBRARY_STEMS)?;
         Ok(Self {
             chewing_table,
             phrase_table: None,
-            phrase_index,
+            libraries,
         })
     }
 
@@ -61,10 +71,16 @@ impl ChewingDictionary {
     ///
     /// `phrase_dbm_path` is the libpinyin `phrase_index.bin` file (UCS-4
     /// keys, `u32 token[]` values). When provided, `tokens_for_text`
-    /// does a direct lazy DBM lookup instead of building a reverse map.
+    /// does a direct lazy DBM lookup; without one it answers empty, the
+    /// upstream shape when no phrase table is attached.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when a DBM cannot be opened or a present
+    /// chunk file does not verify.
     pub fn open_with_phrase_dbm(
         pinyin_index_path: &Path,
-        phrase_index_path: &Path,
+        library_dir: &Path,
         phrase_dbm_path: &Path,
     ) -> Result<Self, DictError> {
         let pinyin_store =
@@ -77,35 +93,67 @@ impl ChewingDictionary {
         let phrase_dbm = RawChewingDbm::new(phrase_store);
         let phrase_table = PhraseTable::new(Box::new(phrase_dbm));
 
-        let phrase_index = load_phrase_index(phrase_index_path)?;
+        let libraries = PhraseLibraries::open(library_dir, SYSTEM_LIBRARY_STEMS)?;
         Ok(Self {
             chewing_table,
             phrase_table: Some(phrase_table),
-            phrase_index,
+            libraries,
         })
     }
 
-    /// Phrase text for `token`, if present.
+    /// Phrase text for `token`, if the token's library is loaded and
+    /// owns it.
     #[must_use]
-    pub fn phrase_text(&self, token: u32) -> Option<&str> {
-        phrase_lookup(&self.phrase_index, token)
+    pub fn phrase_text(&self, token: u32) -> Option<String> {
+        self.libraries.phrase_text(token)
+    }
+
+    /// The library item's stored unigram count for `token`
+    /// (`PhraseItem::get_unigram_frequency`), if the item exists.
+    #[must_use]
+    pub fn unigram_count(&self, token: u32) -> Option<u64> {
+        self.libraries.unigram_count(token)
+    }
+
+    /// The total unigram frequency across the loaded libraries —
+    /// `FacadePhraseIndex::get_phrase_index_total_freq` over its
+    /// sub-indexes.
+    #[must_use]
+    pub fn unigram_total(&self) -> u64 {
+        self.libraries.unigram_total()
+    }
+
+    /// `token`'s pronunciations as `(spelling, freq)` pairs, in stored
+    /// order — the item's `get_nth_pronunciation` list rendered the way
+    /// the export surface produces them.
+    #[must_use]
+    pub fn pronunciations(&self, token: u32) -> Vec<(String, u64)> {
+        self.libraries
+            .pronunciations(token)
+            .map(|prons| {
+                prons
+                    .into_iter()
+                    .map(|pron| (pron.spelling, pron.freq))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Tokens whose phrase text is exactly `text`.
     ///
-    /// When a `PhraseTable` is available (P3), uses a direct DBM lookup.
-    /// Otherwise falls back to scanning the phrase index.
+    /// When a `PhraseTable` is attached, a direct DBM lookup; empty
+    /// otherwise (upstream answers nothing when no phrase table is
+    /// attached).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read or the value decode
+    /// fails.
     pub fn tokens_for_text(&self, text: &str) -> Result<Vec<u32>, DictError> {
-        if let Some(ref pt) = self.phrase_table {
-            return pt.search(text);
+        match self.phrase_table {
+            Some(ref table) => table.search(text),
+            None => Ok(Vec::new()),
         }
-        let mut tokens = Vec::new();
-        for (key, stored_text) in &self.phrase_index {
-            if stored_text.as_str() == text {
-                tokens.push(key.token());
-            }
-        }
-        Ok(tokens)
     }
 
     fn fill_lookup(
@@ -125,9 +173,13 @@ impl ChewingDictionary {
             return Ok(());
         }
         for item in &items {
-            if let Some(text) = phrase_lookup(&self.phrase_index, item.token) {
-                out.push(PhraseEntry::new(PhraseToken::new(item.token), text));
-            }
+            // Upstream's entry search drops tokens whose sub-index is
+            // not loaded (`PhraseTableEntry::search`'s NULL-array skip);
+            // a token with no resident library item is invisible here.
+            let Some(text) = self.libraries.phrase_text(item.token) else {
+                continue;
+            };
+            out.push(PhraseEntry::new(PhraseToken::new(item.token), text));
         }
         Ok(())
     }
@@ -138,7 +190,7 @@ impl Dictionary for ChewingDictionary {
     type Entry = PhraseEntry;
     type Error = DictError;
 
-    fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+    fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
         self.fill_lookup(syllables, &mut entries)?;
         Ok(entries)
@@ -146,26 +198,26 @@ impl Dictionary for ChewingDictionary {
 
     fn lookup_into(
         &self,
-        syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
-    ) -> Result<(), Self::Error> {
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<(), DictError> {
         self.fill_lookup(syllables, out)
     }
 
     fn lookup_addon_into(
         &self,
-        _syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
-    ) -> Result<(), Self::Error> {
+        _syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<(), DictError> {
         out.clear();
         Ok(())
     }
 
-    fn phrase_index_item_count(&self) -> Result<u64, Self::Error> {
-        Ok(self.phrase_index.len() as u64)
+    fn phrase_index_item_count(&self) -> Result<u64, DictError> {
+        Ok(self.libraries.item_count())
     }
 
-    fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
+    fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
         if syllables.is_empty() {
             return Ok(true);
         }
@@ -192,40 +244,13 @@ impl Dictionary for ChewingDictionary {
     }
 }
 
-/// Converts a `SyllableKey` slice to a `ChewingKey` slice.
-///
-/// `None` when any syllable cannot be resolved — matching upstream, where
-/// an unrecognized syllable prevents the lookup entirely rather than
-/// substituting a zero key that could collide with prefix markers in the
-/// DBM.
+/// Converts syllables to ChewingKeys. Returns `None` if any syllable
+/// cannot be resolved — matching upstream, where an unrecognized
+/// syllable prevents the lookup entirely rather than substituting a
+/// zero key that could collide with prefix markers in the DBM.
 fn syllables_to_chewing_keys(syllables: &[SyllableKey]) -> Option<Vec<ChewingKey>> {
     syllables
         .iter()
         .map(|s| ChewingKey::from_pinyin(s.text()))
         .collect()
-}
-
-fn phrase_lookup(index: &[(LeByteKey, CompactString)], token: u32) -> Option<&str> {
-    let needle = LeByteKey::new(token);
-    index
-        .binary_search_by(|(stored, _)| stored.cmp(&needle))
-        .ok()
-        .map(|pos| index[pos].1.as_str())
-}
-
-fn load_phrase_index(path: &Path) -> Result<PhraseIndex, DictError> {
-    let mut map = PhraseIndex::new();
-    table::for_each_row(path, |key, value| {
-        if key.len() != 4 {
-            return Ok::<(), DictError>(());
-        }
-        let token = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
-        let text = std::str::from_utf8(value).map_err(|_| {
-            DictError::Parse(format!("phrase text for token {token:#010x} is not UTF-8"))
-        })?;
-        map.push((LeByteKey::new(token), CompactString::from(text)));
-        Ok::<(), DictError>(())
-    })?;
-    table::ensure_sorted_unique(&mut map);
-    Ok(map)
 }
