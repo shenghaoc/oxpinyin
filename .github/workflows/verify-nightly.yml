@@ -96,37 +96,14 @@ jobs:
           done
           exit $status
 
-  # UB detection for the pure-Rust crates (core's algorithms, store's
-  # default redb backend). Trial: continue-on-error until it has proven
-  # stable on this schedule; FFI crates are out of Miri's reach (C/C++).
-  miri:
-    continue-on-error: true
-    # Miri is ~100x slower than a native test run; without a cap it hits
-    # the 6-hour job ceiling and is force-cancelled (which reads as failure,
-    # not as the trial's continue-on-error). 45 minutes is enough for the
-    # pure-Rust unit suites under Miri; integration tests are out of scope.
-    timeout-minutes: 45
-    runs-on: ubuntu-latest
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap-rust
-        with:
-          toolchain: nightly-2026-08-01
-          # rustup-init requires --component repeated per component;
-          # the composite action handles this from the space-separated list.
-          rust-components: miri rust-src
-      - run: cargo +nightly-2026-08-01 miri setup
-      # --lib keeps Miri on the cfg(test) unit suites; the integration
-      # tests in tests/ pull in fixtures/oracle binaries Miri cannot finish
-      # in a bounded window.
-      - run: cargo +nightly-2026-08-01 miri test --lib -p oxpinyin-core -p oxpinyin-store
+  # Miri is intentionally NOT run. It made sense to trial it while the
+  # pure-Rust crates carried unsafe, but the unsafe has since moved or gone:
+  # oxpinyin-core is #![forbid(unsafe_code)] (zero unsafe to check) and
+  # oxpinyin-store's unsafe is entirely FFI into native C libraries
+  # (kyotocabinet/tkrzw/lmdb), which Miri cannot step into. Miri would
+  # only interpret safe Rust at 10x-1000x slowdown, never producing a
+  # finding, so the lane burned a 45-minute runner to 6-hour-term twice
+  # for no signal. Recorded in docs/findings/verify-nightly-overrides.md.
 
   # Latent-overflow lane: the releaseoptimized codepath with overflow
   # checks and debug assertions forced on (docs/safety/
