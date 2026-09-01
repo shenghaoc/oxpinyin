@@ -38,6 +38,7 @@ pub(crate) fn encode_ucs4_key(text: &str) -> Vec<u8> {
     buf
 }
 
+#[cfg(test)]
 /// Decodes a UCS-4 DBM key back to a UTF-8 string.
 ///
 /// Returns `None` if the key length is not a multiple of 4 or if any
@@ -81,6 +82,7 @@ pub(crate) fn decode_tokens(value: &[u8]) -> Result<Vec<u32>, DictError> {
         .collect())
 }
 
+#[cfg(test)]
 /// Encodes a slice of tokens into a DBM value.
 pub(crate) fn encode_tokens(tokens: &[u32]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(tokens.len() * 4);
@@ -129,6 +131,7 @@ impl PhraseTable {
     ///
     /// Used for the phrase-segment DP's span probe: does this character
     /// span correspond to a known phrase?
+    #[cfg(test)]
     pub(crate) fn has_key(&self, text: &str) -> Result<bool, DictError> {
         if text.is_empty() {
             return Ok(false);

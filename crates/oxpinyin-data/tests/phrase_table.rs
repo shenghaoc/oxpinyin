@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use oxpinyin_core::ChewingKey;
 use oxpinyin_data::ChewingDictionary;
-use oxpinyin_store::{DefaultStore, RAW_TABLE, WriteStore};
+use oxpinyin_store::{DefaultStore, WriteStore};
+
+mod support;
 
 static FIXTURE_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -27,7 +29,7 @@ impl Fixture {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         write_pinyin_index(&dir.join(oxpinyin_store::default_store_file("pinyin_index")));
-        write_phrase_index(&dir.join(oxpinyin_store::default_store_file("phrase_index")));
+        write_gb_char_chunk(&dir.join("gb_char.bin"));
         write_phrase_dbm(&dir.join(oxpinyin_store::default_store_file("phrase_dbm")));
         Self { dir }
     }
@@ -37,9 +39,7 @@ impl Fixture {
             &self
                 .dir
                 .join(oxpinyin_store::default_store_file("pinyin_index")),
-            &self
-                .dir
-                .join(oxpinyin_store::default_store_file("phrase_index")),
+            &self.dir,
             &self
                 .dir
                 .join(oxpinyin_store::default_store_file("phrase_dbm")),
@@ -52,9 +52,7 @@ impl Fixture {
             &self
                 .dir
                 .join(oxpinyin_store::default_store_file("pinyin_index")),
-            &self
-                .dir
-                .join(oxpinyin_store::default_store_file("phrase_index")),
+            &self.dir,
         )
         .unwrap()
     }
@@ -129,33 +127,27 @@ fn write_pinyin_index(path: &std::path::Path) {
 
     store
         .write(|txn| {
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_complete(&[key("ni")]),
                 &encode_pinyin_items(&[(0x01000010, &[ni3][..])]),
             )?;
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_complete(&[key("hao")]),
                 &encode_pinyin_items(&[(0x01000011, &[hao3][..])]),
             )?;
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_complete(&[key("ni"), key("hao")]),
                 &encode_pinyin_items(&[(0x01000099, &[ni3, hao3][..])]),
             )?;
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_complete(&[key("zhong")]),
                 &encode_pinyin_items(&[(0x01000020, &[zhong1][..])]),
             )?;
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_complete(&[key("guo")]),
                 &encode_pinyin_items(&[(0x01000021, &[guo2][..])]),
             )?;
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_complete(&[key("zhong"), key("guo")]),
                 &encode_pinyin_items(&[(0x010000A0, &[zhong1, guo2][..])]),
             )?;
@@ -164,19 +156,28 @@ fn write_pinyin_index(path: &std::path::Path) {
         .unwrap();
 }
 
-fn write_phrase_index(path: &std::path::Path) {
-    let store = DefaultStore::create(path).unwrap();
-    store
-        .write(|txn| {
-            txn.put("data", &0x01000010_u32.to_le_bytes(), "你".as_bytes())?;
-            txn.put("data", &0x01000011_u32.to_le_bytes(), "好".as_bytes())?;
-            txn.put("data", &0x01000020_u32.to_le_bytes(), "中".as_bytes())?;
-            txn.put("data", &0x01000021_u32.to_le_bytes(), "国".as_bytes())?;
-            txn.put("data", &0x01000099_u32.to_le_bytes(), "你好".as_bytes())?;
-            txn.put("data", &0x010000A0_u32.to_le_bytes(), "中国".as_bytes())?;
-            Ok(())
-        })
-        .unwrap();
+fn write_gb_char_chunk(path: &std::path::Path) {
+    let mut builder = support::ChunkBuilder::new(35);
+    let pron = |spelling: &str| {
+        let mut keys = Vec::new();
+        for syllable in spelling.split('\'') {
+            support::push_packed_key(
+                &mut keys,
+                ChewingKey::from_pinyin(syllable).unwrap().initial,
+                ChewingKey::from_pinyin(syllable).unwrap().middle,
+                ChewingKey::from_pinyin(syllable).unwrap().final_,
+                0,
+            );
+        }
+        vec![(keys, 5_u32)]
+    };
+    builder.add(0x10, 5, "你", pron("ni"));
+    builder.add(0x11, 5, "好", pron("hao"));
+    builder.add(0x20, 5, "中", pron("zhong"));
+    builder.add(0x21, 5, "国", pron("guo"));
+    builder.add(0x99, 5, "你好", pron("ni'hao"));
+    builder.add(0xA0, 5, "中国", pron("zhong'guo"));
+    std::fs::write(path, builder.build()).unwrap();
 }
 
 fn write_phrase_dbm(path: &std::path::Path) {
@@ -185,39 +186,14 @@ fn write_phrase_dbm(path: &std::path::Path) {
         .write(|txn| {
             // UCS-4 text keys → u32 token[] values
             // (the libpinyin phrase_index.bin format)
-            txn.put(
-                RAW_TABLE,
-                &encode_ucs4_key("你"),
-                &encode_tokens(&[0x01000010]),
-            )?;
-            txn.put(
-                RAW_TABLE,
-                &encode_ucs4_key("好"),
-                &encode_tokens(&[0x01000011]),
-            )?;
-            txn.put(
-                RAW_TABLE,
-                &encode_ucs4_key("中"),
-                &encode_tokens(&[0x01000020]),
-            )?;
-            txn.put(
-                RAW_TABLE,
-                &encode_ucs4_key("国"),
-                &encode_tokens(&[0x01000021]),
-            )?;
-            txn.put(
-                RAW_TABLE,
-                &encode_ucs4_key("你好"),
-                &encode_tokens(&[0x01000099]),
-            )?;
-            txn.put(
-                RAW_TABLE,
-                &encode_ucs4_key("中国"),
-                &encode_tokens(&[0x010000A0]),
-            )?;
+            txn.put_raw(&encode_ucs4_key("你"), &encode_tokens(&[0x01000010]))?;
+            txn.put_raw(&encode_ucs4_key("好"), &encode_tokens(&[0x01000011]))?;
+            txn.put_raw(&encode_ucs4_key("中"), &encode_tokens(&[0x01000020]))?;
+            txn.put_raw(&encode_ucs4_key("国"), &encode_tokens(&[0x01000021]))?;
+            txn.put_raw(&encode_ucs4_key("你好"), &encode_tokens(&[0x01000099]))?;
+            txn.put_raw(&encode_ucs4_key("中国"), &encode_tokens(&[0x010000A0]))?;
             // A phrase with multiple tokens (different library origins)
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_ucs4_key("的"),
                 &encode_tokens(&[0x010005DB, 0x020005DB]),
             )?;
@@ -271,11 +247,13 @@ fn tokens_for_text_empty_returns_empty() {
 }
 
 #[test]
-fn tokens_for_text_fallback_without_phrase_dbm() {
+fn tokens_for_text_empty_without_phrase_dbm() {
     let fix = Fixture::new();
     let dict = fix.dict_no_phrase_dbm();
+    // Upstream answers nothing when no phrase table is attached — the
+    // text→tokens direction lives exclusively in the phrase DBM.
     let tokens = dict.tokens_for_text("你好").unwrap();
-    assert_eq!(tokens, vec![0x01000099]);
+    assert!(tokens.is_empty());
 }
 
 #[test]
@@ -288,6 +266,6 @@ fn open_with_phrase_dbm_does_not_scan() {
 fn phrase_text_still_works_with_phrase_dbm() {
     let fix = Fixture::new();
     let dict = fix.dict();
-    assert_eq!(dict.phrase_text(0x01000099), Some("你好"));
+    assert_eq!(dict.phrase_text(0x01000099).as_deref(), Some("你好"));
     assert_eq!(dict.phrase_text(0xFFFFFFFF), None);
 }
