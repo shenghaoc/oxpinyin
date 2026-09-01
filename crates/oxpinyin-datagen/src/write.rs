@@ -168,6 +168,78 @@ impl Backend {
             ))),
         }
     }
+
+    /// Whether this backend emits the libpinyin drop-in schema: the KC and
+    /// Tkrzw producers write `pinyin_index.bin` / `phrase_index.bin` /
+    /// `bigram.db` / `punct.bin` / the per-library chunk files +
+    /// `table.conf` exactly as a libpinyin install ships them
+    /// (`docs/findings/datagen-compat-2026-09-01.md`). The redb and LMDB
+    /// producers keep the native oxpinyin schema — no drop-in requirement
+    /// exists for them.
+    #[must_use]
+    pub const fn emits_libpinyin_schema(self) -> bool {
+        matches!(self, Self::KyotoCabinet | Self::Tkrzw)
+    }
+
+    /// Writes `entries` to `path` through this backend's raw keyspace
+    /// (libpinyin-schema rows — no table-name framing).
+    ///
+    /// # Errors
+    ///
+    /// Fails if the backend was not compiled in, or on any store or
+    /// verification failure.
+    pub fn write_raw(self, path: &Path, entries: &Entries) -> Result<(), DatagenError> {
+        match self {
+            #[cfg(feature = "redb")]
+            Self::Redb => crate::write::write_raw_with::<oxpinyin_store::RedbStore>(path, entries),
+            #[cfg(feature = "lmdb")]
+            Self::Lmdb => crate::write::write_raw_with::<oxpinyin_store::LmdbStore>(path, entries),
+            #[cfg(feature = "tkrzw")]
+            Self::Tkrzw => {
+                crate::write::write_raw_with::<oxpinyin_store::TkrzwStore>(path, entries)
+            }
+            #[cfg(feature = "kyotocabinet")]
+            Self::KyotoCabinet => {
+                crate::write::write_raw_with::<oxpinyin_store::KcStore>(path, entries)
+            }
+            #[allow(unreachable_patterns)]
+            backend => Err(DatagenError::Consistency(format!(
+                "backend {:?} requires rebuilding this crate with --features {}",
+                backend,
+                backend.feature()
+            ))),
+        }
+    }
+
+    /// Writes `entries` to a hash store at `path` (libpinyin's `bigram.db`
+    /// container class) through this backend.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the backend was not compiled in, or on any store or
+    /// verification failure.
+    pub fn write_hash(self, path: &Path, entries: &Entries) -> Result<(), DatagenError> {
+        match self {
+            #[cfg(feature = "redb")]
+            Self::Redb => crate::write::write_hash_with::<oxpinyin_store::RedbStore>(path, entries),
+            #[cfg(feature = "lmdb")]
+            Self::Lmdb => crate::write::write_hash_with::<oxpinyin_store::LmdbStore>(path, entries),
+            #[cfg(feature = "tkrzw")]
+            Self::Tkrzw => {
+                crate::write::write_hash_with::<oxpinyin_store::TkrzwStore>(path, entries)
+            }
+            #[cfg(feature = "kyotocabinet")]
+            Self::KyotoCabinet => {
+                crate::write::write_hash_with::<oxpinyin_store::KcStore>(path, entries)
+            }
+            #[allow(unreachable_patterns)]
+            backend => Err(DatagenError::Consistency(format!(
+                "backend {:?} requires rebuilding this crate with --features {}",
+                backend,
+                backend.feature()
+            ))),
+        }
+    }
 }
 
 /// Writes `entries` (in writer order) into a fresh store at `path`, then
@@ -196,41 +268,128 @@ pub fn write_with<S: WriteStore>(path: &Path, entries: &Entries) -> Result<(), D
         })?;
     }
     // Drop the writer before verifying: redb locks the file per process.
-
-    // Verify: the store's own iteration (ascending key bytes) must contain
-    // exactly the compiled entries.
     let read_only = S::open_read_only(path)?;
-    let mut index = 0_usize;
-    let mut mismatch: Option<String> = None;
-    let mut expected = entries.clone();
-    expected.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut rows = Vec::new();
     read_only.for_each(TABLE, &mut |key, value| {
-        match expected.get(index) {
-            Some((want_key, want_value)) if want_key == key && want_value == value => index += 1,
-            Some((want_key, _)) => {
-                mismatch = Some(format!(
-                    "row {index}: key {key:02x?} != expected {want_key:02x?}"
-                ));
-                return Err(oxpinyin_store::StoreError::Backend("mismatch".into()));
-            }
-            None => {
-                mismatch = Some(format!("row {index}: unexpected extra key {key:02x?}"));
-                return Err(oxpinyin_store::StoreError::Backend("mismatch".into()));
-            }
-        }
+        rows.push((key.to_vec(), value.to_vec()));
         Ok(())
     })?;
-    if let Some(message) = mismatch {
-        return Err(DatagenError::Consistency(format!(
-            "{} verification failed: {message}",
-            path.display()
-        )));
+    verify_rows(path, entries, rows)
+}
+
+/// Writes libpinyin-schema rows into a fresh store at `path` through the
+/// raw (unframed) keyspace — what libpinyin's own DBMs store. KC and Tkrzw
+/// write the file's bare keyspace (their `RawReadStore` reads read it back
+/// unchanged); redb and LMDB delegate to the well-known raw table, the
+/// same delegation the raw reads use.
+///
+/// An existing file at `path` is replaced.
+///
+/// # Errors
+///
+/// Store or verification failures; verification compares every raw row.
+pub fn write_raw_with<S: WriteStore + oxpinyin_store::RawReadStore>(
+    path: &Path,
+    entries: &Entries,
+) -> Result<(), DatagenError> {
+    if path.exists() {
+        fs::remove_file(path)?;
     }
-    if index != expected.len() {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    {
+        let store = S::create(path)?;
+        store.write(|txn| {
+            for (key, value) in entries {
+                txn.put_raw(key, value)?;
+            }
+            Ok(())
+        })?;
+    }
+    // Drop the writer before verifying: redb locks the file per process.
+    // `range_raw` walks the raw keyspace in ascending key-byte order on
+    // every backend (KC/Tkrzw natively; redb/LMDB through the well-known
+    // raw table), which is exactly the sorted expectation.
+    let read_only = S::open_read_only(path)?;
+    let mut rows = Vec::new();
+    read_only.range_raw(
+        std::ops::Bound::Unbounded,
+        std::ops::Bound::Unbounded,
+        &mut |key, value| {
+            rows.push((key.to_vec(), value.to_vec()));
+            Ok(())
+        },
+    )?;
+    verify_rows(path, entries, rows)
+}
+
+/// Writes libpinyin-schema rows into a fresh **hash** store at `path`
+/// (libpinyin's `bigram.db` container class — KC HashDB / Tkrzw HashDBM),
+/// then verifies every raw row reads back.
+///
+/// An existing file at `path` is replaced.
+///
+/// # Errors
+///
+/// Store or verification failures.
+pub fn write_hash_with<S: WriteStore + oxpinyin_store::RawReadStore>(
+    path: &Path,
+    entries: &Entries,
+) -> Result<(), DatagenError> {
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    {
+        let store = S::create_hash(path)?;
+        store.write(|txn| {
+            for (key, value) in entries {
+                txn.put_raw(key, value)?;
+            }
+            Ok(())
+        })?;
+    }
+    let read_only = S::open_hash_read_only(path)?;
+    for (key, value) in entries {
+        let got = read_only.get_raw(key)?;
+        if got.as_deref() != Some(value.as_slice()) {
+            return Err(DatagenError::Consistency(format!(
+                "{} verification failed: key {key:02x?} reads back {:?}",
+                path.display(),
+                got
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Compares the read-back rows to the sorted expectation; shared by the
+/// writers above.
+fn verify_rows(
+    path: &Path,
+    entries: &Entries,
+    rows: Vec<(Vec<u8>, Vec<u8>)>,
+) -> Result<(), DatagenError> {
+    let mut expected = entries.clone();
+    expected.sort_by(|a, b| a.0.cmp(&b.0));
+    if rows != expected {
+        for (index, (got, want)) in rows.iter().zip(expected.iter()).enumerate() {
+            if got != want {
+                return Err(DatagenError::Consistency(format!(
+                    "{} verification failed: row {index}: key {:02x?} != expected {:02x?}",
+                    path.display(),
+                    got.0,
+                    want.0
+                )));
+            }
+        }
         return Err(DatagenError::Consistency(format!(
             "{} verification failed: {} of {} rows present",
             path.display(),
-            index,
+            rows.len(),
             expected.len()
         )));
     }
