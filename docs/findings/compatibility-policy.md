@@ -199,8 +199,9 @@ TARGET**. This table drives PR 5.
 | 15 | Apostrophe-only input: pin consumes every byte, engine none | **REVERT TARGET** | a parse-length difference (pin 1/2/3, oxpinyin 0), not an abort |
 | 16 | `FORCE_TONE` honoured on the full-pinyin seam only | **(d)** | `FORCE_TONE` appears in **neither** consumer's `src/` — 0 hits in ibus-libpinyin 1.16.5 and 0 in fcitx-libpinyin |
 | 17 | Literal `0x0` option gating (`jv`/`zon`; `xian` divided-table) | **REVERT TARGET** | named in PR 5; see the unreachability note below |
+| 18 | The pinyin index DBMs carry uninitialized struct padding | **(b)** | upstream copies a stack struct's tail padding into the DBM; datagen zeroes it and the reader never touches it |
 
-Totals: **(a)** 1 · **(b)** 1 · **(c)** 6 · **(d)** 1 · **REVERT
+Totals: **(a)** 1 · **(b)** 2 · **(c)** 6 · **(d)** 1 · **REVERT
 TARGET** 7 · closed or not a divergence 2.
 
 ### Notes on the three entries whose class was not obvious
