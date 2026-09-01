@@ -1282,3 +1282,27 @@ freezes — was never in that enumeration. This entry completes it.
   registered so the bopomofo SPEC freeze can name it as its open
   implementation item rather than stay silent, exactly as the double-pinyin
   freeze carried its batch gate.
+
+### The pinyin index DBMs carry uninitialized struct padding
+
+- **Upstream source cite:** `src/storage/chewing_large_table2.h:217-231`
+  (`ChewingTableEntry::add_index` inserts a whole `PinyinIndexItem2<L>`
+  struct with `m_chunk.insert_content(offset, &add_elem, sizeof(IndexItem))`)
+  and `pinyin_phrase3.h:181-195` (`PinyinIndexItem2<L>` = `{u32 m_token,
+  ChewingKey m_keys[L]}` — for odd L the struct carries 2 bytes of
+  tail padding to the token's 4-byte alignment).
+- **Mechanism:** `add_elem` is a stack-allocated `PinyinIndexItem2<L>`
+  whose constructor `memmove`s only the keys and never touches the tail
+  padding; the whole `sizeof` bytes — padding included — are copied into
+  the DBM value. The padding bytes are whatever happened to sit on that
+  stack region during `gen_binary_files` — unreproducible garbage
+  (observed `17, 236` and `90, 237` in the pin's real files).
+- **What oxpinyin does instead:** datagen zeroes the padding
+  (`libpinyin::encode_item`), and the runtime reader
+  (`chewing_table::decode_pinyin_index_value`) reads only the token and
+  key fields within each stride, never the padding.
+- **Externally observable:** no — the reader never touches the padding
+  bytes, so a libpinyin runtime consuming either file decodes identical
+  index items; only the file bytes differ, in two bytes per odd-L value
+  record. Class (b): upstream's stored bytes *are* uninitialized memory;
+  no safe construction reproduces specific garbage, and none should.
