@@ -172,6 +172,24 @@ pub trait WriteTxn {
     /// Returns [`StoreError`] when the backend write fails.
     fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
 
+    /// Insert or overwrite a raw (unframed) `key` → `value` — the write
+    /// half of [`RawReadStore::get_raw`]. Rows written here are what
+    /// `get_raw` / [`RawReadStore::range_raw`] read back on the same
+    /// backend, with no table-name framing.
+    ///
+    /// Backends without a flat keyspace (redb, LMDB) delegate to the
+    /// well-known [`RAW_TABLE`], the same delegation the raw reads use,
+    /// so the round trip holds on every backend. KC and Tkrzw override
+    /// this to write the file's bare keyspace — what libpinyin's own
+    /// DBMs store and what datagen's libpinyin-format writers emit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend write fails.
+    fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        self.put(RAW_TABLE, key, value)
+    }
+
     /// Remove `key` from `table` (no-op if absent).
     ///
     /// # Errors
