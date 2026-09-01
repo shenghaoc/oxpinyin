@@ -932,6 +932,13 @@ impl WriteTxn for TkrzwWriteTxn<'_> {
         Ok(())
     }
 
+    fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        // The file's bare keyspace — no framing prefix, so the row is
+        // exactly what `get_raw`/`range_raw` read back on this backend.
+        self.buffer.insert(key.to_vec(), Some(value.to_vec()));
+        Ok(())
+    }
+
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         let prefix = table_prefix(table)?;
         self.buffer.insert(framed(&prefix, key), None);
