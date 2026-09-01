@@ -171,18 +171,15 @@ pub struct SemanticModel {
 /// (`parse_one_key` false → `parse` returns short, the row is skipped).
 fn parse_pinyin_keys(pinyin: &str) -> Option<Vec<ChewingKey>> {
     let mut keys = Vec::new();
-    for syllable in pinyin.split(|c| c == '\'' || c == ' ') {
+    for syllable in pinyin.split(['\'', ' ']) {
         if syllable.is_empty() {
             return None;
         }
         let mut text = syllable;
         let mut tone = 0_u8;
-        let bytes = syllable.as_bytes();
-        if let Some(last) = bytes.last() {
-            if (b'1'..=b'5').contains(last) {
-                tone = last - b'0';
-                text = &syllable[..syllable.len() - 1];
-            }
+        if let Some(last @ b'1'..=b'5') = syllable.as_bytes().last() {
+            tone = last - b'0';
+            text = &syllable[..syllable.len() - 1];
         }
         let key = ChewingKey::from_pinyin(text)?.with_tone(tone);
         keys.push(key);
@@ -190,25 +187,32 @@ fn parse_pinyin_keys(pinyin: &str) -> Option<Vec<ChewingKey>> {
     Some(keys)
 }
 
-/// Reads the four system `.table` files into the semantic model:
-/// per-library phrase records, parsed pinyin rows, and the native-schema
-/// raw index accumulator.
+/// Reads a list of `.table` files into per-library semantic models:
+/// phrase records, parsed pinyin rows, and (for the native path) the
+/// raw-index accumulator. Shared by the system compile
+/// ([`SYSTEM_LIBRARIES`]) and the addon compile ([`crate::addon`]).
 ///
 /// # Errors
 ///
 /// Fails on missing `.table` files, tokens outside their library, a token
 /// re-grouped across the file, or a token naming two different phrases.
-fn read_tables(model_dir: &Path, model: &mut SemanticModel) -> Result<(), DatagenError> {
-    for (slot, &(library, name)) in SYSTEM_LIBRARIES.iter().enumerate() {
+pub fn read_libraries(
+    model_dir: &Path,
+    libraries: &[(u8, &'static str)],
+    raw_index: &mut DictionaryIndex,
+) -> Result<(Vec<LibraryModel>, Vec<u64>), DatagenError> {
+    let mut out = Vec::with_capacity(libraries.len());
+    let mut row_counts = Vec::with_capacity(libraries.len());
+    for &(library, name) in libraries {
         let path = model_dir.join(format!("{name}.table"));
         if !path.is_file() {
             return Err(DatagenError::MissingModel {
                 dir: model_dir.to_path_buf(),
-                file: SYSTEM_LIBRARIES[slot].1,
+                file: name,
             });
         }
         let rows = read_table_file(&path)?;
-        model.stats.library_rows[slot] = rows.len() as u64;
+        row_counts.push(rows.len() as u64);
 
         // load_text switches PhraseItems on token change, so a token's rows
         // must be consecutive in the file; a re-grouped token would start a
@@ -234,21 +238,13 @@ fn read_tables(model_dir: &Path, model: &mut SemanticModel) -> Result<(), Datage
             seen.insert(row.token, ());
             previous = Some(row.token);
 
-            let item = match lib_items.get_mut(&row.token) {
-                Some(item) => item,
-                None => {
-                    lib_items.insert(
-                        row.token,
-                        PhraseModel {
-                            ucs4: row.phrase.chars().map(u32::from).collect(),
-                            text: row.phrase.clone(),
-                            prons: Vec::new(),
-                        },
-                    );
-                    lib_items.get_mut(&row.token).expect("just inserted")
-                }
-            };
-            if item.text != row.phrase {
+            let is_new = !lib_items.contains_key(&row.token);
+            let item = lib_items.entry(row.token).or_insert_with(|| PhraseModel {
+                ucs4: row.phrase.chars().map(u32::from).collect(),
+                text: row.phrase.clone(),
+                prons: Vec::new(),
+            });
+            if !is_new && item.text != row.phrase {
                 return Err(DatagenError::Consistency(format!(
                     "token {:#010x} names both {} and {}",
                     row.token, item.text, row.phrase
@@ -257,10 +253,7 @@ fn read_tables(model_dir: &Path, model: &mut SemanticModel) -> Result<(), Datage
 
             // Native raw index: every row, keyed by the raw pinyin string —
             // the frozen native recipe (no parse gate).
-            let records = model
-                .raw_index
-                .entry(row.pinyin.as_bytes().to_vec())
-                .or_default();
+            let records = raw_index.entry(row.pinyin.as_bytes().to_vec()).or_default();
             match records.iter_mut().find(|(token, _)| *token == row.token) {
                 Some((_, sum)) => *sum += row.count,
                 None => records.push((row.token, row.count)),
@@ -283,13 +276,27 @@ fn read_tables(model_dir: &Path, model: &mut SemanticModel) -> Result<(), Datage
                 None => item.prons.push((keys, row.count)),
             }
         }
-        model.libraries.push(LibraryModel {
+        out.push(LibraryModel {
             nibble: library,
             name,
             items: lib_items,
             parsed_rows,
         });
     }
+    Ok((out, row_counts))
+}
+
+/// The shared table-read half of [`read_semantic`]: the four system
+/// libraries' semantic content plus the native raw-index accumulator.
+///
+/// # Errors
+///
+/// Propagates [`read_libraries`] failures.
+fn read_tables(model_dir: &Path, model: &mut SemanticModel) -> Result<(), DatagenError> {
+    let (libraries, row_counts) =
+        read_libraries(model_dir, SYSTEM_LIBRARIES, &mut model.raw_index)?;
+    model.stats.library_rows.copy_from_slice(&row_counts[..4]);
+    model.libraries = libraries;
     Ok(())
 }
 
