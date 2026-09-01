@@ -410,7 +410,13 @@ fn reads_a_real_libpinyin_installation() {
         Some(7)
     );
 
-    // The addon chunk files ride the same format.
-    let art = PhraseLibrary::open(&dir.join("art.bin")).expect("addon art.bin");
-    assert!(art.items().count() > 0);
+    // The addon chunk files ride the same format — when the
+    // installation carries them.
+    let art_path = dir.join("art.bin");
+    if art_path.is_file() {
+        let art = PhraseLibrary::open(&art_path).expect("addon art.bin");
+        assert!(art.items().count() > 0);
+    } else {
+        eprintln!("skipping art.bin check: not present under OXPINYIN_LIBPINYIN_DATA");
+    }
 }
