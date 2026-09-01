@@ -709,7 +709,7 @@ fn lookup_profile(export: &Path, repeats: usize) {
             for shape in &shapes {
                 dict.lookup_into(shape, &mut scratch).expect("lookup");
                 let _ = black_box(&scratch);
-                let _ = dict.phrase_prefix_exists(shape).expect("probe");
+                let _ = black_box(dict.phrase_prefix_exists(shape).expect("probe"));
             }
         }
         started.elapsed()
