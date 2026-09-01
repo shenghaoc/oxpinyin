@@ -307,6 +307,29 @@ pub trait WriteStore: ReadStore {
     fn compact(&mut self) -> Result<(), StoreError>;
 }
 
+// ── Raw (unframed) read tier ──────────────────────────────────────
+//
+// libpinyin's DBM files (pinyin_index.bin, phrase_index.bin, bigram.db,
+// punct.bin) use raw byte keys — no table-name framing. This trait
+// exposes the same `open_read_only` handle with key lookups that bypass
+// the `table || 0x00 || key` framing the multi-table [`ReadStore`]
+// uses.
+//
+// Needed so oxpinyin can directly consume a libpinyin-generated data
+// directory without importing or converting its files.
+
+/// Read-only access to a store file with raw (unframed) keys.
+///
+/// Extends [`ReadStore`] with methods that bypass table-name framing,
+/// matching libpinyin's single-keyspace DBM layout. KC and Tkrzw
+/// backends implement this by calling the underlying library with the
+/// caller's key verbatim; redb and LMDB delegate to a well-known table
+/// name since those backends do not have a flat-keyspace concept.
+pub trait RawReadStore: ReadStore {
+    /// Read a single raw key. Returns `None` if absent.
+    fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+}
+
 // ── Shared: table-name validation ──────────────────────────────────
 //
 // Backend-independent: every peer's frame/prefix machinery needs to
@@ -464,6 +487,22 @@ impl ReadStore for RedbStore {
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
         let txn = self.begin_read()?;
         read_is_empty(&txn, table)
+    }
+}
+
+/// The well-known table name raw reads use on table-oriented backends.
+///
+/// redb and LMDB have no flat keyspace: [`RawReadStore::get_raw`]
+/// delegates to this table name so test fixtures written through
+/// `WriteStore::write(|txn| txn.put(RAW_TABLE, key, value))` are
+/// readable by the raw path.
+pub const RAW_TABLE: &str = "data";
+
+#[cfg(feature = "redb")]
+impl RawReadStore for RedbStore {
+    fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let txn = self.begin_read()?;
+        read_get(&txn, RAW_TABLE, key)
     }
 }
 
