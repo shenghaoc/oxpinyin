@@ -183,6 +183,12 @@ impl ReadStore for KcStore {
     }
 }
 
+impl crate::RawReadStore for KcStore {
+    fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, crate::StoreError> {
+        Ok(self.db.get(key)?.map(|buf| buf.to_vec()))
+    }
+}
+
 impl WriteStore for KcStore {
     fn create(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
