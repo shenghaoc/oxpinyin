@@ -387,6 +387,23 @@ fn open_hash(path: &Path) -> Result<TkrzwStore, StoreError> {
     })
 }
 
+fn open_hash_create(path: &Path) -> Result<TkrzwStore, StoreError> {
+    validate_path(path)?;
+    let params = c"dbm=hash";
+    let path = CString::new(path.as_os_str().as_encoded_bytes())
+        .map_err(|_| StoreError::InvalidInput("path contains NUL"))?;
+    // SAFETY: both strings outlive the call; the returned handle is
+    // NULL on failure, taken as an error immediately.
+    let db = unsafe { ffi::tkrzw_dbm_open(path.as_ptr(), true, params.as_ptr()) };
+    let Some(db) = NonNull::new(db) else {
+        return Err(status_error());
+    };
+    Ok(TkrzwStore {
+        db: Db(db),
+        read_only: false,
+    })
+}
+
 fn open(path: &Path, writable: bool) -> Result<TkrzwStore, StoreError> {
     validate_path(path)?;
     // `dbm=tree` selects TreeDBM; `no_create=true` reproduces
@@ -812,6 +829,10 @@ impl ReadStore for TkrzwStore {
 impl WriteStore for TkrzwStore {
     fn create(path: &Path) -> Result<Self, StoreError> {
         open(path, true)
+    }
+
+    fn create_hash(path: &Path) -> Result<Self, StoreError> {
+        open_hash_create(path)
     }
 
     fn write<R>(
