@@ -97,6 +97,10 @@ fn complete_key(keys: &[ChewingKey]) -> Vec<u8> {
         .collect()
 }
 
+/// One keyspace's accumulated rows: packed key bytes → `(stored keys,
+/// token)` records in arrival order.
+type SpaceMap = BTreeMap<Vec<u8>, Vec<(Vec<ChewingKey>, u32)>>;
+
 /// Serialises one `PinyinIndexItem2<L>` record: token, then the stored
 /// keys (their original tones), then zero padding to the stride.
 fn encode_item(token: u32, keys: &[ChewingKey]) -> Vec<u8> {
@@ -128,8 +132,7 @@ fn encode_item(token: u32, keys: &[ChewingKey]) -> Vec<u8> {
 #[must_use]
 pub fn pinyin_index_entries(rows: &[ParsedRow]) -> Entries {
     // key bytes → records; a BTreeMap emits ascending key-byte order.
-    let mut spaces: [BTreeMap<Vec<u8>, Vec<(Vec<ChewingKey>, u32)>>; 2] =
-        [BTreeMap::new(), BTreeMap::new()];
+    let mut spaces: [SpaceMap; 2] = [BTreeMap::new(), BTreeMap::new()];
 
     for row in rows {
         let keys_with_tone = row.keys.clone();

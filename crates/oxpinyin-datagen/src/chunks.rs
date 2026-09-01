@@ -107,8 +107,7 @@ fn checksum(payload: &[u8]) -> u32 {
 /// count above `u8::MAX`), or a total frequency above `u32::MAX`.
 pub fn build_chunk(items: &[(u32, ChunkItem)]) -> Result<Vec<u8>, DatagenError> {
     // ---- validate and serialise the entry area -------------------------
-    let mut content: Vec<u8> = Vec::new();
-    content.resize(usize::try_from(FIRST_ITEM_OFFSET).unwrap_or(0), 0);
+    let mut content: Vec<u8> = vec![0; usize::try_from(FIRST_ITEM_OFFSET).unwrap_or(0)];
     let mut offsets: Vec<u32> = Vec::new();
     let mut total_freq: u64 = 0;
     let mut last_slot: Option<u32> = None;
@@ -119,12 +118,10 @@ pub fn build_chunk(items: &[(u32, ChunkItem)]) -> Result<Vec<u8>, DatagenError> 
                 "chunk slot {slot:#010x} exceeds PHRASE_MASK"
             )));
         }
-        if let Some(prev) = last_slot {
-            if slot <= prev {
-                return Err(DatagenError::Consistency(format!(
-                    "chunk slots not ascending: {slot:#010x} after {prev:#010x}"
-                )));
-            }
+        if let Some(prev) = last_slot.filter(|&p| slot <= p) {
+            return Err(DatagenError::Consistency(format!(
+                "chunk slots not ascending: {slot:#010x} after {prev:#010x}"
+            )));
         }
         last_slot = Some(slot);
 
