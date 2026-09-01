@@ -67,10 +67,15 @@ whole dictionary on the heap at every open.
 | oxpinyin | KC | 86.188 ms | 8.473 ms | 72,910 KiB |
 | oxpinyin | Tkrzw | 106.383 ms | 8.932 ms | 69,256 KiB |
 
-This PR is the first Stage-2 optimization on that finding: the system
-pinyin/phrase index path stops reconstructing and adopts libpinyin's
-proven architecture — compact immutable files, mapped at startup,
-served through offset views.
+That iteration prototyped a first Stage-2 optimization on that
+finding: the system pinyin/phrase index path stopped reconstructing,
+using mapped compact files at startup and offset views for lookup.
+**That mapped-file implementation was subsequently withdrawn** (it
+introduced an oxpinyin-specific on-disk format, contrary to the
+direct-replacement requirement) and is recorded here only as
+historical evidence that eager reconstruction was the bottleneck. The
+reader it validated is **not wired into `SystemDictionary`**; oxpinyin
+still eagerly loads its own store tables at init today.
 
 ## 2. What oxpinyin rebuilt (the before-path)
 
@@ -209,15 +214,15 @@ process runs):
 
 The dictionary side of init is now the two `open(2)`+`mmap(2)` pairs
 plus header/section/ordering validation — the libpinyin shape. What
-remits of oxpinyin's init is the bigram slurp and the
+remains of oxpinyin's init is the bigram slurp and the
 `interpolation2.text` parse, both explicitly out of scope here and
 both already named by the matrix doc as the next targets.
 
 Docker matrix (the #260 harness, same container image recipe, same
 CPU pinning, PERF_RUNS=20 / PERF_CYCLES=8 / PERF_RAM_RUNS=10; the
 libpinyin cells re-measured as controls: init 0.864/1.108 ms against
-#260's 0.854/0.920 ms — same sub-millisecond regime, comparison
-valid):
+the `#260` baseline's 0.854/0.920 ms — same sub-millisecond regime,
+comparison valid):
 
 | Cell | init before (#260) | init after | reduction | gap vs libpinyin |
 | --- | ---: | ---: | ---: | ---: |

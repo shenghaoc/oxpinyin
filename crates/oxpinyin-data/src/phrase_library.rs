@@ -149,7 +149,7 @@ mod map {
         /// parser's call.
         pub(crate) fn open(path: &Path) -> Result<Self, LibraryError> {
             let file = std::fs::File::open(path).map_err(LibraryError::Io)?;
-            let len = std::fs::metadata(path).map_err(LibraryError::Io)?.len() as usize;
+            let len = file.metadata().map_err(LibraryError::Io)?.len() as usize;
             Self::from_file(file, len)
         }
 
@@ -206,10 +206,11 @@ mod map {
             let mut buffer = Vec::with_capacity(len.min(1 << 20));
             file.read_to_end(&mut buffer).map_err(LibraryError::Io)?;
             let len = buffer.len();
+            let heap = buffer.into_boxed_slice();
             Ok(Self {
-                data: buffer.as_ptr(),
+                data: heap.as_ptr(),
                 len,
-                heap: Some(buffer.into_boxed_slice()),
+                heap: Some(heap),
             })
         }
 
@@ -441,7 +442,11 @@ impl PhraseLibrary {
         // `index_two` sits past the offset array's separator, so it is
         // at least `index_one + 1` even for an empty array (an empty
         // library's array is zero slots, not a negative one).
-        if index_two <= index_one || index_three < index_two {
+        // `index_three > index_two` keeps the entry area non-empty:
+        // `SubPhraseIndex::store` always leaves at least the 8 reserved
+        // bytes plus a separator, so the content section can never be
+        // zero-length — and the range built below subtracts one.
+        if index_two <= index_one || index_three <= index_two {
             return Err(bad("sub-index sections out of order"));
         }
         if index_three > payload_bytes.len() {
