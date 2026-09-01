@@ -297,6 +297,12 @@ impl WriteTxn for KcTxn<'_> {
         self.store.db.set(&frame(table, key), value)
     }
 
+    fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        // The file's bare keyspace, no table-name framing — what
+        // `get_raw`/`range_raw` read back on this backend.
+        self.store.db.set(key, value)
+    }
+
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         validate_table_name(table)?;
         self.store.db.remove(&frame(table, key))
