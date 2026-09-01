@@ -299,6 +299,27 @@ pub trait WriteStore: ReadStore {
     where
         Self: Sized;
 
+    /// Open or create a **hash** store file in read-write mode — the
+    /// write half of [`RawReadStore::open_hash_read_only`].
+    ///
+    /// libpinyin's `bigram.db` is a KC **HashDB** / Tkrzw **HashDBM**
+    /// while its other DBMs are tree containers; datagen writes the
+    /// bigram through this constructor so the reader's hash open finds a
+    /// hash file. The default implementation delegates to
+    /// [`WriteStore::create`] (correct for redb and LMDB, which have no
+    /// hash/tree distinction). KC and Tkrzw override this to select the
+    /// hash container class.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the store cannot be created.
+    fn create_hash(path: &Path) -> Result<Self, StoreError>
+    where
+        Self: Sized,
+    {
+        Self::create(path)
+    }
+
     /// Run `f` inside an atomic write transaction.  All puts/removes in
     /// `f` land together on `Ok`, or none land on `Err` (full rollback).
     /// The closure sees its own writes.

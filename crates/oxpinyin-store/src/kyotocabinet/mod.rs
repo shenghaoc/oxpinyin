@@ -232,6 +232,12 @@ impl WriteStore for KcStore {
         })
     }
 
+    fn create_hash(path: &Path) -> Result<Self, StoreError> {
+        Ok(Self {
+            db: Db::open(path, DbType::Hash, false, true)?,
+        })
+    }
+
     fn write<R>(
         &self,
         f: impl FnOnce(&mut dyn WriteTxn) -> Result<R, StoreError>,
