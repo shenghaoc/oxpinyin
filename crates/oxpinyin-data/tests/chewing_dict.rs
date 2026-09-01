@@ -1,15 +1,19 @@
-//! Integration tests for `ChewingDictionary` — the lazy P2 dictionary.
+//! Integration tests for `ChewingDictionary` — the lazy P2/P3
+//! dictionary.
 //!
-//! Creates a pair of ChewingKey-format pinyin-index and phrase-index
-//! fixtures, then exercises the `Dictionary` trait through
-//! `ChewingDictionary`.
+//! Creates a ChewingKey-format pinyin-index DBM (bare keyspace rows)
+//! and a gb_char phrase-library chunk file, then exercises the
+//! `Dictionary` trait through `ChewingDictionary`.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use oxpinyin_core::{ChewingKey, Completeness, Dictionary, SyllableKey};
 use oxpinyin_data::ChewingDictionary;
-use oxpinyin_store::{DefaultStore, RAW_TABLE, WriteStore};
+use oxpinyin_store::DefaultStore;
+
+mod support;
+use support::{ChunkBuilder, write_raw_rows};
 
 static FIXTURE_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -27,7 +31,7 @@ impl Fixture {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         write_pinyin_index(&dir.join(oxpinyin_store::default_store_file("pinyin_index")));
-        write_phrase_index(&dir.join(oxpinyin_store::default_store_file("phrase_index")));
+        write_gb_char_chunk(&dir.join("gb_char.bin"));
         Self { dir }
     }
 
@@ -36,9 +40,7 @@ impl Fixture {
             &self
                 .dir
                 .join(oxpinyin_store::default_store_file("pinyin_index")),
-            &self
-                .dir
-                .join(oxpinyin_store::default_store_file("phrase_index")),
+            &self.dir,
         )
         .unwrap()
     }
@@ -98,72 +100,74 @@ fn encode_items(entries: &[(u32, &[ChewingKey])]) -> Vec<u8> {
 // ── Fixture writers ──────────────────────────────────────────────
 
 fn write_pinyin_index(path: &std::path::Path) {
-    let store = DefaultStore::create(path).unwrap();
     let ni3 = key("ni").with_tone(3);
     let hao3 = key("hao").with_tone(3);
     let zhong1 = key("zhong").with_tone(1);
     let guo2 = key("guo").with_tone(2);
 
-    store
-        .write(|txn| {
-            // Complete index entries.
-            txn.put(
-                RAW_TABLE,
-                &encode_complete(&[key("ni")]),
-                &encode_items(&[(0x01000010, &[ni3][..])]),
-            )?;
-            txn.put(
-                RAW_TABLE,
-                &encode_complete(&[key("hao")]),
-                &encode_items(&[(0x01000011, &[hao3][..])]),
-            )?;
-            txn.put(
-                RAW_TABLE,
-                &encode_complete(&[key("ni"), key("hao")]),
-                &encode_items(&[(0x01000099, &[ni3, hao3][..])]),
-            )?;
-            txn.put(
-                RAW_TABLE,
-                &encode_complete(&[key("zhong")]),
-                &encode_items(&[(0x01000020, &[zhong1][..])]),
-            )?;
-            txn.put(
-                RAW_TABLE,
-                &encode_complete(&[key("guo")]),
-                &encode_items(&[(0x01000021, &[guo2][..])]),
-            )?;
-            txn.put(
-                RAW_TABLE,
-                &encode_complete(&[key("zhong"), key("guo")]),
-                &encode_items(&[(0x010000A0, &[zhong1, guo2][..])]),
-            )?;
-
-            // Incomplete index entries.
-            let n_init = ChewingKey::new(key("ni").initial, 0, 0, 0);
-            txn.put(
-                RAW_TABLE,
-                &encode_incomplete(&[key("ni")]),
-                &encode_items(&[(0x01000010, &[n_init][..])]),
-            )?;
-
-            Ok(())
-        })
-        .unwrap();
+    // Bare keyspace rows, the libpinyin DBM layout (no table framing).
+    let rows: Vec<(Vec<u8>, Vec<u8>)> = vec![
+        // Complete index entries.
+        (
+            encode_complete(&[key("ni")]),
+            encode_items(&[(0x01000010, &[ni3][..])]),
+        ),
+        (
+            encode_complete(&[key("hao")]),
+            encode_items(&[(0x01000011, &[hao3][..])]),
+        ),
+        (
+            encode_complete(&[key("ni"), key("hao")]),
+            encode_items(&[(0x01000099, &[ni3, hao3][..])]),
+        ),
+        (
+            encode_complete(&[key("zhong")]),
+            encode_items(&[(0x01000020, &[zhong1][..])]),
+        ),
+        (
+            encode_complete(&[key("guo")]),
+            encode_items(&[(0x01000021, &[guo2][..])]),
+        ),
+        (
+            encode_complete(&[key("zhong"), key("guo")]),
+            encode_items(&[(0x010000A0, &[zhong1, guo2][..])]),
+        ),
+        // Incomplete index entry.
+        (
+            encode_incomplete(&[key("ni")]),
+            encode_items(&[(
+                0x01000010,
+                &[ChewingKey::new(key("ni").initial, 0, 0, 0)][..],
+            )]),
+        ),
+    ];
+    write_raw_rows::<DefaultStore>(path, &rows);
 }
 
-fn write_phrase_index(path: &std::path::Path) {
-    let store = DefaultStore::create(path).unwrap();
-    store
-        .write(|txn| {
-            txn.put("data", &0x01000010_u32.to_le_bytes(), "你".as_bytes())?;
-            txn.put("data", &0x01000011_u32.to_le_bytes(), "好".as_bytes())?;
-            txn.put("data", &0x01000020_u32.to_le_bytes(), "中".as_bytes())?;
-            txn.put("data", &0x01000021_u32.to_le_bytes(), "国".as_bytes())?;
-            txn.put("data", &0x01000099_u32.to_le_bytes(), "你好".as_bytes())?;
-            txn.put("data", &0x010000A0_u32.to_le_bytes(), "中国".as_bytes())?;
-            Ok(())
-        })
-        .unwrap();
+/// The gb_char chunk file: the six nibble-1 tokens with their text and
+/// one pronunciation each. `total_freq` is the sum of the stored
+/// unigrams, exactly what `SubPhraseIndex::store` records.
+fn write_gb_char_chunk(path: &std::path::Path) {
+    let ni3 = key("ni").with_tone(3);
+    let hao3 = key("hao").with_tone(3);
+    let zhong1 = key("zhong").with_tone(1);
+    let guo2 = key("guo").with_tone(2);
+
+    let pron1 = |key: ChewingKey| vec![(key.to_packed().to_le_bytes().to_vec(), 5_u32)];
+    let pron2 = |a: ChewingKey, b: ChewingKey| {
+        let mut keys = a.to_packed().to_le_bytes().to_vec();
+        keys.extend_from_slice(&b.to_packed().to_le_bytes());
+        vec![(keys, 5_u32)]
+    };
+
+    let mut builder = ChunkBuilder::new(30);
+    builder.add(0x10, 5, "你", pron1(ni3));
+    builder.add(0x11, 5, "好", pron1(hao3));
+    builder.add(0x20, 5, "中", pron1(zhong1));
+    builder.add(0x21, 5, "国", pron1(guo2));
+    builder.add(0x99, 5, "你好", pron2(ni3, hao3));
+    builder.add(0xA0, 5, "中国", pron2(zhong1, guo2));
+    std::fs::write(path, builder.build()).unwrap();
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -275,6 +279,6 @@ fn lookup_into_matches_lookup() {
 fn phrase_text_resolves_token() {
     let fix = Fixture::new();
     let dict = fix.dict();
-    assert_eq!(dict.phrase_text(0x01000099), Some("你好"));
+    assert_eq!(dict.phrase_text(0x01000099).as_deref(), Some("你好"));
     assert_eq!(dict.phrase_text(0xFFFFFFFF), None);
 }
