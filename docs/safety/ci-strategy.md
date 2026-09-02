@@ -3,7 +3,7 @@
 Design goal: maximum confidence per CI-minute, four tiers, nothing heavy on
 the PR path. Existing jobs (keep): `lint` (fmt ×2 workspaces + clippy
 `-D warnings`), `test` (+ C++ smoke gate + live-typing differential),
-`test-portable` (mac/win), `fuzz` (pinned nightly, parser smoke).
+`test-portable` (mac/win), `fuzz` (pinned nightly; builds all five targets, parser smoke).
 Estimated costs below are rough additive deltas on a cached runner.
 
 ## Tier 1 — FAST PR GATE (every push/PR, ~+2 min over today)
@@ -16,7 +16,7 @@ cargo clippy --locked -p oxpinyin-capi -p pinyin-oracle --all-targets -- -D warn
 cargo nextest run --workspace (or cargo test)  # existing runner, nextest optional
 cargo test --doc                               # only if nextest adopted
 cargo deny check advisories bans licenses sources   # NEW, ~40–90s cold, cacheable DB
-fuzz smoke: parser target only (~10s)   # existing job; the four newer targets soak nightly
+fuzz: build all five targets, smoke-run parser (~10s)   # existing job; all five targets soak nightly
 ```
 
 Rationale per addition: `cargo deny` is the only supply-chain gate (one

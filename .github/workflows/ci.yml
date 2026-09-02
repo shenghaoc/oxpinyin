@@ -317,6 +317,16 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Verify fuzz lockfile
         run: cargo +nightly-2026-08-01 metadata --locked --manifest-path fuzz/Cargo.toml --format-version 1 --no-deps > /dev/null
+      - name: Build every fuzz target
+        # Only the parser target was ever built by a PR gate; the other
+        # four (dict-loader, fixture-model, double-pinyin, capi-commands)
+        # were compiled by nothing until the nightly soak, which is how a
+        # broken import in fixture-model survived from its introduction to
+        # the first verify-nightly dispatch (docs/findings/
+        # verify-nightly.md, finding 6). Build all five here — compile cost
+        # only, no soak time — with the same triple pin as the run below so
+        # the parser pass reuses these artifacts instead of rebuilding.
+        run: cargo +nightly-2026-08-01 fuzz build --target x86_64-unknown-linux-gnu
       - name: Run bounded parser fuzz pass
         # The pinned cargo-fuzz release binary is itself a musl build, and
         # cargo-fuzz defaults the fuzz target to the triple it was built for

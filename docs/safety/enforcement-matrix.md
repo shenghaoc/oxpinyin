@@ -71,7 +71,7 @@ warning, SCHED = scheduled analysis, REV = human review.
 
 | Rule | Today | Proposed | Mechanism |
 |---|---|---|---|
-| Parser fuzz smoke per PR | yes (10s) | PR gate: parser target only; the four additional targets run in the nightly soak | cargo-fuzz pinned nightly (existing job) |
+| Parser fuzz smoke per PR | yes (10s) | PR gate: all five targets built, parser target smoke-run; every target soaks nightly | cargo-fuzz pinned nightly (existing job; the build-all step landed with `docs/findings/verify-nightly.md` finding 6) |
 | Corpus replay under Miri | no | ~~SCHED nightly~~ retired 2026-09-01 | the Miri lane was retired (`docs/findings/verify-nightly.md`) |
 | Fuzz soak | no | SCHED nightly | five targets × 3 min; one committed seed (`fuzz/corpus/parser/zhuan`), the rest of the corpus is seeded at run time |
 | Coverage visibility | no | SCHED nightly | cargo-llvm-cov report, no threshold |

@@ -114,10 +114,11 @@ how the broken `fixture-model` import rotted from introduction to the
 first nightly dispatch. This is the same structural failure as
 `verify-nightly` itself: a lane no PR gate ever exercises.
 
-Proposed fix (not done in this stack, per its scope): add a compile-only
-step to ci.yml's fuzz lane — `cargo fuzz build` over all five targets
-(or `cargo fuzz run <target> -- -max_total_time=1` each if a smoke run
-is wanted). Build cost only; no soak time in the PR gate.
+Fix (a follow-up to this stack, kept out of it per its scope): ci.yml's
+fuzz lane now runs `cargo fuzz build` over all five targets before the
+bounded parser pass, with the same triple pin so the parser run reuses
+the artifacts. Compile cost only; no soak time in the PR gate. A target
+that stops compiling now fails the PR that broke it.
 
 ## 7. fetch-model.sh's degraded refusal is intended defensive behaviour
 
