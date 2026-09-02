@@ -1,0 +1,13 @@
+\data model interpolation
+\1-gram
+\item 16777221 你 count 30
+\item 16777222 好 count 20
+\item 16777224 你好 count 15
+\item 16777225 中国 count 8
+\item 33554434 拔 count 2
+\2-gram
+\item 1 <start> 16777221 你 count 4
+\item 16777221 你 16777222 好 count 12
+\item 16777224 你好 16777225 中国 count 3
+\item 16777222 好 16777221 你 count 1
+\end
