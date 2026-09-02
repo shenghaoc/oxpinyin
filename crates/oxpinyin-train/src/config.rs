@@ -28,11 +28,25 @@ pub const FINAL_STATUS_FILE_NAME: &str = "cwd.status";
 /// The evaluation corpus filename (`getEvalsTextFileName`).
 pub const EVALS_TEXT_FILE_NAME: &str = "evals2.text";
 
+/// Prefix of a candidate model filename (`getCandidateModelName`).
+pub const CANDIDATE_MODEL_PREFIX: &str = "model-candidates-";
+
 /// The candidate model filename for candidate number `index`
-/// (`getCandidateModelName`).
+/// (`getCandidateModelName`): `model-candidates-<index>.db`.
 #[must_use]
 pub fn candidate_model_name(index: u32) -> String {
-    format!("model-candidates-{index}.db")
+    format!("{CANDIDATE_MODEL_PREFIX}{index}{MODEL_POSTFIX}")
+}
+
+/// The exact inverse of [`candidate_model_name`]: the candidate number
+/// encoded in a candidate model filename, or `None` for any other name.
+#[must_use]
+pub fn candidate_number(model_name: &str) -> Option<u32> {
+    model_name
+        .strip_prefix(CANDIDATE_MODEL_PREFIX)?
+        .strip_suffix(MODEL_POSTFIX)?
+        .parse()
+        .ok()
 }
 
 /// The typed trainer configuration (`MyConfig`, main-pipeline knobs).
@@ -95,7 +109,7 @@ impl TrainConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{TrainConfig, candidate_model_name};
+    use super::{TrainConfig, candidate_model_name, candidate_number};
 
     #[test]
     fn defaults_match_myconfig() {
@@ -113,6 +127,15 @@ mod tests {
     fn candidate_names_are_numbered() {
         assert_eq!(candidate_model_name(0), "model-candidates-0.db");
         assert_eq!(candidate_model_name(7), "model-candidates-7.db");
+    }
+
+    #[test]
+    fn candidate_number_inverts_candidate_model_name() {
+        for index in [0, 7, 4_000_000_000] {
+            assert_eq!(candidate_number(&candidate_model_name(index)), Some(index));
+        }
+        assert_eq!(candidate_number("model-candidates-x.db"), None);
+        assert_eq!(candidate_number("estimate.index"), None);
     }
 
     #[test]

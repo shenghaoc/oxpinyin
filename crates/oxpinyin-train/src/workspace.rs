@@ -29,7 +29,7 @@ use oxpinyin_segment::Segmenter;
 
 use crate::config::{
     self, ESTIMATE_INDEX, FINAL_MODEL_FILE_NAME, FINAL_STATUS_FILE_NAME, SORTED_ESTIMATE_INDEX,
-    TrainConfig, candidate_model_name,
+    TrainConfig, candidate_model_name, candidate_number,
 };
 use crate::corpus::CorpusIndex;
 use crate::error::TrainError;
@@ -151,15 +151,26 @@ impl Trainer {
     /// Generate stage: build candidate models with rollover + the min-size
     /// filter, numbering and persisting each as `model-candidates-N.db` with a
     /// `Generate` status carrying its `GenerateStart`/`GenerateEnd`. Gated by
-    /// the index-level `Generate` epoch; when signed, candidates are reloaded.
+    /// the index-level `Generate` epoch; when signed and its recorded
+    /// `GenerateTextEnd` covers every segmented document, the candidates are
+    /// reloaded.
+    ///
+    /// Upstream resumes a partial generate from that per-document checkpoint
+    /// and skips a signed one outright; the in-memory port has no partial
+    /// checkpoint, so the recorded end doubles as the coverage check — an
+    /// index that grew since the sign is regenerated (stale candidates
+    /// cleaned up) rather than silently served from the old candidates.
     fn generate_stage(
         &self,
         segmented: &[SegmentedDoc],
     ) -> Result<Vec<CandidateModel>, TrainError> {
         let index_status_path = self.index_status_path();
         let mut index_status = Status::load(&index_status_path)?;
+        // A file stamped by a newer trainer is refused before it is rewritten.
+        index_status.epoch_state(Stage::Estimate)?;
 
-        if index_status.is_done(Stage::Generate)? {
+        let covered = index_status.generate_text_end == Some(segmented.len() as u64);
+        if index_status.is_done(Stage::Generate)? && covered {
             return self.reload_candidates(index_status.generate_model_end.unwrap_or(0));
         }
 
@@ -196,6 +207,8 @@ impl Trainer {
                 detail: error.to_string(),
             })?;
             let status = Status::load(&Status::path_for(&model_path))?;
+            status.epoch_state(Stage::Generate)?;
+            status.epoch_state(Stage::Estimate)?;
             out.push(CandidateModel {
                 number,
                 model,
@@ -235,6 +248,8 @@ impl Trainer {
     ) -> Result<pipeline::SortedCandidates, TrainError> {
         let index_status_path = self.index_status_path();
         let mut index_status = Status::load(&index_status_path)?;
+        // Validate the epoch before this run overwrites the file.
+        index_status.epoch_state(Stage::Estimate)?;
 
         let scored = pipeline::score_candidates(candidates, deleted)?;
         // Persist each candidate's score into its status file.
@@ -244,6 +259,7 @@ impl Trainer {
                 let model_path = self.candidate_path(number);
                 let status_path = Status::path_for(&model_path);
                 let mut status = Status::load(&status_path)?;
+                status.epoch_state(Stage::Estimate)?;
                 status.estimate_score = Some(candidate.candidate.score);
                 status.sign(Stage::Estimate);
                 status.store(&status_path)?;
@@ -276,9 +292,12 @@ impl Trainer {
         let trydir = self.try_dir(tryname);
         let cwd_status_path = trydir.join(FINAL_STATUS_FILE_NAME);
 
-        // Resume: a fully pruned workspace is reused.
+        // Resume: a fully pruned workspace is reused. A workspace stamped by
+        // a newer trainer at any stage is refused before its status is
+        // overwritten.
         if cwd_status_path.is_file() {
             let status = Status::load(&cwd_status_path)?;
+            status.epoch_state(Stage::Evaluate)?;
             let interp_path = trydir.join(FINAL_MODEL_FILE_NAME);
             if status.is_done(Stage::Prune)? && interp_path.is_file() {
                 let interpolation2 = read(&interp_path)?;
@@ -339,6 +358,7 @@ impl Trainer {
         let trydir = self.try_dir(tryname);
         let cwd_status_path = trydir.join(FINAL_STATUS_FILE_NAME);
         let mut status = Status::load(&cwd_status_path)?;
+        status.epoch_state(Stage::Evaluate)?;
 
         let outcome = pipeline::evaluate_model(
             &final_model.interpolation2,
@@ -369,15 +389,6 @@ impl Trainer {
     fn try_dir(&self, tryname: &str) -> PathBuf {
         self.paths.final_dir.join(format!("try{tryname}"))
     }
-}
-
-/// The candidate number encoded in a `model-candidates-N.db` filename.
-fn candidate_number(model_name: &str) -> Option<u32> {
-    model_name
-        .strip_prefix("model-candidates-")?
-        .strip_suffix(config::MODEL_POSTFIX)?
-        .parse()
-        .ok()
 }
 
 fn report_path(model_path: &Path) -> PathBuf {
