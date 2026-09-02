@@ -227,8 +227,10 @@ engine's agreement against it:
 - **decoded 1-best (`pinyin_get_sentence` row 0): 488/496 = 98.4%** of the
   comparable inputs (the 7 junk-leading inputs the oracle does not parse
   at all are excluded — no sentence surface exists on either side).
-- **full sentence lists 385/496, first-6 candidate rows 370/496.** The
-  residuals are segmentation near-ties (`shuan` resplit vs whole) and
+- **full sentence lists 385/496, first-6 candidate rows 379/496** (370/496 at
+  this section's original measurement; the W12 Class A candidate tie-law port
+  lifted the figure — §11). The residuals are segmentation near-ties
+  (`shuan` resplit vs whole) and
   second/third-tail ties, the §3 divergences: upstream accumulates `gfloat`
   and breaks comparator ties in heap order, the port uses fixed-point
   surprisal with insertion-order tie-breaks.
