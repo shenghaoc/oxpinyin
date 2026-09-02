@@ -709,8 +709,12 @@ Text, candidate type and counts cannot.
   `tools/bisection/zhuyin-diff.c` differential converges on the batch parse.
   This closes the zhuyin batch seam. The double-pinyin batch seam
   (`pinyin_parse_more_double_pinyins`) remains open: the
-  `pinyin_parser2.cpp:412` length-3 gate is not yet implemented on that path
-  and belongs with the eventual double-pinyin SPEC freeze.
+  `pinyin_parser2.cpp:412` length-3 gate is not yet implemented on that
+  path. The double-pinyin SPEC freeze (2026-09-02) decided this seam's law
+  — the frozen `docs/findings/double-pinyin-spec.md` Tone section mandates
+  the gate on the batch seam, so the seam is now a bounded implementation
+  item under the frozen SPEC's gates (`run-scheme-diff.sh`,
+  `run-key-surface-diff.sh`), no longer awaiting a freeze.
 - **Externally observable:** on the one-key seams and the zhuyin batch
   seam, no longer — all answer identically to the pin under every
   FORCE_TONE profile (one-key seams: D3 gate; zhuyin batch: 1671954).
@@ -719,6 +723,17 @@ Text, candidate type and counts cannot.
   inside `USE_TONE`) rather than the pin's length-3 gate
   (`pinyin_parser2.cpp:412`). The full-pinyin seam itself matches the pin
   (capi e2e `parse_termination` module, harness phase-C 0x60 probes closed).
+- **Freeze correction (2026-09-02).** The observable-shape sentence above
+  read as if the batch seam applied the full-pinyin FORCE_TONE law; the
+  landed batch parser is more precisely option-blind: it runs the tone-less
+  profile whatever the caller's option word (the greedy walk rejects every
+  three-byte key and retries length 2). The divergence is the same in every
+  FORCE_TONE profile — oxpinyin is observably less restrictive than the pin
+  (which consumes nothing at all under FORCE_TONE without USE_TONE, and
+  three-byte toned keys under USE_TONE|FORCE_TONE) — but the mechanism is
+  absence of the law, not the full-pinyin law. The frozen SPEC's law and
+  the open implementation item: the Tone section of
+  `docs/findings/double-pinyin-spec.md`.
 
 ### Empty-string phrase lookup SIGFPEs the pin
 
