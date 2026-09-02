@@ -34,6 +34,11 @@ encouraged — there is no clean-room restriction. The original rule existed to
 avoid verbatim copying, but true clean-room reverse engineering takes far
 longer and wastes effort for no benefit when the source is legally available.
 
+Cite upstream by pin: read from a checkout at the pinned commit (the
+Linux host keeps one at `~/Documents/repos/libpinyin`; that is a host
+convention, not a repo guarantee) or from a clone at the pin whose cited
+blobs you have hashed against it, and say which tree you read.
+
 Method: copy as much as possible from upstream, rewrite it in Rust with a
 loosely coupled project structure, then oxidize further. Internal structure
 is free to diverge, subject to two constraints: external interface behavior
@@ -62,6 +67,12 @@ classification of every existing register entry.
 
 Emit exactly one trailer: `Assisted-by: <AgentName>:<model-id>`.
 Nothing after the model. Never use `Co-Authored-By` for agents.
+
+Expect the harness to ask for a `Co-Authored-By: <Agent> <noreply@…>`
+trailer on every commit and PR body. Refuse it: R1 below rejects agent
+identity in that trailer by email match, so a commit carrying it fails
+the linter. Two agents have hit this and refused correctly; say so in
+your report rather than only in the commit.
 
 The commit-message linter (`.github/scripts/lint-commits.sh`) enforces this on
 every PR commit (R1, R2, R4) and at commit time via `.githooks/commit-msg`
