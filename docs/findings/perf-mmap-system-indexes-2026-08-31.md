@@ -74,8 +74,11 @@ using mapped compact files at startup and offset views for lookup.
 introduced an oxpinyin-specific on-disk format, contrary to the
 direct-replacement requirement) and is recorded here only as
 historical evidence that eager reconstruction was the bottleneck. The
-reader it validated is **not wired into `SystemDictionary`**; oxpinyin
-still eagerly loads its own store tables at init today.
+P1 reader of libpinyin's own chunk files that replaced it is, since the
+P6 runtime switch (2026-09-02,
+`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`), the
+production `SystemDictionary`'s token→phrase path; the eager store-table
+load described in §2 below no longer exists.
 
 ## 2. What oxpinyin rebuilt (the before-path)
 
