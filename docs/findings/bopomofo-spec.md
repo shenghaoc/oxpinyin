@@ -1,12 +1,17 @@
 # Bopomofo/Zhuyin scheme SPEC
 
-Date: 2026-08-17 · Status: W13 Phase 0 draft (human freeze pending)
+Date: 2026-08-17 · Status: W13 Phase 0 draft — **freeze proposed
+2026-09-03** (audit and amendments in the Freeze record at the bottom;
+this line reads "frozen" only on the maintainer's dated ruling)
 Amended 2026-08-20 by `zhuyin-index-fidelity` (PR 1 of the #109 stack):
 the recorded no-shuffle decision below is superseded — see "Index
 fidelity". Amended again by `zhuyin-simple-keyboards` (PR 2): the
 Simple keyboard family is table-driven — see "Keyboard scope" — and by
 `zhuyin-discrete` (PR 3): the Discrete family joins it there — and by
 `zhuyin-dachen-cp26` (PR 4): CP26 completes the ported keyboard set.
+Amended 2026-08-27 by the exact seam (the full-log differential closed)
+and 2026-09-03 by the option-seam correction (dea0880) and the freeze
+audit — see the Freeze record at the bottom.
 
 ## Scope
 
@@ -116,13 +121,21 @@ inventory.
 
 The chewing parser outputs `ChewingKey`/`ChewingKeyRest` and feeds the same
 `PhoneticKeyMatrix` through `fill_matrix`, then `fuzzy_syllable_step`
-(`src/pinyin.cpp:1582-1608`). This first W13 pass uses the same
-transformed-spelling shortcut as double pinyin (`'`-joined tone-less full
-pinyin into `Session::type_pinyin`). On real unigrams,
-`CandidateKind::Sentence` is absent for `sucl` and `sucl5j/eji` exactly
-as it is for full-pinyin `nihao` / `nihaozhongguo` on main. That gap is
-full-pinyin ground, not W11. The scheme-edge construction in
-`double-pinyin-spec.md` remains a later segmentation-fidelity pass.
+(`src/pinyin.cpp:1582-1609`). The landed routing is the exact seam
+described under "The exact seam (2026-08-27)" below: the parser's keys
+reach the decoder as one `Exact` edge chain over the `'`-joined
+full-pinyin text (`SegmentGraph::build_exact`,
+`Session::replace_raw_exact`), never re-segmented by the pinyin
+inventory — the same shape as upstream handing the scheme parser's
+`ChewingKey`s to `fill_matrix`. The first W13 draft of this section
+recorded a `Session::type_pinyin` shortcut, an absent
+`CandidateKind::Sentence` on `sucl` / `sucl5j/eji`, and a "later"
+scheme-edge pass; the shortcut was replaced by the exact seam, the
+sentence gap was closed by W14 (`docs/findings/sentence-surface.md`,
+PR #113 and follow-ups), and the scheme-edge pass is the landed
+routing. The measured sentence residual is the trellis-side §12 class
+in `upstream-divergences.md`, shared with full pinyin, not
+scheme-specific.
 
 ## Auxiliary text
 
@@ -222,7 +235,7 @@ table cross-check.
 
 The `zhuyin-discrete` PR (2026-08-20) adds the Discrete family:
 **HSU (2), ETEN26 (6), HSU_DVORAK (8)**, ported as
-`ZhuyinDiscreteParser2` (`zhuyin_parser2.cpp:335-490`). These parse by
+`ZhuyinDiscreteParser2` (`zhuyin_parser2.cpp:335-494`). These parse by
 **positional probe** — position 0 in the keyboard's initial table, 1 in
 the middle table, 2 in the final table, 3 (under `USE_TONE`) in the
 tone table, a failed initial probe letting the middle probe read
@@ -230,8 +243,10 @@ position 0 — then require full consumption and a row hit in the
 keyboard's own index; the per-byte Simple concatenation is deliberately
 not reused. A key may appear twice in one table (the dual-mapped keys:
 `c` → ㄒ/ㄕ, `j` → ㄐ/ㄓ, `v` → ㄑ/ㄔ on the HSU keyboards): parsing
-resolves the **first** row, `in_chewing_keyboard` reports both — up to
-three symbols plus the tone mark, `search_chewing_symbols2`. The
+resolves the **first** row, `in_chewing_keyboard` reports both — at most
+three strings in total, tone mark included (`assert(array->len <= 3)`,
+`:534`; HSU `j` = ㄐ, ㄓ + the tone-4 mark is the maximum),
+`search_chewing_symbols2`. The
 keyboards' indexes (`hsu_zhuyin_index` 500 = 417 plain + 78
 `ZHUYIN_CORRECT_HSU` + 5 incomplete; `eten26_zhuyin_index` 482 = 417 +
 59 `ZHUYIN_CORRECT_ETEN26` + 6) carry the layout remaps as
@@ -246,7 +261,7 @@ value 9. Unsupported values report `false` and keep the previous scheme
 rather than aborting.
 
 The `zhuyin-dachen-cp26` PR (2026-08-20) adds **DACHEN_CP26 (9)**,
-ported as `ZhuyinDaChenCP26Parser2` (`zhuyin_parser2.cpp:541-844`).
+ported as `ZhuyinDaChenCP26Parser2` (`zhuyin_parser2.cpp:547-852`).
 The parser is constructor-configured — no `set_scheme`, no `m_options`,
 no correction bit — and searches the **global** index. Successful
 parsed keys resolve to plain rows because the repeat-count probe always
@@ -267,7 +282,7 @@ to the lone incomplete ㄍ and consumes 0). Max key length is 12
 rows of a dual cycle by repeat count); the one display-only string is
 the `i` key's extra "ㄧㄚ" in `in_chewing_scheme` — parse produces
 ㄧㄚ only through the `u` triple-tap. The upstream `#if 0`
-partial-input block (`:752-785`) is dead code at the pin and is not
+partial-input block (`:768-792`) is dead code at the pin and is not
 ported. Deferred: STANDARD_DVORAK (the abort slot). The scheme setter
 accepts 1/2/3/4/5/6/8/9. The per-scheme
 PARSE_AUX sweep (runs 1–6, 8) is IDENTICAL for each; the Discrete
@@ -354,3 +369,93 @@ tests use the mini tables' deliberate `xian`/`xi'an` pair — zhuyin
 ㄒㄧㄢ must offer the xian rows only, while bare full-pinyin
 `xian` still enumerates its `xi`+`an` segmentation — plus the `den`
 no-truncation case.
+
+## Freeze record (2026-09-03, proposed — maintainer ruling pending)
+
+Drafted after the Phase 1 audit of this SPEC against the pin, in the
+form the double-pinyin freeze established (2026-09-02, PR #287). The
+maintainer's rulings on the audit (2026-09-03) fixed what goes into the
+freeze and what stays outside it; the status line above is switched to
+**frozen** by the maintainer, not by this record.
+
+- **Every upstream citation was re-verified at the pin `0c5e80e1`**
+  (tag `2.11.91`), read from a fresh clone of libpinyin at that commit
+  — the eight source files were also hashed against the pin's blobs.
+  Scheme enum `pinyin_custom2.h:122-133`; setter `pinyin.cpp:1161-1192`
+  with the out-of-enum abort at `:1188`; parse path `:1582-1609` with the
+  strip at `:1589`; `in_chewing_keyboard` `:1615-1625`; aux text
+  `:3516-3574` and `chewing_key.cpp:74-89`; the parser laws at
+  `zhuyin_parser2.cpp:37/:39` (lengths 4 and 12), `:44-64` and `:71-101`
+  (option gate and index search), `:162-213/:216-268/:272/:301-333`
+  (Simple), `:335-405/:408-460/:462-494/:496-545` (Discrete),
+  `:547-555/:557-571/:573-716/:718-795/:798-852` (CP26, dead block
+  `:768-792`); the post-match `is_valid_zhuyin` stop at `:256-257`,
+  `:448`, `:757` with the table at `chewing_key.cpp:38-45` and
+  `zhuyin_table.h:491`; all 26 keyboard tables at the lines in the
+  Scheme tables section; the indexes at `pinyin_parser_table.h:1492`
+  (1493 = 417 + 1062 + 14), `:2988` (500 = 417 + 78 + 5) and `:3491`
+  (482 = 417 + 59 + 6); the shuffle law (227 × 1 + 167 × 5, every row a
+  non-identity permutation of its canonical spelling); the twelve
+  recovered spellings and their tone masks (`eng` 110000, `nun` 101010,
+  `den`/`zhei` 100010, `nia`/`yai` 101000, `chua` 110100; `din`, `fe`,
+  `kei`, `len`, `rua` and all 14 incomplete rows 000000; `ni` 101110);
+  the HSU/ETEN26 correction-row mappings; the byte-identical
+  `chewing_hsu_dvorak_*` tables; the STANDARD_DVORAK fallthrough
+  `:291-295`. All hold at the pin.
+- **Five audit findings were corrected.** The option-seam paragraph and
+  the `parse.rs` comment it was copied into claimed `ZHUYIN_INCOMPLETE`
+  was the only caller bit consulted and cited `pinyin.cpp:1621` for the
+  strip; both were false at the pin and the claim was the stated reason
+  the pinyin facade forwards one bit instead of the option word. That
+  correction landed first, on its own (dea0880), and the register entry
+  it exposes followed (128076a). Folded into this freeze: the dead-block
+  cite (`:752-785` → `:768-792`), the Discrete `in_chewing_keyboard`
+  overstatement (at most three strings in total, tone mark included),
+  two drifted class ranges, and the Downstream lattice section, which
+  still described the superseded `type_pinyin` shortcut and the
+  pre-W14 sentence gap.
+- **Re-measured for the freeze (2026-09-03).** In the debian-testing
+  gate container (`oxpinyin-validate`, pin-built tkrzw oracle,
+  `pin_ref=libpinyin-2.11.91-0c5e80e1…+model20-59c68e89…+dbm-tkrzw`),
+  `chewing-diff.c` driven against `libpinyin_capi.so` built from this
+  tree and against the oracle, both on full model20 tables compiled by
+  `oxpinyin-datagen`: the full log is byte-identical for all eight
+  keyboards (1 STANDARD 888 lines over the 45-input corpus, 2 HSU 255,
+  3 IBM 206, 4 GINYIEH 206, 5 ETEN 206, 6 ETEN26 268, 8 HSU_DVORAK 255,
+  9 DACHEN_CP26 665) and the runner's `PARSE_AUX_ONLY` filter is
+  identical on each; double scheme 2 re-run as a control, identical.
+  The drivers were run directly with the runner's own arguments and
+  filter because `run-scheme-diff.sh`'s completeness check still
+  requires `.redb` table names while the default build writes `.kct`
+  (a runner defect, flagged separately, not a scheme result). The
+  driver's embedded STANDARD tables are verbatim `zhuyin_table.h:9-58`;
+  its other keyboards' tables are set-identical to the pin, with the
+  GINYIEH and ETEN apostrophe rows relocated — harmless, the lookup is
+  by key.
+- **What is frozen.** The four functions in Scope, the scheme ABI, the
+  parser laws, the tables and indexes, the post-match tone-validity
+  stop, the aux rendering, the index-fidelity rows, and the exact-seam
+  routing — under the option word the standing gate uses
+  (`IS_ZHUYIN | ZHUYIN_INCOMPLETE | USE_TONE`, `chewing-diff.c:53`) and
+  the one-key seam's FORCE_TONE profiles (`run-key-surface-diff.sh`).
+- **What remains provisional.** (1) Tone stays outside the frozen
+  `SyllableKey` vocabulary (the Tone section's decision and its
+  sign-off condition are unchanged). (2) STANDARD_DVORAK (7) stays the
+  abort slot until upstream fixes the fallthrough. (3) The **open
+  implementation item**: the pinyin facade's chewing batch seam does
+  not forward `FORCE_TONE` (register entry "pinyin-facade chewing batch
+  seam does not forward `FORCE_TONE`"); the frozen law for that seam is
+  the pin's — the whole word minus `ZHUYIN_CORRECT_ALL` crosses, with
+  `FORCE_TONE` nested under `USE_TONE` for Simple and CP26 and
+  unconditional for Discrete — the same law the libzhuyin facade
+  already implements. Closing it means the one-line
+  `parse_with_options` forward plus a FORCE_TONE profile in
+  `chewing-diff.c`, and must keep every gate below green.
+- **Standing gates.** `run-scheme-diff.sh bopomofo <k>` for k in
+  1 2 3 4 5 6 8 9 (full log and `SCHEME_DIFF_PARSE_AUX_ONLY=1`) and
+  `run-key-surface-diff.sh` (one-key seam, 2,131 probe lines).
+- **Re-opening condition.** A pin-observed behaviour of the four
+  functions that a gate cannot reproduce under the frozen law, or
+  evidence that the pinned bopomofo candidate surface needs tone in the
+  decoder key (the Tone section's settled-ground clause). Either is a
+  maintainer decision recorded here, not a silent amendment.
