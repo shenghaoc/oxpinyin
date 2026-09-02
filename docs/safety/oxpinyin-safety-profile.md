@@ -123,7 +123,7 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 
 | Activity | Cadence | Scope |
 |---|---|---|
-| fuzz smoke | every PR | parser target only (10s); the four newer targets run in the nightly soak |
+| fuzz smoke | every PR | all five targets built, parser target smoke-run (10s); every target runs in the nightly soak |
 | fuzz soak | nightly | all targets, 10–30 min, corpus committed |
 | ~~Miri~~ | retired 2026-09-01 | — (`docs/findings/verify-nightly.md`) |
 | overflow-checks release test | nightly | `cargo test --release` with `-C overflow-checks -C debug-assertions` |
