@@ -1,7 +1,8 @@
 # verify-nightly failure record
 
 Date: 2026-09-01 · Status: record of the verify-nightly fix stack
-(PR #277 jobs/apt/sweep, PR #278 fuzz import, this PR).
+(PR #277 jobs/apt/sweep, PR #278 fuzz import, PR #279 this record;
+finding 10 added after the merge).
 
 ## Purpose
 
@@ -187,3 +188,56 @@ apt claims inside the image the workflow actually runs, not an adjacent
 suite's index, and record what was observed as a dated snapshot. A
 `podman run debian:testing apt-get install -s` dry run settles the
 snapshot in one command; it does not make the snapshot permanent.
+
+## 10. The merge raced the trailer fix; main carries a malformed trailer block
+
+Timeline (2026-09-02, UTC):
+
+- 11:09 — the rebuilt stack was force-pushed with the review fixes:
+  #277 at `d9ad6f5`, #278 at `fbc0562`, #279 at `81d255b`. #277's
+  amended message appended a second `Assisted-by:` line after the
+  message's trailing newline, leaving a blank line between the two
+  trailers. git's trailer block is the last paragraph only, so the
+  original `Assisted-by: DeepSeek:deepseek-chat` line became body
+  text; `git interpret-trailers --parse` on that commit reports only
+  the Claude line. The commit linter passed: R2 checks the shape of the
+  lines git parses as trailers, and a well-formed line demoted to body
+  text is invisible to it.
+- 11:28 — the maintainer rebase-merged the three PRs from those heads.
+  `main` carries the defect at `14b76ff`; the #279 commit (`b1424a6`)
+  was written correctly, both lines adjacent.
+- 11:31–11:48 — the defect was noticed and fixed by re-amending #277
+  and rebasing the stack, and the rewrites were force-pushed to the
+  three PR branches — after the merge had already happened, unnoticed
+  because merge state was checked before the first push and not before
+  the later ones. Those rewrites never merged; the three PR branches
+  now hold orphaned commits whose content is already on `main`.
+- 11:10 (same session) — dispatching `verify-nightly` on all three
+  branches at once cancelled the middle one: the workflow's
+  concurrency group (`cancel-in-progress: false`) keeps one running and
+  one pending run, and a third dispatch replaces the pending one (run
+  33623225922, cancelled by the #279 dispatch).
+
+Disposition: `main` is not rewritten. `verify-nightly` dispatched on
+`main` at the merged tip `b1424a6` (run 33626570590, 2026-09-02) is the
+first green run of that workflow on `main`; the stack's dispositions
+hold on the merged tree. `14b76ff`'s DeepSeek attribution
+stands in its body, one blank line above the trailer block, and this
+entry is the record of it. The three PR branches are dead and can be
+deleted; nothing on them is missing from `main`.
+
+Lessons, now mechanical:
+
+- A `%B`-dumped message ends in a newline; appending a trailer after it
+  starts a new paragraph. Add trailers with `git interpret-trailers
+  --trailer`, or strip the trailing newline first, and check
+  `git interpret-trailers --parse` before pushing. The linter cannot
+  see a trailer demoted to body text; only the parse can.
+- Check merge state before every push, not only before the first.
+  `git fetch` plus the PR's merged state is a two-second check; a push
+  to a merged PR's branch is wasted at best and misleading at worst
+  (the re-validation runs at the rewritten SHAs were validating commits
+  that could never land).
+- Dispatch a stacked workflow one branch at a time, each after the
+  previous run has started, when the workflow's concurrency group holds
+  a single pending slot.
