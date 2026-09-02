@@ -27,8 +27,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let phrase_index = tool_cli::locate_phrase_index(tool.export_dir.as_deref())?;
-    let lexicon = PhraseLexicon::from_phrase_index(&phrase_index)?;
+    let system_dir = tool_cli::locate_system_dir(tool.export_dir.as_deref())?;
+    let lexicon = PhraseLexicon::from_system_dir(&system_dir)?;
 
     let bytes = tool_cli::read_input(tool.input.as_deref())?;
     let text = std::str::from_utf8(&bytes)?;
@@ -44,7 +44,7 @@ fn print_help() {
         "Usage: oxpinyin-counter [--skip-pi-gram-training] [-o outputfile] [inputfile]\n\
          \n\
          Extra options (not in gen_ngram):\n\
-           --export-dir DIR    system-table export (the phrase_index table) for the freq-1 floor\n\
+           --export-dir DIR    system data directory (the chunk files) for the freq-1 floor\n\
            --skip-pi-gram-training\n\
                                drop sentence-start boundary bigrams\n"
     );

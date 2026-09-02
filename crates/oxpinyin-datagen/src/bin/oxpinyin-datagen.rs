@@ -1,11 +1,19 @@
-//! `oxpinyin-datagen` — compile the pinned model20 text into oxpinyin
-//! runtime tables for one storage backend.
+//! `oxpinyin-datagen` — compile the pinned model20 text into a system data
+//! directory for one storage backend.
 //!
 //! ```text
 //! oxpinyin-datagen compile [--model-dir DIR] [--out-dir DIR]
 //!                          [--backend redb|lmdb|tkrzw|kyotocabinet] [--mini]
 //!                          [--tables system,addon,punct]
 //! ```
+//!
+//! The output is the data directory libpinyin's own build produces —
+//! the sixteen per-library chunk files, `pinyin_index.bin`,
+//! `phrase_index.bin`, `bigram.db`, `punct.bin`, the `addon_*` pair, and
+//! `table.conf` — written through the selected backend. On Kyoto Cabinet
+//! and tkrzw the files carry libpinyin's names and are its drop-in set;
+//! on redb and LMDB the same records live in that backend's container
+//! under `<stem>.<ext>`. The chunk files are backend-independent.
 //!
 //! The model directory is discovered exactly as the differential harness
 //! discovers it (`PINYIN_MODEL_DIR`, `PINYIN_MODEL_CACHE/extracted`, the
@@ -15,7 +23,7 @@
 //! section the engine reads at runtime), and `datagen-manifest.txt` with
 //! the run's provenance.
 //!
-//! `--mini` reproduces the committed `fixtures/w3/` subset — the
+//! `--mini` reproduces the committed `fixtures/w3/<backend>/` subset — the
 //! regression recipe, not a shipping path.
 
 #![forbid(unsafe_code)]
@@ -24,22 +32,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use oxpinyin_datagen::manifest::{Manifest, TableRecord};
-use oxpinyin_datagen::write::Backend;
+use oxpinyin_datagen::write::{Backend, DbmFile};
 use oxpinyin_datagen::{DatagenError, addon, punct, system};
-
-/// The `database format:` token of the emitted `table.conf`, per drop-in
-/// backend — the same string the corresponding libpinyin build writes
-/// (`KyotoCabinet` / `Tkrzw`; the container bytes are identical for both
-/// DBM families, only the token names the build).
-fn database_format_token(backend: Backend) -> &'static str {
-    match backend {
-        Backend::KyotoCabinet => "KyotoCabinet",
-        Backend::Tkrzw => "Tkrzw",
-        // redb/LMDB never emit table.conf (not a drop-in backend), so
-        // this branch is unreachable for them; the token is defensive.
-        _ => "native",
-    }
-}
 
 #[derive(Debug)]
 struct Options {
@@ -155,27 +149,9 @@ fn resolve_model_dir(explicit: Option<&Path>) -> PathBuf {
     }
 }
 
-fn write_table(
-    backend: Backend,
-    out_dir: &Path,
-    base: &str,
-    entries: &oxpinyin_datagen::Entries,
-    manifest: &mut Vec<TableRecord>,
-) {
-    let path = backend.table_path(out_dir, base);
-    backend.write(&path, entries).unwrap_or_else(|e| fail(&e));
-    eprintln!(
-        "  {base}.{}: {} records → {}",
-        backend.extension(),
-        entries.len(),
-        path.display()
-    );
-    let record = Manifest::record_file(
-        &path.file_name().unwrap().to_string_lossy(),
-        &path,
-        entries.len() as u64,
-    )
-    .unwrap_or_else(|e| fail(&e));
+fn record(path: &Path, rows: u64, manifest: &mut Vec<TableRecord>) {
+    let record = Manifest::record_file(&path.file_name().unwrap().to_string_lossy(), path, rows)
+        .unwrap_or_else(|e| fail(&e));
     manifest.push(record);
 }
 
@@ -244,37 +220,25 @@ fn write_interpolation2_1gram(src: &Path, dst: &Path) -> Result<(), DatagenError
     }
 }
 
-/// One libpinyin-schema output file (raw keyspace or hash container).
-fn write_libpinyin_table(
+/// One DBM file: the raw keyspace of a tree container or the hash
+/// container; every row read back before it is reported.
+fn write_dbm(
     backend: Backend,
     out_dir: &Path,
-    file_name: &str,
+    dbm: DbmFile,
     entries: &oxpinyin_datagen::Entries,
-    hash: bool,
     manifest: &mut Vec<TableRecord>,
 ) {
-    let path = out_dir.join(file_name);
-    if hash {
-        backend
-            .write_hash(&path, entries)
-            .unwrap_or_else(|e| fail(&e));
-    } else {
-        backend
-            .write_raw(&path, entries)
-            .unwrap_or_else(|e| fail(&e));
-    }
+    let path = backend
+        .write_dbm(out_dir, dbm, entries)
+        .unwrap_or_else(|e| fail(&e));
     eprintln!(
-        "  {file_name}: {} records → {}",
+        "  {}: {} records → {}",
+        backend.dbm_file_name(dbm),
         entries.len(),
         path.display()
     );
-    let record = Manifest::record_file(
-        &path.file_name().unwrap().to_string_lossy(),
-        &path,
-        entries.len() as u64,
-    )
-    .unwrap_or_else(|e| fail(&e));
-    manifest.push(record);
+    record(&path, entries.len() as u64, manifest);
 }
 
 /// One per-library chunk file (plain bytes, no store container).
@@ -287,13 +251,7 @@ fn write_chunk_file(
     let path = out_dir.join(file_name);
     std::fs::write(&path, bytes).unwrap_or_else(|e| fail(&DatagenError::Io(e)));
     eprintln!("  {file_name}: {} bytes → {}", bytes.len(), path.display());
-    let record = Manifest::record_file(
-        &path.file_name().unwrap().to_string_lossy(),
-        &path,
-        bytes.len() as u64,
-    )
-    .unwrap_or_else(|e| fail(&e));
-    manifest.push(record);
+    record(&path, bytes.len() as u64, manifest);
 }
 
 /// The `table.conf` every libpinyin runtime expects in its data dir
@@ -331,18 +289,16 @@ fn write_table_conf(out_dir: &Path, backend: Backend, manifest: &mut Vec<TableRe
          addon 13 society.table society.bin NULL DICTIONARY\n\
          addon 14 sport.table sport.bin NULL DICTIONARY\n\
          addon 15 technology.table technology.bin NULL DICTIONARY\n",
-        format = database_format_token(backend),
+        format = backend.database_format_token(),
     );
     let path = out_dir.join("table.conf");
     std::fs::write(&path, content).unwrap_or_else(|e| fail(&DatagenError::Io(e)));
     eprintln!("  table.conf → {}", path.display());
-    let record = Manifest::record_file(&path.file_name().unwrap().to_string_lossy(), &path, 1)
-        .unwrap_or_else(|e| fail(&e));
-    manifest.push(record);
+    record(&path, 1, manifest);
 }
 
-/// The `--tables system` half: the three compiled system tables plus the
-/// engine's `interpolation2.text` (1-gram section only).
+/// The `--tables system` half: the chunk files, the two index DBMs,
+/// the bigram, and the `\1-gram` section of `interpolation2.text`.
 fn compile_system(
     backend: Backend,
     mini: bool,
@@ -355,48 +311,9 @@ fn compile_system(
     } else {
         system::Subset::Full
     };
-    // The engine's system dir consumes interpolation2.text directly on
-    // every backend.
-    let target = out_dir.join("interpolation2.text");
-    std::fs::copy(model_dir.join("interpolation2.text"), &target)
-        .unwrap_or_else(|e| fail(&DatagenError::Io(e)));
-    eprintln!("  interpolation2.text → {}", target.display());
-
-    if backend.emits_libpinyin_schema() {
-        let out = system::compile_libpinyin(model_dir, subset).unwrap_or_else(|e| fail(&e));
-        eprintln!(
-            "  system: {} chunk files · {} pinyin rows · {} phrase rows · {} bigram rows",
-            out.chunks.len(),
-            out.pinyin_index.len(),
-            out.phrase_index.len(),
-            out.bigram.len(),
-        );
-        for (file_name, bytes) in &out.chunks {
-            write_chunk_file(out_dir, file_name, bytes, manifest);
-        }
-        write_libpinyin_table(
-            backend,
-            out_dir,
-            "pinyin_index.bin",
-            &out.pinyin_index,
-            false,
-            manifest,
-        );
-        write_libpinyin_table(
-            backend,
-            out_dir,
-            "phrase_index.bin",
-            &out.phrase_index,
-            false,
-            manifest,
-        );
-        write_libpinyin_table(backend, out_dir, "bigram.db", &out.bigram, true, manifest);
-        return;
-    }
-
-    let (tables, stats) = system::compile(model_dir, subset).unwrap_or_else(|e| fail(&e));
+    let (out, stats) = system::compile(model_dir, subset).unwrap_or_else(|e| fail(&e));
     eprintln!(
-        "  system: rows {:+?} · {} index keys · {} phrases · {} bigram entries \
+        "  system: rows {:+?} · {} spellings · {} phrases · {} bigram entries \
          ({} records, {} special tokens)",
         stats.library_rows,
         stats.index_keys,
@@ -405,21 +322,24 @@ fn compile_system(
         stats.bigram_records,
         stats.special_tokens
     );
-    write_table(
+    for (file_name, bytes) in &out.chunks {
+        write_chunk_file(out_dir, file_name, bytes, manifest);
+    }
+    write_dbm(
         backend,
         out_dir,
-        "pinyin_index",
-        &tables.pinyin_index,
+        DbmFile::PinyinIndex,
+        &out.pinyin_index,
         manifest,
     );
-    write_table(
+    write_dbm(
         backend,
         out_dir,
-        "phrase_index",
-        &tables.phrase_index,
+        DbmFile::PhraseIndex,
+        &out.phrase_index,
         manifest,
     );
-    write_table(backend, out_dir, "bigram", &tables.bigram, manifest);
+    write_dbm(backend, out_dir, DbmFile::Bigram, &out.bigram, manifest);
     // The engine reads only the \1-gram section at runtime; emit that section only.
     let target = out_dir.join("interpolation2.text");
     write_interpolation2_1gram(&model_dir.join("interpolation2.text"), &target)
@@ -427,7 +347,8 @@ fn compile_system(
     eprintln!("  interpolation2.text (1-gram only) → {}", target.display());
 }
 
-/// The `--tables addon` half: every add-on library's two tables.
+/// The `--tables addon` half: twelve chunk files and the merged addon DBM
+/// pair (upstream's second `generate_binary_files` run).
 fn compile_addon(
     backend: Backend,
     mini: bool,
@@ -440,73 +361,42 @@ fn compile_addon(
     } else {
         addon::Subset::Full
     };
-    if backend.emits_libpinyin_schema() {
-        // Upstream's second generate_binary_files run: one merged DBM
-        // pair over all twelve libraries plus one chunk file each.
-        let out = addon::compile_libpinyin(model_dir, subset).unwrap_or_else(|e| fail(&e));
-        eprintln!(
-            "  addon: {} chunk files · {} pinyin rows · {} phrase rows",
-            out.chunks.len(),
-            out.pinyin_index.len(),
-            out.phrase_index.len(),
-        );
-        for (file_name, bytes) in &out.chunks {
-            write_chunk_file(out_dir, file_name, bytes, manifest);
-        }
-        write_libpinyin_table(
-            backend,
-            out_dir,
-            "addon_pinyin_index.bin",
-            &out.pinyin_index,
-            false,
-            manifest,
-        );
-        write_libpinyin_table(
-            backend,
-            out_dir,
-            "addon_phrase_index.bin",
-            &out.phrase_index,
-            false,
-            manifest,
-        );
-        return;
+    let out = addon::compile(model_dir, subset).unwrap_or_else(|e| fail(&e));
+    eprintln!(
+        "  addon: {} chunk files · {} pinyin rows · {} phrase rows",
+        out.chunks.len(),
+        out.pinyin_index.len(),
+        out.phrase_index.len(),
+    );
+    for (file_name, bytes) in &out.chunks {
+        write_chunk_file(out_dir, file_name, bytes, manifest);
     }
-    let libraries = addon::compile(model_dir, subset).unwrap_or_else(|e| fail(&e));
-    for library in &libraries {
-        write_table(
-            backend,
-            out_dir,
-            &format!("addon_{}_pinyin_index", library.index),
-            &library.pinyin_index,
-            manifest,
-        );
-        write_table(
-            backend,
-            out_dir,
-            &format!("addon_{}_phrase_index", library.index),
-            &library.phrase_index,
-            manifest,
-        );
-    }
+    write_dbm(
+        backend,
+        out_dir,
+        DbmFile::AddonPinyinIndex,
+        &out.pinyin_index,
+        manifest,
+    );
+    write_dbm(
+        backend,
+        out_dir,
+        DbmFile::AddonPhraseIndex,
+        &out.phrase_index,
+        manifest,
+    );
 }
 
-/// The `--tables punct` half: the full punctuation table (no mini variant;
-/// the frozen fixtures hold the full table).
+/// The `--tables punct` half: the full punctuation table (no mini variant).
 fn compile_punct(
     backend: Backend,
     model_dir: &Path,
     out_dir: &Path,
     manifest: &mut Vec<TableRecord>,
 ) {
-    if backend.emits_libpinyin_schema() {
-        let entries = punct::compile_libpinyin(model_dir).unwrap_or_else(|e| fail(&e));
-        eprintln!("  punct: {} tokens", entries.len());
-        write_libpinyin_table(backend, out_dir, "punct.bin", &entries, false, manifest);
-        return;
-    }
     let entries = punct::compile(model_dir).unwrap_or_else(|e| fail(&e));
     eprintln!("  punct: {} tokens", entries.len());
-    write_table(backend, out_dir, "punct", &entries, manifest);
+    write_dbm(backend, out_dir, DbmFile::Punct, &entries, manifest);
 }
 
 fn main() -> ExitCode {
@@ -529,7 +419,7 @@ fn main() -> ExitCode {
         "compiling model20 from {} → {} (backend {}, mini={})",
         model_dir.display(),
         out_dir.display(),
-        options.backend.extension(),
+        options.backend.feature(),
         options.mini
     );
 
@@ -559,9 +449,7 @@ fn main() -> ExitCode {
         compile_punct(options.backend, &model_dir, &out_dir, &mut manifest);
     }
 
-    if options.backend.emits_libpinyin_schema() {
-        write_table_conf(&out_dir, options.backend, &mut manifest);
-    }
+    write_table_conf(&out_dir, options.backend, &mut manifest);
 
     let manifest = Manifest {
         backend: options.backend,

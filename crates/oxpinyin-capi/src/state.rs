@@ -84,49 +84,21 @@ pub struct CapiContext {
     pub(crate) options: Arc<AtomicU32>,
 }
 
-/// Where [`CapiContext::new`] takes unigram counts from.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UnigramSource {
-    /// Require a parsable `interpolation2.text` next to the system
-    /// tables (the compiled-in backend's `default_store_file` names).
-    RealOnly,
-    /// Test fixtures and the W3 mini tables use export-ABI flat counts.
-    FlatExportForFixtures,
-}
-
 impl CapiContext {
+    /// Opens a context the way `pinyin_init` does: the system data
+    /// directory (a libpinyin install's own on Kyoto Cabinet and tkrzw)
+    /// plus the optional user dir.
     pub(crate) fn new(system_dir: &str, user_dir: &str) -> Option<Self> {
-        Self::new_with_unigrams(system_dir, user_dir, UnigramSource::RealOnly)
-    }
-
-    /// Fixture/test constructor: the W3 mini system dir deliberately has no
-    /// model file, so it opts into the old flat-export behaviour explicitly.
-    pub(crate) fn new_for_fixtures(system_dir: &str, user_dir: &str) -> Option<Self> {
-        Self::new_with_unigrams(system_dir, user_dir, UnigramSource::FlatExportForFixtures)
-    }
-
-    fn new_with_unigrams(
-        system_dir: &str,
-        user_dir: &str,
-        unigram_source: UnigramSource,
-    ) -> Option<Self> {
         if system_dir.is_empty() {
             return None;
         }
 
-        // W8 fork-bootstrap wiring and the fixture split both live in the
-        // shared assembly now: the constructor opens the tables, installs λ
-        // from table.conf when present, fails init on a missing model file
-        // (RealOnly) or derives flat fixture counts, degrades an unusable
-        // user dir to "no learning", and wires addons + punctuation.
+        // W8 fork-bootstrap wiring lives in the shared assembly: the
+        // constructor opens the DBM handles and chunk mappings, installs λ
+        // from table.conf when present, degrades an unusable user dir to
+        // "no learning", and wires addons + punctuation.
         let sys = Path::new(system_dir);
-        let runtime = match unigram_source {
-            UnigramSource::RealOnly => Runtime::open(sys, Some(Path::new(user_dir))),
-            UnigramSource::FlatExportForFixtures => {
-                Runtime::open_fixtures(sys, Some(Path::new(user_dir)))
-            }
-        }
-        .ok()?;
+        let runtime = Runtime::open(sys, Some(Path::new(user_dir))).ok()?;
         let user = runtime.user_store();
         Some(Self {
             config: Config::default(),
@@ -382,11 +354,10 @@ impl CapiContext {
             Some((phrase.text().to_owned(), pinyins))
         } else {
             let dict = self.runtime.as_ref()?.dict();
-            let text = dict.system().phrase_text(token).ok().flatten()?;
+            let text = dict.system().phrase_text(token)?;
             let pinyins: Vec<String> = dict
                 .system()
                 .pronunciations(token)
-                .ok()?
                 .into_iter()
                 .map(|(pinyin, _freq)| pinyin)
                 .collect();

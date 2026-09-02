@@ -148,6 +148,15 @@ mod tests {
         fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
             Ok(self.data.lock().unwrap().get(key).cloned())
         }
+
+        fn walk(
+            &self,
+            _lo: &[u8],
+            _hi: Option<&[u8]>,
+            _visit: &mut crate::chewing_table::RowVisitor<'_>,
+        ) -> Result<(), DictError> {
+            unreachable!("the bigram reader never walks")
+        }
     }
 
     #[test]

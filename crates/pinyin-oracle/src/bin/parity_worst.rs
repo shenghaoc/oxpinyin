@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use oxpinyin_data::{BigramLanguageModel, SystemDictionary, default_store_file};
+use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
 use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use pinyin_oracle::corpus;
 
@@ -33,17 +33,17 @@ struct Row {
 
 fn main() -> ExitCode {
     let dir = Path::new("/tmp/oxpinyin-export");
-    if !dir.join(default_store_file("pinyin_index")).exists() {
+    if !dir.join(SystemDbm::PinyinIndex.file_name()).exists() {
         eprintln!("missing export tables");
         return ExitCode::from(2);
     }
-    let dict = SystemDictionary::open(
-        &dir.join(default_store_file("pinyin_index")),
-        &dir.join(default_store_file("phrase_index")),
+    let dict = SystemDictionary::open(dir).expect("dict");
+    let mut lm = BigramLanguageModel::open(
+        &dir.join(SystemDbm::Bigram.file_name()),
+        std::sync::Arc::clone(dict.libraries()),
     )
-    .expect("dict");
-    let mut lm = BigramLanguageModel::open(&dir.join(default_store_file("bigram"))).expect("lm");
-    lm.set_unigrams_from_dict(&dict);
+    .expect("lm");
+    lm.set_lambda_from_table_conf(&dir.join("table.conf"));
     let mut session =
         Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm).expect("session");
 

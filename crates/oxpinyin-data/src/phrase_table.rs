@@ -19,7 +19,7 @@
 //! See `docs/findings/libpinyin-system-data-formats-2026-09-01.md` §1.1
 //! and `phrase_large_table3_tkrzwdb.cpp`.
 
-use crate::chewing_table::ChewingDbm;
+use crate::chewing_table::{ChewingDbm, prefix_upper_bound};
 use crate::dict::DictError;
 
 // ── Key encoding ─────────────────────────────────────────────────
@@ -127,6 +127,50 @@ impl PhraseTable {
         }
     }
 
+    /// Tokens of every stored phrase that starts with `prefix` and is
+    /// longer — `PhraseLargeTable3::search_suggestion`
+    /// (`phrase_large_table3_kyotodb.cpp` / `_tkrzwdb.cpp`), the
+    /// prediction path's source of longer phrases:
+    ///
+    /// * the prefix itself must be a key (`m_db->check` — empty marker or
+    ///   phrase; absent → `SEARCH_NONE`, nothing);
+    /// * the cursor jumps to the prefix and steps past it, then keeps
+    ///   reading while `phrase_continue_search` holds: the row's key is
+    ///   longer than the prefix and its first `prefix` characters compare
+    ///   equal (`compare_phrase` over the shorter length) — exactly the
+    ///   keys whose bytes extend the prefix's, a contiguous run under the
+    ///   tree's byte order;
+    /// * each row's tokens are appended (`PhraseTableEntry::search`; an
+    ///   empty marker contributes none).
+    ///
+    /// Tokens come back in the DBM's key order — upstream's physical
+    /// bucket walk, which the caller sorts into oxpinyin's defined
+    /// prediction order. Upstream also drops tokens whose library array is
+    /// `NULL` (not loaded); the dictionary applies that when it resolves
+    /// text.
+    pub(crate) fn search_suggestion(&self, prefix: &str) -> Result<Vec<u32>, DictError> {
+        if prefix.is_empty() {
+            return Ok(Vec::new());
+        }
+        let key = encode_ucs4_key(prefix);
+        if self.dbm.get(&key)?.is_none() {
+            return Ok(Vec::new());
+        }
+        let upper = prefix_upper_bound(&key);
+        let mut tokens = Vec::new();
+        self.dbm
+            .walk(&key, upper.as_deref(), &mut |row_key, value| {
+                // The jump lands on the prefix's own row; upstream steps past
+                // it before reading.
+                if row_key.len() <= key.len() || !row_key.starts_with(&key) {
+                    return Ok(());
+                }
+                tokens.extend(decode_tokens(value)?);
+                Ok(())
+            })?;
+        Ok(tokens)
+    }
+
     /// Whether `text` exists as a key (empty or non-empty value).
     ///
     /// Used for the phrase-segment DP's span probe: does this character
@@ -169,6 +213,50 @@ mod tests {
         fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
             Ok(self.data.lock().unwrap().get(key).cloned())
         }
+
+        fn walk(
+            &self,
+            lo: &[u8],
+            hi: Option<&[u8]>,
+            visit: &mut crate::chewing_table::RowVisitor<'_>,
+        ) -> Result<(), DictError> {
+            let data = self.data.lock().unwrap();
+            for (key, value) in data.range(lo.to_vec()..) {
+                if hi.is_some_and(|hi| key.as_slice() >= hi) {
+                    break;
+                }
+                visit(key, value)?;
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn search_suggestion_collects_every_longer_phrase_under_the_prefix() {
+        let dbm = MemoryDbm::new();
+        // 你 is a marker, 你好 / 你们 / 你好吗 are phrases, 好 is a neighbour.
+        dbm.put(encode_ucs4_key("你"), Vec::new());
+        dbm.put(
+            encode_ucs4_key("你好"),
+            encode_tokens(&[0x01000099, 0x02000001]),
+        );
+        dbm.put(encode_ucs4_key("你好吗"), encode_tokens(&[0x03000005]));
+        dbm.put(encode_ucs4_key("你们"), encode_tokens(&[0x01000098]));
+        dbm.put(encode_ucs4_key("好"), encode_tokens(&[0x01000011]));
+        let table = PhraseTable::new(Box::new(dbm));
+        let mut tokens = table.search_suggestion("你").unwrap();
+        tokens.sort_unstable();
+        assert_eq!(tokens, vec![0x01000098, 0x01000099, 0x02000001, 0x03000005]);
+        // The prefix's own tokens are not suggestions.
+        let tokens = table.search_suggestion("你好").unwrap();
+        assert_eq!(tokens, vec![0x03000005]);
+        // A prefix that is no key at all answers nothing, even though
+        // longer phrases would extend it.
+        let dbm = MemoryDbm::new();
+        dbm.put(encode_ucs4_key("你好"), encode_tokens(&[0x01000099]));
+        let table = PhraseTable::new(Box::new(dbm));
+        assert!(table.search_suggestion("你").unwrap().is_empty());
+        assert!(table.search_suggestion("").unwrap().is_empty());
     }
 
     #[test]
