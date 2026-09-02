@@ -21,8 +21,12 @@
 //!   slot; `0` is the no-item sentinel (`add_phrase_item` never stores an
 //!   offset below 8).
 //! * The entry area's first 8 bytes stay zero (`add_phrase_item` bumps a
-//!   zero content size to 8 before the first write); item offsets in the
-//!   offset array are relative to the entry-area start.
+//!   zero content size to 8 before the first write) — **once there is a
+//!   first write**: a library with no items has an empty entry area, so
+//!   its whole payload is the 16-byte header and three separators
+//!   (19 bytes; measured on the pin's own `gen_binary_files` output for
+//!   an empty `.table`). Item offsets in the offset array are relative to
+//!   the entry-area start.
 //! * Each item is `{ u8 phrase_length, u8 n_pronunciations, u32 unigram,
 //!   ucs4_t phrase[L], { ChewingKey u16[L], u32 freq } × n_pronunciations }`
 //!   (`phrase_item_header`, `phrase_index.h:56`; `sizeof(ChewingKey) == 2`).
@@ -45,7 +49,8 @@ const SEPARATOR: u8 = b'#';
 /// the offset array starts (`SubPhraseIndex::store`).
 const INDEX_ONE: u32 = 17;
 /// `add_phrase_item` reserves the first 8 entry-area bytes by bumping a
-/// zero content size to 8; the first real item lives at offset 8.
+/// zero content size to 8 on the first item; the first real item lives at
+/// offset 8, and a library with no items reserves nothing.
 const FIRST_ITEM_OFFSET: u32 = 8;
 
 /// One phrase entry of a library chunk.
@@ -107,7 +112,9 @@ fn checksum(payload: &[u8]) -> u32 {
 /// count above `u8::MAX`), or a total frequency above `u32::MAX`.
 pub fn build_chunk(items: &[(u32, ChunkItem)]) -> Result<Vec<u8>, DatagenError> {
     // ---- validate and serialise the entry area -------------------------
-    let mut content: Vec<u8> = vec![0; usize::try_from(FIRST_ITEM_OFFSET).unwrap_or(0)];
+    // Empty until the first item: `add_phrase_item`'s `if (0 == offset)
+    // offset = 8` only fires when an item is written.
+    let mut content: Vec<u8> = Vec::new();
     let mut offsets: Vec<u32> = Vec::new();
     let mut total_freq: u64 = 0;
     let mut last_slot: Option<u32> = None;
@@ -139,6 +146,9 @@ pub fn build_chunk(items: &[(u32, ChunkItem)]) -> Result<Vec<u8>, DatagenError> 
             )));
         }
 
+        if content.is_empty() {
+            content.resize(usize::try_from(FIRST_ITEM_OFFSET).unwrap_or(0), 0);
+        }
         let offset = u32::try_from(content.len()).map_err(|_| {
             DatagenError::Consistency(format!("chunk slot {slot:#010x} offset overflows u32"))
         })?;
@@ -298,6 +308,37 @@ mod tests {
         let pron = item.pronunciation(0).expect("pronunciation");
         assert_eq!(pron.keys, &[0x11_u8, 0x00, 0x22, 0x00]);
         assert_eq!(pron.freq, 9);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// An empty library is the 16-byte header plus three separators — no
+    /// 8-byte entry-area reservation, because `add_phrase_item` never ran.
+    /// The bytes are the pin's own `gen_binary_files` output for an empty
+    /// `.table` (the toned mini model's `culture.table`).
+    #[test]
+    fn build_chunk_of_no_items_matches_the_pin() {
+        let file = build_chunk(&[]).expect("build");
+        assert_eq!(
+            file,
+            [
+                19, 0, 0, 0, // payload length
+                51, 35, 35, 0, // checksum
+                0, 0, 0, 0, // total_freq
+                17, 0, 0, 0, // index_one
+                18, 0, 0, 0, // index_two: no offset array
+                19, 0, 0, 0, // index_three: no entry area
+                b'#', b'#', b'#'
+            ]
+        );
+        let dir =
+            std::env::temp_dir().join(format!("oxpinyin-chunks-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        let path = dir.join("empty.bin");
+        std::fs::write(&path, &file).expect("write");
+        let lib = oxpinyin_data::phrase_library::PhraseLibrary::open(&path).expect("open");
+        assert_eq!(lib.total_freq(), 0);
+        assert!(lib.item(0x0000_0001).is_none());
+        assert_eq!(lib.items().count(), 0);
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
