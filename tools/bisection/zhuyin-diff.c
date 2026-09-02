@@ -188,8 +188,10 @@ static const char *SYLLABLE_CORPUS[] = {
 
 static void dump_candidates(const struct symbols *s, zhuyin_instance_t *inst) {
     guint n = 0;
-    if (s->get_n_candidate)
-        s->get_n_candidate(inst, &n);
+    if (!s->get_n_candidate(inst, &n)) {
+        printf("n_candidates: FAILED (zhuyin_get_n_candidate returned false)\n");
+        return;
+    }
     printf("n_candidates: %u\n", n);
     /* The full list, not a head prefix: the n-best row-count divergence
      * also shifts the phrase tail (a phrase whose text equals a non-first
@@ -202,9 +204,15 @@ static void dump_candidates(const struct symbols *s, zhuyin_instance_t *inst) {
             continue;
         }
         const gchar *text = NULL;
-        s->get_candidate_string(inst, cand, &text);
+        if (!s->get_candidate_string(inst, cand, &text)) {
+            printf("  candidate[%u]: FAILED (zhuyin_get_candidate_string returned false)\n", k);
+            continue;
+        }
         lookup_candidate_type_t ctype = NORMAL_CANDIDATE_AFTER_CURSOR;
-        s->get_candidate_type(inst, cand, &ctype);
+        if (!s->get_candidate_type(inst, cand, &ctype)) {
+            printf("  candidate[%u]: FAILED (zhuyin_get_candidate_type returned false)\n", k);
+            continue;
+        }
         printf("  candidate[%u]: type=%s text=\"%s\"\n",
                k, ctype_name(ctype), text ? text : "(null)");
     }
@@ -212,10 +220,14 @@ static void dump_candidates(const struct symbols *s, zhuyin_instance_t *inst) {
 
 int main(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "usage: %s <libzhuyin.so> <systemdir> [userdir]\n", argv[0]);
+        fprintf(stderr, "usage: %s <libzhuyin.so> <systemdir> [userdir] [noguess]\n", argv[0]);
+        fprintf(stderr, "       'noguess' also works as the only optional argument\n");
         return 1;
     }
-    const char *user_dir = argc > 3 ? argv[3] : "";
+    /* "noguess" as the first optional argument selects the parse-only
+     * protocol without requiring a user-directory placeholder. */
+    const char *user_dir =
+        (argc > 3 && strcmp(argv[3], "noguess") != 0) ? argv[3] : "";
     resolve_g_free();
     void *handle = dlopen(argv[1], RTLD_NOW);
     if (!handle) {
@@ -257,15 +269,17 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Protocol selection: "noguess" as the 4th argument reproduces the
-     * register's original before(3) measurement shape — parse, then the
-     * lookup battery, with NO zhuyin_guess_sentence in between (the pin's
+    /* Protocol selection: a "noguess" argument — either the only optional
+     * one or the one after the user directory — reproduces the register's
+     * original before(3) measurement shape — parse, then the lookup
+     * battery, with NO zhuyin_guess_sentence in between (the pin's
      * m_nbest_results stays empty, so nothing is prepended). The default
      * protocol guesses a sentence first, which is what a real consumer does
      * and what the standing differential pins. Both protocols are part of
      * the record: docs/findings/upstream-divergences.md publishes them side
      * by side for the before(3) boundary. */
-    bool no_guess = argc > 4 && strcmp(argv[4], "noguess") == 0;
+    bool no_guess = (argc > 3 && strcmp(argv[3], "noguess") == 0)
+        || (argc > 4 && strcmp(argv[4], "noguess") == 0);
 
     for (size_t i = 0; i < sizeof(SYLLABLE_CORPUS) / sizeof(SYLLABLE_CORPUS[0]); i++) {
         const char *input = SYLLABLE_CORPUS[i];
