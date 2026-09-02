@@ -142,6 +142,30 @@ impl DbType {
     }
 }
 
+/// The pointer Kyoto Cabinet may read `bytes.len()` bytes through.
+///
+/// An empty slice must not be handed over as its own `as_ptr()`: a
+/// `Vec<u8>` with no allocation reports Rust's dangling sentinel, the
+/// alignment address `1` — and `(const char*)1` is Kyoto Cabinet's
+/// `Visitor::REMOVE` (`kcdb.h:46`, `DB::Visitor::REMOVE`). The set path
+/// compares the value pointer its visitor returns against that sentinel
+/// (`kcdb.h:62`: "if it is Visitor::REMOVE, the record is removed"), so a
+/// zero-length value passed as address `1` **deletes** the key instead of
+/// storing an empty record — `kcdbset` still returns success. Measured
+/// against Kyoto Cabinet 1.2.80: `kcdbset(k, 2, (char*)1, 0)` leaves no
+/// record and removes an existing one; `kcdbset(k, 2, "", 0)` stores an
+/// empty record. libpinyin's `pinyin_index.bin` / `phrase_index.bin` are
+/// full of empty-value continuation markers, so the raw writer depends on
+/// this. Every byte pointer crossing this boundary goes through here.
+fn c_ptr(bytes: &[u8]) -> *const c_char {
+    static EMPTY: u8 = 0;
+    if bytes.is_empty() {
+        std::ptr::addr_of!(EMPTY).cast::<c_char>()
+    } else {
+        bytes.as_ptr().cast::<c_char>()
+    }
+}
+
 /// An owned region Kyoto Cabinet allocated, released with `kcfree`.
 ///
 /// The whole answer to the buffer-ownership hazard: the region is ours,
@@ -354,14 +378,7 @@ impl Db {
         let mut size = 0_usize;
         // SAFETY: the handle is live and `key` outlives the call. The
         // returned region is ours to release.
-        let raw = unsafe {
-            sys::kcdbget(
-                self.handle,
-                key.as_ptr().cast::<c_char>(),
-                key.len(),
-                &raw mut size,
-            )
-        };
+        let raw = unsafe { sys::kcdbget(self.handle, c_ptr(key), key.len(), &raw mut size) };
         // SAFETY: `raw` is null or a `kcfree`-able region of `size` bytes,
         // which is exactly the constructor's contract.
         match unsafe { Buf::from_raw(raw, size) } {
@@ -377,13 +394,14 @@ impl Db {
             return Err(StoreError::ReadOnly);
         }
         // SAFETY: the handle is live; both slices outlive the call, and
-        // Kyoto Cabinet copies out of them before returning.
+        // Kyoto Cabinet copies out of them before returning. `c_ptr`
+        // keeps an empty value off the `REMOVE` sentinel address.
         let ok = unsafe {
             sys::kcdbset(
                 self.handle,
-                key.as_ptr().cast::<c_char>(),
+                c_ptr(key),
                 key.len(),
-                value.as_ptr().cast::<c_char>(),
+                c_ptr(value),
                 value.len(),
             )
         };
@@ -399,7 +417,7 @@ impl Db {
             return Err(StoreError::ReadOnly);
         }
         // SAFETY: the handle is live and `key` outlives the call.
-        let ok = unsafe { sys::kcdbremove(self.handle, key.as_ptr().cast::<c_char>(), key.len()) };
+        let ok = unsafe { sys::kcdbremove(self.handle, c_ptr(key), key.len()) };
         if ok == 0 && !self.last_was_no_record() {
             return Err(self.error("kcdbremove"));
         }
@@ -513,8 +531,7 @@ impl Cursor<'_> {
     /// there is none.
     pub(crate) fn jump_to(&mut self, key: &[u8]) -> Result<bool, StoreError> {
         // SAFETY: the cursor handle is live and `key` outlives the call.
-        let ok =
-            unsafe { sys::kccurjumpkey(self.handle, key.as_ptr().cast::<c_char>(), key.len()) };
+        let ok = unsafe { sys::kccurjumpkey(self.handle, c_ptr(key), key.len()) };
         if ok != 0 {
             return Ok(true);
         }

@@ -1125,6 +1125,52 @@ mod tests {
                     cleanup(&path);
                 }
 
+                /// An empty value is a stored record, not a delete.
+                ///
+                /// libpinyin's index DBMs are full of zero-length
+                /// continuation markers, so the raw writer depends on this
+                /// on every backend. The values are built from `Vec::new()`
+                /// on purpose: a `Vec<u8>` with no allocation hands its
+                /// `as_ptr()` over as the dangling address `1`, which Kyoto
+                /// Cabinet reads as its `Visitor::REMOVE` sentinel (see
+                /// `kyotocabinet::ffi::c_ptr`); a `b""` literal has a real
+                /// address and never trips it.
+                #[test]
+                fn empty_value_is_a_record() {
+                    let path = temp_path("empty-value");
+                    let store = <$store>::create(&path).unwrap();
+                    let empty: Vec<u8> = Vec::new();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"marker", &empty)?;
+                            txn.put("t", b"full", b"v")?;
+                            txn.put_raw(b"raw-marker", &empty)?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(store.get("t", b"marker").unwrap(), Some(Vec::new()));
+                    assert_eq!(store.get_raw(b"raw-marker").unwrap(), Some(Vec::new()));
+                    // Overwriting a full record with an empty value keeps
+                    // the record; only `remove` deletes.
+                    store
+                        .write(|txn| txn.put("t", b"full", &empty))
+                        .unwrap();
+                    assert_eq!(store.get("t", b"full").unwrap(), Some(Vec::new()));
+                    let mut rows = Vec::new();
+                    store
+                        .for_each("t", &mut |key, value| {
+                            rows.push((key.to_vec(), value.to_vec()));
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(
+                        rows,
+                        vec![(b"full".to_vec(), Vec::new()), (b"marker".to_vec(), Vec::new())]
+                    );
+                    drop(store);
+                    cleanup(&path);
+                }
+
                 #[test]
                 fn write_txn_is_empty() {
                     let path = temp_path("wtxn-empty");
