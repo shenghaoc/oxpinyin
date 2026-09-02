@@ -337,6 +337,36 @@ inputs (the pin-built `.so` SIGABRTs).
   it on either engine. Report-back batch: file with the aux over-read
   as an internal-inconsistency pair, not a bare assert.
 
+### One bigram-prediction row differs on the pin's own data (trellis residual)
+
+- **Where:** `tools/bisection/run-same-data-dir-diff.sh union-diff` on a
+  `--with-dbm=KyotoCabinet` libpinyin install's own `data/` — one line,
+  `pred: type=4 text=你` (a `PREDICTED_BIGRAM_CANDIDATE`), present on
+  oxpinyin's C ABI and not the pin's, after the union differential's
+  train-then-predict sequence for `测测`.
+- **Mechanism:** downstream of the registered n-best trellis divergence
+  (below). The union driver's step 3 chooses an n-best row for
+  `cecenihao` and trains the constrained decode; the first decoded phrase
+  after `测测` differs by the trellis's gfloat-vs-fixed-point residual, so
+  the two engines write `测测 → 你` into the user bigram with counts that
+  straddle `_compute_predicted_bigram_candidates`'s `m_count ≥ 10` filter
+  (`pinyin.cpp:2340-2366`). At that one prefix oxpinyin's trained count
+  clears 10 and the pin's does not, so oxpinyin emits the extra
+  single-character bigram prediction.
+- **Independent of the P6 runtime switch:** the user-store training code
+  (`oxpinyin-user`) is unchanged by P6, and the divergence is stable
+  across the scoring change; the standard `run-union-diff.sh` (oxpinyin on
+  its own generated data vs the pin on its own) stays green, because there
+  the two decodes settle the same way. It surfaces only when oxpinyin
+  reads the pin's exact bytes and the trellis residual tips this filter.
+- **Externally observable:** yes — one predicted-bigram row on this one
+  trained-prediction edge. Not reducible without matching the pin's float
+  trellis bit-for-bit, which the fixed-point decoder deliberately does not
+  (see below). Every other `union-diff` line, and the whole
+  `dict-surface` / `pred-order` / `live-typing` / `nbest-train` /
+  `phrase-surface` / `predict` / `punct` / `addon` / `user-candidate` /
+  `import` / `key-surface` differential, is identical on the pin's data.
+
 ### N-best trellis accumulates gfloat log costs — not reproducible in fixed point, FROZEN as a permanent Stage-1 divergence
 
 - **Upstream source cite:** `src/lookup/phonetic_lookup.h:663, 692`
@@ -371,24 +401,9 @@ inputs (the pin-built `.so` SIGABRTs).
   ordered misses are all trellis-side (0 candidate-surface leaks). The
   candidate surface, which does not share this arithmetic, is
   bit-identical. Recorded as the measured Stage-1 sentence residual in
-  `sentence-surface.md` §12; enumerate with the read-only
+  `sentence-surface.md` §12 (recommended as a permanent divergence; the
+  freeze is the maintainer's call); enumerate with the read-only
   `pinyin-oracle` `sentence-tail` binary.
-- **Status:** FROZEN as a permanent Stage-1 divergence (maintainer ruling
-  2026-09-02; `sentence-surface.md` §12). The residual is one named,
-  understood mechanism — the pin's platform-dependent `gfloat` accumulation
-  against this port's defined fixed-point arithmetic — and bit-exact
-  reproduction is ruled out by constitution item 6, so `488 / 385 / 379` is
-  a recorded constant, not a target of zero. Same disposition as the
-  predicted-candidate tie order (2026-08-25 ruling): upstream deterministic
-  but not reproducibly so. The gate
-  `sentence_surface_matches_the_declared_residual` asserts a defined
-  residual, not a parity target: it holds the frozen numbers and the
-  mechanism invariants (`0` order-only, the `6` distinct-same), and any move
-  is a deliberate re-freeze of §12, never a silent drift. Re-opening
-  condition: a deliberate pin re-freeze that itself accepts platform-locked
-  floating point — which the constitution does not permit for this project —
-  or a measured leak of the residual onto the candidate surface (0 leaks
-  today; the candidate surface is bit-identical).
 
 ### Predicted-candidate tie order is the Tkrzw HashDBM bucket walk
 
@@ -441,11 +456,19 @@ across builds, what the `BTreeMap` walk already yields, reproducible by
 anyone — joining the trellis-float entry as "upstream deterministic but
 not reproducibly so." Two consequences, stated explicitly:
 
-1. oxpinyin **permanently diverges from the pin on list positions**
-   for predicted candidates. The parity number (177/178 on 好,
-   1557/1571 across the eight measurement prefixes — measured after
-   the text-ascending switch) is a recorded constant, not a target
-   of zero.
+1. **Superseded by P6 (2026-09-02).** Once the runtime reads the phrase
+   DBM directly, the suggestion order is reproduced from the *same* file
+   the pin walks: `SystemDictionary::suggest_after` +
+   `resolve_suggestions` (`crates/oxpinyin-data/src/dict.rs`) group the
+   tokens by library nibble ascending (the `reduce_tokens` concatenation)
+   and, within a group, in the DBM's byte-lexical UCS-4 cursor order —
+   exactly `PhraseLargeTable3::search_suggestion`'s walk. On the pin's own
+   KC `data/`, `pred-order-diff` is now **IDENTICAL** (1588 log lines, 0
+   position mismatches), not the text-ascending near-miss below. The
+   text-ascending fallback remains the *defined* order for oxpinyin-native
+   backends (redb/LMDB), whose container is not the pin's; on KC and tkrzw
+   the pin's own order is reproduced because the file is the pin's own.
+   The historical text-ascending decision is kept below for the record.
 2. The pred-order gate therefore **changes meaning**: from a parity
    assertion (drive to zero) to a **defined-order assertion** — the
    emitted list equals its own defined text-ascending order
@@ -664,7 +687,7 @@ Text, candidate type and counts cannot.
   oxpinyin answers. Report-back batch: file with the scheme-setter and
   `_check_offset` assert families.
 
-### FORCE_TONE — scheme-specific: zhuyin batch closed (1671954); double-pinyin batch closed (5ec782ea); pinyin-facade chewing batch open
+### FORCE_TONE — scheme-specific: full-pinyin batch and all one-key seams honour scheme law; zhuyin batch closed (1671954); double-pinyin batch seam remains
 
 - **Upstream source cite:** `src/storage/pinyin_parser2.cpp:412` and
   `:448` (`DoublePinyinParser2::parse_one_key`: `if (options & FORCE_TONE
@@ -708,56 +731,17 @@ Text, candidate type and counts cannot.
   `zhuyin_parser2.cpp:176-180, :373, :387, :602`. Measured: the
   `tools/bisection/zhuyin-diff.c` differential converges on the batch parse.
   This closes the zhuyin batch seam. The double-pinyin batch seam
-  (`pinyin_parse_more_double_pinyins`) was closed subsequently — see the
-  Double-pinyin batch closure amendment below.
-- **Externally observable:** no longer on any seam — the one-key seams,
-  the zhuyin batch seam, and the double-pinyin batch seam all answer
-  identically to the pin under every FORCE_TONE profile (one-key seams:
-  D3 gate; zhuyin batch: 1671954; double-pinyin batch: 5ec782ea). The
-  full-pinyin seam itself matches the pin (capi e2e `parse_termination`
-  module, harness phase-C 0x60 probes closed).
-- **Freeze correction (2026-09-02, historical).** Before the batch
-  closure, the freeze-time observable-shape sentence read as if the batch
-  seam applied the full-pinyin FORCE_TONE law; the batch parser of that
-  time was more precisely option-blind: it ran the tone-less profile
-  whatever the caller's option word (the greedy walk rejected every
-  three-byte key and retried length 2). The divergence was the same in
-  every FORCE_TONE profile — oxpinyin observably less restrictive than
-  the pin (which consumes nothing at all under FORCE_TONE without
-  USE_TONE, and three-byte toned keys under USE_TONE|FORCE_TONE) — but
-  the mechanism was absence of the law, not the full-pinyin law. The
-  frozen SPEC fixed the law; the Double-pinyin batch closure amendment
-  below implemented it.
-- **Double-pinyin batch closure (5ec782ea, 2026-09-02).** The batch
-  double-pinyin `parse` surface (`pinyin_parse_more_double_pinyins`) now
-  honours the frozen SPEC's Tone law: the caller's full option word
-  crosses the seam (the pin's `options = context->m_options`,
-  `src/pinyin.cpp:1543`) and drives `DoublePinyinParser::parse_with_options`
-  — the additive option-word seam the zhuyin batch closure established.
-  `FORCE_TONE` rejects any key that is not exactly three bytes
-  (`pinyin_parser2.cpp:412`); a three-byte key carries its trailing
-  `1`..`5` digit as the tone only under `USE_TONE` (`:439-451`), so
-  FORCE_TONE without USE_TONE consumes nothing at all. The parsed tone
-  rides the key into the exact segments. Measured in the debian-testing
-  gate container against the pinned tkrzw oracle over full model20 KC
-  tables, three evidence sources kept distinct. (1) The new `tonelaw`
-  probe section — the batch FORCE_TONE/USE_TONE profiles over thirteen
-  tone-digit inputs — ran on all six double schemes: the whole scheme
-  differentials are byte-identical on schemes 1, 2, 4, 5, 6, and on
-  scheme 3 every tonelaw line matches too (its one residual is the
-  DEFAULT_FLAGS-section row described below). (2) The eight bopomofo
-  keyboards are byte-identical on the existing chewing corpus, which
-  carries no FORCE_TONE profile — regression coverage for this closure,
-  not FORCE_TONE evidence. (3) The one-key seams keep their own gate:
-  `run-key-surface-diff.sh` stays IDENTICAL over 2,131 probe lines (the
-  D3 sweep, which exercises the FORCE_TONE profiles on the one-key
-  seams). Revert-and-check: the pristine parser diverges from the pin on
-  130 of the new tonelaw lines under the same driver. The one residual
-  in the comparison — scheme 3 (Ziguang) NBEST row 2 on `zhrgguor` (pin
-  宗人光卓然 / oxpinyin 总人光卓然; the 1-best and 2-best rows agree) —
-  is the pre-existing §12 trellis hypothesis-selection class, unchanged
-  by this closure (the same revert-check reproduces it) and first
-  surfaced by the full-model scheme sweep.
+  (`pinyin_parse_more_double_pinyins`) remains open: the
+  `pinyin_parser2.cpp:412` length-3 gate is not yet implemented on that path
+  and belongs with the eventual double-pinyin SPEC freeze.
+- **Externally observable:** on the one-key seams and the zhuyin batch
+  seam, no longer — all answer identically to the pin under every
+  FORCE_TONE profile (one-key seams: D3 gate; zhuyin batch: 1671954).
+  On the double-pinyin batch seam, yes — `pinyin_parse_more_double_pinyins`
+  with FORCE_TONE set produces the full-pinyin behaviour (effective only
+  inside `USE_TONE`) rather than the pin's length-3 gate
+  (`pinyin_parser2.cpp:412`). The full-pinyin seam itself matches the pin
+  (capi e2e `parse_termination` module, harness phase-C 0x60 probes closed).
 
 ### Empty-string phrase lookup SIGFPEs the pin
 
@@ -1306,3 +1290,4 @@ freezes — was never in that enumeration. This entry completes it.
   index items; only the file bytes differ, in two bytes per odd-L value
   record. Class (b): upstream's stored bytes *are* uninitialized memory;
   no safe construction reproduces specific garbage, and none should.
+
