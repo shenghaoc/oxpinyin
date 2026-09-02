@@ -75,7 +75,12 @@ fn run() -> Cli {
 
     // Decode the evaluation corpus against the system phrase index; the
     // model is floored over that index's lexicon, as `make` would.
-    let dictionary = SystemDictionary::open(&pinyin_index, &phrase_index)?;
+    // P6's reader opens the two DBMs plus the per-library chunk files; the
+    // chunk files sit in the same directory as the phrase index.
+    let library_dir = phrase_index
+        .parent()
+        .ok_or("--phrase-index must have a parent directory holding the chunk files")?;
+    let dictionary = SystemDictionary::open_files(&pinyin_index, &phrase_index, library_dir)?;
     let source = SystemPhraseSource::new(&dictionary);
     let model = build_model(&counts, lambda, source.lexicon_tokens());
     let sentences = parse_eval_corpus(&read(&evals)?)?;
