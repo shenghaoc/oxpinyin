@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use oxpinyin_core::{OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_MG_NG, PINYIN_CORRECT_UE_VE};
-use oxpinyin_data::{BigramLanguageModel, SystemDictionary, default_store_file};
+use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
 use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use pinyin_oracle::corpus;
 
@@ -66,9 +66,13 @@ fn export_dir() -> Result<PathBuf, String> {
         || Path::new("/tmp/oxpinyin-export").to_path_buf(),
         PathBuf::from,
     );
-    if ["pinyin_index", "phrase_index", "bigram"]
-        .iter()
-        .all(|stem| dir.join(default_store_file(stem)).exists())
+    if [
+        SystemDbm::PinyinIndex,
+        SystemDbm::PhraseIndex,
+        SystemDbm::Bigram,
+    ]
+    .iter()
+    .all(|dbm| dir.join(dbm.file_name()).exists())
     {
         Ok(dir)
     } else {
@@ -102,21 +106,15 @@ struct TailEnv {
 
 fn open_env() -> Result<TailEnv, String> {
     let dir = export_dir()?;
-    let Ok(Some(model_dir)) = pinyin_oracle::model_cache::locate_model_dir() else {
-        return Err(
-            "model cache absent; set PINYIN_MODEL_DIR to an extracted model20 dir".to_owned(),
-        );
-    };
 
-    let dict = SystemDictionary::open(
-        &dir.join(default_store_file("pinyin_index")),
-        &dir.join(default_store_file("phrase_index")),
+    let dict = SystemDictionary::open(&dir)
+        .map_err(|error| format!("cannot open SystemDictionary: {error}"))?;
+    let mut lm = BigramLanguageModel::open(
+        &dir.join(SystemDbm::Bigram.file_name()),
+        std::sync::Arc::clone(dict.libraries()),
     )
-    .map_err(|error| format!("cannot open SystemDictionary: {error}"))?;
-    let mut lm = BigramLanguageModel::open(&dir.join(default_store_file("bigram")))
-        .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
-    lm.set_unigrams_from_interpolation2(&model_dir.join("interpolation2.text"))
-        .map_err(|error| format!("cannot parse interpolation2: {error}"))?;
+    .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
+    lm.set_lambda_from_table_conf(&dir.join("table.conf"));
     let session = Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm)
         .map_err(|error| format!("cannot create Session: {error}"))?;
     let fixture = load_fixture(&repo_root().join(CANDIDATES_FIXTURE))?;

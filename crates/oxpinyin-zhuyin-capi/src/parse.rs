@@ -239,6 +239,11 @@ pub extern "C" fn zhuyin_in_chewing_keyboard(
         };
         let use_tone = inst.use_tone.load(Ordering::Relaxed);
         let parser = oxpinyin_core::ZhuyinParser::with_scheme(scheme);
+        // `c_char` is `i8` on some targets and `u8` on others (aarch64
+        // Linux among them); `as u8` is a lossless reinterpret on both,
+        // and the cast is not "unnecessary" on the targets where it is
+        // `i8`.
+        #[allow(clippy::unnecessary_cast)]
         let mapped = parser.symbols_for(key as u8, use_tone);
         if mapped.is_empty() {
             if !symbols.is_null() {

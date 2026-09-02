@@ -15,6 +15,7 @@
 //! the predicted flat `+69`, remember-as-index-only, and
 //! `InvalidPhrase` → `false`.
 
+use oxpinyin_core::{LanguageModel, PhraseToken};
 use std::ptr;
 
 use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, UserStore};
@@ -396,26 +397,32 @@ fn empty_user_store_decode_is_identical_across_instances() {
 }
 
 #[test]
-fn populated_store_cheapens_the_trained_candidate() {
+fn populated_store_raises_the_trained_unigram() {
     // Populated-store pin — separate from the empty-store corpus contract.
     // Training sequence (reproducible):
-    //   1. parse "nihao", guess, snapshot costs
+    //   1. parse "nihao", guess, read the trained token's unigram
     //   2. choose candidate 0, pinyin_train once (seed 69, unigram 483)
     //   3. reset, parse "nihao", guess again
-    // The trained token's decoder cost is strictly below its empty-store
-    // cost: the additive merge raised the unigram (empty-history ranking
-    // on the mini fixture, which has no real-frequency construction).
+    // The additive merge raises the token's unigram by exactly the store's
+    // delta — the item field upstream's `add_unigram_frequency` moves and
+    // the pinned candidate law reads — and the trained token stays
+    // offered.
     let user_dir = TempUserDir::new("populated");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
     let first = candidate(instance, "nihao", 0);
     let token = token_of(instance, first);
     let before = phrase_snapshot(instance);
-    let before_cost = before
-        .iter()
-        .find(|(t, _, _)| *t == token)
-        .map(|(_, _, cost)| *cost)
-        .expect("the chosen token is in the empty-store list");
+    assert!(
+        before.iter().any(|(t, _, _)| *t == token),
+        "the chosen token is in the empty-store list"
+    );
+    // SAFETY: live instance immediately after the guess.
+    let lm = unsafe { instance_ref(instance) }.lm.clone();
+    let unigram_before = lm
+        .unigram_freq(&PhraseToken::new(token))
+        .expect("query")
+        .expect("real unigrams");
 
     assert!(pinyin_choose_candidate(instance, 0, first) > 0);
     assert!(pinyin_train(instance, 0));
@@ -424,14 +431,18 @@ fn populated_store_cheapens_the_trained_candidate() {
     assert!(pinyin_reset(instance));
     let _ = candidate(instance, "nihao", 0);
     let after = phrase_snapshot(instance);
-    let after_cost = after
-        .iter()
-        .find(|(t, _, _)| *t == token)
-        .map(|(_, _, cost)| *cost)
-        .expect("the trained token is still offered");
     assert!(
-        after_cost < before_cost,
-        "training must cheapen the trained token: before={before_cost} after={after_cost}"
+        after.iter().any(|(t, _, _)| *t == token),
+        "the trained token is still offered"
+    );
+    let unigram_after = lm
+        .unigram_freq(&PhraseToken::new(token))
+        .expect("query")
+        .expect("real unigrams");
+    assert_eq!(
+        unigram_after - unigram_before,
+        483,
+        "training must raise the trained token's unigram by the store delta"
     );
 
     crate::instance::pinyin_free_instance(instance);
@@ -1359,9 +1370,7 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
 
     // SAFETY: live instance immediately after the guess.
     let inst = unsafe { instance_ref(instance) };
-    let total = inst
-        .lm
-        .amplified_total(inst.dict.system().unigram_records().len() as u64);
+    let total = inst.lm.amplified_total();
     let rows: Vec<(String, usize, u64)> = inst
         .candidates
         .iter()

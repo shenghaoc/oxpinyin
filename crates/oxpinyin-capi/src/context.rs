@@ -4,29 +4,19 @@ use std::os::raw::c_char;
 use std::ptr;
 
 use crate::ffi::{cstr_to_owned_lossy, ffi_catch};
-use crate::state::{CapiContext, UnigramSource, box_context, context_mut};
+use crate::state::{CapiContext, box_context, context_mut};
 // Only the harness-gated fixture hooks below take a shared context ref; the
 // shipped build (--features shipped) does not compile them.
 #[cfg(not(feature = "shipped"))]
 use crate::state::context_ref;
 use crate::types::PinyinContext;
 
-fn init_context(
-    systemdir: *const c_char,
-    userdir: *const c_char,
-    unigram_source: UnigramSource,
-) -> *mut PinyinContext {
+fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut PinyinContext {
     ffi_catch(ptr::null_mut(), || {
         // SAFETY: Both pointers are C strings from the caller (null OK).
         let system_path = cstr_to_owned_lossy(systemdir);
         let user_path = cstr_to_owned_lossy(userdir);
-        let context = match unigram_source {
-            UnigramSource::RealOnly => CapiContext::new(&system_path, &user_path),
-            UnigramSource::FlatExportForFixtures => {
-                CapiContext::new_for_fixtures(&system_path, &user_path)
-            }
-        };
-        context.map_or(ptr::null_mut(), box_context)
+        CapiContext::new(&system_path, &user_path).map_or(ptr::null_mut(), box_context)
     })
 }
 
@@ -37,24 +27,27 @@ fn init_context(
 /// pinyin_context_t * pinyin_init(const char * systemdir, const char * userdir);
 /// ```
 ///
-/// Opens the system dictionary and language model tables from `systemdir`.
-/// Returns NULL when `systemdir` is empty, any table fails to open, or the
-/// system dir has no parsable `interpolation2.text` real-unigram model.
+/// Opens the system data directory from `systemdir` the way libpinyin
+/// does — the pinyin and phrase DBMs, the per-library chunk files,
+/// `bigram.db`, `punct.bin`, the addon DBM pair, λ from `table.conf`.
+/// Returns NULL when `systemdir` is empty or a required file fails to
+/// open.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_init(
     systemdir: *const c_char,
     userdir: *const c_char,
 ) -> *mut PinyinContext {
-    init_context(systemdir, userdir, UnigramSource::RealOnly)
+    init_context(systemdir, userdir)
 }
 
-/// Fixture constructor for tools and Rust tests that drive the W3 mini
-/// tables (no `interpolation2.text`).
+/// Test-tool constructor kept for the Rust suites and C tools that
+/// `dlsym` this name to open the committed `fixtures/w3` mini data set.
+/// It is `pinyin_init` under another name: the mini set is a real
+/// (small) data directory with real counts, so there is no separate
+/// fixture mode any more.
 ///
-/// Not in `pinyin.h` and not part of the W8 51-symbol surface. C tools
-/// `dlsym` this name; the public [`pinyin_init`] path never takes the
-/// flat-export fallback.
-/// Outside the consumer union: compiled out of the shipped artifact
+/// Not in `pinyin.h` and not part of the W8 51-symbol surface. Outside the
+/// consumer union: compiled out of the shipped artifact
 /// (`--features shipped`) so it exports exactly the union, per exception (d)
 /// of `docs/findings/compatibility-policy.md`.
 #[cfg(not(feature = "shipped"))]
@@ -64,7 +57,7 @@ pub extern "C" fn oxpinyin_init_for_fixtures(
     systemdir: *const c_char,
     userdir: *const c_char,
 ) -> *mut PinyinContext {
-    init_context(systemdir, userdir, UnigramSource::FlatExportForFixtures)
+    init_context(systemdir, userdir)
 }
 
 /// Test-only: overwrite a user-bigram successor count by phrase text.
@@ -177,47 +170,32 @@ mod tests {
     use crate::test_support::{TempSystemDir, TempUserDir, cstr};
 
     #[test]
-    fn public_init_refuses_a_system_dir_without_real_unigrams() {
-        let system = TempSystemDir::new("no-interpolation");
-        let user = TempUserDir::new("no-interpolation-user");
+    fn public_init_opens_a_system_data_directory() {
+        let system = TempSystemDir::new("opens");
+        let user = TempUserDir::new("opens-user");
         let context = pinyin_init(
             cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
             cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
         );
-        assert!(
-            context.is_null(),
-            "missing interpolation2.text must fail init"
-        );
-    }
-
-    #[test]
-    fn public_init_refuses_an_unparsable_interpolation2_file() {
-        let system = TempSystemDir::new("bad-interpolation");
-        system.write("interpolation2.text", "not an interpolation model\n");
-        let user = TempUserDir::new("bad-interpolation-user");
-        let context = pinyin_init(
-            cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
-            cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
-        );
-        assert!(
-            context.is_null(),
-            "present-but-unparsable interpolation2.text must fail init"
-        );
-    }
-
-    #[test]
-    fn public_init_loads_a_parsable_interpolation2_file() {
-        let system = TempSystemDir::new("good-interpolation");
-        system.write(
-            "interpolation2.text",
-            "\\data model interpolation\n\\1-gram\n\\item 1 ok count 1\n",
-        );
-        let user = TempUserDir::new("good-interpolation-user");
-        let context = pinyin_init(
-            cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
-            cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
-        );
-        assert!(!context.is_null(), "parsable model file must open");
+        assert!(!context.is_null(), "the fixture data directory must open");
         crate::context::pinyin_fini(context);
+    }
+
+    #[test]
+    fn public_init_refuses_a_directory_without_the_dbms() {
+        let system = TempSystemDir::new("no-dbms");
+        for entry in std::fs::read_dir(&system.path).expect("dir") {
+            let path = entry.expect("entry").path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.starts_with("pinyin_index") {
+                std::fs::remove_file(&path).expect("remove");
+            }
+        }
+        let user = TempUserDir::new("no-dbms-user");
+        let context = pinyin_init(
+            cstr(system.path.to_str().expect("UTF-8 path")).as_ptr(),
+            cstr(user.path.to_str().expect("UTF-8 path")).as_ptr(),
+        );
+        assert!(context.is_null(), "a missing pinyin index must fail init");
     }
 }

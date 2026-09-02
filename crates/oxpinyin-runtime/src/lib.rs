@@ -1,8 +1,14 @@
 //! The concrete engine assembly shared by every oxpinyin consumer.
 //!
-//! Wiring only: this crate loads the converted system tables, installs the
-//! unigram model and λ, opens the optional user store, and hands out
-//! [`Session`]s over the merged backends. The algorithms stay where they
+//! Wiring only: this crate opens a system data directory the way
+//! `pinyin_init` does — the pinyin and phrase DBMs, the per-library
+//! chunk files, `bigram.db`, `punct.bin`, the addon DBM pair, λ from
+//! `table.conf` — installs the optional user store, and hands out
+//! [`Session`]s over the merged backends. On Kyoto Cabinet and tkrzw that
+//! directory is an unmodified libpinyin install's `data/`; on every
+//! backend it is what `oxpinyin-datagen compile` writes. Nothing is
+//! scanned at open: every reader in `oxpinyin-data` is a handle plus a
+//! point read. The algorithms stay where they
 //! belong — decoding/composition in `oxpinyin-engine`, tables and model math
 //! in `oxpinyin-data`, user state in `oxpinyin-user` — and the user-count
 //! overlay arithmetic lives in `oxpinyin-data`'s `*_with_user_delta` methods,
@@ -34,8 +40,8 @@ use oxpinyin_core::{
     SyllableKey, UserCountDelta,
 };
 use oxpinyin_data::{
-    BigramLanguageModel, DictError, InterpolationError, LmError, PunctTable, SystemDictionary,
-    default_store_file,
+    AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
+    SystemDictionary, default_store_file,
 };
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
 use oxpinyin_user::{PinyinKey, UserLookup, UserStore};
@@ -63,17 +69,10 @@ pub enum OpenError {
     /// A required path exists but could not be read, or is not a plain
     /// file.
     Io(PathBuf, std::io::Error),
-    /// The production constructor ran where no `interpolation2.text`
-    /// unigram model sits next to the system tables (whichever backend
-    /// they are in). The pinned three-key candidate ranking needs the
-    /// real frequencies.
-    ModelMissing(PathBuf),
     /// The dictionary tables failed to open or parse.
     Dict(DictError),
     /// The language model failed to open or parse.
     Lm(LmError),
-    /// `interpolation2.text` exists but is unreadable or unparsable.
-    Interpolation(InterpolationError),
     /// The per-key cost table could not be computed from the opened backends.
     KeyCosts(ScoringError),
 }
@@ -83,15 +82,8 @@ impl core::fmt::Display for OpenError {
         match self {
             Self::Missing(path) => write!(f, "missing file: {}", path.display()),
             Self::Io(path, error) => write!(f, "cannot read {}: {error}", path.display()),
-            Self::ModelMissing(path) => write!(
-                f,
-                "no real-unigram model at {} — pass it via the converted \
-                 system dir, or use the fixture-mode constructor",
-                path.display()
-            ),
             Self::Dict(error) => write!(f, "dictionary error: {error}"),
             Self::Lm(error) => write!(f, "language model error: {error}"),
-            Self::Interpolation(error) => write!(f, "unigram model error: {error}"),
             Self::KeyCosts(error) => write!(f, "key-cost table error: {error}"),
         }
     }
@@ -99,32 +91,17 @@ impl core::fmt::Display for OpenError {
 
 impl std::error::Error for OpenError {}
 
-/// Where the language model takes its unigram counts from.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum UnigramSource {
-    /// Require a parsable `interpolation2.text`; absence is an open failure.
-    Real,
-    /// Derive flat unigram counts from the phrase index when
-    /// `interpolation2.text` is absent. Fixture-only semantics: ranking
-    /// degrades off the pinned three-key order.
-    FlatExportForFixtures,
-}
-
 // ── Addon libraries ─────────────────────────────────────────────────────
 
-/// Loaded addon libraries, shared by every session derived from one
-/// runtime.
+/// The addon facade shared by every session derived from one runtime:
+/// the addon DBM pair opened at init (upstream attaches
+/// `addon_pinyin_index.bin` / `addon_phrase_index.bin` in `pinyin_init`)
+/// and the chunk files `pinyin_load_addon_phrase_library` loads.
 struct AddonSet {
-    loaded: BTreeMap<u8, SystemDictionary>,
+    dict: AddonDictionary,
 }
 
 impl AddonSet {
-    const fn new() -> Self {
-        Self {
-            loaded: BTreeMap::new(),
-        }
-    }
-
     /// Drops addon library `index`, if it is loaded.
     ///
     /// The pin's `unload` is unconditional and answers `true` whether or
@@ -132,21 +109,11 @@ impl AddonSet {
     /// `FacadePhraseIndex::unload`), so this reports success the same way
     /// rather than distinguishing the two.
     fn unload(&mut self, index: u8) -> bool {
-        self.loaded.remove(&index);
-        true
+        self.dict.unload(index)
     }
 
     fn load(&mut self, index: u8, system_dir: &Path) -> bool {
-        if self.loaded.contains_key(&index) {
-            return false;
-        }
-        let pinyin = system_dir.join(default_store_file(&format!("addon_{index}_pinyin_index")));
-        let phrase = system_dir.join(default_store_file(&format!("addon_{index}_phrase_index")));
-        let Ok(dict) = SystemDictionary::open(&pinyin, &phrase) else {
-            return false;
-        };
-        self.loaded.insert(index, dict);
-        true
+        self.dict.load(index, system_dir)
     }
 
     fn lookup_into(
@@ -154,82 +121,44 @@ impl AddonSet {
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<(), DictError> {
-        out.clear();
-        if self.loaded.is_empty() {
-            return Ok(());
-        }
-        // `SystemDictionary::lookup_into` replaces its output vec. One
-        // scratch is filled, drained into `out`, and reused so the addon
-        // path never hits the allocating `Dictionary::lookup` default.
-        let mut scratch = Vec::new();
-        for dict in self.loaded.values() {
-            dict.lookup_into(syllables, &mut scratch)?;
-            out.append(&mut scratch);
-        }
-        Ok(())
+        self.dict.lookup_into(syllables, out)
     }
 
     fn prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
-        for dict in self.loaded.values() {
-            if dict.phrase_prefix_exists(syllables)? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        self.dict.prefix_exists(syllables)
     }
 
     fn unigram_freq(&self, token: u32) -> Option<u64> {
-        self.loaded
-            .values()
-            .find_map(|dict| dict.unigram_count(token))
+        self.dict.unigram_freq(token)
     }
 
     fn unigram_total(&self) -> Option<u64> {
-        if self.loaded.is_empty() {
-            return None;
-        }
-        // Saturating, like every other total in this crate: `Iterator::sum`
-        // would wrap on release and panic on debug — a profile-dependent
-        // divergence determinism cannot afford.
-        Some(
-            self.loaded
-                .values()
-                .map(SystemDictionary::unigram_total)
-                .fold(0_u64, u64::saturating_add),
-        )
+        self.dict.unigram_total()
     }
 
     fn is_empty(&self) -> bool {
-        self.loaded.is_empty()
+        self.dict.is_empty()
     }
 
     /// The addon phrase item behind `token`: its text, its pronunciations as
     /// `(key sequence, count)` pairs, and its copied unigram frequency — the
     /// `get_phrase_item` half of the promotion (`pinyin.cpp:2534-2549`).
     ///
-    /// `None` when no loaded addon dictionary owns `token`. A pronunciation
+    /// `None` when no loaded addon library owns `token`. A pronunciation
     /// whose spelling does not map back to syllable keys is dropped, the same
     /// rule the reverse rendering applies.
     fn phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
-        for dict in self.loaded.values() {
-            let Ok(Some(text)) = dict.phrase_text(token) else {
-                continue;
-            };
-            let Ok(prons) = dict.pronunciations(token) else {
-                continue;
-            };
-            let readings = prons
-                .into_iter()
-                .filter_map(|(pinyin, freq)| Some((pinyin_to_keys(&pinyin)?, freq)))
-                .collect();
-            let unigram = dict.unigram_count(token).unwrap_or(0);
-            return Some(AddonPhraseItem {
-                text,
-                readings,
-                unigram,
-            });
-        }
-        None
+        let item = self.dict.phrase_item(token)?;
+        let readings = item
+            .pronunciations
+            .into_iter()
+            .filter_map(|(pinyin, freq)| Some((pinyin_to_keys(&pinyin)?, freq)))
+            .collect();
+        Some(AddonPhraseItem {
+            text: item.text,
+            readings,
+            unigram: item.unigram,
+        })
     }
 }
 
@@ -270,7 +199,8 @@ type LookupCache = Arc<Mutex<Option<(u64, Arc<UserLookup>)>>>;
 
 /// The system dictionary with the user-phrase lookup merged in.
 ///
-/// `SystemDictionary` is not `Clone`, so it rides an `Arc`.
+/// `SystemDictionary` holds DBM handles and mappings, so it rides an
+/// `Arc`.
 #[derive(Clone)]
 pub struct RuntimeDict {
     system: Arc<SystemDictionary>,
@@ -324,10 +254,11 @@ impl RuntimeDict {
     }
 
     /// Punctuation strings registered for `token`, if the punct table
-    /// shipped with the system dir.
+    /// shipped with the system dir — one point read; a malformed value
+    /// answers none, as upstream's `get_all_punctuations` failing does.
     #[must_use]
-    pub fn punctuations(&self, token: u32) -> &[String] {
-        self.punct.punctuations(token)
+    pub fn punctuations(&self, token: u32) -> Vec<String> {
+        self.punct.punctuations(token).unwrap_or_default()
     }
 
     /// Loads addon library `index` from `system_dir`; `false` when already
@@ -483,10 +414,11 @@ impl RuntimeDict {
         addons.unigram_freq(token)
     }
 
-    /// The system table's stored (flat) count for `token` — the fallback
-    /// the token-introspection unigram read uses when the LM's real
-    /// unigram table is not installed (the fixture configuration, whose
-    /// LM is seeded from this same map).
+    /// The system item's stored unigram for `token` —
+    /// `PhraseItem::get_unigram_frequency`, `gen_unigram`'s `+1` included —
+    /// the field the pin's predicted-candidate law reads
+    /// (`pinyin.cpp:1811-1824`). `None` when the token's library is
+    /// unloaded or owns no such item.
     #[must_use]
     pub fn system_unigram_count(&self, token: u32) -> Option<u64> {
         if !self.library_visible_token(token) {
@@ -495,21 +427,13 @@ impl RuntimeDict {
         self.system.unigram_count(token)
     }
 
-    /// The visible item count for the amplified-law denominator:
-    /// `unigram_records` entries whose library is not unloaded. An O(n) scan
-    /// per call is bounded by the table size and only reachable on the
-    /// prediction path.
+    /// The visible item count for the amplified-law denominator: the
+    /// items of every library that is not unloaded. Per-library counts
+    /// are tallied once and cached.
     #[must_use]
     pub fn visible_item_count(&self) -> u64 {
-        if self.library_mask.load(Ordering::SeqCst) == 0 {
-            return self.system.unigram_records().len() as u64;
-        }
         self.system
-            .unigram_records()
-            .iter()
-            .map(|&(token, _)| token)
-            .filter(|&token| self.library_visible(token >> 24))
-            .count() as u64
+            .item_count_where(|nibble| self.library_visible(u32::from(nibble)))
     }
 
     /// The token's library-nibble visibility, for entry-level filters.
@@ -530,8 +454,8 @@ impl RuntimeDict {
                 if !self.library_visible(nibble) {
                     return None;
                 }
-                let text = self.system.phrase_text(token).ok()??;
-                let pronunciations = self.system.pronunciations(token).ok()?;
+                let text = self.system.phrase_text(token)?;
+                let pronunciations = self.system.pronunciations(token);
                 Some(TokenIntrospection {
                     text,
                     // Drop only the pronunciations whose spelling can't
@@ -637,8 +561,9 @@ impl Dictionary for RuntimeDict {
         let mut tokens: Vec<PhraseToken> = self
             .system
             .tokens_for_text(text)
-            .iter()
-            .map(|&token| PhraseToken::new(token))
+            .unwrap_or_default()
+            .into_iter()
+            .map(PhraseToken::new)
             .filter(|token| self.library_visible_token(token.value()))
             .collect();
         if let Ok(lookup) = self.user_lookup() {
@@ -682,10 +607,12 @@ impl Dictionary for RuntimeDict {
     }
 
     fn phrase_index_item_count(&self) -> Result<u64, Self::Error> {
-        // System items only: the parity surface the ranking denominator
-        // reproduces runs an empty user store, where this is the whole
-        // facade. A trained store's user items are not folded in.
-        self.system.phrase_index_item_count()
+        // System items only, of the libraries that are loaded: upstream
+        // frees an unloaded sub-index, so its items leave the facade
+        // count. The parity surface the ranking denominator reproduces
+        // runs an empty user store, where this is the whole facade; a
+        // trained store's user items are not folded in.
+        Ok(self.visible_item_count())
     }
 }
 
@@ -707,18 +634,17 @@ impl RuntimeLm {
             .map_err(|error| LmError::User(error.to_string()))
     }
 
-    /// The phrase-index total the pin's amplified law divides by, as the
-    /// pinned predicted-candidate path constructs it (`pinyin.cpp:1813-1814`,
-    /// live per call): the LM total with user extra (`None` without real
-    /// unigrams → 0) plus the caller's phrase-index item count. Must not be
-    /// snapshotted — training changes it.
+    /// The phrase-index total the pin's amplified law divides by
+    /// (`pinyin.cpp:1813-1814`, `get_phrase_index_total_freq`, live per
+    /// call): the facade's Σ item unigram over the visible libraries, plus
+    /// the user store's extra. Must not be snapshotted — training changes
+    /// it.
     #[must_use]
-    pub fn amplified_total(&self, item_count: u64) -> u64 {
+    pub fn amplified_total(&self) -> u64 {
         <Self as LanguageModel>::unigram_total(self)
             .ok()
             .flatten()
             .unwrap_or(0)
-            .saturating_add(item_count)
     }
 }
 
@@ -874,63 +800,47 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    /// Opens the production configuration: the compiled-in peer
-    /// backend's system tables under `system_dir` (Kyoto Cabinet `.kct`
-    /// under the default features; `.redb`/`.lmdb`/`.tkt` under the
-    /// corresponding `--no-default-features --features <peer>` selection),
-    /// real unigrams from `interpolation2.text` next to them, λ from
-    /// `table.conf` when present, and — when `user_dir` is given — the
-    /// learning store (its creation or read failure degrades to "no user
-    /// state", matching the C ABI so a bad user dir cannot fail init).
+    /// Opens a system data directory the way `pinyin_init` does.
+    ///
+    /// `system_dir` holds the compiled-in backend's DBMs
+    /// (`SystemDbm::file_name` — libpinyin's own names on Kyoto Cabinet
+    /// and tkrzw, `<stem>.<ext>` on redb and LMDB), the per-library chunk
+    /// files, and optionally `table.conf` (λ), `punct.bin`, and the addon
+    /// DBM pair. On Kyoto Cabinet and tkrzw an unmodified libpinyin
+    /// install's `data/` opens as is. When `user_dir` is given, the
+    /// learning store opens too (its creation or read failure degrades to
+    /// "no user state", matching the C ABI so a bad user dir cannot fail
+    /// init).
+    ///
+    /// Nothing is read beyond the handles: the DBMs are opened, the chunk
+    /// files mapped and checksummed, `table.conf` parsed for λ.
     ///
     /// # Errors
     ///
-    /// Returns [`OpenError`] when the system data cannot be opened or the
-    /// unigram model is missing/unparsable.
+    /// Returns [`OpenError`] when a required file is missing or a DBM or
+    /// chunk file cannot be opened.
     pub fn open(system_dir: &Path, user_dir: Option<&Path>) -> Result<Self, OpenError> {
-        Self::open_with_unigrams(system_dir, user_dir, UnigramSource::Real)
-    }
-
-    /// Opens fixture semantics like the committed `fixtures/w3` mini tables:
-    /// flat unigram counts derive from the phrase index when
-    /// `interpolation2.text` is absent. Test/dev surface only — parity with
-    /// the pin is defined for the real-model configuration.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Runtime::open`].
-    pub fn open_fixtures(system_dir: &Path, user_dir: Option<&Path>) -> Result<Self, OpenError> {
-        Self::open_with_unigrams(system_dir, user_dir, UnigramSource::FlatExportForFixtures)
-    }
-
-    fn open_with_unigrams(
-        system_dir: &Path,
-        user_dir: Option<&Path>,
-        source: UnigramSource,
-    ) -> Result<Self, OpenError> {
-        let pinyin_index = system_dir.join(default_store_file("pinyin_index"));
-        let phrase_index = system_dir.join(default_store_file("phrase_index"));
-        let bigram = system_dir.join(default_store_file("bigram"));
+        let pinyin_index = system_dir.join(SystemDbm::PinyinIndex.file_name());
+        let phrase_index = system_dir.join(SystemDbm::PhraseIndex.file_name());
+        let bigram = system_dir.join(SystemDbm::Bigram.file_name());
         require_file(&pinyin_index)?;
         require_file(&phrase_index)?;
         require_file(&bigram)?;
 
-        let dict = SystemDictionary::open(&pinyin_index, &phrase_index).map_err(OpenError::Dict)?;
-        let mut lm = BigramLanguageModel::open(&bigram).map_err(OpenError::Lm)?;
+        let dict = SystemDictionary::open(system_dir).map_err(OpenError::Dict)?;
+        // The loaded-library mask is shared with the language model: an
+        // unloaded library's items leave both the lookups and the unigram
+        // denominator, as freeing the sub-index does upstream.
+        let library_mask = Arc::new(AtomicU32::new(0));
+        let mut lm = BigramLanguageModel::open_with_mask(
+            &bigram,
+            Arc::clone(dict.libraries()),
+            Arc::clone(&library_mask),
+        )
+        .map_err(OpenError::Lm)?;
         // λ rides the install's table.conf when one ships; absent, the
         // pinned default stands.
         lm.set_lambda_from_table_conf(&system_dir.join("table.conf"));
-
-        let interpolation2 = system_dir.join("interpolation2.text");
-        if interpolation2.is_file() {
-            lm.set_unigrams_from_interpolation2(&interpolation2)
-                .map_err(OpenError::Interpolation)?;
-        } else {
-            match source {
-                UnigramSource::Real => return Err(OpenError::ModelMissing(interpolation2)),
-                UnigramSource::FlatExportForFixtures => lm.set_unigrams_from_dict(&dict),
-            }
-        }
 
         // An empty path means no user directory; otherwise an unusable
         // directory must not fail init either — training then refuses,
@@ -939,8 +849,10 @@ impl Runtime {
             .filter(|dir| !dir.as_os_str().is_empty())
             .and_then(|dir| UserStore::open(&dir.join(user_store_file())).ok());
 
-        let addons = Arc::new(RwLock::new(AddonSet::new()));
-        let punct = PunctTable::open_optional(&system_dir.join(default_store_file("punct")));
+        let addons = Arc::new(RwLock::new(AddonSet {
+            dict: AddonDictionary::open(system_dir).map_err(OpenError::Dict)?,
+        }));
+        let punct = PunctTable::open_optional(&system_dir.join(SystemDbm::Punct.file_name()));
 
         let dict = RuntimeDict {
             system: Arc::new(dict),
@@ -950,7 +862,7 @@ impl Runtime {
             punct: Arc::new(punct),
             unigram_overlay: Arc::new(Mutex::new(HashMap::new())),
             unigram_total_delta: Arc::new(AtomicU64::new(0)),
-            library_mask: Arc::new(AtomicU32::new(0)),
+            library_mask,
         };
         let lm = RuntimeLm {
             inner: Arc::new(lm),

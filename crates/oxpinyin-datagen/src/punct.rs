@@ -1,16 +1,7 @@
-//! Punctuation table: `punct.table` text → token-keyed punctuation lists.
-//!
-//! Two value schemas, one read pass (`rows_to_entries` parses the file
-//! once; each serializer encodes it its own way):
-//!
-//! * **native** ([`rows_to_entries`]) — NUL-separated UTF-8, the frozen
-//!   oxpinyin schema for the redb/LMDB producers and the eager
-//!   `PunctTable` reader.
-//! * **libpinyin** ([`rows_to_entries_ucs4`]) — raw UCS-4 stream, each
-//!   punctuation's codepoints followed by a u32 zero terminator, the
-//!   `PunctTableEntry::escape` layout the KC/Tkrzw producers emit and the
-//!   lazy `LazyPunctTable` reader consumes
-//!   (`docs/findings/bigram-punct-format-2026-09-01.md` §2).
+//! Punctuation table: `punct.table` text → token-keyed punctuation lists
+//! in `PunctTableEntry::escape`'s layout (`punct_table.cpp:40-54`): a raw
+//! UCS-4 stream, each punctuation's codepoints followed by a u32 zero
+//! terminator (`docs/findings/bigram-punct-format-2026-09-01.md` §2).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -97,29 +88,12 @@ fn group_rows(rows: &[PunctRow]) -> BTreeMap<u32, Vec<String>> {
     by_token
 }
 
-/// Serialises rows into the native schema: token → NUL-terminated UTF-8
-/// punctuation lists.
-#[must_use]
-pub fn rows_to_entries(rows: &[PunctRow]) -> Entries {
-    group_rows(rows)
-        .into_iter()
-        .map(|(token, puncts)| {
-            let mut value = Vec::new();
-            for punct in puncts {
-                value.extend_from_slice(punct.as_bytes());
-                value.push(0);
-            }
-            (token.to_le_bytes().to_vec(), value)
-        })
-        .collect()
-}
-
-/// Serialises rows into the libpinyin schema (`PunctTableEntry::escape`,
-/// `punct_table.cpp:40-54`): token → raw UCS-4 stream, each punctuation's
+/// Serialises rows into `PunctTableEntry::escape`'s layout
+/// (`punct_table.cpp:40-54`): token → raw UCS-4 stream, each punctuation's
 /// codepoints followed by a u32 zero terminator, successive punctuations
 /// concatenated.
 #[must_use]
-pub fn rows_to_entries_ucs4(rows: &[PunctRow]) -> Entries {
+pub fn rows_to_entries(rows: &[PunctRow]) -> Entries {
     group_rows(rows)
         .into_iter()
         .map(|(token, puncts)| {
@@ -151,22 +125,13 @@ pub fn read_rows(model_dir: &Path) -> Result<Vec<PunctRow>, DatagenError> {
     read_punct_file(&table_path)
 }
 
-/// Compiles `model_dir/punct.table` into the native schema table.
+/// Compiles `model_dir/punct.table` into the `punct.bin` rows.
 ///
 /// # Errors
 ///
 /// Fails when `punct.table` is missing or contains a malformed line.
 pub fn compile(model_dir: &Path) -> Result<Entries, DatagenError> {
     Ok(rows_to_entries(&read_rows(model_dir)?))
-}
-
-/// Compiles `model_dir/punct.table` into the libpinyin schema table.
-///
-/// # Errors
-///
-/// Fails when `punct.table` is missing or contains a malformed line.
-pub fn compile_libpinyin(model_dir: &Path) -> Result<Entries, DatagenError> {
-    Ok(rows_to_entries_ucs4(&read_rows(model_dir)?))
 }
 
 #[cfg(test)]
@@ -188,7 +153,7 @@ mod tests {
             parse_punct_line("16778715 的 ， 275240").unwrap(),
             parse_punct_line("16778715 的 。 214463").unwrap(),
         ];
-        let entries = rows_to_entries_ucs4(&rows);
+        let entries = rows_to_entries(&rows);
         // ， = U+FF0C, 。 = U+3002, each zero-terminated as u32.
         let mut want = Vec::new();
         want.extend_from_slice(&0xFF0C_u32.to_le_bytes());
@@ -208,6 +173,7 @@ mod tests {
         let entries = rows_to_entries(&rows);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, 16_778_715u32.to_le_bytes());
-        assert_eq!(entries[0].1, b"\xef\xbc\x8c\x00\xe3\x80\x82\x00");
+        // ， then 。 once each: the duplicate ， is `g_strv_contains`-skipped.
+        assert_eq!(entries[0].1.len(), 16);
     }
 }

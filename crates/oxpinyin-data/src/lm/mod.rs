@@ -1,10 +1,27 @@
-//! Bigram language model over the verbatim-copied system bigram.
+//! Bigram language model over libpinyin's own `bigram.db` and the phrase
+//! libraries' unigram counts.
 //!
-//! Implements [`oxpinyin_core::LanguageModel`] on the byte format frozen in
-//! `docs/findings/data-layer-export.md`: each key is the previous
-//! `phrase_token_t` as 4 bytes little-endian; each value is a `total: u32`
-//! followed by 8-byte `{next_token: u32, count: u32}` records, with
-//! `total == Σ count`.
+//! Implements [`oxpinyin_core::LanguageModel`] with two lazy sources:
+//!
+//! * the bigram rows — `Bigram::load` per previous token through
+//!   [`BigramTable`] (a point read on the hash container: key
+//!   `phrase_token_t` LE, value `total: u32` + `{next: u32, count: u32}`
+//!   records, `SingleGram`'s layout);
+//! * the unigram counts — `PhraseItem::get_unigram_frequency` on the
+//!   shared [`PhraseLibraries`], the mmap'd chunk items, and
+//!   `FacadePhraseIndex::get_phrase_index_total_freq` for the total.
+//!
+//! Nothing is loaded at open beyond the DBM handle. The unigram the seam
+//! hands out is upstream's item field itself —
+//! `PhraseItem::get_unigram_frequency`, the `\1-gram` count plus the one
+//! `gen_unigram` adds to every item "to avoid zero value when computing
+//! unigram frequency in float format" (`utils/training/gen_unigram.cpp`)
+//! — and the total is `FacadePhraseIndex::get_phrase_index_total_freq`,
+//! `Σ item`. That is the arithmetic every upstream reader of the field
+//! performs (`PinyinLookup2`'s unigram term, `_compute_frequency_of_items`,
+//! `train_result3`): an item the corpus never saw has frequency 1, not 0,
+//! and stays reachable in the trellis. Verified on the pinned model:
+//! `Σ item == Σ \1-gram count + 138,096`.
 //!
 //! Scoring follows the interpolated form frozen in
 //! `docs/findings/scoring-spec.md`:
@@ -15,22 +32,24 @@
 //!
 //! λ is read from the model's `table.conf` ([`crate::table_conf`]); it
 //! defaults to [`crate::table_conf::Lambda::PINNED`] (`0.312699`,
-//! `data-formats.md` §3) when no `table.conf` is available. Unigram counts are
-//! installed from a [`crate::SystemDictionary`]'s aggregated export
-//! frequencies. Without unigrams the model falls back to pure
-//! bigram-or-floor behaviour so the mini-fixture unit tests stay
-//! self-contained.
+//! `data-formats.md` §3) when no `table.conf` is available.
+//!
+//! An unloaded library (`pinyin_unload_phrase_library`) leaves the model
+//! through the shared library mask: its items answer no unigram and its
+//! total leaves the denominator, as freeing the sub-index does upstream.
 
-use std::collections::BTreeMap;
 use std::fmt;
-use std::ops::Range;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use oxpinyin_core::cost::{UNKNOWN_COST, reduce_ratio, surprisal};
 use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta};
 
-use crate::interp::{self, InterpolationError, UnigramTable};
-use crate::table::{self, LeByteKey, TableError};
+use crate::bigram_table::BigramTable;
+use crate::dict::DictError;
+use crate::phrase_libraries::PhraseLibraries;
+use crate::table::TableError;
 use crate::table_conf::Lambda;
 
 /// Error conditions for bigram lookups.
@@ -66,6 +85,16 @@ impl std::error::Error for LmError {
 impl From<TableError> for LmError {
     fn from(e: TableError) -> Self {
         Self::Table(e)
+    }
+}
+
+impl From<DictError> for LmError {
+    fn from(e: DictError) -> Self {
+        match e {
+            DictError::Table(table) => Self::Table(table),
+            DictError::Parse(message) => Self::Parse(message),
+            DictError::Library(library) => Self::Parse(library.to_string()),
+        }
     }
 }
 
@@ -147,8 +176,6 @@ pub fn merge_bigram(
 /// One previous-token row of the system bigram.
 ///
 /// `total` is the stored row total and equals `Σ count` over [`records`].
-/// This is the copied-out shape callers hold: the model itself stores every
-/// row's records in one shared arena ([`BigramLanguageModel::records`]).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BigramRow {
     /// Sum of the successor counts.
@@ -157,33 +184,23 @@ pub struct BigramRow {
     pub records: Vec<(u32, u32)>,
 }
 
-/// One stored row's metadata: its total plus the range of its
-/// `(next_token, count)` records inside the shared arena.
-#[derive(Debug)]
-struct BigramRowMeta {
-    /// Sum of the successor counts.
-    total: u32,
-    /// The row's records inside [`BigramLanguageModel::records`], stored order.
-    records: Range<usize>,
+/// Whether library `nibble` is visible under `mask` (bit `n` set =
+/// library `n` unloaded). `mask == 0` and nibbles outside the u32 bit
+/// range are trivially visible — the same rule the runtime's dictionary
+/// applies.
+#[must_use]
+pub fn library_visible(mask: u32, nibble: u8) -> bool {
+    mask == 0 || nibble >= 32 || mask & (1_u32 << nibble) == 0
 }
 
-/// Bigram language model backed by `bigram.redb`.
+/// Bigram language model over `bigram.db` and the phrase libraries.
 pub struct BigramLanguageModel {
-    /// `(previous token, row)` pairs in ascending [`LeByteKey`] order — the
-    /// order redb's walk yields for the 4-byte LE keys — searched by binary
-    /// search. The append replaces `BTreeMap::insert`'s per-row walk.
-    bigram: Vec<(LeByteKey, BigramRowMeta)>,
-    /// Every `(next_token, count)` record of every row, concatenated in row
-    /// order: one allocation for the whole table instead of one `Vec` per
-    /// row (56,359 rows at the pin export), the `PinyinIndex` arena shape.
-    records: Vec<(u32, u32)>,
-    unigrams: Option<UnigramTable>,
-    unigram_total: u64,
-    /// Whether `unigrams` came from `interpolation2.text`: only the phrase
-    /// index's real counts switch the engine to its pinned construction. The
-    /// export-ABI map (flat 100s) keeps feeding the interpolated cost but is
-    /// never mistaken for real frequencies.
-    real_unigrams: bool,
+    bigram: BigramTable,
+    /// The facade's chunk items — the unigram source.
+    libraries: Arc<PhraseLibraries>,
+    /// The loaded-library mask shared with the dictionary: bit `n` set =
+    /// library `n` unloaded.
+    library_mask: Arc<AtomicU32>,
     /// Bigram/unigram interpolation weight λ, read from the model's
     /// `table.conf` when available and [`Lambda::PINNED`] (`0.312699`,
     /// `data-formats.md` §3) otherwise. Read from config rather than
@@ -192,7 +209,10 @@ pub struct BigramLanguageModel {
 }
 
 impl BigramLanguageModel {
-    /// Opens the bigram model from a redb table file.
+    /// Opens the bigram model: a lazy handle on `bigram_path` (the
+    /// selected backend's hash container — `bigram.db` on Kyoto Cabinet
+    /// and tkrzw) over the facade's `libraries`, with every library
+    /// visible.
     ///
     /// λ defaults to [`Lambda::PINNED`] (`0.312699`, `data-formats.md` §3);
     /// override it from a real install's config with
@@ -200,38 +220,27 @@ impl BigramLanguageModel {
     ///
     /// # Errors
     ///
-    /// Returns [`LmError`] when the model file cannot be opened or fails validation.
-    pub fn open(path: &Path) -> Result<Self, LmError> {
-        let mut bigram: Vec<(LeByteKey, BigramRowMeta)> = Vec::new();
-        let mut records: Vec<(u32, u32)> = Vec::new();
-        table::for_each_row(path, |key, value| {
-            if key.len() != 4 {
-                return Err(LmError::Parse(format!(
-                    "bigram key length {} is not 4",
-                    key.len()
-                )));
-            }
-            let prev = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
-            // Ascending walk order: an append; the order check repairs (and
-            // keeps the last row per key, as insert did) on any other input.
-            let start = records.len();
-            let total = parse_bigram_value(value, &mut records)?;
-            bigram.push((
-                LeByteKey::new(prev),
-                BigramRowMeta {
-                    total,
-                    records: start..records.len(),
-                },
-            ));
-            Ok::<(), LmError>(())
-        })?;
-        table::ensure_sorted_unique(&mut bigram);
+    /// Returns [`LmError`] when the bigram file cannot be opened.
+    pub fn open(bigram_path: &Path, libraries: Arc<PhraseLibraries>) -> Result<Self, LmError> {
+        Self::open_with_mask(bigram_path, libraries, Arc::new(AtomicU32::new(0)))
+    }
+
+    /// [`Self::open`] sharing `library_mask` with the dictionary that
+    /// owns the unload state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LmError`] when the bigram file cannot be opened.
+    pub fn open_with_mask(
+        bigram_path: &Path,
+        libraries: Arc<PhraseLibraries>,
+        library_mask: Arc<AtomicU32>,
+    ) -> Result<Self, LmError> {
+        let bigram = BigramTable::open(bigram_path)?;
         Ok(Self {
             bigram,
-            records,
-            unigrams: None,
-            unigram_total: 0,
-            real_unigrams: false,
+            libraries,
+            library_mask,
             lambda: Lambda::PINNED,
         })
     }
@@ -252,9 +261,8 @@ impl BigramLanguageModel {
     ///
     /// Returns `true` when a `table.conf` with a parsable `lambda parameter:`
     /// line was found and applied; `false` when the file is absent or carries
-    /// no such line, in which case λ is left unchanged (so the
-    /// [`Lambda::PINNED`] default stands for the fetched cache, which ships no
-    /// `table.conf`). Never errors: a missing config is the normal case.
+    /// no such line, in which case λ is left unchanged. Never errors: a
+    /// missing config is the normal case.
     pub fn set_lambda_from_table_conf(&mut self, table_conf_path: &Path) -> bool {
         match crate::table_conf::read_table_conf_lambda(table_conf_path) {
             Some(lambda) => {
@@ -265,93 +273,47 @@ impl BigramLanguageModel {
         }
     }
 
-    /// Installs unigram counts aggregated from a [`crate::SystemDictionary`].
-    ///
-    /// Call after opening both tables and before constructing a
-    /// [`oxpinyin_core::scoring::Scorer`]. Scoring falls back to pure
-    /// bigram-or-floor behaviour when no unigrams have been installed, so the
-    /// fixture-only unit tests remain self-contained. These counts are the
-    /// export ABI's — not the phrase index's real frequencies — and are never
-    /// reported through [`oxpinyin_core::LanguageModel::unigram_freq`].
-    pub fn set_unigrams(&mut self, unigrams: BTreeMap<u32, u64>, total: u64) {
-        self.unigrams = Some(UnigramTable::from_map(unigrams));
-        self.unigram_total = total;
-        self.real_unigrams = false;
+    /// The facade's phrase libraries this model reads unigrams from.
+    #[must_use]
+    pub fn libraries(&self) -> &Arc<PhraseLibraries> {
+        &self.libraries
     }
 
-    /// Installs the phrase index's **real** unigram counts from an
-    /// `interpolation2.text` model export in the fetched model cache.
-    ///
-    /// This replaces the export-ABI counts ([`Self::set_unigrams`],
-    /// [`Self::set_unigrams_from_dict`]), which report a flat `100` for every
-    /// multi-character phrase. The real counts are what the pinned oracle
-    /// ranks candidates by, so parity with its candidate construction requires
-    /// them; without them the model keeps behaving as it did before.
-    ///
-    /// The caller resolves the cache path (`PINYIN_MODEL_DIR` /
-    /// `tools/model/fetch-model.sh`); this crate discovers nothing.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`InterpolationError`] when the file cannot be read or parsed.
-    pub fn set_unigrams_from_interpolation2(
-        &mut self,
-        path: &Path,
-    ) -> Result<(), InterpolationError> {
-        let table = interp::parse_interpolation2(path)?;
-        self.unigram_total = table.total();
-        self.unigrams = Some(table);
-        self.real_unigrams = true;
-        Ok(())
+    fn visible(&self, nibble: u8) -> bool {
+        library_visible(self.library_mask.load(Ordering::SeqCst), nibble)
     }
 
-    /// Convenience: installs unigrams from a dictionary's aggregated map.
-    pub fn set_unigrams_from_dict(&mut self, dict: &crate::SystemDictionary) {
-        self.unigrams = Some(UnigramTable::from_records(dict.unigram_records()));
-        self.unigram_total = dict.unigram_total();
-        self.real_unigrams = false;
-    }
-
-    /// Number of previous-token entries.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LmError`] when the model file cannot be read.
-    pub const fn entry_count(&self) -> Result<u64, LmError> {
-        Ok(self.bigram.len() as u64)
-    }
-
-    /// Whether unigram counts have been installed for interpolation.
+    /// Whether unigram counts are available for interpolation: some
+    /// visible library carries corpus counts.
     #[must_use]
     pub fn has_unigrams(&self) -> bool {
-        self.unigram_total > 0
-            && self
-                .unigrams
-                .as_ref()
-                .is_some_and(|table| !table.is_empty())
+        self.unigram_total() > 0
     }
 
-    /// The installed unigram count of `token`.
+    /// `PhraseItem::get_unigram_frequency` for `token`: the stored item
+    /// field, `gen_unigram`'s `+1` included, so a phrase the n-gram corpus
+    /// never saw answers `Some(1)`.
     ///
-    /// `None` when no unigram table is installed at all; `Some(0)` when a
-    /// table is installed but the phrase index has no such token. A real
-    /// table counts phrases the n-gram corpus never saw as zero rather than
-    /// absent, which is what lets candidate ranking put them last among equal
-    /// keys.
+    /// `None` when the token's library is not loaded or is masked
+    /// (upstream's `get_phrase_item` failing), or owns no such item.
     #[must_use]
     pub fn unigram_count(&self, token: u32) -> Option<u64> {
-        self.unigrams
-            .as_ref()
-            .map(|table| table.count(token).unwrap_or(0))
+        if !self.visible((token >> 24) as u8) {
+            return None;
+        }
+        self.libraries.unigram_count(token)
     }
 
-    /// The sum of the installed unigram counts, `0` when none are installed.
+    /// `FacadePhraseIndex::get_phrase_index_total_freq` over the visible
+    /// libraries: the sum of every item's stored unigram.
     #[must_use]
-    pub const fn unigram_total(&self) -> u64 {
-        self.unigram_total
+    pub fn unigram_total(&self) -> u64 {
+        let mask = self.library_mask.load(Ordering::SeqCst);
+        self.libraries
+            .unigram_total_where(|nibble| library_visible(mask, nibble))
     }
 
-    /// Loads the system-bigram row for `prev`.
+    /// Loads the system-bigram row for `prev` — one point read.
     ///
     /// `None` means `prev` has no entry: the same miss
     /// `PhraseLookup::search_bigram2` treats as "skip this node" (no merged
@@ -361,37 +323,23 @@ impl BigramLanguageModel {
     /// # Errors
     ///
     /// Returns [`LmError`] when the table cannot be read or a value does not
-    /// parse under the frozen schema.
+    /// parse under the stored schema.
     pub fn load_successors(&self, prev: u32) -> Result<Option<BigramRow>, LmError> {
-        Ok(self.row(prev).map(|(total, records)| BigramRow {
-            total,
-            records: records.to_vec(),
-        }))
-    }
-
-    /// The stored row for `prev`: its total plus its `(next_token, count)`
-    /// records borrowed from the arena, or `None` when `prev` has no entry.
-    fn row(&self, prev: u32) -> Option<(u32, &[(u32, u32)])> {
-        let needle = LeByteKey::new(prev);
-        let position = self
-            .bigram
-            .binary_search_by(|(key, _)| key.cmp(&needle))
-            .ok()?;
-        let (_, meta) = &self.bigram[position];
-        Some((meta.total, &self.records[meta.records.clone()]))
+        Ok(self.bigram.load_successors(prev)?)
     }
 
     /// Returns `(count, total)` for the `prev → next` transition, or `None`
     /// when `prev` has no bigram entry.
     fn transition(&self, prev: u32, next: u32) -> Result<Option<(u32, u32)>, LmError> {
-        let Some((total, records)) = self.row(prev) else {
+        let Some(row) = self.load_successors(prev)? else {
             return Ok(None);
         };
-        let count = records
+        let count = row
+            .records
             .iter()
             .find(|(next_token, _)| *next_token == next)
             .map_or(0, |(_, count)| *count);
-        Ok(Some((count, total)))
+        Ok(Some((count, row.total)))
     }
 
     /// System `prev → next` counts with the §5 overlay already merged.
@@ -442,7 +390,7 @@ impl BigramLanguageModel {
             self.unigram_count(token.value()).unwrap_or(0),
             user.unigram_delta,
         );
-        let unigram_total = merge_counts(self.unigram_total, user.unigram_total_delta);
+        let unigram_total = merge_counts(self.unigram_total(), user.unigram_total_delta);
         if unigram == 0 || unigram_total == 0 {
             return Ok(UNKNOWN_COST);
         }
@@ -517,16 +465,15 @@ impl BigramLanguageModel {
         Ok(edge_cost.saturating_add(self.model_cost(history, token, user)?))
     }
 
-    /// Real unigram count of `token` plus a user delta, when a real table
-    /// is installed.
-    ///
-    /// `None` when the model has no real frequency table (same switch as
-    /// [`LanguageModel::unigram_freq`]). `Some(0)` is a miss that the user
-    /// overlay did not raise.
+    /// The item unigram of `token` plus a user delta. `Some(0)` is a token
+    /// with no item that the user overlay did not raise; the chunk items
+    /// are the real frequency table, so this is never `None`.
     #[must_use]
     pub fn unigram_freq_with_user_delta(&self, token: u32, user_delta: u64) -> Option<u64> {
-        self.real_unigrams
-            .then(|| merge_counts(self.unigram_count(token).unwrap_or(0), user_delta))
+        Some(merge_counts(
+            self.unigram_count(token).unwrap_or(0),
+            user_delta,
+        ))
     }
 
     /// [`LanguageModel::nbest_step_costs`] with an explicit §5 user-count
@@ -612,19 +559,16 @@ impl LanguageModel for BigramLanguageModel {
     }
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
-        // Only the interpolation2 table is a real frequency table; the
-        // export-ABI map is a scoring input, not candidate-ranking data.
-        Ok(self
-            .real_unigrams
-            .then(|| self.unigram_count(token.value()).unwrap_or(0)))
+        // The chunk items are the phrase index's real frequency table.
+        Ok(Some(self.unigram_count(token.value()).unwrap_or(0)))
     }
 
     fn has_real_unigrams(&self) -> bool {
-        self.real_unigrams
+        true
     }
 
     fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {
-        Ok(self.real_unigrams.then_some(self.unigram_total))
+        Ok(Some(self.unigram_total()))
     }
 
     fn nbest_step_costs(
@@ -647,25 +591,3 @@ fn ratio_cost((numerator, denominator): (u128, u128)) -> Option<Cost> {
         cost => Some(cost),
     }
 }
-
-/// Parses a bigram value as `(total, [{next_token, count}])`, appending the
-/// records to the shared arena and returning the row total.
-fn parse_bigram_value(data: &[u8], records: &mut Vec<(u32, u32)>) -> Result<u32, LmError> {
-    if data.len() < 4 || !(data.len() - 4).is_multiple_of(8) {
-        return Err(LmError::Parse(format!(
-            "bigram value length {} is not 4 + 8n",
-            data.len()
-        )));
-    }
-    let total = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-    records.extend(data[4..].chunks_exact(8).map(|chunk| {
-        (
-            u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
-            u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
-        )
-    }));
-    Ok(total)
-}
-
-#[cfg(test)]
-mod tests;

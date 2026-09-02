@@ -2323,30 +2323,28 @@ where
     /// to equal keys under that truncation — the tie class
     /// `docs/testing/corpus-tail.md` calls Class A — and equal keys fall to
     /// the collection order the stable sort keeps. `amplified_frequency`
-    /// reproduces the arithmetic bit-for-bit; the `+1` is the shipped
-    /// model20 data identity (every phrase-index item's baked unigram is
-    /// its interpolation2 count + 1; items absent from interpolation2 are
-    /// 1), and the denominator is the index total that follows from it:
-    /// interpolation2 sum + item count.
+    /// reproduces the arithmetic bit-for-bit over the model's own numbers:
+    /// the item's stored unigram (`get_unigram_frequency`, `gen_unigram`'s
+    /// +1 included — a phrase the corpus never saw is 1, never 0) over the
+    /// facade total (`get_phrase_index_total_freq`, Σ item), exactly the
+    /// two reads `_compute_frequency_of_items` performs.
     ///
-    /// `Some(0)` marks a phrase the n-gram corpus never saw: it still sorts,
-    /// last among its equal-length, equal-span peers. Only the first `Some`
-    /// switches the construction on, so a model that mixes per-token answers
-    /// degrades deterministically (missing tokens rank as zero).
+    /// Only the first `Some` switches the construction on, so a model that
+    /// mixes per-token answers degrades deterministically (missing tokens
+    /// rank as zero).
     fn candidate_frequencies(
         &self,
         collected: &[Candidate],
         gram: Option<&MergedGram>,
     ) -> Result<Option<Vec<u64>>, EngineError> {
         let mut frequencies: Option<Vec<u64>> = None;
+        // The facade total, `get_phrase_index_total_freq()`: the sum of
+        // every item's stored unigram (`gen_unigram`'s +1 included).
         let default_total = self
             .model
             .unigram_total()
             .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
-            .unwrap_or(0)
-            .saturating_add(self.dictionary.phrase_index_item_count().map_err(|error| {
-                EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-            })?);
+            .unwrap_or(0);
         let addon_total = self
             .model
             .addon_unigram_total()
@@ -2385,11 +2383,7 @@ where
                             gram,
                             token.value(),
                         );
-                        amplified_frequency_with_bigram(
-                            count.saturating_add(1),
-                            default_total,
-                            bigram,
-                        )
+                        amplified_frequency_with_bigram(count, default_total, bigram)
                     })
             };
             if let Some(count) = count {
@@ -4663,17 +4657,17 @@ mod tests {
         use crate::candidate::Candidate;
 
         // The pin's two amplified branches (`pinyin.cpp:1829-1843` for the
-        // addon, `:1855-1866` for the system): the system branch adds the
-        // model20 +1 and divides by the index total; the addon branch
-        // amplifies its own raw count over the addon facade's total. The
-        // same raw count 14 therefore lands on 3 over 51,051,831 but 6
-        // over the half-size addon total.
+        // addon, `:1855-1866` for the system): both read the item's stored
+        // unigram (a model20 count 13 is stored as 14, `gen_unigram`'s +1)
+        // — the system branch over the default facade's total, the addon
+        // branch over the addon facade's. The same stored 14 therefore
+        // lands on 3 over 51,051,831 but 6 over the half-size addon total.
         let session = Session::new(
             &EmptyConfigSource,
             StoragePaths::new("user"),
             Silent,
             FixedUnigrams {
-                system: 13,
+                system: 14,
                 addon: 14,
                 total: 51_051_831,
                 addon_total: 25_525_916,
@@ -4706,7 +4700,7 @@ mod tests {
         assert_eq!(
             frequencies,
             Some(vec![3, 6]),
-            "system = amplified(13 + 1, 51_051_831) = 3; addon = amplified(14, 25_525_916) = 6"
+            "system = amplified(14, 51_051_831) = 3; addon = amplified(14, 25_525_916) = 6"
         );
     }
 
@@ -4737,7 +4731,7 @@ mod tests {
     #[test]
     fn window_scan_emits_system_candidates_before_addon_candidates() {
         // Two one-character candidates whose three RankKeys tie (length 1,
-        // span 1, amplified 3: system 13 + 1 over 51,051,831; addon 7 over
+        // span 1, amplified 3: system item 14 over 51,051,831; addon 7 over
         // the half-size addon total). The stable sort must therefore keep
         // the scan's flush order — the default facade's batch before the
         // addon facade's, the array order `_append_items`
@@ -4750,7 +4744,7 @@ mod tests {
                 addon: PhraseEntry::new(PhraseToken::new(0x0500_0002), "附".to_owned()),
             },
             FixedUnigrams {
-                system: 13,
+                system: 14,
                 addon: 7,
                 total: 51_051_831,
                 addon_total: 25_525_916,

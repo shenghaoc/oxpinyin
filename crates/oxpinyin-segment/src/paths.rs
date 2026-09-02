@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use oxpinyin_data::default_store_file;
+use oxpinyin_data::SystemDbm;
 
 use crate::error::SegmentError;
 use crate::model::parse_table_conf_lambda;
@@ -24,24 +24,22 @@ pub const EXPORT_DIR_ENV: &str = "PINYIN_EXPORT_DIR";
 /// Default export directory used by the oracle integration tests.
 pub const DEFAULT_EXPORT_DIR: &str = "/tmp/oxpinyin-export";
 
-/// Table stems the segmenter needs from the export directory.
-///
-/// The on-disk names carry the compiled-in peer backend's extension
-/// (`default_store_file` — `.kct` for Kyoto Cabinet, `.redb` for redb,
-/// `.lmdb` for LMDB, `.tkt` for tkrzw).
-pub const EXPORT_STEMS: &[&str] = &["phrase_index", "bigram"];
+/// DBMs the segmenter needs from the system data directory: the phrase
+/// DBM (present in any complete directory; the lexicon itself reads the
+/// chunk files) and the bigram, both under the compiled-in backend's names
+/// (`SystemDbm::file_name`).
+pub const EXPORT_DBMS: &[SystemDbm] = &[SystemDbm::PhraseIndex, SystemDbm::Bigram];
 
 /// Files the segmenter needs from the fetched model20 cache.
 pub const MODEL_FILES: &[&str] = &["interpolation2.text"];
 
-/// Locations of the three tables `Segmenter::open` reads.
+/// Locations `Segmenter::open` reads.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SegmenterPaths {
-    /// The `phrase_index` table, in the compiled-in backend's format,
-    /// from the export directory.
-    pub phrase_index: PathBuf,
-    /// The `bigram` table, in the compiled-in backend's format, from the
-    /// export directory.
+    /// The system data directory (the chunk files the lexicon reads).
+    pub system_dir: PathBuf,
+    /// The system bigram (`bigram.db` on the drop-in backends), in the
+    /// compiled-in backend's container, from the system data directory.
     pub bigram: PathBuf,
     /// `interpolation2.text` from the fetched model20 cache.
     pub interpolation2: PathBuf,
@@ -57,8 +55,8 @@ impl SegmenterPaths {
         let export = locate_export_dir().ok_or_else(|| SegmentError::MissingPath {
             detail: format!(
                 "no export at ${EXPORT_DIR_ENV} or {DEFAULT_EXPORT_DIR}; \
-                 set ${{EXPORT_DIR_ENV}} to an export directory such as \
-                 fixtures/w3/, which holds the committed tables"
+                 set ${{EXPORT_DIR_ENV}} to a system data directory such as \
+                 fixtures/w3/<backend>/, which holds the committed mini set"
             ),
         })?;
         let model = locate_model_dir().ok_or_else(|| SegmentError::MissingPath {
@@ -74,27 +72,27 @@ impl SegmenterPaths {
     #[must_use]
     pub fn from_dirs(export: &Path, model: &Path) -> Self {
         Self {
-            phrase_index: export.join(default_store_file("phrase_index")),
-            bigram: export.join(default_store_file("bigram")),
+            system_dir: export.to_path_buf(),
+            bigram: export.join(SystemDbm::Bigram.file_name()),
             interpolation2: model.join("interpolation2.text"),
         }
     }
 }
 
-/// Locates a complete system-table export directory
-/// (`oxpinyin-datagen compile` output, or the historical export) holding
-/// the tables in the compiled-in backend's format.
+/// Locates a complete system data directory (`oxpinyin-datagen compile`
+/// output, or a libpinyin install's `data/` on the drop-in backends)
+/// holding the DBMs in the compiled-in backend's format.
 #[must_use]
 pub fn locate_export_dir() -> Option<PathBuf> {
     if let Some(raw) = std::env::var_os(EXPORT_DIR_ENV) {
         let path = PathBuf::from(raw);
-        if dir_has_tables(&path, EXPORT_STEMS) {
+        if dir_has_tables(&path, EXPORT_DBMS) {
             return Some(path);
         }
         return None;
     }
     let default = PathBuf::from(DEFAULT_EXPORT_DIR);
-    dir_has_tables(&default, EXPORT_STEMS).then_some(default)
+    dir_has_tables(&default, EXPORT_DBMS).then_some(default)
 }
 
 /// Locates a complete extracted model20 directory.
@@ -134,13 +132,13 @@ fn dir_has(dir: &Path, names: &[&str]) -> bool {
     dir.is_dir() && names.iter().all(|name| dir.join(name).is_file())
 }
 
-/// `dir_has` over table stems: the checked name of each stem is its
-/// compiled-in-backend form (`phrase_index.kct`, `phrase_index.redb`, …).
-fn dir_has_tables(dir: &Path, stems: &[&str]) -> bool {
+/// `dir_has` over DBMs: the checked name of each is its compiled-in
+/// backend's form (`bigram.db` on Kyoto Cabinet and tkrzw, `bigram.redb`,
+/// …).
+fn dir_has_tables(dir: &Path, dbms: &[SystemDbm]) -> bool {
     dir.is_dir()
-        && stems
-            .iter()
-            .all(|stem| dir.join(default_store_file(stem)).is_file())
+        && dir.join("gb_char.bin").is_file()
+        && dbms.iter().all(|dbm| dir.join(dbm.file_name()).is_file())
 }
 
 fn workspace_root() -> Option<PathBuf> {
