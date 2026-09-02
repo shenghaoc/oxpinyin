@@ -8,7 +8,7 @@
 //! syllables, each parsed to a [`SyllableKey`].
 
 use oxpinyin_core::{PhraseToken, SyllableKey};
-use oxpinyin_data::SystemDictionary;
+use oxpinyin_data::{SYSTEM_LIBRARY_FILES, SystemDictionary};
 
 use crate::decode::PhraseSource;
 
@@ -27,7 +27,7 @@ impl<'a> SystemPhraseSource<'a> {
 
 impl PhraseSource for SystemPhraseSource<'_> {
     fn best_keys(&self, token: PhraseToken) -> Option<Vec<SyllableKey>> {
-        let pronunciations = self.dictionary.pronunciations(token.value()).ok()?;
+        let pronunciations = self.dictionary.pronunciations(token.value());
         // The highest-frequency pronunciation; ties keep the earlier one, as
         // `get_possible_pinyin`'s `freq > max_freq` strict test does.
         let best = pronunciations
@@ -37,17 +37,26 @@ impl PhraseSource for SystemPhraseSource<'_> {
     }
 
     fn text(&self, token: PhraseToken) -> Option<String> {
-        self.dictionary.phrase_text(token.value()).ok().flatten()
+        self.dictionary.phrase_text(token.value())
     }
 
     fn lexicon_tokens(&self) -> Vec<PhraseToken> {
-        // Every token of the loaded phrase index (the default tables the pin's
-        // eval loads), aggregated by the dictionary at open.
-        self.dictionary
-            .unigram_records()
-            .iter()
-            .map(|&(token, _)| PhraseToken::new(token))
-            .collect()
+        // Every token of the loaded system phrase index. The lazy dictionary
+        // keeps no aggregated unigram vector, so walk the per-library chunk
+        // files directly — the same library-then-slot order the phrase-index
+        // walk uses.
+        let libraries = self.dictionary.libraries();
+        let mut tokens = Vec::new();
+        for &(nibble, _) in SYSTEM_LIBRARY_FILES {
+            let base = u32::from(nibble) << 24;
+            let Some(library) = libraries.library(base) else {
+                continue;
+            };
+            for (slot, _item) in library.items() {
+                tokens.push(PhraseToken::new(base | slot));
+            }
+        }
+        tokens
     }
 }
 
