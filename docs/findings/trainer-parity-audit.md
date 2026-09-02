@@ -177,8 +177,9 @@ Compatibility ground rules (task §2):
 
 ## 3. Capability matrix (trainer → OXpinyin) — **final (2026-08-31)**
 
-Status key: **done** implemented & tested · **off-path** valid libpinyin
-util the trainer never invokes · **excluded** deliberate non-port (§11).
+Status key: **done** implemented & tested · **off-path** a valid libpinyin
+utility that the trainer never invokes · **excluded** deliberately not
+ported (§11).
 Every capability the main / word-recognition / punctuation pipelines use is
 **done**. Test evidence is in §15's tables; the arithmetic is verified
 line-by-line in `docs/findings/kmm-arithmetic-audit.md`.
@@ -439,13 +440,20 @@ over `deleted_bigram.db`, average λ), writes λ into `table.conf` via
   sentence equals the source; **incorrect** = differs; exactly one nbest
   result asserted; malformed lines `abort`).
 
-So the evaluator is the *decode round-trip* OXpinyin already implements in
-`oxpinyin-engine`. The native evaluator (task §7): build an isolated model
-from the candidate `interpolation2.text` + system tables (no `make`, no
-libpinyin install), reuse the engine's Viterbi for the best match, and
-report the same rate. λ is computed by reusing `oxpinyin-lambda`'s EM over
-the KMM-storage-derived counts (the deleted model), not by the off-path
-legacy counter.
+So the evaluator is a *decode round-trip*. The native evaluator (task §7):
+build an isolated model from the candidate `interpolation2.text` + the
+system lexicon — every phrase-index token at count + 1, the floor
+`evaluate.py`'s `make` applies through `gen_unigram` — with no `make` and
+no libpinyin install, decode with a term-for-term port of
+`PhoneticLookup<1,1>::get_nbest_match` (beam of 32, bigram before unigram
+expansion, `log((λ·P_bi + (1 − λ)·P_uni) · P_pron)` at the pin's float
+widths), and report the same rate. It does **not** reuse the engine's
+typing `Scorer`: that ranks with segmentation penalties and phrase bonuses
+that are not the pin's probabilities, and the live `eval_correction_rate`
+gate measured the difference (`0.52` vs the pin's `0.88`; identical after
+the port — `trainer-replacement-report.md`). λ is computed by reusing
+`oxpinyin-lambda`'s EM over the KMM-storage-derived counts (the deleted
+model), not by the off-path legacy counter.
 
 ---
 
@@ -696,7 +704,7 @@ implemented natively in Rust. Each part is an independently-reviewable commit:
 | B | `spseg` (fewest-words DP), `mergeseq` (phrase merge) | `oxpinyin-segment` (`spseg`, `mergeseq`, two CLIs) | toy unit + committed-golden differential (W3 table, CI-always) + env-gated live cross-check |
 | C+D | full KMM pipeline — data model, generate, estimate, merge, validate, prune, export/import, →interpolation | `oxpinyin-kmm` (self-contained, one CLI, 8 subcommands) | per-op unit + hand-verified golden + merge-equals-combined + end-to-end from the real segmented corpus + **semantic-parity golden + env-gated oracle differential** (`tests/differential.rs`) |
 | C+D audit | line-by-line arithmetic verification vs the six KMM sources | `docs/findings/kmm-arithmetic-audit.md` | term-for-term tables + divergence register (four-class) |
-| E | evaluator — `estimate_interpolation` λ over KMM-derived counts + `eval_correction_rate` decode round-trip, native runtime model, no `make`/libpinyin | `oxpinyin-eval` (`oxpinyin-eval` CLI) | hand-computable homophone fixture + full-flow integration + env-gated `eval_correction_rate` differential |
+| E | evaluator — `estimate_interpolation` λ over KMM-derived counts + `eval_correction_rate` decode round-trip, native runtime model, no `make`/libpinyin | `oxpinyin-eval` (`oxpinyin-eval` CLI) | hand-computable homophone fixture + full-flow integration + **live `eval_correction_rate` differential (`0.880000` == pin, 25 sentences)** |
 | G | punctuation table (`genpunct.py`) | `oxpinyin-punct` (count/merge CLI) | per-stage unit + two-stage golden (segmented → puncts.table) |
 | F | word recognition — populate, partial-word discovery + cross-order merge, new-word entropy filtering, pinyin marking | `oxpinyin-word` (`recognize` CLI) | per-stage unit (incl. the `partition` merge walk) + hand-traced end-to-end golden (→ recognized word + pinyin) |
 | H (core) | end-to-end main pipeline on real committed data (segment → KMM → interpolation2.text) | `oxpinyin-kmm` integration test over the committed `spseg` fixture | passes on CI |
