@@ -291,13 +291,24 @@ fn write_raw_corpus(temp: &TempDir) {
     write(&text_dir.join("c.text"), "中国\n中国中国\n");
 }
 
+const CORPUS_INDEX: &str = "doc a#/a.text\ndoc b#/b.text\ndoc c#/c.text\n";
+
 /// Full setup + run against the workspace under `temp`, into `try<tryname>`.
 /// Everything the run borrows is constructed here, so nothing escapes.
 fn run_full(
     temp: &TempDir,
     tryname: &str,
 ) -> Result<oxpinyin_train::TrainOutcome, oxpinyin_train::TrainError> {
-    let index = CorpusIndex::parse("doc a#/a.text\ndoc b#/b.text\ndoc c#/c.text\n").expect("index");
+    run_full_with_index(temp, tryname, CORPUS_INDEX)
+}
+
+/// [`run_full`] over an explicit corpus index text.
+fn run_full_with_index(
+    temp: &TempDir,
+    tryname: &str,
+    index_text: &str,
+) -> Result<oxpinyin_train::TrainOutcome, oxpinyin_train::TrainError> {
+    let index = CorpusIndex::parse(index_text).expect("index");
     let mut scoring_deleted = KMixtureModel::new();
     scoring_deleted
         .add_document(HELD_OUT, GenerateParams::default())
@@ -372,6 +383,78 @@ fn a_status_with_a_newer_epoch_is_rejected_not_silently_resumed() {
 }
 
 #[test]
+fn a_newer_epoch_in_the_index_status_is_rejected() {
+    let temp = TempDir::new("resume-epoch-index");
+    write_raw_corpus(&temp);
+    run_full(&temp, "1").expect("first run");
+
+    // models/corpus.index.status stamped by a newer trainer at Estimate: the
+    // generate stage meets it first and must refuse it rather than rewrite it.
+    write(
+        &temp.path.join("models/corpus.index.status"),
+        "{\"GenerateEpoch\": 1, \"EstimateEpoch\": 2}",
+    );
+    let error = run_full(&temp, "2").expect_err("must reject a newer index epoch");
+    assert!(
+        matches!(
+            error,
+            oxpinyin_train::TrainError::EpochTooNew {
+                stage: "Estimate",
+                found: 2,
+                known: 1
+            }
+        ),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn a_newer_epoch_in_the_final_status_is_rejected() {
+    let temp = TempDir::new("resume-epoch-final");
+    write_raw_corpus(&temp);
+    run_full(&temp, "1").expect("first run");
+
+    // finals/try1/cwd.status stamped by a newer trainer at Evaluate; the same
+    // try name is reused so the prune stage meets the file before it would
+    // overwrite it.
+    write(
+        &temp.path.join("finals/try1/cwd.status"),
+        "{\"PruneEpoch\": 1, \"EvaluateEpoch\": 2}",
+    );
+    let error = run_full(&temp, "1").expect_err("must reject a newer final epoch");
+    assert!(
+        matches!(
+            error,
+            oxpinyin_train::TrainError::EpochTooNew {
+                stage: "Evaluate",
+                found: 2,
+                known: 1
+            }
+        ),
+        "got {error:?}"
+    );
+}
+
+#[test]
+fn resume_regenerates_when_the_corpus_index_grew() {
+    let temp = TempDir::new("resume-grow");
+    write_raw_corpus(&temp);
+    let first = run_full(&temp, "1").expect("first run");
+
+    // A document appended to the index after a signed Generate must be
+    // generated, not silently dropped by reloading the old candidates.
+    write(&temp.path.join("texts/d.text"), "中国中国\n");
+    let grown = format!("{CORPUS_INDEX}doc d#/d.text\n");
+    let second = run_full_with_index(&temp, "2", &grown).expect("second run");
+    assert_eq!(
+        second.candidate_count,
+        first.candidate_count + 1,
+        "the appended document forms its own candidate under the test config"
+    );
+    assert!(temp.path.join("models/model-candidates-3.db").is_file());
+}
+
+#[test]
 fn a_malformed_status_is_an_error_not_a_panic() {
     let temp = TempDir::new("resume-malformed");
     write_raw_corpus(&temp);
@@ -427,8 +510,10 @@ fn generate_skips_documents_below_the_minimum_file_size() {
         candidate_model_size: 1_000_000,
         ..TrainConfig::default()
     };
-    // doc0 size 3 < 5 → skipped; doc1 size 6 ≥ 5 → kept. One candidate over the
-    // kept document only, covering [1,2) (index 0 skipped, not covered).
+    // doc0 size 3 < 5 → skipped; doc1 size 6 ≥ 5 → kept. The candidate holds
+    // only the kept document, but the window spans every document considered
+    // (`GenerateStart`/`GenerateEnd` are index positions, not kept counts), so
+    // the range is [0,2), not [1,2).
     let docs = [doc(3), doc(6)];
     let candidates = generate_candidates(&config, &docs).expect("generate");
     assert_eq!(candidates.len(), 1);

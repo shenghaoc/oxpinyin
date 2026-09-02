@@ -338,8 +338,9 @@ pub struct EvalOutcome {
 ///
 /// # Errors
 ///
-/// Returns [`TrainError::Eval`] when λ cannot be estimated or the corpus is
-/// malformed.
+/// Returns [`TrainError::Eval`] when λ cannot be estimated, the corpus is
+/// malformed, or no sentence was evaluated — a `0.0` rate from an empty
+/// corpus would be indistinguishable from a model that decoded nothing.
 pub fn evaluate_model<D, P>(
     interpolation2: &str,
     deleted: &DeletedCounts,
@@ -366,6 +367,11 @@ where
             detail: error.to_string(),
         }
     })?;
+    if report.tested == 0 {
+        return Err(TrainError::Eval {
+            detail: "evaluation corpus has no usable sentences".to_owned(),
+        });
+    }
     Ok(EvalOutcome {
         average_lambda: lambda,
         report,

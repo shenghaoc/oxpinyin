@@ -170,12 +170,20 @@ impl Status {
     }
 
     /// Writes the status file (`store_status`: `json.dumps` of the flat dict).
+    /// The bytes go to a temporary sibling that is then renamed over the
+    /// target (atomic within one directory), so an interruption mid-write
+    /// leaves the previous status intact instead of a truncated file the
+    /// next run would refuse as malformed.
     ///
     /// # Errors
     ///
-    /// Returns [`TrainError::Io`] when the file cannot be written.
+    /// Returns [`TrainError::Io`] when the file cannot be written or renamed.
     pub fn store(&self, path: &Path) -> Result<(), TrainError> {
-        std::fs::write(path, self.to_json()).map_err(|error| TrainError::io(path, error))
+        let mut temp = path.as_os_str().to_owned();
+        temp.push(".tmp");
+        let temp = PathBuf::from(temp);
+        std::fs::write(&temp, self.to_json()).map_err(|error| TrainError::io(&temp, error))?;
+        std::fs::rename(&temp, path).map_err(|error| TrainError::io(path, error))
     }
 
     /// The status path for a base file (`<file><STATUS_POSTFIX>`).

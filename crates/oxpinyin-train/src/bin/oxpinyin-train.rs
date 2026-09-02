@@ -73,12 +73,18 @@ fn run() -> Cli {
 
     let mut config = TrainConfig::default();
     if let Some(merge) = args.merge {
+        if merge == 0 {
+            return Err("--merge must be at least 1 (0 would select no candidate)".into());
+        }
         config.merge_number = merge;
     }
     if let Some(k) = args.prune_k {
         config.prune_k = k;
     }
     if let Some(cdf) = args.cdf {
+        if !cdf.is_finite() || !(0.0..=1.0).contains(&cdf) {
+            return Err(format!("--CDF must be finite and in [0, 1], got {cdf}").into());
+        }
         config.prune_cdf = cdf;
     }
     if args.skip_pi_gram {
@@ -146,6 +152,9 @@ fn run() -> Cli {
 
 /// Builds the segmenter from explicit `--phrase-index`/`--bigram`/
 /// `--interpolation2` when all three are given, else from discovery.
+/// `--phrase-index` alone is legitimate (the evaluation dictionary needs
+/// it); `--bigram` or `--interpolation2` without the full triple is an
+/// error rather than a silent fall-back to a discovered model.
 fn build_segmenter(args: &Args) -> Cli<Segmenter> {
     let lambda = load_lambda(args.table_conf.as_deref()).unwrap_or(PINNED_LAMBDA);
     match (&args.phrase_index, &args.bigram, &args.interpolation2) {
@@ -157,7 +166,14 @@ fn build_segmenter(args: &Args) -> Cli<Segmenter> {
             };
             Ok(Segmenter::open(&paths, lambda)?)
         }
-        _ => Ok(Segmenter::discover(args.table_conf.as_deref())?),
+        _ => {
+            if args.bigram.is_some() || args.interpolation2.is_some() {
+                return Err(
+                    "--phrase-index, --bigram, and --interpolation2 must be given together".into(),
+                );
+            }
+            Ok(Segmenter::discover(args.table_conf.as_deref())?)
+        }
     }
 }
 
