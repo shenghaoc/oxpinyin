@@ -78,14 +78,17 @@ Five stages:
 Two disjoint model representations share one corpus-counting algorithm:
 
 - **Legacy interpolation path** — `gen_unigram` (§3) + `gen_ngram` (§4) +
-  `gen_deleted_ngram` (§4.3) + `estimate_interpolation` (§5). This is the
-  **load-bearing algorithm W9 must reproduce**.
+  `gen_deleted_ngram` (§4.3) + `estimate_interpolation` (§5).
+  **SUPERSEDED (2026-08-30):** the trainer never invokes the first three;
+  they are valid off-path libpinyin utilities. Only `estimate_interpolation`
+  (§5) is on the real path (inside `evaluate.py`).
 - **K-mixture-model (KMM) path** — `gen_k_mixture_model` +
   `estimate_k_mixture_model` + prune + `k_mixture_model_to_interpolation`. This
   is the *modern* path that actually produces the shipped
   `interpolation2.text`, but its corpus counting is algorithmically the same as
   `gen_ngram` (§7), and its λ math is the same deleted-interpolation EM (§5).
-  **Recommendation: skip KMM for W9** (§7).
+  **SUPERSEDED (2026-08-30):** this is the load-bearing W9 path; the former
+  "skip KMM" recommendation (§7) no longer applies.
 
 The bootstrap circularity (the segmenter needs a bigram to score Viterbi, yet
 produces the corpus that trains that bigram) is resolved by seeding the
@@ -309,6 +312,11 @@ shrink. The floor and the total are coupled; both must be reproduced.
 
 ## 7. K-mixture-model (KMM) path and recommendation (**SHOWN**, KMM sources)
 
+> **SUPERSEDED (2026-08-30).** The recommendation below to skip KMM is
+> retained as the historical record only; W9 now reproduces the full KMM
+> pipeline (`docs/findings/trainer-parity-audit.md`). The source
+> characterisation in this section remains accurate.
+
 The KMM path is a *different storage* for the same counts, plus a pruning and
 conversion stage:
 
@@ -328,7 +336,7 @@ conversion stage:
   format — removing `sentence_start` from the unigram section (`:131-132`) and
   skipping zero-freq unigrams (`:137-138`).
 
-**Recommendation (Decision): skip KMM for W9.** Justification (**SHOWN**):
+**Recommendation (Decision, SUPERSEDED): skip KMM for W9.** Justification (**SHOWN**):
 
 1. The shipped, `interp.rs`-consumed format is `interpolation2.text` (§8), and
    `k_mixture_model_to_interpolation` produces exactly that format. The values
