@@ -102,7 +102,9 @@ fn parse_token(line: &str) -> Result<u32, EvalError> {
 /// # Errors
 ///
 /// Returns [`EvalError`] when a token has no pronunciation
-/// (`get_possible_pinyin` would abort) or a decode backend fails.
+/// (`get_possible_pinyin` would abort) or no text, when a key chain has no
+/// phrase cover (upstream asserts exactly one best match), or when a decode
+/// backend fails.
 pub fn correction_rate<D, L, P>(
     dictionary: &D,
     model: &L,
@@ -131,7 +133,7 @@ where
             continue;
         }
         let keys = sentence_keys(phrases, sentence)?;
-        let expected = sentence_text(phrases, sentence);
+        let expected = sentence_text(phrases, sentence)?;
         let decoded = decode(&scorer, &keys)?;
 
         tested += 1;
@@ -170,12 +172,21 @@ fn sentence_keys<P: PhraseSource>(
     Ok(keys)
 }
 
-/// The source sentence text (`convert_to_utf8`).
-fn sentence_text<P: PhraseSource>(phrases: &P, sentence: &[PhraseToken]) -> String {
-    sentence
-        .iter()
-        .filter_map(|&token| phrases.text(token))
-        .collect()
+/// The source sentence text (`convert_to_utf8`). A token without text is an
+/// error, never silently dropped: an incomplete expected sentence would
+/// make the comparison — and the reported rate — wrong.
+fn sentence_text<P: PhraseSource>(
+    phrases: &P,
+    sentence: &[PhraseToken],
+) -> Result<String, EvalError> {
+    let mut text = String::new();
+    for &token in sentence {
+        let phrase = phrases.text(token).ok_or(EvalError::NoText {
+            token: token.value(),
+        })?;
+        text.push_str(&phrase);
+    }
+    Ok(text)
 }
 
 /// Decode a clean complete-syllable key chain to its best phrase cover,
@@ -224,10 +235,12 @@ where
         }
     }
 
-    Ok(best[keys.len()]
+    // No cover is a data error (a dictionary/index problem), not a failed
+    // correction: upstream `assert(1 == results.size())`s here.
+    best[keys.len()]
         .clone()
         .map(|(_, text, _)| text)
-        .unwrap_or_default())
+        .ok_or(EvalError::Undecodable { keys: keys.len() })
 }
 
 #[cfg(test)]
@@ -238,17 +251,7 @@ mod tests {
 
     // A trivial fixture PhraseSource + Dictionary + LanguageModel is exercised
     // in the crate's integration test; here we only pin the corpus parser and
-    // the empty-source error path.
-
-    struct EmptySource;
-    impl PhraseSource for EmptySource {
-        fn best_keys(&self, _token: PhraseToken) -> Option<Vec<SyllableKey>> {
-            None
-        }
-        fn text(&self, _token: PhraseToken) -> Option<String> {
-            None
-        }
-    }
+    // the error paths.
 
     #[test]
     fn corpus_splits_on_null_tokens() {
@@ -268,36 +271,81 @@ mod tests {
         );
     }
 
-    /// A minimal map-backed PhraseSource for the error test.
-    struct MapSource(BTreeMap<u32, Vec<SyllableKey>>);
+    /// A minimal map-backed PhraseSource for the error tests: keys and text
+    /// per token, either absent.
+    struct MapSource {
+        keys: BTreeMap<u32, Vec<SyllableKey>>,
+        text: BTreeMap<u32, String>,
+    }
     impl PhraseSource for MapSource {
         fn best_keys(&self, token: PhraseToken) -> Option<Vec<SyllableKey>> {
-            self.0.get(&token.value()).cloned()
+            self.keys.get(&token.value()).cloned()
         }
-        fn text(&self, _token: PhraseToken) -> Option<String> {
-            Some(String::new())
+        fn text(&self, token: PhraseToken) -> Option<String> {
+            self.text.get(&token.value()).cloned()
         }
     }
 
-    #[test]
-    fn a_token_without_pronunciation_is_an_error() {
-        // Uses the real fixture dictionary/model so Scorer::new succeeds, then
-        // fails on the missing pronunciation.
-        let _ = EmptySource;
-        let source = MapSource(BTreeMap::new());
-        // Build via the integration path is heavier; here assert the keys
-        // helper surfaces the error through correction_rate using the
-        // testsupport fixtures.
+    fn fixture() -> (
+        oxpinyin_testsupport::FixtureDictionary,
+        oxpinyin_testsupport::FixtureLanguageModel,
+    ) {
+        // The real fixture dictionary/model so Scorer::new succeeds.
         let vocab = include_str!("../../../fixtures/w4/mini-vocab.txt");
         let bigram = include_str!("../../../fixtures/w4/mini-bigram.txt");
         let dict = oxpinyin_testsupport::FixtureDictionary::parse(vocab).expect("vocab");
         let model =
             oxpinyin_testsupport::FixtureLanguageModel::parse(vocab, bigram).expect("model");
+        (dict, model)
+    }
+
+    #[test]
+    fn a_token_without_pronunciation_is_an_error() {
+        let (dict, model) = fixture();
+        let source = MapSource {
+            keys: BTreeMap::new(),
+            text: BTreeMap::new(),
+        };
         let sentences = vec![vec![PhraseToken::new(1)]];
         let err = correction_rate(&dict, &model, &source, &sentences).unwrap_err();
         assert!(matches!(
             err,
             crate::error::EvalError::NoPronunciation { token: 1 }
         ));
+    }
+
+    #[test]
+    fn a_token_without_text_is_an_error_not_a_shorter_expected_sentence() {
+        let (dict, model) = fixture();
+        let mut keys = BTreeMap::new();
+        keys.insert(1, vec![SyllableKey::from_text("ni").expect("key")]);
+        let source = MapSource {
+            keys,
+            text: BTreeMap::new(),
+        };
+        let sentences = vec![vec![PhraseToken::new(1)]];
+        let err = correction_rate(&dict, &model, &source, &sentences).unwrap_err();
+        assert!(
+            matches!(err, crate::error::EvalError::NoText { token: 1 }),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_key_chain_without_a_phrase_cover_is_an_error_not_a_mismatch() {
+        let (dict, model) = fixture();
+        let mut keys = BTreeMap::new();
+        // `guo` is not in the fixture vocabulary, so no phrase covers the
+        // chain.
+        keys.insert(1, vec![SyllableKey::from_text("guo").expect("key")]);
+        let mut text = BTreeMap::new();
+        text.insert(1, "国".to_owned());
+        let source = MapSource { keys, text };
+        let sentences = vec![vec![PhraseToken::new(1)]];
+        let err = correction_rate(&dict, &model, &source, &sentences).unwrap_err();
+        assert!(
+            matches!(err, crate::error::EvalError::Undecodable { keys: 1 }),
+            "{err}"
+        );
     }
 }
