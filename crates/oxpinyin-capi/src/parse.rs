@@ -95,6 +95,12 @@ pub(crate) const fn double_scheme(value: i32) -> Option<DoublePinyinScheme> {
 /// and drives the existing session decoder with the `'`-joined full-pinyin
 /// spelling. The returned length is the original consumed byte count, not the
 /// transformed spelling length.
+///
+/// The caller's full option word crosses the seam (the pin's
+/// `options = context->m_options` at `src/pinyin.cpp:1543`), so
+/// `FORCE_TONE`'s length-3 gate and `USE_TONE`'s tone carriage are honoured
+/// by the batch law — the frozen double-pinyin SPEC's Tone section
+/// (`docs/findings/double-pinyin-spec.md`).
 fn parse_double_more(instance: *mut PinyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
@@ -106,7 +112,7 @@ fn parse_double_more(instance: *mut PinyinInstance, text: &str) -> usize {
     };
     let allow_incomplete = inst.incomplete.load(Ordering::Relaxed);
     let parser = oxpinyin_core::DoublePinyinParser::with_scheme(scheme);
-    let parsed = parser.parse(text.as_bytes(), allow_incomplete);
+    let parsed = parser.parse_with_options(text.as_bytes(), inst.options().bits());
 
     if text.is_empty() {
         inst.parsed_len = 0;
@@ -235,7 +241,7 @@ impl ExactKey for DoublePinyinKey {
         DoublePinyinKey::key(*self)
     }
     fn tone(&self) -> u8 {
-        0
+        DoublePinyinKey::tone(*self)
     }
 }
 

@@ -20,12 +20,14 @@ use crate::zhuyin_map::VALID_ZHUYIN_TONES;
 use crate::{CHEWING_ZERO_TONE, ChewingKey};
 
 /// One parsed double-pinyin key: a full-pinyin [`SyllableKey`] and its byte
-/// span in the original two-key (or one-key incomplete) input.
+/// span in the original two-key (or one-key incomplete) input, with the tone
+/// a third byte carried under `USE_TONE`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DoublePinyinKey {
     key: SyllableKey,
     start: usize,
     end: usize,
+    tone: u8,
 }
 
 impl DoublePinyinKey {
@@ -45,6 +47,13 @@ impl DoublePinyinKey {
     #[must_use]
     pub const fn end(self) -> usize {
         self.end
+    }
+
+    /// The tone a third input byte carried under `USE_TONE` (`1`..=`5`);
+    /// `0` for the two-key and one-key forms.
+    #[must_use]
+    pub const fn tone(self) -> u8 {
+        self.tone
     }
 }
 
@@ -699,19 +708,43 @@ impl DoublePinyinParser {
         self.scheme
     }
 
-    /// Greedily parses `input`, mirroring `DoublePinyinParser2::parse`
-    /// (`src/storage/pinyin_parser2.cpp:531-574`).
+    /// Greedily parses `input` in the tone-less profile, mirroring
+    /// `DoublePinyinParser2::parse` under an option word without
+    /// `USE_TONE` (`src/storage/pinyin_parser2.cpp:531-574`).
     ///
-    /// `allow_incomplete` is the `PINYIN_INCOMPLETE` option. Tone is
-    /// intentionally not represented here yet: without `USE_TONE` upstream
-    /// rejects a three-byte key, and the W13 double-pinyin differential
-    /// runs in that tone-less profile.
+    /// `allow_incomplete` is the `PINYIN_INCOMPLETE` option. Kept for the
+    /// callers that hold only that bit; the batch seam driven by the full
+    /// option word is [`Self::parse_with_options`].
     #[must_use]
     pub fn parse(&self, input: &[u8], allow_incomplete: bool) -> DoublePinyinParse {
+        let options = u32::from(allow_incomplete) * PINYIN_INCOMPLETE;
+        self.parse_with_options(input, options)
+    }
+
+    /// The batch [`Self::parse`] law driven by the caller's **full option
+    /// word** (`pinyin_parse_more_double_pinyins`, `src/pinyin.cpp:1543`):
+    /// the `USE_TONE`, `FORCE_TONE`, and `PINYIN_INCOMPLETE` bits are read
+    /// off the word exactly as upstream's `DoublePinyinParser2::parse`
+    /// reads its caller options. `FORCE_TONE` requires a three-byte key
+    /// (`pinyin_parser2.cpp:412`); a three-byte key carries its trailing
+    /// `1`..=`5` digit as the tone only under `USE_TONE` (`:439-451`), so
+    /// `FORCE_TONE` without `USE_TONE` consumes nothing at all. The
+    /// one-byte incomplete probe runs under `PINYIN_INCOMPLETE`
+    /// (`:418-421`). Correction and ambiguity bits never cross: the
+    /// two-key lookup is [`lookup_pinyin`]'s forced-`UE_VE`/`V_U` law
+    /// whatever the word carries (`:409, :434-436`).
+    #[must_use]
+    pub fn parse_with_options(&self, input: &[u8], options: u32) -> DoublePinyinParse {
         let Some(tables) = self.scheme.tables() else {
             return DoublePinyinParse::default();
         };
+        let bits = OptionBits::from_bits(options);
+        let use_tone = bits.contains(USE_TONE);
+        let force_tone = bits.contains(FORCE_TONE);
+        let allow_incomplete = bits.contains(PINYIN_INCOMPLETE);
 
+        // The probe window is option-blind, exactly upstream: tone digits
+        // extend it even without USE_TONE (`:538-545`).
         let maximum_len = input
             .iter()
             .take_while(|&&byte| is_key(byte) || (b'1'..=b'5').contains(&byte))
@@ -724,23 +757,26 @@ impl DoublePinyinParser {
             let try_len = remaining.len().min(3);
             let mut matched = None;
             for len in (1..=try_len).rev() {
-                if let Some(key) = parse_one_key(
+                if let Some((key, tone)) = probe_one_key(
                     &input[parsed_len..parsed_len + len],
+                    use_tone,
+                    force_tone,
                     allow_incomplete,
                     tables,
                 ) {
-                    matched = Some((key, len));
+                    matched = Some((key, tone, len));
                     break;
                 }
             }
 
-            let Some((key, len)) = matched else {
+            let Some((key, tone, len)) = matched else {
                 break;
             };
             keys.push(DoublePinyinKey {
                 key,
                 start: parsed_len,
                 end: parsed_len + len,
+                tone,
             });
             parsed_len += len;
         }
@@ -803,17 +839,37 @@ impl Default for DoublePinyinParser {
     }
 }
 
-fn parse_one_key(
+/// One greedy-walk probe of `DoublePinyinParser2::parse_one_key`
+/// (`src/storage/pinyin_parser2.cpp:405-530`) under the batch law's three
+/// caller bits: the `FORCE_TONE` length-3 gate (`:412`), the one-byte
+/// incomplete probe under `PINYIN_INCOMPLETE` (`:415-432`), and the
+/// three-byte tone parse under `USE_TONE` (`:439-451`). The answer is the
+/// resolved key plus the tone the third byte carried (`0` for the
+/// one/two-byte forms). Without `USE_TONE` a three-byte slice refuses and
+/// the walk retries length 2 — the tone-less profile.
+fn probe_one_key(
     input: &[u8],
+    use_tone: bool,
+    force_tone: bool,
     allow_incomplete: bool,
     tables: SchemeTables,
-) -> Option<SyllableKey> {
+) -> Option<(SyllableKey, u8)> {
+    if force_tone && input.len() != 3 {
+        return None;
+    }
     match input.len() {
-        1 => parse_incomplete(input[0], allow_incomplete, tables),
-        2 => parse_two_keys(input, tables),
-        // Upstream accepts length 3 only with USE_TONE. The tone-less W13
-        // profile therefore rejects it and lets the caller retry length 2.
-        3 => None,
+        1 => parse_incomplete(input[0], allow_incomplete, tables).map(|key| (key, 0)),
+        2 => parse_two_keys(input, tables).map(|key| (key, 0)),
+        3 => {
+            if !use_tone {
+                return None;
+            }
+            let tone = match input[2] {
+                byte @ b'1'..=b'5' => byte - b'0',
+                _ => return None,
+            };
+            parse_two_keys(&input[..2], tables).map(|key| (key, tone))
+        }
         _ => None,
     }
 }
@@ -2453,6 +2509,69 @@ mod tests {
         let parsed = parser.parse(b"nihao", true);
         assert_eq!(parsed.consumed(), 4);
         assert_eq!(parsed.full_pinyin(), "ni'ha");
+    }
+
+    /// The batch [`DoublePinyinParser::parse`] is the tone-less projection
+    /// of [`DoublePinyinParser::parse_with_options`]: the same walk with
+    /// only the `PINYIN_INCOMPLETE` bit set.
+    #[test]
+    fn batch_parse_is_the_tone_less_projection_of_options() {
+        let parser = DoublePinyinParser::new();
+        for input in [b"nihao".as_slice(), b"a".as_slice(), b"nihk".as_slice()] {
+            for allow_incomplete in [false, true] {
+                let options = u32::from(allow_incomplete) * PINYIN_INCOMPLETE;
+                assert_eq!(
+                    parser.parse(input, allow_incomplete),
+                    parser.parse_with_options(input, options),
+                    "input {:?} allow_incomplete {allow_incomplete}",
+                    core::str::from_utf8(input)
+                );
+            }
+        }
+    }
+
+    /// The frozen batch law (`docs/findings/double-pinyin-spec.md`, Tone):
+    /// `USE_TONE` lets a three-byte key carry its `1`..=`5` digit as the
+    /// tone, and `FORCE_TONE` requires an exactly-three-byte key — so
+    /// `FORCE_TONE` without `USE_TONE` consumes nothing at all.
+    #[test]
+    fn batch_parse_honours_use_tone_and_force_tone() {
+        let parser = DoublePinyinParser::new();
+
+        // USE_TONE: the three-byte key rides its tone.
+        let toned = parser.parse_with_options(b"ni3", USE_TONE);
+        assert_eq!(toned.consumed(), 3);
+        assert_eq!(toned.keys().len(), 1);
+        assert_eq!(toned.keys()[0].key().text(), "ni");
+        assert_eq!(toned.keys()[0].tone(), 3);
+
+        // Without USE_TONE the three-byte key is refused and the walk
+        // retries length two.
+        let toneless = parser.parse_with_options(b"ni3", 0);
+        assert_eq!(toneless.consumed(), 2);
+        assert_eq!(toneless.keys()[0].tone(), 0);
+
+        // A non-tone third byte is refused even under USE_TONE.
+        assert_eq!(parser.parse_with_options(b"nix", USE_TONE).consumed(), 2);
+        assert_eq!(parser.parse_with_options(b"ni0", USE_TONE).consumed(), 2);
+
+        // FORCE_TONE: a two-byte key is refused.
+        assert_eq!(parser.parse_with_options(b"ni", FORCE_TONE).consumed(), 0);
+
+        // FORCE_TONE without USE_TONE: the three-byte key passes the
+        // length gate but the tone parse refuses it — nothing consumed.
+        assert_eq!(parser.parse_with_options(b"ni3", FORCE_TONE).consumed(), 0);
+
+        // USE_TONE | FORCE_TONE: only an exactly-three-byte toned key.
+        let forced = parser.parse_with_options(b"ni3", USE_TONE | FORCE_TONE);
+        assert_eq!(forced.consumed(), 3);
+        assert_eq!(forced.keys()[0].tone(), 3);
+        assert_eq!(
+            parser
+                .parse_with_options(b"ni3ha4", USE_TONE | FORCE_TONE)
+                .consumed(),
+            6
+        );
     }
 
     #[test]
