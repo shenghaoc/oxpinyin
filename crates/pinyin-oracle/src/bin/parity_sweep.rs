@@ -15,7 +15,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use oxpinyin_core::scoring::ScoringConfig;
-use oxpinyin_data::{BigramLanguageModel, SystemDictionary, default_store_file};
+use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
 use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use pinyin_oracle::corpus;
 
@@ -108,34 +108,36 @@ fn pct(n: usize, d: usize) -> usize {
 
 fn main() -> ExitCode {
     let dir = Path::new("/tmp/oxpinyin-export");
-    let missing: Vec<String> = ["pinyin_index", "phrase_index", "bigram"]
-        .into_iter()
-        .map(default_store_file)
-        .filter(|table| !dir.join(table).is_file())
-        .collect();
+    let missing: Vec<String> = [
+        SystemDbm::PinyinIndex,
+        SystemDbm::PhraseIndex,
+        SystemDbm::Bigram,
+    ]
+    .into_iter()
+    .map(SystemDbm::file_name)
+    .filter(|name| !dir.join(name).is_file())
+    .collect();
     if !missing.is_empty() {
         eprintln!(
-            "missing {missing:?} in {dir:?}; copy or symlink the required \
-             tables from the committed fixtures/w3/"
+            "missing {missing:?} in {dir:?}; run oxpinyin-datagen compile --out-dir {dir:?}, \
+             or point it at a libpinyin data dir of the same backend"
         );
         return ExitCode::from(2);
     }
 
-    let dict = SystemDictionary::open(
-        &dir.join(default_store_file("pinyin_index")),
-        &dir.join(default_store_file("phrase_index")),
-    )
-    .unwrap_or_else(|error| {
+    let dict = SystemDictionary::open(dir).unwrap_or_else(|error| {
         eprintln!("cannot open system dictionary from {dir:?}: {error}");
         std::process::exit(2);
     });
-    let mut lm = BigramLanguageModel::open(&dir.join(default_store_file("bigram"))).unwrap_or_else(
-        |error| {
-            eprintln!("cannot open bigram model from {dir:?}: {error}");
-            std::process::exit(2);
-        },
-    );
-    lm.set_unigrams_from_dict(&dict);
+    let mut lm = BigramLanguageModel::open(
+        &dir.join(SystemDbm::Bigram.file_name()),
+        std::sync::Arc::clone(dict.libraries()),
+    )
+    .unwrap_or_else(|error| {
+        eprintln!("cannot open bigram model from {dir:?}: {error}");
+        std::process::exit(2);
+    });
+    lm.set_lambda_from_table_conf(&dir.join("table.conf"));
     let mut session =
         Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm).expect("session");
 

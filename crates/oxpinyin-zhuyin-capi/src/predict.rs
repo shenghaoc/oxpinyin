@@ -29,8 +29,8 @@ pub(crate) fn compute_prefixes(
         tokens.extend(
             dict.system()
                 .tokens_for_text(&suffix)
-                .iter()
-                .copied()
+                .unwrap_or_default()
+                .into_iter()
                 .filter(|token| dict.library_visible_token(*token)),
         );
         if let Some(lookup) = user_lookup.as_ref() {

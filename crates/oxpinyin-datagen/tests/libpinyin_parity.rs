@@ -137,8 +137,8 @@ fn assert_rows_equal_ignoring_padding(name: &str, generated: &[(Vec<u8>, Vec<u8>
 /// HashDB cursor cannot be positioned from the empty key (unordered
 /// container), so every generated key is looked up in the real file and
 /// its value compared. Real rows the generator did not emit would be
-/// missed by this direction alone; `libpinyin_compile_matches_upstream_arithmetic`
-/// in `system.rs` and the row-count line printed here cover the counts.
+/// missed by this direction alone; the row-count line printed here and
+/// the writer's own read-back verification cover the counts.
 fn assert_hash_equal(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &Path) {
     let store = DropInStore::open_hash_read_only(real).expect("open hash");
     for (index, (key, value)) in generated.iter().enumerate() {
@@ -163,9 +163,9 @@ fn drop_in_output_matches_the_pin_built_data_dir() {
         return;
     };
 
-    let sys = system::compile_libpinyin(&model, system::Subset::Full).expect("system");
-    let add = addon::compile_libpinyin(&model, addon::Subset::Full).expect("addon");
-    let punct_rows = punct::compile_libpinyin(&model).expect("punct");
+    let (sys, _) = system::compile(&model, system::Subset::Full).expect("system");
+    let add = addon::compile(&model, addon::Subset::Full).expect("addon");
+    let punct_rows = punct::compile(&model).expect("punct");
 
     // ---- chunk files: byte-exact ---------------------------------------
     // Tones, unigram (+1), pronunciation frequencies and item layout are

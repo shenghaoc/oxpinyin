@@ -12,16 +12,15 @@ use serde_json::{Value, json};
 
 use oxpinyin_runtime::{Runtime, RuntimeSession};
 
-/// Runs every case in `corpus` against a fixture-mode runtime over
-/// `system_dir` and returns the transcript document.
+/// Runs every case in `corpus` against a runtime over `system_dir` and
+/// returns the transcript document.
 ///
 /// # Errors
 ///
 /// Returns an [`std::io::Error`]-flavoured panic-free failure via the
 /// serialized [`RunError`] on open or backend errors.
 pub fn run_corpus(corpus: &Value, system_dir: &Path) -> Result<Value, RunError> {
-    let runtime =
-        Runtime::open_fixtures(system_dir, None).map_err(|error| RunError(error.to_string()))?;
+    let runtime = Runtime::open(system_dir, None).map_err(|error| RunError(error.to_string()))?;
 
     let mut cases = Vec::new();
     for case in corpus["cases"]

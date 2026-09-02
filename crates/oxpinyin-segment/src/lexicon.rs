@@ -1,17 +1,18 @@
-//! Character-domain phrase table built from the `phrase_index` table
-//! (compiled-in backend's format).
+//! Character-domain phrase table built from the system libraries' chunk
+//! files (`gb_char.bin` … `merged.bin`, the `FacadePhraseIndex` items).
 //!
 //! `ngseg` classifies a run as segmentable by
 //! `FacadePhraseTable3::search(1, char, tokens) & SEARCH_OK`
-//! (`utils/segment/ngseg.cpp:204-210`). The Rust export has no character
-//! trie; the same answer is an exact lookup of the one-character phrase
-//! text in the inverted `phrase_index` map. `SEARCH_CONTINUED` is
-//! "a stored phrase is a strict extension of this span".
+//! (`utils/segment/ngseg.cpp:204-210`). The segmenter keeps its own
+//! inverted map instead of consulting the phrase DBM per span: the same
+//! answer is an exact lookup of the one-character phrase text.
+//! `SEARCH_CONTINUED` is "a stored phrase is a strict extension of this
+//! span".
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use oxpinyin_data::LookupTable;
+use oxpinyin_data::{PhraseLibraries, SYSTEM_LIBRARY_FILES};
 
 use crate::error::SegmentError;
 
@@ -27,28 +28,29 @@ pub struct PhraseLexicon {
 }
 
 impl PhraseLexicon {
-    /// Builds the inverted index from the `phrase_index` table in the
-    /// compiled-in backend's format (`token → UTF-8`).
+    /// Builds the inverted index from the system libraries' chunk files
+    /// under `system_dir` (every resident item of `gb_char.bin` …
+    /// `merged.bin`, `token → text`).
     ///
     /// # Errors
     ///
-    /// Returns [`SegmentError`] when the table cannot be opened or a value
-    /// is not UTF-8.
-    pub fn from_phrase_index(path: &Path) -> Result<Self, SegmentError> {
-        let table = LookupTable::open(path)?;
+    /// Returns [`SegmentError`] when a present chunk file does not verify
+    /// or an item's text does not decode.
+    pub fn from_system_dir(system_dir: &Path) -> Result<Self, SegmentError> {
+        let libraries = PhraseLibraries::open(system_dir, SYSTEM_LIBRARY_FILES)?;
         let mut pairs = Vec::new();
-        for (key, value) in table.iter() {
-            if key.len() != 4 {
-                return Err(SegmentError::Config(format!(
-                    "phrase_index key length {} is not 4",
-                    key.len()
-                )));
+        for &(nibble, _) in SYSTEM_LIBRARY_FILES {
+            let base = u32::from(nibble) << 24;
+            let Some(library) = libraries.library(base) else {
+                continue;
+            };
+            for (slot, item) in library.items() {
+                let token = base | slot;
+                let text = item.phrase_text().ok_or_else(|| {
+                    SegmentError::Config(format!("phrase text for token {token} does not decode"))
+                })?;
+                pairs.push((token, text));
             }
-            let token = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
-            let text = std::str::from_utf8(value).map_err(|_| {
-                SegmentError::Config(format!("phrase text for token {token} is not UTF-8"))
-            })?;
-            pairs.push((token, text.to_owned()));
         }
         Ok(Self::from_pairs(pairs))
     }

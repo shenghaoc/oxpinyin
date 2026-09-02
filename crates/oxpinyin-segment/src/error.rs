@@ -4,7 +4,7 @@ use std::fmt;
 use std::io;
 use std::path::PathBuf;
 
-use oxpinyin_data::{InterpolationError, LmError, TableError};
+use oxpinyin_data::{DictError, InterpolationError, LmError, TableError};
 
 /// Why constructing or running the segmenter failed.
 #[derive(Debug)]
@@ -71,6 +71,21 @@ impl std::error::Error for SegmentError {
 impl From<TableError> for SegmentError {
     fn from(error: TableError) -> Self {
         Self::Table(error)
+    }
+}
+
+impl From<DictError> for SegmentError {
+    fn from(error: DictError) -> Self {
+        match error {
+            DictError::Table(table) => Self::Table(table),
+            other => Self::Config(other.to_string()),
+        }
+    }
+}
+
+impl From<oxpinyin_data::phrase_library::LibraryError> for SegmentError {
+    fn from(error: oxpinyin_data::phrase_library::LibraryError) -> Self {
+        Self::Config(format!("phrase library: {error}"))
     }
 }
 
