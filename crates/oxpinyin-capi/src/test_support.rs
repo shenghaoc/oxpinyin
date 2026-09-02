@@ -19,6 +19,7 @@ pub fn system_dir() -> PathBuf {
         .join("..")
         .join("fixtures")
         .join("w3")
+        .join(oxpinyin_data::DEFAULT_STORE_EXT)
 }
 
 pub struct TempUserDir {
@@ -53,20 +54,13 @@ impl TempSystemDir {
         ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("temp system dir");
-        for stem in [
-            "pinyin_index",
-            "phrase_index",
-            "bigram",
-            "addon_4_pinyin_index",
-            "addon_4_phrase_index",
-            "punct",
-        ] {
-            // The fixture set matching the compiled-in backend (`.kct`,
-            // `.redb`, …), so this helper works under every backend gate.
-            let name = oxpinyin_data::default_store_file(stem);
-            let src = system_dir().join(&name);
-            if src.is_file() {
-                std::fs::copy(&src, path.join(&name)).expect("copy store table");
+        // The whole fixture directory of the compiled-in backend
+        // (`fixtures/w3/<ext>`: the DBMs, the chunk files, table.conf),
+        // so this helper works under every backend gate.
+        for entry in std::fs::read_dir(system_dir()).expect("fixture dir") {
+            let entry = entry.expect("fixture entry");
+            if entry.file_type().expect("file type").is_file() {
+                std::fs::copy(entry.path(), path.join(entry.file_name())).expect("copy fixture");
             }
         }
         Self { path }

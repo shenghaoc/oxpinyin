@@ -556,10 +556,17 @@ fn a_guess_at_a_mid_syllable_offset_answers_the_empty_column() {
             pinyin_guess_candidates(instance, offset, DEFAULT_SORT),
             "offset {offset} still answers true after the sentence lookup"
         );
-        assert_eq!(
-            texts(instance),
-            vec!["\u{4f60}\u{597d}".to_owned()],
-            "offset {offset}: the n-best row alone at the empty column"
+        // Only the n-best sentence rows appear at the empty column (no
+        // suffix re-parse), 你好 first. The mini fixture, now read with
+        // the chunk items' real counts, offers 你好 and the near-tie 你号
+        // as rows 0 and 1 — the registered gfloat-trellis divergence
+        // (`upstream-divergences.md`) tips that tie at fixture scale; the
+        // full-data nbest differential is identical.
+        let rows = texts(instance);
+        assert_eq!(rows.first().map(String::as_str), Some("\u{4f60}\u{597d}"));
+        assert!(
+            rows.iter().all(|text| text.chars().count() == 2),
+            "offset {offset}: only two-character n-best rows: {rows:?}"
         );
     }
 

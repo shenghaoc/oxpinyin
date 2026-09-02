@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use oxpinyin_data::{BigramLanguageModel, SystemDictionary, default_store_file};
+use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
 use oxpinyin_engine::{Candidate, CandidateKind, EmptyConfigSource, Session, StoragePaths};
 
 /// The concrete port session the measurement drives.
@@ -45,10 +45,14 @@ pub fn export_dir() -> Option<PathBuf> {
         || Path::new("/tmp/oxpinyin-export").to_path_buf(),
         PathBuf::from,
     );
-    ["pinyin_index", "phrase_index", "bigram"]
-        .iter()
-        .all(|stem| dir.join(default_store_file(stem)).exists())
-        .then_some(dir)
+    [
+        SystemDbm::PinyinIndex,
+        SystemDbm::PhraseIndex,
+        SystemDbm::Bigram,
+    ]
+    .iter()
+    .all(|dbm| dir.join(dbm.file_name()).exists())
+    .then_some(dir)
 }
 
 /// Opens the port session over the exported tables with real unigrams, or
@@ -70,22 +74,14 @@ pub fn open_session_from_env() -> Result<Option<PortSession>, String> {
     let Some(dir) = export_dir() else {
         return Ok(None);
     };
-    let model_dir = match crate::model_cache::locate_model_dir() {
-        Ok(Some(model_dir)) => model_dir,
-        // No model directory configured or discoverable: skip, like absent tables.
-        Ok(None) => return Ok(None),
-        // PINYIN_MODEL_DIR set but unusable: a misconfiguration, not an absence.
-        Err(error) => return Err(format!("model directory lookup failed: {error}")),
-    };
-    let dict = SystemDictionary::open(
-        &dir.join(default_store_file("pinyin_index")),
-        &dir.join(default_store_file("phrase_index")),
+    let dict = SystemDictionary::open(&dir)
+        .map_err(|error| format!("cannot open SystemDictionary: {error}"))?;
+    let mut lm = BigramLanguageModel::open(
+        &dir.join(SystemDbm::Bigram.file_name()),
+        std::sync::Arc::clone(dict.libraries()),
     )
-    .map_err(|error| format!("cannot open SystemDictionary: {error}"))?;
-    let mut lm = BigramLanguageModel::open(&dir.join(default_store_file("bigram")))
-        .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
-    lm.set_unigrams_from_interpolation2(&model_dir.join("interpolation2.text"))
-        .map_err(|error| format!("cannot parse interpolation2: {error}"))?;
+    .map_err(|error| format!("cannot open BigramLanguageModel: {error}"))?;
+    lm.set_lambda_from_table_conf(&dir.join("table.conf"));
     let session = Session::new(&EmptyConfigSource, StoragePaths::new("user"), dict, lm)
         .map_err(|error| format!("cannot create Session: {error}"))?;
     Ok(Some(session))

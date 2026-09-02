@@ -414,11 +414,13 @@ pub trait LanguageModel {
     ) -> Result<Cost, Self::Error>;
 
     /// The model's real unigram frequency of `token`, when the model carries
-    /// one.
+    /// one — upstream's phrase-item field (`PhraseItem::get_unigram_frequency`:
+    /// the corpus count plus the one `gen_unigram` adds to every item, so a
+    /// counted phrase is never 0).
     ///
     /// `None` means the model exposes no frequency table at all; the engine
     /// then keeps its pre-frequency behaviour. `Some(0)` is a real table miss
-    /// — the phrase has no frequency — and ranks below every counted phrase.
+    /// — the phrase has no item — and ranks below every counted phrase.
     ///
     /// Defaulted so the frozen implementors and any third-party model keep
     /// compiling unchanged (`docs/findings/core-trait-seam.md`: the seam grows
@@ -463,10 +465,11 @@ pub trait LanguageModel {
         false
     }
 
-    /// Sum of the default-facade unigram table, when the model carries one.
+    /// Sum of the default-facade unigram table, when the model carries one
+    /// — `FacadePhraseIndex::get_phrase_index_total_freq`, the denominator
+    /// of the pinned candidate law.
     ///
-    /// Used only to put addon frequencies on a comparable scale. Defaulted
-    /// to `None` so existing implementors compile unchanged.
+    /// Defaulted to `None` so existing implementors compile unchanged.
     ///
     /// # Errors
     ///

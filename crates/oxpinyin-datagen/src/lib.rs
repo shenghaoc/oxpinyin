@@ -1,56 +1,59 @@
-//! model20 → oxpinyin runtime tables, compiled natively from the canonical
-//! linguistic source for every storage backend.
+//! model20 → a libpinyin system data directory, compiled natively from the
+//! canonical linguistic source for every storage backend.
 //!
 //! # Architecture
 //!
 //! The canonical source of truth is the pinned `model20.text.tar.gz`
 //! archive (`docs/findings/model-provenance.md`; fetched and verified by
-//! `tools/model/fetch-model.sh`). Every runtime-data producer consumes that
-//! archive **directly** — no producer may take libpinyin-generated runtime
-//! data as its input:
+//! `tools/model/fetch-model.sh`). Every producer consumes that archive
+//! **directly** — no producer may take libpinyin-generated runtime data as
+//! its input:
 //!
 //! ```text
-//! pinned model20 ──► libpinyin's own build ──► libpinyin tables ─┐
-//!        │                                                        ├─► differential
-//!        ├──► oxpinyin-datagen (kyotocabinet, default) ► KC tables┤
-//!        ├──► oxpinyin-datagen (redb)  ──► redb tables  ─────────┤
-//!        ├──► oxpinyin-datagen (lmdb)  ──► LMDB tables  ─────────┤
-//!        └──► oxpinyin-datagen (tkrzw) ──► Tkrzw tables ─────────┘
+//! pinned model20 ──► libpinyin's own build ──► libpinyin's data dir ─┐
+//!        │                                                            ├─► differential
+//!        ├──► oxpinyin-datagen (kyotocabinet, default) ► KC data dir ─┤   (same files)
+//!        ├──► oxpinyin-datagen (tkrzw) ─────────────────► Tkrzw data dir┤
+//!        ├──► oxpinyin-datagen (redb) ──────────────────► redb data dir ┤   (same records,
+//!        └──► oxpinyin-datagen (lmdb) ──────────────────► LMDB data dir ┘    own container)
 //! ```
 //!
-//! The four rows below the libpinyin row are peer producers behind the
-//! same `WriteStore`; the same compiled row stream reads back identically
-//! under each. Kyoto Cabinet is only the default *selection*.
+//! One semantic read pass ([`system::read_semantic`]) and one set of
+//! serializers implementing libpinyin's own formats — the byte-level
+//! output of its `gen_binary_files` + `import_interpolation` +
+//! `gen_unigram` chain (`data/Makefile.am`):
 //!
-//! This replaces the retired `oxpinyin-migrate` route, which exported the
-//! dictionary through the pin-built oracle's C ABI and copied the bigram
-//! verbatim from the oracle's `bigram.db`
-//! (`docs/findings/data-layer-export.md` — that route tested migration
-//! compatibility, not implementation parity). The native derivation here is
-//! the same arithmetic libpinyin's own `data/Makefile.am` performs:
+//! * the sixteen per-library chunk files (`MemoryChunk` +
+//!   `SubPhraseIndex::store`, [`chunks`]) — byte-exact against the pin;
+//! * `pinyin_index.bin` / `addon_pinyin_index.bin` (`ChewingLargeTable2`,
+//!   [`libpinyin::pinyin_index_entries`]) and `phrase_index.bin` /
+//!   `addon_phrase_index.bin` (`PhraseLargeTable3`,
+//!   [`libpinyin::phrase_index_entries`]);
+//! * `bigram.db` (`Bigram`, [`system::compile`]) and `punct.bin`
+//!   (`PunctTable`, [`punct::compile`]);
+//! * `table.conf`.
 //!
-//! * `pinyin_index` + `phrase_index` — the four system `.table` files
-//!   (`gb_char`, `gbk_char`, `opengram`, `merged`), rows
-//!   `pinyin phrase token count`, exactly as
-//!   `FacadePhraseIndex::load_text` reads them and the public-ABI export
-//!   iterator prints them.
-//! * `bigram` — the `\2-gram` section of `interpolation2.text`, grouped by
-//!   first token with `total == Σ count`, exactly as
-//!   `import_interpolation` stores it.
-//! * addon tables — the twelve topic `.table` files; `punct` —
-//!   `punct.table`.
+//! The four backends are instantiations of `oxpinyin-store`'s
+//! [`WriteStore`]: the same rows through each container. On Kyoto Cabinet
+//! and tkrzw the result is the file set a libpinyin build of that DBM
+//! ships, name for name; a libpinyin runtime opens it and so does
+//! oxpinyin's. There is no conversion layer between the two
+//! implementations: each compiles the text.
 //!
-//! Byte-exact equivalence of this native compilation with the frozen
-//! oracle-derived export was measured on the pinned model (all 138,096
-//! phrase rows, 93,349 pinyin keys, and 56,359 bigram entries identical);
-//! see `docs/findings/datagen-model20.md` and the crate's tests.
+//! Verification: `tests/libpinyin_parity.rs` compares the output with a
+//! pin-built data directory record by record (and the chunk files byte
+//! by byte), on the pinned model20 and on the toned mini model under
+//! `fixtures/datagen-toned/`
+//! (`tools/datagen/libpinyin-drop-in-differential.sh`);
+//! `docs/findings/datagen-compat-2026-09-01.md` carries the findings.
 //!
 //! # Determinism
 //!
-//! Entries are emitted in ascending key-byte order with frozen value
-//! layouts, so repeated runs over the same archive produce identical tables
-//! (key/value-stream identical across every backend; the on-disk container
-//! byte layout depends on the writing DBM's own conventions).
+//! Entries are emitted in ascending key-byte order with the upstream value
+//! layouts, so repeated runs over the same archive produce identical row
+//! streams (the on-disk container byte layout depends on the writing
+//! DBM's own conventions — and, for the pinyin index, on struct padding
+//! upstream leaves uninitialized and this crate zeroes).
 //!
 //! This crate is data-prep tooling for packagers, CI, and differentials; it
 //! never ships in an oxpinyin installation.
@@ -60,13 +63,9 @@
 //! This is the counterpart of libpinyin's build-time data tools
 //! (`utils/storage/gen_binary_files`, `utils/storage/import_interpolation`,
 //! `utils/training/gen_unigram`) — compiled from the source tree but not
-//! part of the shipped library. The runtime loader is `oxpinyin-data`
-//! (equivalent of libpinyin's library-side DB readers); new-model training
-//! is the W9 crate chain (equivalent of the separate trainer repo). The
-//! four backends are instantiations of `oxpinyin-store`'s [`WriteStore`]:
-//! one linguistic model, three storage containers, no algorithm
-//! duplication. See `docs/findings/datagen-model20.md` for the full
-//! capability map and the equivalence evidence.
+//! part of the shipped library. The runtime reader is `oxpinyin-data`
+//! (the library-side DB readers); new-model training is the W9 crate
+//! chain (equivalent of the separate trainer repo).
 
 // Constitution §4, mechanically: library builds may not unwrap, expect,
 // or panic. Inline #[cfg(test)] modules are exempt (see the allow below
@@ -87,14 +86,9 @@ pub mod system;
 pub mod table;
 pub mod write;
 
-/// One compiled table: `(key, value)` pairs in the frozen writer order.
-///
-/// This is the exact insertion sequence of the retired `oxpinyin-migrate`
-/// writers, which redb file byte-identity depends on (string-keyed tables
-/// and the bigram in ascending key-byte order; token-keyed dictionary,
-/// addon, and punctuation tables in integer token order). Reading a table
-/// back through any store always yields ascending key-byte order
-/// regardless.
+/// One DBM's rows: `(key, value)` pairs in ascending key-byte order — the
+/// physical order of every tree container and the order every raw walk
+/// reads back.
 pub type Entries = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// Errors from compiling model20 text or writing a runtime table.

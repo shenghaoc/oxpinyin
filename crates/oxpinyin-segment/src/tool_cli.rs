@@ -108,25 +108,23 @@ impl ToolArgs {
     }
 }
 
-/// Resolves the phrase-index table path the counting tools read:
-/// `export_dir` when given, else the discovered export directory.
+/// Resolves the system data directory the counting tools read their
+/// lexicon from: `export_dir` when given, else the discovered directory.
 ///
 /// # Errors
 ///
-/// When no system-table export can be located; the message names the two
-/// ways to fix it (`--export-dir` or `PINYIN_EXPORT_DIR`).
-pub fn locate_phrase_index(export_dir: Option<&Path>) -> Result<PathBuf, String> {
+/// When no system data directory can be located; the message names the
+/// two ways to fix it (`--export-dir` or `PINYIN_EXPORT_DIR`).
+pub fn locate_system_dir(export_dir: Option<&Path>) -> Result<PathBuf, String> {
     export_dir.map_or_else(
         || {
-            crate::locate_export_dir()
-                .map(|dir| dir.join(crate::default_store_file("phrase_index")))
-                .ok_or_else(|| {
-                    "no system-table export (the phrase_index table); \
-                     set --export-dir or PINYIN_EXPORT_DIR"
-                        .to_owned()
-                })
+            crate::locate_export_dir().ok_or_else(|| {
+                "no system data directory (the chunk files and DBMs); \
+                 set --export-dir or PINYIN_EXPORT_DIR"
+                    .to_owned()
+            })
         },
-        |dir| Ok(dir.join(crate::default_store_file("phrase_index"))),
+        |dir| Ok(dir.to_path_buf()),
     )
 }
 

@@ -760,6 +760,22 @@ pub fn default_store_file(stem: &str) -> String {
     format!("{stem}.{DEFAULT_STORE_EXT}")
 }
 
+/// Whether [`DefaultStore`] is one of the two DBM libraries libpinyin
+/// itself builds against (`--with-dbm=KyotoCabinet` / `--with-dbm=Tkrzw`).
+///
+/// For these two, a libpinyin install's data directory *is* this
+/// backend's file set — same container library, same records, same
+/// file names (`pinyin_index.bin`, `bigram.db`, …) — so the runtime opens
+/// it unchanged, and `oxpinyin-datagen` writes the same names. redb and
+/// LMDB hold the same records in their own containers under their own
+/// extensions; no libpinyin build can open those, and none needs to.
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = true;
+/// See the Kyoto Cabinet / tkrzw definition: redb and LMDB are
+/// oxpinyin-only containers.
+#[cfg(any(feature = "lmdb", feature = "redb"))]
+pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = false;
+
 #[cfg(feature = "lmdb")]
 mod lmdb;
 #[cfg(feature = "lmdb")]

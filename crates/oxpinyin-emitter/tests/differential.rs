@@ -38,10 +38,7 @@ fn manifest_path() -> PathBuf {
 
 fn rust_counts_and_text() -> Option<(Counts, PhraseLexicon, String)> {
     let export = locate_export_dir()?;
-    let lexicon = PhraseLexicon::from_phrase_index(
-        &export.join(oxpinyin_segment::default_store_file("phrase_index")),
-    )
-    .ok()?;
+    let lexicon = PhraseLexicon::from_system_dir(&export).ok()?;
     let text = std::fs::read_to_string(fixture_ngseg()).ok()?;
     let counts = count_ngseg(&lexicon, &text, true).ok()?;
     let emitted = emit_interpolation2(&counts, &lexicon);

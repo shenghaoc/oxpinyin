@@ -51,8 +51,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let phrase_index = tool_cli::locate_phrase_index(tool.export_dir.as_deref())?;
-    let lexicon = PhraseLexicon::from_phrase_index(&phrase_index)?;
+    let system_dir = tool_cli::locate_system_dir(tool.export_dir.as_deref())?;
+    let lexicon = PhraseLexicon::from_system_dir(&system_dir)?;
 
     let system_text = String::from_utf8(tool_cli::read_input(tool.input.as_deref())?)?;
     let train_pi_gram = !tool.skip_pi_gram;
@@ -84,7 +84,7 @@ fn print_help() {
          DELETED_BIGRAM (default: the SYSTEM stream itself).\n\
          \n\
            --deleted FILE      held-out ngseg stream (DELETED_BIGRAM)\n\
-           --export-dir DIR    system-table export (the phrase_index table) for the freq-1 floor\n\
+           --export-dir DIR    system data directory (the chunk files) for the freq-1 floor\n\
            --skip-pi-gram-training\n\
                                drop sentence-start boundary bigrams on both streams\n"
     );

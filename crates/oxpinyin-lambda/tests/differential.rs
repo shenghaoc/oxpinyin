@@ -75,10 +75,7 @@ struct Estimate {
 
 fn rust_estimate() -> Option<Estimate> {
     let export = locate_export_dir()?;
-    let lexicon = PhraseLexicon::from_phrase_index(
-        &export.join(oxpinyin_segment::default_store_file("phrase_index")),
-    )
-    .ok()?;
+    let lexicon = PhraseLexicon::from_system_dir(&export).ok()?;
     let full = std::fs::read_to_string(fixture_ngseg()).ok()?;
     let system = count_ngseg(&lexicon, &system_fold(&full), true).ok()?;
     let deleted = count_deleted(&full, true).ok()?;
