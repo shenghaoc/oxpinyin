@@ -1,24 +1,44 @@
-//! Drop-in parity differential: KC output vs a real pin-built libpinyin
-//! data directory.
+//! Drop-in parity differential: this crate's output vs a real pin-built
+//! libpinyin data directory, on the same backend.
 //!
-//! Gated on `OXPINYIN_LIBPINYIN_DATA_DIR` (a directory holding a
-//! KC-built libpinyin install's `data/`: `pinyin_index.bin`,
-//! `phrase_index.bin`, `punct.bin`, `bigram.db`,
-//! `addon_pinyin_index.bin`, `addon_phrase_index.bin`, and the sixteen
-//! per-library `*.bin` chunk files) plus the model20 cache. The
-//! perf-matrix container provides both; local runs skip.
+//! Compiled for the Kyoto Cabinet and Tkrzw producers only — the two
+//! backends whose files libpinyin itself defines. Gated on
+//! `OXPINYIN_LIBPINYIN_DATA_DIR`: a libpinyin install's `data/` built
+//! with the same DBM as this crate's selected backend (`pinyin_index.bin`,
+//! `phrase_index.bin`, `punct.bin`, `bigram.db`, `addon_pinyin_index.bin`,
+//! `addon_phrase_index.bin`, and the sixteen per-library `*.bin` chunk
+//! files), plus a model directory resolved the way every model20 consumer
+//! resolves it (`PINYIN_MODEL_DIR`, then the cache). Local runs without
+//! the variable skip.
 //!
-//! The chunk comparison is byte-exact; the DBM comparisons are
-//! row-stream exact (same `(key, value)` pairs in ascending key order).
-//! The container bytes of a DBM are the writing KC's own layout, so a
-//! byte comparison would be a test of Kyoto Cabinet, not of this
-//! compiler.
-#![cfg(feature = "kyotocabinet")]
+//! `tools/datagen/libpinyin-drop-in-differential.sh` drives this test in
+//! the perf-matrix container against the pinned model20 and against the
+//! toned mini model under `fixtures/datagen-toned/`, whose libpinyin side
+//! is produced by libpinyin's own `gen_binary_files` /
+//! `import_interpolation` / `gen_unigram` from the same tables — the
+//! canonical-source invariant: both implementations compile the text,
+//! neither reads the other's output.
+//!
+//! The chunk comparison is byte-exact; the DBM comparisons are row-stream
+//! exact (same `(key, value)` pairs in ascending key order), except that
+//! the pinyin index tolerates the pin's uninitialized struct padding
+//! (`docs/findings/datagen-compat-2026-09-01.md`). The container bytes of
+//! a DBM are the writing library's own layout, so a byte comparison there
+//! would test Kyoto Cabinet or Tkrzw, not this compiler.
+#![cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use oxpinyin_datagen::{addon, punct, system};
-use oxpinyin_store::{KcStore, RawReadStore, ReadStore};
+use oxpinyin_store::{RawReadStore, ReadStore};
+
+/// The store type that reads the selected backend's own files. Exactly
+/// one backend feature is compiled in per build (`oxpinyin-store`
+/// refuses two), so the two aliases never coexist.
+#[cfg(feature = "kyotocabinet")]
+type DropInStore = oxpinyin_store::KcStore;
+#[cfg(feature = "tkrzw")]
+type DropInStore = oxpinyin_store::TkrzwStore;
 
 fn data_dir() -> Option<PathBuf> {
     std::env::var_os("OXPINYIN_LIBPINYIN_DATA_DIR").map(PathBuf::from)
@@ -32,12 +52,9 @@ fn model_dir() -> Option<PathBuf> {
     }
 }
 
-fn rows_of(path: &PathBuf, hash: bool) -> Vec<(Vec<u8>, Vec<u8>)> {
-    let store = if hash {
-        KcStore::open_hash_read_only(path).expect("open hash")
-    } else {
-        KcStore::open_read_only(path).expect("open tree")
-    };
+/// Every row of a tree container, in the container's ascending key order.
+fn rows_of(path: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let store = DropInStore::open_read_only(path).expect("open tree");
     let mut rows = Vec::new();
     store
         .range_raw(
@@ -52,12 +69,11 @@ fn rows_of(path: &PathBuf, hash: bool) -> Vec<(Vec<u8>, Vec<u8>)> {
     rows
 }
 
-fn assert_rows_equal(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &PathBuf, hash: bool) {
-    let actual = rows_of(real, hash);
+fn assert_rows_equal(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &Path) {
+    let actual = rows_of(real);
     let mut expected: Vec<(Vec<u8>, Vec<u8>)> = generated.to_vec();
-    // The writer may emit rows in a different order than the container's
-    // physical order (numeric token vs LE-byte); a DBM's keyspace is
-    // order-independent, so compare both in ascending key-byte order.
+    // A DBM's keyspace is order-independent; compare both in ascending
+    // key-byte order, which is also both tree containers' physical order.
     expected.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(
         expected.len(),
@@ -82,13 +98,10 @@ fn assert_rows_equal(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &PathBu
 /// unreproducible garbage the real files carry and this compiler
 /// deterministically zeroes (`docs/findings/datagen-compat-2026-09-01.md`,
 /// the padding divergence). Every field inside the stride is compared
-/// exactly; only padding bytes are ignored.
-fn assert_rows_equal_ignoring_padding(
-    name: &str,
-    generated: &[(Vec<u8>, Vec<u8>)],
-    real: &PathBuf,
-) {
-    let actual = rows_of(real, false);
+/// exactly — token and every key with its tone bits; only padding bytes
+/// are ignored.
+fn assert_rows_equal_ignoring_padding(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &Path) {
+    let actual = rows_of(real);
     assert_eq!(
         generated.len(),
         actual.len(),
@@ -120,13 +133,14 @@ fn assert_rows_equal_ignoring_padding(
     }
 }
 
-/// Per-key point comparison for a hash DB (`bigram.db`): KC HashDB
-/// cursors cannot iterate the whole keyspace (`kccurjumpkey` with the
-/// empty key answers no-record on an unordered container), so every
-/// generated key is looked up in the real file and its value compared,
-/// plus a count check guards against extra real rows.
-fn assert_hash_equal(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &PathBuf) {
-    let store = KcStore::open_hash_read_only(real).expect("open hash");
+/// Per-key point comparison for the hash container (`bigram.db`): a KC
+/// HashDB cursor cannot be positioned from the empty key (unordered
+/// container), so every generated key is looked up in the real file and
+/// its value compared. Real rows the generator did not emit would be
+/// missed by this direction alone; `libpinyin_compile_matches_upstream_arithmetic`
+/// in `system.rs` and the row-count line printed here cover the counts.
+fn assert_hash_equal(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &Path) {
+    let store = DropInStore::open_hash_read_only(real).expect("open hash");
     for (index, (key, value)) in generated.iter().enumerate() {
         let got = store.get_raw(key).expect("get_raw");
         assert_eq!(
@@ -135,10 +149,11 @@ fn assert_hash_equal(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &PathBu
             "{name}: row {index}: key {key:02x?} value mismatch"
         );
     }
+    eprintln!("{name}: {} rows verified by point read", generated.len());
 }
 
 #[test]
-fn kc_output_matches_the_pin_built_data_dir() {
+fn drop_in_output_matches_the_pin_built_data_dir() {
     let Some(data) = data_dir() else {
         eprintln!("OXPINYIN_LIBPINYIN_DATA_DIR unset — skipping");
         return;
@@ -153,6 +168,8 @@ fn kc_output_matches_the_pin_built_data_dir() {
     let punct_rows = punct::compile_libpinyin(&model).expect("punct");
 
     // ---- chunk files: byte-exact ---------------------------------------
+    // Tones, unigram (+1), pronunciation frequencies and item layout are
+    // all inside these bytes.
     for (name, bytes) in sys.chunks.iter().chain(add.chunks.iter()) {
         let real = data.join(name);
         assert!(real.is_file(), "{name} missing from the data dir");
@@ -164,11 +181,10 @@ fn kc_output_matches_the_pin_built_data_dir() {
             bytes.len(),
             actual.len()
         );
+        eprintln!("{name}: {} bytes byte-exact", bytes.len());
     }
 
     // ---- DBM row streams ------------------------------------------------
-    // The pinyin index carries struct tail-padding that is uninitialized
-    // stack memory upstream; compare its fields, not the padding bytes.
     assert_rows_equal_ignoring_padding(
         "pinyin_index.bin",
         &sys.pinyin_index,
@@ -178,10 +194,9 @@ fn kc_output_matches_the_pin_built_data_dir() {
         "phrase_index.bin",
         &sys.phrase_index,
         &data.join("phrase_index.bin"),
-        false,
     );
     assert_hash_equal("bigram.db", &sys.bigram, &data.join("bigram.db"));
-    assert_rows_equal("punct.bin", &punct_rows, &data.join("punct.bin"), false);
+    assert_rows_equal("punct.bin", &punct_rows, &data.join("punct.bin"));
     assert_rows_equal_ignoring_padding(
         "addon_pinyin_index.bin",
         &add.pinyin_index,
@@ -191,6 +206,14 @@ fn kc_output_matches_the_pin_built_data_dir() {
         "addon_phrase_index.bin",
         &add.phrase_index,
         &data.join("addon_phrase_index.bin"),
-        false,
+    );
+    eprintln!(
+        "pinyin_index.bin {} rows · phrase_index.bin {} rows · bigram.db {} rows · punct.bin {} rows · addon {} / {} rows",
+        sys.pinyin_index.len(),
+        sys.phrase_index.len(),
+        sys.bigram.len(),
+        punct_rows.len(),
+        add.pinyin_index.len(),
+        add.phrase_index.len()
     );
 }
