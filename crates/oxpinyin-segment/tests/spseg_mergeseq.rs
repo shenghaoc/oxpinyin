@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use oxpinyin_segment::{PhraseLexicon, default_store_file, mergeseq, spseg};
+use oxpinyin_segment::{PhraseLexicon, mergeseq, spseg};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -25,11 +25,11 @@ fn repo_root() -> PathBuf {
 }
 
 fn w3_lexicon() -> PhraseLexicon {
-    let path = repo_root()
-        .join("fixtures/w3")
-        .join(default_store_file("phrase_index"));
-    PhraseLexicon::from_phrase_index(&path)
-        .unwrap_or_else(|error| panic!("committed w3 phrase_index must open: {error}"))
+    // The system chunk files are backend-independent, so any committed
+    // per-backend subdir serves the lexicon; kct is always present.
+    let dir = repo_root().join("fixtures/w3").join("kct");
+    PhraseLexicon::from_system_dir(&dir)
+        .unwrap_or_else(|error| panic!("committed w3 chunk files must open: {error}"))
 }
 
 fn first_divergence(left: &str, right: &str) -> Option<String> {
@@ -153,9 +153,7 @@ fn rust_matches_live_spseg_when_present() {
         eprintln!("skipping live spseg: no full export for the Rust side");
         return;
     };
-    let lexicon =
-        PhraseLexicon::from_phrase_index(&export.join(default_store_file("phrase_index")))
-            .expect("export phrase_index opens");
+    let lexicon = PhraseLexicon::from_system_dir(&export).expect("export chunk files open");
     let input_path = repo_root().join("fixtures/w9/segmenter-han.txt");
     let input = std::fs::read(&input_path).expect("han input");
     let rust = spseg::segment_bytes(&lexicon, &input, false);
@@ -176,9 +174,7 @@ fn rust_matches_live_mergeseq_when_present() {
         eprintln!("skipping live mergeseq: no full export for the Rust side");
         return;
     };
-    let lexicon =
-        PhraseLexicon::from_phrase_index(&export.join(default_store_file("phrase_index")))
-            .expect("export phrase_index opens");
+    let lexicon = PhraseLexicon::from_system_dir(&export).expect("export chunk files open");
     // mergeseq consumes a segmented stream: use the committed full-dict
     // ngseg golden as the shared input.
     let input_path = repo_root().join("fixtures/w9/segmenter-ngseg.txt");
