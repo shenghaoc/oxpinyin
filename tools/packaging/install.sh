@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# install.sh — install the drop-in libpinyin + libzhuyin trees, each with a
+# install.sh — install ONE drop-in library tree (libpinyin or libzhuyin) with a
 # COMPLETE pkg-config file.
+#
+# libpinyin and libzhuyin are separate shared objects and must always be
+# installable separately: one invocation installs exactly one library, named by
+# the required first argument. Run the script twice to install both; the two
+# trees are disjoint apart from the byte-identical companion headers
+# (novel_types.h, pinyin_custom2.h) both crates ship into the shared include
+# subdirectory, which this script verifies before installing anything.
 #
 # Why this wrapper exists (verified against cargo-c 0.10.24 source):
 #   1. cargo-c's [package.metadata.capi.pkg_config] has a closed 7-key field
@@ -17,17 +24,19 @@
 #
 # So each crate's build.rs bakes the build-time fields into its
 # <name>.pc.in.baked (version, ABI binary version, database_format), and this
-# wrapper runs `cargo cinstall` for BOTH crates, fills the install-time
-# placeholders, and OVERWRITES the incomplete .pc files cargo-c installed.
+# wrapper runs `cargo cinstall` for the named crate, fills the install-time
+# placeholders, and OVERWRITES the incomplete .pc file cargo-c installed.
 # This wrapper is the ONLY supported path to a correct .pc; a plain
 # `cargo capi install` leaves cargo-c's incomplete one — the documented
 # silent window (docs/findings/installed-naming.md).
 #
-# Usage: tools/packaging/install.sh --prefix=DIR [--libdir=DIR] [-- <extra cargo cinstall args>]
+# Usage: tools/packaging/install.sh <library> --prefix=DIR [--libdir=DIR] [-- <extra cargo cinstall args>]
+#        <library> is `libpinyin` or `libzhuyin` — required, one per invocation.
 # Env:   LIBPINYIN_DATABASE_FORMAT=<name>  overrides the baked database_format
 #                                          (e.g. KyotoCabinet, BerkeleyDB).
 #
-# Exits 0 on success; non-zero on a failed install or a missing baked template.
+# Exits 0 on success; 2 on a usage error; non-zero on a failed install, a
+# missing baked template, or divergent companion headers.
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -36,12 +45,19 @@ REPO_ROOT="$(cd ../.. && pwd)"
 PINYIN_CRATE_DIR="$REPO_ROOT/crates/oxpinyin-capi"
 ZHUYIN_CRATE_DIR="$REPO_ROOT/crates/oxpinyin-zhuyin-capi"
 
+# The companion headers both crates ship, verbatim, into the same include
+# subdirectory. They must be byte-identical or the second install to a prefix
+# would silently rewrite what the first put there.
+COMPANION_HEADERS="novel_types.h pinyin_custom2.h"
+
+LIBRARY=""
 PREFIX=""
 LIBDIR=""
 EXTRA=()
 
 usage() {
-  echo "usage: $0 --prefix=DIR [--libdir=DIR] [-- <extra cargo cinstall args>]" >&2
+  echo "usage: $0 <libpinyin|libzhuyin> --prefix=DIR [--libdir=DIR] [-- <extra cargo cinstall args>]" >&2
+  echo "       one library per invocation; run twice to install both" >&2
   exit 2
 }
 
@@ -52,6 +68,13 @@ profile_dir() {
     *)   echo "$1" ;;
   esac
 }
+
+# The library to install is the required first argument, consumed before the
+# option loop so it can never be mistaken for a cargo passthrough word.
+case "${1:-}" in
+  libpinyin|libzhuyin) LIBRARY="$1"; shift ;;
+  *) usage ;;
+esac
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -103,17 +126,11 @@ else
   TARGET_DIR="$REPO_ROOT/target"
 fi
 
-# 1. cargo-c builds + installs BOTH crates (each of its own incomplete
-#    libpinyin.pc / libzhuyin.pc lands in <libdir>/pkgconfig). These builds
-#    (re)generate the crates' build.rs baked templates.
-( cd "$PINYIN_CRATE_DIR"  && cargo cinstall --prefix="$PREFIX" --libdir="$LIBDIR" --target-dir="$TARGET_DIR" ${PASSTHRU[@]+"${PASSTHRU[@]}"} )
-( cd "$ZHUYIN_CRATE_DIR"  && cargo cinstall --prefix="$PREFIX" --libdir="$LIBDIR" --target-dir="$TARGET_DIR" ${PASSTHRU[@]+"${PASSTHRU[@]}"} )
-
-# 2. Locate the build.rs baked templates, fresh from the cinstall builds above.
-#    Each build.rs mirrors its template to <target-dir>[/<triple>]/<profile>/,
-#    so the exact path is derived from the SAME target-dir / --target / profile
-#    the builds used — not a broad search that could pick up an unrelated
-#    crate's `out` artifact or a stale profile.
+# Resolve the baked-template location the build.rs of the installed crate will
+# use. Each build.rs mirrors its template to <target-dir>[/<triple>]/<profile>/,
+# so the exact path is derived from the SAME target-dir / --target / profile
+# the build uses — not a broad search that could pick up an unrelated crate's
+# `out` artifact or a stale profile.
 #
 # cargo cinstall always builds under an explicit target triple (cargo-c sets it
 # to rustc.host when --target is absent — build.rs:825-828), so the layout is
@@ -186,28 +203,64 @@ sed_escape() {
   printf '%s' "$1" | sed 's/[\\&#]/\\&/g'
 }
 
-# 3. Fill the install-time placeholders and overwrite the installed .pc files.
+# Pre-install guard: the companion headers both crates ship must be
+# byte-identical, so installing either library (or both, in any order) puts the
+# same bytes in the shared include subdirectory. The workspace test
+# crates/oxpinyin-zhuyin-capi/tests/companion_headers.rs is the primary gate on
+# the tree; this catches a divergent checkout before it reaches a prefix.
+check_companion_headers() {
+  local name
+  for name in $COMPANION_HEADERS; do
+    if ! cmp -s -- "$PINYIN_CRATE_DIR/$name" "$ZHUYIN_CRATE_DIR/$name"; then
+      echo "error: companion header '$name' differs between the two crates:" >&2
+      echo "         $PINYIN_CRATE_DIR/$name" >&2
+      echo "         $ZHUYIN_CRATE_DIR/$name" >&2
+      echo "       both ship into the same include subdirectory and must be byte-identical." >&2
+      exit 1
+    fi
+  done
+}
+
+# Install one library: cargo-c builds + installs the crate (its own incomplete
+# .pc lands in <libdir>/pkgconfig and the build (re)generates the crate's
+# build.rs baked template), then the install-time placeholders are filled and
+# the installed .pc overwritten.
+#   $1 crate directory, $2 baked template name, $3 installed .pc name,
+#   $4.. sed expressions (each already prefixed with -e).
+install_library() {
+  local crate_dir="$1" baked_name="$2" pc_name="$3"
+  shift 3
+  ( cd "$crate_dir" && cargo cinstall --prefix="$PREFIX" --libdir="$LIBDIR" --target-dir="$TARGET_DIR" ${PASSTHRU[@]+"${PASSTHRU[@]}"} )
+  local baked
+  baked="$(locate_baked "$baked_name")"
+  sed "$@" "$baked" > "$PC_DIR/$pc_name"
+  echo "installed complete pkg-config file: $PC_DIR/$pc_name"
+}
+
+check_companion_headers
+
 PC_DIR="$LIBDIR/pkgconfig"
 mkdir -p "$PC_DIR"
 
 prefix_esc="$(sed_escape "$PREFIX")"
 libdir_esc="$(sed_escape "$LIBDIR")"
 
-# libpinyin: the template hardcodes exec_prefix/includedir off ${prefix}, so
-# only @prefix@ and @libdir@ are install-time.
-PINYIN_BAKED="$(locate_baked libpinyin.pc.in.baked)"
-sed -e "s#@prefix@#${prefix_esc}#g" -e "s#@libdir@#${libdir_esc}#g" \
-    "$PINYIN_BAKED" > "$PC_DIR/libpinyin.pc"
-echo "installed complete pkg-config file: $PC_DIR/libpinyin.pc"
-
-# libzhuyin: the template keeps @exec_prefix@ and @includedir@ as placeholders
-# (unlike libpinyin.pc.in's hardcoded ${prefix}/include), so all four are
-# install-time. Mirror the values autoconf substitutes upstream (exec_prefix
-# defaults to ${prefix}, includedir to ${prefix}/include).
-ZHUYIN_BAKED="$(locate_baked libzhuyin.pc.in.baked)"
-sed -e "s#@prefix@#${prefix_esc}#g" \
-    -e "s#@exec_prefix@#\${prefix}#g" \
-    -e "s#@libdir@#${libdir_esc}#g" \
-    -e "s#@includedir@#\${prefix}/include#g" \
-    "$ZHUYIN_BAKED" > "$PC_DIR/libzhuyin.pc"
-echo "installed complete pkg-config file: $PC_DIR/libzhuyin.pc"
+case "$LIBRARY" in
+  libpinyin)
+    # libpinyin: the template hardcodes exec_prefix/includedir off ${prefix}, so
+    # only @prefix@ and @libdir@ are install-time.
+    install_library "$PINYIN_CRATE_DIR" libpinyin.pc.in.baked libpinyin.pc \
+      -e "s#@prefix@#${prefix_esc}#g" -e "s#@libdir@#${libdir_esc}#g"
+    ;;
+  libzhuyin)
+    # libzhuyin: the template keeps @exec_prefix@ and @includedir@ as placeholders
+    # (unlike libpinyin.pc.in's hardcoded ${prefix}/include), so all four are
+    # install-time. Mirror the values autoconf substitutes upstream (exec_prefix
+    # defaults to ${prefix}, includedir to ${prefix}/include).
+    install_library "$ZHUYIN_CRATE_DIR" libzhuyin.pc.in.baked libzhuyin.pc \
+      -e "s#@prefix@#${prefix_esc}#g" \
+      -e "s#@exec_prefix@#\${prefix}#g" \
+      -e "s#@libdir@#${libdir_esc}#g" \
+      -e "s#@includedir@#\${prefix}/include#g"
+    ;;
+esac

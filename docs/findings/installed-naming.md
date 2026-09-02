@@ -122,10 +122,18 @@ the prefix to build.rs, the work splits in two:
   install-time `@prefix@` / `@libdir@` for the wrapper. It writes to
   `$OUT_DIR` and mirrors the file to `<target>/<profile>/` so the wrapper
   can read it without discovering the build-hash directory.
-- **`tools/packaging/install.sh` owns placement.** It runs
-  `cargo cinstall --prefix=… --libdir=…`, then substitutes the real
-  `prefix`/`libdir` into the baked template and **overwrites** the
-  incomplete `libpinyin.pc` cargo-c just installed.
+- **`tools/packaging/install.sh` owns placement.** For the one library
+  named on its command line (`libpinyin` or `libzhuyin` — one per
+  invocation, so each stays installable on its own) it runs
+  `cargo cinstall --prefix=… --libdir=…`, then fills that crate's baked
+  template and **overwrites** the incomplete `.pc` cargo-c just
+  installed. For `libpinyin` that is `libpinyin.pc.in.baked` →
+  `libpinyin.pc`, with `@prefix@` / `@libdir@` substituted (the template
+  hardcodes `exec_prefix` and `includedir` off `${prefix}`). For
+  `libzhuyin` it is `libzhuyin.pc.in.baked` → `libzhuyin.pc`, with all
+  four filled: `@prefix@` / `@libdir@` as real paths, and `@exec_prefix@`
+  / `@includedir@` as the symbolic `${prefix}` / `${prefix}/include`
+  autoconf substitutes upstream.
 
 The wrapper is the **supported installation path**. A plain
 `cargo capi install` still leaves cargo-c's incomplete `.pc` — the
@@ -146,7 +154,7 @@ override that mapping sets `LIBPINYIN_DATABASE_FORMAT=<name>` at build
 time; otherwise the variable reads whichever peer the library was
 compiled against.
 
-**Gate.** After `tools/packaging/install.sh --prefix=$P` (with
+**Gate.** After `tools/packaging/install.sh libpinyin --prefix=$P` (with
 `PKG_CONFIG_PATH=$P/lib/pkgconfig`):
 
 ```console
