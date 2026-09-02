@@ -174,9 +174,15 @@ fn parse_chewing_more(instance: *mut PinyinInstance, text: &str) -> usize {
     };
     let use_tone = inst.use_tone.load(Ordering::Relaxed);
     // Upstream passes the caller's option word through after stripping the
-    // parser-owned corrections (`pinyin.cpp:1621`); `ZHUYIN_INCOMPLETE` is
-    // the one caller bit the Simple parser consults, so that bit alone
-    // crosses this seam.
+    // parser-owned corrections (`pinyin.cpp:1589`, inside
+    // `pinyin_parse_more_chewings`). Three caller bits reach the parsers:
+    // `USE_TONE` and `FORCE_TONE` (`zhuyin_parser2.cpp:171-179` for Simple,
+    // `:373`/`:387` for Discrete, `:595-605` for CP26) and
+    // `ZHUYIN_INCOMPLETE` (`:49-51`). This seam carries `USE_TONE` and
+    // `ZHUYIN_INCOMPLETE`; `FORCE_TONE` does not cross yet — the open item
+    // in `docs/findings/upstream-divergences.md` (FORCE_TONE entry,
+    // pinyin-facade chewing batch seam). The libzhuyin facade forwards the
+    // whole word through `ZhuyinParser::parse_with_options`.
     let allow_incomplete = inst.options().contains(ZHUYIN_INCOMPLETE);
     let parser = oxpinyin_core::ZhuyinParser::with_scheme(scheme);
     let parsed = parser.parse(text.as_bytes(), use_tone, allow_incomplete);

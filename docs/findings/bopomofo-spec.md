@@ -184,15 +184,28 @@ input-based. The differential surfaced exactly this class before the
 column was added (aux-only divergence on shuffled inputs; parse surfaces
 already matched).
 
-**Option seam.** `pinyin_parse_more_chewings` strips
-`ZHUYIN_CORRECT_ALL` from caller options and passes the word through
-(`pinyin.cpp:1621`); the only caller bit the Simple parser consults is
-`ZHUYIN_INCOMPLETE` (bit 4), which `parse_chewing_more` now masks from
-the whole-word options atomic into `ZhuyinParser::parse`'s
-`allow_incomplete`. Keys recovered by the shuffle/recovery rows join the
-already-documented non-gated full-candidate divergence class (no
-phrases for the new spellings in the string-keyed dictionary — empty
-lookup, `UNKNOWN_COST`, no panic; verified by the id-table audit).
+**Option seam.** `pinyin_parse_more_chewings` strips `ZHUYIN_CORRECT_ALL`
+from the caller's option word and passes the rest through to the parser
+(`pinyin.cpp:1582-1609`, the strip at `:1589`; `pinyin_in_chewing_keyboard`
+carries its own strip at `:1621`). Three caller bits reach the parsers:
+`USE_TONE` (Simple `zhuyin_parser2.cpp:171`, Discrete `:379`, CP26 `:595`);
+`FORCE_TONE` (Simple `:178`, nested under `USE_TONE`; Discrete `:373` and
+`:387`; CP26 `:602`, nested); and `ZHUYIN_INCOMPLETE` (bit 4,
+`pinyin_custom2.h:35`), consulted only by `check_chewing_options`
+(`:49-51`). `PINYIN_AMB_ALL` is masked off on entry (`:166`, `:342`,
+`:580`). An earlier version of this paragraph — and the comment it was
+copied from in `crates/oxpinyin-capi/src/parse.rs` — said
+`ZHUYIN_INCOMPLETE` was the only caller bit consulted and cited `:1621`
+for the strip; both were wrong (corrected 2026-09-03). oxpinyin's
+`parse_chewing_more` carries `USE_TONE` and `ZHUYIN_INCOMPLETE` across the
+seam and does not yet carry `FORCE_TONE`; that is an open implementation
+item on the pinyin facade's chewing batch seam, registered in
+`upstream-divergences.md` (FORCE_TONE entry), not a property of the pin.
+The libzhuyin facade forwards the whole word through
+`ZhuyinParser::parse_with_options`. Keys recovered by the shuffle/recovery
+rows join the already-documented non-gated full-candidate divergence
+class (no phrases for the new spellings in the string-keyed dictionary —
+empty lookup, `UNKNOWN_COST`, no panic; verified by the id-table audit).
 
 ## Keyboard scope
 
