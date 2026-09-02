@@ -1,7 +1,8 @@
 # P2 performance findings — lazy ChewingTable vs eager PinyinIndex
 
-Date: 2026-09-01 · Status: **measured (mini fixtures; full-data expected
-to show the architectural benefit)**
+Date: 2026-09-01 · Status: **measured (mini fixtures); the reader is the
+production pinyin path since P6 (2026-09-02) — the full-data runtime
+numbers are in `runtime-direct-libpinyin-data-2026-09-02.md`**
 
 ## The architectural change
 

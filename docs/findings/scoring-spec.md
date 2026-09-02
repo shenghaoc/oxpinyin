@@ -188,6 +188,26 @@ Ranking impact is path-specific — the real-unigram three-key order is
 not; see `scoring-constant-sweep.md`. The functional form, cost scale, sign
 convention, tie-break and totality rules in this SPEC are unchanged.
 
+**2026-09-02 — `P_unigram` reads the phrase item's stored field, not the
+corpus count.** The language model used to hand the engine the raw
+`\1-gram` count and `Σ count`, and the candidate law re-added the `+1`
+and `+ item count` the pin's data carries. Upstream never sees the raw
+count: every reader of the unigram — the trellis (`PinyinLookup2`), the
+candidate law (`_compute_frequency_of_items`), training
+(`train_result3`) — reads `PhraseItem::get_unigram_frequency`, the
+count plus the one `gen_unigram` adds to every item precisely "to avoid
+zero value when computing unigram frequency", over
+`get_phrase_index_total_freq()`, the sum of those fields. The
+`LanguageModel` seam now hands out exactly those two numbers (the chunk
+item field and the facade total), the engine's `+1`/`+ item count`
+re-derivation is gone, and a phrase the corpus never saw has probability
+`1/Σ` in the trellis instead of the `UNKNOWN_COST` floor. On the pinned
+model the two constructions differ by one part in fifty million and the
+same-data differentials are identical either way; on a small data set
+(the `fixtures/w3` mini directories, which libpinyin itself can open)
+the floor truncated sentences the pin completes. Formula, cost scale,
+sign convention, tie-break and totality rules are unchanged.
+
 **2026-08-16 — incomplete expansion is phonetic initial, not string prefix.**
 The paragraph above said an incomplete key stood for every complete key it is
 a proper prefix of. That leaked `n` into `ng` and `z`/`c`/`s` into

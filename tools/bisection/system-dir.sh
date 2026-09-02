@@ -59,9 +59,10 @@ resolve_system_dir() {
 	# 3. the conventional build locations, newest convention first.
 	if [[ -z $resolved ]]; then
 		for candidate in \
+			"$repo_root/target/datagen/kct" \
 			"$repo_root/target/datagen/redb" \
 			/tmp/oxpinyin-export; do
-			if [[ -f $candidate/pinyin_index.redb ]]; then
+			if [[ -f $candidate/gb_char.bin ]]; then
 				resolved=$candidate
 				break
 			fi
@@ -84,7 +85,7 @@ resolve_system_dir() {
 		printf '# make this fatal again.\n' >&2
 		printf '################################################################\n' >&2
 		printf '\n' >&2
-		printf '%s\n' "$repo_root/fixtures/w3"
+		printf '%s\n' "$repo_root/fixtures/w3/kct"
 		return 0
 	fi
 
@@ -94,11 +95,11 @@ resolve_system_dir() {
 		printf 'Looked at, in order:\n'
 		printf '  $%s          (this runner'"'"'s own variable)\n' "$var_name"
 		printf '  $OXPINYIN_SYSTEM_DIR   (set once for a whole sweep)\n'
-		printf '  %s/target/datagen/redb\n' "$repo_root"
+		printf '  %s/target/datagen/{kct,redb}\n' "$repo_root"
 		printf '  /tmp/oxpinyin-export\n'
 		printf '\n'
-		printf 'A usable directory holds the real-unigram tables:\n'
-		printf '  pinyin_index.redb  phrase_index.redb  bigram.redb  interpolation2.text\n'
+		printf 'A usable directory is a system data directory for the compiled-in\n'
+		printf 'backend: the chunk files, table.conf, and the DBMs.\n'
 		printf '\n'
 		printf 'Build one from the pinned model:\n'
 		printf '  tools/model/fetch-model.sh\n'
@@ -122,9 +123,18 @@ resolve_system_dir() {
 system_dir_require_complete() {
 	local dir=$1 var_name=$2 label=$3
 	local missing=() file
-	for file in pinyin_index.redb phrase_index.redb bigram.redb interpolation2.text; do
+	# A system data directory holds the chunk files, table.conf, and the
+	# DBMs under the compiled-in backend's names: libpinyin's own
+	# (pinyin_index.bin, bigram.db, ...) on Kyoto Cabinet and tkrzw,
+	# <stem>.<ext> on redb and LMDB.
+	for file in gb_char.bin table.conf; do
 		[[ -f $dir/$file ]] || missing+=("$file")
 	done
+	local found_index=
+	for file in pinyin_index.bin pinyin_index.redb pinyin_index.lmdb; do
+		[[ -f $dir/$file ]] && found_index=$file
+	done
+	[[ -n $found_index ]] || missing+=("pinyin_index.{bin,redb,lmdb}")
 	((${#missing[@]} == 0)) && return 0
 	{
 		printf 'fatal: %s: the system directory is incomplete.\n' "$label"
@@ -132,16 +142,9 @@ system_dir_require_complete() {
 		printf '  (from $%s, $OXPINYIN_SYSTEM_DIR, or a conventional location)\n' "$var_name"
 		printf '\nMissing:\n'
 		printf '  %s\n' "${missing[@]}"
-		printf '\nAll four are required: the three tables plus interpolation2.text,\n'
-		printf 'whose real unigrams are what the oracle scores against. Without it\n'
-		printf 'the comparison is flat-export unigrams versus the pin'"'"'s real ones\n'
-		# %s, not a bare format: a format string opening with `--` is read
-		# as options, and the builtin fails with `invalid option`. That
-		# truncates this message, and because the failure lands under
-		# `set -e` before the `exit 3` below, the caller gets status 2 --
-		# which run-option-sweep.sh publishes as DIVERGENCE, the exact
-		# misreading this file exists to prevent.
-		printf '%s\n' '-- a data mismatch that reports as a divergence.'
+		printf '\nA system data directory is an oxpinyin-datagen compile output, or\n'
+		printf 'a libpinyin install'"'"'s data/ on Kyoto Cabinet and tkrzw: the chunk\n'
+		printf 'files, table.conf, and the DBMs under the backend'"'"'s names.\n'
 	} >&2
 	exit 3
 }

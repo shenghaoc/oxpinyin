@@ -337,6 +337,36 @@ inputs (the pin-built `.so` SIGABRTs).
   it on either engine. Report-back batch: file with the aux over-read
   as an internal-inconsistency pair, not a bare assert.
 
+### One bigram-prediction row differs on the pin's own data (trellis residual)
+
+- **Where:** `tools/bisection/run-same-data-dir-diff.sh union-diff` on a
+  `--with-dbm=KyotoCabinet` libpinyin install's own `data/` — one line,
+  `pred: type=4 text=你` (a `PREDICTED_BIGRAM_CANDIDATE`), present on
+  oxpinyin's C ABI and not the pin's, after the union differential's
+  train-then-predict sequence for `测测`.
+- **Mechanism:** downstream of the registered n-best trellis divergence
+  (below). The union driver's step 3 chooses an n-best row for
+  `cecenihao` and trains the constrained decode; the first decoded phrase
+  after `测测` differs by the trellis's gfloat-vs-fixed-point residual, so
+  the two engines write `测测 → 你` into the user bigram with counts that
+  straddle `_compute_predicted_bigram_candidates`'s `m_count ≥ 10` filter
+  (`pinyin.cpp:2340-2366`). At that one prefix oxpinyin's trained count
+  clears 10 and the pin's does not, so oxpinyin emits the extra
+  single-character bigram prediction.
+- **Independent of the P6 runtime switch:** the user-store training code
+  (`oxpinyin-user`) is unchanged by P6, and the divergence is stable
+  across the scoring change; the standard `run-union-diff.sh` (oxpinyin on
+  its own generated data vs the pin on its own) stays green, because there
+  the two decodes settle the same way. It surfaces only when oxpinyin
+  reads the pin's exact bytes and the trellis residual tips this filter.
+- **Externally observable:** yes — one predicted-bigram row on this one
+  trained-prediction edge. Not reducible without matching the pin's float
+  trellis bit-for-bit, which the fixed-point decoder deliberately does not
+  (see below). Every other `union-diff` line, and the whole
+  `dict-surface` / `pred-order` / `live-typing` / `nbest-train` /
+  `phrase-surface` / `predict` / `punct` / `addon` / `user-candidate` /
+  `import` / `key-surface` differential, is identical on the pin's data.
+
 ### N-best trellis accumulates gfloat log costs — not reproducible in fixed point
 
 - **Upstream source cite:** `src/lookup/phonetic_lookup.h:663, 692`
@@ -426,11 +456,19 @@ across builds, what the `BTreeMap` walk already yields, reproducible by
 anyone — joining the trellis-float entry as "upstream deterministic but
 not reproducibly so." Two consequences, stated explicitly:
 
-1. oxpinyin **permanently diverges from the pin on list positions**
-   for predicted candidates. The parity number (177/178 on 好,
-   1557/1571 across the eight measurement prefixes — measured after
-   the text-ascending switch) is a recorded constant, not a target
-   of zero.
+1. **Superseded by P6 (2026-09-02).** Once the runtime reads the phrase
+   DBM directly, the suggestion order is reproduced from the *same* file
+   the pin walks: `SystemDictionary::suggest_after` +
+   `resolve_suggestions` (`crates/oxpinyin-data/src/dict.rs`) group the
+   tokens by library nibble ascending (the `reduce_tokens` concatenation)
+   and, within a group, in the DBM's byte-lexical UCS-4 cursor order —
+   exactly `PhraseLargeTable3::search_suggestion`'s walk. On the pin's own
+   KC `data/`, `pred-order-diff` is now **IDENTICAL** (1588 log lines, 0
+   position mismatches), not the text-ascending near-miss below. The
+   text-ascending fallback remains the *defined* order for oxpinyin-native
+   backends (redb/LMDB), whose container is not the pin's; on KC and tkrzw
+   the pin's own order is reproduced because the file is the pin's own.
+   The historical text-ascending decision is kept below for the record.
 2. The pred-order gate therefore **changes meaning**: from a parity
    assertion (drive to zero) to a **defined-order assertion** — the
    emitted list equals its own defined text-ascending order

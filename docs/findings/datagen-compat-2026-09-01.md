@@ -2,7 +2,7 @@
 
 Date: 2026-09-01 (rewritten 2026-09-02) · Status: **implemented, tested
 against the pin-built data, wired into the normal `compile` command;
-the production runtime does not consume this output until P6**
+consumed by the production runtime since P6 (2026-09-02)**
 
 > The file name is historical. There is **no compatibility layer** in
 > this design and this document describes none: the earlier `compat.rs`
@@ -22,21 +22,17 @@ system::read_semantic / addon::read_libraries / punct::read_rows
         ├──► KC producer      ─┐  libpinyin's own schema, libpinyin's own
         ├──► Tkrzw producer   ─┘  file names: the drop-in set
         │
-        ├──► redb producer    ─┐  oxpinyin's native schema
-        └──► LMDB producer    ─┘  (no drop-in requirement exists)
+        ├──► redb producer    ─┐  the same records in the backend's own
+        └──► LMDB producer    ─┘  container, `<stem>.<ext>` (since P6)
 ```
 
-The read pass produces one semantic model. Two serializers consume it:
-
-* `system::compile_libpinyin`, `addon::compile_libpinyin`,
-  `punct::compile_libpinyin` — the byte-level output of upstream's
-  build-time chain `gen_binary_files` → `import_interpolation` →
-  `gen_unigram` (`data/Makefile.am:43-49`). This is what the
-  `--backend kyotocabinet` (default) and `--backend tkrzw` runs of
-  `oxpinyin-datagen compile` write.
-* `system::compile`, `addon::compile`, `punct::compile` — the frozen
-  native schema (`docs/findings/data-layer-export.md`) the redb and LMDB
-  producers write.
+The read pass produces one semantic model. One set of serializers
+consumes it — `system::compile`, `addon::compile`, `punct::compile`, the
+byte-level output of upstream's build-time chain `gen_binary_files` →
+`import_interpolation` → `gen_unigram` (`data/Makefile.am:43-49`) — and
+every backend writes the rows it produces. (Until P6 the redb and LMDB
+producers wrote a separate native schema for the old eager runtime; that
+schema and its serializers are gone.)
 
 Nothing translates one persistent representation into another. The
 semantic model is in memory and belongs to neither implementation; each
@@ -142,9 +138,9 @@ padding. Register entry 18, class (b) — memory safety
 | Normal `oxpinyin-datagen compile` writes the drop-in set for KC and Tkrzw | done — `--backend kyotocabinet` (default) and `--backend tkrzw` |
 | Output field-exact / byte-exact against the pin-built data dir | done — model20 on KC and Tkrzw; toned mini model on both |
 | Tones preserved | done — proven by the toned differential |
-| redb / LMDB | unchanged native schema; not a drop-in target |
-| Production runtime reads this output | **not yet** — `Runtime::open` still opens the native-schema `pinyin_index.<ext>` set; the P6 PR switches it to the P1–P4 readers over these files |
-| `tools/bisection/Dockerfile.perf-matrix` | its oxpinyin cells run `compile` into `/opt/oxpinyin-*/data`, which now holds the drop-in set; the image's oxpinyin runtime works again once P6 lands |
+| redb / LMDB | the same records in the backend's own container under `<stem>.<ext>` (P6); the earlier native schema is gone |
+| Production runtime reads this output | done (P6, 2026-09-02) — `Runtime::open` opens this directory, or a libpinyin install's own, through the P1–P4 readers (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`) |
+| `tools/bisection/Dockerfile.perf-matrix` | its oxpinyin cells run `compile` into `/opt/oxpinyin-*/data`; `run-perf-same-data.sh` measures oxpinyin on the libpinyin cells' own directories instead |
 
 ## 8. Files
 
