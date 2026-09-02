@@ -31,6 +31,8 @@ typedef int32_t gint;
 
 #define IS_PINYIN         (1u << 1)
 #define PINYIN_INCOMPLETE (1u << 3)
+#define USE_TONE          (1u << 5)
+#define FORCE_TONE        (1u << 6)
 #define USE_DIVIDED_TABLE (1u << 7)
 #define USE_RESPLIT_TABLE (1u << 8)
 #define DEFAULT_FLAGS                                                   \
@@ -226,6 +228,68 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
     printf("\n");
 }
 
+/* The frozen double-pinyin Tone law's batch-parse probes
+ * (docs/findings/double-pinyin-spec.md, Tone): tone digits riding
+ * three-byte keys under USE_TONE, and the FORCE_TONE length-3 gate
+ * (pinyin_parser2.cpp:412). Option words are the bare profiles the
+ * key-surface differential uses, so the gate is observed with and
+ * without PINYIN_INCOMPLETE's neighbours. */
+static const pinyin_option_t TONE_PROFILES[] = {
+    DEFAULT_FLAGS | USE_TONE,
+    DEFAULT_FLAGS | FORCE_TONE,
+    DEFAULT_FLAGS | USE_TONE | FORCE_TONE,
+};
+static const size_t N_TONE_PROFILES = sizeof(TONE_PROFILES) / sizeof(TONE_PROFILES[0]);
+
+static const char *TONE_INPUTS[] = {
+    "ni3",
+    "ni3ha4",
+    "ni3ha",
+    "ni",
+    "ni6",
+    "ni0",
+    "nix",
+    "n3",
+    "a1",
+    "ni3x",
+    "3ni",
+    "ni34",
+    "nih3",
+};
+static const size_t N_TONE_INPUTS = sizeof(TONE_INPUTS) / sizeof(TONE_INPUTS[0]);
+
+static void drive_tone_law(const struct symbols *s, pinyin_instance_t *inst,
+                           pinyin_context_t *ctx, pinyin_option_t profile) {
+    s->set_options(ctx, profile);
+    for (size_t i = 0; i < N_TONE_INPUTS; i++) {
+        const char *input = TONE_INPUTS[i];
+        size_t consumed = s->parse_double(inst, input);
+        printf("tonelaw|0x%03x|%s|consumed=%zu|parsed=%zu\n", profile, input,
+               consumed, s->parsed_len(inst));
+
+        bool gc = s->guess_candidates(inst, 0, DEFAULT_SORT);
+        guint n = 0;
+        if (gc && s->get_n_candidate)
+            s->get_n_candidate(inst, &n);
+        printf("tonelaw|0x%03x|%s|guess=%s|n=%u\n", profile, input,
+               gc ? "true" : "false", n);
+        guint limit = n < 4 ? n : 4;
+        for (guint c = 0; c < limit; c++) {
+            lookup_candidate_t *cand = NULL;
+            if (!s->get_candidate(inst, c, &cand) || !cand)
+                break;
+            const gchar *text = NULL;
+            s->get_candidate_string(inst, cand, &text);
+            lookup_candidate_type_t ctype = NORMAL_CANDIDATE;
+            s->get_candidate_type(inst, cand, &ctype);
+            printf("tonelaw|0x%03x|%s|c[%u]=%s|%s\n", profile, input, c,
+                   ctype_name(ctype), text ? text : "(null)");
+        }
+        s->reset(inst);
+    }
+    s->set_options(ctx, DEFAULT_FLAGS);
+}
+
 static int file_exists(const char *dir, const char *name) {
     char path[4096];
     snprintf(path, sizeof(path), "%s/%s", dir, name);
@@ -286,6 +350,10 @@ int main(int argc, char **argv) {
 
     for (size_t i = 0; i < N_INPUTS; i++)
         drive_input(&s, inst, TEST_INPUTS[i]);
+
+    printf("=== tone law (batch FORCE_TONE / USE_TONE) ===\n");
+    for (size_t p = 0; p < N_TONE_PROFILES; p++)
+        drive_tone_law(&s, inst, ctx, TONE_PROFILES[p]);
 
     s.free_instance(inst);
     s.fini(ctx);
