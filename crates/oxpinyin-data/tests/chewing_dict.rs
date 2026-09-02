@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use oxpinyin_core::{ChewingKey, Completeness, Dictionary, SyllableKey};
 use oxpinyin_data::ChewingDictionary;
-use oxpinyin_store::{DefaultStore, RAW_TABLE, WriteStore};
+use oxpinyin_store::{DefaultStore, WriteStore};
 
 static FIXTURE_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -107,41 +107,34 @@ fn write_pinyin_index(path: &std::path::Path) {
     store
         .write(|txn| {
             // Complete index entries.
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_complete(&[key("ni")]),
                 &encode_items(&[(0x01000010, &[ni3][..])]),
             )?;
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_complete(&[key("hao")]),
                 &encode_items(&[(0x01000011, &[hao3][..])]),
             )?;
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_complete(&[key("ni"), key("hao")]),
                 &encode_items(&[(0x01000099, &[ni3, hao3][..])]),
             )?;
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_complete(&[key("zhong")]),
                 &encode_items(&[(0x01000020, &[zhong1][..])]),
             )?;
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_complete(&[key("guo")]),
                 &encode_items(&[(0x01000021, &[guo2][..])]),
             )?;
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_complete(&[key("zhong"), key("guo")]),
                 &encode_items(&[(0x010000A0, &[zhong1, guo2][..])]),
             )?;
 
             // Incomplete index entries.
             let n_init = ChewingKey::new(key("ni").initial, 0, 0, 0);
-            txn.put(
-                RAW_TABLE,
+            txn.put_raw(
                 &encode_incomplete(&[key("ni")]),
                 &encode_items(&[(0x01000010, &[n_init][..])]),
             )?;
