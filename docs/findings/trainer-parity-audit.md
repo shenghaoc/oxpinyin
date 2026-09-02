@@ -44,7 +44,7 @@ pipelines share the segmented-corpus input.
 Traced from the five `__main__` scripts. Each stage is epoch-gated by a
 `.status` JSON file (`utils.check_epoch`).
 
-```
+```text
 segment.py   → utils/segment/ngseg   (default)              segment
              → utils/segment/spseg   (--fast)
 generate.py  → utils/training/gen_k_mixture_model            KMM count (per document)
@@ -107,7 +107,7 @@ invocation exists): `training/gen_ngram`, `training/gen_unigram`,
 
 Separate entry points, pure Python + SQLite (no libpinyin binary):
 
-```
+```text
 prepare.py     → create 1..N-gram SQLite DBs (N=7)                     Prepare
 populate.py    → count word-history n-grams from segmented corpus,     Populate
                  prune freq ≤ 1 per pass
@@ -381,7 +381,7 @@ pairs whose P(≥K occurrences per doc) ≥ 0.99.)
 
 ### 6.7 KMM text format — `export`/`import` (`export…:35-110`, `import…`)
 
-```
+```text
 \data model "k mixture model" count <m_WC> N <m_N> total_freq <m_total_freq>
 \1-gram
 \item <token> <phrase> count <arrayhdr.m_WC> freq <arrayhdr.m_freq>
@@ -400,7 +400,7 @@ reverse (taglib-parsed) and re-signs the magic/array headers.
 
 Parses the KMM text (from `export`), emits the interpolation text:
 
-```
+```text
 \data model interpolation
 \1-gram
 \item <token> <phrase> count <freq>      # from the KMM \1-gram `freq` field;
@@ -588,7 +588,8 @@ Per stage:
 
 | Stage | Canonical comparison | Equality |
 |---|---|---|
-| spseg / mergeseq | ngseg-grammar token stream | byte-exact vs golden / live |
+| spseg | pin `spseg` token stream (same framing grammar as ngseg) | byte-exact vs golden / live |
+| mergeseq | pin `mergeseq` merged token stream | byte-exact vs golden / live |
 | KMM generate | canonical KMM record set (export text, sorted) | exact map equality |
 | KMM estimate | `average lambda` | exact (double `%f`) or documented tol |
 | KMM merge/prune | retained record set (export text) | exact |

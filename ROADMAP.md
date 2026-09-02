@@ -189,14 +189,16 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   `k_mixture_model_to_interpolation` off a merged-and-pruned KMM — **not**
   by the legacy `gen_ngram`/`export_interpolation` path.
 
-  First increment shipped the five legacy-path stages — segmenter
-  (`ngseg`), counter (`gen_ngram`), held-out/λ estimator
-  (`gen_deleted_ngram` + `estimate_interpolation`), emitter
-  (`export_interpolation`), corpus front-end (zhwiki cleaner). The
-  re-audit reclassifies `gen_ngram`/`gen_unigram`/`gen_deleted_ngram`/
-  `export_interpolation` as **legacy libpinyin utilities that the trainer
-  does not invoke** (kept, correct, retitled); `estimate_interpolation`'s
-  λ EM stays on the real path inside `evaluate.py`. Remaining scope is
+  First increment shipped five stages — segmenter (`ngseg`), counter
+  (`gen_ngram`), held-out/λ estimator (`gen_deleted_ngram` +
+  `estimate_interpolation`), emitter (`export_interpolation`), corpus
+  front-end (zhwiki cleaner). `ngseg` remains the active default
+  segmenter and the corpus front-end remains active; the re-audit
+  reclassifies only the n-gram counting and export utilities —
+  `gen_ngram`/`gen_unigram`/`gen_deleted_ngram`/`export_interpolation` —
+  as **legacy libpinyin utilities that the trainer does not invoke**
+  (kept, correct, retitled); `estimate_interpolation`'s λ EM stays on the
+  real path inside `evaluate.py`. Remaining scope is
   decomposed as Parts B–H in the audit: `spseg`/`mergeseq`
   (`oxpinyin-segment`); the KMM pipeline (`oxpinyin-kmm`); the evaluator
   (`oxpinyin-eval`, reusing the engine decoder); word recognition
