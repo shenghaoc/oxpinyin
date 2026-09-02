@@ -68,8 +68,15 @@ pub fn estimate_lambda(system: &Counts, deleted: &DeletedCounts) -> Result<Lambd
 ///
 /// # Errors
 ///
-/// Returns [`EvalError::Lambda`] when λ is outside `[0, 1]`.
+/// Returns [`EvalError::Lambda`] when λ is not finite or is outside
+/// `[0, 1]` — checked on the original value, before the six-decimal
+/// rounding, so `1.0000004` is rejected rather than rounded to `1.000000`.
 pub fn lambda_from_f64(value: f64) -> Result<Lambda, EvalError> {
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        return Err(EvalError::Lambda {
+            detail: format!("lambda {value} is not in [0, 1]"),
+        });
+    }
     Lambda::from_decimal(&format!("{value:.6}")).ok_or_else(|| EvalError::Lambda {
         detail: format!("lambda {value:.6} is not in [0, 1]"),
     })
@@ -80,4 +87,22 @@ pub fn lambda_from_f64(value: f64) -> Result<Lambda, EvalError> {
 #[must_use]
 pub fn build_model(counts: &Counts, lambda: Lambda) -> EvalLanguageModel {
     EvalLanguageModel::from_counts(counts, lambda)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lambda_from_f64;
+
+    #[test]
+    fn lambda_is_range_checked_before_rounding() {
+        assert_eq!(
+            lambda_from_f64(0.5).expect("in range"),
+            oxpinyin_data::Lambda::from_decimal("0.500000").expect("half")
+        );
+        assert!(lambda_from_f64(1.0).is_ok());
+        assert!(lambda_from_f64(0.0).is_ok());
+        for out in [1.000_000_4, -0.000_000_4, 1.5, f64::NAN, f64::INFINITY] {
+            assert!(lambda_from_f64(out).is_err(), "{out}");
+        }
+    }
 }

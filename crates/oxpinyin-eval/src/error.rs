@@ -31,6 +31,19 @@ pub enum EvalError {
         /// The token that could not be spelled.
         token: u32,
     },
+    /// A token in an evaluation sentence has no phrase text, so the expected
+    /// sentence cannot be formed (`convert_to_utf8` would read an unset
+    /// phrase item).
+    NoText {
+        /// The token without text.
+        token: u32,
+    },
+    /// No phrase cover spells the sentence's key chain, so there is no best
+    /// match to compare (`eval_correction_rate` asserts exactly one result).
+    Undecodable {
+        /// The number of keys in the chain.
+        keys: usize,
+    },
     /// A decode backend (dictionary or model) failed.
     Backend {
         /// Diagnostic context.
@@ -46,6 +59,10 @@ impl fmt::Display for EvalError {
             Self::Lambda { detail } => write!(formatter, "lambda estimation: {detail}"),
             Self::NoPronunciation { token } => {
                 write!(formatter, "token {token} has no pronunciation")
+            }
+            Self::NoText { token } => write!(formatter, "token {token} has no phrase text"),
+            Self::Undecodable { keys } => {
+                write!(formatter, "no phrase cover spells the {keys}-key chain")
             }
             Self::Backend { detail } => write!(formatter, "decode backend: {detail}"),
         }
