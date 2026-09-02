@@ -318,15 +318,29 @@ jobs:
       - name: Verify fuzz lockfile
         run: cargo +nightly-2026-08-01 metadata --locked --manifest-path fuzz/Cargo.toml --format-version 1 --no-deps > /dev/null
       - name: Build every fuzz target
-        # Only the parser target was ever built by a PR gate; the other
-        # four (dict-loader, fixture-model, double-pinyin, capi-commands)
-        # were compiled by nothing until the nightly soak, which is how a
-        # broken import in fixture-model survived from its introduction to
-        # the first verify-nightly dispatch (docs/findings/
-        # verify-nightly.md, finding 6). Build all five here — compile cost
-        # only, no soak time — with the same triple pin as the run below so
-        # the parser pass reuses these artifacts instead of rebuilding.
-        run: cargo +nightly-2026-08-01 fuzz build --target x86_64-unknown-linux-gnu
+        # Compile gate for the whole fuzz workspace. Only the parser is run
+        # here; the other targets used to reach a compiler solely in the
+        # nightly soak lane (verify-nightly.yml), so a PR that broke one
+        # merged green and surfaced the next night at best. The target
+        # list is derived from the manifest's [[bin]] entries via
+        # `cargo fuzz list` rather than enumerated, so a new target cannot
+        # be forgotten here; an empty list fails loudly rather than passing
+        # while building nothing. `fuzz build` and `fuzz run` share the
+        # ASan release profile and the pinned gnu triple (see the next
+        # step), so this warms exactly the parser binary the run step
+        # executes — the two steps are not redundant.
+        run: |
+          set -euo pipefail
+          mapfile -t targets < <(cargo +nightly-2026-08-01 fuzz list)
+          if [ "${#targets[@]}" -eq 0 ]; then
+            echo "::error::cargo fuzz list returned no targets"
+            exit 1
+          fi
+          for target in "${targets[@]}"; do
+            echo "::group::build $target"
+            cargo +nightly-2026-08-01 fuzz build --target x86_64-unknown-linux-gnu "$target"
+            echo "::endgroup::"
+          done
       - name: Run bounded parser fuzz pass
         # The pinned cargo-fuzz release binary is itself a musl build, and
         # cargo-fuzz defaults the fuzz target to the triple it was built for
