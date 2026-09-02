@@ -246,13 +246,16 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   double-pinyin SPEC is **frozen** (2026-09-02, maintainer freeze of the
   Phase 0 draft after landed W13; freeze record at the bottom of
   `docs/findings/double-pinyin-spec.md`). The freeze fixed the FORCE_TONE
-  law for both parse seams; the one remaining item is its open
-  implementation side: the batch seam
-  (`pinyin_parse_more_double_pinyins`) does not yet implement the
-  `pinyin_parser2.cpp:412` length-3 gate (the one-key seam does, measured
-  identical over 2,131 probe lines). The divergence register carries the
-  seam (FORCE_TONE entry); the frozen SPEC's gates (`run-scheme-diff.sh`,
-  `run-key-surface-diff.sh`) bound the change.
+  law for both parse seams, and the batch seam
+  (`pinyin_parse_more_double_pinyins`) now implements it (5ec782ea): the
+  caller's option word crosses the seam and drives the
+  `pinyin_parser2.cpp:412` length-3 gate plus the `USE_TONE` tone carriage,
+  measured byte-identical against the pinned oracle over full model20 KC
+  tables for double schemes 1, 2, 4, 5, 6 — including a new FORCE_TONE /
+  USE_TONE `tonelaw` probe section in the scheme differential — and for all
+  eight bopomofo keyboards, with `run-key-surface-diff.sh` still IDENTICAL
+  (2,131 probe lines). No W13 items remain; the divergence register's
+  FORCE_TONE entry carries the closure.
 
 - **W14 LANDED (489e94d, PR #113).** Three parts, all delivered: (a) sentence
   candidates emit with real unigrams loaded — up to N n-best rows prepended

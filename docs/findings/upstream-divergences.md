@@ -664,7 +664,7 @@ Text, candidate type and counts cannot.
   oxpinyin answers. Report-back batch: file with the scheme-setter and
   `_check_offset` assert families.
 
-### FORCE_TONE — scheme-specific: full-pinyin batch and all one-key seams honour scheme law; zhuyin batch closed (1671954); double-pinyin batch seam remains
+### FORCE_TONE — scheme-specific: every seam honours its scheme law; zhuyin batch closed (1671954); double-pinyin batch closed (5ec782ea)
 
 - **Upstream source cite:** `src/storage/pinyin_parser2.cpp:412` and
   `:448` (`DoublePinyinParser2::parse_one_key`: `if (options & FORCE_TONE
@@ -708,32 +708,50 @@ Text, candidate type and counts cannot.
   `zhuyin_parser2.cpp:176-180, :373, :387, :602`. Measured: the
   `tools/bisection/zhuyin-diff.c` differential converges on the batch parse.
   This closes the zhuyin batch seam. The double-pinyin batch seam
-  (`pinyin_parse_more_double_pinyins`) remains open: the
-  `pinyin_parser2.cpp:412` length-3 gate is not yet implemented on that
-  path. The double-pinyin SPEC freeze (2026-09-02) decided this seam's law
-  — the frozen `docs/findings/double-pinyin-spec.md` Tone section mandates
-  the gate on the batch seam, so the seam is now a bounded implementation
-  item under the frozen SPEC's gates (`run-scheme-diff.sh`,
-  `run-key-surface-diff.sh`), no longer awaiting a freeze.
-- **Externally observable:** on the one-key seams and the zhuyin batch
-  seam, no longer — all answer identically to the pin under every
-  FORCE_TONE profile (one-key seams: D3 gate; zhuyin batch: 1671954).
-  On the double-pinyin batch seam, yes — `pinyin_parse_more_double_pinyins`
-  with FORCE_TONE set produces the full-pinyin behaviour (effective only
-  inside `USE_TONE`) rather than the pin's length-3 gate
-  (`pinyin_parser2.cpp:412`). The full-pinyin seam itself matches the pin
-  (capi e2e `parse_termination` module, harness phase-C 0x60 probes closed).
-- **Freeze correction (2026-09-02).** The observable-shape sentence above
-  read as if the batch seam applied the full-pinyin FORCE_TONE law; the
-  landed batch parser is more precisely option-blind: it runs the tone-less
-  profile whatever the caller's option word (the greedy walk rejects every
-  three-byte key and retries length 2). The divergence is the same in every
-  FORCE_TONE profile — oxpinyin is observably less restrictive than the pin
-  (which consumes nothing at all under FORCE_TONE without USE_TONE, and
-  three-byte toned keys under USE_TONE|FORCE_TONE) — but the mechanism is
-  absence of the law, not the full-pinyin law. The frozen SPEC's law and
-  the open implementation item: the Tone section of
-  `docs/findings/double-pinyin-spec.md`.
+  (`pinyin_parse_more_double_pinyins`) was closed subsequently — see the
+  Double-pinyin batch closure amendment below.
+- **Externally observable:** no longer on any seam — the one-key seams,
+  the zhuyin batch seam, and the double-pinyin batch seam all answer
+  identically to the pin under every FORCE_TONE profile (one-key seams:
+  D3 gate; zhuyin batch: 1671954; double-pinyin batch: 5ec782ea). The
+  full-pinyin seam itself matches the pin (capi e2e `parse_termination`
+  module, harness phase-C 0x60 probes closed).
+- **Freeze correction (2026-09-02, historical).** Before the batch
+  closure, the freeze-time observable-shape sentence read as if the batch
+  seam applied the full-pinyin FORCE_TONE law; the batch parser of that
+  time was more precisely option-blind: it ran the tone-less profile
+  whatever the caller's option word (the greedy walk rejected every
+  three-byte key and retried length 2). The divergence was the same in
+  every FORCE_TONE profile — oxpinyin observably less restrictive than
+  the pin (which consumes nothing at all under FORCE_TONE without
+  USE_TONE, and three-byte toned keys under USE_TONE|FORCE_TONE) — but
+  the mechanism was absence of the law, not the full-pinyin law. The
+  frozen SPEC fixed the law; the Double-pinyin batch closure amendment
+  below implemented it.
+- **Double-pinyin batch closure (5ec782ea, 2026-09-02).** The batch
+  double-pinyin `parse` surface (`pinyin_parse_more_double_pinyins`) now
+  honours the frozen SPEC's Tone law: the caller's full option word
+  crosses the seam (the pin's `options = context->m_options`,
+  `src/pinyin.cpp:1543`) and drives `DoublePinyinParser::parse_with_options`
+  — the additive option-word seam the zhuyin batch closure established.
+  `FORCE_TONE` rejects any key that is not exactly three bytes
+  (`pinyin_parser2.cpp:412`); a three-byte key carries its trailing
+  `1`..`5` digit as the tone only under `USE_TONE` (`:439-451`), so
+  FORCE_TONE without USE_TONE consumes nothing at all. The parsed tone
+  rides the key into the exact segments. Measured in the debian-testing
+  gate container against the pinned tkrzw oracle over full model20 KC
+  tables: the scheme differential is byte-identical for double schemes
+  1, 2, 4, 5, 6 including the new `tonelaw` probe section (142 lines
+  each: three FORCE_TONE/USE_TONE profiles over thirteen tone-digit
+  inputs) and for all eight bopomofo keyboards; `run-key-surface-diff.sh`
+  stays IDENTICAL (2,131 probe lines). Revert-and-check: the pristine
+  parser diverges from the pin on 130 of the new probe lines under the
+  same driver. The one residual in the comparison — scheme 3 (Ziguang)
+  NBEST row 2 on `zhrgguor` (pin 宗人光卓然 / oxpinyin 总人光卓然; the
+  1-best and 2-best rows agree) — is the pre-existing §12 trellis
+  hypothesis-selection class, unchanged by this closure (the same
+  revert-check reproduces it) and first surfaced by the full-model
+  scheme sweep.
 
 ### Empty-string phrase lookup SIGFPEs the pin
 
