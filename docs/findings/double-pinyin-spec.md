@@ -101,6 +101,13 @@ implementation could ship the tone-less profile without perturbing the
 frozen scheme sweeps. The freeze does not change that scope boundary — it
 fixes the law the batch seam must grow into.
 
+**Amendment (2026-09-02, 5ec782ea):** the batch seam implements the frozen
+law — the caller's option word crosses the seam and the greedy walk honours
+the length-3 gate and the tone carriage; the measured closure and the one
+pre-existing scheme-3 trellis residual are recorded in the divergence
+register's FORCE_TONE entry (Double-pinyin batch closure amendment). The
+"Status at freeze" bullets above stay as the freeze-time snapshot.
+
 ### Maximum forward match
 
 `parse` probes the longest possible input of valid key/tone bytes, then
@@ -206,3 +213,8 @@ Phase 0 draft against the pinned source and the landed implementation:
   `run-key-surface-diff.sh` (the one-key seam, 2,131 probe lines). Any
   future change to the batch parse — including the open `FORCE_TONE` gate
   — must keep both green against the pinned oracle.
+
+The freeze's one open implementation item — the batch seam's `FORCE_TONE`
+length-3 gate — was closed by 5ec782ea on the same day, stacked on the
+freeze PR, keeping both standing gates green (see the Tone section
+amendment and the divergence register's FORCE_TONE entry).
