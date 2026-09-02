@@ -242,11 +242,17 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
 
 - **W13 LANDED (20e6b3a).** Double-pinyin (ZRM/MS/Ziguang/ABC/PYJJ/Xiaohe)
   and standard bopomofo (Zhuyin) schemes are implemented and verified against
-  the pinned oracle on their scheme-specific differential surfaces. Remaining
-  items: (a) human freeze of `docs/findings/double-pinyin-spec.md`; (b) the
-  FORCE_TONE double-pinyin batch seam (`pinyin_parse_more_double_pinyins`
-  does not yet implement the `pinyin_parser2.cpp:412` length-3 gate), which
-  belongs with the eventual double-pinyin SPEC freeze.
+  the pinned oracle on their scheme-specific differential surfaces. The
+  double-pinyin SPEC is **frozen** (2026-09-02, maintainer freeze of the
+  Phase 0 draft after landed W13; freeze record at the bottom of
+  `docs/findings/double-pinyin-spec.md`). The freeze fixed the FORCE_TONE
+  law for both parse seams; the one remaining item is its open
+  implementation side: the batch seam
+  (`pinyin_parse_more_double_pinyins`) does not yet implement the
+  `pinyin_parser2.cpp:412` length-3 gate (the one-key seam does, measured
+  identical over 2,131 probe lines). The divergence register carries the
+  seam (FORCE_TONE entry); the frozen SPEC's gates (`run-scheme-diff.sh`,
+  `run-key-surface-diff.sh`) bound the change.
 
 - **W14 LANDED (489e94d, PR #113).** Three parts, all delivered: (a) sentence
   candidates emit with real unigrams loaded — up to N n-best rows prepended
