@@ -153,7 +153,16 @@ impl KMixtureModel {
             detail: format!("token field {head:?} is not an integer"),
         })?;
         if token != NULL_TOKEN {
-            self.record_text(token, rest);
+            // The phrase field must be exactly one word: an empty or
+            // space-containing phrase would export a line `import` cannot
+            // read back, so reject it here, against the offending line.
+            let phrase = rest.trim_matches([' ', '\t']);
+            if phrase.is_empty() || phrase.contains([' ', '\t']) {
+                return Err(KmmError::Malformed {
+                    detail: format!("phrase field {rest:?} in {line:?} is not a single word"),
+                });
+            }
+            self.record_text(token, phrase);
         }
         Ok(token)
     }

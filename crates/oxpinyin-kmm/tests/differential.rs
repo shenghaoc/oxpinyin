@@ -308,7 +308,7 @@ fn native_export_tokens_only(segmented: &str) -> String {
 fn sorted_items(export_text: &str) -> Vec<String> {
     let mut items: Vec<String> = export_text
         .lines()
-        .filter(|l| l.starts_with("\\item"))
+        .filter(|l| l.starts_with("\\data ") || l.starts_with("\\item"))
         .map(str::to_owned)
         .collect();
     items.sort();

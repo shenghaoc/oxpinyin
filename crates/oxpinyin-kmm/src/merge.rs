@@ -19,6 +19,13 @@ use crate::text::merge_texts;
 /// Returns [`KmmError::Invalid`] when the magic-header word count or total
 /// freq would overflow `u32` (upstream `EOVERFLOW`).
 pub fn merge_into(target: &mut KMixtureModel, new_one: &KMixtureModel) -> Result<(), KmmError> {
+    // merge_magic_header (`:96-129`): overflow-guarded sums, computed before
+    // any row is touched so an overflow leaves `target` unmodified (upstream
+    // has already written the rows when it reports EOVERFLOW; a caller that
+    // keeps the model after the error would otherwise hold a half-merge).
+    let merged_wc = checked_sum(target.wc, new_one.wc, "magic word count")?;
+    let merged_total_freq = checked_sum(target.total_freq, new_one.total_freq, "magic total freq")?;
+
     // merge_array_items (`:131-200`).
     for (&token1, new_gram) in &new_one.grams {
         match target.grams.get_mut(&token1) {
@@ -29,9 +36,8 @@ pub fn merge_into(target: &mut KMixtureModel, new_one: &KMixtureModel) -> Result
         }
     }
 
-    // merge_magic_header (`:96-129`): overflow-guarded sums.
-    target.wc = checked_sum(target.wc, new_one.wc, "magic word count")?;
-    target.total_freq = checked_sum(target.total_freq, new_one.total_freq, "magic total freq")?;
+    target.wc = merged_wc;
+    target.total_freq = merged_total_freq;
     target.n = target.n.wrapping_add(new_one.n);
 
     merge_texts(&mut target.texts, &new_one.texts);
@@ -134,6 +140,17 @@ mod tests {
         assert_eq!(merged.wc, combined.wc);
         assert_eq!(merged.n, combined.n);
         assert_eq!(merged.total_freq, combined.total_freq);
+    }
+
+    #[test]
+    fn a_header_overflow_leaves_the_target_untouched() {
+        let mut target = model_from("10 甲\n20 乙\n10 甲\n");
+        target.wc = u32::MAX;
+        let before = target.clone();
+        let new_one = model_from("30 丙\n40 丁\n");
+        let error = merge_into(&mut target, &new_one).expect_err("overflow");
+        assert!(matches!(error, crate::error::KmmError::Invalid { .. }));
+        assert_eq!(target, before, "no row is merged when the header overflows");
     }
 
     #[test]
