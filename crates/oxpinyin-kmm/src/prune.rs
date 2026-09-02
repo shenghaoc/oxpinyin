@@ -24,9 +24,15 @@ pub const DEFAULT_CDF: f64 = 0.99;
 ///
 /// # Errors
 ///
-/// Returns [`KmmError::Domain`] when a survival probability falls outside
-/// `[0, 1]` (upstream `EDOM`).
+/// Returns [`KmmError::Domain`] when `cdf` is not a probability (non-finite
+/// or outside `[0, 1]` — a `cdf > 1` would remove every pair, a NaN none)
+/// or when a survival probability falls outside `[0, 1]` (upstream `EDOM`).
 pub fn prune(model: &mut KMixtureModel, prune_k: u32, cdf: f64) -> Result<(), KmmError> {
+    if !cdf.is_finite() || !(0.0..=1.0).contains(&cdf) {
+        return Err(KmmError::Domain {
+            detail: format!("CDF must be finite and in [0, 1], got {cdf}"),
+        });
+    }
     let n = model.n;
 
     // Pass 1 — decide (read-only). Collect (token1, token2, wc) to remove.
@@ -93,6 +99,7 @@ fn survival(prune_k: u32, n: u32, item: &crate::model::ArrayItem) -> Result<f64,
 #[cfg(test)]
 mod tests {
     use super::{DEFAULT_CDF, DEFAULT_PRUNE_K, prune};
+    use crate::error::KmmError;
     use crate::generate::GenerateParams;
     use crate::model::KMixtureModel;
     use crate::validate::validate;
@@ -116,6 +123,20 @@ mod tests {
         // All bigram pairs pruned; only freq-only headers may remain.
         let bigram_pairs: usize = model.grams.values().map(|g| g.items.len()).sum();
         assert_eq!(bigram_pairs, 0, "default CDF prunes every rare pair");
+    }
+
+    #[test]
+    fn a_cdf_outside_the_unit_interval_is_rejected_before_pruning() {
+        for cdf in [2.0, -0.5, f64::NAN, f64::INFINITY] {
+            let mut model = model_from(&["10 甲\n20 乙\n10 甲\n"]);
+            let before = model.clone();
+            let error = prune(&mut model, DEFAULT_PRUNE_K, cdf).expect_err("rejected");
+            assert!(
+                matches!(error, KmmError::Domain { .. }),
+                "cdf {cdf}: {error}"
+            );
+            assert_eq!(model, before, "cdf {cdf}: model untouched");
+        }
     }
 
     #[test]

@@ -230,7 +230,13 @@ pub fn kmm_text_to_interpolation(text: &str) -> Result<String, KmmError> {
                 }
                 Section::Bigram => {
                     let fields: Vec<&str> = line.split_whitespace().collect();
-                    if fields.len() < 7 || fields[5] != "count" {
+                    if fields.len() != 15
+                        || fields[5] != "count"
+                        || fields[7] != "T"
+                        || fields[9] != "N_n_0"
+                        || fields[11] != "n_1"
+                        || fields[13] != "Mr"
+                    {
                         return Err(malformed(line, "malformed \\2-gram \\item"));
                     }
                     let token1 = parse_u32(fields[1], line)?;

@@ -183,17 +183,17 @@ gaps noted · **todo** not yet implemented · **home** target crate.
 | Capability | Trainer entry | libpinyin source | OXpinyin status | Home | Action |
 |---|---|---|---|---|---|
 | ngseg (bigram Viterbi) | `segment.py` | `utils/segment/ngseg.cpp` | **done** | `oxpinyin-segment` | verify residual gaps |
-| spseg (fewest-words DP) | `segment.py --fast` | `utils/segment/spseg.cpp` | **todo** | `oxpinyin-segment` | implement (§5) |
-| mergeseq (phrase merge) | `mergeseq.py` | `utils/segment/mergeseq.cpp` | **todo** | `oxpinyin-segment` | implement (§5) |
-| KMM data model | — | `utils/training/k_mixture_model.h` | **todo** | `oxpinyin-kmm` | implement (§6.1) |
-| KMM generate (per-doc count) | `generate.py` | `gen_k_mixture_model.cpp` | **todo** | `oxpinyin-kmm` | implement (§6.2) |
-| KMM estimate (λ score) | `estimate.py` | `estimate_k_mixture_model.cpp` | **todo** | `oxpinyin-kmm` | implement (§6.3) |
-| KMM merge | `tryprune.py` | `merge_k_mixture_model.cpp` | **todo** | `oxpinyin-kmm` | implement (§6.4) |
-| KMM validate | `tryprune.py` | `validate_k_mixture_model.cpp` | **todo** | `oxpinyin-kmm` | implement (§6.5) |
-| KMM prune | `tryprune.py` | `prune_k_mixture_model.cpp` | **todo** | `oxpinyin-kmm` | implement (§6.6) |
-| KMM export (text) | `tryprune.py` | `export_k_mixture_model.cpp` | **todo** | `oxpinyin-kmm` | implement (§6.7) |
-| KMM import (text) | *(off-path)* | `import_k_mixture_model.cpp` | **todo** | `oxpinyin-kmm` | implement for round-trip fixtures (§6.7) |
-| KMM → interpolation | `tryprune.py` | `k_mixture_model_to_interpolation.cpp` | **todo** | `oxpinyin-kmm` | implement (§6.8) |
+| spseg (fewest-words DP) | `segment.py --fast` | `utils/segment/spseg.cpp` | **done** | `oxpinyin-segment::spseg` | Part B landed (§15) |
+| mergeseq (phrase merge) | `mergeseq.py` | `utils/segment/mergeseq.cpp` | **done** | `oxpinyin-segment::mergeseq` | Part B landed (§15) |
+| KMM data model | — | `utils/training/k_mixture_model.h` | **done** | `oxpinyin-kmm::model` | Part C+D landed (§15) |
+| KMM generate (per-doc count) | `generate.py` | `gen_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::generate` | Part C+D landed (§15) |
+| KMM estimate (λ score) | `estimate.py` | `estimate_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::estimate` | Part C+D landed (§15) |
+| KMM merge | `tryprune.py` | `merge_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::merge` | Part C+D landed (§15) |
+| KMM validate | `tryprune.py` | `validate_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::validate` | Part C+D landed (§15) |
+| KMM prune | `tryprune.py` | `prune_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::prune` | Part C+D landed (§15) |
+| KMM export (text) | `tryprune.py` | `export_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::text` | Part C+D landed (§15) |
+| KMM import (text) | *(off-path)* | `import_k_mixture_model.cpp` | **done** | `oxpinyin-kmm::text` | Part C+D landed (§15) |
+| KMM → interpolation | `tryprune.py` | `k_mixture_model_to_interpolation.cpp` | **done** | `oxpinyin-kmm::text::kmm_text_to_interpolation` | Part C+D landed (§15) |
 | candidate gather/sort | `estimate.py` | *(Python)* | **todo** | `oxpinyin-kmm` CLI / orchestration | implement (§6.3) |
 | λ estimate (deleted-interp EM) | `evaluate.py` | `estimate_interpolation.cpp` | **partial** | `oxpinyin-lambda` | reuse EM; add KMM-storage entry (§7) |
 | correction rate | `evaluate.py` | `eval_correction_rate.cpp` | **todo** | `oxpinyin-eval` | implement, reuse engine decoder (§7) |
@@ -661,7 +661,6 @@ Landed since this audit was frozen (each an independently-reviewable commit):
 |---|---|---|---|
 | B | `spseg` (fewest-words DP), `mergeseq` (phrase merge) | `oxpinyin-segment` (`spseg`, `mergeseq`, two CLIs) | toy unit + committed-golden differential (W3 table, CI-always) + env-gated live cross-check |
 | C+D | full KMM pipeline — data model, generate, estimate, merge, validate, prune, export/import, →interpolation | `oxpinyin-kmm` (self-contained, one CLI, 8 subcommands) | per-op unit + hand-verified golden + merge-equals-combined + end-to-end from the real segmented corpus |
-| G | punctuation table (`genpunct.py`) | `oxpinyin-punct` (count/merge CLI) | per-stage unit + two-stage golden |
 | H (core) | end-to-end main pipeline on real committed data (segment → KMM → interpolation2.text) with no Python/SQLite/make/libpinyin | `oxpinyin-kmm` integration test over the committed `spseg` fixture | passes on CI |
 
 **Reclassified** (kept, retitled): `oxpinyin-counter` (`gen_ngram`) and
