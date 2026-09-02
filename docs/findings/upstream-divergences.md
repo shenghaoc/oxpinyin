@@ -1239,3 +1239,46 @@ tags.
   `ZHUYIN_INCOMPLETE`) and the parse-length gap above is the only residual.
   Entry kept so a future consumer that sets the bit finds the law already
   analysed.
+
+## pinyin-facade chewing batch seam does not forward `FORCE_TONE` — open (the FORCE_TONE entry's fourth seam)
+
+Surfaced by the bopomofo SPEC audit (2026-09-03). The FORCE_TONE entry
+above enumerates the full-pinyin batch, the double one-key, the zhuyin
+one-key and the libzhuyin batch seams; the pinyin facade's chewing batch
+seam — `pinyin_parse_more_chewings`, the function the bopomofo SPEC
+freezes — was never in that enumeration. This entry completes it.
+
+- **Upstream source cite:** `src/pinyin.cpp:1582-1609`
+  (`pinyin_parse_more_chewings` passes `context->m_options` with only
+  `ZHUYIN_CORRECT_ALL` stripped, the strip at `:1589`);
+  `src/storage/zhuyin_parser2.cpp:171-179` (Simple `parse_one_key`:
+  `FORCE_TONE` nested under `USE_TONE`), `:373` and `:387` (Discrete),
+  `:595-605` (CP26, nested); `pinyin_init` seeds `USE_TONE` alone
+  (`src/pinyin.cpp:329`), so the bit is caller-set on this facade.
+- **Mechanism:** the pin forwards the whole option word, so a
+  `pinyin_context_t` consumer that sets `FORCE_TONE` gets the per-keyboard
+  law — a toneless Simple/CP26 syllable and any Discrete key without a
+  tone byte refuse, and the greedy walk stops there.
+- **What oxpinyin does instead:** `parse_chewing_more`
+  (`crates/oxpinyin-capi/src/parse.rs`) calls the three-argument
+  `ZhuyinParser::parse(text, use_tone, allow_incomplete)`, so `FORCE_TONE`
+  never crosses and the tone-less profile runs whatever the caller's word.
+  The comment that justified forwarding one bit — "`ZHUYIN_INCOMPLETE` is
+  the one caller bit the Simple parser consults", citing `pinyin.cpp:1621`
+  — was false at the pin on both counts and was the reason the seam was
+  built this way; corrected in dea0880 together with the SPEC paragraph it
+  was copied into. The libzhuyin facade's batch seam forwards the whole
+  word through `ZhuyinParser::parse_with_options` (1671954); the fix shape
+  here is the same one-line forward of `inst.options().bits()` plus a
+  `FORCE_TONE` profile in `tools/bisection/chewing-diff.c`, whose only
+  option word today is `IS_ZHUYIN | ZHUYIN_INCOMPLETE | USE_TONE`
+  (`chewing-diff.c:53`).
+- **Externally observable:** yes, but only under a caller-set `FORCE_TONE`
+  — not the pin's `pinyin_init` default and not the bopomofo differential's
+  word, which is why every existing gate is IDENTICAL while the seam is
+  unimplemented. Under `USE_TONE | FORCE_TONE` the pin consumes 0 on
+  toneless `su` (STANDARD ㄋㄧ) where oxpinyin consumes 2. No class among
+  (a)–(d) of `compatibility-policy.md` fits: this is a defect to close,
+  registered so the bopomofo SPEC freeze can name it as its open
+  implementation item rather than stay silent, exactly as the double-pinyin
+  freeze carried its batch gate.
