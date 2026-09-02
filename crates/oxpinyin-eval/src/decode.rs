@@ -9,17 +9,30 @@
 //! compares its UTF-8 to the source sentence. The correction rate is
 //! passed / tested.
 //!
-//! Because the keys are a clean chain of complete syllables (one per token
-//! syllable), the decode is the sentence Viterbi over that chain — exactly
-//! [`oxpinyin_engine`'s `collect_sentences_with_tokens`], reproduced here
-//! over the public [`Scorer::rank_phrases`], seeded with `sentence_start` so
-//! the first phrase is scored against it as upstream's prefix is.
+//! The decode is the pin's own `PhoneticLookup<1, 1>` beam Viterbi
+//! (`src/lookup/phonetic_lookup.h:515-820`), ported term for term: one
+//! node per `(key position, arriving token)`, the top [`NBEAM`] nodes of
+//! a step expanded (`get_top_results`), every phrase spelled by an exact
+//! key span scored `log((λ·P_bi + (1 − λ)·P_uni) · P_pron)` after a bigram
+//! row (`bigram_gen_next_step`) and `log(P_uni · P_pron · (1 − λ))` from
+//! the best node otherwise (`unigram_gen_next_step`), at the pin's float
+//! widths (`gfloat m_poss`). `P_pron` is the phrase's pronunciation
+//! possibility for the span's keys (`PhraseItem::get_pronunciation_
+//! possibility`, `phrase_index.h:136-164`); it is what keeps a rare
+//! reading (红 read `gong`) from outranking the common phrase.
+//!
+//! It deliberately does not reuse `oxpinyin_engine`'s sentence decode:
+//! that path ranks through `Scorer`'s typing heuristics (segmentation
+//! penalties, phrase bonuses, integer costs), which are not the pin's
+//! probabilities, and the live `eval_correction_rate` gate showed the
+//! difference (0.52 vs 0.88 on a 25-sentence corpus).
 
-use oxpinyin_core::graph::EdgeKind;
-use oxpinyin_core::scoring::{Scorer, ScoringConfig};
-use oxpinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
+use std::collections::HashMap;
+
+use oxpinyin_core::{Dictionary, PhraseEntry, PhraseToken, SyllableKey};
 
 use crate::error::EvalError;
+use crate::model::EvalLanguageModel;
 
 /// `sentence_start` (`novel_types.h:122`).
 pub const SENTENCE_START: u32 = 1;
@@ -27,9 +40,12 @@ pub const SENTENCE_START: u32 = 1;
 pub const NULL_TOKEN: u32 = 0;
 /// Longest phrase the decoder considers, in keys (`MAX_PHRASE_LENGTH`).
 const MAX_PHRASE_KEYS: usize = 16;
+/// Beam width per step (`phonetic_lookup.h:37`, `nbeam`).
+const NBEAM: usize = 32;
 
 /// Supplies each token's best pronunciation and its text — the
-/// `get_possible_pinyin` and `convert_to_utf8` inputs.
+/// `get_possible_pinyin` and `convert_to_utf8` inputs — and the phrase
+/// lexicon the evaluation model is floored over.
 pub trait PhraseSource {
     /// The highest-frequency pronunciation of `token` as syllable keys, or
     /// `None` when the token has no pronunciation.
@@ -37,6 +53,11 @@ pub trait PhraseSource {
 
     /// The phrase text of `token`, or `None` when it is unknown.
     fn text(&self, token: PhraseToken) -> Option<String>;
+
+    /// Every token of the loaded phrase index — the items `gen_unigram`
+    /// floors (`utils/training/gen_unigram.cpp:45-68`) and
+    /// `get_phrase_index_total_freq` sums over.
+    fn lexicon_tokens(&self) -> Vec<PhraseToken>;
 }
 
 /// The evaluation result.
@@ -97,7 +118,7 @@ fn parse_token(line: &str) -> Result<u32, EvalError> {
 }
 
 /// Evaluates the correction rate over `sentences`, decoding each with the
-/// dictionary and language model.
+/// dictionary and the evaluation model.
 ///
 /// # Errors
 ///
@@ -105,25 +126,17 @@ fn parse_token(line: &str) -> Result<u32, EvalError> {
 /// (`get_possible_pinyin` would abort) or no text, when a key chain has no
 /// phrase cover (upstream asserts exactly one best match), or when a decode
 /// backend fails.
-pub fn correction_rate<D, L, P>(
+pub fn correction_rate<D, P>(
     dictionary: &D,
-    model: &L,
+    model: &EvalLanguageModel,
     phrases: &P,
     sentences: &[Vec<PhraseToken>],
 ) -> Result<EvalReport, EvalError>
 where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
     D::Error: core::fmt::Display,
-    L: LanguageModel<Token = PhraseToken>,
-    L::Error: core::fmt::Display,
     P: PhraseSource,
 {
-    let scorer = Scorer::new(ScoringConfig::default(), dictionary, model).map_err(|error| {
-        EvalError::Backend {
-            detail: error.to_string(),
-        }
-    })?;
-
     let mut tested = 0;
     let mut passed = 0;
     let mut mismatches = Vec::new();
@@ -134,7 +147,8 @@ where
         }
         let keys = sentence_keys(phrases, sentence)?;
         let expected = sentence_text(phrases, sentence)?;
-        let decoded = decode(&scorer, &keys)?;
+        let guessed = get_nbest_match(dictionary, model, &keys)?;
+        let decoded = sentence_text(phrases, &guessed)?;
 
         tested += 1;
         if decoded == expected {
@@ -172,9 +186,9 @@ fn sentence_keys<P: PhraseSource>(
     Ok(keys)
 }
 
-/// The source sentence text (`convert_to_utf8`). A token without text is an
-/// error, never silently dropped: an incomplete expected sentence would
-/// make the comparison — and the reported rate — wrong.
+/// The text of a token sequence (`convert_to_utf8`). A token without text
+/// is an error, never silently dropped: an incomplete expected sentence
+/// would make the comparison — and the reported rate — wrong.
 fn sentence_text<P: PhraseSource>(
     phrases: &P,
     sentence: &[PhraseToken],
@@ -189,69 +203,316 @@ fn sentence_text<P: PhraseSource>(
     Ok(text)
 }
 
-/// Decode a clean complete-syllable key chain to its best phrase cover,
-/// seeded with `sentence_start`, returning the decoded UTF-8
-/// (`get_nbest_match` + `convert_to_utf8`).
-fn decode<D, L>(scorer: &Scorer<'_, D, L>, keys: &[SyllableKey]) -> Result<String, EvalError>
+/// One `trellis_value_t` (`phonetic_lookup.h:44-63`): `m_handles[0]` is
+/// `prev`, `m_handles[1]` is `token`, `m_poss` is a `gfloat`.
+#[derive(Clone, Copy, Debug)]
+struct Node {
+    prev: u32,
+    token: u32,
+    poss: f32,
+    last_step: i32,
+}
+
+/// One trellis step: insertion-ordered nodes plus a token → index map
+/// (`LookupStepContent` + `LookupStepIndex`), one value per token
+/// (`trellis_node<1>`).
+#[derive(Clone, Debug, Default)]
+struct Step {
+    content: Vec<Node>,
+    index: HashMap<u32, usize>,
+}
+
+impl Step {
+    const fn is_empty(&self) -> bool {
+        self.content.is_empty()
+    }
+
+    fn get(&self, token: u32) -> Option<&Node> {
+        self.index.get(&token).map(|&idx| &self.content[idx])
+    }
+
+    fn insert(&mut self, node: Node) {
+        self.index.insert(node.token, self.content.len());
+        self.content.push(node);
+    }
+
+    /// `get_top_results<1>(num, …)`: the `num` best nodes by `m_poss`,
+    /// descending. Every node of a step covers the same key count, so the
+    /// heap comparator reduces to `m_poss`; ties keep insertion order.
+    fn top_results(&self, num: usize) -> Vec<Node> {
+        let mut nodes = self.content.clone();
+        nodes.sort_by(|lhs, rhs| rhs.poss.total_cmp(&lhs.poss));
+        nodes.truncate(num);
+        nodes
+    }
+}
+
+/// Scoring context shared by the C++-shaped helpers.
+struct ScoreCtx<'a> {
+    model: &'a EvalLanguageModel,
+    bigram_lambda: f32,
+    unigram_lambda: f32,
+}
+
+/// `PhoneticLookup<1, 1>::get_nbest_match` over a clean chain of complete
+/// keys, one per cell, prefixed by `sentence_start`, then
+/// `extract_result`: the best token sequence in order.
+fn get_nbest_match<D>(
+    dictionary: &D,
+    model: &EvalLanguageModel,
+    keys: &[SyllableKey],
+) -> Result<Vec<PhraseToken>, EvalError>
 where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
     D::Error: core::fmt::Display,
-    L: LanguageModel<Token = PhraseToken>,
-    L::Error: core::fmt::Display,
 {
     if keys.is_empty() {
-        return Ok(String::new());
+        return Ok(Vec::new());
     }
-    let kinds = vec![EdgeKind::Exact; keys.len()];
+    let nstep = keys.len() + 1;
+    let mut steps = vec![Step::default(); nstep];
+    // fill_prefixes: sentence_start at step 0 with log(1.f) = 0.
+    steps[0].insert(Node {
+        prev: NULL_TOKEN,
+        token: SENTENCE_START,
+        poss: 0.0,
+        last_step: -1,
+    });
 
-    // best[i] = cheapest way to spell keys[..i]: (cost, text, history). The
-    // history is seeded with sentence_start so the first phrase is scored
-    // against it (the get_nbest_match prefix).
-    let mut best: Vec<Option<(Cost, String, Vec<PhraseToken>)>> = vec![None; keys.len() + 1];
-    best[0] = Some((0, String::new(), vec![PhraseToken::new(SENTENCE_START)]));
+    let bigram_lambda = model.lambda_f32();
+    let ctx = ScoreCtx {
+        model,
+        bigram_lambda,
+        // `unigram_lambda(1. - lambda)`: a double subtraction stored as gfloat.
+        unigram_lambda: (1.0_f64 - f64::from(bigram_lambda)) as f32,
+    };
 
-    for end in 1..=keys.len() {
-        let first = end.saturating_sub(MAX_PHRASE_KEYS);
-        for start in first..end {
-            let Some((prefix_cost, prefix_text, prefix_history)) = best[start].clone() else {
-                continue;
-            };
-            let ranked = scorer
-                .rank_phrases(&prefix_history, &keys[start..end], &kinds[start..end])
+    for i in 0..nstep - 1 {
+        if steps[i].is_empty() {
+            continue;
+        }
+        let topresults = steps[i].top_results(NBEAM);
+        let last = (i + MAX_PHRASE_KEYS).min(nstep - 1);
+        for m in i + 1..=last {
+            let span = &keys[i..m];
+            // search_matrix: the phrases spelled exactly by this key span.
+            let mut entries = dictionary
+                .lookup(span)
                 .map_err(|error| EvalError::Backend {
                     detail: error.to_string(),
                 })?;
-            let Some((entry, cost)) = ranked.first() else {
-                continue;
-            };
-            let total = prefix_cost.saturating_add(*cost);
-            if best[end].as_ref().is_none_or(|(seen, ..)| total < *seen) {
-                let mut text = prefix_text.clone();
-                text.push_str(entry.text());
-                let mut history = prefix_history.clone();
-                history.push(entry.token());
-                best[end] = Some((total, text, history));
+            if !entries.is_empty() {
+                // Library-then-token order (`prepare_ranges` walk): token
+                // ascending, so ties resolve as the pin's do.
+                entries.sort_by_key(|entry| entry.token().value());
+                search_bigram2(&mut steps, i, m, &topresults, &entries, &ctx);
+                search_unigram2(&mut steps, i, m, &topresults[0], &entries, &ctx);
+            }
+            // SEARCH_CONTINUED: stop once no stored phrase extends the span.
+            let continued =
+                dictionary
+                    .phrase_prefix_exists(span)
+                    .map_err(|error| EvalError::Backend {
+                        detail: error.to_string(),
+                    })?;
+            if !continued {
+                break;
             }
         }
     }
 
-    // No cover is a data error (a dictionary/index problem), not a failed
-    // correction: upstream `assert(1 == results.size())`s here.
-    best[keys.len()]
-        .clone()
-        .map(|(_, text, _)| text)
-        .ok_or(EvalError::Undecodable { keys: keys.len() })
+    // get_tails: the best node of the last step (nbest = 1), then
+    // extract_result backtracks it. No tail means no phrase cover: upstream
+    // `assert(1 == results.size())`s, so it is a data error here, not a
+    // failed correction.
+    let tail = steps[nstep - 1]
+        .top_results(1)
+        .first()
+        .copied()
+        .ok_or(EvalError::Undecodable { keys: keys.len() })?;
+    let mut result = vec![NULL_TOKEN; nstep];
+    let mut cursor = tail;
+    loop {
+        let index = cursor.last_step;
+        let Ok(index) = usize::try_from(index) else {
+            break;
+        };
+        result[index] = cursor.token;
+        let Some(previous) = steps.get(index).and_then(|step| step.get(cursor.prev)) else {
+            return Err(EvalError::Undecodable { keys: keys.len() });
+        };
+        cursor = *previous;
+    }
+    Ok(result
+        .into_iter()
+        .filter(|&token| token != NULL_TOKEN)
+        .map(PhraseToken::new)
+        .collect())
+}
+
+/// `search_unigram2` (`phonetic_lookup.h:540-576`): expand from the top
+/// node only, over every phrase of the span.
+fn search_unigram2(
+    steps: &mut [Step],
+    start: usize,
+    end: usize,
+    max: &Node,
+    entries: &[PhraseEntry],
+    ctx: &ScoreCtx<'_>,
+) {
+    for entry in entries {
+        unigram_gen_next_step(steps, start, end, max, entry, ctx);
+    }
+}
+
+/// `search_bigram2` (`phonetic_lookup.h:578-641`): expand from every beam
+/// node whose token has a bigram row, over the phrases of the span that
+/// row records.
+fn search_bigram2(
+    steps: &mut [Step],
+    start: usize,
+    end: usize,
+    topresults: &[Node],
+    entries: &[PhraseEntry],
+    ctx: &ScoreCtx<'_>,
+) {
+    for value in topresults {
+        // merge_single_gram fails without a system row: skip the node.
+        if !ctx.model.has_bigram_row(value.token) {
+            continue;
+        }
+        for entry in entries {
+            let Some(bigram_poss) = ctx.model.bigram_poss(value.token, entry.token().value())
+            else {
+                continue;
+            };
+            bigram_gen_next_step(steps, start, end, value, entry, bigram_poss, ctx);
+        }
+    }
+}
+
+/// `compute_pronunciation_possibility` over one exact key per cell: the
+/// item's `get_pronunciation_possibility` for the span's keys,
+/// `matched / (gfloat) total`. A fixture entry that carries no
+/// pronunciation data counts as possibility 1.
+fn pronunciation_possibility(entry: &PhraseEntry) -> f32 {
+    match entry.pronunciation_possibility() {
+        Some((_, 0)) => 0.0,
+        Some((matched, total)) => matched as f32 / total as f32,
+        None => 1.0,
+    }
+}
+
+/// `unigram_gen_next_step` (`phonetic_lookup.h:643-668`).
+fn unigram_gen_next_step(
+    steps: &mut [Step],
+    start: usize,
+    end: usize,
+    cur: &Node,
+    entry: &PhraseEntry,
+    ctx: &ScoreCtx<'_>,
+) {
+    let token = entry.token().value();
+    let elem_poss = ctx.model.unigram_poss(token);
+    if elem_poss < f64::EPSILON {
+        return;
+    }
+    let pinyin_poss = pronunciation_possibility(entry);
+    if pinyin_poss < f32::EPSILON {
+        return;
+    }
+    // `cur->m_poss + log(elem_poss * pinyin_poss * unigram_lambda)`: the
+    // product and the log are doubles, the sum is stored as gfloat.
+    let poss = (f64::from(cur.poss)
+        + (elem_poss * f64::from(pinyin_poss) * f64::from(ctx.unigram_lambda)).ln())
+        as f32;
+    save_next_step(
+        steps,
+        end,
+        Node {
+            prev: cur.token,
+            token,
+            poss,
+            last_step: i32_from_step(start),
+        },
+    );
+}
+
+/// `bigram_gen_next_step` (`phonetic_lookup.h:670-697`).
+fn bigram_gen_next_step(
+    steps: &mut [Step],
+    start: usize,
+    end: usize,
+    cur: &Node,
+    entry: &PhraseEntry,
+    bigram_poss: f32,
+    ctx: &ScoreCtx<'_>,
+) {
+    let token = entry.token().value();
+    let unigram_poss = ctx.model.unigram_poss(token);
+    if bigram_poss < f32::EPSILON && unigram_poss < f64::EPSILON {
+        return;
+    }
+    let pinyin_poss = pronunciation_possibility(entry);
+    if pinyin_poss < f32::EPSILON {
+        return;
+    }
+    // `(bigram_lambda * bigram_poss + unigram_lambda * unigram_poss) *
+    // pinyin_poss`: a float product plus a double product, times the
+    // float possibility, all in double; log; stored as gfloat.
+    let mixed =
+        f64::from(ctx.bigram_lambda * bigram_poss) + f64::from(ctx.unigram_lambda) * unigram_poss;
+    let scaled = mixed * f64::from(pinyin_poss);
+    if scaled <= 0.0 {
+        return;
+    }
+    let poss = (f64::from(cur.poss) + scaled.ln()) as f32;
+    save_next_step(
+        steps,
+        end,
+        Node {
+            prev: cur.token,
+            token,
+            poss,
+            last_step: i32_from_step(start),
+        },
+    );
+}
+
+/// `save_next_step` → `insert_candidate` → `trellis_node<1>::eval_item`
+/// (`phonetic_lookup_heap.h:108-122`): a node per token per step; a later
+/// candidate replaces it only when strictly better (`m_poss <`), so equal
+/// scores keep the first-inserted path.
+fn save_next_step(steps: &mut [Step], index: usize, candidate: Node) {
+    let Some(step) = steps.get_mut(index) else {
+        return;
+    };
+    if let Some(&idx) = step.index.get(&candidate.token) {
+        let existing = &mut step.content[idx];
+        if existing.poss < candidate.poss {
+            *existing = candidate;
+        }
+        return;
+    }
+    step.insert(candidate);
+}
+
+fn i32_from_step(step: usize) -> i32 {
+    i32::try_from(step).unwrap_or(i32::MAX)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{PhraseSource, correction_rate, parse_eval_corpus};
+    use crate::model::EvalLanguageModel;
     use oxpinyin_core::{PhraseToken, SyllableKey};
+    use oxpinyin_counter::Counts;
+    use oxpinyin_data::Lambda;
     use std::collections::BTreeMap;
 
-    // A trivial fixture PhraseSource + Dictionary + LanguageModel is exercised
-    // in the crate's integration test; here we only pin the corpus parser and
-    // the error paths.
+    // The full decode is exercised by the crate's integration tests (the
+    // hand-computable homophone fixture) and the live pin gate; here we pin
+    // the corpus parser and the error paths.
 
     #[test]
     fn corpus_splits_on_null_tokens() {
@@ -284,18 +545,22 @@ mod tests {
         fn text(&self, token: PhraseToken) -> Option<String> {
             self.text.get(&token.value()).cloned()
         }
+        fn lexicon_tokens(&self) -> Vec<PhraseToken> {
+            self.keys
+                .keys()
+                .map(|&token| PhraseToken::new(token))
+                .collect()
+        }
     }
 
-    fn fixture() -> (
-        oxpinyin_testsupport::FixtureDictionary,
-        oxpinyin_testsupport::FixtureLanguageModel,
-    ) {
-        // The real fixture dictionary/model so Scorer::new succeeds.
+    fn fixture() -> (oxpinyin_testsupport::FixtureDictionary, EvalLanguageModel) {
+        // The real fixture dictionary; an evaluation model that gives every
+        // fixture token a unigram count.
         let vocab = include_str!("../../../fixtures/w4/mini-vocab.txt");
-        let bigram = include_str!("../../../fixtures/w4/mini-bigram.txt");
         let dict = oxpinyin_testsupport::FixtureDictionary::parse(vocab).expect("vocab");
-        let model =
-            oxpinyin_testsupport::FixtureLanguageModel::parse(vocab, bigram).expect("model");
+        let mut counts = Counts::default();
+        counts.unigrams.insert(1, 10);
+        let model = EvalLanguageModel::from_counts(&counts, Lambda::PINNED);
         (dict, model)
     }
 

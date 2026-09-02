@@ -33,6 +33,7 @@ pub use error::EvalError;
 pub use model::EvalLanguageModel;
 pub use phrases::SystemPhraseSource;
 
+use oxpinyin_core::PhraseToken;
 use oxpinyin_counter::Counts;
 use oxpinyin_data::Lambda;
 use oxpinyin_lambda::DeletedCounts;
@@ -83,10 +84,16 @@ pub fn lambda_from_f64(value: f64) -> Result<Lambda, EvalError> {
 }
 
 /// Builds the native evaluation model from the candidate counts with λ
-/// applied. Equivalent to `evaluate.py`'s `make`-rebuilt runtime model.
+/// applied, floored over the phrase lexicon (`lexicon`) the way
+/// `evaluate.py`'s `make` rebuilds the runtime model (`gen_binary_files` +
+/// `import_interpolation` + `gen_unigram`).
 #[must_use]
-pub fn build_model(counts: &Counts, lambda: Lambda) -> EvalLanguageModel {
-    EvalLanguageModel::from_counts(counts, lambda)
+pub fn build_model(
+    counts: &Counts,
+    lambda: Lambda,
+    lexicon: impl IntoIterator<Item = PhraseToken>,
+) -> EvalLanguageModel {
+    EvalLanguageModel::from_counts_with_lexicon(counts, lambda, lexicon)
 }
 
 #[cfg(test)]

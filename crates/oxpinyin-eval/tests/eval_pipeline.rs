@@ -75,6 +75,12 @@ impl PhraseSource for FixtureSource {
     fn text(&self, token: PhraseToken) -> Option<String> {
         self.text.get(&token.value()).cloned()
     }
+    fn lexicon_tokens(&self) -> Vec<PhraseToken> {
+        self.text
+            .keys()
+            .map(|&token| PhraseToken::new(token))
+            .collect()
+    }
 }
 
 fn sentences() -> Vec<Vec<PhraseToken>> {
@@ -100,11 +106,11 @@ fn full_flow_estimate_apply_decode_correction_rate() {
     // estimate λ over a held-out slice (中 国), then apply it.
     let deleted = count_deleted("10 中\n30 国\n", true).expect("held-out counts");
     let lambda = estimate_lambda(&counts, &deleted).expect("lambda estimates");
-    let model = build_model(&counts, lambda);
 
     // decode the evaluation corpus.
     let dictionary = FixtureDictionary::parse(VOCAB).expect("vocab");
     let source = FixtureSource::new();
+    let model = build_model(&counts, lambda, source.lexicon_tokens());
     let report = correction_rate(&dictionary, &model, &source, &sentences()).expect("evaluate");
 
     assert_eq!(report.tested, 2);
