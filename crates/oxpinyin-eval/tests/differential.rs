@@ -111,7 +111,11 @@ fn native_correction_rate_matches_pin_eval_correction_rate() {
     let lambda =
         parse_table_conf_lambda(&std::fs::read_to_string(&table_conf).expect("table.conf"))
             .expect("λ from table.conf");
-    let dictionary = SystemDictionary::open(&pinyin_index, &phrase_index).expect("system index");
+    let library_dir = phrase_index
+        .parent()
+        .expect("phrase index has a parent directory");
+    let dictionary = SystemDictionary::open_files(&pinyin_index, &phrase_index, library_dir)
+        .expect("system index");
     let source = SystemPhraseSource::new(&dictionary);
     let model = build_model(&counts, lambda, source.lexicon_tokens());
     let evals = std::fs::read_to_string(data_dir.join("evals2.text")).expect("evals2.text");
