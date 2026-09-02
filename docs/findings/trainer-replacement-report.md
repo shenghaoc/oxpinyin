@@ -132,7 +132,7 @@ utils to the `PINYIN_*` gates. Running it produced:
 |---|---|---|---|---|---|
 | spseg | ✓ | ✓ | ✓ | **✓** | live: matches pin `spseg` |
 | mergeseq | ✓ | ✓ | ✓ | **✓** | live: matches pin `mergeseq` |
-| ngseg | ✓ | ✓ | ✓ | ✓/gated | Rust == committed golden (bit-identical); live gate additionally needs the compiled system bigram (see below) |
+| ngseg | ✓ | ✓ | ✓ | **✓** | live: 111 fixture lines token-identical to pin `ngseg` on the full system data (bigram.db + the `gen_unigram` floor; see below) |
 | KMM generate | ✓ | ✓ | ✓ | **✓** | live: gen+export record set matches pin on the real corpus |
 | KMM export/import | ✓ | ✓ | ✓ | **✓** | live: via gen+export |
 | KMM estimate (candidate score) | ✓ | ✓ | ✓ | ✓* | *deleted-interpolation EM shares the arithmetic proven live for λ below; committed golden |
@@ -142,7 +142,7 @@ utils to the `PINYIN_*` gates. Running it produced:
 | KMM → interpolation | ✓ | ✓ | ✓ | **✓** | live: byte-identical to pin `k_mixture_model_to_interpolation` |
 | λ (estimate_interpolation) | ✓ | ✓ | ✓ | **✓** | live: DELETED bigrams bit-exact, 153 per-context λ byte-identical at 6dp |
 | ngram counter (gen_ngram) | ✓ | ✓ | ✓ | **✓** | live: 138 096 unigrams value-identical to pin `gen_ngram` |
-| correction rate (evaluator) | ✓ | ✓ | ✓ | gated | needs the compiled system bigram + a matching `evals2.text`; gate present, skips |
+| correction rate (evaluator) | ✓ | ✓ | ✓ | **✓** | live: `0.880000` == pin on a 25-sentence held-out corpus (22 passed), after the `PhoneticLookup` port below |
 | punctuation | ✓ | ✓ | ✓ | — | no pin oracle path (genpunct is pure Python); golden-verified |
 | word recognition | ✓ | ✓ | ✓ | — | no pin oracle path (pure Python + SQLite); golden-verified |
 | orchestration / raw-corpus E2E | ✓ | ✓ | ✓ | — | pure native wiring; acceptance-tested |
@@ -156,30 +156,58 @@ and the export order was reclassified from "matches the DBM order" to
 "token-ascending canonicalisation compared as a set" (the pin's order is
 Tkrzw hash order). See `kmm-arithmetic-audit.md` §2/§6 and the D6/D7 register.
 
-**The one gated live stage — the system bigram.** ngseg-live and
-correction-rate-live both need the compiled `bigram.db`, built by the pin's
-own `import_interpolation` over model20's `interpolation2.text`. In this build
-that step hits an upstream `insert_freq` assertion on the full model20 (a
-pin/data-import nuance, not an oxpinyin issue; the pin's `gen_ngram`,
-`estimate_interpolation`, `spseg`, and all KMM utils run cleanly). ngseg is
-therefore Level-2 (Rust == the committed golden, which was captured from a
-real ngseg), and the evaluator is Level 1+2 with its live gate ready. An
-operator with a working `import_interpolation` supplies `bigram.db` and the
-two gates run.
+**The two formerly gated stages, and what running them found.** ngseg-live
+and correction-rate-live both need the compiled `bigram.db`, built by the
+pin's own `import_interpolation` over model20's `interpolation2.text`. That
+step tripped its `insert_freq` assertion on the first attempt in both a
+Tkrzw and a Kyoto Cabinet build of the pin, and completed on a re-run over a
+fresh `bigram.db` — it is intermittent, not a property of the data (model20
+holds no duplicate bigram) — and the resulting `bigram.db` round-trips
+through the pin's own `export_interpolation` with all 63 907 unigrams and
+1 849 609 bigrams value-identical to the source. With it, three things
+surfaced that the gated state had hidden:
+
+1. **The data recipe was incomplete.** libpinyin's `data/Makefile.am` builds
+   the system data in three steps — `gen_binary_files`,
+   `import_interpolation`, `gen_unigram` — and the runner's recipe listed
+   two. Without `gen_unigram`'s freq-1 floor a zero-count phrase such as
+   `今天天气` is unreachable to the pin, so the pin's `ngseg` split it and
+   diverged from the committed golden in 19 lines; with the floor applied it
+   reproduces the golden byte for byte, as the native segmenter always did.
+   The recipe (script header) now names all three steps.
+2. **The evaluator's decode was not the pin's.** Its first live run scored
+   `0.52` against the pin's `0.88`: the native decode ranked spans through
+   `oxpinyin_core::Scorer::rank_phrases` — the engine's typing heuristics
+   (segmentation penalties, phrase bonuses, integer costs) — and carried no
+   pronunciation possibility, so a rare reading (红 read `gong`) could
+   outrank 公园. `oxpinyin-eval::decode` is now a term-for-term port of
+   `PhoneticLookup<1, 1>::get_nbest_match` (beam of 32, bigram before
+   unigram expansion, `log((λ·P_bi + (1 − λ)·P_uni) · P_pron)` at the pin's
+   float widths, strict-less replacement).
+3. **The evaluation model lacked the floor.** `evaluate.py`'s `make` runs
+   `gen_unigram` over the rebuilt data, so every phrase-index token carries
+   count + 1 and the total spans the whole lexicon; `build_model` now takes
+   the lexicon and floors it the same way.
+
+After 2 and 3 the gate passes exactly: native `0.880000` == pin `0.880000`,
+22 of 25 sentences, the same three sentences failing on both sides. The
+evaluator gate needs an `evals2.text` in the system token space; the runner
+wires it when `$data/evals2.text` exists (here: 20 hand-written sentences
+segmented by the pin's `ngseg`) and reports it as skipped otherwise.
 
 ## Test counts
 
 | Crate | Tests | Coverage |
 |---|---|---|
-| `oxpinyin-segment` | 36 | spseg/mergeseq/ngseg + differentials |
-| `oxpinyin-kmm` | 43 | per-op units + pipeline golden + semantic parity + **5 live oracle gates** |
-| `oxpinyin-eval` | 13 | model/decode/phrases units + full-flow + oracle gate |
-| `oxpinyin-word` | 23 | per-stage units + end-to-end golden |
+| `oxpinyin-segment` | 36 | spseg/mergeseq/ngseg + differentials (**live** spseg, mergeseq, ngseg) |
+| `oxpinyin-kmm` | 46 | per-op units + pipeline golden + semantic parity + **5 live oracle gates** |
+| `oxpinyin-eval` | 16 | model/decode/phrases units + full-flow + **live** `eval_correction_rate` gate |
+| `oxpinyin-word` | 25 | per-stage units + end-to-end golden |
 | `oxpinyin-punct` | 13 | per-stage units + two-stage golden |
-| `oxpinyin-train` | 25 | config/status/corpus/candidate units + raw-corpus acceptance |
+| `oxpinyin-train` | 32 | config/status/corpus/candidate units + raw-corpus acceptance + resumability |
 | `oxpinyin-lambda` | 14 | held-out EM + **live** differential |
 | `oxpinyin-counter` | 13 | ngram counting + **live** differential |
-| **Total** | **180** | all green |
+| **Total** | **195** | all green (1 013 across the workspace; `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`) |
 
 ## Determinism & complexity
 
@@ -189,7 +217,7 @@ token-ascending and candidate sets, sorts, and merges are order-stable
 (`trainer-parity-audit.md` §12). This is the property that makes the
 byte-level goldens and the semantic-parity harness reproducible.
 
-**Benchmarks.** The pin is now built, so a measured comparison is feasible; a
+**Benchmarks.** The pin is built, so a measured comparison is feasible; a
 clean throughput/RAM benchmark still needs a *valid* large corpus. A quick
 smoke run over a 57 600-line synthetic corpus (the real fixture repeated) is
 not that: the pin's `gen_k_mixture_model` aborts on it (the repeated fixture
@@ -204,11 +232,13 @@ deterministic) for upstream's hash maps (O(1) average, nondeterministic order).
 
 ## Limitations
 
-- **Two live gates need the compiled system bigram** (ngseg-live,
-  correction-rate-live). Building it via the pin's own `import_interpolation`
-  over model20 hits an upstream `insert_freq` assertion in this build; ngseg is
-  Level-2 (Rust == committed golden) and the evaluator Level 1+2 until an
-  operator supplies a working `bigram.db`. Every other live gate runs (9 pass).
+- **Upstream `import_interpolation` can assert intermittently** when it
+  compiles `bigram.db` (`insert_freq`, both DBM backends); a re-run over a
+  fresh `bigram.db` completed and round-trips exactly. Delete a partial
+  `bigram.db` before retrying. Every live gate runs (eleven pass).
+- **The evaluator's live gate needs an operator-supplied `evals2.text`** in
+  the data dir (the pin's `eval_correction_rate` reads it from its cwd); the
+  runner skips that gate, visibly, when it is absent.
 - **The `oxpinyin-train` binary needs a system phrase index** for the segment
   and evaluate stages (as the pin does); the in-memory acceptance test builds
   a fixture segmenter to exercise the whole chain without it.
