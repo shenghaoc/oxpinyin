@@ -18,6 +18,7 @@ pub fn system_dir() -> PathBuf {
         .join("..")
         .join("fixtures")
         .join("w3")
+        .join(oxpinyin_data::DEFAULT_STORE_EXT)
 }
 
 pub struct TempUserDir {

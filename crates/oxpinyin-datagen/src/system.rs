@@ -3,22 +3,17 @@
 //!
 //! The read pass ([`read_semantic`]) parses the `.table` files and
 //! `interpolation2.text` into a [`SemanticModel`] — phrases with their
-//! pronunciations and unigram counts, parsed pinyin rows, and the bigram
-//! groups. Two serializers consume it:
+//! pronunciations and unigram counts, parsed pinyin rows (tones kept), and
+//! the bigram groups. [`compile`] serialises it into libpinyin's own
+//! formats — the byte-level output of upstream's `gen_binary_files` +
+//! `import_interpolation` + `gen_unigram` chain: per-library chunk files,
+//! the two index DBMs' row streams, and the `bigram.db` row stream. Every
+//! backend writes the same rows; on Kyoto Cabinet and tkrzw they are the
+//! files a libpinyin install of that DBM ships.
 //!
-//! * **native** ([`compile`]) — the frozen oxpinyin schema for the redb and
-//!   LMDB producers: pinyin string (UTF-8, syllables joined by `'`) →
-//!   `{token, freq}` records sorted freq-desc then token-asc; token →
-//!   phrase UTF-8; bigram groups with `total == Σ count`.
-//! * **libpinyin** ([`compile_libpinyin`]) — the byte-level output of
-//!   upstream's `gen_binary_files` + `import_interpolation` + `gen_unigram`
-//!   chain for the KC/Tkrzw drop-in producers: per-library chunk files,
-//!   the two index DBMs' row streams, and the `bigram.db` row stream.
-//!
-//! Schemas are frozen in `docs/findings/data-layer-export.md` (native) and
-//! `docs/findings/pinyin-dbm-format-2026-09-01.md` /
-//! `phrase-dbm-format-2026-09-01.md` /
-//! `bigram-punct-format-2026-09-01.md` (libpinyin).
+//! Formats: `docs/findings/pinyin-dbm-format-2026-09-01.md`,
+//! `phrase-dbm-format-2026-09-01.md`, `bigram-punct-format-2026-09-01.md`,
+//! `datagen-compat-2026-09-01.md`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -30,8 +25,9 @@ use crate::libpinyin::ParsedRow;
 use crate::table::read_table_file;
 use crate::{DatagenError, Entries, chunks, libpinyin};
 
-/// Pinyin key (UTF-8 bytes) → freq-desc `(token, summed count)` records.
-type DictionaryIndex = BTreeMap<Vec<u8>, Vec<(u32, u64)>>;
+/// Pinyin spelling (UTF-8 bytes, as written in the `.table`) → the tokens
+/// carrying it — the selector [`Subset::MiniFixture`] restricts by.
+type SpellingIndex = BTreeMap<Vec<u8>, Vec<u32>>;
 
 /// Previous token → `(total, successor records)` in token order.
 type BigramGroups = BTreeMap<u32, (u64, Vec<(u32, u32)>)>;
@@ -75,23 +71,11 @@ pub enum Subset {
     MiniFixture,
 }
 
-/// The three compiled system tables in the frozen native schema, each
-/// sorted by ascending key bytes.
+/// The output of one system compile — the byte-level product of
+/// upstream's `gen_binary_files` + `import_interpolation` + `gen_unigram`
+/// chain (`docs/findings/datagen-compat-2026-09-01.md`).
 #[derive(Debug)]
-pub struct SystemTables {
-    /// pinyin string → phrase records.
-    pub pinyin_index: Entries,
-    /// token → phrase text.
-    pub phrase_index: Entries,
-    /// previous token → successor records.
-    pub bigram: Entries,
-}
-
-/// The libpinyin-schema output of one system compile — the byte-level
-/// product of upstream's `gen_binary_files` + `import_interpolation` +
-/// `gen_unigram` chain (`docs/findings/datagen-compat-2026-09-01.md`).
-#[derive(Debug)]
-pub struct LibpinyinSystem {
+pub struct SystemOutput {
     /// Per-library chunk files: `(file name, bytes)` — `gb_char.bin`,
     /// `gbk_char.bin`, `opengram.bin`, `merged.bin`.
     pub chunks: Vec<(String, Vec<u8>)>,
@@ -109,7 +93,7 @@ pub struct LibpinyinSystem {
 pub struct SystemStats {
     /// Rows read per library, index-aligned with [`SYSTEM_LIBRARIES`].
     pub library_rows: [u64; 4],
-    /// Distinct pinyin keys.
+    /// Distinct pinyin spellings across the `.table` rows.
     pub index_keys: u64,
     /// Distinct tokens in `phrase_index`.
     pub phrases: u64,
@@ -154,8 +138,8 @@ pub struct LibraryModel {
 pub struct SemanticModel {
     /// The four system libraries, in [`SYSTEM_LIBRARIES`] order.
     pub libraries: Vec<LibraryModel>,
-    /// Native-schema pinyin index accumulator (raw pinyin string keys).
-    pub raw_index: DictionaryIndex,
+    /// Spelling → tokens, the mini-subset selector.
+    pub raw_index: SpellingIndex,
     /// `\1-gram` counts per token.
     pub unigrams: BTreeMap<u32, u64>,
     /// `\2-gram` groups: token1 → `(total, records)`.
@@ -188,9 +172,9 @@ fn parse_pinyin_keys(pinyin: &str) -> Option<Vec<ChewingKey>> {
 }
 
 /// Reads a list of `.table` files into per-library semantic models:
-/// phrase records, parsed pinyin rows, and (for the native path) the
-/// raw-index accumulator. Shared by the system compile
-/// ([`SYSTEM_LIBRARIES`]) and the addon compile ([`crate::addon`]).
+/// phrase records, parsed pinyin rows, and the spelling → tokens selector.
+/// Shared by the system compile ([`SYSTEM_LIBRARIES`]) and the addon
+/// compile ([`crate::addon`]).
 ///
 /// # Errors
 ///
@@ -199,7 +183,7 @@ fn parse_pinyin_keys(pinyin: &str) -> Option<Vec<ChewingKey>> {
 pub fn read_libraries(
     model_dir: &Path,
     libraries: &[(u8, &'static str)],
-    raw_index: &mut DictionaryIndex,
+    raw_index: &mut SpellingIndex,
 ) -> Result<(Vec<LibraryModel>, Vec<u64>), DatagenError> {
     let mut out = Vec::with_capacity(libraries.len());
     let mut row_counts = Vec::with_capacity(libraries.len());
@@ -251,12 +235,11 @@ pub fn read_libraries(
                 )));
             }
 
-            // Native raw index: every row, keyed by the raw pinyin string —
-            // the frozen native recipe (no parse gate).
-            let records = raw_index.entry(row.pinyin.as_bytes().to_vec()).or_default();
-            match records.iter_mut().find(|(token, _)| *token == row.token) {
-                Some((_, sum)) => *sum += row.count,
-                None => records.push((row.token, row.count)),
+            // The spelling selector: every row, keyed by the raw pinyin
+            // string as written (no parse gate).
+            let tokens = raw_index.entry(row.pinyin.as_bytes().to_vec()).or_default();
+            if !tokens.contains(&row.token) {
+                tokens.push(row.token);
             }
 
             // Libpinyin paths gate on the parse, upstream's
@@ -287,7 +270,7 @@ pub fn read_libraries(
 }
 
 /// The shared table-read half of [`read_semantic`]: the four system
-/// libraries' semantic content plus the native raw-index accumulator.
+/// libraries' semantic content plus the spelling selector.
 ///
 /// # Errors
 ///
@@ -418,7 +401,7 @@ fn parse_count(count: &str, path: &Path, number: usize) -> Result<u32, DatagenEr
 pub fn read_semantic(model_dir: &Path) -> Result<SemanticModel, DatagenError> {
     let mut model = SemanticModel {
         libraries: Vec::new(),
-        raw_index: DictionaryIndex::new(),
+        raw_index: SpellingIndex::new(),
         unigrams: BTreeMap::new(),
         bigram: BTreeMap::new(),
         stats: SystemStats::default(),
@@ -432,9 +415,9 @@ pub fn read_semantic(model_dir: &Path) -> Result<SemanticModel, DatagenError> {
     Ok(model)
 }
 
-/// The mini restriction shared by both serializers: keep [`MINI_KEYS`]
-/// pinyin keys, the tokens they reference, and nothing else.
-fn mini_keep_tokens(index: &DictionaryIndex) -> std::collections::BTreeSet<u32> {
+/// The mini restriction: keep the tokens the [`MINI_KEYS`] spellings
+/// reference, and nothing else.
+fn mini_keep_tokens(index: &SpellingIndex) -> std::collections::BTreeSet<u32> {
     index
         .iter()
         .filter(|(key, _)| {
@@ -442,105 +425,12 @@ fn mini_keep_tokens(index: &DictionaryIndex) -> std::collections::BTreeSet<u32> 
                 .iter()
                 .any(|mini| key.as_slice() == mini.as_bytes())
         })
-        .flat_map(|(_, records)| records.iter().map(|(token, _)| *token))
+        .flat_map(|(_, tokens)| tokens.iter().copied())
         .collect()
 }
 
-/// Serialises the native schema: freq-desc records per pinyin key,
-/// token-ordered phrase rows, and key-byte-ordered bigram rows (the frozen
-/// byte-identity recipe).
-///
-/// # Errors
-///
-/// Fails when a bigram total overflows u32.
-fn serialise_native(model: SemanticModel) -> Result<SystemTables, DatagenError> {
-    let SemanticModel {
-        libraries,
-        raw_index,
-        bigram,
-        stats: _,
-        unigrams: _,
-    } = model;
-    let pinyin_index = raw_index
-        .into_iter()
-        .map(|(pinyin, mut records)| {
-            records.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-            let mut value = Vec::with_capacity(records.len() * 8);
-            for (token, freq) in records {
-                value.extend_from_slice(&token.to_le_bytes());
-                value.extend_from_slice(&u32::try_from(freq).unwrap_or(u32::MAX).to_le_bytes());
-            }
-            (pinyin, value)
-        })
-        .collect();
-    // Insertion order is part of the byte-identity recipe with the frozen
-    // tables: the retired writers inserted token-keyed tables in integer
-    // token order (BTreeMap iteration) and the bigram in ascending key-byte
-    // order (the old converter sorted lexicographically). redb's file layout
-    // depends on insertion order, so keep both exactly.
-    let phrase_index: Entries = libraries
-        .iter()
-        .flat_map(|lib| lib.items.iter())
-        .collect::<BTreeMap<&u32, &PhraseModel>>()
-        .into_iter()
-        .map(|(token, item)| (token.to_le_bytes().to_vec(), item.text.as_bytes().to_vec()))
-        .collect();
-    let mut bigram_entries: Entries = bigram
-        .into_iter()
-        .map(|(token, (total, records))| {
-            let total = u32::try_from(total).map_err(|_| {
-                DatagenError::Consistency(format!("bigram total for {token:#010x} overflows u32"))
-            })?;
-            let mut value = Vec::with_capacity(4 + records.len() * 8);
-            value.extend_from_slice(&total.to_le_bytes());
-            for (next, count) in records {
-                value.extend_from_slice(&next.to_le_bytes());
-                value.extend_from_slice(&count.to_le_bytes());
-            }
-            Ok((token.to_le_bytes().to_vec(), value))
-        })
-        .collect::<Result<Entries, DatagenError>>()?;
-    bigram_entries.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(SystemTables {
-        pinyin_index,
-        phrase_index,
-        bigram: bigram_entries,
-    })
-}
-
-/// Compiles the system tables from the extracted model20 directory in the
-/// frozen native schema (the redb/LMDB producers and the `.redb`
-/// fixtures).
-///
-/// # Errors
-///
-/// Fails on missing files, unparsable lines, token/word contradictions
-/// between `interpolation2.text` and the tables, duplicate 2-gram pairs, or
-/// u32 overflow of a bigram total — never silently drops data.
-pub fn compile(
-    model_dir: &Path,
-    subset: Subset,
-) -> Result<(SystemTables, SystemStats), DatagenError> {
-    let mut model = read_semantic(model_dir)?;
-    let stats = model.stats.clone();
-    if subset == Subset::MiniFixture {
-        let kept = mini_keep_tokens(&model.raw_index);
-        model
-            .raw_index
-            .retain(|key, _| MINI_KEYS.iter().any(|m| key == m.as_bytes()));
-        for lib in &mut model.libraries {
-            lib.items.retain(|token, _| kept.contains(token));
-            lib.parsed_rows.retain(|row| kept.contains(&row.token));
-        }
-        model.unigrams.retain(|token, _| kept.contains(token));
-        model.bigram.retain(|token, _| kept.contains(token));
-    }
-    let tables = serialise_native(model)?;
-    Ok((tables, stats))
-}
-
-/// Compiles the system tables from the extracted model20 directory in the
-/// libpinyin byte schemas (the KC/Tkrzw drop-in producers).
+/// Compiles the system tables from the extracted model20 directory into
+/// libpinyin's own formats.
 ///
 /// Reproduces upstream's three-tool chain exactly:
 /// `gen_binary_files` (parse + `compact()` + `SubPhraseIndex::store` for
@@ -551,13 +441,16 @@ pub fn compile(
 ///
 /// # Errors
 ///
-/// Same read/validation failures as [`compile`], plus chunk serialization
-/// failures.
-pub fn compile_libpinyin(
+/// Fails on missing files, unparsable lines, token/word contradictions
+/// between `interpolation2.text` and the tables, duplicate 2-gram pairs,
+/// u32 overflow of a bigram total, or a chunk serialization failure —
+/// never silently drops data.
+pub fn compile(
     model_dir: &Path,
     subset: Subset,
-) -> Result<LibpinyinSystem, DatagenError> {
+) -> Result<(SystemOutput, SystemStats), DatagenError> {
     let mut model = read_semantic(model_dir)?;
+    let stats = model.stats.clone();
     if subset == Subset::MiniFixture {
         let kept = mini_keep_tokens(&model.raw_index);
         for lib in &mut model.libraries {
@@ -642,12 +535,15 @@ pub fn compile_libpinyin(
     }
     bigram_entries.sort_by(|a, b| a.0.cmp(&b.0));
 
-    Ok(LibpinyinSystem {
-        chunks: chunk_files,
-        pinyin_index,
-        phrase_index,
-        bigram: bigram_entries,
-    })
+    Ok((
+        SystemOutput {
+            chunks: chunk_files,
+            pinyin_index,
+            phrase_index,
+            bigram: bigram_entries,
+        },
+        stats,
+    ))
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -732,55 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn same_token_two_readings_sum_in_the_index() {
-        let dir = tmp_model("two-readings");
-        write(
-            &dir.join("gb_char.table"),
-            "a\t吖\t16777218\t104\nya\t吖\t16777218\t793\n",
-        );
-        write_empty_libraries(&dir, "gb_char");
-        write(
-            &dir.join("interpolation2.text"),
-            "\\data model interpolation\n\\end\n",
-        );
-        let (tables, stats) = compile(&dir, Subset::Full).unwrap();
-        assert_eq!(stats.library_rows, [2, 0, 0, 0]);
-        assert_eq!(tables.phrase_index.len(), 1);
-        assert_eq!(tables.pinyin_index.len(), 2);
-        let a = &tables.pinyin_index[0];
-        assert_eq!(a.0, b"a");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn writer_orders_match_the_frozen_recipe() {
-        let dir = tmp_model("writer-order");
-        // 0x02000000 (gbk) < 0x01000001 (gb) as LE bytes but not as
-        // integers, so the two orders are genuinely different sequences.
-        write(&dir.join("gb_char.table"), "a\t锕\t16777217\t7\n");
-        write(&dir.join("gbk_char.table"), "e\t㤅\t33554432\t3\n");
-        write(&dir.join("opengram.table"), "");
-        write(&dir.join("merged.table"), "");
-        write(
-            &dir.join("interpolation2.text"),
-            "\\data model interpolation\n\\2-gram\n\
-             \\item 33554432 㤅 16777217 锕 count 2\n\\item 16777217 锕 33554432 㤅 count 1\n\\end\n",
-        );
-        let (tables, _) = compile(&dir, Subset::Full).unwrap();
-        // Token-keyed dictionary: integer token order.
-        assert_eq!(tables.phrase_index[0].0, 16_777_217u32.to_le_bytes());
-        assert_eq!(tables.phrase_index[1].0, 33_554_432u32.to_le_bytes());
-        // Bigram: ascending key-byte order.
-        assert_eq!(tables.bigram[0].0, 33_554_432u32.to_le_bytes());
-        assert_eq!(tables.bigram[1].0, 16_777_217u32.to_le_bytes());
-        // Bigram value layout: total then records, total == Σ count.
-        assert_eq!(&tables.bigram[0].1[..4], &2u32.to_le_bytes());
-        assert_eq!(tables.bigram[0].1.len(), 4 + 8);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn libpinyin_compile_matches_upstream_arithmetic() {
+    fn compile_matches_upstream_arithmetic() {
         let dir = tmp_model("libpinyin");
         write(
             &dir.join("gb_char.table"),
@@ -791,7 +639,10 @@ mod tests {
             &dir.join("interpolation2.text"),
             "\\data model interpolation\n\\1-gram\n\\item 16777218 吖 count 9\n\\end\n",
         );
-        let out = compile_libpinyin(&dir, Subset::Full).unwrap();
+        let (out, stats) = compile(&dir, Subset::Full).unwrap();
+        assert_eq!(stats.library_rows, [3, 0, 0, 0]);
+        assert_eq!(stats.index_keys, 3);
+        assert_eq!(stats.phrases, 2);
         assert_eq!(out.chunks.len(), 4);
         assert_eq!(out.chunks[0].0, "gb_char.bin");
         // Chunk unigram = \1-gram + 1 = 10; the other token has 0 + 1.
@@ -811,8 +662,7 @@ mod tests {
         // Both keyspaces + prefix markers: "a", "b", "ya" are all
         // one-syllable → 3 real keys + no proper prefixes = 3 + 3 = 6.
         assert_eq!(out.pinyin_index.len(), 6);
-        // Phrase index: two phrases, each with its one-character prefix
-        // marker (吖, 吧 are single chars → no markers).
+        // Phrase index: two phrases, each a single character → no markers.
         assert_eq!(out.phrase_index.len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -820,16 +670,25 @@ mod tests {
     #[test]
     fn bigram_groups_total_and_start_token() {
         let dir = tmp_model("bigram");
-        write(&dir.join("gb_char.table"), "de\t的\t16778715\t275240\n");
+        write(
+            &dir.join("gb_char.table"),
+            "de\t的\t16778715\t275240\nzhong'guo\t中国\t16778716\t5\n",
+        );
         write_empty_libraries(&dir, "gb_char");
         write(
             &dir.join("interpolation2.text"),
             "\\data model interpolation\n\
-             \\1-gram\n\\item 16778715 的 count 5\n\\item 1 <start> count 99\n\\end\n",
+             \\1-gram\n\\item 16778715 的 count 5\n\\item 1 <start> count 99\n\
+             \\2-gram\n\\item 16778716 中国 16778715 的 count 2\n\\item 1 <start> 16778715 的 count 3\n\\end\n",
         );
-        let (tables, stats) = compile(&dir, Subset::Full).unwrap();
-        assert_eq!(stats.special_tokens, 1);
-        assert_eq!(tables.pinyin_index.len(), 1);
+        let (out, stats) = compile(&dir, Subset::Full).unwrap();
+        assert_eq!(stats.special_tokens, 2);
+        assert_eq!(stats.bigram_entries, 2);
+        // Bigram: ascending key-byte order; each value = total + records.
+        assert_eq!(out.bigram[0].0, 1_u32.to_le_bytes());
+        assert_eq!(&out.bigram[0].1[..4], &3_u32.to_le_bytes());
+        assert_eq!(out.bigram[1].0, 16_778_716_u32.to_le_bytes());
+        assert_eq!(out.bigram[1].1.len(), 4 + 8);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -865,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn mini_subset_restricts_all_three_tables() {
+    fn mini_subset_keeps_the_allowlisted_spellings_only() {
         let dir = tmp_model("mini");
         write(
             &dir.join("gb_char.table"),
@@ -878,12 +737,11 @@ mod tests {
         );
         let (full, _) = compile(&dir, Subset::Full).unwrap();
         let (mini, _) = compile(&dir, Subset::MiniFixture).unwrap();
-        assert_eq!(full.pinyin_index.len(), 3);
-        // "a" and "ni" keys: only "a" present; "b" and "ya" are dropped.
-        assert_eq!(mini.pinyin_index.len(), 1);
-        assert_eq!(mini.pinyin_index[0].0, b"a");
-        // token 16777218 referenced by key "a"; 16777219 dropped.
+        assert_eq!(full.phrase_index.len(), 2);
+        // "a" is allowlisted and names 吖 (both its readings survive);
+        // 吧 is only reachable through "b", which is not.
         assert_eq!(mini.phrase_index.len(), 1);
+        assert_eq!(mini.pinyin_index.len(), 4, "a and ya in both keyspaces");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

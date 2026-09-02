@@ -1,8 +1,8 @@
 //! Scoring-model data the segmenter reads through the existing loaders.
 //!
-//! Bigrams come from [`oxpinyin_data::BigramLanguageModel`] (the
-//! `bigram` table in the compiled-in backend's format, the verbatim
-//! export of the pin's `SYSTEM_BIGRAM`). Unigrams come from
+//! Bigrams come from [`oxpinyin_data::BigramTable`] (the system
+//! `bigram.db` — the pin's `SYSTEM_BIGRAM` — through the compiled-in
+//! backend, one point read per row). Unigrams come from
 //! [`oxpinyin_data::parse_interpolation2`] plus the `gen_unigram` freq-1 floor
 //! that the pin applies when it builds `phrase_index.bin`
 //! (`utils/training/gen_unigram.cpp:45-68`, run from `data/Makefile.am:62`).
@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use oxpinyin_data::{BigramLanguageModel, BigramRow, parse_interpolation2};
+use oxpinyin_data::{BigramRow, BigramTable, parse_interpolation2};
 
 use crate::error::SegmentError;
 use crate::lexicon::PhraseLexicon;
@@ -36,7 +36,7 @@ pub struct SegmentModel {
 }
 
 enum BigramStore {
-    Table(BigramLanguageModel),
+    Table(BigramTable),
     Memory(HashMap<u32, (u32, HashMap<u32, u32>)>),
 }
 
@@ -52,7 +52,7 @@ impl SegmentModel {
         interpolation2_path: &Path,
         lexicon: &PhraseLexicon,
     ) -> Result<Self, SegmentError> {
-        let bigram = BigramLanguageModel::open(bigram_path)?;
+        let bigram = BigramTable::open(bigram_path)?;
         let table = parse_interpolation2(interpolation2_path)?;
         Ok(Self::with_counts(
             BigramStore::Table(bigram),

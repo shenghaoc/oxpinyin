@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use oxpinyin_core::{Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
-use oxpinyin_data::{BigramLanguageModel, LookupTable, SystemDictionary};
+use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
 use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 // Canonical export-dir resolution, shared with the capi benches.
 pub use oxpinyin_testsupport::model_cache::export_dir;
@@ -47,19 +47,18 @@ pub fn model_dir() -> PathBuf {
         .expect("model cache missing; run tools/model/fetch-model.sh")
 }
 
-/// Dictionary + real-frequency language model used by the pinned scan.
+/// Dictionary + real-frequency language model used by the pinned scan:
+/// the system data directory's DBMs and chunk files, whose items carry
+/// the real unigram counts.
 pub fn load_real_tables() -> (SystemDictionary, BigramLanguageModel) {
     let export = export_dir();
-    let model = model_dir();
-    let dict = SystemDictionary::open(
-        &export.join("pinyin_index.redb"),
-        &export.join("phrase_index.redb"),
+    let dict = SystemDictionary::open(&export).expect("SystemDictionary opens");
+    let mut lm = BigramLanguageModel::open(
+        &export.join(SystemDbm::Bigram.file_name()),
+        std::sync::Arc::clone(dict.libraries()),
     )
-    .expect("SystemDictionary opens");
-    let mut lm =
-        BigramLanguageModel::open(&export.join("bigram.redb")).expect("BigramLanguageModel opens");
-    lm.set_unigrams_from_interpolation2(&model.join("interpolation2.text"))
-        .expect("interpolation2.text parses");
+    .expect("BigramLanguageModel opens");
+    lm.set_lambda_from_table_conf(&export.join("table.conf"));
     assert!(
         lm.has_real_unigrams(),
         "loaded model must expose real unigrams"
@@ -167,33 +166,6 @@ where
 {
     session.reset();
     let _ = session.type_pinyin(input);
-}
-
-/// Rebuilds the two prefix-probe tables the same way `SystemDictionary` does.
-pub fn load_prefix_tables() -> (Box<[String]>, Box<[String]>) {
-    let export = export_dir();
-    let index = LookupTable::open(&export.join("pinyin_index.redb")).expect("pinyin_index");
-    oxpinyin_data::build_prefix_tables(&index)
-}
-
-/// Heap bytes of a `Box<[String]>`: slice header + each `String`'s buffer.
-pub fn string_table_bytes(keys: &[String]) -> usize {
-    let headers = std::mem::size_of_val(keys);
-    let buffers: usize = keys.iter().map(std::string::String::capacity).sum();
-    headers + buffers
-}
-
-/// The `SEARCH_CONTINUED` probe, copied so benches can time it in isolation.
-pub fn prefix_probe(sorted: &[String], joined: &str) -> bool {
-    match sorted.binary_search_by(|candidate| candidate.as_str().cmp(joined)) {
-        Ok(_) => true,
-        Err(index) => {
-            sorted
-                .get(index)
-                .is_some_and(|candidate| candidate.starts_with(joined))
-                && sorted[index].as_bytes().get(joined.len()) == Some(&b'\'')
-        }
-    }
 }
 
 /// W2 parity inputs from the committed corpus.

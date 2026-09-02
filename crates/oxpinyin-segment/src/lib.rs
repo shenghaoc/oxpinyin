@@ -26,9 +26,9 @@ pub use error::SegmentError;
 // compiled-in backend's format without a direct oxpinyin-data edge.
 pub use lexicon::{MAX_PHRASE_LENGTH, PhraseLexicon};
 pub use model::{NULL_TOKEN, PINNED_LAMBDA, SENTENCE_START, SegmentModel, parse_table_conf_lambda};
-pub use oxpinyin_data::default_store_file;
+pub use oxpinyin_data::{SystemDbm, default_store_file};
 pub use paths::{
-    DEFAULT_EXPORT_DIR, EXPORT_DIR_ENV, EXPORT_STEMS, MODEL_CACHE_ENV, MODEL_DIR_ENV, MODEL_FILES,
+    DEFAULT_EXPORT_DIR, EXPORT_DBMS, EXPORT_DIR_ENV, MODEL_CACHE_ENV, MODEL_DIR_ENV, MODEL_FILES,
     SegmenterPaths, load_lambda, locate_export_dir, locate_model_dir,
 };
 
@@ -51,7 +51,7 @@ impl Segmenter {
     ///
     /// Returns [`SegmentError`] when a table cannot be read.
     pub fn open(paths: &SegmenterPaths, lambda: f32) -> Result<Self, SegmentError> {
-        let lexicon = PhraseLexicon::from_phrase_index(&paths.phrase_index)?;
+        let lexicon = PhraseLexicon::from_system_dir(&paths.system_dir)?;
         let model = SegmentModel::open(&paths.bigram, &paths.interpolation2, &lexicon)?;
         Ok(Self {
             lexicon,
