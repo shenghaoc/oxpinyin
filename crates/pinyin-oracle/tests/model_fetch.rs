@@ -90,6 +90,7 @@ fn verified_model_dir_rejects_a_partial_export() {
 mod fetch_script {
     use super::{EXPECTED_MODEL_FILES, Scratch, workspace_root};
     use pinyin_oracle::MODEL20_SHA256;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
 
@@ -103,6 +104,32 @@ mod fetch_script {
             .args(args)
             .output()
             .expect("spawn fetch-model.sh")
+    }
+
+    /// Run the script with a `git` that always fails, so
+    /// `git rev-parse --is-inside-work-tree` returns non-zero — reproducing a
+    /// git-less image or a worktree whose gitdir sits outside the checkout,
+    /// which forces the script's second refusal branch. A shim shadowed onto
+    /// the front of `PATH` (rather than an emptied `PATH`) keeps tar/sha256sum
+    /// and the other real tools reachable behind it.
+    fn run_without_git(args: &[&str]) -> Output {
+        let shim = Scratch::new("nogit-bin");
+        let git = shim.path().join("git");
+        std::fs::write(&git, "#!/bin/sh\nexit 1\n").expect("write git shim");
+        std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod git shim");
+
+        let original = std::env::var_os("PATH").unwrap_or_default();
+        let mut dirs = vec![shim.path().to_path_buf()];
+        dirs.extend(std::env::split_paths(&original));
+        let path = std::env::join_paths(dirs).expect("join PATH with git shim");
+
+        Command::new("bash")
+            .arg(script())
+            .args(args)
+            .env("PATH", path)
+            .output()
+            .expect("spawn fetch-model.sh without git")
     }
 
     fn stderr_text(output: &Output) -> String {
@@ -239,6 +266,43 @@ mod fetch_script {
         assert!(
             stderr.contains("refusing to write model bytes"),
             "must refuse a repo-internal cache path:\n{stderr}"
+        );
+    }
+
+    // `refuses_a_tracked_cache_path` above exercises whichever branch the host
+    // lands on (the git-present one, on GitHub CI and the now git-ful
+    // perf-matrix image). This test forces the git-absent branch so it keeps
+    // coverage where no automated environment would otherwise reach it: a
+    // regression that stopped it refusing would silently vendor model bytes
+    // into the tree on a git-less host or an external-gitdir worktree.
+    #[test]
+    fn refuses_when_git_is_unavailable() {
+        let root = workspace_root();
+        let cache = root.join("crates/pinyin-oracle/__must_not_vendor_model20_nogit");
+        let _ = std::fs::remove_dir_all(&cache);
+
+        let output = run_without_git(&[
+            "--cache-dir",
+            cache.to_str().expect("utf-8 cache"),
+            "--archive",
+            "/dev/null",
+        ]);
+
+        let leftover = cache.exists();
+        let _ = std::fs::remove_dir_all(&cache);
+        assert!(
+            !leftover,
+            "a refused cache path must not be created even without git"
+        );
+        assert!(!output.status.success());
+        assert_no_panic(&output);
+        let stderr = stderr_text(&output);
+        // Pin the git-absent branch's own wording here (the branch-agnostic
+        // substring is already covered above), so this branch stays green only
+        // when the script actually takes it.
+        assert!(
+            stderr.contains("without git ignore checks"),
+            "must refuse a repo-internal path when git is unavailable:\n{stderr}"
         );
     }
 
