@@ -1083,7 +1083,7 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
     the STOP; the base's measured value at the declared protocol is
     125, per the table above.)
 
-## zhuyin multi-syllable candidate construction — engine workstream
+## zhuyin multi-syllable candidate construction — CLOSED (the zhuyin display law, not the construction model)
 
 The two-syllable differential input `su3u3` (ㄋㄧˇ ㄧˇ, consumed 5) exposes a
 broader divergence than the `after(consumed)`/tag-gap above: the multi-syllable
@@ -1130,7 +1130,7 @@ tags.
   the zhuyin facade only), and the measured before/after numbers. The full-row
   differential is byte-identical after the fix, revert-and-check proven.
   The `before(consumed)` half of the measured list stays open in the
-  before-cursor entry below — that is the backward-anchored window builder's,
+  before-cursor entry above — that is the backward-anchored window builder's,
   not this entry's.)
 
 ## zhuyin n-best trellis constants: `PhoneticLookup<1, 1>` vs the engine's `<2, 3>` port — registered, not yet fixed
