@@ -23,7 +23,7 @@ def crate_dir() -> Path:
 @pytest.fixture(scope="session")
 def fixture_w3(repo_root: Path) -> Path:
     """The committed mini system-data fixture the Rust tests use too."""
-    path = repo_root / "fixtures" / "w3"
+    path = repo_root / "fixtures" / "w3" / "kct"
     assert (path / "pinyin_index.redb").is_file(), "w3 fixture missing"
     return path
 
@@ -54,7 +54,7 @@ def native_transcript(tmp_path_factory, repo_root: Path, crate_dir: Path) -> dic
             "native-dump",
             "--",
             str(crate_dir / "parity-corpus.json"),
-            str(repo_root / "fixtures" / "w3"),
+            str(repo_root / "fixtures" / "w3" / "kct"),
             str(out_path),
         ],
         check=True,
