@@ -94,8 +94,14 @@ impl BigramTable {
     pub fn load_successors(&self, prev_token: u32) -> Result<Option<BigramRow>, DictError> {
         let key = prev_token.to_le_bytes();
         match self.dbm.get(&key)? {
-            Some(value) if !value.is_empty() => Ok(Some(parse_bigram_value(&value)?)),
-            _ => Ok(None),
+            None => Ok(None),
+            // A present but empty value is malformed: a stored bigram
+            // always carries at least its header. Report the corruption
+            // rather than masking it as a clean miss.
+            Some(value) if value.is_empty() => Err(DictError::Parse(format!(
+                "bigram entry for token {prev_token:#010x} has an empty value"
+            ))),
+            Some(value) => Ok(Some(parse_bigram_value(&value)?)),
         }
     }
 
@@ -228,6 +234,16 @@ mod tests {
     fn malformed_value_does_not_panic() {
         let dbm = MemoryDbm::new();
         dbm.put(0x01000010_u32.to_le_bytes().to_vec(), vec![0xFF; 5]);
+        let table = BigramTable::new(Box::new(dbm));
+        assert!(table.load_successors(0x01000010).is_err());
+    }
+
+    #[test]
+    fn empty_value_is_reported_not_silently_missed() {
+        // A present key whose value is empty is corruption, not a miss:
+        // libpinyin never stores a zero-length SingleGram. Surface it.
+        let dbm = MemoryDbm::new();
+        dbm.put(0x01000010_u32.to_le_bytes().to_vec(), Vec::new());
         let table = BigramTable::new(Box::new(dbm));
         assert!(table.load_successors(0x01000010).is_err());
     }
