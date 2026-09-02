@@ -249,13 +249,16 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   law for both parse seams, and the batch seam
   (`pinyin_parse_more_double_pinyins`) now implements it (5ec782ea): the
   caller's option word crosses the seam and drives the
-  `pinyin_parser2.cpp:412` length-3 gate plus the `USE_TONE` tone carriage,
-  measured byte-identical against the pinned oracle over full model20 KC
-  tables for double schemes 1, 2, 4, 5, 6 — including a new FORCE_TONE /
-  USE_TONE `tonelaw` probe section in the scheme differential — and for all
-  eight bopomofo keyboards, with `run-key-surface-diff.sh` still IDENTICAL
-  (2,131 probe lines). No W13 items remain; the divergence register's
-  FORCE_TONE entry carries the closure.
+  `pinyin_parser2.cpp:412` length-3 gate plus the `USE_TONE` tone carriage.
+  Measured against the pinned oracle over full model20 KC tables, evidence
+  sources distinct: the batch `tonelaw` profiles (FORCE_TONE/USE_TONE) ran
+  on all six double schemes — the whole differentials byte-identical on
+  1, 2, 4, 5, 6, scheme 3 differing only in the pre-existing §12 row — the
+  eight bopomofo keyboards stay byte-identical on the existing chewing
+  corpus (no FORCE_TONE profile; regression coverage), and the one-key seam
+  gate `run-key-surface-diff.sh` stays IDENTICAL (2,131 probe lines,
+  including its FORCE_TONE profile sweep). No W13 items remain; the
+  divergence register's FORCE_TONE entry carries the closure.
 
 - **W14 LANDED (489e94d, PR #113).** Three parts, all delivered: (a) sentence
   candidates emit with real unigrams loaded — up to N n-best rows prepended

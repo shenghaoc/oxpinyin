@@ -740,18 +740,24 @@ Text, candidate type and counts cannot.
   FORCE_TONE without USE_TONE consumes nothing at all. The parsed tone
   rides the key into the exact segments. Measured in the debian-testing
   gate container against the pinned tkrzw oracle over full model20 KC
-  tables: the scheme differential is byte-identical for double schemes
-  1, 2, 4, 5, 6 including the new `tonelaw` probe section (142 lines
-  each: three FORCE_TONE/USE_TONE profiles over thirteen tone-digit
-  inputs) and for all eight bopomofo keyboards; `run-key-surface-diff.sh`
-  stays IDENTICAL (2,131 probe lines). Revert-and-check: the pristine
-  parser diverges from the pin on 130 of the new probe lines under the
-  same driver. The one residual in the comparison — scheme 3 (Ziguang)
-  NBEST row 2 on `zhrgguor` (pin 宗人光卓然 / oxpinyin 总人光卓然; the
-  1-best and 2-best rows agree) — is the pre-existing §12 trellis
-  hypothesis-selection class, unchanged by this closure (the same
-  revert-check reproduces it) and first surfaced by the full-model
-  scheme sweep.
+  tables, three evidence sources kept distinct. (1) The new `tonelaw`
+  probe section — the batch FORCE_TONE/USE_TONE profiles over thirteen
+  tone-digit inputs — ran on all six double schemes: the whole scheme
+  differentials are byte-identical on schemes 1, 2, 4, 5, 6, and on
+  scheme 3 every tonelaw line matches too (its one residual is the
+  DEFAULT_FLAGS-section row described below). (2) The eight bopomofo
+  keyboards are byte-identical on the existing chewing corpus, which
+  carries no FORCE_TONE profile — regression coverage for this closure,
+  not FORCE_TONE evidence. (3) The one-key seams keep their own gate:
+  `run-key-surface-diff.sh` stays IDENTICAL over 2,131 probe lines (the
+  D3 sweep, which exercises the FORCE_TONE profiles on the one-key
+  seams). Revert-and-check: the pristine parser diverges from the pin on
+  130 of the new tonelaw lines under the same driver. The one residual
+  in the comparison — scheme 3 (Ziguang) NBEST row 2 on `zhrgguor` (pin
+  宗人光卓然 / oxpinyin 总人光卓然; the 1-best and 2-best rows agree) —
+  is the pre-existing §12 trellis hypothesis-selection class, unchanged
+  by this closure (the same revert-check reproduces it) and first
+  surfaced by the full-model scheme sweep.
 
 ### Empty-string phrase lookup SIGFPEs the pin
 
