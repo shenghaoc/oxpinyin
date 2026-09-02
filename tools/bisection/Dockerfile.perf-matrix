@@ -25,6 +25,7 @@ RUN apt-get -o Acquire::Check-Valid-Until=false update \
     autoconf automake autopoint libtool \
     pkg-config gettext gnome-common \
     curl ca-certificates \
+    git \
     tar \
     python3 \
     libglib2.0-dev \

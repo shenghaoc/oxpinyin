@@ -229,9 +229,16 @@ mod fetch_script {
         assert!(!output.status.success());
         assert_no_panic(&output);
         let stderr = stderr_text(&output);
+        // The script has two refusal branches for a repo-internal cache: one
+        // when git can vet the path ("...git would track...") and one when git
+        // is absent or the gitdir sits outside the checkout, as in a linked
+        // worktree or a git-less CI image ("...without git ignore checks...").
+        // Both are correct refusals — non-zero exit, no directory created (both
+        // asserted above). Pin the property they share, not the git-present
+        // wording, so the test holds wherever git happens to be unavailable.
         assert!(
-            stderr.contains("git would track"),
-            "must refuse a tracked path:\n{stderr}"
+            stderr.contains("refusing to write model bytes"),
+            "must refuse a repo-internal cache path:\n{stderr}"
         );
     }
 
