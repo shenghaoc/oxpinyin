@@ -1,52 +1,32 @@
 # W3 mini fixtures
 
-Three families, all deterministic against the pinned oracle
-(`fixtures/w3/pin-ref.txt`):
+Four data directories, one per storage backend, plus the content `.bin`
+files at this level:
 
-- **Content `.bin` files** (art … technology) — truncated copies of the
-  oracle's custom-content tables, regenerated with
-  `python3 tools/generate_w3_fixtures.py`.
-- **Kyoto Cabinet tables (`.kct`)** — the default backend's committed set:
-  `pinyin_index.kct`, `phrase_index.kct`, `bigram.kct`, `punct.kct`,
-  `addon_4_pinyin_index.kct`, `addon_4_phrase_index.kct`. Produced by the
-  same recipe as the redb set —
-  `oxpinyin-datagen compile --mini --backend kyotocabinet` — and
-  row-identical to it through the store API (the writer verifies every row
-  on read-back). The tkrzw (`.tkt`) and LMDB (`.lmdb`) sets are committed
-  too — same command, `--backend tkrzw|lmdb` — so the four-backend test
-  gate is self-contained everywhere, including CI, which must never fetch
-  model20. All bytes pinned by `fixtures.sha256`.
-- **redb tables** (the pure-Rust portability backend,
-  `--no-default-features`) — `pinyin_index.redb`, `phrase_index.redb`,
-  `bigram.redb`, `punct.redb`, and the `addon_*.redb` files are **frozen**
-  (committed bytes pinned by `fixtures.sha256`). They were originally
-  produced by the removed `oxpinyin-migrate` exporters; the same mini
-  subset is now reproducible from the canonical model20 archive alone via
-  `oxpinyin-datagen compile --mini` (row-identical through the store API;
-  container bytes depend on the writing redb version — see
-  `docs/findings/datagen-model20.md`). Provenance is recorded below for
-  reference.
+- **`kct/`, `tkt/`, `redb/`, `lmdb/`** — the `--mini` compile of the
+  pinned model20 (`oxpinyin-datagen compile --mini --backend <peer>
+  --out-dir fixtures/w3/<ext>`), one directory per compiled-in backend,
+  each a complete system data directory the runtime opens as is:
+  `pinyin_index`, `phrase_index`, `bigram`, `punct`, the `addon_*` pair
+  (libpinyin's own file names on `kct/` and `tkt/` — Kyoto Cabinet and
+  tkrzw are the DBMs libpinyin builds against; `<stem>.<ext>` on `redb/`
+  and `lmdb/`), the sixteen per-library chunk files (`gb_char.bin` …
+  `technology.bin`, byte-identical across the four), `table.conf`, and the
+  producer's `datagen-manifest.txt`. The subset is `system::MINI_KEYS`
+  and `addon::MINI_ART_KEYS`: the phrases those spellings reference, with
+  their real `\1-gram` counts and bigram rows. The runtime and C-ABI test
+  suites open `fixtures/w3/<DEFAULT_STORE_EXT>`; `oxpinyin-datagen`'s
+  `fixtures_identity` test reproduces the compiled backend's directory
+  from the model cache (records and chunk bytes; DBM container bytes
+  depend on the writing library's version).
+- **Content `.bin` files** (art … technology, at this level) — truncated
+  copies of the oracle's custom-content tables for the custom-content
+  loader tests, regenerated with `python3 tools/generate_w3_fixtures.py`.
 
-  `pinyin_index.redb` / `phrase_index.redb`: the `--mini` subset of the
-  public-ABI export (`docs/findings/data-layer-export.md`). `--mini` keeps
-  the allowlisted pinyin keys and the phrase tokens those keys reference —
-  every kept record byte-identical to the full export.
+`pin-ref.txt` names the oracle pin the fixtures are deterministic
+against. `fixtures.sha256` lists the checksums of every fixture file;
+regenerate it with:
 
-  `bigram.redb`: verbatim Tkrzw-conversion records of the pin's `bigram.db`
-  per `docs/findings/data-layer-export.md` — not part of the public-ABI
-  export, whose bigram iterator yields no system data — restricted like the
-  other tables to the mini allowlist (entries whose previous token is one
-  of those phrases).
-
-  `punct.redb`: the Option A public-ABI export of `punct.table` (token →
-  NUL-terminated UTF-8 puncts).
-
-  The aggregate `addon_pinyin_index.redb` / `addon_phrase_index.redb` are
-  verbatim conversions of the raw Tkrzw files. Those two `addon_*.redb`
-  files are **superseded** for runtime use: they are the undocumented
-  sectioned format, kept only because this manifest still pins them.
-
-  `addon_4_pinyin_index.redb` / `addon_4_phrase_index.redb` are the W11
-  Option A public-ABI export of a mini `art.table` subset.
-
-`fixtures.sha256` lists the checksums of every fixture file.
+```bash
+cd fixtures/w3 && find . -type f ! -name fixtures.sha256 | LC_ALL=C sort | sed 's|^\./||' | xargs shasum -a 256 | sed 's| \./| fixtures/w3/|; s|  | fixtures/w3/|' > fixtures.sha256
+```
