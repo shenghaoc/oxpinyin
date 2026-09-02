@@ -337,7 +337,7 @@ inputs (the pin-built `.so` SIGABRTs).
   it on either engine. Report-back batch: file with the aux over-read
   as an internal-inconsistency pair, not a bare assert.
 
-### N-best trellis accumulates gfloat log costs — not reproducible in fixed point
+### N-best trellis accumulates gfloat log costs — not reproducible in fixed point, FROZEN as a permanent Stage-1 divergence
 
 - **Upstream source cite:** `src/lookup/phonetic_lookup.h:663, 692`
   (`m_poss += log(...)` per step, a `gfloat` accumulator rounded at
@@ -371,9 +371,24 @@ inputs (the pin-built `.so` SIGABRTs).
   ordered misses are all trellis-side (0 candidate-surface leaks). The
   candidate surface, which does not share this arithmetic, is
   bit-identical. Recorded as the measured Stage-1 sentence residual in
-  `sentence-surface.md` §12 (recommended as a permanent divergence; the
-  freeze is the maintainer's call); enumerate with the read-only
+  `sentence-surface.md` §12; enumerate with the read-only
   `pinyin-oracle` `sentence-tail` binary.
+- **Status:** FROZEN as a permanent Stage-1 divergence (maintainer ruling
+  2026-09-02; `sentence-surface.md` §12). The residual is one named,
+  understood mechanism — the pin's platform-dependent `gfloat` accumulation
+  against this port's defined fixed-point arithmetic — and bit-exact
+  reproduction is ruled out by constitution item 6, so `488 / 385 / 379` is
+  a recorded constant, not a target of zero. Same disposition as the
+  predicted-candidate tie order (2026-08-25 ruling): upstream deterministic
+  but not reproducibly so. The gate
+  `sentence_surface_matches_the_declared_residual` asserts a defined
+  residual, not a parity target: it holds the frozen numbers and the
+  mechanism invariants (`0` order-only, the `6` distinct-same), and any move
+  is a deliberate re-freeze of §12, never a silent drift. Re-opening
+  condition: a deliberate pin re-freeze that itself accepts platform-locked
+  floating point — which the constitution does not permit for this project —
+  or a measured leak of the residual onto the candidate surface (0 leaks
+  today; the candidate surface is bit-identical).
 
 ### Predicted-candidate tie order is the Tkrzw HashDBM bucket walk
 

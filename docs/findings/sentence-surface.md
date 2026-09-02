@@ -550,11 +550,11 @@ are untouched — §3's trellis divergences stand. The measured agreement:
 
 `sentence_surface_matches_the_declared_residual` holds 488/385/379. §12
 defines what each of those three numbers measures — they are three comparison
-strictnesses, not one measure — and records the residual; whether to freeze it
-as a permanent Stage-1 divergence is the maintainer's decision, pending
-approval.
+strictnesses, not one measure — and records the residual; the freeze decision
+was the maintainer's, and was taken 2026-09-02 — the residual is FROZEN (see
+§12).
 
-## 12. The residual, defined and measured — a Stage-1 divergence pending a freeze decision
+## 12. The residual, defined and measured — FROZEN as a permanent Stage-1 divergence
 
 Date: 2026-08-24 · branch `feat/gfloat-accumulation-parity`
 
@@ -652,3 +652,25 @@ report-back entry in `upstream-divergences.md`; **freezing it as permanent is
 the maintainer's call, not taken here.** It would be revisited only under a
 deliberate pin re-freeze that accepts platform-locked floating point, which
 the constitution does not permit.
+
+**Ruling (maintainer, 2026-09-02): FROZEN as a permanent Stage-1
+divergence.** The recommendation above is accepted. The residual is one named,
+understood mechanism — the pin's platform-dependent `gfloat` accumulation
+against this port's defined fixed-point arithmetic — and bit-exact
+reproduction is ruled out by constitution item 6, so `488 / 385 / 379` is a
+recorded constant, not a target of zero. The disposition is the same one the
+predicted-candidate tie order took under the 2026-08-25 ruling: upstream
+deterministic but not reproducibly so. Two consequences, stated explicitly:
+
+1. The gate `sentence_surface_matches_the_declared_residual` asserts a
+   **defined-residual**, not a parity target: it holds the frozen numbers and
+   the mechanism invariants (`0` order-only, the `6` distinct-same), and any
+   move remains a deliberate re-freeze of this section, never a silent drift.
+2. The report-back entry in `upstream-divergences.md` ("N-best trellis
+   accumulates gfloat log costs") carries the mechanism for libpinyin and is
+   amended with this ruling.
+
+**Re-opening condition:** a deliberate pin re-freeze that itself accepts
+platform-locked floating point — which the constitution does not permit for
+this project — or a measured leak of the residual onto the candidate surface
+(today's measurement shows 0 leaks; the candidate surface is bit-identical).
