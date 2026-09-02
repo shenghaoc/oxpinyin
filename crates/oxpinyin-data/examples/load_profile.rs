@@ -21,7 +21,7 @@ use std::io::{BufRead, BufReader, Cursor};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use oxpinyin_core::{Dictionary, SyllableKey, syllable_initial};
+use oxpinyin_core::{Dictionary, SyllableKey};
 use oxpinyin_data::{
     BigramLanguageModel, LookupTable, PunctTable, SystemDictionary, build_prefix_tables,
     default_store_file, parse_interpolation2, parse_interpolation2_from_reader,
