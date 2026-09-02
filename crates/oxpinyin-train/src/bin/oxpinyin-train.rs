@@ -121,10 +121,12 @@ fn run() -> Cli {
     let deleted_counts = count_deleted(&held_text, config.train_pi_gram)?;
 
     // The evaluation decode target.
-    let dictionary = SystemDictionary::open(
-        &require(args.pinyin_index, "--pinyin-index")?,
-        &require(args.phrase_index.clone(), "--phrase-index")?,
-    )?;
+    let pinyin_index = require(args.pinyin_index, "--pinyin-index")?;
+    let phrase_index = require(args.phrase_index.clone(), "--phrase-index")?;
+    let library_dir = phrase_index
+        .parent()
+        .ok_or("--phrase-index must have a parent directory holding the chunk files")?;
+    let dictionary = SystemDictionary::open_files(&pinyin_index, &phrase_index, library_dir)?;
     let source = SystemPhraseSource::new(&dictionary);
     let evals_text = read(&require(args.evals, "--evals")?)?;
 
@@ -159,8 +161,12 @@ fn build_segmenter(args: &Args) -> Cli<Segmenter> {
     let lambda = load_lambda(args.table_conf.as_deref()).unwrap_or(PINNED_LAMBDA);
     match (&args.phrase_index, &args.bigram, &args.interpolation2) {
         (Some(phrase_index), Some(bigram), Some(interpolation2)) => {
+            let system_dir = phrase_index
+                .parent()
+                .ok_or("--phrase-index must have a parent directory holding the chunk files")?
+                .to_path_buf();
             let paths = SegmenterPaths {
-                phrase_index: phrase_index.clone(),
+                system_dir,
                 bigram: bigram.clone(),
                 interpolation2: interpolation2.clone(),
             };

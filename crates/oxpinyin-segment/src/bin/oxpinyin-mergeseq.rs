@@ -17,8 +17,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use oxpinyin_segment::{
-    DEFAULT_EXPORT_DIR, EXPORT_DIR_ENV, PhraseLexicon, default_store_file, locate_export_dir,
-    mergeseq,
+    DEFAULT_EXPORT_DIR, EXPORT_DIR_ENV, PhraseLexicon, locate_export_dir, mergeseq,
 };
 
 fn main() -> ExitCode {
@@ -64,8 +63,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let export = export_dir.or_else(locate_export_dir).ok_or_else(|| {
         format!("no export at ${EXPORT_DIR_ENV} or {DEFAULT_EXPORT_DIR}; pass --export-dir")
     })?;
-    let phrase_index = export.join(default_store_file("phrase_index"));
-    let lexicon = PhraseLexicon::from_phrase_index(&phrase_index)?;
+    let lexicon = PhraseLexicon::from_system_dir(&export)?;
 
     let bytes = match input {
         Some(path) => fs::read(&path)?,
