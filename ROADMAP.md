@@ -254,8 +254,13 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   `pinyin_get_sentence` returns the decoded n-best text (index 0 = 1-best),
   not raw input; (c) `SORT_WITHOUT_SENTENCE_CANDIDATE` gating. Corpus
   candidate pins bit-identical; sentence-surface fixture green (488/496 1-best,
-  385/496 n-best distinct-set). Remaining item: the §12 measured 117-position
-  ordered/first-6 residual (hypothesis selection, trellis-side; documented in
-  `docs/findings/sentence-surface.md`), pending maintainer freeze/decision.
-  The predicted-candidate ordering divergence is recorded as accepted
+  385/496 n-best distinct-set). The §12 measured 117-position ordered/first-6
+  residual (hypothesis selection, trellis-side) is **FROZEN as a permanent
+  Stage-1 divergence** (maintainer ruling 2026-09-02,
+  `docs/findings/sentence-surface.md` §12): the pin's `gfloat` trellis
+  accumulation is not bit-reproducible under the constitution's determinism
+  rule, and the gate `sentence_surface_matches_the_declared_residual` holds
+  the frozen 488/385/379 as a defined residual, not a parity target. The
+  predicted-candidate ordering divergence is recorded as accepted
   (`docs/findings/sentence-surface.md`) and is not an open implementation task.
+  Nothing in W14 remains open.

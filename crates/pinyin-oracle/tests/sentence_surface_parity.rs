@@ -1,8 +1,10 @@
 //! The gate for the sentence-surface residual `docs/findings/sentence-
 //! surface.md` §12 records: the port's `guess_sentence` surface against the
-//! pinned oracle fixture, at the three named strictnesses. (Whether that
-//! residual is frozen as permanent is the maintainer's call; this gate holds
-//! the measured numbers regardless.)
+//! pinned oracle fixture, at the three named strictnesses. The residual is
+//! FROZEN as a permanent Stage-1 divergence (maintainer ruling 2026-09-02),
+//! so this gate asserts a defined residual, not a parity target: it holds the
+//! frozen numbers and the mechanism invariants, and any move is a deliberate
+//! re-freeze of §12.
 //!
 //! Runs the same `pinyin_oracle::sentence_tail::measure` the `sentence-tail`
 //! binary prints, so the asserted numbers and the reported numbers are one
