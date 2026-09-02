@@ -305,37 +305,28 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
                 *freq = 0;
             }
         }
-        // The pin's `PhraseItem::get_unigram_frequency` is the phrase
-        // index's trained count — the LM's interpolation2 table carries
-        // that number in oxpinyin (the flat pinyin-index aggregation is
-        // the suggestion store's, a different surface). User tokens read
-        // their stored count; the overlay delta rides on top.
+        // The pin's `PhraseItem::get_unigram_frequency` is the chunk
+        // item's stored field (`gen_unigram`'s +1 included), which the
+        // language model hands out as is; the user store's trained delta
+        // rides on it there, the overlay delta below. A token whose
+        // library owns no item answers `false`, as `get_phrase_item`
+        // failing does upstream.
         let nibble = token >> 24;
         let base = match nibble {
             1..=4 => {
-                if !inst.dict.library_visible_token(token) {
-                    // Unloaded library — the item is hidden, so no
-                    // frequency is reported (matches the visibility
-                    // filter every other Tier-C read honours).
+                if !inst.dict.library_visible_token(token)
+                    || inst.dict.system_unigram_count(token).is_none()
+                {
+                    // Unloaded library or no such item — nothing is
+                    // reported (matches the visibility filter every other
+                    // Tier-C read honours).
                     None
                 } else {
                     use oxpinyin_core::LanguageModel;
-                    let trained = inst
-                        .lm
+                    inst.lm
                         .unigram_freq(&oxpinyin_core::PhraseToken::new(token))
                         .ok()
                         .flatten()
-                        // The fixture LM carries no real-unigram flag; its
-                        // table was seeded from this same map, so the
-                        // fallback is the same number.
-                        .or_else(|| inst.dict.system_unigram_count(token));
-                    // The trainer's avoid-zero constant: gen_unigram adds
-                    // `guint32 freq = 1` to every SYSTEM_FILE/DICTIONARY
-                    // item ("To avoid zero value when computing unigram
-                    // frequency in float format", gen_unigram.cpp:34-49),
-                    // so the stored item count is the trained count + 1.
-                    // The exported tables carry the pre-constant values.
-                    trained.map(|count| count + 1)
                 }
             }
             5..=6 => inst.dict.addon_unigram_frequency(token).or_else(|| {

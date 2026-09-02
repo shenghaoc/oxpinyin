@@ -1,72 +1,45 @@
-//! System dictionary backed by the exported pinyin index and phrase index.
+//! The system and addon dictionaries over libpinyin's own data files.
 //!
-//! Implements [`oxpinyin_core::Dictionary`] over the tables
-//! committed under `fixtures/w3/` (frozen; no longer regenerated in-tree)
-//! (`docs/findings/data-layer-export.md`). The index is keyed by the
-//! pinyin spelling itself — syllables joined by `'` — so a lookup for
-//! `[ni, hao]` is a single get on `ni'hao`; there is no per-syllable
-//! binary encoder and no compound binary key. Entries come back in the
-//! stored order, which the exporter froze as frequency-descending.
+//! Upstream's `pinyin_init` opens three things per facade: a
+//! `ChewingLargeTable2` (pinyin keys → `PinyinIndexItem2` records), a
+//! `PhraseLargeTable3` (UCS-4 text → tokens), and a `FacadePhraseIndex`
+//! of mmap'd per-library chunk files (token → phrase item). Nothing is
+//! scanned at open: the two DBMs are handles, the chunk files are mapped
+//! and checksummed. Every lookup is a point read plus a chunk-item read.
 //!
-//! Values are the resolved [`PhraseEntry`] slice so `fill_lookup` copies
-//! hits instead of walking `phrase_index` / `unigrams` per record.
+//! [`SystemDictionary`] is the default facade (`pinyin_index.bin`,
+//! `phrase_index.bin`, `gb_char.bin` … `merged.bin`);
+//! [`AddonDictionary`] the addon facade (`addon_pinyin_index.bin`,
+//! `addon_phrase_index.bin`, `art.bin` … `technology.bin`, libraries
+//! loaded on demand by `pinyin_load_addon_phrase_library`).
+//!
+//! Lookups convert `SyllableKey` → `ChewingKey`, run
+//! `ChewingLargeTable2::search` (incomplete-index selection and the
+//! `pinyin_compare_with_tones` record filter included), and resolve every
+//! surviving token through its library — a token whose library is not
+//! loaded is invisible, upstream's `NULL == head` skip.
 
-use std::collections::BTreeMap;
 use std::fmt;
-use std::ops::Range;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::Arc;
 
-use compact_str::CompactString;
-use oxpinyin_core::{
-    Completeness, Dictionary, PhraseEntry, PhraseToken, SyllableKey, syllable_initial,
+use oxpinyin_core::{ChewingKey, Dictionary, PhraseEntry, PhraseToken, SyllableKey};
+use oxpinyin_store::{DefaultStore, ReadStore};
+
+use crate::chewing_table::{ChewingTable, PinyinIndexItem, RawChewingDbm, prefix_keys_match};
+use crate::phrase_libraries::PhraseLibraries;
+use crate::phrase_table::PhraseTable;
+use crate::system_files::{
+    ADDON_LIBRARY_FILES, SYSTEM_LIBRARY_FILES, SystemDbm, addon_library_file,
 };
+use crate::table::TableError;
 
-use crate::table::{self, LeByteKey, LookupTable, TableError};
-
-/// The pinyin index as a sorted vector map plus one shared entry arena.
-///
-/// `rows` holds `(key, entries range)` pairs in ascending key order — redb
-/// walks its B-tree in that order, so the load appends rows instead of
-/// paying `BTreeMap::insert`'s O(log n) string compares per row (the
-/// #129/#132 audit). All [`PhraseEntry`] hits live contiguously in
-/// `entries`: one allocation for the whole index instead of one boxed
-/// slice per key, and a key's hits are still one contiguous slice for
-/// `fill_lookup`'s `extend_from_slice`.
-#[derive(Default)]
-struct PinyinIndex {
-    /// `(pinyin key, hits range into `entries`)`, ascending key order.
-    /// Keys are inline-backed compact strings: most pinyin keys fit the
-    /// inline storage, so the retained index carries no per-key heap
-    /// allocation.
-    rows: Vec<(CompactString, Range<usize>)>,
-    /// Every resolved hit of every row, concatenated in row order.
-    entries: Vec<PhraseEntry>,
-}
-
-impl PinyinIndex {
-    /// Exact-key get: the hits slice of `key`, or `None`.
-    fn hits(&self, key: &str) -> Option<&[PhraseEntry]> {
-        self.rows
-            .binary_search_by(|(stored, _)| stored.as_str().cmp(key))
-            .ok()
-            .map(|position| &self.entries[self.rows[position].1.clone()])
-    }
-}
-
-/// The phrase index as a sorted vector map: `(token, text)` pairs in
-/// ascending [`LeByteKey`] order — the order redb's walk already yields
-/// for the 4-byte little-endian keys the exporter wrote — searched by
-/// binary search. The append replaces `BTreeMap::insert`'s O(log n)
-/// per-row walk; iteration stays ascending in walk order.
-type PhraseIndex = Vec<(LeByteKey, CompactString)>;
-
-/// Error conditions for system dictionary lookups.
+/// Error conditions for dictionary lookups.
 #[derive(Debug)]
 pub enum DictError {
-    /// A table-level error (I/O, redb, etc.).
+    /// A table-level error (I/O, the store backend).
     Table(TableError),
-    /// Value bytes did not parse as `{token, freq}` records.
+    /// Stored bytes did not decode under libpinyin's record layout.
     Parse(String),
     /// A phrase-library chunk file failed to verify.
     Library(crate::phrase_library::LibraryError),
@@ -104,224 +77,234 @@ impl From<crate::phrase_library::LibraryError> for DictError {
     }
 }
 
-/// The system dictionary, backed by `pinyin_index.redb` and
-/// `phrase_index.redb` committed under `fixtures/w3/`.
+/// Converts syllables to `ChewingKey`s, tone zero. `None` when any
+/// syllable is not a content-table spelling — upstream's parser never
+/// produces such a key, so the lookup answers nothing rather than
+/// substituting a zero key that could collide with a prefix marker.
+fn syllables_to_chewing_keys(syllables: &[SyllableKey]) -> Option<Vec<ChewingKey>> {
+    syllables
+        .iter()
+        .map(|s| ChewingKey::from_pinyin(s.text()))
+        .collect()
+}
+
+fn open_tree(path: &Path) -> Result<ChewingTable, DictError> {
+    let store = DefaultStore::open_read_only(path).map_err(TableError::from)?;
+    Ok(ChewingTable::new(Box::new(RawChewingDbm::new(store))))
+}
+
+fn open_phrase_table(path: &Path) -> Result<PhraseTable, DictError> {
+    let store = DefaultStore::open_read_only(path).map_err(TableError::from)?;
+    Ok(PhraseTable::new(Box::new(RawChewingDbm::new(store))))
+}
+
+/// Resolves the surviving records of one search through `libraries`:
+/// text from the chunk item, possibility over its pronunciations. A token
+/// without a loaded item is dropped (upstream's `NULL == head` skip).
+fn resolve_items(
+    libraries: &PhraseLibraries,
+    keys: &[ChewingKey],
+    items: &[PinyinIndexItem],
+    out: &mut Vec<PhraseEntry>,
+) {
+    for item in items {
+        let Some(text) = libraries.phrase_text(item.token) else {
+            continue;
+        };
+        let mut entry = PhraseEntry::new(PhraseToken::new(item.token), text);
+        if let Some((matched, total)) = libraries.pronunciation_possibility(item.token, keys) {
+            entry = entry.with_pronunciation_possibility(matched, total);
+        }
+        out.push(entry);
+    }
+}
+
+/// `search_suggestion` tokens resolved to `(token, text)` rows in the
+/// order upstream hands them to `_compute_predicted_prefix_candidates`:
+/// `search_suggestion` files each token into its library's array
+/// (`PhraseTableEntry::search`'s `tokens[PHRASE_INDEX_LIBRARY_INDEX]`)
+/// and `reduce_tokens` concatenates those arrays library by library, so
+/// the list is grouped by library nibble ascending, and inside a group
+/// it is the DBM's cursor order — byte-lexical over the UCS-4 keys, the
+/// order [`PhraseTable::search_suggestion`] already yields. A stable sort
+/// by nibble over the walk is exactly that.
+fn resolve_suggestions(libraries: &PhraseLibraries, tokens: Vec<u32>) -> Vec<(u32, String)> {
+    let mut rows: Vec<(u32, String)> = tokens
+        .into_iter()
+        .filter_map(|token| Some((token, libraries.phrase_text(token)?)))
+        .collect();
+    rows.sort_by_key(|(token, _)| token >> 24);
+    rows
+}
+
+/// The byte-lexical sort key of a phrase text in a UCS-4 keyed DBM: the
+/// little-endian `u32` scalars concatenated — the cursor order
+/// `PhraseLargeTable3` walks, which `pinyin_guess_predicted_candidates`
+/// exposes as the order of tied rows. Public so the user seam's
+/// suggestions can be merged in the same order.
+#[must_use]
+pub fn ucs4_walk_key(text: &str) -> Vec<u8> {
+    text.chars()
+        .flat_map(|ch| (ch as u32).to_le_bytes())
+        .collect()
+}
+
+/// The `SEARCH_CONTINUED` probe restricted to visible phrases: whether
+/// some phrase whose pinyin equals or extends `keys` has a token
+/// `visible` accepts and a loaded library item.
+fn visible_extension_exists(
+    table: &ChewingTable,
+    libraries: &PhraseLibraries,
+    keys: &[ChewingKey],
+    visible: &dyn Fn(u32) -> bool,
+) -> Result<bool, DictError> {
+    table.walk_extensions(keys, &mut |_, items| {
+        Ok(items.iter().any(|item| {
+            prefix_keys_match(keys, &item.keys)
+                && visible(item.token)
+                && libraries
+                    .library(item.token)
+                    .is_some_and(|library| library.item(item.token).is_some())
+        }))
+    })
+}
+
+// ── the default facade ───────────────────────────────────────────
+
+/// The system dictionary: the default facade's pinyin DBM, phrase DBM,
+/// and the four system phrase libraries.
 pub struct SystemDictionary {
-    /// Pinyin spelling → `{token, freq}` records, stored order.
-    pinyin_index: PinyinIndex,
-    /// Phrase token → UTF-8 text.
-    phrase_index: PhraseIndex,
-    /// Aggregated phrase frequencies across all pinyin keys, for unigram LM.
-    /// `(token, count)` sorted by token ascending — the [`crate::interp::UnigramTable`]
-    /// shape without its node overhead.
-    unigrams: Box<[(u32, u64)]>,
-    unigram_total: u64,
-    /// Every pinyin-index key projected to its initial sequence, sorted:
-    /// the probe the pin uses when the searched sequence holds an
-    /// initial-only key. Vowel-initial syllables project to a `0` sentinel.
-    initial_keys: Box<[String]>,
-    /// Reverse phrase-table map: exact UTF-8 text → tokens (nibble then id).
-    /// Built on first `tokens_for_text` / `suggest_after`; decode does not
-    /// need it, so `open` leaves it empty.
-    text_tokens: OnceLock<BTreeMap<String, Vec<u32>>>,
+    pinyin: ChewingTable,
+    phrase: PhraseTable,
+    libraries: Arc<PhraseLibraries>,
 }
 
 impl SystemDictionary {
-    /// Opens the system dictionary from the two exported table files.
+    /// Opens the default facade from a system data directory — a
+    /// libpinyin install's `data/` on Kyoto Cabinet and tkrzw, an
+    /// `oxpinyin-datagen` output directory on every backend
+    /// ([`SystemDbm::file_name`] names the DBMs, [`SYSTEM_LIBRARY_FILES`]
+    /// the chunk files).
     ///
     /// # Errors
     ///
-    /// Returns [`DictError`] when either table cannot be opened or fails validation.
-    pub fn open(pinyin_index_path: &Path, phrase_index_path: &Path) -> Result<Self, DictError> {
-        let phrase_index = load_phrase_index(phrase_index_path)?;
-        let derived = load_pinyin_index(pinyin_index_path, &phrase_index)?;
+    /// Returns [`DictError`] when either DBM cannot be opened or a present
+    /// chunk file does not verify. A missing chunk file leaves that
+    /// library unloaded, as `FacadePhraseIndex::load` failing does.
+    pub fn open(system_dir: &Path) -> Result<Self, DictError> {
+        Self::open_files(
+            &system_dir.join(SystemDbm::PinyinIndex.file_name()),
+            &system_dir.join(SystemDbm::PhraseIndex.file_name()),
+            system_dir,
+        )
+    }
+
+    /// [`Self::open`] with every path spelled out.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`].
+    pub fn open_files(
+        pinyin_index: &Path,
+        phrase_index: &Path,
+        library_dir: &Path,
+    ) -> Result<Self, DictError> {
+        let pinyin = open_tree(pinyin_index)?;
+        let phrase = open_phrase_table(phrase_index)?;
+        let libraries = PhraseLibraries::open(library_dir, SYSTEM_LIBRARY_FILES)?;
         Ok(Self {
-            pinyin_index: derived.pinyin_index,
-            phrase_index,
-            unigrams: derived.unigrams,
-            unigram_total: derived.unigram_total,
-            initial_keys: derived.initial_keys,
-            text_tokens: OnceLock::new(),
+            pinyin,
+            phrase,
+            libraries: Arc::new(libraries),
         })
     }
 
-    /// Number of pinyin keys in the index.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the phrase index cannot be read.
-    pub const fn key_count(&self) -> Result<u64, DictError> {
-        Ok(self.pinyin_index.rows.len() as u64)
-    }
-
-    /// Total of all phrase frequencies observed in the pinyin index.
+    /// The facade's phrase libraries, shared with the language model
+    /// (the unigram counts live in the chunk items).
     #[must_use]
-    pub const fn unigram_total(&self) -> u64 {
-        self.unigram_total
+    pub fn libraries(&self) -> &Arc<PhraseLibraries> {
+        &self.libraries
     }
 
-    /// Frequency of `token` aggregated across all pinyin keys.
+    /// Phrase text for `token`, if its library is loaded and owns it.
+    #[must_use]
+    pub fn phrase_text(&self, token: u32) -> Option<String> {
+        self.libraries.phrase_text(token)
+    }
+
+    /// `PhraseItem::get_unigram_frequency` for `token` — the stored field
+    /// (`gen_unigram`'s `+1` included).
     #[must_use]
     pub fn unigram_count(&self, token: u32) -> Option<u64> {
-        let position = self
-            .unigrams
-            .binary_search_by_key(&token, |&(stored, _)| stored)
-            .ok()?;
-        Some(self.unigrams[position].1)
+        self.libraries.unigram_count(token)
     }
 
-    /// Unigram records for wiring into a [`crate::BigramLanguageModel`]:
-    /// `(token, count)` sorted by token ascending.
+    /// `FacadePhraseIndex::get_phrase_index_total_freq` over the loaded
+    /// libraries.
     #[must_use]
-    pub fn unigram_records(&self) -> &[(u32, u64)] {
-        &self.unigrams
+    pub fn unigram_total(&self) -> u64 {
+        self.libraries.unigram_total()
     }
 
-    /// Phrase text for `token` from the exported phrase index, if present.
-    ///
-    /// This is the reverse half of [`SystemDictionary::lookup`] and backs the
-    /// W6-T7 bigram export's text rendering for system tokens
-    /// (`docs/findings/user-store.md` §9).
+    /// The facade's item count.
+    #[must_use]
+    pub fn item_count(&self) -> u64 {
+        self.libraries.item_count()
+    }
+
+    /// The item count over the libraries `visible` accepts by nibble.
+    pub fn item_count_where(&self, visible: impl Fn(u8) -> bool) -> u64 {
+        self.libraries.item_count_where(visible)
+    }
+
+    /// `token`'s pronunciations as `(spelling, freq)` pairs, in stored
+    /// order.
+    #[must_use]
+    pub fn pronunciations(&self, token: u32) -> Vec<(String, u64)> {
+        self.libraries
+            .pronunciations(token)
+            .map(|prons| {
+                prons
+                    .into_iter()
+                    .map(|pron| (pron.spelling, pron.freq))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Tokens whose phrase text is exactly `text` — `PhraseLargeTable3::search`.
     ///
     /// # Errors
     ///
-    /// Returns [`DictError`] when the phrase index cannot be read.
-    pub fn phrase_text(&self, token: u32) -> Result<Option<String>, DictError> {
-        Ok(phrase_lookup(&self.phrase_index, token).map(str::to_owned))
-    }
-
-    /// Every pinyin-index spelling recorded for `token`, with its frequency,
-    /// in pinyin-index key order.
-    ///
-    /// These are the phrase item's pronunciations in the upstream model (the
-    /// pinyin table holds one key sequence per pronunciation), so this is the
-    /// rendering surface the W6-T7 bigram export needs for system tokens.
-    /// The scan is O(index) — an export-time cost, not a decode-path cost.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the phrase index cannot be read.
-    pub fn pronunciations(&self, token: u32) -> Result<Vec<(String, u64)>, DictError> {
-        let mut out = Vec::new();
-        for (pinyin, range) in &self.pinyin_index.rows {
-            for entry in &self.pinyin_index.entries[range.clone()] {
-                if entry.token().value() == token {
-                    let freq = entry
-                        .pronunciation_possibility()
-                        .map_or(0, |(matched, _)| matched);
-                    out.push((pinyin.to_string(), freq));
-                }
-            }
-        }
-        Ok(out)
-    }
-
-    /// Tokens whose phrase text is exactly `text`.
-    #[must_use]
-    pub fn tokens_for_text(&self, text: &str) -> &[u32] {
-        self.reverse_text_tokens()
-            .get(text)
-            .map_or(&[], Vec::as_slice)
+    /// Returns [`DictError`] when the DBM read or the value decode fails.
+    pub fn tokens_for_text(&self, text: &str) -> Result<Vec<u32>, DictError> {
+        self.phrase.search(text)
     }
 
     /// Tokens whose phrase text starts with `prefix` and is longer, when
-    /// `prefix` itself is a stored phrase (`PhraseLargeTable3::search_suggestion`).
-    ///
-    /// Rows come out in the DEFINED prediction order (`upstream-divergences.md`,
-    /// "Predicted-candidate tie order"): the `BTreeMap`'s text-ascending
-    /// walk, token-ascending within one text. The pin's order is its DBM's
-    /// physical bucket walk — backend-dependent and semantically arbitrary —
-    /// so oxpinyin deliberately diverges on positions with this defined,
-    /// build-stable order instead.
-    #[must_use]
-    pub fn suggest_after(&self, prefix: &str) -> Vec<(u32, String)> {
-        let map = self.reverse_text_tokens();
-        if prefix.is_empty() || !map.contains_key(prefix) {
-            return Vec::new();
-        }
-        let mut out = Vec::new();
-        for (text, tokens) in map.range(prefix.to_owned()..) {
-            if !text.starts_with(prefix) {
-                break;
-            }
-            if text == prefix {
-                continue;
-            }
-            for token in tokens {
-                out.push((*token, text.clone()));
-            }
-        }
-        out
-    }
-
-    /// The reverse phrase map, built once on first predict/import use.
-    fn reverse_text_tokens(&self) -> &BTreeMap<String, Vec<u32>> {
-        if let Some(map) = self.text_tokens.get() {
-            return map;
-        }
-        let map = build_text_tokens(&self.phrase_index);
-        self.text_tokens.get_or_init(|| map)
-    }
-
-    /// The frozen index key for a syllable sequence: texts joined by `'`.
-    fn index_key(syllables: &[SyllableKey]) -> CompactString {
-        let mut key = CompactString::const_new("");
-        for (position, syllable) in syllables.iter().enumerate() {
-            if position > 0 {
-                key.push('\'');
-            }
-            key.push_str(syllable.text());
-        }
-        key
-    }
-
-    /// Projects a sequence to the initial form the pin's incomplete-index
-    /// probe uses: a complete key contributes its initial, an initial-only
-    /// key its own spelling, joined by `'` with `0` for vowel-initial keys.
-    fn initial_key(syllables: &[SyllableKey]) -> CompactString {
-        let mut key = CompactString::const_new("");
-        for (position, syllable) in syllables.iter().enumerate() {
-            if position > 0 {
-                key.push('\'');
-            }
-            match syllable_initial(syllable.text()) {
-                Some(initial) => key.push_str(initial),
-                None => key.push('0'),
-            }
-        }
-        key
-    }
-
-    fn fill_lookup(&self, syllables: &[SyllableKey], out: &mut Vec<PhraseEntry>) {
-        out.clear();
-        if syllables.is_empty() {
-            return;
-        }
-        let key = Self::index_key(syllables);
-        if let Some(hits) = self.pinyin_index.hits(key.as_str()) {
-            out.extend_from_slice(hits);
-        }
-    }
-
-    /// The `SEARCH_CONTINUED` probe with a per-token visibility filter.
-    ///
-    /// Same shape as [`Dictionary::phrase_prefix_exists`] but the
-    /// complete-key branch answers `true` only when at least one matching
-    /// entry has `visible(token)` — the surface the runtime routes through
-    /// so `pinyin_unload_phrase_library(2)` hides GBK-only extensions from
-    /// the n-best widen probe (`nbest::widen_probe`). The empty and
-    /// partial-key branches keep the plain probe: the initial-key list
-    /// carries no tokens, so filtering there would require walking every
-    /// backing row — a cost that pays only when the caller has a specific
-    /// GBK-only row to hide. With `|_| true` the callback exits on the
-    /// first entry of the first matching row, matching the original
-    /// probe's cost within a constant factor.
+    /// `prefix` itself is a stored key — `PhraseLargeTable3::search_suggestion`
+    /// resolved to `(token, text)` rows, tokens without a loaded item
+    /// dropped, in upstream's order (library groups, cursor order inside).
     ///
     /// # Errors
     ///
-    /// Returns [`DictError`] for the same reasons the plain probe would
-    /// (never today; the signature preserves parity with the trait
-    /// method).
+    /// Returns [`DictError`] when the DBM walk or a value decode fails.
+    pub fn suggest_after(&self, prefix: &str) -> Result<Vec<(u32, String)>, DictError> {
+        let tokens = self.phrase.search_suggestion(prefix)?;
+        Ok(resolve_suggestions(&self.libraries, tokens))
+    }
+
+    /// The `SEARCH_CONTINUED` probe with a per-token visibility filter:
+    /// whether a phrase `visible` accepts has a pinyin equal to or
+    /// extending `syllables`. Routed by the runtime once a library has
+    /// been unloaded, so the n-best widen probe never extends a path that
+    /// only invisible phrases could complete. Costs a bounded walk over the
+    /// prefix's extensions; the plain [`Dictionary::phrase_prefix_exists`]
+    /// stays a point read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM walk or a value decode fails.
     pub fn phrase_prefix_exists_visible(
         &self,
         syllables: &[SyllableKey],
@@ -330,20 +313,27 @@ impl SystemDictionary {
         if syllables.is_empty() {
             return Ok(true);
         }
-        if syllables
-            .iter()
-            .any(|key| key.completeness() == Completeness::Partial)
-        {
-            return Ok(prefix_probe(
-                &self.initial_keys,
-                &Self::initial_key(syllables),
-            ));
+        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+            return Ok(false);
+        };
+        visible_extension_exists(&self.pinyin, &self.libraries, &keys, &visible)
+    }
+
+    fn fill_lookup(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<(), DictError> {
+        out.clear();
+        if syllables.is_empty() {
+            return Ok(());
         }
-        Ok(pinyin_prefix_exists_visible(
-            &self.pinyin_index,
-            &Self::index_key(syllables),
-            visible,
-        ))
+        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+            return Ok(());
+        };
+        let items = self.pinyin.search(&keys)?;
+        resolve_items(&self.libraries, &keys, &items, out);
+        Ok(())
     }
 }
 
@@ -352,557 +342,247 @@ impl Dictionary for SystemDictionary {
     type Entry = PhraseEntry;
     type Error = DictError;
 
-    fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+    fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
-        self.fill_lookup(syllables, &mut entries);
+        self.fill_lookup(syllables, &mut entries)?;
         Ok(entries)
     }
 
     fn lookup_into(
         &self,
-        syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
-    ) -> Result<(), Self::Error> {
-        self.fill_lookup(syllables, out);
-        Ok(())
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<(), DictError> {
+        self.fill_lookup(syllables, out)
     }
 
-    fn lookup_addon_into(
-        &self,
-        _syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
-    ) -> Result<(), Self::Error> {
-        out.clear();
-        Ok(())
+    fn phrase_index_item_count(&self) -> Result<u64, DictError> {
+        Ok(self.libraries.item_count())
     }
 
-    fn phrase_index_item_count(&self) -> Result<u64, Self::Error> {
-        Ok(self.unigram_records().len() as u64)
-    }
-
-    fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
+    /// `SEARCH_CONTINUED`: the query's index key exists in the DBM, as a
+    /// phrase or as a marker for longer phrases — one point read, no
+    /// record decode (the bit is set whenever the key exists).
+    fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
         if syllables.is_empty() {
             return Ok(true);
         }
-        if syllables
-            .iter()
-            .any(|key| key.completeness() == Completeness::Partial)
-        {
-            Ok(prefix_probe(
-                &self.initial_keys,
-                &Self::initial_key(syllables),
-            ))
-        } else {
-            Ok(pinyin_prefix_exists(
-                &self.pinyin_index,
-                &Self::index_key(syllables),
-            ))
-        }
+        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+            return Ok(false);
+        };
+        self.pinyin.key_exists(&keys)
+    }
+
+    fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
+        self.tokens_for_text(text)
+            .unwrap_or_default()
+            .into_iter()
+            .map(PhraseToken::new)
+            .collect()
     }
 }
 
-/// The `SEARCH_CONTINUED` probe over the sorted key list: does any stored key
-/// equal `joined`, or extend it at a syllable boundary (`joined` + `'`)?
-fn prefix_probe(sorted: &[String], joined: &str) -> bool {
-    match sorted.binary_search_by(|candidate| candidate.as_str().cmp(joined)) {
-        Ok(_) => true,
-        Err(index) => {
-            sorted
-                .get(index)
-                .is_some_and(|candidate| candidate.starts_with(joined))
-                && sorted[index].as_bytes().get(joined.len()) == Some(&b'\'')
-        }
-    }
+// ── the addon facade ─────────────────────────────────────────────
+
+/// One addon phrase item, the `get_phrase_item` half of the
+/// choose-promotion path (`pinyin.cpp:2534-2549`).
+pub struct AddonPhraseItem {
+    /// Phrase text.
+    pub text: String,
+    /// Pronunciations as `(spelling, count)` pairs, in stored order.
+    pub pronunciations: Vec<(String, u64)>,
+    /// The item's stored unigram frequency.
+    pub unigram: u64,
 }
 
-/// The `SEARCH_CONTINUED` probe over the sorted vector map.
-fn pinyin_prefix_exists(index: &PinyinIndex, joined: &str) -> bool {
-    // First key >= joined; the exact and the boundary-extension hits can
-    // only be there, as on the tree's `contains_key` + `range` pair.
-    let first_at_or_after = index.rows.partition_point(|(key, _)| key.as_str() < joined);
-    index.rows.get(first_at_or_after).is_some_and(|(key, _)| {
-        key.as_str() == joined
-            || (key.starts_with(joined) && key.as_bytes().get(joined.len()) == Some(&b'\''))
-    })
-}
-
-/// The `SEARCH_CONTINUED` probe with a per-token visibility filter over
-/// the sorted vector map.
+/// The addon dictionary: the addon facade's DBM pair plus the addon
+/// libraries loaded so far.
 ///
-/// Walks every row that satisfies the prefix condition (the exact-match
-/// row, plus every subsequent row whose key extends `joined` at a
-/// syllable boundary) and asks the callback about each entry's token,
-/// answering `true` at the first accepted one. A trivially-passing
-/// callback exits after one entry, matching the plain probe's cost
-/// within a constant factor.
-fn pinyin_prefix_exists_visible(
-    index: &PinyinIndex,
-    joined: &str,
-    visible: impl Fn(u32) -> bool,
-) -> bool {
-    let first_at_or_after = index.rows.partition_point(|(key, _)| key.as_str() < joined);
-    for (key, range) in &index.rows[first_at_or_after..] {
-        let key_matches = key.as_str() == joined
-            || (key.starts_with(joined) && key.as_bytes().get(joined.len()) == Some(&b'\''));
-        if !key_matches {
-            // Rows are ascending; once the prefix stops matching, no
-            // later row can start with `joined` either.
+/// Upstream attaches `addon_pinyin_index.bin` / `addon_phrase_index.bin`
+/// at init and loads chunk files per `pinyin_load_addon_phrase_library`;
+/// every lookup consults the whole addon index and keeps only tokens
+/// whose library is loaded. Both DBMs are optional: an install without
+/// addon data has no addon candidates.
+pub struct AddonDictionary {
+    pinyin: Option<ChewingTable>,
+    phrase: Option<PhraseTable>,
+    libraries: PhraseLibraries,
+}
+
+impl AddonDictionary {
+    /// Opens the addon DBM pair from `system_dir` when present; no
+    /// library is loaded yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when a present DBM cannot be opened.
+    pub fn open(system_dir: &Path) -> Result<Self, DictError> {
+        let pinyin_path = system_dir.join(SystemDbm::AddonPinyinIndex.file_name());
+        let phrase_path = system_dir.join(SystemDbm::AddonPhraseIndex.file_name());
+        let pinyin = pinyin_path
+            .is_file()
+            .then(|| open_tree(&pinyin_path))
+            .transpose()?;
+        let phrase = phrase_path
+            .is_file()
+            .then(|| open_phrase_table(&phrase_path))
+            .transpose()?;
+        Ok(Self {
+            pinyin,
+            phrase,
+            libraries: PhraseLibraries::empty(),
+        })
+    }
+
+    /// An addon facade with neither DBM nor libraries.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            pinyin: None,
+            phrase: None,
+            libraries: PhraseLibraries::empty(),
+        }
+    }
+
+    /// Loads addon library `index`'s chunk file from `dir` —
+    /// `pinyin_load_addon_phrase_library`. `false` when the index names no
+    /// addon library, the library is already loaded, or the file is
+    /// missing or malformed.
+    pub fn load(&mut self, index: u8, dir: &Path) -> bool {
+        let Some(file) = addon_library_file(index) else {
+            return false;
+        };
+        let path = dir.join(file);
+        if !path.is_file() {
             return false;
         }
-        for entry in &index.entries[range.clone()] {
-            if visible(entry.token().value()) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Exact-token get on the phrase-index vector map.
-fn phrase_lookup(index: &[(LeByteKey, CompactString)], token: u32) -> Option<&str> {
-    let needle = LeByteKey::new(token);
-    index
-        .binary_search_by(|(stored, _)| stored.cmp(&needle))
-        .ok()
-        .map(|position| index[position].1.as_str())
-}
-
-/// Rebuilds the two prefix-probe tables over `index`: every pinyin key,
-/// and every key projected to its initial sequence.
-///
-/// The initial projection replaces each syllable with the longest
-/// incomplete key that prefixes it — `syllable_initial` — or a `0`
-/// sentinel for vowel-initial syllables; both tables are sorted and
-/// deduplicated.
-///
-/// The projection is the one `SystemDictionary::open` runs for its
-/// initial-key probe (the load's `InitialAlphabet` answers the same
-/// question as `syllable_initial` with identical results), exposed here so
-/// the load-profiling example and the scan benches build the tables in
-/// exactly one place. Non-UTF-8 keys are skipped; the exported pinyin
-/// index is UTF-8 by construction.
-#[must_use]
-pub fn build_prefix_tables(index: &LookupTable) -> (Box<[String]>, Box<[String]>) {
-    let mut pinyin_keys = Vec::new();
-    let mut initial_keys = Vec::new();
-    for (key, _) in index.iter() {
-        let Ok(pinyin) = std::str::from_utf8(key).map(str::to_owned) else {
-            continue;
-        };
-        let mut initial = String::new();
-        for (position, syllable) in pinyin.split('\'').enumerate() {
-            if position > 0 {
-                initial.push('\'');
-            }
-            match syllable_initial(syllable) {
-                Some(prefix) => initial.push_str(prefix),
-                None => initial.push('0'),
-            }
-        }
-        pinyin_keys.push(pinyin);
-        initial_keys.push(initial);
-    }
-    pinyin_keys.sort_unstable();
-    pinyin_keys.dedup();
-    initial_keys.sort_unstable();
-    initial_keys.dedup();
-    (
-        pinyin_keys.into_boxed_slice(),
-        initial_keys.into_boxed_slice(),
-    )
-}
-
-struct PinyinDerived {
-    pinyin_index: PinyinIndex,
-    unigrams: Box<[(u32, u64)]>,
-    unigram_total: u64,
-    initial_keys: Box<[String]>,
-}
-
-/// Staged rows before derivation: spelling → its `{token, freq}` records.
-type PinyinRows = Vec<(CompactString, Vec<(u32, u32)>)>;
-
-/// The resolved `PinyinIndex` payload: the shared entry arena plus each
-/// key's range into it.
-type ResolvedIndex = (Vec<PhraseEntry>, Vec<(CompactString, Range<usize>)>);
-
-/// The shared derivation over staged rows: sort/dedup, aggregate the
-/// unigram counts, project the initial keys, and resolve every record into
-/// the entry arena.
-fn derive_pinyin(mut rows: PinyinRows, phrase_index: &PhraseIndex) -> PinyinDerived {
-    table::ensure_sorted_unique(&mut rows);
-
-    let alphabet = crate::initials::InitialAlphabet::new();
-    let mut initial_keys: Vec<u128> = Vec::new();
-    let mut oversized_initials: Vec<String> = Vec::new();
-    let mut unigram_pairs: Vec<(u32, u64)> = Vec::new();
-    let mut unigram_total: u64 = 0;
-    for (pinyin, pinyin_records) in &rows {
-        match alphabet.pack(pinyin) {
-            Some(packed) => initial_keys.push(packed),
-            None => oversized_initials.push(alphabet.project(pinyin)),
-        }
-        for &(token, freq) in pinyin_records {
-            unigram_pairs.push((token, u64::from(freq)));
-            unigram_total = unigram_total.saturating_add(u64::from(freq));
-        }
+        self.libraries.load(index, &path).unwrap_or(false)
     }
 
-    // Sort by token and merge same-token counts: the aggregated unigram
-    // map as one sorted vector (the `UnigramTable` shape), skipping the
-    // `BTreeMap`'s per-node allocation and its string-free but still
-    // per-insert O(log n) walk. Frequencies are `u32`, so a token's sum
-    // cannot saturate on any real table and merge order is irrelevant.
-    unigram_pairs.sort_unstable_by_key(|&(token, _)| token);
-    let mut unigrams: Vec<(u32, u64)> = Vec::with_capacity(unigram_pairs.len());
-    for &(token, count) in &unigram_pairs {
-        match unigrams.last_mut() {
-            Some(last) if last.0 == token => last.1 = last.1.saturating_add(count),
-            _ => unigrams.push((token, count)),
+    /// Drops addon library `index` — `pinyin_unload_addon_phrase_library`.
+    /// Answers `true` whether or not it was loaded, the pin's unconditional
+    /// `unload` (`pinyin.cpp:124-131`).
+    pub fn unload(&mut self, index: u8) -> bool {
+        self.libraries.unload(index);
+        true
+    }
+
+    /// Whether library `index` is loaded.
+    #[must_use]
+    pub fn is_loaded(&self, index: u8) -> bool {
+        self.libraries.is_loaded(index)
+    }
+
+    /// Whether no library is loaded (the facade owns no items).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.libraries.is_empty()
+    }
+
+    /// The addon chunk files `table.conf` names, for callers that want to
+    /// load them all.
+    #[must_use]
+    pub const fn library_files() -> &'static [(u8, &'static str)] {
+        ADDON_LIBRARY_FILES
+    }
+
+    /// The stored unigram of `token`'s addon item, if its library is
+    /// loaded.
+    #[must_use]
+    pub fn unigram_freq(&self, token: u32) -> Option<u64> {
+        self.libraries.unigram_count(token)
+    }
+
+    /// The addon facade's total frequency, `None` while no library is
+    /// loaded.
+    #[must_use]
+    pub fn unigram_total(&self) -> Option<u64> {
+        if self.libraries.is_empty() {
+            return None;
         }
+        Some(self.libraries.unigram_total())
     }
-    let unigrams = unigrams.into_boxed_slice();
 
-    initial_keys.sort_unstable();
-    initial_keys.dedup();
-    let mut initial_list: Vec<String> = initial_keys
-        .iter()
-        .map(|&packed| alphabet.unpack(packed))
-        .collect();
-    if !oversized_initials.is_empty() {
-        initial_list.extend(oversized_initials);
-        initial_list.sort_unstable();
-        initial_list.dedup();
+    /// Phrase text for `token`, if its addon library is loaded.
+    #[must_use]
+    pub fn phrase_text(&self, token: u32) -> Option<String> {
+        self.libraries.phrase_text(token)
     }
-    let initial_keys = initial_list.into_boxed_slice();
 
-    // Totals are the sum over every pronunciation; resolve after the
-    // aggregate pass so each hit carries the item's final unigram, and
-    // resolve into one arena so a key's hits stay a contiguous slice.
-    // The merged `unigrams` records are exactly that total table.
-    let (entries, out_rows) = resolve_rows(rows, phrase_index, &unigrams);
-    PinyinDerived {
-        pinyin_index: PinyinIndex {
-            rows: out_rows,
-            entries,
-        },
-        unigrams,
-        unigram_total,
-        initial_keys,
-    }
-}
-
-fn load_pinyin_index(path: &Path, phrase_index: &PhraseIndex) -> Result<PinyinDerived, DictError> {
-    let mut rows: PinyinRows = Vec::new();
-    table::for_each_row(path, |key, value| {
-        let pinyin = std::str::from_utf8(key)
-            .map_err(|_| DictError::Parse("pinyin index key is not UTF-8".to_owned()))?;
-        if !value.len().is_multiple_of(8) {
-            return Err(DictError::Parse(format!(
-                "index value length {} is not a multiple of 8",
-                value.len()
-            )));
-        }
-        let records = value
-            .chunks_exact(8)
-            .map(|chunk| {
-                (
-                    u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
-                    u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
-                )
-            })
+    /// The addon item behind `token`.
+    #[must_use]
+    pub fn phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
+        let text = self.libraries.phrase_text(token)?;
+        let pronunciations = self
+            .libraries
+            .pronunciations(token)?
+            .into_iter()
+            .map(|pron| (pron.spelling, pron.freq))
             .collect();
-        rows.push((CompactString::from(pinyin), records));
-        Ok::<(), DictError>(())
-    })?;
-    Ok(derive_pinyin(rows, phrase_index))
-}
-
-/// Resolves every staged record into the entry arena by merge-join.
-///
-/// Records are flattened row-major, sorted by token once, then one linear
-/// walk resolves text against the sorted phrase index and totals against
-/// the sorted unigram table — O(R log R + R + P) instead of the per-record
-/// binary searches into `phrase_index` (O(R log P), 17% of open's self
-/// time on the audit profile). Rows then re-read their records in stored
-/// order, so the emitted arena is byte-identical to the per-record search:
-/// row-major, stored order within a row, unresolved records skipped.
-fn resolve_rows(
-    rows: PinyinRows,
-    phrase_index: &PhraseIndex,
-    totals: &[(u32, u64)],
-) -> ResolvedIndex {
-    // Flatten the staged records row-major and remember each row's slice.
-    let mut flat: Vec<(u32, u32)> = Vec::new();
-    let mut bounds: Vec<Range<usize>> = Vec::with_capacity(rows.len());
-    for (_, records) in &rows {
-        bounds.push(flat.len()..flat.len() + records.len());
-        flat.extend_from_slice(records);
+        let unigram = self.libraries.unigram_count(token).unwrap_or(0);
+        Some(AddonPhraseItem {
+            text,
+            pronunciations,
+            unigram,
+        })
     }
 
-    // Token-sorted views of the flat records, one per merge: the phrase
-    // index orders by [`LeByteKey`] (byte-value order), the unigram totals
-    // by numeric token. The two orders differ, so neither merge can reuse
-    // the other's walk. Ties keep no particular order — resolution is
-    // keyed by flat position, so emission order is unaffected.
-    let mut by_byte: Vec<(u32, usize)> = flat
-        .iter()
-        .enumerate()
-        .map(|(position, &(token, _))| (token.swap_bytes(), position))
-        .collect();
-    by_byte.sort_unstable_by_key(|&(swapped, _)| swapped);
-    let mut by_num: Vec<(u32, usize)> = flat
-        .iter()
-        .enumerate()
-        .map(|(position, &(token, _))| (token, position))
-        .collect();
-    by_num.sort_unstable_by_key(|&(token, _)| token);
-
-    // Merge 1: resolve each record's hit in `phrase_index`. `u32::MAX`
-    // marks the miss the old per-record binary search skipped.
-    let mut hits: Vec<(u32, u64)> = vec![(u32::MAX, 0); flat.len()];
-    let mut phrase_at = 0_usize;
-    for &(swapped, position) in &by_byte {
-        let needle = swapped.swap_bytes();
-        while phrase_at < phrase_index.len()
-            && phrase_index[phrase_at].0.token().swap_bytes() < swapped
-        {
-            phrase_at += 1;
+    /// The addon lookup pass: every addon-index record for `syllables`
+    /// whose library is loaded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read or a value decode fails.
+    pub fn lookup_into(
+        &self,
+        syllables: &[SyllableKey],
+        out: &mut Vec<PhraseEntry>,
+    ) -> Result<(), DictError> {
+        out.clear();
+        let Some(pinyin) = self.pinyin.as_ref() else {
+            return Ok(());
+        };
+        if self.libraries.is_empty() || syllables.is_empty() {
+            return Ok(());
         }
-        if phrase_index
-            .get(phrase_at)
-            .is_some_and(|(key, _)| key.token() == needle)
-        {
-            hits[position].0 = phrase_at as u32;
+        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+            return Ok(());
+        };
+        let items = pinyin.search(&keys)?;
+        resolve_items(&self.libraries, &keys, &items, out);
+        Ok(())
+    }
+
+    /// The addon facade's `SEARCH_CONTINUED` probe.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read fails.
+    pub fn prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
+        let Some(pinyin) = self.pinyin.as_ref() else {
+            return Ok(false);
+        };
+        if self.libraries.is_empty() {
+            return Ok(false);
         }
-    }
-
-    // Merge 2: attach each record's aggregated unigram total, `0` when
-    // absent — the binary-search fallback the old path kept.
-    let mut total_at = 0_usize;
-    for &(token, position) in &by_num {
-        while total_at < totals.len() && totals[total_at].0 < token {
-            total_at += 1;
+        if syllables.is_empty() {
+            return Ok(true);
         }
-        if totals
-            .get(total_at)
-            .is_some_and(|&(stored, _)| stored == token)
-        {
-            hits[position].1 = totals[total_at].1;
+        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+            return Ok(false);
+        };
+        pinyin.key_exists(&keys)
+    }
+
+    /// Tokens whose addon phrase text is exactly `text`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read or the value decode fails.
+    pub fn tokens_for_text(&self, text: &str) -> Result<Vec<u32>, DictError> {
+        match self.phrase.as_ref() {
+            Some(table) => table.search(text),
+            None => Ok(Vec::new()),
         }
-    }
-
-    // Emit row-major in stored order — the arena shape lookups slice.
-    let mut entries: Vec<PhraseEntry> = Vec::new();
-    let mut out_rows: Vec<(CompactString, Range<usize>)> = Vec::with_capacity(rows.len());
-    for ((key, records), bounds) in rows.into_iter().zip(bounds) {
-        let start = entries.len();
-        let offset = bounds.start;
-        for position in bounds {
-            let (phrase_position, total) = hits[position];
-            if phrase_position == u32::MAX {
-                continue;
-            }
-            let (token, freq) = records[position - offset];
-            let text = phrase_index[phrase_position as usize].1.as_str();
-            entries.push(
-                PhraseEntry::new(PhraseToken::new(token), text)
-                    .with_pronunciation_possibility(u64::from(freq), total),
-            );
-        }
-        out_rows.push((key, start..entries.len()));
-    }
-    (entries, out_rows)
-}
-
-fn load_phrase_index(path: &Path) -> Result<PhraseIndex, DictError> {
-    let mut map = PhraseIndex::new();
-    table::for_each_row(path, |key, value| {
-        if key.len() != 4 {
-            return Ok::<(), DictError>(());
-        }
-        let token = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
-        let text = std::str::from_utf8(value).map_err(|_| {
-            DictError::Parse(format!("phrase text for token {token:#010x} is not UTF-8"))
-        })?;
-        map.push((LeByteKey::new(token), CompactString::from(text)));
-        Ok::<(), DictError>(())
-    })?;
-    table::ensure_sorted_unique(&mut map);
-    Ok(map)
-}
-
-/// Builds the exact-text → tokens reverse map from the typed phrase index.
-fn build_text_tokens(phrase_index: &PhraseIndex) -> BTreeMap<String, Vec<u32>> {
-    let mut map: BTreeMap<String, Vec<u32>> = BTreeMap::new();
-    for (token, text) in phrase_index {
-        map.entry(text.to_string()).or_default().push(token.token());
-    }
-    for tokens in map.values_mut() {
-        tokens.sort_unstable();
-    }
-    map
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn fixtures_dir() -> std::path::PathBuf {
-        let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        std::path::PathBuf::from(manifest)
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("fixtures")
-            .join("w3")
-    }
-
-    fn dict() -> SystemDictionary {
-        SystemDictionary::open(
-            &fixtures_dir().join(crate::default_store_file("pinyin_index")),
-            &fixtures_dir().join(crate::default_store_file("phrase_index")),
-        )
-        .unwrap()
-    }
-
-    fn key(text: &str) -> SyllableKey {
-        SyllableKey::from_text(text).expect("frozen syllable")
-    }
-    #[test]
-    fn every_phrase_token_is_reachable_from_the_pinyin_index() {
-        // Export invariant: a token in phrase_index but referenced by no
-        // pinyin_index entry is unreachable by lookup, and its frequency never
-        // enters the aggregated unigram map — so its unigram silently costs
-        // UNKNOWN_COST. Every phrase token must appear in at least one
-        // pinyin_index record.
-        use std::collections::BTreeSet;
-
-        let dict = dict();
-        let mut reachable: BTreeSet<u32> = BTreeSet::new();
-        for range in dict.pinyin_index.rows.iter().map(|(_, range)| range) {
-            for entry in &dict.pinyin_index.entries[range.clone()] {
-                reachable.insert(entry.token().value());
-            }
-        }
-
-        for token in dict.phrase_index.iter().map(|(key, _)| key.token()) {
-            assert!(
-                reachable.contains(&token),
-                "phrase token {token:#010x} is in phrase_index but no pinyin_index entry references it"
-            );
-        }
-    }
-
-    #[test]
-    fn reverse_map_is_lazy_and_finds_fixture_text() {
-        let dict = dict();
-        assert!(
-            dict.text_tokens.get().is_none(),
-            "decode-only open must not build the reverse map"
-        );
-        let entries = dict.lookup(&[key("ni")]).unwrap();
-        let lead = &entries[0];
-        let tokens = dict.tokens_for_text(lead.text());
-        assert!(
-            tokens.contains(&lead.token().value()),
-            "lazy reverse map must resolve the looked-up phrase"
-        );
-        assert!(dict.text_tokens.get().is_some());
-    }
-
-    #[test]
-    fn loaded_index_is_sorted_and_unique() {
-        // The sorted vector map is only correct with ascending unique keys;
-        // redb's walk provides them, and this pins that the load keeps them.
-        let dict = dict();
-        assert!(
-            dict.pinyin_index
-                .rows
-                .windows(2)
-                .all(|pair| pair[0].0 < pair[1].0),
-            "pinyin index keys must be strictly ascending after open"
-        );
-    }
-
-    #[test]
-    fn hits_binary_searches_the_loaded_order() {
-        let dict = dict();
-        let hits = dict.pinyin_index.hits("ni'hao").expect("fixture key");
-        assert!(hits.iter().any(|entry| entry.text() == "你好"));
-        assert!(dict.pinyin_index.hits("no'such").is_none());
-    }
-
-    #[test]
-    fn phrase_prefix_exists_visible_filters_by_callback() {
-        // `phrase_prefix_exists_visible` answers `true` only when at
-        // least one matching entry passes the callback. A pass-all
-        // callback preserves the plain probe's answers; a reject-all
-        // callback makes every non-empty prefix invisible; an empty
-        // prefix answers `true` unconditionally — the widen recursion
-        // base case.
-        let dict = dict();
-        let ni_hao = keys("ni,hao");
-        let zhong = keys("zhong");
-        let dead_end = keys("zhuang,zhuang");
-
-        for probe in [&ni_hao[..1], &ni_hao[..], &zhong[..]] {
-            let plain = dict.phrase_prefix_exists(probe).unwrap();
-            let pass_all = dict.phrase_prefix_exists_visible(probe, |_| true).unwrap();
-            assert_eq!(plain, pass_all, "pass-all matches the plain probe");
-            assert!(
-                !dict.phrase_prefix_exists_visible(probe, |_| false).unwrap(),
-                "reject-all callback makes {probe:?} invisible"
-            );
-        }
-        assert!(
-            !dict
-                .phrase_prefix_exists_visible(&dead_end, |_| true)
-                .unwrap(),
-            "dead-end stays false regardless of the callback"
-        );
-        assert!(
-            dict.phrase_prefix_exists_visible(&[], |_| false).unwrap(),
-            "empty prefix trivially matches, callback bypassed"
-        );
-    }
-
-    #[test]
-    fn phrase_prefix_exists_visible_hides_a_prefix_when_every_entry_fails_the_filter() {
-        // The regression the CR flagged on PR #234: a syllable prefix
-        // whose only extending entries are filtered out must answer
-        // `false`, not `true`. The mini fixture has no GBK-only pinyin
-        // row (every GBK-carrying row also carries non-GBK entries),
-        // so we simulate the shape by rejecting every entry that
-        // matches the row and confirming the answer flips. A callback
-        // that keeps every entry preserves the plain answer.
-        let dict = dict();
-        let ni_hao = keys("ni,hao");
-
-        assert!(dict.phrase_prefix_exists(&ni_hao).unwrap());
-        assert!(
-            dict.phrase_prefix_exists_visible(&ni_hao, |_| true)
-                .unwrap()
-        );
-        // A callback that hides GBK still keeps the prefix visible
-        // through the non-GBK entries on the same row — the survival
-        // case the routing preserves on this fixture.
-        assert!(
-            dict.phrase_prefix_exists_visible(&ni_hao, |token| (token >> 24) != 2)
-                .unwrap()
-        );
-        // The synthetic simulation of a GBK-only row: with every
-        // entry hidden, no phrase extends the prefix and the answer
-        // must flip to `false`.
-        assert!(
-            !dict
-                .phrase_prefix_exists_visible(&ni_hao, |_| false)
-                .unwrap()
-        );
-    }
-
-    fn keys(text: &str) -> Vec<SyllableKey> {
-        text.split(',').map(key).collect()
     }
 }

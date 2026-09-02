@@ -21,7 +21,7 @@ use pyo3::exceptions::{PyFileNotFoundError, PyIndexError, PyOSError, PyValueErro
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 
-use oxpinyin_data::{DictError, InterpolationError, LmError};
+use oxpinyin_data::{DictError, LmError};
 use oxpinyin_engine::{
     CandidateKind, EmptyConfigSource, EngineError, KeyOutcome, Preedit, Selection,
 };
@@ -46,19 +46,12 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// corrupt data content → `ValueError`.
 fn open_error(error: OpenError) -> PyErr {
     match &error {
-        OpenError::Missing(_) | OpenError::ModelMissing(_) => {
-            PyFileNotFoundError::new_err(error.to_string())
-        }
+        OpenError::Missing(_) => PyFileNotFoundError::new_err(error.to_string()),
         OpenError::Io(..) => PyOSError::new_err(error.to_string()),
         OpenError::Dict(DictError::Parse(_)) | OpenError::Lm(LmError::Parse(_)) => {
             PyValueError::new_err(error.to_string())
         }
-        OpenError::Interpolation(
-            InterpolationError::Parse { .. } | InterpolationError::MissingOneGram,
-        ) => PyValueError::new_err(error.to_string()),
-        OpenError::Dict(_) | OpenError::Lm(_) | OpenError::Interpolation(_) => {
-            OxpinyinError::new_err(error.to_string())
-        }
+        OpenError::Dict(_) | OpenError::Lm(_) => OxpinyinError::new_err(error.to_string()),
         // `OpenError` is #[non_exhaustive]; a future variant is a runtime
         // failure until this layer grows an explicit exception for it.
         _ => OxpinyinError::new_err(error.to_string()),
@@ -120,13 +113,15 @@ pub struct Engine {
 }
 
 impl Engine {
-    fn open_with(system_dir: PathBuf, user_dir: Option<PathBuf>, fixtures: bool) -> PyResult<Self> {
-        let runtime = if fixtures {
-            Runtime::open_fixtures(&system_dir, user_dir.as_deref())
-        } else {
-            Runtime::open(&system_dir, user_dir.as_deref())
-        }
-        .map_err(open_error)?;
+    fn open_with(
+        system_dir: PathBuf,
+        user_dir: Option<PathBuf>,
+        _fixtures: bool,
+    ) -> PyResult<Self> {
+        // The `fixtures` flag is kept for the binding's signature; the
+        // mini fixture set is a real (small) data directory now, so both
+        // paths open the same way.
+        let runtime = Runtime::open(&system_dir, user_dir.as_deref()).map_err(open_error)?;
         let user = runtime.user_store();
         // Defaults-only configuration: the pinned upstream values, exactly
         // as before the shared-runtime extraction.

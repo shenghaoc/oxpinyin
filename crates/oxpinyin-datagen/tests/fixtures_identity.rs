@@ -1,34 +1,17 @@
-//! Mini compile must reproduce the committed `fixtures/w3/` tables.
+//! `--mini` must reproduce the committed `fixtures/w3/<backend>/` data
+//! directory of the compiled backend.
 //!
-//! The fixtures were produced by the retired `oxpinyin-migrate` exporters
-//! from the same pinned model20 (checksummed by
-//! `fixtures/w3/fixtures.sha256`). Reproducing them from the native
-//! compiler proves the model20 derivation without the oracle.
-//!
-//! Comparison is at the key/value level: the frozen files were written by
-//! redb 4.1.0 and the lockfile has since moved to newer redb releases
-//! whose container layout differs, so raw file bytes are only
-//! reproducible under the writing redb version. The committed files
-//! themselves are guarded by `fixtures/w3/fixtures.sha256`, which stays
-//! untouched.
-//!
-//! **Gated on the redb peer feature.** Under exactly-one-backend, this
-//! test only compiles when the redb peer is selected
-//! (`--no-default-features --features redb`) — the frozen `.redb`
-//! fixtures the test reads back can only be opened by the redb reader,
-//! and that reader is only compiled when the peer is enabled. The other
-//! three peers have their own frozen fixture sets (`fixtures/w3/*.kct`,
-//! `*.lmdb`, `*.tkt`) which cross_backend.rs exercises through the
-//! compiled peer.
+//! The fixtures are the `--mini` compile of the same pinned model20,
+//! committed once per backend (`fixtures/w3/README.md`). Comparison is at
+//! the record level for the DBMs (container bytes depend on the writing
+//! library's version) and byte-exact for the chunk files.
 //!
 //! Requires the model cache (`tools/model/fetch-model.sh`); set
-//! `OXPINYIN_DATAGEN_STRICT=1` to fail instead of skip when it is absent
-//! (CI does).
-#![cfg(feature = "redb")]
+//! `OXPINYIN_DATAGEN_STRICT=1` to fail instead of skip when it is absent.
 
 use std::path::PathBuf;
 
-use oxpinyin_datagen::write::Backend;
+use oxpinyin_datagen::write::{Backend, DbmFile};
 use oxpinyin_datagen::{addon, punct, system};
 
 fn strict() -> bool {
@@ -43,41 +26,51 @@ fn model_dir() -> Option<PathBuf> {
     }
 }
 
-fn fixtures_w3() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3")
+fn compiled_backend() -> Backend {
+    [
+        (cfg!(feature = "kyotocabinet"), Backend::KyotoCabinet),
+        (cfg!(feature = "tkrzw"), Backend::Tkrzw),
+        (cfg!(feature = "lmdb"), Backend::Lmdb),
+        (cfg!(feature = "redb"), Backend::Redb),
+    ]
+    .into_iter()
+    .find_map(|(on, backend)| on.then_some(backend))
+    .expect("one backend is compiled in")
 }
 
-fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "oxpinyin-datagen-fixtures-{name}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos())
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+fn fixtures_w3(backend: Backend) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/w3")
+        .join(backend.extension())
 }
 
-fn assert_same_rows(name: &str, produced: &std::path::Path, frozen: &std::path::Path) {
-    let produced = Backend::Redb.read_all(produced).unwrap();
-    let frozen = Backend::Redb.read_all(frozen).unwrap();
+fn assert_same_rows(
+    name: &str,
+    backend: Backend,
+    produced: &[(Vec<u8>, Vec<u8>)],
+    frozen: &std::path::Path,
+) {
+    let frozen_rows = backend.read_all_raw(frozen).unwrap();
+    let mut produced: Vec<(Vec<u8>, Vec<u8>)> = produced.to_vec();
+    produced.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(
         produced.len(),
-        frozen.len(),
+        frozen_rows.len(),
         "{name}: row count differs (produced {} vs frozen {})",
         produced.len(),
-        frozen.len()
+        frozen_rows.len()
     );
-    for (index, (a, b)) in produced.iter().zip(frozen.iter()).enumerate() {
+    for (index, (a, b)) in produced.iter().zip(frozen_rows.iter()).enumerate() {
         assert_eq!(a, b, "{name}: row {index} differs");
     }
-    eprintln!("{name}: all {} rows identical to fixtures/w3", frozen.len());
+    eprintln!(
+        "{name}: all {} rows identical to the fixture",
+        frozen_rows.len()
+    );
 }
 
 #[test]
-fn mini_compile_reproduces_frozen_w3_tables() {
+fn mini_compile_reproduces_the_committed_fixture_directory() {
     let Some(model) = model_dir() else {
         assert!(
             !strict(),
@@ -86,42 +79,46 @@ fn mini_compile_reproduces_frozen_w3_tables() {
         eprintln!("skipping: model20 cache absent (run tools/model/fetch-model.sh)");
         return;
     };
-    let out = temp_dir("mini");
-    let fixtures = fixtures_w3();
+    let backend = compiled_backend();
+    let fixtures = fixtures_w3(backend);
+    assert!(
+        fixtures.is_dir(),
+        "no committed fixture set at {}",
+        fixtures.display()
+    );
 
     let (tables, stats) = system::compile(&model, system::Subset::MiniFixture).unwrap();
     eprintln!("mini stats: {stats:?}");
+    let addons = addon::compile(&model, addon::Subset::MiniFixture).unwrap();
+    let punct_rows = punct::compile(&model).unwrap();
 
-    for (base, entries) in [
-        ("pinyin_index", &tables.pinyin_index),
-        ("phrase_index", &tables.phrase_index),
-        ("bigram", &tables.bigram),
+    for (name, bytes) in tables.chunks.iter().chain(addons.chunks.iter()) {
+        let frozen = std::fs::read(fixtures.join(name)).unwrap();
+        assert_eq!(
+            *bytes, frozen,
+            "{name}: chunk bytes differ from the fixture"
+        );
+    }
+    for (dbm, entries) in [
+        (DbmFile::PinyinIndex, &tables.pinyin_index),
+        (DbmFile::PhraseIndex, &tables.phrase_index),
+        (DbmFile::Punct, &punct_rows),
+        (DbmFile::AddonPinyinIndex, &addons.pinyin_index),
+        (DbmFile::AddonPhraseIndex, &addons.phrase_index),
     ] {
-        let path = Backend::Redb.table_path(&out, base);
-        Backend::Redb.write(&path, entries).unwrap();
-        assert_same_rows(base, &path, &fixtures.join(format!("{base}.redb")));
+        let name = backend.dbm_file_name(dbm);
+        assert_same_rows(&name, backend, entries, &fixtures.join(&name));
     }
-    let addon_tables = addon::compile(&model, addon::Subset::MiniFixture).unwrap();
-    for library in &addon_tables {
-        for (base, entries) in [
-            (
-                format!("addon_{}_pinyin_index", library.index),
-                &library.pinyin_index,
-            ),
-            (
-                format!("addon_{}_phrase_index", library.index),
-                &library.phrase_index,
-            ),
-        ] {
-            let path = Backend::Redb.table_path(&out, &base);
-            Backend::Redb.write(&path, entries).unwrap();
-            assert_same_rows(&base, &path, &fixtures.join(format!("{base}.redb")));
-        }
+    let bigram = fixtures.join(backend.dbm_file_name(DbmFile::Bigram));
+    for (key, value) in &tables.bigram {
+        assert_eq!(
+            backend.get_hash(&bigram, key).unwrap().as_deref(),
+            Some(value.as_slice()),
+            "bigram.db: key {key:02x?}"
+        );
     }
-    let punct_entries = punct::compile(&model).unwrap();
-    let punct_path = Backend::Redb.table_path(&out, "punct");
-    Backend::Redb.write(&punct_path, &punct_entries).unwrap();
-    assert_same_rows("punct", &punct_path, &fixtures.join("punct.redb"));
-
-    let _ = std::fs::remove_dir_all(&out);
+    eprintln!(
+        "bigram: all {} rows identical to the fixture",
+        tables.bigram.len()
+    );
 }

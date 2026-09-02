@@ -15,7 +15,7 @@ use std::time::Duration;
 use criterion::{Criterion, criterion_group, criterion_main};
 use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta};
 use oxpinyin_data::{
-    BigramLanguageModel, LmError, SystemDictionary, default_store_file, parse_interpolation2,
+    BigramLanguageModel, LmError, SystemDbm, SystemDictionary, parse_interpolation2,
 };
 use oxpinyin_engine::{EmptyConfigSource, Session, StoragePaths};
 use oxpinyin_user::{SENTENCE_START, UserStore};
@@ -23,9 +23,7 @@ use oxpinyin_user::{SENTENCE_START, UserStore};
 #[path = "support/mod.rs"]
 mod harness;
 
-use harness::{
-    CYCLE_INPUTS, load_prefix_tables, load_real_tables, prefix_probe, real_session, type_keystrokes,
-};
+use harness::{CYCLE_INPUTS, load_real_tables, real_session, type_keystrokes};
 
 /// Mirrors `oxpinyin-capi`'s `SharedLm`: dict unigrams plus an optional
 /// [`UserStore`] overlay consulted on every `score` / `unigram_freq`.
@@ -90,14 +88,13 @@ impl LanguageModel for BenchLm<'_> {
 /// `keystroke_cycle`.
 fn load_scoring_tables() -> (SystemDictionary, BigramLanguageModel) {
     let export = harness::export_dir();
-    let dict = SystemDictionary::open(
-        &export.join(default_store_file("pinyin_index")),
-        &export.join(default_store_file("phrase_index")),
+    let dict = SystemDictionary::open(&export).expect("SystemDictionary opens");
+    let mut lm = BigramLanguageModel::open(
+        &export.join(SystemDbm::Bigram.file_name()),
+        std::sync::Arc::clone(dict.libraries()),
     )
-    .expect("SystemDictionary opens");
-    let mut lm = BigramLanguageModel::open(&export.join(default_store_file("bigram")))
-        .expect("BigramLanguageModel opens");
-    lm.set_unigrams_from_dict(&dict);
+    .expect("BigramLanguageModel opens");
+    lm.set_lambda_from_table_conf(&export.join("table.conf"));
     (dict, lm)
 }
 
@@ -137,38 +134,6 @@ fn keystroke_cycle(criterion: &mut Criterion) {
                 type_keystrokes(&mut session, input);
                 black_box(session.candidates().len());
             }
-        });
-    });
-}
-
-fn prefix_probe_isolated(criterion: &mut Criterion) {
-    let (pinyin_keys, initial_keys) = load_prefix_tables();
-    let samples = [
-        "ni",
-        "ni'hao",
-        "zhong'guo",
-        "xian",
-        "xi'an",
-        "fan",
-        "fang'an",
-        "q",
-        "q'q'q",
-        "chua",
-        "caisho",
-        "wai'meng'gu",
-    ];
-    criterion.bench_function("prefix_probe_12_needles", |bencher| {
-        bencher.iter(|| {
-            let mut hits = 0_usize;
-            for needle in samples {
-                if prefix_probe(black_box(&pinyin_keys), needle) {
-                    hits += 1;
-                }
-                if prefix_probe(black_box(&initial_keys), needle) {
-                    hits += 1;
-                }
-            }
-            black_box(hits);
         });
     });
 }
@@ -246,6 +211,6 @@ fn config() -> Criterion {
 criterion_group! {
     name = benches;
     config = config();
-    targets = keystroke_cycle, prefix_probe_isolated, parse_interp, user_store_decode_pass
+    targets = keystroke_cycle, parse_interp, user_store_decode_pass
 }
 criterion_main!(benches);

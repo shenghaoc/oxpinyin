@@ -192,28 +192,51 @@ pub fn locate_model_dir() -> Result<Option<PathBuf>, ModelDirError> {
     Ok(None)
 }
 
-/// `/tmp/oxpinyin-export` or `$PINYIN_EXPORT_DIR`; asserts the exported
-/// tables exist, so benches refuse to start on fixture-less hosts. The
-/// tables are opened through the compiled-in backend, so their extension
-/// follows [`oxpinyin_store::default_store_file`] (`.kct` under the KC
-/// default, `.redb` under `--no-default-features --features redb`, …).
+/// `/tmp/oxpinyin-export` or `$PINYIN_EXPORT_DIR`: a system data
+/// directory for the compiled-in backend (a libpinyin install's `data/`
+/// on Kyoto Cabinet and tkrzw, an `oxpinyin-datagen compile` output
+/// anywhere); asserts the three required DBMs exist, so benches refuse to
+/// start on data-less hosts.
 ///
 /// # Panics
 ///
-/// When the export directory does not hold the three committed tables.
+/// When the directory does not hold the pinyin index, phrase index and
+/// bigram for this backend.
 #[must_use]
 pub fn export_dir() -> PathBuf {
     let dir = std::env::var_os("PINYIN_EXPORT_DIR")
         .map_or_else(|| PathBuf::from("/tmp/oxpinyin-export"), PathBuf::from);
-    for stem in ["pinyin_index", "phrase_index", "bigram"] {
-        let name = oxpinyin_store::default_store_file(stem);
+    for name in system_dbm_names() {
         assert!(
             dir.join(&name).is_file(),
-            "exported tables missing at {} ({name}); tables are committed under fixtures/w3/",
+            "system data missing at {} ({name}); run oxpinyin-datagen compile, or point \
+             PINYIN_EXPORT_DIR at a libpinyin data dir of the same backend",
             dir.display()
         );
     }
     dir
+}
+
+/// The three required DBM file names for the compiled-in backend —
+/// libpinyin's own on Kyoto Cabinet and tkrzw (`pinyin_index.bin`,
+/// `phrase_index.bin`, `bigram.db`), `<stem>.<ext>` on redb and LMDB
+/// (`oxpinyin_data::SystemDbm` is the authority; this crate sits below
+/// it).
+#[must_use]
+pub fn system_dbm_names() -> [String; 3] {
+    if oxpinyin_store::DEFAULT_STORE_IS_LIBPINYIN_DBM {
+        [
+            "pinyin_index.bin".to_owned(),
+            "phrase_index.bin".to_owned(),
+            "bigram.db".to_owned(),
+        ]
+    } else {
+        [
+            oxpinyin_store::default_store_file("pinyin_index"),
+            oxpinyin_store::default_store_file("phrase_index"),
+            oxpinyin_store::default_store_file("bigram"),
+        ]
+    }
 }
 
 /// Workspace root that contains the training crates and the provenance finding.

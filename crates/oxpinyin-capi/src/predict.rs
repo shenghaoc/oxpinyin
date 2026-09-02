@@ -127,12 +127,12 @@ pub fn guess_predicted_with_punctuations(inst: &mut CapiInstance, prefix: &str) 
 }
 
 fn prepend_punctuations(inst: &mut CapiInstance, prefixes: &[u32]) {
-    let mut puncts = Vec::new();
-    let mut seen = HashSet::new();
+    let mut puncts: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     for token in prefixes {
         for punct in inst.dict.punctuations(*token) {
-            if seen.insert(punct.as_str()) {
-                puncts.push(punct.clone());
+            if seen.insert(punct.clone()) {
+                puncts.push(punct);
             }
         }
     }
@@ -179,8 +179,8 @@ pub(crate) fn compute_prefixes(
         tokens.extend(
             dict.system()
                 .tokens_for_text(&suffix)
-                .iter()
-                .copied()
+                .unwrap_or_default()
+                .into_iter()
                 .filter(|token| dict.library_visible_token(*token)),
         );
         if let Some(lookup) = user_lookup.as_ref() {
@@ -265,6 +265,7 @@ fn append_predicted_prefix(
     let system: Vec<(u32, String)> = dict
         .system()
         .suggest_after(prefix)
+        .unwrap_or_default()
         .into_iter()
         .filter(|(token, _)| dict.library_visible_token(*token))
         .collect();
@@ -277,16 +278,13 @@ fn append_predicted_prefix(
     };
     let suggestions = merge_suggestions(&system, &user_rows);
     // The pin divides by the phrase-index total, live per call
-    // (`pinyin.cpp:1813-1814`); `amplified_total` is the same construction
-    // the pinned normal path uses (`session.rs:1409-1416`). The item count
-    // leg is `SystemDictionary`'s `phrase_index_item_count`
-    // (`dict.rs:302-304`).
-    // The visible item count (Tier C's library mask can shrink it) plus
+    // (`pinyin.cpp:1813-1814`): the facade's Σ item unigram over the
+    // libraries that are loaded (Tier C's library mask can shrink it) plus
     // the add_unigram_frequency overlay total — upstream's facade
     // total_freq shifts by exactly these (`phrase_index.h:632`,
     // `phrase_index.cpp:264`).
     let total = lm
-        .amplified_total(dict.visible_item_count())
+        .amplified_total()
         .saturating_add(dict.unigram_total_delta());
     for (token, text) in suggestions {
         // The length gate stays on the FULL phrase: the pin checks
@@ -348,33 +346,33 @@ fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<Strin
     if let Ok(Some(phrase)) = store.phrase(token) {
         return Some(phrase.text().to_owned());
     }
-    dict.system().phrase_text(token).ok().flatten()
+    dict.system().phrase_text(token)
 }
 
-/// Merges the system and user `suggest_after` results by TEXT, preserving
-/// the global text-ascending order across both seams, with the system row
-/// first when the two seams share a text.
-///
-/// Both inputs are already text-ascending (the reverse-map walk); the
-/// merge is the standard two-way merge of two ascending-by-text sequences,
-/// stable so equal-text system rows keep their (token) order and precede the
-/// user row. This is what makes the defined prediction order hold across the
-/// system/user boundary rather than only within each seam
-/// (`upstream-divergences.md`, "Predicted-candidate tie order").
+/// Orders the system and user `suggest_after` rows the way
+/// `_compute_predicted_prefix_candidates` receives them
+/// (`pinyin.cpp:2371-2405`): `FacadePhraseTable3::search_suggestion` runs
+/// the system phrase table then the user one, each filing tokens into
+/// its library's array in the DBM's cursor order (byte-lexical over the
+/// UCS-4 keys), and `reduce_tokens` concatenates the arrays library by
+/// library. So: grouped by library nibble ascending — the system
+/// libraries 1–4, then the user library 7 — and inside a group the UCS-4
+/// walk order, token ascending within one text. The system rows arrive
+/// in that order already (`SystemDictionary::suggest_after`); the user
+/// rows are re-keyed here because the user store walks its own map in
+/// UTF-8 order, which differs from the little-endian UCS-4 bytes upstream
+/// sorts by.
 fn merge_suggestions(system: &[(u32, String)], user_rows: &[(u32, String)]) -> Vec<(u32, String)> {
-    let mut merged = Vec::with_capacity(system.len() + user_rows.len());
-    let (mut system_index, mut user_index) = (0, 0);
-    while system_index < system.len() && user_index < user_rows.len() {
-        if system[system_index].1 <= user_rows[user_index].1 {
-            merged.push(system[system_index].clone());
-            system_index += 1;
-        } else {
-            merged.push(user_rows[user_index].clone());
-            user_index += 1;
-        }
-    }
-    merged.extend(system[system_index..].iter().cloned());
-    merged.extend(user_rows[user_index..].iter().cloned());
+    let mut user: Vec<(u32, String)> = user_rows.to_vec();
+    user.sort_by(|a, b| {
+        oxpinyin_data::ucs4_walk_key(&a.1)
+            .cmp(&oxpinyin_data::ucs4_walk_key(&b.1))
+            .then(a.0.cmp(&b.0))
+    });
+    let mut merged = Vec::with_capacity(system.len() + user.len());
+    merged.extend(system.iter().cloned());
+    merged.extend(user);
+    merged.sort_by_key(|(token, _)| token >> 24);
     merged
 }
 
@@ -406,36 +404,21 @@ mod tests {
         assert_eq!(amplified_frequency(100, 0), 0);
     }
     #[test]
-    fn merge_suggestions_interleaves_across_seams_and_keeps_system_first_on_ties() {
-        // The defined order is text-ascending across BOTH seams. A plain
-        // concatenation would put every system row before every user row,
-        // which only survives a (length, frequency) tie group because the
-        // two seams' frequencies never collide today. This exercises the
-        // merge directly: texts from both seams interleave, and a shared
-        // text keeps the system row first.
+    fn merge_suggestions_groups_by_library_then_walks_the_ucs4_keys() {
+        // The pin's list: system library groups first, the user library
+        // last, each in the DBM's byte-lexical UCS-4 order — not text
+        // (UTF-8 / code point) order. U+4E50 sorts before U+4F2D by code
+        // point but after it by little-endian bytes (0x50 > 0x2D).
         let system = vec![
-            (10, "中华".to_owned()), // zhonghua (华)
-            (20, "中年".to_owned()), // zhongnian (年)
+            (0x0200_0001, "中年".to_owned()),
+            (0x0100_0010, "中华".to_owned()),
         ];
         let user_rows = vec![
-            (901, "中号".to_owned()), // zhonghao (号) — sorts between the two
-            (902, "中年".to_owned()), // same text as the system row 20
+            (0x0700_0001, "中乐".to_owned()), // U+4E50
+            (0x0700_0002, "中伭".to_owned()), // U+4F2D
         ];
         let merged = merge_suggestions(&system, &user_rows);
         let texts: Vec<&str> = merged.iter().map(|(_, text)| text.as_str()).collect();
-        assert_eq!(
-            texts,
-            vec![
-                "中华", // 华
-                "中号", // 号 (user) interleaves between the two system rows
-                "中年", // 年 — the system row (token 20) first,
-                "中年", // then the user row (token 902) on the same text,
-            ],
-            "global text-ascending across both seams"
-        );
-        // System-first on the shared text: the lower system token precedes the
-        // user token on that identical text.
-        assert_eq!(merged[2], (20, "中年".to_owned()));
-        assert_eq!(merged[3], (902, "中年".to_owned()));
+        assert_eq!(texts, ["中华", "中年", "中伭", "中乐"]);
     }
 }
