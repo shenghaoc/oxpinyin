@@ -20,8 +20,8 @@ use std::process::ExitCode;
 
 use oxpinyin_data::SystemDictionary;
 use oxpinyin_eval::{
-    SystemPhraseSource, build_model, correction_rate, estimate_lambda, parse_eval_corpus,
-    parse_interpolation2,
+    PhraseSource, SystemPhraseSource, build_model, correction_rate, estimate_lambda,
+    parse_eval_corpus, parse_interpolation2,
 };
 use oxpinyin_lambda::count_deleted;
 
@@ -72,11 +72,12 @@ fn run() -> Cli {
     let counts = parse_interpolation2(&read(&interpolation2)?);
     let deleted = count_deleted(&read(&held_out)?, train_pi_gram)?;
     let lambda = estimate_lambda(&counts, &deleted)?;
-    let model = build_model(&counts, lambda);
 
-    // Decode the evaluation corpus against the system phrase index.
+    // Decode the evaluation corpus against the system phrase index; the
+    // model is floored over that index's lexicon, as `make` would.
     let dictionary = SystemDictionary::open(&pinyin_index, &phrase_index)?;
     let source = SystemPhraseSource::new(&dictionary);
+    let model = build_model(&counts, lambda, source.lexicon_tokens());
     let sentences = parse_eval_corpus(&read(&evals)?)?;
     let report = correction_rate(&dictionary, &model, &source, &sentences)?;
 

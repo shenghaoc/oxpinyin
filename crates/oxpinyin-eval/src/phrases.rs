@@ -39,6 +39,16 @@ impl PhraseSource for SystemPhraseSource<'_> {
     fn text(&self, token: PhraseToken) -> Option<String> {
         self.dictionary.phrase_text(token.value()).ok().flatten()
     }
+
+    fn lexicon_tokens(&self) -> Vec<PhraseToken> {
+        // Every token of the loaded phrase index (the default tables the pin's
+        // eval loads), aggregated by the dictionary at open.
+        self.dictionary
+            .unigram_records()
+            .iter()
+            .map(|&(token, _)| PhraseToken::new(token))
+            .collect()
+    }
 }
 
 /// Parses an apostrophe-joined pinyin string into syllable keys, or `None`

@@ -24,15 +24,18 @@
 //! - `PINYIN_EVAL_INTERPOLATION2` — the `interpolation2.text` the pin's
 //!   runtime `SYSTEM_BIGRAM` was compiled from (the native model counts).
 //! - `PINYIN_EVAL_TABLE_CONF` — the `table.conf` whose λ the pin reads.
-//! - `PINYIN_EVAL_PINYIN_INDEX`, `PINYIN_EVAL_PHRASE_INDEX` — the same system
-//!   pinyin/phrase index the pin loads, for the native `SystemDictionary`.
+//! - `PINYIN_EVAL_PINYIN_INDEX`, `PINYIN_EVAL_PHRASE_INDEX` — the oxpinyin
+//!   export (`oxpinyin-datagen compile`) of the same model the pin loads,
+//!   for the native `SystemDictionary` (which reads oxpinyin-format tables
+//!   in the compiled-in backend, not the pin's `.bin` files).
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use oxpinyin_data::{SystemDictionary, parse_table_conf_lambda};
 use oxpinyin_eval::{
-    SystemPhraseSource, build_model, correction_rate, parse_eval_corpus, parse_interpolation2,
+    PhraseSource, SystemPhraseSource, build_model, correction_rate, parse_eval_corpus,
+    parse_interpolation2,
 };
 
 fn env_path(name: &str) -> Option<PathBuf> {
@@ -108,15 +111,21 @@ fn native_correction_rate_matches_pin_eval_correction_rate() {
     let lambda =
         parse_table_conf_lambda(&std::fs::read_to_string(&table_conf).expect("table.conf"))
             .expect("λ from table.conf");
-    let model = build_model(&counts, lambda);
-
     let dictionary = SystemDictionary::open(&pinyin_index, &phrase_index).expect("system index");
     let source = SystemPhraseSource::new(&dictionary);
+    let model = build_model(&counts, lambda, source.lexicon_tokens());
     let evals = std::fs::read_to_string(data_dir.join("evals2.text")).expect("evals2.text");
     let sentences = parse_eval_corpus(&evals).expect("eval corpus");
     let report = correction_rate(&dictionary, &model, &source, &sentences).expect("evaluate");
 
     let native_rate = format!("{:.6}", report.rate);
+    if native_rate != pin_rate {
+        // Diagnostics before the assertion: which sentences the native decode
+        // got wrong (the pin prints its own to stderr).
+        for (expected, decoded) in &report.mismatches {
+            eprintln!("native mismatch: expected {expected} decoded {decoded}");
+        }
+    }
     assert_eq!(
         native_rate, pin_rate,
         "native correction rate {native_rate} vs pin {pin_rate} \

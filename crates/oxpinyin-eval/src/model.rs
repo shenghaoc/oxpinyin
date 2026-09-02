@@ -2,7 +2,15 @@
 //! from a candidate `interpolation2.text` and an applied λ.
 //!
 //! This is the native replacement for `evaluate.py`'s `make`-rebuilt runtime
-//! model. Its cost function is a line-for-line mirror of the shipping
+//! model — `gen_binary_files` + `import_interpolation` + `gen_unigram`, so
+//! [`EvalLanguageModel::from_counts_with_lexicon`] floors every phrase-index
+//! token at count + 1 and sums the total over the whole lexicon, exactly as
+//! the pin's `get_phrase_index_total_freq` sees it after that `make`. The
+//! evaluator's decode (`decode.rs`) reads the float probabilities
+//! ([`EvalLanguageModel::unigram_poss`], [`EvalLanguageModel::bigram_poss`])
+//! the pin's `PhoneticLookup` scores with. The integer cost function below
+//! is kept for callers that rank through the engine: it is a line-for-line
+//! mirror of the shipping
 //! decoder's LM (`oxpinyin_data::lm::BigramLanguageModel::model_cost`,
 //! `crates/oxpinyin-data/src/lm/mod.rs:387-440`) — same interpolation
 //! (`interpolate_ratio`, `λ·b/bt + (1−λ)·u/ut` over a common denominator),
@@ -39,22 +47,87 @@ pub struct EvalLanguageModel {
 
 impl EvalLanguageModel {
     /// Builds the model from the `interpolation2.text` counts and the applied
-    /// λ. The bigram total per prev is Σ of its successor counts, exactly as
-    /// the compiled bigram table stores it.
+    /// λ, taking the unigram table as the counts give it (no floor). The
+    /// bigram total per prev is Σ of its successor counts, exactly as the
+    /// compiled bigram table stores it.
     #[must_use]
     pub fn from_counts(counts: &Counts, lambda: Lambda) -> Self {
         let unigram_total = counts.unigrams.values().sum();
-        let mut bigram_totals: BTreeMap<u32, u64> = BTreeMap::new();
-        for (&(prev, _next), &count) in &counts.bigrams {
-            *bigram_totals.entry(prev).or_default() += count;
-        }
         Self {
             unigrams: counts.unigrams.clone(),
             unigram_total,
             bigrams: counts.bigrams.clone(),
-            bigram_totals,
+            bigram_totals: bigram_totals(counts),
             lambda,
         }
+    }
+
+    /// Builds the model the pin's `make` builds: every token of the phrase
+    /// index (`lexicon`) carries its `interpolation2.text` count plus the
+    /// `gen_unigram` floor of 1, and the unigram total is the sum over that
+    /// whole lexicon (`get_phrase_index_total_freq`). A count for a token
+    /// outside the lexicon is dropped, as `import_interpolation` cannot
+    /// store it.
+    #[must_use]
+    pub fn from_counts_with_lexicon(
+        counts: &Counts,
+        lambda: Lambda,
+        lexicon: impl IntoIterator<Item = PhraseToken>,
+    ) -> Self {
+        let mut unigrams = BTreeMap::new();
+        let mut unigram_total: u64 = 0;
+        for token in lexicon {
+            let token = token.value();
+            let freq = counts
+                .unigrams
+                .get(&token)
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(1);
+            unigrams.insert(token, freq);
+            unigram_total = unigram_total.saturating_add(freq);
+        }
+        Self {
+            unigrams,
+            unigram_total,
+            bigrams: counts.bigrams.clone(),
+            bigram_totals: bigram_totals(counts),
+            lambda,
+        }
+    }
+
+    /// The `table.conf` λ as the pin's `gfloat`.
+    #[must_use]
+    pub fn lambda_f32(&self) -> f32 {
+        self.lambda.as_f64() as f32
+    }
+
+    /// `P_uni(token)`: `get_unigram_frequency() / (gdouble)
+    /// get_phrase_index_total_freq()` — 0 for an unknown token or an empty
+    /// table.
+    #[must_use]
+    pub fn unigram_poss(&self, token: u32) -> f64 {
+        if self.unigram_total == 0 {
+            return 0.0;
+        }
+        self.unigrams.get(&token).copied().unwrap_or(0) as f64 / self.unigram_total as f64
+    }
+
+    /// Whether `prev` has a bigram row (`Bigram::load` succeeds).
+    #[must_use]
+    pub fn has_bigram_row(&self, prev: u32) -> bool {
+        self.bigram_totals
+            .get(&prev)
+            .is_some_and(|&total| total != 0)
+    }
+
+    /// `P_bi(token | prev)`: `freq / (gfloat) total_freq` of `prev`'s row,
+    /// or `None` when the row lacks `token` (`get_freq` miss).
+    #[must_use]
+    pub fn bigram_poss(&self, prev: u32, token: u32) -> Option<f32> {
+        let total = self.bigram_totals.get(&prev).copied().filter(|&t| t != 0)?;
+        let freq = self.bigrams.get(&(prev, token)).copied()?;
+        Some(freq as f32 / total as f32)
     }
 
     /// The λ in force.
@@ -136,6 +209,15 @@ impl LanguageModel for EvalLanguageModel {
     ) -> Result<Cost, Self::Error> {
         Ok(edge_cost.saturating_add(self.model_cost(history, token)))
     }
+}
+
+/// The bigram total per prev: Σ of its successor counts.
+fn bigram_totals(counts: &Counts) -> BTreeMap<u32, u64> {
+    let mut totals: BTreeMap<u32, u64> = BTreeMap::new();
+    for (&(prev, _next), &count) in &counts.bigrams {
+        *totals.entry(prev).or_default() += count;
+    }
+    totals
 }
 
 /// `λ·b/bt + (1 − λ)·u/ut` over a common denominator, `λ = num/den`
