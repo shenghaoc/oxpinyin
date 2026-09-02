@@ -22,12 +22,13 @@ if [ ! -f "$CAPI_SO" ]; then
     exit 1
 fi
 
-CAPI_DATA="$REPO_ROOT/fixtures/w3"
-# The tables' extension names the backend the capi was compiled with.
-# OXPINYIN_CAPI_BACKEND_EXT pins it for capi builds that select a backend
-# explicitly (e.g. --features tkrzw); unset, this gate builds the default
-# (Kyoto Cabinet `.kct`) and the extension is detected from the committed
-# fixture sets, preferring the default backend's.
+FIX_ROOT="$REPO_ROOT/fixtures/w3"
+# The committed W3 fixture holds one per-backend data directory each
+# (fixtures/w3/<kct|redb|tkt|lmdb>), a real drop-in dir with libpinyin's
+# own file names. OXPINYIN_CAPI_BACKEND_EXT pins the backend for capi
+# builds that select one explicitly (e.g. --features tkrzw); unset, this
+# gate builds the default (Kyoto Cabinet) and picks the first committed
+# backend directory, preferring the default's.
 if [ -n "${OXPINYIN_CAPI_BACKEND_EXT:-}" ]; then
     case "$OXPINYIN_CAPI_BACKEND_EXT" in
         kct|redb|tkt|lmdb) SYS_EXT=$OXPINYIN_CAPI_BACKEND_EXT ;;
@@ -36,27 +37,24 @@ if [ -n "${OXPINYIN_CAPI_BACKEND_EXT:-}" ]; then
             exit 1
             ;;
     esac
-    for t in pinyin_index phrase_index bigram; do
-        if [ ! -f "$CAPI_DATA/$t.$SYS_EXT" ]; then
-            echo "fatal: no $t.$SYS_EXT under $CAPI_DATA for the requested backend"
-            exit 1
-        fi
-    done
+    if [ ! -d "$FIX_ROOT/$SYS_EXT" ]; then
+        echo "fatal: no $FIX_ROOT/$SYS_EXT directory for the requested backend"
+        exit 1
+    fi
 else
     SYS_EXT=""
     for ext in kct redb tkt lmdb; do
-        if [ -f "$CAPI_DATA/pinyin_index.$ext" ] \
-            && [ -f "$CAPI_DATA/phrase_index.$ext" ] \
-            && [ -f "$CAPI_DATA/bigram.$ext" ]; then
+        if [ -d "$FIX_ROOT/$ext" ]; then
             SYS_EXT=$ext
             break
         fi
     done
     if [ -z "$SYS_EXT" ]; then
-        echo "fatal: no complete three-table fixture set at $CAPI_DATA and no OXPINYIN_CAPI_BACKEND_EXT override"
+        echo "fatal: no per-backend fixture directory under $FIX_ROOT and no OXPINYIN_CAPI_BACKEND_EXT override"
         exit 1
     fi
 fi
+CAPI_DATA="$FIX_ROOT/$SYS_EXT"
 
 BUILD_DIR="$(mktemp -d)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
@@ -68,8 +66,7 @@ mkdir "$USER_DIR"
 # the public ABI rather than the fixture constructor.
 SYS_DIR="$BUILD_DIR/sys"
 mkdir "$SYS_DIR"
-cp "$CAPI_DATA/pinyin_index.$SYS_EXT" "$CAPI_DATA/phrase_index.$SYS_EXT" \
-    "$CAPI_DATA/bigram.$SYS_EXT" "$SYS_DIR/"
+cp "$CAPI_DATA"/* "$SYS_DIR/"
 printf '%s\n' '\data model interpolation' '\1-gram' '\item 1 ok count 1' \
     > "$SYS_DIR/interpolation2.text"
 
