@@ -43,7 +43,11 @@ impl NgramTables {
     /// # Errors
     ///
     /// Returns [`WordError::Malformed`] when a non-empty line is not a
-    /// `token word` record.
+    /// `token word` record, or when a word (of a non-`null_token` record)
+    /// is empty or contains the fence separator — such a word would make
+    /// the fenced key ambiguous and the partial-word split land on the
+    /// wrong boundary. A `null_token` record may carry any suffix
+    /// (`0 ` and `0 {raw}` are both valid separators).
     pub fn populate_document(&mut self, text: &str) -> Result<(), WordError> {
         let mut sentence: Vec<&str> = Vec::new();
         for line in text.lines() {
@@ -54,6 +58,11 @@ impl NgramTables {
             if token == NULL_TOKEN {
                 sentence.clear();
                 continue;
+            }
+            if word.is_empty() || word.contains([SEP, '\t']) {
+                return Err(WordError::Malformed {
+                    detail: format!("word field {word:?} in {line:?} is not a single word"),
+                });
             }
             sentence.push(word);
             let have = sentence.len();
@@ -167,6 +176,20 @@ mod tests {
     fn fence_wraps_in_spaces() {
         assert_eq!(fence(&["甲"]), " 甲 ");
         assert_eq!(fence(&["甲", "乙"]), " 甲 乙 ");
+    }
+
+    #[test]
+    fn a_word_with_a_separator_is_rejected_but_a_null_token_suffix_is_not() {
+        let mut tables = NgramTables::new(MAX_COMBINE);
+        for bad in ["1 甲 乙\n", "1 \n", "1 甲\t乙\n"] {
+            assert!(tables.populate_document(bad).is_err(), "{bad:?}");
+        }
+        // null_token records keep any raw suffix.
+        tables
+            .populate_document("1 甲\n0 \n0 raw text here\n1 乙\n")
+            .expect("null_token suffixes are free-form");
+        assert_eq!(tables.unigram_freq("甲"), 1);
+        assert_eq!(tables.unigram_freq("乙"), 1);
     }
 
     #[test]

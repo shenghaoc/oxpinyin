@@ -14,12 +14,17 @@
 //! FTS3 table; this port uses the ordered maps of [`NgramTables`] and the
 //! same space-fenced string substitution, so the merge is byte-faithful to
 //! the Python `partition` walk (which merges one occurrence at a time and
-//! consumes the shared fence space between adjacent pairs).
+//! consumes the shared fence space between adjacent pairs). The FTS3
+//! phrase lookup is replaced by an index from each survivor's fenced pair
+//! to its merged form: a fenced pair can only occur at an adjacent-word
+//! position of a row, so each row is walked once over its adjacent pairs
+//! instead of once per survivor.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::{
-    MAXIMUM_ITERATION, NGRAM_MINIMUM_OCCURRENCE, PARTIAL_WORD_THRESHOLD, WORD_MINIMUM_OCCURRENCE,
+    MAXIMUM_ITERATION, NGRAM_MINIMUM_OCCURRENCE, PARTIAL_WORD_THRESHOLD, SEP,
+    WORD_MINIMUM_OCCURRENCE,
 };
 use crate::error::WordError;
 use crate::ngram::{NgramTables, fence};
@@ -151,6 +156,20 @@ fn qualifying_bigrams(tables: &NgramTables, threshold: u64) -> Vec<PartialWord> 
 /// (`recognizePartialWord`'s `for i in range(N, 1, -1)` loop,
 /// `partialword.py:296-326`), cascading within the pass.
 fn merge_survivors_down(tables: &mut NgramTables, survivors: &[&PartialWord]) {
+    // Fenced pair → merged fenced word (`" a b "` → `" ab "`), built once
+    // for every order. Survivor pairs are distinct (each comes from its own
+    // bigram row), so the map loses nothing.
+    let by_pair: BTreeMap<String, String> = survivors
+        .iter()
+        .map(|survivor| {
+            let merged_word = format!("{}{}", survivor.prefix, survivor.postfix);
+            (
+                fence(&[&survivor.prefix, &survivor.postfix]),
+                fence(&[&merged_word]),
+            )
+        })
+        .collect();
+
     for order in (2..=tables.max_order()).rev() {
         // Snapshot of the high order's qualifying rows (`freq > 9`), the
         // FTS clone. The high order is not modified (the upstream DELETE of
@@ -162,15 +181,23 @@ fn merge_survivors_down(tables: &mut NgramTables, survivors: &[&PartialWord]) {
             .map(|(row, freq)| (row.to_owned(), freq))
             .collect();
 
-        for survivor in survivors {
-            let words_str = fence(&[&survivor.prefix, &survivor.postfix]);
-            let merged_word = format!("{}{}", survivor.prefix, survivor.postfix);
-            let merged_str = fence(&[&merged_word]);
-            for (row, freq) in &snapshot {
-                if !row.contains(&words_str) {
+        for (row, freq) in &snapshot {
+            // Words never contain the fence separator (`populate_document`
+            // rejects them), so a fenced pair matches a row exactly when it
+            // is one of the row's adjacent word pairs. A pair present more
+            // than once is merged once per survivor, over every occurrence,
+            // exactly as the per-survivor `contains` walk did.
+            let words: Vec<&str> = row.split(SEP).filter(|w| !w.is_empty()).collect();
+            let mut merged_here: BTreeSet<&str> = BTreeSet::new();
+            for pair in words.windows(2) {
+                let Some((words_str, merged_str)) = by_pair.get_key_value(fence(pair).as_str())
+                else {
+                    continue;
+                };
+                if !merged_here.insert(words_str) {
                     continue;
                 }
-                for merged in combine_occurrences(row, &words_str, &merged_str) {
+                for merged in combine_occurrences(row, words_str, merged_str) {
                     tables.add(order - 1, &merged, *freq);
                 }
             }
@@ -300,6 +327,26 @@ mod tests {
                 freq: 4,
             }]
         );
+    }
+
+    #[test]
+    fn a_repeated_pair_in_one_row_merges_each_occurrence_once() {
+        // "甲 乙 丙 甲 乙" ×12: the 5-gram holds the pair twice. Each occurrence
+        // yields one merged 4-gram — never doubled by the second hit of the
+        // same pair while walking the row's adjacent pairs.
+        let mut tables = NgramTables::new(MAX_COMBINE);
+        for _ in 0..12 {
+            tables
+                .populate_document("1 甲\n2 乙\n3 丙\n1 甲\n2 乙\n0 \n")
+                .expect("count");
+        }
+        tables.prune();
+        let dict = BTreeSet::new();
+        let partials = recognize_partial_words(&mut tables, &dict, 20);
+        assert_eq!(partials.len(), 1, "{partials:?}");
+        assert_eq!(partials[0].merged, "甲乙");
+        assert_eq!(tables.get(4, &fence(&["甲乙", "丙", "甲", "乙"])), Some(12));
+        assert_eq!(tables.get(4, &fence(&["甲", "乙", "丙", "甲乙"])), Some(12));
     }
 
     #[test]
