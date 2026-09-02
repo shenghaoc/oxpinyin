@@ -1,0 +1,16 @@
+oxpinyin-datagen-manifest-v1
+pin_ref=model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
+backend=tkt
+producer=oxpinyin-datagen@0.1.0
+table=gb_char.bin records=167681 fnv1a64=7fb5262ede3919d8
+table=gbk_char.bin records=70241 fnv1a64=2147549f06f49e25
+table=opengram.bin records=4915 fnv1a64=f171d608991d56bd
+table=merged.bin records=27 fnv1a64=8828c7cfa6d00002
+table=pinyin_index.bin records=182 fnv1a64=a3d5975d2fb1a00d
+table=phrase_index.bin records=736 fnv1a64=b015da5321b06c19
+table=bigram.db records=175 fnv1a64=ef7716255f6f92dc
+table=art.bin records=151 fnv1a64=6127223ebfbac15a
+table=addon_pinyin_index.bin records=11 fnv1a64=023302d6f3202465
+table=addon_phrase_index.bin records=7 fnv1a64=a592463c22f4f01b
+table=punct.bin records=272 fnv1a64=70f3ff8df686595a
+table=table.conf records=1 fnv1a64=991ab28a20ebd27f
