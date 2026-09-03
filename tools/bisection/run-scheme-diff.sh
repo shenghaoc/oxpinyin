@@ -18,7 +18,8 @@
 #
 # The capi side is built from the workspace. To compare candidate lists
 # against real model data, set W13_CAPI_SYSTEM to a directory containing
-# pinyin_index.redb/phrase_index.redb/bigram.redb and interpolation2.text;
+# pinyin_index/phrase_index/bigram in the extension of the capi's compiled
+# backend (.kct by default; .tkt/.lmdb/.redb) and interpolation2.text;
 # otherwise resolution falls to OXPINYIN_SYSTEM_DIR and the conventional
 # build locations, and an unresolvable dir is FATAL rather than a silent
 # mini-fixture run (system-dir.sh). Historically the mini tables were used
@@ -145,9 +146,10 @@ W13_SYSTEM_RESOLVED="$(resolve_system_dir W13_CAPI_SYSTEM scheme-diff)"
 if [[ -n "$W13_SYSTEM_RESOLVED" ]]; then
     W13_CAPI_SYSTEM="$W13_SYSTEM_RESOLVED"
     SYSTEM_TMP="$(mktemp -d)"
-    cp "$W13_CAPI_SYSTEM"/pinyin_index.redb \
-       "$W13_CAPI_SYSTEM"/phrase_index.redb \
-       "$W13_CAPI_SYSTEM"/bigram.redb "$SYSTEM_TMP"/ 2>/dev/null || true
+    # The three core tables in the backend extension the capi opens,
+    # plus punct and any addon tables alongside them (system-dir.sh);
+    # resolve_system_dir already refused a directory lacking the core set.
+    system_dir_copy_tables "$W13_CAPI_SYSTEM" "$SYSTEM_TMP"
     # The real-unigram source: the system dir's own interpolation2.text
     # when present, else the explicit override. Without it the drivers'
     # fixture fallback would compare flat-export unigrams against the

@@ -63,10 +63,11 @@ if [ -n "${OPTION_SWEEP_CAPI_DATA:-}" ]; then
     CAPI_DATA="$OPTION_SWEEP_CAPI_DATA"
     system_dir_require_complete "$CAPI_DATA" OPTION_SWEEP_CAPI_DATA option-sweep
 elif [ -z "${OXPINYIN_SYSTEM_DIR:-}" ] &&
-     [ -f /tmp/oxpinyin-export/pinyin_index.redb ]; then
-    # Resolve both sources before creating or copying anything. This branch
-    # is entered on pinyin_index.redb alone, so the other two tables are
-    # still unchecked, and letting the cp fail under `set -e` would exit 1
+     export_ext="$(system_dir_detect_ext /tmp/oxpinyin-export)"; then
+    # Resolve both sources before creating or copying anything. The
+    # detector guarantees the three core tables in one extension (the
+    # capi's, see system-dir.sh), so what remains unchecked is
+    # interpolation2.text; letting a cp fail under `set -e` would exit 1
     # with a bare `cp: cannot stat` -- when this is the same incomplete-data
     # refusal every other branch answers with 3. interpolation2.text is not
     # an export-cache file at all: the export never holds it, which is the
@@ -77,8 +78,8 @@ elif [ -z "${OXPINYIN_SYSTEM_DIR:-}" ] &&
     # whose provenance line lists the variables -- not the two directories
     # that actually build this one.
     missing_tables=()
-    for table in pinyin_index.redb phrase_index.redb bigram.redb; do
-        [ -f "/tmp/oxpinyin-export/$table" ] || missing_tables+=("$table")
+    for table in pinyin_index phrase_index bigram; do
+        [ -f "/tmp/oxpinyin-export/$table.$export_ext" ] || missing_tables+=("$table.$export_ext")
     done
     interp_src=
     for model_dir in \
@@ -114,9 +115,7 @@ elif [ -z "${OXPINYIN_SYSTEM_DIR:-}" ] &&
         exit 3
     fi
     CAPI_DATA="$(mktemp -d /tmp/option-sweep-capi-data-XXXXXX)"
-    for table in pinyin_index.redb phrase_index.redb bigram.redb; do
-        cp "/tmp/oxpinyin-export/$table" "$CAPI_DATA/$table"
-    done
+    system_dir_copy_tables /tmp/oxpinyin-export "$CAPI_DATA"
     cp "$interp_src" "$CAPI_DATA/interpolation2.text"
 else
     # No explicit dir and no export cache: resolve or refuse. Falling back

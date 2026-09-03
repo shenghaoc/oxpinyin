@@ -22,8 +22,8 @@
 # Env-gated on the pin-built oracle like the train diff
 # (PINYIN_ORACLE_PREFIX, default $HOME/.local/opt/pinyin-oracle) and on a
 # real-unigram capi system dir (NBEST_CAPI_SYSTEM, e.g. the matched model20
-# tables with pinyin_index.redb/phrase_index.redb/bigram.redb and
-# interpolation2.text). Rounds: NBESTTRAINDIFF_USER_ROUNDS (default 3),
+# tables with pinyin_index/phrase_index/bigram in the extension of the
+# capi's compiled backend, .kct by default, and interpolation2.text). Rounds: NBESTTRAINDIFF_USER_ROUNDS (default 3),
 # NBESTTRAINDIFF_ROUNDS (default 3).
 #
 # Exit codes: 0 = identical or skipped; 1 = build/run failure;
@@ -32,6 +32,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/system-dir.sh
+. ./system-dir.sh
 
 echo "--- building nbest-train-diff driver ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o nbest-train-diff nbest-train-diff.c -ldl
@@ -76,10 +78,14 @@ fi
 # NBEST_CAPI_SYSTEM first, then OXPINYIN_SYSTEM_DIR -- the one name that
 # works across every differential, so a whole sweep needs one export
 # rather than a different variable per runner (see system-dir.sh).
+# The tables are looked for in the extension the built capi opens
+# (system_dir_detect_ext), not in a hard-coded one.
 CAPI_SYSTEM="${NBEST_CAPI_SYSTEM:-${OXPINYIN_SYSTEM_DIR:-}}"
-if [[ -z "$CAPI_SYSTEM" || ! -f "$CAPI_SYSTEM/interpolation2.text" ]]; then
+if [[ -z "$CAPI_SYSTEM" || ! -f "$CAPI_SYSTEM/interpolation2.text" ]] \
+    || ! system_dir_detect_ext "$CAPI_SYSTEM" >/dev/null; then
     echo "SKIP: NBEST_CAPI_SYSTEM must name a real-unigram system dir"
-    echo "  (pinyin_index.redb, phrase_index.redb, bigram.redb, interpolation2.text)"
+    echo "  (pinyin_index, phrase_index and bigram in the extension of the capi's"
+    echo "   compiled backend -- .kct by default -- plus interpolation2.text)"
     exit 0
 fi
 
