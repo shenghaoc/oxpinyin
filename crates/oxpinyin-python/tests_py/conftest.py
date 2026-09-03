@@ -23,7 +23,7 @@ def crate_dir() -> Path:
 @pytest.fixture(scope="session")
 def fixture_w3(repo_root: Path) -> Path:
     """The committed mini system-data fixture the Rust tests use too."""
-    path = repo_root / "fixtures" / "w3" / "kct"
+    path = repo_root / "fixtures" / "w3" / "redb"
     assert (path / "pinyin_index.redb").is_file(), "w3 fixture missing"
     return path
 
