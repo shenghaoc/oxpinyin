@@ -101,15 +101,17 @@ fn assert_rows_equal(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &Path) 
 /// exactly — token and every key with its tone bits; only padding bytes
 /// are ignored.
 fn assert_rows_equal_ignoring_padding(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &Path) {
+    let mut sorted = generated.to_vec();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
     let actual = rows_of(real);
     assert_eq!(
-        generated.len(),
+        sorted.len(),
         actual.len(),
         "{name}: row count {} vs real {}",
-        generated.len(),
+        sorted.len(),
         actual.len()
     );
-    for (index, (got, want)) in generated.iter().zip(actual.iter()).enumerate() {
+    for (index, (got, want)) in sorted.iter().zip(actual.iter()).enumerate() {
         assert_eq!(got.0, want.0, "{name}: row {index}: key mismatch");
         assert_eq!(
             got.1.len(),

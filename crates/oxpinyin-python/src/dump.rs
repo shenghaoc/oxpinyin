@@ -203,7 +203,10 @@ fn run_case(session: &mut RuntimeSession, case: &Value) -> Result<Value, RunErro
                     break;
                 }
             }
-            Err(_) => break,
+            Err(error) => {
+                events.push(json!({ "type": "select_error", "message": error.to_string() }));
+                break;
+            }
         }
     }
 
