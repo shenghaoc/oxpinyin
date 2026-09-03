@@ -222,3 +222,9 @@ validation document for the corrected analysis.
    based on `debian:testing` (pinned by digest). Builds both oracle
    (libpinyin 2.11.91 + Tkrzw) and oxpinyin-capi (KC default) in a
    single image.
+
+## Amendments
+
+| Date | Commit | Metric | Before | After | Note |
+|---|---|---|---:|---:|---|
+| 2026-09-03 | `perf(runtime): cache key_cost_table on Runtime` | alloc | 2.667 ms | (pending measurement) | `key_cost_table` moved from per-`new_session` to once at `Runtime::open`; 440 dictionary lookups eliminated per alloc. Criterion bench added (`alloc_instance` group in `stage2.rs`). Measurement requires pinned model20 tables not available in the build environment. |

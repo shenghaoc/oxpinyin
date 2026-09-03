@@ -238,6 +238,31 @@ where
         model: L,
     ) -> Result<Self, EngineError> {
         let key_costs = key_cost_table(&dictionary, &model)?;
+        Self::init(config, paths, dictionary, model, key_costs)
+    }
+
+    /// Builds a session over an already-computed key-cost table.
+    ///
+    /// [`Runtime::new_session`](oxpinyin_runtime) uses this to skip the
+    /// per-session [`key_cost_table`] recomputation: the table is computed
+    /// once at [`Runtime::open`](oxpinyin_runtime) time and reused.
+    pub fn new_with_key_costs(
+        config: &dyn ConfigSource,
+        paths: StoragePaths,
+        dictionary: D,
+        model: L,
+        key_costs: Vec<Cost>,
+    ) -> Result<Self, EngineError> {
+        Self::init(config, paths, dictionary, model, key_costs)
+    }
+
+    fn init(
+        config: &dyn ConfigSource,
+        paths: StoragePaths,
+        dictionary: D,
+        model: L,
+        key_costs: Vec<Cost>,
+    ) -> Result<Self, EngineError> {
         Ok(Self {
             dictionary,
             model,
