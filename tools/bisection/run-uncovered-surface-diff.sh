@@ -30,14 +30,17 @@
 #
 # Env-gated on the pin-built oracle (PINYIN_ORACLE_PREFIX, default
 # $HOME/.local/opt/pinyin-oracle) and on a real-unigram capi system dir
-# (UNCOVERED_SYSTEM) holding pinyin_index.redb, phrase_index.redb,
-# bigram.redb, interpolation2.text, AND punct.redb — the Option A export
+# (UNCOVERED_SYSTEM) holding pinyin_index, phrase_index, bigram,
+# interpolation2.text, AND punct — the tables in the extension of the
+# capi's compiled backend (.kct by default; .tkt/.lmdb/.redb), punct being the Option A export
 # (token LE → NUL-terminated UTF-8, docs/findings/prediction-punct.md) of
 # the SAME model20 punct.table the oracle's punct.bin was built from, so
 # the punct rows are compared over matched tables (370 rows / 272 tokens).
 
 set -euo pipefail
 cd "$(dirname "$0")"
+# shellcheck source=tools/bisection/system-dir.sh
+. ./system-dir.sh
 REPO_ROOT="$(cd ../.. && pwd)"
 
 echo "--- building uncovered-surface-diff driver ---"
@@ -97,11 +100,17 @@ fi
 # UNCOVERED_SYSTEM first, then OXPINYIN_SYSTEM_DIR -- the one name that
 # works across every differential, so a whole sweep needs one export
 # rather than a different variable per runner (see system-dir.sh).
+# The three core tables are looked for in the extension the built capi
+# opens (system_dir_detect_ext), and punct must sit beside them in that
+# same extension: the engine opens every table through one backend.
 SYSTEM="${UNCOVERED_SYSTEM:-${OXPINYIN_SYSTEM_DIR:-}}"
-if [[ -z "$SYSTEM" ]] || ! [[ -f "$SYSTEM/interpolation2.text"          && -f "$SYSTEM/pinyin_index.redb"          && -f "$SYSTEM/phrase_index.redb"          && -f "$SYSTEM/bigram.redb"          && -f "$SYSTEM/punct.redb" ]]; then
+SYSTEM_EXT=""
+[[ -n "$SYSTEM" ]] && SYSTEM_EXT="$(system_dir_detect_ext "$SYSTEM" || true)"
+if [[ -z "$SYSTEM_EXT" ]] || ! [[ -f "$SYSTEM/interpolation2.text" && -f "$SYSTEM/punct.$SYSTEM_EXT" ]]; then
     echo "SKIP: UNCOVERED_SYSTEM must name a real-unigram system dir"
-    echo "  (pinyin_index.redb, phrase_index.redb, bigram.redb, interpolation2.text,"
-    echo "   plus the Option A punct.redb of the same model20 punct.table)"
+    echo "  (pinyin_index, phrase_index, bigram and punct all in the extension of"
+    echo "   the capi's compiled backend -- .kct by default -- plus interpolation2.text;"
+    echo "   punct is the Option A export of the same model20 punct.table)"
     exit 0
 fi
 # The five-file presence check catches half-assembled dirs; it does NOT bind
