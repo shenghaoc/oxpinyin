@@ -189,8 +189,11 @@ pub fn staged_system_dir() -> &'static Path {
                 std::env::temp_dir().join(format!("oxpinyin-stage2-system-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&staged);
             std::fs::create_dir_all(&staged).expect("stage system dir");
-            for stem in ["pinyin_index", "phrase_index", "bigram"] {
-                let name = oxpinyin_store::default_store_file(stem);
+            // Name the staged tables exactly as the export dir carries them
+            // and the runtime opens them (`SystemDbm::file_name`):
+            // libpinyin's own on Kyoto Cabinet and tkrzw, `<stem>.<ext>` on
+            // redb and LMDB.
+            for name in oxpinyin_testsupport::model_cache::system_dbm_names() {
                 link_or_copy(&export.join(&name), &staged.join(&name));
             }
             link_or_copy(
