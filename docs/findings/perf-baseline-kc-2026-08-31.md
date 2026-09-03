@@ -229,7 +229,8 @@ validation document for the corrected analysis.
 |---|---|---|---:|---:|---|
 | 2026-09-03 | 17ae4bf | runtime data (interpolation2.text) | 80.0 MiB | 1.97 MiB (2,065,403 bytes) | \2-gram section omitted; already compiled into KC tables; byte-level verified; runtime parser yields identical UnigramTable (63,907 records, total 50,913,735). |
 | 2026-09-03 | 0f6c8a4 | alloc | 6.223 ms | 0.003 ms | `key_cost_table` moved from per-`new_session` to once at `Runtime::open`; 440 dictionary lookups eliminated per alloc. Criterion bench added (`alloc_instance` group in `stage2.rs`). Before/after pair re-measured on the second host described below; the original M-series before-value (2.667 ms) is not comparable across hosts. |
-| 2026-09-03 | b5f203a | shared object (stripped) | 1,669 KiB (ARM64/KC, Correction 2) | −7.54% on x86_64/redb (2,914,304 → 2,694,568 B stripped); ARM64/KC re-measurement pending | `lto = "fat"`, `codegen-units = 1` added to `[profile.release]`; see `docs/perf/perf-so-size-2026-09.md` |
+| 2026-09-03 | f10b9e0 | shared object (stripped) | 1,669 KiB (ARM64/KC, Correction 2) | −7.54% on x86_64/redb (2,914,304 → 2,694,568 B stripped); ARM64/KC re-measurement in the next row | `lto = "fat"`, `codegen-units = 1` added to `[profile.release]`; see `docs/perf/perf-so-size-2026-09.md` |
+| 2026-09-04 | f10b9e0 | shared object (stripped) | 1,643,232 B (ARM64/KC at the rebase tip) | 1,446,528 B (−196,704, −11.97%) | ARM64/KC re-measurement of the same `lto = "fat"`, `codegen-units = 1` change (`docs/perf/perf-so-size-2026-09.md`): `.text` −12.9%, unwind tables −42.3%, `.rodata` −30.0%; `guess_candidates/offset_0` 11.27 → 8.67 ns (−23.1%), no regression. The before-value is not Correction 2's 1,708,768 B: 30 commits (the P1–P8 data rewrite) landed between the two measurements; the before/after pair here was measured back-to-back at one tip. |
 
 ### Amendment environment (2026-09-03, alloc row)
 
@@ -260,7 +261,44 @@ oracle control ran alternating in one session.
   default; the names now derive from
   `oxpinyin_store::default_store_file` (the compiled-in backend).
 
-The x86_64/redb figure is not the same build as this baseline's
-ARM64/KC artifact (the redb backend compiles the database engine into
-the `.so`; KC links it externally), so the ratio is recorded per host
-and the KC number stays as measured until re-measured.
+The x86_64/redb figure in the first `.so` row is not the same build as
+this baseline's ARM64/KC artifact (the redb backend compiles the
+database engine into the `.so`; KC links it externally), so the ratio is
+recorded per host. The second `.so` row is that ARM64/KC
+re-measurement, run below.
+
+### Amendment environment (2026-09-04, ARM64/KC `.so` row)
+
+Measured in the ARM64 `oxpinyin-validate` container (Docker Desktop on
+Apple Silicon, linux/arm64, Debian testing at the 20260831 snapshot,
+libkyotocabinet-dev, Rust 1.97.1 (8bab26f4), cargo-c 0.10.25) — the
+same environment family as the baseline above. Before = `53eb5b8`
+(`origin/main` at measurement time); after = the same tree plus the
+`[profile.release]` change. (The branch was rebased onto `30556ae`
+afterwards; the two intervening commits touch bisection scripts and CI
+only, and do not change the build artifact.) Both builds ran cold
+(`cargo cinstall --locked --release -p oxpinyin-capi --prefix=/usr`,
+verified via the `Compiling oxpinyin-capi` provenance lines), stripped
+with `strip --strip-all`; the export tables were regenerated from the
+pinned model20 by the after tree's datagen and shared by both sides.
+
+- Stripped `.so`: 1,643,232 → 1,446,528 B (−196,704, −11.97%).
+  Sections: `.text` −96,064 (−12.9%), `.rodata` −18,488 (−30.0%),
+  unwind (`.eh_frame` + `.eh_frame_hdr`) −53,256 (−42.3%),
+  `.data.rel.ro` −5,656 (−2.1%), `.rela.dyn` −7,488 (−2.2%).
+- `guess_candidates/offset_0` (stage2 criterion, `taskset -c 0`, 4
+  alternating rounds × 20 samples): before median 11.27 ns
+  [11.209, 11.269], after median 8.67 ns [8.5754, 8.6970] — −23.1%,
+  faster on every round. The absolute scale (ns, not the µs the x86_64
+  host saw) reflects the P1–P8 data rewrite's candidate-path cost
+  change, which affects both sides equally; the before/after comparison
+  is internally consistent.
+- Steady-state parity gates: `sentence_surface` §12 pin FAILED on both
+  trees identically (1-best 491 vs the frozen 488) — a pre-existing
+  drift from the P1–P8 rewrites, not an LTO effect (profiles cannot
+  change deterministic output); `real_tables` fixture-freshness 2/2
+  PASS; clippy `-D warnings` and `cargo fmt --check` clean.
+- Measuring needed one companion fix, carried on this branch: the
+  stage2 benches staged the pre-P1–P5 `.kct` table names, so
+  `pinyin_init` failed under the KC default; they now stage the names
+  `system_dbm_names` returns.
