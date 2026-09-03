@@ -117,8 +117,18 @@ fn mini_compile_reproduces_the_committed_fixture_directory() {
             "bigram.db: key {key:02x?}"
         );
     }
+    // The point reads above prove every generated row is in the frozen
+    // fixture; the count proves the frozen fixture holds no extra rows.
+    let frozen_count = backend.count_hash(&bigram).unwrap();
+    assert_eq!(
+        frozen_count as usize,
+        tables.bigram.len(),
+        "bigram.db: {} frozen rows vs {} generated",
+        frozen_count,
+        tables.bigram.len()
+    );
     eprintln!(
-        "bigram: all {} rows identical to the fixture",
+        "bigram: all {} rows identical to the fixture, both directions",
         tables.bigram.len()
     );
 }

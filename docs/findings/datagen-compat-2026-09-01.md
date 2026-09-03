@@ -45,7 +45,7 @@ writer implements its schema directly.
 | `gb_char.bin`, `gbk_char.bin`, `opengram.bin`, `merged.bin`, `art.bin` … `technology.bin` | `SubPhraseIndex::store` (`phrase_index.cpp`), `MemoryChunk` | `chunks::build_chunk` | **byte-exact** (all 16) |
 | `pinyin_index.bin`, `addon_pinyin_index.bin` | `ChewingLargeTable2` + `PinyinIndexItem2<L>` (`pinyin_phrase3.h`) | `libpinyin::pinyin_index_entries` | field-exact rows; struct tail padding excluded (§6) |
 | `phrase_index.bin`, `addon_phrase_index.bin` | `PhraseLargeTable3` | `libpinyin::phrase_index_entries` | row-exact |
-| `bigram.db` | `Bigram` / `SingleGram` (`ngram.cpp`) — a KC HashDB / Tkrzw HashDBM | `system::compile` | row-exact by point read |
+| `bigram.db` | `Bigram` / `SingleGram` (`ngram.cpp`) — a KC HashDB / Tkrzw HashDBM | `system::compile` | row-exact by point read plus a record-count check (the hash containers have no walkable order from an empty key, so per-key reads cannot see real rows the generator missed; `RawReadStore::count_raw` closes that direction) |
 | `punct.bin` | `PunctTable` (`punct_table.cpp`) | `punct::rows_to_entries_ucs4` | row-exact |
 | `table.conf` | `SystemTableInfo2` | the CLI, `database format:` token per backend | text |
 

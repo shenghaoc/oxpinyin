@@ -320,6 +320,32 @@ impl Backend {
             backend => Err(not_compiled(backend)),
         }
     }
+
+    /// Counts the rows of the hash container at `path` — the reverse
+    /// direction of [`Self::get_hash`], whose per-key point reads cannot
+    /// see rows the caller did not ask about.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the backend was not compiled in, or on any store failure.
+    pub fn count_hash(self, path: &Path) -> Result<u64, DatagenError> {
+        fn count<S: RawReadStore>(path: &Path) -> Result<u64, DatagenError> {
+            let store = S::open_hash_read_only(path)?;
+            Ok(store.count_raw()?)
+        }
+        match self {
+            #[cfg(feature = "redb")]
+            Self::Redb => count::<oxpinyin_store::RedbStore>(path),
+            #[cfg(feature = "kyotocabinet")]
+            Self::KyotoCabinet => count::<oxpinyin_store::KcStore>(path),
+            #[cfg(feature = "lmdb")]
+            Self::Lmdb => count::<oxpinyin_store::LmdbStore>(path),
+            #[cfg(feature = "tkrzw")]
+            Self::Tkrzw => count::<oxpinyin_store::TkrzwStore>(path),
+            #[allow(unreachable_patterns)]
+            backend => Err(not_compiled(backend)),
+        }
+    }
 }
 
 fn not_compiled(backend: Backend) -> DatagenError {

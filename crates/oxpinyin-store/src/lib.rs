@@ -386,6 +386,28 @@ pub trait RawReadStore: ReadStore {
         self.range(RAW_TABLE, lo, hi, visit)
     }
 
+    /// The number of raw (unframed) rows — the count half of the raw
+    /// keyspace [`RawReadStore::range_raw`] walks. The hash containers
+    /// (`bigram.db`) are unordered on some backends, so a completeness
+    /// check that cannot walk them (a KC HashDB cursor has no ordered
+    /// first position) compares per-key values through [`Self::get_raw`]
+    /// and closes the reverse direction through this count.
+    ///
+    /// The default implementation counts by walking the raw keyspace;
+    /// KC and Tkrzw override it with the library's own record count.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend count fails.
+    fn count_raw(&self) -> Result<u64, StoreError> {
+        let mut count: u64 = 0;
+        self.range_raw(Bound::Unbounded, Bound::Unbounded, &mut |_key, _value| {
+            count += 1;
+            Ok(())
+        })?;
+        Ok(count)
+    }
+
     /// Opens a hash-DB file in read-only mode (for `bigram.db`).
     ///
     /// libpinyin's `bigram.db` uses KC **HashDB** / Tkrzw **HashDBM**,

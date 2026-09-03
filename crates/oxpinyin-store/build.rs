@@ -314,6 +314,7 @@ mod tkrzw {
             .allowlist_function("tkrzw_dbm_close")
             .allowlist_function("tkrzw_dbm_process")
             .allowlist_function("tkrzw_dbm_process_multi")
+            .allowlist_function("tkrzw_dbm_count")
             .allowlist_function("tkrzw_dbm_synchronize")
             .allowlist_function("tkrzw_dbm_rebuild")
             .allowlist_function("tkrzw_dbm_make_iterator")
