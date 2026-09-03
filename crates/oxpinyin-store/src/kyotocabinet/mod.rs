@@ -218,6 +218,12 @@ impl crate::RawReadStore for KcStore {
         Ok(())
     }
 
+    /// The library's own O(1) record count — over the whole file, which
+    /// on this backend is exactly the raw keyspace.
+    fn count_raw(&self) -> Result<u64, crate::StoreError> {
+        self.db.count()
+    }
+
     fn open_hash_read_only(path: &Path) -> Result<Self, crate::StoreError> {
         Ok(Self {
             db: Db::open(path, DbType::Hash, true, false)?,

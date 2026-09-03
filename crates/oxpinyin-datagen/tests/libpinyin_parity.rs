@@ -135,12 +135,13 @@ fn assert_rows_equal_ignoring_padding(name: &str, generated: &[(Vec<u8>, Vec<u8>
     }
 }
 
-/// Per-key point comparison for the hash container (`bigram.db`): a KC
-/// HashDB cursor cannot be positioned from the empty key (unordered
-/// container), so every generated key is looked up in the real file and
-/// its value compared. Real rows the generator did not emit would be
-/// missed by this direction alone; the row-count line printed here and
-/// the writer's own read-back verification cover the counts.
+/// Per-key point comparison plus a count comparison for the hash
+/// container (`bigram.db`): a KC HashDB cursor cannot be positioned from
+/// the empty key (unordered container), so every generated key is looked
+/// up in the real file and its value compared. That direction alone
+/// would miss real rows the generator did not emit; the count assertion
+/// closes the reverse direction — generated keys are distinct and all
+/// present, so equal counts mean the real file holds nothing else.
 fn assert_hash_equal(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &Path) {
     let store = DropInStore::open_hash_read_only(real).expect("open hash");
     for (index, (key, value)) in generated.iter().enumerate() {
@@ -151,7 +152,15 @@ fn assert_hash_equal(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &Path) 
             "{name}: row {index}: key {key:02x?} value mismatch"
         );
     }
-    eprintln!("{name}: {} rows verified by point read", generated.len());
+    let real_count = store.count_raw().expect("count_raw");
+    assert_eq!(
+        generated.len(),
+        real_count as usize,
+        "{name}: {} real rows vs {} generated — the real file holds rows the generator did not emit",
+        real_count,
+        generated.len()
+    );
+    eprintln!("{name}: {real_count} rows identical, both directions");
 }
 
 #[test]

@@ -442,6 +442,21 @@ impl Db {
         Ok(())
     }
 
+    /// The number of records — `kcdbcount`.
+    ///
+    /// A negative return (the header's `int64_t` failure value under some
+    /// kclangc.h versions) is reported through the handle's own error
+    /// state; bindings that type the call as `uint64_t` cannot produce
+    /// one and the conversion is infallible.
+    pub(crate) fn count(&self) -> Result<u64, StoreError> {
+        // SAFETY: the handle is live; `kcdbcount` is defined for a handle
+        // in any state and is one of the record operations the thread
+        // safety audit above covers (it takes the database's own
+        // reader-writer lock).
+        let count = unsafe { sys::kcdbcount(self.handle) };
+        u64::try_from(count).map_err(|_| self.error("kcdbcount"))
+    }
+
     /// Begins a transaction.
     ///
     /// Unlike the Berkeley DB backend — where libpinyin's environment-less

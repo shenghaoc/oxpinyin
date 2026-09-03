@@ -596,6 +596,19 @@ unsafe extern "C" fn apply_one(
 
 // ── engine-level operations ───────────────────────────────────────
 
+/// The record count — `tkrzw_dbm_count`, which returns it or -1 on
+/// failure (the failure reason lands in the thread-local last status,
+/// like every other call).
+fn db_count(db: &Db) -> Result<u64, StoreError> {
+    // SAFETY: the handle is open; the call only reads the database's
+    // record counter and touches no borrowed buffers.
+    let count = unsafe { ffi::tkrzw_dbm_count(db.0.as_ptr()) };
+    if count >= 0 {
+        return Ok(count as u64);
+    }
+    Err(status_error())
+}
+
 /// Reads one record, handing the borrowed value to `get_value` exactly
 /// once, or not at all when the key is absent.
 fn db_get(db: &Db, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
@@ -766,7 +779,7 @@ impl crate::RawReadStore for TkrzwStore {
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
         visit: &mut Visitor<'_>,
-    ) -> Result<(), crate::StoreError> {
+    ) -> Result<(), StoreError> {
         // `scan` over the file's bare keyspace — an empty prefix leaves
         // every stored key verbatim, the raw counterpart of the framed
         // `range` walk.
@@ -774,6 +787,12 @@ impl crate::RawReadStore for TkrzwStore {
             visit(key, value)?;
             Ok(true)
         })
+    }
+
+    /// The library's own record count — over the whole file, which on
+    /// this backend is exactly the raw keyspace.
+    fn count_raw(&self) -> Result<u64, StoreError> {
+        db_count(&self.db)
     }
 
     fn open_hash_read_only(path: &Path) -> Result<Self, crate::StoreError> {
