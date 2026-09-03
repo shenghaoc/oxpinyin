@@ -21,7 +21,7 @@
 //! marker making it neither `Send`, `Sync`, nor `Unpin`, so a handle cannot be
 //! moved across threads by accident.
 
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{c_char, c_int, c_uint};
 use core::marker::{PhantomData, PhantomPinned};
 
 /// Emulates an `extern type`: unsized-ish, never constructed, never read.
@@ -62,39 +62,8 @@ opaque_handle! {
     ExportIterator
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) use glib_sys::GArray;
-#[cfg(target_os = "linux")]
-pub(crate) use glib_sys::{g_array_free, g_array_new};
-
-#[cfg(not(target_os = "linux"))]
-pub(crate) use self::glib_compat::{GArray, g_array_free, g_array_new};
-
-/// Fallback declarations for Windows where glib-sys is not available
-/// (no pkg-config / no glib). The oracle never runs on Windows (the
-/// pin-built libpinyin is Linux-only), but the crate must compile there
-/// for the portable test-suite CI job.
-#[cfg(not(target_os = "linux"))]
-mod glib_compat {
-    use core::ffi::{c_char, c_int, c_uint};
-
-    /// Matches `glib_sys::GArray` layout: `data: *mut gchar`, `len: guint`.
-    #[repr(C)]
-    pub struct GArray {
-        pub data: *mut c_char,
-        pub len: c_uint,
-    }
-
-    unsafe extern "C" {
-        pub fn g_array_new(
-            zero_terminated: c_int,
-            clear: c_int,
-            element_size: c_uint,
-        ) -> *mut GArray;
-
-        pub fn g_array_free(array: *mut GArray, free_segment: c_int) -> *mut c_char;
-    }
-}
+pub(crate) use glib_sys::g_free;
+pub(crate) use glib_sys::{GArray, g_array_free, g_array_new};
 
 /// `pinyin_option_t`, defined as `guint32` in the pinned `novel_types.h`.
 pub type PinyinOption = u32;
@@ -219,8 +188,6 @@ unsafe extern "C" {
         key: *mut ChewingKey,
     ) -> bool;
 
-    /// GLib deallocator, for the owned strings libpinyin hands back.
-    pub(crate) fn g_free(mem: *mut c_void);
 }
 
 // Export/token functions, the extension frozen in
