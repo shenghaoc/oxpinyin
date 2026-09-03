@@ -113,9 +113,11 @@ def test_open_errors_map_to_python_exceptions(fixture_w3):
         Engine("/nonexistent/oxpinyin-data-dir")
     with pytest.raises(FileNotFoundError):
         Engine.from_fixture_dir("/nonexistent/oxpinyin-data-dir")
-    # production mode requires interpolation2.text; the fixture lacks it
-    with pytest.raises(FileNotFoundError, match="interpolation2"):
-        Engine(str(fixture_w3))
+    # The runtime runs on libpinyin's own data set and no longer needs
+    # interpolation2.text at open time, so production mode opens the same
+    # complete mini data directory the fixture constructor does.
+    with Engine(str(fixture_w3)) as engine:
+        assert engine.lookup("nihao")
 
 
 def test_index_and_offset_errors_map_cleanly(make_engine):
