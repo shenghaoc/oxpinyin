@@ -28,6 +28,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 const GBK_DICTIONARY: u32 = 2;
 use std::sync::{Arc, Mutex, RwLock};
 
+use oxpinyin_core::scoring::{ScoringError, key_cost_table};
 use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseToken,
     SyllableKey, UserCountDelta,
@@ -73,6 +74,8 @@ pub enum OpenError {
     Lm(LmError),
     /// `interpolation2.text` exists but is unreadable or unparsable.
     Interpolation(InterpolationError),
+    /// The per-key cost table could not be computed from the opened backends.
+    KeyCosts(ScoringError),
 }
 
 impl core::fmt::Display for OpenError {
@@ -89,6 +92,7 @@ impl core::fmt::Display for OpenError {
             Self::Dict(error) => write!(f, "dictionary error: {error}"),
             Self::Lm(error) => write!(f, "language model error: {error}"),
             Self::Interpolation(error) => write!(f, "unigram model error: {error}"),
+            Self::KeyCosts(error) => write!(f, "key-cost table error: {error}"),
         }
     }
 }
@@ -866,6 +870,7 @@ pub struct Runtime {
     dict: RuntimeDict,
     lm: RuntimeLm,
     user: Option<UserStore>,
+    key_costs: Arc<[Cost]>,
 }
 
 impl Runtime {
@@ -937,25 +942,33 @@ impl Runtime {
         let addons = Arc::new(RwLock::new(AddonSet::new()));
         let punct = PunctTable::open_optional(&system_dir.join(default_store_file("punct")));
 
+        let dict = RuntimeDict {
+            system: Arc::new(dict),
+            user: user.clone(),
+            user_lookup_cache: LookupCache::default(),
+            addons: Arc::clone(&addons),
+            punct: Arc::new(punct),
+            unigram_overlay: Arc::new(Mutex::new(HashMap::new())),
+            unigram_total_delta: Arc::new(AtomicU64::new(0)),
+            library_mask: Arc::new(AtomicU32::new(0)),
+        };
+        let lm = RuntimeLm {
+            inner: Arc::new(lm),
+            user: user.clone(),
+            addons,
+        };
+
+        let key_costs: Arc<[Cost]> = key_cost_table(&dict, &lm)
+            .map_err(OpenError::KeyCosts)?
+            .into();
+
         Ok(Self {
             paths: StoragePaths::new(user_dir.unwrap_or_else(|| Path::new("")))
                 .with_system_dirs([system_dir]),
-            dict: RuntimeDict {
-                system: Arc::new(dict),
-                user: user.clone(),
-                user_lookup_cache: LookupCache::default(),
-                addons: Arc::clone(&addons),
-                punct: Arc::new(punct),
-                unigram_overlay: Arc::new(Mutex::new(HashMap::new())),
-                unigram_total_delta: Arc::new(AtomicU64::new(0)),
-                library_mask: Arc::new(AtomicU32::new(0)),
-            },
-            lm: RuntimeLm {
-                inner: Arc::new(lm),
-                user: user.clone(),
-                addons,
-            },
+            dict,
+            lm,
             user,
+            key_costs,
         })
     }
 
@@ -971,11 +984,12 @@ impl Runtime {
     /// Forwards [`EngineError`] from session construction (currently
     /// infallible over valid backends).
     pub fn new_session(&self, config: &dyn ConfigSource) -> Result<RuntimeSession, EngineError> {
-        Session::new(
+        Session::new_with_key_costs(
             config,
             self.paths.clone(),
             self.dict.clone(),
             self.lm.clone(),
+            self.key_costs.to_vec(),
         )
     }
 

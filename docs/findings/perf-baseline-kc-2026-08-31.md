@@ -228,3 +228,4 @@ validation document for the corrected analysis.
 | Date | Commit | Metric | Before | After | Note |
 |---|---|---|---:|---:|---|
 | 2026-09-03 | 17ae4bf | runtime data (interpolation2.text) | 80.0 MiB | 1.97 MiB (2,065,403 bytes) | \2-gram section omitted; already compiled into KC tables; byte-level verified; runtime parser yields identical UnigramTable (63,907 records, total 50,913,735). |
+| 2026-09-03 | ebb54d2 | alloc | 2.667 ms | (pending measurement) | `key_cost_table` moved from per-`new_session` to once at `Runtime::open`; 440 dictionary lookups eliminated per alloc. Criterion bench added (`alloc_instance` group in `stage2.rs`). Measurement requires pinned model20 tables not available in the build environment. |
