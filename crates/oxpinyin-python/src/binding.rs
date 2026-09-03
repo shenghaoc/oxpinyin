@@ -163,8 +163,9 @@ impl Engine {
 impl Engine {
     /// Opens a production engine over `system_dir`.
     ///
-    /// Requires `interpolation2.text` next to the tables (the real-unigram
-    /// model the pinned ranking uses); `user_dir`, when given, holds
+    /// `system_dir` is a libpinyin data directory in the compiled-in
+    /// backend's format (`pinyin_index`, `phrase_index`, `bigram` and the
+    /// per-library chunk files); `user_dir`, when given, holds
     /// ``user_store.<ext>`` (the compiled-in backend's format) and
     /// enables learning.
     #[new]
