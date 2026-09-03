@@ -82,12 +82,20 @@ impl PhraseLibraries {
     /// twice or lies outside the sixteen-library space.
     pub fn open(dir: &Path, stems: &[(u8, &str)]) -> Result<Self, LibraryError> {
         let mut this = Self::empty();
+        let mut seen = [false; 16];
         for &(nibble, file) in stems {
-            if this.is_loaded(nibble) {
+            let slot = usize::from(nibble);
+            if slot >= 16 {
+                return Err(LibraryError::Format(format!(
+                    "library nibble {nibble} out of range"
+                )));
+            }
+            if seen[slot] {
                 return Err(LibraryError::Format(format!(
                     "library nibble {nibble} named twice"
                 )));
             }
+            seen[slot] = true;
             let path = dir.join(file);
             if !path.is_file() {
                 continue;
@@ -229,6 +237,9 @@ impl PhraseLibraries {
         let mut matched: u64 = 0;
         let mut total: u64 = 0;
         for view in item.pronunciations() {
+            if !view.keys.len().is_multiple_of(2) {
+                continue;
+            }
             total = total.saturating_add(u64::from(view.freq));
             let stored: Vec<ChewingKey> = view
                 .keys
