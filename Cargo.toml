@@ -77,6 +77,15 @@ phf_codegen = "0.11"
 rustc-hash = "2.1"
 glib-sys = "0.20"
 
+# Release .so size/speed lever: fat LTO + one codegen unit lets the linker
+# drop cross-crate dead code and duplicate generic instantiations that
+# per-CGU codegen keeps. Measured effect: docs/perf/perf-so-size-2026-09.md.
+# [profile.profiling] keeps its explicit `lto = "thin"` override and
+# inherits codegen-units from here.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
 # Stage-2 CPU profiles: release speed with enough debug to resolve stacks.
 # `debug = "line-tables-only"` keeps the image small; samply/perf still map
 # samples to functions and source lines. `lto = "thin"` is closer to a
