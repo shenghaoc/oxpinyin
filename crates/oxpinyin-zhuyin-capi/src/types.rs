@@ -102,16 +102,7 @@ impl ChewingKeyRest {
 /// Opaque import iterator.
 pub struct ImportIterator;
 
-/// glib `GArray` — the caller passes a real glib array (built through
-/// `g_array_new`, torn down through `g_array_free`); the library appends
-/// into it through glib's `g_array_append_vals`.
-#[repr(C)]
-pub struct GArray {
-    /// The element data buffer, glib-owned.
-    pub data: *mut GChar,
-    /// The element count.
-    pub len: u32,
-}
+pub use glib_sys::GArray;
 
 // ── Enums ────────────────────────────────────────────────────────────
 

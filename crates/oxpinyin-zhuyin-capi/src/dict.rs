@@ -6,15 +6,11 @@ use std::ptr;
 
 use oxpinyin_core::Dictionary;
 
+use glib_sys::{g_array_append_vals, g_array_set_size};
+
 use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
 use crate::state::instance_ref;
 use crate::types::{GArray, GChar, GUint, PhraseTokenT, ZhuyinInstance};
-
-// glib append/truncate, the same entry points oxpinyin-capi uses.
-unsafe extern "C" {
-    fn g_array_append_vals(array: *mut GArray, data: *const c_void, len: c_uint) -> *mut GArray;
-    fn g_array_set_size(array: *mut GArray, length: c_uint) -> *mut GArray;
-}
 
 /// Look up the phrase tokens stored for an exact phrase string.
 ///

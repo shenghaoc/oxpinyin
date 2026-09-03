@@ -69,9 +69,6 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=libpinyin.pc.in");
     println!("cargo:rerun-if-env-changed=LIBPINYIN_DATABASE_FORMAT");
-    println!("cargo:rerun-if-env-changed=GLIB_LIBS");
-    println!("cargo:rerun-if-env-changed=PKG_CONFIG");
-    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
 
     // SONAME is an ELF concept. The crate is Linux-first by design but must
     // not fail to build elsewhere.
@@ -79,18 +76,10 @@ fn main() {
         println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libpinyin.so.15");
     }
 
-    // Hard-link glib-2.0: `crate::dict`'s GArray appenders call glib's
-    // `g_array_append_vals` / `g_array_set_size`, which keep the array's
-    // private `_RealArray` metadata (`alloc`, `element_size`, `clear_func`)
-    // consistent with the public `data` / `len`. Every box that already
-    // runs a libpinyin consumer has `libglib-2.0.so.0` resident (upstream
-    // `libpinyin.so.15` records it in DT_NEEDED); mirroring that entry
-    // here adds nothing to the runtime surface. pkg-config discovery
-    // matches how the pin builds; a `GLIB_LIBS` env override lets a
-    // constrained builder point at a specific library path.
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
-        emit_glib_link();
-    }
+    // glib-2.0 linking is handled by glib-sys's build script (system-deps).
+    // Constrained builders: use SYSTEM_DEPS_GLIB_2_0_SEARCH_NATIVE,
+    // SYSTEM_DEPS_GLIB_2_0_LIB, and SYSTEM_DEPS_GLIB_2_0_NO_PKG_CONFIG
+    // in place of the former GLIB_LIBS override.
 
     bake_pkg_config_template();
 }
@@ -168,52 +157,4 @@ fn database_format() -> String {
 fn target_profile_dir(out_dir: &str) -> Option<PathBuf> {
     // out -> <pkg>-<hash> -> build -> <profile>
     Path::new(out_dir).ancestors().nth(3).map(Path::to_path_buf)
-}
-
-/// Emits the `cargo:rustc-link-*` lines for glib-2.0. `GLIB_LIBS` wins for
-/// constrained builders; otherwise `pkg-config` is asked, with a plain
-/// `-lglib-2.0` fallback that matches how upstream `libpinyin.so.15`
-/// records the entry when pkg-config is absent from the build sandbox.
-fn emit_glib_link() {
-    if let Ok(explicit) = env::var("GLIB_LIBS")
-        && !explicit.trim().is_empty()
-    {
-        for token in explicit.split_whitespace() {
-            println!("cargo:rustc-link-arg={token}");
-        }
-        return;
-    }
-
-    let pkg_config = env::var("PKG_CONFIG").unwrap_or_else(|_| "pkg-config".to_owned());
-    let probed = std::process::Command::new(&pkg_config)
-        .args(["--libs", "glib-2.0"])
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .and_then(|out| String::from_utf8(out.stdout).ok());
-
-    match probed {
-        Some(libs) => {
-            for token in libs.split_whitespace() {
-                if let Some(name) = token.strip_prefix("-l") {
-                    println!("cargo:rustc-link-lib={name}");
-                } else if let Some(path) = token.strip_prefix("-L") {
-                    println!("cargo:rustc-link-search=native={path}");
-                } else {
-                    // Anything else pkg-config emits (`-pthread`,
-                    // `-Wl,--as-needed`, `-framework Foo`, ...) is a
-                    // linker flag — forward it verbatim so the pkg's
-                    // recorded link contract stays intact.
-                    println!("cargo:rustc-link-arg={token}");
-                }
-            }
-        }
-        None => {
-            // pkg-config unavailable: link against the system's SONAME
-            // directly. On the target box `libglib-2.0.so.0` is
-            // guaranteed to be resident because upstream libpinyin.so.15
-            // already NEEDs it, so a plain `-l` line finds it.
-            println!("cargo:rustc-link-lib=glib-2.0");
-        }
-    }
 }

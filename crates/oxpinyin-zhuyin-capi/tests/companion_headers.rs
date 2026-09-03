@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! The companion headers `novel_types.h` and `pinyin_custom2.h` are shipped
 //! verbatim by BOTH `oxpinyin-capi` and `oxpinyin-zhuyin-capi` into the same
 //! installed include subdirectory (`libpinyin-2.11.91/`), because each
