@@ -30,9 +30,9 @@ mod support;
 
 use support::{
     CapiBench, GUESS_MID_OFFSET, GUESS_PHRASE, HOT_TOKEN, Instance, PARSE_JUNK_LEADING,
-    PARSE_MEDIUM, PARSE_SHORT, W8_SORT, pinyin_get_n_candidate, pinyin_get_sentence,
-    pinyin_guess_candidates, pinyin_guess_sentence, pinyin_parse_more_full_pinyins, pinyin_reset,
-    print_pin_header,
+    PARSE_MEDIUM, PARSE_SHORT, W8_SORT, pinyin_alloc_instance, pinyin_free_instance,
+    pinyin_get_n_candidate, pinyin_get_sentence, pinyin_guess_candidates, pinyin_guess_sentence,
+    pinyin_parse_more_full_pinyins, pinyin_reset, print_pin_header,
 };
 
 // SAFETY: re-declaring libc `free` to release strings the ABI hands to the
@@ -213,6 +213,22 @@ fn user_store_count_delta(criterion: &mut Criterion) {
     drop(guard);
 }
 
+fn alloc_instance(criterion: &mut Criterion) {
+    let capi = CapiBench::open();
+    criterion.bench_function("alloc_instance", |bencher| {
+        bencher.iter(|| {
+            // SAFETY: `capi.context` is a live handle for this bench; each
+            // iteration allocs a fresh instance and frees it immediately.
+            unsafe {
+                let instance = pinyin_alloc_instance(capi.context);
+                assert!(!instance.is_null(), "pinyin_alloc_instance failed");
+                pinyin_free_instance(instance);
+            }
+            black_box(());
+        });
+    });
+}
+
 fn config() -> Criterion {
     print_pin_header();
     Criterion::default()
@@ -227,6 +243,6 @@ fn config() -> Criterion {
 criterion_group! {
     name = benches;
     config = config();
-    targets = parse_more_full_pinyins, guess_candidates, guess_sentence_get_sentence, user_store_count_delta
+    targets = parse_more_full_pinyins, guess_candidates, guess_sentence_get_sentence, user_store_count_delta, alloc_instance
 }
 criterion_main!(benches);
