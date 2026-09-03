@@ -6,16 +6,15 @@ Status: **profile change adopted.** The workspace had no
 leaving cross-crate duplication and per-CGU dead code in the `.so`. This
 change adds `lto = "fat"` + `codegen-units = 1` and measures the result.
 
-**Host note.** All before/after figures below are **x86_64/redb**
-(Linux EL10, rustc 1.97.1, commit `bf83ffb9`, built with
-`--no-default-features --features redb` because the host lacks KC dev
-headers). They are **not comparable** to the canonical ARM64/KC numbers
-— oracle 789,512 B vs oxpinyin 1,708,768 B stripped, ratio 2.164×
-(`docs/findings/perf-baseline-kc-validation-2026-08-31.md` Correction 2).
-Under redb the entire database engine compiles into the `.so`; a KC
-build links the external `libkyotocabinet` instead. The before/after
-comparison here is internally consistent (same host, commit, features,
-and fixtures); the ARM64/KC re-measurement is pending.
+**Host note.** The before/after figures in the sections below are
+**x86_64/redb** (Linux EL10, rustc 1.97.1, commit `bf83ffb9`, built
+with `--no-default-features --features redb` because that host lacks KC
+dev headers). Under redb the entire database engine compiles into the
+`.so`; a KC build links the external `libkyotocabinet` instead. The
+before/after comparison is internally consistent (same host, commit,
+features, and fixtures). The ARM64/KC re-measurement was completed
+2026-09-04 and is recorded below under "ARM64/KC re-measurement";
+see also the row in `docs/findings/perf-baseline-kc-2026-08-31.md`.
 
 Method: `cargo build --locked --release -p oxpinyin-capi
 --no-default-features --features redb`, then `strip --strip-all` on the
@@ -28,7 +27,72 @@ back-to-back on the same host and fixtures (model20 via
 `target/model20/extracted`, exported `.redb` tables regenerated once
 before the change and shared by both runs).
 
-## Before/after (stripped `.so`)
+## ARM64/KC re-measurement (2026-09-04)
+
+The merge notes asked the next perf-container pass to re-measure this
+change on the canonical ARM64/KC build. Done, in the ARM64
+`oxpinyin-validate` container (Apple Silicon, linux/arm64, Debian
+testing 20260831 snapshot, libkyotocabinet-dev, Rust 1.97.1, cargo-c
+0.10.25) — the same environment family as the 2026-08-31 KC baseline.
+Both sides built cold with `cargo cinstall --locked --release -p
+oxpinyin-capi --prefix=/usr` and were stripped with `strip --strip-all`;
+the export tables were regenerated once from the pinned model20 by the
+after tree's datagen and shared by both sides.
+
+| | bytes | KiB |
+|---|---:|---:|
+| before (rebase tip, no release profile) | 1,643,232 | 1,604.7 |
+| after (`lto = "fat"`, `codegen-units = 1`) | 1,446,528 | 1,412.6 |
+| **delta** | **−196,704 (−11.97%)** | **−192.1** |
+
+The KC win (−11.97%) is larger than the x86_64/redb one (−7.54%).
+Under KC the `.so` carries only the port's own code, so the cross-crate
+deduplication has proportionally more of the image to act on — the
+redb build's extra in-image DB engine was already LTO-merged per-CGU.
+Section deltas (unstripped, `readelf -S`): `.text` 743,572 → 647,508 B
+(−12.9%), `.rodata` 61,688 → 43,200 B (−30.0%), unwind (`.eh_frame` +
+`.eh_frame_hdr`) 125,812 → 72,556 B (−42.3%), `.data.rel.ro`
+267,192 → 261,536 B (−2.1%), `.rela.dyn` 347,616 → 340,128 B (−2.2%).
+Same pattern as x86_64: the backend-independent levers (unwind cut,
+dead-code pruning) carry, and the static tables / relocation mass
+remain — the root-cause split below stands.
+
+Against the pinned oracle (`789,512 B` stripped), the ARM64/KC ratio
+moves 2.081× → 1.832×.
+
+Steady-state: `guess_candidates/offset_0` (stage2 criterion,
+`taskset -c 0`, four alternating rounds × 20 samples, shared tables):
+before median 11.27 ns, after median 8.67 ns — **−23.1%**, after
+faster on every round, no regression. The absolute nanosecond scale
+(differs from the µs the x86_64 host saw) reflects the P1–P8 data
+rewrite's candidate-path cost change, which affects both sides equally;
+only the before/after comparison is claimed.
+
+Note on the before-value: it is 1,643,232 B, not Correction 2's
+1,708,768 B — 30 commits (the P1–P8 data rewrite) landed between the
+two measurements and changed the artifact; the pair here was measured
+back-to-back at one tip.
+
+Gates on ARM64/KC: `real_tables` fixture-freshness **PASS** (2/2,
+executed — the container has the oracle); clippy `-D warnings` and
+`cargo fmt --check` clean. The `sentence_surface` §12 pin failed
+**identically on both trees** (1-best agreement 491 vs the frozen 488,
+`guessed_disagree` still 0) — a pre-existing drift introduced by the
+P1–P8 rewrites, not by this change: a codegen profile cannot alter
+deterministic predictions, and both builds ran on identical tables.
+The frozen residual needs a maintainer-signed re-freeze (§12) — flagged,
+not done here.
+
+Measuring on KC required one companion fix on this branch: the stage2
+benches still staged the pre-P1–P5 `.kct` table names while the KC
+runtime opens libpinyin-native names (`SystemDbm::file_name`), so
+`pinyin_init` failed before the profile change could be benched;
+`fix(bench): stage2 staged DBMs under the pre-P1-P5 .kct names`
+restores them to the names `export_dir` asserts and the runtime opens.
+
+## x86_64/redb detail (original measurement)
+
+### Before/after (stripped `.so`)
 
 | | bytes | KiB |
 |---|---:|---:|
@@ -40,7 +104,7 @@ After/before ratio: **0.925×**. Unstripped: 3,832,344 → 3,125,528 B
 (the extra −707 KiB is mostly `.symtab` shrink from inlined-away
 symbols, irrelevant once stripped).
 
-## Steady-state performance (regression gate)
+### Steady-state performance (regression gate)
 
 `guess_candidates/offset_0`, criterion, 20 samples per side, identical
 fixtures and features, run back-to-back:
@@ -54,7 +118,7 @@ Criterion's own change estimate: **−7.095%** [−10.899, −3.521],
 p = 0.00. LTO enables cross-crate inlining and made the measured
 path faster, not slower; the 5% regression gate is nowhere near tripped.
 
-## Section breakdown (stripped, `size -A`)
+### Section breakdown (stripped, `size -A`)
 
 | section | before (B) | after (B) | delta |
 |---|---:|---:|---:|
@@ -69,7 +133,7 @@ The 24% unwind-table cut is fat LTO proving more functions `nounwind`
 after inlining; the ~222 KiB that remains is what `panic = "unwind"`
 keeps paying for.
 
-## Top-10 symbols (unstripped `nm --size-sort`)
+### Top-10 symbols (unstripped `nm --size-sort`)
 
 | before | symbol | after | symbol |
 |---:|---|---:|---|
@@ -87,7 +151,7 @@ keeps paying for.
 Distinct redb `btree_mutator` monomorphizations: **40 → 26** (14
 duplicate/dead instantiations eliminated).
 
-## Crate attribution of symbol bytes (unstripped `nm`)
+### Crate attribution of symbol bytes (unstripped `nm`)
 
 | group | before (KiB) | after (KiB) |
 |---|---:|---:|
@@ -107,27 +171,27 @@ inlining, not bloat).
 
 ## Root cause of the 2.164× gap — where it stands
 
-The canonical gap is ARM64/KC; this change does not re-measure it
-(ratio reported in the Amendments row as pending). What x86_64/redb
-says about the shape of the problem:
+The ARM64/KC re-measurement above moved the canonical ratio
+2.081× → 1.832× (1,643,232 → 1,446,528 B at the rebase tip). What
+x86_64/redb says about the shape of the problem:
 
-- **LTO+CGU=1 recovers 7.5%, not a fold change.** The stripped `.so`
-  is still 2,631 KiB. Codegen settings alone cannot close a 2× gap.
-- **~36% of the stripped image is untouchable by LTO**: static data
-  tables (`ZHUYIN_PINYIN_MAP` 83.6 KiB, chewing `CONTENT_TABLE`
-  45.9 KiB, HSU/ETEN indexes 27 KiB each — ~227 KiB of
-  `oxpinyin_core` data), relocation mass (`.rela.dyn` + the
-  `.data.rel.ro` it serves, ~663 KiB combined), and the ~222 KiB of
-  unwind tables that survive under `panic = "unwind"`.
-- **The std backtrace symbolizer (142.3 KiB) survived fat LTO** — it
-  is referenced by the panic machinery, not dead code. Only
-  `panic = "abort"` (or a customized std) removes it.
-- On this backend, redb + hashbrown still cost ~629 KiB — a KC build
-  does not carry this mass at all, which is why the KC-build ratio
-  must be re-measured rather than extrapolated from these numbers.
-  The backend-independent parts of the win (unwind-table cut,
-  alloc/core pruning, wrapper dissolution) should carry to KC; the
-  redb-specific merges will not exist there.
+- **LTO+CGU=1 recovers single digits to low double digits, not a fold
+  change.** Codegen settings alone cannot close a ~1.8× gap.
+- **A large share of the stripped image is untouchable by LTO**:
+  static data tables (`ZHUYIN_PINYIN_MAP` 83.6 KiB, chewing
+  `CONTENT_TABLE` 45.9 KiB, HSU/ETEN indexes 27 KiB each — ~227 KiB
+  of `oxpinyin_core` data), relocation mass (`.rela.dyn` + the
+  `.data.rel.ro` it serves), and the unwind tables that survive under
+  `panic = "unwind"` (72.6 KiB on ARM64/KC after the cut, 227 KiB on
+  x86_64/redb).
+- **The std backtrace symbolizer (142.3 KiB on x86_64/redb) survived
+  fat LTO** — it is referenced by the panic machinery, not dead code.
+  Only `panic = "abort"` (or a customized std) removes it.
+- On x86_64/redb, redb + hashbrown still cost ~629 KiB — a KC build
+  does not carry this mass at all; the KC re-measurement confirmed
+  the backend-independent parts of the win (unwind-table cut,
+  alloc/core pruning, wrapper dissolution) carry, and the redb-
+  specific merges do not exist there.
 
 ## Further reduction options
 
@@ -149,12 +213,17 @@ says about the shape of the problem:
 
 ## Verification
 
-- Parity: `sentence_surface` §12 pin — **PASS** (1/1, non-vacuous,
-  44 s run); `real_tables` compile-check — **PASS** (oracle-gated,
-  0 executed on this host, exit 0 per plan).
+- Parity (x86_64/redb): `sentence_surface` §12 pin — **PASS** (1/1,
+  non-vacuous, 44 s run); `real_tables` compile-check — **PASS**
+  (oracle-gated, 0 executed on that host, exit 0 per plan).
+- Parity (ARM64/KC): `real_tables` fixture-freshness — **PASS** (2/2,
+  executed); `sentence_surface` §12 pin — **FAIL, identical on before
+  and after trees** (1-best 491 vs the frozen 488, `guessed_disagree`
+  0). Attributed to the P1–P8 data rewrites on `main`, not to this
+  change; the frozen residual needs a maintainer-signed §12 re-freeze.
 - `cargo clippy --workspace --no-default-features --features redb
-  --all-targets -- -D warnings` — **PASS**; `cargo fmt --check` —
-  clean.
+  --all-targets -- -D warnings` — **PASS** (x86_64/redb); ARM64/KC:
+  clippy `-D warnings` and `cargo fmt --check` — clean.
 - `[profile.profiling]` untouched: its explicit `lto = "thin"` keeps
   winning over release's `lto = "fat"` (Cargo inheritance: child
   settings override, unset settings inherit), and it now inherits
