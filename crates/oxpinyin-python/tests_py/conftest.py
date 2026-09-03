@@ -22,9 +22,14 @@ def crate_dir() -> Path:
 
 @pytest.fixture(scope="session")
 def fixture_w3(repo_root: Path) -> Path:
-    """The committed mini system-data fixture the Rust tests use too."""
-    path = repo_root / "fixtures" / "w3" / "redb"
-    assert (path / "pinyin_index.redb").is_file(), "w3 fixture missing"
+    """The committed mini system-data fixture the Rust tests use too.
+
+    The wheel is built with the crate's default backend (Kyoto Cabinet:
+    the CI job installs its C library for exactly that), so the fixture
+    directory is the one datagen wrote in libpinyin's own layout.
+    """
+    path = repo_root / "fixtures" / "w3" / "kct"
+    assert (path / "pinyin_index.bin").is_file(), "w3 fixture missing"
     return path
 
 
