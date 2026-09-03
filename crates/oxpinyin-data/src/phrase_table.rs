@@ -163,10 +163,10 @@ impl PhraseTable {
                 // The jump lands on the prefix's own row; upstream steps past
                 // it before reading.
                 if row_key.len() <= key.len() || !row_key.starts_with(&key) {
-                    return Ok(());
+                    return Ok(false);
                 }
                 tokens.extend(decode_tokens(value)?);
-                Ok(())
+                Ok(false)
             })?;
         Ok(tokens)
     }
@@ -222,7 +222,9 @@ mod tests {
                 if hi.is_some_and(|hi| key.as_slice() >= hi) {
                     break;
                 }
-                visit(key, value)?;
+                if visit(key, value)? {
+                    break;
+                }
             }
             Ok(())
         }
