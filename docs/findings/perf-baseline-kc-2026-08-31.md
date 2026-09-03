@@ -228,4 +228,33 @@ validation document for the corrected analysis.
 | Date | Commit | Metric | Before | After | Note |
 |---|---|---|---:|---:|---|
 | 2026-09-03 | 17ae4bf | runtime data (interpolation2.text) | 80.0 MiB | 1.97 MiB (2,065,403 bytes) | \2-gram section omitted; already compiled into KC tables; byte-level verified; runtime parser yields identical UnigramTable (63,907 records, total 50,913,735). |
-| 2026-09-03 | ebb54d2 | alloc | 2.667 ms | (pending measurement) | `key_cost_table` moved from per-`new_session` to once at `Runtime::open`; 440 dictionary lookups eliminated per alloc. Criterion bench added (`alloc_instance` group in `stage2.rs`). Measurement requires pinned model20 tables not available in the build environment. |
+| 2026-09-03 | 0f6c8a4 | alloc | 6.223 ms | 0.003 ms | `key_cost_table` moved from per-`new_session` to once at `Runtime::open`; 440 dictionary lookups eliminated per alloc. Criterion bench added (`alloc_instance` group in `stage2.rs`). Before/after pair re-measured on the second host described below; the original M-series before-value (2.667 ms) is not comparable across hosts. |
+
+### Amendment environment (2026-09-03, alloc row)
+
+The alloc before/after pair was measured on a second host, because the
+pinned model20 tables were unavailable where the change was written:
+podman 5.8.2 on RHEL 10.2 (x86_64, 12 vCPU), guest Debian testing with
+libkyotocabinet-dev 1.2.80-2+b2, libtkrzw-dev 1.0.32-1+b2, gcc 15.3.0,
+Rust 1.97.1 (8bab26f4), cargo-c 0.10.25 — the same package set as the
+image above, via a live mirror rather than the 20260831 snapshot.
+Absolute numbers are not comparable with the M-series table at the top
+of this document (host init alone: 244 ms vs 102 ms there); the
+before/after ratio is internally consistent because both sides and the
+oracle control ran alternating in one session.
+
+- `bisect --perf` speed axis, n=20 processes per side, `taskset -c 0`:
+  oracle alloc 0.001 ms [0.001, 0.001]; oxpinyin at `main` (`bf83ffb9`)
+  6.223 ms [5.931, 8.001]; oxpinyin with the change 0.003 ms
+  [0.003, 0.007]. Alloc ratio to the oracle: 7,872× → 4.2× (median to
+  median, ~1,870×).
+- The moved work reappears once at open: init 244.271 ms → 250.504 ms
+  (+6.2 ms, +2.5%) on the same runs, matching the eliminated per-alloc
+  cost.
+- Criterion `alloc_instance` (`stage2.rs`, first run on this host):
+  1.082 µs [1.080, 1.085] per alloc+free iteration in a warm loop.
+- Running that bench needed a companion fix, landed with the change: the
+  stage2 support module still staged `.redb` table names from the pre-KC
+  era, so `pinyin_init` failed on the staged directory under the KC
+  default; the names now derive from
+  `oxpinyin_store::default_store_file` (the compiled-in backend).
