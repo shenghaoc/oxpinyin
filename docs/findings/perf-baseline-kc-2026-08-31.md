@@ -229,6 +229,7 @@ validation document for the corrected analysis.
 |---|---|---|---:|---:|---|
 | 2026-09-03 | 17ae4bf | runtime data (interpolation2.text) | 80.0 MiB | 1.97 MiB (2,065,403 bytes) | \2-gram section omitted; already compiled into KC tables; byte-level verified; runtime parser yields identical UnigramTable (63,907 records, total 50,913,735). |
 | 2026-09-03 | 0f6c8a4 | alloc | 6.223 ms | 0.003 ms | `key_cost_table` moved from per-`new_session` to once at `Runtime::open`; 440 dictionary lookups eliminated per alloc. Criterion bench added (`alloc_instance` group in `stage2.rs`). Before/after pair re-measured on the second host described below; the original M-series before-value (2.667 ms) is not comparable across hosts. |
+| 2026-09-03 | b5f203a | shared object (stripped) | 1,669 KiB (ARM64/KC, Correction 2) | −7.54% on x86_64/redb (2,914,304 → 2,694,568 B stripped); ARM64/KC re-measurement pending | `lto = "fat"`, `codegen-units = 1` added to `[profile.release]`; see `docs/perf/perf-so-size-2026-09.md` |
 
 ### Amendment environment (2026-09-03, alloc row)
 
@@ -258,3 +259,8 @@ oracle control ran alternating in one session.
   era, so `pinyin_init` failed on the staged directory under the KC
   default; the names now derive from
   `oxpinyin_store::default_store_file` (the compiled-in backend).
+
+The x86_64/redb figure is not the same build as this baseline's
+ARM64/KC artifact (the redb backend compiles the database engine into
+the `.so`; KC links it externally), so the ratio is recorded per host
+and the KC number stays as measured until re-measured.
