@@ -5,7 +5,7 @@ engine produces::
 
     import oxpinyin
 
-    with oxpinyin.Engine.from_fixture_dir("fixtures/w3/kct") as engine:
+    with oxpinyin.Engine.from_fixture_dir("fixtures/w3/redb") as engine:
         for candidate in engine.lookup("nihao"):
             print(candidate.text)
 
