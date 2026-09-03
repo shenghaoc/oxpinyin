@@ -222,3 +222,9 @@ validation document for the corrected analysis.
    based on `debian:testing` (pinned by digest). Builds both oracle
    (libpinyin 2.11.91 + Tkrzw) and oxpinyin-capi (KC default) in a
    single image.
+
+## Amendments
+
+| Date | Commit | Metric | Before | After | Note |
+|---|---|---|---:|---:|---|
+| 2026-09-03 | be98cda | runtime data (interpolation2.text) | 80.0 MiB | ~2.0 MiB | \2-gram section omitted; already compiled into KC tables. |
