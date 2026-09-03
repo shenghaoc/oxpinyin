@@ -45,7 +45,7 @@ writer implements its schema directly.
 | `gb_char.bin`, `gbk_char.bin`, `opengram.bin`, `merged.bin`, `art.bin` … `technology.bin` | `SubPhraseIndex::store` (`phrase_index.cpp`), `MemoryChunk` | `chunks::build_chunk` | **byte-exact** (all 16) |
 | `pinyin_index.bin`, `addon_pinyin_index.bin` | `ChewingLargeTable2` + `PinyinIndexItem2<L>` (`pinyin_phrase3.h`) | `libpinyin::pinyin_index_entries` | field-exact rows; struct tail padding excluded (§6) |
 | `phrase_index.bin`, `addon_phrase_index.bin` | `PhraseLargeTable3` | `libpinyin::phrase_index_entries` | row-exact |
-| `bigram.db` | `Bigram` / `SingleGram` (`ngram.cpp`) — a KC HashDB / Tkrzw HashDBM | `system::compile_libpinyin` | row-exact by point read |
+| `bigram.db` | `Bigram` / `SingleGram` (`ngram.cpp`) — a KC HashDB / Tkrzw HashDBM | `system::compile` | row-exact by point read |
 | `punct.bin` | `PunctTable` (`punct_table.cpp`) | `punct::rows_to_entries_ucs4` | row-exact |
 | `table.conf` | `SystemTableInfo2` | the CLI, `database format:` token per backend | text |
 
@@ -144,7 +144,7 @@ padding. Register entry 18, class (b) — memory safety
 
 ## 8. Files
 
-* `crates/oxpinyin-datagen/src/system.rs` — read pass, both serializers
+* `crates/oxpinyin-datagen/src/system.rs` — read pass and compile (chunk, bigram, and table.conf output)
 * `crates/oxpinyin-datagen/src/libpinyin.rs` — the two index DBM row builders
 * `crates/oxpinyin-datagen/src/chunks.rs` — `MemoryChunk` + `SubPhraseIndex` emitter
 * `crates/oxpinyin-datagen/src/addon.rs`, `punct.rs` — addon and punctuation halves
