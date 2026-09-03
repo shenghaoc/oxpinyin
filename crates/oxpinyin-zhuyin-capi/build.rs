@@ -29,16 +29,14 @@ const PC_BINARY_VERSION: &str = "15.0";
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=libzhuyin.pc.in");
-    println!("cargo:rerun-if-env-changed=GLIB_LIBS");
-    println!("cargo:rerun-if-env-changed=PKG_CONFIG");
-    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libzhuyin.so.15");
     }
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
-        emit_glib_link();
-    }
+    // glib-2.0 linking is handled by glib-sys's build script (system-deps).
+    // Constrained builders: use SYSTEM_DEPS_GLIB_2_0_SEARCH_NATIVE,
+    // SYSTEM_DEPS_GLIB_2_0_LIB, and SYSTEM_DEPS_GLIB_2_0_NO_PKG_CONFIG
+    // in place of the former GLIB_LIBS override.
 
     bake_pkg_config_template();
 }
@@ -92,38 +90,4 @@ fn database_format() -> String {
 
 fn target_profile_dir(out_dir: &str) -> Option<PathBuf> {
     Path::new(out_dir).ancestors().nth(3).map(Path::to_path_buf)
-}
-
-fn emit_glib_link() {
-    if let Ok(explicit) = env::var("GLIB_LIBS")
-        && !explicit.trim().is_empty()
-    {
-        for token in explicit.split_whitespace() {
-            println!("cargo:rustc-link-arg={token}");
-        }
-        return;
-    }
-    let pkg_config = env::var("PKG_CONFIG").unwrap_or_else(|_| "pkg-config".to_owned());
-    let probed = std::process::Command::new(&pkg_config)
-        .args(["--libs", "glib-2.0"])
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .and_then(|out| String::from_utf8(out.stdout).ok());
-    match probed {
-        Some(libs) => {
-            for token in libs.split_whitespace() {
-                if let Some(name) = token.strip_prefix("-l") {
-                    println!("cargo:rustc-link-lib={name}");
-                } else if let Some(path) = token.strip_prefix("-L") {
-                    println!("cargo:rustc-link-search=native={path}");
-                } else {
-                    println!("cargo:rustc-link-arg={token}");
-                }
-            }
-        }
-        None => {
-            println!("cargo:rustc-link-lib=glib-2.0");
-        }
-    }
 }

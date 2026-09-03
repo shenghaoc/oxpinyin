@@ -27,22 +27,11 @@ use std::ptr;
 
 use oxpinyin_core::Dictionary;
 
+use glib_sys::{g_array_append_vals, g_array_set_size};
+
 use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
 use crate::state::instance_ref;
-use crate::types::{GArray, GChar, GUint, PhraseTokenT, PinyinInstance};
-
-// glib append/truncate: the caller-side array is a real glib GArray
-// (built with `g_array_new`, torn down with `g_array_free`). These two
-// entry points are the ones that keep the array's private `_GRealArray`
-// metadata consistent with its public `data`/`len` — writing those
-// fields directly would leave `alloc` and `element_size` stale and
-// break the next consumer call. `_vals` copies `len` elements of the
-// array's stored `element_size` from `data`; `_set_size` extends or
-// truncates in place, honouring any `clear_func`.
-unsafe extern "C" {
-    fn g_array_append_vals(array: *mut GArray, data: *const c_void, len: c_uint) -> *mut GArray;
-    fn g_array_set_size(array: *mut GArray, length: c_uint) -> *mut GArray;
-}
+use crate::types::{GChar, GUint, PhraseTokenT, PinyinInstance};
 
 /// Look up the phrase tokens stored for an exact phrase string.
 ///

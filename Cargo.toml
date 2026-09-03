@@ -75,6 +75,7 @@ phf = "0.11"
 phf_codegen = "0.11"
 # FxHasher: faster non-cryptic hashing for internal membership sets.
 rustc-hash = "2.1"
+glib-sys = "0.20"
 
 # Stage-2 CPU profiles: release speed with enough debug to resolve stacks.
 # `debug = "line-tables-only"` keeps the image small; samply/perf still map

@@ -75,6 +75,7 @@ oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
 oxpinyin-engine.workspace = true
 oxpinyin-runtime.workspace = true
 oxpinyin-user.workspace = true
+glib-sys.workspace = true
 
 [dev-dependencies]
 # Criterion 0.5+ (workspace lock is 0.8). Stage-2 benches only; not a

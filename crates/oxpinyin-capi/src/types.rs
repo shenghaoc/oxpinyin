@@ -124,24 +124,7 @@ pub struct ExportIterator;
 /// Opaque bigram export iterator.
 pub struct BigramExportIterator;
 
-/// glib `GArray` — the caller passes a real glib array (built through
-/// `g_array_new`, torn down through `g_array_free`); the library appends
-/// into it through glib's `g_array_append_vals` and truncates through
-/// `g_array_set_size`, so the array's private `_GRealArray` metadata
-/// (`alloc`, `element_size`, `clear_func`) stays consistent with the
-/// public `data` / `len`. The two public fields are still exposed here
-/// so tests and consumers can peek at the buffer glib owns — that layout
-/// is glib's documented public contract — but nothing in the shipping
-/// library writes them directly. The shipped header declares this
-/// pointer-only (`typedef struct _GArray GArray;`), exactly like glib's
-/// own header.
-#[repr(C)]
-pub struct GArray {
-    /// The element data buffer, glib-owned.
-    pub data: *mut GChar,
-    /// The element count.
-    pub len: u32,
-}
+pub use glib_sys::GArray;
 
 // ── Enums ────────────────────────────────────────────────────────────
 

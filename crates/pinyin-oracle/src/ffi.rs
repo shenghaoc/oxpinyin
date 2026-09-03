@@ -62,17 +62,38 @@ opaque_handle! {
     ExportIterator
 }
 
-/// GLib's `GArray`, by its documented public layout (`data` + `len`).
-///
-/// Only these two fields are public GLib API; the allocation is managed
-/// entirely by `g_array_new`/`g_array_free` and never touched from Rust
-/// beyond reading `len` elements out of `data`.
-#[repr(C)]
-pub(crate) struct GArray {
-    /// Element storage, `len * element_size` bytes.
-    pub(crate) data: *mut u8,
-    /// Number of elements.
-    pub(crate) len: c_uint,
+#[cfg(target_os = "linux")]
+pub(crate) use glib_sys::GArray;
+#[cfg(target_os = "linux")]
+pub(crate) use glib_sys::{g_array_free, g_array_new};
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) use self::glib_compat::{GArray, g_array_free, g_array_new};
+
+/// Fallback declarations for Windows where glib-sys is not available
+/// (no pkg-config / no glib). The oracle never runs on Windows (the
+/// pin-built libpinyin is Linux-only), but the crate must compile there
+/// for the portable test-suite CI job.
+#[cfg(not(target_os = "linux"))]
+mod glib_compat {
+    use core::ffi::{c_char, c_int, c_uint};
+
+    /// Matches `glib_sys::GArray` layout: `data: *mut gchar`, `len: guint`.
+    #[repr(C)]
+    pub struct GArray {
+        pub data: *mut c_char,
+        pub len: c_uint,
+    }
+
+    unsafe extern "C" {
+        pub fn g_array_new(
+            zero_terminated: c_int,
+            clear: c_int,
+            element_size: c_uint,
+        ) -> *mut GArray;
+
+        pub fn g_array_free(array: *mut GArray, free_segment: c_int) -> *mut c_char;
+    }
 }
 
 /// `pinyin_option_t`, defined as `guint32` in the pinned `novel_types.h`.
@@ -243,13 +264,4 @@ unsafe extern "C" {
         utf8_str: *mut *mut c_char,
     ) -> bool;
 
-    /// GLib array constructor; elements are `element_size` bytes each.
-    pub(crate) fn g_array_new(
-        zero_terminated: c_int,
-        clear: c_int,
-        element_size: c_uint,
-    ) -> *mut GArray;
-
-    /// GLib array destructor; `free_segment != 0` releases the storage.
-    pub(crate) fn g_array_free(array: *mut GArray, free_segment: c_int) -> *mut c_char;
 }

@@ -1,3 +1,4 @@
+#![cfg(target_os = "linux")]
 //! Black-box integration tests over the C ABI.
 //!
 //! Driven exclusively through the re-exported `pinyin_*` surface of the

@@ -102,6 +102,9 @@ dhat = "0.3"
 # re-defaulted through this dev edge.
 oxpinyin-user = { path = "../oxpinyin-user", default-features = false }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+glib-sys.workspace = true
+
 [[bench]]
 name = "scan_perf"
 harness = false
