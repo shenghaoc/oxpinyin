@@ -141,6 +141,8 @@ impl PunctTable {
         };
         let key = token.to_le_bytes();
         match dbm.get(&key)? {
+            // Upstream's load_entry conflates absent and empty (0 == value.size());
+            // remove_punctuation can leave a stored chunk at size 0.
             Some(value) if !value.is_empty() => decode_puncts(&value),
             _ => Ok(Vec::new()),
         }
@@ -203,19 +205,29 @@ mod tests {
     }
 
     #[test]
-    fn decode_rejects_unterminated() {
+    fn decode_rejects_unaligned() {
         assert!(decode_puncts("，".as_bytes()).is_err());
-    }
-
-    #[test]
-    fn decode_rejects_empty() {
+        assert!(decode_puncts(b"\x00").is_err());
         assert!(decode_puncts(b"").is_err());
     }
 
     #[test]
+    fn decode_rejects_unterminated() {
+        let one_codepoint = 0xFF0Cu32.to_le_bytes();
+        assert!(decode_puncts(&one_codepoint).is_err());
+    }
+
+    #[test]
     fn decode_rejects_empty_field() {
-        assert!(decode_puncts(b"\x00").is_err());
-        assert!(decode_puncts(b"\xef\xbc\x8c\x00\x00\xe3\x80\x82\x00").is_err());
+        let mut value = Vec::new();
+        value.extend_from_slice(&0u32.to_le_bytes());
+        assert!(decode_puncts(&value).is_err());
+
+        let mut value = Vec::new();
+        value.extend_from_slice(&0xFF0Cu32.to_le_bytes());
+        value.extend_from_slice(&0u32.to_le_bytes());
+        value.extend_from_slice(&0u32.to_le_bytes());
+        assert!(decode_puncts(&value).is_err());
     }
 
     #[test]

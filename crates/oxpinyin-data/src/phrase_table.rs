@@ -172,9 +172,6 @@ impl PhraseTable {
     }
 
     /// Whether `text` exists as a key (empty or non-empty value).
-    ///
-    /// Used for the phrase-segment DP's span probe: does this character
-    /// span correspond to a known phrase?
     #[cfg(test)]
     pub(crate) fn has_key(&self, text: &str) -> Result<bool, DictError> {
         if text.is_empty() {

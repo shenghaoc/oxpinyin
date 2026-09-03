@@ -174,9 +174,9 @@ impl Engine {
         Self::open_with(system_dir, user_dir, false)
     }
 
-    /// Opens fixture-mode semantics like the repository's committed mini
-    /// tables: when no unigram model file is present, flat counts derive
-    /// from the phrase index instead. Development and tests only.
+    /// Opens the engine from a system data directory. Identical to
+    /// `new()` — the mini fixture set is a real (small) data directory
+    /// now. Kept for backward compatibility of the Python API.
     #[classmethod]
     #[pyo3(signature = (system_dir, user_dir=None))]
     fn from_fixture_dir(
