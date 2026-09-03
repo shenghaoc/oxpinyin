@@ -166,41 +166,68 @@ fn write_table(
 }
 
 fn write_interpolation2_1gram(src: &Path, dst: &Path) -> Result<(), DatagenError> {
-    let file = std::fs::File::open(src).map_err(DatagenError::Io)?;
-    let mut reader = BufReader::new(file);
-    let out = std::fs::File::create(dst).map_err(DatagenError::Io)?;
-    let mut writer = BufWriter::new(out);
-    let mut buf = String::new();
-    let mut seen_1gram = false;
+    // `--out-dir` pointed at the model dir would make dst alias src, and
+    // creating dst would truncate the source mid-read.
+    let src_canon = std::fs::canonicalize(src).ok();
+    let dst_canon = std::fs::canonicalize(dst).ok();
+    if src == dst || (src_canon.is_some() && src_canon == dst_canon) {
+        return Err(DatagenError::Consistency(format!(
+            "interpolation2.text source and destination are the same file: {}",
+            src.display()
+        )));
+    }
+    // Write to a sibling temp file and rename into place only on success, so
+    // a failed extraction leaves an existing dst untouched.
+    let mut tmp = dst.as_os_str().to_os_string();
+    tmp.push(format!(".{}.tmp", std::process::id()));
+    let tmp = PathBuf::from(tmp);
 
-    loop {
-        buf.clear();
-        let n = reader.read_line(&mut buf).map_err(DatagenError::Io)?;
-        if n == 0 {
-            break;
+    let extracted = (|| -> Result<(), DatagenError> {
+        let file = std::fs::File::open(src).map_err(DatagenError::Io)?;
+        let mut reader = BufReader::new(file);
+        let out = std::fs::File::create(&tmp).map_err(DatagenError::Io)?;
+        let mut writer = BufWriter::new(out);
+        let mut buf = String::new();
+        let mut seen_1gram = false;
+
+        loop {
+            buf.clear();
+            let n = reader.read_line(&mut buf).map_err(DatagenError::Io)?;
+            if n == 0 {
+                break;
+            }
+            let trimmed = buf.trim_end_matches(['\r', '\n']);
+
+            if !seen_1gram {
+                writer.write_all(buf.as_bytes()).map_err(DatagenError::Io)?;
+                if trimmed == "\\1-gram" {
+                    seen_1gram = true;
+                }
+                continue;
+            }
+            if trimmed.starts_with('\\') && !trimmed.starts_with("\\item") {
+                break;
+            }
+            writer.write_all(buf.as_bytes()).map_err(DatagenError::Io)?;
         }
-        let trimmed = buf.trim_end_matches(['\r', '\n']);
 
         if !seen_1gram {
-            writer.write_all(buf.as_bytes()).map_err(DatagenError::Io)?;
-            if trimmed == "\\1-gram" {
-                seen_1gram = true;
-            }
-            continue;
+            return Err(DatagenError::Consistency(
+                "no \\1-gram section found".into(),
+            ));
         }
-        if trimmed.starts_with('\\') && !trimmed.starts_with("\\item") {
-            break;
-        }
-        writer.write_all(buf.as_bytes()).map_err(DatagenError::Io)?;
-    }
+        writer.write_all(b"\\end\n").map_err(DatagenError::Io)?;
+        writer.flush().map_err(DatagenError::Io)?;
+        Ok(())
+    })();
 
-    if !seen_1gram {
-        return Err(DatagenError::Consistency(
-            "no \\1-gram section found".into(),
-        ));
+    match extracted {
+        Ok(()) => std::fs::rename(&tmp, dst).map_err(DatagenError::Io),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
     }
-    writer.write_all(b"\\end\n").map_err(DatagenError::Io)?;
-    Ok(())
 }
 
 /// The `--tables system` half: the three compiled system tables plus the
@@ -358,4 +385,111 @@ fn main() -> ExitCode {
         out_dir.display()
     );
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_interpolation2_1gram;
+
+    /// A fresh per-test scratch dir; this workspace keeps no tempfile dep.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "oxpinyin-datagen-bin-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    fn tmp_litter(dir: &std::path::Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .expect("read dir")
+            .filter_map(|e| {
+                let name = e.expect("dir entry").file_name().into_string().ok()?;
+                name.ends_with(".tmp").then_some(name)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn emits_1gram_section_only_and_leaves_no_temp_file() {
+        let dir = scratch("emits");
+        let src = dir.join("src.text");
+        std::fs::write(
+            &src,
+            "\\created_by\tmarisa\n\\1-gram\n\\item\ta 1.0\n\\2-gram\n\\item\tx 2.0\n",
+        )
+        .expect("write src");
+        let dst = dir.join("interpolation2.text");
+
+        write_interpolation2_1gram(&src, &dst).expect("extract");
+
+        assert_eq!(
+            std::fs::read_to_string(&dst).expect("read dst"),
+            "\\created_by\tmarisa\n\\1-gram\n\\item\ta 1.0\n\\end\n"
+        );
+        assert!(tmp_litter(&dir).is_empty());
+    }
+
+    #[test]
+    fn missing_1gram_section_leaves_destination_intact() {
+        let dir = scratch("missing");
+        let src = dir.join("src.text");
+        std::fs::write(&src, "\\created_by\tmarisa\n").expect("write src");
+        let dst = dir.join("interpolation2.text");
+        std::fs::write(&dst, "previous output\n").expect("write dst");
+
+        let err = write_interpolation2_1gram(&src, &dst).expect_err("no 1-gram section");
+
+        assert!(
+            matches!(err, super::DatagenError::Consistency(ref msg) if msg.contains("1-gram")),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&dst).expect("read dst"),
+            "previous output\n"
+        );
+        assert!(tmp_litter(&dir).is_empty());
+    }
+
+    #[test]
+    fn aliased_source_and_destination_rejected() {
+        let dir = scratch("alias");
+        let src = dir.join("interpolation2.text");
+        std::fs::write(&src, "\\1-gram\n").expect("write src");
+
+        let err = write_interpolation2_1gram(&src, &src).expect_err("src and dst are one file");
+
+        assert!(
+            matches!(err, super::DatagenError::Consistency(ref msg) if msg.contains("same file")),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&src).expect("read src"),
+            "\\1-gram\n"
+        );
+        assert!(tmp_litter(&dir).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_destination_alias_rejected() {
+        let dir = scratch("symlink-alias");
+        let src = dir.join("src.text");
+        std::fs::write(&src, "\\1-gram\n").expect("write src");
+        let link = dir.join("interpolation2.text");
+        std::os::unix::fs::symlink(&src, &link).expect("symlink");
+
+        let err = write_interpolation2_1gram(&src, &link).expect_err("dst resolves to src");
+
+        assert!(
+            matches!(err, super::DatagenError::Consistency(_)),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&src).expect("read src"),
+            "\\1-gram\n"
+        );
+    }
 }
