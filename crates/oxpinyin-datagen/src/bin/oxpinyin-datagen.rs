@@ -11,13 +11,15 @@
 //! discovers it (`PINYIN_MODEL_DIR`, `PINYIN_MODEL_CACHE/extracted`, the
 //! workspace `target/model20/extracted` cache); run
 //! `tools/model/fetch-model.sh` first. The output directory receives the
-//! tables, a copy of `interpolation2.text` (the engine's system dir reads
-//! it), and `datagen-manifest.txt` with the run's provenance.
+//! tables, the `\1-gram` section of `interpolation2.text` (the only
+//! section the engine reads at runtime), and `datagen-manifest.txt` with
+//! the run's provenance.
 //!
 //! `--mini` reproduces the committed `fixtures/w3/` subset — the
 //! regression recipe, not a shipping path.
 
 #![forbid(unsafe_code)]
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -163,8 +165,46 @@ fn write_table(
     manifest.push(record);
 }
 
+fn write_interpolation2_1gram(src: &Path, dst: &Path) -> Result<(), DatagenError> {
+    let file = std::fs::File::open(src).map_err(DatagenError::Io)?;
+    let mut reader = BufReader::new(file);
+    let out = std::fs::File::create(dst).map_err(DatagenError::Io)?;
+    let mut writer = BufWriter::new(out);
+    let mut buf = String::new();
+    let mut seen_1gram = false;
+
+    loop {
+        buf.clear();
+        let n = reader.read_line(&mut buf).map_err(DatagenError::Io)?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = buf.trim_end_matches(['\r', '\n']);
+
+        if !seen_1gram {
+            writer.write_all(buf.as_bytes()).map_err(DatagenError::Io)?;
+            if trimmed == "\\1-gram" {
+                seen_1gram = true;
+            }
+            continue;
+        }
+        if trimmed.starts_with('\\') && !trimmed.starts_with("\\item") {
+            break;
+        }
+        writer.write_all(buf.as_bytes()).map_err(DatagenError::Io)?;
+    }
+
+    if !seen_1gram {
+        return Err(DatagenError::Consistency(
+            "no \\1-gram section found".into(),
+        ));
+    }
+    writer.write_all(b"\\end\n").map_err(DatagenError::Io)?;
+    Ok(())
+}
+
 /// The `--tables system` half: the three compiled system tables plus the
-/// engine's `interpolation2.text` copy.
+/// engine's `interpolation2.text` (1-gram section only).
 fn compile_system(
     backend: Backend,
     mini: bool,
@@ -203,11 +243,11 @@ fn compile_system(
         manifest,
     );
     write_table(backend, out_dir, "bigram", &tables.bigram, manifest);
-    // The engine's system dir consumes interpolation2.text directly.
+    // The engine reads only the \1-gram section at runtime; emit that section only.
     let target = out_dir.join("interpolation2.text");
-    std::fs::copy(model_dir.join("interpolation2.text"), &target)
-        .unwrap_or_else(|e| fail(&DatagenError::Io(e)));
-    eprintln!("  interpolation2.text → {}", target.display());
+    write_interpolation2_1gram(&model_dir.join("interpolation2.text"), &target)
+        .unwrap_or_else(|e| fail(&e));
+    eprintln!("  interpolation2.text (1-gram only) → {}", target.display());
 }
 
 /// The `--tables addon` half: every add-on library's two tables.
