@@ -170,8 +170,10 @@ pub(crate) fn encode_items(items: &[PinyinIndexItem]) -> Vec<u8> {
 
 // ── ChewingTable ─────────────────────────────────────────────────
 
-/// The callback a [`ChewingDbm::walk`] hands each `(key, value)` row to.
-pub(crate) type RowVisitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), DictError> + 'a;
+/// The callback a [`ChewingDbm::walk`] hands each `(key, value)` row to;
+/// `Ok(true)` stops the walk — the backend abandons the underlying scan
+/// right there rather than skipping the remaining rows.
+pub(crate) type RowVisitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<bool, DictError> + 'a;
 
 /// The callback [`ChewingTable::walk_extensions`] hands each non-empty
 /// extension row's `(syllable count, records)` to; `Ok(true)` stops the
@@ -188,6 +190,10 @@ pub(crate) trait ChewingDbm {
     /// Every row whose key lies in `[lo, hi)` (`hi = None` — to the end),
     /// in ascending key-byte order — the cursor walk upstream's
     /// `search_suggestion` performs (`cursor->jump` + `step`).
+    ///
+    /// A visitor return of `Ok(true)` stops the walk: implementations
+    /// must terminate the underlying scan there (not merely skip the
+    /// remaining rows), and the walk returns `Ok(())`.
     fn walk(
         &self,
         lo: &[u8],
@@ -224,6 +230,34 @@ impl<S> RawChewingDbm<S> {
     }
 }
 
+/// Aborts the store scan when a row visitor stops or fails: the store's
+/// visitor signature has no stop channel, so the abort rides the error
+/// path under a private marker type that cannot collide with a backend
+/// failure.
+#[derive(Debug)]
+struct WalkStopped;
+
+impl std::fmt::Display for WalkStopped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("row visitor stopped the walk")
+    }
+}
+
+impl std::error::Error for WalkStopped {}
+
+/// The sentinel a stopping (or failed) visitor aborts the store scan
+/// with — see [`WalkStopped`].
+fn stop_scan() -> oxpinyin_store::StoreError {
+    oxpinyin_store::StoreError::Backend(Box::new(WalkStopped))
+}
+
+/// Whether `e` is the [`WalkStopped`] sentinel rather than a backend
+/// failure.
+fn is_stop_scan(e: &oxpinyin_store::StoreError) -> bool {
+    matches!(e, oxpinyin_store::StoreError::Backend(b)
+        if b.downcast_ref::<WalkStopped>().is_some())
+}
+
 impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm<S> {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
         self.store
@@ -238,24 +272,36 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
         visit: &mut RowVisitor<'_>,
     ) -> Result<(), DictError> {
         use std::ops::Bound;
-        // The store's visitor speaks `StoreError`; collect the bounded
-        // range first (every caller bounds it to one key's extensions)
-        // and hand the rows over outside the store's callback.
-        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-        self.store
-            .range_raw(
-                Bound::Included(lo),
-                hi.map_or(Bound::Unbounded, Bound::Excluded),
-                &mut |key, value| {
-                    rows.push((key.to_vec(), value.to_vec()));
-                    Ok(())
-                },
-            )
-            .map_err(|e| DictError::Table(e.into()))?;
-        for (key, value) in &rows {
-            visit(key, value)?;
+        // The store's callback speaks `StoreError` and has no stop
+        // channel, while the row visitor speaks `DictError` and asks to
+        // stop: both are bridged by aborting the scan with the sentinel
+        // and sorting the outcome out afterwards. Rows are visited as
+        // the store hands them over — no collect-then-replay buffer, and
+        // nothing past the stop is scanned.
+        let mut failure: Option<DictError> = None;
+        let scan = self.store.range_raw(
+            Bound::Included(lo),
+            hi.map_or(Bound::Unbounded, Bound::Excluded),
+            &mut |key, value| match visit(key, value) {
+                Ok(true) => Err(stop_scan()),
+                Ok(false) => Ok(()),
+                Err(e) => {
+                    failure = Some(e);
+                    Err(stop_scan())
+                }
+            },
+        );
+        if let Some(e) = failure {
+            return Err(e);
         }
-        Ok(())
+        match scan {
+            Ok(()) => Ok(()),
+            // The sentinel is this walk's own stop request, not a store
+            // failure — every backend aborts its scan on the first
+            // visitor error, so nothing else can follow it.
+            Err(e) if is_stop_scan(&e) => Ok(()),
+            Err(e) => Err(DictError::Table(e.into())),
+        }
     }
 }
 
@@ -321,7 +367,8 @@ impl ChewingTable {
     /// Every row whose key extends the query's index key (the key itself
     /// included), in ascending key order — the rows a longer phrase with
     /// this pinyin prefix can live under. Each row is handed over as
-    /// `(syllable count, records)`; empty markers are skipped.
+    /// `(syllable count, records)`; empty markers are skipped. A visitor
+    /// `Ok(true)` terminates the scan itself, not merely the visit loop.
     ///
     /// This is the widen probe's visibility walk: upstream's
     /// `SEARCH_CONTINUED` says only that *some* longer key exists, and a
@@ -340,15 +387,13 @@ impl ChewingTable {
         let mut found = false;
         self.dbm
             .walk(&encoded, upper.as_deref(), &mut |key, value| {
-                if found || value.is_empty() || !key.len().is_multiple_of(2) {
-                    return Ok(());
+                if value.is_empty() || !key.len().is_multiple_of(2) {
+                    return Ok(false);
                 }
                 let phrase_length = key.len() / 2;
                 let items = decode_items(value, phrase_length)?;
-                if visit(phrase_length, &items)? {
-                    found = true;
-                }
-                Ok(())
+                found = visit(phrase_length, &items)?;
+                Ok(found)
             })?;
         Ok(found)
     }
@@ -558,7 +603,9 @@ mod tests {
                 if hi.is_some_and(|hi| key.as_slice() >= hi) {
                     break;
                 }
-                visit(key, value)?;
+                if visit(key, value)? {
+                    break;
+                }
             }
             Ok(())
         }
@@ -794,6 +841,82 @@ mod tests {
             .walk_extensions(&[ni], &mut |_, items| Ok(items[0].token >> 24 == 2))
             .unwrap();
         assert!(found);
+    }
+
+    #[test]
+    fn walk_stops_the_scan_at_the_visitor_stop() {
+        let dbm = MemoryDbm::new();
+        for i in 0_u8..8 {
+            dbm.put(vec![i], vec![i]);
+        }
+        let table = ChewingTable::new(Box::new(dbm));
+        let mut seen = Vec::new();
+        table
+            .dbm
+            .walk(&[2], Some(&[8]), &mut |key, _| {
+                seen.push(key[0]);
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(seen, vec![2], "the stop ends the scan at the first row");
+    }
+
+    #[test]
+    fn raw_walk_stops_the_store_scan_and_keeps_errors_distinct() {
+        use oxpinyin_store::{DefaultStore, ReadStore as _, WriteStore as _};
+        let dir = std::env::temp_dir().join(format!(
+            "oxpinyin-raw-walk-stop-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(oxpinyin_store::default_store_file("walk_stop"));
+        let store = DefaultStore::create(&path).unwrap();
+        store
+            .write(|txn| {
+                for i in 0_u8..8 {
+                    txn.put_raw(&[i], &[i])?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        drop(store);
+        let dbm = RawChewingDbm::new(DefaultStore::open_read_only(&path).unwrap());
+
+        // A stop after two rows: only two rows are visited and the walk
+        // succeeds — the store scan is aborted, not run to the end.
+        let mut seen = Vec::new();
+        dbm.walk(&[2], Some(&[8]), &mut |key, _| {
+            seen.push(key[0]);
+            Ok(seen.len() == 2)
+        })
+        .unwrap();
+        assert_eq!(seen, vec![2, 3]);
+
+        // No stop: every row of the range.
+        let mut count = 0;
+        dbm.walk(&[2], Some(&[8]), &mut |_, _| {
+            count += 1;
+            Ok(false)
+        })
+        .unwrap();
+        assert_eq!(count, 6);
+
+        // A visitor error comes back as itself, not as the sentinel that
+        // aborted the store scan.
+        let err = dbm
+            .walk(&[2], Some(&[8]), &mut |_, _| {
+                Err(DictError::Parse("boom".to_owned()))
+            })
+            .unwrap_err();
+        assert!(
+            matches!(err, DictError::Parse(ref m) if m == "boom"),
+            "{err:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
