@@ -8,7 +8,7 @@ table=opengram.bin records=4915 fnv1a64=f171d608991d56bd
 table=merged.bin records=27 fnv1a64=8828c7cfa6d00002
 table=pinyin_index.redb records=182 fnv1a64=129859b845698265
 table=phrase_index.redb records=736 fnv1a64=dc55091cf50a971c
-table=bigram.redb records=175 fnv1a64=efbca4bd7d049626
+table=bigram.redb records=65 fnv1a64=cf3fa43ee561f651
 table=art.bin records=151 fnv1a64=6127223ebfbac15a
 table=addon_pinyin_index.redb records=11 fnv1a64=69c8dc3d8c37c739
 table=addon_phrase_index.redb records=7 fnv1a64=7488811400f4299f

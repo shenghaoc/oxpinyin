@@ -458,7 +458,21 @@ pub fn compile(
             lib.parsed_rows.retain(|row| kept.contains(&row.token));
         }
         model.unigrams.retain(|token, _| kept.contains(token));
+        // The bigram must stay reference-complete inside the subset: a
+        // record naming a token the restricted phrase index no longer
+        // carries is a dangling reference, and a total that still counts
+        // pruned records would skew every probability read from it. So
+        // the records are pruned to `kept` too, groups that empty out
+        // are dropped, and each surviving total is rebuilt as the sum of
+        // its remaining records.
         model.bigram.retain(|token, _| kept.contains(token));
+        for (_, records) in model.bigram.values_mut() {
+            records.retain(|(next, _)| kept.contains(next));
+        }
+        model.bigram.retain(|_, (_, records)| !records.is_empty());
+        for (total, records) in model.bigram.values_mut() {
+            *total = records.iter().map(|(_, count)| u64::from(*count)).sum();
+        }
     }
 
     // ---- chunk files (per-library SubPhraseIndex::store) --------------
@@ -742,6 +756,50 @@ mod tests {
         // 吧 is only reachable through "b", which is not.
         assert_eq!(mini.phrase_index.len(), 1);
         assert_eq!(mini.pinyin_index.len(), 4, "a and ya in both keyspaces");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mini_subset_prunes_dangling_bigram_successors_and_recomputes_totals() {
+        let dir = tmp_model("mini-bigram");
+        // a → 吖 (kept), b → 吧 (pruned: "b" is not an allowlisted
+        // spelling), ni → 妮 (kept).
+        write(
+            &dir.join("gb_char.table"),
+            "a\t吖\t16777218\t104\nb\t吧\t16777219\t5\nni\t妮\t16777220\t7\n",
+        );
+        write_empty_libraries(&dir, "gb_char");
+        write(
+            &dir.join("interpolation2.text"),
+            "\\data model interpolation\n\
+             \\2-gram\n\
+             \\item 16777218 吖 16777219 吧 count 5\n\
+             \\item 16777218 吖 16777220 妮 count 3\n\
+             \\item 16777219 吧 16777218 吖 count 7\n\
+             \\item 16777220 妮 16777219 吧 count 9\n\
+             \\end\n",
+        );
+        let (full, _) = compile(&dir, Subset::Full).unwrap();
+        // Three groups: 吖 (2 records, total 8), 吧 (1, total 7),
+        // 妮 (1, total 9).
+        assert_eq!(full.bigram.len(), 3);
+        let (mini, _) = compile(&dir, Subset::MiniFixture).unwrap();
+        // The 吧-keyed group is pruned wholesale; the 妮-keyed group's
+        // only record dangles and the group empties out; the 吖-keyed
+        // group keeps its 妮 record, drops the 吧 record, and its total
+        // is the surviving sum 3, not the pre-prune 8.
+        assert_eq!(mini.bigram.len(), 1);
+        assert_eq!(mini.bigram[0].0, 16_777_218_u32.to_le_bytes());
+        assert_eq!(
+            mini.bigram[0].1,
+            [
+                3_u32.to_le_bytes(),
+                16_777_220_u32.to_le_bytes(),
+                3_u32.to_le_bytes()
+            ]
+            .concat(),
+            "total 3 + one record (妮, 3)"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -67,6 +67,12 @@ __pycache__/
 # LMDB creates a runtime lock file beside each committed .lmdb fixture.
 /fixtures/w3/*.lmdb-lock
 
+# oxpinyin-datagen (since the 1-gram-only emission) writes an
+# interpolation2.text into every --out-dir; the committed w3 fixture sets
+# predate that and deliberately do not carry it — nothing at runtime reads
+# it from a data dir.
+/fixtures/w3/*/interpolation2.text
+
 # Container drop-in gates write their cargo targets here (run-dropin-*.sh).
 /target-fedora/
 /target-debian/
