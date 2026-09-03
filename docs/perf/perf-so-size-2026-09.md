@@ -101,7 +101,7 @@ restores them to the names `export_dir` asserts and the runtime opens.
 | **delta** | **−219,736 (−7.54%)** | **−214.6** |
 
 After/before ratio: **0.925×**. Unstripped: 3,832,344 → 3,125,528 B
-(the extra −707 KiB is mostly `.symtab` shrink from inlined-away
+(the extra −706,816 B is mostly `.symtab` shrink from inlined-away
 symbols, irrelevant once stripped).
 
 ### Steady-state performance (regression gate)
@@ -129,8 +129,9 @@ path faster, not slower; the 5% regression gate is nowhere near tripped.
 | `.rodata` | 78,360 | 72,136 | −6,224 |
 | `.data` / `.bss` | 2,560 / 144 | 2,560 / 144 | 0 |
 
-The 24% unwind-table cut is fat LTO proving more functions `nounwind`
-after inlining; the ~222 KiB that remains is what `panic = "unwind"`
+The 24% unwind-table cut is consistent with fat LTO proving more
+functions `nounwind` after inlining (no compiler-level evidence
+collected); the ~222 KiB that remains is what `panic = "unwind"`
 keeps paying for.
 
 ### Top-10 symbols (unstripped `nm --size-sort`)
