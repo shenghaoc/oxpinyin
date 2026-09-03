@@ -664,7 +664,7 @@ Text, candidate type and counts cannot.
   oxpinyin answers. Report-back batch: file with the scheme-setter and
   `_check_offset` assert families.
 
-### FORCE_TONE — scheme-specific: every seam honours its scheme law; zhuyin batch closed (1671954); double-pinyin batch closed (5ec782ea)
+### FORCE_TONE — scheme-specific: zhuyin batch closed (1671954); double-pinyin batch closed (5ec782ea); pinyin-facade chewing batch open
 
 - **Upstream source cite:** `src/storage/pinyin_parser2.cpp:412` and
   `:448` (`DoublePinyinParser2::parse_one_key`: `if (options & FORCE_TONE
@@ -1240,15 +1240,15 @@ tags.
   Entry kept so a future consumer that sets the bit finds the law already
   analysed.
 
-## pinyin-facade chewing batch seam does not forward `FORCE_TONE` — open (the FORCE_TONE entry's fourth seam)
+## pinyin-facade chewing batch seam does not forward `FORCE_TONE` — open (the FORCE_TONE entry's sixth seam)
 
 Surfaced by the bopomofo SPEC audit (2026-09-03). The FORCE_TONE entry
 above enumerates the full-pinyin batch, the double one-key, the zhuyin
-one-key and the libzhuyin batch seams; the pinyin facade's chewing batch
-seam — `pinyin_parse_more_chewings`, the function the bopomofo SPEC
+one-key, the libzhuyin batch and the double-pinyin batch seams; the pinyin
+facade's chewing batch seam — `pinyin_parse_more_chewings`, the function the bopomofo SPEC
 freezes — was never in that enumeration. This entry completes it.
 
-- **Upstream source cite:** `src/pinyin.cpp:1582-1609`
+- **Upstream source cite:** `src/pinyin.cpp:1582-1609` (at pin `0c5e80e1`)
   (`pinyin_parse_more_chewings` passes `context->m_options` with only
   `ZHUYIN_CORRECT_ALL` stripped, the strip at `:1589`);
   `src/storage/zhuyin_parser2.cpp:171-179` (Simple `parse_one_key`:
