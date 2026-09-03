@@ -68,21 +68,6 @@ pub struct ChunkItem {
     pub prons: Vec<(Vec<u16>, u32)>,
 }
 
-impl ChunkItem {
-    /// The serialised item size: header + UCS-4 text + per-pronunciation
-    /// key runs and frequency (`get_phrase_item`'s length arithmetic).
-    #[must_use]
-    pub fn byte_len(&self) -> usize {
-        let len = self.phrase.len();
-        6 + 4 * len
-            + self
-                .prons
-                .iter()
-                .map(|(keys, _)| 2 * keys.len() + 4)
-                .sum::<usize>()
-    }
-}
-
 /// `MemoryChunk::get_check_sum` (`memory_chunk.h:131-159`).
 fn checksum(payload: &[u8]) -> u32 {
     let mut sum: u32 = 0;
