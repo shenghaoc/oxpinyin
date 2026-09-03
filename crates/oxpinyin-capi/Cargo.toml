@@ -84,6 +84,12 @@ criterion = "0.8"
 # Direct use in `benches/stage2.rs` (`UserStore::count_delta`). Already a
 # runtime dependency of this crate; restated so the bench crate can import it.
 oxpinyin-user = { path = "../oxpinyin-user", default-features = false }
+# Dev-only edge: the Stage-2 benches name the exported tables through
+# `oxpinyin_store::default_store_file` (the compiled-in backend's extension,
+# `.kct` under the KC default). Never a dependency of the C ABI itself;
+# the backend feature reaches it through oxpinyin-data, as with the line
+# above.
+oxpinyin-store = { path = "../oxpinyin-store", default-features = false }
 # Dev-only edge: the Stage-2 benches consume the canonical model20-cache
 # locator and export-dir resolution (oxpinyin_testsupport::model_cache).
 # Never a dependency of the C ABI itself.

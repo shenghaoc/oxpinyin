@@ -176,8 +176,9 @@ fn link_or_copy(src: &Path, dst: &Path) {
     });
 }
 
-/// One directory that `pinyin_init` can open: exported redb tables plus
-/// the pinned `interpolation2.text`.
+/// One directory that `pinyin_init` can open: the exported tables (named
+/// by the compiled-in backend, like [`export_dir`] asserts them) plus the
+/// pinned `interpolation2.text`.
 pub fn staged_system_dir() -> &'static Path {
     static STAGED: OnceLock<PathBuf> = OnceLock::new();
     STAGED
@@ -188,8 +189,9 @@ pub fn staged_system_dir() -> &'static Path {
                 std::env::temp_dir().join(format!("oxpinyin-stage2-system-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&staged);
             std::fs::create_dir_all(&staged).expect("stage system dir");
-            for name in ["pinyin_index.redb", "phrase_index.redb", "bigram.redb"] {
-                link_or_copy(&export.join(name), &staged.join(name));
+            for stem in ["pinyin_index", "phrase_index", "bigram"] {
+                let name = oxpinyin_store::default_store_file(stem);
+                link_or_copy(&export.join(&name), &staged.join(&name));
             }
             link_or_copy(
                 &model.join("interpolation2.text"),
