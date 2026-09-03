@@ -222,3 +222,9 @@ validation document for the corrected analysis.
    based on `debian:testing` (pinned by digest). Builds both oracle
    (libpinyin 2.11.91 + Tkrzw) and oxpinyin-capi (KC default) in a
    single image.
+
+## Amendments
+
+| Date | Commit | Metric | Before | After | Note |
+|---|---|---|---:|---:|---|
+| 2026-09-03 | 17ae4bf | runtime data (interpolation2.text) | 80.0 MiB | 1.97 MiB (2,065,403 bytes) | \2-gram section omitted; already compiled into KC tables; byte-level verified; runtime parser yields identical UnigramTable (63,907 records, total 50,913,735). |
