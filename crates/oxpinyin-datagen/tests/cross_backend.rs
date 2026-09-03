@@ -134,7 +134,9 @@ fn the_compiled_backend_reads_back_through_the_runtime_reader() {
         "xi'an must find 西安"
     );
     assert!(dict.phrase_prefix_exists(&syllables("zhong")).unwrap());
-    assert!(dict.lookup(&syllables("zzz")).unwrap().is_empty());
+    // An unparseable spelling cannot become a `SyllableKey` query at all,
+    // and an absent-but-parseable lookup answering empty is covered by
+    // `system_dictionary.rs`'s `empty_and_unknown_lookups_answer_empty`.
     let tokens = dict.tokens_for_text("你好").unwrap();
     assert!(
         tokens
