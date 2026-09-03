@@ -6,11 +6,11 @@ table=gb_char.bin records=167681 fnv1a64=7fb5262ede3919d8
 table=gbk_char.bin records=70241 fnv1a64=2147549f06f49e25
 table=opengram.bin records=4915 fnv1a64=f171d608991d56bd
 table=merged.bin records=27 fnv1a64=8828c7cfa6d00002
-table=pinyin_index.lmdb records=182 fnv1a64=2fee8768cb113d44
-table=phrase_index.lmdb records=736 fnv1a64=3a538ecacad80ba5
-table=bigram.lmdb records=175 fnv1a64=05096784614c8503
+table=pinyin_index.lmdb records=182 fnv1a64=c97b7a452ebaf084
+table=phrase_index.lmdb records=736 fnv1a64=f7fa47fce5dbc245
+table=bigram.lmdb records=65 fnv1a64=d94467695b96cbfa
 table=art.bin records=151 fnv1a64=6127223ebfbac15a
-table=addon_pinyin_index.lmdb records=11 fnv1a64=3cf96420e0f1a2ca
-table=addon_phrase_index.lmdb records=7 fnv1a64=321817781f7ef894
-table=punct.lmdb records=272 fnv1a64=f7d21f575bcfff50
+table=addon_pinyin_index.lmdb records=11 fnv1a64=af5fa2e87dafbfea
+table=addon_phrase_index.lmdb records=7 fnv1a64=22797c76638f4994
+table=punct.lmdb records=272 fnv1a64=5cb3d972dd13b411
 table=table.conf records=1 fnv1a64=3c993bcf472f8772
