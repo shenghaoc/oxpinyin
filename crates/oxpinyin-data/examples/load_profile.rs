@@ -82,6 +82,7 @@ fn main() {
             LookupTable::open(&export.join(default_store_file("phrase_index"))).expect("phrase")
         }),
         "lookups" => lookup_profile(&export, repeats),
+        "chewing-lookups" => chewing_lookup_profile(&export, repeats),
         "bigram" => retain_step("LookupTable::open bigram", || {
             LookupTable::open(&export.join(default_store_file("bigram"))).expect("bigram")
         }),
@@ -103,10 +104,29 @@ fn main() {
             println!("  key_costs len={}", costs.len());
             drop((dict, lm, punct_table, costs));
         }
+        "chewing" => {
+            println!("=== ChewingDictionary::open (P2 lazy path) ===");
+            retain_step("ChewingDictionary::open", || {
+                oxpinyin_data::ChewingDictionary::open(
+                    &export.join(default_store_file("pinyin_index")),
+                    &export.join(default_store_file("phrase_index")),
+                )
+                .expect("chewing dict")
+            });
+            println!();
+            println!("=== SystemDictionary::open (eager path, for comparison) ===");
+            retain_step("SystemDictionary::open", || {
+                SystemDictionary::open(
+                    &export.join(default_store_file("pinyin_index")),
+                    &export.join(default_store_file("phrase_index")),
+                )
+                .expect("system dict")
+            });
+        }
         other => {
             eprintln!(
                 "unknown mode {other:?}\n\
-                 usage: load_profile [all|inventory|isolated|cumulative|dict|lookups|pinyin|phrase|bigram|interp|full|keycosts]"
+                 usage: load_profile [all|inventory|isolated|cumulative|dict|lookups|pinyin|phrase|bigram|interp|full|keycosts|chewing|chewing-lookups]"
             );
             std::process::exit(2);
         }
@@ -680,6 +700,50 @@ fn lookup_profile(export: &Path, repeats: usize) {
         &export.join(default_store_file("phrase_index")),
     )
     .expect("dict");
+    let shapes: Vec<Vec<SyllableKey>> = ["ni", "ni'hao", "zhong'guo", "xian", "de"]
+        .into_iter()
+        .map(|spelling| {
+            spelling
+                .split('\'')
+                .map(|syllable| SyllableKey::from_text(syllable).expect("frozen syllable"))
+                .collect()
+        })
+        .collect();
+    let mut scratch = Vec::new();
+    for shape in &shapes {
+        dict.lookup_into(shape, &mut scratch).expect("lookup");
+        println!(
+            "  {:<12} hits={:<5} prefix={}",
+            shape
+                .iter()
+                .map(|key| key.text())
+                .collect::<Vec<_>>()
+                .join("'"),
+            scratch.len(),
+            dict.phrase_prefix_exists(shape).expect("probe")
+        );
+    }
+    let per_batch = median_of(repeats, || {
+        let started = Instant::now();
+        for _ in 0..1000 {
+            for shape in &shapes {
+                dict.lookup_into(shape, &mut scratch).expect("lookup");
+                let _ = black_box(&scratch);
+                let _ = black_box(dict.phrase_prefix_exists(shape).expect("probe"));
+            }
+        }
+        started.elapsed()
+    });
+    println!("  5000 lookups + 5000 prefix probes: {per_batch}");
+}
+
+fn chewing_lookup_profile(export: &Path, repeats: usize) {
+    println!("=== ChewingDictionary steady-state lookups ===");
+    let dict = oxpinyin_data::ChewingDictionary::open(
+        &export.join(default_store_file("pinyin_index")),
+        &export.join(default_store_file("phrase_index")),
+    )
+    .expect("chewing dict");
     let shapes: Vec<Vec<SyllableKey>> = ["ni", "ni'hao", "zhong'guo", "xian", "de"]
         .into_iter()
         .map(|spelling| {

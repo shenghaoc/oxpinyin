@@ -16,6 +16,8 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
+pub mod chewing_dict;
+pub(crate) mod chewing_table;
 pub mod content;
 pub mod dict;
 pub(crate) mod initials;
@@ -26,6 +28,7 @@ pub mod punct;
 pub mod table;
 pub mod table_conf;
 
+pub use chewing_dict::ChewingDictionary;
 pub use content::{ContentTable, LoadError, Record, TokenPair};
 pub use dict::{DictError, SystemDictionary, build_prefix_tables};
 pub use interp::{

@@ -613,6 +613,12 @@ impl ReadStore for LmdbStore {
     }
 }
 
+impl crate::RawReadStore for LmdbStore {
+    fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        self.get(crate::RAW_TABLE, key)
+    }
+}
+
 impl WriteStore for LmdbStore {
     fn create(path: &Path) -> Result<Self, StoreError> {
         let env = shared_env(path, false, MAP_SIZE)?;

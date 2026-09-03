@@ -172,6 +172,24 @@ pub trait WriteTxn {
     /// Returns [`StoreError`] when the backend write fails.
     fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
 
+    /// Insert or overwrite a raw (unframed) `key` → `value` — the write
+    /// half of [`RawReadStore::get_raw`]. Rows written here are what
+    /// `get_raw` / [`RawReadStore::range_raw`] read back on the same
+    /// backend, with no table-name framing.
+    ///
+    /// Backends without a flat keyspace (redb, LMDB) delegate to the
+    /// well-known [`RAW_TABLE`], the same delegation the raw reads use,
+    /// so the round trip holds on every backend. KC and Tkrzw override
+    /// this to write the file's bare keyspace — what libpinyin's own
+    /// DBMs store and what datagen's libpinyin-format writers emit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend write fails.
+    fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        self.put(RAW_TABLE, key, value)
+    }
+
     /// Remove `key` from `table` (no-op if absent).
     ///
     /// # Errors
@@ -305,6 +323,47 @@ pub trait WriteStore: ReadStore {
     ///
     /// Returns [`StoreError`] when compaction fails.
     fn compact(&mut self) -> Result<(), StoreError>;
+}
+
+// ── Raw (unframed) read tier ──────────────────────────────────────
+//
+// libpinyin's DBM files (pinyin_index.bin, phrase_index.bin, bigram.db,
+// punct.bin) use raw byte keys — no table-name framing. This trait
+// exposes the same `open_read_only` handle with key lookups that bypass
+// the `table || 0x00 || key` framing the multi-table [`ReadStore`]
+// uses.
+//
+// Needed so oxpinyin can directly consume a libpinyin-generated data
+// directory without importing or converting its files.
+
+/// Read-only access to a store file with raw (unframed) keys.
+///
+/// Extends [`ReadStore`] with methods that bypass table-name framing,
+/// matching libpinyin's single-keyspace DBM layout. KC and Tkrzw
+/// backends implement this by calling the underlying library with the
+/// caller's key verbatim; redb and LMDB delegate to a well-known table
+/// name since those backends do not have a flat-keyspace concept.
+pub trait RawReadStore: ReadStore {
+    /// Read a single raw key. Returns `None` if absent.
+    fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Visit raw (unframed) rows whose keys fall in `[lo, hi]`, ascending
+    /// key-byte order — the ordered-walk half of the raw keyspace that
+    /// [`Self::get_raw`] point-reads. libpinyin's phrase table relies on
+    /// exactly this for its `search_suggestion` continuation walk
+    /// (`phrase_large_table3_tkrzwdb.cpp:155-190`).
+    ///
+    /// Backends without a flat keyspace (redb, LMDB) delegate to the
+    /// well-known [`RAW_TABLE`], the same delegation [`Self::get_raw`]
+    /// uses; KC and Tkrzw walk the file's real keyspace.
+    fn range_raw(
+        &self,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+        visit: &mut Visitor<'_>,
+    ) -> Result<(), StoreError> {
+        self.range(RAW_TABLE, lo, hi, visit)
+    }
 }
 
 // ── Shared: table-name validation ──────────────────────────────────
@@ -464,6 +523,22 @@ impl ReadStore for RedbStore {
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
         let txn = self.begin_read()?;
         read_is_empty(&txn, table)
+    }
+}
+
+/// The well-known table name raw reads use on table-oriented backends.
+///
+/// redb and LMDB have no flat keyspace: [`RawReadStore::get_raw`]
+/// delegates to this table name so test fixtures written through
+/// `WriteStore::write(|txn| txn.put(RAW_TABLE, key, value))` are
+/// readable by the raw path.
+pub const RAW_TABLE: &str = "data";
+
+#[cfg(feature = "redb")]
+impl RawReadStore for RedbStore {
+    fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let txn = self.begin_read()?;
+        read_get(&txn, RAW_TABLE, key)
     }
 }
 
@@ -1046,6 +1121,52 @@ mod tests {
                             Ok(())
                         })
                         .unwrap();
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                /// An empty value is a stored record, not a delete.
+                ///
+                /// libpinyin's index DBMs are full of zero-length
+                /// continuation markers, so the raw writer depends on this
+                /// on every backend. The values are built from `Vec::new()`
+                /// on purpose: a `Vec<u8>` with no allocation hands its
+                /// `as_ptr()` over as the dangling address `1`, which Kyoto
+                /// Cabinet reads as its `Visitor::REMOVE` sentinel (see
+                /// `kyotocabinet::ffi::c_ptr`); a `b""` literal has a real
+                /// address and never trips it.
+                #[test]
+                fn empty_value_is_a_record() {
+                    let path = temp_path("empty-value");
+                    let store = <$store>::create(&path).unwrap();
+                    let empty: Vec<u8> = Vec::new();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"marker", &empty)?;
+                            txn.put("t", b"full", b"v")?;
+                            txn.put_raw(b"raw-marker", &empty)?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(store.get("t", b"marker").unwrap(), Some(Vec::new()));
+                    assert_eq!(store.get_raw(b"raw-marker").unwrap(), Some(Vec::new()));
+                    // Overwriting a full record with an empty value keeps
+                    // the record; only `remove` deletes.
+                    store
+                        .write(|txn| txn.put("t", b"full", &empty))
+                        .unwrap();
+                    assert_eq!(store.get("t", b"full").unwrap(), Some(Vec::new()));
+                    let mut rows = Vec::new();
+                    store
+                        .for_each("t", &mut |key, value| {
+                            rows.push((key.to_vec(), value.to_vec()));
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(
+                        rows,
+                        vec![(b"full".to_vec(), Vec::new()), (b"marker".to_vec(), Vec::new())]
+                    );
                     drop(store);
                     cleanup(&path);
                 }

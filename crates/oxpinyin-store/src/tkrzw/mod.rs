@@ -722,6 +722,27 @@ fn db_rebuild(db: &Db) -> Result<(), StoreError> {
     check(unsafe { ffi::tkrzw_dbm_rebuild(db.0.as_ptr(), c"".as_ptr()) })
 }
 
+impl crate::RawReadStore for TkrzwStore {
+    fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, crate::StoreError> {
+        db_get(&self.db, key)
+    }
+
+    fn range_raw(
+        &self,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+        visit: &mut Visitor<'_>,
+    ) -> Result<(), crate::StoreError> {
+        // `scan` over the file's bare keyspace — an empty prefix leaves
+        // every stored key verbatim, the raw counterpart of the framed
+        // `range` walk.
+        scan(&self.db, &[], lo, hi, &mut |key, value| {
+            visit(key, value)?;
+            Ok(true)
+        })
+    }
+}
+
 impl ReadStore for TkrzwStore {
     fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         open(path, false)
@@ -908,6 +929,13 @@ impl WriteTxn for TkrzwWriteTxn<'_> {
         let prefix = table_prefix(table)?;
         self.buffer
             .insert(framed(&prefix, key), Some(value.to_vec()));
+        Ok(())
+    }
+
+    fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        // The file's bare keyspace — no framing prefix, so the row is
+        // exactly what `get_raw`/`range_raw` read back on this backend.
+        self.buffer.insert(key.to_vec(), Some(value.to_vec()));
         Ok(())
     }
 
