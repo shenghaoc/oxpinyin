@@ -175,7 +175,8 @@ fn parse_chewing_more(instance: *mut PinyinInstance, text: &str) -> usize {
     let use_tone = inst.use_tone.load(Ordering::Relaxed);
     // Upstream passes the caller's option word through after stripping the
     // parser-owned corrections (`pinyin.cpp:1589`, inside
-    // `pinyin_parse_more_chewings`). Three caller bits reach the parsers:
+    // `pinyin_parse_more_chewings`; all cites at pin `0c5e80e1`).
+    // Three caller bits reach the parsers:
     // `USE_TONE` and `FORCE_TONE` (`zhuyin_parser2.cpp:171-179` for Simple,
     // `:373`/`:387` for Discrete, `:595-605` for CP26) and
     // `ZHUYIN_INCOMPLETE` (`:49-51`). This seam carries `USE_TONE` and
