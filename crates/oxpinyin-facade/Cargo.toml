@@ -1,0 +1,43 @@
+[package]
+name = "oxpinyin-facade"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The facade-orchestration layer shared by the pinyin and zhuyin C-ABI facades: instance/context state machines and the laws both facades already implement identically."
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unused_must_use = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+# Local table: stops workspace inheritance, so restate the
+# workspace-only additions here as well.
+must_use_candidate = "warn"
+
+[dependencies]
+oxpinyin-core.workspace = true
+oxpinyin-engine.workspace = true
+# The workspace table carries default-features = false for the
+# store-reaching edges; the [features] block below forwards the backend
+# selection.
+oxpinyin-runtime.workspace = true
+oxpinyin-user.workspace = true
+
+[features]
+# Backend selection, forwarded down the chain (one backend per binary; see
+# oxpinyin-store's [features] for the model and precedence) — the same
+# block both C-ABI facade crates carry, because InstanceCore holds the
+# runtime's concrete dict/lm handles by value.
+default = ["kyotocabinet"]
+kyotocabinet = [
+    "oxpinyin-runtime/kyotocabinet",
+    "oxpinyin-user/kyotocabinet",
+]
+tkrzw = ["oxpinyin-runtime/tkrzw", "oxpinyin-user/tkrzw"]
+lmdb = ["oxpinyin-runtime/lmdb", "oxpinyin-user/lmdb"]
+redb = ["oxpinyin-runtime/redb", "oxpinyin-user/redb"]

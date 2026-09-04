@@ -3,11 +3,9 @@
 use std::os::raw::c_int;
 use std::sync::atomic::Ordering;
 
-use oxpinyin_engine::ConfigValue;
-
 use crate::ffi::ffi_catch;
 use crate::state::{context_mut, context_ref};
-use crate::types::{PinyinContext, PinyinOptionT, PinyinTableFlag};
+use crate::types::{PinyinContext, PinyinOptionT};
 
 /// Set pinyin options on the context.
 ///
@@ -27,13 +25,9 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
     ffi_catch(false, || {
         // SAFETY: `context` is non-null and was produced by `pinyin_init`.
         let ctx = unsafe { context_mut(context) };
-        let enabled = (options & (PinyinTableFlag::PINYIN_INCOMPLETE as u32)) != 0;
-        let use_tone = (options & (PinyinTableFlag::USE_TONE as u32)) != 0;
-        ctx.config
-            .set("incomplete-pinyin", ConfigValue::Bool(enabled));
-        ctx.incomplete.store(enabled, Ordering::Relaxed);
-        ctx.use_tone.store(use_tone, Ordering::Relaxed);
-        ctx.options.store(options, Ordering::Relaxed);
+        // The shared set_options law (word, mirrored bools, config key);
+        // the zhuyin facade's setter runs the same body.
+        ctx.core.set_options(options);
         true
     })
 }
@@ -72,7 +66,7 @@ pub extern "C" fn pinyin_set_full_pinyin_scheme(
         if !matches!(scheme, 1..=3) {
             return false;
         }
-        ctx.full_scheme.store(scheme, Ordering::Relaxed);
+        ctx.core.live.full_scheme.store(scheme, Ordering::Relaxed);
         true
     })
 }
@@ -112,7 +106,10 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
             6 => oxpinyin_core::DoublePinyinScheme::Xhe,
             _ => return false,
         };
-        ctx.double_scheme.store(scheme as i32, Ordering::Relaxed);
+        ctx.core
+            .live
+            .double_scheme
+            .store(scheme as i32, Ordering::Relaxed);
         true
     })
 }
@@ -145,7 +142,7 @@ pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: 
         if !matches!(scheme, 1 | 2 | 3 | 4 | 5 | 6 | 8 | 9) {
             return false;
         }
-        ctx.zhuyin_scheme.store(scheme, Ordering::Relaxed);
+        ctx.core.live.zhuyin_scheme.store(scheme, Ordering::Relaxed);
         true
     })
 }
@@ -226,7 +223,7 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
     ffi_catch(false, || {
         // SAFETY: `context` is non-null and was produced by `pinyin_init`.
         let ctx = unsafe { context_ref(context) };
-        match ctx.runtime.as_ref() {
+        match ctx.core.runtime.as_ref() {
             Some(runtime) => runtime.load_library(index as u32),
             None => false,
         }

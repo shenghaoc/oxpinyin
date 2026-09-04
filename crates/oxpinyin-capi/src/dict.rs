@@ -68,6 +68,7 @@ pub extern "C" fn pinyin_lookup_tokens(
         // SAFETY: Null-checked above.
         let text = unsafe { cstr_to_string(phrase) };
         let tokens: Vec<u32> = inst
+            .core
             .dict
             .tokens_for_text(&text)
             .iter()
@@ -126,7 +127,7 @@ pub extern "C" fn pinyin_token_get_phrase(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let Some(intro) = inst.dict.token_introspection(token) else {
+        let Some(intro) = inst.core.dict.token_introspection(token) else {
             if !utf8_str.is_null() {
                 // SAFETY: Null-checked above.
                 unsafe {
@@ -184,7 +185,7 @@ pub extern "C" fn pinyin_token_get_n_pronunciation(
                 *num = 0;
             }
         }
-        let Some(intro) = inst.dict.token_introspection(token) else {
+        let Some(intro) = inst.core.dict.token_introspection(token) else {
             return false;
         };
         if !num.is_null() {
@@ -228,7 +229,7 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let Some(intro) = inst.dict.token_introspection(token) else {
+        let Some(intro) = inst.core.dict.token_introspection(token) else {
             return false;
         };
         let Some((keys_list, _count)) = intro.pronunciations.get(nth as usize) else {
@@ -303,8 +304,8 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
         let nibble = token >> 24;
         let base = match nibble {
             1..=4 => {
-                if !inst.dict.library_visible_token(token)
-                    || inst.dict.system_unigram_count(token).is_none()
+                if !inst.core.dict.library_visible_token(token)
+                    || inst.core.dict.system_unigram_count(token).is_none()
                 {
                     // Unloaded library or no such item — nothing is
                     // reported (matches the visibility filter every other
@@ -312,20 +313,23 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
                     None
                 } else {
                     use oxpinyin_core::LanguageModel;
-                    inst.lm
+                    inst.core
+                        .lm
                         .unigram_freq(&oxpinyin_core::PhraseToken::new(token))
                         .ok()
                         .flatten()
                 }
             }
-            5..=6 => inst.dict.addon_unigram_frequency(token).or_else(|| {
+            5..=6 => inst.core.dict.addon_unigram_frequency(token).or_else(|| {
                 use oxpinyin_core::LanguageModel;
-                inst.lm
+                inst.core
+                    .lm
                     .addon_unigram_freq(&oxpinyin_core::PhraseToken::new(token))
                     .ok()
                     .flatten()
             }),
             7 => inst
+                .core
                 .user
                 .as_ref()
                 .and_then(|store| store.unigram_delta(token).ok()),
@@ -334,7 +338,7 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
         let Some(base) = base else {
             return false;
         };
-        let count = base + inst.dict.unigram_delta(token).unwrap_or(0);
+        let count = base + inst.core.dict.unigram_delta(token).unwrap_or(0);
         if !freq.is_null() {
             // SAFETY: Null-checked above.
             unsafe {
@@ -374,6 +378,6 @@ pub extern "C" fn pinyin_token_add_unigram_frequency(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        inst.dict.add_unigram_delta(token, delta as u64)
+        inst.core.dict.add_unigram_delta(token, delta as u64)
     })
 }

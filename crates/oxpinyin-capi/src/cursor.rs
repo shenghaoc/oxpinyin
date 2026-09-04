@@ -17,10 +17,8 @@
 
 use std::ptr;
 
-use oxpinyin_engine::EngineError;
-
 use crate::ffi::{ffi_catch, owned_cstr};
-use crate::state::{CapiInstance, instance_mut, instance_ref};
+use crate::state::{instance_mut, instance_ref};
 use crate::types::{ChewingKey, ChewingKeyRest, GChar, PinyinInstance};
 
 /// Get the pinyin key rest at an offset.
@@ -54,7 +52,7 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
-        let Some(found) = key_at(inst, offset) else {
+        let Some(found) = inst.core.key_at(offset) else {
             return false;
         };
         inst.key_rest_slot.begin = u16::try_from(found.begin).unwrap_or(u16::MAX);
@@ -273,113 +271,6 @@ fn render_key(
     })
 }
 
-/// The active parse mode's span source/// The active parse mode's span source: the coordinate input bytes, its
-/// parsed length, the key spans (start, end), and whether `'` is a zero-key
-/// separator in that mode. `None` for plain full pinyin, whose law runs
-/// over the session's own buffer.
-struct SpanSource<'a> {
-    input: &'a [u8],
-    parsed: usize,
-    spans: Vec<(usize, usize)>,
-    separators: bool,
-}
-
-/// The mode dispatch shared by [`lookup_offset`], [`left_offset`] and
-/// [`right_offset`]: zhuyin, then double pinyin, then the LUOMA /
-/// `SECONDARY_ZHUYIN` full-pinyin index — the same precedence as
-/// `CapiInstance::validate_lookup_offset`. Zhuyin and double pinyin hold
-/// no zero-key columns (`separators` false); the index parse consumes `'`
-/// as a separator (`separators` true). Plain full pinyin answers `None`.
-fn span_source(inst: &CapiInstance) -> Option<SpanSource<'_>> {
-    if let Some(parse) = inst.zhuyin_parse.as_ref() {
-        return Some(SpanSource {
-            input: inst.zhuyin_input.as_bytes(),
-            parsed: parse.consumed(),
-            spans: parse
-                .keys()
-                .iter()
-                .map(|key| (key.start(), key.end()))
-                .collect(),
-            separators: false,
-        });
-    }
-    if let Some(parse) = inst.double_parse.as_ref() {
-        return Some(SpanSource {
-            input: inst.double_input.as_bytes(),
-            parsed: parse.consumed(),
-            spans: parse
-                .keys()
-                .iter()
-                .map(|key| (key.start(), key.end()))
-                .collect(),
-            separators: false,
-        });
-    }
-    inst.full_parse.as_ref().map(|parse| SpanSource {
-        input: inst.full_input.as_bytes(),
-        parsed: parse.consumed(),
-        spans: parse
-            .keys()
-            .iter()
-            .map(|key| (key.start(), key.end()))
-            .collect(),
-        separators: true,
-    })
-}
-
-/// The cursor → lookup-offset law in the instance's active parse mode.
-///
-/// Plain full pinyin walks the session's own scan matrix; the index-parsed
-/// schemes walk the index parse's key spans over the stored original
-/// input; double pinyin and zhuyin hold no zero-key columns and step the
-/// parse's key spans in original coordinates.
-fn lookup_offset(inst: &CapiInstance, cursor: usize) -> Result<usize, EngineError> {
-    match span_source(inst) {
-        Some(source) => oxpinyin_engine::lookup_offset_over_spans(
-            source.input,
-            source.parsed,
-            &source.spans,
-            source.separators,
-            cursor,
-        ),
-        None => inst.session.lookup_offset_for_cursor(cursor),
-    }
-}
-
-/// The word-level left-move law in the instance's active parse mode —
-/// [`lookup_offset`]'s mode dispatch applied to the engine's
-/// `left_word_offset` law.
-fn left_offset(inst: &CapiInstance, offset: usize) -> Result<usize, EngineError> {
-    match span_source(inst) {
-        Some(source) => oxpinyin_engine::left_word_offset_over_spans(
-            source.input,
-            source.parsed,
-            &source.spans,
-            source.separators,
-            offset,
-        ),
-        None => inst.session.left_word_offset(offset),
-    }
-}
-
-/// The word-level right-move law in the instance's active parse mode —
-/// [`lookup_offset`]'s mode dispatch applied to the engine's
-/// `right_word_offset` law. `Ok(None)` is the pin's one graceful
-/// false (`pinyin.cpp:3085-3086`): no key starts at the
-/// (zero-run-skipped) position.
-fn right_offset(inst: &CapiInstance, offset: usize) -> Result<Option<usize>, EngineError> {
-    match span_source(inst) {
-        Some(source) => oxpinyin_engine::right_word_offset_over_spans(
-            source.input,
-            source.parsed,
-            &source.spans,
-            source.separators,
-            offset,
-        ),
-        None => inst.session.right_word_offset(offset),
-    }
-}
-
 /// Get the lookup offset from a user cursor position.
 ///
 /// # C signature
@@ -407,7 +298,7 @@ pub extern "C" fn pinyin_get_pinyin_offset(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let Ok(normalized) = lookup_offset(inst, cursor) else {
+        let Ok(normalized) = inst.core.lookup_offset(cursor) else {
             return false;
         };
         if !offset.is_null() {
@@ -446,7 +337,7 @@ pub extern "C" fn pinyin_get_left_pinyin_offset(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let Ok(result) = left_offset(inst, offset) else {
+        let Ok(result) = inst.core.left_offset(offset) else {
             return false;
         };
         if !left.is_null() {
@@ -486,7 +377,7 @@ pub extern "C" fn pinyin_get_right_pinyin_offset(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let Ok(Some(result)) = right_offset(inst, offset) else {
+        let Ok(Some(result)) = inst.core.right_offset(offset) else {
             return false;
         };
         if !right.is_null() {
@@ -678,129 +569,6 @@ mod tests {
 // so what must match the pin is the observable output: the boolean, the
 // two `guint16`s, and the rendered strings.
 
-/// One matrix key at an offset: its canonical pinyin spelling, its tone,
-/// and its raw span.
-///
-/// The spelling rather than a `SyllableKey` because all three renderers
-/// want text, and because the LUOMA / `SECONDARY_ZHUYIN` index parse carries
-/// a canonical spelling rather than a vocabulary key.
-struct KeyAt {
-    text: &'static str,
-    tone: u8,
-    begin: usize,
-    end: usize,
-}
-
-/// The parse's keys as `(text, tone, syllable start, raw end)`, the active
-/// mode's own input buffer, and whether `'` is a zero-key separator in that
-/// mode — the same `(input, separators)` dispatch [`span_source`] and
-/// [`CapiInstance::validate_lookup_offset`] make. The key spans are in the
-/// active input's coordinates, so [`key_at`] must walk that same buffer, not
-/// the session's `'`-joined canonical spelling. Zhuyin and double pinyin
-/// carry `'` as content or not at all (`separators` false); plain full
-/// pinyin and the LUOMA / `SECONDARY_ZHUYIN` index parse consume it as a
-/// separator (`separators` true).
-fn mode_keys(inst: &CapiInstance) -> Result<(Vec<KeyAt>, &[u8], bool), EngineError> {
-    if let Some(parse) = inst.zhuyin_parse.as_ref() {
-        return Ok((
-            parse
-                .keys()
-                .iter()
-                .map(|k| KeyAt {
-                    text: k.key().text(),
-                    tone: k.tone(),
-                    begin: k.start(),
-                    end: k.end(),
-                })
-                .collect(),
-            inst.zhuyin_input.as_bytes(),
-            false,
-        ));
-    }
-    if let Some(parse) = inst.double_parse.as_ref() {
-        return Ok((
-            parse
-                .keys()
-                .iter()
-                .map(|k| KeyAt {
-                    text: k.key().text(),
-                    tone: 0,
-                    begin: k.start(),
-                    end: k.end(),
-                })
-                .collect(),
-            inst.double_input.as_bytes(),
-            false,
-        ));
-    }
-    if let Some(parse) = inst.full_parse.as_ref() {
-        return Ok((
-            parse
-                .keys()
-                .iter()
-                .map(|k| KeyAt {
-                    text: k.canonical(),
-                    tone: k.tone(),
-                    begin: k.start(),
-                    end: k.end(),
-                })
-                .collect(),
-            inst.full_input.as_bytes(),
-            true,
-        ));
-    }
-    let (keys, _) = inst.session.matrix_keys()?;
-    Ok((
-        keys.iter()
-            .map(|k| KeyAt {
-                text: k.key().text(),
-                tone: k.tone(),
-                begin: k.syllable_start(),
-                end: k.end(),
-            })
-            .collect(),
-        inst.session.raw_input().as_bytes(),
-        true,
-    ))
-}
-
-/// The key the pin's `pinyin_get_pinyin_key` answers at `offset`.
-///
-/// The pin's three steps (`pinyin.cpp`): refuse `offset >= matrix.size() - 1`
-/// (the reserved slot), refuse an empty column, then `_compute_pinyin_start`
-/// skips forward over columns holding one lone zero key — a consumed `'`
-/// separator — and the answer is that column's first item.
-fn key_at(inst: &CapiInstance, offset: usize) -> Option<KeyAt> {
-    let (keys, input, separators) = mode_keys(inst).ok()?;
-    // matrix.size() is input.len() + 1; the last column is the reserved slot.
-    // `input` and the key spans share one coordinate space — the active
-    // mode's own buffer — so the separator walk reads it, not the session's
-    // `'`-joined canonical spelling.
-    if offset >= input.len() {
-        return None;
-    }
-    let mut at = offset;
-    loop {
-        if let Some(found) = keys.iter().find(|k| k.begin == at) {
-            return Some(KeyAt {
-                text: found.text,
-                tone: found.tone,
-                begin: found.begin,
-                end: found.end,
-            });
-        }
-        // A lone zero-key column is a consumed separator; the pin walks past
-        // the run. Only the separator modes hold one — zhuyin and double
-        // pinyin carry `'` as content or not at all, so their empty columns
-        // end the walk. Anything else is an empty mid-syllable column.
-        if separators && input.get(at).copied() == Some(b'\'') && at + 1 < input.len() {
-            at += 1;
-            continue;
-        }
-        return None;
-    }
-}
-
 /// Get the pinyin key at an offset.
 ///
 /// # C signature
@@ -833,7 +601,7 @@ pub extern "C" fn pinyin_get_pinyin_key(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
-        let Some(found) = key_at(inst, offset) else {
+        let Some(found) = inst.core.key_at(offset) else {
             return false;
         };
         inst.key_slot =

@@ -39,14 +39,26 @@ struct Predicted {
 /// returns false when `m_prefixes` stays empty).
 pub fn guess_predicted(inst: &mut CapiInstance, prefix: &str) -> bool {
     inst.candidates.clear();
-    let prefixes = compute_prefixes(&inst.dict, inst.user.as_ref(), prefix);
+    let prefixes =
+        oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), prefix);
     if prefixes.is_empty() {
         return false;
     }
 
     let mut items = Vec::new();
-    append_predicted_bigrams(&inst.dict, inst.user.as_ref(), &prefixes, &mut items);
-    append_predicted_prefix(&inst.dict, &inst.lm, inst.user.as_ref(), prefix, &mut items);
+    append_predicted_bigrams(
+        &inst.core.dict,
+        inst.core.user.as_ref(),
+        &prefixes,
+        &mut items,
+    );
+    append_predicted_prefix(
+        &inst.core.dict,
+        &inst.core.lm,
+        inst.core.user.as_ref(),
+        prefix,
+        &mut items,
+    );
 
     items.sort_by(|left, right| {
         right
@@ -120,7 +132,8 @@ pub extern "C" fn pinyin_guess_predicted_candidates(
 /// Upstream always returns `true` after the prepend, even when the prefix
 /// matched no phrase-table suffix.
 pub fn guess_predicted_with_punctuations(inst: &mut CapiInstance, prefix: &str) -> bool {
-    let prefixes = compute_prefixes(&inst.dict, inst.user.as_ref(), prefix);
+    let prefixes =
+        oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), prefix);
     let _ = guess_predicted(inst, prefix);
     prepend_punctuations(inst, &prefixes);
     true
@@ -130,7 +143,7 @@ fn prepend_punctuations(inst: &mut CapiInstance, prefixes: &[u32]) {
     let mut puncts: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for token in prefixes {
-        for punct in inst.dict.punctuations(*token) {
+        for punct in inst.core.dict.punctuations(*token) {
             if seen.insert(punct.clone()) {
                 puncts.push(punct);
             }
@@ -155,39 +168,6 @@ fn prepend_punctuations(inst: &mut CapiInstance, prefixes: &[u32]) {
         });
     }
     inst.candidates.extend(rest);
-}
-
-pub(crate) fn compute_prefixes(
-    dict: &SharedDict,
-    user: Option<&UserStore>,
-    prefix: &str,
-) -> Vec<u32> {
-    let chars: Vec<char> = prefix.chars().collect();
-    if chars.is_empty() {
-        return Vec::new();
-    }
-    let user_lookup = user.and_then(|store| oxpinyin_user::UserLookup::from_store(store).ok());
-    let max = chars.len().min(oxpinyin_user::MAX_PHRASE_LENGTH);
-    let mut tokens = Vec::new();
-    for length in 1..=max {
-        let suffix: String = chars[chars.len() - length..].iter().collect();
-        // System tokens ride the loaded-library mask: an unloaded library
-        // must not contribute prefix or successor tokens (upstream's
-        // `_get_phrase_item_from_token` refuses them at the item lookup;
-        // filtering here is the closest we get to that gate on the
-        // prefix path).
-        tokens.extend(
-            dict.system()
-                .tokens_for_text(&suffix)
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|token| dict.library_visible_token(*token)),
-        );
-        if let Some(lookup) = user_lookup.as_ref() {
-            tokens.extend(lookup.tokens_for_text(&suffix).iter().copied());
-        }
-    }
-    tokens
 }
 
 fn append_predicted_bigrams(
