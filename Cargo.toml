@@ -80,18 +80,34 @@ glib-sys = "0.20"
 
 # Release .so size/speed lever: fat LTO + one codegen unit lets the linker
 # drop cross-crate dead code and duplicate generic instantiations that
-# per-CGU codegen keeps. Measured effect: docs/perf/perf-so-size-2026-09.md.
-# [profile.profiling] keeps its explicit `lto = "thin"` override and
-# inherits codegen-units from here.
+# per-CGU codegen keeps; panic = "abort" drops the remaining unwind tables.
+# Measured effect: docs/perf/perf-so-size-2026-09.md.
+#
+# panic = "abort" is safe because the no-panic guarantee is mechanically
+# enforced (clippy::unwrap_used/expect_used/panic/panic_in_result_fn denied
+# in every library crate, non-test scope). The former UB justification for
+# catching panics at the C ABI is obsolete since Rust 1.81 (Rust Reference,
+# "Unwinding": a panic reaching a non-unwinding ABI boundary aborts, it is
+# not undefined behaviour), and the toolchain pins 1.97.1. On a bug panic
+# the process now aborts instead of continuing with a sentinel return;
+# with the lints green the catch sites were operationally inert. The 116 KiB
+# gimli/addr2line symbolizer is unaffected — it is held by std::io::Error
+# backtrace capture, not by catch_unwind.
+# [profile.profiling] keeps its explicit `lto = "thin"` and `panic =
+# "unwind"` overrides and inherits codegen-units from here.
 [profile.release]
 lto = "fat"
 codegen-units = 1
+panic = "abort"
 
 # Stage-2 CPU profiles: release speed with enough debug to resolve stacks.
 # `debug = "line-tables-only"` keeps the image small; samply/perf still map
 # samples to functions and source lines. `lto = "thin"` is closer to a
-# realistic cargo-c install than fat LTO.
+# realistic cargo-c install than fat LTO. `panic = "unwind"` is explicit
+# rather than inherited: this is a governance-sensitive setting and the
+# profiling workflow must not silently track the release policy.
 [profile.profiling]
 inherits = "release"
 debug = "line-tables-only"
 lto = "thin"
+panic = "unwind"
