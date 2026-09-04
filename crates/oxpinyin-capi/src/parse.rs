@@ -20,6 +20,10 @@ fn parse_more(instance: *mut PinyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    // The parse path clears the candidate snapshot before anything else —
+    // main's `begin_parse` did this through `reset_parse_state`; the core
+    // seam cannot see this layer's snapshot, so the clear lives here.
+    inst.candidates.clear();
     inst.core.parse_full_more(text)
 }
 
@@ -73,9 +77,10 @@ pub extern "C" fn pinyin_parse_more_double_pinyins(
         // SAFETY: `pinyins` is a C string from the caller (null OK).
         let text = unsafe { cstr_to_string(pinyins) };
         // SAFETY: `instance` is non-null (checked above).
-        unsafe { instance_mut(instance) }
-            .core
-            .parse_double_more(&text)
+        let inst = unsafe { instance_mut(instance) };
+        // Parse-path snapshot clear (main's begin_parse law).
+        inst.candidates.clear();
+        inst.core.parse_double_more(&text)
     })
 }
 
@@ -101,8 +106,10 @@ pub extern "C" fn pinyin_parse_more_chewings(
         // SAFETY: `chewings` is a C string from the caller (null OK).
         let text = unsafe { cstr_to_string(chewings) };
         // SAFETY: `instance` is non-null (checked above).
-        unsafe { instance_mut(instance) }
-            .core
+        let inst = unsafe { instance_mut(instance) };
+        // Parse-path snapshot clear (main's begin_parse law).
+        inst.candidates.clear();
+        inst.core
             .parse_chewing_more(&text, ToneForwarding::PinFacade)
     })
 }
@@ -197,10 +204,37 @@ mod tests {
     use std::ptr;
 
     use super::{pinyin_get_parsed_input_length, pinyin_parse_more_full_pinyins};
-    use crate::candidates::pinyin_get_candidate;
+    use crate::candidates::{pinyin_get_candidate, pinyin_get_n_candidate};
     use crate::instance::pinyin_reset;
     use crate::sentence::pinyin_guess_candidates;
     use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
+
+    /// A re-parse clears the candidate snapshot even when no guess follows —
+    /// upstream's `begin_parse` reset law, which a reads-between-parse-and-
+    /// guess consumer observes as an empty list. Regression pin for the
+    /// extraction, where the clear moved out of `begin_parse`'s reach.
+    #[test]
+    fn reparse_clears_the_candidate_snapshot_before_any_guess() {
+        let user_dir = TempUserDir::new("reparse-clears");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+        let nihao = cstr("nihao");
+        assert!(pinyin_parse_more_full_pinyins(instance, nihao.as_ptr()) > 0);
+        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+        let mut populated = 0_u32;
+        assert!(pinyin_get_n_candidate(instance, &raw mut populated));
+        assert!(populated > 0, "a guess populates the snapshot");
+
+        // Parse again with no guess in between: the snapshot must be empty.
+        let ni = cstr("ni");
+        assert!(pinyin_parse_more_full_pinyins(instance, ni.as_ptr()) > 0);
+        let mut after = u32::MAX;
+        assert!(pinyin_get_n_candidate(instance, &raw mut after));
+        assert_eq!(after, 0, "parse clears the snapshot without a guess");
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
 
     #[test]
     fn parsed_input_length_stores_the_parse_result_and_clears_on_reset() {
