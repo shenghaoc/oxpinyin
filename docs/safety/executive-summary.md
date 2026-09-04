@@ -122,7 +122,7 @@ re-state these.
 - **REJECT**: `no-panic`; Prusti (today's support window); pedantic/nursery
   group enables; restriction group enables; release `overflow-checks` in
   shipped profiles (nightly lane instead); nightly-only rustfmt options.
-  *(One dated override, 2026-09-05, commit 8a81b8ab: `panic = "abort"`
+  *(One dated override, 2026-09-05, commit b6dd5c6f: `panic = "abort"`
   for shipped artifacts — rejected above as defeating `ffi_catch` — is
   now CONDITIONAL ACCEPT in `[profile.release]`. The REJECT's premise
   is gone twice over: the UB rationale for catching at `extern "C"`
