@@ -807,7 +807,7 @@ pub struct Runtime {
     /// [`Runtime::load_library`]/[`Runtime::unload_library`] has changed
     /// visibility since. Addon load/unload never touch the mask, so they
     /// never invalidate it.
-    key_costs: Mutex<Option<(u32, Arc<[Cost]>)>>,
+    key_costs: RwLock<Option<(u32, Arc<[Cost]>)>>,
 }
 
 impl Runtime {
@@ -887,7 +887,7 @@ impl Runtime {
             dict,
             lm,
             user,
-            key_costs: Mutex::new(None),
+            key_costs: RwLock::new(None),
         })
     }
 
@@ -913,11 +913,36 @@ impl Runtime {
         // the mask it was built under and rebuilt whenever a
         // load/unload_library has changed visibility since — each session
         // decodes with the visibility in effect when it is built.
-        let mask = self.dict.library_mask.load(Ordering::SeqCst);
+        let mask = self.dict.library_mask.load(Ordering::Acquire);
+        // Fast path: shared read lock — concurrent `new_session` calls with
+        // an unchanged mask do not contend.
+        let cached = {
+            let cache = self
+                .key_costs
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match cache.as_ref() {
+                Some((cached_mask, table)) if *cached_mask == mask => Some(Arc::clone(table)),
+                _ => None,
+            }
+        };
+        if let Some(key_costs) = cached {
+            return Session::new_with_key_costs(
+                config,
+                self.paths.clone(),
+                self.dict.clone(),
+                self.lm.clone(),
+                key_costs.to_vec(),
+            );
+        }
+
+        // Slow path: exclusive write lock — mask changed or cache empty.
+        // Re-checked under the write lock: a racing thread may have already
+        // rebuilt the table for this mask.
         let key_costs: Arc<[Cost]> = {
             let mut cache = self
                 .key_costs
-                .lock()
+                .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             match cache.as_ref() {
                 Some((cached_mask, table)) if *cached_mask == mask => Arc::clone(table),
