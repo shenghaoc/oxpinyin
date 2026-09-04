@@ -19,15 +19,15 @@
 //! discovers it (`PINYIN_MODEL_DIR`, `PINYIN_MODEL_CACHE/extracted`, the
 //! workspace `target/model20/extracted` cache); run
 //! `tools/model/fetch-model.sh` first. The output directory receives the
-//! tables, the `\1-gram` section of `interpolation2.text` (the only
-//! section the engine reads at runtime), and `datagen-manifest.txt` with
-//! the run's provenance.
+//! tables and `datagen-manifest.txt` with the run's provenance.
+//! `interpolation2.text` is consumed by the datagen only (for bigram
+//! compilation) and is not emitted — unigram counts live in the chunk
+//! files, and the runtime never opens the file.
 //!
 //! `--mini` reproduces the committed `fixtures/w3/<backend>/` subset — the
 //! regression recipe, not a shipping path.
 
 #![forbid(unsafe_code)]
-use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -155,9 +155,10 @@ fn record(path: &Path, rows: u64, manifest: &mut Vec<TableRecord>) {
     manifest.push(record);
 }
 
+#[cfg(test)]
 fn write_interpolation2_1gram(src: &Path, dst: &Path) -> Result<(), DatagenError> {
-    // `--out-dir` pointed at the model dir would make dst alias src, and
-    // creating dst would truncate the source mid-read.
+    use std::io::{BufRead, BufReader, BufWriter, Write};
+
     let src_canon = std::fs::canonicalize(src).ok();
     let dst_canon = std::fs::canonicalize(dst).ok();
     if src == dst || (src_canon.is_some() && src_canon == dst_canon) {
@@ -298,7 +299,7 @@ fn write_table_conf(out_dir: &Path, backend: Backend, manifest: &mut Vec<TableRe
 }
 
 /// The `--tables system` half: the chunk files, the two index DBMs,
-/// the bigram, and the `\1-gram` section of `interpolation2.text`.
+/// and the bigram.
 fn compile_system(
     backend: Backend,
     mini: bool,
@@ -340,11 +341,6 @@ fn compile_system(
         manifest,
     );
     write_dbm(backend, out_dir, DbmFile::Bigram, &out.bigram, manifest);
-    // The engine reads only the \1-gram section at runtime; emit that section only.
-    let target = out_dir.join("interpolation2.text");
-    write_interpolation2_1gram(&model_dir.join("interpolation2.text"), &target)
-        .unwrap_or_else(|e| fail(&e));
-    eprintln!("  interpolation2.text (1-gram only) → {}", target.display());
 }
 
 /// The `--tables addon` half: twelve chunk files and the merged addon DBM
