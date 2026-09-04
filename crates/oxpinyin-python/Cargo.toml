@@ -21,6 +21,8 @@ oxpinyin-core.workspace = true
 # selection.
 oxpinyin-data.workspace = true
 oxpinyin-engine.workspace = true
+# The shared facade-orchestration layer the zhuyin session drives.
+oxpinyin-facade = { path = "../oxpinyin-facade", default-features = false }
 oxpinyin-runtime.workspace = true
 oxpinyin-user.workspace = true
 serde_json = "1"
@@ -41,10 +43,26 @@ kyotocabinet = [
     "oxpinyin-runtime/kyotocabinet",
     "oxpinyin-data/kyotocabinet",
     "oxpinyin-user/kyotocabinet",
+    "oxpinyin-facade/kyotocabinet",
 ]
-tkrzw = ["oxpinyin-runtime/tkrzw", "oxpinyin-data/tkrzw", "oxpinyin-user/tkrzw"]
-lmdb = ["oxpinyin-runtime/lmdb", "oxpinyin-data/lmdb", "oxpinyin-user/lmdb"]
-redb = ["oxpinyin-runtime/redb", "oxpinyin-data/redb", "oxpinyin-user/redb"]
+tkrzw = [
+    "oxpinyin-runtime/tkrzw",
+    "oxpinyin-data/tkrzw",
+    "oxpinyin-user/tkrzw",
+    "oxpinyin-facade/tkrzw",
+]
+lmdb = [
+    "oxpinyin-runtime/lmdb",
+    "oxpinyin-data/lmdb",
+    "oxpinyin-user/lmdb",
+    "oxpinyin-facade/lmdb",
+]
+redb = [
+    "oxpinyin-runtime/redb",
+    "oxpinyin-data/redb",
+    "oxpinyin-user/redb",
+    "oxpinyin-facade/redb",
+]
 # Build the `oxpinyin._native` extension module. maturin adds
 # `pyo3/extension-module` itself when packaging; keeping it out of the
 # feature means tests can still link executables against this rlib.
@@ -65,3 +83,7 @@ must_use_candidate = "warn"
 [[bin]]
 name = "native-dump"
 path = "src/bin/native_dump.rs"
+
+[[bin]]
+name = "zhuyin-dump"
+path = "src/bin/zhuyin_dump.rs"

@@ -2,12 +2,52 @@
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 CRATE_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = CRATE_DIR.parents[1]
+
+#: Mirror of the parity-runner input cap in `dump.rs::effective_input`:
+#: replay inputs resolve identically on both sides, and an adversarial
+#: corpus file must not OOM the pytest process any more than it may crash
+#: the dump.
+INPUT_CAP = 1 << 20
+
+
+def resolve_input(case: dict) -> str:
+    """Resolves a case's effective input: `input`, or `repeat.unit` × times."""
+    if "input" in case:
+        return case["input"]
+    repeat = case.get("repeat") or {}
+    unit, times = repeat.get("unit", ""), int(repeat.get("times", 0))
+    total = len(unit) * times
+    if total > INPUT_CAP:
+        raise ValueError(
+            f"repeated input is {total} bytes, past the {INPUT_CAP}-byte corpus cap"
+        )
+    return unit * times
+
+
+@pytest.fixture(scope="session", autouse=True)
+def extension_runs_gil_disabled():
+    """The CI interpreter check is not enough: it probes the interpreter
+    before the wheel installs. Importing an extension that does not declare
+    `Py_MOD_GIL_NOT_USED` re-enables the GIL process-wide on 3.13+, which
+    would leave the shared-engine thread-safety test vacuous while the job
+    stays green. Assert the GIL is still disabled after both extension
+    modules import. (`sys._is_gil_enabled` only exists from 3.13; older
+    interpreters skip the assert.)
+    """
+    import oxpinyin
+    import oxpinyin.zhuyin
+
+    assert oxpinyin is not None and oxpinyin.zhuyin is not None
+    is_gil_enabled = getattr(sys, "_is_gil_enabled", None)
+    if is_gil_enabled is not None:
+        assert not is_gil_enabled(), "extension import re-enabled the GIL"
 
 
 @pytest.fixture(scope="session")
@@ -36,6 +76,42 @@ def fixture_w3(repo_root: Path) -> Path:
 @pytest.fixture(scope="session")
 def parity_corpus(crate_dir: Path) -> dict:
     return json.loads((crate_dir / "parity-corpus.json").read_text())
+
+
+@pytest.fixture(scope="session")
+def zhuyin_parity_corpus(crate_dir: Path) -> dict:
+    return json.loads((crate_dir / "parity-corpus-zhuyin.json").read_text())
+
+
+@pytest.fixture(scope="session")
+def zhuyin_native_transcript(tmp_path_factory, repo_root: Path, crate_dir: Path) -> dict:
+    """Regenerates the zhuyin native-side transcript through the pure-Rust session.
+
+    ``zhuyin-dump`` drives the same [`oxpinyin_facade`] orchestration the
+    binding wraps, with no Python anywhere in the process — so comparing
+    its output against the binding's replay proves the two surfaces
+    compute identically.
+    """
+    out_dir = tmp_path_factory.mktemp("zhuyin-dump")
+    out_path = out_dir / "zhuyin-native.json"
+    subprocess.run(
+        [
+            "cargo",
+            "run",
+            "--quiet",
+            "-p",
+            "oxpinyin-python",
+            "--bin",
+            "zhuyin-dump",
+            "--",
+            str(crate_dir / "parity-corpus-zhuyin.json"),
+            str(repo_root / "fixtures" / "w3" / "kct"),
+            str(out_path),
+        ],
+        check=True,
+        cwd=repo_root,
+    )
+    return json.loads(out_path.read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="session")
@@ -77,6 +153,25 @@ def make_engine(fixture_w3: Path):
 
     def _make(user_dir=None):
         engine = oxpinyin.Engine.from_fixture_dir(
+            str(fixture_w3),
+            None if user_dir is None else str(user_dir),
+        )
+        created.append(engine)
+        return engine
+
+    yield _make
+    del created
+
+
+@pytest.fixture
+def make_zhuyin_engine(fixture_w3: Path):
+    """Opens zhuyin engines in fixture mode; defaults to no user directory."""
+    import oxpinyin.zhuyin
+
+    created = []
+
+    def _make(user_dir=None):
+        engine = oxpinyin.zhuyin.Engine.from_fixture_dir(
             str(fixture_w3),
             None if user_dir is None else str(user_dir),
         )

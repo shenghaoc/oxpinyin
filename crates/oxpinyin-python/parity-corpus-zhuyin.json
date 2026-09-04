@@ -1,0 +1,175 @@
+{
+  "schema": "oxpinyin-zhuyin-parity-v1",
+  "replay_procedure": [
+    "Keystrokes below are Standard-keyboard codes (s=ㄋ, u=ㄧ, c=ㄏ, l=ㄠ, 3=third tone): 'sucl' parses to ni+hao, the same syllables the pinyin corpus queries as 'nihao'.",
+    "A case may specify either input (a literal string) or repeat {unit, times}; the effective input is unit repeated times times. Both drivers must resolve it identically.",
+    "For every case: open a fresh zhuyin facade over fixtures/w3 (no user dir). Scheme values are C discriminants (chewing 1 Standard 2 Hsu 3 Ibm 4 Ginyieh 5 Eten 6 Eten26 8 HsuDvorak 9 DachenCp26; 7 StandardDvorak is unimplemented; full 1 Hanyu 2 Luoma 3 SecondaryZhuyin) and must fit in a byte.",
+    "1. If chewing_scheme/full_scheme is set: apply it. A rejection records scheme_error and ends the case.",
+    "2. If probe_chewing/probe_full is set: run the one-key probe; record the key object (initial, middle, final, tone, packed, zhuyin, pinyin) or null.",
+    "3. If in_keyboard is set: record the mapped symbol list; a multi-character key records in_keyboard_error instead.",
+    "4. parse(input) in mode (chewing default, full for full pinyin): batch-parse, guess the after-cursor window at 0, record mode/consumed/input/parsed_len/composing/ran and the full snapshot (text, kind, candidate_type, consumed_bytes, cost, nbest_index).",
+    "8. For every index in select: choose that snapshot row; record index/cursor/composition_offset/composing/first 8 snapshot texts. On error record select_error and stop.",
+    "9. If clear is set: clear the constraint at that original-coordinate offset; record offset/cleared/first 8 snapshot texts.",
+    "10. If commit is true: commit and record the text.",
+    "7. If guess {offset, before} is set: rebuild the window there; record offset/before/ran and the snapshot.",
+    "8. For every index in select: choose that snapshot row; record index/cursor/composition_offset/composing/first 8 snapshot texts. On error record select_error and stop.",
+    "9. If commit is true: commit and record the text.",
+    "A transcript event records exactly what the API returned at that step; on both sides (Rust zhuyin-dump binary and Python binding) the steps are identical and deterministic."
+  ],
+  "cases": [
+    {
+      "name": "empty-input",
+      "input": ""
+    },
+    {
+      "name": "nihao",
+      "input": "su3cl3"
+    },
+    {
+      "name": "nihao-toneless-refused",
+      "input": "sucl"
+    },
+    {
+      "name": "full-hanyu-toneless-refused",
+      "mode": "full",
+      "input": "nihao"
+    },
+    {
+      "name": "single-ni",
+      "input": "su3"
+    },
+    {
+      "name": "unmapped-keystrokes",
+      "input": "AA"
+    },
+    {
+      "name": "full-hanyu-toned",
+      "mode": "full",
+      "input": "ni3hao3"
+    },
+    {
+      "name": "full-hanyu-apostrophe",
+      "mode": "full",
+      "input": "ni3'hao3"
+    },
+    {
+      "name": "full-luoma-toned",
+      "mode": "full",
+      "full_scheme": 2,
+      "input": "ni3hao3"
+    },
+    {
+      "name": "parse-continues",
+      "input": "su3",
+      "parse2": {
+        "input": "su3cl3"
+      }
+    },
+    {
+      "name": "parse-restarts",
+      "input": "su3cl3",
+      "parse2": {
+        "input": "cl3"
+      }
+    },
+    {
+      "name": "one-key-probes",
+      "input": "su3cl3",
+      "probe_chewing": "su3",
+      "probe_full": "ni3"
+    },
+    {
+      "name": "one-key-probe-miss",
+      "input": "sucl",
+      "probe_chewing": "A",
+      "probe_full": "zzz"
+    },
+    {
+      "name": "in-keyboard",
+      "input": "su3cl3",
+      "in_keyboard": "s"
+    },
+    {
+      "name": "in-keyboard-miss",
+      "input": "su3cl3",
+      "in_keyboard": "A"
+    },
+    {
+      "name": "in-keyboard-arity",
+      "input": "su3cl3",
+      "in_keyboard": "su"
+    },
+    {
+      "name": "scheme-dvorak-rejected",
+      "input": "sucl",
+      "chewing_scheme": 7
+    },
+    {
+      "name": "scheme-unknown-rejected",
+      "input": "sucl",
+      "chewing_scheme": 42
+    },
+    {
+      "name": "full-scheme-unknown-rejected",
+      "mode": "full",
+      "input": "nihao",
+      "full_scheme": 5
+    },
+    {
+      "name": "nihao-guess-sentence",
+      "input": "su3cl3",
+      "guess_sentence": true
+    },
+    {
+      "name": "nihao-sentence-prefix",
+      "input": "su3cl3",
+      "sentence_prefix": "你"
+    },
+    {
+      "name": "guess-before-cursor",
+      "input": "su3cl3",
+      "guess": {
+        "offset": 6,
+        "before": true
+      }
+    },
+    {
+      "name": "guess-after-boundary",
+      "input": "su3cl3",
+      "guess": {
+        "offset": 3,
+        "before": false
+      }
+    },
+    {
+      "name": "select-first-commits",
+      "input": "su3cl3",
+      "select": [
+        0
+      ],
+      "commit": true
+    },
+    {
+      "name": "select-second",
+      "input": "su3cl3",
+      "select": [
+        1
+      ]
+    },
+    {
+      "name": "select-stale",
+      "input": "su3cl3",
+      "select": [
+        9999
+      ]
+    },
+    {
+      "name": "select-then-clear",
+      "input": "su3cl3",
+      "select": [
+        1
+      ],
+      "clear": 0
+    }
+  ]
+}
