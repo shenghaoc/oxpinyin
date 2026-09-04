@@ -188,6 +188,11 @@ x86_64/redb says about the shape of the problem:
 - **The std backtrace symbolizer (142.3 KiB on x86_64/redb) survived
   fat LTO** — it is referenced by the panic machinery, not dead code.
   Only `panic = "abort"` (or a customized std) removes it.
+  *(Correction, 2026-09-05: `panic = "abort"` does **not** remove it —
+  measured unchanged on ARM64/KC with 168 gimli/addr2line symbols.
+  What holds it is `std::io::Error` backtrace capture in the engine
+  and store code, not the panic strategy; see the amended bullet under
+  "Further reduction options".)*
 - On x86_64/redb, redb + hashbrown still cost ~629 KiB — a KC build
   does not carry this mass at all; the KC re-measurement confirmed
   the backend-independent parts of the win (unwind-table cut,
@@ -196,14 +201,30 @@ x86_64/redb says about the shape of the problem:
 
 ## Further reduction options
 
-- **`panic = "abort"`** — would remove the remaining ~222 KiB of
-  unwind tables plus the 142 KiB backtrace symbolizer (~13% of the
-  current stripped image), and let further code prune. For a `cdylib`
-  crossing a C ABI boundary, unwinding through foreign frames is
-  already UB, so `abort` is semantically correct — but it changes the
-  `.so`'s panic behaviour (a Rust panic aborts the process instead of
-  unwinding) and is a **maintainer decision, not an agent decision**.
-  Flagged here; not taken.
+- **`panic = "abort"`** — ~~would remove the remaining ~222 KiB of
+  unwind tables plus the 142 KiB backtrace symbolizer~~. **Adopted
+  2026-09-05** (`perf/remove-ffi-catch-panic-abort`). Measured on
+  ARM64/KC back-to-back at one tip (rustc 1.97.1, default KC features,
+  `strip --strip-all`): stripped 1,512,160 → 1,446,624 B
+  (**−65,536 B, −4.33%**); unwind sections (`.eh_frame` +
+  `.eh_frame_hdr` + `.gcc_except_table`) 120,948 → 88,576 B
+  (−32,372); `.text` −54,016 B. **Correction to the original
+  prediction: the 116.3 KiB std backtrace symbolizer (gimli/addr2line)
+  survives `panic = "abort"` unchanged** — 168 symbols before and
+  after, byte count identical. Probe builds pin the mechanism: it is
+  held by `std::io::Error` backtrace capture (and the panic hook's
+  symbolize path), not by `catch_unwind` — a trivial `panic = "abort"`
+  cdylib carries zero gimli symbols, and adding a single
+  `std::io::Error` construction brings in ~135 of them, with
+  `catch_unwind` present or not. **Next size target**: audit which
+  engine/store code constructs `std::io::Error` values (each can pull
+  the symbolizer in via backtrace capture) and replace with
+  non-capturing error types; that — not the catch sites, not the panic
+  strategy — is what holds the 116 KiB. The ~88.6 KiB of unwind
+  sections that remain under `abort` serve the exported `extern "C"`
+  boundaries and C code in the image; shrinking those further is a
+  separate investigation. See also the safety-policy override note in
+  docs/safety/enforcement-matrix.md §B.
 - **`opt-level = "z"`** — expects another single-digit % at a real
   speed cost, working against the Stage-2 steady-cycle parity goal
   (1.079× at the KC baseline). Not recommended while speed parity is

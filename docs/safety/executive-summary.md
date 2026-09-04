@@ -120,9 +120,18 @@ re-state these.
   documented local convenience); coverage thresholds (until baseline);
   `redundant_pub_crate` as a signal.
 - **REJECT**: `no-panic`; Prusti (today's support window); pedantic/nursery
-  group enables; restriction group enables; `panic = "abort"` for shipped
-  artifacts (defeats `ffi_catch`); release `overflow-checks` in shipped
-  profiles (nightly lane instead); nightly-only rustfmt options.
+  group enables; restriction group enables; release `overflow-checks` in
+  shipped profiles (nightly lane instead); nightly-only rustfmt options.
+  *(One dated override, 2026-09-05, commit 8a81b8ab: `panic = "abort"`
+  for shipped artifacts — rejected above as defeating `ffi_catch` — is
+  now CONDITIONAL ACCEPT in `[profile.release]`. The REJECT's premise
+  is gone twice over: the UB rationale for catching at `extern "C"`
+  boundaries has been false since Rust 1.81 (rust-lang/rust#116088),
+  and with the no-panic lints green the catch sites were operationally
+  inert — `panic = "abort"` made them literally dead, and all three
+  were removed. Measured −64 KiB stripped on ARM64/KC; the 116 KiB
+  symbolizer is unaffected (docs/perf/perf-so-size-2026-09.md).
+  `[profile.profiling]` keeps an explicit `panic = "unwind"`.)*
 
 ## K. Highest-risk existing findings
 
