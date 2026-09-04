@@ -208,7 +208,13 @@ x86_64/redb says about the shape of the problem:
   `strip --strip-all`): stripped 1,512,160 → 1,446,624 B
   (**−65,536 B, −4.33%**); unwind sections (`.eh_frame` +
   `.eh_frame_hdr` + `.gcc_except_table`) 120,948 → 88,576 B
-  (−32,372); `.text` −54,016 B. **Correction to the original
+  (−32,372); `.text` −54,016 B. Re-measured 2026-09-05 back-to-back
+  after the branch rebased onto the `oxpinyin-facade` extraction tip
+  (`b40e3542`): stripped 1,577,696 → 1,446,624 B
+  (**−131,072 B, −8.31%**) — the facade crate's added orchestration
+  code carries unwind mass and landing pads that `abort` removes, so
+  the delta grew with it; unwind sections at the branch tip 93,248 B,
+  symbolizer still 168 symbols. **Correction to the original
   prediction: the 116.3 KiB std backtrace symbolizer (gimli/addr2line)
   survives `panic = "abort"` unchanged** — 168 symbols before and
   after, byte count identical. Probe builds pin the mechanism: it is
