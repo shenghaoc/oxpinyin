@@ -2,137 +2,24 @@
 //! batch-parse shell.
 
 use std::os::raw::c_char;
-use std::ptr;
-use std::sync::atomic::Ordering;
-
-use oxpinyin_core::{FullPinyinScheme, USE_TONE, ZhuyinKey, ZhuyinScheme};
 
 use crate::ffi::{cstr_to_string, ffi_catch};
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, ZhuyinInstance};
 
-/// The full-pinyin scheme dispatch for `zhuyin_get_pinyin_string`.
-pub(crate) fn full_scheme(value: i32) -> Option<FullPinyinScheme> {
-    match value {
-        1 => Some(FullPinyinScheme::Hanyu),
-        2 => Some(FullPinyinScheme::Luoma),
-        3 => Some(FullPinyinScheme::SecondaryZhuyin),
-        _ => None,
-    }
-}
-
-/// The zhuyin scheme dispatch.
-pub(crate) fn zhuyin_scheme(value: i32) -> Option<ZhuyinScheme> {
-    match value {
-        1 => Some(ZhuyinScheme::Standard),
-        2 => Some(ZhuyinScheme::Hsu),
-        3 => Some(ZhuyinScheme::Ibm),
-        4 => Some(ZhuyinScheme::Ginyieh),
-        5 => Some(ZhuyinScheme::Eten),
-        6 => Some(ZhuyinScheme::Eten26),
-        7 => Some(ZhuyinScheme::StandardDvorak),
-        8 => Some(ZhuyinScheme::HsuDvorak),
-        9 => Some(ZhuyinScheme::DachenCp26),
-        _ => None,
-    }
-}
-
-/// Builds the exact-decoder input for a scheme parse: the `'`-joined
-/// full-pinyin text plus one [`ExactSegment`] per key over that text.
-fn exact_input(keys: &[&ZhuyinKey]) -> (String, Vec<oxpinyin_core::graph::ExactSegment>) {
-    let mut text = String::new();
-    let mut segments = Vec::with_capacity(keys.len());
-    for key in keys {
-        if !text.is_empty() {
-            text.push('\'');
-        }
-        let start = text.len();
-        text.push_str(key.key().text());
-        segments.push(oxpinyin_core::graph::ExactSegment::new(
-            start,
-            text.len(),
-            key.key(),
-            key.tone(),
-        ));
-    }
-    (text, segments)
-}
-
-/// Zhuyin batch-parse path (`zhuyin_parse_more_chewings`).
-///
-/// Mirrors `oxpinyin-capi`'s chewing path, delegating to
-/// [`oxpinyin_core::ZhuyinParser::parse_with_options`] and driving the session
-/// decoder with the `'`-joined full-pinyin spelling. The caller's full option
-/// word crosses the seam (the pin's `options = context->m_options` at
-/// `zhuyin.cpp:1061`), so `FORCE_TONE` — part of the pin's `USE_TONE |
-/// FORCE_TONE` default — is honoured by the batch law.
 fn parse_chewing_more(instance: *mut ZhuyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    inst.begin_parse(text.as_bytes());
-
-    let Some(scheme) = zhuyin_scheme(inst.zhuyin_scheme.load(Ordering::Relaxed)) else {
-        return 0;
-    };
-    // The caller's option word drives the batch law; the parser OR-s its
-    // keyboard correction under `m_options` internally (upstream
-    // `zhuyin_parser2.cpp:221,413`).
-    let options = inst.options().bits();
-    let parser = oxpinyin_core::ZhuyinParser::with_scheme(scheme);
-    let parsed = parser.parse_with_options(text.as_bytes(), options);
-
-    if text.is_empty() {
-        inst.parsed_len = 0;
-        return 0;
-    }
-
-    let keys: Vec<&ZhuyinKey> = parsed.keys().iter().collect();
-    let (full, segments) = exact_input(&keys);
-    if !full.is_empty() && inst.session.replace_raw_exact(&full, &segments).is_err() {
-        return 0;
-    }
-
-    inst.parsed_len = parsed.consumed();
-    inst.zhuyin_input = text.to_owned();
-    inst.zhuyin_parse = Some(parsed);
-    inst.parsed_len
+    inst.core
+        .parse_chewing_more(text, oxpinyin_facade::ToneForwarding::ZhuyinFacade)
 }
 
-/// Full-pinyin batch-parse path (`zhuyin_parse_more_full_pinyins`).
 fn parse_full_more(instance: *mut ZhuyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    inst.begin_parse(text.as_bytes());
-    if inst.session.set_options(inst.options()).is_err() {
-        return 0;
-    }
-    if text.is_empty() {
-        return 0;
-    }
-    // LUOMA / SECONDARY_ZHUYIN: parse the raw input through the scheme's
-    // pinned index.
-    if let Some(scheme) = full_scheme(inst.full_scheme.load(Ordering::Relaxed))
-        && let Some(index) = scheme.index()
-    {
-        let use_tone = inst.options().contains(USE_TONE);
-        let parsed = oxpinyin_core::parse_full_pinyin_index(text.as_bytes(), use_tone, index);
-        let full = parsed.full_pinyin();
-        if !full.is_empty() && inst.session.replace_raw(&full).is_err() {
-            return 0;
-        }
-        inst.parsed_len = parsed.consumed();
-        inst.full_input = text.to_owned();
-        inst.full_parse = Some(parsed);
-        return inst.parsed_len;
-    }
-    let consumed = match inst.session.replace_raw(text) {
-        Ok(()) => inst.session.full_parsed_len(),
-        Err(_) => 0,
-    };
-    inst.parsed_len = consumed;
-    consumed
+    inst.core.parse_full_more(text)
 }
 
 /// Parse multiple full pinyins.
@@ -198,7 +85,7 @@ pub extern "C" fn zhuyin_get_parsed_input_length(instance: *mut ZhuyinInstance) 
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        inst.parsed_len
+        inst.core.parsed_len
     })
 }
 
@@ -225,26 +112,12 @@ pub extern "C" fn zhuyin_in_chewing_keyboard(
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let Some(scheme) = zhuyin_scheme(inst.zhuyin_scheme.load(Ordering::Relaxed)) else {
-            // Initialize the out-param on the invalid-scheme path, matching
-            // the empty-mapping failure below, so a caller never reads a
-            // stale pointer after a `false` return.
-            if !symbols.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *symbols = std::ptr::null_mut();
-                }
-            }
-            return false;
-        };
-        let use_tone = inst.use_tone.load(Ordering::Relaxed);
-        let parser = oxpinyin_core::ZhuyinParser::with_scheme(scheme);
         // `c_char` is `i8` on some targets and `u8` on others (aarch64
         // Linux among them); `as u8` is a lossless reinterpret on both,
         // and the cast is not "unnecessary" on the targets where it is
         // `i8`.
         #[allow(clippy::unnecessary_cast)]
-        let mapped = parser.symbols_for(key as u8, use_tone);
+        let mapped = inst.core.in_keyboard(key as u8);
         if mapped.is_empty() {
             if !symbols.is_null() {
                 // SAFETY: Null-checked above.
@@ -259,7 +132,7 @@ pub extern "C" fn zhuyin_in_chewing_keyboard(
             if list.is_null() {
                 // SAFETY: Null-checked above.
                 unsafe {
-                    *symbols = ptr::null_mut();
+                    *symbols = std::ptr::null_mut();
                 }
                 return false;
             }

@@ -49,7 +49,6 @@ mod iterators;
 mod keys;
 mod parse;
 mod phrase;
-mod predict;
 mod sentence;
 mod state;
 mod types;

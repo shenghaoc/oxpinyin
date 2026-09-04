@@ -187,24 +187,28 @@ pub extern "C" fn zhuyin_choose_candidate(
             return -1;
         };
         let source_index = inst.candidates[index].source_index;
-        let selection = match inst.anchored_window.as_ref() {
-            Some((anchor, window)) => inst.session.select_anchored(source_index, window, *anchor),
-            None => inst.session.select(source_index),
+        let selection = match inst.core.anchored_window.as_ref() {
+            Some((anchor, window)) => {
+                inst.core
+                    .session
+                    .select_anchored(source_index, window, *anchor)
+            }
+            None => inst.core.session.select(source_index),
         };
         if selection.is_err() {
             return -1;
         }
-        inst.anchored_window = None;
+        inst.core.anchored_window = None;
         // The BEST_MATCH row answers the parse end; the normal rows answer
         // their own span's end mapped back to original coordinates.
         let end = if inst.candidates[index].candidate_type
             == lookup_candidate_type_t::BEST_MATCH_CANDIDATE
         {
-            inst.parsed_len
-        } else if let Some(parse) = inst.zhuyin_parse.as_ref() {
-            crate::sentence::zhuyin_original_offset(parse, inst.session.composition_offset())
+            inst.core.parsed_len
+        } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+            oxpinyin_facade::zhuyin_original_offset(parse, inst.core.session.composition_offset())
         } else {
-            inst.session.composition_offset()
+            inst.core.session.composition_offset()
         };
         end as c_int
     })
@@ -226,12 +230,12 @@ pub extern "C" fn zhuyin_clear_constraint(instance: *mut ZhuyinInstance, offset:
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
-        let session_offset = if let Some(parse) = inst.zhuyin_parse.as_ref() {
-            crate::sentence::zhuyin_session_offset(parse, offset)
+        let session_offset = if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+            oxpinyin_facade::zhuyin_session_offset(parse, offset)
         } else {
             offset
         };
-        inst.session.clear_constraint(session_offset)
+        inst.core.session.clear_constraint(session_offset)
     })
 }
 
@@ -250,13 +254,7 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
-        let Some(user) = inst.user.as_mut() else {
-            return false;
-        };
-        if inst.session.selected_tokens().is_empty() {
-            return false;
-        }
-        inst.session.train(user).is_ok()
+        inst.core.train()
     })
 }
 
@@ -277,7 +275,7 @@ pub(crate) fn snapshot_candidates(
     } else {
         lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR
     };
-    let zhuyin_parse = inst.zhuyin_parse.clone();
+    let zhuyin_parse = inst.core.zhuyin_parse.clone();
     for (window_index, cand) in window.iter().enumerate() {
         if cand.kind() == CandidateKind::Sentence && !before_cursor {
             // BEST_MATCH row stays at the head.
@@ -290,7 +288,7 @@ pub(crate) fn snapshot_candidates(
             Err(_) => continue,
         };
         let consumed_bytes = if let Some(parse) = zhuyin_parse.as_ref() {
-            crate::sentence::zhuyin_original_offset(parse, cand.consumed_bytes())
+            oxpinyin_facade::zhuyin_original_offset(parse, cand.consumed_bytes())
         } else {
             cand.consumed_bytes()
         };

@@ -32,9 +32,9 @@ pub extern "C" fn zhuyin_phrase_segment(
         let Some(text) = cstr_to_strict(sentence) else {
             return false;
         };
-        match inst.session.phrase_segment(&text) {
+        match inst.core.session.phrase_segment(&text) {
             Ok((matched, tokens)) => {
-                inst.phrase_result = tokens;
+                inst.core.phrase_result = tokens;
                 matched
             }
             Err(_) => false,
@@ -57,7 +57,7 @@ pub extern "C" fn zhuyin_get_n_phrase(instance: *mut ZhuyinInstance, num: *mut G
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let count = inst.phrase_result.len();
+        let count = inst.core.phrase_result.len();
         if !num.is_null() {
             // SAFETY: Null-checked above.
             unsafe {
@@ -94,13 +94,13 @@ pub extern "C" fn zhuyin_get_phrase_token(
                 *token = crate::types::null_token;
             }
         }
-        if index as usize >= inst.phrase_result.len() {
+        if index as usize >= inst.core.phrase_result.len() {
             return false;
         }
         if !token.is_null() {
             // SAFETY: Null-checked above.
             unsafe {
-                *token = inst.phrase_result[index as usize].value();
+                *token = inst.core.phrase_result[index as usize].value();
             }
         }
         true

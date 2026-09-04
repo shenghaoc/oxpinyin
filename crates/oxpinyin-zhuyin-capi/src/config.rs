@@ -3,8 +3,6 @@
 use std::os::raw::c_int;
 use std::sync::atomic::Ordering;
 
-use oxpinyin_engine::ConfigValue;
-
 use crate::ffi::ffi_catch;
 use crate::state::{context_mut, context_ref};
 use crate::types::{PinyinOptionT, ZhuyinContext};
@@ -32,7 +30,7 @@ pub extern "C" fn zhuyin_set_chewing_scheme(context: *mut ZhuyinContext, scheme:
         if !matches!(scheme, 1 | 2 | 3 | 4 | 5 | 6 | 8 | 9) {
             return false;
         }
-        ctx.zhuyin_scheme.store(scheme, Ordering::Relaxed);
+        ctx.core.live.zhuyin_scheme.store(scheme, Ordering::Relaxed);
         true
     })
 }
@@ -58,7 +56,7 @@ pub extern "C" fn zhuyin_set_full_pinyin_scheme(
         if !matches!(scheme, 1..=3) {
             return false;
         }
-        ctx.full_scheme.store(scheme, Ordering::Relaxed);
+        ctx.core.live.full_scheme.store(scheme, Ordering::Relaxed);
         true
     })
 }
@@ -78,15 +76,9 @@ pub extern "C" fn zhuyin_set_options(context: *mut ZhuyinContext, options: Pinyi
     ffi_catch(false, || {
         // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
         let ctx = unsafe { context_mut(context) };
-        let enabled = (options & oxpinyin_core::PINYIN_INCOMPLETE) != 0;
-        let use_tone = (options & oxpinyin_core::USE_TONE) != 0;
-        let force_tone = (options & oxpinyin_core::FORCE_TONE) != 0;
-        ctx.config
-            .set("incomplete-pinyin", ConfigValue::Bool(enabled));
-        ctx.incomplete.store(enabled, Ordering::Relaxed);
-        ctx.use_tone.store(use_tone, Ordering::Relaxed);
-        ctx.force_tone.store(force_tone, Ordering::Relaxed);
-        ctx.options.store(options, Ordering::Relaxed);
+        // The shared set_options law (word, mirrored bools, config key);
+        // the pinyin facade's setter runs the same body.
+        ctx.core.set_options(options);
         true
     })
 }
