@@ -26,10 +26,10 @@ bindgen = { workspace = true, optional = true }
 # unselected peer's dependency (redb, heed, bindgen) is not pulled in
 # either.
 #
-# `kyotocabinet` is the enabled feature in the workspace's default set,
+# `tkrzw` is the enabled feature in the workspace's default set,
 # which is what "default" means here — select any peer explicitly with
 # `--no-default-features --features {kyotocabinet|redb|lmdb|tkrzw}`.
-default = ["kyotocabinet"]
+default = ["tkrzw"]
 lmdb = ["dep:heed"]
 tkrzw = ["dep:bindgen"]
 # Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);

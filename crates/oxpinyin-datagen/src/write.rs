@@ -75,9 +75,9 @@ impl DbmFile {
 ///
 /// The four variants are peers behind the same `WriteStore`; the same
 /// compiled row stream reads back identically under each. [`Self::DEFAULT`]
-/// is [`Self::KyotoCabinet`], matching `oxpinyin_store::DefaultStore` under
-/// the workspace's default feature set; it names the selected backend, not
-/// a privileged implementation.
+/// resolves to the peer whose feature the build carries — tkrzw under the
+/// workspace's default feature set — matching `oxpinyin_store::DefaultStore`;
+/// it names the selected backend, not a privileged implementation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Backend {
@@ -88,22 +88,39 @@ pub enum Backend {
     /// cargo feature.
     Lmdb,
     /// Tkrzw — libpinyin's `--with-dbm=Tkrzw` files. Requires the `tkrzw`
-    /// cargo feature.
+    /// cargo feature (on by default — tkrzw is the workspace's default
+    /// selection).
     Tkrzw,
     /// Kyoto Cabinet — libpinyin's `--with-dbm=KyotoCabinet` files.
-    /// Requires the `kyotocabinet` cargo feature (on by default — Kyoto
-    /// Cabinet is the workspace's default selection).
+    /// Requires the `kyotocabinet` cargo feature.
     KyotoCabinet,
 }
 
 impl Backend {
     /// The default selected backend for a normal `oxpinyin-datagen
     /// compile` run — matches `oxpinyin_store::DefaultStore` under the
-    /// workspace's default feature set. Kept here as an associated
-    /// constant so the binary's `Options::default()` and the workspace
-    /// runtime cannot silently diverge on which peer backend the default
-    /// selection is.
+    /// workspace's default feature set (tkrzw there). Kept as a
+    /// per-feature constant so the binary's `Options::default()` and the
+    /// workspace runtime cannot silently diverge on which peer backend
+    /// the default selection is.
+    #[cfg(feature = "kyotocabinet")]
     pub const DEFAULT: Self = Self::KyotoCabinet;
+
+    /// The default selected backend for a normal `oxpinyin-datagen
+    /// compile` run — matches `oxpinyin_store::DefaultStore` (tkrzw under
+    /// the workspace's default feature set).
+    #[cfg(feature = "tkrzw")]
+    pub const DEFAULT: Self = Self::Tkrzw;
+
+    /// The default selected backend for a normal `oxpinyin-datagen
+    /// compile` run — matches `oxpinyin_store::DefaultStore`.
+    #[cfg(feature = "lmdb")]
+    pub const DEFAULT: Self = Self::Lmdb;
+
+    /// The default selected backend for a normal `oxpinyin-datagen
+    /// compile` run — matches `oxpinyin_store::DefaultStore`.
+    #[cfg(feature = "redb")]
+    pub const DEFAULT: Self = Self::Redb;
 
     /// Parses a `--backend` argument.
     ///

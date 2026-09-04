@@ -19,7 +19,7 @@ oxpinyin-store = { workspace = true }
 [features]
 # Backend selection, forwarded to oxpinyin-store (one backend per binary;
 # see the store's [features] for the model and precedence).
-default = ["kyotocabinet"]
+default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-store/kyotocabinet"]
 lmdb = ["oxpinyin-store/lmdb"]
 tkrzw = ["oxpinyin-store/tkrzw"]

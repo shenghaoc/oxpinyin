@@ -77,11 +77,11 @@ def crate_dir() -> Path:
 def fixture_w3(repo_root: Path) -> Path:
     """The committed mini system-data fixture the Rust tests use too.
 
-    The wheel is built with the crate's default backend (Kyoto Cabinet:
+    The wheel is built with the crate's default backend (tkrzw:
     the CI job installs its C library for exactly that), so the fixture
     directory is the one datagen wrote in libpinyin's own layout.
     """
-    path = repo_root / "fixtures" / "w3" / "kct"
+    path = repo_root / "fixtures" / "w3" / "tkt"
     assert (path / "pinyin_index.bin").is_file(), "w3 fixture missing"
     return path
 
@@ -148,7 +148,7 @@ def native_transcript(tmp_path_factory, repo_root: Path, crate_dir: Path) -> dic
             "native-dump",
             "--",
             str(crate_dir / "parity-corpus.json"),
-            str(repo_root / "fixtures" / "w3" / "kct"),
+            str(repo_root / "fixtures" / "w3" / "tkt"),
             str(out_path),
         ],
         check=True,

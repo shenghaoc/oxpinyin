@@ -100,7 +100,7 @@ pub(crate) fn lock_error() -> PyErr {
 /// though nothing needs releasing — see :meth:`close`.
 ///
 /// * Native oxpinyin layout — the ``pinyin_index``, ``phrase_index`` and
-///   ``bigram`` tables in the compiled-in backend's format (``.kct`` by
+///   ``bigram`` tables in the compiled-in backend's format (``.tkt`` by
 ///   default).
 /// * libpinyin layout — a directory as installed by the distro's
 ///   ``libpinyin-data`` package (``pinyin_index.bin``, ``phrase_index.bin``,

@@ -32,11 +32,11 @@ pip install .              # builds a wheel through PEP 517 + maturin
 
 The engine needs oxpinyin's own system data: `pinyin_index`,
 `phrase_index` and `bigram` tables in the compiled-in backend's
-format. The four peer backends produce four distinct extensions — `.kct`
-under the default selection (Kyoto Cabinet), `.redb` with
+format. The four peer backends produce four distinct extensions — `.tkt`
+under the default selection (tkrzw), `.redb` with
 `--no-default-features --features redb`, `.lmdb` with
-`--no-default-features --features lmdb`, `.tkt` with
-`--no-default-features --features tkrzw`. Optional `punct.<ext>` adds
+`--no-default-features --features lmdb`, `.kct` with
+`--no-default-features --features kyotocabinet`. Optional `punct.<ext>` adds
 predicted-punctuation rows; its absence simply yields no predicted
 punctuation. The repository's committed mini fixture (`fixtures/w3`) works
 through `Engine.from_fixture_dir`; production model directories

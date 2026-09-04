@@ -26,7 +26,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 capi = []
 # Backend selection, forwarded down the chain (one backend per binary; see
 # oxpinyin-store's [features] for the model and precedence).
-default = ["kyotocabinet"]
+default = ["tkrzw"]
 kyotocabinet = [
     "oxpinyin-runtime/kyotocabinet",
     "oxpinyin-data/kyotocabinet",

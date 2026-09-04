@@ -2,8 +2,8 @@
 //!
 //! Three invariants:
 //!   1. `Backend::DEFAULT` — the constant `Options::default()` pulls from —
-//!      is `Backend::KyotoCabinet`, matching `oxpinyin_store::DefaultStore`
-//!      under the workspace's default feature set.
+//!      is the compiled-in peer, matching `oxpinyin_store::DefaultStore`
+//!      under the workspace's default feature set (tkrzw there).
 //!   2. The file names the producer writes are the names the runtime
 //!      reader (`oxpinyin_data::SystemDbm`) opens for the same backend:
 //!      libpinyin's own on the drop-in backends, `<stem>.<ext>` elsewhere.
@@ -13,10 +13,18 @@
 use oxpinyin_datagen::write::{Backend, DbmFile};
 
 /// The datagen default is the workspace's default store.
-#[cfg(feature = "kyotocabinet")]
 #[test]
 fn default_backend_matches_store_default() {
-    assert_eq!(Backend::DEFAULT, Backend::KyotoCabinet);
+    let compiled_in = [
+        (cfg!(feature = "kyotocabinet"), Backend::KyotoCabinet),
+        (cfg!(feature = "tkrzw"), Backend::Tkrzw),
+        (cfg!(feature = "lmdb"), Backend::Lmdb),
+        (cfg!(feature = "redb"), Backend::Redb),
+    ]
+    .into_iter()
+    .find_map(|(on, backend)| on.then_some(backend))
+    .expect("one backend is compiled in");
+    assert_eq!(Backend::DEFAULT, compiled_in);
     assert_eq!(
         Backend::DEFAULT.extension(),
         oxpinyin_store::DEFAULT_STORE_EXT

@@ -15,10 +15,10 @@ workspace = true
 # Backend selection, forwarded through oxpinyin-segment to the chain (one
 # backend per binary; see oxpinyin-store's [features] for the model): the
 # counter reads `phrase_index.<ext>` in the compiled-in backend's format.
-# The four peer backends match the store's; Kyoto Cabinet is the default
-# selection, and `--no-default-features --features {redb|lmdb|tkrzw}`
+# The four peer backends match the store's; Tkrzw is the default
+# selection, and `--no-default-features --features {kyotocabinet|redb|lmdb}`
 # picks a peer.
-default = ["kyotocabinet"]
+default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-segment/kyotocabinet"]
 tkrzw = ["oxpinyin-segment/tkrzw"]
 lmdb = ["oxpinyin-segment/lmdb"]

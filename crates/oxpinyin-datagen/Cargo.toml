@@ -9,15 +9,15 @@ publish = false
 description = "model20 → oxpinyin runtime tables compiler for every storage backend. Never ships."
 
 [features]
-# Kyoto Cabinet is the default selected backend (matching oxpinyin-store's
+# Tkrzw is the default selected backend (matching oxpinyin-store's
 # workspace-default feature set) so a plain
-# `cargo run -p oxpinyin-datagen -- compile ...` produces `.kct` tables.
+# `cargo run -p oxpinyin-datagen -- compile ...` produces `.tkt` tables.
 # The other three producers (redb, lmdb, tkrzw) are peer implementations
 # behind the same `WriteStore` trait; each is chosen explicitly with
 # `--no-default-features --features {redb|lmdb|tkrzw}` on the build and
 # `--backend {redb|lmdb|tkrzw}` on the run. Only the producers whose
 # cargo features are enabled are available at runtime.
-default = ["kyotocabinet"]
+default = ["tkrzw"]
 # Enable the Kyoto Cabinet producer (`--backend kyotocabinet`); mirrors
 # oxpinyin-store.
 kyotocabinet = ["oxpinyin-store/kyotocabinet"]

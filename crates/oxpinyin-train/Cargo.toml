@@ -15,9 +15,9 @@ workspace = true
 # Backend selection forwarded through the training-crate chain (one backend
 # per binary; see oxpinyin-store's [features] for the model): the segment and
 # evaluation stages open `phrase_index.<ext>` in the compiled-in backend's
-# format. Kyoto Cabinet is the default selection; `--no-default-features
-# --features {redb|lmdb|tkrzw}` picks a peer. oxpinyin-kmm is backend-agnostic.
-default = ["kyotocabinet"]
+# format. Tkrzw is the default selection; `--no-default-features
+# --features {kyotocabinet|redb|lmdb}` picks a peer. oxpinyin-kmm is backend-agnostic.
+default = ["tkrzw"]
 kyotocabinet = [
     "oxpinyin-segment/kyotocabinet",
     "oxpinyin-counter/kyotocabinet",
