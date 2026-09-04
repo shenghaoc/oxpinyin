@@ -13,7 +13,7 @@
 
 use std::os::raw::c_char;
 
-use crate::ffi::{cstr_to_strict, ffi_catch};
+use crate::ffi::cstr_to_strict;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GUint, PhraseTokenT, PinyinInstance};
 
@@ -37,26 +37,25 @@ pub extern "C" fn pinyin_phrase_segment(
     if instance.is_null() || sentence.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        // SAFETY: Null-checked above. Invalid UTF-8 refuses here, the
-        // pin's `g_return_val_if_fail` gate; the lossy conversion the
-        // parse paths use would paper over exactly what upstream rejects.
-        // `cstr_to_strict` reads the bytes without an unsafe block; the
-        // safety obligation lives in its own doc comment.
-        let Some(text) = cstr_to_strict(sentence) else {
-            return false;
-        };
-        match inst.core.session.phrase_segment(&text) {
-            Ok((matched, tokens)) => {
-                inst.core.phrase_result = tokens;
-                matched
-            }
-            Err(_) => false,
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    // SAFETY: Null-checked above. Invalid UTF-8 refuses here, the
+    // pin's `g_return_val_if_fail` gate; the lossy conversion the
+    // parse paths use would paper over exactly what upstream rejects.
+    // `cstr_to_strict` reads the bytes without an unsafe block; the
+    // safety obligation lives in its own doc comment.
+    let Some(text) = cstr_to_strict(sentence) else {
+        return false;
+    };
+    match inst.core.session.phrase_segment(&text) {
+        Ok((matched, tokens)) => {
+            inst.core.phrase_result = tokens;
+            matched
         }
-    })
+        Err(_) => false,
+    }
 }
 
 /// Get the number of phrase tokens in the phrase result.
@@ -74,19 +73,18 @@ pub extern "C" fn pinyin_get_n_phrase(instance: *mut PinyinInstance, num: *mut G
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        let count = inst.core.phrase_result.len();
-        if !num.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *num = count as GUint;
-            }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    let count = inst.core.phrase_result.len();
+    if !num.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *num = count as GUint;
         }
-        true
-    })
+    }
+    true
 }
 
 /// Get the phrase token at an index of the phrase result.
@@ -109,25 +107,24 @@ pub extern "C" fn pinyin_get_phrase_token(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        if !token.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *token = crate::types::null_token;
-            }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    if !token.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *token = crate::types::null_token;
         }
-        if index as usize >= inst.core.phrase_result.len() {
-            return false;
+    }
+    if index as usize >= inst.core.phrase_result.len() {
+        return false;
+    }
+    if !token.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *token = inst.core.phrase_result[index as usize].value();
         }
-        if !token.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *token = inst.core.phrase_result[index as usize].value();
-            }
-        }
-        true
-    })
+    }
+    true
 }

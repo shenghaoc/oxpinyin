@@ -3,7 +3,6 @@
 
 use std::ptr;
 
-use crate::ffi::ffi_catch;
 use crate::state::{CapiInstance, box_instance, context_ref, instance_mut, instance_ref};
 use crate::types::{PinyinContext, PinyinInstance};
 
@@ -20,12 +19,11 @@ pub extern "C" fn pinyin_alloc_instance(context: *mut PinyinContext) -> *mut Pin
     if context.is_null() {
         return ptr::null_mut();
     }
-    ffi_catch(ptr::null_mut(), || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-        let ctx = unsafe { context_ref(context) };
-        ctx.alloc_instance(context)
-            .map_or(ptr::null_mut(), box_instance)
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+    let ctx = unsafe { context_ref(context) };
+    ctx.alloc_instance(context)
+        .map_or(ptr::null_mut(), box_instance)
 }
 
 /// Get the pinyin context from a pinyin instance.
@@ -43,12 +41,11 @@ pub extern "C" fn pinyin_get_context(instance: *mut PinyinInstance) -> *mut Piny
     if instance.is_null() {
         return ptr::null_mut();
     }
-    ffi_catch(ptr::null_mut(), || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        inst.context
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    inst.context
 }
 
 /// Free a pinyin instance.
@@ -62,13 +59,12 @@ pub extern "C" fn pinyin_free_instance(instance: *mut PinyinInstance) {
     if instance.is_null() {
         return;
     }
-    ffi_catch((), || {
-        // SAFETY: `instance` was created by `pinyin_alloc_instance` via
-        // `box_instance` (= `Box::into_raw`). The caller transfers ownership.
-        unsafe {
-            drop(Box::from_raw(instance.cast::<CapiInstance>()));
-        }
-    });
+
+    // SAFETY: `instance` was created by `pinyin_alloc_instance` via
+    // `box_instance` (= `Box::into_raw`). The caller transfers ownership.
+    unsafe {
+        drop(Box::from_raw(instance.cast::<CapiInstance>()));
+    };
 }
 
 /// Reset the pinyin instance (clear parsing and sentence state).
@@ -88,12 +84,11 @@ pub extern "C" fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        inst.core.full_reset();
-        inst.candidates.clear();
-        true
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    inst.core.full_reset();
+    inst.candidates.clear();
+    true
 }

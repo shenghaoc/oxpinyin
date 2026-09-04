@@ -3,7 +3,6 @@
 use std::os::raw::c_int;
 use std::sync::atomic::Ordering;
 
-use crate::ffi::ffi_catch;
 use crate::state::{context_mut, context_ref};
 use crate::types::{PinyinContext, PinyinOptionT};
 
@@ -22,14 +21,13 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
     if context.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-        let ctx = unsafe { context_mut(context) };
-        // The shared set_options law (word, mirrored bools, config key);
-        // the zhuyin facade's setter runs the same body.
-        ctx.core.set_options(options);
-        true
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+    let ctx = unsafe { context_mut(context) };
+    // The shared set_options law (word, mirrored bools, config key);
+    // the zhuyin facade's setter runs the same body.
+    ctx.core.set_options(options);
+    true
 }
 
 /// Set the full pinyin scheme.
@@ -60,15 +58,14 @@ pub extern "C" fn pinyin_set_full_pinyin_scheme(
     if context.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-        let ctx = unsafe { context_mut(context) };
-        if !matches!(scheme, 1..=3) {
-            return false;
-        }
-        ctx.core.live.full_scheme.store(scheme, Ordering::Relaxed);
-        true
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+    let ctx = unsafe { context_mut(context) };
+    if !matches!(scheme, 1..=3) {
+        return false;
+    }
+    ctx.core.live.full_scheme.store(scheme, Ordering::Relaxed);
+    true
 }
 
 /// Set the double pinyin scheme.
@@ -94,24 +91,23 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
     if context.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-        let ctx = unsafe { context_mut(context) };
-        let scheme = match scheme {
-            1 => oxpinyin_core::DoublePinyinScheme::Zrm,
-            2 => oxpinyin_core::DoublePinyinScheme::Ms,
-            3 => oxpinyin_core::DoublePinyinScheme::Ziguang,
-            4 => oxpinyin_core::DoublePinyinScheme::Abc,
-            5 => oxpinyin_core::DoublePinyinScheme::Pyjj,
-            6 => oxpinyin_core::DoublePinyinScheme::Xhe,
-            _ => return false,
-        };
-        ctx.core
-            .live
-            .double_scheme
-            .store(scheme as i32, Ordering::Relaxed);
-        true
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+    let ctx = unsafe { context_mut(context) };
+    let scheme = match scheme {
+        1 => oxpinyin_core::DoublePinyinScheme::Zrm,
+        2 => oxpinyin_core::DoublePinyinScheme::Ms,
+        3 => oxpinyin_core::DoublePinyinScheme::Ziguang,
+        4 => oxpinyin_core::DoublePinyinScheme::Abc,
+        5 => oxpinyin_core::DoublePinyinScheme::Pyjj,
+        6 => oxpinyin_core::DoublePinyinScheme::Xhe,
+        _ => return false,
+    };
+    ctx.core
+        .live
+        .double_scheme
+        .store(scheme as i32, Ordering::Relaxed);
+    true
 }
 
 /// Set the zhuyin scheme.
@@ -136,15 +132,14 @@ pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: 
     if context.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-        let ctx = unsafe { context_mut(context) };
-        if !matches!(scheme, 1 | 2 | 3 | 4 | 5 | 6 | 8 | 9) {
-            return false;
-        }
-        ctx.core.live.zhuyin_scheme.store(scheme, Ordering::Relaxed);
-        true
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+    let ctx = unsafe { context_mut(context) };
+    if !matches!(scheme, 1 | 2 | 3 | 4 | 5 | 6 | 8 | 9) {
+        return false;
+    }
+    ctx.core.live.zhuyin_scheme.store(scheme, Ordering::Relaxed);
+    true
 }
 
 /// Load an addon phrase library by index.
@@ -164,11 +159,10 @@ pub extern "C" fn pinyin_load_addon_phrase_library(context: *mut PinyinContext, 
     if context.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-        let ctx = unsafe { context_ref(context) };
-        ctx.load_addon(index)
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+    let ctx = unsafe { context_ref(context) };
+    ctx.load_addon(index)
 }
 
 /// Unload an addon phrase library.
@@ -194,11 +188,10 @@ pub extern "C" fn pinyin_unload_addon_phrase_library(
     if context.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-        let ctx = unsafe { context_ref(context) };
-        ctx.unload_addon(index)
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+    let ctx = unsafe { context_ref(context) };
+    ctx.unload_addon(index)
 }
 
 /// Load a default phrase library by index.
@@ -220,14 +213,13 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
     if context.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-        let ctx = unsafe { context_ref(context) };
-        match ctx.core.runtime.as_ref() {
-            Some(runtime) => runtime.load_library(index as u32),
-            None => false,
-        }
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+    let ctx = unsafe { context_ref(context) };
+    match ctx.core.runtime.as_ref() {
+        Some(runtime) => runtime.load_library(index as u32),
+        None => false,
+    }
 }
 
 /// Unload a default phrase library by index.
@@ -249,11 +241,10 @@ pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, inde
     if context.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-        let ctx = unsafe { context_ref(context) };
-        ctx.unload_phrase_library(index)
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+    let ctx = unsafe { context_ref(context) };
+    ctx.unload_phrase_library(index)
 }
 
 ///
@@ -279,12 +270,11 @@ pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value:
     if context.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`;
-        // the unique borrow lasts only for the mask call.
-        let ctx = unsafe { context_mut(context) };
-        ctx.mask_out(mask, value)
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`;
+    // the unique borrow lasts only for the mask call.
+    let ctx = unsafe { context_mut(context) };
+    ctx.mask_out(mask, value)
 }
 
 #[cfg(test)]

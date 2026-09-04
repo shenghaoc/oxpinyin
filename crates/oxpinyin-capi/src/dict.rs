@@ -29,7 +29,7 @@ use oxpinyin_core::Dictionary;
 
 use glib_sys::{g_array_append_vals, g_array_set_size};
 
-use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
+use crate::ffi::{cstr_to_string, owned_cstr};
 use crate::state::instance_ref;
 use crate::types::{GChar, GUint, PhraseTokenT, PinyinInstance};
 
@@ -61,45 +61,44 @@ pub extern "C" fn pinyin_lookup_tokens(
         // no-abort policy refuses instead.
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        // SAFETY: Null-checked above.
-        let text = unsafe { cstr_to_string(phrase) };
-        let tokens: Vec<u32> = inst
-            .core
-            .dict
-            .tokens_for_text(&text)
-            .iter()
-            .map(|token| token.value())
-            .collect();
-        // `reduce_tokens` clears the caller's array before appending
-        // (`phrase_large_table3.h:81`) — an empty result clears too.
-        // SAFETY: Null-checked above; `g_array_set_size` on a real
-        // glib GArray updates `len` and preserves the private
-        // metadata (`alloc`, `element_size`, `clear_func`).
-        unsafe {
-            g_array_set_size(tokenarray, 0);
-        }
-        // The retval is `SEARCH_OK & retval`: exact hits exist.
-        if tokens.is_empty() {
-            return false;
-        }
-        // SAFETY: Null-checked above; `g_array_append_vals` copies
-        // `tokens.len()` elements of the array's stored `element_size`
-        // (guint32, the caller creates the array with element_size=4).
-        // The tokens slice is a live Rust allocation and stays valid
-        // for the duration of the call.
-        unsafe {
-            g_array_append_vals(
-                tokenarray,
-                tokens.as_ptr().cast::<c_void>(),
-                tokens.len() as c_uint,
-            );
-        }
-        true
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    // SAFETY: Null-checked above.
+    let text = unsafe { cstr_to_string(phrase) };
+    let tokens: Vec<u32> = inst
+        .core
+        .dict
+        .tokens_for_text(&text)
+        .iter()
+        .map(|token| token.value())
+        .collect();
+    // `reduce_tokens` clears the caller's array before appending
+    // (`phrase_large_table3.h:81`) — an empty result clears too.
+    // SAFETY: Null-checked above; `g_array_set_size` on a real
+    // glib GArray updates `len` and preserves the private
+    // metadata (`alloc`, `element_size`, `clear_func`).
+    unsafe {
+        g_array_set_size(tokenarray, 0);
+    }
+    // The retval is `SEARCH_OK & retval`: exact hits exist.
+    if tokens.is_empty() {
+        return false;
+    }
+    // SAFETY: Null-checked above; `g_array_append_vals` copies
+    // `tokens.len()` elements of the array's stored `element_size`
+    // (guint32, the caller creates the array with element_size=4).
+    // The tokens slice is a live Rust allocation and stays valid
+    // for the duration of the call.
+    unsafe {
+        g_array_append_vals(
+            tokenarray,
+            tokens.as_ptr().cast::<c_void>(),
+            tokens.len() as c_uint,
+        );
+    }
+    true
 }
 
 /// Get the phrase text of a token.
@@ -123,37 +122,36 @@ pub extern "C" fn pinyin_token_get_phrase(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        let Some(intro) = inst.core.dict.token_introspection(token) else {
-            if !utf8_str.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *utf8_str = ptr::null_mut();
-                }
-            }
-            return false;
-        };
-        if !len.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *len = intro.text.chars().count() as GUint;
-            }
-        }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    let Some(intro) = inst.core.dict.token_introspection(token) else {
         if !utf8_str.is_null() {
-            let rendered = owned_cstr(&intro.text);
             // SAFETY: Null-checked above.
             unsafe {
-                *utf8_str = rendered;
-            }
-            if rendered.is_null() {
-                return false;
+                *utf8_str = ptr::null_mut();
             }
         }
-        true
-    })
+        return false;
+    };
+    if !len.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *len = intro.text.chars().count() as GUint;
+        }
+    }
+    if !utf8_str.is_null() {
+        let rendered = owned_cstr(&intro.text);
+        // SAFETY: Null-checked above.
+        unsafe {
+            *utf8_str = rendered;
+        }
+        if rendered.is_null() {
+            return false;
+        }
+    }
+    true
 }
 
 /// Get the number of pronunciations of a token.
@@ -175,27 +173,26 @@ pub extern "C" fn pinyin_token_get_n_pronunciation(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        if !num.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *num = 0;
-            }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    if !num.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *num = 0;
         }
-        let Some(intro) = inst.core.dict.token_introspection(token) else {
-            return false;
-        };
-        if !num.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *num = intro.pronunciations.len() as GUint;
-            }
+    }
+    let Some(intro) = inst.core.dict.token_introspection(token) else {
+        return false;
+    };
+    if !num.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *num = intro.pronunciations.len() as GUint;
         }
-        true
-    })
+    }
+    true
 }
 
 /// Get the nth pronunciation of a token as a vector of chewing keys.
@@ -225,43 +222,42 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
     if keys.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        let Some(intro) = inst.core.dict.token_introspection(token) else {
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    let Some(intro) = inst.core.dict.token_introspection(token) else {
+        return false;
+    };
+    let Some((keys_list, _count)) = intro.pronunciations.get(nth as usize) else {
+        return false;
+    };
+    // Pack each syllable key into its two-byte chewing-key word.
+    let mut packed: Vec<u16> = Vec::with_capacity(keys_list.len());
+    for &key in keys_list {
+        let Some(syllable) = oxpinyin_core::SyllableKey::from_index(key as usize) else {
             return false;
         };
-        let Some((keys_list, _count)) = intro.pronunciations.get(nth as usize) else {
+        let Some(chewing) = oxpinyin_core::ChewingKey::from_pinyin(syllable.text()) else {
             return false;
         };
-        // Pack each syllable key into its two-byte chewing-key word.
-        let mut packed: Vec<u16> = Vec::with_capacity(keys_list.len());
-        for &key in keys_list {
-            let Some(syllable) = oxpinyin_core::SyllableKey::from_index(key as usize) else {
-                return false;
-            };
-            let Some(chewing) = oxpinyin_core::ChewingKey::from_pinyin(syllable.text()) else {
-                return false;
-            };
-            packed.push(chewing.to_packed());
-        }
-        if packed.is_empty() {
-            return false;
-        }
-        // SAFETY: Null-checked above; the caller creates the keys
-        // array with element_size = sizeof(u16) (chewing-key vector,
-        // packed two-byte words). `g_array_append_vals` copies
-        // `packed.len()` such elements from the buffer.
-        unsafe {
-            g_array_append_vals(
-                keys,
-                packed.as_ptr().cast::<c_void>(),
-                packed.len() as c_uint,
-            );
-        }
-        true
-    })
+        packed.push(chewing.to_packed());
+    }
+    if packed.is_empty() {
+        return false;
+    }
+    // SAFETY: Null-checked above; the caller creates the keys
+    // array with element_size = sizeof(u16) (chewing-key vector,
+    // packed two-byte words). `g_array_append_vals` copies
+    // `packed.len()` such elements from the buffer.
+    unsafe {
+        g_array_append_vals(
+            keys,
+            packed.as_ptr().cast::<c_void>(),
+            packed.len() as c_uint,
+        );
+    }
+    true
 }
 
 /// Get the unigram frequency of a token.
@@ -285,68 +281,67 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        if !freq.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *freq = 0;
-            }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    if !freq.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *freq = 0;
         }
-        // The pin's `PhraseItem::get_unigram_frequency` is the chunk
-        // item's stored field (`gen_unigram`'s +1 included), which the
-        // language model hands out as is; the user store's trained delta
-        // rides on it there, the overlay delta below. A token whose
-        // library owns no item answers `false`, as `get_phrase_item`
-        // failing does upstream.
-        let nibble = token >> 24;
-        let base = match nibble {
-            1..=4 => {
-                if !inst.core.dict.library_visible_token(token)
-                    || inst.core.dict.system_unigram_count(token).is_none()
-                {
-                    // Unloaded library or no such item — nothing is
-                    // reported (matches the visibility filter every other
-                    // Tier-C read honours).
-                    None
-                } else {
-                    use oxpinyin_core::LanguageModel;
-                    inst.core
-                        .lm
-                        .unigram_freq(&oxpinyin_core::PhraseToken::new(token))
-                        .ok()
-                        .flatten()
-                }
-            }
-            5..=6 => inst.core.dict.addon_unigram_frequency(token).or_else(|| {
+    }
+    // The pin's `PhraseItem::get_unigram_frequency` is the chunk
+    // item's stored field (`gen_unigram`'s +1 included), which the
+    // language model hands out as is; the user store's trained delta
+    // rides on it there, the overlay delta below. A token whose
+    // library owns no item answers `false`, as `get_phrase_item`
+    // failing does upstream.
+    let nibble = token >> 24;
+    let base = match nibble {
+        1..=4 => {
+            if !inst.core.dict.library_visible_token(token)
+                || inst.core.dict.system_unigram_count(token).is_none()
+            {
+                // Unloaded library or no such item — nothing is
+                // reported (matches the visibility filter every other
+                // Tier-C read honours).
+                None
+            } else {
                 use oxpinyin_core::LanguageModel;
                 inst.core
                     .lm
-                    .addon_unigram_freq(&oxpinyin_core::PhraseToken::new(token))
+                    .unigram_freq(&oxpinyin_core::PhraseToken::new(token))
                     .ok()
                     .flatten()
-            }),
-            7 => inst
-                .core
-                .user
-                .as_ref()
-                .and_then(|store| store.unigram_delta(token).ok()),
-            _ => None,
-        };
-        let Some(base) = base else {
-            return false;
-        };
-        let count = base + inst.core.dict.unigram_delta(token).unwrap_or(0);
-        if !freq.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *freq = GUint::try_from(count).unwrap_or(GUint::MAX);
             }
         }
-        true
-    })
+        5..=6 => inst.core.dict.addon_unigram_frequency(token).or_else(|| {
+            use oxpinyin_core::LanguageModel;
+            inst.core
+                .lm
+                .addon_unigram_freq(&oxpinyin_core::PhraseToken::new(token))
+                .ok()
+                .flatten()
+        }),
+        7 => inst
+            .core
+            .user
+            .as_ref()
+            .and_then(|store| store.unigram_delta(token).ok()),
+        _ => None,
+    };
+    let Some(base) = base else {
+        return false;
+    };
+    let count = base + inst.core.dict.unigram_delta(token).unwrap_or(0);
+    if !freq.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *freq = GUint::try_from(count).unwrap_or(GUint::MAX);
+        }
+    }
+    true
 }
 
 /// Add a unigram-frequency delta to a token.
@@ -374,10 +369,9 @@ pub extern "C" fn pinyin_token_add_unigram_frequency(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        inst.core.dict.add_unigram_delta(token, delta as u64)
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    inst.core.dict.add_unigram_delta(token, delta as u64)
 }

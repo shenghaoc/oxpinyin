@@ -11,7 +11,7 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::sync::atomic::Ordering;
 
-use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
+use crate::ffi::{cstr_to_string, owned_cstr};
 use crate::state::instance_ref;
 use crate::types::{ChewingKey, GChar, ZhuyinInstance};
 
@@ -37,25 +37,24 @@ pub extern "C" fn zhuyin_parse_full_pinyin(
     if instance.is_null() || onepinyin.is_null() || onekey.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        // SAFETY: Null-checked above.
-        let text = unsafe { cstr_to_string(onepinyin) };
-        // SAFETY: Null-checked above; written through the caller's storage.
-        unsafe {
-            *onekey = ChewingKey::ZERO;
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    // SAFETY: Null-checked above.
+    let text = unsafe { cstr_to_string(onepinyin) };
+    // SAFETY: Null-checked above; written through the caller's storage.
+    unsafe {
+        *onekey = ChewingKey::ZERO;
+    }
+    match inst.core.parse_one_full_pinyin(&text, true) {
+        Some(key) => {
+            // SAFETY: Null-checked above.
+            unsafe { *onekey = ChewingKey::from_core(key) };
+            true
         }
-        match inst.core.parse_one_full_pinyin(&text, true) {
-            Some(key) => {
-                // SAFETY: Null-checked above.
-                unsafe { *onekey = ChewingKey::from_core(key) };
-                true
-            }
-            None => false,
-        }
-    })
+        None => false,
+    }
 }
 
 /// Parse one chewing (bopomofo) keystroke string into a key.
@@ -79,21 +78,20 @@ pub extern "C" fn zhuyin_parse_chewing(
     if instance.is_null() || onechewing.is_null() || onekey.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        // SAFETY: Null-checked above.
-        let text = unsafe { cstr_to_string(onechewing) };
-        match inst.core.parse_one_chewing(&text) {
-            Some(key) => {
-                // SAFETY: Null-checked above.
-                unsafe { *onekey = ChewingKey::from_core(key) };
-                true
-            }
-            None => false,
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    // SAFETY: Null-checked above.
+    let text = unsafe { cstr_to_string(onechewing) };
+    match inst.core.parse_one_chewing(&text) {
+        Some(key) => {
+            // SAFETY: Null-checked above.
+            unsafe { *onekey = ChewingKey::from_core(key) };
+            true
         }
-    })
+        None => false,
+    }
 }
 
 /// `zhuyin_get_zhuyin_string` — render the key's zhuyin spelling.
@@ -157,24 +155,23 @@ fn display_string_getter(
     if instance.is_null() || key.is_null() || utf8_str.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *utf8_str = ptr::null_mut();
-        }
-        // SAFETY: Null-checked above.
-        let core = unsafe { *key }.to_core();
-        if core.table_index() == 0 {
-            return false;
-        }
-        let rendered = render(core);
-        // Return success only when the allocation succeeded; `owned_cstr`
-        // returns null on an interior NUL or OOM.
-        let owned = owned_cstr(&rendered);
-        // SAFETY: Null-checked above.
-        unsafe {
-            *utf8_str = owned;
-        }
-        !owned.is_null()
-    })
+
+    // SAFETY: Null-checked above.
+    unsafe {
+        *utf8_str = ptr::null_mut();
+    }
+    // SAFETY: Null-checked above.
+    let core = unsafe { *key }.to_core();
+    if core.table_index() == 0 {
+        return false;
+    }
+    let rendered = render(core);
+    // Return success only when the allocation succeeded; `owned_cstr`
+    // returns null on an interior NUL or OOM.
+    let owned = owned_cstr(&rendered);
+    // SAFETY: Null-checked above.
+    unsafe {
+        *utf8_str = owned;
+    }
+    !owned.is_null()
 }

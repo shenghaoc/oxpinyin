@@ -3,7 +3,7 @@
 use std::ffi::CString;
 use std::os::raw::c_char;
 
-use crate::ffi::{cstr_to_strict, cstr_to_string, ffi_catch, owned_cstr};
+use crate::ffi::{cstr_to_strict, cstr_to_string, owned_cstr};
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t, sort_option_t};
 
@@ -25,12 +25,11 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        inst.core.session.guess_sentence().unwrap_or(false)
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    inst.core.session.guess_sentence().unwrap_or(false)
 }
 
 /// Guess a sentence seeded with prefix tokens.
@@ -55,27 +54,26 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        // Reject invalid UTF-8 before the prefix-token lookup — same
-        // upstream FALSE gate the sibling prediction seam honours
-        // (`ffi::cstr_to_strict`).
-        let Some(prefix) = cstr_to_strict(prefix) else {
-            return false;
-        };
-        let prefixes =
-            oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), &prefix);
-        let prefix_tokens: Vec<oxpinyin_core::PhraseToken> = prefixes
-            .iter()
-            .map(|&token| oxpinyin_core::PhraseToken::new(token))
-            .collect();
-        inst.core
-            .session
-            .guess_sentence_with_prefix(&prefix_tokens)
-            .unwrap_or(false)
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    // Reject invalid UTF-8 before the prefix-token lookup — same
+    // upstream FALSE gate the sibling prediction seam honours
+    // (`ffi::cstr_to_strict`).
+    let Some(prefix) = cstr_to_strict(prefix) else {
+        return false;
+    };
+    let prefixes =
+        oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), &prefix);
+    let prefix_tokens: Vec<oxpinyin_core::PhraseToken> = prefixes
+        .iter()
+        .map(|&token| oxpinyin_core::PhraseToken::new(token))
+        .collect();
+    inst.core
+        .session
+        .guess_sentence_with_prefix(&prefix_tokens)
+        .unwrap_or(false)
 }
 
 /// Guess predicted candidates with punctuations after a prefix.
@@ -97,14 +95,13 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        // SAFETY: `prefix` is a C string from the caller (null OK).
-        let prefix = unsafe { cstr_to_string(prefix) };
-        crate::predict::guess_predicted_with_punctuations(inst, &prefix)
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    // SAFETY: `prefix` is a C string from the caller (null OK).
+    let prefix = unsafe { cstr_to_string(prefix) };
+    crate::predict::guess_predicted_with_punctuations(inst, &prefix)
 }
 
 /// Get a sentence string from the instance (n-best variant).
@@ -135,46 +132,45 @@ pub extern "C" fn pinyin_get_sentence(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        if inst.core.session.sentence_lookup_active() {
-            // An active lookup answers decoded-or-nothing — the row text
-            // when held, `false` past the row count or after a lookup that
-            // produced none (upstream's `0 == results.size()` false),
-            // never the raw form.
-            return if let Some(decoded) = inst.core.session.sentence_text(index) {
-                write_owned_sentence(decoded, sentence)
-            } else {
-                if !sentence.is_null() {
-                    // SAFETY: Null-checked above.
-                    unsafe {
-                        *sentence = std::ptr::null_mut();
-                    }
-                }
-                false
-            };
-        }
-        let text = if inst
-            .core
-            .zhuyin_parse
-            .as_ref()
-            .is_some_and(|parse| !parse.keys().is_empty())
-        {
-            inst.core.zhuyin_input.clone()
-        } else if inst
-            .core
-            .double_parse
-            .as_ref()
-            .is_some_and(|parse| !parse.keys().is_empty())
-        {
-            inst.core.double_input.clone()
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    if inst.core.session.sentence_lookup_active() {
+        // An active lookup answers decoded-or-nothing — the row text
+        // when held, `false` past the row count or after a lookup that
+        // produced none (upstream's `0 == results.size()` false),
+        // never the raw form.
+        return if let Some(decoded) = inst.core.session.sentence_text(index) {
+            write_owned_sentence(decoded, sentence)
         } else {
-            inst.core.session.preedit().text().to_owned()
+            if !sentence.is_null() {
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *sentence = std::ptr::null_mut();
+                }
+            }
+            false
         };
-        write_owned_sentence(&text, sentence)
-    })
+    }
+    let text = if inst
+        .core
+        .zhuyin_parse
+        .as_ref()
+        .is_some_and(|parse| !parse.keys().is_empty())
+    {
+        inst.core.zhuyin_input.clone()
+    } else if inst
+        .core
+        .double_parse
+        .as_ref()
+        .is_some_and(|parse| !parse.keys().is_empty())
+    {
+        inst.core.double_input.clone()
+    } else {
+        inst.core.session.preedit().text().to_owned()
+    };
+    write_owned_sentence(&text, sentence)
 }
 
 /// Writes `text` through the caller-owned out-param: `false` on an empty
@@ -225,23 +221,22 @@ pub extern "C" fn pinyin_get_character_offset(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `phrase` is a C string from the caller (null OK).
-        let text = unsafe { cstr_to_string(phrase) };
-        let mut clamped = offset.min(text.len());
-        // Floor to a UTF-8 char boundary so the slice never panics.
-        while !text.is_char_boundary(clamped) {
-            clamped -= 1;
+
+    // SAFETY: `phrase` is a C string from the caller (null OK).
+    let text = unsafe { cstr_to_string(phrase) };
+    let mut clamped = offset.min(text.len());
+    // Floor to a UTF-8 char boundary so the slice never panics.
+    while !text.is_char_boundary(clamped) {
+        clamped -= 1;
+    }
+    let char_count = text[..clamped].chars().count();
+    if !length.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *length = char_count;
         }
-        let char_count = text[..clamped].chars().count();
-        if !length.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *length = char_count;
-            }
-        }
-        true
-    })
+    }
+    true
 }
 
 /// Guess candidates at the given offset with sort option.
@@ -284,135 +279,130 @@ pub extern "C" fn pinyin_guess_candidates(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        if inst.core.session.set_options(inst.core.options()).is_err() {
-            return false;
-        }
-        if !inst.core.session.is_composing() {
-            return false;
-        }
-        let Ok(normalized) = inst.core.validate_lookup_offset(offset) else {
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    if inst.core.session.set_options(inst.core.options()).is_err() {
+        return false;
+    }
+    if !inst.core.session.is_composing() {
+        return false;
+    }
+    let Ok(normalized) = inst.core.validate_lookup_offset(offset) else {
+        inst.candidates.clear();
+        return false;
+    };
+    let without_sentence =
+        sort_option & sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE as GUint != 0;
+    inst.candidates.clear();
+    let double_parse = inst.core.double_parse.clone();
+    let zhuyin_parse = inst.core.zhuyin_parse.clone();
+    // Mirror the pin's per-offset span search. `pinyin_guess_candidates`
+    // anchors its window at `start = offset` (`pinyin.cpp:2224-2262`); the
+    // session's cached list is anchored at the composition offset it owns.
+    // When the caller's normalized lookup offset differs — a
+    // mid-composition cursor with no prior choose — rebuild the window at
+    // that offset. When it matches (offset 0 unconstrained, and every
+    // post-choose lookup, where the frontend's offset equals the
+    // composition offset), the cached list already answers, so those paths
+    // stay bit-identical.
+    //
+    // Re-anchoring is valid only for plain full pinyin, where the caller's
+    // offset is a direct byte index into the session's raw buffer — the
+    // same coordinate space as `composition_offset`. Under a transform
+    // (double pinyin, zhuyin, or the LUOMA / secondary-zhuyin full-pinyin
+    // index) the offset lives in the original input's coordinates, which
+    // `self.raw` does not share; the normalized offset is range-checked
+    // there but is not a raw index, so the cached list stands (the C2
+    // differential never drives a transformed scheme).
+    let transformed = inst.core.double_parse.is_some()
+        || inst.core.zhuyin_parse.is_some()
+        || inst.core.full_parse.is_some();
+    // Retain the re-anchored window on the instance: a session's
+    // selection records against the cached (composition-anchored) list,
+    // but the row the caller saw came from the offset-anchored window —
+    // an index into the cached list would select a different row
+    // whenever the two differ. `anchored_window` is set here and a later
+    // `pinyin_choose_candidate` resolves its index against it.
+    // Re-anchor only at a normalized offset strictly PAST the
+    // composition offset. A normalized offset equal to it is the
+    // composition-anchored cached list; one BELOW it is a stale cursor
+    // behind the selection, whose anchored span would regress the
+    // composition (rejected — the `select_anchored` guard refuses it)
+    // and is served the cached list instead. Under a transform the
+    // cached list stands (the offset is in the original input's
+    // coordinates `self.raw` does not share).
+    inst.core.anchored_window =
+        if transformed || normalized <= inst.core.session.composition_offset() {
+            None
+        } else if let Ok(window) = inst.core.session.candidates_at(normalized) {
+            Some((normalized, window))
+        } else {
+            // Unreachable for a well-formed plain-pinyin lookup:
+            // the offset-shaped contracts are refused by
+            // `validate_lookup_offset` and `candidates_at`'s own
+            // range/char-boundary checks, and a mid-syllable byte
+            // is not an error — the window answers the pin's
+            // empty-column law. The arm remains for genuine
+            // backend failures during the re-anchored scan.
             inst.candidates.clear();
             return false;
         };
-        let without_sentence =
-            sort_option & sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE as GUint != 0;
-        inst.candidates.clear();
-        let double_parse = inst.core.double_parse.clone();
-        let zhuyin_parse = inst.core.zhuyin_parse.clone();
-        // Mirror the pin's per-offset span search. `pinyin_guess_candidates`
-        // anchors its window at `start = offset` (`pinyin.cpp:2224-2262`); the
-        // session's cached list is anchored at the composition offset it owns.
-        // When the caller's normalized lookup offset differs — a
-        // mid-composition cursor with no prior choose — rebuild the window at
-        // that offset. When it matches (offset 0 unconstrained, and every
-        // post-choose lookup, where the frontend's offset equals the
-        // composition offset), the cached list already answers, so those paths
-        // stay bit-identical.
-        //
-        // Re-anchoring is valid only for plain full pinyin, where the caller's
-        // offset is a direct byte index into the session's raw buffer — the
-        // same coordinate space as `composition_offset`. Under a transform
-        // (double pinyin, zhuyin, or the LUOMA / secondary-zhuyin full-pinyin
-        // index) the offset lives in the original input's coordinates, which
-        // `self.raw` does not share; the normalized offset is range-checked
-        // there but is not a raw index, so the cached list stands (the C2
-        // differential never drives a transformed scheme).
-        let transformed = inst.core.double_parse.is_some()
-            || inst.core.zhuyin_parse.is_some()
-            || inst.core.full_parse.is_some();
-        // Retain the re-anchored window on the instance: a session's
-        // selection records against the cached (composition-anchored) list,
-        // but the row the caller saw came from the offset-anchored window —
-        // an index into the cached list would select a different row
-        // whenever the two differ. `anchored_window` is set here and a later
-        // `pinyin_choose_candidate` resolves its index against it.
-        // Re-anchor only at a normalized offset strictly PAST the
-        // composition offset. A normalized offset equal to it is the
-        // composition-anchored cached list; one BELOW it is a stale cursor
-        // behind the selection, whose anchored span would regress the
-        // composition (rejected — the `select_anchored` guard refuses it)
-        // and is served the cached list instead. Under a transform the
-        // cached list stands (the offset is in the original input's
-        // coordinates `self.raw` does not share).
-        inst.core.anchored_window =
-            if transformed || normalized <= inst.core.session.composition_offset() {
-                None
-            } else if let Ok(window) = inst.core.session.candidates_at(normalized) {
-                Some((normalized, window))
-            } else {
-                // Unreachable for a well-formed plain-pinyin lookup:
-                // the offset-shaped contracts are refused by
-                // `validate_lookup_offset` and `candidates_at`'s own
-                // range/char-boundary checks, and a mid-syllable byte
-                // is not an error — the window answers the pin's
-                // empty-column law. The arm remains for genuine
-                // backend failures during the re-anchored scan.
-                inst.candidates.clear();
-                return false;
-            };
-        let candidates: &oxpinyin_engine::CandidateList = match inst.core.anchored_window.as_ref() {
-            Some((_, window)) => window,
-            None => inst.core.session.candidates(),
+    let candidates: &oxpinyin_engine::CandidateList = match inst.core.anchored_window.as_ref() {
+        Some((_, window)) => window,
+        None => inst.core.session.candidates(),
+    };
+    for (window_index, cand) in candidates.iter().enumerate() {
+        if without_sentence && cand.kind() == oxpinyin_engine::CandidateKind::Sentence {
+            continue;
+        }
+        // The engine's remaining-raw-input `Fallback` row is the
+        // session-API affordance (`session-api.md`: it keeps `Space`
+        // and `select` meaningful before a decoder result exists) —
+        // the pin has no raw-input fallback: an empty matrix answers
+        // false (`pinyin.cpp:2193`), an empty result answers true
+        // with no rows. The C ABI translates the engine shape, it
+        // does not surface it.
+        if cand.kind() == oxpinyin_engine::CandidateKind::Fallback {
+            continue;
+        }
+        let Ok(text) = CString::new(cand.text().as_bytes()) else {
+            continue;
         };
-        for (window_index, cand) in candidates.iter().enumerate() {
-            if without_sentence && cand.kind() == oxpinyin_engine::CandidateKind::Sentence {
-                continue;
-            }
-            // The engine's remaining-raw-input `Fallback` row is the
-            // session-API affordance (`session-api.md`: it keeps `Space`
-            // and `select` meaningful before a decoder result exists) —
-            // the pin has no raw-input fallback: an empty matrix answers
-            // false (`pinyin.cpp:2193`), an empty result answers true
-            // with no rows. The C ABI translates the engine shape, it
-            // does not surface it.
-            if cand.kind() == oxpinyin_engine::CandidateKind::Fallback {
-                continue;
-            }
-            let Ok(text) = CString::new(cand.text().as_bytes()) else {
-                continue;
-            };
-            let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
-                || {
-                    double_parse.as_ref().map_or_else(
-                        || cand.consumed_bytes(),
-                        |parse| {
-                            oxpinyin_facade::double_original_offset(parse, cand.consumed_bytes())
-                        },
-                    )
-                },
-                |parse| oxpinyin_facade::zhuyin_original_offset(parse, cand.consumed_bytes()),
-            );
-            inst.candidates.push(CapiCandidate {
-                text,
-                kind: cand.kind(),
-                candidate_type: match cand.kind() {
-                    oxpinyin_engine::CandidateKind::Sentence => {
-                        lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
-                    }
-                    oxpinyin_engine::CandidateKind::Addon => {
-                        lookup_candidate_type_t::ADDON_CANDIDATE
-                    }
-                    oxpinyin_engine::CandidateKind::Phrase
-                    | oxpinyin_engine::CandidateKind::Fallback
-                    | _ => lookup_candidate_type_t::NORMAL_CANDIDATE,
-                },
-                nbest_index: cand.nbest_index(),
-                consumed_bytes,
-                token: cand.token(),
-                source_index: window_index,
-            });
-        }
-        // The pin's empty-matrix early return (`pinyin.cpp:2193`): a
-        // parse that produced no keys answers false, not an empty list.
-        // A non-empty parse with no candidates (apostrophe-only runs,
-        // unmatchable tails) answers true with zero rows.
-        if inst.candidates.is_empty() && inst.core.parsed_len == 0 {
-            return false;
-        }
-        true
-    })
+        let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
+            || {
+                double_parse.as_ref().map_or_else(
+                    || cand.consumed_bytes(),
+                    |parse| oxpinyin_facade::double_original_offset(parse, cand.consumed_bytes()),
+                )
+            },
+            |parse| oxpinyin_facade::zhuyin_original_offset(parse, cand.consumed_bytes()),
+        );
+        inst.candidates.push(CapiCandidate {
+            text,
+            kind: cand.kind(),
+            candidate_type: match cand.kind() {
+                oxpinyin_engine::CandidateKind::Sentence => {
+                    lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+                }
+                oxpinyin_engine::CandidateKind::Addon => lookup_candidate_type_t::ADDON_CANDIDATE,
+                oxpinyin_engine::CandidateKind::Phrase
+                | oxpinyin_engine::CandidateKind::Fallback
+                | _ => lookup_candidate_type_t::NORMAL_CANDIDATE,
+            },
+            nbest_index: cand.nbest_index(),
+            consumed_bytes,
+            token: cand.token(),
+            source_index: window_index,
+        });
+    }
+    // The pin's empty-matrix early return (`pinyin.cpp:2193`): a
+    // parse that produced no keys answers false, not an empty list.
+    // A non-empty parse with no candidates (apostrophe-only runs,
+    // unmatchable tails) answers true with zero rows.
+    if inst.candidates.is_empty() && inst.core.parsed_len == 0 {
+        return false;
+    }
+    true
 }

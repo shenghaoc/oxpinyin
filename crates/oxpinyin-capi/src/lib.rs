@@ -10,12 +10,16 @@
 //!
 //! ## Panic discipline
 //!
-//! An unwind across `extern "C"` is undefined behaviour. Every entry
-//! point wraps its body in [`ffi::ffi_catch`] which calls
-//! [`std::panic::catch_unwind`], returning the sentinel value (false /
-//! null / 0) on panic. The engine layer returns `Result` everywhere and
-//! should never panic, but `catch_unwind` is the belt-and-suspenders
-//! safety net at the ABI boundary.
+//! Nothing here may panic on any input: every library crate in the
+//! workspace denies `clippy::unwrap_used`/`expect_used`/`panic`/
+//! `panic_in_result_fn` outside tests, so the engine layer returns
+//! `Result` everywhere and the entry-point bodies are panic-free by
+//! construction. Rust (since 1.81) aborts the process when a panic
+//! reaches an `extern "C"` boundary, so if a bug ever produced a panic
+//! the failure would be a loud abort, not undefined behaviour. There is
+//! deliberately no panic-catching wrapper: with the lints green one is
+//! operationally inert, and `panic = "abort"` in the release profile
+//! makes it literally so.
 //!
 //! Opaque handles cross the boundary as `*mut T` via `Box::into_raw` /
 //! `Box::from_raw`. Every incoming pointer is null-checked before deref.
@@ -522,9 +526,8 @@ pub fn open_user_import_context(user_dir: &std::path::Path) -> *mut PinyinContex
     let Some(user_dir) = user_dir.to_str() else {
         return std::ptr::null_mut();
     };
-    ffi::ffi_catch(std::ptr::null_mut(), || {
-        state::CapiContext::new_user_only(user_dir).map_or(std::ptr::null_mut(), state::box_context)
-    })
+
+    state::CapiContext::new_user_only(user_dir).map_or(std::ptr::null_mut(), state::box_context)
 }
 
 /// Snapshot the user-store phrase rows a migration tool needs for its

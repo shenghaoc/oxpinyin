@@ -17,7 +17,7 @@
 
 use std::ptr;
 
-use crate::ffi::{ffi_catch, owned_cstr};
+use crate::ffi::owned_cstr;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{ChewingKey, ChewingKeyRest, GChar, PinyinInstance};
 
@@ -48,24 +48,23 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
             *key_rest = ptr::null_mut();
         }
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        let Some(found) = inst.core.key_at(offset) else {
-            return false;
-        };
-        inst.key_rest_slot.begin = u16::try_from(found.begin).unwrap_or(u16::MAX);
-        inst.key_rest_slot.end = u16::try_from(found.end).unwrap_or(u16::MAX);
-        if !key_rest.is_null() {
-            // SAFETY: Null-checked above; the slot lives as long as the
-            // instance.
-            unsafe {
-                *key_rest = &raw mut inst.key_rest_slot;
-            }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    let Some(found) = inst.core.key_at(offset) else {
+        return false;
+    };
+    inst.key_rest_slot.begin = u16::try_from(found.begin).unwrap_or(u16::MAX);
+    inst.key_rest_slot.end = u16::try_from(found.end).unwrap_or(u16::MAX);
+    if !key_rest.is_null() {
+        // SAFETY: Null-checked above; the slot lives as long as the
+        // instance.
+        unsafe {
+            *key_rest = &raw mut inst.key_rest_slot;
         }
-        true
-    })
+    }
+    true
 }
 
 /// Get the begin/end byte positions of a pinyin key rest.
@@ -91,23 +90,22 @@ pub extern "C" fn pinyin_get_pinyin_key_rest_positions(
     if instance.is_null() || key_rest.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: Non-null and produced by `pinyin_get_pinyin_key_rest`.
-        let rest = unsafe { &*key_rest };
-        if !begin.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *begin = rest.begin;
-            }
+
+    // SAFETY: Non-null and produced by `pinyin_get_pinyin_key_rest`.
+    let rest = unsafe { &*key_rest };
+    if !begin.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *begin = rest.begin;
         }
-        if !end.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *end = rest.end;
-            }
+    }
+    if !end.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *end = rest.end;
         }
-        true
-    })
+    }
+    true
 }
 
 /// Get the raw byte length of a pinyin key rest.
@@ -132,17 +130,16 @@ pub extern "C" fn pinyin_get_pinyin_key_rest_length(
     if instance.is_null() || key_rest.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: Non-null and produced by `pinyin_get_pinyin_key_rest`.
-        let rest = unsafe { &*key_rest };
-        if !length.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *length = rest.end.saturating_sub(rest.begin);
-            }
+
+    // SAFETY: Non-null and produced by `pinyin_get_pinyin_key_rest`.
+    let rest = unsafe { &*key_rest };
+    if !length.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *length = rest.end.saturating_sub(rest.begin);
         }
-        true
-    })
+    }
+    true
 }
 
 /// Render a pinyin key as its full spelling.
@@ -212,27 +209,26 @@ pub extern "C" fn pinyin_get_pinyin_strings(
     if instance.is_null() || key.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: Non-null and produced by `pinyin_get_pinyin_key`.
-        let slot = unsafe { &*key };
-        let decoded = slot.to_core();
-        if decoded.table_index() == 0 {
-            return false;
+
+    // SAFETY: Non-null and produced by `pinyin_get_pinyin_key`.
+    let slot = unsafe { &*key };
+    let decoded = slot.to_core();
+    if decoded.table_index() == 0 {
+        return false;
+    }
+    if !shengmu.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *shengmu = owned_cstr(decoded.shengmu_string());
         }
-        if !shengmu.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *shengmu = owned_cstr(decoded.shengmu_string());
-            }
+    }
+    if !yunmu.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *yunmu = owned_cstr(decoded.yunmu_string());
         }
-        if !yunmu.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *yunmu = owned_cstr(decoded.yunmu_string());
-            }
-        }
-        true
-    })
+    }
+    true
 }
 
 /// The shared body of the single-string renderers.
@@ -251,24 +247,23 @@ fn render_key(
             *utf8_str = ptr::null_mut();
         }
     }
-    ffi_catch(false, || {
-        // SAFETY: Non-null and produced by `pinyin_get_pinyin_key`.
-        let slot = unsafe { &*key };
-        let decoded = slot.to_core();
-        if decoded.table_index() == 0 {
-            return false;
+
+    // SAFETY: Non-null and produced by `pinyin_get_pinyin_key`.
+    let slot = unsafe { &*key };
+    let decoded = slot.to_core();
+    if decoded.table_index() == 0 {
+        return false;
+    }
+    let Some(rendered) = render(&decoded) else {
+        return false;
+    };
+    if !utf8_str.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *utf8_str = owned_cstr(&rendered);
         }
-        let Some(rendered) = render(&decoded) else {
-            return false;
-        };
-        if !utf8_str.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *utf8_str = owned_cstr(&rendered);
-            }
-        }
-        true
-    })
+    }
+    true
 }
 
 /// Get the lookup offset from a user cursor position.
@@ -294,21 +289,20 @@ pub extern "C" fn pinyin_get_pinyin_offset(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        let Ok(normalized) = inst.core.lookup_offset(cursor) else {
-            return false;
-        };
-        if !offset.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *offset = normalized;
-            }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    let Ok(normalized) = inst.core.lookup_offset(cursor) else {
+        return false;
+    };
+    if !offset.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *offset = normalized;
         }
-        true
-    })
+    }
+    true
 }
 
 /// Get the left offset from a lookup offset.
@@ -333,21 +327,20 @@ pub extern "C" fn pinyin_get_left_pinyin_offset(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        let Ok(result) = inst.core.left_offset(offset) else {
-            return false;
-        };
-        if !left.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *left = result;
-            }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    let Ok(result) = inst.core.left_offset(offset) else {
+        return false;
+    };
+    if !left.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *left = result;
         }
-        true
-    })
+    }
+    true
 }
 
 /// Get the right offset from a lookup offset.
@@ -373,21 +366,20 @@ pub extern "C" fn pinyin_get_right_pinyin_offset(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        let Ok(Some(result)) = inst.core.right_offset(offset) else {
-            return false;
-        };
-        if !right.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *right = result;
-            }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    let Ok(Some(result)) = inst.core.right_offset(offset) else {
+        return false;
+    };
+    if !right.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *right = result;
         }
-        true
-    })
+    }
+    true
 }
 
 #[cfg(test)]
@@ -597,24 +589,22 @@ pub extern "C" fn pinyin_get_pinyin_key(
             *key = ptr::null_mut();
         }
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        let Some(found) = inst.core.key_at(offset) else {
-            return false;
-        };
-        inst.key_slot =
-            ChewingKey::from_spelling(found.text, found.tone).unwrap_or(ChewingKey::ZERO);
-        if !key.is_null() {
-            // SAFETY: Null-checked above; the slot lives as long as the
-            // instance.
-            unsafe {
-                *key = &raw mut inst.key_slot;
-            }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    let Some(found) = inst.core.key_at(offset) else {
+        return false;
+    };
+    inst.key_slot = ChewingKey::from_spelling(found.text, found.tone).unwrap_or(ChewingKey::ZERO);
+    if !key.is_null() {
+        // SAFETY: Null-checked above; the slot lives as long as the
+        // instance.
+        unsafe {
+            *key = &raw mut inst.key_slot;
         }
-        true
-    })
+    }
+    true
 }
 
 #[cfg(test)]

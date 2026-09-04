@@ -11,7 +11,6 @@ use std::os::raw::c_int;
 
 use oxpinyin_engine::CandidateKind;
 
-use crate::ffi::ffi_catch;
 use crate::state::{
     CapiCandidate, CapiInstance, candidate_ptr, candidate_ref, instance_mut, instance_ref,
 };
@@ -28,18 +27,17 @@ pub extern "C" fn zhuyin_get_n_candidate(instance: *mut ZhuyinInstance, num: *mu
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        if !num.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *num = inst.candidates.len() as GUint;
-            }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    if !num.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *num = inst.candidates.len() as GUint;
         }
-        true
-    })
+    }
+    true
 }
 
 /// Get a candidate by index.
@@ -58,32 +56,31 @@ pub extern "C" fn zhuyin_get_candidate(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        let idx = index as usize;
-        match inst.candidates.get(idx) {
-            Some(cand) => {
-                if !candidate.is_null() {
-                    // SAFETY: Null-checked above.
-                    unsafe {
-                        *candidate = candidate_ptr(cand);
-                    }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    let idx = index as usize;
+    match inst.candidates.get(idx) {
+        Some(cand) => {
+            if !candidate.is_null() {
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *candidate = candidate_ptr(cand);
                 }
-                true
             }
-            None => {
-                if !candidate.is_null() {
-                    // SAFETY: Null-checked above.
-                    unsafe {
-                        *candidate = std::ptr::null_mut();
-                    }
-                }
-                false
-            }
+            true
         }
-    })
+        None => {
+            if !candidate.is_null() {
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *candidate = std::ptr::null_mut();
+                }
+            }
+            false
+        }
+    }
 }
 
 /// Get the type of a lookup candidate.
@@ -107,19 +104,18 @@ pub extern "C" fn zhuyin_get_candidate_type(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `candidate` is non-null and was produced by
-        // `zhuyin_get_candidate`.
-        let cand = unsafe { candidate_ref(candidate) };
-        let ctype = cand.candidate_type;
-        if !candidate_type.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *candidate_type = ctype;
-            }
+
+    // SAFETY: `candidate` is non-null and was produced by
+    // `zhuyin_get_candidate`.
+    let cand = unsafe { candidate_ref(candidate) };
+    let ctype = cand.candidate_type;
+    if !candidate_type.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *candidate_type = ctype;
         }
-        true
-    })
+    }
+    true
 }
 
 /// Get the display string of a candidate.
@@ -141,19 +137,18 @@ pub extern "C" fn zhuyin_get_candidate_string(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `candidate` is non-null and was produced by
-        // `zhuyin_get_candidate`.
-        let cand = unsafe { candidate_ref(candidate) };
-        if !utf8_str.is_null() {
-            // SAFETY: Null-checked above. Pointer borrows into the
-            // CapiCandidate's CString, valid until candidates are rebuilt.
-            unsafe {
-                *utf8_str = cand.text.as_ptr();
-            }
+
+    // SAFETY: `candidate` is non-null and was produced by
+    // `zhuyin_get_candidate`.
+    let cand = unsafe { candidate_ref(candidate) };
+    if !utf8_str.is_null() {
+        // SAFETY: Null-checked above. Pointer borrows into the
+        // CapiCandidate's CString, valid until candidates are rebuilt.
+        unsafe {
+            *utf8_str = cand.text.as_ptr();
         }
-        true
-    })
+    }
+    true
 }
 
 /// Choose a candidate at an offset, returning the new cursor position.
@@ -175,43 +170,40 @@ pub extern "C" fn zhuyin_choose_candidate(
     if instance.is_null() || candidate.is_null() {
         return -1;
     }
-    ffi_catch(-1, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        let Some(index) = inst
-            .candidates
-            .iter()
-            .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
-        else {
-            return -1;
-        };
-        let source_index = inst.candidates[index].source_index;
-        let selection = match inst.core.anchored_window.as_ref() {
-            Some((anchor, window)) => {
-                inst.core
-                    .session
-                    .select_anchored(source_index, window, *anchor)
-            }
-            None => inst.core.session.select(source_index),
-        };
-        if selection.is_err() {
-            return -1;
-        }
-        inst.core.anchored_window = None;
-        // The BEST_MATCH row answers the parse end; the normal rows answer
-        // their own span's end mapped back to original coordinates.
-        let end = if inst.candidates[index].candidate_type
-            == lookup_candidate_type_t::BEST_MATCH_CANDIDATE
-        {
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    let Some(index) = inst
+        .candidates
+        .iter()
+        .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
+    else {
+        return -1;
+    };
+    let source_index = inst.candidates[index].source_index;
+    let selection = match inst.core.anchored_window.as_ref() {
+        Some((anchor, window)) => inst
+            .core
+            .session
+            .select_anchored(source_index, window, *anchor),
+        None => inst.core.session.select(source_index),
+    };
+    if selection.is_err() {
+        return -1;
+    }
+    inst.core.anchored_window = None;
+    // The BEST_MATCH row answers the parse end; the normal rows answer
+    // their own span's end mapped back to original coordinates.
+    let end =
+        if inst.candidates[index].candidate_type == lookup_candidate_type_t::BEST_MATCH_CANDIDATE {
             inst.core.parsed_len
         } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
             oxpinyin_facade::zhuyin_original_offset(parse, inst.core.session.composition_offset())
         } else {
             inst.core.session.composition_offset()
         };
-        end as c_int
-    })
+    end as c_int
 }
 
 /// Clear the constraint a prior choose pinned, by offset.
@@ -226,17 +218,16 @@ pub extern "C" fn zhuyin_clear_constraint(instance: *mut ZhuyinInstance, offset:
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        let session_offset = if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-            oxpinyin_facade::zhuyin_session_offset(parse, offset)
-        } else {
-            offset
-        };
-        inst.core.session.clear_constraint(session_offset)
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    let session_offset = if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+        oxpinyin_facade::zhuyin_session_offset(parse, offset)
+    } else {
+        offset
+    };
+    inst.core.session.clear_constraint(session_offset)
 }
 
 /// Train the current sentence.
@@ -250,12 +241,11 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        inst.core.train()
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    inst.core.train()
 }
 
 /// Fill the instance's candidate snapshot from a `CandidateList`.

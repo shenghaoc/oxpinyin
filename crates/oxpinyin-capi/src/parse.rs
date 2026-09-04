@@ -12,7 +12,7 @@ use std::os::raw::c_char;
 
 use oxpinyin_facade::ToneForwarding;
 
-use crate::ffi::{cstr_to_string, ffi_catch};
+use crate::ffi::cstr_to_string;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, PinyinInstance};
 
@@ -31,11 +31,10 @@ fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> usize {
     if instance.is_null() {
         return 0;
     }
-    ffi_catch(0, || {
-        // SAFETY: `text` is a C string from the caller (null OK).
-        let text = unsafe { cstr_to_string(text) };
-        parse_more(instance, &text)
-    })
+
+    // SAFETY: `text` is a C string from the caller (null OK).
+    let text = unsafe { cstr_to_string(text) };
+    parse_more(instance, &text)
 }
 
 /// Parse multiple full pinyins.
@@ -73,15 +72,14 @@ pub extern "C" fn pinyin_parse_more_double_pinyins(
     if instance.is_null() {
         return 0;
     }
-    ffi_catch(0, || {
-        // SAFETY: `pinyins` is a C string from the caller (null OK).
-        let text = unsafe { cstr_to_string(pinyins) };
-        // SAFETY: `instance` is non-null (checked above).
-        let inst = unsafe { instance_mut(instance) };
-        // Parse-path snapshot clear (main's begin_parse law).
-        inst.candidates.clear();
-        inst.core.parse_double_more(&text)
-    })
+
+    // SAFETY: `pinyins` is a C string from the caller (null OK).
+    let text = unsafe { cstr_to_string(pinyins) };
+    // SAFETY: `instance` is non-null (checked above).
+    let inst = unsafe { instance_mut(instance) };
+    // Parse-path snapshot clear (main's begin_parse law).
+    inst.candidates.clear();
+    inst.core.parse_double_more(&text)
 }
 
 /// Parse multiple chewing (bopomofo) inputs.
@@ -102,16 +100,15 @@ pub extern "C" fn pinyin_parse_more_chewings(
     if instance.is_null() {
         return 0;
     }
-    ffi_catch(0, || {
-        // SAFETY: `chewings` is a C string from the caller (null OK).
-        let text = unsafe { cstr_to_string(chewings) };
-        // SAFETY: `instance` is non-null (checked above).
-        let inst = unsafe { instance_mut(instance) };
-        // Parse-path snapshot clear (main's begin_parse law).
-        inst.candidates.clear();
-        inst.core
-            .parse_chewing_more(&text, ToneForwarding::PinFacade)
-    })
+
+    // SAFETY: `chewings` is a C string from the caller (null OK).
+    let text = unsafe { cstr_to_string(chewings) };
+    // SAFETY: `instance` is non-null (checked above).
+    let inst = unsafe { instance_mut(instance) };
+    // Parse-path snapshot clear (main's begin_parse law).
+    inst.candidates.clear();
+    inst.core
+        .parse_chewing_more(&text, ToneForwarding::PinFacade)
 }
 
 /// Get the parsed length of the input.
@@ -129,12 +126,11 @@ pub extern "C" fn pinyin_get_parsed_input_length(instance: *mut PinyinInstance) 
     if instance.is_null() {
         return 0;
     }
-    ffi_catch(0, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        inst.core.parsed_len
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    inst.core.parsed_len
 }
 
 /// Check whether an input key is in the current chewing keyboard scheme.
@@ -160,43 +156,42 @@ pub extern "C" fn pinyin_in_chewing_keyboard(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        // `c_char` is `i8` on some targets and `u8` on others (aarch64
-        // Linux among them); `as u8` is a lossless reinterpret on both,
-        // and the cast is not "unnecessary" on the targets where it is
-        // `i8`.
-        #[allow(clippy::unnecessary_cast)]
-        let mapped = inst.core.in_keyboard(key as u8);
-        if mapped.is_empty() {
-            if !symbols.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *symbols = std::ptr::null_mut();
-                }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    // `c_char` is `i8` on some targets and `u8` on others (aarch64
+    // Linux among them); `as u8` is a lossless reinterpret on both,
+    // and the cast is not "unnecessary" on the targets where it is
+    // `i8`.
+    #[allow(clippy::unnecessary_cast)]
+    let mapped = inst.core.in_keyboard(key as u8);
+    if mapped.is_empty() {
+        if !symbols.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *symbols = std::ptr::null_mut();
+            }
+        }
+        return false;
+    }
+
+    if !symbols.is_null() {
+        let ptr = crate::ffi::owned_cstr_list(&mapped);
+        if ptr.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *symbols = std::ptr::null_mut();
             }
             return false;
         }
-
-        if !symbols.is_null() {
-            let ptr = crate::ffi::owned_cstr_list(&mapped);
-            if ptr.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *symbols = std::ptr::null_mut();
-                }
-                return false;
-            }
-            // SAFETY: `owned_cstr_list` is a malloc array of malloc
-            // strings; the caller releases both with g_strfreev.
-            unsafe {
-                *symbols = ptr;
-            }
+        // SAFETY: `owned_cstr_list` is a malloc array of malloc
+        // strings; the caller releases both with g_strfreev.
+        unsafe {
+            *symbols = ptr;
         }
-        true
-    })
+    }
+    true
 }
 
 #[cfg(test)]

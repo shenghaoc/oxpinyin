@@ -4,7 +4,7 @@ use std::os::raw::{c_char, c_int};
 
 use oxpinyin_user::PinyinKey;
 
-use crate::ffi::{cstr_to_string, ffi_catch};
+use crate::ffi::cstr_to_string;
 use crate::state::instance_mut;
 use crate::types::PinyinInstance;
 
@@ -40,32 +40,31 @@ pub extern "C" fn pinyin_remember_user_input(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `phrase` is a C string from the caller (null OK; a null
-        // pointer reads as empty, which validation rejects).
-        let phrase = unsafe { cstr_to_string(phrase) };
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        let Some(user) = inst.core.user.as_mut() else {
-            return false;
-        };
-        // Key ids are the dense inventory index (< u16::MAX by
-        // construction: 405 complete + 23 initial keys).
-        let Some(keys) = inst.core.session.composition_keys().ok().and_then(|keys| {
-            keys.into_iter()
-                .map(|key| u16::try_from(key.index()).ok())
-                .collect::<Option<Vec<PinyinKey>>>()
-        }) else {
-            return false;
-        };
-        let count = if count == -1 {
-            None
-        } else if count >= 0 {
-            Some(u64::try_from(count).unwrap_or(0))
-        } else {
-            return false;
-        };
-        user.add_phrase(&phrase, &keys, count).is_ok()
-    })
+
+    // SAFETY: `phrase` is a C string from the caller (null OK; a null
+    // pointer reads as empty, which validation rejects).
+    let phrase = unsafe { cstr_to_string(phrase) };
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    let Some(user) = inst.core.user.as_mut() else {
+        return false;
+    };
+    // Key ids are the dense inventory index (< u16::MAX by
+    // construction: 405 complete + 23 initial keys).
+    let Some(keys) = inst.core.session.composition_keys().ok().and_then(|keys| {
+        keys.into_iter()
+            .map(|key| u16::try_from(key.index()).ok())
+            .collect::<Option<Vec<PinyinKey>>>()
+    }) else {
+        return false;
+    };
+    let count = if count == -1 {
+        None
+    } else if count >= 0 {
+        Some(u64::try_from(count).unwrap_or(0))
+    } else {
+        return false;
+    };
+    user.add_phrase(&phrase, &keys, count).is_ok()
 }

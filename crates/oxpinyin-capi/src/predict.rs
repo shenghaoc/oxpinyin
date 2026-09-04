@@ -12,7 +12,7 @@ use std::os::raw::c_char;
 use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::UserStore;
 
-use crate::ffi::{cstr_to_strict, ffi_catch};
+use crate::ffi::cstr_to_strict;
 use crate::state::{CapiCandidate, CapiInstance, SharedDict, SharedLm, instance_mut};
 use crate::types::{PinyinInstance, lookup_candidate_type_t};
 
@@ -114,18 +114,17 @@ pub extern "C" fn pinyin_guess_predicted_candidates(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        // Reject invalid UTF-8 without touching `inst.candidates` —
-        // mirrors upstream's `g_return_val_if_fail(prefix, FALSE)` at
-        // `pinyin.cpp:1450-1452` (see `ffi::cstr_to_strict`).
-        let Some(prefix) = cstr_to_strict(prefix) else {
-            return false;
-        };
-        guess_predicted(inst, &prefix)
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    // Reject invalid UTF-8 without touching `inst.candidates` —
+    // mirrors upstream's `g_return_val_if_fail(prefix, FALSE)` at
+    // `pinyin.cpp:1450-1452` (see `ffi::cstr_to_strict`).
+    let Some(prefix) = cstr_to_strict(prefix) else {
+        return false;
+    };
+    guess_predicted(inst, &prefix)
 }
 
 ///
