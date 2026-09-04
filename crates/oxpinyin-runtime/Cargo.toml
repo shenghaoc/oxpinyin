@@ -22,9 +22,9 @@ oxpinyin-user.workspace = true
 
 [features]
 # Backend selection, forwarded down the chain (one backend per binary;
-# see oxpinyin-store's [features] for the peer model). KC is the default
+# see oxpinyin-store's [features] for the peer model). Tkrzw is the default
 # selection.
-default = ["kyotocabinet"]
+default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-data/kyotocabinet", "oxpinyin-user/kyotocabinet"]
 tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-user/tkrzw"]
 lmdb = ["oxpinyin-data/lmdb", "oxpinyin-user/lmdb"]

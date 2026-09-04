@@ -17,9 +17,9 @@ workspace = true
 # training tools built on it name export tables (`phrase_index.<ext>` &
 # co.) in the compiled-in backend's format, so a standalone
 # `cargo run -p oxpinyin-segment` must select the same peer backend the
-# export was produced with — Kyoto Cabinet is the default selection;
-# `--no-default-features --features {redb|lmdb|tkrzw}` picks a peer.
-default = ["kyotocabinet"]
+# export was produced with — Tkrzw is the default selection;
+# `--no-default-features --features {kyotocabinet|redb|lmdb}` picks a peer.
+default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-data/kyotocabinet"]
 tkrzw = ["oxpinyin-data/tkrzw"]
 lmdb = ["oxpinyin-data/lmdb"]

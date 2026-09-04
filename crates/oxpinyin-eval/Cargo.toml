@@ -14,10 +14,10 @@ workspace = true
 [features]
 # Backend selection forwarded through oxpinyin-data to the store chain (one
 # backend per binary): the real-model path opens the system phrase index and
-# pinyin index in the compiled-in backend's format. Kyoto Cabinet is the
-# default selection; `--no-default-features --features {redb|lmdb|tkrzw}`
+# pinyin index in the compiled-in backend's format. Tkrzw is the
+# default selection; `--no-default-features --features {kyotocabinet|redb|lmdb}`
 # picks a peer.
-default = ["kyotocabinet"]
+default = ["tkrzw"]
 kyotocabinet = [
     "oxpinyin-data/kyotocabinet",
     "oxpinyin-counter/kyotocabinet",

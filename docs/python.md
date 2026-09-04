@@ -46,18 +46,18 @@ data toolchain. A libpinyin installation is never linked or read.
 | `table.conf` | optional | λ override; pinned default otherwise |
 | `user_store.<ext>` | created in `user_dir` | learning persistence |
 
-`<ext>` names the peer backend the build was compiled against: `kct`
-(Kyoto Cabinet — the default selection), `redb` under
-`--no-default-features --features redb`, `tkt` with
-`--no-default-features --features tkrzw`, `lmdb` with
+`<ext>` names the peer backend the build was compiled against: `tkt`
+(tkrzw — the default selection), `redb` under
+`--no-default-features --features redb`, `kct` with
+`--no-default-features --features kyotocabinet`, `lmdb` with
 `--no-default-features --features lmdb`. All four backends are
 first-class; the same logical row stream reads back identically under
 each.
 
 The pinned model is fetched with `tools/model/fetch-model.sh`, then
 compiled into the tables above by `oxpinyin-datagen compile ...`
-(defaults to the KC backend; pass `--backend {redb|lmdb|tkrzw}` on a
-build enabling that peer). The committed mini fixture `fixtures/w3` has
+(defaults to the compiled-in default backend, tkrzw; pass
+`--backend {redb|lmdb|kyotocabinet}` on a build enabling that peer). The committed mini fixture `fixtures/w3` has
 no `interpolation2.text`; open it through `Engine.from_fixture_dir`,
 which falls back to flat counts derived from the phrase index. That mode
 exists for development and tests — production engines need the
@@ -310,8 +310,8 @@ The shipping data path always uses the compiled-in backend —
 `oxpinyin-runtime` opens tables through `GenericLookupTable<DefaultStore>`
 and learning through `UserStore = GenericUserStore<DefaultStore>`, where
 `DefaultStore` resolves to whichever peer backend the build was
-compiled against (Kyoto Cabinet under the default features; redb, LMDB,
-or tkrzw when their `--no-default-features --features <peer>` is
+compiled against (tkrzw under the default features; redb, LMDB,
+or Kyoto Cabinet when their `--no-default-features --features <peer>` is
 selected). Each peer backend's own coverage belongs to the separate
 store/backend differential tests, not to Python parity.
 

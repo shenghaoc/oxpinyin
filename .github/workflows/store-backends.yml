@@ -2,7 +2,7 @@ name: Store backends
 
 # Backend coverage for the four peer store backends on a rolling
 # toolchain. The four peers (Kyoto Cabinet, redb, LMDB, tkrzw) are
-# equal implementations behind the store's trait surface; KC is the
+# equal implementations behind the store's trait surface; tkrzw is the
 # workspace's default selection. Exactly one peer is compiled per
 # build — the exactly-one-backend invariant is enforced at compile
 # time by two `compile_error!` guards in `crates/oxpinyin-store/src/lib.rs`
@@ -150,8 +150,8 @@ jobs:
         # Debian's libtkrzw-dev builds tkrzw with compression, so tkrzw.pc
         # demands -llzma -llz4 -lzstd -lz at link time; their -dev packages
         # must be present or every final link dies.
-        # libkyotocabinet-dev: the default backend links the distro Kyoto
-        # Cabinet; bindgen reads kclangc.h at build time.
+        # libkyotocabinet-dev: the explicit kyotocabinet child links the
+        # distro Kyoto Cabinet; bindgen reads kclangc.h at build time.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
 
       # This child runs exactly one of four fixed cargo invocations, selected
@@ -183,16 +183,16 @@ jobs:
           # exactly-one-backend invariant is unchanged; the
           # `backend-matrix` job proves it separately.
           kyotocabinet)
-            echo "--- kyotocabinet (workspace, the default backend) ---"
-            cargo test --locked --workspace
+            echo "--- kyotocabinet (explicit) ---"
+            cargo test --locked --workspace --no-default-features --features kyotocabinet
             ;;
           redb)
             echo "--- redb (workspace, pure-Rust peer) ---"
             cargo test --locked --workspace --no-default-features --features redb
             ;;
           tkrzw)
-            echo "--- tkrzw (workspace) ---"
-            cargo test --locked --workspace --no-default-features --features tkrzw
+            echo "--- tkrzw (the default) ---"
+            cargo test --locked --workspace
             ;;
           lmdb)
             echo "--- lmdb (workspace) ---"
@@ -445,10 +445,9 @@ jobs:
       # translation units — the memory-unsafe boundary — and injects libubsan
       # at cargo's final link. Any finding traps and fails the job.
       #
-      # Both arms build with --no-default-features --features tkrzw so
-      # the instrumented binary is pure tkrzw: the kyotocabinet DEFAULT
-      # would drag a second C backend (and its headers) into a build
-      # whose instrumentation exists to catch tkrzw-shim misuse.
+      # Both arms build the workspace default backend (tkrzw), so the
+      # instrumented binary is pure tkrzw — exactly the surface whose
+      # instrumentation exists to catch tkrzw-shim misuse.
       #
       # Both arms pass an EXPLICIT --target on purpose: without it, cargo
       # applies RUSTFLAGS to HOST build scripts and proc macros too, which is
@@ -486,7 +485,7 @@ jobs:
             # container cannot lower vm.mmap_rnd_bits itself.
             export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1
             setarch "$(uname -m)" -R \
-              cargo test --locked --target "$triple" -p oxpinyin-store --no-default-features --features tkrzw
+              cargo test --locked --target "$triple" -p oxpinyin-store
             ;;
           undefined)
             # No -Zsanitizer=undefined exists; instrument the shim and link
@@ -495,7 +494,7 @@ jobs:
             export RUSTFLAGS="-D warnings -C linker=cc -Clink-arg=-fsanitize=undefined -Clink-arg=-lubsan"
             export CFLAGS="-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
             export CXXFLAGS="$CFLAGS"
-            cargo test --locked --target "$triple" -p oxpinyin-store --no-default-features --features tkrzw
+            cargo test --locked --target "$triple" -p oxpinyin-store
             ;;
           *)
             echo "FAIL: unknown matrix.sanitizer value '$SANITIZER'" >&2

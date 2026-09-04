@@ -33,7 +33,7 @@ oxpinyin-user.workspace = true
 # oxpinyin-store's [features] for the model and precedence) — the same
 # block both C-ABI facade crates carry, because InstanceCore holds the
 # runtime's concrete dict/lm handles by value.
-default = ["kyotocabinet"]
+default = ["tkrzw"]
 kyotocabinet = [
     "oxpinyin-runtime/kyotocabinet",
     "oxpinyin-user/kyotocabinet",

@@ -38,7 +38,7 @@ features = ["macros", "abi3-py310", "abi3t-py315"]
 [features]
 # Backend selection, forwarded down the chain (one backend per binary; see
 # oxpinyin-store's [features] for the model and precedence).
-default = ["kyotocabinet"]
+default = ["tkrzw"]
 kyotocabinet = [
     "oxpinyin-runtime/kyotocabinet",
     "oxpinyin-data/kyotocabinet",

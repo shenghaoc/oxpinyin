@@ -15,9 +15,9 @@ workspace = true
 # Backend selection, forwarded through the training-crate chain (one
 # backend per binary; see oxpinyin-store's [features] for the model): the
 # emitter reads `phrase_index.<ext>` in the compiled-in backend's format.
-# The four peer backends match the store's; Kyoto Cabinet is the default
+# The four peer backends match the store's; Tkrzw is the default
 # selection.
-default = ["kyotocabinet"]
+default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-segment/kyotocabinet", "oxpinyin-counter/kyotocabinet"]
 tkrzw = ["oxpinyin-segment/tkrzw", "oxpinyin-counter/tkrzw"]
 lmdb = ["oxpinyin-segment/lmdb", "oxpinyin-counter/lmdb"]

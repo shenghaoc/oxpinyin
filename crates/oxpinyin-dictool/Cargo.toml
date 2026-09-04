@@ -18,7 +18,7 @@ oxpinyin-capi = { path = "../oxpinyin-capi", default-features = false }
 [features]
 # Backend selection, forwarded to the C ABI crate (one backend per binary;
 # see oxpinyin-store's [features] for the model and precedence).
-default = ["kyotocabinet"]
+default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-capi/kyotocabinet"]
 tkrzw = ["oxpinyin-capi/tkrzw"]
 lmdb = ["oxpinyin-capi/lmdb"]
