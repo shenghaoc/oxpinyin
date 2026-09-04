@@ -87,32 +87,28 @@ echo "installed capi .so:         $CAPI_SO"
 
 # ── Installed data tree (cargo-c ships no data; packager must add it) ────
 
-if [ ! -f "$CAPI_DATA/pinyin_index.kct" ] || [ ! -f "$CAPI_DATA/phrase_index.kct" ] \
-   || [ ! -f "$CAPI_DATA/bigram.kct" ] || [ ! -f "$CAPI_DATA/interpolation2.text" ]; then
+if [ ! -f "$CAPI_DATA/pinyin_index.bin" ] || [ ! -f "$CAPI_DATA/phrase_index.bin" ] \
+   || [ ! -f "$CAPI_DATA/bigram.db" ] || [ ! -f "$CAPI_DATA/table.conf" ]; then
     echo "--- populating oxpinyin data from export + model cache ---"
     EXPORT_DIR="${PINYIN_EXPORT_DIR:-/tmp/oxpinyin-export}"
     missing=""
-    for table in pinyin_index.kct phrase_index.kct bigram.kct; do
+    for table in pinyin_index.bin phrase_index.bin bigram.db table.conf; do
         [ -f "$EXPORT_DIR/$table" ] || missing="$missing $table"
     done
     [ -z "$missing" ] || {
-        echo "fatal: exported table(s)$missing not found at $EXPORT_DIR;" >&2
+        echo "fatal: exported file(s)$missing not found at $EXPORT_DIR;" >&2
         echo "  generate with: cargo run --release -p oxpinyin-datagen -- compile --out-dir DIR" >&2
         exit 1
     }
     mkdir -p "$CAPI_DATA"
-    cp -L "$EXPORT_DIR/pinyin_index.kct" \
-          "$EXPORT_DIR/phrase_index.kct" \
-          "$EXPORT_DIR/bigram.kct" "$CAPI_DATA/"
-    if [ -f "$EXPORT_DIR/interpolation2.text" ]; then
-        cp -L "$EXPORT_DIR/interpolation2.text" "$CAPI_DATA/interpolation2.text"
-    else
-        MODEL_DIR=$(PINYIN_MODEL_CACHE="$WORK/model" \
-            "$REPO_ROOT/tools/model/fetch-model.sh" | tail -n 1)
-        cp -L "$MODEL_DIR/interpolation2.text" "$CAPI_DATA/interpolation2.text"
-    fi
+    cp -L "$EXPORT_DIR"/*.bin "$EXPORT_DIR"/*.db "$EXPORT_DIR"/table.conf \
+          "$CAPI_DATA/" 2>/dev/null || true
+    # Copy chunk .table files if present (used by addon libraries).
+    for f in "$EXPORT_DIR"/*.table; do
+        [ -f "$f" ] && cp -L "$f" "$CAPI_DATA/"
+    done
 fi
-for _required in pinyin_index.kct phrase_index.kct bigram.kct interpolation2.text; do
+for _required in pinyin_index.bin phrase_index.bin bigram.db table.conf; do
     [ -f "$CAPI_DATA/$_required" ] || {
         echo "fatal: missing $CAPI_DATA/$_required" >&2
         exit 1
