@@ -103,3 +103,43 @@ pub fn full_session_offset(parse: &FullPinyinIndexParse, offset: usize) -> usize
     }
     transformed
 }
+
+/// Maps an original zhuyin-input lookup offset to the session raw-buffer
+/// offset for the candidate-guess family — the libzhuyin facade's law.
+/// The terminal offset (`offset == consumed`) maps to the session
+/// buffer's one-past-end — upstream's matrix reserved slot, where the
+/// span walk yields nothing and only the prepended sentence rows answer
+/// — which the per-key walk in [`zhuyin_session_offset`] overruns by one
+/// trailing apostrophe.
+///
+/// The mapping is direction-dependent because a key boundary between two
+/// syllables is two session positions at once: the end of the left key
+/// (`'a'`-joined bytes up to the apostrophe) and the start of the right
+/// key (past the apostrophe). The after-cursor family searches spans
+/// STARTING at the offset and takes the right-key start
+/// ([`zhuyin_session_offset`]); the before-cursor family searches spans
+/// ENDING at it and takes the left-key end — upstream's `search_matrix`
+/// walk answers the left syllable's candidates there.
+#[must_use]
+pub fn zhuyin_lookup_session_offset(
+    parse: &ZhuyinParse,
+    session_len: usize,
+    offset: usize,
+    before_cursor: bool,
+) -> usize {
+    if offset >= parse.consumed() {
+        return session_len;
+    }
+    if before_cursor {
+        let mut transformed = 0;
+        for item in parse.keys() {
+            let key_len = item.key().text().len();
+            if offset == item.end() {
+                return transformed + key_len;
+            }
+            transformed += key_len + 1; // apostrophe between keys
+        }
+        return session_len;
+    }
+    zhuyin_session_offset(parse, offset)
+}

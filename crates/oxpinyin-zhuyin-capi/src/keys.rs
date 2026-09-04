@@ -11,10 +11,7 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::sync::atomic::Ordering;
 
-use oxpinyin_core::{FullPinyinParser, ZHUYIN_CORRECT_ALL, ZhuyinParser};
-
 use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
-use crate::parse::{full_scheme, zhuyin_scheme};
 use crate::state::instance_ref;
 use crate::types::{ChewingKey, GChar, ZhuyinInstance};
 
@@ -50,10 +47,7 @@ pub extern "C" fn zhuyin_parse_full_pinyin(
         unsafe {
             *onekey = ChewingKey::ZERO;
         }
-        match FullPinyinParser.parse_one_key(
-            inst.options().bits() & !oxpinyin_core::PINYIN_CORRECT_ALL,
-            text.as_bytes(),
-        ) {
+        match inst.core.parse_one_full_pinyin(&text, true) {
             Some(key) => {
                 // SAFETY: Null-checked above.
                 unsafe { *onekey = ChewingKey::from_core(key) };
@@ -91,12 +85,7 @@ pub extern "C" fn zhuyin_parse_chewing(
         let inst = unsafe { instance_ref(instance) };
         // SAFETY: Null-checked above.
         let text = unsafe { cstr_to_string(onechewing) };
-        let scheme = zhuyin_scheme(inst.zhuyin_scheme.load(Ordering::Relaxed));
-        let Some(scheme) = scheme else {
-            return false;
-        };
-        let options = inst.options().bits() & !ZHUYIN_CORRECT_ALL;
-        match ZhuyinParser::with_scheme(scheme).parse_one_key(options, text.as_bytes()) {
+        match inst.core.parse_one_chewing(&text) {
             Some(key) => {
                 // SAFETY: Null-checked above.
                 unsafe { *onekey = ChewingKey::from_core(key) };
@@ -143,9 +132,11 @@ pub extern "C" fn zhuyin_get_pinyin_string(
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let scheme = unsafe { instance_ref(instance) }
+            .core
+            .live
             .full_scheme
             .load(Ordering::Relaxed);
-        match full_scheme(scheme) {
+        match oxpinyin_facade::full_scheme(scheme) {
             Some(oxpinyin_core::FullPinyinScheme::Luoma) => core.luoma_pinyin_string(),
             Some(oxpinyin_core::FullPinyinScheme::SecondaryZhuyin) => {
                 core.secondary_zhuyin_string()

@@ -31,10 +31,26 @@ kyotocabinet = [
     "oxpinyin-runtime/kyotocabinet",
     "oxpinyin-data/kyotocabinet",
     "oxpinyin-user/kyotocabinet",
+    "oxpinyin-facade/kyotocabinet",
 ]
-tkrzw = ["oxpinyin-runtime/tkrzw", "oxpinyin-data/tkrzw", "oxpinyin-user/tkrzw"]
-lmdb = ["oxpinyin-runtime/lmdb", "oxpinyin-data/lmdb", "oxpinyin-user/lmdb"]
-redb = ["oxpinyin-runtime/redb", "oxpinyin-data/redb", "oxpinyin-user/redb"]
+tkrzw = [
+    "oxpinyin-runtime/tkrzw",
+    "oxpinyin-data/tkrzw",
+    "oxpinyin-user/tkrzw",
+    "oxpinyin-facade/tkrzw",
+]
+lmdb = [
+    "oxpinyin-runtime/lmdb",
+    "oxpinyin-data/lmdb",
+    "oxpinyin-user/lmdb",
+    "oxpinyin-facade/lmdb",
+]
+redb = [
+    "oxpinyin-runtime/redb",
+    "oxpinyin-data/redb",
+    "oxpinyin-user/redb",
+    "oxpinyin-facade/redb",
+]
 
 [lints.rust]
 unsafe_code = "allow" # FFI + glib marshalling only; // SAFETY: on every block
@@ -52,6 +68,8 @@ must_use_candidate = "warn"
 [dependencies]
 oxpinyin-chewing = { path = "../oxpinyin-chewing" }
 oxpinyin-core.workspace = true
+# The shared facade-orchestration layer this crate's C wrappers translate.
+oxpinyin-facade = { path = "../oxpinyin-facade", default-features = false }
 oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
 oxpinyin-engine.workspace = true
 oxpinyin-runtime.workspace = true

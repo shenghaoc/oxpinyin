@@ -38,6 +38,7 @@ pub extern "C" fn zhuyin_lookup_tokens(
         // SAFETY: Null-checked above.
         let text = unsafe { cstr_to_string(phrase) };
         let tokens: Vec<u32> = inst
+            .core
             .dict
             .tokens_for_text(&text)
             .iter()
@@ -84,7 +85,7 @@ pub extern "C" fn zhuyin_token_get_phrase(
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let Some(intro) = inst.dict.token_introspection(token) else {
+        let Some(intro) = inst.core.dict.token_introspection(token) else {
             if !utf8_str.is_null() {
                 // SAFETY: Null-checked above.
                 unsafe {
@@ -139,7 +140,7 @@ pub extern "C" fn zhuyin_token_get_n_pronunciation(
                 *num = 0;
             }
         }
-        let Some(intro) = inst.dict.token_introspection(token) else {
+        let Some(intro) = inst.core.dict.token_introspection(token) else {
             return false;
         };
         if !num.is_null() {
@@ -182,7 +183,7 @@ pub extern "C" fn zhuyin_token_get_nth_pronunciation(
         unsafe {
             g_array_set_size(keys, 0);
         }
-        let Some(intro) = inst.dict.token_introspection(token) else {
+        let Some(intro) = inst.core.dict.token_introspection(token) else {
             return false;
         };
         let Some((keys_list, _count)) = intro.pronunciations.get(nth as usize) else {
@@ -233,7 +234,7 @@ pub extern "C" fn zhuyin_token_get_unigram_frequency(
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let Some(count) = inst.dict.system_unigram_count(token) else {
+        let Some(count) = inst.core.dict.system_unigram_count(token) else {
             return false;
         };
         if !freq.is_null() {
@@ -266,6 +267,6 @@ pub extern "C" fn zhuyin_token_add_unigram_frequency(
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        inst.dict.add_unigram_delta(token, delta as u64)
+        inst.core.dict.add_unigram_delta(token, delta as u64)
     })
 }

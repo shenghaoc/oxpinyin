@@ -7,10 +7,8 @@
 
 use std::ptr;
 
-use oxpinyin_engine::EngineError;
-
 use crate::ffi::ffi_catch;
-use crate::state::{CapiInstance, instance_mut, instance_ref};
+use crate::state::{instance_mut, instance_ref};
 use crate::types::{ChewingKey, ChewingKeyRest, ZhuyinInstance};
 
 /// Get the zhuyin key rest at an offset.
@@ -39,7 +37,7 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest(
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
-        let Some(found) = key_at(inst, offset) else {
+        let Some(found) = inst.core.key_at(offset) else {
             return false;
         };
         inst.key_rest_slot.begin = u16::try_from(found.begin).unwrap_or(u16::MAX);
@@ -148,7 +146,7 @@ pub extern "C" fn zhuyin_get_zhuyin_key(
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
-        let Some(found) = key_at(inst, offset) else {
+        let Some(found) = inst.core.key_at(offset) else {
             return false;
         };
         // `found.text` comes from `mode_keys`, which reads the parsed keys /
@@ -191,7 +189,7 @@ pub extern "C" fn zhuyin_get_zhuyin_offset(
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let Ok(normalized) = lookup_offset(inst, cursor) else {
+        let Ok(normalized) = inst.core.lookup_offset(cursor) else {
             return false;
         };
         if !offset.is_null() {
@@ -224,7 +222,7 @@ pub extern "C" fn zhuyin_get_left_zhuyin_offset(
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let Ok(result) = left_offset(inst, offset) else {
+        let Ok(result) = inst.core.left_offset(offset) else {
             return false;
         };
         if !left.is_null() {
@@ -257,7 +255,7 @@ pub extern "C" fn zhuyin_get_right_zhuyin_offset(
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let inst = unsafe { instance_ref(instance) };
-        let Ok(Some(result)) = right_offset(inst, offset) else {
+        let Ok(Some(result)) = inst.core.right_offset(offset) else {
             return false;
         };
         if !right.is_null() {
@@ -268,156 +266,4 @@ pub extern "C" fn zhuyin_get_right_zhuyin_offset(
         }
         true
     })
-}
-
-/// The active parse mode's span source: the coordinate input bytes, its
-/// parsed length, the key spans, and whether `'` is a zero-key separator.
-struct SpanSource<'a> {
-    input: &'a [u8],
-    parsed: usize,
-    spans: Vec<(usize, usize)>,
-    separators: bool,
-}
-
-fn span_source(inst: &CapiInstance) -> Option<SpanSource<'_>> {
-    if let Some(parse) = inst.zhuyin_parse.as_ref() {
-        return Some(SpanSource {
-            input: inst.zhuyin_input.as_bytes(),
-            parsed: parse.consumed(),
-            spans: parse
-                .keys()
-                .iter()
-                .map(|key| (key.start(), key.end()))
-                .collect(),
-            separators: false,
-        });
-    }
-    inst.full_parse.as_ref().map(|parse| SpanSource {
-        input: inst.full_input.as_bytes(),
-        parsed: parse.consumed(),
-        spans: parse
-            .keys()
-            .iter()
-            .map(|key| (key.start(), key.end()))
-            .collect(),
-        separators: true,
-    })
-}
-
-fn lookup_offset(inst: &CapiInstance, cursor: usize) -> Result<usize, EngineError> {
-    match span_source(inst) {
-        Some(source) => oxpinyin_engine::lookup_offset_over_spans(
-            source.input,
-            source.parsed,
-            &source.spans,
-            source.separators,
-            cursor,
-        ),
-        None => inst.session.lookup_offset_for_cursor(cursor),
-    }
-}
-
-fn left_offset(inst: &CapiInstance, offset: usize) -> Result<usize, EngineError> {
-    match span_source(inst) {
-        Some(source) => oxpinyin_engine::left_word_offset_over_spans(
-            source.input,
-            source.parsed,
-            &source.spans,
-            source.separators,
-            offset,
-        ),
-        None => inst.session.left_word_offset(offset),
-    }
-}
-
-fn right_offset(inst: &CapiInstance, offset: usize) -> Result<Option<usize>, EngineError> {
-    match span_source(inst) {
-        Some(source) => oxpinyin_engine::right_word_offset_over_spans(
-            source.input,
-            source.parsed,
-            &source.spans,
-            source.separators,
-            offset,
-        ),
-        None => inst.session.right_word_offset(offset),
-    }
-}
-
-/// One matrix key at an offset.
-struct KeyAt {
-    text: &'static str,
-    tone: u8,
-    begin: usize,
-    end: usize,
-}
-
-fn mode_keys(inst: &CapiInstance) -> Result<(Vec<KeyAt>, &[u8], bool), EngineError> {
-    if let Some(parse) = inst.zhuyin_parse.as_ref() {
-        return Ok((
-            parse
-                .keys()
-                .iter()
-                .map(|k| KeyAt {
-                    text: k.key().text(),
-                    tone: k.tone(),
-                    begin: k.start(),
-                    end: k.end(),
-                })
-                .collect(),
-            inst.zhuyin_input.as_bytes(),
-            false,
-        ));
-    }
-    if let Some(parse) = inst.full_parse.as_ref() {
-        return Ok((
-            parse
-                .keys()
-                .iter()
-                .map(|k| KeyAt {
-                    text: k.canonical(),
-                    tone: k.tone(),
-                    begin: k.start(),
-                    end: k.end(),
-                })
-                .collect(),
-            inst.full_input.as_bytes(),
-            true,
-        ));
-    }
-    let (keys, _) = inst.session.matrix_keys()?;
-    Ok((
-        keys.iter()
-            .map(|k| KeyAt {
-                text: k.key().text(),
-                tone: k.tone(),
-                begin: k.syllable_start(),
-                end: k.end(),
-            })
-            .collect(),
-        inst.session.raw_input().as_bytes(),
-        true,
-    ))
-}
-
-fn key_at(inst: &CapiInstance, offset: usize) -> Option<KeyAt> {
-    let (keys, input, separators) = mode_keys(inst).ok()?;
-    if offset >= input.len() {
-        return None;
-    }
-    let mut at = offset;
-    loop {
-        if let Some(found) = keys.iter().find(|k| k.begin == at) {
-            return Some(KeyAt {
-                text: found.text,
-                tone: found.tone,
-                begin: found.begin,
-                end: found.end,
-            });
-        }
-        if separators && input.get(at).copied() == Some(b'\'') && at + 1 < input.len() {
-            at += 1;
-            continue;
-        }
-        return None;
-    }
 }
