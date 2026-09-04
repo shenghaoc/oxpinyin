@@ -50,20 +50,20 @@ fn sentence_surface_matches_the_declared_residual() {
         "guess_sentence retval must agree on every comparable input"
     );
 
-    // The three strictnesses of §12. 1-best 488, distinct-set 385, ordered 379.
-    assert_eq!(report.row0_match, 488, "1-best agreement moved (§12: 488)");
+    // The three strictnesses of §12. 1-best 491, distinct-set 396, ordered 390.
+    assert_eq!(report.row0_match, 491, "1-best agreement moved (§12: 491)");
     assert_eq!(
         report.distinct_set_match(),
-        385,
-        "n-best distinct-set agreement moved (§12: 385)"
+        396,
+        "n-best distinct-set agreement moved (§12: 396)"
     );
     assert_eq!(
-        report.list_ordered_match, 379,
-        "n-best ordered-list agreement moved (§12: 379)"
+        report.list_ordered_match, 390,
+        "n-best ordered-list agreement moved (§12: 390)"
     );
     assert_eq!(
-        report.rows_match, 379,
-        "first-6 candidate-row agreement moved (§12: 379, coincides with ordered)"
+        report.rows_match, 390,
+        "first-6 candidate-row agreement moved (§12: 390, coincides with ordered)"
     );
 
     // The mechanism invariant: the residual is hypothesis selection, not
@@ -74,7 +74,7 @@ fn sentence_surface_matches_the_declared_residual() {
          pure hypothesis selection; revisit §12's mechanism claim"
     );
 
-    // The 385 − 379 = 6 duplicate-path ranks (the distinct-same rows).
+    // The 396 − 390 = 6 duplicate-path ranks (the distinct-same rows).
     assert_eq!(
         report.list_distinct_extra, 6,
         "the distinct-set minus ordered gap moved from 6 (§12)"

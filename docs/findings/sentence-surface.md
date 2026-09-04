@@ -676,3 +676,23 @@ deterministic but not reproducibly so. Two consequences, stated explicitly:
 platform-locked floating point — which the constitution does not permit for
 this project — or a measured leak of the residual onto the candidate surface
 (today's measurement shows 0 leaks; the candidate surface is bit-identical).
+
+### §12 re-freeze — 2026-09-04
+
+Re-measured at tip `4eb72efd` by `sentence_tail::measure` (redb backend;
+backend-independent, reproduced at the freeze ref and P6 bracket). The
+entire move is `345af16` (P6 — run the production engine on libpinyin's
+own data): the sentence trellis's P_unigram switched from the
+interpolation2.text-derived construction (UNKNOWN_COST floor) to
+PhraseItem::get_unigram_frequency (count + gen_unigram + 1) / total,
+1/Σ floor. The two constructions differ by ~1 part in 5×10⁷ on the
+pinned model — sufficient to flip exact-comparator near-tie resolution
+for three inputs (`paobiao`, `lisuancengmenlutingmouchangdielvejin`,
+`ran'hua'zhui'hu'guo'zhan'zhen'hei`). P2–P5 affirmatively ruled out by
+bracket; freeze ref `181bd7a` reproduced exactly. Ordered-miss residual:
+117 → 106 (breakdown 8→5 / 83→81 / 26→20); 11 inputs fixed, 0
+regressed (the inputs missing at the tip are a strict subset of those
+missing at the freeze).
+Mechanism invariants held: guessed_disagree 0, list_order_only 0,
+list_distinct_extra 6. New frozen numbers: **491 / 396 / 390**.
+Maintainer ruling: 2026-09-04.
