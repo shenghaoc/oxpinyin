@@ -3,7 +3,7 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use crate::ffi::{cstr_to_owned_lossy, ffi_catch};
+use crate::ffi::cstr_to_owned_lossy;
 use crate::state::{CapiContext, box_context, context_mut};
 // Only the harness-gated fixture hooks below take a shared context ref; the
 // shipped build (--features shipped) does not compile them.
@@ -12,12 +12,10 @@ use crate::state::context_ref;
 use crate::types::PinyinContext;
 
 fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut PinyinContext {
-    ffi_catch(ptr::null_mut(), || {
-        // SAFETY: Both pointers are C strings from the caller (null OK).
-        let system_path = cstr_to_owned_lossy(systemdir);
-        let user_path = cstr_to_owned_lossy(userdir);
-        CapiContext::new(&system_path, &user_path).map_or(ptr::null_mut(), box_context)
-    })
+    // SAFETY: Both pointers are C strings from the caller (null OK).
+    let system_path = cstr_to_owned_lossy(systemdir);
+    let user_path = cstr_to_owned_lossy(userdir);
+    CapiContext::new(&system_path, &user_path).map_or(ptr::null_mut(), box_context)
 }
 
 /// Create a new pinyin context.
@@ -80,22 +78,21 @@ pub extern "C" fn oxpinyin_test_set_user_bigram(
     if context.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-        let ctx = unsafe { context_ref(context) };
-        let Some(mut user) = ctx.user_store() else {
-            return false;
-        };
-        let prev_text = cstr_to_owned_lossy(prev);
-        let cur_text = cstr_to_owned_lossy(cur);
-        let Some(prev_tok) = user.token_for_phrase(&prev_text).ok().flatten() else {
-            return false;
-        };
-        let Some(cur_tok) = user.token_for_phrase(&cur_text).ok().flatten() else {
-            return false;
-        };
-        user.set_bigram_count(prev_tok, cur_tok, count).is_ok()
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+    let ctx = unsafe { context_ref(context) };
+    let Some(mut user) = ctx.user_store() else {
+        return false;
+    };
+    let prev_text = cstr_to_owned_lossy(prev);
+    let cur_text = cstr_to_owned_lossy(cur);
+    let Some(prev_tok) = user.token_for_phrase(&prev_text).ok().flatten() else {
+        return false;
+    };
+    let Some(cur_tok) = user.token_for_phrase(&cur_text).ok().flatten() else {
+        return false;
+    };
+    user.set_bigram_count(prev_tok, cur_tok, count).is_ok()
 }
 
 /// Finalize and free a pinyin context.
@@ -117,13 +114,12 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     if context.is_null() {
         return;
     }
-    ffi_catch((), || {
-        // SAFETY: `context` was created by `pinyin_init` via `box_context`
-        // (= `Box::into_raw`). The caller transfers ownership back.
-        unsafe {
-            drop(Box::from_raw(context.cast::<CapiContext>()));
-        }
-    });
+
+    // SAFETY: `context` was created by `pinyin_init` via `box_context`
+    // (= `Box::into_raw`). The caller transfers ownership back.
+    unsafe {
+        drop(Box::from_raw(context.cast::<CapiContext>()));
+    };
 }
 
 /// Save user data.
@@ -143,12 +139,11 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
     if context.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`;
-        // the unique borrow lasts only for the save call.
-        let ctx = unsafe { context_mut(context) };
-        ctx.save_user()
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`;
+    // the unique borrow lasts only for the save call.
+    let ctx = unsafe { context_mut(context) };
+    ctx.save_user()
 }
 
 /// Save user data.

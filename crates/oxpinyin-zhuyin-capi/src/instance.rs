@@ -3,7 +3,6 @@
 
 use std::ptr;
 
-use crate::ffi::ffi_catch;
 use crate::state::{CapiInstance, box_instance, context_ref, instance_mut, instance_ref};
 use crate::types::{ZhuyinContext, ZhuyinInstance};
 
@@ -20,14 +19,13 @@ pub extern "C" fn zhuyin_alloc_instance(context: *mut ZhuyinContext) -> *mut Zhu
     if context.is_null() {
         return ptr::null_mut();
     }
-    ffi_catch(ptr::null_mut(), || {
-        // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
-        let ctx = unsafe { context_ref(context) };
-        match ctx.alloc_instance(context) {
-            Some(inst) => box_instance(inst),
-            None => ptr::null_mut(),
-        }
-    })
+
+    // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
+    let ctx = unsafe { context_ref(context) };
+    match ctx.alloc_instance(context) {
+        Some(inst) => box_instance(inst),
+        None => ptr::null_mut(),
+    }
 }
 
 /// Get the zhuyin context from a zhuyin instance.
@@ -40,12 +38,11 @@ pub(crate) fn zhuyin_get_context(instance: *mut ZhuyinInstance) -> *mut ZhuyinCo
     if instance.is_null() {
         return ptr::null_mut();
     }
-    ffi_catch(ptr::null_mut(), || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        inst.context
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    inst.context
 }
 
 /// Free a zhuyin instance.
@@ -59,13 +56,12 @@ pub extern "C" fn zhuyin_free_instance(instance: *mut ZhuyinInstance) {
     if instance.is_null() {
         return;
     }
-    ffi_catch((), || {
-        // SAFETY: `instance` was created by `zhuyin_alloc_instance` via
-        // `box_instance` (= `Box::into_raw`). The caller transfers ownership.
-        unsafe {
-            drop(Box::from_raw(instance.cast::<CapiInstance>()));
-        }
-    });
+
+    // SAFETY: `instance` was created by `zhuyin_alloc_instance` via
+    // `box_instance` (= `Box::into_raw`). The caller transfers ownership.
+    unsafe {
+        drop(Box::from_raw(instance.cast::<CapiInstance>()));
+    };
 }
 
 /// Reset the zhuyin instance (clear parsing and sentence state).
@@ -79,12 +75,11 @@ pub extern "C" fn zhuyin_reset(instance: *mut ZhuyinInstance) -> bool {
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        inst.core.full_reset();
-        inst.candidates.clear();
-        true
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    inst.core.full_reset();
+    inst.candidates.clear();
+    true
 }

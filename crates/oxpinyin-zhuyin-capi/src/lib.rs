@@ -25,11 +25,19 @@
 //!
 //! ## Panic discipline
 //!
-//! Every entry point wraps its body in [`ffi::ffi_catch`] (the
-//! [`std::panic::catch_unwind`] boundary), returning the sentinel value
-//! (false / null / 0) on panic. Opaque handles cross as `*mut T` via
-//! `Box::into_raw` / `Box::from_raw`; every incoming pointer is null-checked.
-//! `// SAFETY:` documents each `unsafe` block.
+//! Nothing here may panic on any input: every library crate in the
+//! workspace denies `clippy::unwrap_used`/`expect_used`/`panic`/
+//! `panic_in_result_fn` outside tests, so the entry-point bodies are
+//! panic-free by construction. Rust (since 1.81) aborts the process when
+//! a panic reaches an `extern "C"` boundary, so if a bug ever produced a
+//! panic the failure would be a loud abort, not undefined behaviour.
+//! There is deliberately no panic-catching wrapper: with the lints green
+//! one is operationally inert, and `panic = "abort"` in the release
+//! profile makes it literally so.
+//!
+//! Opaque handles cross as `*mut T` via `Box::into_raw` / `Box::from_raw`;
+//! every incoming pointer is null-checked. `// SAFETY:` documents each
+//! `unsafe` block.
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]

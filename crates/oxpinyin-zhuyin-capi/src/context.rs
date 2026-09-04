@@ -3,7 +3,7 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use crate::ffi::{cstr_to_owned_lossy, ffi_catch};
+use crate::ffi::cstr_to_owned_lossy;
 use crate::state::{CapiContext, box_context, context_mut};
 use crate::types::ZhuyinContext;
 
@@ -33,15 +33,13 @@ pub extern "C" fn zhuyin_init(
     systemdir: *const c_char,
     userdir: *const c_char,
 ) -> *mut ZhuyinContext {
-    ffi_catch(ptr::null_mut(), || {
-        // SAFETY: Both pointers are C strings from the caller (null OK).
-        let system_dir = cstr_to_owned_lossy(systemdir);
-        let user_dir = cstr_to_owned_lossy(userdir);
-        match CapiContext::open(&system_dir, &user_dir) {
-            Some(ctx) => box_context(ctx),
-            None => ptr::null_mut(),
-        }
-    })
+    // SAFETY: Both pointers are C strings from the caller (null OK).
+    let system_dir = cstr_to_owned_lossy(systemdir);
+    let user_dir = cstr_to_owned_lossy(userdir);
+    match CapiContext::open(&system_dir, &user_dir) {
+        Some(ctx) => box_context(ctx),
+        None => ptr::null_mut(),
+    }
 }
 
 /// Finalize and free a zhuyin context.
@@ -57,13 +55,12 @@ pub extern "C" fn zhuyin_fini(context: *mut ZhuyinContext) {
     if context.is_null() {
         return;
     }
-    ffi_catch((), || {
-        // SAFETY: `context` was created by `zhuyin_init` via `box_context`
-        // (= `Box::into_raw`). The caller transfers ownership back.
-        unsafe {
-            drop(Box::from_raw(context.cast::<CapiContext>()));
-        }
-    });
+
+    // SAFETY: `context` was created by `zhuyin_init` via `box_context`
+    // (= `Box::into_raw`). The caller transfers ownership back.
+    unsafe {
+        drop(Box::from_raw(context.cast::<CapiContext>()));
+    };
 }
 
 /// Save user data.
@@ -80,10 +77,9 @@ pub extern "C" fn zhuyin_save(context: *mut ZhuyinContext) -> bool {
     if context.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `context` is non-null and was produced by `zhuyin_init`;
-        // the unique borrow lasts only for the save call.
-        let ctx = unsafe { context_mut(context) };
-        ctx.save_user()
-    })
+
+    // SAFETY: `context` is non-null and was produced by `zhuyin_init`;
+    // the unique borrow lasts only for the save call.
+    let ctx = unsafe { context_mut(context) };
+    ctx.save_user()
 }

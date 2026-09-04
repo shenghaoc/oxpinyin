@@ -10,7 +10,7 @@ use std::ptr;
 use oxpinyin_core::graph::FewestKeys;
 use oxpinyin_user::{ExportedPhrase, PinyinKey, UserStore, is_user_file_library};
 
-use crate::ffi::{cstr_to_owned_lossy, ffi_catch, owned_cstr};
+use crate::ffi::{cstr_to_owned_lossy, owned_cstr};
 use crate::state::{ExportedBigramRow, context_ref};
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
@@ -63,17 +63,16 @@ pub fn begin_add_phrases_impl(context: *mut PinyinContext, index: u8) -> *mut Im
     if context.is_null() {
         return ptr::null_mut();
     }
-    ffi_catch(ptr::null_mut(), || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init` or
-        // `CapiContext::new_user_only`; the borrow lasts only for this
-        // constructor.
-        let ctx = unsafe { context_ref(context) };
-        let handle = ImportHandle {
-            index,
-            user: ctx.user_store(),
-        };
-        Box::into_raw(Box::new(handle)).cast()
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init` or
+    // `CapiContext::new_user_only`; the borrow lasts only for this
+    // constructor.
+    let ctx = unsafe { context_ref(context) };
+    let handle = ImportHandle {
+        index,
+        user: ctx.user_store(),
+    };
+    Box::into_raw(Box::new(handle)).cast()
 }
 
 /// Begin adding phrases to an index.
@@ -121,42 +120,41 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     if iter.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // `cstr_to_owned_lossy` is the C ABI entry point's string
-        // marshaller: null reads as empty, which validation rejects.
-        let phrase = cstr_to_owned_lossy(phrase);
-        let pinyin = cstr_to_owned_lossy(pinyin);
-        let count = if count == -1 {
-            None
-        } else if count >= 0 {
-            Some(u64::try_from(count).unwrap_or(0))
-        } else {
-            return false;
-        };
 
-        // SAFETY: `iter` is non-null and was produced by
-        // `pinyin_begin_add_phrases`; the unique borrow lasts for this call.
-        let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
-        if !is_user_file_library(handle.index) {
-            return false;
-        }
-        let Some(user) = handle.user.as_mut() else {
-            return false;
-        };
-        let Some(parsed) = FewestKeys::parse(&pinyin) else {
-            return false;
-        };
-        let Some(keys) = parsed
-            .keys()
-            .iter()
-            .map(|key| PinyinKey::try_from(key.index()).ok())
-            .collect::<Option<Vec<PinyinKey>>>()
-        else {
-            return false;
-        };
-        user.add_phrase_in(handle.index, &phrase, &keys, count)
-            .is_ok()
-    })
+    // `cstr_to_owned_lossy` is the C ABI entry point's string
+    // marshaller: null reads as empty, which validation rejects.
+    let phrase = cstr_to_owned_lossy(phrase);
+    let pinyin = cstr_to_owned_lossy(pinyin);
+    let count = if count == -1 {
+        None
+    } else if count >= 0 {
+        Some(u64::try_from(count).unwrap_or(0))
+    } else {
+        return false;
+    };
+
+    // SAFETY: `iter` is non-null and was produced by
+    // `pinyin_begin_add_phrases`; the unique borrow lasts for this call.
+    let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
+    if !is_user_file_library(handle.index) {
+        return false;
+    }
+    let Some(user) = handle.user.as_mut() else {
+        return false;
+    };
+    let Some(parsed) = FewestKeys::parse(&pinyin) else {
+        return false;
+    };
+    let Some(keys) = parsed
+        .keys()
+        .iter()
+        .map(|key| PinyinKey::try_from(key.index()).ok())
+        .collect::<Option<Vec<PinyinKey>>>()
+    else {
+        return false;
+    };
+    user.add_phrase_in(handle.index, &phrase, &keys, count)
+        .is_ok()
 }
 
 /// End the import iterator, arm `m_modified`, and free it.
@@ -176,15 +174,14 @@ pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
     if iter.is_null() {
         return;
     }
-    ffi_catch((), || {
-        // SAFETY: `iter` was produced by `pinyin_begin_add_phrases` via
-        // `Box::into_raw`; the caller transfers ownership back here and
-        // only here.
-        let mut handle = unsafe { Box::from_raw(iter.cast::<ImportHandle>()) };
-        if let Some(user) = handle.user.as_mut() {
-            user.mark_modified();
-        }
-    });
+
+    // SAFETY: `iter` was produced by `pinyin_begin_add_phrases` via
+    // `Box::into_raw`; the caller transfers ownership back here and
+    // only here.
+    let mut handle = unsafe { Box::from_raw(iter.cast::<ImportHandle>()) };
+    if let Some(user) = handle.user.as_mut() {
+        user.mark_modified();
+    };
 }
 
 // ── Export iterator (unigram phrases) ────────────────────────────────
@@ -211,12 +208,11 @@ pub extern "C" fn pinyin_begin_get_phrases(
     if context.is_null() {
         return ptr::null_mut();
     }
-    ffi_catch(ptr::null_mut(), || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-        let ctx = unsafe { context_ref(context) };
-        let rows = ctx.export_phrases(index).unwrap_or_default();
-        Box::into_raw(Box::new(ExportHandle { rows, index: 0 })).cast()
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+    let ctx = unsafe { context_ref(context) };
+    let rows = ctx.export_phrases(index).unwrap_or_default();
+    Box::into_raw(Box::new(ExportHandle { rows, index: 0 })).cast()
 }
 
 /// Check whether the export iterator has a next phrase.
@@ -230,12 +226,11 @@ pub extern "C" fn pinyin_iterator_has_next_phrase(iter: *mut ExportIterator) -> 
     if iter.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `iter` is non-null and was produced by
-        // `pinyin_begin_get_phrases`.
-        let handle = unsafe { &*(iter.cast::<ExportHandle>()) };
-        handle.index < handle.rows.len()
-    })
+
+    // SAFETY: `iter` is non-null and was produced by
+    // `pinyin_begin_get_phrases`.
+    let handle = unsafe { &*(iter.cast::<ExportHandle>()) };
+    handle.index < handle.rows.len()
 }
 
 /// Get the next phrase from the export iterator.
@@ -260,34 +255,33 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
     if iter.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `iter` is non-null and was produced by
-        // `pinyin_begin_get_phrases`; the unique borrow lasts for this call.
-        let handle = unsafe { &mut *(iter.cast::<ExportHandle>()) };
-        let Some(row) = handle.rows.get(handle.index) else {
-            return false;
-        };
-        if !phrase.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *phrase = owned_cstr(&row.text);
-            }
+
+    // SAFETY: `iter` is non-null and was produced by
+    // `pinyin_begin_get_phrases`; the unique borrow lasts for this call.
+    let handle = unsafe { &mut *(iter.cast::<ExportHandle>()) };
+    let Some(row) = handle.rows.get(handle.index) else {
+        return false;
+    };
+    if !phrase.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *phrase = owned_cstr(&row.text);
         }
-        if !pinyin.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *pinyin = owned_cstr(&row.pinyin);
-            }
+    }
+    if !pinyin.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *pinyin = owned_cstr(&row.pinyin);
         }
-        if !count.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *count = c_int::try_from(row.count).unwrap_or(c_int::MAX);
-            }
+    }
+    if !count.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *count = c_int::try_from(row.count).unwrap_or(c_int::MAX);
         }
-        handle.index += 1;
-        true
-    })
+    }
+    handle.index += 1;
+    true
 }
 
 /// End the export iterator and free it.
@@ -301,12 +295,12 @@ pub extern "C" fn pinyin_end_get_phrases(iter: *mut ExportIterator) {
     if iter.is_null() {
         return;
     }
-    ffi_catch((), || unsafe {
-        // SAFETY: `iter` was produced by its begin call via
-        // `Box::into_raw`; the caller transfers ownership back here and
-        // only here.
+    // SAFETY: `iter` was produced by its begin call via
+    // `Box::into_raw`; the caller transfers ownership back here and
+    // only here.
+    unsafe {
         drop(Box::from_raw(iter.cast::<ExportHandle>()));
-    });
+    }
 }
 
 // ── Bigram export iterator ───────────────────────────────────────────
@@ -332,16 +326,15 @@ pub extern "C" fn pinyin_begin_get_bigram_phrases(
     if context.is_null() {
         return ptr::null_mut();
     }
-    ffi_catch(ptr::null_mut(), || {
-        // SAFETY: `context` is non-null and was produced by `pinyin_init`
-        // or `CapiContext::new_user_only`.
-        let ctx = unsafe { context_ref(context) };
-        if !ctx.can_render_export_bigrams() {
-            return ptr::null_mut();
-        }
-        let rows = ctx.export_bigram_rows().unwrap_or_default();
-        Box::into_raw(Box::new(BigramHandle { rows, index: 0 })).cast()
-    })
+
+    // SAFETY: `context` is non-null and was produced by `pinyin_init`
+    // or `CapiContext::new_user_only`.
+    let ctx = unsafe { context_ref(context) };
+    if !ctx.can_render_export_bigrams() {
+        return ptr::null_mut();
+    }
+    let rows = ctx.export_bigram_rows().unwrap_or_default();
+    Box::into_raw(Box::new(BigramHandle { rows, index: 0 })).cast()
 }
 
 /// Check whether the bigram export iterator has a next phrase.
@@ -356,12 +349,11 @@ pub extern "C" fn pinyin_bigram_iterator_has_next_phrase(iter: *mut BigramExport
     if iter.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `iter` is non-null and was produced by
-        // `pinyin_begin_get_bigram_phrases`.
-        let handle = unsafe { &*(iter.cast::<BigramHandle>()) };
-        handle.index < handle.rows.len()
-    })
+
+    // SAFETY: `iter` is non-null and was produced by
+    // `pinyin_begin_get_bigram_phrases`.
+    let handle = unsafe { &*(iter.cast::<BigramHandle>()) };
+    handle.index < handle.rows.len()
 }
 
 /// Get the next phrase from the bigram export iterator.
@@ -385,35 +377,34 @@ pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
     if iter.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `iter` is non-null and was produced by
-        // `pinyin_begin_get_bigram_phrases`; the unique borrow lasts for
-        // this call.
-        let handle = unsafe { &mut *(iter.cast::<BigramHandle>()) };
-        let Some(row) = handle.rows.get(handle.index) else {
-            return false;
-        };
-        if !phrase.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *phrase = owned_cstr(&row.phrase);
-            }
+
+    // SAFETY: `iter` is non-null and was produced by
+    // `pinyin_begin_get_bigram_phrases`; the unique borrow lasts for
+    // this call.
+    let handle = unsafe { &mut *(iter.cast::<BigramHandle>()) };
+    let Some(row) = handle.rows.get(handle.index) else {
+        return false;
+    };
+    if !phrase.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *phrase = owned_cstr(&row.phrase);
         }
-        if !pinyin.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *pinyin = owned_cstr(&row.pinyin);
-            }
+    }
+    if !pinyin.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *pinyin = owned_cstr(&row.pinyin);
         }
-        if !count.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *count = c_int::try_from(row.count).unwrap_or(c_int::MAX);
-            }
+    }
+    if !count.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *count = c_int::try_from(row.count).unwrap_or(c_int::MAX);
         }
-        handle.index += 1;
-        true
-    })
+    }
+    handle.index += 1;
+    true
 }
 
 /// End the bigram export iterator and free it.
@@ -427,10 +418,10 @@ pub extern "C" fn pinyin_end_get_bigram_phrases(iter: *mut BigramExportIterator)
     if iter.is_null() {
         return;
     }
-    ffi_catch((), || unsafe {
-        // SAFETY: `iter` was produced by its begin call via
-        // `Box::into_raw`; the caller transfers ownership back here and
-        // only here.
+    // SAFETY: `iter` was produced by its begin call via
+    // `Box::into_raw`; the caller transfers ownership back here and
+    // only here.
+    unsafe {
         drop(Box::from_raw(iter.cast::<BigramHandle>()));
-    });
+    }
 }

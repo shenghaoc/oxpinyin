@@ -7,7 +7,7 @@ use std::ptr;
 use oxpinyin_core::graph::FewestKeys;
 use oxpinyin_user::{PinyinKey, UserStore, is_user_file_library};
 
-use crate::ffi::{cstr_to_owned_lossy, ffi_catch};
+use crate::ffi::cstr_to_owned_lossy;
 use crate::state::context_ref;
 use crate::types::{ImportIterator, ZhuyinContext};
 
@@ -36,15 +36,14 @@ pub extern "C" fn zhuyin_begin_add_phrases(
     if context.is_null() {
         return ptr::null_mut();
     }
-    ffi_catch(ptr::null_mut(), || {
-        // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
-        let ctx = unsafe { context_ref(context) };
-        let handle = ImportHandle {
-            index,
-            user: ctx.user_store(),
-        };
-        Box::into_raw(Box::new(handle)).cast()
-    })
+
+    // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
+    let ctx = unsafe { context_ref(context) };
+    let handle = ImportHandle {
+        index,
+        user: ctx.user_store(),
+    };
+    Box::into_raw(Box::new(handle)).cast()
 }
 
 /// Add a phrase/pinyin pair to the import iterator.
@@ -66,36 +65,35 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     if iter.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        let phrase = cstr_to_owned_lossy(phrase);
-        let pinyin = cstr_to_owned_lossy(pinyin);
-        let count = if count == -1 {
-            None
-        } else if count >= 0 {
-            Some(count as u64)
-        } else {
-            return false;
-        };
-        // SAFETY: `iter` is non-null and was produced by
-        // `zhuyin_begin_add_phrases`.
-        let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
-        if !is_user_file_library(handle.index) {
-            return false;
-        }
-        let Some(user) = handle.user.as_mut() else {
-            return false;
-        };
-        let Some(parsed) = FewestKeys::parse(&pinyin) else {
-            return false;
-        };
-        let keys: Vec<PinyinKey> = parsed
-            .keys()
-            .iter()
-            .map(|key| key.index() as PinyinKey)
-            .collect();
-        user.add_phrase_in(handle.index, &phrase, &keys, count)
-            .is_ok()
-    })
+
+    let phrase = cstr_to_owned_lossy(phrase);
+    let pinyin = cstr_to_owned_lossy(pinyin);
+    let count = if count == -1 {
+        None
+    } else if count >= 0 {
+        Some(count as u64)
+    } else {
+        return false;
+    };
+    // SAFETY: `iter` is non-null and was produced by
+    // `zhuyin_begin_add_phrases`.
+    let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
+    if !is_user_file_library(handle.index) {
+        return false;
+    }
+    let Some(user) = handle.user.as_mut() else {
+        return false;
+    };
+    let Some(parsed) = FewestKeys::parse(&pinyin) else {
+        return false;
+    };
+    let keys: Vec<PinyinKey> = parsed
+        .keys()
+        .iter()
+        .map(|key| key.index() as PinyinKey)
+        .collect();
+    user.add_phrase_in(handle.index, &phrase, &keys, count)
+        .is_ok()
 }
 
 /// End the import iterator, arm `m_modified`, and free it.
@@ -109,12 +107,11 @@ pub extern "C" fn zhuyin_end_add_phrases(iter: *mut ImportIterator) {
     if iter.is_null() {
         return;
     }
-    ffi_catch((), || {
-        // SAFETY: `iter` was produced by `zhuyin_begin_add_phrases` via
-        // `Box::into_raw`; the caller transfers ownership back here.
-        let mut handle = unsafe { Box::from_raw(iter.cast::<ImportHandle>()) };
-        if let Some(user) = handle.user.as_mut() {
-            user.mark_modified();
-        }
-    });
+
+    // SAFETY: `iter` was produced by `zhuyin_begin_add_phrases` via
+    // `Box::into_raw`; the caller transfers ownership back here.
+    let mut handle = unsafe { Box::from_raw(iter.cast::<ImportHandle>()) };
+    if let Some(user) = handle.user.as_mut() {
+        user.mark_modified();
+    };
 }

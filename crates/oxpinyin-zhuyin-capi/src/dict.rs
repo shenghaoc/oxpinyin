@@ -8,7 +8,7 @@ use oxpinyin_core::Dictionary;
 
 use glib_sys::{g_array_append_vals, g_array_set_size};
 
-use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
+use crate::ffi::{cstr_to_string, owned_cstr};
 use crate::state::instance_ref;
 use crate::types::{GArray, GChar, GUint, PhraseTokenT, ZhuyinInstance};
 
@@ -31,36 +31,35 @@ pub extern "C" fn zhuyin_lookup_tokens(
     if tokenarray.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        // SAFETY: Null-checked above.
-        let text = unsafe { cstr_to_string(phrase) };
-        let tokens: Vec<u32> = inst
-            .core
-            .dict
-            .tokens_for_text(&text)
-            .iter()
-            .map(|token| token.value())
-            .collect();
-        // SAFETY: Null-checked above.
-        unsafe {
-            g_array_set_size(tokenarray, 0);
-        }
-        if tokens.is_empty() {
-            return false;
-        }
-        // SAFETY: Null-checked above.
-        unsafe {
-            g_array_append_vals(
-                tokenarray,
-                tokens.as_ptr().cast::<c_void>(),
-                tokens.len() as c_uint,
-            );
-        }
-        true
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    // SAFETY: Null-checked above.
+    let text = unsafe { cstr_to_string(phrase) };
+    let tokens: Vec<u32> = inst
+        .core
+        .dict
+        .tokens_for_text(&text)
+        .iter()
+        .map(|token| token.value())
+        .collect();
+    // SAFETY: Null-checked above.
+    unsafe {
+        g_array_set_size(tokenarray, 0);
+    }
+    if tokens.is_empty() {
+        return false;
+    }
+    // SAFETY: Null-checked above.
+    unsafe {
+        g_array_append_vals(
+            tokenarray,
+            tokens.as_ptr().cast::<c_void>(),
+            tokens.len() as c_uint,
+        );
+    }
+    true
 }
 
 /// Get the phrase text of a token.
@@ -81,37 +80,36 @@ pub extern "C" fn zhuyin_token_get_phrase(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        let Some(intro) = inst.core.dict.token_introspection(token) else {
-            if !utf8_str.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *utf8_str = ptr::null_mut();
-                }
-            }
-            return false;
-        };
-        if !len.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *len = intro.text.chars().count() as GUint;
-            }
-        }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    let Some(intro) = inst.core.dict.token_introspection(token) else {
         if !utf8_str.is_null() {
-            let rendered = owned_cstr(&intro.text);
             // SAFETY: Null-checked above.
             unsafe {
-                *utf8_str = rendered;
-            }
-            if rendered.is_null() {
-                return false;
+                *utf8_str = ptr::null_mut();
             }
         }
-        true
-    })
+        return false;
+    };
+    if !len.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *len = intro.text.chars().count() as GUint;
+        }
+    }
+    if !utf8_str.is_null() {
+        let rendered = owned_cstr(&intro.text);
+        // SAFETY: Null-checked above.
+        unsafe {
+            *utf8_str = rendered;
+        }
+        if rendered.is_null() {
+            return false;
+        }
+    }
+    true
 }
 
 /// Get the number of pronunciations of a token.
@@ -130,27 +128,26 @@ pub extern "C" fn zhuyin_token_get_n_pronunciation(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        if !num.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *num = 0;
-            }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    if !num.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *num = 0;
         }
-        let Some(intro) = inst.core.dict.token_introspection(token) else {
-            return false;
-        };
-        if !num.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *num = intro.pronunciations.len() as GUint;
-            }
+    }
+    let Some(intro) = inst.core.dict.token_introspection(token) else {
+        return false;
+    };
+    if !num.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *num = intro.pronunciations.len() as GUint;
         }
-        true
-    })
+    }
+    true
 }
 
 /// Get the nth pronunciation of a token as a vector of chewing keys.
@@ -171,47 +168,46 @@ pub extern "C" fn zhuyin_token_get_nth_pronunciation(
     if instance.is_null() || keys.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        // The pin clears the caller's array before appending
-        // (`zhuyin.cpp:1793` `g_array_set_size(keys, 0)`), so a stale or
-        // re-used GArray never shows concatenated results on either path.
-        // SAFETY: Null-checked above; `g_array_set_size` on a real glib
-        // GArray updates `len` and preserves its private metadata.
-        unsafe {
-            g_array_set_size(keys, 0);
-        }
-        let Some(intro) = inst.core.dict.token_introspection(token) else {
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    // The pin clears the caller's array before appending
+    // (`zhuyin.cpp:1793` `g_array_set_size(keys, 0)`), so a stale or
+    // re-used GArray never shows concatenated results on either path.
+    // SAFETY: Null-checked above; `g_array_set_size` on a real glib
+    // GArray updates `len` and preserves its private metadata.
+    unsafe {
+        g_array_set_size(keys, 0);
+    }
+    let Some(intro) = inst.core.dict.token_introspection(token) else {
+        return false;
+    };
+    let Some((keys_list, _count)) = intro.pronunciations.get(nth as usize) else {
+        return false;
+    };
+    let mut packed: Vec<u16> = Vec::with_capacity(keys_list.len());
+    for &key in keys_list {
+        let Some(syllable) = oxpinyin_core::SyllableKey::from_index(key as usize) else {
             return false;
         };
-        let Some((keys_list, _count)) = intro.pronunciations.get(nth as usize) else {
+        let Some(chewing) = oxpinyin_core::ChewingKey::from_pinyin(syllable.text()) else {
             return false;
         };
-        let mut packed: Vec<u16> = Vec::with_capacity(keys_list.len());
-        for &key in keys_list {
-            let Some(syllable) = oxpinyin_core::SyllableKey::from_index(key as usize) else {
-                return false;
-            };
-            let Some(chewing) = oxpinyin_core::ChewingKey::from_pinyin(syllable.text()) else {
-                return false;
-            };
-            packed.push(chewing.to_packed());
-        }
-        if packed.is_empty() {
-            return false;
-        }
-        // SAFETY: Null-checked above.
-        unsafe {
-            g_array_append_vals(
-                keys,
-                packed.as_ptr().cast::<c_void>(),
-                packed.len() as c_uint,
-            );
-        }
-        true
-    })
+        packed.push(chewing.to_packed());
+    }
+    if packed.is_empty() {
+        return false;
+    }
+    // SAFETY: Null-checked above.
+    unsafe {
+        g_array_append_vals(
+            keys,
+            packed.as_ptr().cast::<c_void>(),
+            packed.len() as c_uint,
+        );
+    }
+    true
 }
 
 /// Get the unigram frequency of a token.
@@ -230,21 +226,20 @@ pub extern "C" fn zhuyin_token_get_unigram_frequency(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        let Some(count) = inst.core.dict.system_unigram_count(token) else {
-            return false;
-        };
-        if !freq.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *freq = GUint::try_from(count + 1).unwrap_or(GUint::MAX);
-            }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    let Some(count) = inst.core.dict.system_unigram_count(token) else {
+        return false;
+    };
+    if !freq.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *freq = GUint::try_from(count + 1).unwrap_or(GUint::MAX);
         }
-        true
-    })
+    }
+    true
 }
 
 /// Add a unigram-frequency delta to a token.
@@ -263,10 +258,9 @@ pub extern "C" fn zhuyin_token_add_unigram_frequency(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `zhuyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        inst.core.dict.add_unigram_delta(token, delta as u64)
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    inst.core.dict.add_unigram_delta(token, delta as u64)
 }

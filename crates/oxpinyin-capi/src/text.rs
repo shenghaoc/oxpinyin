@@ -8,7 +8,7 @@ use oxpinyin_core::graph::SegmentGraph;
 use oxpinyin_core::phonetic_initial;
 use oxpinyin_core::{DoublePinyinParse, ZhuyinParse};
 
-use crate::ffi::{ffi_catch, owned_cstr};
+use crate::ffi::owned_cstr;
 use crate::state::instance_ref;
 use crate::types::{GChar, PinyinInstance};
 
@@ -267,53 +267,52 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        // Upstream returns false with an allocated empty string when
-        // the matrix is empty — no parse, or a parse that consumed
-        // nothing (`pinyin.cpp:3382-3386`).
-        if inst.core.parsed_len == 0 {
-            if !aux_text.is_null() {
-                let owned = owned_cstr("");
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *aux_text = owned;
-                }
-            }
-            return false;
-        }
-        let text = inst.core.full_parse.as_ref().map_or_else(
-            || {
-                full_aux_text(
-                    inst.core.session.raw_input(),
-                    inst.core.parsed_len,
-                    cursor,
-                    inst.core.options(),
-                )
-            },
-            // LUOMA / SECONDARY_ZHUYIN: render the stored index parse —
-            // canonical spellings (tone digit appended when a tone was
-            // parsed, like `ChewingKey::get_pinyin_string`) over raw
-            // spans.
-            |parse| full_index_aux_text(&inst.core.full_input, parse, cursor),
-        );
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    // Upstream returns false with an allocated empty string when
+    // the matrix is empty — no parse, or a parse that consumed
+    // nothing (`pinyin.cpp:3382-3386`).
+    if inst.core.parsed_len == 0 {
         if !aux_text.is_null() {
-            // SAFETY: Null-checked above. `owned_cstr` returns null on an
-            // interior NUL or allocation failure; otherwise ownership
-            // transfers to the caller, which frees it with `g_free`.
-            let owned = owned_cstr(&text);
+            let owned = owned_cstr("");
             // SAFETY: Null-checked above.
             unsafe {
                 *aux_text = owned;
             }
-            if owned.is_null() {
-                return false;
-            }
         }
-        true
-    })
+        return false;
+    }
+    let text = inst.core.full_parse.as_ref().map_or_else(
+        || {
+            full_aux_text(
+                inst.core.session.raw_input(),
+                inst.core.parsed_len,
+                cursor,
+                inst.core.options(),
+            )
+        },
+        // LUOMA / SECONDARY_ZHUYIN: render the stored index parse —
+        // canonical spellings (tone digit appended when a tone was
+        // parsed, like `ChewingKey::get_pinyin_string`) over raw
+        // spans.
+        |parse| full_index_aux_text(&inst.core.full_input, parse, cursor),
+    );
+    if !aux_text.is_null() {
+        // SAFETY: Null-checked above. `owned_cstr` returns null on an
+        // interior NUL or allocation failure; otherwise ownership
+        // transfers to the caller, which frees it with `g_free`.
+        let owned = owned_cstr(&text);
+        // SAFETY: Null-checked above.
+        unsafe {
+            *aux_text = owned;
+        }
+        if owned.is_null() {
+            return false;
+        }
+    }
+    true
 }
 
 /// Get auxiliary text for double pinyin display.
@@ -336,48 +335,47 @@ pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        let Some(parse) = inst.core.double_parse.as_ref() else {
-            if !aux_text.is_null() {
-                // Upstream returns false with an allocated empty string when
-                // the matrix is empty (pinyin.cpp:3442-3445).
-                let owned = owned_cstr("");
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *aux_text = owned;
-                }
-            }
-            return false;
-        };
-        if parse.keys().is_empty() {
-            if !aux_text.is_null() {
-                let owned = owned_cstr("");
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *aux_text = owned;
-                }
-            }
-            return false;
-        }
-        let text = double_aux_text(&inst.core.double_input, parse, inst.core.parsed_len, cursor);
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    let Some(parse) = inst.core.double_parse.as_ref() else {
         if !aux_text.is_null() {
-            // SAFETY: Null-checked above. `owned_cstr` returns null on an
-            // interior NUL or allocation failure; otherwise ownership
-            // transfers to the caller, which frees it with `g_free`.
-            let owned = owned_cstr(&text);
+            // Upstream returns false with an allocated empty string when
+            // the matrix is empty (pinyin.cpp:3442-3445).
+            let owned = owned_cstr("");
             // SAFETY: Null-checked above.
             unsafe {
                 *aux_text = owned;
             }
-            if owned.is_null() {
-                return false;
+        }
+        return false;
+    };
+    if parse.keys().is_empty() {
+        if !aux_text.is_null() {
+            let owned = owned_cstr("");
+            // SAFETY: Null-checked above.
+            unsafe {
+                *aux_text = owned;
             }
         }
-        true
-    })
+        return false;
+    }
+    let text = double_aux_text(&inst.core.double_input, parse, inst.core.parsed_len, cursor);
+    if !aux_text.is_null() {
+        // SAFETY: Null-checked above. `owned_cstr` returns null on an
+        // interior NUL or allocation failure; otherwise ownership
+        // transfers to the caller, which frees it with `g_free`.
+        let owned = owned_cstr(&text);
+        // SAFETY: Null-checked above.
+        unsafe {
+            *aux_text = owned;
+        }
+        if owned.is_null() {
+            return false;
+        }
+    }
+    true
 }
 
 /// Get auxiliary text for chewing (bopomofo) display.
@@ -400,46 +398,45 @@ pub extern "C" fn pinyin_get_chewing_auxiliary_text(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        let Some(parse) = inst.core.zhuyin_parse.as_ref() else {
-            if !aux_text.is_null() {
-                let owned = owned_cstr("");
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *aux_text = owned;
-                }
-            }
-            return false;
-        };
-        if parse.keys().is_empty() {
-            if !aux_text.is_null() {
-                let owned = owned_cstr("");
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *aux_text = owned;
-                }
-            }
-            return false;
-        }
-        let text = chewing_aux_text(&inst.core.zhuyin_input, parse, inst.core.parsed_len, cursor);
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    let Some(parse) = inst.core.zhuyin_parse.as_ref() else {
         if !aux_text.is_null() {
-            // SAFETY: Null-checked above. `owned_cstr` returns null on an
-            // interior NUL or allocation failure; otherwise ownership
-            // transfers to the caller, which frees it with `g_free`.
-            let owned = owned_cstr(&text);
+            let owned = owned_cstr("");
             // SAFETY: Null-checked above.
             unsafe {
                 *aux_text = owned;
             }
-            if owned.is_null() {
-                return false;
+        }
+        return false;
+    };
+    if parse.keys().is_empty() {
+        if !aux_text.is_null() {
+            let owned = owned_cstr("");
+            // SAFETY: Null-checked above.
+            unsafe {
+                *aux_text = owned;
             }
         }
-        true
-    })
+        return false;
+    }
+    let text = chewing_aux_text(&inst.core.zhuyin_input, parse, inst.core.parsed_len, cursor);
+    if !aux_text.is_null() {
+        // SAFETY: Null-checked above. `owned_cstr` returns null on an
+        // interior NUL or allocation failure; otherwise ownership
+        // transfers to the caller, which frees it with `g_free`.
+        let owned = owned_cstr(&text);
+        // SAFETY: Null-checked above.
+        unsafe {
+            *aux_text = owned;
+        }
+        if owned.is_null() {
+            return false;
+        }
+    }
+    true
 }
 
 #[cfg(test)]

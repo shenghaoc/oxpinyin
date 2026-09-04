@@ -6,7 +6,6 @@ use oxpinyin_core::PhraseToken;
 use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::{SENTENCE_START, is_user_token};
 
-use crate::ffi::ffi_catch;
 use crate::state::{
     CapiCandidate, CapiInstance, candidate_ptr, candidate_ref, instance_mut, instance_ref,
 };
@@ -23,18 +22,17 @@ pub extern "C" fn pinyin_get_n_candidate(instance: *mut PinyinInstance, num: *mu
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        if !num.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *num = GUint::try_from(inst.candidates.len()).unwrap_or(GUint::MAX);
-            }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    if !num.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *num = GUint::try_from(inst.candidates.len()).unwrap_or(GUint::MAX);
         }
-        true
-    })
+    }
+    true
 }
 
 /// Get a candidate by index.
@@ -57,29 +55,28 @@ pub extern "C" fn pinyin_get_candidate(
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        let idx = index as usize;
-        if let Some(cand) = inst.candidates.get(idx) {
-            if !candidate.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *candidate = candidate_ptr(cand);
-                }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    let idx = index as usize;
+    if let Some(cand) = inst.candidates.get(idx) {
+        if !candidate.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *candidate = candidate_ptr(cand);
             }
-            true
-        } else {
-            if !candidate.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *candidate = std::ptr::null_mut();
-                }
-            }
-            false
         }
-    })
+        true
+    } else {
+        if !candidate.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *candidate = std::ptr::null_mut();
+            }
+        }
+        false
+    }
 }
 
 /// Get the type of a lookup candidate.
@@ -99,19 +96,18 @@ pub extern "C" fn pinyin_get_candidate_type(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `candidate` is non-null and was produced by
-        // `pinyin_get_candidate`.
-        let cand = unsafe { candidate_ref(candidate) };
-        let ctype = cand.candidate_type;
-        if !candidate_type.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *candidate_type = ctype;
-            }
+
+    // SAFETY: `candidate` is non-null and was produced by
+    // `pinyin_get_candidate`.
+    let cand = unsafe { candidate_ref(candidate) };
+    let ctype = cand.candidate_type;
+    if !candidate_type.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *candidate_type = ctype;
         }
-        true
-    })
+    }
+    true
 }
 
 /// Get the display string of a candidate.
@@ -133,19 +129,18 @@ pub extern "C" fn pinyin_get_candidate_string(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `candidate` is non-null and was produced by
-        // `pinyin_get_candidate`.
-        let cand = unsafe { candidate_ref(candidate) };
-        if !utf8_str.is_null() {
-            // SAFETY: Null-checked above. Pointer borrows into the
-            // CapiCandidate's CString, valid until candidates are rebuilt.
-            unsafe {
-                *utf8_str = cand.text.as_ptr();
-            }
+
+    // SAFETY: `candidate` is non-null and was produced by
+    // `pinyin_get_candidate`.
+    let cand = unsafe { candidate_ref(candidate) };
+    if !utf8_str.is_null() {
+        // SAFETY: Null-checked above. Pointer borrows into the
+        // CapiCandidate's CString, valid until candidates are rebuilt.
+        unsafe {
+            *utf8_str = cand.text.as_ptr();
         }
-        true
-    })
+    }
+    true
 }
 
 /// Get the n-best index of a candidate.
@@ -169,18 +164,17 @@ pub extern "C" fn pinyin_get_candidate_nbest_index(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `candidate` is non-null and was produced by
-        // `pinyin_get_candidate`.
-        let cand = unsafe { candidate_ref(candidate) };
-        if !index.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *index = cand.nbest_index;
-            }
+
+    // SAFETY: `candidate` is non-null and was produced by
+    // `pinyin_get_candidate`.
+    let cand = unsafe { candidate_ref(candidate) };
+    if !index.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *index = cand.nbest_index;
         }
-        true
-    })
+    }
+    true
 }
 
 /// Check whether a candidate is a user candidate.
@@ -204,12 +198,11 @@ pub extern "C" fn pinyin_is_user_candidate(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `candidate` is non-null and was produced by
-        // `pinyin_get_candidate`.
-        let cand = unsafe { candidate_ref(candidate) };
-        cand.token.is_some_and(|token| is_user_token(token.value()))
-    })
+
+    // SAFETY: `candidate` is non-null and was produced by
+    // `pinyin_get_candidate`.
+    let cand = unsafe { candidate_ref(candidate) };
+    cand.token.is_some_and(|token| is_user_token(token.value()))
 }
 
 /// Remove a user candidate from the dictionary.
@@ -236,29 +229,28 @@ pub extern "C" fn pinyin_remove_user_candidate(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        // Identify the candidate by pointer equality over the snapshot.
-        let Some(index) = inst
-            .candidates
-            .iter()
-            .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
-        else {
-            return false;
-        };
-        let Some(token) = inst.candidates[index].token else {
-            return false;
-        };
-        if !is_user_token(token.value()) {
-            return false;
-        }
-        let Some(user) = inst.core.user.as_mut() else {
-            return false;
-        };
-        user.remove_user_phrase(token.value()).unwrap_or(false)
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    // Identify the candidate by pointer equality over the snapshot.
+    let Some(index) = inst
+        .candidates
+        .iter()
+        .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
+    else {
+        return false;
+    };
+    let Some(token) = inst.candidates[index].token else {
+        return false;
+    };
+    if !is_user_token(token.value()) {
+        return false;
+    }
+    let Some(user) = inst.core.user.as_mut() else {
+        return false;
+    };
+    user.remove_user_phrase(token.value()).unwrap_or(false)
 }
 
 /// Choose a candidate at an offset, returning the new cursor position.
@@ -311,86 +303,84 @@ pub extern "C" fn pinyin_choose_candidate(
     if instance.is_null() || candidate.is_null() {
         return -1;
     }
-    ffi_catch(-1, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        // Identify the candidate by pointer equality over the current
-        // snapshot. `offset_from` would be UB unless `candidate` points
-        // into `inst.candidates`, which cannot be assumed across C calls.
-        let Some(index) = inst
-            .candidates
-            .iter()
-            .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
-        else {
-            return -1;
-        };
-        // `index` is the candidate's position in the SNAPSHOT, which
-        // `try_promote_addon` reads (it indexes `inst.candidates`); the
-        // snapshot may omit entries (sentence rows under
-        // `SORT_WITHOUT_SENTENCE_CANDIDATE`, a `CString` conversion
-        // failure), so that position is NOT the row's position in the
-        // window the `select*` calls index. Select by the candidate's
-        // recorded source index.
-        let addon_token = try_promote_addon(inst, index);
-        let source_index = inst.candidates[index].source_index;
-        // Resolve the selection against the window the caller actually saw:
-        // when the last `pinyin_guess_candidates` re-anchored at an offset
-        // other than the composition's own, that window is held in
-        // `anchored_window`, and an index into the composition-anchored
-        // cached list would select a different row.
-        let selection = match addon_token {
-            Some(promoted) => match inst.core.anchored_window.as_ref() {
-                Some((anchor, window)) => inst.core.session.select_anchored_promoted(
-                    source_index,
-                    window,
-                    *anchor,
-                    promoted,
-                ),
-                None => inst.core.session.select_promoted(source_index, promoted),
-            },
-            None => match inst.core.anchored_window.as_ref() {
-                Some((anchor, window)) => {
-                    inst.core
-                        .session
-                        .select_anchored(source_index, window, *anchor)
-                }
-                None => inst.core.session.select(source_index),
-            },
-        };
-        if selection.is_err() {
-            return -1;
-        }
-        // The selection refreshed the cached list at the new composition
-        // offset, so a subsequent index is against that refreshed list.
-        inst.core.anchored_window = None;
-        // The candidate's absolute end. The snapshot span is anchored at
-        // the session's composition offset and includes any separator run
-        // it crossed, while the caller offset may already sit past that
-        // run (the begin of the next key rest) — adding them would count
-        // the run twice and answer parsed length + 1, derailing the ibus
-        // commit branch. Upstream never overshoots because its candidates
-        // are anchored at the caller offset (`m_begin = start`,
-        // libpinyin@412f88e3); the post-select composition offset is that
-        // same end, mapped back to the transformed seams' original
-        // coordinates through the parse's key spans. The sentence-row
-        // branch above answers the parse end before this mapping — a
-        // whole-composition hypothesis consumes the composition.
-        let end = if inst.candidates[index].candidate_type
-            == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
-        {
-            inst.core.parsed_len
-        } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-            oxpinyin_facade::zhuyin_original_offset(parse, inst.core.session.composition_offset())
-        } else if let Some(parse) = inst.core.double_parse.as_ref() {
-            oxpinyin_facade::double_original_offset(parse, inst.core.session.composition_offset())
-        } else if let Some(parse) = inst.core.full_parse.as_ref() {
-            oxpinyin_facade::full_original_offset(parse, inst.core.session.composition_offset())
-        } else {
-            inst.core.session.composition_offset()
-        };
-        c_int::try_from(end).unwrap_or(c_int::MAX)
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    // Identify the candidate by pointer equality over the current
+    // snapshot. `offset_from` would be UB unless `candidate` points
+    // into `inst.candidates`, which cannot be assumed across C calls.
+    let Some(index) = inst
+        .candidates
+        .iter()
+        .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
+    else {
+        return -1;
+    };
+    // `index` is the candidate's position in the SNAPSHOT, which
+    // `try_promote_addon` reads (it indexes `inst.candidates`); the
+    // snapshot may omit entries (sentence rows under
+    // `SORT_WITHOUT_SENTENCE_CANDIDATE`, a `CString` conversion
+    // failure), so that position is NOT the row's position in the
+    // window the `select*` calls index. Select by the candidate's
+    // recorded source index.
+    let addon_token = try_promote_addon(inst, index);
+    let source_index = inst.candidates[index].source_index;
+    // Resolve the selection against the window the caller actually saw:
+    // when the last `pinyin_guess_candidates` re-anchored at an offset
+    // other than the composition's own, that window is held in
+    // `anchored_window`, and an index into the composition-anchored
+    // cached list would select a different row.
+    let selection = match addon_token {
+        Some(promoted) => match inst.core.anchored_window.as_ref() {
+            Some((anchor, window)) => {
+                inst.core
+                    .session
+                    .select_anchored_promoted(source_index, window, *anchor, promoted)
+            }
+            None => inst.core.session.select_promoted(source_index, promoted),
+        },
+        None => match inst.core.anchored_window.as_ref() {
+            Some((anchor, window)) => {
+                inst.core
+                    .session
+                    .select_anchored(source_index, window, *anchor)
+            }
+            None => inst.core.session.select(source_index),
+        },
+    };
+    if selection.is_err() {
+        return -1;
+    }
+    // The selection refreshed the cached list at the new composition
+    // offset, so a subsequent index is against that refreshed list.
+    inst.core.anchored_window = None;
+    // The candidate's absolute end. The snapshot span is anchored at
+    // the session's composition offset and includes any separator run
+    // it crossed, while the caller offset may already sit past that
+    // run (the begin of the next key rest) — adding them would count
+    // the run twice and answer parsed length + 1, derailing the ibus
+    // commit branch. Upstream never overshoots because its candidates
+    // are anchored at the caller offset (`m_begin = start`,
+    // libpinyin@412f88e3); the post-select composition offset is that
+    // same end, mapped back to the transformed seams' original
+    // coordinates through the parse's key spans. The sentence-row
+    // branch above answers the parse end before this mapping — a
+    // whole-composition hypothesis consumes the composition.
+    let end = if inst.candidates[index].candidate_type
+        == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+    {
+        inst.core.parsed_len
+    } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+        oxpinyin_facade::zhuyin_original_offset(parse, inst.core.session.composition_offset())
+    } else if let Some(parse) = inst.core.double_parse.as_ref() {
+        oxpinyin_facade::double_original_offset(parse, inst.core.session.composition_offset())
+    } else if let Some(parse) = inst.core.full_parse.as_ref() {
+        oxpinyin_facade::full_original_offset(parse, inst.core.session.composition_offset())
+    } else {
+        inst.core.session.composition_offset()
+    };
+    c_int::try_from(end).unwrap_or(c_int::MAX)
 }
 
 /// Clear the constraint a prior choose pinned, by offset.
@@ -417,21 +407,20 @@ pub extern "C" fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset:
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        let session_offset = if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-            oxpinyin_facade::zhuyin_session_offset(parse, offset)
-        } else if let Some(parse) = inst.core.double_parse.as_ref() {
-            oxpinyin_facade::double_session_offset(parse, offset)
-        } else if let Some(parse) = inst.core.full_parse.as_ref() {
-            oxpinyin_facade::full_session_offset(parse, offset)
-        } else {
-            offset
-        };
-        inst.core.session.clear_constraint(session_offset)
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    let session_offset = if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+        oxpinyin_facade::zhuyin_session_offset(parse, offset)
+    } else if let Some(parse) = inst.core.double_parse.as_ref() {
+        oxpinyin_facade::double_session_offset(parse, offset)
+    } else if let Some(parse) = inst.core.full_parse.as_ref() {
+        oxpinyin_facade::full_session_offset(parse, offset)
+    } else {
+        offset
+    };
+    inst.core.session.clear_constraint(session_offset)
 }
 
 /// Promotes the chosen candidate when it is an `ADDON_CANDIDATE`
@@ -487,32 +476,31 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     if instance.is_null() || candidate.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        // Identify the candidate by pointer equality over the snapshot.
-        let Some(index) = inst
-            .candidates
-            .iter()
-            .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
-        else {
-            return false;
-        };
-        let Some(token) = inst.candidates[index].token else {
-            return false;
-        };
-        let Some(user) = inst.core.user.as_mut() else {
-            return false;
-        };
-        let last = inst
-            .core
-            .session
-            .selected_tokens()
-            .last()
-            .map_or(SENTENCE_START, |token| token.value());
-        user.observe_predicted(last, token.value()).is_ok()
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    // Identify the candidate by pointer equality over the snapshot.
+    let Some(index) = inst
+        .candidates
+        .iter()
+        .position(|c| std::ptr::eq(c, candidate.cast::<CapiCandidate>()))
+    else {
+        return false;
+    };
+    let Some(token) = inst.candidates[index].token else {
+        return false;
+    };
+    let Some(user) = inst.core.user.as_mut() else {
+        return false;
+    };
+    let last = inst
+        .core
+        .session
+        .selected_tokens()
+        .last()
+        .map_or(SENTENCE_START, |token| token.value());
+    user.observe_predicted(last, token.value()).is_ok()
 }
 
 /// Train the current sentence with the given n-best index.
@@ -538,10 +526,9 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, _index: u8) -> boo
     if instance.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_mut(instance) };
-        inst.core.train()
-    })
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_mut(instance) };
+    inst.core.train()
 }

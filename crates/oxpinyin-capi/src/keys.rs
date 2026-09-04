@@ -20,7 +20,7 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
+use crate::ffi::{cstr_to_string, owned_cstr};
 use crate::state::instance_ref;
 use crate::types::{ChewingKey, GChar, PinyinInstance};
 
@@ -48,26 +48,25 @@ pub extern "C" fn pinyin_parse_full_pinyin(
     if instance.is_null() || onepinyin.is_null() || onekey.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        // SAFETY: Null-checked above.
-        let text = unsafe { cstr_to_string(onepinyin) };
-        // SAFETY: Null-checked above; written through the caller's
-        // storage exactly once per branch.
-        unsafe {
-            *onekey = ChewingKey::ZERO;
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    // SAFETY: Null-checked above.
+    let text = unsafe { cstr_to_string(onepinyin) };
+    // SAFETY: Null-checked above; written through the caller's
+    // storage exactly once per branch.
+    unsafe {
+        *onekey = ChewingKey::ZERO;
+    }
+    match inst.core.parse_one_full_pinyin(&text, false) {
+        Some(key) => {
+            // SAFETY: Null-checked above.
+            unsafe { *onekey = ChewingKey::from_core(key) };
+            true
         }
-        match inst.core.parse_one_full_pinyin(&text, false) {
-            Some(key) => {
-                // SAFETY: Null-checked above.
-                unsafe { *onekey = ChewingKey::from_core(key) };
-                true
-            }
-            None => false,
-        }
-    })
+        None => false,
+    }
 }
 
 /// Parse one double pinyin into a key.
@@ -93,21 +92,20 @@ pub extern "C" fn pinyin_parse_double_pinyin(
     if instance.is_null() || onepinyin.is_null() || onekey.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        // SAFETY: Null-checked above.
-        let text = unsafe { cstr_to_string(onepinyin) };
-        match inst.core.parse_one_double_pinyin(&text) {
-            Some(key) => {
-                // SAFETY: Null-checked above.
-                unsafe { *onekey = ChewingKey::from_core(key) };
-                true
-            }
-            None => false,
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    // SAFETY: Null-checked above.
+    let text = unsafe { cstr_to_string(onepinyin) };
+    match inst.core.parse_one_double_pinyin(&text) {
+        Some(key) => {
+            // SAFETY: Null-checked above.
+            unsafe { *onekey = ChewingKey::from_core(key) };
+            true
         }
-    })
+        None => false,
+    }
 }
 
 /// Parse one chewing (bopomofo) keystroke string into a key.
@@ -133,21 +131,20 @@ pub extern "C" fn pinyin_parse_chewing(
     if instance.is_null() || onechewing.is_null() || onekey.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: `instance` is non-null and was produced by
-        // `pinyin_alloc_instance`.
-        let inst = unsafe { instance_ref(instance) };
-        // SAFETY: Null-checked above.
-        let text = unsafe { cstr_to_string(onechewing) };
-        match inst.core.parse_one_chewing(&text) {
-            Some(key) => {
-                // SAFETY: Null-checked above.
-                unsafe { *onekey = ChewingKey::from_core(key) };
-                true
-            }
-            None => false,
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `pinyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    // SAFETY: Null-checked above.
+    let text = unsafe { cstr_to_string(onechewing) };
+    match inst.core.parse_one_chewing(&text) {
+        Some(key) => {
+            // SAFETY: Null-checked above.
+            unsafe { *onekey = ChewingKey::from_core(key) };
+            true
         }
-    })
+        None => false,
+    }
 }
 
 // ── Display getters ──────────────────────────────────────────────────
@@ -224,19 +221,18 @@ fn display_string_getter(
     if instance.is_null() || key.is_null() || utf8_str.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *utf8_str = ptr::null_mut();
-        }
-        // SAFETY: Null-checked above.
-        let core = unsafe { *key }.to_core();
-        if core.table_index() == 0 {
-            return false;
-        }
-        // SAFETY: Null-checked above.
-        unsafe { write_string(utf8_str, &render(core)) }
-    })
+
+    // SAFETY: Null-checked above.
+    unsafe {
+        *utf8_str = ptr::null_mut();
+    }
+    // SAFETY: Null-checked above.
+    let core = unsafe { *key }.to_core();
+    if core.table_index() == 0 {
+        return false;
+    }
+    // SAFETY: Null-checked above.
+    unsafe { write_string(utf8_str, &render(core)) }
 }
 
 /// Whether a chewing key carries no middle and no final.
@@ -260,9 +256,8 @@ pub extern "C" fn pinyin_get_pinyin_is_incomplete(
     if instance.is_null() || key.is_null() {
         return false;
     }
-    ffi_catch(false, || {
-        // SAFETY: Null-checked above.
-        let core = unsafe { *key }.to_core();
-        core.middle == 0 && core.final_ == 0
-    })
+
+    // SAFETY: Null-checked above.
+    let core = unsafe { *key }.to_core();
+    core.middle == 0 && core.final_ == 0
 }

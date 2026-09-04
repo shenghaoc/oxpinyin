@@ -1,17 +1,8 @@
-//! FFI boundary helpers — panic catch, C-string conversion.
+//! FFI boundary helpers — C-string conversion.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
-
-/// Runs `body` inside [`catch_unwind`], returning `fallback` on panic.
-///
-/// Every `extern "C"` entry point wraps its real work in this so that a
-/// bug in Rust code never unwinds across the C ABI (which is UB).
-pub fn ffi_catch<T>(fallback: T, body: impl FnOnce() -> T) -> T {
-    catch_unwind(AssertUnwindSafe(body)).unwrap_or(fallback)
-}
 
 /// Converts a nullable C string to an owned [`String`].
 ///
