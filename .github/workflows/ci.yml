@@ -132,19 +132,37 @@ jobs:
   # thread-safety test mean anything; see the version selector below.
   python:
     runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see store-backends.yml header
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
+      # debian:testing ships a minimal base without bash or git; the
+      # runner infrastructure and later steps need both.
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
+          safe-directory: 'true'
+          rustup: 'true'
+          rustup-components: clippy
           rust-cache: 'true'
+          rust-cache-key: python-job
       - run: rustup show active-toolchain
-      - name: Install the default backend's C dependencies (apt)
+      - name: Install build dependencies (apt)
         # Kyoto Cabinet is the default store backend; bindgen (libclang) reads
         # kclangc.h at build time. Linux-only jobs install both; the portable
         # job below runs the pure-Rust redb fallback instead.
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libkyotocabinet-dev libclang-dev libglib2.0-dev pkg-config
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           # Free-threaded is the platform this binding is written for, so it
