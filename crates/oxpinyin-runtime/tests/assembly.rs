@@ -270,3 +270,49 @@ fn phrase_prefix_exists_survives_the_gbk_unload_and_the_reload_restores_the_fast
     assert!(dict.phrase_prefix_exists(&ni_hao[..]).unwrap());
     assert!(!dict.phrase_prefix_exists(&dead_end).unwrap());
 }
+
+// The key-cost table `new_session` caches is a function of library
+// visibility, so unloading a library must not leave a later session decoding
+// against stale costs. This pins the invariant that makes the mask-stamped
+// cache necessary — the table genuinely differs under a GBK unload and is
+// restored exactly on reload — and drives the open → session → unload →
+// session → reload → session sequence the cache must service without regress.
+#[test]
+fn key_costs_track_gbk_visibility_across_sessions() {
+    let runtime = Runtime::open(&w3_dir(), None).expect("open");
+    let dict = runtime.dict();
+    let lm = runtime.lm();
+
+    // The cache is stamped with the library-visibility mask; these direct
+    // computations are exactly what `new_session` memoises per mask.
+    let loaded = oxpinyin_core::scoring::key_cost_table(&dict, &lm).expect("key costs (loaded)");
+    runtime
+        .new_session(&EmptyConfigSource)
+        .expect("session (loaded)");
+
+    assert!(runtime.unload_library(2), "first GBK unload arms the mask");
+    let unloaded =
+        oxpinyin_core::scoring::key_cost_table(&dict, &lm).expect("key costs (GBK unloaded)");
+    // An unloaded library drops out of the lookups and the unigram
+    // denominator, so at least one frozen key must cost differently — else
+    // the cache could never go stale and this guard would be vacuous.
+    assert_ne!(
+        loaded, unloaded,
+        "GBK unload must change the key-cost table, or the mask stamp is pointless"
+    );
+    // A session built now must recompute against the unloaded visibility.
+    runtime
+        .new_session(&EmptyConfigSource)
+        .expect("session (GBK unloaded)");
+
+    assert!(runtime.load_library(2), "reload clears the mask");
+    let reloaded =
+        oxpinyin_core::scoring::key_cost_table(&dict, &lm).expect("key costs (GBK reloaded)");
+    assert_eq!(
+        loaded, reloaded,
+        "reload must restore the original key costs"
+    );
+    runtime
+        .new_session(&EmptyConfigSource)
+        .expect("session (GBK reloaded)");
+}

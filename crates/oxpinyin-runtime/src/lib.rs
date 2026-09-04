@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 const GBK_DICTIONARY: u32 = 2;
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use oxpinyin_core::scoring::{ScoringError, key_cost_table};
 use oxpinyin_core::{
@@ -796,12 +796,18 @@ pub struct Runtime {
     dict: RuntimeDict,
     lm: RuntimeLm,
     user: Option<UserStore>,
-    /// The per-key initial cost table. Deferred out of [`Runtime::open`]:
-    /// it is a pure function of the immutable system dict/lm, but computing
-    /// it walks the dictionary, which dominates `pinyin_init`. It is filled
-    /// lazily on the first [`Runtime::new_session`] instead, so a caller
-    /// that opens an engine without immediately decoding pays nothing here.
-    key_costs: OnceLock<Arc<[Cost]>>,
+    /// The per-key initial cost table, memoised alongside the
+    /// library-visibility mask it was computed under. Deferred out of
+    /// [`Runtime::open`]: computing it walks the dictionary, which dominates
+    /// `pinyin_init`, so it is filled lazily on the first
+    /// [`Runtime::new_session`]. Its values depend on which phrase libraries
+    /// are visible — an unloaded library's items drop out of the lookups and
+    /// the unigram denominator — so every session build compares the current
+    /// mask against the stored one and rebuilds when a
+    /// [`Runtime::load_library`]/[`Runtime::unload_library`] has changed
+    /// visibility since. Addon load/unload never touch the mask, so they
+    /// never invalidate it.
+    key_costs: Mutex<Option<(u32, Arc<[Cost]>)>>,
 }
 
 impl Runtime {
@@ -881,7 +887,7 @@ impl Runtime {
             dict,
             lm,
             user,
-            key_costs: OnceLock::new(),
+            key_costs: Mutex::new(None),
         })
     }
 
@@ -894,22 +900,32 @@ impl Runtime {
     ///
     /// # Errors
     ///
-    /// Forwards [`EngineError`] from session construction (currently
+    /// Returns [`EngineError`] when the key-cost table cannot be computed —
+    /// a backend failure while walking the dictionary, on the first build or
+    /// the first after a library-visibility change — and otherwise forwards
+    /// any [`EngineError`] from session construction (itself currently
     /// infallible over valid backends).
     pub fn new_session(&self, config: &dyn ConfigSource) -> Result<RuntimeSession, EngineError> {
         // The key-cost table is filled on first use rather than at open,
-        // keeping `pinyin_init` off the dictionary walk. `get_or_try_init`
-        // is still unstable (once_cell_try), so this is the stable form.
-        let key_costs: Arc<[Cost]> = match self.key_costs.get() {
-            Some(kc) => Arc::clone(kc),
-            None => {
-                let computed: Arc<[Cost]> = Arc::from(key_cost_table(&self.dict, &self.lm)?);
-                // A racing new_session may win the set(); both compute the
-                // same deterministic result from the immutable system
-                // dict/lm, so either value is correct. Adopt whatever ends
-                // up stored.
-                let _ = self.key_costs.set(Arc::clone(&computed));
-                self.key_costs.get().map_or(computed, Arc::clone)
+        // keeping `pinyin_init` off the dictionary walk. Its values depend on
+        // the library-visibility mask (an unloaded library's items leave the
+        // lookups and the unigram denominator), so the cache is stamped with
+        // the mask it was built under and rebuilt whenever a
+        // load/unload_library has changed visibility since — each session
+        // decodes with the visibility in effect when it is built.
+        let mask = self.dict.library_mask.load(Ordering::SeqCst);
+        let key_costs: Arc<[Cost]> = {
+            let mut cache = self
+                .key_costs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match cache.as_ref() {
+                Some((cached_mask, table)) if *cached_mask == mask => Arc::clone(table),
+                _ => {
+                    let computed: Arc<[Cost]> = Arc::from(key_cost_table(&self.dict, &self.lm)?);
+                    *cache = Some((mask, Arc::clone(&computed)));
+                    computed
+                }
             }
         };
         Session::new_with_key_costs(
