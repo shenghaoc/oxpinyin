@@ -26,9 +26,9 @@ warning, SCHED = scheduled analysis, REV = human review.
 | Public fallible APIs return Result/Option | REV (constitution §4) | REV + partial | type convention; `clippy::result_unit_err` already denied |
 | No `unwrap`/`expect`/`panic!` in library code | factual (0 hits) but unenforced | HGATE | `clippy::unwrap_used`/`expect_used`/`panic`/`panic_in_result_fn` denied at the crate root of the eleven library crates — core/engine/user/data/store/segment plus runtime, python, datagen, capi and pinyin-oracle; `not(test)` exempts inline `#[cfg(test)]` modules (see §J note on why the exemption is deliberate) |
 | Release `assert`s only as documented bug-trips | factual (2, commented) | REV + comment anchor | review checklist keyed on the two `parser.rs` sites |
-| No panic crosses the C ABI | near-factual (`ffi_catch` on 50/55) | HGATE after F-7 | review + contract tests; Rust ≥1.81 abort-at-ABI is backstop, not license |
+| No panic crosses the C ABI | enforced by construction (no-panic lints; no catch wrapper — `ffi_catch` removed 2026-09-05) | HGATE | review + contract tests; a panic reaching an `extern "C"` boundary aborts the process (Rust ≥1.81, rust-lang/rust#116088) — abort-at-ABI is now the containment, no longer a backstop |
 | Tests/benches/examples unrestricted | yes | yes | explicit non-goal to lint them |
-| `panic = "abort"` in shipped artifacts | absent | **forbidden by profile** | documented decision (would defeat `ffi_catch`) |
+| `panic = "abort"` in shipped artifacts | adopted in `[profile.release]` | **CONDITIONAL ACCEPT** (2026-09-05, commit 8a81b8ab) | dated override of the former REJECT ("would defeat `ffi_catch`"): the UB rationale for catching at `extern "C"` was obsolete since Rust 1.81, the no-panic lints made the catch sites operationally inert, and `panic = "abort"` makes them literally dead — all removed. Measured −64 KiB stripped ARM64/KC; the 116 KiB gimli/addr2line symbolizer is unaffected (see docs/perf/perf-so-size-2026-09.md). `[profile.profiling]` pins `panic = "unwind"` explicitly |
 
 ## C. Arithmetic & conversions
 
