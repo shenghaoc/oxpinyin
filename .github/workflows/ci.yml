@@ -341,10 +341,34 @@ jobs:
             cargo +nightly-2026-08-01 fuzz build --target x86_64-unknown-linux-gnu "$target"
             echo "::endgroup::"
           done
-      - name: Run bounded parser fuzz pass
+      - name: Run bounded fuzz smoke pass (every target)
         # The pinned cargo-fuzz release binary is itself a musl build, and
         # cargo-fuzz defaults the fuzz target to the triple it was built for
         # (rust-fuzz/cargo-fuzz#398) — pin the runner's gnu triple so the
         # fuzzers build against the gnu std exactly as they did under the
         # source-built tool (ASan will not link musl's static libc).
-        run: cargo +nightly-2026-08-01 fuzz run --target x86_64-unknown-linux-gnu parser -- -max_total_time=10 -timeout=5 -max_len=4096
+        #
+        # Every target gets a short run, not just the parser: building is
+        # not executing. A harness whose environment went stale (the
+        # capi-commands fixture path, 2026-09-04) compiled green and
+        # failed only in the nightly soak — the first input already
+        # panicked. A 10s run per target boots each harness against its
+        # real inputs, fixtures, and temp state, so that class fails the
+        # PR. The soak lane still does the deep work (180s/target).
+        run: |
+          set -euo pipefail
+          mapfile -t targets < <(cargo +nightly-2026-08-01 fuzz list)
+          if [ "${#targets[@]}" -eq 0 ]; then
+            echo "::error::cargo fuzz list returned no targets"
+            exit 1
+          fi
+          status=0
+          for target in "${targets[@]}"; do
+            echo "::group::fuzz smoke $target"
+            if ! cargo +nightly-2026-08-01 fuzz run --target x86_64-unknown-linux-gnu "$target" -- -max_total_time=10 -timeout=15 -max_len=4096; then
+              status=1
+              echo "::error::fuzz smoke failed for $target"
+            fi
+            echo "::endgroup::"
+          done
+          exit $status

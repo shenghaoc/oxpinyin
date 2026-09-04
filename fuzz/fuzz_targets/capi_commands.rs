@@ -58,8 +58,19 @@ static SESSION: OnceLock<Session> = OnceLock::new();
 
 fn session() -> &'static Session {
     SESSION.get_or_init(|| {
-        let system = CString::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/w3"))
-            .expect("static path");
+        // The compiled-in backend's own fixture directory — the same
+        // contract as the capi suites' system_dir() twins (crates/
+        // oxpinyin-capi/src/test_support.rs, tests/abi/common.rs):
+        // fixtures/w3 carries one complete DBM set per backend under its
+        // DEFAULT_STORE_EXT subdirectory, and the runtime opens only that
+        // backend's files. Passing the fixtures/w3 root asks for DBMs that
+        // live one level down, so init answers NULL (2026-09-04 soak).
+        let system_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("fixtures")
+            .join("w3")
+            .join(oxpinyin_data::DEFAULT_STORE_EXT);
+        let system = CString::new(system_dir.to_str().expect("static path")).expect("no NUL");
         let user =
             std::env::temp_dir().join(format!("oxpinyin-fuzz-capi-{}.d", std::process::id()));
         let _ = std::fs::remove_dir_all(&user);
@@ -68,7 +79,11 @@ fn session() -> &'static Session {
         // SAFETY: fresh fixture context over the committed w3 tables and a
         // per-process temp user dir; both outlive the process.
         let context = oxpinyin_init_for_fixtures(system.as_ptr(), user.as_ptr());
-        assert!(!context.is_null(), "fixture context must initialize");
+        assert!(
+            !context.is_null(),
+            "fixture context must initialize (system dir: {})",
+            system_dir.display()
+        );
         // SAFETY: `context` is the live context above.
         let instance = pinyin_alloc_instance(context);
         assert!(!instance.is_null(), "instance must allocate");
