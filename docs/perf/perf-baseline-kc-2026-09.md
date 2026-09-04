@@ -66,11 +66,16 @@ reducing init to ~1 ms.
 | runtime footprint | 0.95× | 2.56× |
 | total install | 1.03× | 2.78× |
 
-Runtime data fell from 101.80 MiB to 36.88 MiB: the 79.59 MiB
-`interpolation2.text` was trimmed to 1.97 MiB (2026-09-03), then
-removed entirely (this measurement) — the runtime never opens the
-file. The remaining delta to the oracle (36.88 vs 35.54 MiB) is KC vs
-Tkrzw container overhead on the three DBMs (+1.34 MiB).
+The Aug 31 data dir contained only 4 files (3 KC tables +
+`interpolation2.text` at 79.59 MiB) totaling 101.80 MiB. This
+measurement ships the full datagen output (23 files: 3 system DBMs,
+2 addon DBMs, 16 chunk files, punct, table.conf) — the same set the
+oracle ships — with no `interpolation2.text`. The file was trimmed to
+1.97 MiB (2026-09-03, 17ae4bf) and removed entirely here after strace
+confirmed the runtime never opens it.
+
+The remaining delta to the oracle (36.88 vs 35.54 MiB) is KC vs Tkrzw
+container overhead on the DBMs (+1.34 MiB).
 
 oxpinyin runtime data breakdown:
 
@@ -84,7 +89,7 @@ oxpinyin runtime data breakdown:
 | opengram.bin | 0.78 MiB |
 | addon_phrase_index.bin | 0.78 MiB |
 | punct.bin | 0.39 MiB |
-| (10 remaining chunk + conf) | 1.87 MiB |
+| (15 remaining chunk + conf) | 0.87 MiB |
 
 ### Axis 3 — RAM (PERF_RAM_RUNS=10)
 

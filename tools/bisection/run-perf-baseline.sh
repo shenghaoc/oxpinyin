@@ -102,13 +102,23 @@ if [ ! -f "$CAPI_DATA/pinyin_index.bin" ] || [ ! -f "$CAPI_DATA/phrase_index.bin
     }
     mkdir -p "$CAPI_DATA"
     cp -L "$EXPORT_DIR"/*.bin "$EXPORT_DIR"/*.db "$EXPORT_DIR"/table.conf \
-          "$CAPI_DATA/" 2>/dev/null || true
-    # Copy chunk .table files if present (used by addon libraries).
+          "$CAPI_DATA/"
     for f in "$EXPORT_DIR"/*.table; do
         [ -f "$f" ] && cp -L "$f" "$CAPI_DATA/"
     done
+    # Verify every exported file arrived.
+    for f in "$EXPORT_DIR"/*.bin "$EXPORT_DIR"/*.db "$EXPORT_DIR"/table.conf; do
+        [ -f "$f" ] || continue
+        base=$(basename "$f")
+        [ -f "$CAPI_DATA/$base" ] || {
+            echo "fatal: $base failed to copy from $EXPORT_DIR to $CAPI_DATA" >&2
+            exit 1
+        }
+    done
 fi
-for _required in pinyin_index.bin phrase_index.bin bigram.db table.conf; do
+for _required in pinyin_index.bin phrase_index.bin bigram.db table.conf \
+                 addon_pinyin_index.bin addon_phrase_index.bin punct.bin \
+                 gb_char.bin; do
     [ -f "$CAPI_DATA/$_required" ] || {
         echo "fatal: missing $CAPI_DATA/$_required" >&2
         exit 1
