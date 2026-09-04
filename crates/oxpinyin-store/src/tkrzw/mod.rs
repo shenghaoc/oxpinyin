@@ -159,21 +159,6 @@ impl fmt::Display for TkrzwError {
 
 impl std::error::Error for TkrzwError {}
 
-/// A scan visitor panicked. The panic is caught at the callback boundary
-/// and reported as this error: a visitor runs inside tkrzw's call stack,
-/// and an unwind escaping through the C ABI would be undefined
-/// behaviour, so it must never be allowed to propagate.
-#[derive(Debug)]
-struct VisitorPanicked;
-
-impl fmt::Display for VisitorPanicked {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("store scan visitor panicked")
-    }
-}
-
-impl std::error::Error for VisitorPanicked {}
-
 /// Reads the thread-local "last status" and copies it out — the
 /// message region is valid only until the next tkrzw call on this
 /// thread, so this runs immediately after every failed call, before
@@ -490,22 +475,17 @@ unsafe extern "C" fn walk_row(
         return rec_proc_noop();
     }
     if in_bounds(user_key, ctx.lo, ctx.hi) {
-        // The visitor runs inside tkrzw's call stack, reached through
-        // the C ABI. An unwind escaping `row` would cross that boundary
-        // into undefined behaviour (Rust aborts `extern "C"` unwinds,
-        // losing the error mapping entirely). Catch it here and surface
-        // it as an error instead.
-        let visited =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (ctx.row)(user_key, value)));
-        match visited {
-            Ok(Ok(true)) => {}
-            Ok(Ok(false)) => ctx.stop = true,
-            Ok(Err(error)) => {
+        // The visitor runs inside tkrzw's call stack, reached through the
+        // C ABI. Store errors surface through `ctx.error` and stop the
+        // walk; a panic in `row` (a bug — visitors are panic-free by the
+        // no-panic lints) reaches this callback's `extern "C"` boundary,
+        // where Rust aborts the process; it is never allowed to run on
+        // into tkrzw's frames.
+        match (ctx.row)(user_key, value) {
+            Ok(true) => {}
+            Ok(false) => ctx.stop = true,
+            Err(error) => {
                 ctx.error = Some(error);
-                ctx.stop = true;
-            }
-            Err(_panic) => {
-                ctx.error = Some(StoreError::Backend(Box::new(VisitorPanicked)));
                 ctx.stop = true;
             }
         }
