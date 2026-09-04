@@ -3,22 +3,20 @@
 //! `CapiContext` lives behind `pinyin_context_t *` and `CapiInstance`
 //! behind `pinyin_instance_t *`. The opaque `#[repr(C)]` types in
 //! [`crate::types`] exist only for the generated C header.
+//!
+//! The orchestration half of both structs — the runtime assembly, the
+//! user store, the live option/scheme word, the parse-mode state machine,
+//! the re-anchored window — lives in [`oxpinyin_facade`]'s
+//! `ContextCore`/`InstanceCore`, shared with the zhuyin facade; this file
+//! keeps only the C-facing shell: the context back-pointer, the ABI key
+//! slots, the CString candidate snapshot, and this facade's §9
+//! user-data export machinery.
 #![allow(dead_code)]
 
 use std::ffi::CString;
-use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
-use oxpinyin_core::{
-    DoublePinyinParse, DoublePinyinScheme, FullPinyinIndexParse, FullPinyinScheme, OptionBits,
-    PINYIN_INCOMPLETE, PhraseToken, ZhuyinParse, ZhuyinScheme,
-};
-use oxpinyin_engine::{
-    CandidateKind, CandidateList, Config, EngineError, check_lookup_offset_range,
-    normalize_lookup_offset,
-};
-pub use oxpinyin_runtime::user_store_file;
+use oxpinyin_core::PhraseToken;
+use oxpinyin_engine::CandidateKind;
 
 /// Upstream's phrase-index library count (`novel_types.h:43`, `1<<4`).
 ///
@@ -26,26 +24,20 @@ pub use oxpinyin_runtime::user_store_file;
 /// compatibility policy's availability class turns that abort into a
 /// `false`.
 const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
-use oxpinyin_runtime::{Runtime, RuntimeSession};
+use oxpinyin_facade::ContextCore;
+pub use oxpinyin_facade::InstanceCore;
 pub use oxpinyin_runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
 use oxpinyin_user::{
-    ExportedPhrase, NETWORK_DICTIONARY, SENTENCE_START, USER_DICTIONARY, UserStore,
-    is_user_file_token,
+    ExportedPhrase, NETWORK_DICTIONARY, SENTENCE_START, USER_DICTIONARY, is_user_file_token,
 };
 
 use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, PinyinContext, PinyinInstance};
 
 // ── Context ─────────────────────────────────────────────────────────────
-//
-// The concrete assembly lives in `oxpinyin-runtime` (`SharedDict` /
-// `SharedLm` above are aliases into it), so the C ABI and the Python binding
-// construct engines through one reviewed code path. This file keeps only the
-// C-facing state: live option words, storage/config plumbing around the C
-// contracts, and the instance snapshot machinery.
 
 /// The session type every C handle wraps: the shared runtime's concrete
 /// session.
-pub type CapiSession = RuntimeSession;
+pub type CapiSession = oxpinyin_runtime::RuntimeSession;
 
 /// State behind `pinyin_context_t *`.
 ///
@@ -54,62 +46,27 @@ pub type CapiSession = RuntimeSession;
 /// `user_store()` — so they never borrow the context and stay alive past
 /// `pinyin_fini`.
 pub struct CapiContext {
-    pub(crate) config: Config,
-    /// The shared concrete assembly; `None` under a user-store-only context.
-    pub(crate) runtime: Option<Runtime>,
-    /// The user-learning store, shared by value-clone with every instance.
-    ///
-    /// `None` when the caller passed an empty user directory — the
-    /// libpinyin situation where `pinyin_train` refuses — or when the store
-    /// file cannot be opened (a missing/inaccessible user dir must not make
-    /// `pinyin_init` fail; training then degrades to `false`, upstream-style).
-    user: Option<UserStore>,
-    /// Live `PINYIN_INCOMPLETE` bit. Shared with every instance so
-    /// `pinyin_set_options` remasks already-allocated sessions.
-    pub(crate) incomplete: Arc<AtomicBool>,
-    /// Live double-pinyin scheme. Shared with every instance so
-    /// `pinyin_set_double_pinyin_scheme` remasks already-allocated sessions.
-    pub(crate) double_scheme: Arc<AtomicI32>,
-    /// Live Zhuyin scheme. Shared with every instance so
-    /// `pinyin_set_zhuyin_scheme` remasks already-allocated sessions.
-    pub(crate) zhuyin_scheme: Arc<AtomicI32>,
-    /// Live full-pinyin scheme. Shared with every instance so
-    /// `pinyin_set_full_pinyin_scheme` remasks already-allocated
-    /// sessions.
-    pub(crate) full_scheme: Arc<AtomicI32>,
-    /// Live `USE_TONE` bit for the bopomofo context.
-    pub(crate) use_tone: Arc<AtomicBool>,
-    /// Live option word. Shared with every instance so `pinyin_set_options`
-    /// remasks already-allocated sessions.
-    pub(crate) options: Arc<AtomicU32>,
+    /// The shared orchestration half: assembly, user store, layered
+    /// configuration, and the live option/scheme word.
+    pub(crate) core: ContextCore,
 }
 
 impl CapiContext {
     /// Opens a context the way `pinyin_init` does: the system data
     /// directory (a libpinyin install's own on Kyoto Cabinet and tkrzw)
-    /// plus the optional user dir.
+    /// plus the optional user dir, seeded with `PINYIN_INCOMPLETE` (the
+    /// pinyin facade's option word).
     pub(crate) fn new(system_dir: &str, user_dir: &str) -> Option<Self> {
-        if system_dir.is_empty() {
-            return None;
-        }
-
         // W8 fork-bootstrap wiring lives in the shared assembly: the
         // constructor opens the DBM handles and chunk mappings, installs λ
         // from table.conf when present, degrades an unusable user dir to
         // "no learning", and wires addons + punctuation.
-        let sys = Path::new(system_dir);
-        let runtime = Runtime::open(sys, Some(Path::new(user_dir))).ok()?;
-        let user = runtime.user_store();
         Some(Self {
-            config: Config::default(),
-            runtime: Some(runtime),
-            user,
-            incomplete: Arc::new(AtomicBool::new(true)),
-            double_scheme: Arc::new(AtomicI32::new(DoublePinyinScheme::Ms as i32)),
-            zhuyin_scheme: Arc::new(AtomicI32::new(ZhuyinScheme::Standard as i32)),
-            full_scheme: Arc::new(AtomicI32::new(FullPinyinScheme::Hanyu as i32)),
-            use_tone: Arc::new(AtomicBool::new(false)),
-            options: Arc::new(AtomicU32::new(PINYIN_INCOMPLETE)),
+            core: ContextCore::open(
+                system_dir,
+                user_dir,
+                oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,
+            )?,
         })
     }
 
@@ -120,70 +77,35 @@ impl CapiContext {
     /// without carrying a system dictionary. `pinyin_alloc_instance` reports
     /// `None` for such a context because there is nothing to decode with.
     pub(crate) fn new_user_only(user_dir: &str) -> Option<Self> {
-        if user_dir.is_empty() {
-            return None;
-        }
-        let user = UserStore::open(&Path::new(user_dir).join(user_store_file())).ok()?;
         Some(Self {
-            config: Config::default(),
-            runtime: None,
-            user: Some(user),
-            incomplete: Arc::new(AtomicBool::new(true)),
-            double_scheme: Arc::new(AtomicI32::new(DoublePinyinScheme::Ms as i32)),
-            zhuyin_scheme: Arc::new(AtomicI32::new(ZhuyinScheme::Standard as i32)),
-            full_scheme: Arc::new(AtomicI32::new(FullPinyinScheme::Hanyu as i32)),
-            use_tone: Arc::new(AtomicBool::new(false)),
-            options: Arc::new(AtomicU32::new(PINYIN_INCOMPLETE)),
+            core: ContextCore::new_user_only(
+                user_dir,
+                oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,
+            )?,
         })
     }
 
     pub(crate) fn alloc_instance(&self, context: *mut PinyinContext) -> Option<CapiInstance> {
-        let runtime = self.runtime.as_ref()?;
-        let session = runtime.new_session(&self.config).ok()?;
         Some(CapiInstance {
             context,
-            session,
-            phrase_result: Vec::new(),
             key_slot: ChewingKey::ZERO,
             key_rest_slot: ChewingKeyRest { begin: 0, end: 0 },
             candidates: Vec::new(),
-            anchored_window: None,
-            parsed_len: 0,
-            user: self.user.clone(),
-            dict: runtime.dict(),
-            lm: runtime.lm(),
-            incomplete: Arc::clone(&self.incomplete),
-            double_scheme: Arc::clone(&self.double_scheme),
-            zhuyin_scheme: Arc::clone(&self.zhuyin_scheme),
-            full_scheme: Arc::clone(&self.full_scheme),
-            use_tone: Arc::clone(&self.use_tone),
-            options: Arc::clone(&self.options),
-            double_parse: None,
-            double_input: String::new(),
-            zhuyin_parse: None,
-            zhuyin_input: String::new(),
-            full_parse: None,
-            full_input: String::new(),
+            core: self.core.alloc_instance()?,
         })
     }
 
     /// `pinyin_load_phrase_library`'s read side: the runtime's
     /// library-load (mask-clear) rule; `false` without a runtime.
     pub(crate) fn load_phrase_library(&self, index: u32) -> bool {
-        match self.runtime.as_ref() {
-            Some(runtime) => runtime.load_library(index),
-            None => false,
-        }
+        self.core.load_phrase_library(index)
     }
 
     /// `pinyin_unload_phrase_library`'s read side: GBK-only, first-unload
     /// `true`; `false` without a runtime (a user-store-only context
     /// never loaded GBK — upstream's sub-index is NULL there too).
     pub(crate) fn unload_phrase_library(&self, index: u8) -> bool {
-        match self.runtime.as_ref() {
-            Some(runtime) => runtime.unload_library(index as u32),
-            None => false,
-        }
+        self.core.unload_phrase_library(index)
     }
 
     /// Clone of the context's user store, if this context has one.
@@ -191,25 +113,21 @@ impl CapiContext {
     /// The import iterator owns this clone; because the store's §4 dirty flag
     /// is shared by every clone, `pinyin_end_add_phrases` can arm
     /// `m_modified` through it without retaining a context pointer.
-    pub(crate) fn user_store(&self) -> Option<UserStore> {
-        self.user.clone()
+    pub(crate) fn user_store(&self) -> Option<oxpinyin_user::UserStore> {
+        self.core.user_store()
     }
 
     /// `pinyin_save`'s body (§4): `false` without a user dir (upstream
     /// `pinyin.cpp:1133`), otherwise the store's gated save — `false` when
     /// unmodified (`:1136`), `true` after a dirty save.
     pub(crate) fn save_user(&mut self) -> bool {
-        self.user
-            .as_mut()
-            .is_some_and(|store| store.save().unwrap_or(false))
+        self.core.save_user()
     }
 
     /// `pinyin_mask_out`'s body: the store-level deletion, or `false`
     /// without a user store.
     pub(crate) fn mask_out(&mut self, mask: u32, value: u32) -> bool {
-        self.user
-            .as_mut()
-            .is_some_and(|store| store.mask_out(mask, value).is_ok())
+        self.core.mask_out(mask, value)
     }
 
     /// Load addon library `index` from the runtime's first system data dir.
@@ -226,7 +144,8 @@ impl CapiContext {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
-        self.runtime
+        self.core
+            .runtime
             .as_ref()
             .is_some_and(|runtime| runtime.load_system_addon(index))
     }
@@ -241,7 +160,8 @@ impl CapiContext {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
-        self.runtime
+        self.core
+            .runtime
             .as_ref()
             .is_some_and(|runtime| runtime.unload_system_addon(index))
     }
@@ -254,7 +174,7 @@ impl CapiContext {
         if index != USER_DICTIONARY && index != NETWORK_DICTIONARY {
             return Some(Vec::new());
         }
-        self.user.as_ref()?.export_phrases_in(index).ok()
+        self.core.user.as_ref()?.export_phrases_in(index).ok()
     }
 
     /// §9 bigram-export materialization with upstream's filters and
@@ -270,10 +190,10 @@ impl CapiContext {
     /// rows into an incomplete file.
     pub(crate) fn can_render_export_bigrams(&self) -> bool {
         const INITIAL_SEED: u64 = 23 * 3;
-        if self.runtime.is_some() {
+        if self.core.runtime.is_some() {
             return true;
         }
-        let Some(store) = self.user.as_ref() else {
+        let Some(store) = self.core.user.as_ref() else {
             return true;
         };
         let Ok(raw) = store.export_bigrams() else {
@@ -288,7 +208,7 @@ impl CapiContext {
 
     pub(crate) fn export_bigram_rows(&self) -> Option<Vec<ExportedBigramRow>> {
         const INITIAL_SEED: u64 = 23 * 3;
-        let store = self.user.as_ref()?;
+        let store = self.core.user.as_ref()?;
         let raw = store.export_bigrams().ok()?;
         let mut rows = Vec::new();
         // Memoize the (text, pinyins) rendering: a system token recurs across
@@ -338,7 +258,7 @@ impl CapiContext {
     /// system phrase index and the pinyin index (reverse-scanned).
     fn render_token(&self, token: u32) -> Option<(String, Vec<String>)> {
         if is_user_file_token(token) {
-            let store = self.user.as_ref()?;
+            let store = self.core.user.as_ref()?;
             let phrase = store.phrase(token).ok().flatten()?;
             // Render each reading through the shared `render_pinyin` helper,
             // skipping any unrenderable one — the same rule `export_phrases`
@@ -353,7 +273,7 @@ impl CapiContext {
             }
             Some((phrase.text().to_owned(), pinyins))
         } else {
-            let dict = self.runtime.as_ref()?.dict();
+            let dict = self.core.runtime.as_ref()?.dict();
             let text = dict.system().phrase_text(token)?;
             let pinyins: Vec<String> = dict
                 .system()
@@ -415,12 +335,10 @@ pub struct CapiInstance {
     /// pointer like every C handle here: no ownership, and using it
     /// after `pinyin_fini` is the caller's UAF, exactly upstream's.
     pub(crate) context: *mut PinyinContext,
-    pub(crate) session: CapiSession,
-    /// `m_phrase_result` (`pinyin.cpp:90`): the phrase-segment span DP's
-    /// output, written by `pinyin_phrase_segment` and read by
-    /// `pinyin_get_n_phrase` / `pinyin_get_phrase_token`. Cleared by
-    /// `pinyin_reset` (`pinyin.cpp:2699`) and by nothing else.
-    pub(crate) phrase_result: Vec<PhraseToken>,
+    /// The orchestration half — session, shared handles, live option
+    /// word, parse-mode state machine, re-anchored window — shared with
+    /// the zhuyin facade.
+    pub(crate) core: InstanceCore,
     /// Per-instance slots the `pinyin_get_pinyin_key` family hands out as
     /// `ChewingKey *` / `ChewingKeyRest *`.
     ///
@@ -435,155 +353,17 @@ pub struct CapiInstance {
     /// Snapshotted candidates, rebuilt by `pinyin_guess_candidates`.
     /// `lookup_candidate_t *` pointers borrow into this vec.
     pub(crate) candidates: Vec<CapiCandidate>,
-    /// The re-anchored candidate window from the most recent
-    /// `pinyin_guess_candidates` when it ran at an offset other than the
-    /// composition's own, as `(anchor, window)` — retained so a later
-    /// `pinyin_choose_candidate` resolves its index against the SAME window
-    /// the caller saw (rather than the composition-anchored cached list,
-    /// which would select a different row whenever the two differ) and
-    /// measures the chosen span from that anchor (the candidate's
-    /// `consumed_bytes` is anchor-relative). `None` when the last guess ran
-    /// at the composition offset or under a transformed scheme, where the
-    /// cached list already answers.
-    pub(crate) anchored_window: Option<(usize, CandidateList)>,
-    /// Bytes of raw input consumed by the most recent parse call — upstream
-    /// `m_parsed_len` (`pinyin.cpp:84`), returned by
-    /// `pinyin_get_parsed_input_length` (`pinyin.cpp:1611-1613`).
-    /// Allocation and reset both store 0 (`pinyin.cpp:1318,2692`).
-    pub(crate) parsed_len: usize,
-    /// Clone of the context's user store. `None` under an empty user dir.
-    pub(crate) user: Option<UserStore>,
-    /// Shared dictionary (system + user-file + addon set) for prediction.
-    pub(crate) dict: SharedDict,
-    /// Clone of the context's language model, for the predicted-candidate
-    /// frequency key: the amplified-law total must be read live per call
-    /// (training changes it), like the pin's
-    /// `get_phrase_index_total_freq()` read (`pinyin.cpp:1813-1814`).
-    pub(crate) lm: SharedLm,
-    /// Shared live `PINYIN_INCOMPLETE` flag from the owning context.
-    pub(crate) incomplete: Arc<AtomicBool>,
-    /// Shared live double-pinyin scheme from the owning context.
-    pub(crate) double_scheme: Arc<AtomicI32>,
-    /// Most recent double-pinyin parse, when the last parse call was the
-    /// double-pinyin entry point. Used for aux text and candidate-offset
-    /// mapping back to the original double-pinyin input bytes.
-    pub(crate) double_parse: Option<DoublePinyinParse>,
-    /// Original double-pinyin input for sentence/preedit fallback display.
-    pub(crate) double_input: String,
-    /// Shared live Zhuyin scheme from the owning context.
-    pub(crate) zhuyin_scheme: Arc<AtomicI32>,
-    /// Most recent Zhuyin parse, when the last parse call was the chewing
-    /// entry point.
-    pub(crate) zhuyin_parse: Option<ZhuyinParse>,
-    /// Original Zhuyin input for sentence/preedit fallback display.
-    pub(crate) zhuyin_input: String,
-    /// Shared live full-pinyin scheme from the owning context.
-    pub(crate) full_scheme: Arc<AtomicI32>,
-    /// Most recent full-pinyin index parse, when the scheme is LUOMA or
-    /// `SECONDARY_ZHUYIN` and the last parse call was the full-pinyin
-    /// entry point. Used for aux-text rendering over the raw input.
-    pub(crate) full_parse: Option<FullPinyinIndexParse>,
-    /// Original full-pinyin input for aux-text cursor mapping.
-    pub(crate) full_input: String,
-    /// Shared live `USE_TONE` flag from the owning context.
-    pub(crate) use_tone: Arc<AtomicBool>,
-    /// Shared live option word from the owning context.
-    pub(crate) options: Arc<AtomicU32>,
 }
 
 impl CapiInstance {
-    /// The parse-path reset: the composition's parse state goes, the
-    /// selection record and the §3 constraint store stay — upstream's
-    /// `pinyin_parse_more_full_pinyins` never touches instance-level
-    /// constraints (`pinyin.cpp:1497-1533`), and the frontend re-sends
-    /// the whole buffer every keystroke, so the chosen cursor must
-    /// survive the re-parse (`Session::reset_composition`, the L2
-    /// lifetime rule in `docs/findings/live-typing.md`).
+    /// The parse-path reset: the shared core's reset (composition parse
+    /// state, re-anchored window, stored parses) plus this layer's
+    /// candidate snapshot — the selection record and the §3 constraint
+    /// store stay (upstream's parse-never-touches-constraints rule, the
+    /// L2 lifetime rule in `docs/findings/live-typing.md`).
     pub(crate) fn reset_parse_state(&mut self) {
-        self.session.reset_composition();
+        self.core.reset_parse_state();
         self.candidates.clear();
-        self.parsed_len = 0;
-        self.double_parse = None;
-        self.double_input.clear();
-        self.zhuyin_parse = None;
-        self.zhuyin_input.clear();
-        self.full_parse = None;
-        self.full_input.clear();
-    }
-
-    /// Begin a parse of `original` (the caller's input, in the active
-    /// mode's own coordinates): continue the current composition when the
-    /// buffer evolved from the stored one — extension, backspace, or
-    /// re-send — whether the composition is open (upstream's
-    /// parse-never-touches-constraints rule) or a selection consumed it
-    /// (the R5 revert, register #8: upstream's store survives every
-    /// re-parse and only `pinyin_reset` clears it, `pinyin.cpp:2693-2704`).
-    /// `validate_constraint` drops what stops spelling at the next guess.
-    /// Only a divergent buffer starts fresh: a different string is a
-    /// different composition, and a stale selection-derived cursor must
-    /// not mis-anchor its window before validate could drop the
-    /// mismatched forcings.
-    pub(crate) fn begin_parse(&mut self, original: &[u8]) {
-        let stored: &[u8] = if self.zhuyin_parse.is_some() {
-            self.zhuyin_input.as_bytes()
-        } else if self.double_parse.is_some() {
-            self.double_input.as_bytes()
-        } else if self.full_parse.is_some() {
-            self.full_input.as_bytes()
-        } else {
-            self.session.raw_input().as_bytes()
-        };
-        let continues = self.session.parse_continues(stored, original);
-        let committed_continues =
-            !continues && self.session.committed_parse_continues(stored, original);
-        // The committed-continues shape needs exactly `reset_parse_state`:
-        // its `reset_composition` keeps the store and the selection
-        // record, so the full reset below must not run there.
-        self.reset_parse_state();
-        if !continues && !committed_continues {
-            self.session.reset();
-        }
-    }
-
-    /// The current live option word.
-    pub(crate) fn options(&self) -> OptionBits {
-        OptionBits::from_bits(self.options.load(Ordering::Relaxed))
-    }
-
-    /// The generalized lookup-offset law in the active parse mode's own
-    /// coordinates — the space the caller's guess/choose offsets live in.
-    ///
-    /// - Plain full pinyin: the full law over the session's raw buffer,
-    ///   whose `'` bytes are the matrix's zero-key columns
-    ///   ([`Session::normalized_lookup_offset`]).
-    /// - LUOMA / `SECONDARY_ZHUYIN`: the full law over the consumed prefix
-    ///   of the stored original input — the pinned index parse consumes
-    ///   `'` as the same separator, and bytes past its consumed length
-    ///   never entered the composition, so they bound the offset range
-    ///   exactly like the other transformed seams' parsed lengths.
-    /// - Double pinyin: no zero-key column can exist — `'` is not a scheme
-    ///   key, the parse stops there, and upstream asserts the input
-    ///   carries none at all (`pinyin_parser2.cpp:629`) — so only the
-    ///   range refusal against the parsed original length applies.
-    /// - Zhuyin: `'` is either outside the keyboard (the parse stops
-    ///   there) or a *content* symbol (Gin-Yieh ㄥ, Eten ㄘ), never a zero
-    ///   key, so the separator walk would mis-read content; only the
-    ///   range refusal against the parsed original length applies.
-    pub(crate) fn validate_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
-        if let Some(parse) = self.zhuyin_parse.as_ref() {
-            return check_lookup_offset_range(parse.consumed(), offset);
-        }
-        if let Some(parse) = self.double_parse.as_ref() {
-            return check_lookup_offset_range(parse.consumed(), offset);
-        }
-        if let Some(parse) = self.full_parse.as_ref() {
-            // The min is defensive only: `full_input` and the parse are set
-            // together and cleared together, so consumed never exceeds the
-            // buffer — but a desync must refuse, not slice-panic.
-            let consumed = parse.consumed().min(self.full_input.len());
-            return normalize_lookup_offset(&self.full_input.as_bytes()[..consumed], offset);
-        }
-        self.session.normalized_lookup_offset(offset)
     }
 }
 
@@ -600,8 +380,8 @@ impl CapiInstance {
 ///
 /// `ptr` must be non-null and produced by `Box::into_raw(Box::new(CapiContext { .. }))`.
 /// The returned reference must not outlive the `Box` (i.e. must not be used
-/// after `pinyin_fini` reconstructs and drops it), and must not be stored in
-/// a `CapiInstance` or any other longer-lived location.
+/// after `pinyin_fini` reconstructs and drops it), and must not be stored in a
+/// `CapiInstance` or any other longer-lived location.
 pub unsafe fn context_ref<'a>(ptr: *mut PinyinContext) -> &'a CapiContext {
     // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
     unsafe { &*(ptr.cast::<CapiContext>()) }

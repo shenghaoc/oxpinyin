@@ -186,6 +186,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
     // SAFETY: live instance.
     let inst = unsafe { instance_ref(instance) };
     let store = inst
+        .core
         .user
         .as_ref()
         .expect("fixture context has a user store");

@@ -254,7 +254,7 @@ pub extern "C" fn pinyin_remove_user_candidate(
         if !is_user_token(token.value()) {
             return false;
         }
-        let Some(user) = inst.user.as_mut() else {
+        let Some(user) = inst.core.user.as_mut() else {
             return false;
         };
         user.remove_user_phrase(token.value()).unwrap_or(false)
@@ -340,18 +340,22 @@ pub extern "C" fn pinyin_choose_candidate(
         // `anchored_window`, and an index into the composition-anchored
         // cached list would select a different row.
         let selection = match addon_token {
-            Some(promoted) => match inst.anchored_window.as_ref() {
-                Some((anchor, window)) => {
-                    inst.session
-                        .select_anchored_promoted(source_index, window, *anchor, promoted)
-                }
-                None => inst.session.select_promoted(source_index, promoted),
+            Some(promoted) => match inst.core.anchored_window.as_ref() {
+                Some((anchor, window)) => inst.core.session.select_anchored_promoted(
+                    source_index,
+                    window,
+                    *anchor,
+                    promoted,
+                ),
+                None => inst.core.session.select_promoted(source_index, promoted),
             },
-            None => match inst.anchored_window.as_ref() {
+            None => match inst.core.anchored_window.as_ref() {
                 Some((anchor, window)) => {
-                    inst.session.select_anchored(source_index, window, *anchor)
+                    inst.core
+                        .session
+                        .select_anchored(source_index, window, *anchor)
                 }
-                None => inst.session.select(source_index),
+                None => inst.core.session.select(source_index),
             },
         };
         if selection.is_err() {
@@ -359,7 +363,7 @@ pub extern "C" fn pinyin_choose_candidate(
         }
         // The selection refreshed the cached list at the new composition
         // offset, so a subsequent index is against that refreshed list.
-        inst.anchored_window = None;
+        inst.core.anchored_window = None;
         // The candidate's absolute end. The snapshot span is anchored at
         // the session's composition offset and includes any separator run
         // it crossed, while the caller offset may already sit past that
@@ -375,15 +379,15 @@ pub extern "C" fn pinyin_choose_candidate(
         let end = if inst.candidates[index].candidate_type
             == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
         {
-            inst.parsed_len
-        } else if let Some(parse) = inst.zhuyin_parse.as_ref() {
-            crate::sentence::zhuyin_original_offset(parse, inst.session.composition_offset())
-        } else if let Some(parse) = inst.double_parse.as_ref() {
-            crate::sentence::double_original_offset(parse, inst.session.composition_offset())
-        } else if let Some(parse) = inst.full_parse.as_ref() {
-            crate::sentence::full_original_offset(parse, inst.session.composition_offset())
+            inst.core.parsed_len
+        } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+            oxpinyin_facade::zhuyin_original_offset(parse, inst.core.session.composition_offset())
+        } else if let Some(parse) = inst.core.double_parse.as_ref() {
+            oxpinyin_facade::double_original_offset(parse, inst.core.session.composition_offset())
+        } else if let Some(parse) = inst.core.full_parse.as_ref() {
+            oxpinyin_facade::full_original_offset(parse, inst.core.session.composition_offset())
         } else {
-            inst.session.composition_offset()
+            inst.core.session.composition_offset()
         };
         c_int::try_from(end).unwrap_or(c_int::MAX)
     })
@@ -417,16 +421,16 @@ pub extern "C" fn pinyin_clear_constraint(instance: *mut PinyinInstance, offset:
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
-        let session_offset = if let Some(parse) = inst.zhuyin_parse.as_ref() {
-            crate::sentence::zhuyin_session_offset(parse, offset)
-        } else if let Some(parse) = inst.double_parse.as_ref() {
-            crate::sentence::double_session_offset(parse, offset)
-        } else if let Some(parse) = inst.full_parse.as_ref() {
-            crate::sentence::full_session_offset(parse, offset)
+        let session_offset = if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+            oxpinyin_facade::zhuyin_session_offset(parse, offset)
+        } else if let Some(parse) = inst.core.double_parse.as_ref() {
+            oxpinyin_facade::double_session_offset(parse, offset)
+        } else if let Some(parse) = inst.core.full_parse.as_ref() {
+            oxpinyin_facade::full_session_offset(parse, offset)
         } else {
             offset
         };
-        inst.session.clear_constraint(session_offset)
+        inst.core.session.clear_constraint(session_offset)
     })
 }
 
@@ -444,8 +448,9 @@ fn try_promote_addon(inst: &mut CapiInstance, index: usize) -> Option<PhraseToke
         return None;
     }
     let addon_token = inst.candidates[index].token?;
-    let item = inst.dict.addon_phrase_item(addon_token.value())?;
+    let item = inst.core.dict.addon_phrase_item(addon_token.value())?;
     let promoted = inst
+        .core
         .user
         .as_mut()?
         .promote_addon_phrase(&item.text, &item.readings, item.unigram)
@@ -497,10 +502,11 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
         let Some(token) = inst.candidates[index].token else {
             return false;
         };
-        let Some(user) = inst.user.as_mut() else {
+        let Some(user) = inst.core.user.as_mut() else {
             return false;
         };
         let last = inst
+            .core
             .session
             .selected_tokens()
             .last()
@@ -536,12 +542,6 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, _index: u8) -> boo
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
-        let Some(user) = inst.user.as_mut() else {
-            return false;
-        };
-        if inst.session.selected_tokens().is_empty() {
-            return false;
-        }
-        inst.session.train(user).is_ok()
+        inst.core.train()
     })
 }

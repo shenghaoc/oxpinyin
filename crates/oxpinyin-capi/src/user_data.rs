@@ -47,12 +47,12 @@ pub extern "C" fn pinyin_remember_user_input(
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
-        let Some(user) = inst.user.as_mut() else {
+        let Some(user) = inst.core.user.as_mut() else {
             return false;
         };
         // Key ids are the dense inventory index (< u16::MAX by
         // construction: 405 complete + 23 initial keys).
-        let Some(keys) = inst.session.composition_keys().ok().and_then(|keys| {
+        let Some(keys) = inst.core.session.composition_keys().ok().and_then(|keys| {
             keys.into_iter()
                 .map(|key| u16::try_from(key.index()).ok())
                 .collect::<Option<Vec<PinyinKey>>>()

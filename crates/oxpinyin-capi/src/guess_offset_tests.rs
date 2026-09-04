@@ -299,7 +299,7 @@ fn the_ranking_context_survives_either_guess_offset() {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
         let inst = unsafe { instance_ref(instance) };
         assert_eq!(
-            inst.session.selected_tokens().last().copied(),
+            inst.core.session.selected_tokens().last().copied(),
             Some(ni_token),
             "the ranking context stays the selected word's token at offset {offset}"
         );

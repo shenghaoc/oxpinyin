@@ -33,10 +33,11 @@ use crate::iterators::{
 };
 use crate::parse::pinyin_parse_more_full_pinyins;
 use crate::sentence::{pinyin_get_sentence, pinyin_guess_candidates, pinyin_guess_sentence};
-use crate::state::{instance_mut, instance_ref, user_store_file};
+use crate::state::{instance_mut, instance_ref};
 use crate::test_support::{DEFAULT_SORT, TempUserDir, candidate, cstr, open, system_dir};
 use crate::types::{LookupCandidate, PinyinInstance};
 use crate::user_data::pinyin_remember_user_input;
+use oxpinyin_runtime::user_store_file;
 
 /// The instance's user store handle (the same connection the entry points
 /// write through; every update commits before returning).
@@ -47,7 +48,10 @@ fn store_of(instance: *mut PinyinInstance) -> &'static UserStore {
     // a test convenience: every use sits inside this function's caller and
     // never outlives the instance.
     let inst = unsafe { instance_ref(instance) };
-    inst.user.as_ref().expect("instance carries a user store")
+    inst.core
+        .user
+        .as_ref()
+        .expect("instance carries a user store")
 }
 
 /// The token snapshotted on the candidate pointer.
@@ -362,7 +366,8 @@ fn mask_out_clears_user_entries_and_leaves_the_flag_alone() {
 fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String, i64)> {
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
     let inst = unsafe { instance_ref(instance) };
-    inst.session
+    inst.core
+        .session
         .candidates()
         .iter()
         .filter_map(|candidate| {
@@ -418,7 +423,7 @@ fn populated_store_raises_the_trained_unigram() {
         "the chosen token is in the empty-store list"
     );
     // SAFETY: live instance immediately after the guess.
-    let lm = unsafe { instance_ref(instance) }.lm.clone();
+    let lm = unsafe { instance_ref(instance) }.core.lm.clone();
     let unigram_before = lm
         .unigram_freq(&PhraseToken::new(token))
         .expect("query")
@@ -1284,11 +1289,11 @@ fn a_shrinking_reparse_reconciles_the_committed_selection() {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
         let inst = unsafe { instance_ref(instance) };
         assert!(
-            inst.session.selected_tokens().is_empty(),
+            inst.core.session.selected_tokens().is_empty(),
             "the clamped selection reconciled away"
         );
         assert_eq!(
-            inst.session.composition_offset(),
+            inst.core.session.composition_offset(),
             0,
             "the composition re-opened at the survivor end"
         );
@@ -1302,7 +1307,8 @@ fn a_shrinking_reparse_reconciles_the_committed_selection() {
     let outcome = {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
         let inst = unsafe { instance_mut(instance) };
-        inst.session
+        inst.core
+            .session
             .process_key(&KeyInput::plain(LogicalKey::Enter))
             .expect("enter on a composing session cannot fail")
     };
@@ -1370,7 +1376,7 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
 
     // SAFETY: live instance immediately after the guess.
     let inst = unsafe { instance_ref(instance) };
-    let total = inst.lm.amplified_total();
+    let total = inst.core.lm.amplified_total();
     let rows: Vec<(String, usize, u64)> = inst
         .candidates
         .iter()
@@ -1378,7 +1384,7 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
         .map(|c| {
             let baked = c
                 .token
-                .and_then(|t| inst.dict.system().unigram_count(t.value()))
+                .and_then(|t| inst.core.dict.system().unigram_count(t.value()))
                 .unwrap_or(0);
             (
                 c.text.to_str().expect("candidate text is UTF-8").to_owned(),
@@ -1469,6 +1475,7 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
         // SAFETY: the instance is live; commit takes &mut and resets.
         unsafe {
             crate::state::instance_mut(instance)
+                .core
                 .session
                 .commit()
                 .expect("commit")

@@ -92,9 +92,8 @@ pub extern "C" fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`.
         let inst = unsafe { instance_mut(instance) };
-        inst.reset_parse_state();
-        inst.phrase_result.clear();
-        inst.session.reset();
+        inst.core.full_reset();
+        inst.candidates.clear();
         true
     })
 }

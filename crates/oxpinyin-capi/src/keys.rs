@@ -19,12 +19,8 @@
 
 use std::os::raw::c_char;
 use std::ptr;
-use std::sync::atomic::Ordering;
-
-use oxpinyin_core::{DoublePinyinParser, FullPinyinParser, ZHUYIN_CORRECT_ALL, ZhuyinParser};
 
 use crate::ffi::{cstr_to_string, ffi_catch, owned_cstr};
-use crate::parse::{double_scheme, zhuyin_scheme};
 use crate::state::instance_ref;
 use crate::types::{ChewingKey, GChar, PinyinInstance};
 
@@ -63,7 +59,7 @@ pub extern "C" fn pinyin_parse_full_pinyin(
         unsafe {
             *onekey = ChewingKey::ZERO;
         }
-        match FullPinyinParser.parse_one_key(inst.options().bits(), text.as_bytes()) {
+        match inst.core.parse_one_full_pinyin(&text, false) {
             Some(key) => {
                 // SAFETY: Null-checked above.
                 unsafe { *onekey = ChewingKey::from_core(key) };
@@ -103,13 +99,7 @@ pub extern "C" fn pinyin_parse_double_pinyin(
         let inst = unsafe { instance_ref(instance) };
         // SAFETY: Null-checked above.
         let text = unsafe { cstr_to_string(onepinyin) };
-        let scheme = double_scheme(inst.double_scheme.load(Ordering::Relaxed));
-        let Some(scheme) = scheme else {
-            return false;
-        };
-        match DoublePinyinParser::with_scheme(scheme)
-            .parse_one_key(inst.options().bits(), text.as_bytes())
-        {
+        match inst.core.parse_one_double_pinyin(&text) {
             Some(key) => {
                 // SAFETY: Null-checked above.
                 unsafe { *onekey = ChewingKey::from_core(key) };
@@ -149,12 +139,7 @@ pub extern "C" fn pinyin_parse_chewing(
         let inst = unsafe { instance_ref(instance) };
         // SAFETY: Null-checked above.
         let text = unsafe { cstr_to_string(onechewing) };
-        let scheme = zhuyin_scheme(inst.zhuyin_scheme.load(Ordering::Relaxed));
-        let Some(scheme) = scheme else {
-            return false;
-        };
-        let options = inst.options().bits() & !ZHUYIN_CORRECT_ALL;
-        match ZhuyinParser::with_scheme(scheme).parse_one_key(options, text.as_bytes()) {
+        match inst.core.parse_one_chewing(&text) {
             Some(key) => {
                 // SAFETY: Null-checked above.
                 unsafe { *onekey = ChewingKey::from_core(key) };

@@ -34,10 +34,26 @@ kyotocabinet = [
     "oxpinyin-runtime/kyotocabinet",
     "oxpinyin-data/kyotocabinet",
     "oxpinyin-user/kyotocabinet",
+    "oxpinyin-facade/kyotocabinet",
 ]
-tkrzw = ["oxpinyin-runtime/tkrzw", "oxpinyin-data/tkrzw", "oxpinyin-user/tkrzw"]
-lmdb = ["oxpinyin-runtime/lmdb", "oxpinyin-data/lmdb", "oxpinyin-user/lmdb"]
-redb = ["oxpinyin-runtime/redb", "oxpinyin-data/redb", "oxpinyin-user/redb"]
+tkrzw = [
+    "oxpinyin-runtime/tkrzw",
+    "oxpinyin-data/tkrzw",
+    "oxpinyin-user/tkrzw",
+    "oxpinyin-facade/tkrzw",
+]
+lmdb = [
+    "oxpinyin-runtime/lmdb",
+    "oxpinyin-data/lmdb",
+    "oxpinyin-user/lmdb",
+    "oxpinyin-facade/lmdb",
+]
+redb = [
+    "oxpinyin-runtime/redb",
+    "oxpinyin-data/redb",
+    "oxpinyin-user/redb",
+    "oxpinyin-facade/redb",
+]
 # Compiles out the three exports outside the consumer union: two fixture
 # hooks and pinyin_set_full_pinyin_scheme, all `dlsym`ed by tools/bisection
 # drivers and called by neither reference consumer. Enabled only when building
@@ -73,6 +89,9 @@ oxpinyin-core.workspace = true
 # above forwards it.
 oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
 oxpinyin-engine.workspace = true
+# The shared facade-orchestration layer (instance/context state machines,
+# parse seams, cursor laws) this crate's C wrappers translate.
+oxpinyin-facade = { path = "../oxpinyin-facade", default-features = false }
 oxpinyin-runtime.workspace = true
 oxpinyin-user.workspace = true
 glib-sys.workspace = true
