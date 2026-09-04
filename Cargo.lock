@@ -907,6 +907,7 @@ dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",
+ "oxpinyin-facade",
  "oxpinyin-runtime",
  "oxpinyin-user",
  "pyo3",

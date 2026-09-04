@@ -44,7 +44,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Translates an open failure into the Python exception hierarchy:
 /// missing paths/models → `FileNotFoundError`, unreadable ones → `OSError`,
 /// corrupt data content → `ValueError`.
-fn open_error(error: OpenError) -> PyErr {
+///
+/// Shared with the zhuyin translation layer (`crate::zhuyin_binding`): both
+/// facades open the same runtime, so they report its failures identically.
+pub(crate) fn open_error(error: OpenError) -> PyErr {
     match &error {
         OpenError::Missing(_) => PyFileNotFoundError::new_err(error.to_string()),
         OpenError::Io(..) => PyOSError::new_err(error.to_string()),
@@ -60,7 +63,10 @@ fn open_error(error: OpenError) -> PyErr {
 
 /// Translates a session failure: stale indexes → `IndexError`, bad offsets →
 /// `ValueError`, everything else (backend/decode) → [`OxpinyinError`].
-fn engine_error(error: &EngineError) -> PyErr {
+///
+/// Shared with the zhuyin translation layer: both facades drive the same
+/// session API, so the same failure means the same exception on both sides.
+pub(crate) fn engine_error(error: &EngineError) -> PyErr {
     match error {
         EngineError::CandidateIndexOutOfRange { index, len } => {
             PyIndexError::new_err(format!("candidate index {index} is out of range 0..{len}"))
@@ -81,7 +87,9 @@ fn engine_error(error: &EngineError) -> PyErr {
 /// is refused, never recovered. `#[pyclass(frozen)]` leaves no way to
 /// rebuild the session in place, so a refused engine stays refused and the
 /// caller opens a new one.
-fn lock_error() -> PyErr {
+///
+/// Shared with the zhuyin translation layer: one lock policy for the crate.
+pub(crate) fn lock_error() -> PyErr {
     OxpinyinError::new_err("engine lock poisoned by a failed operation")
 }
 
@@ -145,18 +153,38 @@ impl Engine {
     where
         T: Send,
     {
-        let inner = Arc::clone(&self.inner);
-        // `None` is `lock::locked`'s refusal: a `PyErr` cannot be built with
-        // the interpreter detached, so the refusal is carried out as an
-        // absent result and turned into one here.
-        let outcome = py.detach(move || {
-            let mut guard = locked(&inner).ok()?;
-            Some(f(&mut guard))
-        });
-        outcome
-            .ok_or_else(lock_error)?
-            .map_err(|error| engine_error(&error))
+        with_locked(py, &self.inner, f)
     }
+}
+
+/// Runs `f` with `inner` locked and the GIL released — the shared
+/// detach-and-guard shell for the crate's engines.
+///
+/// The result must be GIL-free owned data; Python objects are built after
+/// re-acquiring the interpreter lock. Shared with the zhuyin translation
+/// layer (`crate::zhuyin_binding`) so both engines detach, refuse poison,
+/// and translate failures identically; there is exactly one copy of this
+/// shell.
+pub(crate) fn with_locked<T, R>(
+    py: Python<'_>,
+    inner: &Arc<Mutex<T>>,
+    f: impl FnOnce(&mut T) -> Result<R, EngineError> + Send,
+) -> PyResult<R>
+where
+    T: Send,
+    R: Send,
+{
+    let inner = Arc::clone(inner);
+    // `None` is `lock::locked`'s refusal: a `PyErr` cannot be built with
+    // the interpreter detached, so the refusal is carried out as an
+    // absent result and turned into one here.
+    let outcome = py.detach(move || {
+        let mut guard = locked(&inner).ok()?;
+        Some(f(&mut guard))
+    });
+    outcome
+        .ok_or_else(lock_error)?
+        .map_err(|error| engine_error(&error))
 }
 
 #[pymethods]
@@ -396,7 +424,10 @@ struct EngineInner {
 /// Where a candidate came from, rendered for Python. `CandidateKind` is
 /// `#[non_exhaustive]`; a future kind degrades to `"other"` rather than
 /// inventing semantics for it.
-fn kind_label(kind: CandidateKind) -> &'static str {
+///
+/// Shared with the zhuyin translation layer: both candidate shapes render
+/// the same origin labels.
+pub(crate) fn kind_label(kind: CandidateKind) -> &'static str {
     match kind {
         CandidateKind::Phrase => "phrase",
         CandidateKind::Addon => "addon",
@@ -473,5 +504,9 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyCandidate>()?;
     module.add("OxpinyinError", module.py().get_type::<OxpinyinError>())?;
     module.add("__version__", VERSION)?;
+    // The zhuyin submodule lives in the same extension (and the same
+    // wheel): one package, no forced linkage for pinyin-only consumers —
+    // importing `oxpinyin` never touches it until `oxpinyin.zhuyin` does.
+    module.add_submodule(&crate::zhuyin_binding::init_submodule(module.py())?)?;
     Ok(())
 }

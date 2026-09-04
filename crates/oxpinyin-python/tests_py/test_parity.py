@@ -16,14 +16,7 @@ import json
 import pytest
 
 import oxpinyin
-
-
-def resolve_input(case: dict) -> str:
-    if "input" in case:
-        return case["input"]
-    repeat = case.get("repeat") or {}
-    unit, times = repeat.get("unit", ""), int(repeat.get("times", 0))
-    return unit * times
+from conftest import resolve_input
 
 
 def snapshot_candidates(candidates) -> list[dict]:
