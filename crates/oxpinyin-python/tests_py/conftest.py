@@ -39,6 +39,41 @@ def parity_corpus(crate_dir: Path) -> dict:
 
 
 @pytest.fixture(scope="session")
+def zhuyin_parity_corpus(crate_dir: Path) -> dict:
+    return json.loads((crate_dir / "parity-corpus-zhuyin.json").read_text())
+
+
+@pytest.fixture(scope="session")
+def zhuyin_native_transcript(tmp_path_factory, repo_root: Path, crate_dir: Path) -> dict:
+    """Regenerates the zhuyin native-side transcript through the pure-Rust facade.
+
+    ``zhuyin-dump`` links the same facade module the binding wraps, with no
+    Python anywhere in the process — so comparing its output against the
+    binding's replay proves the two surfaces compute identically.
+    """
+    out_dir = tmp_path_factory.mktemp("zhuyin-dump")
+    out_path = out_dir / "zhuyin-native.json"
+    subprocess.run(
+        [
+            "cargo",
+            "run",
+            "--quiet",
+            "-p",
+            "oxpinyin-python",
+            "--bin",
+            "zhuyin-dump",
+            "--",
+            str(crate_dir / "parity-corpus-zhuyin.json"),
+            str(repo_root / "fixtures" / "w3" / "kct"),
+            str(out_path),
+        ],
+        check=True,
+        cwd=repo_root,
+    )
+    return json.loads(out_path.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="session")
 def native_transcript(tmp_path_factory, repo_root: Path, crate_dir: Path) -> dict:
     """Regenerates the native-side transcript through the pure-Rust API.
 
@@ -77,6 +112,25 @@ def make_engine(fixture_w3: Path):
 
     def _make(user_dir=None):
         engine = oxpinyin.Engine.from_fixture_dir(
+            str(fixture_w3),
+            None if user_dir is None else str(user_dir),
+        )
+        created.append(engine)
+        return engine
+
+    yield _make
+    del created
+
+
+@pytest.fixture
+def make_zhuyin_engine(fixture_w3: Path):
+    """Opens zhuyin engines in fixture mode; defaults to no user directory."""
+    import oxpinyin.zhuyin
+
+    created = []
+
+    def _make(user_dir=None):
+        engine = oxpinyin.zhuyin.Engine.from_fixture_dir(
             str(fixture_w3),
             None if user_dir is None else str(user_dir),
         )

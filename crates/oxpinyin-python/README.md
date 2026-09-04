@@ -61,6 +61,24 @@ only these data files.
 - Learning: `train()` mirrors native `pinyin_train`; `save()` persists when
   modified.
 
+The same wheel ships the chewing facade as `oxpinyin.zhuyin` (same
+extension module, `oxpinyin._native.zhuyin` submodule — no second package):
+
+- `zhuyin.Engine(system_dir, user_dir=None)` — Standard-keyboard chewing by
+  default (`USE_TONE | FORCE_TONE` seed, like `zhuyin_init`); tones are
+  mandatory, toneless input parses to nothing per the pinned batch law.
+- `engine.lookup_chewing(text)` / `lookup_full_pinyin(text)` → fresh-query
+  batch lookups (`"su3cl3"` is ni+hao); `parse_chewing` / `parse_full_pinyin`
+  are the incremental shapes, followed by `guess_candidates(offset,
+  before_cursor)` and the `candidates` snapshot.
+- `select(index)` → new cursor in keystroke coordinates; `ChewingKey`
+  values (`from_pinyin`/`from_packed`, display renderers);
+  `parse_one_chewing` / `parse_one_full_pinyin` probes; `in_keyboard(key)`;
+  `chewing_scheme` / `full_pinyin_scheme` properties (StandardDvorak and
+  out-of-enum values raise `ValueError`).
+- Candidates add `candidate_type` (`best_match` / `normal_after_cursor` /
+  `normal_before_cursor`) — the zhuyin-local tag, never the pinyin one.
+
 Errors: missing model/data raise `FileNotFoundError`; unreadable data raises
 `OSError`; corrupt content raises `ValueError`; stale candidate indexes raise
 `IndexError`; out-of-range offsets raise `ValueError`; backend failures raise
@@ -77,6 +95,8 @@ cargo test -p oxpinyin-runtime                      # Rust side (shared assembly
 cargo test -p oxpinyin-python                       # binding crate
 cargo run -p oxpinyin-python --bin native-dump -- \
     parity-corpus.json ../../fixtures/w3 native.json  # native transcript
+cargo run -p oxpinyin-python --bin zhuyin-dump -- \
+    parity-corpus-zhuyin.json ../../fixtures/w3 zhuyin-native.json
 pytest                                              # binding + parity vs above
 ```
 

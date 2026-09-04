@@ -143,6 +143,67 @@ if engine.guess_sentence():
 Sentence rows prepend to `engine.candidates` while they live, mirroring the
 native behaviour.
 
+## Zhuyin (`oxpinyin.zhuyin`)
+
+The same package ships the chewing facade as `oxpinyin.zhuyin`, built from
+the same extension module (`oxpinyin._native.zhuyin`) — one wheel, no forced
+linkage: importing `oxpinyin` never touches zhuyin code until
+`oxpinyin.zhuyin` is imported. The binding wraps the same
+`oxpinyin-runtime` session assembly through a zhuyin facade module that
+re-homes `oxpinyin-zhuyin-capi`'s law (scheme/option state, the begin-parse
+continuation rule, the batch seams, the candidate tagging) without its C
+types; the translation file holds the same representation-only invariant as
+the pinyin one.
+
+```python
+import oxpinyin.zhuyin
+
+with oxpinyin.zhuyin.Engine.from_fixture_dir("fixtures/w3/kct") as engine:
+    for candidate in engine.lookup_chewing("su3cl3"):
+        print(candidate.text)     # 你好 first, then 你, 尼, ...
+```
+
+Keystrokes are Standard-keyboard codes (`s` is ㄋ, `u` is ㄧ, `3` is the
+third tone, …). `lookup_chewing(text)` / `lookup_full_pinyin(text)` are the
+reset-first batch queries; `parse_chewing(text)` / `parse_full_pinyin(text)`
+are the incremental `parse_more` shapes returning consumed bytes, followed
+by `guess_candidates(offset=0, before_cursor=False)` and the `candidates`
+snapshot. `select(index)` answers the new cursor in original keystroke
+coordinates (a stale index raises `IndexError`, like `Engine.select`).
+`ChewingKey` carries the parsed key's elements and display renderers;
+`parse_one_chewing` / `parse_one_full_pinyin` probe one keystroke string
+(`None` when it does not parse), `in_keyboard(key)` lists the symbols one
+keystroke maps to (`[]` when it is not on the keyboard). `chewing_scheme`
+(1 Standard … 9 DachenCp26) and `full_pinyin_scheme` (1 Hanyu, 2 Luoma,
+3 SecondaryZhuyin) read and write the live keyboards; the unimplemented
+StandardDvorak (7) and out-of-enum values raise `ValueError`. Candidates
+additionally carry `candidate_type` — the zhuyin-local list tag
+(`"best_match"`, `"normal_after_cursor"`, `"normal_before_cursor"`) whose
+discriminants collide with the pinyin tag at 3 and 4, so the two are never
+aliased.
+
+Tones are mandatory under the facade's default `USE_TONE | FORCE_TONE`
+options (the `zhuyin_init` seed): toneless chewing parses to nothing and a
+toneless full-pinyin buffer decodes to nothing. That is the pinned upstream
+batch law, not a binding limitation — the parity corpus pins both the toned
+path and the refusal.
+
+Parity for zhuyin is binding-layer parity only: `zhuyin-dump` replays
+`parity-corpus-zhuyin.json` (27 cases) through the pure-Rust facade and
+`test_zhuyin_parity.py` replays it through the binding. That proves the
+Python wrapper does not diverge from the facade it wraps — a narrower claim
+than `oxpinyin-zhuyin-capi`'s own oracle-vs-upstream differentials, which
+remain the authority on facade-vs-libzhuyin fidelity. Like the pinyin
+corpus, no case opens a `user_dir`, so the user-overlay ranking path is
+compared nowhere; the same partial coverage (persistence round-trip tests)
+applies.
+
+Zhuyin v0 omissions, mirroring the pinyin list: addon phrase libraries,
+phrase import iterators, `mask_out`, token introspection, phrase-result
+iteration, `set_options` knobs (the pinned default word is seeded, no knobs),
+and the cursor/key-rest getters (IME-cursor UI, not the lookup/selection
+workflow).
+
 ## Errors
 
 | Condition | Exception |
@@ -275,7 +336,8 @@ cases, which changes the corpus, so it is recorded here rather than done.
 ## Deliberate omissions (v0)
 
 - Addon phrase libraries and the punctuation table remain C-ABI-only.
-- Double-pinyin/Zhuyin input schemes are not bound (parse-level features the
-  capi drives separately).
+- Double-pinyin input schemes are not bound (parse-level features the
+  capi drives separately). Zhuyin is bound (`oxpinyin.zhuyin`, above) with
+  its own v0 omission list recorded there.
 - Live configuration (page size, incomplete-pinyin toggles) follows the
   captured upstream defaults; no knobs yet.

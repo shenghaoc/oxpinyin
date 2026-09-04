@@ -65,3 +65,7 @@ must_use_candidate = "warn"
 [[bin]]
 name = "native-dump"
 path = "src/bin/native_dump.rs"
+
+[[bin]]
+name = "zhuyin-dump"
+path = "src/bin/zhuyin_dump.rs"

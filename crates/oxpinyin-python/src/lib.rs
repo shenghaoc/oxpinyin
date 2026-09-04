@@ -16,6 +16,10 @@
 #![warn(missing_docs)]
 
 pub mod dump;
+// The zhuyin facade state machine the zhuyin binding translates. Pure Rust
+// over the same runtime assembly — no Python dependency, so the parity
+// driver links it like `dump` does.
+pub mod zhuyin;
 
 // The engine lock policy the binding acquires through. Compiled with the
 // binding, and under `cfg(test)` regardless, so `cargo test -p
@@ -26,3 +30,6 @@ mod lock;
 
 #[cfg(feature = "bindings")]
 mod binding;
+
+#[cfg(feature = "bindings")]
+mod zhuyin_binding;
