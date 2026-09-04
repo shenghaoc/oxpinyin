@@ -11,6 +11,10 @@ fn parse_chewing_more(instance: *mut ZhuyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    // The parse path clears the candidate snapshot before anything else —
+    // main's `begin_parse` did this through `reset_parse_state`; the core
+    // seam cannot see this layer's snapshot, so the clear lives here.
+    inst.candidates.clear();
     inst.core
         .parse_chewing_more(text, oxpinyin_facade::ToneForwarding::ZhuyinFacade)
 }
@@ -19,6 +23,8 @@ fn parse_full_more(instance: *mut ZhuyinInstance, text: &str) -> usize {
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    // Parse-path snapshot clear (main's begin_parse law).
+    inst.candidates.clear();
     inst.core.parse_full_more(text)
 }
 

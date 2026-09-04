@@ -126,17 +126,6 @@ pub(crate) struct CapiInstance {
     pub(crate) candidates: Vec<CapiCandidate>,
 }
 
-impl CapiInstance {
-    /// The parse-path reset: the shared core's reset (composition parse
-    /// state, re-anchored window, stored parses) plus this layer's
-    /// candidate snapshot — the selection record and the constraint
-    /// store stay.
-    pub(crate) fn reset_parse_state(&mut self) {
-        self.core.reset_parse_state();
-        self.candidates.clear();
-    }
-}
-
 // ── Pointer casts ───────────────────────────────────────────────────────
 
 /// Casts a `*mut ZhuyinContext` to `&CapiContext`.
