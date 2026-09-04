@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 const GBK_DICTIONARY: u32 = 2;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use oxpinyin_core::scoring::{ScoringError, key_cost_table};
 use oxpinyin_core::{
@@ -796,7 +796,12 @@ pub struct Runtime {
     dict: RuntimeDict,
     lm: RuntimeLm,
     user: Option<UserStore>,
-    key_costs: Arc<[Cost]>,
+    /// The per-key initial cost table. Deferred out of [`Runtime::open`]:
+    /// it is a pure function of the immutable system dict/lm, but computing
+    /// it walks the dictionary, which dominates `pinyin_init`. It is filled
+    /// lazily on the first [`Runtime::new_session`] instead, so a caller
+    /// that opens an engine without immediately decoding pays nothing here.
+    key_costs: OnceLock<Arc<[Cost]>>,
 }
 
 impl Runtime {
@@ -870,17 +875,13 @@ impl Runtime {
             addons,
         };
 
-        let key_costs: Arc<[Cost]> = key_cost_table(&dict, &lm)
-            .map_err(OpenError::KeyCosts)?
-            .into();
-
         Ok(Self {
             paths: StoragePaths::new(user_dir.unwrap_or_else(|| Path::new("")))
                 .with_system_dirs([system_dir]),
             dict,
             lm,
             user,
-            key_costs,
+            key_costs: OnceLock::new(),
         })
     }
 
@@ -896,12 +897,27 @@ impl Runtime {
     /// Forwards [`EngineError`] from session construction (currently
     /// infallible over valid backends).
     pub fn new_session(&self, config: &dyn ConfigSource) -> Result<RuntimeSession, EngineError> {
+        // The key-cost table is filled on first use rather than at open,
+        // keeping `pinyin_init` off the dictionary walk. `get_or_try_init`
+        // is still unstable (once_cell_try), so this is the stable form.
+        let key_costs: Arc<[Cost]> = match self.key_costs.get() {
+            Some(kc) => Arc::clone(kc),
+            None => {
+                let computed: Arc<[Cost]> = Arc::from(key_cost_table(&self.dict, &self.lm)?);
+                // A racing new_session may win the set(); both compute the
+                // same deterministic result from the immutable system
+                // dict/lm, so either value is correct. Adopt whatever ends
+                // up stored.
+                let _ = self.key_costs.set(Arc::clone(&computed));
+                self.key_costs.get().map_or(computed, Arc::clone)
+            }
+        };
         Session::new_with_key_costs(
             config,
             self.paths.clone(),
             self.dict.clone(),
             self.lm.clone(),
-            self.key_costs.to_vec(),
+            key_costs.to_vec(),
         )
     }
 
