@@ -13,10 +13,8 @@ use oxpinyin_user::UserStore;
 /// allocates shares: `set_options`/`set_*_scheme` on the context remask
 /// already-allocated instances through these handles.
 ///
-/// Both C-ABI facades carry the same seven fields today (the zhuyin
-/// facade adds `force_tone`, which its `zhuyin_set_options` writes); the
-/// seed word differs per facade and is the caller's choice at
-/// [`ContextCore::open`].
+/// Both C-ABI facades carry the same seven fields; the seed word differs
+/// per facade and is the caller's choice at [`ContextCore::open`].
 #[derive(Clone)]
 pub struct LiveOptions {
     /// Live `PINYIN_INCOMPLETE` bit.
