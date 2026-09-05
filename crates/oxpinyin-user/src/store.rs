@@ -191,11 +191,14 @@ fn bump_unigram_total(txn: &mut dyn WriteTxn, delta: u64) -> Result<(), StoreErr
     Ok(())
 }
 
-/// Pronunciation-range bounds for `token`.
-fn pronunciation_range(token: Token) -> (Bound<Vec<u8>>, Bound<Vec<u8>>) {
-    let lo = Bound::Included(codec::encode_token_bytes(token, &[]).to_vec());
+/// Pronunciation-range bounds for `token`: every key whose 4-byte
+/// big-endian prefix is `token`, so `[token, token + 1)` over the prefix
+/// alone. The bytes are exactly what `encode_token_bytes(token, &[])`
+/// yields, held in fixed-width arrays rather than heap buffers.
+fn pronunciation_range(token: Token) -> (Bound<[u8; 4]>, Bound<[u8; 4]>) {
+    let lo = Bound::Included(codec::encode_token(token));
     let hi = token.checked_add(1).map_or(Bound::Unbounded, |next| {
-        Bound::Excluded(codec::encode_token_bytes(next, &[]).to_vec())
+        Bound::Excluded(codec::encode_token(next))
     });
     (lo, hi)
 }
@@ -208,8 +211,8 @@ fn collect_pronunciations_from_store(
     let mut out = Vec::new();
     store.range(
         PRONUNCIATION,
-        lo.as_ref().map(std::vec::Vec::as_slice),
-        hi.as_ref().map(std::vec::Vec::as_slice),
+        lo.as_ref().map(<[u8; 4]>::as_slice),
+        hi.as_ref().map(<[u8; 4]>::as_slice),
         &mut |key, value| {
             let (_, key_bytes) = codec::decode_token_bytes(key)
                 .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
@@ -233,8 +236,8 @@ fn collect_pronunciations_from_txn(
     let mut out = Vec::new();
     txn.range(
         PRONUNCIATION,
-        lo.as_ref().map(std::vec::Vec::as_slice),
-        hi.as_ref().map(std::vec::Vec::as_slice),
+        lo.as_ref().map(<[u8; 4]>::as_slice),
+        hi.as_ref().map(<[u8; 4]>::as_slice),
         &mut |key, value| {
             let (_, key_bytes) = codec::decode_token_bytes(key)
                 .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
@@ -804,9 +807,9 @@ impl<S: WriteStore> GenericUserStore<S> {
         let Some(text_bytes) = db.get(PHRASE, &token_key)? else {
             return Ok(None);
         };
-        let text = codec::decode_str(&text_bytes)
-            .map_err(|_| UserStoreError::Decode)?
-            .to_owned();
+        // The get already handed over an owned buffer: validate it as UTF-8
+        // in place instead of decoding to `&str` and copying a second time.
+        let text = String::from_utf8(text_bytes).map_err(|_| UserStoreError::Decode)?;
         let pronunciations = collect_pronunciations_from_store(&*db, token)?;
         Ok(Some(UserPhrase::new(token, text, pronunciations)))
     }
@@ -1134,9 +1137,10 @@ impl<S: WriteStore> GenericUserStore<S> {
                 let Some(text_bytes) = txn.get(PHRASE, &token_key)? else {
                     return Ok(None);
                 };
-                let text = codec::decode_str(&text_bytes)
-                    .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?
-                    .to_owned();
+                // As in `phrase`: the get hands over an owned buffer, so
+                // validate it in place rather than copying it a second time.
+                let text = String::from_utf8(text_bytes)
+                    .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
 
                 txn.remove(PHRASE, &token_key)?;
                 if phrase_index_library_index(token) == USER_DICTIONARY {
