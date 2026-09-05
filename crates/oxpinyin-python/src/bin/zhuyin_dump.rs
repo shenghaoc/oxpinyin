@@ -1,7 +1,7 @@
 //! Native-side zhuyin corpus transcript generator for the Python parity tests.
 //!
 //! Reads a zhuyin parity corpus (JSON), replays it through the pure-Rust
-//! facade — the same [`oxpinyin_python::zhuyin::ZhuyinFacade`] the `PyO3`
+//! facade — the same [`oxpinyin_python::zhuyin::ZhuyinSession`] the `PyO3`
 //! binding wraps, with no Python in the process — and writes the transcript
 //! document for `tests_py/test_zhuyin_parity.py` to compare against.
 //!

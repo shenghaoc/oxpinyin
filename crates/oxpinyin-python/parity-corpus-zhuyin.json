@@ -8,12 +8,12 @@
     "2. If probe_chewing/probe_full is set: run the one-key probe; record the key object (initial, middle, final, tone, packed, zhuyin, pinyin) or null.",
     "3. If in_keyboard is set: record the mapped symbol list; a multi-character key records in_keyboard_error instead.",
     "4. parse(input) in mode (chewing default, full for full pinyin): batch-parse, guess the after-cursor window at 0, record mode/consumed/input/parsed_len/composing/ran and the full snapshot (text, kind, candidate_type, consumed_bytes, cost, nbest_index).",
+    "5. If parse2 is set: parse it onto the same facade WITHOUT resetting (the begin-parse continuation law: an extending buffer continues, a divergent one restarts), then record the step-4 shape again under type parse2.",
+    "6. If guess_sentence is true: run the sentence decode. If sentence_prefix is set: run the prefixed decode. Each records ran, every n-best row's text, and the first 8 snapshot texts.",
+    "7. If guess {offset, before} is set: rebuild the window there; record offset/before/ran and the snapshot.",
     "8. For every index in select: choose that snapshot row; record index/cursor/composition_offset/composing/first 8 snapshot texts. On error record select_error and stop.",
     "9. If clear is set: clear the constraint at that original-coordinate offset; record offset/cleared/first 8 snapshot texts.",
     "10. If commit is true: commit and record the text.",
-    "7. If guess {offset, before} is set: rebuild the window there; record offset/before/ran and the snapshot.",
-    "8. For every index in select: choose that snapshot row; record index/cursor/composition_offset/composing/first 8 snapshot texts. On error record select_error and stop.",
-    "9. If commit is true: commit and record the text.",
     "A transcript event records exactly what the API returned at that step; on both sides (Rust zhuyin-dump binary and Python binding) the steps are identical and deterministic."
   ],
   "cases": [
