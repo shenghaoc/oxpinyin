@@ -191,11 +191,14 @@ fn bump_unigram_total(txn: &mut dyn WriteTxn, delta: u64) -> Result<(), StoreErr
     Ok(())
 }
 
-/// Pronunciation-range bounds for `token`.
-fn pronunciation_range(token: Token) -> (Bound<Vec<u8>>, Bound<Vec<u8>>) {
-    let lo = Bound::Included(codec::encode_token_bytes(token, &[]).to_vec());
+/// Pronunciation-range bounds for `token`: every key whose 4-byte
+/// big-endian prefix is `token`, so `[token, token + 1)` over the prefix
+/// alone. The bytes are exactly what `encode_token_bytes(token, &[])`
+/// yields, held in fixed-width arrays rather than heap buffers.
+fn pronunciation_range(token: Token) -> (Bound<[u8; 4]>, Bound<[u8; 4]>) {
+    let lo = Bound::Included(codec::encode_token(token));
     let hi = token.checked_add(1).map_or(Bound::Unbounded, |next| {
-        Bound::Excluded(codec::encode_token_bytes(next, &[]).to_vec())
+        Bound::Excluded(codec::encode_token(next))
     });
     (lo, hi)
 }
@@ -208,8 +211,8 @@ fn collect_pronunciations_from_store(
     let mut out = Vec::new();
     store.range(
         PRONUNCIATION,
-        lo.as_ref().map(std::vec::Vec::as_slice),
-        hi.as_ref().map(std::vec::Vec::as_slice),
+        lo.as_ref().map(<[u8; 4]>::as_slice),
+        hi.as_ref().map(<[u8; 4]>::as_slice),
         &mut |key, value| {
             let (_, key_bytes) = codec::decode_token_bytes(key)
                 .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
@@ -233,8 +236,8 @@ fn collect_pronunciations_from_txn(
     let mut out = Vec::new();
     txn.range(
         PRONUNCIATION,
-        lo.as_ref().map(std::vec::Vec::as_slice),
-        hi.as_ref().map(std::vec::Vec::as_slice),
+        lo.as_ref().map(<[u8; 4]>::as_slice),
+        hi.as_ref().map(<[u8; 4]>::as_slice),
         &mut |key, value| {
             let (_, key_bytes) = codec::decode_token_bytes(key)
                 .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
