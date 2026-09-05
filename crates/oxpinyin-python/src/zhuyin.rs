@@ -20,8 +20,8 @@
 use oxpinyin_core::{ChewingKey, FullPinyinScheme, ZhuyinScheme};
 use oxpinyin_engine::{CandidateKind, CandidateList, EngineError};
 use oxpinyin_facade::{
-    InstanceCore, LiveOptions, ToneForwarding, ZHUYIN_DEFAULT_OPTION_WORD, compute_prefixes,
-    zhuyin_lookup_session_offset, zhuyin_original_offset, zhuyin_session_offset,
+    BEFORE_CURSOR_ANCHOR, InstanceCore, LiveOptions, ToneForwarding, ZHUYIN_DEFAULT_OPTION_WORD,
+    compute_prefixes, zhuyin_lookup_session_offset, zhuyin_original_offset, zhuyin_session_offset,
 };
 use oxpinyin_runtime::{Runtime, RuntimeSession};
 use oxpinyin_user::UserStore;
@@ -378,14 +378,24 @@ impl ZhuyinSession {
             None => normalized,
         };
         let window_owned: CandidateList = if before_cursor {
-            self.core.anchored_window = None;
-            match self.core.session.candidates_ending_at(session_offset) {
+            let window = match self.core.session.candidates_ending_at(session_offset) {
                 Ok(window) => window,
                 Err(_) => {
+                    self.core.anchored_window = None;
                     self.candidates.clear();
                     return false;
                 }
-            }
+            };
+            // The before-cursor window is re-anchored just like the
+            // after-cursor one: `snapshot_candidates` records each row's
+            // index into THIS list, so a later `choose` must resolve it
+            // here and not against the composition-anchored cached list —
+            // the two differ in general, and the caller would commit a row
+            // it never displayed. The anchor is the buffer start rather
+            // than the lookup offset because the ending-at window is
+            // END-anchored; see `oxpinyin_facade::BEFORE_CURSOR_ANCHOR`.
+            self.core.anchored_window = Some((BEFORE_CURSOR_ANCHOR, window.clone()));
+            window
         } else {
             self.core.anchored_window = if session_offset <= self.core.session.composition_offset()
             {

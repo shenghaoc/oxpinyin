@@ -252,14 +252,24 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         normalized
     };
     let window_owned: oxpinyin_engine::CandidateList = if before_cursor {
-        inst.core.anchored_window = None;
-        match inst.core.session.candidates_ending_at(session_offset) {
+        let window = match inst.core.session.candidates_ending_at(session_offset) {
             Ok(window) => window,
             Err(_) => {
+                inst.core.anchored_window = None;
                 inst.candidates.clear();
                 return false;
             }
-        }
+        };
+        // The before-cursor window is re-anchored just like the
+        // after-cursor one: `snapshot_candidates` records each row's index
+        // into THIS list, so a later `zhuyin_choose_candidate` must resolve
+        // it here and not against the composition-anchored cached list —
+        // the two differ in general, and the caller would commit a row it
+        // never displayed. The anchor is the buffer start rather than the
+        // lookup offset because the ending-at window is END-anchored; see
+        // `oxpinyin_facade::BEFORE_CURSOR_ANCHOR`.
+        inst.core.anchored_window = Some((oxpinyin_facade::BEFORE_CURSOR_ANCHOR, window.clone()));
+        window
     } else {
         inst.core.anchored_window = if session_offset <= inst.core.session.composition_offset() {
             None

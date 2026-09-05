@@ -15,6 +15,31 @@ use oxpinyin_user::UserStore;
 
 use crate::context::LiveOptions;
 
+/// The [`InstanceCore::anchored_window`] anchor for a **before-cursor**
+/// window — the buffer start, not the lookup offset.
+///
+/// The two window builders measure a candidate's `consumed_bytes` in
+/// different coordinates, and [`oxpinyin_engine::Session::select_anchored`]
+/// reads the chosen span as `[anchor, anchor + consumed_bytes)`:
+///
+/// - **After-cursor** (`Session::candidates_at(offset)`) rebases its graph
+///   onto `raw[offset..]`, so `consumed_bytes` is a LENGTH measured from
+///   the lookup offset. Its anchor is that offset.
+/// - **Before-cursor** (`Session::candidates_ending_at(offset)`) runs on
+///   the prefix graph `raw[..offset]`, whose coordinates are absolute from
+///   the buffer start, so every row's `consumed_bytes` is the span's
+///   ABSOLUTE END — the lookup offset itself, shared by every row in the
+///   window, whatever byte each span starts on. The anchor that reproduces
+///   that end (and so the consumed advance) is therefore the coordinate
+///   those ends are measured from: 0.
+///
+/// Reusing the after-cursor anchor here would read the span as
+/// `[offset, 2 * offset)` and walk the composition off the end of the
+/// buffer; leaving the window unanchored resolves the row's index against
+/// the composition-anchored cached list instead, which is a different list
+/// — the caller would commit a row it never displayed.
+pub const BEFORE_CURSOR_ANCHOR: usize = 0;
+
 /// State behind a facade's instance handle, minus the C parts: everything
 /// the two C-ABI crates' `CapiInstance`s held in identical shape. The C
 /// layers hold one of these plus their ABI-only fields (the context
