@@ -187,14 +187,15 @@ x86_64/redb says about the shape of the problem:
   x86_64/redb).
 - **The std backtrace symbolizer (142.3 KiB on x86_64/redb) survived
   fat LTO** — it is referenced by the panic machinery, not dead code.
-  Only `panic = "abort"` (or a customized std) removes it.
-  *(Correction, 2026-09-05: `panic = "abort"` does **not** remove it —
-  measured unchanged on ARM64/KC with 168 gimli/addr2line symbols.
-  What holds it is std's default panic hook, not the panic strategy
-  and not `std::io::Error`; see the amended bullet under "Further
-  reduction options". A second correction the same day retracted the
-  `std::io::Error` attribution — see "Symbolizer attribution —
-  corrected".)*
+  **No panic strategy removes it.** `panic = "abort"` was measured
+  unchanged on ARM64/KC at 168 gimli/addr2line symbols: std's default
+  panic hook still runs to print message and backtrace before
+  aborting, so the symbolize path stays reachable. The hook is what
+  holds it — not the panic strategy, and not `std::io::Error` (an
+  attribution made and retracted on 2026-09-05). The one remaining
+  lever, a customized std via `panic_immediate_abort`, is recorded and
+  closed under "Further reduction options"; the measurements are in
+  "Symbolizer attribution — corrected".
 - On x86_64/redb, redb + hashbrown still cost ~629 KiB — a KC build
   does not carry this mass at all; the KC re-measurement confirmed
   the backend-independent parts of the win (unwind-table cut,
