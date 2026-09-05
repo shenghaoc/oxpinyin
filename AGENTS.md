@@ -147,3 +147,11 @@ pre-rebase numbers still hold.
 
 fmt failures are merge blockers; a fmt-only commit is always safe
 when the diff is formatting-only and reviewed.
+
+## LMDB fixture sidecars
+
+Opening a committed `fixtures/w3/lmdb/*` DBM from a test dirties its
+`-lock` sidecar — LMDB rewrites the lock file on every open, read-only
+included. The data files never change; the dirt is incidental. Run
+`git checkout -- fixtures/w3/lmdb/` after any model-dependent datagen
+test run before committing, and never commit the sidecars.
