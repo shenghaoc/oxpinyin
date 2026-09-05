@@ -148,19 +148,76 @@ pub fn parse_table_conf_lambda(text: &str) -> Option<Lambda> {
 }
 
 /// Reads λ from a `table.conf` at `path`, returning `None` when the file is
-/// absent, unreadable, or carries no parsable `lambda parameter:` line.
+/// absent, not a regular file, unreadable, or carries no parsable
+/// `lambda parameter:` line.
 ///
 /// The decoder falls back to [`Lambda::PINNED`] on `None`, so a missing
 /// `table.conf` (the normal fetched-cache case) is not an error.
 #[must_use]
 pub fn read_table_conf_lambda(path: &Path) -> Option<Lambda> {
+    // Not a regular file means "no config", the same answer every other
+    // optional-file path in this crate gives (`punct.rs`,
+    // `phrase_libraries.rs`, `dict.rs`). Without the check a FIFO here
+    // would not fail — `File::open` is `O_RDONLY` with no `O_NONBLOCK`,
+    // so the read blocks until a writer appears and `pinyin_init` never
+    // returns.
+    if !path.is_file() {
+        return None;
+    }
     let text = fs::read_to_string(path).ok()?;
     parse_table_conf_lambda(&text)
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::read_table_conf_lambda;
     use super::{Lambda, PINNED_LAMBDA, parse_table_conf_lambda};
+
+    /// A FIFO at the `table.conf` path must read as "no config", not block
+    /// `pinyin_init` forever waiting for a writer. Runs the read on a worker
+    /// so a regression fails the test instead of hanging the suite.
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_table_conf_reads_as_absent_without_blocking() {
+        let dir = std::env::temp_dir().join(format!("oxpinyin-table-conf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("table.conf");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .is_ok_and(|status| status.success());
+        if !made {
+            let _ = std::fs::remove_dir_all(&dir);
+            return; // no mkfifo on this host; nothing to assert
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let probe = path.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(read_table_conf_lambda(&probe));
+        });
+        let verdict = rx.recv_timeout(std::time::Duration::from_secs(10));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        match verdict {
+            Ok(lambda) => assert!(lambda.is_none(), "a FIFO carries no lambda"),
+            Err(_) => panic!("read_table_conf_lambda blocked on a FIFO"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_table_conf_reads_as_absent() {
+        let dir =
+            std::env::temp_dir().join(format!("oxpinyin-table-conf-d-{}", std::process::id()));
+        let path = dir.join("table.conf");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&path).expect("temp dir");
+        assert!(read_table_conf_lambda(&path).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn pinned_table_conf_line_parses_to_the_pinned_rational() {
