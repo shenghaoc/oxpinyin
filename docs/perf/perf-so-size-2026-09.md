@@ -229,7 +229,13 @@ x86_64/redb says about the shape of the problem:
   is withdrawn: the facade extraction adds no stripped bytes. The same
   series measures a +5.7% steady-cycle regression at `a41605ea` that
   this document's size-only measurement did not see; it is an open
-  item there. **Correction to the original
+  item there. **Reverted 2026-09-05** (`perf/revert-release-panic-abort`):
+  a back-to-back rebuild of `b5fdfad8` with only the profile line removed
+  recovers the cycle (steady 9.196 → 8.686 ms, cold 9.623 → 9.008 ms,
+  oracle flat) at +65,536 B (1,380,992 → 1,446,528 B stripped); the
+  release profile is back on `unwind`, the `ffi_catch` removal stands,
+  and re-adoption needs a cycle number next to the size number.
+  **Correction to the original
   prediction: the 116.3 KiB std backtrace symbolizer (gimli/addr2line)
   survives `panic = "abort"` unchanged** — 168 symbols before and
   after, byte count identical. ~~Probe builds pin the mechanism: it is

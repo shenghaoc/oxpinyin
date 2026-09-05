@@ -277,6 +277,11 @@ Three readings:
   on the table, since AGENTS.md accepts a regression on one axis only
   when it is traded against, minimised, and justified in the change's
   report — and this one was not measured there.
+  **Resolved 2026-09-05:** `panic = "abort"` reverted from
+  `[profile.release]` (`perf/revert-release-panic-abort`). A back-to-back
+  rebuild of `b5fdfad8` with only that line removed recovers the cycle
+  (steady 9.196 → 8.686 ms, cold 9.623 → 9.008 ms, oracle flat) at
+  +65,536 B stripped; the `ffi_catch` removal stands.
 
 Method note. A first pass of this series shared one target dir across
 the eight trees and was discarded: cargo's freshness check is
@@ -301,7 +306,7 @@ it (79–80 crates compiled at every point).
 | 2026-09-04 | key_cost_table deferred to first new_session (87f9a49) | init 21.0 → 3.3 ms; first alloc 0.001 → 17.4 ms; later allocs 0.5 µs; total unchanged |
 | 2026-09-04 | key-cost cache tracks library visibility; RwLock fast path; epoch validation (706918c, 48db10f, 8147b7d) | no measurable change (init 3.8 ms, steady 8.63 ms) |
 | 2026-09-04 | oxpinyin-facade extraction (cbe8435, c519e1a; tip b40e354) | no measurable change; stripped .so unchanged |
-| 2026-09-05 | release `panic = "abort"` (a41605e) | stripped .so −65,536 B (−4.5%); **steady cycle +5.7%, cold +5.3%** (open item above) |
+| 2026-09-05 | release `panic = "abort"` (a41605e) | stripped .so −65,536 B (−4.5%); **steady cycle +5.7%, cold +5.3%** — reverted the same day (resolution above) |
 | 2026-09-05 | `ffi_catch` removed (828e203) | no measurable change |
 | 2026-09-05 | default backend → Tkrzw (0568857) | none on this KC measurement; KC builds now need `--no-default-features --features kyotocabinet` |
 
