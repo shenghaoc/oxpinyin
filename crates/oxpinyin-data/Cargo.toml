@@ -24,6 +24,3 @@ kyotocabinet = ["oxpinyin-store/kyotocabinet"]
 tkrzw = ["oxpinyin-store/tkrzw"]
 lmdb = ["oxpinyin-store/lmdb"]
 redb = ["oxpinyin-store/redb"]
-
-[dev-dependencies]
-redb = { workspace = true }
