@@ -23,9 +23,10 @@ Post-P6, on this host:
   marginally faster on this host (on ARM64 at the same pin it measured
   1.14× slower; the sign of this small gap is host-dependent). Caveat:
   the pin builds oxpinyin with release `panic = "abort"`, which on
-  ARM64 cost +5.7% steady cycle (`a41605ea`, reverted at `1b0c84a0`) —
-  these steady ratios are slightly pessimistic for oxpinyin;
-  post-revert production is marginally faster.
+  ARM64 cost +5.7% steady cycle (`a41605ea`, reverted at `1b0c84a0`).
+  That evidence is ARM64-only; the policy's effect on this host was
+  not measured, so the steady ratios carry an unknown bias from it —
+  no direction is claimed here.
 - **Cold-cycle cost swapped sides**: libpinyin-Tkrzw pays ~20 ms of
   lazy paging in its first keystroke cycle (48.4 vs 28.6 ms steady;
   peak HWM jumps 12.6 → 32.7 MiB), because oxpinyin's first-alloc walk
@@ -89,15 +90,15 @@ baseline document was amended at. `b5fdfad8` still carries release
 |---|---|
 | Host | Intel Core i7-9750H (6C/12T), x86_64, kernel 6.12.0-211.22.1.el10_2 |
 | Runtime | podman 5.8.2, rootless, **one** container for builds and measurement |
-| Base image | `debian:testing@sha256:dab11cdb…` (manifest digest, amd64) |
+| Base image | `debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9` (manifest digest, amd64) |
 | APT snapshot | `snapshot.debian.org/20260831T000000Z` |
 | GCC | 15.3.0 (Debian 15.3.0-2) |
 | Rust | 1.97.1 (8bab26f4f 2026-07-14), from `rust-toolchain.toml` |
 | cargo-c | 0.10.25+cargo-0.99.0 |
 | libtkrzw / libkyotocabinet | 1.0.32-1+b2 (`libtkrzw1t64`) / 1.2.80-2+b2 (`libkyotocabinet16v5`) |
-| libpinyin source | 2.11.91 tarball, SHA-256 `eb25890d…`, built twice (fresh trees) |
+| libpinyin source | 2.11.91 tarball, SHA-256 `eb25890dab0072eb0744c9ee1bc152051143b7bc23aea2a424792a9b1b84bdcb`, built twice (fresh trees) |
 | oxpinyin source | `git archive b5fdfad8`, fresh per-backend target dirs |
-| Model data | model20 (`59c68e89…`), fresh `fetch-model.sh` download |
+| Model data | model20 (`59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155`), fresh `fetch-model.sh` download |
 | Data directories | 2 shared, `oxpinyin-datagen`-compiled (see above) |
 | CPU affinity | `taskset -c 0` on every run |
 | Speed | 20 interleaved rounds × 4 cells, `PERF_CYCLES=8` |
@@ -119,16 +120,19 @@ steady pools cycles 1..7 of every run.
 
 | Cell | init | first alloc | cold cycle | steady cycle | post-init RSS | stripped `.so` |
 |---|---:|---:|---:|---:|---:|---:|
-| libpinyin-tkrzw | 1.915 [1.791, 2.004] ms | 0.001 ms | 48.388 [44.585, 69.010] ms | 28.615 [26.732, 40.162] ms | 12,648 KiB | 867,248 B |
+| libpinyin-tkrzw | 1.915 [1.791, 2.004] ms | 0.719 [0.650, 0.742] µs | 48.388 [44.585, 69.010] ms | 28.615 [26.732, 40.162] ms | 12,648 KiB | 867,248 B |
 | oxpinyin-tkrzw | 2.218 [2.121, 2.398] ms | 56.932 [54.958, 59.893] ms | 27.003 [25.187, 38.880] ms | 26.841 [25.451, 31.376] ms | 30,294 KiB | 1,523,576 B |
-| libpinyin-kc | 4.431 [4.292, 4.604] ms | 0.001 ms | 28.947 [26.483, 46.708] ms | 28.610 [27.205, 34.493] ms | 17,280 KiB | 1,209,640 B |
+| libpinyin-kc | 4.431 [4.292, 4.604] ms | 1.106 [0.984, 1.227] µs | 28.947 [26.483, 46.708] ms | 28.610 [27.205, 34.493] ms | 17,280 KiB | 1,209,640 B |
 | oxpinyin-kc | 4.964 [4.847, 5.103] ms | 42.128 [41.502, 42.900] ms | 28.082 [25.437, 40.428] ms | 27.216 [25.432, 39.762] ms | 27,944 KiB | 1,499,984 B |
-| **oxpinyin ÷ libpinyin (Tkrzw)** | **1.16×** | 79,182× (vs 0.7 µs) | 0.56× | **0.94×** | **2.40×** | **1.76×** |
-| **oxpinyin ÷ libpinyin (KC)** | **1.12×** | 38,091× (vs 1.1 µs) | 0.97× | **0.95×** | **1.62×** | **1.24×** |
+| **oxpinyin ÷ libpinyin (Tkrzw)** | **1.16×** | 79,182× (÷ 0.719 µs) | 0.56× | **0.94×** | **2.40×** | **1.76×** |
+| **oxpinyin ÷ libpinyin (KC)** | **1.12×** | 38,091× (÷ 1.106 µs) | 0.97× | **0.95×** | **1.62×** | **1.24×** |
 
 The first-alloc ratios against sub-microsecond denominators say
-nothing (the ARM64 baseline made the same observation at 52,983×); the
-load-bearing totals:
+nothing (the ARM64 baseline made the same observation at 52,983×).
+Ratio rows divide unrounded medians: with the cell values shown,
+56.932 ms ÷ 0.719 µs = 79,182×, and 42.128 ms ÷ 1.106 µs reproduces
+38,091× to within 0.01% (exact medians 56.932015 ms / 42.128115 ms).
+The load-bearing totals:
 
 | Metric | libpinyin-tkrzw | oxpinyin-tkrzw | libpinyin-kc | oxpinyin-kc |
 |---|---:|---:|---:|---:|
@@ -213,8 +217,10 @@ backend sensitivity of either implementation.
 - **first alloc (the walk).** The 56.9/42.1 ms is `key_cost_table`:
   440 point reads into `pinyin_index.bin` filling the
   visibility-masked cache on `Runtime` (the ARM64 KC baseline measured
-  the same walk at 17.6 ms — this host is ~2.4× slower per operation,
-  consistent with the steady-cycle ratio 28.6 vs 8.0 ms). Second and
+  the same walk at 17.6 ms). Between the hosts the walk scales 2.4×
+  (42.1 vs 17.6 ms) — less than the steady cycle's 3.6× (28.6 vs
+  8.0 ms); the point-read walk is relatively less penalised on this
+  host than full-cycle work. Second and
   later allocs are sub-microsecond on both sides.
 - **cold cycle.** libpinyin-Tkrzw faults ~20 MiB of lazily mapped
   tables during its first keystroke cycle (48.4 vs 28.6 ms steady;
@@ -228,10 +234,11 @@ backend sensitivity of either implementation.
   cross-ISA claim is made. The pin's release `panic = "abort"` must be
   weighed with these numbers: on ARM64 that policy measured +5.7%
   steady / +5.3% cold and was reverted at `1b0c84a0` (steady recovered
-  9.196 → 8.686 ms there, oracle flat). The steady columns here are
-  therefore a mild upper bound for oxpinyin — production after the
-  revert is marginally faster — and the cold/first-alloc columns carry
-  the same bias. The effect was not re-measured on this host.
+  9.196 → 8.686 ms there, oracle flat). That quantification is
+  ARM64-only — the policy's effect on this x86_64 host was not
+  measured, so the steady, cold, and first-alloc columns carry an
+  unknown bias from it; no direction or magnitude is claimed for this
+  host.
 - **RSS (1.62–2.40×).** oxpinyin is now mmap-dominated (RssFile 16.8–
   17.0 MiB vs libpinyin's 11.1 MiB; the delta is the six DBMs mapped
   through the backend plus the Rust runtime's anon floor of ~11–13
