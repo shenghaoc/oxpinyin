@@ -807,9 +807,9 @@ impl<S: WriteStore> GenericUserStore<S> {
         let Some(text_bytes) = db.get(PHRASE, &token_key)? else {
             return Ok(None);
         };
-        let text = codec::decode_str(&text_bytes)
-            .map_err(|_| UserStoreError::Decode)?
-            .to_owned();
+        // The get already handed over an owned buffer: validate it as UTF-8
+        // in place instead of decoding to `&str` and copying a second time.
+        let text = String::from_utf8(text_bytes).map_err(|_| UserStoreError::Decode)?;
         let pronunciations = collect_pronunciations_from_store(&*db, token)?;
         Ok(Some(UserPhrase::new(token, text, pronunciations)))
     }
