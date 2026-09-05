@@ -2,7 +2,9 @@
 //!
 //! Enabled by the `lmdb` cargo feature.  Key ordering uses the default
 //! LMDB byte-lexicographic comparator, so big-endian encoded keys sort
-//! identically to the redb backend.
+//! identically to the redb backend.  Writable environments open with
+//! `MDB_WRITEMAP`: commits write through the mapping instead of staging
+//! pages in malloc'd buffers and copying them in.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -85,12 +87,20 @@ fn open_env(path: &Path, read_only: bool, map_size: usize) -> Result<Env, StoreE
     let mut flags = EnvFlags::NO_SUB_DIR;
     if read_only {
         flags |= EnvFlags::READ_ONLY;
+    } else {
+        // MDB_WRITEMAP: commits write directly into the writeable mapping,
+        // removing the memcpy from the write transaction's staging buffers
+        // into the map. Sound here because this backend is single-writer
+        // (heed's RwTxn borrow) and no database uses MDB_DUPSORT.
+        flags |= EnvFlags::WRITE_MAP;
     }
     // SAFETY: we uphold LMDB's contract — a single process opens each
     // data file with a consistent map-size, and heed's RwTxn borrow
     // enforces the single-writer invariant within this process.
     // `flags()` is unsafe because certain flag combinations can violate
-    // LMDB invariants; our chosen flags (NO_SUB_DIR ± READ_ONLY) are safe.
+    // LMDB invariants (heed names NO_SYNC, NO_META_SYNC, NO_LOCK); our
+    // chosen flags (NO_SUB_DIR ± READ_ONLY, plus WRITE_MAP on writable
+    // opens) are not in that class.
     unsafe {
         opts.flags(flags);
         opts.open(path)
@@ -484,8 +494,9 @@ fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Share
 
 /// An LMDB-backed store implementing both capability tiers.
 ///
-/// Feature-gated behind `lmdb`.  Uses a single file (`NO_SUB_DIR`)
-/// and the default byte-lexicographic comparator.
+/// Feature-gated behind `lmdb`.  Uses a single file (`NO_SUB_DIR`), the
+/// default byte-lexicographic comparator, and a writeable mapping
+/// (`MDB_WRITEMAP`) on writable handles.
 ///
 /// LMDB caps an environment at 32 named tables (`MAX_DBS`). Writing to a
 /// 33rd distinct table fails with [`StoreError::InvalidInput`]; the redb
