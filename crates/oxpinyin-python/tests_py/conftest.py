@@ -23,7 +23,10 @@ def resolve_input(case: dict) -> str:
         return case["input"]
     repeat = case.get("repeat") or {}
     unit, times = repeat.get("unit", ""), int(repeat.get("times", 0))
-    total = len(unit) * times
+    # Byte length, not character count: the Rust side measures
+    # `str::len` (UTF-8 bytes), so a non-ASCII unit must be encoded
+    # before measuring, or the two drivers disagree on the cap.
+    total = len(unit.encode("utf-8")) * times
     if total > INPUT_CAP:
         raise ValueError(
             f"repeated input is {total} bytes, past the {INPUT_CAP}-byte corpus cap"
