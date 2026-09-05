@@ -217,7 +217,19 @@ x86_64/redb says about the shape of the problem:
   (**−131,072 B, −8.31%**) — the facade crate's added orchestration
   code carries unwind mass and landing pads that `abort` removes, so
   the delta grew with it; unwind sections at the branch tip 93,248 B,
-  symbolizer still 168 symbols. **Correction to the original
+  symbolizer still 168 symbols. **Correction 2026-09-05** (full-rebuild
+  series in docs/perf/perf-baseline-kc-2026-09.md, "Where the changes
+  landed"): with every tree built cold into its own target dir and KC
+  selected explicitly, the facade tip `b40e3542` strips to
+  **1,446,528 B** — the same figure as every tree back to the LTO change
+  — and the abort commit `a41605ea` (the landed form of b6dd5c6f) to
+  **1,380,992 B**: **−65,536 B (−4.53%)**, the same delta as
+  pre-facade. The 1,577,696 → 1,446,624 B pair and its −131,072 B
+  delta did not reproduce, so the "delta grew with the facade" reading
+  is withdrawn: the facade extraction adds no stripped bytes. The same
+  series measures a +5.7% steady-cycle regression at `a41605ea` that
+  this document's size-only measurement did not see; it is an open
+  item there. **Correction to the original
   prediction: the 116.3 KiB std backtrace symbolizer (gimli/addr2line)
   survives `panic = "abort"` unchanged** — 168 symbols before and
   after, byte count identical. ~~Probe builds pin the mechanism: it is
