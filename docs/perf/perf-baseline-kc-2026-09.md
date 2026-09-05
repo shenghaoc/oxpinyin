@@ -12,7 +12,8 @@ The workspace default backend changed from Kyoto Cabinet to Tkrzw at
 `05688575` (2026-09-05). This document stays on KC so its columns remain
 comparable with the 2026-08-31 baseline and the `94b38948` rows; the
 amendment therefore builds with `--no-default-features --features
-kyotocabinet` explicitly. A Tkrzw scoreboard is a separate measurement.
+kyotocabinet` explicitly. A Tkrzw scoreboard is a separate measurement:
+`docs/findings/perf-backend-matrix-2026-09.md` (x86_64 host).
 
 ## Measurement host
 
@@ -309,7 +310,9 @@ it (79–80 crates compiled at every point).
 | 2026-09-05 | release `panic = "abort"` (a41605e) | stripped .so −65,536 B (−4.5%); **steady cycle +5.7%, cold +5.3%** — reverted the same day (resolution above) |
 | 2026-09-05 | `ffi_catch` removed (828e203) | no measurable change |
 | 2026-09-05 | default backend → Tkrzw (0568857) | none on this KC measurement; KC builds now need `--no-default-features --features kyotocabinet` |
+| 2026-09-05 | 4-cell backend matrix re-measured post-P6 on x86_64 with shared datagen data dirs | Tkrzw scoreboard now lives in `docs/findings/perf-backend-matrix-2026-09.md` (different host/ISA; not comparable with this document's absolute numbers) |
 
 Not re-run for this amendment: the parity pin (491/396/390) — no code
-changed. The Tkrzw default is not measured here; a Tkrzw scoreboard
-would be a new document, not a column in this one.
+changed. The Tkrzw default is not measured here; the Tkrzw scoreboard
+is `docs/findings/perf-backend-matrix-2026-09.md` (an x86_64 session,
+not a column in this ARM64 document).
