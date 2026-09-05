@@ -91,8 +91,11 @@ glib-sys = "0.20"
 # not undefined behaviour), and the toolchain pins 1.97.1. On a bug panic
 # the process now aborts instead of continuing with a sentinel return;
 # with the lints green the catch sites were operationally inert. The 116 KiB
-# gimli/addr2line symbolizer is unaffected — it is held by std::io::Error
-# backtrace capture, not by catch_unwind.
+# gimli/addr2line symbolizer is unaffected by this setting — it is held by
+# std's default panic hook, which still runs to print before aborting, so
+# no panic strategy removes it. (An earlier revision of this comment blamed
+# std::io::Error backtrace capture; retracted — see the "Symbolizer
+# attribution — corrected" section of docs/perf/perf-so-size-2026-09.md.)
 # [profile.profiling] keeps its explicit `lto = "thin"` and `panic =
 # "unwind"` overrides and inherits codegen-units from here.
 [profile.release]
