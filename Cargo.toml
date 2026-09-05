@@ -74,8 +74,6 @@ compact_str = "0.10"
 # oxpinyin-core/build.rs generates the maps, so phf_codegen is build-time only.
 phf = "0.11"
 phf_codegen = "0.11"
-# FxHasher: faster non-cryptic hashing for internal membership sets.
-rustc-hash = "2.1"
 glib-sys = "0.20"
 
 # Release .so size/speed lever: fat LTO + one codegen unit lets the linker

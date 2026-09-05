@@ -302,7 +302,6 @@ version = "0.1.0"
 dependencies = [
  "compact_str",
  "oxpinyin-core",
- "rustc-hash",
  "smallvec",
 ]
 
