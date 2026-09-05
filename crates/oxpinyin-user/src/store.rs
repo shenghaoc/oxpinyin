@@ -1137,9 +1137,10 @@ impl<S: WriteStore> GenericUserStore<S> {
                 let Some(text_bytes) = txn.get(PHRASE, &token_key)? else {
                     return Ok(None);
                 };
-                let text = codec::decode_str(&text_bytes)
-                    .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?
-                    .to_owned();
+                // As in `phrase`: the get hands over an owned buffer, so
+                // validate it in place rather than copying it a second time.
+                let text = String::from_utf8(text_bytes)
+                    .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
 
                 txn.remove(PHRASE, &token_key)?;
                 if phrase_index_library_index(token) == USER_DICTIONARY {
