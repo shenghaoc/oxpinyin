@@ -100,9 +100,6 @@ glib-sys.workspace = true
 # Criterion 0.5+ (workspace lock is 0.8). Stage-2 benches only; not a
 # runtime dependency of the C ABI.
 criterion = "0.8"
-# Direct use in `benches/stage2.rs` (`UserStore::count_delta`). Already a
-# runtime dependency of this crate; restated so the bench crate can import it.
-oxpinyin-user = { path = "../oxpinyin-user", default-features = false }
 # Dev-only edge: the Stage-2 benches consume the canonical model20-cache
 # locator and export-dir resolution (oxpinyin_testsupport::model_cache).
 # Never a dependency of the C ABI itself.
