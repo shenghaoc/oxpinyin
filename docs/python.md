@@ -294,9 +294,13 @@ build time by pyo3, from the interpreter in front of it. On GIL-enabled 3.14
 `abi3-py310` applies and `abi3t-py315` does not — `abi3t` takes effect from
 3.15 onward — so the job now builds against the limited API at the 3.10 floor
 and produces a **stable-ABI extension**, tagged `cp310-abi3`, where the
-free-threaded job used to emit a version-specific `cp314t` one. This project
-publishes and tests no pre-built wheels, so nothing beyond that source build
-on GIL-enabled 3.14 is claimed here.
+free-threaded job used to emit a version-specific `cp314t` one. The job
+asserts that tag on the installed dist-info rather than trusting this
+paragraph — `debian:testing` is deliberately unpinned, and an interpreter that
+moved to 3.15 or to a free-threaded build would change the answer without
+touching a line of this file. This project publishes and tests no pre-built
+wheels, so nothing beyond that source build on GIL-enabled 3.14 is claimed
+here.
 
 The two floors are deliberately different numbers, and both pins stay as they
 are. `abi3-py310` is the *binary* floor — what the built extension could load

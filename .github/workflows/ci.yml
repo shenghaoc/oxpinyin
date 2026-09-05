@@ -223,6 +223,36 @@ jobs:
         run: |
           pip install --break-system-packages maturin==1.15.0 pytest==9.1.1
           pip install --break-system-packages --no-build-isolation .
+      # The ABI above is asserted, not just documented. debian:testing is
+      # deliberately unpinned, so its python3 can move under us: to 3.15,
+      # where abi3t-py315 takes over from abi3-py310, or to a free-threaded
+      # build, where neither stable ABI applies and pyo3 emits a
+      # version-specific extension. Either silently invalidates the
+      # cp310-abi3 claim in the step above and in docs/python.md — which is
+      # exactly how that prose went stale when this job was containerized.
+      # Read the tag off the installed dist-info: `pip install .` leaves no
+      # wheel file behind, but it does record what it built.
+      - name: Assert the wheel is the documented stable ABI
+        run: |
+          python3 - <<'PY' >&2
+          import importlib.metadata as metadata
+          import sys
+
+          wheel = metadata.distribution("oxpinyin").read_text("WHEEL") or ""
+          tags = [
+              line.split(":", 1)[1].strip()
+              for line in wheel.splitlines()
+              if line.startswith("Tag:")
+          ]
+          if not tags or any(not tag.startswith("cp310-abi3-") for tag in tags):
+              print(
+                  f"::error::built wheel tags {tags or '(none)'} are not the "
+                  "documented cp310-abi3; the interpreter or pyo3's stable-ABI "
+                  "selection moved. See docs/python.md, 'Supported platforms'."
+              )
+              sys.exit(1)
+          print(f"wheel tags: {tags}")
+          PY
       - name: Rust runtime tests
         run: cargo test --locked -p oxpinyin-python
       - name: Binding tests and native-vs-Python parity
