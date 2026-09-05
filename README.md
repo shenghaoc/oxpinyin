@@ -14,6 +14,10 @@ init/RAM reduction) in progress.
 
 ```sh
 # Debian/Ubuntu: apt-get install libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libclang-dev libglib2.0-dev pkg-config
+# macOS (Homebrew): brew install tkrzw glib pkgconf; libclang ships with the Xcode Command Line Tools.
+#   export LIBRARY_PATH="$(brew --prefix)/lib"  # tkrzw links lz4/lzma/zstd from there, but the store's build
+#   script emits only tkrzw's own -L dir: without this `cargo test` fails at link time ("library 'lz4' not
+#   found") while `cargo check`/`clippy`, which never link, still pass.
 cargo fmt --all --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
