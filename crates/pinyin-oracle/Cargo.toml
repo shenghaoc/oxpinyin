@@ -19,7 +19,9 @@ build = "build.rs"
 default = ["tkrzw"]
 # Links the pin-built libpinyin from tools/oracle/build-oracle.sh.
 # Linux-only, and requires the oracle prefix to be present and on-pin.
-oracle-ffi = []
+# glib-sys is reached only through this feature's `ffi` module, so the
+# feature is what pulls it in; without it no glib binding is compiled.
+oracle-ffi = ["dep:glib-sys"]
 # Backend selection, forwarded through oxpinyin-data (one backend per
 # binary; see oxpinyin-store's [features] for the model and precedence).
 kyotocabinet = ["oxpinyin-data/kyotocabinet"]
@@ -103,7 +105,7 @@ dhat = "0.3"
 oxpinyin-user = { path = "../oxpinyin-user", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-glib-sys.workspace = true
+glib-sys = { workspace = true, optional = true }
 
 [[bench]]
 name = "scan_perf"
