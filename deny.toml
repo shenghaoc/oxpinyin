@@ -15,10 +15,10 @@ yanked = "deny"
 # either renew or remove the entry.
 ignore = [
     # bincode 1.x is unmaintained upstream; it reaches us only through
-    # heed-types behind the non-default `lmdb` feature (the default redb
+    # heed-types behind the non-default `lmdb` feature (the default tkrzw
     # path never links it). No fix exists until heed migrates or we drop
     # the LMDB backend. Unmaintained, not a vulnerability.
-    { id = "RUSTSEC-2025-0141", reason = "transitive via heed-types behind the non-default lmdb feature; unmaintained, not a vulnerability; redb is the default backend; review by 2027-02-28" },
+    { id = "RUSTSEC-2025-0141", reason = "transitive via heed-types behind the non-default lmdb feature; unmaintained, not a vulnerability; tkrzw is the default backend; review by 2027-02-28" },
 ]
 
 [bans]
