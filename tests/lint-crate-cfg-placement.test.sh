@@ -70,10 +70,13 @@ expect_fail() {
     shift 2
     tests_run=$((tests_run + 1))
     run_lint "$@"
-    if [ "$rc" -eq 0 ]; then
-        fail_test "$name" 'expected nonzero exit, got 0'
+    # Exactly 1, not merely nonzero: exit 2 is a usage/environment error, and
+    # accepting it here would let a violation assertion pass on a script that
+    # never reached its scan — the failure mode this harness exists to catch.
+    if [ "$rc" -ne 1 ]; then
+        fail_test "$name" "expected exit 1 (violation), got $rc: $(printf '%s' "$out" | head -n 2)"
     elif ! printf '%s' "$out" | grep -q -- "$want"; then
-        fail_test "$name" "exit $rc but output lacks '$want': $(printf '%s' "$out" | head -n 4)"
+        fail_test "$name" "exit 1 but output lacks '$want': $(printf '%s' "$out" | head -n 4)"
     else
         ok "$name"
     fi
@@ -172,14 +175,34 @@ expect_fail 'distance from the gate does not excuse it' \
 expect_fail 'one bad file among good ones fails the run' \
     'gate_then_docs.rs:2' "$docs_then_gate" "$gate_then_docs" "$docs_only"
 
-# --help is a usage exit, distinct from a violation.
-tests_run=$((tests_run + 1))
-run_lint --help
-if [ "$rc" -eq 2 ]; then
-    ok '--help exits 2 (usage)'
-else
-    fail_test '--help exits 2 (usage)' "expected exit 2, got $rc"
-fi
+# expect_usage <name> <expected-substring> <arg>... — a usage/environment
+# error: exit 2, distinct from both a clean run and a violation.
+expect_usage() {
+    name=$1
+    want=$2
+    shift 2
+    tests_run=$((tests_run + 1))
+    run_lint "$@"
+    if [ "$rc" -ne 2 ]; then
+        fail_test "$name" "expected exit 2 (usage), got $rc: $(printf '%s' "$out" | head -n 2)"
+    elif ! printf '%s' "$out" | grep -q -- "$want"; then
+        fail_test "$name" "exit 2 but output lacks '$want': $(printf '%s' "$out" | head -n 4)"
+    else
+        ok "$name"
+    fi
+}
+
+expect_usage '--help exits 2 (usage)' 'usage:' --help
+
+# A path named on the command line must exist. Skipping a typo silently would
+# report "no violations" for a file nobody read.
+expect_usage 'a named path that does not exist is an error' \
+    'no-such-file.rs' "$tmp/no-such-file.rs"
+expect_usage 'a named directory is an error' \
+    "$tmp" "$tmp"
+# ...and it must not be masked by valid files scanning cleanly alongside it.
+expect_usage 'a missing path among valid ones still fails' \
+    'no-such-file.rs' "$docs_then_gate" "$tmp/no-such-file.rs" "$docs_only"
 
 # --- summary -----------------------------------------------------------------
 
