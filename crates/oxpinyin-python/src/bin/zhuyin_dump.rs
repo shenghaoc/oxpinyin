@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! cargo run -p oxpinyin-python --bin zhuyin-dump -- \
-//!     crates/oxpinyin-python/parity-corpus-zhuyin.json fixtures/w3/kct zhuyin-native.json
+//!     crates/oxpinyin-python/parity-corpus-zhuyin.json fixtures/w3/tkt zhuyin-native.json
 //! ```
 
 use std::path::PathBuf;

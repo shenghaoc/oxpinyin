@@ -118,7 +118,7 @@ def zhuyin_native_transcript(tmp_path_factory, repo_root: Path, crate_dir: Path)
             "zhuyin-dump",
             "--",
             str(crate_dir / "parity-corpus-zhuyin.json"),
-            str(repo_root / "fixtures" / "w3" / "kct"),
+            str(repo_root / "fixtures" / "w3" / "tkt"),
             str(out_path),
         ],
         check=True,
