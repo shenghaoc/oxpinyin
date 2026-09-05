@@ -74,7 +74,7 @@ compact_str = "0.10"
 # oxpinyin-core/build.rs generates the maps, so phf_codegen is build-time only.
 phf = "0.11"
 phf_codegen = "0.11"
-glib-sys = "0.20"
+glib-sys = "0.22"
 
 # Release .so size/speed lever: fat LTO + one codegen unit lets the linker
 # drop cross-crate dead code and duplicate generic instantiations that
