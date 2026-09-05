@@ -134,6 +134,18 @@
       }
     },
     {
+      "name": "guess-before-cursor-then-select",
+      "input": "su3cl3",
+      "guess": {
+        "offset": 6,
+        "before": true
+      },
+      "select": [
+        1
+      ],
+      "commit": true
+    },
+    {
       "name": "guess-after-boundary",
       "input": "su3cl3",
       "guess": {

@@ -1121,6 +1121,84 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
     the STOP; the base's measured value at the declared protocol is
     125, per the table above.)
 
+  (Amended 2026-09-05, **the choose leg of the same surface** — the window
+  this entry closed was displayed correctly but could not be chosen from.
+  `zhuyin_choose_candidate` resolved the snapshot row's `source_index`
+  through `Session::select`, which indexes the composition-anchored cached
+  list, while `snapshot_candidates` had recorded that index against the
+  `candidates_ending_at` window the before-cursor guess built. The two
+  lists differ in general, so the committed text could be a row the caller
+  never displayed. Measured on `fixtures/w3` (redb backend), `su3cl3` —
+  `ni3'hao3` in the session's `'`-joined buffer — with `before(6)`:
+
+  | `before(6)` row 1 | displayed | committed | cursor answered |
+  |---|---|---|---|
+  | before this fix | 好 | **`你'hao`** | **3** |
+  | after this fix | 好 | 好 | 6 |
+
+  The cached list's row 1 is 你 (the FIRST key's span, `consumed_bytes` 3);
+  the before-cursor window's row 1 is 好 (the SECOND key's span, ending at
+  the cursor). Choosing the displayed 好 committed 你 and left the raw
+  `hao` tail in the buffer, and answered the first key's end as the new
+  cursor.
+
+  **A defect, not a divergence.** Upstream has no equivalent indirection:
+  `zhuyin_choose_candidate` receives a `lookup_candidate_t *` carrying the
+  row's own token, so no index is resolved against a second list and the
+  mismatch is not expressible there. Per this policy's rule that anything
+  outside the four exception classes is a defect to be reverted, the fix
+  moves toward the pin and needs no class.
+
+  **The fix.** The before-cursor window is retained in
+  `InstanceCore::anchored_window` exactly as the after-cursor one is, so
+  the later choose resolves through `Session::select_anchored` against the
+  same list — in BOTH zhuyin facades (`oxpinyin-zhuyin-capi`'s C ABI and
+  `oxpinyin-python`'s `ZhuyinSession`, which mirror each other line for
+  line and are held together by `tests_py/test_zhuyin_parity.py`). The
+  anchor is `oxpinyin_facade::BEFORE_CURSOR_ANCHOR` = 0, not the lookup
+  offset: `candidates_ending_at` scans the prefix graph `raw[..offset]`,
+  whose coordinates are absolute from the buffer start, so every row's
+  `consumed_bytes` is the span's absolute END rather than a length
+  measured from a start. `select_inner` reads the chosen span as
+  `[anchor, anchor + consumed_bytes)`, so 0 is the only anchor that
+  reproduces the span end and the consumed advance; reusing the
+  after-cursor anchor would read `[offset, 2 * offset)` and walk the
+  composition off the end of the buffer.
+
+  **Coverage.** A C-side test pins the property on the zhuyin ABI —
+  `oxpinyin-zhuyin-capi`'s
+  `choosing_from_a_before_cursor_window_uses_that_window`, the twin of
+  `oxpinyin-capi`'s
+  `choosing_from_a_reanchored_window_uses_the_anchored_span` — and the
+  zhuyin parity corpus gained `guess-before-cursor-then-select`
+  (`before(6)` then select row 1 then commit), replayed by both drivers.
+  Revert-and-check: reverting the two facade edits fails the C test at the
+  cursor assertion (3 vs 6) and changes exactly one of the 28 corpus cases.
+
+  **Residual — OPEN, and NOT measured against the pin.** The fix makes the
+  committed row the displayed row; it does not make the before-cursor
+  choose pin-identical. For a row whose span STARTS after the composition
+  offset, the chosen span is recorded as `[0, offset)` rather than
+  `[start, offset)`, so the raw bytes before the span are absorbed into the
+  chosen text instead of being decoded — `su3cl3` `before(6)` row 1 commits
+  `好`, where upstream's constrain-and-re-decode model would keep a
+  conversion for the leading key as well. Root cause:
+  `oxpinyin_engine::Candidate` carries `consumed_bytes` but no span START,
+  so a window whose rows have per-row begins cannot be resolved row by row;
+  the pin's rows carry `m_begin` each (`pinyin.cpp:2227`, the `m_begin =
+  start` already cited in `Session::select_anchored`'s doc comment) and its
+  caller passes that begin as the choose offset, where this facade
+  deliberately ignores its `offset` argument. Closing it needs `Candidate`
+  to carry its span start plus an end-anchored `Session::select_*` — both
+  changes to `oxpinyin-engine`'s supported surface, so AGENTS.md's STOP
+  ("needs interface change") applies and the gap is registered rather than
+  improvised. No libpinyin checkout or instrumented oracle was available on
+  the host this amendment was written on, so the pin-side answer for this
+  residual is **inferred from the cited `m_begin` law, not measured**; a
+  differential run on the Linux oracle is owed before it is classified or
+  closed.)
+
+
 ## zhuyin multi-syllable candidate construction — CLOSED (the zhuyin display law, not the construction model)
 
 The two-syllable differential input `su3u3` (ㄋㄧˇ ㄧˇ, consumed 5) exposes a

@@ -80,7 +80,19 @@ pub use sentence::{
 
 #[cfg(test)]
 mod tests {
-    use super::types::lookup_candidate_type_t;
+    use std::ffi::CString;
+    use std::path::PathBuf;
+    use std::ptr;
+
+    use super::candidates::{
+        zhuyin_choose_candidate, zhuyin_get_candidate, zhuyin_get_n_candidate,
+    };
+    use super::context::{zhuyin_fini, zhuyin_init};
+    use super::instance::{zhuyin_alloc_instance, zhuyin_free_instance};
+    use super::parse::zhuyin_parse_more_chewings;
+    use super::sentence::zhuyin_guess_candidates_before_cursor;
+    use super::state::instance_mut;
+    use super::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance, lookup_candidate_type_t};
 
     /// The Phase-1 correction, pinned: the zhuyin 4-value enum's exact
     /// discriminants. The zhuyin header (`zhuyin.h:41-45`) defines four
@@ -127,5 +139,105 @@ mod tests {
     fn opaque_handles_layout() {
         assert_eq!(std::mem::size_of::<super::types::ChewingKey>(), 2);
         assert_eq!(std::mem::size_of::<super::types::ChewingKeyRest>(), 4);
+    }
+
+    /// The committed mini fixture (`fixtures/w3/<backend ext>`), the same
+    /// data directory the pinyin crate's e2e tests open.
+    fn system_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("fixtures")
+            .join("w3")
+            .join(oxpinyin_data::DEFAULT_STORE_EXT)
+    }
+
+    fn cstr(value: &str) -> CString {
+        CString::new(value).expect("no interior NUL")
+    }
+
+    /// Opens the fixture context with no user directory (the corpus
+    /// driver's shape) and one instance on it.
+    fn open() -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
+        let system = cstr(system_dir().to_str().expect("UTF-8 path"));
+        let user = cstr("");
+        let context = zhuyin_init(system.as_ptr(), user.as_ptr());
+        assert!(!context.is_null(), "the mini fixture must open");
+        let instance = zhuyin_alloc_instance(context);
+        assert!(!instance.is_null());
+        (context, instance)
+    }
+
+    /// The text a snapshot row carries, by row index.
+    fn candidate_text(instance: *mut ZhuyinInstance, index: usize) -> String {
+        // SAFETY: `instance` is live and was produced by
+        // `zhuyin_alloc_instance`; the borrow ends with this function.
+        let inst = unsafe { instance_mut(instance) };
+        inst.candidates[index]
+            .text
+            .to_str()
+            .expect("candidate text is UTF-8")
+            .to_owned()
+    }
+
+    /// The zhuyin twin of the pinyin crate's
+    /// `choosing_from_a_reanchored_window_uses_the_anchored_span`
+    /// (`oxpinyin-capi/src/e2e_tests.rs`): a
+    /// `zhuyin_guess_candidates_before_cursor` window is re-anchored, so
+    /// the following `zhuyin_choose_candidate` must resolve the row's
+    /// index against THAT window.
+    ///
+    /// `su3cl3` is `ni3'hao3` in the session's `'`-joined buffer, and the
+    /// two lists provably differ at row 1: the composition-anchored cached
+    /// list offers 你 (the first key's span), the `before(6)` window offers
+    /// 好 (the second key's span, ending at the cursor). Resolving row 1
+    /// through the cached list committed 你 and answered cursor 3 — a row
+    /// the caller never displayed.
+    #[test]
+    fn choosing_from_a_before_cursor_window_uses_that_window() {
+        let (context, instance) = open();
+        let input = cstr("su3cl3");
+        assert_eq!(
+            zhuyin_parse_more_chewings(instance, input.as_ptr()),
+            "su3cl3".len(),
+            "the whole keystroke run parses"
+        );
+
+        assert!(zhuyin_guess_candidates_before_cursor(instance, 6));
+        let mut count = 0;
+        assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+        assert!(count > 1, "the before-cursor window carries several rows");
+
+        // Row 0 is the prepended BEST_MATCH sentence row (你好); row 1 is
+        // the first phrase row of the spans ending at the cursor.
+        let displayed = candidate_text(instance, 1);
+        assert_eq!(displayed, "好", "the fixture's before(6) row 1");
+        let mut cand: *mut LookupCandidate = ptr::null_mut();
+        assert!(zhuyin_get_candidate(instance, 1, &raw mut cand));
+        assert!(!cand.is_null());
+
+        // The chosen span ENDS at the cursor, so the composition advances
+        // to it (6), not to the first key's end (3) the cached list's row 1
+        // would have given.
+        assert_eq!(zhuyin_choose_candidate(instance, 6, cand), 6);
+
+        // commit() resets the session, so it is read last: the committed
+        // text is the row the caller was shown.
+        let committed = {
+            // SAFETY: the instance is live; commit takes &mut and resets.
+            unsafe {
+                instance_mut(instance)
+                    .core
+                    .session
+                    .commit()
+                    .expect("commit")
+            }
+        };
+        assert_eq!(
+            committed, displayed,
+            "the committed text is the displayed row, not a cached-list row"
+        );
+        zhuyin_free_instance(instance);
+        zhuyin_fini(context);
     }
 }

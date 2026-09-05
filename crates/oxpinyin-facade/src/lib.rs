@@ -40,7 +40,7 @@ mod predict;
 
 pub use context::{ContextCore, LiveOptions};
 pub use cursor::{KeyAt, SpanSource};
-pub use instance::InstanceCore;
+pub use instance::{BEFORE_CURSOR_ANCHOR, InstanceCore};
 pub use offsets::{
     double_original_offset, double_session_offset, full_original_offset, full_session_offset,
     zhuyin_lookup_session_offset, zhuyin_original_offset, zhuyin_session_offset,
