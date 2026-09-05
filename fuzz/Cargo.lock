@@ -292,7 +292,6 @@ dependencies = [
 name = "oxpinyin-data"
 version = "0.1.0"
 dependencies = [
- "compact_str",
  "oxpinyin-core",
  "oxpinyin-store",
 ]
