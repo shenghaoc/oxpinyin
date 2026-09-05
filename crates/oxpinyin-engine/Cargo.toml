@@ -17,7 +17,6 @@ workspace = true
 oxpinyin-core = { path = "../oxpinyin-core" }
 smallvec.workspace = true
 compact_str.workspace = true
-rustc-hash.workspace = true
 
 [dev-dependencies]
 # Fixture-backed doubles shared with the other test suites.

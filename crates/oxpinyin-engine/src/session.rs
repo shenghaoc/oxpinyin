@@ -11,7 +11,6 @@
 use core::fmt::Display;
 use std::collections::HashSet;
 
-use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 use oxpinyin_core::graph::{Edge, EdgeKind, ExactSegment, SegmentGraph};
@@ -3286,8 +3285,7 @@ struct RankKey {
 fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
     let mut keep = Vec::with_capacity(candidates.len());
     {
-        let mut seen: FxHashSet<&str> =
-            FxHashSet::with_capacity_and_hasher(candidates.len(), Default::default());
+        let mut seen: HashSet<&str> = HashSet::with_capacity(candidates.len());
         keep.extend(
             candidates
                 .iter()
