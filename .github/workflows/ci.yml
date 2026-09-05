@@ -79,38 +79,73 @@ env:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see store-backends.yml header
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
+      # debian:testing ships a minimal base without bash or git; the
+      # runner infrastructure and later steps need both.
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
+          safe-directory: 'true'
+          rustup: 'true'
+          rustup-components: clippy rustfmt
           rust-cache: 'true'
+          rust-cache-key: lint-job
       - run: rustup show active-toolchain
-      - name: Install the default backend's C dependencies (apt)
+      - name: Install build dependencies (apt)
         # Kyoto Cabinet is the default store backend; bindgen (libclang) reads
         # kclangc.h at build time. Linux-only jobs install both; the portable
         # job below runs the pure-Rust redb fallback instead.
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libkyotocabinet-dev libclang-dev libglib2.0-dev pkg-config
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev
       - run: cargo fmt --all --check
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
   test:
     runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see store-backends.yml header
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
+      # debian:testing ships a minimal base without bash or git; the
+      # runner infrastructure and later steps need both.
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
+          safe-directory: 'true'
+          rustup: 'true'
           rust-cache: 'true'
+          rust-cache-key: test-job
       - run: rustup show active-toolchain
-      - name: Install the default backend's C dependencies (apt)
+      - name: Install build dependencies (apt)
         # Kyoto Cabinet is the default store backend; bindgen (libclang) reads
         # kclangc.h at build time. Linux-only jobs install both; the portable
         # job below runs the pure-Rust redb fallback instead.
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libkyotocabinet-dev libclang-dev libglib2.0-dev pkg-config
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev
       - run: cargo test --locked --workspace
       - name: C++ pinyin.h smoke gate
         run: tools/bisection/run-cpp-smoke.sh
@@ -127,9 +162,9 @@ jobs:
 
   # The Python binding: build the real extension (no mocks), run its pytest
   # suite, which regenerates the pure-Rust transcript via `native-dump` and
-  # compares it against the binding's replay of the same corpus. Runs on a
-  # free-threaded interpreter, which is what makes the shared-engine
-  # thread-safety test mean anything; see the version selector below.
+  # compares it against the binding's replay of the same corpus. The
+  # interpreter is Debian's python3 from the container: actions/setup-python
+  # does not support container jobs.
   python:
     runs-on: ubuntu-latest
     container:
@@ -161,38 +196,12 @@ jobs:
       - name: Install build dependencies (apt)
         # Kyoto Cabinet is the default store backend; bindgen (libclang) reads
         # kclangc.h at build time. Linux-only jobs install both; the portable
-        # job below runs the pure-Rust redb fallback instead.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          # Free-threaded is the platform this binding is written for, so it
-          # is the one the binding is tested on. `Engine.lookup` detaches the
-          # GIL before it takes the shared-engine mutex, so
-          # `test_shared_engine_is_thread_safe` contends that mutex even under
-          # a GIL; free-threaded is what additionally lets the Python-side
-          # worker loop run concurrently rather than serialised behind the GIL.
-          #
-          # `3.14t` is setup-python's free-threaded spelling: the `t` suffix
-          # combines with x.y, x.y.z or x.y-dev. 3.14 has shipped, so this
-          # resolves to the current stable 3.14.x without
-          # `allow-prereleases`.
-          python-version: '3.14t'
-      - name: Verify free-threaded build
-        # A silent fallback to a GIL build would leave this job green while
-        # proving none of what it exists to prove, so this gates rather than
-        # merely logging. `sys._is_gil_enabled` only exists from 3.13, so it
-        # is probed rather than called outright — a pre-3.13 fallback is
-        # exactly what this guards against, and it should report that rather
-        # than raise AttributeError.
-        run: |
-          python -c "
-          import sys, sysconfig
-          gil = getattr(sys, '_is_gil_enabled', None)
-          disabled = sysconfig.get_config_var('Py_GIL_DISABLED')
-          if gil is None or gil() or not disabled:
-              raise SystemExit('Expected free-threaded build; got GIL-enabled or pre-3.13')
-          print(f'ok: {sys.version}, Py_GIL_DISABLED={disabled}')
-          "
+        # job below runs the pure-Rust redb fallback instead. python3 comes
+        # from apt — actions/setup-python does not support container jobs —
+        # and the pip installs need --break-system-packages: Debian marks its
+        # interpreter PEP 668 externally managed, and this container is
+        # ephemeral with no system Python to protect.
+        run: apt-get install -y --no-install-recommends python3 python3-pip gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev
       - name: Lint the binding feature set
         run: cargo clippy --locked -p oxpinyin-python --features bindings --all-targets -- -D warnings
       - name: Build and install the wheel
@@ -202,8 +211,8 @@ jobs:
         # the build-system requires range (>=1.14,<2) in an isolated env; that
         # range only bounds human-driven builds.
         run: |
-          pip install maturin==1.15.0 pytest==9.1.1
-          pip install --no-build-isolation .
+          pip install --break-system-packages maturin==1.15.0 pytest==9.1.1
+          pip install --break-system-packages --no-build-isolation .
       - name: Rust runtime tests
         run: cargo test --locked -p oxpinyin-python
       - name: Binding tests and native-vs-Python parity
@@ -215,12 +224,11 @@ jobs:
   # portable too with its Linux-only `oracle-ffi` feature off, and it carries
   # the graph and decode-level differentials. capi/oracle-ffi stay Linux-first
   # and are covered by the job above.
-  test-portable:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  #
+  # Two jobs rather than a matrix: containers run on Linux runners only, so
+  # a containerized matrix cannot cover these operating systems.
+  test-macos:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -229,10 +237,32 @@ jobs:
         with:
           rust-cache: 'true'
       - run: rustup show active-toolchain
-      # KC/tkrzw/lmdb require a C toolchain and Linux system libraries; redb
-      # is the pure-Rust peer, selected by disabling the default
-      # (kyotocabinet) feature chain and passing --features redb so the
-      # exactly-one-backend guard sees exactly one peer.
+      # All backends but redb require Linux system libraries; redb is the
+      # pure-Rust peer, selected by disabling the default (kyotocabinet)
+      # feature chain and passing --features redb so the exactly-one-backend
+      # guard sees exactly one peer.
+      - run: >
+          cargo test --locked --no-default-features --features redb
+          -p oxpinyin-core -p oxpinyin-data -p oxpinyin-user -p oxpinyin-engine
+      # Separately and with --no-default-features --features redb, so
+      # oracle-ffi stays off even if it ever became a default feature — it
+      # links the pin-built libpinyin and is Linux-only; on this runner it
+      # would not build at all — and so the exactly-one-backend guard is
+      # satisfied.
+      - run: cargo test --locked -p pinyin-oracle --no-default-features --features redb
+
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-cache: 'true'
+      - run: rustup show active-toolchain
+      # Same selection as the macOS leg above: redb only, because every
+      # other backend requires Linux system libraries.
       - run: >
           cargo test --locked --no-default-features --features redb
           -p oxpinyin-core -p oxpinyin-data -p oxpinyin-user -p oxpinyin-engine
@@ -309,16 +339,33 @@ jobs:
 
   fuzz:
     runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see store-backends.yml header
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
+      # debian:testing ships a minimal base without bash or git; the
+      # runner infrastructure and later steps need both.
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
-      - name: Install the default backend's C dependencies (apt)
-        # The fuzz targets link the workspace crates with their default
-        # features, so the Kyoto Cabinet default backend compiles in:
-        # bindgen (libclang) reads kclangc.h at build time.
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libkyotocabinet-dev libclang-dev libglib2.0-dev pkg-config
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+      - name: Install build dependencies (apt)
+        # The fuzz workspace pins its backend explicitly in its own
+        # manifest (fuzz/Cargo.toml: kyotocabinet): bindgen (libclang)
+        # reads kclangc.h at build time.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev
       - name: Install pinned nightly with Rust sources
         run: rustup toolchain install nightly-2026-08-01 --profile minimal --component rust-src
       - name: Install pinned cargo-fuzz

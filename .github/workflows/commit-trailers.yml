@@ -11,10 +11,29 @@ jobs:
   # Job names are the required-check contexts. They must not collide
   # with CI's `lint` / `test` (bare-name matching treated a green
   # trailer job as the rustfmt gate on #98).
+  #
+  # Container in the store-backends.yml style: the linter is pure shell
+  # plus git, so the jobs need only the bare-runner essentials — no
+  # rustup, no build deps. The image is deliberately unpinned — do not
+  # "stabilise" it.
   trailer-lint:
     name: trailer-lint
     runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see store-backends.yml header
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
+      # debian:testing ships a minimal base without bash or git; the
+      # runner infrastructure and later steps need both.
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
       # Pinned to the v7.0.1 tag commit; verified against the
       # actions/checkout releases page (do not bump without re-verifying).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -22,6 +41,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
       - name: Lint PR commits against trailer rules
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -40,10 +61,24 @@ jobs:
   trailer-test:
     name: trailer-test
     runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see store-backends.yml header
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
       - name: Run linter test harness
         run: tests/lint-commits.test.sh
