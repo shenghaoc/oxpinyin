@@ -66,9 +66,16 @@ pub fn user_store_file() -> String {
 pub enum OpenError {
     /// A required path does not exist.
     Missing(PathBuf),
-    /// A required path exists but could not be read, or is not a plain
-    /// file.
+    /// A required path exists but could not be read.
     Io(PathBuf, std::io::Error),
+    /// A required path exists and is readable but is not a regular file
+    /// (a directory, socket, FIFO, …).
+    ///
+    /// Its own variant rather than an [`OpenError::Io`] carrying a
+    /// synthesized `std::io::Error`: no operating-system call failed, so
+    /// there is no `ErrorKind` or `raw_os_error` to report and nothing
+    /// for a caller to inspect beyond the path.
+    NotRegularFile(PathBuf),
     /// The dictionary tables failed to open or parse.
     Dict(DictError),
     /// The language model failed to open or parse.
@@ -82,6 +89,9 @@ impl core::fmt::Display for OpenError {
         match self {
             Self::Missing(path) => write!(f, "missing file: {}", path.display()),
             Self::Io(path, error) => write!(f, "cannot read {}: {error}", path.display()),
+            Self::NotRegularFile(path) => {
+                write!(f, "cannot read {}: not a regular file", path.display())
+            }
             Self::Dict(error) => write!(f, "dictionary error: {error}"),
             Self::Lm(error) => write!(f, "language model error: {error}"),
             Self::KeyCosts(error) => write!(f, "key-cost table error: {error}"),
@@ -1076,10 +1086,7 @@ fn require_file(path: &Path) -> Result<(), OpenError> {
     if meta.is_file() {
         Ok(())
     } else {
-        Err(OpenError::Io(
-            path.to_path_buf(),
-            std::io::Error::other("not a regular file"),
-        ))
+        Err(OpenError::NotRegularFile(path.to_path_buf()))
     }
 }
 

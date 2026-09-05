@@ -50,7 +50,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub(crate) fn open_error(error: OpenError) -> PyErr {
     match &error {
         OpenError::Missing(_) => PyFileNotFoundError::new_err(error.to_string()),
-        OpenError::Io(..) => PyOSError::new_err(error.to_string()),
+        OpenError::Io(..) | OpenError::NotRegularFile(_) => PyOSError::new_err(error.to_string()),
         OpenError::Dict(DictError::Parse(_)) | OpenError::Lm(LmError::Parse(_)) => {
             PyValueError::new_err(error.to_string())
         }
