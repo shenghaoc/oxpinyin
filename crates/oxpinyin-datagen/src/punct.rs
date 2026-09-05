@@ -92,9 +92,16 @@ fn group_rows(rows: &[PunctRow]) -> BTreeMap<u32, Vec<String>> {
 /// (`punct_table.cpp:40-54`): token → raw UCS-4 stream, each punctuation's
 /// codepoints followed by a u32 zero terminator, successive punctuations
 /// concatenated.
+///
+/// Entries are emitted in ascending key-byte order — the crate-wide
+/// [`Entries`](crate::Entries) contract. The keys stay little-endian
+/// (libpinyin's `punct.bin` layout), under which the `BTreeMap`'s integer
+/// token order is *not* key-byte order (LE byte order diverges from
+/// integer order at every 256 boundary), so the final sort is by encoded
+/// key, not by token.
 #[must_use]
 pub fn rows_to_entries(rows: &[PunctRow]) -> Entries {
-    group_rows(rows)
+    let mut entries: Entries = group_rows(rows)
         .into_iter()
         .map(|(token, puncts)| {
             let mut value = Vec::new();
@@ -106,7 +113,9 @@ pub fn rows_to_entries(rows: &[PunctRow]) -> Entries {
             }
             (token.to_le_bytes().to_vec(), value)
         })
-        .collect()
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries
 }
 
 /// Reads `model_dir/punct.table` into rows.
@@ -175,5 +184,28 @@ mod tests {
         assert_eq!(entries[0].0, 16_778_715u32.to_le_bytes());
         // ， then 。 once each: the duplicate ， is `g_strv_contains`-skipped.
         assert_eq!(entries[0].1.len(), 16);
+    }
+
+    #[test]
+    fn entries_are_strictly_ascending_by_key_bytes() {
+        // Tokens straddling a 256 boundary, where little-endian byte order
+        // diverges from integer order: 0x0100 follows 0x00FF as an integer
+        // but its LE key `00 01 00 00` sorts before `FF 00 00 00`.
+        let rows = [
+            parse_punct_line("255 的 ， 1").unwrap(),
+            parse_punct_line("256 的 。 1").unwrap(),
+            parse_punct_line("512 的 ！ 1").unwrap(),
+            parse_punct_line("511 的 ？ 1").unwrap(),
+        ];
+        let entries = rows_to_entries(&rows);
+        let tokens: Vec<u32> = entries
+            .iter()
+            .map(|(key, _)| u32::from_le_bytes(key[..4].try_into().unwrap()))
+            .collect();
+        assert_eq!(tokens, vec![256, 512, 255, 511]);
+        assert!(
+            entries.windows(2).all(|w| w[0].0 < w[1].0),
+            "emission must be strictly ascending by key bytes"
+        );
     }
 }
