@@ -15,9 +15,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
 use heed::types::Bytes;
-use heed::{Database, EnvFlags, EnvOpenOptions, RwTxn, WithoutTls};
+use heed::{Database, EnvFlags, EnvOpenOptions, PutFlags, RwTxn, WithoutTls};
 
-use crate::{ReadStore, StoreError, Visitor, WriteStore, WriteTxn, validate_table_name};
+use crate::{RAW_TABLE, ReadStore, StoreError, Visitor, WriteStore, WriteTxn, validate_table_name};
 
 type Env = heed::Env<WithoutTls>;
 
@@ -76,7 +76,12 @@ fn is_empty_upper_bound(bound: Bound<&[u8]>) -> bool {
 }
 
 #[allow(unsafe_code)]
-fn open_env(path: &Path, read_only: bool, map_size: usize) -> Result<Env, StoreError> {
+fn open_env(
+    path: &Path,
+    read_only: bool,
+    map_size: usize,
+    no_sync: bool,
+) -> Result<Env, StoreError> {
     validate_path(path)?;
     if map_size == 0 {
         return Err(StoreError::InvalidInput("map size must be nonzero"));
@@ -94,13 +99,22 @@ fn open_env(path: &Path, read_only: bool, map_size: usize) -> Result<Env, StoreE
         // (heed's RwTxn borrow) and no database uses MDB_DUPSORT.
         flags |= EnvFlags::WRITE_MAP;
     }
+    if no_sync {
+        // MDB_NOSYNC: skip the fsync per commit. Only the one-shot bulk
+        // loader opens this way; it calls `mdb_env_sync(force)` once after
+        // its final commit (see [`LmdbStore::bulk_load_raw`]), so the file
+        // is durable before the environment is shared or closed.
+        flags |= EnvFlags::NO_SYNC;
+    }
     // SAFETY: we uphold LMDB's contract — a single process opens each
     // data file with a consistent map-size, and heed's RwTxn borrow
     // enforces the single-writer invariant within this process.
     // `flags()` is unsafe because certain flag combinations can violate
     // LMDB invariants (heed names NO_SYNC, NO_META_SYNC, NO_LOCK); our
     // chosen flags (NO_SUB_DIR ± READ_ONLY, plus WRITE_MAP on writable
-    // opens) are not in that class.
+    // opens) stay out of that class, and the one NO_SYNC user accepts
+    // reduced crash durability for the load and restores it with an
+    // explicit forced sync before the environment outlives the loader.
     unsafe {
         opts.flags(flags);
         opts.open(path)
@@ -129,11 +143,13 @@ fn open_env(path: &Path, read_only: bool, map_size: usize) -> Result<Env, StoreE
 // it goes away — the same shape as `oxpinyin-user`'s store registry.
 
 /// One registry row: the live environment, whether it was opened
-/// writable, and the map-size ceiling it was opened with — heed can
-/// neither reopen a live environment at a different ceiling nor resize
-/// it, so a mismatching request must be refused rather than silently
-/// handed the live ceiling.
-type EnvSlot = (Weak<SharedEnv>, bool, usize);
+/// writable, the map-size ceiling it was opened with, and whether it was
+/// opened with per-commit syncing disabled — heed can neither reopen a
+/// live environment at a different ceiling nor resize it, and a NO_SYNC
+/// environment must not be silently handed to an opener that expects
+/// durable commits, so a mismatching request is refused rather than
+/// served with the live environment's mode.
+type EnvSlot = (Weak<SharedEnv>, bool, usize, bool);
 
 static OPEN_ENVS: OnceLock<Mutex<HashMap<PathBuf, EnvSlot>>> = OnceLock::new();
 
@@ -401,14 +417,23 @@ fn live_env(
     key: &Path,
     read_only: bool,
     map_size: usize,
+    no_sync: bool,
 ) -> Option<(Arc<SharedEnv>, Result<(), StoreError>)> {
-    let (weak, writable, live_map_size) = map.get(key)?;
+    let (weak, writable, live_map_size, live_no_sync) = map.get(key)?;
     let env = weak.upgrade()?;
     if *live_map_size != map_size {
         return Some((
             env,
             Err(StoreError::InvalidInput(
                 "this LMDB file is already open in this process with a different map size; close those handles before opening it with this ceiling",
+            )),
+        ));
+    }
+    if *live_no_sync != no_sync {
+        return Some((
+            env,
+            Err(StoreError::InvalidInput(
+                "this LMDB file is already open in this process with a different durability mode; close those handles before opening it with this one",
             )),
         ));
     }
@@ -430,7 +455,9 @@ fn live_env(
 /// handle that cannot write. A live env is shared only at the map size it
 /// was opened with: a different ceiling cannot be applied to it, so that
 /// mismatch is refused too, before the caller grows data past a ceiling
-/// it does not actually hold.
+/// it does not actually hold. Likewise a NO_SYNC env (the bulk loader)
+/// and a syncing env never share: the durability difference is a mode the
+/// caller chose, not one to silently override.
 ///
 /// The whole open sequence — live-env check, then `open_env` on a miss —
 /// runs while the registry mutex is held, so it serializes with
@@ -441,7 +468,12 @@ fn live_env(
 /// `None` but our Drop has not yet taken the mutex, so a first attempt
 /// can race heed's own drop and come back `EnvAlreadyOpened`. The retry
 /// runs behind the mutex and observes the freshly-evicted slot.
-fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<SharedEnv>, StoreError> {
+fn shared_env(
+    path: &Path,
+    read_only: bool,
+    map_size: usize,
+    no_sync: bool,
+) -> Result<Arc<SharedEnv>, StoreError> {
     let registry = open_envs();
     // 1ms doubling to 256ms: ~500ms total, orders of magnitude past the
     // Arc-decrement window we retry against, while a genuine stuck close
@@ -457,7 +489,7 @@ fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Share
         }
         let key = env_key(path);
         let mut map = registry.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some((env, check)) = live_env(&map, &key, read_only, map_size) {
+        if let Some((env, check)) = live_env(&map, &key, read_only, map_size, no_sync) {
             // Release the registry mutex before `env` can drop: on the
             // mismatch paths `check` is `Err`, so `env` is dropped when
             // `check.map(..)` discards it, and that drop must not
@@ -465,7 +497,7 @@ fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Share
             drop(map);
             return check.map(|()| env);
         }
-        match open_env(path, read_only, map_size) {
+        match open_env(path, read_only, map_size, no_sync) {
             Ok(env) => {
                 let env = Arc::new(SharedEnv {
                     inner: ManuallyDrop::new(env),
@@ -477,7 +509,7 @@ fn shared_env(path: &Path, read_only: bool, map_size: usize) -> Result<Arc<Share
                 // same file through a different spelling collide correctly.
                 map.insert(
                     env.key.clone(),
-                    (Arc::downgrade(&env), !read_only, map_size),
+                    (Arc::downgrade(&env), !read_only, map_size, no_sync),
                 );
                 return Ok(env);
             }
@@ -526,7 +558,7 @@ impl LmdbStore {
     /// [`WriteStore::create`] when the 1 GiB default is too small; use
     /// one consistent ceiling for a given file across processes.
     pub fn create_with_map_size(path: &Path, map_size: usize) -> Result<Self, StoreError> {
-        let env = shared_env(path, false, map_size)?;
+        let env = shared_env(path, false, map_size, false)?;
         Ok(Self {
             env,
             path: path.to_path_buf(),
@@ -545,18 +577,116 @@ impl LmdbStore {
     /// `map_size` must be a multiple of the system page size; other values
     /// fail with [`StoreError::InvalidInput`].
     pub fn open_read_only_with_map_size(path: &Path, map_size: usize) -> Result<Self, StoreError> {
-        let env = shared_env(path, true, map_size)?;
+        let env = shared_env(path, true, map_size, false)?;
         Ok(Self {
             env,
             path: path.to_path_buf(),
             read_only: true,
         })
     }
+
+    /// One-shot bulk loader for the raw (unframed) keyspace: writes every
+    /// entry into the well-known [`RAW_TABLE`] in a single transaction
+    /// using `MDB_APPEND`, into an environment opened with `MDB_NOSYNC`,
+    /// and forces one sync after the final commit.
+    ///
+    /// This is the data-prep fast path (`oxpinyin-datagen`); the runtime
+    /// read and training paths keep per-commit syncing and plain puts.
+    /// `MDB_APPEND` lets LMDB skip the B-tree descent and spill each
+    /// written key at the current tail, which is only correct when keys
+    /// arrive in ascending order — LMDB returns `MDB_KEYEXIST` (or worse)
+    /// otherwise, so the strictly-ascending precondition is checked up
+    /// front and a violation is reported as [`StoreError::InvalidInput`]
+    /// rather than surfacing as a mid-load backend error.
+    ///
+    /// The `MDB_NOSYNC` environment skips the per-commit fsync; the
+    /// explicit forced sync after the commit restores durability before
+    /// the environment is dropped, so the file on disk is complete once
+    /// this function returns `Ok`. A caller holding the same file open
+    /// through a normal (syncing) handle will be refused by the env
+    /// registry, and vice versa.
+    ///
+    /// An existing file at `path` is left untouched (the caller replaces
+    /// it); the store is not returned — the environment is closed when
+    /// this function returns, leaving the path reopenable read-only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the entries are not strictly ascending
+    /// by key (including duplicate keys), a key is outside 1..=511 bytes,
+    /// or the environment, transaction, or final sync fails.
+    pub fn bulk_load_raw(path: &Path, entries: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError> {
+        for window in entries.windows(2) {
+            if window[0].0 >= window[1].0 {
+                return Err(StoreError::InvalidInput(
+                    "bulk load entries must be strictly ascending by key",
+                ));
+            }
+        }
+        for (key, _) in entries {
+            if key.is_empty() || key.len() > MAX_KEY_LEN {
+                return Err(StoreError::InvalidInput("key length must be 1..=511 bytes"));
+            }
+        }
+        let env = shared_env(path, false, MAP_SIZE, true)?;
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let txn = env.inner.write_txn().map_err(map_heed_error)?;
+        let mut wtxn = LmdbWriteTxn {
+            env: &env,
+            txn,
+            pending_cache: Vec::new(),
+            dbi_open_guard: RefCell::new(None),
+        };
+        let result = {
+            let db = wtxn.ensure_created(RAW_TABLE)?;
+            let mut outcome = Ok(());
+            for (key, value) in entries {
+                if let Err(e) = db.put_with_flags(&mut wtxn.txn, PutFlags::APPEND, key, value) {
+                    outcome = Err(map_heed_error(e));
+                    break;
+                }
+            }
+            outcome
+        };
+        match result {
+            Ok(()) => {
+                let LmdbWriteTxn {
+                    env,
+                    txn,
+                    pending_cache,
+                    dbi_open_guard,
+                } = wtxn;
+                txn.commit().map_err(map_heed_error)?;
+                env.promote_created(&pending_cache);
+                // Release `dbi_open` before the forced sync: the DBI the
+                // txn opened is committed env-wide now, so other txns may
+                // call `mdb_dbi_open` while the sync runs.
+                drop(dbi_open_guard);
+                // The environment was opened with MDB_NOSYNC, so the
+                // commit above is not yet durable; flush it once here,
+                // while this loader is still the only writer.
+                env.inner.force_sync().map_err(map_heed_error)?;
+                Ok(())
+            }
+            Err(error) => {
+                let LmdbWriteTxn {
+                    txn,
+                    dbi_open_guard,
+                    ..
+                } = wtxn;
+                txn.abort();
+                drop(dbi_open_guard);
+                Err(error)
+            }
+        }
+    }
 }
 
 impl ReadStore for LmdbStore {
     fn open_read_only(path: &Path) -> Result<Self, StoreError> {
-        let env = shared_env(path, true, MAP_SIZE)?;
+        let env = shared_env(path, true, MAP_SIZE, false)?;
         Ok(Self {
             env,
             path: path.to_path_buf(),
@@ -632,7 +762,7 @@ impl crate::RawReadStore for LmdbStore {
 
 impl WriteStore for LmdbStore {
     fn create(path: &Path) -> Result<Self, StoreError> {
-        let env = shared_env(path, false, MAP_SIZE)?;
+        let env = shared_env(path, false, MAP_SIZE, false)?;
         Ok(Self {
             env,
             path: path.to_path_buf(),

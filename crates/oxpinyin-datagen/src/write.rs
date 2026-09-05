@@ -248,7 +248,7 @@ impl Backend {
             #[cfg(feature = "redb")]
             Self::Redb => write_raw_with::<oxpinyin_store::RedbStore>(path, entries),
             #[cfg(feature = "lmdb")]
-            Self::Lmdb => write_raw_with::<oxpinyin_store::LmdbStore>(path, entries),
+            Self::Lmdb => write_raw_lmdb(path, entries),
             #[cfg(feature = "tkrzw")]
             Self::Tkrzw => write_raw_with::<oxpinyin_store::TkrzwStore>(path, entries),
             #[cfg(feature = "kyotocabinet")]
@@ -270,7 +270,7 @@ impl Backend {
             #[cfg(feature = "redb")]
             Self::Redb => write_hash_with::<oxpinyin_store::RedbStore>(path, entries),
             #[cfg(feature = "lmdb")]
-            Self::Lmdb => write_hash_with::<oxpinyin_store::LmdbStore>(path, entries),
+            Self::Lmdb => write_hash_lmdb(path, entries),
             #[cfg(feature = "tkrzw")]
             Self::Tkrzw => write_hash_with::<oxpinyin_store::TkrzwStore>(path, entries),
             #[cfg(feature = "kyotocabinet")]
@@ -409,6 +409,16 @@ pub fn write_raw_with<S: WriteStore + RawReadStore>(
         })?;
     }
     // Drop the writer before verifying: redb locks the file per process.
+    verify_raw::<S>(path, entries)
+}
+
+/// The read-back half of [`write_raw_with`], shared with the LMDB bulk
+/// path: reopen read-only and compare every raw row.
+///
+/// # Errors
+///
+/// Store or verification failures; verification compares every raw row.
+fn verify_raw<S: RawReadStore>(path: &Path, entries: &Entries) -> Result<(), DatagenError> {
     // `range_raw` walks the raw keyspace in ascending key-byte order on
     // every backend (KC/Tkrzw natively; redb/LMDB through the well-known
     // raw table), which is exactly the sorted expectation.
@@ -423,6 +433,22 @@ pub fn write_raw_with<S: WriteStore + RawReadStore>(
         },
     )?;
     verify_rows(path, entries, rows)
+}
+
+/// The LMDB bulk path: the same rows [`write_raw_with`] writes, in one
+/// `MDB_APPEND` transaction in an `MDB_NOSYNC` environment, force-synced
+/// once after the commit. Appending is valid because datagen entries are
+/// strictly ascending by construction — the property `verify_rows` pins —
+/// and [`LmdbStore::bulk_load_raw`] enforces it before the first write.
+///
+/// # Errors
+///
+/// Store or verification failures; verification compares every raw row.
+#[cfg(feature = "lmdb")]
+fn write_raw_lmdb(path: &Path, entries: &Entries) -> Result<(), DatagenError> {
+    replace_file(path)?;
+    oxpinyin_store::LmdbStore::bulk_load_raw(path, entries)?;
+    verify_raw::<oxpinyin_store::LmdbStore>(path, entries)
 }
 
 /// Writes rows into a fresh **hash** container at `path` (libpinyin's
@@ -450,6 +476,17 @@ pub fn write_hash_with<S: WriteStore + RawReadStore>(
             Ok(())
         })?;
     }
+    verify_hash::<S>(path, entries)
+}
+
+/// The read-back half of [`write_hash_with`], shared with the LMDB bulk
+/// path: reopen through the hash-container open and verify every raw row
+/// by point read.
+///
+/// # Errors
+///
+/// Store or verification failures.
+fn verify_hash<S: RawReadStore>(path: &Path, entries: &Entries) -> Result<(), DatagenError> {
     let read_only = S::open_hash_read_only(path)?;
     for (key, value) in entries {
         let got = read_only.get_raw(key)?;
@@ -462,6 +499,20 @@ pub fn write_hash_with<S: WriteStore + RawReadStore>(
         }
     }
     Ok(())
+}
+
+/// The LMDB bulk path for the hash container: LMDB has one container
+/// class, so this is [`write_raw_lmdb`]'s loader with the hash writer's
+/// point-read verification.
+///
+/// # Errors
+///
+/// Store or verification failures.
+#[cfg(feature = "lmdb")]
+fn write_hash_lmdb(path: &Path, entries: &Entries) -> Result<(), DatagenError> {
+    replace_file(path)?;
+    oxpinyin_store::LmdbStore::bulk_load_raw(path, entries)?;
+    verify_hash::<oxpinyin_store::LmdbStore>(path, entries)
 }
 
 /// Compares the read-back rows to the sorted expectation.
