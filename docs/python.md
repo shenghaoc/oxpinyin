@@ -12,8 +12,8 @@ requiring libpinyin.
 
 ## Installation
 
-Free-threaded Python 3.14 with a Rust toolchain (the pinned one in
-`rust-toolchain.toml` works):
+CPython 3.14 with a Rust toolchain (the pinned one in `rust-toolchain.toml`
+works):
 
 ```sh
 cd crates/oxpinyin-python  # this package lives inside the workspace
@@ -274,30 +274,59 @@ candidate computation never depends on writable storage.
 
 ## Supported platforms
 
-Free-threaded CPython 3.14, on any platform PyO3 + maturin build for. CI
-exercises Linux; macOS and Windows run the same portable crates
+CPython 3.14, on any platform PyO3 + maturin build for. CI exercises Linux;
+macOS and Windows run the same portable crates
 (`oxpinyin-core/data/user/engine`) that the portable CI job covers, but
 wheel builds there are currently untested.
 
-CI runs exactly one interpreter — free-threaded CPython 3.14 on Linux — and
-it builds from source there (`pip install .` through maturin), so that one
-source-built configuration is the whole of what these tests prove.
+CI runs exactly one interpreter — the `debian:testing` image's stock
+`python3`, a **GIL-enabled** CPython 3.14 on Linux — and it builds from
+source there (`pip install .` through maturin), so that one source-built
+configuration is the whole of what these tests prove. It was free-threaded
+3.14t until the job moved into a container: `actions/setup-python` supplied
+that selector and cannot serve a container job, so the interpreter is now
+whatever the image ships (`Py_GIL_DISABLED` is `0` there and
+`sys._is_gil_enabled()` is `True`).
+
 `requires-python = ">=3.14"` only gates where pip will *install* the package;
 it does not describe what a build is binary-compatible with. That is fixed at
-build time by pyo3 — and neither stable-ABI feature the crate enables applies
-to the interpreter CI actually builds. `abi3-py310` covers GIL-enabled CPython
-only; `abi3t-py315` takes effect from 3.15 onward, which is why it is enabled
-at all. On free-threaded 3.14 pyo3 selects neither and emits a
-version-specific `cp314t` extension instead of a stable-ABI one. This project
-publishes and tests no pre-built wheels, so nothing beyond the source build on
-free-threaded 3.14 is claimed here.
+build time by pyo3, from the interpreter in front of it. On GIL-enabled 3.14
+`abi3-py310` applies and `abi3t-py315` does not — `abi3t` takes effect from
+3.15 onward — so the job now builds against the limited API at the 3.10 floor
+and produces a **stable-ABI extension**, tagged `cp310-abi3`, where the
+free-threaded job used to emit a version-specific `cp314t` one. This project
+publishes and tests no pre-built wheels, so nothing beyond that source build
+on GIL-enabled 3.14 is claimed here.
 
-Free-threaded 3.14 is the platform this binding is written for. `Engine.lookup`
-runs through `Engine::with_session`, which releases the GIL before it acquires
-the shared-`Engine` mutex and performs the native operation, so the
-shared-engine thread-safety test contends that mutex for real even on a GIL
-build — only the Python-side work outside that detached region stays
-serialized. GIL builds are neither claimed nor tested here.
+The two floors are deliberately different numbers, and both pins stay as they
+are. `abi3-py310` is the *binary* floor — what the built extension could load
+into. `requires-python = ">=3.14"` is the *support* floor — what anything here
+is tested against; claiming less than the ABI allows is the safe direction, so
+pip refuses the older GIL interpreters the artifact would technically satisfy.
+`abi3t-py315` is inert on this interpreter and is kept as the forward pin: from
+3.15 pyo3 prefers it over `abi3-py310` on GIL-enabled and free-threaded builds
+alike, and on a free-threaded build it is the only one that can apply.
+
+The binding is still *written* to be correct without a GIL — `Engine` is
+`#[pyclass(frozen)]` behind an internal mutex, and `_native` declares
+`gil_used = false` so importing it cannot re-enable the GIL process-wide on a
+free-threaded interpreter — but written-for is not tested-for, and no job
+exercises a free-threaded build today.
+
+The suite records the same boundary. `tests_py/conftest.py`'s session-scoped
+`extension_imports_keep_the_gil_as_found` is the check that would catch a
+missing `Py_MOD_GIL_NOT_USED`, and it is gated on `Py_GIL_DISABLED`: the
+imports run on every interpreter, but the GIL assert only bites on a build
+that has a GIL to lose. On CI's interpreter it asserts nothing, so read a
+green run as "the modules load", not as "the attestation holds". It is
+dormant rather than deleted — a local `pytest` on a free-threaded 3.14 re-arms
+it.
+
+What the GIL build does still test is the lock itself: `Engine.lookup` runs
+through `Engine::with_session`, which releases the GIL before it acquires the
+shared-`Engine` mutex and performs the native operation, so
+`test_shared_engine_is_thread_safe` contends that mutex for real under a GIL —
+only the Python-side work outside that detached region stays serialized.
 
 ## Testing strategy
 

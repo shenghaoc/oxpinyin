@@ -100,11 +100,16 @@ Past that the gap stops widening: the eight-thread rows above have private at
 than growing without bound. The lever is shared-vs-private, not
 GIL-vs-free-threaded.
 
-(This does not make the free-threaded CI pin pointless: `Engine.lookup`
-releases the GIL for the native decode, so the shared-`Engine` mutex is
-contended in `test_shared_engine_is_thread_safe` even under a GIL — but
-free-threaded is what lets the rest of the worker loop, the Python-side list
-building and getters, run concurrently instead of serialised behind the GIL.)
+(CI no longer pins a free-threaded interpreter: containerising the python job
+on `debian:testing` dropped `actions/setup-python` and with it the `3.14t`
+selector, so the job runs the image's GIL-enabled CPython 3.14 — see
+`docs/python.md`, "Supported platforms". That costs less than it sounds.
+`Engine.lookup` releases the GIL for the native decode, so the
+shared-`Engine` mutex is still contended for real in
+`test_shared_engine_is_thread_safe` under a GIL; what a free-threaded
+interpreter adds is the rest of the worker loop — the Python-side list
+building and getters — running concurrently instead of serialised behind the
+GIL.)
 
 ## Result 3 — what a `Runtime`/`Session` split would save
 
