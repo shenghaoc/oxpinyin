@@ -18,8 +18,10 @@
 //! reaches an `extern "C"` boundary, so if a bug ever produced a panic
 //! the failure would be a loud abort, not undefined behaviour. There is
 //! deliberately no panic-catching wrapper: with the lints green one is
-//! operationally inert, and `panic = "abort"` in the release profile
-//! makes it literally so.
+//! operationally inert, and abort-at-ABI makes the outcome the same under
+//! either panic strategy (the release profile is `unwind`; `abort` was
+//! tried and reverted for its keystroke-cycle cost, see
+//! docs/perf/perf-baseline-kc-2026-09.md).
 //!
 //! Opaque handles cross the boundary as `*mut T` via `Box::into_raw` /
 //! `Box::from_raw`. Every incoming pointer is null-checked before deref.

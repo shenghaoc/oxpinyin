@@ -131,7 +131,12 @@ re-state these.
   inert — `panic = "abort"` made them literally dead, and all three
   were removed. Measured −64 KiB stripped on ARM64/KC; the 116 KiB
   symbolizer is unaffected (docs/perf/perf-so-size-2026-09.md).
-  `[profile.profiling]` keeps an explicit `panic = "unwind"`.)*
+  `[profile.profiling]` keeps an explicit `panic = "unwind"`.
+  **Reverted 2026-09-05** (`perf/revert-release-panic-abort`): the
+  profile line measured +5.5% on the ARM64/KC keystroke cycle against
+  −64 KiB and recovers without it (docs/perf/perf-baseline-kc-2026-09.md);
+  the release profile is back on `unwind` on performance grounds, while
+  the `ffi_catch` removal and the abort-at-ABI containment stand.)*
 
 ## K. Highest-risk existing findings
 

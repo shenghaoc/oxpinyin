@@ -80,28 +80,28 @@ glib-sys = "0.20"
 
 # Release .so size/speed lever: fat LTO + one codegen unit lets the linker
 # drop cross-crate dead code and duplicate generic instantiations that
-# per-CGU codegen keeps; panic = "abort" drops the remaining unwind tables.
-# Measured effect: docs/perf/perf-so-size-2026-09.md.
+# per-CGU codegen keeps. Measured effect: docs/perf/perf-so-size-2026-09.md.
 #
-# panic = "abort" is safe because the no-panic guarantee is mechanically
-# enforced (clippy::unwrap_used/expect_used/panic/panic_in_result_fn denied
-# in every library crate, non-test scope). The former UB justification for
-# catching panics at the C ABI is obsolete since Rust 1.81 (Rust Reference,
-# "Unwinding": a panic reaching a non-unwinding ABI boundary aborts, it is
-# not undefined behaviour), and the toolchain pins 1.97.1. On a bug panic
-# the process now aborts instead of continuing with a sentinel return;
-# with the lints green the catch sites were operationally inert. The 116 KiB
-# gimli/addr2line symbolizer is unaffected by this setting — it is held by
-# std's default panic hook, which still runs to print before aborting, so
-# no panic strategy removes it. (An earlier revision of this comment blamed
-# std::io::Error backtrace capture; retracted — see the "Symbolizer
-# attribution — corrected" section of docs/perf/perf-so-size-2026-09.md.)
+# panic = "abort" was added here on 2026-09-05 (a41605ea, −65,536 B
+# stripped on ARM64/KC) and removed the same day: with it the ARM64/KC
+# keystroke cycle measured +5.5% steady / +6.4% cold, and a back-to-back
+# rebuild without it recovers the time at +64 KiB
+# (docs/perf/perf-baseline-kc-2026-09.md, "Where the changes landed").
+# The panic discipline does not depend on the strategy: the no-panic lints
+# (clippy::unwrap_used/expect_used/panic/panic_in_result_fn denied in every
+# library crate, non-test scope) keep the bodies panic-free, and since
+# Rust 1.81 a panic reaching a non-unwinding ABI boundary aborts (Rust
+# Reference, "Unwinding"), so the removed catch sites stay removed under
+# either strategy. Re-adopting abort needs a keystroke-cycle number next
+# to the size number. The 116 KiB gimli/addr2line symbolizer is held by
+# std's default panic hook and is unaffected by either strategy (see the
+# "Symbolizer attribution — corrected" section of
+# docs/perf/perf-so-size-2026-09.md).
 # [profile.profiling] keeps its explicit `lto = "thin"` and `panic =
 # "unwind"` overrides and inherits codegen-units from here.
 [profile.release]
 lto = "fat"
 codegen-units = 1
-panic = "abort"
 
 # Stage-2 CPU profiles: release speed with enough debug to resolve stacks.
 # `debug = "line-tables-only"` keeps the image small; samply/perf still map
