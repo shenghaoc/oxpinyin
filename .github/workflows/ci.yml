@@ -68,9 +68,11 @@ env:
 #   lint — rustfmt + clippy
 #   test — cargo test for the whole workspace, and the portable crates on
 #          macOS and Windows
-#   python — the oxpinyin Python binding on a free-threaded interpreter:
-#            wheel build, binding tests, and native-vs-Python parity against
-#            the corpus transcript
+#   python — the oxpinyin Python binding on the container image's stock
+#            python3 — GIL-enabled CPython 3.14, since actions/setup-python
+#            cannot serve a container job and took the old '3.14t' selector
+#            with it: wheel build, binding tests, and native-vs-Python
+#            parity against the corpus transcript
 #   deny — supply-chain gate: RustSec advisories, licenses, sources,
 #          duplicate-version drift (docs/safety/oxpinyin-safety-profile.md
 #          layer 6)
@@ -213,6 +215,11 @@ jobs:
         # the build use this exact maturin instead of resolving its own from
         # the build-system requires range (>=1.14,<2) in an isolated env; that
         # range only bounds human-driven builds.
+        #
+        # On this GIL-enabled interpreter pyo3's abi3-py310 applies and
+        # abi3t-py315 does not (abi3t needs 3.15+), so the wheel built here is
+        # a stable-ABI cp310-abi3 one, not a version-specific build. See
+        # docs/python.md, "Supported platforms".
         run: |
           pip install --break-system-packages maturin==1.15.0 pytest==9.1.1
           pip install --break-system-packages --no-build-isolation .
