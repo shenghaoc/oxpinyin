@@ -1428,3 +1428,12 @@ freezes — was never in that enumeration. This entry completes it.
   record. Class (b): upstream's stored bytes *are* uninitialized memory;
   no safe construction reproduces specific garbage, and none should.
 
+
+## redb write-side emptiness probe creates the table it probes (2026-09-05)
+
+redb `WriteTxn::is_empty` (`RedbWriteTxn` in `crates/oxpinyin-store/src/lib.rs`)
+creates the probed table if absent — redb API constraint (4.2.0: `open_table`
+creates, `list_tables` is the only lookup), no non-creating write-side
+existence probe exists; the store traits cannot tell an empty table from an
+absent one, so nothing above them observes it and the only trace is an empty
+table in the file.
