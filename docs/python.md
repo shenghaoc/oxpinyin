@@ -159,7 +159,7 @@ the pinyin one.
 ```python
 import oxpinyin.zhuyin
 
-with oxpinyin.zhuyin.Engine.from_fixture_dir("fixtures/w3/kct") as engine:
+with oxpinyin.zhuyin.Engine.from_fixture_dir("fixtures/w3/tkt") as engine:
     for candidate in engine.lookup_chewing("su3cl3"):
         print(candidate.text)     # 你好 first, then 你, 尼, ...
 ```
