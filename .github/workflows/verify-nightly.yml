@@ -49,7 +49,7 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev util-linux
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev util-linux
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

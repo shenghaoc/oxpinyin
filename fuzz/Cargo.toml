@@ -13,23 +13,14 @@ unsafe_code = "deny"
 [package.metadata]
 cargo-fuzz = true
 
-# The fuzz workspace pins its backend explicitly: kyotocabinet, through
-# oxpinyin-capi's forwarding chain, independent of the main workspace's
-# default (tkrzw). default-features = false on the backend-carrying edges
-# keeps cargo from unifying the main default with the pin and tripping the
-# exactly-one-backend compile_error! in oxpinyin-store.
-[features]
-default = ["kyotocabinet"]
-kyotocabinet = ["oxpinyin-capi/kyotocabinet"]
-
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 oxpinyin-core = { path = "../crates/oxpinyin-core" }
 # dict-loader: hostile bytes through the table decoder (audit F-3 class).
-oxpinyin-data = { path = "../crates/oxpinyin-data", default-features = false }
+oxpinyin-data = { path = "../crates/oxpinyin-data" }
 # capi-commands: stateful session fuzzer over the C ABI (libchewing
 # fuzzer.rs shape). Linux-only, matching the fuzz CI job — as is capi.
-oxpinyin-capi = { path = "../crates/oxpinyin-capi", default-features = false, features = ["fuzz-api"] }
+oxpinyin-capi = { path = "../crates/oxpinyin-capi", features = ["fuzz-api"] }
 # fixture-model: the fixture Dictionary/LanguageModel doubles live in the
 # test-support crate, not oxpinyin-core (core defines the traits; testsupport
 # holds the in-memory test implementations).
