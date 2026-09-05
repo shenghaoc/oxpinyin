@@ -1175,7 +1175,7 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
   Revert-and-check: reverting the two facade edits fails the C test at the
   cursor assertion (3 vs 6) and changes exactly one of the 28 corpus cases.
 
-  **Residual — OPEN, and NOT measured against the pin.** The fix makes the
+  **Residual — OPEN.** The fix makes the
   committed row the displayed row; it does not make the before-cursor
   choose pin-identical. For a row whose span STARTS after the composition
   offset, the chosen span is recorded as `[0, offset)` rather than
@@ -1192,11 +1192,70 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
   to carry its span start plus an end-anchored `Session::select_*` — both
   changes to `oxpinyin-engine`'s supported surface, so AGENTS.md's STOP
   ("needs interface change") applies and the gap is registered rather than
-  improvised. No libpinyin checkout or instrumented oracle was available on
-  the host this amendment was written on, so the pin-side answer for this
-  residual is **inferred from the cited `m_begin` law, not measured**; a
-  differential run on the Linux oracle is owed before it is classified or
-  closed.)
+  improvised. (The paragraph's pin-side claims were written without an
+  oracle on the authoring host and are superseded by the measured record
+  below.)
+
+  (Amended 2026-09-05, **the residual measured against the pin** — the
+  owed differential run, on the pin-built oracle
+  (`/tmp/oxpinyin-zhuyin-oracle`, `oracle-pin.txt`: libpinyin 2.11.91 at
+  `0c5e80e1`, model20 `59c68e89…`, Tkrzw, `shared_object_sha256`
+  `5cb23f8b…`) against this branch (`ab36a43c`); the Rust systemdir was
+  recompiled from the same SHA-verified model20 export with
+  `oxpinyin-datagen compile --backend tkrzw` — the runtime's
+  default-backend switch (`05688575`) had made the session's `.redb` dir
+  stale. Pin source re-read at the pin (`git show 0c5e80e1:src/zhuyin.cpp`):
+  `zhuyin_choose_candidate` for a `NORMAL_CANDIDATE_BEFORE_CURSOR` row
+  does `constraints->add_constraint(candidate->m_begin,
+  candidate->m_end, token)` and `offset = candidate->m_begin` — the
+  `m_begin` law, now measured, not just cited. The driver gained the
+  default-off `choose` battery for it (`tools/bisection/zhuyin-diff.c`:
+  parse, `guess_sentence` — the consumer protocol — then
+  `guess_before(consumed)`, choose row 1, the answered cursor,
+  `get_sentence` after the choose and after the next re-guess, over
+  `su3cl3`/`su3u3`/`su3u3u3`); the standing default battery is unchanged
+  (byte-identical, 2307 lines both sides). Measured, row 1 of
+  `before(consumed)` — the row is the same on both sides, windows
+  identical (n 94/600/608, head rows equal):
+
+  | input | row 1 (span, pin) | pin cursor | ox cursor | pin re-guess | ox re-guess |
+  |---|---|---|---|---|---|
+  | `su3cl3` | 好 `[3,6)` | **3** | 6 | 你好 | 你好 |
+  | `su3u3` | 拟议 `[0,5)` | **0** | 5 | 拟议 | 拟议 |
+  | `su3u3u3` | 意义 `[3,7)` | **3** | 7 | 你意义 | 你意义 |
+
+  What the measurement settles, and what it corrects:
+  - **The cursor divergence is universal, and it is the whole measured
+    surface.** The pin answers the row's `m_begin` in every case —
+    including a whole-composition row (拟议 `[0,5)` → 0), where this
+    facade answers the composition end. This facade's law (the span END
+    mapped to original coordinates) is measurable at every row: 6 vs 3,
+    5 vs 0, 7 vs 3. Honest note: the fix above traded an accidental
+    cursor agreement for the displayed-row property — pre-fix this
+    facade answered 3 on `su3cl3` (= the pin, by accident of the
+    wrongly-chosen 你's consumed length); post-fix it answers 6. The
+    text side moved toward the pin (好, the row the caller actually
+    saw); the cursor side moved from accidentally-right to wrong.
+  - **The sentence-level claim is corrected.** The superseded
+    paragraph's "the raw bytes before the span are absorbed into the
+    chosen text instead of being decoded" does not show in the re-decoded
+    1-best sentence: the pin's constrain-and-re-decode keeps 你好 AND so
+    does this facade, on all three inputs. The `[0, offset)` constraint
+    span is structurally real (the source law above), but no corpus
+    input here flips the 1-best because of it; a sentence-level
+    divergence would need an input where the constraint changes the
+    decode, none found among the three.
+  - **Classification, unchanged and now grounded.** The pin law is plain
+    integer bookkeeping — reproducible in principle — so this is not one
+    of the four exception classes; it is a gap the compatibility policy's
+    corollary makes mandatory to close ("if implementing a symbol
+    correctly requires an engine change, that engine change is
+    mandatory"). The STOP stands (an `oxpinyin-engine` interface change
+    needs an ask), so the entry stays OPEN, registered rather than
+    improvised. Closure proof when the engine work lands: this battery
+    must go byte-identical — cursor, sentence after the choose, and
+    sentence after the re-guess across all three inputs, on both
+    protocols.)
 
 
 ## zhuyin multi-syllable candidate construction — CLOSED (the zhuyin display law, not the construction model)
