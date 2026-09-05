@@ -255,6 +255,65 @@ fn remove_pronunciations(txn: &mut dyn WriteTxn, token: Token) -> Result<(), Sto
     Ok(())
 }
 
+/// Every pronunciation of `tokens`, grouped by token, from **one** ordered
+/// walk of the pronunciation table.
+///
+/// The table's keys are a big-endian token prefix plus a key tail, so a
+/// single ascending walk yields each token's rows contiguously, in the
+/// same per-token order the per-token [`pronunciation_range`] scan
+/// produced. Multi-token readers use this instead of one `range` scan —
+/// each with its own read transaction and cursor — per token.
+fn collect_pronunciations_for_tokens(
+    store: &impl ReadStore,
+    tokens: &std::collections::HashSet<Token>,
+) -> Result<std::collections::BTreeMap<Token, Vec<UserPronunciation>>, UserStoreError> {
+    let mut out = std::collections::BTreeMap::new();
+    if tokens.is_empty() {
+        return Ok(out);
+    }
+    store.for_each(PRONUNCIATION, &mut |key, value| {
+        let (token, key_bytes) = codec::decode_token_bytes(key)
+            .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
+        if !tokens.contains(&token) {
+            return Ok(());
+        }
+        let count = codec::decode_u64(value)
+            .map_err(|_| StoreError::Backend("corrupt pronunciation count".into()))?;
+        out.entry(token)
+            .or_insert_with(Vec::new)
+            .push(UserPronunciation::new(
+                phrase::decode_keys(key_bytes),
+                count,
+            ));
+        Ok(())
+    })?;
+    Ok(out)
+}
+
+/// The pronunciation key tails owned by `tokens`, from **one** ordered
+/// walk of the pronunciation table inside `txn` — the write-side twin of
+/// [`collect_pronunciations_for_tokens`], for callers that remove the
+/// rows afterwards. Returns `(token, key tail)` pairs so each removal can
+/// rebuild its full key with [`codec::encode_token_bytes`].
+fn collect_pronunciation_keys_from_txn(
+    txn: &dyn WriteTxn,
+    tokens: &std::collections::HashSet<Token>,
+) -> Result<Vec<(Token, Vec<u8>)>, StoreError> {
+    let mut out = Vec::new();
+    if tokens.is_empty() {
+        return Ok(out);
+    }
+    txn.for_each(PRONUNCIATION, &mut |key, _value| {
+        let (token, key_bytes) = codec::decode_token_bytes(key)
+            .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
+        if tokens.contains(&token) {
+            out.push((token, key_bytes.to_vec()));
+        }
+        Ok(())
+    })?;
+    Ok(out)
+}
+
 /// Whether the store holds any user data, evaluated inside `txn`.
 ///
 /// `||` short-circuits, so each table is probed with a first-row
@@ -909,9 +968,12 @@ impl<S: WriteStore> GenericUserStore<S> {
             rows.push((token, text.to_owned()));
             Ok(())
         })?;
+        let tokens: std::collections::HashSet<Token> =
+            rows.iter().map(|(token, _)| *token).collect();
+        let pronunciations = collect_pronunciations_for_tokens(&*db, &tokens)?;
         let mut out = Vec::new();
         for (token, text) in rows {
-            for pronunciation in collect_pronunciations_from_store(&*db, token)? {
+            for pronunciation in pronunciations.get(&token).into_iter().flatten() {
                 let Some(pinyin) = pronunciation.render_pinyin() else {
                     continue;
                 };
@@ -942,9 +1004,12 @@ impl<S: WriteStore> GenericUserStore<S> {
             tokens_and_texts.push((token, text));
             Ok(())
         })?;
+        let tokens: std::collections::HashSet<Token> =
+            tokens_and_texts.iter().map(|(token, _)| *token).collect();
+        let pronunciations = collect_pronunciations_for_tokens(&*db, &tokens)?;
         let mut out = Vec::new();
         for (token, text) in tokens_and_texts {
-            let pronunciations = collect_pronunciations_from_store(&*db, token)?;
+            let pronunciations = pronunciations.get(&token).cloned().unwrap_or_default();
             out.push(UserPhrase::new(token, text, pronunciations));
         }
         Ok(out)
@@ -1104,6 +1169,12 @@ impl<S: WriteStore> GenericUserStore<S> {
                 }
                 Ok(())
             })?;
+            // One ordered walk collects every matched token's
+            // pronunciation keys, instead of a per-token range scan
+            // (and cursor) inside the remove loop below.
+            let matched_tokens: std::collections::HashSet<Token> =
+                matched.iter().map(|(token, _)| *token).collect();
+            let pron_keys = collect_pronunciation_keys_from_txn(txn, &matched_tokens)?;
             for (token, text) in matched {
                 txn.remove(PHRASE, &codec::encode_token(token))?;
                 if phrase_index_library_index(token) == USER_DICTIONARY {
@@ -1113,7 +1184,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                     PHRASE_BY_LIB_TEXT,
                     &codec::encode_u8_str(phrase_index_library_index(token), &text),
                 )?;
-                remove_pronunciations(txn, token)?;
+            }
+            for (token, key_bytes) in pron_keys {
+                txn.remove(PRONUNCIATION, &codec::encode_token_bytes(token, &key_bytes))?;
             }
             has_user_data_in_write_txn(txn)
         })?;
