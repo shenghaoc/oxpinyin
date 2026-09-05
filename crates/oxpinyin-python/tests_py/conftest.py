@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
@@ -35,21 +36,30 @@ def resolve_input(case: dict) -> str:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def extension_runs_gil_disabled():
-    """The CI interpreter check is not enough: it probes the interpreter
-    before the wheel installs. Importing an extension that does not declare
-    `Py_MOD_GIL_NOT_USED` re-enables the GIL process-wide on 3.13+, which
-    would leave the shared-engine thread-safety test vacuous while the job
-    stays green. Assert the GIL is still disabled after both extension
-    modules import. (`sys._is_gil_enabled` only exists from 3.13; older
-    interpreters skip the assert.)
+def extension_imports_keep_the_gil_as_found():
+    """Both extension modules import, and a free-threaded build stays free.
+
+    Importing an extension that does not declare `Py_MOD_GIL_NOT_USED`
+    re-enables the GIL process-wide on 3.13+, which would leave
+    `test_shared_engine_is_thread_safe` vacuous while the suite stayed
+    green. The import runs on every interpreter — a module that fails to
+    load is caught everywhere — and the GIL assert is gated on the
+    interpreter actually being a free-threaded build.
+
+    That gate is the whole point of `Py_GIL_DISABLED`, not a way around a
+    failure: only a build whose GIL is off has one to re-enable. CI runs
+    Debian's stock `python3` (GIL-enabled: `actions/setup-python` cannot
+    serve a container job, so the free-threaded selector went with it),
+    where the interpreter's own default would fail an ungated assert while
+    proving nothing. On a free-threaded build the check bites exactly as
+    before. (`sys._is_gil_enabled` only exists from 3.13.)
     """
     import oxpinyin
     import oxpinyin.zhuyin
 
     assert oxpinyin is not None and oxpinyin.zhuyin is not None
     is_gil_enabled = getattr(sys, "_is_gil_enabled", None)
-    if is_gil_enabled is not None:
+    if sysconfig.get_config_var("Py_GIL_DISABLED") and is_gil_enabled is not None:
         assert not is_gil_enabled(), "extension import re-enabled the GIL"
 
 
