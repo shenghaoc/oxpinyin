@@ -91,7 +91,7 @@ use std::ops::Bound;
 use std::path::Path;
 
 #[cfg(feature = "redb")]
-use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata, TableHandle};
+use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata};
 
 /// Errors that can occur when opening or scanning a store.
 ///
@@ -704,17 +704,15 @@ impl WriteTxn for RedbWriteTxn<'_> {
     }
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
-        // `open_table` creates an absent table; probe existence first so an
-        // emptiness check never changes the schema.
-        let exists = self
-            .txn
-            .list_tables()
-            .map_err(map_storage_error)?
-            .any(|handle| handle.name() == table);
+        // Opening the table inside the write transaction creates it when
+        // absent, the same create-on-open every read-side method here has
+        // (see the trait docs), and a fresh table has no root, so the probe
+        // answers `true` straight from the header. redb has no existence
+        // check short of `list_tables`, which builds an owned name for
+        // every table on each call; the former probe-then-open shape paid
+        // that on every emptiness check to keep an absent table absent, a
+        // distinction nothing above the trait can observe.
         let def = table_def(table)?;
-        if !exists {
-            return Ok(true);
-        }
         let tbl = self.txn.open_table(def).map_err(map_table_error)?;
         tbl.is_empty().map_err(map_storage_error)
     }
@@ -1248,8 +1246,10 @@ mod tests {
                 fn write_txn_is_empty() {
                     let path = temp_path("wtxn-empty");
                     let store = <$store>::create(&path).unwrap();
-                    // An absent table counts as empty and must not be created
-                    // by the probe.
+                    // An absent table counts as empty. Whether the probe
+                    // leaves the table behind is the backend's business
+                    // (redb's write-transaction open creates it); the
+                    // contract is only the answer.
                     assert!(store.write(|txn| txn.is_empty("t")).unwrap());
                     store
                         .write(|txn| {
@@ -1556,7 +1556,7 @@ mod tests {
 
     #[cfg(feature = "redb")]
     #[test]
-    fn redb_is_empty_probe_does_not_create_tables() {
+    fn redb_is_empty_probe_opens_the_table_it_probes() {
         use ::redb::ReadableDatabase;
         let path = std::env::temp_dir().join(format!(
             "oxpinyin-store-wtxn-probe-{}.redb",
@@ -1566,15 +1566,18 @@ mod tests {
         let _cleanup = RemoveOnDrop(&path);
         let store = crate::RedbStore::create(&path).unwrap();
         assert!(store.write(|txn| txn.is_empty("t")).unwrap());
-        drop(store);
-        // A committed write transaction that only probed emptiness must
-        // leave the database with zero tables; assert it against redb
-        // directly because the store traits cannot distinguish an absent
-        // table from an empty one.  (`::redb` names the crate
+        // The probe opens the table through the write transaction, which
+        // creates it, so the committed database carries exactly the probed
+        // table, empty. Through the store traits an empty table and an
+        // absent one read identically, so the read tier's answers are
+        // unchanged; assert both faces. (`::redb` names the crate
         // unambiguously alongside the generated per-tier test modules.)
+        assert!(crate::ReadStore::is_empty(&store, "t").unwrap());
+        assert_eq!(crate::ReadStore::get(&store, "t", b"k").unwrap(), None);
+        drop(store);
         let db = ::redb::ReadOnlyDatabase::open(&path).unwrap();
         let txn = db.begin_read().unwrap();
-        assert_eq!(txn.list_tables().unwrap().count(), 0);
+        assert_eq!(txn.list_tables().unwrap().count(), 1);
         drop(txn);
         drop(db);
     }
