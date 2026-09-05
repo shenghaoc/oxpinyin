@@ -26,8 +26,8 @@ FIX_ROOT="$REPO_ROOT/fixtures/w3"
 # The committed W3 fixture holds one per-backend data directory each
 # (fixtures/w3/<kct|redb|tkt|lmdb>), a real drop-in dir with libpinyin's
 # own file names. OXPINYIN_CAPI_BACKEND_EXT pins the backend for capi
-# builds that select one explicitly (e.g. --features tkrzw); unset, this
-# gate builds the default (Kyoto Cabinet) and picks the first committed
+# builds that select one explicitly (e.g. --features kyotocabinet); unset,
+# this gate builds the default (tkrzw) and picks the first committed
 # backend directory, preferring the default's.
 if [ -n "${OXPINYIN_CAPI_BACKEND_EXT:-}" ]; then
     case "$OXPINYIN_CAPI_BACKEND_EXT" in
@@ -43,7 +43,7 @@ if [ -n "${OXPINYIN_CAPI_BACKEND_EXT:-}" ]; then
     fi
 else
     SYS_EXT=""
-    for ext in kct redb tkt lmdb; do
+    for ext in tkt kct redb lmdb; do
         if [ -d "$FIX_ROOT/$ext" ]; then
             SYS_EXT=$ext
             break
