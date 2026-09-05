@@ -50,6 +50,21 @@ esac
 
 if [ "$#" -gt 0 ]; then
     list=$(printf '%s\n' "$@")
+    # A path we were asked for by name must exist and be a regular file.
+    # Skipping a typo silently would report "no violations" for a file nobody
+    # read, which is the one answer a linter must never give. The tracked-file
+    # listing below is deliberately NOT held to this: a path git still lists
+    # but the working tree lacks (mid-rebase, sparse checkout) stays a skip.
+    unreadable=''
+    for file in "$@"; do
+        [ -f "$file" ] || unreadable="${unreadable}  ${file}
+"
+    done
+    if [ -n "$unreadable" ]; then
+        printf 'crate-cfg-placement: not a readable regular file:\n%s' \
+            "$unreadable" >&2
+        exit 2
+    fi
 elif list=$(git ls-files -- '*.rs' 2>/dev/null); then
     :
 else
@@ -71,6 +86,7 @@ checked=0
 
 while IFS= read -r file; do
     [ -n "$file" ] || continue
+    # Only reachable in tracked-listing mode; named paths were checked above.
     [ -f "$file" ] || continue
     checked=$((checked + 1))
     hit=$(awk "$scan" "$file")
