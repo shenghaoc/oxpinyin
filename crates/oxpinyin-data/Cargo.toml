@@ -15,7 +15,6 @@ oxpinyin-core = { workspace = true }
 # The workspace table carries default-features = false for this edge; the
 # [features] block below forwards the backend selection.
 oxpinyin-store = { workspace = true }
-compact_str.workspace = true
 
 [features]
 # Backend selection, forwarded to oxpinyin-store (one backend per binary;
