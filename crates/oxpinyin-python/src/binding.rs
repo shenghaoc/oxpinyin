@@ -41,6 +41,20 @@ create_exception!(
 /// Workspace version surfaced as `oxpinyin.__version__`.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The compiled-in backend's table extension, surfaced as
+/// `oxpinyin._native.__store_ext__`.
+///
+/// Exactly one backend is compiled per build, and its extension names the
+/// data directory this wheel can open — `<stem>.<ext>` for the tables the
+/// two non-DBM peers write, `fixtures/w3/<ext>` for the committed fixture
+/// sets. A caller cannot infer it from a directory listing: Kyoto Cabinet
+/// and tkrzw both write libpinyin's own file names, so the wrong one of
+/// that pair is not a clean miss but a deep content failure. Reading the
+/// constant off the extension module gives Python the same answer
+/// `oxpinyin_data::DEFAULT_STORE_EXT` gives the Rust suites, from the one
+/// artifact that actually knows.
+const STORE_EXT: &str = oxpinyin_data::DEFAULT_STORE_EXT;
+
 /// Translates an open failure into the Python exception hierarchy:
 /// missing paths/models → `FileNotFoundError`, unreadable ones → `OSError`,
 /// corrupt data content → `ValueError`.
@@ -504,6 +518,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyCandidate>()?;
     module.add("OxpinyinError", module.py().get_type::<OxpinyinError>())?;
     module.add("__version__", VERSION)?;
+    module.add("__store_ext__", STORE_EXT)?;
     // The zhuyin submodule lives in the same extension (and the same
     // wheel): one package, no forced linkage for pinyin-only consumers —
     // importing `oxpinyin` never touches it until `oxpinyin.zhuyin` does.

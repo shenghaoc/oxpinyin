@@ -74,15 +74,37 @@ def crate_dir() -> Path:
 
 
 @pytest.fixture(scope="session")
-def fixture_w3(repo_root: Path) -> Path:
+def store_ext() -> str:
+    """The store backend the installed extension module was compiled with.
+
+    Exactly one backend is compiled per build, and `fixtures/w3` carries a
+    complete data directory per peer, so the suite has to pick the one this
+    wheel can read. Pinning it by hand went red twice on default-backend
+    flips, and the Kyoto Cabinet/tkrzw pair makes that failure a bad one:
+    both write libpinyin's own file names (`pinyin_index.bin`, `bigram.db`
+    — `DEFAULT_STORE_IS_LIBPINYIN_DBM` is true for both), so the wrong one
+    of the two is not a clean miss but a deep content failure (`tkrzw
+    status 11: bad magic data`). The extension module reports its own
+    `oxpinyin_data::DEFAULT_STORE_EXT`, which is what the Rust suites join
+    onto `fixtures/w3` as well, so the two sides cannot drift apart.
+    """
+    from oxpinyin._native import __store_ext__
+
+    return __store_ext__
+
+
+@pytest.fixture(scope="session")
+def fixture_w3(repo_root: Path, store_ext: str) -> Path:
     """The committed mini system-data fixture the Rust tests use too.
 
-    The wheel is built with the crate's default backend (tkrzw:
-    the CI job installs its C library for exactly that), so the fixture
-    directory is the one datagen wrote in libpinyin's own layout.
+    `fixtures/w3/<ext>`, the same path `oxpinyin-runtime`'s and the C ABI's
+    suites build — resolved from the compiled-in backend rather than
+    written out.
     """
-    path = repo_root / "fixtures" / "w3" / "tkt"
-    assert (path / "pinyin_index.bin").is_file(), "w3 fixture missing"
+    path = repo_root / "fixtures" / "w3" / store_ext
+    # `pinyin_index.*`, not one pinned name: the two DBM peers write
+    # libpinyin's `pinyin_index.bin`, redb and LMDB `pinyin_index.<ext>`.
+    assert any(path.glob("pinyin_index.*")), f"w3 fixture missing for {store_ext}"
     return path
 
 
@@ -97,7 +119,9 @@ def zhuyin_parity_corpus(crate_dir: Path) -> dict:
 
 
 @pytest.fixture(scope="session")
-def zhuyin_native_transcript(tmp_path_factory, repo_root: Path, crate_dir: Path) -> dict:
+def zhuyin_native_transcript(
+    tmp_path_factory, repo_root: Path, crate_dir: Path, fixture_w3: Path
+) -> dict:
     """Regenerates the zhuyin native-side transcript through the pure-Rust session.
 
     ``zhuyin-dump`` drives the same [`oxpinyin_facade`] orchestration the
@@ -118,7 +142,7 @@ def zhuyin_native_transcript(tmp_path_factory, repo_root: Path, crate_dir: Path)
             "zhuyin-dump",
             "--",
             str(crate_dir / "parity-corpus-zhuyin.json"),
-            str(repo_root / "fixtures" / "w3" / "tkt"),
+            str(fixture_w3),
             str(out_path),
         ],
         check=True,
@@ -128,7 +152,9 @@ def zhuyin_native_transcript(tmp_path_factory, repo_root: Path, crate_dir: Path)
 
 
 @pytest.fixture(scope="session")
-def native_transcript(tmp_path_factory, repo_root: Path, crate_dir: Path) -> dict:
+def native_transcript(
+    tmp_path_factory, repo_root: Path, crate_dir: Path, fixture_w3: Path
+) -> dict:
     """Regenerates the native-side transcript through the pure-Rust API.
 
     ``native-dump`` links the same runtime module the binding wraps, with no
@@ -148,7 +174,7 @@ def native_transcript(tmp_path_factory, repo_root: Path, crate_dir: Path) -> dic
             "native-dump",
             "--",
             str(crate_dir / "parity-corpus.json"),
-            str(repo_root / "fixtures" / "w3" / "tkt"),
+            str(fixture_w3),
             str(out_path),
         ],
         check=True,
