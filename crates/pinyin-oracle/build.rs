@@ -7,6 +7,11 @@
 //! `tools/oracle/build-oracle.sh`. A prefix whose `oracle-pin.txt` does not
 //! carry the frozen pin reference is refused, so a stray libpinyin on the
 //! search path cannot be linked by accident.
+//!
+//! `PINYIN_BENCH_DBM=kc|bdb` relaxes the pin-ref comparison to a
+//! `dbm-<name>` containment check for bench-only, non-tkrzw prefixes built
+//! with the recipe's `--dbm` flag. CI must never set it: parity and capture
+//! always link the tkrzw oracle under the full frozen-ref check.
 
 use std::path::{Path, PathBuf};
 
@@ -15,10 +20,27 @@ include!("src/pin_ref.rs");
 
 fn main() {
     println!("cargo::rerun-if-env-changed=PINYIN_ORACLE_PREFIX");
+    println!("cargo::rerun-if-env-changed=PINYIN_BENCH_DBM");
     println!("cargo::rerun-if-env-changed=PKG_CONFIG_PATH");
 
     if std::env::var_os("CARGO_FEATURE_ORACLE_FFI").is_none() {
         return;
+    }
+
+    // The bench-prefix relaxation below weakens the frozen pin-ref check by
+    // design, so it must be impossible in CI: parity and capture runs link
+    // the tkrzw oracle under the full check.
+    if std::env::var_os("CI").is_some() && std::env::var_os("PINYIN_BENCH_DBM").is_some() {
+        panic!("PINYIN_BENCH_DBM must not be set in CI");
+    }
+    if let Some(value) = std::env::var_os("PINYIN_BENCH_DBM") {
+        let value = value.to_string_lossy();
+        if value != "kc" && value != "bdb" {
+            panic!(
+                "PINYIN_BENCH_DBM must be 'kc' or 'bdb'; for the tkrzw parity \
+                 oracle, leave it unset"
+            );
+        }
     }
 
     let prefix = match locate_prefix() {
@@ -104,6 +126,11 @@ fn locate_prefix() -> Result<PathBuf, String> {
 }
 
 /// Accepts a prefix only if it carries the frozen pin and a shared object.
+///
+/// With `PINYIN_BENCH_DBM=kc|bdb` set, the frozen-pin comparison is relaxed
+/// to a `dbm-<name>` containment check: the prefix must be a bench oracle
+/// built with that `--dbm`, still by `build-oracle.sh` (which alone writes
+/// `oracle-pin.txt`, full pin and hashes included).
 fn verify(prefix: &Path) -> Result<(), String> {
     let manifest = prefix.join(MANIFEST_FILE_NAME);
     let text = std::fs::read_to_string(&manifest)
@@ -115,7 +142,16 @@ fn verify(prefix: &Path) -> Result<(), String> {
         .ok_or_else(|| format!("{} has no pin_ref field", manifest.display()))?
         .trim();
 
-    if pin_ref != EXPECTED_PIN_REF {
+    if let Some(bench_dbm) = std::env::var_os("PINYIN_BENCH_DBM") {
+        let needle = format!("dbm-{}", bench_dbm.to_string_lossy());
+        if !pin_ref.contains(&needle) {
+            return Err(format!(
+                "off-pin bench prefix: pin_ref is {pin_ref:?}, expected it to \
+                 contain {needle:?} (PINYIN_BENCH_DBM={needle} with a mismatched \
+                 prefix)"
+            ));
+        }
+    } else if pin_ref != EXPECTED_PIN_REF {
         return Err(format!(
             "off-pin prefix: pin_ref is {pin_ref:?}, expected {EXPECTED_PIN_REF:?}"
         ));

@@ -57,3 +57,28 @@ file. Run `tools/oracle/build-oracle.sh --help` for flags.
 - The frontend source is not a backend implementation reference.
 - A pin change requires a dedicated human-reviewed PR that updates tags,
   commits, archive hashes, fixtures, and the divergence baseline together.
+
+## Multi-backend bench oracles
+
+Added 2026-09-06 (append-only; everything above is unchanged). For
+backend-comparison benchmarking only, `tools/oracle/build-oracle.sh`
+accepts `--dbm <tkrzw|kc|bdb>` and configures libpinyin with the
+corresponding DBM (`Tkrzw`, `KyotoCabinet`, `BerkeleyDB`). The choice is
+recorded in the pin ref (`+dbm-<name>`) and in the `dbm=` field of
+`oracle-pin.txt`; each backend gets its own explicit `--prefix`. The
+default path — no flag — is unchanged: the parity oracle remains tkrzw
+and nothing in this section applies to it.
+
+A bench prefix is linked by setting `PINYIN_ORACLE_PREFIX` plus
+`PINYIN_BENCH_DBM=kc|bdb`, which relaxes the frozen pin-ref comparison
+in `crates/pinyin-oracle/build.rs` to a `dbm-<name>` containment check
+(the manifest still records the full pin, hashes included). The
+relaxation is CI-guarded — `PINYIN_BENCH_DBM` set under `CI` fails the
+build — and `tools/capture/run-capture.sh` separately refuses any
+prefix whose manifest `dbm=` is not `Tkrzw`, so parity and capture can
+link only the tkrzw oracle regardless.
+
+Berkeley DB is measured deliberately: it is libpinyin's upstream
+default DBM and the configuration distributions ship, even though
+libpinyin's own development deprecates it. Bench-only prefixes never
+gate parity or capture.
