@@ -80,6 +80,16 @@ pub enum OracleError {
         /// Name of the C function that returned false.
         function: &'static str,
     },
+    /// A train was requested but its preconditions failed: the input did not
+    /// parse completely, or the lookup built no candidates to train on.
+    TrainPreconditionFailed {
+        /// Length the oracle parsed.
+        parsed: usize,
+        /// Length of the input supplied.
+        input_len: usize,
+        /// Candidates the lookup built.
+        candidates: u32,
+    },
     /// The oracle produced a string that was not valid UTF-8.
     NonUtf8 {
         /// Name of the C function that produced the bytes.
@@ -190,6 +200,15 @@ impl fmt::Display for OracleError {
                 "flag word {flags:#010x} sets DYNAMIC_ADJUST, which the parity protocol rejects"
             ),
             Self::Call { function } => write!(formatter, "{function} reported failure"),
+            Self::TrainPreconditionFailed {
+                parsed,
+                input_len,
+                candidates,
+            } => write!(
+                formatter,
+                "train preconditions failed: parsed {parsed} of {input_len} bytes, \
+                 {candidates} candidates"
+            ),
             Self::UnknownCandidateType { value } => write!(
                 formatter,
                 "pinyin_get_candidate_type reported unknown lookup_candidate_type_t value {value}"
