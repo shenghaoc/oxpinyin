@@ -10,7 +10,7 @@
 //! `phrase_{i}` with one key per character, keys in 1..=300 (renderable
 //! syllables), fixed count. No model fixture.
 
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use oxpinyin_user::UserStore;
 use std::path::{Path, PathBuf};
 
@@ -50,11 +50,7 @@ fn bench_export(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(u64::from(n)));
         group.bench_with_input(BenchmarkId::new("phrases", n), &n, |b, _| {
-            b.iter_batched(
-                || &store,
-                |store| store.export_phrases().expect("export"),
-                BatchSize::LargeInput,
-            );
+            b.iter(|| store.export_phrases().expect("export"));
         });
 
         drop(store);
