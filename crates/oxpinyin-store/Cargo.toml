@@ -44,3 +44,10 @@ kyotocabinet = ["dep:bindgen"]
 # peer depends on it, so a KC/LMDB/tkrzw build carries none of redb's
 # code or its transitive dependencies.
 redb = ["dep:redb"]
+
+[[bench]]
+name = "lmdb_bulk_load"
+harness = false
+# heed is the `lmdb` peer's dependency, so `--all-targets` builds of the
+# other backends skip this target instead of failing to resolve it.
+required-features = ["lmdb"]
