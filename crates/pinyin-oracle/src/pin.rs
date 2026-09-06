@@ -15,8 +15,18 @@ use std::path::{Path, PathBuf};
 use crate::OracleError;
 pub use crate::pin_ref::{EXPECTED_PIN_REF, MANIFEST_FILE_NAME, bench_pin_ref};
 
-/// Data-payload manifest the build recipe writes into the prefix.
+/// Reproducible data-payload manifest the build recipe writes into the prefix.
+///
+/// Covers the generated data files that are byte-identical across clean
+/// builds of the same pin, so its digest is comparable between prefixes.
 pub const DATA_MANIFEST_FILE_NAME: &str = "oracle-data.sha256";
+
+/// Informational data-payload manifest for the files libpinyin does not
+/// generate reproducibly (the DBM-backed generation path; see
+/// `docs/findings/oracle-data-reproducibility.md`).
+///
+/// Tamper-evident within one prefix, never comparable across builds.
+pub const DATA_UNSTABLE_MANIFEST_FILE_NAME: &str = "oracle-data-unstable.sha256";
 
 /// Manifest schema this harness understands.
 pub const MANIFEST_SCHEMA: &str = "pinyin-oracle-v1";
@@ -140,6 +150,9 @@ impl PinManifest {
             header_sha256: self.require("header_sha256")?.to_owned(),
             shared_object_sha256: self.require("shared_object_sha256")?.to_owned(),
             data_manifest_sha256: self.require("data_manifest_sha256")?.to_owned(),
+            data_unstable_manifest_sha256: self
+                .field("data_unstable_manifest_sha256")
+                .map(str::to_owned),
         })
     }
 
@@ -183,6 +196,7 @@ pub struct VerifiedPin {
     header_sha256: String,
     shared_object_sha256: String,
     data_manifest_sha256: String,
+    data_unstable_manifest_sha256: Option<String>,
 }
 
 impl VerifiedPin {
@@ -216,10 +230,21 @@ impl VerifiedPin {
         &self.shared_object_sha256
     }
 
-    /// SHA-256 of the generated data-payload manifest.
+    /// SHA-256 of the reproducible data-payload manifest.
     #[must_use]
     pub fn data_manifest_sha256(&self) -> &str {
         &self.data_manifest_sha256
+    }
+
+    /// SHA-256 of the informational manifest over the non-reproducible data
+    /// files, when the recipe recorded one.
+    ///
+    /// Recorded for the audit trail only: two clean builds of the same pin
+    /// legitimately disagree on it, so it never participates in
+    /// verification and a prefix built before the split may lack it.
+    #[must_use]
+    pub fn data_unstable_manifest_sha256(&self) -> Option<&str> {
+        self.data_unstable_manifest_sha256.as_deref()
     }
 }
 
@@ -348,7 +373,8 @@ mod tests {
              dbm={dbm}\n\
              header_sha256=aa\n\
              shared_object_sha256=bb\n\
-             data_manifest_sha256=cc\n"
+             data_manifest_sha256=cc\n\
+             data_unstable_manifest_sha256=dd\n"
         )
     }
 
@@ -361,6 +387,18 @@ mod tests {
         assert_eq!(pin.header_sha256(), "aa");
         assert_eq!(pin.shared_object_sha256(), "bb");
         assert_eq!(pin.data_manifest_sha256(), "cc");
+        assert_eq!(pin.data_unstable_manifest_sha256(), Some("dd"));
+    }
+
+    #[test]
+    fn unstable_manifest_digest_is_informational_and_optional() {
+        let text = manifest_text(EXPECTED_PIN_REF, "Tkrzw")
+            .replace("data_unstable_manifest_sha256=dd\n", "");
+        let manifest = PinManifest::parse(&text).expect("parses");
+        let pin = manifest
+            .verify()
+            .expect("a prefix built before the manifest split still verifies");
+        assert_eq!(pin.data_unstable_manifest_sha256(), None);
     }
 
     #[test]

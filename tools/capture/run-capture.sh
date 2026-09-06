@@ -18,6 +18,7 @@ header=$prefix/include/libpinyin-2.11.91/pinyin.h
 shared_object=$prefix/lib/libpinyin.so.15.0.0
 manifest=$prefix/oracle-pin.txt
 data_manifest=$prefix/oracle-data.sha256
+data_unstable_manifest=$prefix/oracle-data-unstable.sha256
 
 fail() {
 	printf '%s\n' "$1" >&2
@@ -47,6 +48,8 @@ check_file_sha256() {
 [[ -f $shared_object ]] || fail "pinned shared object not found: $shared_object"
 [[ -d $system_dir ]] || fail "pinned data directory not found: $system_dir"
 [[ -f $data_manifest ]] || fail "oracle data manifest not found: $data_manifest"
+[[ -f $data_unstable_manifest ]] ||
+	fail "oracle unstable data manifest not found: $data_unstable_manifest"
 
 [[ $(manifest_value schema) == pinyin-oracle-v1 ]] ||
 	fail 'unsupported oracle manifest schema'
@@ -57,9 +60,15 @@ oracle_pin_ref=$(manifest_value pin_ref) || fail 'missing oracle pin ref'
 check_file_sha256 header_sha256 "$header"
 check_file_sha256 shared_object_sha256 "$shared_object"
 check_file_sha256 data_manifest_sha256 "$data_manifest"
+# The unstable manifest covers the six files libpinyin does not generate
+# reproducibly. Checking it here keeps the payload tamper-evident within
+# this prefix; it says nothing about whether another build of the same pin
+# would agree, and nothing compares it across prefixes.
+check_file_sha256 data_unstable_manifest_sha256 "$data_unstable_manifest"
 (
 	cd "$prefix"
-	sha256sum --check --status oracle-data.sha256
+	sha256sum --check --status oracle-data.sha256 &&
+		sha256sum --check --status oracle-data-unstable.sha256
 ) || fail 'oracle data payload checksum mismatch'
 
 mkdir -p "$build_dir" "$output_dir"
