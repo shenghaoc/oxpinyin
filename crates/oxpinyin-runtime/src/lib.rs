@@ -940,7 +940,49 @@ impl Runtime {
     /// the first after a library-visibility change — and otherwise forwards
     /// any [`EngineError`] from session construction (itself currently
     /// infallible over valid backends).
+    ///
+    /// The walk runs only for a model without real unigram frequencies. A
+    /// runtime over [`BigramLanguageModel`] always has them, so in practice
+    /// this allocates the session and reads nothing.
     pub fn new_session(&self, config: &dyn ConfigSource) -> Result<RuntimeSession, EngineError> {
+        // Real frequencies mean the session decodes through the pinned
+        // construction, which prices each candidate inline from the phrase
+        // item it has already fetched — upstream's
+        // `unigram_gen_next_step`/`bigram_gen_next_step`
+        // (`src/lookup/phonetic_lookup.h:643-698` at the pin `0c5e80e1`),
+        // whose `pinyin_alloc_instance` reads nothing at all. The key-cost
+        // table is read only by the pre-frequency fallback scorer, which
+        // that branch cannot reach, so walking the frozen key inventory
+        // here would spend 42–57 ms on a value no decode consults
+        // (`docs/findings/perf-backend-matrix-2026-09.md`). Skip the walk
+        // and the cache with it; `BigramLanguageModel` always reports real
+        // unigrams, so this is the live path for every runtime-backed
+        // session.
+        let key_costs = if self.lm.has_real_unigrams() {
+            Vec::new()
+        } else {
+            self.cached_key_costs()?.to_vec()
+        };
+        Session::new_with_key_costs(
+            config,
+            self.paths.clone(),
+            self.dict.clone(),
+            self.lm.clone(),
+            key_costs,
+        )
+    }
+
+    /// The visibility-stamped key-cost table, walked on demand and shared
+    /// by every later session built under the same mask.
+    ///
+    /// Only [`Self::new_session`]'s pre-frequency fallback branch needs
+    /// this; a model with real unigram frequencies decodes through the
+    /// pinned construction and never reads a key-cost table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when a backend fails during the walk.
+    fn cached_key_costs(&self) -> Result<Arc<[Cost]>, EngineError> {
         // The key-cost table is filled on first use rather than at open,
         // keeping `pinyin_init` off the dictionary walk. Its values depend on
         // the library-visibility mask (an unloaded library's items leave the
@@ -965,13 +1007,7 @@ impl Runtime {
             }
         };
         if let Some(key_costs) = cached {
-            return Session::new_with_key_costs(
-                config,
-                self.paths.clone(),
-                self.dict.clone(),
-                self.lm.clone(),
-                key_costs.to_vec(),
-            );
+            return Ok(key_costs);
         }
 
         // Slow path — mask changed or cache empty. The walk runs unlocked
@@ -1006,13 +1042,7 @@ impl Runtime {
                 }
             }
         };
-        Session::new_with_key_costs(
-            config,
-            self.paths.clone(),
-            self.dict.clone(),
-            self.lm.clone(),
-            key_costs.to_vec(),
-        )
+        Ok(key_costs)
     }
 
     /// A handle clone of the merged dictionary backend.
@@ -1096,7 +1126,6 @@ mod tests {
     //! seam is covered by `tests/assembly.rs`.
 
     use super::*;
-    use oxpinyin_engine::EmptyConfigSource;
 
     fn w3_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1113,14 +1142,20 @@ mod tests {
     // would serve wrong costs to every later session under that mask.
     //
     // Each round pins the cache to the unloaded stamp, then races one
-    // session build against a bounded flip storm. Without epoch
-    // validation the racing build snapshots mask 0 (a miss against the
-    // 0b100 pin), walks while the flipper tears visibility, and
-    // publishes that torn walk stamped 0 — which the quiesced probe then
-    // serves. With it, a published stamp always names the visibility the
-    // table was computed under, so the probe must see exactly the loaded
-    // table. (The flipper is bounded by count, not a reader-set flag: the
-    // rebuild's retry loop can only settle once the flips stop.)
+    // rebuild against a bounded flip storm. Without epoch validation the
+    // racing build snapshots mask 0 (a miss against the 0b100 pin), walks
+    // while the flipper tears visibility, and publishes that torn walk
+    // stamped 0 — which the quiesced probe then serves. With it, a
+    // published stamp always names the visibility the table was computed
+    // under, so the probe must see exactly the loaded table. (The flipper
+    // is bounded by count, not a reader-set flag: the rebuild's retry loop
+    // can only settle once the flips stop.)
+    //
+    // Driven through `cached_key_costs` rather than `new_session`: only
+    // the pre-frequency fallback branch consults the cache, and a
+    // `RuntimeLm` always reports real unigram frequencies, so no
+    // `new_session` call can reach it. The cache and its epoch validation
+    // stay covered here for the branch that does.
     #[test]
     fn key_costs_cache_stays_stamp_true_under_concurrent_visibility_flips() {
         let runtime = Runtime::open(&w3_dir(), None).expect("fixture opens");
@@ -1141,8 +1176,8 @@ mod tests {
         for _ in 0..ROUNDS {
             let _ = runtime.unload_library(2);
             runtime
-                .new_session(&EmptyConfigSource)
-                .expect("pin session (GBK unloaded)");
+                .cached_key_costs()
+                .expect("pin the cache (GBK unloaded)");
 
             std::thread::scope(|scope| {
                 scope.spawn(|| {
@@ -1162,23 +1197,19 @@ mod tests {
                     }
                     std::thread::yield_now();
                 }
-                runtime
-                    .new_session(&EmptyConfigSource)
-                    .expect("session mid-storm");
+                runtime.cached_key_costs().expect("build mid-storm");
             });
 
             // Quiesced: the flip pairs leave GBK loaded, so the probe
             // must hold the true loaded-visibility table under stamp 0.
-            runtime
-                .new_session(&EmptyConfigSource)
-                .expect("probe session");
+            runtime.cached_key_costs().expect("probe build");
             let cache = runtime
                 .key_costs
                 .read()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let (stamp, table) = cache
                 .as_ref()
-                .expect("a session build leaves the cache populated");
+                .expect("a rebuild leaves the cache populated");
             assert_eq!(*stamp, 0, "final visibility is all-loaded");
             assert_eq!(
                 table.as_ref(),
