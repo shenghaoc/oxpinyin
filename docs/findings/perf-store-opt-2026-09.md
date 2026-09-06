@@ -13,10 +13,13 @@ five do not.
   per call at 1024 phrases) and it is the removal of one LMDB read transaction plus one cursor
   open per phrase, replaced by a single ordered walk of the
   pronunciation table. Scaling stays linear on both sides.
-- The redb allocation trims (F1/F3), the redb `is_empty` header probe
-  (F4), the LMDB `bulk_load_raw` path (S4), and `MDB_WRITEMAP` (S3)
-  are **not measured** here; the two fsync-dominated benches are filed
-  for redesign as #342 and #343.
+- **F4 — redb `is_empty` header probe (#340, measured after the #342
+  bench redesign)**: the removed `list_tables` walk costs 1.32× the
+  direct open at one table and 3.47× at nine; the direct open is flat
+  in the table count, the walk scales with it. See "Results — F4".
+- The redb allocation trims (F1/F3), the LMDB `bulk_load_raw` path
+  (S4), and `MDB_WRITEMAP` (S3) are **not measured** here; the LMDB
+  bench redesign is filed as #343.
 
 These are x86_64 numbers from one host, branch-vs-branch on the same
 build; no libpinyin cell exists for these backends and none is
@@ -86,6 +89,51 @@ Throughput at 1024 phrases: 1.28 → 2.94 Melem/s.
   side bends, so the walk's filtering of non-matching rows is not a
   visible cost at these sizes.
 
+## Results — F4 (the #342 bench redesign)
+
+`WriteStore::write` commits, so a store-trait bench times redb's ~3 ms
+commit fsync with the `is_empty` probe as a sub-µs rider — the failure
+mode recorded below. The redesigned bench
+(`crates/oxpinyin-store/benches/redb_is_empty.rs`, group
+`redb_is_empty_probe`) opens redb directly and times only the probe:
+each iteration begins a write transaction untimed, runs the arm between
+two `Instant`s, then drops the transaction to abort it
+(`WriteTransaction`'s `Drop` rolls back without touching storage), so no
+commit, fsync, or disk I/O sits anywhere near the timed region. The
+pre-F4 probe — the `list_tables` existence walk added by `3dd7d39b` and
+removed by `9a75191c` — is reimplemented as the `list_tables_walk` arm;
+the post-F4 direct open (`RedbWriteTxn::is_empty`) is the
+`open_table_header` arm. Both probe a pre-created empty table of the
+production `TableDefinition<&[u8], &[u8]>` shape, over a 1-vs-9
+pre-created-table dimension.
+
+| Bench ID | Mean | 95 % CI | vs `open_table_header` |
+|---|---:|---:|---:|
+| `redb_is_empty_probe/list_tables_walk/tables/1` | 860 ns | 856–864 ns | 1.32× |
+| `redb_is_empty_probe/open_table_header/tables/1` | 650 ns | 648–653 ns | 1× |
+| `redb_is_empty_probe/list_tables_walk/tables/9` | 2.23 µs | 2.221–2.245 µs | 3.47× |
+| `redb_is_empty_probe/open_table_header/tables/9` | 642 ns | 633–655 ns | 0.99× |
+
+### Interpretation
+
+- **The walk scales with the table count; the direct open does not.**
+  Walk: 860 ns at one table, 2.23 µs at nine — ~171 ns per additional
+  table, the cost of building each `UntypedTableHandle`'s owned `String`
+  name on every probe. Direct open: 650 ns and 642 ns, flat within
+  noise.
+- **F4's saving is fixed-per-call at these sizes**: ~210 ns at one
+  table, ~1.59 µs at nine. The direct open pays one table-header lookup
+  regardless of how many tables exist.
+- **Mechanism confirmed.** `9a75191c` claimed the create-on-open probe
+  answers "straight from the header"; the flat 0.64–0.65 µs across the
+  dimension is that claim measured.
+- Sub-µs probes against a ~3 ms commit fsync is why the store-trait
+  draft failed (stddev 40–103 % of mean): the redesign removes the
+  commit from the measurement rather than averaging it out.
+- Same harness family as S5: x86_64, one host, this checkout's pinned
+  1.97.1 toolchain, criterion 0.8, 100 samples per ID; no libpinyin
+  cell exists for redb and none is claimed.
+
 ## What is NOT measured
 
 - **F1 / F3 (redb — fixed-width `pronunciation_range` bounds,
@@ -98,7 +146,8 @@ Throughput at 1024 phrases: 1.28 → 2.94 Melem/s.
 - **F4 (redb `is_empty` header probe, #340)**: the draft bench went
   through `WriteStore::write`, which commits, so it timed a ~3 ms redb
   fsync with the probe as a sub-µs rider (stddev 40–103 % of mean).
-  Redesign filed as #342.
+  Redesign filed as #342; the redesign (#348) landed and measures it —
+  see "Results — F4".
 - **S4 (LMDB `bulk_load_raw`, APPEND + NOSYNC, #341)**: fsync-dominated
   on every arm (stddev 50–60 % of mean); the point estimates ordered as
   expected (14.2 → 11.9 → 9.4 ms) but the intervals overlap. Redesign
@@ -114,3 +163,9 @@ range scans would show as a ~2× regression at every N.
 `cargo bench -p oxpinyin-user --no-default-features --features redb
 --bench phrase_read` is the F1/F3 canary; treat a change outside
 ±10 % as signal, anything inside as run-to-run drift.
+`cargo bench -p oxpinyin-store --no-default-features --features redb
+--bench redb_is_empty` reproduces the F4 rows: `list_tables_walk` is
+the pre-F4 cost and `open_table_header` the post-F4 one, so the pair
+doubles as a canary against reintroducing a per-probe table walk — that
+would show as the header arm regressing toward the walk arm, first at
+the 9-table end.
