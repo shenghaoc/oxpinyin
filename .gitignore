@@ -64,8 +64,12 @@ __pycache__/
 /crates/oxpinyin-python/python/oxpinyin/*.so
 /crates/oxpinyin-python/python/oxpinyin/*.pyd
 
-# LMDB creates a runtime lock file beside each committed .lmdb fixture.
-/fixtures/w3/*.lmdb-lock
+# LMDB rewrites a runtime lock file beside each .lmdb fixture on every
+# open, read-only included; the data files never change. The sidecars
+# live one level down (fixtures/w3/lmdb/*.lmdb-lock), so the pattern is
+# recursive. Six were tracked until 2026-09-06 because an earlier
+# pattern matched only the top level.
+/fixtures/**/*.lmdb-lock
 
 # oxpinyin-datagen (since the 1-gram-only emission) writes an
 # interpolation2.text into every --out-dir; the committed w3 fixture sets

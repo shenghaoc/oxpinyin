@@ -158,11 +158,12 @@ when the diff is formatting-only and reviewed.
 
 ## LMDB fixture sidecars
 
-Opening a committed `fixtures/w3/lmdb/*` DBM from a test dirties its
-`-lock` sidecar — LMDB rewrites the lock file on every open, read-only
-included. The data files never change; the dirt is incidental. Run
-`git checkout -- fixtures/w3/lmdb/` after any model-dependent datagen
-test run before committing, and never commit the sidecars.
+Opening a committed `fixtures/w3/lmdb/*` DBM rewrites its `-lock`
+sidecar — LMDB does that on every open, read-only included. The data
+files never change. The sidecars are gitignored
+(`/fixtures/**/*.lmdb-lock`) and untracked since 2026-09-06; if one ever
+shows up in `git status`, the ignore pattern regressed — fix the pattern,
+do not commit the file.
 
 ## Oracle C-API gotchas
 
