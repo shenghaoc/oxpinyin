@@ -53,6 +53,23 @@ The unstable list is fixed in `build-oracle.sh` (`DATA_UNSTABLE_FILES`);
 a file that moves from one class to the other is a recipe change, made
 deliberately, not something the split infers per build.
 
+## Reproduction of the split (2026-09-06)
+
+Two clean runs of the split recipe, separate work dirs, Ubuntu 24.04
+container, libtkrzw from the distro, archives verified against the pinned
+hashes:
+
+- `oracle-data.sha256` (17 lines) byte-identical across the two builds,
+  so `data_manifest_sha256` agreed
+  (`4a03fce6eec26916bc5bd0f0f18cba24492f334698e1d9b14b83e9c50c58e281`).
+- `oracle-data-unstable.sha256` (6 lines) differed on all six entries.
+- `libpinyin.so` also differed between the builds; that is build
+  nondeterminism in the shared object, outside this note's scope, and is
+  why `shared_object_sha256` is likewise not comparable across prefixes.
+- `run-capture.sh` accepted the prefix, and the F-A and F-C captures it
+  produced matched `fixtures/foundation/` exactly. Appending a byte to
+  `punct.bin` was rejected with the payload-mismatch failure.
+
 ## Upstream angle
 
 libpinyin's generated data is not reproducible, which matters for distro
