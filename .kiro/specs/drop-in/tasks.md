@@ -15,12 +15,6 @@ the shelved BerkeleyDB route remain.
   `libpinyin.pc` with the installed naming (#206, #192).
   _Requirements: 1_
 
-- [x] 3. Implement `CompatLayout` detection and the compat load path (#228).
-  _Requirements: 2_
-
-- [x] 4. Implement the `MemoryChunk` reader with checksum verification (#228).
-  _Requirements: 2_
-
 - [x] 5. Measure the Kyoto Cabinet compat path on Fedora rawhide
   (kyotocabinet 1.2.80): 1,571/1,571 rows, sorted sets byte-identical,
   order-only.

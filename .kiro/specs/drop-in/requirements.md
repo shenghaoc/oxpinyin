@@ -10,8 +10,6 @@ the goal, the mechanisms and the remaining work.
 
 ## Glossary
 
-- **Consumer_union** — the 58 exported symbols the two reference consumers
-  (ibus-libpinyin 1.16.5, fcitx-libpinyin) call.
 - **Compat_path** — reading installed libpinyin data directly, without
   conversion.
 - **R1** — the predicted-candidate row-order divergence; oxpinyin's
@@ -31,8 +29,6 @@ so that unmodified consumers link and run.
 2. THE header SHALL install under `include/libpinyin-2.11.91/`.
 3. THE pkg-config file SHALL ship as `libpinyin.pc` exposing `pkgdatadir`,
    `database_format` and `exec_prefix`.
-4. THE exported surface SHALL be the 58-symbol consumer union, no more and
-   no less.
 
 ### Requirement 2: Compat read path for installed data
 
@@ -41,13 +37,11 @@ libpinyin data so that no conversion step ships.
 
 #### Acceptance Criteria
 
-1. WHEN `pinyin_init` is pointed at a libpinyin data directory THEN the
-   runtime SHALL detect the layout and open the compat path.
-2. THE reader SHALL parse libpinyin's `MemoryChunk` container (8-byte
+1. THE reader SHALL parse libpinyin's `MemoryChunk` container (8-byte
    header: u32 LE length, u32 XOR checksum) and verify before use.
-3. THE path SHALL cover Kyoto Cabinet installs (Fedora, NixOS) and tkrzw
+2. THE path SHALL cover Kyoto Cabinet installs (Fedora, NixOS) and tkrzw
    installs (Debian).
-4. ON every measured backend THE prediction surface SHALL read 1,571/1,571
+3. ON every measured backend THE prediction surface SHALL read 1,571/1,571
    rows with sorted row sets byte-identical.
 
 ### Requirement 3: Output compatibility under the recorded exceptions
@@ -57,7 +51,7 @@ replacement changes nothing observable.
 
 #### Acceptance Criteria
 
-1. FOR every consumer-union symbol, given the same inputs and state, the
+1. FOR every exported symbol, given the same inputs and state, the
    whole observable output SHALL be byte-identical to the pinned libpinyin
    2.11.91.
 2. Divergence SHALL be permitted only under classes (a) MATH, (b) MEMORY
