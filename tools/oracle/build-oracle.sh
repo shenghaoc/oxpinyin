@@ -3,8 +3,9 @@ set -euo pipefail
 
 # Build dependencies: autotools (autoconf, automake, autopoint, libtool),
 # a C/C++ toolchain and make, pkg-config, gettext, gnome-common, curl,
-# tar, python3, and development headers for GLib 2.0, IBus 1.0,
-# Tkrzw and SQLite 3.
+# tar, python3, and development headers for GLib 2.0, IBus 1.0, SQLite 3,
+# and the DBM backend selected by --dbm (Tkrzw, Kyoto Cabinet or
+# Berkeley DB).
 
 LIBPINYIN_TAG=2.11.91
 LIBPINYIN_SHA=0c5e80e1200f84fab185d1c5bde458b770a0636c
@@ -39,13 +40,12 @@ MODEL_FILES=(
 	sport.table
 	technology.table
 )
-ORACLE_PIN_REF="libpinyin-$LIBPINYIN_TAG-$LIBPINYIN_SHA+model20-$MODEL_SHA256+dbm-tkrzw"
-
 work_dir=${TMPDIR:-/tmp}/oxpinyin-oracle
 prefix=
 jobs=1
 apply_patches_dir=
 model_dir=
+dbm=tkrzw
 
 usage() {
 	cat <<'EOF'
@@ -69,6 +69,11 @@ Options:
                        SHA-256 check: the archive that produced DIR was verified
                        against MODEL_SHA256 before extraction. Only the source
                        of the bytes changes, never whether they are checked.
+  --dbm NAME           DBM backend libpinyin is configured with: tkrzw
+                       (default), kc, or bdb. Recorded in the pin ref
+                       (+dbm-<name>) and the oracle-pin.txt dbm= field. For
+                       bench-only oracle prefixes; the parity oracle stays
+                       tkrzw.
   -h, --help           Show this help
 
 Build variables CC, CXX, CFLAGS, CXXFLAGS and LDFLAGS are passed through.
@@ -98,6 +103,10 @@ while (($#)); do
 		model_dir=$2
 		shift 2
 		;;
+	--dbm)
+		dbm=$2
+		shift 2
+		;;
 	-h | --help)
 		usage
 		exit 0
@@ -124,6 +133,26 @@ case $jobs in
 	exit 2
 	;;
 esac
+
+# The dbm suffix in the pin ref is the flag value itself (tkrzw/kc/bdb);
+# dbm_name is the spelling libpinyin's configure expects. Both must stay in
+# step with PINYIN_BENCH_DBM in crates/pinyin-oracle/build.rs.
+case $dbm in
+tkrzw)
+	dbm_name=Tkrzw
+	;;
+kc)
+	dbm_name=KyotoCabinet
+	;;
+bdb)
+	dbm_name=BerkeleyDB
+	;;
+*)
+	printf '%s\n' '--dbm must be one of: tkrzw, kc, bdb' >&2
+	exit 2
+	;;
+esac
+ORACLE_PIN_REF="libpinyin-$LIBPINYIN_TAG-$LIBPINYIN_SHA+model20-$MODEL_SHA256+dbm-$dbm"
 
 for command in curl sha256sum tar autoreconf make pkg-config find sort xargs patch; do
 	command -v "$command" >/dev/null 2>&1 || {
@@ -260,7 +289,7 @@ fi
 (
 	cd "$lib_src"
 	autoreconf --force --install --verbose
-	./configure --prefix="$prefix" --disable-static --with-dbm=Tkrzw
+	./configure --prefix="$prefix" --disable-static --with-dbm="$dbm_name"
 	make -j"$jobs"
 	make install
 )
@@ -307,7 +336,7 @@ libpinyin_commit=$LIBPINYIN_SHA
 ibus_libpinyin_tag=$IBUS_LIBPINYIN_TAG
 ibus_libpinyin_commit=$IBUS_LIBPINYIN_SHA
 model_sha256=$MODEL_SHA256
-dbm=Tkrzw
+dbm=$dbm_name
 header_sha256=$header_sha256
 shared_object_sha256=$shared_object_sha256
 data_manifest_sha256=$data_manifest_sha256
