@@ -34,10 +34,14 @@ session:
   libpinyin's numbers carry the engine and facade, oxpinyin's are
   storage only — but within each project the backend ordering is real,
   and ox-LMDB is the RAM floor everywhere.
-- **ox-KC's commits are microsecond-scale** (244 µs for 64 trains)
-  against 6–13 ms on redb/LMDB/tkrzw. That is the commit-durability
-  asymmetry #343 isolated, not a speed breakthrough: KC's write path
-  does not pay the fsync the other three do. Do not read it as a win.
+- **ox-KC's commits are microsecond-scale** (244 µs for 64 trains) where
+  redb pays 6.0 ms and LMDB 13.2 ms for the same rows. That is not speed
+  and not a win over lp-KC or any other column: the KC store commits
+  with a soft flush only (`sync(false)` — page cache, no fsync,
+  NOSYNC-class durability), so a crash can corrupt the database that
+  redb's and LMDB's fsync-backed commits protect. ox-tkrzw's write path
+  is soft the same way (`synchronize(hard=false)`); only redb and LMDB
+  pay for durability in the timed path.
 
 Within-project deltas are the comparable signal throughout. libpinyin
 numbers are facade+DBM; oxpinyin numbers are storage-tier only; absolute
@@ -177,8 +181,10 @@ train path is the most expensive cell of the matrix.
 **oxpinyin, store tier.** Backends separate cleanly on writes:
 redb is the fastest committing store (6.0/9.4 ms), tkrzw next
 (9.3/12.0 ms), LMDB slowest at 256 (16.7 ms), and KC's 0.24/0.43 ms is
-the fsync asymmetry, not speed — treat it as "no durable commit in the
-timed path" (see What is NOT measured). On the populated-open, LMDB is
+the NOSYNC asymmetry, not speed — the KC commit flushes to the page
+cache and no further, a guarantee a crash can corrupt, and the reader
+must not take that column for an oxpinyin advantage (see What is NOT
+measured). On the populated-open, LMDB is
 fastest (0.40 ms), redb slowest (7.4 ms). RAM floors: LMDB 3.3–3.5 MiB,
 redb ~4.0 MiB, tkrzw 6.7–7.3 MiB, KC 7.0–7.3 MiB — the C-backed stores
 pay roughly a 3 MiB library floor over the pure-Rust ones.
@@ -203,10 +209,12 @@ with the 4-cell matrix's steady-state conclusion.
   alternative builds; that asymmetry is a feature of the matrix, not a
   control gap, but it means BDB numbers are the ones a distro user
   actually experiences.
-- **Commit durability is not held constant across ox backends**: KC's
-  write path does not pay the fsync redb/LMDB/tkrzw pay in this
-  transaction shape (#343 isolated the same asymmetry); its train_write
-  rows measure a weaker guarantee.
+- **Commit durability is not held constant across ox backends**: KC and
+  tkrzw commit with a soft OS flush only (`sync(false)` /
+  `synchronize(hard=false)` — NOSYNC-class: no fsync, corruptible on
+  crash), while redb and LMDB fsync in the timed path (#343 isolated
+  the same asymmetry). The ox-KC and ox-tkrzw train_write rows measure
+  a weaker guarantee and are not an advantage over lp-KC/lp-tkrzw.
 - **Cold page-cache opens are not measured** — every open in this
   session hit warm cache; first-boot-after-install costs more.
 - **Cross-project absolute comparison is not meaningful** — different

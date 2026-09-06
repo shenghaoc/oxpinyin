@@ -94,6 +94,12 @@ fn train_and_save(oracle: &mut Oracle, n: usize) {
         let mut session = oracle
             .session(OracleFlags::DEFAULT)
             .expect("oracle session");
+        // pinyin_train has a non-obvious precondition: it trains n-best
+        // result `index`, not a candidate from pinyin_guess_candidates,
+        // and returns false when no n-best results exist (pinyin.cpp:2676
+        // at the pin). train_top runs pinyin_guess_sentence first for
+        // exactly this reason; calling pinyin_train on a candidates-only
+        // instance silently turns every train into a false return.
         for i in 0..n {
             let input = TRAIN_INPUTS[i % TRAIN_INPUTS.len()];
             session
