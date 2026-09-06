@@ -23,29 +23,32 @@ the install layout, SONAME, and `.pc` file from Cargo metadata.
 
 ## Metadata on `oxpinyin-capi`
 
-`crates/oxpinyin-capi/Cargo.toml` carries the full contract:
+`crates/oxpinyin-capi/Cargo.toml` carries the full contract. The installed
+tree takes libpinyin's own binary identity — SONAME `libpinyin.so.15`,
+`libpinyin.pc`, headers under `libpinyin-2.11.91/` — while the source tree
+keeps ours; the full rationale and the measured gates live in
+`docs/findings/installed-naming.md`. In short:
 
 - `[lib] crate-type = ["cdylib", "staticlib", "rlib"]`. `staticlib` is
   required by cargo-c (it builds the `.a` alongside the `.so`); `rlib` is
   retained so `oxpinyin-dictool` can use the crate in-process.
 - `[features] capi = []`. cargo-c identifies the crate to package by the
   presence of a `capi` feature; without it the crate is skipped.
-- `[package.metadata.capi.header] generation = false` and
-  `subdirectory = ""`. `pinyin.h` is shipped **verbatim** — it is
-  byte-identical to what the fork compiles against, and that property must
-  survive packaging. It is installed to `$includedir/pinyin.h` with no
-  regeneration.
-- `[package.metadata.capi.install.include] asset = [{ from = "pinyin.h",
-  to = "" }]`. cargo-c's pre-generated-header asset mechanism, keeping the
-  file where it lives today (the crate root).
-- `[package.metadata.capi.pkg_config] name = "oxpinyin"`,
-  `filename = "oxpinyin"`. The crate is `oxpinyin-capi` and the library
-  `pinyin_capi`, but the `.pc` is `oxpinyin` — consumers depend on
-  `oxpinyin`, not the crate's internal hyphenated name.
-- `[package.metadata.capi.library] name = "pinyin_capi"`,
-  `version = "0.1.0"`, `versioning = true`. Pins the `.so` basename to
-  `pinyin_capi` (the fork links `-lpinyin_capi`) and produces the SONAME
-  `libpinyin_capi.so.0.1` (see below).
+  `[features] shipped = []` compiles out the fixture hooks no real consumer
+  calls; it is enabled only for the shipped drop-in artifact.
+- `[package.metadata.capi.header] generation = false`, `subdirectory =
+  "libpinyin-2.11.91"`. `pinyin.h` and its two companion headers ship
+  **verbatim** under libpinyin's version-stamped include subdirectory, never
+  regenerated.
+- `[package.metadata.capi.pkg_config] name = "libpinyin"`,
+  `version = "2.11.91"`. The `.pc` answers to libpinyin's own name and a
+  libpinyin version, so consumers' `>=` constraints resolve; cargo-c's own
+  `.pc` is incomplete (closed seven-key field set) and is overwritten from
+  the build.rs-baked template by `tools/packaging/install.sh`.
+- `[package.metadata.capi.library] name = "pinyin"`, `version = "15.0.0"`,
+  `versioning = true`. The INSTALLED artifact is the drop-in
+  `libpinyin.so.15`; the Rust `[lib] name` stays `pinyin_capi` so in-tree
+  gates keep finding `target/debug/libpinyin_capi.so`.
 
 No `"."` first-member entry was needed: that cargo-c requirement applies only
 when the exported crate is the workspace **root**. Here the crate is a normal
@@ -162,8 +165,71 @@ Two consequences worth registering:
 ## Relocation
 
 The generated `.pc` is fully `${prefix}`-derived — no baked absolute paths —
-so a `DESTDIR` install relocates cleanly. `pkg-config --cflags --libs oxpinyin`
-returns only `-lpinyin_capi` when the prefix is a system path (`/usr`), because
-pkg-config elides `-I/usr/include -L/usr/lib64`; `pkg-config --define-prefix`
-(or `PKG_CONFIG_SYSROOT_DIR`, used by distro build roots) resolves the staged
+so a `DESTDIR` install relocates cleanly. `pkg-config --cflags --libs
+libpinyin` returns only `-lpinyin` (plus glib from `Requires`) when the
+prefix is a system path (`/usr`), because pkg-config elides
+`-I/usr/include -L/usr/lib64`; `pkg-config --define-prefix` (or
+`PKG_CONFIG_SYSROOT_DIR`, used by distro build roots) resolves the staged
 paths. This is the standard DESTDIR relocation mechanism, not a defect.
+
+## Release artifacts (`release-packages.yml`)
+
+Every published GitHub release triggers
+`.github/workflows/release-packages.yml`, which builds drop-in packages for
+the three distro families and attaches them (plus a `SHA256SUMS`) to the
+release with `gh release upload`.
+
+Each lane builds under the ONE store backend whose model format that
+distro's own `libpinyin` data is encoded in, so the drop-in reads the data
+already on the system:
+
+| lane | image | backend | because |
+|---|---|---|---|
+| Debian | `debian:latest` | tkrzw | Debian's libpinyin 2.11.91 switched BerkeleyDB → Tkrzw (`libtkrzw1t64`) |
+| Fedora | `fedora:latest` | kyotocabinet | Fedora's libpinyin still links KyotoCabinet (`kyotocabinet-libs`) |
+| Arch | `archlinux:latest` | kyotocabinet | Arch's libpinyin still links KyotoCabinet |
+
+`tools/packaging/release-stage.sh` builds both cdylibs with plain
+`cargo build --no-default-features --features <backend>,shipped` — NOT
+`cargo cinstall` — because cargo-c does not forward `--no-default-features`
+(verified against cargo-c 0.10.24), so the kyotocabinet lanes cannot select
+their backend through it. Nothing is lost by building directly: build.rs
+stamps the SONAMEs and bakes the complete `.pc` templates, the staged
+layout is the fixed tree of `docs/findings/installed-naming.md`, and the
+script re-gates it (SONAME, the five pkg-config reads real consumers
+perform, and a C compile/link/run) before any packaging runs.
+
+The per-distro makers wrap that staged tree in the shape the distro's real
+libpinyin packaging uses, and every package takes the distro's
+libpinyin/libzhuyin over **in their entirety** — same sonames, same
+pkg-config names, versioned Provides at 2.11.91, and
+Conflicts/Replaces (deb) / Obsoletes (rpm) / `conflicts=` (pacman) on the
+originals:
+
+- `tools/packaging/release-deb.sh` — `oxpinyin-libpinyin15-<backend>` +
+  `-dev` (~ libpinyin15 + libzhuyin15, and their -dev packages). Depends is
+  computed from the shipped ELF's DT_NEEDED via ldconfig + `dpkg -S`, so
+  t64-era names (`libglib2.0-0t64`, `libtkrzw1t64`) resolve on whatever
+  suite the build runs on, plus a `libc6 (>= N)` floor taken from the
+  highest `GLIBC_*` symbol version referenced.
+- `tools/packaging/release-rpm.sh` — `oxpinyin-libpinyin-<backend>` +
+  `-devel` (~ libpinyin + libpinyin-devel). rpm's dependency generator
+  emits the soname Provides (`libpinyin.so.15()(64bit)`) and the backend
+  Requires automatically; Obsoletes (not Conflicts — a package may not
+  conflict with a name it provides) performs the swap.
+- `tools/packaging/release-arch.sh` — one `oxpinyin-libpinyin-<backend>`
+  package, since Arch ships libpinyin undivided, with soname Provides in
+  pacman's form (`libpinyin.so=15-64`).
+
+No lane ships data. Debian and Fedora keep `libpinyin-data` — a separate
+package there, it stays installed through the takeover and is only a
+Recommends on ours. On Arch the data lives inside the libpinyin package the
+takeover removes, and oxpinyin's own generated tables are not shippable
+yet; users must restore `/usr/lib/libpinyin/data` from the Arch package
+archive until that changes (see the caveat header of
+`tools/packaging/release-arch.sh`).
+
+Each CI lane finishes by INSTALLING its own packages back into its build
+container and re-running the gates against `/usr` — the same five
+pkg-config reads and a C compile/link/run — so a release never attaches a
+package that does not install or does not answer as libpinyin/libzhuyin.
