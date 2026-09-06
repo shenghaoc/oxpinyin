@@ -195,12 +195,18 @@ jobs:
               # the libpinyin package our takeover removes. Download (not
               # install) that package and ship its data directory in ours,
               # so pinyin_init/zhuyin_init still have a model afterwards.
+              # The file and version come from pacman's own resolution, not a
+              # cache glob, so a stale cache entry can never be picked up.
+              # -dd: print libpinyin alone, not its dependencies as well.
               pacman -Sw --noconfirm libpinyin
+              read -r DATA_VER DATA_URL < <(pacman -Sp -dd --print-format '%v %l' libpinyin)
+              DATA_PKG="/var/cache/pacman/pkg/$(basename "$DATA_URL")"
+              [ -f "$DATA_PKG" ] || { echo "::error::downloaded Arch libpinyin package $DATA_PKG missing" >&2; exit 1; }
               mkdir -p arch-data
-              tar -xf /var/cache/pacman/pkg/libpinyin-*.pkg.tar.zst \
-                -C arch-data --strip-components=4 usr/lib/libpinyin/data
-              [ -f arch-data/table.conf ] || { echo "::error::Arch libpinyin data not found in the package" >&2; exit 1; }
-              tools/packaging/release-arch.sh "$BACKEND" "$VERSION" "$PWD/stage" dist --data="$PWD/arch-data"
+              tar -xf "$DATA_PKG" -C arch-data --strip-components=4 usr/lib/libpinyin/data
+              [ -f arch-data/table.conf ] || { echo "::error::Arch libpinyin data not found in $DATA_PKG" >&2; exit 1; }
+              tools/packaging/release-arch.sh "$BACKEND" "$VERSION" "$PWD/stage" dist \
+                --data="$PWD/arch-data" --data-version="$DATA_VER"
               ;;
           esac
 

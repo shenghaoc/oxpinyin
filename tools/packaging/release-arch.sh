@@ -23,13 +23,18 @@
 # libpinyin.pc already points one level above it). Omitting --data is
 # allowed for a bare library build but the result cannot initialise on a
 # system whose libpinyin it replaced; the release workflow always passes it.
+# `--data-version=VER` names the libpinyin package version the data came
+# from and is recorded in pkgdesc, since the model's version (Arch is on
+# 2.10.x) is not the 2.11.91 the library provides.
 #
 # makepkg refuses to run as root, so a build user is created and the package
 # is built as that user; the script itself is expected to run as root (CI
 # container) or via sudo.
 #
-# Usage: release-arch.sh <backend> <version> <stage-root> <outdir> [--data=DIR]
-#   e.g. release-arch.sh kyotocabinet 0.1.0 stage dist --data=arch-data
+# Usage: release-arch.sh <backend> <version> <stage-root> <outdir>
+#                        [--data=DIR] [--data-version=VER]
+#   e.g. release-arch.sh kyotocabinet 0.1.0 stage dist \
+#          --data=arch-data --data-version=2.10.3-2
 
 set -euo pipefail
 
@@ -39,16 +44,27 @@ STAGE="${3:?stage root required}"
 OUTDIR="${4:?outdir required}"
 shift 4
 DATADIR=""
+DATAVER=""
 for arg in "$@"; do
   case "$arg" in
     --data=*) DATADIR="${arg#--data=}" ;;
+    --data-version=*) DATAVER="${arg#--data-version=}" ;;
     *) echo "error: unknown argument '$arg'" >&2; exit 2 ;;
   esac
 done
 if [ -n "$DATADIR" ]; then
   [ -f "$DATADIR/table.conf" ] \
     || { echo "error: --data=$DATADIR holds no table.conf" >&2; exit 1; }
+  # Strip a trailing slash so cp -a below always copies the directory itself
+  # (GNU cp treats "dir/" and "dir" alike when the destination is new, but
+  # the error message and any future rsync-style tooling should not rely on it).
+  DATADIR="${DATADIR%/}"
+elif [ -n "$DATAVER" ]; then
+  echo "error: --data-version given without --data" >&2; exit 2
 fi
+DESC="Library to deal with pinyin — oxpinyin drop-in ($BACKEND store backend"
+[ -n "$DATAVER" ] && DESC="$DESC; model data from Arch libpinyin $DATAVER"
+DESC="$DESC)"
 
 PCVER="2.11.91"      # mirrors [package.metadata.capi.pkg_config].version
 PKGNAME="oxpinyin-libpinyin-${BACKEND}"
@@ -89,7 +105,7 @@ cat > "$PKGWORK/PKGBUILD" <<EOF
 pkgname=$PKGNAME
 pkgver=$VERSION
 pkgrel=1
-pkgdesc='Library to deal with pinyin — oxpinyin drop-in ($BACKEND store backend)'
+pkgdesc='$DESC'
 arch=($ARCH)
 url='https://github.com/shenghaoc/oxpinyin'
 license=('GPL-3.0-or-later')
