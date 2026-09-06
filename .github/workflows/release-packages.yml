@@ -27,10 +27,10 @@
 # can read, so a tkrzw build there could not pass the init gate below and
 # would be a package for a system whose data it cannot open.
 #
-# Why plain cargo build and not `cargo cinstall` (tools/packaging/install.sh):
-# cargo-c does not forward --no-default-features, so the kyotocabinet lanes
-# cannot select their backend through it; the SONAMEs and complete .pc files
-# come from the crates' build.rs either way. See the header of
+# The build is the distro-documented one: each distro's own cargo-c package
+# runs `cargo cinstall` through tools/packaging/install.sh (which completes
+# the .pc), with the backend chosen by cargo-c's ordinary
+# `--no-default-features --features <backend>`. See the header of
 # tools/packaging/release-stage.sh.
 #
 # Two jobs:
@@ -95,8 +95,11 @@ jobs:
       # distro-native step. bindgen (libclang) reads tkrzw_langc.h /
       # kclangc.h; glib2 is a Tier-C requirement (the shipped .so NEEDs
       # libglib-2.0); the compression -dev packages satisfy Debian's
-      # libtkrzw link demands. The case is a closed set over
-      # repository-controlled matrix values — fail-closed default.
+      # libtkrzw link demands; cargo-c is the distro's own package, the
+      # same one its libpinyin packaging would use (rustc/cargo still come
+      # from rust-toolchain.toml via the bootstrap below). The case is a
+      # closed set over repository-controlled matrix values — fail-closed
+      # default.
       - name: Install build dependencies
         env:
           DISTRO: ${{ matrix.distro }}
@@ -109,19 +112,19 @@ jobs:
               bash tar gzip zstd git ca-certificates curl \
               gcc g++ make pkg-config libclang-dev \
               libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev \
-              libglib2.0-dev
+              libglib2.0-dev cargo-c
             ;;
           fedora)
             dnf -y --setopt=install_weak_deps=False install \
               bash tar gzip zstd git curl ca-certificates \
               gcc gcc-c++ make pkgconf clang-devel \
-              kyotocabinet-devel glib2-devel rpm-build
+              kyotocabinet-devel glib2-devel rpm-build cargo-c
             ;;
           arch)
             pacman -Sy --noconfirm \
               git curl tar gzip zstd diffutils \
               gcc make pkgconf clang binutils fakeroot debugedit \
-              kyotocabinet glib2
+              kyotocabinet glib2 cargo-c
             ;;
           *)
             echo "unknown distro '$DISTRO'" >&2

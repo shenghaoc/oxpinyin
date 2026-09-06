@@ -2,19 +2,16 @@
 # release-stage.sh — build the two shipped cdylibs under ONE store backend and
 # stage the complete drop-in libpinyin/libzhuyin install tree for packaging.
 #
-# Why plain `cargo build` and not `cargo cinstall` (tools/packaging/install.sh):
-# the release lanes select NON-default store backends (kyotocabinet on
-# Fedora/Arch, whose distro data is KC-format), and cargo-c does not forward
-# --no-default-features to cargo (verified against cargo-c 0.10.24; see the
-# `shipped` feature note in crates/oxpinyin-capi/Cargo.toml), so only the
-# workspace-default backend can be selected through it. Nothing else of
-# cargo-c's output is lost by building directly:
-#   - the SONAMEs (libpinyin.so.15 / libzhuyin.so.15) are stamped by each
-#     crate's build.rs as cdylib link args, not by cargo-c;
-#   - the complete .pc files come from the same build.rs-baked templates
-#     install.sh consumes, with the same install-time substitutions;
-#   - the install layout is the fixed one verified against Ubuntu's
-#     libpinyin15-dev in docs/findings/installed-naming.md.
+# The build and layout come from the one supported install path,
+# tools/packaging/install.sh (cargo cinstall + the complete .pc), run once
+# per library with the backend selected through cargo-c's ordinary feature
+# flags: `--no-default-features --features <backend>` (plus `shipped` on the
+# pinyin crate). cargo-c forwards both — its subcommands register cargo's
+# own feature argument set — so the release lanes select kyotocabinet on
+# Fedora/Arch exactly as a distro packager would. The tree is staged under
+# --dest via install.sh's --destdir, which is the DESTDIR every distro build
+# uses. This script adds only what packaging needs on top: stripping (every
+# distro's libpinyin ships stripped) and the gates below.
 #
 # Usage: release-stage.sh <backend> --prefix=DIR --libdir=DIR [--dest=DIR]
 #   <backend>  kyotocabinet | tkrzw | lmdb | redb  (exactly one; the store's
@@ -107,87 +104,52 @@ for name in $COMPANION_HEADERS; do
   fi
 done
 
-# Build both cdylibs under exactly one backend. `shipped` compiles out the
-# fixture hooks no real consumer calls and exists only on the pinyin crate.
-# --locked keeps the release lanes on the committed Cargo.lock.
-echo "== building oxpinyin-capi (backend: $BACKEND, features: shipped) =="
-cargo build --release --locked -p oxpinyin-capi \
-  --no-default-features --features "$BACKEND,shipped"
-echo "== building oxpinyin-zhuyin-capi (backend: $BACKEND) =="
-cargo build --release --locked -p oxpinyin-zhuyin-capi \
-  --no-default-features --features "$BACKEND"
+command -v cargo-cinstall >/dev/null 2>&1 || {
+  echo "error: cargo-c (cargo cinstall) is required; install the distro's cargo-c package" >&2
+  exit 1
+}
 
-TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
-PROFILE_DIR="$TARGET_DIR/release"
-
-PINYIN_SO="$PROFILE_DIR/libpinyin_capi.so"
-PINYIN_A="$PROFILE_DIR/libpinyin_capi.a"
-ZHUYIN_SO="$PROFILE_DIR/libzhuyin_capi.so"
-ZHUYIN_A="$PROFILE_DIR/libzhuyin_capi.a"
-PINYIN_PC_BAKED="$PROFILE_DIR/libpinyin.pc.in.baked"
-ZHUYIN_PC_BAKED="$PROFILE_DIR/libzhuyin.pc.in.baked"
-
-for f in "$PINYIN_SO" "$PINYIN_A" "$ZHUYIN_SO" "$ZHUYIN_A" \
-         "$PINYIN_PC_BAKED" "$ZHUYIN_PC_BAKED"; do
-  if [ ! -f "$f" ]; then
-    echo "error: expected build artifact $f is missing" >&2
-    exit 1
-  fi
-done
-
-# --- stage ---------------------------------------------------------------
-
+# --- build + stage via install.sh ------------------------------------------
+#
+# One library per invocation, as install.sh requires. `shipped` compiles out
+# the fixture hooks no real consumer calls and exists only on the pinyin
+# crate. --locked keeps the release lanes on the committed Cargo.lock.
 rm -rf -- "$DEST"
+echo "== installing libpinyin into $DEST (backend: $BACKEND, features: shipped) =="
+./install.sh libpinyin --prefix="$PREFIX" --libdir="$LIBDIR" --destdir="$DEST" -- \
+  --release --locked --no-default-features --features "$BACKEND,shipped"
+echo "== installing libzhuyin into $DEST (backend: $BACKEND) =="
+./install.sh libzhuyin --prefix="$PREFIX" --libdir="$LIBDIR" --destdir="$DEST" -- \
+  --release --locked --no-default-features --features "$BACKEND"
+
 STAGE_LIB="$DEST$LIBDIR"
 STAGE_INC="$DEST$PREFIX/include/libpinyin-2.11.91"
 STAGE_PC="$STAGE_LIB/pkgconfig"
-mkdir -p -- "$STAGE_LIB" "$STAGE_INC" "$STAGE_PC"
 
-install_so() { # $1=source $2=dest base name (libpinyin / libzhuyin)
-  install -m0755 -- "$1" "$STAGE_LIB/$2.so.15.0.0"
-  # Release artifacts ship stripped, as every distro's libpinyin does.
-  if command -v strip >/dev/null 2>&1; then
-    strip --strip-unneeded -- "$STAGE_LIB/$2.so.15.0.0"
-  fi
-  ln -sfn -- "$2.so.15.0.0" "$STAGE_LIB/$2.so.15"
-  ln -sfn -- "$2.so.15" "$STAGE_LIB/$2.so"
-}
-
-install_so "$PINYIN_SO" libpinyin
-install_so "$ZHUYIN_SO" libzhuyin
-install -m0644 -- "$PINYIN_A" "$STAGE_LIB/libpinyin.a"
-install -m0644 -- "$ZHUYIN_A" "$STAGE_LIB/libzhuyin.a"
-
-# The closed header set each crate's Cargo.toml declares as include assets.
-for h in pinyin.h novel_types.h pinyin_custom2.h; do
-  install -m0644 -- "$PINYIN_CRATE_DIR/$h" "$STAGE_INC/$h"
+# The fixed tree of docs/findings/installed-naming.md, file by file: a
+# missing piece here means cargo-c's layout moved and the packagers' file
+# lists would ship a hole.
+for f in "$STAGE_LIB/libpinyin.so.15.0.0" "$STAGE_LIB/libpinyin.so.15" \
+         "$STAGE_LIB/libpinyin.so" "$STAGE_LIB/libpinyin.a" \
+         "$STAGE_LIB/libzhuyin.so.15.0.0" "$STAGE_LIB/libzhuyin.so.15" \
+         "$STAGE_LIB/libzhuyin.so" "$STAGE_LIB/libzhuyin.a" \
+         "$STAGE_PC/libpinyin.pc" "$STAGE_PC/libzhuyin.pc" \
+         "$STAGE_INC/pinyin.h" "$STAGE_INC/zhuyin.h" \
+         "$STAGE_INC/novel_types.h" "$STAGE_INC/pinyin_custom2.h" \
+         "$STAGE_INC/zhuyin_custom2.h"; do
+  [ -e "$f" ] || { echo "error: expected staged file $f is missing" >&2; exit 1; }
 done
-for h in zhuyin.h zhuyin_custom2.h novel_types.h pinyin_custom2.h; do
-  install -m0644 -- "$ZHUYIN_CRATE_DIR/$h" "$STAGE_INC/$h"
-done
+# Nothing beyond that tree may ride along (cargo-c would happily add e.g. a
+# bin/ or share/ if a crate grew one).
+unexpected="$(find "$DEST" -type f ! -path "$STAGE_LIB/*" ! -path "$STAGE_INC/*")"
+[ -z "$unexpected" ] || { echo "error: unexpected staged files:" >&2; echo "$unexpected" >&2; exit 1; }
 
-# Escape a value for the sed replacement side (same helper contract as
-# install.sh): '\', '&', and the '#' delimiter substitute literally.
-sed_escape() {
-  printf '%s' "$1" | sed 's/[\\&#]/\\&/g'
-}
-
-prefix_esc="$(sed_escape "$PREFIX")"
-libdir_esc="$(sed_escape "$LIBDIR")"
-
-# libpinyin: the template hardcodes exec_prefix/includedir off ${prefix}, so
-# only @prefix@ and @libdir@ are install-time (mirrors install.sh exactly).
-sed -e "s#@prefix@#${prefix_esc}#g" -e "s#@libdir@#${libdir_esc}#g" \
-  "$PINYIN_PC_BAKED" > "$STAGE_PC/libpinyin.pc"
-
-# libzhuyin: all four placeholders are install-time; @exec_prefix@ and
-# @includedir@ get the symbolic values autoconf substitutes upstream.
-sed -e "s#@prefix@#${prefix_esc}#g" \
-  -e "s#@exec_prefix@#\${prefix}#g" \
-  -e "s#@libdir@#${libdir_esc}#g" \
-  -e "s#@includedir@#\${prefix}/include#g" \
-  "$ZHUYIN_PC_BAKED" > "$STAGE_PC/libzhuyin.pc"
-chmod 0644 -- "$STAGE_PC/libpinyin.pc" "$STAGE_PC/libzhuyin.pc"
+# Release artifacts ship stripped, as every distro's libpinyin does.
+if command -v strip >/dev/null 2>&1; then
+  strip --strip-unneeded -- "$STAGE_LIB/libpinyin.so.15.0.0" "$STAGE_LIB/libzhuyin.so.15.0.0"
+fi
+chmod 0755 -- "$STAGE_LIB/libpinyin.so.15.0.0" "$STAGE_LIB/libzhuyin.so.15.0.0"
+chmod 0644 -- "$STAGE_LIB"/*.a "$STAGE_PC"/*.pc "$STAGE_INC"/*.h
 
 # --- gates ----------------------------------------------------------------
 

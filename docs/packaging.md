@@ -129,8 +129,8 @@ Both recipes are the distro-documented shape; a real packaging must run
 `tools/packaging/install.sh <libpinyin|libzhuyin> --prefix=/usr …` in place
 of the bare `cargo cinstall` (or re-run it afterwards), because cargo-c's
 own `.pc` lacks the variables consumers read — see the next section. The
-release packages built by `release-packages.yml` do not use cargo-c at all
-(below).
+release packages built by `release-packages.yml` go through exactly that
+wrapper (below).
 
 ## Debian recipe
 
@@ -210,15 +210,20 @@ already on the system:
 | Fedora | `fedora:latest` | kyotocabinet | Fedora's libpinyin still links KyotoCabinet (`kyotocabinet-libs`) |
 | Arch | `archlinux:latest` | kyotocabinet | Arch's libpinyin still links KyotoCabinet |
 
-`tools/packaging/release-stage.sh` builds both cdylibs with plain
-`cargo build --no-default-features --features <backend>,shipped` — NOT
-`cargo cinstall` — because cargo-c does not forward `--no-default-features`
-(verified against cargo-c 0.10.24), so the kyotocabinet lanes cannot select
-their backend through it. Nothing is lost by building directly: build.rs
-stamps the SONAMEs and bakes the complete `.pc` templates, the staged
-layout is the fixed tree of `docs/findings/installed-naming.md`, and the
-script re-gates it (SONAME, the five pkg-config reads real consumers
-perform, and a C compile/link/run) before any packaging runs.
+`tools/packaging/release-stage.sh` builds and stages through the supported
+path: `tools/packaging/install.sh` (cargo cinstall plus the complete `.pc`)
+once per library, with `--destdir` pointing at the staging root and the
+backend selected by cargo-c's ordinary
+`--no-default-features --features <backend>` (plus `shipped` on the pinyin
+crate). cargo-c forwards both flags — its subcommands register cargo's
+full feature argument set (checked in its source and exercised on 0.10.24
+by building the kyotocabinet drop-in through it), so an earlier note here
+saying it did not was wrong. Each lane uses its distro's own `cargo-c`
+package, the one the distro's libpinyin packaging would use; rustc and
+cargo still come from `rust-toolchain.toml`. The script then strips the
+shared objects and re-gates the tree (the fixed file list of
+`docs/findings/installed-naming.md`, SONAME, the five pkg-config reads real
+consumers perform, and a C compile/link/run) before any packaging runs.
 
 The per-distro makers wrap that staged tree in the shape the distro's real
 libpinyin packaging uses, and every package takes the distro's

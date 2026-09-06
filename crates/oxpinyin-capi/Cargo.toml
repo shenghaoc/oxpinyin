@@ -62,9 +62,14 @@ redb = [
 #
 # Deliberately a subtractive feature, which cargo features usually should not
 # be. The additive spelling (a default-on `harness` feature switched off with
-# --no-default-features) does not work here: cargo-c does not forward
-# --no-default-features to cargo, so the shipped artifact came out carrying the
-# extra symbols. --features IS forwarded, so the restriction has to ride on it.
+# --no-default-features) would tie the hooks to the SAME switch that selects
+# the store backend: `default = ["tkrzw"]` already rides on default features,
+# so every non-default-backend build would silently drop the hooks too and
+# every in-tree run-*.sh would have to spell `--features tkrzw,harness`.
+# (An earlier note here claimed cargo-c does not forward
+# --no-default-features; that was wrong — cargo-c registers cargo's full
+# feature argument set, verified on 0.10.24 by building the kyotocabinet
+# drop-in through `cargo cbuild --no-default-features`.)
 shipped = []
 
 [lints.rust]

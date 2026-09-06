@@ -30,8 +30,12 @@
 # `cargo capi install` leaves cargo-c's incomplete one — the documented
 # silent window (docs/findings/installed-naming.md).
 #
-# Usage: tools/packaging/install.sh <library> --prefix=DIR [--libdir=DIR] [-- <extra cargo cinstall args>]
+# Usage: tools/packaging/install.sh <library> --prefix=DIR [--libdir=DIR] [--destdir=DIR]
+#                                   [-- <extra cargo cinstall args>]
 #        <library> is `libpinyin` or `libzhuyin` — required, one per invocation.
+#        --destdir stages the tree under DIR (the usual packaging DESTDIR): it
+#        is forwarded to cargo cinstall and the complete .pc is written under
+#        it too, while the .pc's own paths keep the real --prefix/--libdir.
 # Env:   LIBPINYIN_DATABASE_FORMAT=<name>  overrides the baked database_format
 #                                          (e.g. KyotoCabinet, BerkeleyDB).
 #
@@ -53,10 +57,11 @@ COMPANION_HEADERS="novel_types.h pinyin_custom2.h"
 LIBRARY=""
 PREFIX=""
 LIBDIR=""
+DESTDIR=""
 EXTRA=()
 
 usage() {
-  echo "usage: $0 <libpinyin|libzhuyin> --prefix=DIR [--libdir=DIR] [-- <extra cargo cinstall args>]" >&2
+  echo "usage: $0 <libpinyin|libzhuyin> --prefix=DIR [--libdir=DIR] [--destdir=DIR] [-- <extra cargo cinstall args>]" >&2
   echo "       one library per invocation; run twice to install both" >&2
   exit 2
 }
@@ -82,6 +87,8 @@ while [ $# -gt 0 ]; do
     --prefix)   shift; PREFIX="${1:-}" ;;
     --libdir=*) LIBDIR="${1#*=}" ;;
     --libdir)   shift; LIBDIR="${1:-}" ;;
+    --destdir=*) DESTDIR="${1#*=}" ;;
+    --destdir)  shift; DESTDIR="${1:-}" ;;
     --)         shift; EXTRA+=("$@"); break ;;
     *)          EXTRA+=("$1") ;;
   esac
@@ -230,7 +237,8 @@ check_companion_headers() {
 install_library() {
   local crate_dir="$1" baked_name="$2" pc_name="$3"
   shift 3
-  ( cd "$crate_dir" && cargo cinstall --prefix="$PREFIX" --libdir="$LIBDIR" --target-dir="$TARGET_DIR" ${PASSTHRU[@]+"${PASSTHRU[@]}"} )
+  ( cd "$crate_dir" && cargo cinstall --prefix="$PREFIX" --libdir="$LIBDIR" --target-dir="$TARGET_DIR" \
+      ${DESTDIR:+--destdir="$DESTDIR"} ${PASSTHRU[@]+"${PASSTHRU[@]}"} )
   local baked
   baked="$(locate_baked "$baked_name")"
   sed "$@" "$baked" > "$PC_DIR/$pc_name"
@@ -239,7 +247,9 @@ install_library() {
 
 check_companion_headers
 
-PC_DIR="$LIBDIR/pkgconfig"
+# Under --destdir the .pc lands in the staged tree, but its contents still
+# carry the real --prefix/--libdir (DESTDIR is never baked into a .pc).
+PC_DIR="${DESTDIR}${LIBDIR}/pkgconfig"
 mkdir -p "$PC_DIR"
 
 prefix_esc="$(sed_escape "$PREFIX")"
