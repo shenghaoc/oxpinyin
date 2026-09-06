@@ -156,6 +156,15 @@ included. The data files never change; the dirt is incidental. Run
 `git checkout -- fixtures/w3/lmdb/` after any model-dependent datagen
 test run before committing, and never commit the sidecars.
 
+## Oracle C-API gotchas
+
+`pinyin_train(instance, index)` trains the n-best result `index` and
+returns false unless `pinyin_guess_sentence` filled the n-best results
+first (`pinyin.cpp:2676` at the pin) — it does not consume the candidate
+list from `pinyin_guess_candidates`. `Session::train_top` exists to make
+this impossible to get wrong; harness and bench authors call it rather
+than `pinyin_train` directly.
+
 ## Bench targets
 
 A backend-specific criterion bench — one that names a peer's optional
