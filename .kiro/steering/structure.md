@@ -65,11 +65,13 @@ surface only. Extension traits (`Dictionary`, `UserModel`,
 `LanguageModel`) are unsealed and grow only by defaulted methods; public
 error enums are `#[non_exhaustive]`.
 
-**Configuration model:** layered — pinned upstream defaults (P0-5,
-verbatim) → system drop-ins → user (GSettings on Linux; file backend
-elsewhere via the same trait). Merge is a pure core function.
-`Config::default()` must equal the captured upstream defaults — the sane
-default *is* the parity configuration, and S1b runs under it.
+**Configuration model:** layered — the frozen upstream defaults
+(`docs/findings/upstream-schema.md`, verbatim) → system drop-ins → a user
+layer the shell supplies as data (a `ConfigLayer` file, or one built in
+memory from whatever settings store the shell owns; libpinyin itself has
+no settings store, and neither does the engine). Merge is a pure core
+function. `Config::default()` must equal the captured upstream defaults —
+the sane default *is* the parity configuration, and S1b runs under it.
 Customisation is data overlays (rules, maps, schemes) and live
 preferences; engine weights and LM order are never user configuration.
 
