@@ -1629,7 +1629,22 @@ where
         phrase: &str,
         offset: usize,
     ) -> Result<Option<usize>, EngineError> {
-        let (keys, parsed) = self.matrix_keys()?;
+        // The working graph, not the parsed-only one `matrix_keys`
+        // builds: pre-parsed scheme segments keep their boundaries and
+        // gain no divided/resplit alternates, as every other law over
+        // the session's matrix has it.
+        let graph = self.build_graph_at(0, self.raw.as_bytes())?;
+        let parsed = graph.consumed();
+        let matrix = build_scan_matrix(
+            &graph,
+            self.settings.options,
+            self.exact_segments.is_empty(),
+        );
+        let keys: Vec<crate::cursor::MatrixKey> = matrix
+            .iter()
+            .flatten()
+            .map(|key| crate::cursor::MatrixKey::new(key.key, key.tone, key.syllable_start, key.to))
+            .collect();
         crate::character_offset_over_keys(
             self.raw.as_bytes(),
             parsed,
