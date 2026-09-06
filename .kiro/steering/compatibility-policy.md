@@ -8,8 +8,9 @@ Canonical text: `docs/findings/compatibility-policy.md` (policy,
 `libpinyin.so.15`, put it on the library path, and unmodified consumers work
 against the data already on the system.
 
-**E2E I/O rule.** For every exported symbol in the consumer union (58
-symbols), given the same inputs and state, oxpinyin MUST return
+**E2E I/O rule.** For every exported symbol (all 79 `pinyin_*` exports
+are live; the measured consumer union of 58 is the probe-coverage scope),
+given the same inputs and state, oxpinyin MUST return
 byte-identical output to the pinned libpinyin 2.11.91 — return status,
 out-parameters and the data they point to, written lengths, and any state
 transition on the handle. Divergence is permitted only under the four

@@ -30,9 +30,9 @@ need none. The linter enforces the house form when a trailer is present
 No slash in either character class, and each token starts alphanumeric. The
 model token must contain an ASCII letter (`Kiro:kiro-1` passes;
 `Kiro:4.6` fails). No duplicate lines (set semantics). Never
-`Co-Authored-By:` for agents. Vendors currently in use: `ZCode:GLM-5.3`,
-`ZCode:GLM-5.3-Flash`, `Claude:claude-opus-4-8`, `Claude:claude-opus-5`,
-and `Kiro:kiro-<id>`.
+`Co-Authored-By:` for agents. The regex is the gate; there is no vendor
+allowlist — `git log --format=%B | grep Assisted-by` shows the forms in
+use (`ZCode:GLM-5.3`, `Claude:claude-fable-5-1`, `Kiro:kiro-cli`, …).
 
 ## Worktrees
 
