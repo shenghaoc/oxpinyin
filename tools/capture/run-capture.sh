@@ -48,8 +48,17 @@ check_file_sha256() {
 [[ -f $shared_object ]] || fail "pinned shared object not found: $shared_object"
 [[ -d $system_dir ]] || fail "pinned data directory not found: $system_dir"
 [[ -f $data_manifest ]] || fail "oracle data manifest not found: $data_manifest"
-[[ -f $data_unstable_manifest ]] ||
-	fail "oracle unstable data manifest not found: $data_unstable_manifest"
+# A prefix built before the manifest split records no
+# data_unstable_manifest_sha256 and has no unstable manifest: its
+# oracle-data.sha256 covers all 23 files, so the gate check below still
+# covers the whole payload. The unstable checks apply only when the pin
+# records the field.
+has_unstable_manifest=0
+if manifest_value data_unstable_manifest_sha256 >/dev/null; then
+	has_unstable_manifest=1
+	[[ -f $data_unstable_manifest ]] ||
+		fail "oracle unstable data manifest not found: $data_unstable_manifest"
+fi
 
 [[ $(manifest_value schema) == pinyin-oracle-v1 ]] ||
 	fail 'unsupported oracle manifest schema'
@@ -60,16 +69,21 @@ oracle_pin_ref=$(manifest_value pin_ref) || fail 'missing oracle pin ref'
 check_file_sha256 header_sha256 "$header"
 check_file_sha256 shared_object_sha256 "$shared_object"
 check_file_sha256 data_manifest_sha256 "$data_manifest"
+(
+	cd "$prefix"
+	sha256sum --check --status oracle-data.sha256
+) || fail 'oracle data payload checksum mismatch'
 # The unstable manifest covers the six files libpinyin does not generate
 # reproducibly. Checking it here keeps the payload tamper-evident within
 # this prefix; it says nothing about whether another build of the same pin
 # would agree, and nothing compares it across prefixes.
-check_file_sha256 data_unstable_manifest_sha256 "$data_unstable_manifest"
-(
-	cd "$prefix"
-	sha256sum --check --status oracle-data.sha256 &&
+if ((has_unstable_manifest)); then
+	check_file_sha256 data_unstable_manifest_sha256 "$data_unstable_manifest"
+	(
+		cd "$prefix"
 		sha256sum --check --status oracle-data-unstable.sha256
-) || fail 'oracle data payload checksum mismatch'
+	) || fail 'oracle unstable data payload checksum mismatch'
+fi
 
 mkdir -p "$build_dir" "$output_dir"
 rm -rf "$build_dir/user-f-a" "$build_dir/user-f-c"
