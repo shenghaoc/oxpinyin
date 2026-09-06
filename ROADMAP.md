@@ -96,9 +96,6 @@ open or pending:
 - W8 drop-in task 9 — the write path for learned user data in
   libpinyin's own user-file format (`.kiro/specs/drop-in/tasks.md`; the
   user store is `user_store.<ext>` today).
-- The bopomofo SPEC freeze — proposed 2026-09-03, **maintainer ruling
-  pending** (`docs/findings/bopomofo-spec.md`, Freeze record). The
-  double-pinyin SPEC is frozen (2026-09-02).
 - The Phase 0 F-E register (foundation task 4).
 
 Parked, not open: the W12 live-typing behaviours the parity sequence does
@@ -316,9 +313,12 @@ shelved BerkeleyDB compat path (drop-in task 10).
   gate `run-key-surface-diff.sh` stays IDENTICAL (2,131 probe lines,
   including its FORCE_TONE profile sweep). No W13 implementation items
   remain; the divergence register's FORCE_TONE entry carries the closure.
-  The bopomofo SPEC's freeze record is drafted (2026-09-03) and awaits
-  the maintainer's dated ruling — until then its status line stays
-  "freeze proposed".
+  The bopomofo SPEC is frozen as well: the 2026-09-03 draft was frozen
+  as drafted by the maintainer's ruling of 2026-09-06 (PR #353; freeze
+  record at the bottom of `docs/findings/bopomofo-spec.md`). Its one
+  open implementation item — the pinyin facade's chewing batch seam does
+  not forward `FORCE_TONE` — stays open under the frozen law, carried by
+  the divergence register.
 
 - **W14 LANDED (489e94d, PR #113).** Three parts, all delivered: (a) sentence
   candidates emit with real unigrams loaded — up to N n-best rows prepended
