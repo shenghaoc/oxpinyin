@@ -48,7 +48,7 @@ fn main() {
             // Codegen applies its own `{:?}` quoting to the key (`FmtConst`),
             // so the raw spelling goes in — debugging it here would
             // double-escape every entry.
-            phf.entry(entry.clone(), &index.to_string());
+            phf.entry(entry.clone(), index.to_string());
         }
         writeln!(
             generated,
