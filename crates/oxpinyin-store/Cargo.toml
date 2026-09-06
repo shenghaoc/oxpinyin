@@ -14,6 +14,10 @@ workspace = true
 redb = { workspace = true, optional = true }
 heed = { workspace = true, optional = true }
 
+[dev-dependencies]
+# Backend micro-benches (benches/); workspace lock pins 0.8.
+criterion = "0.8"
+
 [build-dependencies]
 bindgen = { workspace = true, optional = true }
 
