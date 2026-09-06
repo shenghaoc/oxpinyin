@@ -2,15 +2,15 @@
 
 ## Executive summary
 
-#340 (`opt/redb-alloc-reduction`) and #341 (`opt/lmdb-backend`) landed
-six store-layer changes on main. One of them has a clean, reliable
+PRs #340 (`opt/redb-alloc-reduction`) and #341 (`opt/lmdb-backend`)
+landed six store-layer changes on main. One of them has a clean, reliable
 measurement; this document records that one and says why the other
 five do not.
 
 - **S5 — `export_phrases` single-walk pronunciation collection
   (#341)**: 2.2× faster at every size measured, 64–1024 phrases. The
-  saving is ≈0.36 µs per phrase — at 1024 phrases, 450 µs per call —
-  and it is the removal of one LMDB read transaction plus one cursor
+  saving is 0.36–0.44 µs per phrase (0.36 at 64, 0.44 at 1024 — 450 µs
+  per call at 1024 phrases) and it is the removal of one LMDB read transaction plus one cursor
   open per phrase, replaced by a single ordered walk of the
   pronunciation table. Scaling stays linear on both sides.
 - The redb allocation trims (F1/F3), the redb `is_empty` header probe
@@ -71,7 +71,7 @@ Throughput at 1024 phrases: 1.28 → 2.94 Melem/s.
 
 - **2.2× at every N.** The ratio is flat from 64 to 1024 phrases
   (2.30×, 2.07×, 2.29×), so the change is per-phrase, not fixed-cost.
-- **≈0.36 µs saved per phrase**: (798.9 − 348.7) / 1024 = 0.44 µs at
+- **0.36–0.44 µs saved per phrase**: (798.9 − 348.7) / 1024 = 0.44 µs at
   the largest N, (40.83 − 17.77) / 64 = 0.36 µs at the smallest; the
   per-phrase saving is the one number a caller can budget with.
 - **Mechanism.** Before, `export_phrases_in` ran one
