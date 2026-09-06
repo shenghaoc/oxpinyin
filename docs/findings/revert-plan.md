@@ -1,7 +1,23 @@
 # Revert plan — the seven incompatible divergences
 
-Date: 2026-08-28 · Status: **work order; nothing reverted yet** · Branch:
-`claude/pr5-revert-incompatible-divergences`.
+Date: 2026-08-28 · Status: **work order** · Branch:
+`claude/pr5-revert-incompatible-divergences` (#209; the work order
+merged as a document — the reverts landed as their own PRs).
+
+**Status at `87f25055` (2026-09-06):**
+
+| # | Register | Disposition |
+| --- | --- | --- |
+| 1 | #12 predicted-candidate tie order | superseded by P6 (345af16d): on KC/tkrzw the runtime walks the pin's own DBM and `pred-order-diff` is IDENTICAL; text-ascending stays the defined order on redb/LMDB |
+| 2 | #13 mid-syllable offset | closed — the pin's empty-column law reproduced (C2 residue, 2026-08-29) |
+| 3 | #17 literal `0x0` gating | **open** and unconditional: class (d) was retired 2026-09-06, so the consumer-unreachability question no longer applies |
+| 4 | #7 `validate_constraint` | closed as equivalent on model20 (4c2fe02b) |
+| 5 | #8 constraints across re-parse | closed (#217) |
+| 6 | #9 n-best row-choose cursor | closed (eca8d43b) |
+| 7 | #15 apostrophe-only consumption | closed (678f3259, 2026-08-26 — predates this plan; the register entry was not updated until 2026-09-06) |
+
+The sections below are the 2026-08-28 text, kept as the record of what
+each revert had to prove.
 
 Driven by the classification table in
 `docs/findings/compatibility-policy.md`. Every entry that table marks

@@ -29,8 +29,10 @@ covers only cases where reproduction is structurally impossible.
 supply; oxpinyin returns `false`/`Err` and logs the point. Covers aborts,
 not wrong-but-defined answers.
 
-**(d) CONSUMER SCOPE** — only what ibus-libpinyin 1.16.5 and
-fcitx-libpinyin actually call; dead code is not a call site.
+**(d) CONSUMER SCOPE** — **retired 2026-09-06**: written for the
+consumer-union contract, moot since the target is the full ABI with the
+upstream headers copied verbatim. Every export and option bit is in
+scope; "no consumer calls it" is a priority signal, not an exception.
 
 A stub returning `false` is not compliance — it is a defect. Probe coverage
 is itself a deliverable: a consumer-union symbol with no differential probe

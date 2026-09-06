@@ -2,7 +2,12 @@
 
 Date: 2026-08-28 · Status: **policy** (maintainer-decided; this document
 records the decision and classifies the existing register against it) ·
-Branch: `claude/pr2-compatibility-policy`.
+Branch: `claude/pr2-compatibility-policy` (#203). **Amended 2026-09-06:**
+the classification table re-synced with `upstream-divergences.md` at
+`87f25055` — every register entry now has a row, closures since
+2026-08-28 are recorded, and the "PR 5" the original text named is
+`docs/findings/revert-plan.md` (#209, the work order), which never
+became a PR of its own; the reverts landed one by one (see the table).
 
 ## The goal this policy serves
 
@@ -98,6 +103,17 @@ out-of-enum row in the table below, which sits on exactly that line.
 
 ### (d) CONSUMER SCOPE — only what the two reference consumers call
 
+> **RETIRED (maintainer decision, 2026-09-06).** This class was written
+> for the 51/58-symbol consumer-union contract and became moot the
+> moment the target changed to the full ABI with `pinyin.h` and
+> `zhuyin.h` copied verbatim (W8, 79/79; libzhuyin, 52/52): every
+> exported symbol and every option bit is in scope, whether or not a
+> known consumer reaches it. The text below is kept as the record of
+> what (d) meant; no new entry may be classified (d), and the two rows
+> that were (16, 17) are re-dispositioned in the table. "No consumer
+> calls it" remains useful as a *priority* signal, never as an
+> exception.
+
 Only what **ibus-libpinyin 1.16.5** and **fcitx-libpinyin** actually
 call is in scope. Symbols in `libpinyin.ver` that neither consumer
 touches are out of scope until a new consumer demonstrates a need.
@@ -122,9 +138,12 @@ in `abi-subset.md` §6, and `pinyin_get_raw_full_pinyin` is the fcitx
 case (`eim.cpp:377-391`, inside `#if 0`) — a symbol upstream does not
 export at all, so a live call would not even link.
 
-**The measured union is 58 symbols** (see PR 3). The enforcement
-mechanism is a linker version script exposing exactly that set; new
-consumers join it via a documented PR.
+**The measured union is 58 symbols** (`abi-subset.md` §1 plus the fcitx
+grep). Since W8 closed (2026-08-30) the shipped object exports all 79
+`pinyin_*` symbols from `libpinyin.ver` live (`abi-subset.md` §6), so
+the union no longer bounds the *export* set; it bounds the E2E probe
+obligation below and the (d) scope decision. New consumers extend the
+union via a documented PR.
 
 ## (e) The E2E I/O compatibility rule
 
@@ -135,7 +154,7 @@ exceptions to.
 > **E2E I/O COMPATIBILITY RULE:** For every exported symbol in the
 > consumer union, given the same inputs and state, oxpinyin MUST return
 > byte-identical outputs to the pinned libpinyin 2.11.91 at `0c5e80e` —
-> except where one of the four named exceptions (a)/(b)/(c)/(d)
+> except where one of the named exceptions (a)/(b)/(c) ((d) retired 2026-09-06)
 > explicitly applies. Exporting a symbol that returns a wrong value is
 > worse than not exporting it: the consumer gets a silent wrong answer
 > instead of a link error. **A stub returning `false` is not compliance —
@@ -162,10 +181,11 @@ somewhere:
    legitimately divergent (a named exception). It may not be present and
    wrong.
 2. **`pinyin_get_pinyin_key_rest` and `pinyin_get_pinyin_key_rest_positions`
-   are defects today**, not gaps: both are exported and both return
-   `false` unconditionally (`cursor.rs`, "Provisional"). Under this rule
-   they are worse than the five siblings that are simply missing, because
-   a linker error is a diagnosis and a `false` is not.
+   were defects when this was written** — exported, returning `false`
+   unconditionally. Closed with the W8 79/79 work: both are implemented
+   against a per-instance key-rest slot
+   (`crates/oxpinyin-capi/src/cursor.rs`). The rule they illustrated
+   stands: a linker error is a diagnosis and a `false` is not.
 3. **Probe coverage is itself a deliverable.** 58 symbols are in the
    union; the differential suite does not drive all of them. The
    uncovered ones are unverified rather than compliant, and closing that
@@ -174,8 +194,15 @@ somewhere:
 ## The classification table
 
 Every entry in `upstream-divergences.md`, and the one parked entry in
-`all-off-tails.md`, classified against (a)/(b)/(c)/(d) or **REVERT
-TARGET**. This table drives PR 5.
+`all-off-tails.md`, classified against (a)/(b)/(c)/(d), **REVERT
+TARGET** (reproducible, not yet reproduced, no blocker but the work),
+**OPEN DEFECT** (reproducible, blocked on a STOP — an engine-interface
+ask), **CLOSED** (reproduced, or proven equivalent on the pinned data),
+or **no ABI divergence**. Rows 1–18 are the 2026-08-28 table with their
+status brought to `87f25055`; rows 19–31 are the entries the register
+gained or that the original table skipped (row 19 landed with the
+074a2219 pin bump). The work order for the
+revert targets is `revert-plan.md`.
 
 | # | Entry | Class | Basis |
 | --- | --- | --- | --- |
@@ -188,26 +215,63 @@ TARGET**. This table drives PR 5.
 | 5c | Scheme setters — zhuyin `STANDARD_DVORAK` (7) | **(c)** | dvorak arm falls through to `abort()` (`zhuyin_parser2.cpp:291-295`) |
 | 5d | Scheme setters — zhuyin / full-pinyin out-of-enum | **(c)** | aborts at `pinyin.cpp:1188` / `pinyin_parser2.cpp:398` |
 | 6 | Constraint-aware train without the consistency assert | **(c)** | `train_result3` asserts and aborts on a stale result |
-| 7 | `validate_constraint`'s drop test is the span-search shape | **REVERT TARGET** | see below — the arithmetic is basic-ops, not class (a) |
-| 8 | Constraints survive every re-parse except the selection-committed one | **REVERT TARGET** | a behaviour choice; upstream never resets on re-parse |
-| 9 | The n-best row-choose cursor is the row's own end | **REVERT TARGET** | upstream returns `matrix.size()-1` unconditionally; reproducible |
+| 7 | `validate_constraint`'s drop test is the span-search shape | **CLOSED** (was REVERT TARGET) | 4c2fe02b, 2026-08-29: the `FLT_EPSILON` drop boundary is unreachable on model20 (max per-token total 2,945,481 < 2²³), so the two tests are observably equivalent on the pinned data; the arithmetic still differs (see the note below) |
+| 8 | Constraints survive every re-parse except the selection-committed one | **CLOSED** (was REVERT TARGET) | #217 (`fix/revert-r5-constraint-reset`): constraints survive a selection-committed re-parse; frozen pins bit-identical |
+| 9 | The n-best row-choose cursor is the row's own end | **CLOSED** (was REVERT TARGET) | eca8d43b: every `NBEST_MATCH_CANDIDATE` choose answers `parsed_len` — upstream's `matrix.size()-1` in the active parse mode's coordinates |
 | 10 | `pinyin_get_sentence` asserts a past-the-rows index | **(c)** | SIGABRTs on a non-empty result set (`pinyin.cpp:1463-1482`) |
-| 11 | N-best trellis accumulates `gfloat` log costs | **(a)** | `log()` per step into a `gfloat`; ties decided at the ULP |
-| 12 | Predicted-candidate tie order | **REVERT TARGET** | named in PR 5; the target order changes with the backend (see below) |
-| 13 | Mid-syllable candidate-lookup offset | **REVERT TARGET** | named in PR 5; empty matrix column vs suffix re-parse |
+| 11 | N-best trellis accumulates `gfloat` log costs | **(a)** | `log()` per step into a `gfloat`; ties decided at the ULP. **FROZEN** as a permanent Stage-1 divergence (maintainer ruling 2026-09-02, re-frozen 2026-09-04 at 491/396/390 of 496) |
+| 12 | Predicted-candidate tie order | **CLOSED** (was REVERT TARGET) | superseded by P6 (345af16d, 2026-09-02): on KC and tkrzw the runtime walks the pin's own phrase DBM, so `pred-order-diff` is IDENTICAL on the pin's `data/` (1588 lines, 0 mismatches) — the KC hash-walk experiment the original row asked for is moot. On redb/LMDB the text-ascending *defined* order stands (maintainer decision 2026-08-25); those containers are not the pin's and are outside the drop-in surface. `ROADMAP.md` records the same disposition |
+| 13 | Mid-syllable candidate-lookup offset | **CLOSED** (was REVERT TARGET) | the pin's empty-column law is reproduced (register entry re-titled "closed"; the C2 residue closed 2026-08-29 per `uncovered-surface-differentials.md` phase E) |
 | 14 | Cursor helpers' `_check_offset` aborts answer `false` | **(c)** | pin SIGABRTs at `pinyin.cpp:2175` |
-| 15 | Apostrophe-only input: pin consumes every byte, engine none | **REVERT TARGET** | a parse-length difference (pin 1/2/3, oxpinyin 0), not an abort |
-| 16 | `FORCE_TONE` honoured on the full-pinyin seam only | **(d)** | `FORCE_TONE` appears in **neither** consumer's `src/` — 0 hits in ibus-libpinyin 1.16.5 and 0 in fcitx-libpinyin |
-| 17 | Literal `0x0` option gating (`jv`/`zon`; `xian` divided-table) | **REVERT TARGET** | named in PR 5; see the unreachability note below |
+| 15 | Apostrophe-only input: pin consumes every byte, engine none | **CLOSED** (was REVERT TARGET) | 678f3259, 2026-08-26 (B2, the parser-termination class): `SegmentGraph` propagates each apostrophe one byte, counted — `'''` consumes 3, pinned in `graph.rs`. Closed two days *before* this policy was written; the register entry had not been updated (amended 2026-09-06) |
+| 16 | `FORCE_TONE` honoured on the full-pinyin seam only | **CLOSED** (was (d); (d) retired 2026-09-06) | the zhuyin batch (1671954), double-pinyin batch (#289) and one-key seams have since been ported; the last seam, the pinyin facade's chewing batch, is row 30 |
+| 17 | Literal `0x0` option gating (`jv`/`zon`; `xian` divided-table) | **REVERT TARGET** | not a register entry: the parked paragraph in `all-off-tails.md`. With (d) retired the consumer-unreachability argument is moot: port the pin's gating at the literal `0x0` word (empty guess for `jv`/`zon`; drop the divided-table inventory without `USE_DIVIDED_TABLE`), probe via `run-option-sweep.sh` at that word |
 | 18 | The pinyin index DBMs carry uninitialized struct padding | **(b)** | upstream copies a stack struct's tail padding into the DBM; datagen zeroes it and the reader never touches it |
 | 19 | `pinyin_get_character_offset`'s recursion asserts answer `false` | **(c)** | pin SIGABRTs at `pinyin.cpp:3152` / `:3166` (and the #14 family's range and `_check_offset` asserts); the unbounded `cached_tokens` read (`:3172`) is a (b) sub-shape answered as a deterministic miss |
+| 20 | One bigram-prediction row differs on the pin's own data (trellis residual) | **(a)** | downstream of row 11: the trained count for `测测 → 你` straddles the `m_count ≥ 10` filter because the trellis residual picks a different phrase; one `union-diff` line, everything else identical |
+| 21 | The single-key surface aborts the pin where oxpinyin answers `false` | **(c)** | `assert` on apostrophes in `parse_one_key` (`pinyin_parser2.cpp:170`), `assert(index < PHRASE_INDEX_LIBRARY_COUNT)` on unload (`pinyin.cpp:499`), empty-input over-reads; pinned in `tests/abi/keys.rs` |
+| 22 | Empty-string phrase lookup SIGFPEs the pin | **(c)** | `pinyin_phrase_segment(instance, "")` divides by the zero span length; oxpinyin answers `false`. A crash on caller input is the (c) shape whether the signal is ABRT or FPE |
+| 23 | Sanitizer scope on the tkrzw shim CI · native data-file naming · R1 measured on the compat paths | **no ABI divergence** | three dated records, not behaviour entries: a CI-instrumentation note, a file-naming decision (`installed-naming.md`), and a measurement whose subject was removed (its SUPERSEDED banner is itself amended 2026-09-06 — P6 restored direct reads of libpinyin's files) |
+| 24 | zhuyin batch `FORCE_TONE` law | **CLOSED** | 1671954: `ZhuyinParser::parse_with_options` honours the three per-keyboard shapes |
+| 25 | zhuyin candidate-tag grouping + `after(consumed)` terminal offset | **CLOSED** | both halves closed by the display-law collapse and the builder terminal mapping (amended 2026-08-31) |
+| 26 | zhuyin before-cursor candidate window | **CLOSED, with an OPEN DEFECT residual** | window builder closed (c2ad5925); the residual — a row whose span starts after the offset is constrained as `[0, offset)`, not `[start, offset)` — is plain integer bookkeeping, so no class fits and the corollary makes it mandatory. Measured against the pin 2026-09-05: no corpus input flips the 1-best. Blocked on a STOP: `Candidate` needs a span start and `Session::select_*` an end anchor (engine interface ask) |
+| 27 | zhuyin multi-syllable candidate construction | **CLOSED** | the divergence was the pinyin string-fill law, not the construction model (amended 2026-08-31) |
+| 28 | zhuyin n-best trellis constants `<1, 1>` vs the engine's `<2, 3>` | **OPEN DEFECT** | reproducible (per-surface const generics), not observable through today's libzhuyin candidate surface, so no gate moves; the pruning depth differs and becomes observable through any per-row sentence access. Fix shape recorded in the entry; touches `oxpinyin-engine`'s decoder, so it lands with a measured differential, not as a constant edit |
+| 29 | zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default | **no ABI divergence** | `CapiContext::open` seeds the pin's `USE_TONE \| FORCE_TONE`; entry kept as analysis for a future consumer |
+| 30 | pinyin-facade chewing batch seam does not forward `FORCE_TONE` | **OPEN DEFECT** | the register says it: no class fits, a defect to close; `ROADMAP.md` carries it as the bopomofo SPEC's one open implementation item. Observable only under a caller-set `FORCE_TONE` (pin consumes 0 on toneless `su`, oxpinyin 2). Fix shape: forward `inst.options().bits()` through `parse_with_options` plus a `FORCE_TONE` profile in `chewing-diff.c`. Not STOP-gated — the same one-line shape #289 used on the double-pinyin seam |
+| 31 | redb write-side emptiness probe creates the table it probes | **no ABI divergence** | a redb API constraint below the store traits; nothing above them observes it. Stage-2 store-trait note, not a compatibility entry |
 
-Totals: **(a)** 1 · **(b)** 2 · **(c)** 7 · **(d)** 1 · **REVERT
-TARGET** 7 · closed or not a divergence 2.
+Totals at `2a99761a` (2026-09-06, oracle pin 074a2219): **(a)** 2 ·
+**(b)** 2 · **(c)** 10 · **(d)** 0 (class retired, see below) · **REVERT
+TARGET** 2 (rows 5b, 17) · **OPEN DEFECT** 3 (rows 26, 28, 30) ·
+**CLOSED** 11 (rows 3, 7, 8, 9, 12, 13, 15, 16, 24, 25, 27) · **no ABI
+divergence** 4 rows (2, 23, 29, 31).
+
+The 2026-08-28 totals were (a) 1 · (b) 2 · (c) 6 · (d) 1 · REVERT
+TARGET 7 · closed or not a divergence 2. Of the seven revert targets,
+five closed by reproduction or proven equivalence (7, 8, 9, 13, 15) and
+one was superseded by P6 (12); 5b and 17 remain, and 17 is no longer
+conditional.
+
+### What is still owed, in order
+
+1. **Row 30** — the chewing batch seam's `FORCE_TONE` forward. One line
+   plus a differential profile; no ask needed.
+2. **Row 5b** — the double out-of-enum half-mutation. Reproducing a
+   half-mutation that lies about success is the (c) boundary case the
+   policy singles out; the maintainer named it a revert target and it
+   has not moved.
+3. **Row 17** — port the pin's `0x0` gating; unconditional since (d)
+   was retired.
+4. **Rows 26 and 28** — the two `oxpinyin-engine` interface changes.
+   Approved by the maintainer 2026-09-06 with the instruction to copy
+   what libpinyin's source does; they land with the zhuyin differential
+   battery, not as a constant edit.
 
 ### Notes on the three entries whose class was not obvious
 
-**#7 — why `validate_constraint` is not class (a).** The drop test is
+**#7 — why `validate_constraint` is not class (a), and how it closed
+anyway.** The drop test is
 `compute_pronunciation_possibility(...) < FLT_EPSILON`
 (`phonetic_lookup.cpp:161-164`). Reading the function first-hand
 (`phonetic_key_matrix.cpp:534-600`), it is a recursive **sum over every
@@ -216,10 +280,14 @@ addition and a frequency ratio, no transcendental anywhere. That is the
 `amplified_frequency` standard, which is ported to 100%, so the
 threshold is bit-reproducible and the entry does not qualify under (a).
 
-Reverting it is real work rather than a flag flip: oxpinyin's
+Reverting it would be real work rather than a flag flip: oxpinyin's
 `span_finds_token` follows the §3 step-cost model (first path per
-token), while upstream sums **all** paths. The revert has to port the
-all-paths sum, not just re-thread the comparison.
+token), while upstream sums **all** paths. It closed without the port
+(4c2fe02b): the threshold can only bite when a token's pronunciation
+total exceeds 2²³, and the largest total in model20 is 2,945,481, so on
+the pinned data the drop boundary is unreachable and the two tests are
+observably equivalent. The register entry carries the scan. A different
+model with a total above 2²³ would reopen it.
 
 **#16 — why `FORCE_TONE` is class (d), and why that is not a criticism
 of the port.** The double-pinyin parser has a genuinely different
@@ -251,11 +319,10 @@ maintainer's decision names it as one explicitly, and because (d) as
 written is scoped to *symbols* rather than to unreachable inputs
 generally.
 
-One decision is therefore open, and it is one line: **does (d) cover
-consumer-unreachable inputs, or only consumer-uncalled symbols?** If
-inputs, #17 moves to (d) and PR 5 drops it. If symbols only, #17 stays
-a revert target and PR 5 ports the pin's `0x0` gating. Nothing else in
-the table turns on the answer.
+The decision that was open here — whether (d) covers
+consumer-unreachable inputs or only uncalled symbols — was overtaken on
+2026-09-06 by the retirement of (d) itself (see the banner above): #17
+is a plain revert target and the pin's `0x0` gating gets ported.
 
 ## What is not an exception
 
@@ -266,10 +333,9 @@ Stated so the classes are not read as broader than they are:
 - **"Upstream's behaviour is meaningless."** Not a class. #12's
   predicted-candidate order was defended that way; it is a revert
   target.
-- **"No frontend does that."** Not a class on its own — that is (d),
-  and (d) is scoped to the two named consumers with a call-site grep
-  behind it, not to a judgement about what a frontend would plausibly
-  do.
+- **"No frontend does that."** Not a class. It was the basis of (d)
+  while the consumer-union contract stood; with (d) retired it is at
+  most a reason to schedule a port later, never to skip it.
 - **"A float is involved."** Not class (a) unless a transcendental is
   in the accumulation.
 - **"Upstream returns something useless."** Not class (c) unless
@@ -283,9 +349,9 @@ what the register accumulated. Class (c) entries in particular are not
 language-mechanism residue at all; they are product decisions, and the
 register should say so where it currently implies Rust forced them.
 
-PR 5 flips every REVERT TARGET's differential probe from "recorded
-divergence" to "must be IDENTICAL". Entry #12 carries an extra step:
-Kyoto Cabinet is the reference backend (what distros ship), so the
-target order is KC's physical hash walk, which must be established
-experimentally — it is **not** the Tkrzw bucket order the current entry
-measured.
+The work order (`revert-plan.md`) flips each REVERT TARGET's
+differential probe from "recorded divergence" to "must be IDENTICAL" as
+it lands. Entry #12's extra step — establishing Kyoto Cabinet's physical
+hash walk experimentally — was overtaken by P6: reading the pin's own
+DBM reproduces the pin's own walk, and `pred-order-diff` is IDENTICAL on
+KC without any order having been modelled.
