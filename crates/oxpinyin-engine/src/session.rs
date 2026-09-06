@@ -1610,6 +1610,37 @@ where
         crate::cursor::matrix_keys(self.raw.as_bytes(), self.settings.options)
     }
 
+    /// Lookup byte offset → character count within `phrase` over the
+    /// session's own scan matrix — the `pinyin_get_character_offset` law
+    /// ([`crate::character_offset_over_keys`]): `Ok(Some(n))` when a key
+    /// path pronouncing `phrase`'s first `n` characters reaches `offset`,
+    /// `Ok(None)` for the pin's graceful `false` (empty matrix, empty
+    /// phrase, a character with no dictionary token, no satisfying path).
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Graph`] when the raw buffer cannot be built into a
+    /// segment graph; [`EngineError::LookupOffsetOutOfRange`],
+    /// [`EngineError::ZeroKeyOffsetCheck`] and
+    /// [`EngineError::MatrixColumnAssert`] where the pin asserts; the
+    /// dictionary's backend failure.
+    pub fn character_offset(
+        &self,
+        phrase: &str,
+        offset: usize,
+    ) -> Result<Option<usize>, EngineError> {
+        let (keys, parsed) = self.matrix_keys()?;
+        crate::character_offset_over_keys(
+            self.raw.as_bytes(),
+            parsed,
+            &keys,
+            true,
+            &self.dictionary,
+            phrase,
+            offset,
+        )
+    }
+
     /// Whether a selection consumed the whole buffer and no rebuild has
     /// since changed the record — the commit-branch shape the R5 revert
     /// keeps composing through ([`Session::committed_parse_continues`]).

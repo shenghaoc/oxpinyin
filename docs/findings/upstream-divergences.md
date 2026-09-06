@@ -687,6 +687,41 @@ Text, candidate type and counts cannot.
   oxpinyin answers. Report-back batch: file with the scheme-setter and
   `_check_offset` assert families.
 
+### `pinyin_get_character_offset`'s recursion asserts answer `false`
+
+- **Upstream source cite:** `pinyin_get_character_offset`
+  (`src/pinyin.cpp:3193-3241` at 074a221; `zhuyin.cpp:2148-2196` for the
+  zhuyin twin), `_pre_compute_tokens` (`pinyin.cpp:3098-3136`) and
+  `_get_char_offset_recur` (`pinyin.cpp:3138-3191`).
+- **Mechanism:** the function asserts `offset < matrix.size()` and
+  `_check_offset` (the register's #14 family — the offset 3/4 rows of
+  issue #356's matrix), then the recursion asserts a non-empty column at
+  every stepped-to position (`assert(size > 0)`, `:3152` — an input with
+  a leading apostrophe run has an empty column 0) and a lone zero key
+  where one appears (`assert(1 == size)`, `:3166`). Separately, the
+  recursion indexes `cached_tokens` by the characters consumed so far
+  with no bound (`g_array_index`, `:3172`): a phrase shorter than the
+  key path measured against it reads the array's zero terminator
+  (`null_token`, whose `get_phrase_item` fails and leaves the previous
+  item) and beyond it the heap — the aux-text over-read's class.
+- **What oxpinyin does instead:** the ported law answers the pin's
+  `false` rows exactly (`_pre_compute_tokens` finding no token for a
+  phrase character — the #356 defect, fixed in
+  `oxpinyin-engine/src/char_offset.rs`; a walk no key path satisfies)
+  and answers `false` where the pin asserts:
+  `EngineError::LookupOffsetOutOfRange`, `EngineError::ZeroKeyOffsetCheck`
+  and the new `EngineError::MatrixColumnAssert` rendered as the C ABI's
+  `false`. A walk past the cached tokens treats the missing token as a
+  pronunciation miss, so that branch fails like a mismatched key rather
+  than reading a stale item.
+- **Externally observable:** yes — the pin SIGABRTs where oxpinyin
+  answers `false` (issue #356's offsets 3 and 4 on `ni'`), and reads off
+  its token array where oxpinyin answers a deterministic `false`. The
+  consumers (`PYPPinyinEditor.cc:290`, `PYPBopomofoEditor.cc:404`) pass
+  the guessed sentence and a normalized cursor offset, which reach
+  neither shape. Report-back batch: file with the `_check_offset` assert
+  family.
+
 ### FORCE_TONE — scheme-specific: full-pinyin batch and all one-key seams honour scheme law; zhuyin batch closed (1671954); double-pinyin batch seam remains
 
 - **Upstream source cite:** `src/storage/pinyin_parser2.cpp:412` and

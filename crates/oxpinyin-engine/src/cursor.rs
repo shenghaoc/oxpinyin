@@ -357,6 +357,19 @@ pub struct MatrixKey {
 }
 
 impl MatrixKey {
+    /// Builds a key from its syllable, tone, and raw span — for callers
+    /// (the facade's non-full-pinyin parse modes) whose keys come from a
+    /// parse other than the session's own scan matrix.
+    #[must_use]
+    pub const fn new(key: SyllableKey, tone: u8, syllable_start: usize, end: usize) -> Self {
+        Self {
+            key,
+            tone,
+            syllable_start,
+            end,
+        }
+    }
+
     /// The syllable this key matched.
     #[must_use]
     pub const fn key(self) -> SyllableKey {
