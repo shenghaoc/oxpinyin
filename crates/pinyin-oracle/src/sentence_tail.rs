@@ -41,10 +41,7 @@ pub fn repo_root() -> PathBuf {
 /// --features redb`); `None` otherwise (so callers can skip).
 #[must_use]
 pub fn export_dir() -> Option<PathBuf> {
-    let dir = std::env::var_os("PINYIN_EXPORT_DIR").map_or_else(
-        || Path::new("/tmp/oxpinyin-export").to_path_buf(),
-        PathBuf::from,
-    );
+    let dir = oxpinyin_testsupport::model_cache::resolve_export_dir();
     [
         SystemDbm::PinyinIndex,
         SystemDbm::PhraseIndex,

@@ -5,7 +5,7 @@
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use oxpinyin_data::{BigramLanguageModel, SystemDbm, SystemDictionary};
@@ -32,7 +32,8 @@ struct Row {
 }
 
 fn main() -> ExitCode {
-    let dir = Path::new("/tmp/oxpinyin-export");
+    let dir = oxpinyin_testsupport::model_cache::resolve_export_dir();
+    let dir = dir.as_path();
     if !dir.join(SystemDbm::PinyinIndex.file_name()).exists() {
         eprintln!("missing export tables");
         return ExitCode::from(2);

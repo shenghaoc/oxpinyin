@@ -302,6 +302,10 @@ fn append_predicted_prefix(
 /// The pinned interpolation λ (`PIN_LAMBDA_F32` in `session.rs`).
 const PIN_LAMBDA_F32: f32 = 0.312_699;
 
+/// The pin's 2²⁴ amplification (`pinyin.cpp:1821`, `* 256 * 256 * 256`);
+/// mirrors `AMPLIFY_SCALE_F32` in `session.rs`.
+const AMPLIFY_SCALE_F32: f32 = 256.0 * 256.0 * 256.0;
+
 /// The pin's candidate `m_freq` for predicted rows: the unigram possibility
 /// `(1−λ)·unigram/total` computed and amplified by 2²⁴ in C `float`
 /// arithmetic, then truncated like the `guint32` assignment
@@ -318,7 +322,7 @@ fn amplified_frequency(unigram: u64, total: u64) -> u64 {
         return 0;
     }
     let possibility = (1.0_f32 - PIN_LAMBDA_F32) * unigram as f32 / total as f32;
-    u64::from((possibility * 256.0 * 256.0 * 256.0) as u32)
+    u64::from((possibility * AMPLIFY_SCALE_F32) as u32)
 }
 
 fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<String> {

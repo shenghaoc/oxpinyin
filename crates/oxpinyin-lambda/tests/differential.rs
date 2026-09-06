@@ -28,7 +28,7 @@ use std::path::PathBuf;
 
 use oxpinyin_counter::{Counts, count_ngseg, parse_interpolation_dump};
 use oxpinyin_lambda::{DeletedCounts, Lambda, count_deleted, estimate_lambda};
-use oxpinyin_segment::{PhraseLexicon, locate_export_dir};
+use oxpinyin_segment::{DEFAULT_EXPORT_DIR, EXPORT_DIR_ENV, PhraseLexicon, locate_export_dir};
 use oxpinyin_testsupport::{PinDir, fnv1a64, locate_bin, locate_data, parse_estimate_stdout};
 
 fn repo_root() -> PathBuf {
@@ -130,7 +130,7 @@ fn parse_manifest(text: &str) -> Manifest {
 fn rust_lambda_matches_committed_manifest() {
     let Some(estimate) = rust_estimate() else {
         eprintln!(
-            "skipping: system tables not found (PINYIN_EXPORT_DIR | /tmp/oxpinyin-export; produce with oxpinyin-datagen compile)"
+            "skipping: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"
         );
         return;
     };

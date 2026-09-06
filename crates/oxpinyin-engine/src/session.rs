@@ -2889,6 +2889,12 @@ fn amplified_frequency(unigram: u64, total: u64) -> u64 {
 /// The pin's `BIGRAM_FREQUENCY_DISCOUNT` (`pinyin.cpp:33`).
 const BIGRAM_FREQUENCY_DISCOUNT_F32: f32 = 0.1;
 
+/// The pin's amplification of a `[0, 1]` possibility into the `guint32`
+/// candidate frequency: `* 256 * 256 * 256` (`pinyin.cpp:1821`), i.e. 2²⁴,
+/// written as the same three-factor product so the `float` rounding
+/// sequence is the pin's.
+const AMPLIFY_SCALE_F32: f32 = 256.0 * 256.0 * 256.0;
+
 /// [`amplified_frequency`] with the `DYNAMIC_ADJUST` bigram term folded in,
 /// reproducing the pin's whole expression (`pinyin.cpp:1862-1866`):
 ///
@@ -2915,7 +2921,7 @@ fn amplified_frequency_with_bigram(unigram: u64, total: u64, bigram_poss: f32) -
     }
     let possibility = PIN_LAMBDA_F32 * bigram_poss * BIGRAM_FREQUENCY_DISCOUNT_F32
         + (1.0_f32 - PIN_LAMBDA_F32) * unigram as f32 / total as f32;
-    u64::from((possibility * 256.0 * 256.0 * 256.0) as u32)
+    u64::from((possibility * AMPLIFY_SCALE_F32) as u32)
 }
 
 /// One resplit pair the scan matrix admits alongside the selected parse,

@@ -10,7 +10,7 @@
 //! full corpus when `PARITY_SWEEP_FULL=1`.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
@@ -107,7 +107,8 @@ fn pct(n: usize, d: usize) -> usize {
 }
 
 fn main() -> ExitCode {
-    let dir = Path::new("/tmp/oxpinyin-export");
+    let dir = oxpinyin_testsupport::model_cache::resolve_export_dir();
+    let dir = dir.as_path();
     let missing: Vec<String> = [
         SystemDbm::PinyinIndex,
         SystemDbm::PhraseIndex,

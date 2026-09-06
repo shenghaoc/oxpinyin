@@ -192,6 +192,22 @@ pub fn locate_model_dir() -> Result<Option<PathBuf>, ModelDirError> {
     Ok(None)
 }
 
+/// Environment variable naming the system data (export) directory.
+pub const EXPORT_DIR_ENV: &str = "PINYIN_EXPORT_DIR";
+
+/// Default export directory when [`EXPORT_DIR_ENV`] is unset. The one
+/// definition for the harness, benches and oracle bins; `oxpinyin-segment`
+/// carries its own equal copy because it must not depend on this crate.
+pub const DEFAULT_EXPORT_DIR: &str = "/tmp/oxpinyin-export";
+
+/// `$PINYIN_EXPORT_DIR` if set, else [`DEFAULT_EXPORT_DIR`], with no
+/// existence check — callers that need one assert or probe themselves.
+#[must_use]
+pub fn resolve_export_dir() -> PathBuf {
+    std::env::var_os(EXPORT_DIR_ENV)
+        .map_or_else(|| PathBuf::from(DEFAULT_EXPORT_DIR), PathBuf::from)
+}
+
 /// `/tmp/oxpinyin-export` or `$PINYIN_EXPORT_DIR`: a system data
 /// directory for the compiled-in backend (a libpinyin install's `data/`
 /// on Kyoto Cabinet and tkrzw, an `oxpinyin-datagen compile` output
@@ -204,8 +220,7 @@ pub fn locate_model_dir() -> Result<Option<PathBuf>, ModelDirError> {
 /// bigram for this backend.
 #[must_use]
 pub fn export_dir() -> PathBuf {
-    let dir = std::env::var_os("PINYIN_EXPORT_DIR")
-        .map_or_else(|| PathBuf::from("/tmp/oxpinyin-export"), PathBuf::from);
+    let dir = resolve_export_dir();
     for name in system_dbm_names() {
         assert!(
             dir.join(&name).is_file(),

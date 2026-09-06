@@ -536,9 +536,14 @@ fn scan_link(chars: &[char], start: usize) -> Option<(usize, Option<&[char]>)> {
 /// Scans a single-bracket `[url display]` or citation `[12]` starting at
 /// `[`. Returns the index past `]` and the text to emit (`None` = drop),
 /// or `None` when this `[` should stay literal.
+/// How far past a `[` the external-link scan looks for its `]` before
+/// giving up and leaving the bracket literal. Real wikitext links are a
+/// few hundred characters at most; the bound keeps a stray `[` in a long
+/// paragraph from turning the rest of the article into one link.
+const EXTERNAL_LINK_LOOKAHEAD: usize = 2048;
+
 fn scan_external(chars: &[char], start: usize) -> Option<(usize, Option<&[char]>)> {
-    // Bound the lookahead so a stray `[` far from any `]` stays literal.
-    let limit = (start + 1 + 2048).min(chars.len());
+    let limit = (start + 1 + EXTERNAL_LINK_LOOKAHEAD).min(chars.len());
     let end = chars[start + 1..limit].iter().position(|&ch| ch == ']')? + start + 1;
     let inner = &chars[start + 1..end];
     if inner.contains(&'\n') {

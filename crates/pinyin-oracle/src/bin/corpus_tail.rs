@@ -62,10 +62,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn export_dir() -> Result<PathBuf, String> {
-    let dir = std::env::var_os("PINYIN_EXPORT_DIR").map_or_else(
-        || Path::new("/tmp/oxpinyin-export").to_path_buf(),
-        PathBuf::from,
-    );
+    let dir = oxpinyin_testsupport::model_cache::resolve_export_dir();
     if [
         SystemDbm::PinyinIndex,
         SystemDbm::PhraseIndex,
