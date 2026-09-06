@@ -188,6 +188,14 @@ unsafe extern "C" {
         key: *mut ChewingKey,
     ) -> bool;
 
+    /// Trains the user model on candidate `index` of the instance's current
+    /// candidate list. A list must have been built by
+    /// [`pinyin_guess_candidates`] first.
+    pub(crate) fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool;
+
+    /// Persists the context's user data to its user directory.
+    pub(crate) fn pinyin_save(context: *mut PinyinContext) -> bool;
+
 }
 
 // Export/token functions, the extension frozen in

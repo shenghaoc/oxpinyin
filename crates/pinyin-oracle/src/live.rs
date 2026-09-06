@@ -67,6 +67,26 @@ impl Drop for FreshUserDir {
     }
 }
 
+/// The user-state directory an [`Oracle`] was opened with.
+#[derive(Debug)]
+enum UserDir {
+    /// Created by [`FreshUserDir`] and removed on drop — the parity
+    /// protocol's fresh-state guarantee.
+    Fresh(FreshUserDir),
+    /// Caller-supplied via [`Oracle::open_with_user_dir`]; left in place on
+    /// drop, exactly as the oracle last wrote it.
+    External(PathBuf),
+}
+
+impl UserDir {
+    fn as_path(&self) -> &Path {
+        match self {
+            UserDir::Fresh(dir) => &dir.path,
+            UserDir::External(path) => path,
+        }
+    }
+}
+
 /// Serialises oracle contexts across the whole process.
 ///
 /// The pinned libpinyin does not tolerate two live contexts being used
@@ -81,6 +101,14 @@ impl Drop for FreshUserDir {
 /// `--test-threads=1` incantation that a plain `cargo test` would skip.
 static ORACLE_LOCK: Mutex<()> = Mutex::new(());
 
+/// Takes the process-wide oracle lock for a context about to be created.
+fn oracle_lock() -> MutexGuard<'static, ()> {
+    // Poisoning only means an earlier holder panicked. The C library's state
+    // is per-context and this context has not been created yet, so taking
+    // the lock anyway is correct and avoids one panic disabling the harness.
+    ORACLE_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// A live oracle context over a pin-verified prefix.
 ///
 /// Holding this value implies the prefix matched the frozen pin: [`Oracle::open`]
@@ -93,7 +121,7 @@ static ORACLE_LOCK: Mutex<()> = Mutex::new(());
 pub struct Oracle {
     prefix: OraclePrefix,
     context: *mut ffi::PinyinContext,
-    user_dir: FreshUserDir,
+    user_dir: UserDir,
     flags: Option<OracleFlags>,
     /// Released on drop, after `pinyin_fini`.
     _lock: MutexGuard<'static, ()>,
@@ -108,14 +136,37 @@ impl Oracle {
     /// Returns an error if the user directory cannot be created, if either path
     /// cannot cross the C boundary, or if `pinyin_init` returns NULL.
     pub fn open(prefix: OraclePrefix, user_dir_parent: &Path) -> Result<Self, OracleError> {
-        // Poisoning only means an earlier holder panicked. The C library's state
-        // is per-context and this context has not been created yet, so taking
-        // the lock anyway is correct and avoids one panic disabling the harness.
-        let lock = ORACLE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let lock = oracle_lock();
+        let user_dir = UserDir::Fresh(FreshUserDir::create(user_dir_parent)?);
+        Self::open_locked(prefix, user_dir, lock)
+    }
 
-        let user_dir = FreshUserDir::create(user_dir_parent)?;
+    /// Opens a context over `prefix` with a caller-supplied user directory.
+    ///
+    /// Unlike [`Oracle::open`], the directory is neither created fresh nor
+    /// removed on drop: `pinyin_init` opens whatever user state is already in
+    /// it, which is the point — reopening a populated user db. Saving may
+    /// write into it, and the caller owns its lifetime afterwards.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either path cannot cross the C boundary or if
+    /// `pinyin_init` returns NULL.
+    pub fn open_with_user_dir(
+        prefix: OraclePrefix,
+        user_dir: impl Into<PathBuf>,
+    ) -> Result<Self, OracleError> {
+        let lock = oracle_lock();
+        Self::open_locked(prefix, UserDir::External(user_dir.into()), lock)
+    }
+
+    fn open_locked(
+        prefix: OraclePrefix,
+        user_dir: UserDir,
+        lock: MutexGuard<'static, ()>,
+    ) -> Result<Self, OracleError> {
         let system_c = path_to_cstring(prefix.data_dir())?;
-        let user_c = path_to_cstring(&user_dir.path)?;
+        let user_c = path_to_cstring(user_dir.as_path())?;
 
         // SAFETY: both pointers come from live `CString`s that outlive this
         // call, and are valid NUL-terminated C strings. `pinyin_init` either
@@ -126,7 +177,7 @@ impl Oracle {
         if context.is_null() {
             return Err(OracleError::ContextInitFailed {
                 system_dir: prefix.data_dir().to_path_buf(),
-                user_dir: user_dir.path.clone(),
+                user_dir: user_dir.as_path().to_path_buf(),
             });
         }
 
@@ -161,14 +212,37 @@ impl Oracle {
         self.prefix.pin().pin_ref()
     }
 
-    /// The fresh user-state directory this context was opened with.
+    /// Persists the context's user data to its user directory.
+    ///
+    /// One `pinyin_save` call: the commit point for everything trained since
+    /// the context was opened (or since the previous save).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OracleError::Call`] if `pinyin_save` reports failure.
+    pub fn save_user_data(&mut self) -> Result<(), OracleError> {
+        // SAFETY: `self.context` was returned non-null by `pinyin_init` and is
+        // owned by `self`; no `Session` can be alive (it borrows `self`
+        // mutably), and `pinyin_save` takes the context alone.
+        let ok = unsafe { ffi::pinyin_save(self.context) };
+        if ok {
+            Ok(())
+        } else {
+            Err(OracleError::Call {
+                function: "pinyin_save",
+            })
+        }
+    }
+
+    /// The user-state directory this context was opened with.
     ///
     /// Exposed so a run can record, or assert the emptiness of, the user state
-    /// the parity protocol requires. The directory is removed when this
-    /// [`Oracle`] is dropped.
+    /// the parity protocol requires. A directory created by [`Oracle::open`]
+    /// is removed when this [`Oracle`] is dropped; one supplied to
+    /// [`Oracle::open_with_user_dir`] is left in place.
     #[must_use]
     pub fn user_dir(&self) -> &Path {
-        &self.user_dir.path
+        self.user_dir.as_path()
     }
 
     /// Applies `flags` to the context if they are not already in force.
@@ -424,6 +498,63 @@ impl Session<'_> {
     pub fn observe(&mut self, input: &[u8]) -> Result<OracleObservation, OracleError> {
         self.reset()?;
         self.observe_without_reset(input)
+    }
+
+    /// Parses `input`, runs the n-best sentence lookup, and trains the user
+    /// model on the top result — one explicit train event of the kind a
+    /// frontend commits on user selection.
+    ///
+    /// The whole input must parse and the n-best lookup must produce at least
+    /// one result (`pinyin_train` trains n-best result `index`, and returns
+    /// false when none exist — `pinyin.cpp:2676` at the pin); otherwise no
+    /// train happens and [`OracleError::TrainPreconditionFailed`] is
+    /// returned, so a caller cannot silently train on different state than it
+    /// asked for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OracleError`] on reset or parse failure,
+    /// [`OracleError::TrainPreconditionFailed`] when the preconditions above
+    /// are not met, and [`OracleError::Call`] if `pinyin_train` itself
+    /// reports failure.
+    pub fn train_top(&mut self, input: &[u8]) -> Result<(), OracleError> {
+        self.reset()?;
+        let (_parse_return, parsed_input_length) = self.parse_input(input)?;
+
+        if parsed_input_length != input.len() {
+            return Err(OracleError::TrainPreconditionFailed {
+                parsed: parsed_input_length,
+                input_len: input.len(),
+                candidates: 0,
+            });
+        }
+
+        // SAFETY: the instance is non-null and owned by `self`; the call has
+        // no out-arguments. A false return means the lookup produced no
+        // result, which is reported as a precondition failure below.
+        let guessed = unsafe { ffi::pinyin_guess_sentence(self.instance) };
+        if !guessed {
+            return Err(OracleError::TrainPreconditionFailed {
+                parsed: parsed_input_length,
+                input_len: input.len(),
+                candidates: 0,
+            });
+        }
+
+        // SAFETY: the instance is non-null and owned by `self`, and the
+        // n-best result list has at least one entry (the successful
+        // `pinyin_guess_sentence` above filled it), so index 0 is in range
+        // for the call's internal `assert(index < results.size())`.
+        // `pinyin_train` reads the result and updates the user model; it
+        // retains no pointer into this call's frame.
+        let ok = unsafe { ffi::pinyin_train(self.instance, 0) };
+        if ok {
+            Ok(())
+        } else {
+            Err(OracleError::Call {
+                function: "pinyin_train",
+            })
+        }
     }
 
     fn observe_without_reset(&mut self, input: &[u8]) -> Result<OracleObservation, OracleError> {

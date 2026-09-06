@@ -114,3 +114,10 @@ harness = false
 [[bench]]
 name = "alloc_profile"
 harness = false
+
+[[bench]]
+name = "dbm_bench"
+harness = false
+# Links the oracle FFI, so plain `cargo bench -p pinyin-oracle` on hosts
+# without an oracle prefix skips this target instead of failing to link.
+required-features = ["oracle-ffi"]
