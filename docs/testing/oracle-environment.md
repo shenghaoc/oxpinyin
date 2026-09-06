@@ -91,7 +91,7 @@ default DBM and the configuration distributions ship, even though
 libpinyin's own development deprecates it. Bench-only prefixes never
 gate parity or capture.
 
-## Amendment — pin 074a2219 (2026-09-07)
+## Amendment — pin 074a2219 (2026-09-06 UTC)
 
 The oracle pin moved from `2.11.91`/`0c5e80e1200f84fab185d1c5bde458b770a0636c`
 to `2.11.92`/`074a2219c90feaf962d0d24f034514033ece5f99` (libpinyin main
@@ -103,7 +103,7 @@ Rows above are the historical 2.11.91 freeze and stand unedited.
   `git checkout FETCH_HEAD`) and verifies by `git rev-parse HEAD`
   equality — an archive SHA-256 cannot pin a GitHub-regenerated
   tarball. ibus-libpinyin stays the tagged `1.16.5` archive.
-- **Verification (2026-09-07, debian:testing container):** the oracle
+- **Verification (2026-09-06 UTC, debian:testing container):** the oracle
   builds unpatched; the W2 candidate surface is byte-identical for all
   10,312 distinct corpus inputs (97,442 triples, 10,037 inputs with
   candidates — the frozen fixture's exact counts); the sentence
