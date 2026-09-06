@@ -198,7 +198,7 @@ jobs:
               pacman -Sw --noconfirm libpinyin
               mkdir -p arch-data
               tar -xf /var/cache/pacman/pkg/libpinyin-*.pkg.tar.zst \
-                -C arch-data --strip-components=3 usr/lib/libpinyin/data
+                -C arch-data --strip-components=4 usr/lib/libpinyin/data
               [ -f arch-data/table.conf ] || { echo "::error::Arch libpinyin data not found in the package" >&2; exit 1; }
               tools/packaging/release-arch.sh "$BACKEND" "$VERSION" "$PWD/stage" dist --data="$PWD/arch-data"
               ;;
