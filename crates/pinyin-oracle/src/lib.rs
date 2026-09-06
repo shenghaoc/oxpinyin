@@ -70,7 +70,7 @@ pub use observation::{
     CandidateInfo, MAX_CAPTURED_CANDIDATES, OracleCandidateType, OracleCompleteness,
     OracleObservation, OracleSegment,
 };
-pub use pin::{EXPECTED_PIN_REF, OraclePrefix, PinManifest, VerifiedPin};
+pub use pin::{EXPECTED_PIN_REF, OraclePrefix, PinManifest, VerifiedPin, bench_pin_ref};
 pub use taxonomy::{BudgetVerdict, DivergenceClass, Taxonomy};
 
 #[cfg(feature = "oracle-ffi")]

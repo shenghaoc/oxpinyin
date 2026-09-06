@@ -127,10 +127,11 @@ fn locate_prefix() -> Result<PathBuf, String> {
 
 /// Accepts a prefix only if it carries the frozen pin and a shared object.
 ///
-/// With `PINYIN_BENCH_DBM=kc|bdb` set, the frozen-pin comparison is relaxed
-/// to a `dbm-<name>` containment check: the prefix must be a bench oracle
-/// built with that `--dbm`, still by `build-oracle.sh` (which alone writes
-/// `oracle-pin.txt`, full pin and hashes included).
+/// With `PINYIN_BENCH_DBM=kc|bdb` set, the required ref is the frozen one
+/// with its DBM suffix swapped — an exact match via `bench_pin_ref`, so a
+/// prefix from any other pin that merely carries the right `dbm-<name>`
+/// fragment still fails. The prefix remains a `build-oracle.sh` product
+/// (which alone writes `oracle-pin.txt`, hashes included).
 fn verify(prefix: &Path) -> Result<(), String> {
     let manifest = prefix.join(MANIFEST_FILE_NAME);
     let text = std::fs::read_to_string(&manifest)
@@ -143,12 +144,15 @@ fn verify(prefix: &Path) -> Result<(), String> {
         .trim();
 
     if let Some(bench_dbm) = std::env::var_os("PINYIN_BENCH_DBM") {
-        let needle = format!("dbm-{}", bench_dbm.to_string_lossy());
-        if !pin_ref.contains(&needle) {
+        let bench_dbm = bench_dbm.to_string_lossy();
+        let Some((expected_ref, _)) = bench_pin_ref(&bench_dbm) else {
             return Err(format!(
-                "off-pin bench prefix: pin_ref is {pin_ref:?}, expected it to \
-                 contain {needle:?} (PINYIN_BENCH_DBM={needle} with a mismatched \
-                 prefix)"
+                "PINYIN_BENCH_DBM must be 'kc' or 'bdb', got {bench_dbm:?}"
+            ));
+        };
+        if pin_ref != expected_ref {
+            return Err(format!(
+                "off-pin bench prefix: pin_ref is {pin_ref:?}, expected {expected_ref:?}"
             ));
         }
     } else if pin_ref != EXPECTED_PIN_REF {

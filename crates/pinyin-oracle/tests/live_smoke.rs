@@ -35,6 +35,21 @@ fn oracle() -> Oracle {
     Oracle::open_with_temp_user_dir(prefix).expect("pin-verified prefix opens a context")
 }
 
+/// The pin ref this run's prefix must carry: the frozen tkrzw ref, or its
+/// bench-prefix variant (same pin, DBM suffix swapped) when
+/// `PINYIN_BENCH_DBM` selects a non-tkrzw oracle — every other pin component
+/// stays asserted by `PinManifest::verify`.
+fn expected_ref() -> String {
+    match std::env::var("PINYIN_BENCH_DBM").as_deref() {
+        Ok(dbm @ ("kc" | "bdb")) => {
+            pinyin_oracle::bench_pin_ref(dbm)
+                .expect("kc and bdb are bench dbms")
+                .0
+        }
+        _ => EXPECTED_PIN_REF.to_owned(),
+    }
+}
+
 /// `(syllable, begin, end, complete?)` for each segment, for terse comparison.
 fn path_of(segments: &[OracleSegment]) -> Vec<(&str, u16, u16, bool)> {
     segments
@@ -68,7 +83,7 @@ fn converts_nihao_through_the_real_libpinyin() {
         .expect("oracle is self-consistent");
 
     // Frozen in fixtures/foundation/f-a.txt, case=valid-multiple.
-    assert_eq!(observed.pin_ref, EXPECTED_PIN_REF);
+    assert_eq!(observed.pin_ref, expected_ref());
     assert_eq!(observed.parse_return, 5);
     assert_eq!(observed.parsed_input_length, 5);
     assert_eq!(observed.remainder, b"");
@@ -229,7 +244,7 @@ fn dynamic_adjust_cannot_be_requested_of_a_live_context() {
 fn located_prefix_is_on_pin_and_reports_its_digests() {
     let prefix = OraclePrefix::locate().expect("oracle prefix is present");
     let pin = prefix.pin();
-    assert_eq!(pin.pin_ref(), EXPECTED_PIN_REF);
+    assert_eq!(pin.pin_ref(), expected_ref());
     assert_eq!(
         pin.header_sha256(),
         "e1138482d06766163608406fe1083539b21ff8c44ea04f329f3db0c78a312d47",
@@ -251,4 +266,19 @@ fn fresh_user_directory_is_created_and_removed() {
         path
     };
     assert!(!path.exists(), "user directory is removed on drop");
+}
+
+/// `pinyin_save` returns `false` for an unmodified store (`pinyin.cpp:1136`
+/// at the pin), so saving with no trains since open must be a successful
+/// no-op — the dirty-flag tracking in `save_user_data` is what makes the
+/// `false` distinguishable from a real failure.
+#[test]
+fn save_without_trains_is_a_clean_noop() {
+    let mut oracle = oracle();
+    oracle
+        .save_user_data()
+        .expect("save with no trains is a no-op");
+    oracle
+        .save_user_data()
+        .expect("a repeated no-op save stays clean");
 }

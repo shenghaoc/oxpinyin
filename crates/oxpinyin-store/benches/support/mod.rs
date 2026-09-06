@@ -60,13 +60,16 @@ pub fn fixture_dir() -> PathBuf {
 
 // ── operations ─────────────────────────────────────────────────────
 
-/// Opens the six system DBMs under `fixture` exactly as production does.
-/// Returns the number opened, for a black-box sanity assert.
-pub fn run_init_load<S>(fixture: &Path) -> usize
+/// Opens the six system DBMs under `fixture` exactly as production does —
+/// tree opens for five, the hash open for `bigram` — and **returns them all
+/// open**: production holds the six simultaneously for the process lifetime,
+/// so open cost and peak RAM are only representative with every handle
+/// retained. Drop the returned `Vec` to tear down.
+pub fn open_system_dbms<S>(fixture: &Path) -> Vec<S>
 where
     S: ReadStore + RawReadStore,
 {
-    let mut opened = 0;
+    let mut stores = Vec::with_capacity(SYSTEM_DBMS.len());
     for (index, file) in system_dbm_files().iter().enumerate() {
         let path = fixture.join(file);
         let store = if SYSTEM_DBMS[index].2 {
@@ -75,11 +78,9 @@ where
             S::open_read_only(&path)
         }
         .expect("open system DBM");
-        black_box(&store);
-        drop(store);
-        opened += 1;
+        stores.push(store);
     }
-    opened
+    stores
 }
 
 /// N bigram + N phrase rows in one transaction; the commit is the save.
@@ -141,9 +142,10 @@ where
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let started = Instant::now();
-                let opened = run_init_load::<S>(&fixture);
+                let stores = open_system_dbms::<S>(&fixture);
                 total += started.elapsed();
-                black_box(opened);
+                black_box(&stores);
+                drop(stores);
             }
             total
         })
@@ -154,11 +156,12 @@ fn bench_train_write<S>(c: &mut Criterion, n: usize, name: &'static str)
 where
     S: WriteStore,
 {
-    let root = bench_root(&format!("train-{n}"));
+    let root = BenchRoot::new(&format!("train-{n}"));
+    let root_path = root.path().to_path_buf();
     c.bench_function(name, move |b| {
         b.iter_batched(
             || {
-                let path = unique_path(&root);
+                let path = unique_path(&root_path);
                 S::create(&path).expect("create store")
             },
             |store| {
@@ -174,15 +177,15 @@ fn bench_user_db_open<S>(c: &mut Criterion)
 where
     S: WriteStore,
 {
-    let root = bench_root("user-db-open");
-    let populated = root.join("populated.db");
+    let root = BenchRoot::new("user-db-open");
+    let populated = root.path().join("populated.db");
     populate_user_store::<S>(&populated);
 
     c.bench_function("backend_matrix/user_db_open", |b| {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for i in 0..iters {
-                let target = root.join(format!("open-{i}.db"));
+                let target = root.path().join(format!("open-{i}.db"));
                 std::fs::copy(&populated, &target).expect("copy populated user store");
                 let started = Instant::now();
                 let store = S::create(&target).expect("open user store");
@@ -224,15 +227,20 @@ fn run_vmhwm_child<S>(op: &str)
 where
     S: ReadStore + RawReadStore + WriteStore,
 {
-    let root = bench_root(&format!("vmhwm-{op}"));
+    let root = BenchRoot::new(&format!("vmhwm-{op}"));
+    // Holders keep opened handles alive through the VmHWM read at the end:
+    // the child's peak must include the open handles, not just the open
+    // calls (the production shape holds all six system DBMs at once).
+    let mut held_stores: Option<Vec<S>> = None;
     match op {
         "init_load" => {
-            let opened = run_init_load::<S>(&fixture_dir());
-            emit("opened", opened);
+            let stores = open_system_dbms::<S>(&fixture_dir());
+            emit("opened", stores.len());
+            held_stores = Some(stores);
         }
         "train_write_64" | "train_write_256" => {
             let n = if op == "train_write_64" { 64 } else { 256 };
-            let store = S::create(&root.join("train.db")).expect("create store");
+            let store = S::create(&root.path().join("train.db")).expect("create store");
             run_train_write::<S>(&store, n);
         }
         "user_db_open" => {
@@ -242,7 +250,7 @@ where
                     eprintln!("backend_matrix: user_db_open child needs BACKEND_MATRIX_POPULATED");
                     std::process::exit(2);
                 });
-            let once = root.join("once.db");
+            let once = root.path().join("once.db");
             std::fs::copy(&populated, &once).expect("copy populated user store");
             let store = S::create(&once).expect("open user store");
             drop(store);
@@ -257,6 +265,7 @@ where
         Some(kib) => emit("vmhwm_kib", kib),
         None => emit("vmhwm_kib", "unavailable"),
     }
+    drop(held_stores);
 }
 
 fn spawn_child(args: &[&str], env: Option<(&str, &Path)>) -> Vec<(String, String)> {
@@ -297,10 +306,14 @@ fn run_vmhwm_parent(backend: &str) {
     ];
 
     // Population runs in its own child: its peak RSS must not leak into the
-    // user_db_open measurement.
-    let pop_root = bench_root("vmhwm-populated");
-    let populated = pop_root.join("user.db");
-    spawn_child(&["--vmhwm-populate", &pop_root.to_string_lossy()], None);
+    // user_db_open measurement. The child receives the root directory and
+    // writes user.db inside it; `populated` below is that file.
+    let pop_root = BenchRoot::new("vmhwm-populated");
+    let populated = pop_root.path().join("user.db");
+    spawn_child(
+        &["--vmhwm-populate", &pop_root.path().to_string_lossy()],
+        None,
+    );
 
     println!(
         "backend_matrix --vmhwm [{backend}] — one child per operation, /proc/self/status VmHWM"
@@ -419,11 +432,37 @@ fn unique_path(root: &Path) -> PathBuf {
     ))
 }
 
-fn bench_root(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("backend-matrix-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("bench temp dir");
-    dir
+/// Owns one bench's temporary root directory and removes it, with everything
+/// written under it, on drop. Without the guard every run would leave a
+/// per-pid root behind (bench_root names embed the pid, so later runs never
+/// clean earlier ones) until temp storage fills and bench setup starts
+/// failing.
+///
+/// Store handles created under the root are dropped before the guard:
+/// criterion drops `iter_batched` outputs inside the measured-bench call,
+/// and the per-iteration stores in `iter_custom` are dropped explicitly
+/// before the guard's scope ends.
+struct BenchRoot(PathBuf);
+
+impl BenchRoot {
+    fn new(tag: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("backend-matrix-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("bench temp dir");
+        Self(dir)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for BenchRoot {
+    fn drop(&mut self) {
+        // Best effort, like FreshUserDir: a leftover root is untidy, not
+        // incorrect, and Drop must not panic.
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 /// Removes a store file plus its `-lock` sidecar, the backend_bench pattern

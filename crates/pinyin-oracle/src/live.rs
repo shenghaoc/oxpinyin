@@ -15,7 +15,8 @@
 use core::ffi::{CStr, c_uint};
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::differential::{ObservationSource, Source as DiffSource};
@@ -123,6 +124,11 @@ pub struct Oracle {
     context: *mut ffi::PinyinContext,
     user_dir: UserDir,
     flags: Option<OracleFlags>,
+    /// Shared with every `Session`: set by a successful train, consumed by
+    /// [`Oracle::save_user_data`] — `pinyin_save` returns `false` for an
+    /// unmodified store (`pinyin.cpp:1136` at the pin), which is a clean
+    /// no-op, not a failure.
+    user_data_dirty: Arc<AtomicBool>,
     /// Released on drop, after `pinyin_fini`.
     _lock: MutexGuard<'static, ()>,
 }
@@ -186,6 +192,7 @@ impl Oracle {
             context,
             user_dir,
             flags: None,
+            user_data_dirty: Arc::new(AtomicBool::new(false)),
             _lock: lock,
         })
     }
@@ -215,12 +222,22 @@ impl Oracle {
     /// Persists the context's user data to its user directory.
     ///
     /// One `pinyin_save` call: the commit point for everything trained since
-    /// the context was opened (or since the previous save).
+    /// the context was opened (or since the previous save). A save with no
+    /// trains since the last one is a successful no-op — `pinyin_save`
+    /// returns `false` for an unmodified store (`pinyin.cpp:1136` at the
+    /// pin) — so mutations are tracked and the flag is what decides whether
+    /// a `false` return means "nothing to do" or a real failure.
     ///
     /// # Errors
     ///
-    /// Returns [`OracleError::Call`] if `pinyin_save` reports failure.
+    /// Returns [`OracleError::Call`] if `pinyin_save` reports failure while
+    /// unsaved trains are pending (the pending state is retained, so a
+    /// retry does not silently report clean).
     pub fn save_user_data(&mut self) -> Result<(), OracleError> {
+        if !self.user_data_dirty.swap(false, Ordering::AcqRel) {
+            return Ok(());
+        }
+
         // SAFETY: `self.context` was returned non-null by `pinyin_init` and is
         // owned by `self`; no `Session` can be alive (it borrows `self`
         // mutably), and `pinyin_save` takes the context alone.
@@ -228,6 +245,7 @@ impl Oracle {
         if ok {
             Ok(())
         } else {
+            self.user_data_dirty.store(true, Ordering::Release);
             Err(OracleError::Call {
                 function: "pinyin_save",
             })
@@ -309,6 +327,7 @@ impl Oracle {
             instance,
             flags,
             pin_ref: self.prefix.pin().pin_ref().to_owned(),
+            user_data_dirty: Arc::clone(&self.user_data_dirty),
             _oracle: core::marker::PhantomData,
         })
     }
@@ -462,6 +481,7 @@ pub struct Session<'oracle> {
     instance: *mut ffi::PinyinInstance,
     flags: OracleFlags,
     pin_ref: String,
+    user_data_dirty: Arc<AtomicBool>,
     _oracle: core::marker::PhantomData<&'oracle mut ()>,
 }
 
@@ -549,6 +569,9 @@ impl Session<'_> {
         // retains no pointer into this call's frame.
         let ok = unsafe { ffi::pinyin_train(self.instance, 0) };
         if ok {
+            // A successful train leaves unsaved user data; save_user_data
+            // reads this to tell a clean no-op from a real failure.
+            self.user_data_dirty.store(true, Ordering::Release);
             Ok(())
         } else {
             Err(OracleError::Call {

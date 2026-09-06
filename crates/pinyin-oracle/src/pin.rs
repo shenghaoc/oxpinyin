@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::OracleError;
-pub use crate::pin_ref::{EXPECTED_PIN_REF, MANIFEST_FILE_NAME};
+pub use crate::pin_ref::{EXPECTED_PIN_REF, MANIFEST_FILE_NAME, bench_pin_ref};
 
 /// Data-payload manifest the build recipe writes into the prefix.
 pub const DATA_MANIFEST_FILE_NAME: &str = "oracle-data.sha256";
@@ -146,10 +146,10 @@ impl PinManifest {
     /// Pin-ref and DBM checks, in the same shape as `build.rs`'s `verify`.
     ///
     /// Unset `PINYIN_BENCH_DBM` requires the frozen tkrzw pin exactly. Set to
-    /// `kc` or `bdb`, the pin ref must carry `+dbm-<name>` and the manifest's
-    /// `dbm=` field must name that backend; the tag and commit checks around
-    /// this one are unchanged, so a bench oracle is still the pinned
-    /// libpinyin, only reconfigured.
+    /// `kc` or `bdb`, the required ref is the frozen one with its DBM suffix
+    /// swapped — an exact match, so a manifest carrying only a `dbm-kc`
+    /// fragment from any other pin still fails; the tag and commit checks
+    /// around this one are unchanged either way.
     fn verify_pin_ref_and_dbm(&self) -> Result<(), OracleError> {
         let Some(bench_dbm) = std::env::var_os("PINYIN_BENCH_DBM") else {
             self.require_eq("pin_ref", EXPECTED_PIN_REF)?;
@@ -158,27 +158,15 @@ impl PinManifest {
         };
 
         let bench_dbm = bench_dbm.to_string_lossy();
-        let expected_dbm = match bench_dbm.as_ref() {
-            "kc" => "KyotoCabinet",
-            "bdb" => "BerkeleyDB",
-            other => {
-                return Err(OracleError::ManifestFieldMismatch {
-                    field: "PINYIN_BENCH_DBM",
-                    expected: "kc or bdb".to_owned(),
-                    found: other.to_owned(),
-                });
-            }
+        let Some((expected_ref, expected_dbm)) = crate::pin_ref::bench_pin_ref(&bench_dbm) else {
+            return Err(OracleError::ManifestFieldMismatch {
+                field: "PINYIN_BENCH_DBM",
+                expected: "kc or bdb".to_owned(),
+                found: bench_dbm.into_owned(),
+            });
         };
 
-        let needle = format!("+dbm-{bench_dbm}");
-        let pin_ref = self.require("pin_ref")?;
-        if !pin_ref.contains(&needle) {
-            return Err(OracleError::ManifestFieldMismatch {
-                field: "pin_ref",
-                expected: needle,
-                found: pin_ref.to_owned(),
-            });
-        }
+        self.require_eq("pin_ref", &expected_ref)?;
         self.require_eq("dbm", expected_dbm)?;
         Ok(())
     }

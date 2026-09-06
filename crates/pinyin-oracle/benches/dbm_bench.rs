@@ -110,12 +110,34 @@ fn train_and_save(oracle: &mut Oracle, n: usize) {
     oracle.save_user_data().expect("pinyin_save");
 }
 
-/// Unique, initially clean temp directory for one bench function's state.
-fn bench_root(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("dbm-bench-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("bench temp dir");
-    dir
+/// Owns one bench's temporary root directory and removes it, with everything
+/// written under it, on drop — without the guard every run leaves a per-pid
+/// root behind until temp storage fills (the same defect the review flagged
+/// in backend_matrix's support module). Oracles opened under the root are
+/// dropped before the guard: criterion drops `iter_batched` outputs inside
+/// the measured-bench call, and the per-iteration oracles in `iter_custom`
+/// are dropped explicitly first.
+struct BenchRoot(PathBuf);
+
+impl BenchRoot {
+    fn new(tag: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("dbm-bench-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("bench temp dir");
+        Self(dir)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for BenchRoot {
+    fn drop(&mut self) {
+        // Best effort: a leftover root is untidy, not incorrect, and Drop
+        // must not panic.
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
@@ -133,13 +155,14 @@ fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
 
 fn bench_init_load(c: &mut Criterion) {
     let prefix = bench_prefix();
-    let parent = bench_root("init-load");
+    let parent = BenchRoot::new("init-load");
+    let parent_path = parent.path().to_path_buf();
     c.bench_function("libpinyin_dbm/init_load", |b| {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 let started = Instant::now();
-                let oracle = Oracle::open(prefix.clone(), &parent).expect("pinyin_init");
+                let oracle = Oracle::open(prefix.clone(), &parent_path).expect("pinyin_init");
                 total += started.elapsed();
                 drop(oracle);
             }
@@ -150,10 +173,11 @@ fn bench_init_load(c: &mut Criterion) {
 
 fn bench_train_write(c: &mut Criterion, n: usize, name: &'static str) {
     let prefix = bench_prefix();
-    let parent = bench_root(&format!("train-{n}"));
+    let parent = BenchRoot::new(&format!("train-{n}"));
+    let parent_path = parent.path().to_path_buf();
     c.bench_function(name, move |b| {
         b.iter_batched(
-            || Oracle::open(prefix.clone(), &parent).expect("pinyin_init"),
+            || Oracle::open(prefix.clone(), &parent_path).expect("pinyin_init"),
             |mut oracle| {
                 train_and_save(&mut oracle, n);
                 oracle
@@ -171,15 +195,15 @@ fn populate_user_dir(prefix: &OraclePrefix, dir: &Path) {
 
 fn bench_user_db_open(c: &mut Criterion) {
     let prefix = bench_prefix();
-    let root = bench_root("user-db-open");
-    let populated = root.join("populated");
+    let root = BenchRoot::new("user-db-open");
+    let populated = root.path().join("populated");
     populate_user_dir(&prefix, &populated);
 
     c.bench_function("libpinyin_dbm/user_db_open", |b| {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for i in 0..iters {
-                let target = root.join(format!("open-{i}"));
+                let target = root.path().join(format!("open-{i}"));
                 copy_dir(&populated, &target).expect("copy populated user dir");
                 let started = Instant::now();
                 let oracle =
@@ -189,7 +213,7 @@ fn bench_user_db_open(c: &mut Criterion) {
             }
             // Untimed cleanup of the per-iteration copies.
             for i in 0..iters {
-                let _ = std::fs::remove_dir_all(root.join(format!("open-{i}")));
+                let _ = std::fs::remove_dir_all(root.path().join(format!("open-{i}")));
             }
             total
         })
@@ -229,15 +253,15 @@ fn run_vmhwm_populate(dir: &str) {
 
 fn run_vmhwm_child(op: &str) {
     let prefix = bench_prefix();
-    let root = bench_root(&format!("vmhwm-{op}"));
+    let root = BenchRoot::new(&format!("vmhwm-{op}"));
     match op {
         "init_load" => {
-            let oracle = Oracle::open(prefix, &root).expect("pinyin_init");
+            let oracle = Oracle::open(prefix, root.path()).expect("pinyin_init");
             drop(oracle);
         }
         "train_write_64" | "train_write_256" => {
             let n = if op == "train_write_64" { 64 } else { 256 };
-            let mut oracle = Oracle::open(prefix, &root).expect("pinyin_init");
+            let mut oracle = Oracle::open(prefix, root.path()).expect("pinyin_init");
             train_and_save(&mut oracle, n);
         }
         "user_db_open" => {
@@ -247,7 +271,7 @@ fn run_vmhwm_child(op: &str) {
                     eprintln!("dbm_bench: user_db_open child needs DBM_BENCH_POPULATED");
                     std::process::exit(2);
                 });
-            let once = root.join("once");
+            let once = root.path().join("once");
             copy_dir(&populated, &once).expect("copy populated user dir");
             let oracle = Oracle::open_with_user_dir(prefix, &once).expect("pinyin_init");
             drop(oracle);
@@ -302,9 +326,9 @@ fn run_vmhwm_parent() {
     ];
 
     // Population runs in its own child: its peak RSS must not leak into the
-    // user_db_open measurement.
-    let pop_root = bench_root("vmhwm-populated");
-    let populated = pop_root.join("user");
+    // user_db_open measurement. The child populates the directory in place.
+    let pop_root = BenchRoot::new("vmhwm-populated");
+    let populated = pop_root.path().join("user");
     spawn_child(&["--vmhwm-populate", &populated.to_string_lossy()], None);
 
     println!("dbm_bench --vmhwm — one child per operation, /proc/self/status VmHWM");
