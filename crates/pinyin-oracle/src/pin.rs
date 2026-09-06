@@ -35,7 +35,7 @@ pub const MANIFEST_SCHEMA: &str = "pinyin-oracle-v1";
 pub const EXPECTED_DBM: &str = "Tkrzw";
 
 /// libpinyin release tag the pin requires.
-pub const EXPECTED_LIBPINYIN_TAG: &str = "2.11.91";
+pub const EXPECTED_LIBPINYIN_TAG: &str = "2.11.92";
 
 /// Relative directory holding the generated model tables inside the prefix.
 pub const DATA_SUBDIR: &str = "lib/libpinyin/data";
@@ -365,8 +365,8 @@ mod tests {
         format!(
             "schema={MANIFEST_SCHEMA}\n\
              pin_ref={pin_ref}\n\
-             libpinyin_tag=2.11.91\n\
-             libpinyin_commit=0c5e80e1200f84fab185d1c5bde458b770a0636c\n\
+             libpinyin_tag=2.11.92\n\
+             libpinyin_commit=074a2219c90feaf962d0d24f034514033ece5f99\n\
              ibus_libpinyin_tag=1.16.5\n\
              ibus_libpinyin_commit=2d2cdac0187101aa0cd7ac06694a8340721ddfbb\n\
              model_sha256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155\n\

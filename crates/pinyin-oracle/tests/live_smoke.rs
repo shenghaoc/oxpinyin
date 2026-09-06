@@ -252,7 +252,7 @@ fn located_prefix_is_on_pin_and_reports_its_digests() {
     );
     assert_eq!(
         pin.libpinyin_commit(),
-        "0c5e80e1200f84fab185d1c5bde458b770a0636c"
+        "074a2219c90feaf962d0d24f034514033ece5f99"
     );
     assert!(prefix.data_dir().is_dir());
 }

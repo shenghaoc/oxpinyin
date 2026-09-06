@@ -1,6 +1,6 @@
 # Reproducible Stage-2 performance-baseline environment.
 #
-# Builds both oracle (libpinyin-2.11.91 + Tkrzw) and oxpinyin-capi
+# Builds both oracle (libpinyin-2.11.92 + Tkrzw) and oxpinyin-capi
 # (Kyoto Cabinet backend) in a single image. Run the benchmark with:
 #
 #   docker build --platform linux/arm64 -f tools/bisection/Dockerfile.perf-baseline -t oxpinyin-perf .

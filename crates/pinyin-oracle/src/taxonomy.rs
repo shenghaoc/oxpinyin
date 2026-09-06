@@ -455,7 +455,7 @@ mod tests {
             DivergenceClass::DataVersion
         );
         assert_eq!(
-            classify_off_pin(&EXPECTED_PIN_REF.replace("libpinyin-2.11.91", "libpinyin-2.10.0")),
+            classify_off_pin(&EXPECTED_PIN_REF.replace("libpinyin-2.11.92", "libpinyin-2.10.0")),
             DivergenceClass::DistroDelta
         );
         assert_eq!(

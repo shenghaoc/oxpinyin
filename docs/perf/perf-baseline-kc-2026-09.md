@@ -316,3 +316,11 @@ Not re-run for this amendment: the parity pin (491/396/390) — no code
 changed. The Tkrzw default is not measured here; the Tkrzw scoreboard
 is `docs/findings/perf-backend-matrix-2026-09.md` (an x86_64 session,
 not a column in this ARM64 document).
+
+> **Pin note (2026-09-07):** the recorded cells above are frozen
+> artifacts of oracle `0c5e80e1` and are not re-timed. The corpus
+> surfaces were re-verified byte-identical at oracle `074a2219`
+> (candidates 10,312/10,312 distinct inputs; sentence counts 491/396/390
+> unchanged) — see `docs/findings/oracle-pin-074a221-verification.md` —
+> so the oracle behavior these numbers measure did not change with the
+> pin bump.

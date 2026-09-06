@@ -211,3 +211,11 @@ Observations only — no optimization work in this PR.
 Continued by the Stage-2 measurement harness in
 `docs/perf/perf-stage2-harness-2026-08.md` (Criterion groups over the
 C ABI, `[profile.profiling]`, `tools/profile/run-w8-cycle.sh`).
+
+> **Pin note (2026-09-07):** the recorded cells above are frozen
+> artifacts of oracle `0c5e80e1` and are not re-timed. The corpus
+> surfaces were re-verified byte-identical at oracle `074a2219`
+> (candidates 10,312/10,312 distinct inputs; sentence counts 491/396/390
+> unchanged) — see `docs/findings/oracle-pin-074a221-verification.md` —
+> so the oracle behavior these numbers measure did not change with the
+> pin bump.

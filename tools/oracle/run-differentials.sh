@@ -7,14 +7,14 @@
 set -uo pipefail
 
 # run-differentials.sh — run the oxpinyin↔libpinyin oracle differentials
-# against a built pinned oracle (libpinyin 2.11.91, Tkrzw backend, verified
+# against a built pinned oracle (libpinyin 2.11.92, Tkrzw backend, verified
 # model20 data). Wires the PINYIN_* env vars the env-gated differential tests
 # read, then runs them with the pure-Rust `redb` backend so no C DBM is needed
 # on the Rust side.
 #
 # Prerequisites (see docs/testing/oracle-environment.md and the build recipe
 # below):
-#   1. A built libpinyin 2.11.91 tree (Tkrzw backend). Its utils and shared
+#   1. A built libpinyin 2.11.92 tree (Tkrzw backend). Its utils and shared
 #      object are used directly from the build tree — no `make install`.
 #   2. A built system data dir: the model20 tables + table.conf plus the
 #      compiled phrase_index.bin / pinyin_index.bin, built by the three
@@ -92,7 +92,7 @@ need_exe() {
 	[[ -x $1 ]] || { printf 'missing executable: %s (%s)\n' "$1" "$2" >&2; missing=1; }
 }
 
-need_dir "$libpinyin" "--libpinyin: built libpinyin 2.11.91 tree"
+need_dir "$libpinyin" "--libpinyin: built libpinyin 2.11.92 tree"
 need_dir "$data" "--data: built system data dir"
 need_dir "$export_dir" "--export: oxpinyin redb export"
 [[ -n $model ]] && need_dir "$model" "--model: extracted model20 dir"

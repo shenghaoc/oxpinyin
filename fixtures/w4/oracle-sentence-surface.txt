@@ -1,4 +1,4 @@
-# pin_ref=libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw
+# pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw
 # sample=504
 a	true	阿阿啊	n/0/阿n/2/啊N/-/呵N/-/腌N/-/吖N/-/嗄
 bu	true	不不部	n/0/不n/2/部N/-/布N/-/步N/-/补N/-/堡

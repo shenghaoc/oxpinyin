@@ -11,7 +11,7 @@ against the data already on the system.
 **E2E I/O rule.** For every exported symbol (all 79 `pinyin_*` exports
 are live; the measured consumer union of 58 is the probe-coverage scope),
 given the same inputs and state, oxpinyin MUST return
-byte-identical output to the pinned libpinyin 2.11.91 — return status,
+byte-identical output to the pinned libpinyin 2.11.92 — return status,
 out-parameters and the data they point to, written lengths, and any state
 transition on the handle. Divergence is permitted only under the four
 classes below; anything else is a defect to revert, not a divergence to

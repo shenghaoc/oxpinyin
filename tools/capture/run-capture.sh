@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-EXPECTED_PIN_REF='libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw'
+EXPECTED_PIN_REF='libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw'
 
 if (($# != 2)); then
 	printf 'usage: %s ORACLE_PREFIX OUTPUT_DIR\n' "$0" >&2
@@ -14,7 +14,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/../.." && pwd)
 build_dir=$repo_root/target/capture
 system_dir=$prefix/lib/libpinyin/data
-header=$prefix/include/libpinyin-2.11.91/pinyin.h
+header=$prefix/include/libpinyin-2.11.92/pinyin.h
 shared_object=$prefix/lib/libpinyin.so.15.0.0
 manifest=$prefix/oracle-pin.txt
 data_manifest=$prefix/oracle-data.sha256

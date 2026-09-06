@@ -97,7 +97,7 @@ These are independent and move for different reasons:
    is what makes the drop-in a drop-in: every consumer already records
    `libpinyin.so.15` in `DT_NEEDED`. It moves only when upstream bumps its
    ABI current — never with the crate version.
-3. **Pinned oracle** — libpinyin `2.11.91`. Re-pinning the oracle is a
+3. **Pinned oracle** — libpinyin `2.11.92`. Re-pinning the oracle is a
    deliberate event with its own re-freeze (`pin-refreeze-*.md` convention),
    independent of the crate version and SONAME.
 4. **Parity pins** — `10190 / 10190 / 98930` of `98930` candidate symbols,

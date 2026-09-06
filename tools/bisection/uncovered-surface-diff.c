@@ -9,7 +9,7 @@
  *      a deep page (index 10) and from the very last row.
  *   B. punctuation modes — full/half width and Chinese/English punct
  *      toggles are ibus-frontend state (PYHalfFullConverter.cc,
- *      PYPunctTable.h), NOT expressible through the pinned 2.11.91 C ABI
+ *      PYPunctTable.h), NOT expressible through the pinned 2.11.92 C ABI
  *      (nm: no such exports). The ABI punct surface is the punct-table
  *      prediction path: pinyin_guess_predicted_candidates_with_punctuations
  *      prepends PREDICTED_PUNCTUATION rows per prefix token

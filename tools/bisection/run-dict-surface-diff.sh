@@ -50,7 +50,7 @@ fi
 # LIBPINYIN_SHA, MODEL_SHA256, dbm). Exact whole-line match so an oracle
 # built against a different model checksum or a different DBM backend
 # does not silently validate this differential.
-EXPECTED_PIN_REF='pin_ref=libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw'
+EXPECTED_PIN_REF='pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw'
 if ! grep -Fxq "$EXPECTED_PIN_REF" "$PREFIX/oracle-pin.txt"; then
     echo "SKIP: oracle prefix at $PREFIX is off-pin"
     exit 3

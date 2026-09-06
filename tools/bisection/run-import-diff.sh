@@ -46,10 +46,10 @@ if [ ! -f "$PREFIX/oracle-pin.txt" ] || [ ! -f "$ORACLE_SO" ]; then
     echo "  build it with tools/oracle/build-oracle.sh and set PINYIN_ORACLE_PREFIX"
     exit 0
 fi
-if ! grep -q '^pin_ref=libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c' \
+if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
     "$PREFIX/oracle-pin.txt"; then
     echo "SKIP: oracle prefix at $PREFIX is off-pin"
-    echo "  expected libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c"
+    echo "  expected libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99"
     exit 0
 fi
 # The pin_ref above is prefix-matched (the full value is composite), so pin
@@ -136,7 +136,7 @@ if [ -z "$IBUS_BUILD" ] || ! ls "$FRONT_SRC/"*.o > /dev/null 2>&1 || [ ! -f "$SC
     echo "SKIP: ibus-libpinyin build tree not found (set PINYIN_IBUS_BUILD_DIR)"
     exit 0
 fi
-IBUS_PIN_REF='libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c'
+IBUS_PIN_REF='libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99'
 if [ ! -f "$IBUS_PREFIX/oracle-pin.txt" ] || ! grep -q "^pin_ref=$IBUS_PIN_REF" "$IBUS_PREFIX/oracle-pin.txt"; then
     echo "SKIP: ibus-libpinyin build at $IBUS_BUILD is off-pin"
     exit 0
@@ -149,7 +149,7 @@ for command in g++ pkg-config glib-compile-schemas; do
 done
 
 # Compile the frontend harness from the same object files the pin build made.
-g++ -std=gnu++17 -O2     -I"$FRONT_SRC"     -I"$IBUS_PREFIX/include/libpinyin-2.11.91"     $(pkg-config --cflags ibus-1.0 glib-2.0 gio-2.0 sqlite3)     frontend-import.cc     $(find "$FRONT_SRC" -maxdepth 1 -name '*.o' ! -name '*PYMain.o' -print | sort)     $(pkg-config --libs ibus-1.0 glib-2.0 gio-2.0 sqlite3)     -L"$IBUS_PREFIX/lib" -lpinyin     -o frontend-import
+g++ -std=gnu++17 -O2     -I"$FRONT_SRC"     -I"$IBUS_PREFIX/include/libpinyin-2.11.92"     $(pkg-config --cflags ibus-1.0 glib-2.0 gio-2.0 sqlite3)     frontend-import.cc     $(find "$FRONT_SRC" -maxdepth 1 -name '*.o' ! -name '*PYMain.o' -print | sort)     $(pkg-config --libs ibus-1.0 glib-2.0 gio-2.0 sqlite3)     -L"$IBUS_PREFIX/lib" -lpinyin     -o frontend-import
 
 # The frontend build's schema is newer than the system GSettings database;
 # compile a private copy for the harness.
