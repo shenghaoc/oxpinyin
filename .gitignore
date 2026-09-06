@@ -28,7 +28,9 @@ rustc-ice-*.txt
 # Local agent tooling worktrees (not committed)
 /.claude/
 
-# Bisection harness compiled binary
+# Bisection harness compiled binaries (every run-*.sh compiles its driver
+# beside the source; one was committed by mistake until 2026-09-06)
+/tools/bisection/*-bin
 /tools/bisection/bisect
 /tools/bisection/train-diff
 /tools/bisection/nbest-train-diff

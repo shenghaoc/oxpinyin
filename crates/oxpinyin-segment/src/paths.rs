@@ -21,7 +21,9 @@ pub const MODEL_CACHE_ENV: &str = "PINYIN_MODEL_CACHE";
 /// Environment variable naming the export directory.
 pub const EXPORT_DIR_ENV: &str = "PINYIN_EXPORT_DIR";
 
-/// Default export directory used by the oracle integration tests.
+/// Default export directory used by the oracle integration tests. Equal
+/// to `oxpinyin_testsupport::model_cache::DEFAULT_EXPORT_DIR` by
+/// construction; duplicated because testsupport is dev-only here.
 pub const DEFAULT_EXPORT_DIR: &str = "/tmp/oxpinyin-export";
 
 /// DBMs the segmenter needs from the system data directory: the phrase

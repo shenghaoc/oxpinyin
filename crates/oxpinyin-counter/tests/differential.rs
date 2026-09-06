@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use oxpinyin_counter::{Counts, count_ngseg, parse_interpolation_dump};
-use oxpinyin_segment::{PhraseLexicon, locate_export_dir};
+use oxpinyin_segment::{DEFAULT_EXPORT_DIR, EXPORT_DIR_ENV, PhraseLexicon, locate_export_dir};
 use oxpinyin_testsupport::{PinDir, fnv1a64, locate_bin, locate_data, parse_manifest};
 
 fn repo_root() -> PathBuf {
@@ -76,7 +76,7 @@ fn assert_counts_equal(rust: &Counts, live: &Counts) {
 fn rust_matches_committed_manifest() {
     let Some(counts) = rust_counts() else {
         eprintln!(
-            "skipping: system tables not found (PINYIN_EXPORT_DIR | /tmp/oxpinyin-export; produce with oxpinyin-datagen compile)"
+            "skipping: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"
         );
         return;
     };
