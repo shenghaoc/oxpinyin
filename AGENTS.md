@@ -147,7 +147,17 @@ Fetch and rebase onto the current landing tip immediately before every
 push and before any merge. `git log origin/main..HEAD` must contain only
 this workstream's commits — the ones this branch introduced, not
 rewritten copies of already-landed work. The diffstat must delete
-nothing the branch does not own. Watch for the stale-base optical
+nothing the branch does not own. A clean textual rebase is not a scheme re-verification. When a
+dependency PR merges mid-review and changes a GENERATION scheme — a
+manifest layout, a fixture format, a builder recipe — artifacts your
+branch produced under the old scheme can survive the rebase textually
+intact and still be wrong. After rebasing, list the committed artifacts
+whose generators main changed since your branch point and regenerate
+them; do not let a conflict-free merge stand in for that. PR #363 vs
+#358 (the oracle-data manifest split) is the worked example: only an
+explicit ask surfaced it.
+
+Watch for the stale-base optical
 illusion (other people's merged work appearing as deletions). Re-run
 pins after any rebase that changes the engine, capi, or data crates.
 Whoever merges later re-measures those pins rather than assuming the
