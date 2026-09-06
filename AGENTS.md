@@ -155,3 +155,14 @@ Opening a committed `fixtures/w3/lmdb/*` DBM from a test dirties its
 included. The data files never change; the dirt is incidental. Run
 `git checkout -- fixtures/w3/lmdb/` after any model-dependent datagen
 test run before committing, and never commit the sidecars.
+
+## Bench targets
+
+A backend-specific criterion bench — one that names a peer's optional
+dependency, such as heed for `lmdb` — must carry
+`required-features = ["<backend>"]` in its `[[bench]]` entry. CI runs
+`cargo clippy --workspace --all-targets` on the default backend, and
+without it the target fails to resolve the dependency instead of being
+skipped. Run one bench with `--bench <name>`; without it cargo also runs
+the lib under libtest, which rejects criterion flags such as
+`--profile-time`.
