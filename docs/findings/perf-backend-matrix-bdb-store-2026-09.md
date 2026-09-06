@@ -190,12 +190,15 @@ redb ~4.0 MiB, tkrzw 6.7–7.3 MiB, KC 7.0–7.3 MiB — the C-backed stores
 pay roughly a 3 MiB library floor over the pure-Rust ones.
 
 **Overlap columns (lp-tkrzw vs ox-tkrzw, lp-KC vs ox-KC).** Same
-backend library, different tier: the store tier is one to two orders of
-magnitude cheaper in both axes on every overlapping op. That gap is the
-engine+facade share, not a backend property — but it does bound what any
-DBM-backend change inside libpinyin could recover on these operations:
-the backend is a minority of the facade+DBM total, which is consistent
-with the 4-cell matrix's steady-state conclusion.
+backend library, different tier, and the size of the gap depends on the
+operation: train_write is where the tiers separate — the store tier is
+15× cheaper on tkrzw and 379× on KC at 64 trains (20× and 420× at 256) —
+while init_load is 3–4× (4.0× tkrzw, 3.0× KC) and peak RSS roughly 2×
+(2.0× tkrzw, 2.5× KC). That gap is the engine+facade share, not a
+backend property — but it does bound what any DBM-backend change inside
+libpinyin could recover on these operations: the backend is a minority
+of the facade+DBM total, which is consistent with the 4-cell matrix's
+steady-state conclusion.
 
 ## What is NOT measured
 
@@ -227,12 +230,14 @@ The benches land in-tree and the baselines are reproducible:
 
 - libpinyin side: `PINYIN_ORACLE_PREFIX=<prefix>
   [PINYIN_BENCH_DBM=<kc|bdb>] cargo bench -p pinyin-oracle --features
-  oracle-ffi --bench dbm_bench` — prefixes rebuilt by
-  `tools/oracle/build-oracle.sh --dbm <tkrzw|kc|bdb> --prefix …`.
+  oracle-ffi --bench dbm_bench -- --save-baseline dbm-<name>` — prefixes
+  rebuilt by `tools/oracle/build-oracle.sh --dbm <tkrzw|kc|bdb>
+  --prefix …`.
 - oxpinyin side: `cargo bench -p oxpinyin-store --no-default-features
-  --features <backend> --bench backend_matrix_<backend>`.
-- Baselines `dbm-bdb`/`dbm-kc`/`dbm-tkrzw`/`ox-*` were saved with
-  `--save-baseline` in this session's `target/criterion`; re-runs with
-  `--baseline <name>` give criterion change verdicts against them.
+  --features <backend> --bench backend_matrix_<backend> --
+  --save-baseline ox-<backend>`.
+- Baselines `dbm-bdb`/`dbm-kc`/`dbm-tkrzw`/`ox-*` were saved that way in
+  this session's `target/criterion`; re-runs with `--baseline <name>`
+  give criterion change verdicts against them.
 - RAM: the same binaries' `--vmhwm` mode prints the per-operation child
   VmHWM table.
