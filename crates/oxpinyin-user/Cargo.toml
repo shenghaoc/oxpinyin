@@ -30,3 +30,11 @@ redb = ["oxpinyin-store/redb"]
 criterion = "0.8"
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
 redb = { workspace = true }
+
+[[bench]]
+name = "export_phrases"
+harness = false
+
+[[bench]]
+name = "phrase_read"
+harness = false

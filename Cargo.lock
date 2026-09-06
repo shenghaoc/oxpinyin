@@ -934,6 +934,7 @@ name = "oxpinyin-store"
 version = "0.1.0"
 dependencies = [
  "bindgen",
+ "criterion",
  "heed",
  "redb",
 ]
@@ -964,6 +965,7 @@ dependencies = [
 name = "oxpinyin-user"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "oxpinyin-core",
  "oxpinyin-store",
  "proptest",
