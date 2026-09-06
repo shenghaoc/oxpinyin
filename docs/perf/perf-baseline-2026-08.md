@@ -188,8 +188,8 @@ Observations only — no optimization work in this PR.
   under `share/oxpinyin`, which is the documented packager step
   (`docs/packaging.md`). The `.a`, header, and `.pc` are included only in the
   total-install row.
-- The parity-profile-excludes-training note still applies: the W8 GSettings
-  parity profile uses sort option 2, whose sentence-candidate-excluding mask
+- The parity-profile-excludes-training note still applies: the W8 parity
+  profile uses the frontend's default sort option, 2, whose sentence-candidate-excluding mask
   never reaches `pinyin_train`. This decode-only harness uses the requested
   ABI sort `0x1e` and does not select or train at all.
 - Symlinks in both installs total <100 bytes and are counted but immaterial.
