@@ -6,7 +6,8 @@
 //!
 //! The pin's law, in order:
 //!
-//! 1. An empty matrix (no parse ran) answers `false`.
+//! 1. An empty matrix (no parse ran, or a parse that placed no key —
+//!    `fill_matrix` leaves it cleared) answers `false`.
 //! 2. `assert(offset < matrix.size())` and `_check_offset(matrix, offset)`
 //!    — abort shapes, answered as [`EngineError::LookupOffsetOutOfRange`]
 //!    and [`EngineError::ZeroKeyOffsetCheck`] (the no-abort policy,
@@ -208,7 +209,10 @@ where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
     D::Error: core::fmt::Display,
 {
-    if input.is_empty() {
+    // `0 == matrix.size()`: no parse ran, or the parse placed no key —
+    // `fill_matrix` clears the matrix and returns before sizing it when
+    // the key vector is empty (`phonetic_key_matrix.cpp:34-38`).
+    if input.is_empty() || keys.is_empty() {
         return Ok(None);
     }
     if offset > input.len() {
@@ -363,6 +367,13 @@ mod tests {
     fn empty_input_and_empty_phrase_answer_false() {
         assert_eq!(
             character_offset_over_keys(b"", 0, &[], true, &dict(), "你", 0).expect("no abort"),
+            None
+        );
+        // A non-empty buffer whose parse placed no key: `fill_matrix`
+        // leaves the matrix cleared, so the pin's empty-matrix `false`
+        // applies before any offset check.
+        assert_eq!(
+            character_offset_over_keys(b"xyz", 0, &[], true, &dict(), "你", 0).expect("no abort"),
             None
         );
         assert_eq!(
