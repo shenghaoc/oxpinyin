@@ -6,7 +6,7 @@ rules: `AGENTS.md`. Crate roles: `.kiro/steering/structure.md`.
 
 > **Project identity:** **oxpinyin** (repo, crate, docs). The prior
 > project name is retained in git history only.
-> Shipped artifact naming for the compatibility bootstrap is a separate
+> Shipped artifact naming for the libpinyin drop-in (`libpinyin.so.15`) is a separate
 > concern from project identity.
 
 ## Stages
@@ -15,10 +15,13 @@ rules: `AGENTS.md`. Crate roles: `.kiro/steering/structure.md`.
 |---|---|
 | **0** | Scaffold, pin, SPECs/fixtures (here) |
 | **1** | Exact-output parity with the pin-built libpinyin oracle (differential testing) |
-| **2** | Measured upgrades (trigram/KN, typo edges, own data) — every divergence vs Stage 1 baseline |
+| **2** | Measured upgrades — smaller binary, faster execution, lower RAM first (in progress, `docs/perf/`); model upgrades (trigram/KN, typo edges, own data) remain candidates — every divergence vs the Stage 1 baseline |
 
-Stage 1 uses installed/libpinyin-format tables (no redistribution required).
-Stage 2 is optional and measurement-gated.
+Stage 1 uses installed/libpinyin-format tables (no redistribution required:
+`docs/findings/model-provenance.md` — build-time fetch of the pinned model20
+archive, compiled by `oxpinyin-datagen`; on Kyoto Cabinet and tkrzw an
+unmodified libpinyin install's `data/` opens as is). Stage 2 is optional and
+measurement-gated.
 
 ## Reference pin
 
@@ -39,18 +42,21 @@ Build: `tools/oracle/build-oracle.sh` (optional container recipe alongside).
 Detailed task cards live under `.kiro/specs/` as they are derived. Until a
 SPEC is frozen, do not implement that slice.
 
-## Phase 0 (blocks feature work)
+## Phase 0 (blocked feature work; now recorded)
 
-Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
+Recorded — see `.kiro/specs/foundation/tasks.md` and findings. The one
+open item is the consolidated F-E cross-lane evidence register (foundation
+task 4): the 13 cases' evidence is spread across the findings docs, not yet
+one artifact on main.
 
 | Need | Output |
 |---|---|
 | Pin + recipe | `docs/testing/oracle-environment.md` (recorded) |
-| Frontend ABI subset | `docs/findings/abi-subset.md` (recorded) |
+| ABI surface | `docs/findings/abi-subset.md` (recorded: the consumer union, then the full 79/79 export set — §6) |
 | Upstream schema | `docs/findings/upstream-schema.md` (recorded) |
-| Parser / path-set / scoring SPECs | not yet frozen |
-| Data load route (D3) | not yet decided |
-| Capture harness + F-A fixtures | not yet built |
+| Parser / path-set / scoring SPECs | frozen 2026-08-09: `docs/findings/parser-spec.md`, `parser-path-set.md`, `scoring-spec.md` |
+| Data load route (D3) | decided: oxpinyin-data loads libpinyin-format tables (`.kiro/steering/structure.md`); native production of those tables is W15 |
+| Capture harness + F-A fixtures | built: `tools/capture/`, `docs/testing/capture-fixtures.md`, `fixtures/foundation/f-a.txt`, `f-c.txt`; F-E register still open |
 
 ## Stage 1 workstreams (names only)
 
@@ -60,46 +66,99 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
 | W2 | Oracle FFI + differential runner | pinyin-oracle |
 | W3 | Table loading | oxpinyin-data |
 | W4 | SegmentGraph, k-best, engine session | oxpinyin-core, oxpinyin-engine |
-| W5 | C ABI subset | oxpinyin-capi |
-| W6 | User store (redb) | oxpinyin-user |
+| W5 | C ABI (began as the consumer subset; the full 79-symbol surface closed under W8) | oxpinyin-capi |
+| W6 | User store (ACID store over the compiled-in `DefaultStore`; began on redb) | oxpinyin-user, oxpinyin-store |
 | W7 | Classic text-format interop via oxpinyin-dictool (import + export) | oxpinyin-dictool, oxpinyin-capi |
-| W8 | oxpinyin library release + compatibility bootstrap for the ibus-libpinyin fork | oxpinyin-capi |
-| W9 | Training toolchain — full trainer-workflow parity (KMM in scope; see `docs/findings/trainer-parity-audit.md`) | oxpinyin-segment, oxpinyin-kmm, oxpinyin-eval, oxpinyin-word, oxpinyin-punct, oxpinyin-lambda, oxpinyin-corpus (legacy: oxpinyin-counter, oxpinyin-emitter) |
+| W8 | libpinyin drop-in: full 79-symbol `.so` ABI under `libpinyin.so.15` (see `.kiro/specs/drop-in/`) | oxpinyin-capi |
+| W9 | Training toolchain — full trainer-workflow parity (KMM in scope; see `docs/findings/trainer-parity-audit.md`) | oxpinyin-segment, oxpinyin-kmm, oxpinyin-eval, oxpinyin-word, oxpinyin-punct, oxpinyin-lambda, oxpinyin-corpus, oxpinyin-train (legacy: oxpinyin-counter, oxpinyin-emitter) |
 | W10 | Option bits: correction, fuzzy/ambiguity, dynamic-adjust gating | oxpinyin-core, oxpinyin-engine |
 | W11 | Phrase-index union at lookup (user, network, addon) | oxpinyin-engine, oxpinyin-data, oxpinyin-user |
 | W12 | Corpus tail (parity gaps; candidate residual closed 2026-08-22) | oxpinyin-core, oxpinyin-engine, oxpinyin-capi |
 | W13 | Double-pinyin and bopomofo input schemes (feature implementation) | oxpinyin-core, oxpinyin-engine |
 | W14 | Sentence surface (n-best emission, NBEST_MATCH typing, get_sentence) | oxpinyin-capi, oxpinyin-engine |
-| W15 | model20-native runtime-data production, every backend | oxpinyin-datagen, oxpinyin-store |
+| W15 | model20-native runtime-data production, every backend — since P5/P6 in libpinyin's own file formats, read directly by the runtime | oxpinyin-datagen, oxpinyin-store, oxpinyin-data, oxpinyin-runtime |
+
+Crates outside the Stage 1 table (roles in `.kiro/steering/structure.md`):
+`oxpinyin-facade` and `oxpinyin-runtime` (the shared orchestration and
+assembly layers under both C ABIs and the Python binding),
+`oxpinyin-chewing` (the excisable zhuyin layer, D6 seam:
+`docs/findings/chewing-crate-seam.md`), `oxpinyin-zhuyin-capi`
+(`libzhuyin.so.15`, upstream's `--enable-libzhuyin` counterpart, 52
+symbols), `oxpinyin-python` (`docs/python.md`; spec
+`.kiro/specs/python-binding/`, three open items), and
+`oxpinyin-testsupport` (dev-only).
+
+**Stage 1 status (2026-09-06):** every workstream above has landed or
+closed — W9, W10, W11, W13, W14 and W15 carry LANDED notes below, W12
+closed 2026-08-22, and `README.md` records Stage 1 as complete. Still
+open or pending:
+
+- W8 drop-in task 9 — the write path for learned user data in
+  libpinyin's own user-file format (`.kiro/specs/drop-in/tasks.md`; the
+  user store is `user_store.<ext>` today).
+- The bopomofo SPEC freeze — proposed 2026-09-03, **maintainer ruling
+  pending** (`docs/findings/bopomofo-spec.md`, Freeze record). The
+  double-pinyin SPEC is frozen (2026-09-02).
+- The Phase 0 F-E register (foundation task 4).
+
+Parked, not open: the W12 live-typing behaviours the parity sequence does
+not exercise (`docs/findings/live-typing.md`, no pin gates) and the
+shelved BerkeleyDB compat path (drop-in task 10).
 
 ### Workstream notes (recorded as decisions settle)
 
-- **Kyoto Cabinet is the default selected backend** (2026-08-29). The four
-  supported oxpinyin store backends — Kyoto Cabinet, redb, LMDB, tkrzw —
+- **tkrzw is the default selected backend** (05688575, 2026-09-05;
+  Kyoto Cabinet had been the default since 2026-08-29 — RHEL 10.2 ships
+  `tkrzw-devel` but not `kyotocabinet-devel`, which made the KC default
+  unbuildable from source on the primary development machine). The four
+  supported oxpinyin store backends — tkrzw, Kyoto Cabinet, LMDB, redb —
   are peer implementations behind one `ReadStore`/`WriteStore` trait
-  surface, and any single build picks one at compile time
-  (`DefaultStore`; chain kyotocabinet > tkrzw > lmdb > redb is a
-  tie-break for cargo's additive feature unification, not a hierarchy).
-  Kyoto Cabinet is the feature enabled in the workspace's default set;
-  the other three are selected explicitly with `--no-default-features
-  --features {redb|lmdb|tkrzw}`. Native table files carry the peer's
-  extension (`.kct`/`.tkt`/`.lmdb`/`.redb`). Switching backends is a
-  storage-format transition — the runtime does not transparently open
-  one backend's files with another, and old backend-specific user data
-  is not carried across the switch. (This matches the model
-  distributions use for libpinyin's own backend transitions.)
+  surface, and any single build compiles in exactly one of them
+  (`DefaultStore`; `oxpinyin-store` refuses a build with zero or more
+  than one backend feature at compile time). tkrzw is the feature in the
+  workspace's default set; the other three are selected explicitly with
+  `--no-default-features --features {kyotocabinet|lmdb|redb}`. redb is
+  the pure-Rust portability fallback; KC/tkrzw/LMDB are C dependencies.
+  System data files carry libpinyin's own names on Kyoto Cabinet and
+  tkrzw (the drop-in set) and `<stem>.<ext>` on redb and LMDB; the user
+  store is `user_store.<ext>` (`kct`/`tkt`/`lmdb`/`redb`). Switching
+  backends is a storage-format transition — the runtime does not
+  transparently open one backend's files with another, and old
+  backend-specific user data is not carried across the switch. (This
+  matches the model distributions use for libpinyin's own backend
+  transitions.)
 
 - **W15 LANDED.** The data pipeline inversion is complete: runtime tables
   are compiled natively from the canonical pinned `model20` archive for every
-  storage backend (Kyoto Cabinet, redb, LMDB, Tkrzw) — no producer consumes
-  libpinyin-generated runtime data. Implemented in `crates/oxpinyin-datagen`
-  (`system.rs`, `table.rs`, `punct.rs`, `addon.rs`, `manifest.rs`, `write.rs`);
-  all four backend producers are feature-gated in `Cargo.toml`. The retired
-  `oxpinyin-migrate` route (oracle ABI export + verbatim Tkrzw conversion) is
-  proven unnecessary: the native compilation reproduces its frozen full export
-  entry-for-entry, which unparked the five differentials that needed a full
-  system dir. Architecture and equivalence evidence:
-  `docs/findings/datagen-model20.md` (Status: recorded / implemented).
+  storage backend (tkrzw, Kyoto Cabinet, LMDB, redb) — no producer consumes
+  libpinyin-generated runtime data. Implemented in `crates/oxpinyin-datagen`;
+  all four backend producers are feature-gated in its `Cargo.toml`. The
+  retired `oxpinyin-migrate` route (oracle ABI export + verbatim Tkrzw
+  conversion) was proven unnecessary by the native compilation.
+  Architecture and the canonical-source invariant:
+  `docs/findings/datagen-model20.md`.
+
+  **P1–P6 (2026-09-01 → 2026-09-02) changed what those tables are.**
+  `oxpinyin-datagen compile` now writes the data directory libpinyin's
+  own build produces — the sixteen per-library chunk files (byte-exact
+  against the pin), `pinyin_index.bin`, `phrase_index.bin`, `bigram.db`,
+  `punct.bin`, the `addon_*` pair and `table.conf` — through the selected
+  backend; on Kyoto Cabinet and tkrzw under libpinyin's names, on redb
+  and LMDB as the same records in that backend's container
+  (`docs/findings/datagen-compat-2026-09-01.md`; the pre-P6 native
+  schema and its serializers are gone). The production runtime reads
+  those files directly through lazy readers — a handle plus a mmap per
+  table, nothing scanned at open — so `Runtime::open`, `pinyin_init` and
+  the Python binding open a system directory the way libpinyin does
+  (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`).
+  `interpolation2.text` is consumed by datagen only and is no longer
+  emitted or read at runtime (3f0f0f36). The drop-in invariant is gated
+  end to end by `tools/bisection/run-same-data-dir-diff.sh`: the
+  pin-built `libpinyin.so` and oxpinyin's C ABI open one unchanged
+  libpinyin `data/` and are byte-identical on every surface but the two
+  registered divergences. Init fell from ~100× the pin to within ~1.3×
+  (`docs/perf/perf-baseline-kc-2026-09.md`,
+  `docs/findings/perf-backend-matrix-2026-09.md`).
 
 - **W7 is flat, not a task stack.** One deliverable: classic text-format
   interop via oxpinyin-dictool (import + export). The line-oriented
@@ -113,60 +172,51 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   who care. Binary legacy-DB migration was investigated
   (`feat/w7-t2-legacy-migrate`, shelved with findings at
   `docs/findings/legacy-migration.md`) and cancelled per that precedent.
-  GSettings key-for-key mapping was cancelled too: a Rust-language rewrite
-  would have its own component/schema ids per the W8 decision. No
-  T-numbering here — one deliverable delivered in one PR, flat like the
+  No T-numbering here — one deliverable delivered in one PR, flat like the
   decoder-λ fix (PR #55).
 
-- **W8 is the oxpinyin library release, with a compatibility bootstrap for
-  the maintainer's ibus-libpinyin fork.** oxpinyin-capi exposes the
-  51-symbol call surface of the fork (`feat/oxpinyin-backend` Phase-0 doc
-  `docs/oxpinyin-switch.md` in that ibus-libpinyin repo, tip `0d71866`):
-  the 50 symbols pinned from ibus-libpinyin 1.16.5 plus
-  `pinyin_get_parsed_input_length` (fork commit `2c5baa9`). For W8, the
-  fork surface supersedes the upstream tag freeze.
-  The first oxpinyin release ships this as a binary the fork links against
-  with minimal changes — enough to switch the fork off the C++ libpinyin
-  backend and onto oxpinyin.
+- **W8 is the libpinyin drop-in: the full `.so` ABI, not a fork
+  bootstrap (supersession declared 2026-08-29, closed 2026-08-30 with all
+  79 symbols live).** oxpinyin-capi maintains the whole
+  live upstream export surface — 79/79 `pinyin_*` symbols from
+  `libpinyin.ver` at the pin (`pinyin_get_raw_full_pinyin` excluded, dead
+  in upstream itself) — under libpinyin's own binary identity: SONAME
+  `libpinyin.so.15`, `LIBPINYIN` symbol versions, the header under
+  `libpinyin-2.11.91/`, and `libpinyin.pc`, all produced by cargo-c
+  (`docs/packaging.md`, `docs/findings/drop-in-abi-identity.md`). The
+  goal is the compatibility policy's: rename the built object to
+  `libpinyin.so.15`, put it on the library path, and unmodified consumers
+  work against the data already on the system
+  (`docs/findings/compatibility-policy.md`). The spec is
+  `.kiro/specs/drop-in/`; the supersession record is
+  `docs/findings/abi-subset.md` §6 (3d918866).
 
-  After that first release, the surface is **free to evolve**. The
-  51-symbol fork call surface is a bootstrap contract for the initial
-  switch, not a permanent ABI freeze. Long-term soname or header
-  compatibility with upstream libpinyin is explicitly a non-goal: the fork
-  and oxpinyin evolve together, and upstream compatibility is not
-  maintained.
+  This supersedes the earlier 51-symbol bootstrap contract for the
+  maintainer's ibus-libpinyin fork (`feat/oxpinyin-backend`, tip
+  `0d71866`), which itself had superseded "capi + forked frontend" and
+  "ibus-pinyin-rs zbus rewrite". The fork surface is now a historical
+  complement inside the full ABI, not the boundary; the drop-in shape
+  the fork route was meant to avoid is the shape shipped. The libchewing
+  precedent (library-only rewrite, frontends left alone) still applies —
+  more strongly, since no frontend change is needed at all.
 
-  Two precedents, cited for what they inform:
+  Landed: binary identity and cargo-c metadata (#206, #192); the compat
+  read path over installed libpinyin data (#228); measured drop-in on
+  Fedora rawhide (Kyoto Cabinet), Debian testing (tkrzw) and NixOS —
+  1,571/1,571 corpus rows, sorted sets byte-identical, the only
+  divergence the R1 defined-order rule (`docs/findings/upstream-divergences.md`,
+  2026-08-30). Since P6 (2026-09-02) there is no compat layer at all:
+  the runtime reads an unmodified install's `data/` through the same
+  readers it uses for its own output (W15 note). Open in the drop-in
+  spec: task 9, the write path for learned user data in libpinyin's own
+  user-file format; task 10, the BerkeleyDB compat path, is shelved until
+  a consumer requires it. The spec's design/requirements text still
+  describes the pre-P6 `compat/` modules and the 58-symbol consumer
+  union; the code and `abi-subset.md` §6 are the current record.
 
-  - **libchewing** (Kan-Ru Chen): a library-only rewrite; frontend packages
-    were left alone. oxpinyin follows this pattern.
-  - **pinyin → libpinyin** (Peng Huang → Peng Wu): historically a new library
-    name with a new frontend, no drop-in. oxpinyin's bootstrap is a
-    transitional inversion of that — the first release IS a working swap for
-    the fork — but the long-term shape returns to the pinyin → libpinyin
-    pattern: own library, own frontend fork, no upstream compatibility
-    promise.
-
-  Acceptance for the initial release: the maintainer's ibus-libpinyin fork
-  builds against oxpinyin's compatibility surface with minimal changes, and
-  the resulting engine produces the same wire-level output on a scripted
-  input sequence as the pinned upstream configuration.
-
-  Earlier language in this repo variously described W8 as
-  "capi + forked frontend", then "ibus-pinyin-rs zbus rewrite", then
-  "drop-in libpinyin.so.15" — all superseded by the above. The maintainer
-  being independent of Red Hat / Fedora / upstream libpinyin is what enables
-  this scope; a maintainer bound to those distros would be forced into the
-  drop-in shape.
-
-  W8 closes the bootstrap milestone, not Stage 1: the fork switched and
-  running against oxpinyin, wire-level parity on the defined bootstrap
-  surface, cargo-c packaging, and a compatibility + performance report
-  that establishes the Stage-2 measurement baseline. Stage 1 parity
-  continues through W10–W12 and closes when the parity bar is met.
-  Measuring Stage-2 baselines while Stage-1 work continues is deliberate —
-  those numbers are prerequisites for improving against them. Remaining
-  work is not W8 — it is W10–W14 below.
+  Stage-2 baselines were measured while Stage-1 parity work continued —
+  those numbers are prerequisites for improving against them. Parity
+  work was never W8 — it was W10–W14 below, all now landed.
 
 - **W9 is the training toolchain — full-scope re-audit (2026-08-30).**
   W9 now targets **complete native-Rust parity with the currently-used
@@ -198,19 +248,26 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   `gen_ngram`/`gen_unigram`/`gen_deleted_ngram`/`export_interpolation` —
   as **legacy libpinyin utilities that the trainer does not invoke**
   (kept, correct, retitled); `estimate_interpolation`'s λ EM stays on the
-  real path inside `evaluate.py`. Remaining scope is
+  real path inside `evaluate.py`. The scope was
   decomposed as Parts B–H in the audit: `spseg`/`mergeseq`
   (`oxpinyin-segment`); the KMM pipeline (`oxpinyin-kmm`); the evaluator
   (`oxpinyin-eval`, reusing the engine decoder); word recognition
   (`oxpinyin-word`); punctuation (`oxpinyin-punct`); native end-to-end
   orchestration.
 
+  **W9 LANDED (2026-08-31).** Parts B–H are all implemented and tested,
+  including the `oxpinyin-train` orchestrator (raw corpus → segment →
+  KMM → interpolation model → λ → correction rate, no Python/make/SQLite/
+  libpinyin at runtime). The audit's §15 status table records each part
+  and states that nothing remains for trainer-workflow parity; the
+  unported helpers are its §11 deliberate exclusions.
+
 - **W10–W12 are three parity workstreams, not one.** They have different shapes —
   bounded/mechanical (W10), architectural (W11), open-ended (W12) — and
   bundling them would make completion hostage to the least predictable
   member. Same reasoning that flattened W7.
 
-- **W10 LANDED (7fca228, ccb52d4, dade719).** Correction
+- **W10 LANDED (7fca2283, ccb52d4a, 217d0c4e).** Correction
   (`PINYIN_CORRECT_*`), fuzzy/ambiguity (`PINYIN_AMB_*`), and
   `DYNAMIC_ADJUST` option bits are implemented. Correction and fuzzy bits
   feed parser-table selection and are verified against the pinned oracle via
@@ -234,8 +291,8 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   tie-swaps and the 1,036 order-only / 4,058 prefix-10 residuals, all one
   species — closed 2026-08-22 by porting the pin's tie law (the amplified
   f32 frequency key and the array order its stable sort keeps,
-  `docs/testing/corpus-tail.md`, `pin-refreeze-2026-08.md` third
-  amendment). The completion criterion was diagnosis-driven, and every
+  `docs/testing/corpus-tail.md`,
+  `docs/findings/pin-refreeze-2026-08.md` third amendment). The completion criterion was diagnosis-driven, and every
   diagnosed class is now zero. Also parked
   here: the live-typing behaviors the parity sequence doesn't yet
   exercise (deep paging, mid-composition edits, punctuation modes).
@@ -247,7 +304,7 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   Phase 0 draft after landed W13; freeze record at the bottom of
   `docs/findings/double-pinyin-spec.md`). The freeze fixed the FORCE_TONE
   law for both parse seams, and the batch seam
-  (`pinyin_parse_more_double_pinyins`) now implements it (5ec782ea): the
+  (`pinyin_parse_more_double_pinyins`) now implements it (c5d0b088): the
   caller's option word crosses the seam and drives the
   `pinyin_parser2.cpp:412` length-3 gate plus the `USE_TONE` tone carriage.
   Measured against the pinned oracle over full model20 KC tables, evidence
@@ -257,22 +314,55 @@ Still open or partial — see `.kiro/specs/foundation/tasks.md` and findings:
   eight bopomofo keyboards stay byte-identical on the existing chewing
   corpus (no FORCE_TONE profile; regression coverage), and the one-key seam
   gate `run-key-surface-diff.sh` stays IDENTICAL (2,131 probe lines,
-  including its FORCE_TONE profile sweep). No W13 items remain; the
-  divergence register's FORCE_TONE entry carries the closure.
+  including its FORCE_TONE profile sweep). No W13 implementation items
+  remain; the divergence register's FORCE_TONE entry carries the closure.
+  The bopomofo SPEC's freeze record is drafted (2026-09-03) and awaits
+  the maintainer's dated ruling — until then its status line stays
+  "freeze proposed".
 
 - **W14 LANDED (489e94d, PR #113).** Three parts, all delivered: (a) sentence
   candidates emit with real unigrams loaded — up to N n-best rows prepended
   and merged/retyped as NBEST_MATCH per `pinyin.cpp:2290-2298`; (b)
   `pinyin_get_sentence` returns the decoded n-best text (index 0 = 1-best),
   not raw input; (c) `SORT_WITHOUT_SENTENCE_CANDIDATE` gating. Corpus
-  candidate pins bit-identical; sentence-surface fixture green (488/496 1-best,
-  385/496 n-best distinct-set). The §12 measured 117-position ordered/first-6
-  residual (hypothesis selection, trellis-side) is **FROZEN as a permanent
+  candidate pins bit-identical. The §12 ordered/first-6 residual
+  (hypothesis selection, trellis-side) is **FROZEN as a permanent
   Stage-1 divergence** (maintainer ruling 2026-09-02,
   `docs/findings/sentence-surface.md` §12): the pin's `gfloat` trellis
   accumulation is not bit-reproducible under the constitution's determinism
   rule, and the gate `sentence_surface_matches_the_declared_residual` holds
-  the frozen 488/385/379 as a defined residual, not a parity target. The
+  the frozen numbers as a defined residual, not a parity target. Frozen at
+  488/385/379 (1-best / n-best distinct-set / ordered, of 496); **re-frozen
+  2026-09-04 at 491/396/390** (94b38948, maintainer ruling 2026-09-04) after
+  P6 moved the trellis unigram onto the item field libpinyin reads — 11
+  ordered-list inputs fixed, none regressed, residual 117 → 106. The
   predicted-candidate ordering divergence is recorded as accepted
   (`docs/findings/sentence-surface.md`) and is not an open implementation task.
   Nothing in W14 remains open.
+
+## Stage 2 (in progress; measurement-gated)
+
+Entry point: `docs/perf/README.md` (dated snapshots;
+`perf-stage2-harness-2026-08.md` is the harness). What has landed so far
+is the size/speed/RAM work the constitution puts first, each change
+measured against the pin in the same container:
+
+- **Measurement harness** (2026-08-19): Criterion groups on the C-ABI
+  surface, the `profiling` cargo profile, `tools/profile/run-w8-cycle.sh`.
+- **P1–P6 data-layer inversion** (2026-09-01 → 2026-09-02): the runtime
+  reads libpinyin's own file formats directly (W15 note above). x86_64,
+  same data directory as the pin: init within ~1.1× (KC) / ~1.3× (tkrzw)
+  of the pin, from ~100× before (`docs/findings/perf-backend-matrix-2026-09.md`).
+  ARM64/KC re-baseline: init 102 → 21 ms, RSS 72,652 → 28,388 KiB,
+  runtime data 101.80 → 36.88 MiB (`docs/perf/perf-baseline-kc-2026-09.md`).
+- **Release profile**: fat LTO + one codegen unit
+  (`docs/perf/perf-so-size-2026-09.md`); `panic = "abort"` was tried and
+  reverted (1b0c84a0, +5.5% keystroke cycle for −64 KiB).
+- **Store/user-crate optimisation** (2026-09-05 → 2026-09-06): redb,
+  LMDB and user-store hot paths, measured in
+  `docs/findings/perf-store-opt-2026-09.md` (S5, F4).
+
+Next targets named by the P6 finding: per-instance `pinyin_alloc_instance`
+key-cost table (~16.5 ms, memoize or defer) and the steady-state candidate
+lookup (~1.5× the pin). Model upgrades (trigram/KN, typo edges, own data)
+have no landed work and remain candidates behind the same gate.
