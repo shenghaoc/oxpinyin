@@ -166,7 +166,10 @@ Built from the branch tree:
 - `Dockerfile.perf-matrix` — **both libpinyin cells pass** (git-fetched,
   configure-less source through `autoreconf --force --install`,
   `./configure`, `make`, `make install`; RC 0). The cargo-c/datagen tail
-  after Cell B was not exercised, per the granted relaxation.
+  after Cell B was not exercised, per the granted relaxation; that image
+  carries `liblz4-dev` and `libzstd-dev`, so the step the other two
+  images fail on is expected to pass there — but that is expected, not
+  proven.
 - `Dockerfile.perf-baseline` and `Dockerfile.perf-validation` — the
   `git` fix is verified working: `build-oracle.sh` completes inside both
   images (libpinyin installs into `/opt/pinyin-oracle`). Both full
@@ -174,10 +177,9 @@ Built from the branch tree:
   `-llz4`/`-lzstd` not found — the images' apt lists predate the tkrzw
   default backend and lack `liblz4-dev`/`libzstd-dev`/`liblzma-dev`
   (libtkrzw-dev does not pull them). Reproduced on pristine main
-  `c6b371da` with the same package list, so it is a pre-existing
-  main-side breakage, not introduced by this PR; the one-line package
-  fix is left for a ruling (STOP condition: image failure outside the
-  known defects).
+  `c6b371da` with the same package list: pre-existing main-side
+  breakage, not introduced by this PR, and out of scope here — tracked
+  as #370.
 
 ## Known inconsistency shipped with the pin
 
