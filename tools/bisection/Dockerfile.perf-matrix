@@ -62,13 +62,15 @@ RUN bash tools/model/fetch-model.sh
 
 # libpinyin source: git fetch pinned by commit SHA (verified by SHA, not
 # an archive hash -- 2.11.92 is untagged upstream and GitHub may regenerate
-# archive tarballs). Mirrors tools/oracle/build-oracle.sh.
+# archive tarballs). Mirrors LIBPINYIN_SHA in tools/oracle/build-oracle.sh;
+# bump both in the same commit.
+ARG LIBPINYIN_SHA=074a2219c90feaf962d0d24f034514033ece5f99
 RUN git init --quiet /tmp/libpinyin-src \
     && git -C /tmp/libpinyin-src fetch --quiet --depth=1 \
        https://github.com/libpinyin/libpinyin.git \
-       074a2219c90feaf962d0d24f034514033ece5f99 \
+       "$LIBPINYIN_SHA" \
     && [ "$(git -C /tmp/libpinyin-src rev-parse FETCH_HEAD)" = \
-       "074a2219c90feaf962d0d24f034514033ece5f99" ] \
+       "$LIBPINYIN_SHA" ] \
     && git -C /tmp/libpinyin-src checkout --quiet --detach FETCH_HEAD
 
 # ── Cell A: libpinyin + Tkrzw ────────────────────────────────────────

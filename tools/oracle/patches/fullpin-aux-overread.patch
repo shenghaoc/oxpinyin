@@ -15,13 +15,12 @@ over-read is possible there.
 
 See docs/findings/full-pinyin-aux-overread.md for the reproduction and
 the venue survey. Authored against libpinyin 2.11.91 @
-`0c5e80e1200f84fab185d1c5bde458b770a0636c`.
-Re-verified to apply cleanly (--forward, no rejects) at the 074a2219
-tree on 2026-09-06 UTC.
+`0c5e80e1200f84fab185d1c5bde458b770a0636c`; hunk regenerated at
+`074a2219c90feaf962d0d24f034514033ece5f99` so it applies at offset 0.
 
 --- a/src/pinyin.cpp
 +++ b/src/pinyin.cpp
-@@ -3415,7 +3415,7 @@ bool pinyin_get_full_pinyin_auxiliary_text(pinyin_instance_t * instance,
+@@ -3417,7 +3417,7 @@ bool pinyin_get_full_pinyin_auxiliary_text(pinyin_instance_t * instance,
          if (begin < cursor && cursor < end) {
              gchar * pinyin = key.get_pinyin_string();
              gchar * left = g_strndup(pinyin, len);
