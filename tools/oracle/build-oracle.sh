@@ -316,17 +316,50 @@ shared_object=$(find "$prefix" -type f \( -name 'libpinyin.so' -o -name 'libpiny
 header=$prefix/include/libpinyin-$LIBPINYIN_TAG/pinyin.h
 data_dir=$prefix/lib/libpinyin/data
 data_manifest=$prefix/oracle-data.sha256
+data_unstable_manifest=$prefix/oracle-data-unstable.sha256
 [[ -f $header && -d $data_dir ]] || {
 	printf '%s\n' 'installed oracle header or data directory not found' >&2
 	exit 1
 }
+# The data payload is split into two manifests. libpinyin's generated data
+# is not reproducible at a fixed pin: two clean builds of the same pin, same
+# model, same container image, differ on exactly the six files produced
+# through the DBM-backed generation path (see
+# docs/findings/oracle-data-reproducibility.md). Those six go into the
+# informational manifest, which is tamper-evident within one prefix but
+# never comparable across builds. Everything else (the seventeen domain
+# phrase tables plus the gb/gbk character tables) is byte-identical across
+# clean builds and forms the reproducible gate: oracle-data.sha256, and its
+# data_manifest_sha256 line in oracle-pin.txt, is a pure function of the
+# pin, so two prefixes of the same pin agree on it.
+DATA_UNSTABLE_FILES=(
+	addon_phrase_index.bin
+	addon_pinyin_index.bin
+	bigram.db
+	phrase_index.bin
+	pinyin_index.bin
+	punct.bin
+)
 (
 	cd "$prefix"
-	find lib/libpinyin/data -type f -print0 | sort -z | xargs -0 sha256sum
+	find lib/libpinyin/data -type f -print0 | sort -z |
+		grep -zvF -e "$(printf '/%s\n' "${DATA_UNSTABLE_FILES[@]}")" |
+		xargs -0 sha256sum
 ) >"$data_manifest"
+(
+	cd "$prefix"
+	for f in "${DATA_UNSTABLE_FILES[@]}"; do
+		[[ -f lib/libpinyin/data/$f ]] || {
+			printf 'generated data file not found: %s\n' "$f" >&2
+			exit 1
+		}
+		sha256sum "lib/libpinyin/data/$f"
+	done
+) >"$data_unstable_manifest"
 read -r header_sha256 _ < <(sha256sum "$header")
 read -r shared_object_sha256 _ < <(sha256sum "$shared_object")
 read -r data_manifest_sha256 _ < <(sha256sum "$data_manifest")
+read -r data_unstable_manifest_sha256 _ < <(sha256sum "$data_unstable_manifest")
 {
 	cat <<EOF
 schema=pinyin-oracle-v1
@@ -340,6 +373,7 @@ dbm=$dbm_name
 header_sha256=$header_sha256
 shared_object_sha256=$shared_object_sha256
 data_manifest_sha256=$data_manifest_sha256
+data_unstable_manifest_sha256=$data_unstable_manifest_sha256
 EOF
 	if [[ -n $patch_manifest ]]; then
 		printf 'patches_manifest_sha256=%s\n' "$patch_manifest_sha256"

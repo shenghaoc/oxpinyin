@@ -47,7 +47,15 @@ inheriting caller search paths; explicit `CC`, `CXX`, `CFLAGS`, `CXXFLAGS` and
 `LDFLAGS` overrides remain supported. A successful build writes
 `oracle-pin.txt` plus `oracle-data.sha256` into the prefix, binding the pin ref
 to checksums of the public header, shared object and every generated data
-file. Run `tools/oracle/build-oracle.sh --help` for flags.
+file that libpinyin produces reproducibly. The six files it does not
+(`addon_phrase_index.bin`, `addon_pinyin_index.bin`, `bigram.db`,
+`phrase_index.bin`, `pinyin_index.bin`, `punct.bin` — the DBM-backed
+generation path) are listed in `oracle-data-unstable.sha256` instead and
+recorded as `data_unstable_manifest_sha256`; that manifest is tamper-evident
+within a prefix but two clean builds of the same pin legitimately disagree on
+it, so only `data_manifest_sha256` is comparable across prefixes. See
+`docs/findings/oracle-data-reproducibility.md`. Run
+`tools/oracle/build-oracle.sh --help` for flags.
 
 ## Oracle boundary
 

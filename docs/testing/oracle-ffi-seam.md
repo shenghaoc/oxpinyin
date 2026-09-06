@@ -26,7 +26,10 @@ The authority for the header identity is the `header_sha256` field of
   equal to `header_sha256` in the prefix manifest;
 - scalar and flag definitions from the headers that public header includes:
   `include/novel_types.h` and `storage/pinyin_custom2.h`;
-- data payload verified by `oracle-data.sha256` (23 generated files).
+- data payload verified by `oracle-data.sha256` (the 17 reproducible
+  generated files) plus `oracle-data-unstable.sha256` (the 6 files
+  libpinyin does not generate reproducibly; informational, see
+  `docs/findings/oracle-data-reproducibility.md`).
 
 This is the same method `docs/findings/abi-subset.md` used to derive the
 frontend-called subset: derive it from the declared public interface. The
