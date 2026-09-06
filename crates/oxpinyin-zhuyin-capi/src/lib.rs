@@ -92,7 +92,7 @@ mod tests {
     use super::context::{zhuyin_fini, zhuyin_init};
     use super::instance::{zhuyin_alloc_instance, zhuyin_free_instance};
     use super::parse::zhuyin_parse_more_chewings;
-    use super::sentence::zhuyin_guess_candidates_before_cursor;
+    use super::sentence::{zhuyin_get_character_offset, zhuyin_guess_candidates_before_cursor};
     use super::state::instance_mut;
     use super::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance, lookup_candidate_type_t};
 
@@ -239,6 +239,44 @@ mod tests {
             committed, displayed,
             "the committed text is the displayed row, not a cached-list row"
         );
+        zhuyin_free_instance(instance);
+        zhuyin_fini(context);
+    }
+
+    /// The zhuyin twin of issue #356: `zhuyin_get_character_offset` runs
+    /// the same phrase-table search and matrix walk (`zhuyin.cpp:2148`
+    /// at the pin). `su3cl3` is 你好 on the standard keyboard: the
+    /// keystroke string as the phrase answers `false`, the sentence
+    /// counts one character per key at or before the offset.
+    #[test]
+    fn character_offset_searches_the_phrase_and_walks_the_keys() {
+        let (context, instance) = open();
+        let input = cstr("su3cl3");
+        assert_eq!(zhuyin_parse_more_chewings(instance, input.as_ptr()), 6);
+
+        let phrase = cstr("su3cl3");
+        for offset in [0, 3, 6] {
+            let mut length = usize::MAX;
+            assert!(!zhuyin_get_character_offset(
+                instance,
+                phrase.as_ptr(),
+                offset,
+                &raw mut length
+            ));
+            assert_eq!(length, usize::MAX, "offset {offset}");
+        }
+        let phrase = cstr("你好");
+        for (offset, expected) in [(0, 0), (3, 1), (6, 2)] {
+            let mut length = usize::MAX;
+            assert!(zhuyin_get_character_offset(
+                instance,
+                phrase.as_ptr(),
+                offset,
+                &raw mut length
+            ));
+            assert_eq!(length, expected, "offset {offset}");
+        }
+
         zhuyin_free_instance(instance);
         zhuyin_fini(context);
     }

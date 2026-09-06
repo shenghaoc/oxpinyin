@@ -7,7 +7,7 @@
 
 use std::os::raw::c_char;
 
-use crate::ffi::{cstr_to_owned_lossy, cstr_to_strict, owned_cstr};
+use crate::ffi::{cstr_to_strict, owned_cstr};
 use crate::state::{instance_mut, instance_ref};
 use crate::types::ZhuyinInstance;
 
@@ -136,7 +136,7 @@ fn write_owned_sentence(text: &str, sentence: *mut *mut c_char) -> bool {
     true
 }
 
-/// Get character offset from a lookup byte offset within a sentence.
+/// Get the character offset within `phrase` for a lookup byte offset.
 ///
 /// # C signature
 /// ```c
@@ -144,6 +144,17 @@ fn write_owned_sentence(text: &str, sentence: *mut *mut c_char) -> bool {
 ///                                  const char * phrase,
 ///                                  size_t offset, size_t * length);
 /// ```
+///
+/// The pin (`zhuyin.cpp:2148-2196` at the pin) searches every character of `phrase`
+/// in the phrase table and walks the matrix from column 0, consuming one
+/// character per key the character's item pronounces, until the next
+/// key's raw end lies past `offset`; the out-param is the characters
+/// consumed. `false` — with the out-param untouched, as upstream leaves
+/// it — for an empty matrix, a NULL, empty or non-UTF-8 phrase, a
+/// character with no dictionary token (issue #356: the pinyin string
+/// passed as the phrase — both pinned oracles answer `false`), or a walk
+/// no key path satisfies; also `false` where the pin asserts (the
+/// range and `_check_offset` shapes — the no-abort policy).
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_get_character_offset(
     instance: *mut ZhuyinInstance,
@@ -155,13 +166,17 @@ pub extern "C" fn zhuyin_get_character_offset(
         return false;
     }
 
-    // SAFETY: `phrase` is a C string from the caller (null OK).
-    let text = cstr_to_owned_lossy(phrase);
-    let mut clamped = offset.min(text.len());
-    while !text.is_char_boundary(clamped) {
-        clamped -= 1;
-    }
-    let char_count = text[..clamped].chars().count();
+    // SAFETY: `instance` is non-null and was produced by the facade's
+    // alloc entry point.
+    let inst = unsafe { instance_ref(instance) };
+    // SAFETY: Null-checked inside; invalid UTF-8 refuses like the pin's
+    // `g_utf8_to_ucs4` NULL answer.
+    let Some(text) = cstr_to_strict(phrase) else {
+        return false;
+    };
+    let Ok(Some(char_count)) = inst.core.character_offset(&text, offset) else {
+        return false;
+    };
     if !length.is_null() {
         // SAFETY: Null-checked above.
         unsafe {

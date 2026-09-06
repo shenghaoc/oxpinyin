@@ -14,7 +14,8 @@
 //! same separator); double pinyin and the zhuyin keyboards hold no
 //! zero-key columns, so the law steps their parse's key spans only.
 
-use oxpinyin_engine::EngineError;
+use oxpinyin_core::SyllableKey;
+use oxpinyin_engine::{EngineError, MatrixKey};
 
 use crate::instance::InstanceCore;
 
@@ -235,6 +236,52 @@ impl InstanceCore {
             self.session.raw_input().as_bytes(),
             true,
         ))
+    }
+
+    /// Lookup byte offset → character count within `phrase` in the
+    /// instance's active parse mode — the `pinyin_get_character_offset` /
+    /// `zhuyin_get_character_offset` law
+    /// ([`oxpinyin_engine::character_offset_over_keys`]) over
+    /// [`Self::mode_keys`]'s dispatch: plain full pinyin walks the
+    /// session's own scan matrix; the other modes walk their parse's keys
+    /// over the stored original input. `Ok(Some(n))` is the pin's `true`
+    /// with the character count, `Ok(None)` its graceful `false`.
+    ///
+    /// # Errors
+    ///
+    /// Forwards [`EngineError`] where the pin asserts (the no-abort
+    /// policy's refusal) and the dictionary's backend failure.
+    pub fn character_offset(
+        &self,
+        phrase: &str,
+        offset: usize,
+    ) -> Result<Option<usize>, EngineError> {
+        let Some(source) = self.span_source() else {
+            return self.session.character_offset(phrase, offset);
+        };
+        let (keys, input, separators) = self.mode_keys()?;
+        // A key whose canonical spelling is not a vocabulary syllable
+        // cannot be looked up; the parsers never place one.
+        let keys: Vec<MatrixKey> = keys
+            .iter()
+            .filter_map(|k| {
+                Some(MatrixKey::new(
+                    SyllableKey::from_text(k.text)?,
+                    k.tone,
+                    k.begin,
+                    k.end,
+                ))
+            })
+            .collect();
+        oxpinyin_engine::character_offset_over_keys(
+            input,
+            source.parsed,
+            &keys,
+            separators,
+            self.session.dictionary(),
+            phrase,
+            offset,
+        )
     }
 
     /// The key the pin's `get_pinyin_key`/`get_zhuyin_key` family answers

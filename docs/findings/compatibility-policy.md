@@ -200,8 +200,9 @@ TARGET**. This table drives PR 5.
 | 16 | `FORCE_TONE` honoured on the full-pinyin seam only | **(d)** | `FORCE_TONE` appears in **neither** consumer's `src/` — 0 hits in ibus-libpinyin 1.16.5 and 0 in fcitx-libpinyin |
 | 17 | Literal `0x0` option gating (`jv`/`zon`; `xian` divided-table) | **REVERT TARGET** | named in PR 5; see the unreachability note below |
 | 18 | The pinyin index DBMs carry uninitialized struct padding | **(b)** | upstream copies a stack struct's tail padding into the DBM; datagen zeroes it and the reader never touches it |
+| 19 | `pinyin_get_character_offset`'s recursion asserts answer `false` | **(c)** | pin SIGABRTs at `pinyin.cpp:3152` / `:3166` (and the #14 family's range and `_check_offset` asserts); the unbounded `cached_tokens` read (`:3172`) is a (b) sub-shape answered as a deterministic miss |
 
-Totals: **(a)** 1 · **(b)** 2 · **(c)** 6 · **(d)** 1 · **REVERT
+Totals: **(a)** 1 · **(b)** 2 · **(c)** 7 · **(d)** 1 · **REVERT
 TARGET** 7 · closed or not a divergence 2.
 
 ### Notes on the three entries whose class was not obvious

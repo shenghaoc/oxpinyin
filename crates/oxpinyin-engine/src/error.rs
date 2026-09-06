@@ -74,6 +74,15 @@ pub enum EngineError {
         /// The examined offset whose preceding column holds the lone zero key.
         offset: usize,
     },
+    /// The character-offset walk reached a matrix column the pin asserts
+    /// on: an empty column at a stepped-to position (`assert(size > 0)`,
+    /// `pinyin.cpp:3152` at the pin) or a zero key sharing a column with
+    /// real keys (`assert(1 == size)`, `pinyin.cpp:3166`). Answered as an
+    /// error instead of the upstream abort (the no-abort policy).
+    MatrixColumnAssert {
+        /// The column position the walk stepped to.
+        offset: usize,
+    },
     /// The dictionary backend failed.
     Dictionary(String),
     /// The language model backend failed.
@@ -132,6 +141,12 @@ impl fmt::Display for EngineError {
                     "offset {offset} sits one past a lone zero-key column"
                 )
             }
+            Self::MatrixColumnAssert { offset } => {
+                write!(
+                    formatter,
+                    "matrix column {offset} has no key or mixes a zero key with real keys"
+                )
+            }
             Self::Dictionary(message) => write!(formatter, "dictionary error: {message}"),
             Self::LanguageModel(message) => write!(formatter, "language model error: {message}"),
             Self::UserModel(message) => write!(formatter, "user model error: {message}"),
@@ -154,6 +169,7 @@ impl std::error::Error for EngineError {
             | Self::LookupOffsetInsideCharacter { .. }
             | Self::SelectionAnchorBeforeComposition { .. }
             | Self::ZeroKeyOffsetCheck { .. }
+            | Self::MatrixColumnAssert { .. }
             | Self::Dictionary(_)
             | Self::LanguageModel(_)
             | Self::UserModel(_) => None,
@@ -214,6 +230,10 @@ mod tests {
         assert_eq!(
             EngineError::ZeroKeyOffsetCheck { offset: 11 }.to_string(),
             "offset 11 sits one past a lone zero-key column"
+        );
+        assert_eq!(
+            EngineError::MatrixColumnAssert { offset: 0 }.to_string(),
+            "matrix column 0 has no key or mixes a zero key with real keys"
         );
     }
 

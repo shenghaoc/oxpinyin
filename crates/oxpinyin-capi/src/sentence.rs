@@ -202,7 +202,7 @@ fn write_owned_sentence(text: &str, sentence: *mut *mut c_char) -> bool {
     true
 }
 
-/// Get character offset from a lookup byte offset within a sentence.
+/// Get the character offset within `phrase` for a lookup byte offset.
 ///
 /// # C signature
 /// ```c
@@ -211,6 +211,17 @@ fn write_owned_sentence(text: &str, sentence: *mut *mut c_char) -> bool {
 ///                                  size_t offset,
 ///                                  size_t * length);
 /// ```
+///
+/// The pin (`pinyin.cpp:3193-3241` at the pin) searches every character of `phrase`
+/// in the phrase table and walks the matrix from column 0, consuming one
+/// character per key the character's item pronounces, until the next
+/// key's raw end lies past `offset`; the out-param is the characters
+/// consumed. `false` — with the out-param untouched, as upstream leaves
+/// it — for an empty matrix, a NULL, empty or non-UTF-8 phrase, a
+/// character with no dictionary token (issue #356: the pinyin string
+/// passed as the phrase — both pinned oracles answer `false`), or a walk
+/// no key path satisfies; also `false` where the pin asserts (the
+/// range and `_check_offset` shapes — the no-abort policy).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_character_offset(
     instance: *mut PinyinInstance,
@@ -222,14 +233,17 @@ pub extern "C" fn pinyin_get_character_offset(
         return false;
     }
 
-    // SAFETY: `phrase` is a C string from the caller (null OK).
-    let text = unsafe { cstr_to_string(phrase) };
-    let mut clamped = offset.min(text.len());
-    // Floor to a UTF-8 char boundary so the slice never panics.
-    while !text.is_char_boundary(clamped) {
-        clamped -= 1;
-    }
-    let char_count = text[..clamped].chars().count();
+    // SAFETY: `instance` is non-null and was produced by the facade's
+    // alloc entry point.
+    let inst = unsafe { instance_ref(instance) };
+    // SAFETY: Null-checked inside; invalid UTF-8 refuses like the pin's
+    // `g_utf8_to_ucs4` NULL answer.
+    let Some(text) = cstr_to_strict(phrase) else {
+        return false;
+    };
+    let Ok(Some(char_count)) = inst.core.character_offset(&text, offset) else {
+        return false;
+    };
     if !length.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
@@ -405,4 +419,106 @@ pub extern "C" fn pinyin_guess_candidates(
         return false;
     }
     true
+}
+
+#[cfg(test)]
+mod character_offset_tests {
+    use crate::config::pinyin_set_options;
+    use crate::parse::pinyin_parse_more_full_pinyins;
+    use crate::test_support::{TempUserDir, cstr, open};
+
+    /// The parity word the pin tables were measured under.
+    const PARITY: u32 = 0x18a;
+
+    fn parity_instance(
+        tag: &str,
+    ) -> (
+        *mut crate::types::PinyinContext,
+        *mut crate::types::PinyinInstance,
+        TempUserDir,
+    ) {
+        let user_dir = TempUserDir::new(tag);
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        assert!(pinyin_set_options(context, PARITY));
+        (context, instance, user_dir)
+    }
+
+    fn character_offset(
+        instance: *mut crate::types::PinyinInstance,
+        phrase: &str,
+        offset: usize,
+    ) -> (bool, usize) {
+        let phrase = cstr(phrase);
+        let mut length = usize::MAX;
+        let ok =
+            super::pinyin_get_character_offset(instance, phrase.as_ptr(), offset, &raw mut length);
+        (ok, length)
+    }
+
+    /// Issue #356's reproducer: the pinyin string itself as the phrase.
+    /// Both pinned oracles answer `false` at offsets 0-2 (the
+    /// one-character phrase-table search finds no token for `n`, `i` or
+    /// `'`) and abort at 3 and 4 (`_check_offset` on the separator's
+    /// zero key, then the range assert) — answered `false` under the
+    /// no-abort policy. The out-param is left untouched throughout.
+    #[test]
+    fn a_non_hanzi_phrase_answers_false_at_every_offset() {
+        let (context, instance, _user_dir) = parity_instance("char-offset-non-hanzi");
+        let input = cstr("ni'");
+        assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 3);
+
+        for offset in 0..=4 {
+            assert_eq!(
+                character_offset(instance, "ni'", offset),
+                (false, usize::MAX),
+                "offset {offset}"
+            );
+        }
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    /// The consumer's shape (`PYPPinyinEditor.cc:290`): the guessed
+    /// sentence as the phrase, the lookup offset from the cursor. `nihao`
+    /// against 你好 counts one character per key whose raw end is at or
+    /// before the offset: 0 at the start, 1 past `ni`, 2 past `hao`.
+    #[test]
+    fn counts_the_sentence_characters_up_to_the_offset() {
+        let (context, instance, _user_dir) = parity_instance("char-offset-nihao");
+        let input = cstr("nihao");
+        assert_eq!(pinyin_parse_more_full_pinyins(instance, input.as_ptr()), 5);
+
+        for (offset, expected) in [(0, 0), (2, 1), (5, 2)] {
+            assert_eq!(
+                character_offset(instance, "你好", offset),
+                (true, expected),
+                "offset {offset}"
+            );
+        }
+        // A phrase whose characters do not pronounce the keys: no path.
+        assert_eq!(character_offset(instance, "好你", 2), (false, usize::MAX));
+        // An empty phrase and a NULL phrase are the pin's `false`.
+        assert_eq!(character_offset(instance, "", 0), (false, usize::MAX));
+        let mut length = usize::MAX;
+        assert!(!super::pinyin_get_character_offset(
+            instance,
+            std::ptr::null(),
+            0,
+            &raw mut length
+        ));
+        assert_eq!(length, usize::MAX);
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    /// No parse yet: the pin's `0 == matrix.size()` false.
+    #[test]
+    fn an_empty_matrix_answers_false() {
+        let (context, instance, _user_dir) = parity_instance("char-offset-empty");
+        assert_eq!(character_offset(instance, "你", 0), (false, usize::MAX));
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
 }

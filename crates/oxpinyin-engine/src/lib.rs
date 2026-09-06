@@ -54,6 +54,7 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
 mod candidate;
+mod char_offset;
 mod config;
 mod constraint;
 mod cursor;
@@ -66,6 +67,7 @@ mod session;
 mod storage;
 
 pub use candidate::{Candidate, CandidateKind, CandidateList};
+pub use char_offset::character_offset_over_keys;
 pub use config::{
     Config, ConfigError, ConfigLayer, ConfigSource, ConfigValue, EmptyConfigSource,
     UPSTREAM_DEFAULT_COUNT, merge,
