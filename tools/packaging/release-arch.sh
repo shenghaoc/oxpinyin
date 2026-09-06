@@ -11,19 +11,25 @@
 # provides/conflicts the package names, and pacman offers to remove the
 # originals.
 #
-# ARCH DATA CAVEAT: on Arch the libpinyin package bundles the model data
-# (/usr/lib/libpinyin/data), unlike Debian/Fedora where libpinyin-data is
-# separate. Taking over therefore removes the data with it, and this package
-# ships none (the generated tables are a separate oxpinyin deliverable). Until
-# oxpinyin ships its own data, restore it afterwards from the Arch package
-# archive or keep a copy of /usr/lib/libpinyin/data.
+# ARCH DATA: on Arch the libpinyin package bundles the model data
+# (/usr/lib/libpinyin/data), unlike Debian/Fedora where libpinyin-data is a
+# separate package that survives the takeover. Removing Arch's libpinyin
+# therefore removes the model with it, and there is no data package to depend
+# on instead — so this package must carry the data itself or leave
+# pinyin_init()/zhuyin_init() with nothing to open. `--data=DIR` installs DIR
+# as /usr/lib/libpinyin/data (the caller hands it the data directory
+# extracted from Arch's own libpinyin package — same KyotoCabinet format this
+# backend reads, same GPL-3.0-or-later licence, and pkgdatadir in our
+# libpinyin.pc already points one level above it). Omitting --data is
+# allowed for a bare library build but the result cannot initialise on a
+# system whose libpinyin it replaced; the release workflow always passes it.
 #
 # makepkg refuses to run as root, so a build user is created and the package
 # is built as that user; the script itself is expected to run as root (CI
 # container) or via sudo.
 #
-# Usage: release-arch.sh <backend> <version> <stage-root> <outdir>
-#   e.g. release-arch.sh kyotocabinet 0.1.0 stage dist
+# Usage: release-arch.sh <backend> <version> <stage-root> <outdir> [--data=DIR]
+#   e.g. release-arch.sh kyotocabinet 0.1.0 stage dist --data=arch-data
 
 set -euo pipefail
 
@@ -31,6 +37,18 @@ BACKEND="${1:?backend required}"
 VERSION="${2:?version required}"
 STAGE="${3:?stage root required}"
 OUTDIR="${4:?outdir required}"
+shift 4
+DATADIR=""
+for arg in "$@"; do
+  case "$arg" in
+    --data=*) DATADIR="${arg#--data=}" ;;
+    *) echo "error: unknown argument '$arg'" >&2; exit 2 ;;
+  esac
+done
+if [ -n "$DATADIR" ]; then
+  [ -f "$DATADIR/table.conf" ] \
+    || { echo "error: --data=$DATADIR holds no table.conf" >&2; exit 1; }
+fi
 
 PCVER="2.11.91"      # mirrors [package.metadata.capi.pkg_config].version
 PKGNAME="oxpinyin-libpinyin-${BACKEND}"
@@ -60,6 +78,12 @@ trap 'rm -rf -- "$WORK"' EXIT
 PKGWORK="$WORK/pkg"
 mkdir -p -- "$PKGWORK"
 cp -a -- "$STAGE/usr" "$PKGWORK/stage-usr"
+if [ -n "$DATADIR" ]; then
+  [ -e "$PKGWORK/stage-usr/lib/libpinyin/data" ] \
+    && { echo "error: staged tree already carries lib/libpinyin/data" >&2; exit 1; }
+  mkdir -p -- "$PKGWORK/stage-usr/lib/libpinyin"
+  cp -a -- "$DATADIR" "$PKGWORK/stage-usr/lib/libpinyin/data"
+fi
 
 cat > "$PKGWORK/PKGBUILD" <<EOF
 pkgname=$PKGNAME

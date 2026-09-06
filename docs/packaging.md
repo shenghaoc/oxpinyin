@@ -1,9 +1,11 @@
 # Packaging oxpinyin as a C library (cargo-c)
 
 This document records how `oxpinyin-capi` is packaged and installed as a
-shared/static C library, and the decisions behind it. The consumer is the
-maintainer's `ibus-libpinyin` fork, which links against the 51-symbol
-`pinyin.h` surface and `-lpinyin_capi`.
+shared/static C library, and the decisions behind it. The installed tree
+is a drop-in for libpinyin: consumers such as `ibus-libpinyin` link the
+51-symbol `pinyin.h` surface exactly as they link upstream — `libpinyin.pc`,
+`-lpinyin`, `libpinyin.so.15` — and need no source changes. The same
+applies to `oxpinyin-zhuyin-capi` and `libzhuyin`.
 
 ## Why cargo-c
 
@@ -19,7 +21,9 @@ exactly this job:
   `--libdir=/usr/lib/${DEB_HOST_MULTIARCH}`.
 
 No hand-written `Makefile` is needed: `cargo cbuild`/`cargo cinstall` derive
-the install layout, SONAME, and `.pc` file from Cargo metadata.
+the install layout and SONAME from Cargo metadata. The one thing cargo-c
+cannot produce is a complete libpinyin `.pc` (see "Locating the model data"
+below), which is why `tools/packaging/install.sh` wraps `cargo cinstall`.
 
 ## Metadata on `oxpinyin-capi`
 
@@ -57,12 +61,17 @@ member (`crates/oxpinyin-capi`) and is selected via the `capi` feature plus
 
 ## Consumer detection
 
-The ibus-libpinyin fork (and any other C consumer) detects oxpinyin via
-pkg-config using the `.pc` name `oxpinyin`:
+ibus-libpinyin (and any other C consumer) detects the library exactly as it
+detects upstream — the `.pc` name is `libpinyin`, not `oxpinyin`, and the
+version it reports is libpinyin's, so existing `>=` constraints resolve:
 
 ```autoconf
-PKG_CHECK_MODULES(LIBPINYIN, [oxpinyin])
+PKG_CHECK_MODULES(LIBPINYIN, [libpinyin >= 2.11.91])
 ```
+
+Nothing in the installed tree carries the `oxpinyin` or `pinyin_capi` name;
+those exist only in the source tree and the Rust artifact names under
+`target/`.
 
 ## Static library decision: ship it
 
@@ -70,8 +79,9 @@ cargo-c always builds a `.a` for a `staticlib` crate and has **no** metadata
 toggle to suppress it; Debian's guidance notes packagers would otherwise need
 a "not-installed" rule to drop it. Decision: **ship the static library**. It
 adds negligible install size, is the cargo-c default, and removes per-packager
-variance — every packager produces the same artifact set. `oxpinyin.pc`'s
-`Libs.private` already lists the platform libraries a static link needs
+variance — every packager produces the same artifact set. It installs as
+`libpinyin.a` beside the `.so`, and `libpinyin.pc`'s `Libs.private` lists the
+platform libraries a static link needs
 (`-lgcc_s -lutil -lrt -lpthread -lm -ldl -lc`).
 
 ## The four version streams
@@ -81,11 +91,12 @@ These are independent and move for different reasons:
 1. **Crate version** — `0.1.0`, pre-1.0. The C surface is free to evolve after
    the first release, so the crate stays `0.x` and makes no semver-compat
    promise at the C-ABI level.
-2. **`.so` SONAME** — `libpinyin_capi.so.0.1`. Bumps only on a **deliberate
-   C-ABI break**. This is what protects the 51-symbol bootstrap contract: the
-   fork links `-lpinyin_capi` and resolves `libpinyin_capi.so.0.1`; bumping the
-   SONAME is the mechanism that makes an ABI break visible to the dynamic
-   linker rather than silently corrupting the fork.
+2. **`.so` SONAME** — `libpinyin.so.15` (`libzhuyin.so.15`), from
+   `[package.metadata.capi.library] version = "15.0.0"`. This is upstream's
+   own ABI number (`libpinyin_abi_current=15` in its configure.ac), and it
+   is what makes the drop-in a drop-in: every consumer already records
+   `libpinyin.so.15` in `DT_NEEDED`. It moves only when upstream bumps its
+   ABI current — never with the crate version.
 3. **Pinned oracle** — libpinyin `2.11.91`. Re-pinning the oracle is a
    deliberate event with its own re-freeze (`pin-refreeze-*.md` convention),
    independent of the crate version and SONAME.
@@ -94,14 +105,12 @@ These are independent and move for different reasons:
    2026-08-22 amendment). These freeze the decode/predict output the
    oracle is held to; packaging must not move them.
 
-**Coupling caveat at 0.x:** streams 1 and 2 are not yet fully independent.
-cargo-c derives the SONAME from `library.version` (defaulting to the crate
-version), mapping `X.Y.Z` → SONAME `X.Y` and real file `X.Y.Z`. Because the
-crate is `0.x`, the SONAME tracks the *minor* version: a `0.1.0` → `0.2.0`
-bump (and a matching `library.version`) changes the SONAME to
-`libpinyin_capi.so.0.2`, breaking the fork's dynamic link. At 1.0, decide
-whether to hold `library.version` at a stable value so the SONAME bumps only
-on a deliberate C-ABI break.
+Streams 1 and 2 are decoupled by construction: cargo-c would otherwise
+derive the SONAME from the crate version (`0.x` → SONAME `libpinyin.so.0.x`,
+moving on every minor bump), so `library.version` is set explicitly and
+must stay at upstream's ABI number regardless of what the crate version
+does. A package version (stream 1, the release tag) therefore never shows
+up in a filename the dynamic linker reads.
 
 ## Fedora recipe
 
@@ -115,6 +124,13 @@ BuildRequires: cargo-c
 ```
 
 `cargo cinstall` derives `--libdir=/usr/lib64` from the target environment.
+
+Both recipes are the distro-documented shape; a real packaging must run
+`tools/packaging/install.sh <libpinyin|libzhuyin> --prefix=/usr …` in place
+of the bare `cargo cinstall` (or re-run it afterwards), because cargo-c's
+own `.pc` lacks the variables consumers read — see the next section. The
+release packages built by `release-packages.yml` do not use cargo-c at all
+(below).
 
 ## Debian recipe
 
@@ -135,32 +151,37 @@ override_dh_auto_install:
 
 ## Locating the model data (`pkgdatadir`)
 
-libpinyin's own `.pc` exports `pkgdatadir` so consumers can find its data
-directory. cargo-c does **not** support custom pkg-config variables, so
-`oxpinyin.pc` carries only `prefix/exec_prefix/libdir/includedir` plus the
-standard `Name/Description/Version/Libs/Cflags/Requires`. Since #84 makes
-`pinyin_init` fail closed on a missing model, consumers need another way to
-find the store tables (`.kct` by default) and `interpolation2.text`.
+libpinyin's own `.pc` exports `pkgdatadir` (plus `database_format`,
+`libpinyinincludedir` and `libpinyin_binary_version`), and consumers read
+them — ibus-libpinyin's build resolves its system data directory from
+`pkgdatadir` and refuses to configure without it. cargo-c cannot emit custom
+pkg-config variables (its `[package.metadata.capi.pkg_config]` is a closed
+seven-key set, verified against 0.10.24) and offers no way to opt out of
+writing its own incomplete `libpinyin.pc`.
 
-**Limitation:** there is no `pkgdatadir` in `oxpinyin.pc`. Consumers locate the
-data as `$(pkg-config --variable=prefix oxpinyin)/share/oxpinyin` (the default
-cargo-c `datadir`), or via the standard data-search mechanism of the embedding
-application. If a first-class data variable is ever required, it must be added
-upstream to cargo-c or emitted by a small post-install `.pc` patch — do not
-hand-write the `.pc` wholesale, as that would forfeit cargo-c's relocatable
-`${prefix}`-derived paths.
+The contract is therefore carried outside cargo-c: each crate's build.rs
+bakes a complete `.pc` template (`libpinyin.pc.in.baked`) with the
+build-time fields, and `tools/packaging/install.sh` fills the install-time
+placeholders and **overwrites** the file cargo-c installed. The result is
+byte-for-byte the shape of upstream's `.pc` — every variable
+`${prefix}`-derived, so `DESTDIR` relocation still works (below). A bare
+`cargo cinstall` without the wrapper leaves the incomplete file; that
+silent window and its gates are recorded in
+`docs/findings/installed-naming.md`.
 
-Two consequences worth registering:
+`pkgdatadir` follows upstream's convention exactly: it points one level
+*above* the data, at `${libdir}/libpinyin`, and the model lives in
+`${pkgdatadir}/data` (`table.conf`, the phrase/pinyin indexes, `bigram.db`,
+the per-library chunk files). `pinyin_init`/`zhuyin_init` take that `data`
+directory as their `systemdir` and fail closed (NULL) on a missing or
+unreadable model — including a model in the wrong store format, which is
+why each release lane is built under the one backend matching the distro's
+data (next section).
 
-1. **The data files are not part of this install.** `cargo cinstall` ships only
-   the `.so`/`.a`, `pinyin.h`, and `oxpinyin.pc`. The store tables and
-   `interpolation2.text` come from the migrate/data deliverable and must be
-   installed separately by the packager.
-2. **The `share/oxpinyin` convention is unenforced.** Nothing installs into it
-   today and nothing validates the path, so a generic consumer has no
-   guaranteed data location. The fork sidesteps both gaps by passing an
-   explicit `--with-oxpinyin-capi-datadir`; a first-class data variable must
-   close them in a follow-up.
+**The library install ships no data of its own** apart from the Arch
+release package: the distros' `libpinyin-data` (Debian, Fedora) stays in
+place and is read as-is. Generating data with `oxpinyin-datagen` is a
+separate deliverable, not part of `cargo cinstall`.
 
 ## Relocation
 
@@ -185,7 +206,7 @@ already on the system:
 
 | lane | image | backend | because |
 |---|---|---|---|
-| Debian | `debian:latest` | tkrzw | Debian's libpinyin 2.11.91 switched BerkeleyDB → Tkrzw (`libtkrzw1t64`) |
+| Debian | `debian:testing` | tkrzw | Debian's libpinyin 2.11.91 (testing/forky) switched BerkeleyDB → Tkrzw (`libtkrzw1t64`); stable (trixie) still ships 2.8.1 on BerkeleyDB, which no backend reads |
 | Fedora | `fedora:latest` | kyotocabinet | Fedora's libpinyin still links KyotoCabinet (`kyotocabinet-libs`) |
 | Arch | `archlinux:latest` | kyotocabinet | Arch's libpinyin still links KyotoCabinet |
 
@@ -219,17 +240,21 @@ originals:
   conflict with a name it provides) performs the swap.
 - `tools/packaging/release-arch.sh` — one `oxpinyin-libpinyin-<backend>`
   package, since Arch ships libpinyin undivided, with soname Provides in
-  pacman's form (`libpinyin.so=15-64`).
+  pacman's form (`libpinyin.so=15-64`) and, via `--data=DIR`, the model
+  directory installed as `/usr/lib/libpinyin/data`.
 
-No lane ships data. Debian and Fedora keep `libpinyin-data` — a separate
-package there, it stays installed through the takeover and is only a
-Recommends on ours. On Arch the data lives inside the libpinyin package the
-takeover removes, and oxpinyin's own generated tables are not shippable
-yet; users must restore `/usr/lib/libpinyin/data` from the Arch package
-archive until that changes (see the caveat header of
-`tools/packaging/release-arch.sh`).
+Data: Debian and Fedora keep `libpinyin-data` — a separate package there,
+it stays installed through the takeover and is only a Recommends on ours.
+Arch has no data package: the model lives inside the libpinyin package the
+takeover removes, so the Arch lane downloads that package (`pacman -Sw`)
+and ships its `usr/lib/libpinyin/data` inside ours — the same
+KyotoCabinet-format files, under the same licence, at the same path
+`pkgdatadir` already points above.
 
 Each CI lane finishes by INSTALLING its own packages back into its build
-container and re-running the gates against `/usr` — the same five
-pkg-config reads and a C compile/link/run — so a release never attaches a
-package that does not install or does not answer as libpinyin/libzhuyin.
+container (plus `libpinyin-data` on Debian/Fedora) and re-running the
+gates against `/usr` — the same five pkg-config reads, a C
+compile/link/run, and a real `pinyin_init`/`zhuyin_init` on
+`$(pkg-config --variable=pkgdatadir libpinyin)/data` that must return a
+context — so a release never attaches a package that does not install,
+does not answer as libpinyin/libzhuyin, or cannot open the system's model.
