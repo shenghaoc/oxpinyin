@@ -1,0 +1,274 @@
+# Release packages — build drop-in packages for the three distro families on
+# every published release and attach them to that release.
+#
+# One matrix child per distro, each building oxpinyin-capi +
+# oxpinyin-zhuyin-capi under exactly ONE store backend — the backend that
+# matches the model data the distro's own libpinyin ships, so the drop-in
+# reads the data already on the system (docs/findings/compatibility-policy.md):
+#
+#   distro   backend       because the distro's libpinyin/data is…
+#   Debian   tkrzw         2.11.91 switched BerkeleyDB → Tkrzw (libtkrzw1t64)
+#   Fedora   kyotocabinet  still KyotoCabinet (kyotocabinet-libs)
+#   Arch     kyotocabinet  still KyotoCabinet (kyotocabinet)
+#
+# The packages REPLACE the distro's libpinyin/libzhuyin in their entirety:
+# same sonames (libpinyin.so.15 / libzhuyin.so.15), same pkg-config names,
+# versioned Provides at the pinned pc version (2.11.91), Conflicts/Replaces
+# (deb) or Obsoletes (rpm) or conflicts= (pacman) on the originals. Data is
+# deliberately NOT replaced on Debian/Fedora (libpinyin-data is a separate
+# package there and stays); on Arch the data lives inside the libpinyin
+# package the takeover removes — see tools/packaging/release-arch.sh's
+# caveat header for what that means until oxpinyin ships its own data.
+#
+# Why :latest and not the debian:testing the CI jobs use: ci.yml and
+# store-backends.yml build on rolling toolchains because building against
+# "the newest toolchain distros actually ship" is a property under test
+# there. Release artifacts are downloads users run on stable distros —
+# building them on the current stable release keeps the glibc floor low, and
+# these jobs test nothing about the toolchain.
+#
+# Why plain cargo build and not `cargo cinstall` (tools/packaging/install.sh):
+# cargo-c does not forward --no-default-features, so the kyotocabinet lanes
+# cannot select their backend through it; the SONAMEs and complete .pc files
+# come from the crates' build.rs either way. See the header of
+# tools/packaging/release-stage.sh.
+#
+# Two jobs:
+#   package — 3-container matrix; each child stages the drop-in tree, builds
+#             the distro's package shape, INSTALLS the packages back into
+#             its own container and re-runs the consumer gates against /usr
+#   attach   — collects every artifact, writes SHA256SUMS, and uploads them
+#             to the published release with the runner's gh CLI
+
+name: Release packages
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  package:
+    name: ${{ matrix.distro }} (${{ matrix.backend }} store)
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+
+    strategy:
+      # One distro's failure must not cancel the other two.
+      fail-fast: false
+      matrix:
+        include:
+          - distro: debian
+            image: debian:latest
+            backend: tkrzw
+            dbfmt: Tkrzw
+          - distro: fedora
+            image: fedora:latest
+            backend: kyotocabinet
+            dbfmt: KyotoCabinet
+          - distro: arch
+            image: archlinux:latest
+            backend: kyotocabinet
+            dbfmt: KyotoCabinet
+
+    steps:
+      # Essentials + every backend's build-time C dependencies in one
+      # distro-native step. bindgen (libclang) reads tkrzw_langc.h /
+      # kclangc.h; glib2 is a Tier-C requirement (the shipped .so NEEDs
+      # libglib-2.0); the compression -dev packages satisfy Debian's
+      # libtkrzw link demands. The case is a closed set over
+      # repository-controlled matrix values — fail-closed default.
+      - name: Install build dependencies
+        env:
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          set -euo pipefail
+          case "$DISTRO" in
+          debian)
+            apt-get update -qq
+            apt-get install -y --no-install-recommends \
+              bash tar gzip zstd git ca-certificates curl \
+              gcc g++ make pkg-config libclang-dev \
+              libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev \
+              libglib2.0-dev
+            ;;
+          fedora)
+            dnf -y --setopt=install_weak_deps=False install \
+              bash tar gzip zstd git curl ca-certificates \
+              gcc gcc-c++ make pkgconf clang-devel \
+              kyotocabinet-devel glib2-devel rpm-build
+            ;;
+          arch)
+            pacman -Sy --noconfirm \
+              git curl tar gzip zstd diffutils \
+              gcc make pkgconf clang binutils fakeroot debugedit \
+              kyotocabinet glib2
+            ;;
+          *)
+            echo "unknown distro '$DISTRO'" >&2
+            exit 2
+            ;;
+          esac
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+          rust-cache: 'true'
+          rust-cache-key: release-${{ matrix.distro }}
+      - run: rustup show active-toolchain
+
+      # The install libdir per distro. Debian's is the MULTIARCH dir —
+      # resolved with `gcc -print-multiarch`, not arch-name + "-linux-gnu":
+      # on arm64 the dir is aarch64-linux-gnu while dpkg's arch name is
+      # arm64 (they coincide on x86_64, hiding the difference).
+      - name: Resolve the install libdir
+        env:
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          set -euo pipefail
+          case "$DISTRO" in
+            debian) echo "LIBDIR=/usr/lib/$(gcc -print-multiarch)" ;;
+            fedora) echo "LIBDIR=/usr/lib64" ;;
+            arch)   echo "LIBDIR=/usr/lib" ;;
+          esac >> "$GITHUB_ENV"
+
+      # Package version = the release tag (v stripped). The .pc keeps its
+      # own 2.11.91 version — docs/packaging.md "The four version streams".
+      - name: Derive the package version from the release tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            v[0-9]*) VER="${TAG#v}" ;;
+            [0-9]*)  VER="$TAG" ;;
+            *) echo "::error::release tag '$TAG' is neither vX.Y.Z nor X.Y.Z" >&2; exit 1 ;;
+          esac
+          echo "VERSION=$VER" >> "$GITHUB_ENV"
+
+      - name: Build and stage the drop-in tree
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          tools/packaging/release-stage.sh "$BACKEND" \
+            --prefix=/usr --libdir="$LIBDIR" --dest="$PWD/stage"
+
+      - name: Package for this distro
+        env:
+          DISTRO: ${{ matrix.distro }}
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          case "$DISTRO" in
+            debian) tools/packaging/release-deb.sh "$BACKEND" "$VERSION" "$PWD/stage" "$LIBDIR" dist ;;
+            fedora) tools/packaging/release-rpm.sh "$BACKEND" "$VERSION" "$PWD/stage" dist ;;
+            arch)   tools/packaging/release-arch.sh "$BACKEND" "$VERSION" "$PWD/stage" dist ;;
+          esac
+
+      # The takeover test: install OUR packages into this same container and
+      # re-run the gates against the system prefix. Proves the package
+      # installs clean under dpkg/dnf/pacman dependency checking and that
+      # what lands on /usr answers as libpinyin/libzhuyin.
+      - name: Install test and system gates
+        env:
+          DISTRO: ${{ matrix.distro }}
+          DBFMT: ${{ matrix.dbfmt }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          case "$DISTRO" in
+            debian) apt-get install -y "$PWD"/dist/*.deb ;;
+            fedora) dnf -y install "$PWD"/dist/*.rpm ;;
+            arch)   pacman -U --noconfirm "$PWD"/dist/*.pkg.tar.zst ;;
+          esac
+          ldconfig
+          fail() { echo "::error::gate failed: $*" >&2; exit 1; }
+          [ "$(pkg-config --modversion libpinyin)" = "2.11.91" ] || fail "libpinyin modversion"
+          [ "$(pkg-config --variable=database_format libpinyin)" = "$DBFMT" ] || fail "database_format"
+          [ -n "$(pkg-config --variable=pkgdatadir libpinyin)" ] || fail "pkgdatadir"
+          pkg-config --libs libpinyin | grep -qw -- "-lpinyin" || fail "libpinyin --libs"
+          pkg-config --cflags libpinyin | grep -q -- "libpinyin-2.11.91" || fail "libpinyin --cflags"
+          [ "$(pkg-config --modversion libzhuyin)" = "2.11.91" ] || fail "libzhuyin modversion"
+          # Two programs, one public header + one library each — the real
+          # consumer pattern (no program links both headers: they
+          # re-declare the same enums and novel_types.h's tentative
+          # definitions duplicate at link time). <stdbool.h> first because
+          # upstream's headers use C99 bool without including it.
+          cat > smoke_pinyin.c <<'EOF'
+          #include <stdbool.h>
+          #include <pinyin.h>
+          #include <stdio.h>
+          int main(void) {
+            pinyin_context_t *c = pinyin_init("", "");
+            printf("pinyin=%p\n", (void *)c);
+            return 0;
+          }
+          EOF
+          cat > smoke_zhuyin.c <<'EOF'
+          #include <stdbool.h>
+          #include <zhuyin.h>
+          #include <stdio.h>
+          int main(void) {
+            zhuyin_context_t *c = zhuyin_init("", "");
+            printf("zhuyin=%p\n", (void *)c);
+            return 0;
+          }
+          EOF
+          # shellcheck disable=SC2046
+          cc smoke_pinyin.c -o smoke_pinyin $(pkg-config --cflags --libs libpinyin) \
+            || fail "libpinyin smoke compile/link on /usr"
+          # shellcheck disable=SC2046
+          cc smoke_zhuyin.c -o smoke_zhuyin $(pkg-config --cflags --libs libzhuyin) \
+            || fail "libzhuyin smoke compile/link on /usr"
+          ./smoke_pinyin || fail "libpinyin smoke run on /usr"
+          ./smoke_zhuyin || fail "libzhuyin smoke run on /usr"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: packages-${{ matrix.distro }}
+          path: dist/*
+          if-no-files-found: error
+
+  attach:
+    name: Attach packages to the release
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: packages-*
+          merge-multiple: true
+          path: dist
+      - name: Checksum
+        run: |
+          set -euo pipefail
+          cd dist
+          ls -l
+          sha256sum -- * > SHA256SUMS
+      # gh ships on the hosted runner (this job is NOT containerized), so no
+      # third-party release-upload action is needed. --clobber makes
+      # re-running a failed attach replace partial assets.
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" dist/* --clobber
