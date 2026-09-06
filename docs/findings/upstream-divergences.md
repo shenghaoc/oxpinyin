@@ -660,7 +660,15 @@ in this family is `pinyin_guess_candidates` (:2226), covered above.
 The port-side `get_character_offset` true-on-invalid-phrase behavior
 seen in the same probe is a separate parity defect: issue #356.
 
-### Apostrophe-only input: the pin consumes every byte, the engine consumes none
+### Apostrophe-only input: the pin consumes every byte, the engine consumes none — CLOSED
+
+- **Status (amended 2026-09-06):** closed by 678f3259 (2026-08-26, the
+  B2 parser-termination class): `SegmentGraph` propagates each
+  apostrophe one byte, counted, so `'` → 1, `''` → 2, `'''` → 3 match
+  the pin (pinned in `crates/oxpinyin-core/src/graph.rs`). The
+  "what oxpinyin does instead" text below describes the pre-fix state
+  and is kept as the record; the cursor helpers' class-(c) `false` at
+  the `_check_offset` abort shapes is unchanged.
 
 - **Upstream source cite:** `src/pinyin.cpp` parse path over
   `FullPinyinParser2` (`src/storage/pinyin_parser2.cpp`): the pin emits a
@@ -884,6 +892,15 @@ seen in the same probe is a separate parity defect: issue #356.
 > not detect or read libpinyin's on-disk DBM files. The measurements
 > below are preserved as a historical record of what the (removed)
 > compat path did.
+>
+> **Amended 2026-09-06:** the banner above was true between f8b81d61
+> (2026-08-30) and P6 (345af16d, 2026-09-02) only. Since P6 the runtime
+> reads an unmodified libpinyin install's `data/` directly on KC and
+> tkrzw through the same readers it uses for its own output — there is
+> no compat *layer*, but the drop-in read is back and is the shipped
+> shape. The R1 measurement below is reproduced on that path:
+> `pred-order-diff` is IDENTICAL on the pin's own KC `data/` (see the
+> predicted-candidate entry's P6 amendment).
 
 - **Where:** the removed `oxpinyin-data/src/compat` module (libpinyin
   drop-in loader) and its removed

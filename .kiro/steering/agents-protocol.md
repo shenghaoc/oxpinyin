@@ -62,5 +62,5 @@ can supply, the C ABI returns `false`/`Err` and logs the point. Class (c)
 does not mask internal invariant failures and does not govern the return
 types of unrelated errors. Engine output is a pure function of (input,
 user state, config), and E2E I/O is byte-identical to the pinned oracle
-given the same inputs and state — except the four named exception classes
-(a)–(d) in `compatibility-policy.md`.
+given the same inputs and state — except the named exception classes
+(a)–(c) in `compatibility-policy.md` ((d) is retired).
