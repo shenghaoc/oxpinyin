@@ -58,3 +58,27 @@ harness = false
 # redb is the peer's optional dependency, so `--all-targets` builds of
 # the other backends skip this target instead of failing to resolve it.
 required-features = ["redb"]
+
+# backend_matrix: one target per backend (b8aff564 convention), all driving
+# the same benches/support/mod.rs over the store-tier traits. Exactly one is
+# built per `--no-default-features --features <backend>` invocation, matching
+# the crate's one-backend-per-binary compile_error! rule.
+[[bench]]
+name = "backend_matrix_redb"
+harness = false
+required-features = ["redb"]
+
+[[bench]]
+name = "backend_matrix_lmdb"
+harness = false
+required-features = ["lmdb"]
+
+[[bench]]
+name = "backend_matrix_tkrzw"
+harness = false
+required-features = ["tkrzw"]
+
+[[bench]]
+name = "backend_matrix_kyotocabinet"
+harness = false
+required-features = ["kyotocabinet"]
