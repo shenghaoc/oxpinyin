@@ -28,7 +28,7 @@ cargo test --locked --workspace --no-default-features --features redb  # portabl
 
 | Path | What |
 |---|---|
-| `crates/*` | 19 crates, none stubs (grouped below) |
+| `crates/*` | 25 crates, none stubs (grouped below); crate map in `.kiro/steering/structure.md` |
 | `ROADMAP.md` | Stages, pin, workstream names |
 | `AGENTS.md` | Agent/collaborator contract |
 | `docs/findings/` | Decisions, divergence records, audit trail |
@@ -42,8 +42,8 @@ cargo test --locked --workspace --no-default-features --features redb  # portabl
 
 | Group | Crates |
 |---|---|
-| Engine / data / runtime / bindings | `oxpinyin-core`, `oxpinyin-chewing`, `oxpinyin-store`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-runtime`, `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, `oxpinyin-python` |
-| Training toolchain | `oxpinyin-segment`, `oxpinyin-counter`, `oxpinyin-lambda`, `oxpinyin-emitter`, `oxpinyin-corpus`, `oxpinyin-datagen` |
+| Engine / data / runtime / bindings | `oxpinyin-core`, `oxpinyin-chewing`, `oxpinyin-store`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-facade`, `oxpinyin-runtime`, `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, `oxpinyin-python` |
+| Training toolchain (never ships) | `oxpinyin-corpus`, `oxpinyin-segment`, `oxpinyin-kmm`, `oxpinyin-lambda`, `oxpinyin-word`, `oxpinyin-punct`, `oxpinyin-eval`, `oxpinyin-train`, `oxpinyin-datagen`; legacy, off the trainer path: `oxpinyin-counter`, `oxpinyin-emitter` |
 | Tools | `oxpinyin-dictool` |
 | Oracle / testing | `pinyin-oracle`, `oxpinyin-testsupport` |
 

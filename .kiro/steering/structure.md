@@ -28,6 +28,7 @@ inclusion: always
 | oxpinyin-kmm | K-mixture-model pipeline (generate/estimate/merge/validate/prune/export/import/→interpolation) — W9 | deny | yes | never |
 | oxpinyin-punct | punctuation-table generator (`genpunct.py` reproduction) — W9 | deny | yes | never |
 | oxpinyin-word | word-recognition pipeline (populate/partialword/newword/markpinyin) — W9 | deny | yes | never |
+| oxpinyin-eval | training correction-rate evaluator (`evaluate.py` + `eval_correction_rate` reproduction) — W9 | forbid | yes | never |
 | oxpinyin-train | native trainer orchestrator (config/status/epoch, segment → KMM → interpolation → λ → correction rate) — W9 | deny | yes | never |
 
 **Centralized assembly:** the concrete construction of a decodable engine
