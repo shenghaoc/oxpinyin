@@ -1,7 +1,7 @@
 # Oracle pin 0c5e80e1 → 074a2219 — verification record
 
-Date: 2026-09-06/07 · Status: verification for the pin-change PR
-(`chore/oracle-pin-074a221`); human rulings 2026-09-07 accepted V2's
+Date: 2026-09-06 UTC · Status: verification for the pin-change PR
+(`chore/oracle-pin-074a221`); human rulings 2026-09-06 UTC accepted V2's
 withdrawal and V3's reframing.
 
 This document records the three Step-0 verifications behind the pin
@@ -24,7 +24,7 @@ does not claim an unreleased version).
 
 Container `c17a2e4a4e70` (recorded in `~/.local/opt/backend-matrix-container.txt`)
 exists on neither this host's docker daemon nor its filesystem. Ruling
-2026-09-07: it was recorded on a different host (this daemon is arm64;
+2026-09-06 UTC: it was recorded on a different host (this daemon is arm64;
 the backend-matrix workstream is x86_64); proceed without it, do not
 recreate, do not touch the Option B workstream. This session's cleanups
 removed only its own named containers and image and can be audited in
@@ -82,12 +82,14 @@ matrix in `v3-matrix.log`; oracle@both pins vs port):
   unchanged.
 - Unrelated side observation on invalid-phrase input, filed as issue
   **#356**: the port's `pinyin_get_character_offset` answers `true`
-  where both oracles answer `false`.
+  where both oracles answer `false`. Fixed on main after this
+  verification landed (`9d369d7c`, 2026-09-06 UTC); the table above
+  records the port as it stood at `87f25055`.
 - F-E-14 (apostrophe-only empty-matrix abort) is a different assert,
   untouched by the range — still present at both pins; the classes are
   independent.
 
-## Pin-bump surface verification (2026-09-07, debian:testing container)
+## Pin-bump surface verification (2026-09-06 UTC, debian:testing container)
 
 The rebuilt oracle (new git-fetch recipe, unpatched) re-verified against
 the frozen fixtures:
@@ -127,13 +129,74 @@ the frozen fixtures:
 - `libpinyin.so.15.0.0` at both pins (`libpinyin_abi_current=15`,
   revision 0); the public `pinyin.h` is byte-identical across pins.
 
+## Review follow-up (2026-09-06 UTC, post-rebase)
+
+Rebased onto main `c6b371da` (#356 and #358 now fixed there; #357 remains
+open and blocked on this merge). Results, all from the rebased tree:
+
+- **Merged `build-oracle.sh`**: diffed against both parents. Kept from
+  main: the #358 split-manifest machinery (17-file reproducible gate +
+  6-file informational unstable manifest, `data_unstable_manifest_sha256`
+  manifest line). Kept from this branch: the commit-SHA git fetch with
+  `rev-parse` verification, SHA-named source dir, version-named header
+  path and pin ref, `git` in the required commands. The rebuilt prefix
+  emits both manifests (17 + 6 files) and the unstable manifest line.
+- **Metrics (post-rebase, verbatim).** `corpus-tail`: compared 10,190,
+  top-1 misses 0, top-5 misses 0, absent 0, order-only 0, prefix-10 gap
+  0 of 98,930. `sentence-tail`: comparable 496, guessed disagreements 0,
+  row-0 491/496 (5 miss), ordered 390/496 (106 miss: 0 order-only,
+  106 set-diff), distinct-set 396/496 (6 distinct-same), breakdown 5/81/20,
+  first-6 rows 390/496.
+- **Foundation capture reproduction**: fresh `run-capture.sh` over the
+  merged-script prefix reproduces the committed f-a/f-c SHA-256s exactly
+  (`6690f849…`, `1712555f…`).
+- **Tests (post-rebase)**: `pinyin-oracle` lib 68 passed / 0 failed;
+  `live_smoke` against the live prefix 9 passed / 0 failed.
+- **Dates**: every stamp in this changeset re-dated to UTC (they were
+  hand-written from SGT local, a day ahead); AGENTS.md now carries the
+  UTC-date convention.
+- **Perf notes**: rewritten to state that timing at `074a2219` was not
+  measured and every commit's basis for "no Linux runtime-path change";
+  cross-pin timing comparison still requires re-measurement.
+
+### Image-build boundary (D3)
+
+Built from the branch tree:
+
+- `Dockerfile.perf-matrix` — **both libpinyin cells pass** (git-fetched,
+  configure-less source through `autoreconf --force --install`,
+  `./configure`, `make`, `make install`; RC 0). The cargo-c/datagen tail
+  after Cell B was not exercised, per the granted relaxation.
+- `Dockerfile.perf-baseline` and `Dockerfile.perf-validation` — the
+  `git` fix is verified working: `build-oracle.sh` completes inside both
+  images (libpinyin installs into `/opt/pinyin-oracle`). Both full
+  builds then fail at the later `cargo run -p oxpinyin-datagen` step:
+  `-llz4`/`-lzstd` not found — the images' apt lists predate the tkrzw
+  default backend and lack `liblz4-dev`/`libzstd-dev`/`liblzma-dev`
+  (libtkrzw-dev does not pull them). Reproduced on pristine main
+  `c6b371da` with the same package list, so it is a pre-existing
+  main-side breakage, not introduced by this PR; the one-line package
+  fix is left for a ruling (STOP condition: image failure outside the
+  known defects).
+
+## Known inconsistency shipped with the pin
+
+`tools/oracle/oracle-pin.txt` (schema `oracle-provisioning-pin-v2`)
+verifies its two upstreams asymmetrically: libpinyin by commit SHA
+(forced — `2.11.92` is untagged upstream), ibus-libpinyin still by its
+tagged archive's SHA-256. A follow-up issue tracks moving ibus to
+commit-SHA verification; this PR does not change the ibus pin.
+
 ## Issues filed from this verification
 
 - **#356** — port `pinyin_get_character_offset` true-on-invalid-phrase
   (parity defect, both pins disagree with the port).
 - **#357** — `7165d2a` vs `oxpinyin-kmm`'s mirrored pre-fix
   `set_array_header` no-op (trainer surface only).
-- **#358** — `oracle-data.sha256` gates on the 6 nondeterministic files.
+- **#358** — `oracle-data.sha256` gates on the 6 nondeterministic
+  files. Fixed on main after this verification landed (`e2f57d52`,
+  2026-09-06 UTC): the manifest is now split into a reproducible gate
+  (the 17 stable files) and an informational unstable section.
 
 ## Collected for the upstream report (not filed upstream)
 

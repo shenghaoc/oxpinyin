@@ -626,7 +626,7 @@ Text, candidate type and counts cannot.
   and the shared root cause), the guess-seam leading-run answered as
   `LookupOffsetPastSeparator`, and this cursor-helper seam.
 
-**Amendment — 2026-09-07, oracle pin 0c5e80e1 → 074a2219 (runtime
+**Amendment — 2026-09-06 UTC, oracle pin 0c5e80e1 → 074a2219 (runtime
 verification).** The pin bump re-measured this entry's shape with a
 fork-per-probe C driver against the oracle at BOTH pins and the port
 (evidence: `docs/findings/oracle-pin-074a221-evidence/`). Two

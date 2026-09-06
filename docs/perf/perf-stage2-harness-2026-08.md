@@ -152,10 +152,18 @@ On a machine with `perf_event_paranoid ≤ 1`, samply writes
 `target/profile/w8-cycle.profile.json.gz`;
 `tools/profile/extract-hot-stacks.py` summarises it.
 
-> **Pin note (2026-09-07):** the recorded cells above are frozen
+> **Pin note (2026-09-06 UTC):** the recorded cells above are frozen
 > artifacts of oracle `0c5e80e1` and are not re-timed. The corpus
 > surfaces were re-verified byte-identical at oracle `074a2219`
 > (candidates 10,312/10,312 distinct inputs; sentence counts 491/396/390
-> unchanged) — see `docs/findings/oracle-pin-074a221-verification.md` —
-> so the oracle behavior these numbers measure did not change with the
-> pin bump.
+> unchanged) — see `docs/findings/oracle-pin-074a221-verification.md`.
+> Timing at `074a2219` was **not** measured. The range's per-commit
+> basis for "no change affecting the Linux runtime path": `88e39fc` is
+> `fsync` → `g_fsync` (a glib identity macro on POSIX), `9ddf484`
+> defines `O_BINARY` as 0 on Linux, `074a221` is `rename` → `g_rename`
+> (the same alias class), `95e3af7`+`3291067` move `_check_offset`
+> inside `assert()` so it is not called at all under `NDEBUG` at six
+> of ten sites, `03bc5ef` and `de11fd4` touch the data-prep text
+> loaders and utils/tests only, and `7165d2a` touches `utils/training`
+> only. Any cross-pin TIMING comparison therefore still requires
+> re-measurement.

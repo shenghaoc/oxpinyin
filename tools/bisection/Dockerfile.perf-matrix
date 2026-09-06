@@ -77,6 +77,7 @@ RUN cp -a /tmp/libpinyin-src /tmp/build-A-src \
     && cp target/model20/extracted/* /tmp/build-A-src/data/ \
     && mkdir /tmp/build-A && mv /tmp/build-A-src /tmp/build-A/libpinyin-src \
     && cd /tmp/build-A/libpinyin-src \
+    && autoreconf --force --install \
     && ./configure --prefix=/opt/libpinyin-tkrzw --disable-static --with-dbm=Tkrzw \
     && make -j"$(nproc)" && make install \
     && rm -rf /tmp/build-A
@@ -87,6 +88,7 @@ RUN cp -a /tmp/libpinyin-src /tmp/build-B-src \
     && cp target/model20/extracted/* /tmp/build-B-src/data/ \
     && mkdir /tmp/build-B && mv /tmp/build-B-src /tmp/build-B/libpinyin-src \
     && cd /tmp/build-B/libpinyin-src \
+    && autoreconf --force --install \
     && ./configure --prefix=/opt/libpinyin-kc --disable-static --with-dbm=KyotoCabinet \
     && make -j"$(nproc)" && make install \
     && rm -rf /tmp/build-B

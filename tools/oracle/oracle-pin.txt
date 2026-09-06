@@ -1,9 +1,16 @@
-schema=oracle-provisioning-pin-v1
+schema=oracle-provisioning-pin-v2
 # Composite pin identity for the locally built oracle. Every field mirrors
 # a constant in tools/oracle/build-oracle.sh; tools/bisection runners and
 # developers verify the two sides agree before trusting a prefix. When a
 # pin component changes, update it here and in its owner file in the same
 # commit — a stale prefix must be rebuilt from scratch.
+#
+# v2 (2026-09-06 UTC): drops libpinyin_archive_sha256. libpinyin is now
+# verified by commit SHA (git fetch --depth=1); no release tag carries
+# the pinned version, so there is no archive to hash. The two upstreams
+# are therefore verified asymmetrically — libpinyin by commit identity,
+# ibus-libpinyin still by its tagged archive's SHA-256 — forced until
+# ibus moves to commit verification too (follow-up: #369).
 # libtkrzw is deliberately NOT pinned here: inside the debian:testing
 # container it comes from libtkrzw-dev as part of the rolling build
 # environment (the workflow's provenance record attributes which version

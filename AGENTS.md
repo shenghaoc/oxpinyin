@@ -113,6 +113,14 @@ Add/upgrade deps without ask · edit frozen SPECs/goldens/CI policy without
 ask · `unsafe` outside allowlisted crates · silence
 lints.
 
+## Dates
+
+All freeze-doc, findings, and patch-metadata dates are UTC, captured at
+run time from the machine executing the step, never hand-written. The
+failure this prevents: a hand-written local timestamp from a zone ahead
+of UTC (SGT, UTC+8) dates a record a day into the future — exactly what
+PR #363's first pass did, caught in review.
+
 ## Toolchain
 
 `rust-toolchain.toml` is the only supported toolchain. Portable crates:

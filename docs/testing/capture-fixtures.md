@@ -94,7 +94,7 @@ family; `DYNAMIC_ADJUST` is excluded by the capture protocol. The `force-tone`
 pair deliberately records no observed output change at this public API
 surface rather than inferring unobserved behavior.
 
-## Amendment — pin 074a2219 (2026-09-07)
+## Amendment — pin 074a2219 (2026-09-06 UTC)
 
 Regenerated against the new pin (same recipe, `run-capture.sh` over the
 git-fetch-built oracle; every record's `pin_ref` stamp moves to
