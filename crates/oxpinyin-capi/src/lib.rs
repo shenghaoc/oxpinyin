@@ -194,6 +194,7 @@ pub fn pinyin_set_double_pinyin_scheme(context: *mut PinyinContext, scheme: c_in
     config::pinyin_set_double_pinyin_scheme(context, scheme)
 }
 /// In-process wrapper for the `pinyin_set_full_pinyin_scheme` ABI symbol (see the C header).
+#[cfg(not(feature = "shipped"))]
 pub fn pinyin_set_full_pinyin_scheme(context: *mut PinyinContext, scheme: c_int) -> bool {
     config::pinyin_set_full_pinyin_scheme(context, scheme)
 }
@@ -208,6 +209,7 @@ pub fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: c_int) -> b
 
 // ── context ─────────────────────────────────────────────
 /// In-process wrapper for the `oxpinyin_init_for_fixtures` ABI symbol (see the C header).
+#[cfg(not(feature = "shipped"))]
 #[must_use]
 pub fn oxpinyin_init_for_fixtures(
     systemdir: *const c_char,
@@ -216,6 +218,7 @@ pub fn oxpinyin_init_for_fixtures(
     context::oxpinyin_init_for_fixtures(systemdir, userdir)
 }
 /// In-process wrapper for the `oxpinyin_test_set_user_bigram` ABI symbol (see the C header).
+#[cfg(not(feature = "shipped"))]
 pub fn oxpinyin_test_set_user_bigram(
     context: *mut PinyinContext,
     prev: *const c_char,
