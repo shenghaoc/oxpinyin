@@ -17,15 +17,15 @@
 # (deb) or Obsoletes (rpm) or conflicts= (pacman) on the originals. Data is
 # deliberately NOT replaced on Debian/Fedora (libpinyin-data is a separate
 # package there and stays); on Arch the data lives inside the libpinyin
-# package the takeover removes — see tools/packaging/release-arch.sh's
-# caveat header for what that means until oxpinyin ships its own data.
+# package the takeover removes, so the Arch lane fetches that package and
+# ships its data directory inside ours — see tools/packaging/release-arch.sh.
 #
-# Why :latest and not the debian:testing the CI jobs use: ci.yml and
-# store-backends.yml build on rolling toolchains because building against
-# "the newest toolchain distros actually ship" is a property under test
-# there. Release artifacts are downloads users run on stable distros —
-# building them on the current stable release keeps the glibc floor low, and
-# these jobs test nothing about the toolchain.
+# Image choice: each lane builds on the distro release whose libpinyin
+# actually IS 2.11.91 in the backend named above. For Debian that is
+# testing (forky): stable (trixie, what debian:latest resolves to) still
+# ships libpinyin 2.8.1 on BerkeleyDB, whose bigram.db no oxpinyin backend
+# can read, so a tkrzw build there could not pass the init gate below and
+# would be a package for a system whose data it cannot open.
 #
 # Why plain cargo build and not `cargo cinstall` (tools/packaging/install.sh):
 # cargo-c does not forward --no-default-features, so the kyotocabinet lanes
@@ -49,6 +49,13 @@ on:
 permissions:
   contents: read
 
+# One run per release: a re-published or edited release must not race an
+# attach still uploading assets for the same tag. Queue, never cancel — the
+# run in flight is the one whose packages are already half-attached.
+concurrency:
+  group: release-packages-${{ github.event.release.id }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
@@ -71,7 +78,7 @@ jobs:
       matrix:
         include:
           - distro: debian
-            image: debian:latest
+            image: debian:testing
             backend: tkrzw
             dbfmt: Tkrzw
           - distro: fedora
@@ -150,16 +157,20 @@ jobs:
 
       # Package version = the release tag (v stripped). The .pc keeps its
       # own 2.11.91 version — docs/packaging.md "The four version streams".
+      # Stable three-component versions only: a prerelease suffix (-rc1)
+      # is not a legal pkgver for makepkg and sorts wrongly under dpkg/rpm,
+      # so anything but vX.Y.Z / X.Y.Z fails here rather than in a maker.
       - name: Derive the package version from the release tag
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
-          case "$TAG" in
-            v[0-9]*) VER="${TAG#v}" ;;
-            [0-9]*)  VER="$TAG" ;;
-            *) echo "::error::release tag '$TAG' is neither vX.Y.Z nor X.Y.Z" >&2; exit 1 ;;
-          esac
+          if [[ "$TAG" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            VER="${BASH_REMATCH[1]}"
+          else
+            echo "::error::release tag '$TAG' is not a stable vX.Y.Z / X.Y.Z version" >&2
+            exit 1
+          fi
           echo "VERSION=$VER" >> "$GITHUB_ENV"
 
       - name: Build and stage the drop-in tree
@@ -179,7 +190,18 @@ jobs:
           case "$DISTRO" in
             debian) tools/packaging/release-deb.sh "$BACKEND" "$VERSION" "$PWD/stage" "$LIBDIR" dist ;;
             fedora) tools/packaging/release-rpm.sh "$BACKEND" "$VERSION" "$PWD/stage" dist ;;
-            arch)   tools/packaging/release-arch.sh "$BACKEND" "$VERSION" "$PWD/stage" dist ;;
+            arch)
+              # Arch has no separate data package: the model lives inside
+              # the libpinyin package our takeover removes. Download (not
+              # install) that package and ship its data directory in ours,
+              # so pinyin_init/zhuyin_init still have a model afterwards.
+              pacman -Sw --noconfirm libpinyin
+              mkdir -p arch-data
+              tar -xf /var/cache/pacman/pkg/libpinyin-*.pkg.tar.zst \
+                -C arch-data --strip-components=3 usr/lib/libpinyin/data
+              [ -f arch-data/table.conf ] || { echo "::error::Arch libpinyin data not found in the package" >&2; exit 1; }
+              tools/packaging/release-arch.sh "$BACKEND" "$VERSION" "$PWD/stage" dist --data="$PWD/arch-data"
+              ;;
           esac
 
       # The takeover test: install OUR packages into this same container and
@@ -193,9 +215,13 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
+          # libpinyin-data is installed explicitly on Debian/Fedora (it is
+          # only a Recommends on ours) so the init gate below runs against
+          # the distro's real model, as it will on a user's system; the Arch
+          # package carries the data itself.
           case "$DISTRO" in
-            debian) apt-get install -y "$PWD"/dist/*.deb ;;
-            fedora) dnf -y install "$PWD"/dist/*.rpm ;;
+            debian) apt-get install -y libpinyin-data "$PWD"/dist/*.deb ;;
+            fedora) dnf -y install libpinyin-data "$PWD"/dist/*.rpm ;;
             arch)   pacman -U --noconfirm "$PWD"/dist/*.pkg.tar.zst ;;
           esac
           ldconfig
@@ -211,13 +237,23 @@ jobs:
           # re-declare the same enums and novel_types.h's tentative
           # definitions duplicate at link time). <stdbool.h> first because
           # upstream's headers use C99 bool without including it.
+          #
+          # Unlike the staged-tree smoke (no data there), this one opens the
+          # system model the way a consumer does — pkgdatadir/data, the
+          # one-level-up convention of docs/findings/installed-naming.md —
+          # and a NULL context is a failed gate, not a diagnostic: the
+          # whole point of the drop-in is reading the data already on the
+          # system, so a package whose init fails against it must not ship.
           cat > smoke_pinyin.c <<'EOF'
           #include <stdbool.h>
           #include <pinyin.h>
           #include <stdio.h>
-          int main(void) {
-            pinyin_context_t *c = pinyin_init("", "");
+          int main(int argc, char **argv) {
+            if (argc != 3) return 2;
+            pinyin_context_t *c = pinyin_init(argv[1], argv[2]);
             printf("pinyin=%p\n", (void *)c);
+            if (c == NULL) return 1;
+            pinyin_fini(c);
             return 0;
           }
           EOF
@@ -225,9 +261,12 @@ jobs:
           #include <stdbool.h>
           #include <zhuyin.h>
           #include <stdio.h>
-          int main(void) {
-            zhuyin_context_t *c = zhuyin_init("", "");
+          int main(int argc, char **argv) {
+            if (argc != 3) return 2;
+            zhuyin_context_t *c = zhuyin_init(argv[1], argv[2]);
             printf("zhuyin=%p\n", (void *)c);
+            if (c == NULL) return 1;
+            zhuyin_fini(c);
             return 0;
           }
           EOF
@@ -237,8 +276,11 @@ jobs:
           # shellcheck disable=SC2046
           cc smoke_zhuyin.c -o smoke_zhuyin $(pkg-config --cflags --libs libzhuyin) \
             || fail "libzhuyin smoke compile/link on /usr"
-          ./smoke_pinyin || fail "libpinyin smoke run on /usr"
-          ./smoke_zhuyin || fail "libzhuyin smoke run on /usr"
+          SYSDATA="$(pkg-config --variable=pkgdatadir libpinyin)/data"
+          [ -f "$SYSDATA/table.conf" ] || fail "no model at $SYSDATA (table.conf missing)"
+          USERDIR="$(mktemp -d)"
+          ./smoke_pinyin "$SYSDATA" "$USERDIR" || fail "pinyin_init on the system model at $SYSDATA"
+          ./smoke_zhuyin "$SYSDATA" "$USERDIR" || fail "zhuyin_init on the system model at $SYSDATA"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
