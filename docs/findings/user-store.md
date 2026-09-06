@@ -3,7 +3,7 @@
 Date: 2026-08-15 · Status: **SHOWN-verified against libpinyin 2.11.91 and
 ibus-libpinyin 1.16.5 source** · Decision: **W6 reproduces libpinyin's
 user-data *values and semantics*; the on-disk binary format
-(MemoryChunk/DBM) is a NON-GOAL (redb is the store).** See §10.
+(MemoryChunk/DBM) is a NON-GOAL.** See §10.
 
 This finding records, with source file + line citations, the exact behaviour a
 later Rust implementation must reproduce to make oxpinyin's user store

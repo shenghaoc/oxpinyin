@@ -1,5 +1,5 @@
-//! redb ACID store for user data: learning, frequencies, preferences.
-//! The redb major version is pinned. Internal crate — the supported
+//! ACID store for user data: learning, frequencies, preferences.
+//! Internal crate — the supported
 //! public API is `oxpinyin-engine`.
 //!
 //! W6-T1: the integer count [`seed`] arithmetic pinned in
