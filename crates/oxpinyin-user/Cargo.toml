@@ -26,5 +26,7 @@ tkrzw = ["oxpinyin-store/tkrzw"]
 redb = ["oxpinyin-store/redb"]
 
 [dev-dependencies]
+# Store micro-benches (benches/); workspace lock pins 0.8.
+criterion = "0.8"
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
 redb = { workspace = true }
