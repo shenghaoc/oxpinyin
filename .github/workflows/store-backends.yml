@@ -61,6 +61,14 @@ on:
       - Cargo.lock
       - rust-toolchain.toml
       - .github/workflows/store-backends.yml
+      # Direct inputs added 2026-09-06: every child decodes the fixture
+      # tables; backend-matrix runs tools/store/backend-matrix.sh; the
+      # sanitizer job runs tools/kc/run-sanitizers.sh; every job runs the
+      # bootstrap composite action.
+      - fixtures/**
+      - tools/store/**
+      - tools/kc/**
+      - .github/actions/**
   pull_request:
     branches: [main]
     paths:
@@ -69,6 +77,14 @@ on:
       - Cargo.lock
       - rust-toolchain.toml
       - .github/workflows/store-backends.yml
+      # Direct inputs added 2026-09-06: every child decodes the fixture
+      # tables; backend-matrix runs tools/store/backend-matrix.sh; the
+      # sanitizer job runs tools/kc/run-sanitizers.sh; every job runs the
+      # bootstrap composite action.
+      - fixtures/**
+      - tools/store/**
+      - tools/kc/**
+      - .github/actions/**
 
 permissions:
   contents: read
