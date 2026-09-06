@@ -72,7 +72,7 @@ smallvec = "1.15"
 compact_str = "0.10"
 # Perfect-hash text lookups over the frozen syllable inventories;
 # oxpinyin-core/build.rs generates the maps, so phf_codegen is build-time only.
-phf = "0.11"
+phf = "0.14"
 phf_codegen = "0.11"
 glib-sys = "0.20"
 
