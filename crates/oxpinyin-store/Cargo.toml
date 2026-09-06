@@ -51,3 +51,10 @@ harness = false
 # heed is the `lmdb` peer's dependency, so `--all-targets` builds of the
 # other backends skip this target instead of failing to resolve it.
 required-features = ["lmdb"]
+
+[[bench]]
+name = "redb_is_empty"
+harness = false
+# redb is the peer's optional dependency, so `--all-targets` builds of
+# the other backends skip this target instead of failing to resolve it.
+required-features = ["redb"]
