@@ -154,6 +154,19 @@ pub struct Session<D, L> {
     candidates: CandidateList,
     history: Vec<PhraseToken>,
     scoring: ScoringConfig,
+    /// Per-key costs for the pre-frequency fallback scorer, and **empty
+    /// whenever [`LanguageModel::has_real_unigrams`] holds**.
+    ///
+    /// The only readers are the two [`Scorer::with_key_costs`] sites, both
+    /// on the `else` of a `has_real_unigrams()` gate, so a model carrying
+    /// real frequencies can never consult this table — the pinned
+    /// construction prices candidates inline instead. Filling it for such a
+    /// model would walk the whole frozen key inventory to produce a value
+    /// nothing reads, which is what made the first `new_session` cost
+    /// 42–57 ms (`docs/findings/perf-backend-matrix-2026-09.md`). Upstream
+    /// has no analogue in any configuration: `pinyin_alloc_instance`
+    /// allocates instance state and performs no dictionary or model read
+    /// (`src/pinyin.cpp:1310-1333` at the pin `0c5e80e1`).
     key_costs: Vec<Cost>,
     /// Decoded n-best sentence rows, filled by [`Session::guess_sentence`]
     /// and cleared by [`Session::reset`] — the `m_nbest_results` gate
@@ -228,15 +241,26 @@ where
     /// # Errors
     ///
     /// Returns [`EngineError`] when a backend rejects the settings it is
-    /// opened with. No such rejection exists yet, so this currently always
-    /// succeeds.
+    /// opened with, or — on the pre-frequency fallback only — when a
+    /// backend fails while the key-cost table is walked. A model carrying
+    /// real unigram frequencies never walks, so no such rejection exists
+    /// for it and construction currently always succeeds.
     pub fn new(
         config: &dyn ConfigSource,
         paths: StoragePaths,
         dictionary: D,
         model: L,
     ) -> Result<Self, EngineError> {
-        let key_costs = key_cost_table(&dictionary, &model)?;
+        // Only the fallback scorer reads the table (see `key_costs`), and
+        // it is unreachable under real frequencies. The fallback keeps the
+        // SPEC's construction-time walk verbatim: costs complete before any
+        // sweep, so `EdgeCost` still cannot fail, and a backend failure
+        // still surfaces here rather than inside the search.
+        let key_costs = if model.has_real_unigrams() {
+            Vec::new()
+        } else {
+            key_cost_table(&dictionary, &model)?
+        };
         Self::init(config, paths, dictionary, model, key_costs)
     }
 
@@ -4693,6 +4717,51 @@ mod tests {
         fn addon_unigram_total(&self) -> Result<Option<u64>, EngineError> {
             Ok(Some(self.addon_total))
         }
+    }
+
+    // The key-cost table is read only by the pre-frequency fallback scorer:
+    // both `Scorer::with_key_costs` sites sit on the `else` of a
+    // `has_real_unigrams()` gate, so a model carrying real frequencies can
+    // never consult one and must not pay to build one. That walk is the
+    // whole 42–57 ms first-alloc penalty in
+    // `docs/findings/perf-backend-matrix-2026-09.md`, and upstream has no
+    // analogue in any configuration — `pinyin_alloc_instance` allocates
+    // instance state and performs no dictionary or model read
+    // (`src/pinyin.cpp:1310-1333` at the pin `0c5e80e1`). The fallback must
+    // keep its full table, so this pins both sides of the gate.
+    #[test]
+    fn real_unigrams_skip_the_key_cost_walk_but_the_fallback_keeps_it() {
+        let real = Session::new(
+            &EmptyConfigSource,
+            StoragePaths::new("user"),
+            Silent,
+            FixedUnigrams {
+                system: 14,
+                addon: 14,
+                total: 51_051_831,
+                addon_total: 25_525_916,
+            },
+        )
+        .expect("Session::new");
+        assert!(real.model.has_real_unigrams());
+        assert!(
+            real.key_costs.is_empty(),
+            "a real-frequency model must not walk the key inventory it cannot read"
+        );
+
+        let fallback = Session::new(
+            &EmptyConfigSource,
+            StoragePaths::new("user"),
+            Silent,
+            Silent,
+        )
+        .expect("Session::new");
+        assert!(!fallback.model.has_real_unigrams());
+        assert_eq!(
+            fallback.key_costs.len(),
+            oxpinyin_core::SYLLABLE_KEY_COUNT,
+            "the fallback scorer still needs every frozen key priced at construction"
+        );
     }
 
     #[test]

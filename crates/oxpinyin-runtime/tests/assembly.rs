@@ -271,12 +271,17 @@ fn phrase_prefix_exists_survives_the_gbk_unload_and_the_reload_restores_the_fast
     assert!(!dict.phrase_prefix_exists(&dead_end).unwrap());
 }
 
-// The key-cost table `new_session` caches is a function of library
-// visibility, so unloading a library must not leave a later session decoding
-// against stale costs. This pins the invariant that makes the mask-stamped
-// cache necessary — the table genuinely differs under a GBK unload and is
-// restored exactly on reload — and drives the open → session → unload →
-// session → reload → session sequence the cache must service without regress.
+// The key-cost table is a function of library visibility, so any cache of it
+// must be keyed on the visibility mask. This pins the invariant that makes
+// the mask stamp necessary — the table genuinely differs under a GBK unload
+// and is restored exactly on reload — across the open → session → unload →
+// session → reload → session sequence.
+//
+// The `new_session` calls here assert the sequence still builds sessions
+// without regress, not that it fills the cache: only the pre-frequency
+// fallback branch consults the key-cost cache, and a `RuntimeLm` always
+// reports real unigram frequencies, so `new_session` no longer walks. The
+// cache's own stamp-truth is covered by the crate's concurrency unit test.
 #[test]
 fn key_costs_track_gbk_visibility_across_sessions() {
     let runtime = Runtime::open(&w3_dir(), None).expect("open");
@@ -284,7 +289,7 @@ fn key_costs_track_gbk_visibility_across_sessions() {
     let lm = runtime.lm();
 
     // The cache is stamped with the library-visibility mask; these direct
-    // computations are exactly what `new_session` memoises per mask.
+    // computations are exactly what the fallback branch memoises per mask.
     let loaded = oxpinyin_core::scoring::key_cost_table(&dict, &lm).expect("key costs (loaded)");
     runtime
         .new_session(&EmptyConfigSource)
