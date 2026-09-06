@@ -16,6 +16,13 @@
 #     tests/lint-crate-cfg-placement.test.sh — the lint job runs the
 #     crate-cfg placement checker and the harness that gates it, so a
 #     change to either is a direct input of that job
+#   - fixtures/** — the frozen tables, goldens and DBM files that the
+#     test, python and fuzz jobs decode through; a fixture-only change
+#     is exactly the kind that must be re-proven (added 2026-09-06 — until
+#     then a fixture-only PR ran no CI at all)
+#   - tests/parity/** — the parity corpus pinyin-oracle's tests replay
+#   - clippy.toml — the lint job's Clippy configuration (msrv)
+#   - .github/actions/** — the bootstrap composite action every job runs
 #
 # Deliberately NOT gated (changes to these skip CI):
 #   - docs/** — findings, design docs, ROADMAP: no code
@@ -51,6 +58,10 @@ on:
       - .github/workflows/ci.yml
       - .github/scripts/lint-crate-cfg-placement.sh
       - tests/lint-crate-cfg-placement.test.sh
+      - fixtures/**
+      - tests/parity/**
+      - clippy.toml
+      - .github/actions/**
   pull_request:
     branches: [main]
     paths:
@@ -64,6 +75,10 @@ on:
       - .github/workflows/ci.yml
       - .github/scripts/lint-crate-cfg-placement.sh
       - tests/lint-crate-cfg-placement.test.sh
+      - fixtures/**
+      - tests/parity/**
+      - clippy.toml
+      - .github/actions/**
 
 permissions:
   contents: read
