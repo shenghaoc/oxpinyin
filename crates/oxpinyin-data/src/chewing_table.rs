@@ -451,7 +451,6 @@ pub(crate) fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> 
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

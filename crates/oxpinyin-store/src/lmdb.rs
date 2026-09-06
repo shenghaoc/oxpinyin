@@ -75,7 +75,10 @@ fn is_empty_upper_bound(bound: Bound<&[u8]>) -> bool {
     matches!(bound, Bound::Included([]) | Bound::Excluded([]))
 }
 
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "heed's EnvOpenOptions::open is unsafe; the caller contract is documented on the SAFETY block"
+)]
 fn open_env(
     path: &Path,
     read_only: bool,
@@ -355,7 +358,10 @@ impl SharedEnv {
     }
 }
 
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "drops the raw environment handle; see the SAFETY block"
+)]
 impl Drop for SharedEnv {
     fn drop(&mut self) {
         let mut map = open_envs()
@@ -541,8 +547,6 @@ fn shared_env(
 /// open-many contract.
 pub struct LmdbStore {
     env: Arc<SharedEnv>,
-    #[allow(dead_code)]
-    path: PathBuf,
     read_only: bool,
 }
 
@@ -561,7 +565,6 @@ impl LmdbStore {
         let env = shared_env(path, false, map_size, false)?;
         Ok(Self {
             env,
-            path: path.to_path_buf(),
             read_only: false,
         })
     }
@@ -580,7 +583,6 @@ impl LmdbStore {
         let env = shared_env(path, true, map_size, false)?;
         Ok(Self {
             env,
-            path: path.to_path_buf(),
             read_only: true,
         })
     }
@@ -689,7 +691,6 @@ impl ReadStore for LmdbStore {
         let env = shared_env(path, true, MAP_SIZE, false)?;
         Ok(Self {
             env,
-            path: path.to_path_buf(),
             read_only: true,
         })
     }
@@ -765,7 +766,6 @@ impl WriteStore for LmdbStore {
         let env = shared_env(path, false, MAP_SIZE, false)?;
         Ok(Self {
             env,
-            path: path.to_path_buf(),
             read_only: false,
         })
     }

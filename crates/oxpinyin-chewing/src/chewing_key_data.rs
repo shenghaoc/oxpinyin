@@ -9,8 +9,6 @@
 //! tables cross-validate: every row's components resolve to its own index
 //! (`chewing_key_data_tests::tables_cross_validate`).
 
-#![allow(clippy::unreadable_literal)]
-
 /// `CHEWING_NUMBER_OF_INITIALS` (`chewing_enum.h:40`).
 pub const NUM_INITIALS: usize = 24;
 /// `CHEWING_NUMBER_OF_MIDDLES` (`chewing_enum.h:55`).

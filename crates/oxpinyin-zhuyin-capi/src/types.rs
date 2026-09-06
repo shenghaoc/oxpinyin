@@ -2,7 +2,6 @@
 //!
 //! Many items here are not yet referenced from Rust code but exist to
 //! match the C ABI surface and appear in the generated header.
-#![allow(dead_code)]
 
 use std::os::raw::{c_char, c_int, c_uint};
 
@@ -90,15 +89,6 @@ const _: () = {
     assert!(align_of::<ChewingKeyRest>() == 2);
 };
 
-impl ChewingKeyRest {
-    /// `_ChewingKeyRest::length` (`chewing_key.h:111-113`):
-    /// `m_raw_end - m_raw_begin`.
-    #[must_use]
-    pub(crate) fn length(self) -> u16 {
-        self.end.wrapping_sub(self.begin)
-    }
-}
-
 /// Opaque import iterator.
 pub struct ImportIterator;
 
@@ -126,7 +116,7 @@ pub use glib_sys::GArray;
 /// compile rather than silently assigning the wrong discriminant.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types, reason = "upstream C identifier")]
 pub enum lookup_candidate_type_t {
     /// `BEST_MATCH_CANDIDATE = 1`.
     BEST_MATCH_CANDIDATE = 1,
@@ -145,7 +135,11 @@ pub enum lookup_candidate_type_t {
 /// that is not a variant is UB.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types, reason = "upstream C identifier")]
+#[expect(
+    dead_code,
+    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
+)]
 pub enum ZhuyinScheme {
     /// Standard layout.
     ZHUYIN_STANDARD = 1,
@@ -171,7 +165,11 @@ pub enum ZhuyinScheme {
 /// `zhuyin_get_pinyin_string` dispatches on (`zhuyin.cpp:1743-1766`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types, reason = "upstream C identifier")]
+#[expect(
+    dead_code,
+    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
+)]
 pub enum FullPinyinScheme {
     /// `FULL_PINYIN_HANYU = 1`.
     FULL_PINYIN_HANYU = 1,
@@ -194,11 +192,15 @@ pub type PhraseTokenT = u32;
 pub type GUint = c_uint;
 
 /// `gint` — GLib signed int (= `c_int`).
+#[expect(
+    dead_code,
+    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
+)]
 pub type GInt = c_int;
 
 /// `gchar` — GLib char (= `c_char`).
 pub type GChar = c_char;
 
 /// `null_token` = 0 (`novel_types.h:121`, tag 2.11.91).
-#[allow(non_upper_case_globals)]
+#[expect(non_upper_case_globals, reason = "upstream C identifier")]
 pub const null_token: u32 = 0;

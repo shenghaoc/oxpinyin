@@ -28,23 +28,6 @@ pub extern "C" fn zhuyin_alloc_instance(context: *mut ZhuyinContext) -> *mut Zhu
     }
 }
 
-/// Get the zhuyin context from a zhuyin instance.
-///
-/// Internal helper (not an exported `libzhuyin.ver` symbol): upstream's
-/// `zhuyin.h` declares it, but it is absent from the 52-symbol export list,
-/// so a Rust `extern "C"` would leak it past the version-script boundary.
-#[allow(dead_code)]
-pub(crate) fn zhuyin_get_context(instance: *mut ZhuyinInstance) -> *mut ZhuyinContext {
-    if instance.is_null() {
-        return ptr::null_mut();
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
-    inst.context
-}
-
 /// Free a zhuyin instance.
 ///
 /// # C signature
@@ -82,4 +65,26 @@ pub extern "C" fn zhuyin_reset(instance: *mut ZhuyinInstance) -> bool {
     inst.core.full_reset();
     inst.candidates.clear();
     true
+}
+
+/// Get the zhuyin context from a zhuyin instance.
+///
+/// Internal helper (not an exported `libzhuyin.ver` symbol): upstream's
+/// `zhuyin.h` declares it, but it is absent from the 52-symbol export list,
+/// so a Rust `extern "C"` would leak it past the version-script boundary.
+/// Nothing in this crate calls it yet; it is the only reader of
+/// `CapiInstance::context`.
+#[expect(
+    dead_code,
+    reason = "upstream-declared helper kept off the export list; no in-crate caller yet"
+)]
+pub(crate) fn zhuyin_get_context(instance: *mut ZhuyinInstance) -> *mut ZhuyinContext {
+    if instance.is_null() {
+        return ptr::null_mut();
+    }
+
+    // SAFETY: `instance` is non-null and was produced by
+    // `zhuyin_alloc_instance`.
+    let inst = unsafe { instance_ref(instance) };
+    inst.context
 }

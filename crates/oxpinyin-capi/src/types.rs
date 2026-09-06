@@ -2,7 +2,6 @@
 //!
 //! Many items here are not yet referenced from Rust code but exist to
 //! match the C ABI surface and appear in the generated header.
-#![allow(dead_code)]
 
 use std::os::raw::{c_char, c_int, c_uint};
 
@@ -106,15 +105,6 @@ const _: () = {
     assert!(align_of::<ChewingKeyRest>() == 2);
 };
 
-impl ChewingKeyRest {
-    /// `_ChewingKeyRest::length` (`chewing_key.h:111-113`):
-    /// `m_raw_end - m_raw_begin`.
-    #[must_use]
-    pub(crate) fn length(self) -> u16 {
-        self.end.wrapping_sub(self.begin)
-    }
-}
-
 /// Opaque import iterator.
 pub struct ImportIterator;
 
@@ -131,7 +121,7 @@ pub use glib_sys::GArray;
 /// `lookup_candidate_type_t` from `pinyin.h`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types, reason = "upstream C identifier")]
 pub enum lookup_candidate_type_t {
     /// Best sentence-level match.
     NBEST_MATCH_CANDIDATE = 1,
@@ -154,7 +144,11 @@ pub enum lookup_candidate_type_t {
 /// `sort_option_t` flag bits from `pinyin.h`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types, reason = "upstream C identifier")]
+#[expect(
+    dead_code,
+    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
+)]
 pub enum sort_option_t {
     /// Exclude sentence candidate.
     SORT_WITHOUT_SENTENCE_CANDIDATE = 0x1,
@@ -175,7 +169,11 @@ pub enum sort_option_t {
 /// `IS_ZHUYIN`, and `FORCE_TONE` are intentionally absent from this header.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types, reason = "upstream C identifier")]
+#[expect(
+    dead_code,
+    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
+)]
 pub enum PinyinTableFlag {
     /// `PINYIN_INCOMPLETE = 1U << 3` (`pinyin_custom2.h:34`).
     PINYIN_INCOMPLETE = 1 << 3,
@@ -195,7 +193,11 @@ pub enum PinyinTableFlag {
 /// (`libpinyin/src/storage/pinyin_custom2.h:49-61`, tag 2.11.91).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types, reason = "upstream C identifier")]
+#[expect(
+    dead_code,
+    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
+)]
 pub enum PinyinAmbiguity2 {
     /// `PINYIN_AMB_C_CH = 1U << 10` (`pinyin_custom2.h:50`).
     PINYIN_AMB_C_CH = 1 << 10,
@@ -225,7 +227,11 @@ pub enum PinyinAmbiguity2 {
 /// (`libpinyin/src/storage/pinyin_custom2.h:70-80`, tag 2.11.91).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types, reason = "upstream C identifier")]
+#[expect(
+    dead_code,
+    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
+)]
 pub enum PinyinCorrection2 {
     /// `PINYIN_CORRECT_GN_NG = 1U << 21` (`pinyin_custom2.h:71`).
     PINYIN_CORRECT_GN_NG = 1 << 21,
@@ -251,7 +257,11 @@ pub enum PinyinCorrection2 {
 /// (`libpinyin/src/include/novel_types.h:151-162`, tag 2.11.91).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types, reason = "upstream C identifier")]
+#[expect(
+    dead_code,
+    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
+)]
 pub enum PhraseIndexLibraries {
     /// `ADDON_DICTIONARY = 5` (`novel_types.h:159`).
     ADDON_DICTIONARY = 5,
@@ -269,7 +279,11 @@ pub enum PhraseIndexLibraries {
 /// named constants and values.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types, reason = "upstream C identifier")]
+#[expect(
+    dead_code,
+    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
+)]
 pub enum DoublePinyinScheme {
     /// Ziran码 scheme.
     DOUBLE_PINYIN_ZRM = 1,
@@ -295,7 +309,11 @@ pub enum DoublePinyinScheme {
 /// named constants and values.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
+#[expect(non_camel_case_types, reason = "upstream C identifier")]
+#[expect(
+    dead_code,
+    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
+)]
 pub enum ZhuyinScheme {
     /// Standard layout.
     ZHUYIN_STANDARD = 1,
@@ -329,13 +347,17 @@ pub type PhraseTokenT = u32;
 pub type GUint = c_uint;
 
 /// `gint` — `GLib` signed int (= `c_int`).
+#[expect(
+    dead_code,
+    reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
+)]
 pub type GInt = c_int;
 
 /// `gchar` — `GLib` char (= `c_char`).
 pub type GChar = c_char;
 
 /// `null_token` = 0 (`novel_types.h:121`, tag 2.11.91).
-#[allow(non_upper_case_globals)]
+#[expect(non_upper_case_globals, reason = "upstream C identifier")]
 pub const null_token: u32 = 0;
 
 // Header phrase-index literals must stay byte-identical to the canonical

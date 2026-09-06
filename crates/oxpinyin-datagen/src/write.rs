@@ -253,7 +253,6 @@ impl Backend {
             Self::Tkrzw => write_raw_with::<oxpinyin_store::TkrzwStore>(path, entries),
             #[cfg(feature = "kyotocabinet")]
             Self::KyotoCabinet => write_raw_with::<oxpinyin_store::KcStore>(path, entries),
-            #[allow(unreachable_patterns)]
             backend => Err(not_compiled(backend)),
         }
     }
@@ -275,7 +274,6 @@ impl Backend {
             Self::Tkrzw => write_hash_with::<oxpinyin_store::TkrzwStore>(path, entries),
             #[cfg(feature = "kyotocabinet")]
             Self::KyotoCabinet => write_hash_with::<oxpinyin_store::KcStore>(path, entries),
-            #[allow(unreachable_patterns)]
             backend => Err(not_compiled(backend)),
         }
     }
@@ -309,7 +307,6 @@ impl Backend {
             Self::Lmdb => collect::<oxpinyin_store::LmdbStore>(path),
             #[cfg(feature = "tkrzw")]
             Self::Tkrzw => collect::<oxpinyin_store::TkrzwStore>(path),
-            #[allow(unreachable_patterns)]
             backend => Err(not_compiled(backend)),
         }
     }
@@ -333,7 +330,6 @@ impl Backend {
             Self::Lmdb => get::<oxpinyin_store::LmdbStore>(path, key),
             #[cfg(feature = "tkrzw")]
             Self::Tkrzw => get::<oxpinyin_store::TkrzwStore>(path, key),
-            #[allow(unreachable_patterns)]
             backend => Err(not_compiled(backend)),
         }
     }
@@ -359,7 +355,6 @@ impl Backend {
             Self::Lmdb => count::<oxpinyin_store::LmdbStore>(path),
             #[cfg(feature = "tkrzw")]
             Self::Tkrzw => count::<oxpinyin_store::TkrzwStore>(path),
-            #[allow(unreachable_patterns)]
             backend => Err(not_compiled(backend)),
         }
     }

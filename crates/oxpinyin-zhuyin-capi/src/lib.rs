@@ -44,8 +44,14 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
-#![allow(unsafe_code)]
-#![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![expect(
+    unsafe_code,
+    reason = "the C ABI crate; every block carries a SAFETY comment (constitution §5)"
+)]
+#![allow(
+    clippy::not_unsafe_ptr_arg_deref,
+    reason = "pointer-by-contract C ABI; fires only when the fuzz-api facade is compiled in, so an expectation would fail the default build"
+)]
 #![warn(missing_docs)]
 
 mod candidates;

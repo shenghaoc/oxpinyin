@@ -170,7 +170,6 @@ pub struct CandidateList {
 }
 
 impl CandidateList {
-    #[allow(dead_code)] // used by the in-crate tests
     pub(crate) const fn from_vec(items: Vec<Candidate>) -> Self {
         Self { items }
     }

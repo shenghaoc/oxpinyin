@@ -12,7 +12,6 @@
 //! key slots, the CString candidate snapshot (with the zhuyin-local
 //! 4-value candidate-type enum), and this facade's distinguishing
 //! seeds and sentence-row display law.
-#![allow(dead_code)]
 
 use oxpinyin_facade::ContextCore;
 pub use oxpinyin_facade::InstanceCore;
@@ -24,12 +23,9 @@ use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, ZhuyinContext, Z
 /// distinguishing default: `pinyin_init` seeds only `PINYIN_INCOMPLETE`.
 ///
 /// Superseded by [`oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD`]; kept as
-/// the crate-local name the tests and docs cite.
+/// the crate-local name the tests cite.
+#[cfg(test)]
 pub(crate) const ZHUYIN_DEFAULT_OPTIONS: u32 = oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD;
-
-/// The session type every C handle wraps: the shared runtime's concrete
-/// session.
-pub(crate) type CapiSession = oxpinyin_runtime::RuntimeSession;
 
 /// State behind `zhuyin_context_t *`.
 pub(crate) struct CapiContext {
@@ -104,12 +100,31 @@ impl CapiContext {
 /// `lookup_candidate_t *` can borrow into it across C calls.
 pub(crate) struct CapiCandidate {
     pub(crate) text: std::ffi::CString,
+    /// The four fields below are snapshotted exactly as the pinyin facade
+    /// snapshots them, but this facade's display law reads only `text`,
+    /// `candidate_type` and `source_index` today.
+    #[expect(
+        dead_code,
+        reason = "snapshotted in step with oxpinyin-capi; no reader on the zhuyin display law yet"
+    )]
     pub(crate) kind: oxpinyin_engine::CandidateKind,
     pub(crate) candidate_type: crate::types::lookup_candidate_type_t,
+    #[expect(
+        dead_code,
+        reason = "snapshotted in step with oxpinyin-capi; no reader on the zhuyin display law yet"
+    )]
     pub(crate) nbest_index: u8,
     /// Bytes of raw input this candidate consumed, snapshotted at guess time.
+    #[expect(
+        dead_code,
+        reason = "snapshotted in step with oxpinyin-capi; no reader on the zhuyin display law yet"
+    )]
     pub(crate) consumed_bytes: usize,
     /// The candidate's scoring token, snapshotted for training.
+    #[expect(
+        dead_code,
+        reason = "snapshotted in step with oxpinyin-capi; no reader on the zhuyin display law yet"
+    )]
     pub(crate) token: Option<oxpinyin_core::PhraseToken>,
     /// The index this candidate held in the window it was snapshotted from.
     pub(crate) source_index: usize,

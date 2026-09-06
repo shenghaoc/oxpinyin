@@ -11,7 +11,6 @@
 //! keeps only the C-facing shell: the context back-pointer, the ABI key
 //! slots, the CString candidate snapshot, and this facade's §9
 //! user-data export machinery.
-#![allow(dead_code)]
 
 use std::ffi::CString;
 
@@ -34,10 +33,6 @@ use oxpinyin_user::{
 use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, PinyinContext, PinyinInstance};
 
 // ── Context ─────────────────────────────────────────────────────────────
-
-/// The session type every C handle wraps: the shared runtime's concrete
-/// session.
-pub type CapiSession = oxpinyin_runtime::RuntimeSession;
 
 /// State behind `pinyin_context_t *`.
 ///
@@ -93,12 +88,6 @@ impl CapiContext {
             candidates: Vec::new(),
             core: self.core.alloc_instance()?,
         })
-    }
-
-    /// `pinyin_load_phrase_library`'s read side: the runtime's
-    /// library-load (mask-clear) rule; `false` without a runtime.
-    pub(crate) fn load_phrase_library(&self, index: u32) -> bool {
-        self.core.load_phrase_library(index)
     }
 
     /// `pinyin_unload_phrase_library`'s read side: GBK-only, first-unload
@@ -310,8 +299,17 @@ pub struct CapiCandidate {
     pub(crate) kind: CandidateKind,
     pub(crate) candidate_type: crate::types::lookup_candidate_type_t,
     pub(crate) nbest_index: u8,
-    /// Bytes of raw input this candidate consumed, snapshotted at guess time
-    /// so `pinyin_choose_candidate` can report the new cursor position.
+    /// Bytes of raw input this candidate consumed, snapshotted at guess time.
+    /// No reader today: `pinyin_choose_candidate` answers the parse end
+    /// (register #9) and the anchored-window law resolves spans from the
+    /// engine. Kept beside the fields the zhuyin facade snapshots identically.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "read by the in-crate tests only since the row-choose cursor moved to the parse end"
+        )
+    )]
     pub(crate) consumed_bytes: usize,
     /// The candidate's scoring token, snapshotted so the training entry
     /// points (`pinyin_train`'s observation, predicted-candidate training,
