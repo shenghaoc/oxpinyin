@@ -1,8 +1,8 @@
 # Bopomofo/Zhuyin scheme SPEC
 
-Date: 2026-08-17 · Status: W13 Phase 0 draft — **freeze proposed
-2026-09-03** (audit and amendments in the Freeze record at the bottom;
-this line reads "frozen" only on the maintainer's dated ruling)
+Date: 2026-08-17 · Status: **frozen** (2026-09-06, maintainer ruling on
+the 2026-09-03 draft; audit, amendments and the ruling in the Freeze
+record at the bottom)
 Amended 2026-08-20 by `zhuyin-index-fidelity` (PR 1 of the #109 stack):
 the recorded no-shuffle decision below is superseded — see "Index
 fidelity". Amended again by `zhuyin-simple-keyboards` (PR 2): the
@@ -370,13 +370,14 @@ tests use the mini tables' deliberate `xian`/`xi'an` pair — zhuyin
 `xian` still enumerates its `xi`+`an` segmentation — plus the `den`
 no-truncation case.
 
-## Freeze record (2026-09-03, proposed — maintainer ruling pending)
+## Freeze record (drafted 2026-09-03; frozen 2026-09-06)
 
 Drafted after the Phase 1 audit of this SPEC against the pin, in the
 form the double-pinyin freeze established (2026-09-02, PR #287). The
 maintainer's rulings on the audit (2026-09-03) fixed what goes into the
-freeze and what stays outside it; the status line above is switched to
-**frozen** by the maintainer, not by this record.
+freeze and what stays outside it; the status line above was switched to
+**frozen** by the maintainer's dated ruling, recorded as the last row of
+this record.
 
 - **Every upstream citation was re-verified at the pin `0c5e80e1`**
   (tag `2.11.91`), read from a fresh clone of libpinyin at that commit
@@ -459,3 +460,13 @@ freeze and what stays outside it; the status line above is switched to
   evidence that the pinned bopomofo candidate surface needs tone in the
   decoder key (the Tone section's settled-ground clause). Either is a
   maintainer decision recorded here, not a silent amendment.
+- **Maintainer ruling — 2026-09-06: frozen as drafted.** The 2026-09-03
+  draft is frozen without further amendment: the "What is frozen" list
+  above is the contract, the "What remains provisional" items keep their
+  stated status, and the standing gates and the re-opening condition
+  apply from this date. The open implementation item — the pinyin
+  facade's chewing batch seam does not forward `FORCE_TONE` — stays open
+  under the frozen law, carried by its register entry
+  (`docs/findings/upstream-divergences.md`, "pinyin-facade chewing batch
+  seam does not forward `FORCE_TONE`"); W13 work proceeds against this
+  SPEC as frozen.
