@@ -26,7 +26,7 @@ SCRIPT_DIR="$(pwd)"
 REPO_ROOT="$(cd ../.. && pwd)"
 BISECT_SRC="$REPO_ROOT/tools/bisection/bisect.c"
 
-PIN_REF='libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw'
+PIN_REF='libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw'
 MODEL20_SHA256='59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155'
 EXPECTED_MODEL_FILES=(
     art.table culture.table economy.table gb_char.table gbk_char.table

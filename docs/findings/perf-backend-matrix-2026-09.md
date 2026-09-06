@@ -282,3 +282,11 @@ second architecture with shared data.
 | 12 | 95% CIs on speed axes | PASS |
 | 13 | ratios per backend pair | PASS |
 | 14 | no production code changes | PASS |
+
+> **Pin note (2026-09-07):** the recorded cells above are frozen
+> artifacts of oracle `0c5e80e1` and are not re-timed. The corpus
+> surfaces were re-verified byte-identical at oracle `074a2219`
+> (candidates 10,312/10,312 distinct inputs; sentence counts 491/396/390
+> unchanged) — see `docs/findings/oracle-pin-074a221-verification.md` —
+> so the oracle behavior these numbers measure did not change with the
+> pin bump.

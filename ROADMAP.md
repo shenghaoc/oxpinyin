@@ -26,7 +26,7 @@ measurement-gated.
 ## Reference pin
 
 Authoritative freeze: `docs/testing/oracle-environment.md`  
-(libpinyin `2.11.91` / ibus-libpinyin `1.16.5` / model archive SHA-256s).
+(libpinyin `2.11.92` / ibus-libpinyin `1.16.5` / model archive SHA-256s).
 
 Build: `tools/oracle/build-oracle.sh` (optional container recipe alongside).
 

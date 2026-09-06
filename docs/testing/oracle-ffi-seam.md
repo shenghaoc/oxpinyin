@@ -19,9 +19,9 @@ compared against.
 The authority for the header identity is the `header_sha256` field of
 `oracle-pin.txt`, which the recipe writes into the prefix:
 
-- libpinyin tag `2.11.91`, commit
-  `0c5e80e1200f84fab185d1c5bde458b770a0636c`;
-- `include/libpinyin-2.11.91/pinyin.h` SHA-256
+- libpinyin version `2.11.92`, commit
+  `074a2219c90feaf962d0d24f034514033ece5f99`;
+- `include/libpinyin-2.11.92/pinyin.h` SHA-256
   `e1138482d06766163608406fe1083539b21ff8c44ea04f329f3db0c78a312d47`,
   equal to `header_sha256` in the prefix manifest;
 - scalar and flag definitions from the headers that public header includes:

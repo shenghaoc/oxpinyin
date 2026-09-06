@@ -626,6 +626,40 @@ Text, candidate type and counts cannot.
   and the shared root cause), the guess-seam leading-run answered as
   `LookupOffsetPastSeparator`, and this cursor-helper seam.
 
+**Amendment — 2026-09-07, oracle pin 0c5e80e1 → 074a2219 (runtime
+verification).** The pin bump re-measured this entry's shape with a
+fork-per-probe C driver against the oracle at BOTH pins and the port
+(evidence: `docs/findings/oracle-pin-074a221-evidence/`). Two
+narrowings, no new divergences:
+
+1. **The legal-boundary arm is CLOSED by upstream.** At an offset one
+   past a lone zero-key column (e.g. `pinyin_guess_candidates("ni'", 3)`,
+   the one-past-end boundary), the old pin SIGABRTs (`pinyin.cpp:2175`
+   at 0c5e80e1); at 074a221 the same call completes and returns `true`
+   with an empty candidate list — and the port answers exactly that
+   (`true`, 0 candidates). Upstream moved to the port here; this entry's
+   "diverges from BOTH arms" claim no longer holds at the legal
+   boundary.
+2. **The residual divergence is the illegal-offset arm only** (beyond
+   one-past-end, e.g. offset 4 on the same input): the new oracle
+   returns `true` with the computed value (the discarded check no longer
+   rejects out-of-range offsets — the upstream construct defect that
+   `assert(_check_offset(...))` compiles the call away under NDEBUG at
+   six of ten sites), while the port keeps answering `false` — the
+   already-registered abort-on-caller-input class answered by the
+   no-abort policy. Not a new finding; see
+   `docs/findings/oracle-pin-074a221-verification.md` §V3.
+
+Also corrected by the same measurement: of 074a221's four bare
+`_check_offset` call sites, `pinyin.cpp:3251` is dead code (`#if 0`),
+`pinyin_get_pinyin_key`/`_pinyin_key_rest` (:2933/:2956) return `false`
+at their range guard before reaching the check, and
+`pinyin_get_character_offset`'s live check is the assert-wrapped
+`:3204` (aborts at both pins). The single observable pin-to-pin change
+in this family is `pinyin_guess_candidates` (:2226), covered above.
+The port-side `get_character_offset` true-on-invalid-phrase behavior
+seen in the same probe is a separate parity defect: issue #356.
+
 ### Apostrophe-only input: the pin consumes every byte, the engine consumes none
 
 - **Upstream source cite:** `src/pinyin.cpp` parse path over

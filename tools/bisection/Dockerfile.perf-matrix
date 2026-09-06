@@ -60,28 +60,33 @@ WORKDIR /repo
 
 RUN bash tools/model/fetch-model.sh
 
-RUN curl --fail -L --retry 3 \
-    "https://codeload.github.com/libpinyin/libpinyin/tar.gz/refs/tags/2.11.91" \
-    -o /tmp/libpinyin.tar.gz \
-    && echo "eb25890dab0072eb0744c9ee1bc152051143b7bc23aea2a424792a9b1b84bdcb  /tmp/libpinyin.tar.gz" \
-    | sha256sum -c -
+# libpinyin source: git fetch pinned by commit SHA (verified by SHA, not
+# an archive hash -- 2.11.92 is untagged upstream and GitHub may regenerate
+# archive tarballs). Mirrors tools/oracle/build-oracle.sh.
+RUN git init --quiet /tmp/libpinyin-src \
+    && git -C /tmp/libpinyin-src fetch --quiet --depth=1 \
+       https://github.com/libpinyin/libpinyin.git \
+       074a2219c90feaf962d0d24f034514033ece5f99 \
+    && [ "$(git -C /tmp/libpinyin-src rev-parse FETCH_HEAD)" = \
+       "074a2219c90feaf962d0d24f034514033ece5f99" ] \
+    && git -C /tmp/libpinyin-src checkout --quiet --detach FETCH_HEAD
 
 # ── Cell A: libpinyin + Tkrzw ────────────────────────────────────────
 
-RUN mkdir -p /tmp/build-A && tar xzf /tmp/libpinyin.tar.gz -C /tmp/build-A \
-    && cp target/model20/extracted/* /tmp/build-A/libpinyin-2.11.91/data/ \
-    && cd /tmp/build-A/libpinyin-2.11.91 \
-    && autoreconf --force --install \
+RUN cp -a /tmp/libpinyin-src /tmp/build-A-src \
+    && cp target/model20/extracted/* /tmp/build-A-src/data/ \
+    && mkdir /tmp/build-A && mv /tmp/build-A-src /tmp/build-A/libpinyin-src \
+    && cd /tmp/build-A/libpinyin-src \
     && ./configure --prefix=/opt/libpinyin-tkrzw --disable-static --with-dbm=Tkrzw \
     && make -j"$(nproc)" && make install \
     && rm -rf /tmp/build-A
 
 # ── Cell B: libpinyin + Kyoto Cabinet ────────────────────────────────
 
-RUN mkdir -p /tmp/build-B && tar xzf /tmp/libpinyin.tar.gz -C /tmp/build-B \
-    && cp target/model20/extracted/* /tmp/build-B/libpinyin-2.11.91/data/ \
-    && cd /tmp/build-B/libpinyin-2.11.91 \
-    && autoreconf --force --install \
+RUN cp -a /tmp/libpinyin-src /tmp/build-B-src \
+    && cp target/model20/extracted/* /tmp/build-B-src/data/ \
+    && mkdir /tmp/build-B && mv /tmp/build-B-src /tmp/build-B/libpinyin-src \
+    && cd /tmp/build-B/libpinyin-src \
     && ./configure --prefix=/opt/libpinyin-kc --disable-static --with-dbm=KyotoCabinet \
     && make -j"$(nproc)" && make install \
     && rm -rf /tmp/build-B

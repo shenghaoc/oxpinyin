@@ -1,0 +1,93 @@
+parsed=3 ret=1 key=2b0000
+parsed=3 ret=1 key=2b0000
+port key     ni'    off=0  -> [dbg] init ok
+parsed=3 ret=1 key=2b0000
+parsed=3 ret=0 key=NULL
+parsed=3 ret=0 key=NULL
+port key     ni'    off=1  -> [dbg] init ok
+parsed=3 ret=0 key=NULL
+parsed=3 ret=1 key=000000
+parsed=3 ret=1 key=000000
+port key     ni'    off=2  -> [dbg] init ok
+parsed=3 ret=0 key=NULL
+parsed=3 ret=0 key=NULL
+parsed=3 ret=0 key=NULL
+port key     ni'    off=3  -> [dbg] init ok
+parsed=3 ret=0 key=NULL
+parsed=3 ret=0 key=NULL
+parsed=3 ret=0 key=NULL
+port key     ni'    off=4  -> [dbg] init ok
+parsed=3 ret=0 key=NULL
+parsed=3 ret=1 rest=00000200
+parsed=3 ret=1 rest=00000200
+port keyrest ni'    off=0  -> [dbg] init ok
+parsed=3 ret=1 rest=00000200
+parsed=3 ret=0 rest=NULL
+parsed=3 ret=0 rest=NULL
+port keyrest ni'    off=1  -> [dbg] init ok
+parsed=3 ret=0 rest=NULL
+parsed=3 ret=1 rest=03000400
+parsed=3 ret=1 rest=03000400
+port keyrest ni'    off=2  -> [dbg] init ok
+parsed=3 ret=0 rest=NULL
+parsed=3 ret=0 rest=NULL
+parsed=3 ret=0 rest=NULL
+port keyrest ni'    off=3  -> [dbg] init ok
+parsed=3 ret=0 rest=NULL
+parsed=3 ret=0 rest=NULL
+parsed=3 ret=0 rest=NULL
+port keyrest ni'    off=4  -> [dbg] init ok
+parsed=3 ret=0 rest=NULL
+parsed=3 ret=0 out=18446744073709551615
+parsed=3 ret=0 out=18446744073709551615
+port charoff ni'    off=0  -> [dbg] init ok
+parsed=3 ret=1 out=0
+parsed=3 ret=0 out=18446744073709551615
+parsed=3 ret=0 out=18446744073709551615
+port charoff ni'    off=1  -> [dbg] init ok
+parsed=3 ret=1 out=1
+parsed=3 ret=0 out=18446744073709551615
+parsed=3 ret=0 out=18446744073709551615
+port charoff ni'    off=2  -> [dbg] init ok
+parsed=3 ret=1 out=2
+old  charoff ni'    off=3  -> ABORT(sig 6) drv: pinyin.cpp:2175: bool _check_offset(pinyin::PhoneticKeyMatrix&, size_t): Assertion `zero_key != key' failed.
+new  charoff ni'    off=3  -> ABORT(sig 6) drv: pinyin.cpp:3204: bool pinyin_get_character_offset(pinyin_instance_t*, const char*, size_t, size_t*): Assertion `_check_offset(matrix, offset)' failed.
+port charoff ni'    off=3  -> [dbg] init ok
+parsed=3 ret=1 out=3
+old  charoff ni'    off=4  -> ABORT(sig 6) drv: pinyin.cpp:3201: bool pinyin_get_character_offset(pinyin_instance_t*, const char*, size_t, size_t*): Assertion `offset < matrix.size()' failed.
+new  charoff ni'    off=4  -> ABORT(sig 6) drv: pinyin.cpp:3203: bool pinyin_get_character_offset(pinyin_instance_t*, const char*, size_t, size_t*): Assertion `offset < matrix.size()' failed.
+port charoff ni'    off=4  -> [dbg] init ok
+parsed=3 ret=1 out=3
+parsed=3 ret=1 cands=0
+parsed=3 ret=1 cands=0
+port guess   ni'    off=0  -> [dbg] init ok
+parsed=3 ret=1 cands=0
+parsed=3 ret=1 cands=0
+parsed=3 ret=1 cands=0
+port guess   ni'    off=1  -> [dbg] init ok
+parsed=3 ret=1 cands=0
+parsed=3 ret=1 cands=0
+parsed=3 ret=1 cands=0
+port guess   ni'    off=2  -> [dbg] init ok
+parsed=3 ret=1 cands=0
+old  guess   ni'    off=3  -> ABORT(sig 6) drv: pinyin.cpp:2175: bool _check_offset(pinyin::PhoneticKeyMatrix&, size_t): Assertion `zero_key != key' failed.
+parsed=3 ret=1 cands=0
+port guess   ni'    off=3  -> [dbg] init ok
+parsed=3 ret=1 cands=0
+old  guess   ni'    off=4  -> ABORT(sig 6) drv: pinyin.cpp:2175: bool _check_offset(pinyin::PhoneticKeyMatrix&, size_t): Assertion `zero_key != key' failed.
+parsed=3 ret=1 cands=0
+port guess   ni'    off=4  -> [dbg] init ok
+parsed=3 ret=0 cands=0
+parsed=5 ret=1 out=2
+parsed=5 ret=1 out=2
+port rightoff nihao  off=0  -> [dbg] init ok
+parsed=5 ret=1 out=2
+old  rightoff nihao  off=5  -> ABORT(sig 6) drv: pinyin.cpp:2175: bool _check_offset(pinyin::PhoneticKeyMatrix&, size_t): Assertion `zero_key != key' failed.
+new  rightoff nihao  off=5  -> ABORT(sig 6) drv: pinyin.cpp:3092: bool pinyin_get_right_pinyin_offset(pinyin_instance_t*, size_t, size_t*): Assertion `_check_offset(matrix, right)' failed.
+port rightoff nihao  off=5  -> [dbg] init ok
+parsed=5 ret=0 out=18446744073709551615
+old  rightoff nihao  off=6  -> ABORT(sig 6) drv: pinyin.cpp:2175: bool _check_offset(pinyin::PhoneticKeyMatrix&, size_t): Assertion `zero_key != key' failed.
+new  rightoff nihao  off=6  -> ABORT(sig 6) drv: pinyin.cpp:3067: bool pinyin_get_right_pinyin_offset(pinyin_instance_t*, size_t, size_t*): Assertion `_check_offset(matrix, offset)' failed.
+port rightoff nihao  off=6  -> [dbg] init ok
+parsed=5 ret=0 out=18446744073709551615
+V3_RUN_DONE

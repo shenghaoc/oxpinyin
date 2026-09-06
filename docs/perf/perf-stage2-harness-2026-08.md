@@ -151,3 +151,11 @@ tools/profile/run-w8-cycle.sh
 On a machine with `perf_event_paranoid ≤ 1`, samply writes
 `target/profile/w8-cycle.profile.json.gz`;
 `tools/profile/extract-hot-stacks.py` summarises it.
+
+> **Pin note (2026-09-07):** the recorded cells above are frozen
+> artifacts of oracle `0c5e80e1` and are not re-timed. The corpus
+> surfaces were re-verified byte-identical at oracle `074a2219`
+> (candidates 10,312/10,312 distinct inputs; sentence counts 491/396/390
+> unchanged) — see `docs/findings/oracle-pin-074a221-verification.md` —
+> so the oracle behavior these numbers measure did not change with the
+> pin bump.

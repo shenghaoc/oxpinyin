@@ -34,7 +34,7 @@ impl OracleCompleteness {
 /// The public `lookup_candidate_type_t` a candidate was reported under.
 ///
 /// These are the eight values the pinned header
-/// (`include/libpinyin-2.11.91/pinyin.h`) declares for
+/// (`include/libpinyin-2.11.92/pinyin.h`) declares for
 /// `_lookup_candidate_type_t`, in its declared order (discriminants 1..=8). The
 /// enum exists so the W2-CAND capture records the frozen public **name** rather
 /// than a bare integer, and so an out-of-range value from the oracle is a
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn candidate_type_discriminants_match_the_pinned_header() {
-        // `_lookup_candidate_type_t` in include/libpinyin-2.11.91/pinyin.h,
+        // `_lookup_candidate_type_t` in include/libpinyin-2.11.92/pinyin.h,
         // discriminants 1..=8 in declared order.
         let ordered = [
             (1, OracleCandidateType::NbestMatch, "NBEST_MATCH_CANDIDATE"),

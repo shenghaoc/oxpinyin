@@ -3,13 +3,13 @@ inclusion: always
 ---
 # Product
 
-A GPL-3.0-or-later Rust re-expression of libpinyin 2.11.91 targeting a
+A GPL-3.0-or-later Rust re-expression of libpinyin 2.11.92 targeting a
 drop-in replacement at the `libpinyin.so.15` ABI. Claims: re-expression is
 fine; never replace / succeed / outperform. Scoped measurements only. See
 `ROADMAP.md` and `AGENTS.md`.
 
 **Stage 1 — oracle parity.** The candidate surface agrees with the pinned,
-source-built libpinyin 2.11.91 oracle bit-identically on every W2 corpus
+source-built libpinyin 2.11.92 oracle bit-identically on every W2 corpus
 input at depth 10: top-1 10,190/10,190, top-5-set 10,190, absent 0,
 order-only 0, prefix-10 98,930/98,930. The sentence surface carries one
 measured residual from platform-dependent `gfloat`+log accumulation,

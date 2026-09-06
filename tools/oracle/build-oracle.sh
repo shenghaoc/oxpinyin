@@ -7,10 +7,17 @@ set -euo pipefail
 # and the DBM backend selected by --dbm (Tkrzw, Kyoto Cabinet or
 # Berkeley DB).
 
-LIBPINYIN_TAG=2.11.91
-LIBPINYIN_SHA=0c5e80e1200f84fab185d1c5bde458b770a0636c
-LIBPINYIN_URL=https://codeload.github.com/libpinyin/libpinyin/tar.gz/refs/tags/2.11.91
-LIBPINYIN_ARCHIVE_SHA256=eb25890dab0072eb0744c9ee1bc152051143b7bc23aea2a424792a9b1b84bdcb
+# libpinyin is fetched by commit SHA and verified by commit SHA: no
+# release tag carries this pin (2.11.92 is untagged upstream, so the former
+# tag-tarball form cannot pin it), and an archive SHA-256 is weaker than it
+# looks -- GitHub regenerates archive tarballs and has changed its
+# compression before, so an archive hash can drift while a commit SHA
+# cannot. LIBPINYIN_VERSION is the version configure.ac reports; it names
+# the installed header dir and the pin ref, and the manifest key keeps its
+# schema name `libpinyin_tag` for compatibility with existing manifests.
+LIBPINYIN_VERSION=2.11.92
+LIBPINYIN_SHA=074a2219c90feaf962d0d24f034514033ece5f99
+LIBPINYIN_GIT_URL=https://github.com/libpinyin/libpinyin.git
 IBUS_LIBPINYIN_TAG=1.16.5
 IBUS_LIBPINYIN_SHA=2d2cdac0187101aa0cd7ac06694a8340721ddfbb
 IBUS_LIBPINYIN_URL=https://codeload.github.com/libpinyin/ibus-libpinyin/tar.gz/refs/tags/1.16.5
@@ -51,7 +58,8 @@ usage() {
 	cat <<'EOF'
 Usage: build-oracle.sh [OPTIONS]
 
-Build the pinned libpinyin and ibus-libpinyin releases from verified archives.
+Build the pinned libpinyin (git fetch verified by commit SHA) and the
+pinned ibus-libpinyin release from its verified archive.
 
 Options:
   --work-dir DIR       Download and build directory (default: $TMPDIR/oxpinyin-oracle)
@@ -152,9 +160,9 @@ bdb)
 	exit 2
 	;;
 esac
-ORACLE_PIN_REF="libpinyin-$LIBPINYIN_TAG-$LIBPINYIN_SHA+model20-$MODEL_SHA256+dbm-$dbm"
+ORACLE_PIN_REF="libpinyin-$LIBPINYIN_VERSION-$LIBPINYIN_SHA+model20-$MODEL_SHA256+dbm-$dbm"
 
-for command in curl sha256sum tar autoreconf make pkg-config find sort xargs patch; do
+for command in curl git sha256sum tar autoreconf make pkg-config find sort xargs patch; do
 	command -v "$command" >/dev/null 2>&1 || {
 		printf 'required command not found: %s\n' "$command" >&2
 		exit 1
@@ -223,14 +231,27 @@ fetch() {
 	printf '%s\n' "$path"
 }
 
-lib_archive=$(fetch "libpinyin-$LIBPINYIN_TAG.tar.gz" "$LIBPINYIN_URL" "$LIBPINYIN_ARCHIVE_SHA256")
 ibus_archive=$(fetch "ibus-libpinyin-$IBUS_LIBPINYIN_TAG.tar.gz" "$IBUS_LIBPINYIN_URL" "$IBUS_LIBPINYIN_ARCHIVE_SHA256")
 
-rm -rf "$work_dir/src/libpinyin-$LIBPINYIN_TAG" "$work_dir/src/ibus-libpinyin-$IBUS_LIBPINYIN_TAG"
-tar -xzf "$lib_archive" -C "$work_dir/src"
-tar -xzf "$ibus_archive" -C "$work_dir/src"
+# Source directory is named by the commit SHA, never by the version: the
+# version names the release line, the SHA names the tree that was built.
+lib_src=$work_dir/src/libpinyin-$LIBPINYIN_SHA
+rm -rf "$lib_src"
+mkdir -p "$lib_src"
+git init --quiet "$lib_src"
+if ! git -C "$lib_src" fetch --quiet --depth=1 "$LIBPINYIN_GIT_URL" "$LIBPINYIN_SHA"; then
+	printf 'git fetch of libpinyin %s failed\n' "$LIBPINYIN_SHA" >&2
+	exit 1
+fi
+git -C "$lib_src" checkout --quiet --detach FETCH_HEAD
+fetched_sha=$(git -C "$lib_src" rev-parse HEAD)
+if [[ $fetched_sha != "$LIBPINYIN_SHA" ]]; then
+	printf 'libpinyin commit mismatch: fetched %s, expected %s\n' "$fetched_sha" "$LIBPINYIN_SHA" >&2
+	exit 1
+fi
 
-lib_src=$work_dir/src/libpinyin-$LIBPINYIN_TAG
+rm -rf "$work_dir/src/ibus-libpinyin-$IBUS_LIBPINYIN_TAG"
+tar -xzf "$ibus_archive" -C "$work_dir/src"
 ibus_src=$work_dir/src/ibus-libpinyin-$IBUS_LIBPINYIN_TAG
 
 # The model data is the 18-file model20 export that build-oracle.sh drops into
@@ -313,7 +334,7 @@ shared_object=$(find "$prefix" -type f \( -name 'libpinyin.so' -o -name 'libpiny
 	exit 1
 }
 
-header=$prefix/include/libpinyin-$LIBPINYIN_TAG/pinyin.h
+header=$prefix/include/libpinyin-$LIBPINYIN_VERSION/pinyin.h
 data_dir=$prefix/lib/libpinyin/data
 data_manifest=$prefix/oracle-data.sha256
 data_unstable_manifest=$prefix/oracle-data-unstable.sha256
@@ -364,7 +385,7 @@ read -r data_unstable_manifest_sha256 _ < <(sha256sum "$data_unstable_manifest")
 	cat <<EOF
 schema=pinyin-oracle-v1
 pin_ref=$ORACLE_PIN_REF
-libpinyin_tag=$LIBPINYIN_TAG
+libpinyin_tag=$LIBPINYIN_VERSION
 libpinyin_commit=$LIBPINYIN_SHA
 ibus_libpinyin_tag=$IBUS_LIBPINYIN_TAG
 ibus_libpinyin_commit=$IBUS_LIBPINYIN_SHA
@@ -380,6 +401,6 @@ EOF
 	fi
 } >"$prefix/oracle-pin.txt"
 
-printf 'libpinyin_tag=%s\nlibpinyin_commit=%s\n' "$LIBPINYIN_TAG" "$LIBPINYIN_SHA" >&2
+printf 'libpinyin_tag=%s\nlibpinyin_commit=%s\n' "$LIBPINYIN_VERSION" "$LIBPINYIN_SHA" >&2
 printf 'ibus_libpinyin_tag=%s\nibus_libpinyin_commit=%s\n' "$IBUS_LIBPINYIN_TAG" "$IBUS_LIBPINYIN_SHA" >&2
 printf '%s\n' "$shared_object"

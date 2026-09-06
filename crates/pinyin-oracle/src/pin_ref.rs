@@ -9,7 +9,7 @@
 /// Identical to `EXPECTED_PIN_REF` in `tools/capture/run-capture.sh`: the
 /// capture harness and the differential harness must agree on the subject.
 pub const EXPECTED_PIN_REF: &str = concat!(
-    "libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c",
+    "libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99",
     "+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155",
     "+dbm-tkrzw"
 );

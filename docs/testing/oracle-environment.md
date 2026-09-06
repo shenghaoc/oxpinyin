@@ -90,3 +90,34 @@ Berkeley DB is measured deliberately: it is libpinyin's upstream
 default DBM and the configuration distributions ship, even though
 libpinyin's own development deprecates it. Bench-only prefixes never
 gate parity or capture.
+
+## Amendment — pin 074a2219 (2026-09-07)
+
+The oracle pin moved from `2.11.91`/`0c5e80e1200f84fab185d1c5bde458b770a0636c`
+to `2.11.92`/`074a2219c90feaf962d0d24f034514033ece5f99` (libpinyin main
+HEAD; nine commits, no release tag — `2.11.92` is untagged upstream).
+Rows above are the historical 2.11.91 freeze and stand unedited.
+
+- **Fetch form:** no tag tarball carries this pin, so the recipe now
+  fetches by commit SHA (`git fetch --depth=1 <repo> <sha>`,
+  `git checkout FETCH_HEAD`) and verifies by `git rev-parse HEAD`
+  equality — an archive SHA-256 cannot pin a GitHub-regenerated
+  tarball. ibus-libpinyin stays the tagged `1.16.5` archive.
+- **Verification (2026-09-07, debian:testing container):** the oracle
+  builds unpatched; the W2 candidate surface is byte-identical for all
+  10,312 distinct corpus inputs (97,442 triples, 10,037 inputs with
+  candidates — the frozen fixture's exact counts); the sentence
+  surface re-freeze §12 counts hold at 491/396/390 with every
+  mechanism invariant intact. See
+  `docs/findings/oracle-pin-074a221-verification.md`.
+- **Known upstream changes re-verified:** `libpinyin.so.15.0.0`
+  unchanged (`libpinyin_abi_current=15`, revision 0, both pins); the
+  public `pinyin.h` is byte-identical (same `header_sha256`); the six
+  DBM-backed data files are build-nondeterministic at ANY pin (issue
+  #358), so no between-pins data claim is made for them; the 17
+  reproducible data files are byte-identical between pins.
+- **oxpinyin's drop-in identity stays 2.11.91** (cargo-c header
+  subdirectory, package version, `libpinyin.pc` version): distros ship
+  2.11.91 and consumers build against `include/libpinyin-2.11.91/`;
+  claiming an unreleased version would break drop-in. It moves only
+  when upstream tags a release.
