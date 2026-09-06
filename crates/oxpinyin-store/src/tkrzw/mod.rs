@@ -103,7 +103,10 @@
 //! backend by decision — the workspace outside it stays `deny` — and it
 //! waives safety ceremony, not correctness: the shared read and write
 //! suites gate this backend like any other.
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "FFI shim over libtkrzw; every block carries a SAFETY comment"
+)]
 
 mod ffi;
 

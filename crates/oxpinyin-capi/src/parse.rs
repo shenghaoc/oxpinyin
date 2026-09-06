@@ -164,7 +164,10 @@ pub extern "C" fn pinyin_in_chewing_keyboard(
     // Linux among them); `as u8` is a lossless reinterpret on both,
     // and the cast is not "unnecessary" on the targets where it is
     // `i8`.
-    #[allow(clippy::unnecessary_cast)]
+    #[allow(
+        clippy::unnecessary_cast,
+        reason = "c_char is u8 on aarch64 Linux and i8 elsewhere; expect would fail on one of them"
+    )]
     let mapped = inst.core.in_keyboard(key as u8);
     if mapped.is_empty() {
         if !symbols.is_null() {

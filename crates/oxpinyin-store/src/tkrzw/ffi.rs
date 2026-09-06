@@ -39,7 +39,7 @@
 //! wrapper matches on; `super` static-asserts the three it names against
 //! the pinned numbers so an upstream renumbering fails the build rather
 //! than silently misclassifying statuses.
-#![allow(unsafe_code)] // raw FFI declarations; see the module docs.
+#![expect(unsafe_code, reason = "raw FFI declarations; see the module docs")]
 #![allow(dead_code, missing_docs, non_camel_case_types)]
 #![allow(non_snake_case, non_upper_case_globals)]
 include!(concat!(env!("OUT_DIR"), "/tkrzw_langc.rs"));

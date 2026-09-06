@@ -126,7 +126,10 @@ fn chunk_checksum(payload: &[u8]) -> u32 {
 /// File mapping: the one place in this crate (and the shipping tree)
 /// with `unsafe`, under the constitution's documented mmap exception.
 mod map {
-    #![allow(unsafe_code)]
+    #![expect(
+        unsafe_code,
+        reason = "the constitution's documented mmap exception; see the module docs"
+    )]
 
     use super::LibraryError;
     use std::path::Path;

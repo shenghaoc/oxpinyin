@@ -75,7 +75,7 @@ fn temp_dir() -> PathBuf {
 
 /// Opens the environment the way the merged loader does: NO_SUB_DIR
 /// (single file at `path`) plus WRITE_MAP and NO_SYNC.
-#[allow(unsafe_code)]
+#[expect(unsafe_code, reason = "heed's EnvOpenOptions::open is unsafe")]
 fn open_env(path: &Path) -> Env {
     let mut opts = EnvOpenOptions::new();
     opts.max_dbs(1);

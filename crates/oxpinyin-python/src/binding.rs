@@ -341,7 +341,6 @@ impl Engine {
         slf
     }
 
-    #[allow(clippy::needless_pass_by_value)]
     #[pyo3(signature = (_exc_type=None, _exc=None, _tb=None))]
     fn __exit__(
         &self,
