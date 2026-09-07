@@ -59,6 +59,10 @@ impl CapiContext {
         // the observable list carries exactly one sentence row — see
         // `Session::set_collapse_sentence_rows_to_best`.
         core.session.set_collapse_sentence_rows_to_best(true);
+        // libzhuyin's trellis is `PhoneticLookup<1, 1>` (`zhuyin.cpp:50`),
+        // not libpinyin's `<2, 3>`: one value per node, one sentence tail.
+        core.session
+            .set_nbest_shape(oxpinyin_engine::NbestShape::ZHUYIN);
         Some(CapiInstance {
             context,
             core,
@@ -109,6 +113,10 @@ pub(crate) struct CapiCandidate {
     pub(crate) token: Option<oxpinyin_core::PhraseToken>,
     /// The index this candidate held in the window it was snapshotted from.
     pub(crate) source_index: usize,
+    /// Where the candidate's span starts, in original input coordinates —
+    /// upstream's `m_begin`, which `zhuyin_choose_candidate` answers as the
+    /// new cursor for a before-cursor row (`zhuyin.cpp:1660` at the pin).
+    pub(crate) span_begin: usize,
 }
 
 /// State behind `zhuyin_instance_t *`.

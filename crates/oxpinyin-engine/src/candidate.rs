@@ -40,6 +40,15 @@ pub struct Candidate {
     /// order, so a row that survives the NBEST-wins dedup still knows
     /// which `NbestRow` is its own even when its list position shifted.
     nbest_index: Option<u8>,
+    /// Where the candidate's span starts, in the coordinates of the window
+    /// it was built in — upstream's `lookup_candidate_t::m_begin`
+    /// (`pinyin.h`/`zhuyin.h`; set beside `m_end` at `zhuyin.cpp:1509,1595`
+    /// at the pin). A window anchored at a lookup offset measures every
+    /// span from that offset, so its rows carry 0; the before-cursor window
+    /// (`Session::candidates_ending_at`) runs on the absolute prefix graph,
+    /// so its rows carry each span's absolute start. Sentence rows and
+    /// fallbacks carry 0.
+    span_start: usize,
 }
 
 impl Candidate {
@@ -60,7 +69,29 @@ impl Candidate {
             cost,
             token,
             nbest_index,
+            span_start: 0,
         }
+    }
+
+    /// Records where this candidate's span starts (see [`Self::span_start`]).
+    pub(crate) const fn set_span_start(&mut self, start: usize) {
+        self.span_start = start;
+    }
+
+    /// Where this candidate's span starts, in the coordinates of the
+    /// window it came from: 0 for a window anchored at a lookup offset
+    /// (its rows are measured from that offset) and the span's absolute
+    /// start for a before-cursor window, whose rows all END at the lookup
+    /// offset ([`Session::candidates_ending_at`]) but begin wherever each
+    /// matching key path starts. Upstream's `m_begin`: the choose writes
+    /// its constraint on `[m_begin, m_end)` and, for a before-cursor row,
+    /// answers `m_begin` as the new cursor (`zhuyin.cpp:1656-1660` at the
+    /// pin).
+    ///
+    /// [`Session::candidates_ending_at`]: crate::Session::candidates_ending_at
+    #[must_use]
+    pub const fn span_start(&self) -> usize {
+        self.span_start
     }
 
     /// The text this candidate would insert.

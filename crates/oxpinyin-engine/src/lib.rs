@@ -78,6 +78,7 @@ pub use cursor::{
 };
 pub use error::EngineError;
 pub use key::{KeyInput, LogicalKey, Modifiers};
+pub use nbest::NbestShape;
 pub use preedit::{Preedit, PreeditSpan, SpanStyle};
 pub use session::{
     KeyOutcome, MAX_INPUT_BYTES, Selection, Session, check_lookup_offset_range,

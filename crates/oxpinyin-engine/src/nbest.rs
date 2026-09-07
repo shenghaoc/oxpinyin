@@ -1,5 +1,8 @@
 //! The n-best sentence trellis — the W14 port of upstream's
-//! `PhoneticLookup<2, 3>` beam search (`lookup/phonetic_lookup.h`).
+//! `PhoneticLookup<nstore, nbest>` beam search (`lookup/phonetic_lookup.h`).
+//! libpinyin instantiates `<2, 3>` (`pinyin.cpp:55`) and libzhuyin `<1, 1>`
+//! (`zhuyin.cpp:50`); the pair is a per-session [`NbestShape`], set by each
+//! facade, never a global constant.
 //!
 //! One trellis per `guess_sentence` call. Steps are byte positions of the
 //! remaining input (upstream uses key-matrix columns; the two coincide
@@ -35,11 +38,57 @@ use crate::constraint::{Cell, ConstraintStore, PhraseSpan};
 use crate::error::EngineError;
 use crate::session::{MAX_PHRASE_LENGTH, SCAN_EXPANSION_LIMIT, ScanKey};
 
-/// Values per `(position, token)` node (`nstore`).
+/// Inline capacity of a node's value list: libpinyin's `nstore`, the
+/// larger of the two shapes, so neither allocates per node. The live cap
+/// is [`NbestShape::nstore`].
 const NSTORE: usize = 2;
-/// Sentence rows extracted from the tails (`nbest`); also the fallback
-/// DP's row cap.
+/// Sentence rows extracted from the tails (`nbest`) on the pinyin surface;
+/// also the fallback DP's row cap there.
 pub const NBEST_ROWS: usize = 3;
+
+/// The two template constants of upstream's `PhoneticLookup<nstore,
+/// nbest>`: values kept per `(position, token)` trellis node, and sentence
+/// tails extracted. libpinyin is `<2, 3>` (`pinyin.cpp:55`), libzhuyin is
+/// `<1, 1>` (`zhuyin.cpp:50`); upstream asserts `nstore <= nbest`
+/// (`phonetic_lookup.h:715`), which the two named shapes satisfy and no
+/// other constructor exists to violate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NbestShape {
+    nstore: usize,
+    nbest: usize,
+}
+
+impl NbestShape {
+    /// libpinyin's `PhoneticLookup<2, 3>` — the default.
+    pub const PINYIN: Self = Self {
+        nstore: NSTORE,
+        nbest: NBEST_ROWS,
+    };
+    /// libzhuyin's `PhoneticLookup<1, 1>`: one value per trellis node and
+    /// one sentence tail.
+    pub const ZHUYIN: Self = Self {
+        nstore: 1,
+        nbest: 1,
+    };
+
+    /// Values kept per `(position, token)` node.
+    #[must_use]
+    pub const fn nstore(self) -> usize {
+        self.nstore
+    }
+
+    /// Sentence tails extracted.
+    #[must_use]
+    pub const fn nbest(self) -> usize {
+        self.nbest
+    }
+}
+
+impl Default for NbestShape {
+    fn default() -> Self {
+        Self::PINYIN
+    }
+}
 /// Beam width per step (`nbeam`).
 const NBEAM: usize = 32;
 
@@ -155,7 +204,9 @@ fn loses_to(left: &Value, right: &Value) -> bool {
 type NodeValues = SmallVec<[Value; NSTORE]>;
 
 struct Trellis {
-    /// `nodes[position][token]` = up to [`NSTORE`] values, best-first.
+    /// The surface's `<nstore, nbest>`.
+    shape: NbestShape,
+    /// `nodes[position][token]` = up to `shape.nstore()` values, best-first.
     nodes: Vec<HashMap<u32, NodeValues>>,
     /// Token → phrase text, gathered from the span searches.
     texts: HashMap<u32, CompactString>,
@@ -169,7 +220,7 @@ impl Trellis {
     /// every `m_prefixes` entry as an initial node at `log(1.0)`.
     /// `pinyin_guess_sentence_with_prefix` drives this with the prefix
     /// token list; the single-seed `new` stays the sentence path's law.
-    fn with_seeds(bound: usize, seeds: &[u32]) -> Self {
+    fn with_seeds(bound: usize, seeds: &[u32], shape: NbestShape) -> Self {
         let mut nodes = vec![HashMap::new(); bound + 1];
         for &seed_token in seeds {
             let mut seed_values = NodeValues::new();
@@ -177,16 +228,18 @@ impl Trellis {
             nodes[0].insert(seed_token, seed_values);
         }
         Self {
+            shape,
             nodes,
             texts: HashMap::new(),
             seq: 1,
         }
     }
 
-    /// `trellis_node::eval_item`: keep the best [`NSTORE`] values.
+    /// `trellis_node::eval_item`: keep the best `nstore` values.
     fn insert(&mut self, position: usize, value: Value) {
+        let nstore = self.shape.nstore();
         let node = self.nodes[position].entry(value.token).or_default();
-        if node.len() < NSTORE {
+        if node.len() < nstore {
             // Insert best-first: before the first value this one beats.
             let slot = node
                 .iter()
@@ -243,7 +296,7 @@ impl Trellis {
         entries
     }
 
-    /// The tails: the top [`NBEST_ROWS`] values at the furthest position that
+    /// The tails: the top `nbest` values at the furthest position that
     /// carries any, ordered by cost ascending (upstream selects with the
     /// comparator in `get_top_results`, then sorts the tails by raw poss
     /// with `trellis_value_compare`).
@@ -272,7 +325,7 @@ impl Trellis {
                 left.seq.cmp(&right.seq)
             }
         });
-        values.truncate(NBEST_ROWS);
+        values.truncate(self.shape.nbest());
         values.sort_by_key(|value| (value.cost, value.seq));
         values
     }
@@ -336,6 +389,7 @@ pub fn nbest_sentences<D, L>(
     model: &L,
     history: &[PhraseToken],
     constraints: Option<&ConstraintStore>,
+    shape: NbestShape,
 ) -> Result<Vec<NbestRow>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
@@ -356,6 +410,7 @@ where
         model,
         &[PhraseToken::new(seed)],
         constraints,
+        shape,
     )
 }
 
@@ -370,6 +425,7 @@ pub(crate) fn nbest_sentences_with_seeds<D, L>(
     model: &L,
     seeds: &[PhraseToken],
     constraints: Option<&ConstraintStore>,
+    shape: NbestShape,
 ) -> Result<Vec<NbestRow>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
@@ -378,7 +434,7 @@ where
     L::Error: core::fmt::Display,
 {
     let seed_values: Vec<u32> = seeds.iter().map(|token| token.value()).collect();
-    let mut trellis = Trellis::with_seeds(bound, &seed_values);
+    let mut trellis = Trellis::with_seeds(bound, &seed_values, shape);
     // Memoised step costs: the beam revisits (prev, token) pairs.
     let mut costs: HashMap<(u32, u32), NbestStepCosts> = HashMap::new();
     let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
@@ -820,7 +876,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{LONG_SENTENCE_PENALTY, NbestRow, Value, loses_to, nbest_sentences};
+    use super::{LONG_SENTENCE_PENALTY, NbestRow, NbestShape, Value, loses_to, nbest_sentences};
     use crate::session::ScanKey;
     use oxpinyin_core::graph::SegmentGraph;
     use oxpinyin_core::{Cost, LanguageModel, NbestStepCosts, OptionBits, PhraseToken};
@@ -929,7 +985,7 @@ mod tests {
             blended: None,
             unigram: None,
         };
-        let rows = nbest_sentences(&matrix, bound, &dict, &model, &[], None)
+        let rows = nbest_sentences(&matrix, bound, &dict, &model, &[], None, NbestShape::PINYIN)
             .expect("the trellis cannot fail here");
         assert!(rows.is_empty());
     }
@@ -946,12 +1002,48 @@ mod tests {
             unigram: Some(2_000),
         };
         let (matrix, bound) = one_column_matrix("nihao");
-        let rows: Vec<NbestRow> = nbest_sentences(&matrix, bound, &dict, &model, &[], None)
-            .expect("the trellis cannot fail here");
+        let rows: Vec<NbestRow> =
+            nbest_sentences(&matrix, bound, &dict, &model, &[], None, NbestShape::PINYIN)
+                .expect("the trellis cannot fail here");
         assert!(!rows.is_empty());
         assert_eq!(rows[0].text.as_str(), "你好");
         assert_eq!(rows[0].span, bound);
         assert_eq!(rows[0].keys, 2);
+    }
+
+    /// libzhuyin's `PhoneticLookup<1, 1>` keeps one value per node and
+    /// extracts one tail, where libpinyin's `<2, 3>` extracts up to three:
+    /// two readings of `ni` give the pinyin shape two rows and the zhuyin
+    /// shape exactly one, the same 1-best.
+    #[test]
+    fn the_zhuyin_shape_extracts_a_single_tail() {
+        const VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n\
+                             token=2\tkeys=ni\ttext=尼\tunigram=900\n\
+                             token=3\tkeys=hao\ttext=好\tunigram=900\n";
+        let dict = FixtureDictionary::parse(VOCAB).expect("authored fixture");
+        let model = Fixed {
+            blended: Some(1_000),
+            unigram: Some(2_000),
+        };
+        let (matrix, bound) = one_column_matrix("nihao");
+        let pinyin = nbest_sentences(&matrix, bound, &dict, &model, &[], None, NbestShape::PINYIN)
+            .expect("the trellis cannot fail here");
+        let zhuyin = nbest_sentences(&matrix, bound, &dict, &model, &[], None, NbestShape::ZHUYIN)
+            .expect("the trellis cannot fail here");
+        assert!(
+            pinyin.len() >= 2,
+            "libpinyin's shape keeps both readings: {pinyin:?}"
+        );
+        assert_eq!(
+            zhuyin.len(),
+            1,
+            "libzhuyin's shape extracts one tail: {zhuyin:?}"
+        );
+        assert_eq!(
+            zhuyin[0].text, pinyin[0].text,
+            "the 1-best is the same tail"
+        );
+        assert_eq!(NbestShape::default(), NbestShape::PINYIN);
     }
 
     #[test]

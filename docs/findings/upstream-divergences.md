@@ -1327,6 +1327,38 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
     protocols.)
 
 
+  (Amended 2026-09-06, **the residual CLOSED in code** — maintainer
+  approval 2026-09-06 for the engine-interface change, with the
+  instruction to copy what libpinyin's source does. `Candidate` now
+  carries `span_start`, upstream's `m_begin`: 0 for a window measured
+  from its anchor, the absolute span start for a before-cursor window
+  (`zhuyin.cpp:1595`, `template_item.m_begin = start; m_end = offset`).
+  `Session::select_inner` writes the constraint on
+  `[anchor + span_start, end)` — `add_constraint(m_begin, m_end, token)`,
+  `zhuyin.cpp:1652,1659` — so `su3cl3` `before(6)` row 1 forces `[3, 6)`
+  (好) and leaves the leading key to the decode: the re-guess answers
+  你好, the shape the 2026-09-05 measurement recorded on the pin. Two
+  observable consequences, both toward the pin:
+  1. `zhuyin_choose_candidate` answers `m_begin` for a before-cursor
+     row (`offset = candidate->m_begin`, `zhuyin.cpp:1660`) — 3 here,
+     where the facade answered the span's end (6). The after-cursor and
+     BEST_MATCH returns are unchanged (`m_end`, `matrix.size() - 1`).
+  2. A before-cursor choose after an earlier selection no longer
+     fails: the old `[0, offset)` span regressed the composition offset
+     and hit `SelectionAnchorBeforeComposition`; the row's own start
+     does not.
+  The engine's `commit()` — a Rust/Python surface with no ABI
+  counterpart — keeps the leading key's raw bytes as a typed-but-
+  unselected gap (`ni好`), the same law an after-cursor re-anchor
+  already applied; the ABI surface commits `zhuyin_get_sentence`'s
+  re-decode, which is 你好. Pinned by the engine test
+  `choosing_a_before_cursor_row_constrains_its_own_span`, the C test
+  `choosing_from_a_before_cursor_window_uses_that_window` (cursor 3,
+  free cell at 0, forcing at 3, sentence 你好 after the re-guess) and the
+  zhuyin parity corpus. **Owed:** the three-input battery on the
+  pin-built oracle (cursor, sentence after the choose, sentence after
+  the re-guess) from the Linux host; this authoring host has no oracle.)
+
 ## zhuyin multi-syllable candidate construction — CLOSED (the zhuyin display law, not the construction model)
 
 The two-syllable differential input `su3u3` (ㄋㄧˇ ㄧˇ, consumed 5) exposes a
@@ -1377,7 +1409,7 @@ tags.
   before-cursor entry above — that is the backward-anchored window builder's,
   not this entry's.)
 
-## zhuyin n-best trellis constants: `PhoneticLookup<1, 1>` vs the engine's `<2, 3>` port — registered, not yet fixed
+## zhuyin n-best trellis constants: `PhoneticLookup<1, 1>` vs the engine's `<2, 3>` port — CLOSED in code (2026-09-06)
 
 - **Upstream source cite:** `src/zhuyin.cpp:50` (`PhoneticLookup<1, 1> *
   m_pinyin_lookup` — `nstore = 1`, `nbest = 1` for libzhuyin) vs
@@ -1408,6 +1440,24 @@ tags.
   through const generics (the `parse_with_options` additive pattern), NOT a
   global constant edit — the full-pinyin corpus pins freeze the `<2, 3>`
   behaviour.
+
+  (Amended 2026-09-06, **CLOSED in code** — maintainer approval
+  2026-09-06. The pair is a per-session `oxpinyin_engine::NbestShape`
+  — `PINYIN` = `<2, 3>` (`pinyin.cpp:55`), `ZHUYIN` = `<1, 1>`
+  (`zhuyin.cpp:50`), `Default` = `PINYIN`, no other constructor so
+  upstream's `nstore <= nbest` assert (`phonetic_lookup.h:715`) cannot
+  be violated — threaded through `nbest_sentences` into the trellis's
+  per-node cap and tail count, and set by both zhuyin facades at
+  instance allocation beside the display law
+  (`Session::set_nbest_shape(NbestShape::ZHUYIN)`). The fallback DP's
+  row cap follows the shape too. Pinned by
+  `the_zhuyin_shape_extracts_a_single_tail`: two readings of `ni` give
+  the pinyin shape two rows and the zhuyin shape one, the same 1-best.
+  Per-surface const generics were the recorded fix shape; a per-session
+  value is the same law without changing the `Session` type every
+  consumer names. Not observable through today's libzhuyin candidate
+  surface, as the entry says; the pruning depth now matches the pin for
+  whatever surface exposes it next.)
 
 ## zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default
 

@@ -82,17 +82,21 @@ pub use sentence::{
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::CString;
+    use std::ffi::{CString, c_char};
     use std::path::PathBuf;
     use std::ptr;
 
     use super::candidates::{
-        zhuyin_choose_candidate, zhuyin_get_candidate, zhuyin_get_n_candidate,
+        zhuyin_choose_candidate, zhuyin_clear_constraint, zhuyin_get_candidate,
+        zhuyin_get_n_candidate,
     };
     use super::context::{zhuyin_fini, zhuyin_init};
     use super::instance::{zhuyin_alloc_instance, zhuyin_free_instance};
     use super::parse::zhuyin_parse_more_chewings;
-    use super::sentence::{zhuyin_get_character_offset, zhuyin_guess_candidates_before_cursor};
+    use super::sentence::{
+        zhuyin_get_character_offset, zhuyin_get_sentence, zhuyin_guess_candidates_before_cursor,
+        zhuyin_guess_sentence,
+    };
     use super::state::instance_mut;
     use super::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance, lookup_candidate_type_t};
 
@@ -218,26 +222,54 @@ mod tests {
         assert!(zhuyin_get_candidate(instance, 1, &raw mut cand));
         assert!(!cand.is_null());
 
-        // The chosen span ENDS at the cursor, so the composition advances
-        // to it (6), not to the first key's end (3) the cached list's row 1
-        // would have given.
-        assert_eq!(zhuyin_choose_candidate(instance, 6, cand), 6);
-
-        // commit() resets the session, so it is read last: the committed
-        // text is the row the caller was shown.
-        let committed = {
-            // SAFETY: the instance is live; commit takes &mut and resets.
-            unsafe {
-                instance_mut(instance)
-                    .core
-                    .session
-                    .commit()
-                    .expect("commit")
-            }
-        };
+        // The chosen span is `[3, 6)` — the second key alone. Upstream
+        // writes the constraint on `[m_begin, m_end)` and, for a
+        // before-cursor row, answers `m_begin` as the new cursor
+        // (`zhuyin.cpp:1656-1660` at the pin): 3, the span's start — not
+        // the span's end. (The cached list's row 1 also ends at 3; the
+        // committed text below is what tells the two rows apart.)
+        assert_eq!(zhuyin_choose_candidate(instance, 6, cand), 3);
+        // The session's own composition offset advanced to the span's end,
+        // which is the whole joined buffer here.
+        // SAFETY: the instance is live and no other reference is held.
+        let session = unsafe { &instance_mut(instance).core.session };
         assert_eq!(
-            committed, displayed,
-            "the committed text is the displayed row, not a cached-list row"
+            session.composition_offset(),
+            session.raw_input().len(),
+            "the composition consumed through the chosen span's end"
+        );
+
+        // The forcing is the row's own span `[3, 6)`, not `[0, 6)`: the
+        // first key's cell is free, the second key's is forced.
+        // (`clear_constraint` answers false for a free cell and true for a
+        // hit anywhere inside a forced run; probing 0 first cannot disturb
+        // the run at 3.)
+        assert!(
+            !zhuyin_clear_constraint(instance, 0),
+            "no forcing covers the first key"
+        );
+
+        // The pin's constrain-and-re-decode: a re-guess keeps the leading
+        // key's conversion and the forced 好 (register, measured
+        // 2026-09-05 on the pin-built oracle: 你好 after the choose).
+        assert!(zhuyin_guess_sentence(instance));
+        let mut sentence: *mut c_char = ptr::null_mut();
+        assert!(zhuyin_get_sentence(instance, &raw mut sentence));
+        assert!(!sentence.is_null());
+        // SAFETY: `sentence` is a NUL-terminated string this facade just
+        // malloc'd for the caller; it is read, then released with the
+        // allocator that produced it.
+        let decoded = unsafe { std::ffi::CStr::from_ptr(sentence) }
+            .to_str()
+            .expect("UTF-8")
+            .to_owned();
+        // SAFETY: `sentence` came from `malloc` in `owned_cstr` and is not
+        // used after this call.
+        unsafe { super::ffi::free(sentence.cast()) };
+        assert_eq!(decoded, "你好", "the re-decode keeps 你 and forces 好");
+        assert!(
+            zhuyin_clear_constraint(instance, 3),
+            "the forcing starts where 好 starts"
         );
         zhuyin_free_instance(instance);
         zhuyin_fini(context);
