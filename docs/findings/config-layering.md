@@ -1,5 +1,8 @@
 # Layered configuration SPEC
 
+> **Historical (pre-P6), 2026-09-08.** Kept as the record; not a
+> description of the current tree: written against the GSettings-backed layer; the merge is now a pure core function over data overlays (structure.md).
+
 Date: 2026-08-09 · Status: **frozen for W4-T0c**
 
 `.kiro/steering/structure.md` states the configuration model in three lines.

@@ -1,5 +1,8 @@
 # Data-layer export SPEC — public-ABI derivation of the system tables
 
+> **Historical (pre-P6), 2026-09-08.** Kept as the record; not a
+> description of the current tree: the public-ABI export route was replaced by native compilation from model20 (datagen-model20.md, W15) and the compat layer by P6.
+
 Date: 2026-08-10 · Status: **frozen for the data-layer rebuild** ·
 Authorised by the maintainer's rebuild plan of 2026-08-10.
 

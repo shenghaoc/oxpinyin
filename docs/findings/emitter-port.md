@@ -1,5 +1,8 @@
 # Emitter port — `export_interpolation` → `interpolation2.text` (W9-T4a)
 
+> **Historical (pre-P6), 2026-09-08.** Kept as the record; not a
+> description of the current tree: oxpinyin-emitter is off the trainer path (trainer-parity-audit.md §4); kept as the port record.
+
 This documents the Rust `oxpinyin-emitter` crate, a value-level reproduction of
 libpinyin's textual interpolation export. It consumes W9-T2's integer
 [`Counts`] and writes `interpolation2.text` in the grammar
