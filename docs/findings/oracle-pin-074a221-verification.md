@@ -194,7 +194,9 @@ commit-SHA verification; this PR does not change the ibus pin.
 - **#356** — port `pinyin_get_character_offset` true-on-invalid-phrase
   (parity defect, both pins disagree with the port).
 - **#357** — `7165d2a` vs `oxpinyin-kmm`'s mirrored pre-fix
-  `set_array_header` no-op (trainer surface only).
+  `set_array_header` no-op (trainer surface only). Fixed after this
+  verification (2026-09-07 UTC): `generate.rs` creates the header-only
+  row and the KMM goldens were re-derived for the 074a221 tools.
 - **#358** — `oracle-data.sha256` gates on the 6 nondeterministic
   files. Fixed on main after this verification landed (`e2f57d52`,
   2026-09-06 UTC): the manifest is now split into a reproducible gate

@@ -77,23 +77,22 @@ impl KMixtureModel {
 
         // post_processing_unigram: add surviving unigram freqs to headers.
         //
-        // The pinned oracle's Tkrzw backend `set_array_header`
-        // (`flexible_ngram_tkrzwdb.h:411-413`) does `m_db->Get(key)` and
-        // returns false if the key is absent — so it only ever *updates* an
-        // existing single_gram, never creates one. A token that never appears
-        // as W1 (has no bigram row) therefore gets NO array header: its freq
-        // still counts toward `magic.m_total_freq`, but no `\1-gram` record is
-        // stored for it. (The Kyoto backend's `set_array_header` would create
-        // the row; the oracle is pinned to Tkrzw, so this is the authoritative
-        // behaviour — oracle-verified in `tests/differential.rs`.) Match it:
-        // add the freq to `total` always, but to a header only when the row
-        // exists.
+        // `get_array_header` zeroes the header and returns false when the
+        // token has no row; `set_array_header` then stores it. At the
+        // 074a221 pin the Tkrzw backend's `set_array_header`
+        // (`flexible_ngram_tkrzwdb.h:402-430`, upstream `7165d2a`) creates
+        // the row on a missing key — the behaviour the Kyoto backend always
+        // had — so a token that never appears as W1 still gets a `\1-gram`
+        // header with `m_WC 0` and `m_freq` = its unigram freq. (The
+        // pre-7165d2a Tkrzw `set_array_header` returned false on a missing
+        // key and stored nothing, which the previous pin — and, until #357,
+        // this crate — exhibited.) Match the current pin: every surviving
+        // unigram is added to its header, creating the row when absent.
         let mut total: u32 = 0;
         for (&token, &freq) in &document.unigram {
             total = total.wrapping_add(freq);
-            if let Some(gram) = self.grams.get_mut(&token) {
-                gram.header_freq = gram.header_freq.wrapping_add(freq);
-            }
+            let gram = self.grams.entry(token).or_default();
+            gram.header_freq = gram.header_freq.wrapping_add(freq);
         }
         // total_freq overflow is guarded upstream (skip the add on wrap).
         if let Some(sum) = self.total_freq.checked_add(total) {
@@ -415,36 +414,43 @@ mod tests {
         let yi = &model.grams[&20];
         assert_eq!(yi.items.get(&10).map(|i| i.wc), Some(1));
         // 甲→甲 dropped, so 甲 never survives as a W1 (its only W1 pair was the
-        // over-cap self-pair). Per the Tkrzw-backend `post_processing_unigram`
-        // (a token with no single_gram gets no array header), 甲 therefore has
-        // **no** row at all: it appears only as the W2 of 乙→甲.
-        assert!(!model.grams.contains_key(&10), "甲 has no surviving row");
-        // 甲's unigram freq (1, after the −24 over-cap reduction) still counts
-        // toward magic total_freq, but is stored in no header — exactly as the
-        // pin's Tkrzw gen leaves it (oracle-verified). total_freq = 乙(1) + 甲(1).
+        // over-cap self-pair) and `train_single_gram` drops its empty row.
+        // `post_processing_unigram` then re-creates it as a header-only row
+        // (wc 0) carrying 甲's unigram freq — 1, after the −24 over-cap
+        // reduction — because the 074a221 pin's `set_array_header` creates
+        // on a missing key. total_freq = 乙(1) + 甲(1).
+        let jia = &model.grams[&10];
+        assert_eq!(jia.header_wc, 0, "甲 begins no surviving pair");
+        assert_eq!(jia.header_freq, 1, "甲's reduced unigram freq");
+        assert!(jia.items.is_empty());
         assert_eq!(model.total_freq, 2);
         assert_eq!(model.grams[&20].header_freq, 1, "乙's own unigram freq");
     }
 
     #[test]
-    fn a_token2_only_token_gets_no_array_header() {
-        // 中国(token1: 中国→你好) and 你好/世界 (W2-only). The pin's Tkrzw
-        // `set_array_header` no-ops on a token without a single_gram, so
-        // 你好/世界 get NO `\1-gram` row — their freq counts in magic
-        // total_freq only. Oracle-verified against pin gen+export
-        // (see `tests/differential.rs`): the pin emits the identical set.
+    fn a_token2_only_token_gets_a_header_only_row() {
+        // 中国(token1: 中国→你好) and 你好/世界 (W2-only). At the 074a221 pin
+        // `set_array_header` creates the row on a missing key (upstream
+        // `7165d2a`), so 你好/世界 get a `\1-gram` row with count 0 and their
+        // unigram freq — and Σ header freq == magic total_freq (#357).
         let mut model = KMixtureModel::new();
         model
             .add_document("10 中国\n20 你好\n0 \n30 世界\n", GenerateParams::default())
             .expect("count");
-        // 中国 is a W1 (中国→你好) → it has a row with a stored freq.
-        assert!(model.grams.contains_key(&10), "中国 (W1) has a row");
+        // 中国 is a W1 (中国→你好) → it has a row with a pair and a stored freq.
+        assert_eq!(model.grams[&10].header_wc, 1);
         assert_eq!(model.grams[&10].header_freq, 1);
-        // 你好 and 世界 are W2-only → no row, no stored freq.
-        assert!(!model.grams.contains_key(&20), "你好 (W2-only) has no row");
-        assert!(!model.grams.contains_key(&30), "世界 (W2-only) has no row");
-        // …but all three freqs are in magic total_freq.
+        // 你好 and 世界 are W2-only → header-only rows: wc 0, freq 1, no items.
+        for token in [20, 30] {
+            let gram = &model.grams[&token];
+            assert_eq!(gram.header_wc, 0, "token {token} begins no pair");
+            assert_eq!(gram.header_freq, 1, "token {token} unigram freq");
+            assert!(gram.items.is_empty());
+        }
+        // All three freqs are in magic total_freq, and the headers sum to it.
         assert_eq!(model.total_freq, 3);
+        let sum: u32 = model.grams.values().map(|g| g.header_freq).sum();
+        assert_eq!(sum, model.total_freq);
     }
 
     #[test]

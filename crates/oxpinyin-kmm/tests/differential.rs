@@ -8,16 +8,17 @@
 //! multi-occurrence pairs (`Mr`), rare pairs (`n_1`), cross-document
 //! accumulation (`N_n_0`, `N`), candidate scoring, a selective prune, the
 //! interpolation projection, and the **token2-only rule** (a token that never
-//! begins a pair gets no `\1-gram` header under the pin's Tkrzw backend — 乙
-//! and 丁 below).
+//! begins a pair gets a header-only `\1-gram` row, count 0 with its unigram
+//! freq, under the 074a221 pin's `set_array_header` — 乙 and 丁 below).
 //!
-//! Two behaviours were pinned by running the live oracle (libpinyin 2.11.91,
-//! Tkrzw backend, model20 data), and the native side matches both:
+//! Two behaviours are pinned against the live oracle (libpinyin 2.11.92 at
+//! 074a221, Tkrzw backend, model20 data), and the native side matches both:
 //!
-//! * **token2-only**: `set_array_header` no-ops on a token without a
-//!   single_gram (`flexible_ngram_tkrzwdb.h:411`), so a W2-only token gets no
-//!   array header — its freq counts in `total_freq` only. `oxpinyin-kmm`
-//!   reproduces this (`generate.rs`).
+//! * **token2-only**: `set_array_header` creates the row on a missing key
+//!   (`flexible_ngram_tkrzwdb.h:402-430`, upstream `7165d2a`), so a W2-only
+//!   token gets an array header with `m_WC 0` and its unigram freq — and
+//!   Σ header freq == `total_freq`. `oxpinyin-kmm` reproduces this
+//!   (`generate.rs`); the pre-7165d2a pin no-opped instead (#357).
 //! * **ordering**: the pin serialises the export in Tkrzw hash-iteration order
 //!   (its `get_all_items` is unordered); the native canonicalises to
 //!   token-ascending. The KMM `.db` is an unordered DBM, so the record *set*
@@ -69,15 +70,17 @@ fn built(doc: &str) -> KMixtureModel {
 // <start>→甲 five times; the single 丙→丁 → wc 1, n_1 1, Mr 1. total_freq =
 // 甲5 + 乙5 + 丙1 + 丁1 = 12; magic count = Σ row header count = 6+5+1 = 12.
 //
-// 乙 and 丁 are W2-only (they never begin a pair), so under the pin's Tkrzw
-// backend they get NO `\1-gram` array header — their freq counts toward
-// total_freq (12) only. This is the token2-only rule, oracle-verified below.
+// 乙 and 丁 are W2-only (they never begin a pair), so at the 074a221 pin they
+// get a header-only `\1-gram` row — count 0, freq = their unigram freq. This
+// is the token2-only rule, checked against the live oracle below.
 const A_EXPORT: &str = "\
 \\data model \"k mixture model\" count 12 N 1 total_freq 12
 \\1-gram
 \\item 1 <start> count 6 freq 0
 \\item 10 甲 count 5 freq 5
+\\item 20 乙 count 0 freq 5
 \\item 30 丙 count 1 freq 1
+\\item 40 丁 count 0 freq 1
 \\2-gram
 \\item 1 <start> 10 甲 count 5 T 5 N_n_0 1 n_1 0 Mr 5
 \\item 1 <start> 30 丙 count 1 T 1 N_n_0 1 n_1 1 Mr 1
@@ -91,7 +94,9 @@ const B_EXPORT: &str = "\
 \\1-gram
 \\item 1 <start> count 4 freq 0
 \\item 10 甲 count 3 freq 3
+\\item 20 乙 count 0 freq 3
 \\item 30 丙 count 1 freq 1
+\\item 40 丁 count 0 freq 1
 \\2-gram
 \\item 1 <start> 10 甲 count 3 T 3 N_n_0 1 n_1 0 Mr 3
 \\item 1 <start> 30 丙 count 1 T 1 N_n_0 1 n_1 1 Mr 1
@@ -107,7 +112,9 @@ const MERGED_EXPORT: &str = "\
 \\1-gram
 \\item 1 <start> count 10 freq 0
 \\item 10 甲 count 8 freq 8
+\\item 20 乙 count 0 freq 8
 \\item 30 丙 count 2 freq 2
+\\item 40 丁 count 0 freq 2
 \\2-gram
 \\item 1 <start> 10 甲 count 8 T 8 N_n_0 2 n_1 0 Mr 5
 \\item 1 <start> 30 丙 count 2 T 2 N_n_0 2 n_1 2 Mr 1
@@ -119,13 +126,15 @@ const MERGED_EXPORT: &str = "\
 // Prune (k 3, CDF 0.5). 甲→乙 / <start>→甲 (count 8, N 2, n_0 0, n_1 0):
 // B=8/2=4, remained = 1 − Pr(0)+Pr(1)+Pr(2) = 1 − (0 + 0 + 1/3) = 0.667 ≥ 0.5
 // → KEEP. 丙→丁 / <start>→丙 (count 2, N 2, n_1 2): B special-case 2,
-// Pr(1)=α(1−γ)=1·(1−0)=1 → remained 0 < 0.5 → PRUNE. The emptied 丙/丁 rows
-// clean up.
+// Pr(1)=α(1−γ)=1·(1−0)=1 → remained 0 < 0.5 → PRUNE. The unigram reduce
+// subtracts each pruned pair's WC from its W2's freq (丙 2→0, 丁 2→0), so the
+// fully-zeroed 丙/丁 rows clean up; 乙's header-only row (freq 8) survives.
 const PRUNED_EXPORT: &str = "\
 \\data model \"k mixture model\" count 16 N 2 total_freq 16
 \\1-gram
 \\item 1 <start> count 8 freq 0
 \\item 10 甲 count 8 freq 8
+\\item 20 乙 count 0 freq 8
 \\2-gram
 \\item 1 <start> 10 甲 count 8 T 8 N_n_0 2 n_1 0 Mr 5
 \\item 10 甲 20 乙 count 8 T 8 N_n_0 2 n_1 0 Mr 5
@@ -134,11 +143,12 @@ const PRUNED_EXPORT: &str = "\
 
 // Interpolation from the pruned model: <start> and zero-freq unigrams drop;
 // the 1-gram count is the KMM freq, the 2-gram count is the pair WC. 乙 is
-// W2-only so it has no 1-gram header to project (token2-only rule).
+// W2-only but its header-only row carries freq 8, so it projects.
 const INTERPOLATION: &str = "\
 \\data model interpolation
 \\1-gram
 \\item 10 甲 count 8
+\\item 20 乙 count 8
 \\2-gram
 \\item 1 <start> 10 甲 count 8
 \\item 10 甲 20 乙 count 8
@@ -161,15 +171,18 @@ fn candidate_scores_are_deterministic() {
     let score_b = estimate(&b, &a).expect("score B vs A").average;
     // Both are well-formed λ in the unit interval and deterministic. A and B
     // share the same structure (甲乙 repeated + one 丙丁, differing only in the
-    // 甲乙 repeat count, which normalises out of the deleted-interpolation EM),
-    // so they score identically — the `estimate.py` sort key is stable and a
-    // tie keeps gather order (a stable sort). The sort/top-N of distinct
-    // scores is unit-tested in `candidate.rs`.
+    // 甲乙 repeat count). At the previous pin that count normalised out of
+    // the deleted-interpolation EM and the two scored identically; since the
+    // 074a221 pin (#357) the W2-only tokens carry header-only rows, so the
+    // EM's unigram term sees 乙's candidate freq (5 vs 3 over total 12 vs 8)
+    // and the scores separate. The sort/top-N of distinct scores is
+    // unit-tested in `candidate.rs`.
     assert!((0.0..=1.0).contains(&score_a), "score A {score_a}");
     assert!((0.0..=1.0).contains(&score_b), "score B {score_b}");
-    // Pin at six decimals — the pin's `%f` precision (the sort key).
-    assert_eq!(format!("{score_a:.6}"), "0.999783");
-    assert_eq!(format!("{score_b:.6}"), "0.999783");
+    // Pin at six decimals — the pin's `%f` precision (the sort key). Both
+    // were 0.999783 at the previous pin, where the unigram term was 0.
+    assert_eq!(format!("{score_a:.6}"), "0.999571");
+    assert_eq!(format!("{score_b:.6}"), "0.999689");
     // Deterministic across repeated runs.
     assert_eq!(estimate(&a, &b).expect("re-score").average, score_a);
 }

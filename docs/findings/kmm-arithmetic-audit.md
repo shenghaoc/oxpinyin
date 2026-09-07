@@ -81,28 +81,29 @@ is dropped. `magic.m_WC += delta` is overflow-guarded (`:280-284`). Rust:
 overflow — the upstream guard returns `false`, i.e. does not add).
 `post_processing_unigram` (`:290-318`): `total_freq += freq` per unigram,
 `magic.m_total_freq += total` overflow-guarded, and `header.m_freq += freq`
-**via `set_array_header`**. That last step is backend-dependent, and the
-oracle is pinned to **Tkrzw**: `flexible_ngram_tkrzwdb.h:411-413`'s
-`set_array_header` does `m_db->Get(key)` and returns false when the key is
-absent, so it only ever *updates* an existing single_gram — a token that
-never appears as W1 (no bigram row) gets **no** array header. Its freq counts
-toward `magic.m_total_freq` only. Rust matches: `total` always accumulates,
-`header_freq` updates a row **only when it exists** (`self.grams.get_mut`,
-not `entry().or_default()`) — oracle-verified against pin gen+export
-(`tests/differential.rs`). `m_N++` per document: `wrapping_add(1)` (upstream
-has no `m_N` overflow guard).
+**via `set_array_header`**. `get_array_header` zeroes the header and returns
+false on a missing key; at the 074a221 pin the Tkrzw backend's
+`set_array_header` (`flexible_ngram_tkrzwdb.h:402-430`, upstream `7165d2a`
+"Fix FlexibleBigram::set_array_header method") then stores a fresh
+`sizeof(ArrayHeader)` record, so a token that never appears as W1 gets a
+header-only row: `m_WC 0`, `m_freq` = its unigram freq. Rust matches:
+`total` always accumulates, and `header_freq` is added through
+`self.grams.entry(token).or_default()` (`generate.rs`). `m_N++` per
+document: `wrapping_add(1)` (upstream has no `m_N` overflow guard).
 
-> **Oracle-discovered (2026-08-31).** The Kyoto backend's `set_array_header`
-> *creates* the row, so a Kyoto-built pin would store W2-only headers; the
-> Tkrzw-built pin (the oracle) does not. The live `gen`+`export` differential
-> exposed the divergence (the native was creating W2-only headers), and the
-> fix above brings it to Tkrzw parity. A consequence: a small-corpus model
-> with W2-only tokens has `Σ header_freq < magic.m_total_freq`, so `validate`
-> rejects it — the pin's own `validate` rejects the same model identically
-> (exit 61); and merge≠combined on such tokens (the combined single-model run
-> stores a later document's freq against a row an earlier document created,
-> which the per-candidate merge cannot). At real corpus scale every token is a
-> W1, so none of this is observable in the shipped model.
+> **Oracle-discovered (2026-08-31), superseded (2026-09-07 UTC, #357).** At
+> the previous pin (2.11.91) the Tkrzw `set_array_header` returned false on
+> a missing key and stored nothing, while the Kyoto backend created the row;
+> the live `gen`+`export` differential caught the native creating W2-only
+> headers, and the native was changed to the Tkrzw no-op. Consequences at
+> that pin: a small-corpus model with W2-only tokens had
+> `Σ header_freq < magic.m_total_freq` and both `validate`s rejected it
+> (exit 61), and merge≠combined on such tokens. Upstream `7165d2a`, in the
+> 074a221 pin, gives Tkrzw the Kyoto behaviour; the native now creates the
+> header-only row again (§2 above), the small-corpus model validates, and
+> merge≡combined holds for any documents. The differential goldens in
+> `tests/differential.rs` were re-derived by hand for the new pin; the live
+> gate against the 074a221 tools is the authoritative check.
 
 ## 3. `estimate` score (`estimate_k_mixture_model.cpp` → `estimate.rs`)
 
@@ -198,7 +199,7 @@ ordering. Pinned by `export_grammar_matches_upstream` and
 | D4c | prune `remained ∉ [0,1]` | `exit(EDOM)` | `Err(Domain)` | (c) availability | Same shape. |
 | D5 | prune interleave | decide+mutate interleaved | decide-then-apply two-pass | equivalence | Proven identical output (survival reads only constant `m_N` + each pair's own counts). Not a divergence. |
 | D6 | export/serialisation order | Tkrzw `get_all_items` hash order (unordered) | BTreeMap token-ascending (canonical) | canonicalisation | The KMM `.db` is an unordered DBM, so record order is not semantic. The native emits a deterministic token-ascending order; the live differential compares the sorted item *set* (oracle-verified). Not a byte-parity target — matching Tkrzw's hash order is neither possible nor meaningful. |
-| D7 | W2-only unigram header | Tkrzw `set_array_header` no-ops on absent key → no header | native stored all headers → **fixed** to match | defect fixed | Was a real divergence (native created W2-only headers a Kyoto pin would, but the Tkrzw-pinned oracle does not). Now token2-only tokens get no header (`generate.rs`), oracle-verified. |
+| D7 | W2-only unigram header | 074a221 Tkrzw `set_array_header` creates on absent key → header-only row (`m_WC 0`, `m_freq` = unigram freq) | native creates the row (`entry().or_default()`) | none (parity) | At the 2.11.91 pin the Tkrzw backend no-opped and the native mirrored it; upstream `7165d2a` fixed the backend and #357 re-aligned the native (2026-09-07 UTC). |
 
 The one behaviour the audit changed to stay inside the policy: the candidate
 score's empty-deleted-model case. Upstream computes `lambda_sum/lambda_count`

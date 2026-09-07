@@ -89,10 +89,9 @@ mod tests {
     fn merging_two_single_document_models_sums_and_maxes() {
         // Same document in two candidate models: merging equals training it
         // twice (two documents), so document frequency doubles and Mr maxes.
-        // The document cycles 甲→乙→甲 so both tokens appear as a W1 (each has
-        // a stored array header); a W2-only token would get no header under
-        // the pin's Tkrzw backend and the model would then fail `validate`
-        // (see `generate::tests::a_token2_only_token_gets_no_array_header`).
+        // The document cycles 甲→乙→甲 so both tokens appear as a W1 with a
+        // pair-bearing row (a W2-only token would get a header-only row; see
+        // `generate::tests::a_token2_only_token_gets_a_header_only_row`).
         let a = model_from("10 甲\n20 乙\n10 甲\n");
         let b = model_from("10 甲\n20 乙\n10 甲\n");
         let mut merged = a.clone();
@@ -115,12 +114,11 @@ mod tests {
     #[test]
     fn merge_equals_single_run_over_both_documents() {
         // Merging per-document candidates must equal counting both docs in one
-        // model (the crux of the candidate-merge stage). The invariant holds
-        // when every token appears as a W1 in each document it occurs in — a
-        // token that is W2-only in one candidate but W1 in another breaks it
-        // (its unigram freq is stored in the combined run but not in the
-        // per-candidate merge — exactly as the pin's Tkrzw gen behaves). The
-        // cyclic documents below keep every token a W1, so the invariant holds.
+        // model (the crux of the candidate-merge stage). Since the 074a221 pin
+        // every unigram gets an array header (a W2-only token a header-only
+        // row), so headers sum the same way in both runs and the invariant
+        // holds for any documents; the cyclic ones below also keep every
+        // token a W1.
         let da = "10 甲\n20 乙\n30 丙\n10 甲\n";
         let db = "20 乙\n30 丙\n10 甲\n20 乙\n";
         let a = model_from(da);

@@ -31,11 +31,9 @@ fn generated(docs: &[&str]) -> KMixtureModel {
 /// path with a byte golden.
 #[test]
 fn full_pipeline_golden() {
-    // The document cycles 甲→乙→甲 so both tokens appear as a W1 and the model
-    // is complete (every unigram freq is stored in an array header) — required
-    // for `validate` to pass. A W2-only token would get no array header under
-    // the pin's Tkrzw backend and the model would fail `validate`, exactly as
-    // the pin's own validate rejects such a small-corpus model (oracle-verified).
+    // The document cycles 甲→乙→甲 so both tokens appear as a W1 and every row
+    // carries a pair (a W2-only token would get a header-only row at the
+    // 074a221 pin — see `tests/differential.rs`).
     let doc = "10 甲\n20 乙\n10 甲\n";
 
     // generate two candidates.
@@ -88,11 +86,9 @@ fn full_pipeline_golden() {
 /// model — the invariant that makes the candidate-merge stage sound.
 #[test]
 fn merge_equals_combined_run() {
-    // The invariant holds only when every token appears as a W1 in each
-    // document it occurs in (see `merge::tests::merge_equals_single_run…`): a
-    // W2-only-in-one-candidate token stores its unigram freq in the combined
-    // run but not in the per-candidate merge, matching the pin's Tkrzw gen.
-    // These cyclic documents keep every token a W1.
+    // Every unigram gets an array header at the 074a221 pin (a W2-only token
+    // a header-only row), so the invariant holds for any documents (see
+    // `merge::tests::merge_equals_single_run…`).
     let doc_a = "10 甲\n20 乙\n30 丙\n10 甲\n";
     let doc_b = "20 乙\n30 丙\n10 甲\n20 乙\n";
 
@@ -123,17 +119,11 @@ fn end_to_end_from_real_segmented_corpus() {
         .expect("generate");
     assert_eq!(candidate.n, 1, "one document");
     // This small real corpus has W2-only tokens (words that never begin a
-    // pair), so — under the pin's Tkrzw backend — their unigram freq is in
-    // magic total_freq but in no array header, and `validate` rejects the
-    // model: `Σ header freq != total_freq`. The pin's own validate rejects
-    // this exact corpus identically (exit 61, "the total freq differs from
-    // sum of freqs" — oracle-verified). At real corpus scale every token is a
-    // W1 and the model validates; the rejection here is pin-faithful, not a
-    // pipeline failure — the chain below still runs and produces output.
-    assert!(
-        validate(&candidate).is_err(),
-        "pin-faithful: a small-corpus model with W2-only tokens fails validate"
-    );
+    // pair). At the 074a221 pin `set_array_header` creates their header-only
+    // rows (upstream `7165d2a`), so Σ header freq == total_freq and the model
+    // validates. (At the previous pin the Tkrzw no-op left their freq out of
+    // every header and validate rejected the model with exit 61 — #357.)
+    validate(&candidate).expect("a small-corpus model with W2-only tokens validates");
 
     // estimate against a held-out slice (the first half of the lines).
     let held_lines: Vec<&str> = segmented
@@ -147,11 +137,10 @@ fn end_to_end_from_real_segmented_corpus() {
     let score = estimate(&candidate, &deleted).expect("estimate").average;
     assert!((0.0..=1.0).contains(&score), "lambda {score} out of range");
 
-    // merge one candidate into a fresh result, export round-trip. (validate
-    // is not asserted here for the same pin-faithful reason as above — the
-    // merged small-corpus model still carries W2-only tokens.)
+    // merge one candidate into a fresh result, validate, export round-trip.
     let mut merged = KMixtureModel::new();
     merge_into(&mut merged, &candidate).expect("merge");
+    validate(&merged).expect("merged validates");
     assert_eq!(import(&export(&merged)).expect("import"), merged);
 
     // prune (CDF 0 keeps everything so the model stays non-empty), then
