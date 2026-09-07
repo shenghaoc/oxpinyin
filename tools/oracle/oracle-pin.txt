@@ -1,4 +1,4 @@
-schema=oracle-provisioning-pin-v2
+schema=oracle-provisioning-pin-v3
 # Composite pin identity for the locally built oracle. Every field mirrors
 # a constant in tools/oracle/build-oracle.sh; tools/bisection runners and
 # developers verify the two sides agree before trusting a prefix. When a
@@ -11,6 +11,10 @@ schema=oracle-provisioning-pin-v2
 # are therefore verified asymmetrically — libpinyin by commit identity,
 # ibus-libpinyin still by its tagged archive's SHA-256 — forced until
 # ibus moves to commit verification too (follow-up: #369).
+# v3 (2026-09-07 UTC): drops ibus_libpinyin_archive_sha256 (#369). Both
+# upstreams are now verified symmetrically by commit SHA (git fetch
+# --depth=1, checked by git rev-parse). The 1.16.5 tag is retained as
+# the release-line name only; the tree built is the commit.
 # libtkrzw is deliberately NOT pinned here: inside the debian:testing
 # container it comes from libtkrzw-dev as part of the rolling build
 # environment (the workflow's provenance record attributes which version
@@ -21,6 +25,7 @@ libpinyin_commit=074a2219c90feaf962d0d24f034514033ece5f99
 # carries 2.11.92 yet, so there is no archive hash to mirror.
 ibus_libpinyin_tag=1.16.5
 ibus_libpinyin_commit=2d2cdac0187101aa0cd7ac06694a8340721ddfbb
-ibus_libpinyin_archive_sha256=ab6d6cc371e4ec0cda1471ef968e9545de69a404958ecfb4e68545ef4b328646
+# ibus-libpinyin: verified by commit SHA (git fetch --depth=1); the
+# lightweight tag 1.16.5 points at this commit upstream.
 model_archive_sha256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
 dbm=Tkrzw
