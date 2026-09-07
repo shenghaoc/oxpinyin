@@ -299,7 +299,7 @@ pub(crate) fn snapshot_candidates(
         };
         let span_begin_session = anchor.saturating_add(cand.span_start());
         let span_begin = if let Some(parse) = zhuyin_parse.as_ref() {
-            oxpinyin_facade::zhuyin_original_offset(parse, span_begin_session)
+            oxpinyin_facade::zhuyin_original_begin(parse, span_begin_session)
         } else {
             span_begin_session
         };

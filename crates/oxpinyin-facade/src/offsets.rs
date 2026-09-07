@@ -44,6 +44,25 @@ pub fn zhuyin_original_offset(parse: &ZhuyinParse, offset: usize) -> usize {
     parse.consumed()
 }
 
+/// Maps a session-coordinate span START back to original zhuyin input
+/// coordinates — [`zhuyin_original_offset`]'s sibling for `m_begin`.
+///
+/// The end mapper answers the END of the key an offset falls in, so
+/// feeding it a key's start (or 0) would answer that key's end, one key
+/// too far. A span start sits on a key boundary of the `'`-joined buffer:
+/// 0 for the first key, otherwise one past the apostrophe that follows
+/// the previous key, so the previous key's original end is exactly this
+/// key's original start (zhuyin keys are contiguous in the original).
+/// Mapping `start - 1` (the apostrophe byte, still inside the previous
+/// key's boundary) through the end mapper answers that; 0 stays 0.
+#[must_use]
+pub fn zhuyin_original_begin(parse: &ZhuyinParse, start: usize) -> usize {
+    match start.checked_sub(1) {
+        None => 0,
+        Some(before) => zhuyin_original_offset(parse, before),
+    }
+}
+
 /// The Luoma/secondary-zhuyin sibling of [`double_original_offset`]: the
 /// transformed string is the `'`-joined canonical spellings, and each key
 /// remembers its original byte span (tone digit included).
