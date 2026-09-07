@@ -11,11 +11,15 @@ set -euo pipefail
 # libpinyin this is forced: no release tag carries this pin (2.11.92 is
 # untagged upstream, so the former tag-tarball form cannot pin it). For
 # ibus-libpinyin a tag exists (1.16.5, a lightweight tag pointing at
-# IBUS_LIBPINYIN_SHA), but an archive SHA-256 is weaker than it looks --
-# GitHub regenerates archive tarballs and has changed its compression
-# before, so an archive hash can drift while a commit SHA cannot -- and
-# verifying the two upstreams the same way keeps the provisioning mirror
-# symmetric (issue #369). LIBPINYIN_VERSION is the version configure.ac
+# IBUS_LIBPINYIN_SHA), but the two forms pin different things: an archive
+# SHA-256 is byte-level identity of one tarball, and GitHub regenerates
+# archive tarballs and has changed its compression before, so a still-valid
+# pin can start failing closed at the checksum with no upstream change; a
+# commit SHA is identity of the git tree itself and is stable across any
+# re-serving of it. Verifying the two upstreams the same way also keeps
+# the provisioning mirror symmetric (issue #369). The model archive stays
+# on its SHA-256: it is a plain file download, not a git tree.
+# LIBPINYIN_VERSION is the version configure.ac
 # reports; it names the installed header dir and the pin ref, and the
 # manifest key keeps its schema name `libpinyin_tag` for compatibility
 # with existing manifests.
