@@ -25,7 +25,9 @@
 #       workload inside the timed region with the corpus frozen
 #   PERF_RAM_RUNS  RAM processes per cell (default 10)
 #   OXPINYIN_KC_SO / OXPINYIN_TKRZW_SO  prebuilt oxpinyin .so paths
-#       (default: cargo build --release from this tree, one per feature)
+#       (default: cargo build --release from this tree, one per feature).
+#       Either way the artifact's backend linkage is verified before any
+#       cell is measured -- see verify_backend.
 set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
@@ -40,28 +42,54 @@ RAM_RUNS="${PERF_RAM_RUNS:-10}"
 TARGET="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
 mkdir -p "$OUT"
 
-# Build the capi .so for exactly one named backend. The backend is never
-# inherited from workspace defaults: the default flipped from kyotocabinet
-# to tkrzw at 05688575, and the KC cell's implicit-default build silently
-# produced a second tkrzw artifact whose processes failed pinyin_init on
-# KC-format data (aborting the whole matrix under `set -e`). The NEEDED
-# check after the build is the guard: it fails the run if the artifact
-# does not actually link the requested backend's system library, before
-# any cell can be measured against the wrong storage format.
+# Assert an artifact links the backend it is labelled with, and only that
+# backend. The backend is never inherited from workspace defaults: the
+# default flipped from kyotocabinet to tkrzw at 05688575, and the KC cell's
+# implicit-default build silently produced a second tkrzw artifact whose
+# processes failed pinyin_init on KC-format data (aborting the whole matrix
+# under `set -e`).
+#
+# This runs on the resolved paths, not inside the build: the OXPINYIN_*_SO
+# variables below skip the build entirely, and that is precisely the mode
+# in which a mislabelled artifact arrives -- it was built somewhere else,
+# by something this script cannot see. When the guard lived inside
+# build_capi, every prebuilt-.so run was unverified.
+#
+# The absence check is the other half. oxpinyin-store has a compile_error!
+# for two backends at once, so no legitimate artifact links both; an
+# artifact that does was not produced by this tree's build and its storage
+# format is unknown.
+verify_backend() {
+    local backend=$1 so=$2 needed want other
+    [ -f "$so" ] || { echo "fatal: $so not found" >&2; exit 1; }
+    case "$backend" in
+        kyotocabinet) want='^libkyotocabinet\.so'; other='^libtkrzw\.so' ;;
+        tkrzw)        want='^libtkrzw\.so';        other='^libkyotocabinet\.so' ;;
+        *) echo "fatal: verify_backend: unknown backend '$backend'" >&2; exit 1 ;;
+    esac
+    needed=$(readelf -d "$so" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p')
+    if ! printf '%s\n' "$needed" | grep -q "$want"; then
+        echo "fatal: $so does not link a $backend library (NEEDED: $(echo $needed))" >&2
+        exit 1
+    fi
+    if printf '%s\n' "$needed" | grep -q "$other"; then
+        echo "fatal: $so links a second backend's library (NEEDED: $(echo $needed))" >&2
+        exit 1
+    fi
+}
+
+# Build the capi .so for exactly one named backend.
 build_capi() {
     local backend=$1 out=$2
     [ -n "$backend" ] || { echo "fatal: build_capi requires an explicit backend" >&2; exit 1; }
+    case "$backend" in
+        kyotocabinet|tkrzw) ;;
+        *) echo "fatal: build_capi: unknown backend '$backend'" >&2; exit 1 ;;
+    esac
     cargo build --locked --release -p oxpinyin-capi --no-default-features --features "$backend" \
         --manifest-path "$REPO_ROOT/Cargo.toml"
     cp "$TARGET/release/libpinyin_capi.so" "$out"
     strip --strip-all "$out"
-    local needed
-    needed=$(readelf -d "$out" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p')
-    case "$backend" in
-        kyotocabinet) echo "$needed" | grep -q '^libkyotocabinet\.so' ;;
-        tkrzw)        echo "$needed" | grep -q '^libtkrzw\.so' ;;
-        *) echo "fatal: build_capi: unknown backend '$backend'" >&2; exit 1 ;;
-    esac || { echo "fatal: $out does not link a $backend library (NEEDED: $(echo $needed))" >&2; exit 1; }
 }
 
 if [ -z "${OXPINYIN_KC_SO:-}" ]; then
@@ -72,6 +100,11 @@ if [ -z "${OXPINYIN_TKRZW_SO:-}" ]; then
     OXPINYIN_TKRZW_SO="$OUT/libpinyin_capi-tkrzw.so"
     echo "--- building oxpinyin capi (tkrzw) ---"; build_capi tkrzw "$OXPINYIN_TKRZW_SO"
 fi
+
+# Unconditional: built here or supplied prebuilt, both are checked.
+echo "--- verifying capi backend linkage ---"
+verify_backend kyotocabinet "$OXPINYIN_KC_SO"
+verify_backend tkrzw "$OXPINYIN_TKRZW_SO"
 
 echo "--- building bisect harness ---"
 gcc -std=gnu11 -Wall -Wextra -O2 -o "$SCRIPT_DIR/bisect" "$SCRIPT_DIR/bisect.c" -ldl
