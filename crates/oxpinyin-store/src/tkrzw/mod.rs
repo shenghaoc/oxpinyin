@@ -120,7 +120,8 @@ use std::ops::Bound;
 use std::path::Path;
 use std::ptr::NonNull;
 
-use crate::{ReadStore, StoreError, Visitor, WriteStore, WriteTxn, validate_table_name};
+use crate::common::{framed, in_bounds, table_prefix, validate_path};
+use crate::{ReadStore, StoreError, Visitor, WriteStore, WriteTxn};
 
 /// `TKRZW_STATUS_SUCCESS` — pinned by number so an upstream renumbering
 /// fails the build instead of silently misclassifying statuses.
@@ -243,42 +244,6 @@ fn c_len(bytes: &[u8]) -> Result<i32, StoreError> {
 
 // ── key framing ───────────────────────────────────────────────────
 
-/// The prefix every record of `table` is stored under.
-///
-/// `validate_table_name` has already rejected the empty name and any
-/// name containing NUL, which is exactly what makes appending a NUL a
-/// prefix-free framing.
-fn table_prefix(table: &str) -> Result<Vec<u8>, StoreError> {
-    validate_table_name(table)?;
-    let mut prefix = Vec::with_capacity(table.len() + 1);
-    prefix.extend_from_slice(table.as_bytes());
-    prefix.push(0);
-    Ok(prefix)
-}
-
-fn framed(prefix: &[u8], key: &[u8]) -> Vec<u8> {
-    let mut framed = Vec::with_capacity(prefix.len() + key.len());
-    framed.extend_from_slice(prefix);
-    framed.extend_from_slice(key);
-    framed
-}
-
-/// Whether `key` falls inside `(lo, hi)` under the same semantics the
-/// other backends' `range` uses.
-fn in_bounds(key: &[u8], lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> bool {
-    let above_lo = match lo {
-        Bound::Unbounded => true,
-        Bound::Included(bound) => key >= bound,
-        Bound::Excluded(bound) => key > bound,
-    };
-    let below_hi = match hi {
-        Bound::Unbounded => true,
-        Bound::Included(bound) => key <= bound,
-        Bound::Excluded(bound) => key < bound,
-    };
-    above_lo && below_hi
-}
-
 /// Row callback for [`scan`]. Returning `false` stops the walk.
 type Row<'a> = dyn FnMut(&[u8], &[u8]) -> Result<bool, StoreError> + 'a;
 
@@ -349,13 +314,6 @@ impl Drop for Iter {
 pub struct TkrzwStore {
     db: Db,
     read_only: bool,
-}
-
-fn validate_path(path: &Path) -> Result<(), StoreError> {
-    if path.as_os_str().as_encoded_bytes().contains(&0) {
-        return Err(StoreError::InvalidInput("path contains NUL"));
-    }
-    Ok(())
 }
 
 fn open_hash(path: &Path) -> Result<TkrzwStore, StoreError> {
