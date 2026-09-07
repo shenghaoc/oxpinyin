@@ -8,8 +8,9 @@
 //! point lookups. CI runs this once per peer build; together the four
 //! runs are the backend matrix's data-level row.
 //!
-//! Requires the model cache; set `OXPINYIN_DATAGEN_STRICT=1` to fail
-//! instead of skip when it is absent (CI does, once per feature build).
+//! Requires the model cache, so the test is `#[ignore]`d: run it with
+//! `--include-ignored` (the backend matrix's local recipe does), and a
+//! missing cache is then a failure, never a skip.
 
 use std::path::PathBuf;
 
@@ -17,10 +18,6 @@ use oxpinyin_core::{Dictionary, SyllableKey};
 use oxpinyin_data::SystemDictionary;
 use oxpinyin_datagen::write::{Backend, DbmFile};
 use oxpinyin_datagen::{punct, system};
-
-fn strict() -> bool {
-    std::env::var_os("OXPINYIN_DATAGEN_STRICT").is_some()
-}
 
 fn model_dir() -> Option<PathBuf> {
     match pinyin_oracle::model_cache::locate_model_dir() {
@@ -72,14 +69,10 @@ fn syllables(text: &str) -> Vec<SyllableKey> {
 }
 
 #[test]
+#[ignore = "needs the model20 cache (tools/model/fetch-model.sh); run with --include-ignored"]
 fn the_compiled_backend_reads_back_through_the_runtime_reader() {
     let Some(model) = model_dir() else {
-        assert!(
-            !strict(),
-            "OXPINYIN_DATAGEN_STRICT=1 but no model20 cache is present"
-        );
-        eprintln!("skipping: model20 cache absent (run tools/model/fetch-model.sh)");
-        return;
+        panic!("missing input: model20 cache absent (run tools/model/fetch-model.sh)")
     };
     let backend = compiled_backend();
     eprintln!("compiled peer: {backend:?}");

@@ -165,6 +165,18 @@ files never change. The sidecars are gitignored
 shows up in `git status`, the ignore pattern regressed — fix the pattern,
 do not commit the file.
 
+## Tests that need inputs CI never has
+
+A test that needs the model20 cache, the system-table export, a
+pin-built libpinyin tool or data dir, or opencc is `#[ignore = "needs
+…; run with --include-ignored"]`, and once run it panics on a missing
+input instead of printing "skipping" and passing (2026-09-06; ~30 tests
+used to do the latter, so a green run proved nothing). A committed
+golden or fixture that is missing is a failure too. `cargo test` shows
+them as ignored; `tools/oracle/run-differentials.sh` and the datagen
+drop-in differential pass `--include-ignored`. Do not add a new
+self-skipping test.
+
 ## Oracle C-API gotchas
 
 `pinyin_train(instance, index)` trains the n-best result `index` and

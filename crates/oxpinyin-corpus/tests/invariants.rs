@@ -133,10 +133,10 @@ fn locate_opencc() -> Option<PathBuf> {
 /// pipeline design shells out; this test pins the seam, not the `OpenCC`
 /// dictionaries.
 #[test]
+#[ignore = "needs an opencc binary (PINYIN_OPENCC or PATH); run with --include-ignored"]
 fn converter_turns_traditional_into_simplified_when_opencc_present() {
     let Some(opencc) = locate_opencc() else {
-        eprintln!("skipping: opencc binary not found (PINYIN_OPENCC / PATH)");
-        return;
+        panic!("missing input: opencc binary not found (PINYIN_OPENCC / PATH)")
     };
     let converter = oxpinyin_corpus::Converter::new(opencc);
     let out = converter

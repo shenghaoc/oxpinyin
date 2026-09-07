@@ -78,14 +78,14 @@ fn run_rust_chain(sample: &[u8]) -> Option<RustChain> {
 /// without the system-table export / model20 cache; CI-unconditional
 /// otherwise.
 #[test]
+#[ignore = "needs the system-table export and the model20 cache (PINYIN_EXPORT_DIR, PINYIN_MODEL_DIR); run with --include-ignored"]
 fn rust_chain_consumes_t4b_sample_with_zero_glue() {
     let sample = std::fs::read(sample_path()).expect("committed sample");
     let Some(chain) = run_rust_chain(&sample) else {
-        eprintln!(
-            "skipping: system-table export or model20 cache not found \
+        panic!(
+            "missing input: system-table export or model20 cache not found \
              (PINYIN_EXPORT_DIR / PINYIN_MODEL_DIR)"
-        );
-        return;
+        )
     };
     let parsed = parse_interpolation_dump(&chain.interpolation);
     assert!(
@@ -248,6 +248,7 @@ fn assert_chains_agree(
 /// Env-gated on the pin tools; reports env-blocked rather than
 /// fabricating a result.
 #[test]
+#[ignore = "needs the pin-built trainer binaries and their data (PINYIN_NGSEG, PINYIN_GEN_*, PINYIN_*_DATA); run with --include-ignored"]
 fn end_to_end_matches_live_libpinyin_pipeline() {
     let (
         Some(ngseg),
@@ -267,27 +268,25 @@ fn end_to_end_matches_live_libpinyin_pipeline() {
         locate_bin("PINYIN_EXPORT_INTERPOLATION"),
     )
     else {
-        eprintln!(
-            "skipping live end-to-end: set PINYIN_NGSEG, PINYIN_GEN_BINARY_FILES, \
+        panic!(
+            "missing input for the live end-to-end: set PINYIN_NGSEG, PINYIN_GEN_BINARY_FILES, \
              PINYIN_GEN_UNIGRAM, PINYIN_GEN_NGRAM, PINYIN_GEN_DELETED_NGRAM, \
              PINYIN_ESTIMATE_INTERPOLATION, and PINYIN_EXPORT_INTERPOLATION"
-        );
-        return;
+        )
     };
     let Some(ngseg_data) = locate_data("PINYIN_NGSEG_DATA") else {
-        eprintln!(
-            "skipping live end-to-end: PINYIN_NGSEG_DATA not set (needs table.conf + bigram.db)"
-        );
-        return;
+        panic!(
+            "missing input for the live end-to-end: PINYIN_NGSEG_DATA not set (needs table.conf + bigram.db)"
+        )
     };
     let Some(training_data) = locate_data("PINYIN_GEN_NGRAM_DATA") else {
-        eprintln!("skipping live end-to-end: PINYIN_GEN_NGRAM_DATA not set or empty");
-        return;
+        panic!("missing input for the live end-to-end: PINYIN_GEN_NGRAM_DATA not set or empty")
     };
     let sample = std::fs::read(sample_path()).expect("committed sample");
     let Some(chain) = run_rust_chain(&sample) else {
-        eprintln!("skipping live end-to-end: system-table export / model20 cache not found");
-        return;
+        panic!(
+            "missing input for the live end-to-end: system-table export / model20 cache not found"
+        )
     };
 
     let pin_ngseg = pin_ngseg_output(&ngseg, &ngseg_data, &sample);

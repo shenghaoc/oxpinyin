@@ -191,18 +191,18 @@ run_suite() {
 }
 
 run_suite "KMM differentials (gen+export, to-interpolation, merge, prune, validate)" \
-	cargo test -p oxpinyin-kmm --test differential -- --nocapture
+	cargo test -p oxpinyin-kmm --test differential -- --include-ignored --nocapture
 run_suite "segment: spseg / mergeseq" \
-	cargo test -p oxpinyin-segment "${feat[@]}" --test spseg_mergeseq -- --nocapture
+	cargo test -p oxpinyin-segment "${feat[@]}" --test spseg_mergeseq -- --include-ignored --nocapture
 run_suite "segment: ngseg (needs the system bigram)" \
-	cargo test -p oxpinyin-segment "${feat[@]}" --test differential -- --nocapture
+	cargo test -p oxpinyin-segment "${feat[@]}" --test differential -- --include-ignored --nocapture
 run_suite "lambda: estimate_interpolation" \
-	cargo test -p oxpinyin-lambda "${feat[@]}" --test differential -- --nocapture
+	cargo test -p oxpinyin-lambda "${feat[@]}" --test differential -- --include-ignored --nocapture
 run_suite "counter: gen_ngram" \
-	cargo test -p oxpinyin-counter "${feat[@]}" --test differential -- --nocapture
+	cargo test -p oxpinyin-counter "${feat[@]}" --test differential -- --include-ignored --nocapture
 if [[ -n $eval_gate ]]; then
 	run_suite "eval: eval_correction_rate" \
-		cargo test -p oxpinyin-eval "${feat[@]}" --test differential -- --nocapture
+		cargo test -p oxpinyin-eval "${feat[@]}" --test differential -- --include-ignored --nocapture
 else
 	echo "== eval: eval_correction_rate =="
 	echo "skipping: needs $data/bigram.db (import_interpolation) and $data/evals2.text"

@@ -30,10 +30,10 @@ fn syllables(text: &str) -> Vec<SyllableKey> {
 }
 
 #[test]
+#[ignore = "needs a pin-built libpinyin data dir (OXPINYIN_LIBPINYIN_DATA_DIR); run with --include-ignored"]
 fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     let Some(dir) = data_dir() else {
-        eprintln!("OXPINYIN_LIBPINYIN_DATA_DIR unset — skipping");
-        return;
+        panic!("OXPINYIN_LIBPINYIN_DATA_DIR unset")
     };
     // The directory is libpinyin's own: its table.conf names the DBM the
     // install was built with, and every file keeps libpinyin's name.

@@ -354,17 +354,17 @@ fn strip_text(export_text: &str) -> String {
 }
 
 #[test]
+#[ignore = "needs the pin-built KMM tools and data (PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, ...); run with --include-ignored"]
 fn rust_kmm_matches_pin_gen_and_export() {
     let (Some(gen_bin), Some(export_bin), Some(data)) = (
         locate_bin("PINYIN_GEN_KMM"),
         locate_bin("PINYIN_EXPORT_KMM"),
         locate_data(),
     ) else {
-        eprintln!(
-            "skipping live KMM gen/export differential: set PINYIN_GEN_KMM, \
+        panic!(
+            "missing input for the live KMM gen/export differential: set PINYIN_GEN_KMM, \
              PINYIN_EXPORT_KMM, PINYIN_GEN_NGRAM_DATA"
-        );
-        return;
+        )
     };
 
     let segmented = std::fs::read_to_string(real_segmented_fixture()).expect("fixture");
@@ -404,16 +404,16 @@ fn rust_kmm_matches_pin_gen_and_export() {
 }
 
 #[test]
+#[ignore = "needs the pin-built KMM tools and data (PINYIN_KMM_TO_INTERP, ...); run with --include-ignored"]
 fn rust_kmm_matches_pin_to_interpolation() {
     let (Some(to_interp), Some(data)) = (
         locate_bin("PINYIN_KMM_TO_INTERP"),
         Some(()).and(locate_data()),
     ) else {
-        eprintln!(
-            "skipping live to-interpolation differential: set PINYIN_KMM_TO_INTERP, \
+        panic!(
+            "missing input for the live to-interpolation differential: set PINYIN_KMM_TO_INTERP, \
              PINYIN_GEN_NGRAM_DATA"
-        );
-        return;
+        )
     };
 
     // The pin `k_mixture_model_to_interpolation` reads KMM text on stdin. Feed
@@ -468,6 +468,7 @@ fn corpus_halves() -> (String, String) {
 }
 
 #[test]
+#[ignore = "needs the pin-built KMM tools and data (PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, PINYIN_MERGE_KMM, ...); run with --include-ignored"]
 fn rust_kmm_matches_pin_merge() {
     let (Some(gen_bin), Some(export_bin), Some(merge_bin), Some(data)) = (
         locate_bin("PINYIN_GEN_KMM"),
@@ -475,11 +476,10 @@ fn rust_kmm_matches_pin_merge() {
         locate_bin("PINYIN_MERGE_KMM"),
         locate_data(),
     ) else {
-        eprintln!(
-            "skipping live merge differential: set PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, \
+        panic!(
+            "missing input for the live merge differential: set PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, \
              PINYIN_MERGE_KMM, PINYIN_GEN_NGRAM_DATA"
-        );
-        return;
+        )
     };
     let (corpus_a, corpus_b) = corpus_halves();
     let pin = PinDir::fresh(&data, "merge").expect("temp data dir");
@@ -543,6 +543,7 @@ fn rust_kmm_matches_pin_merge() {
 }
 
 #[test]
+#[ignore = "needs the pin-built KMM tools and data (PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, PINYIN_PRUNE_KMM, ...); run with --include-ignored"]
 fn rust_kmm_matches_pin_prune() {
     let (Some(gen_bin), Some(export_bin), Some(prune_bin), Some(data)) = (
         locate_bin("PINYIN_GEN_KMM"),
@@ -550,11 +551,10 @@ fn rust_kmm_matches_pin_prune() {
         locate_bin("PINYIN_PRUNE_KMM"),
         locate_data(),
     ) else {
-        eprintln!(
-            "skipping live prune differential: set PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, \
+        panic!(
+            "missing input for the live prune differential: set PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, \
              PINYIN_PRUNE_KMM, PINYIN_GEN_NGRAM_DATA"
-        );
-        return;
+        )
     };
     // A *complete* corpus (every token appears as a W1) — required because the
     // pin's prune post-processing asserts every pruned pair's W2 has an array
@@ -617,6 +617,7 @@ fn rust_kmm_matches_pin_prune() {
 }
 
 #[test]
+#[ignore = "needs the pin-built KMM tools and data (PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, PINYIN_VALIDATE_KMM, ...); run with --include-ignored"]
 fn rust_kmm_matches_pin_validate() {
     let (Some(gen_bin), Some(export_bin), Some(validate_bin), Some(data)) = (
         locate_bin("PINYIN_GEN_KMM"),
@@ -624,11 +625,10 @@ fn rust_kmm_matches_pin_validate() {
         locate_bin("PINYIN_VALIDATE_KMM"),
         locate_data(),
     ) else {
-        eprintln!(
-            "skipping live validate differential: set PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, \
+        panic!(
+            "missing input for the live validate differential: set PINYIN_GEN_KMM, PINYIN_EXPORT_KMM, \
              PINYIN_VALIDATE_KMM, PINYIN_GEN_NGRAM_DATA"
-        );
-        return;
+        )
     };
     let segmented = std::fs::read_to_string(real_segmented_fixture()).expect("fixture");
     let pin = PinDir::fresh(&data, "validate").expect("temp data dir");

@@ -337,21 +337,18 @@ fn fix_checksum(bytes: &mut [u8]) {
 // ── the real thing ──────────────────────────────────────────────────
 
 /// The pinned build's per-library files, when the environment points at
-/// them (`OXPINYIN_LIBPINYIN_DATA`; `OXPINYIN_DATAGEN_STRICT=1` makes
-/// absence a failure). Never a CI dependency: the model data is not
+/// them (`OXPINYIN_LIBPINYIN_DATA`). `#[ignore]`d: run it with
+/// `--include-ignored`, and absence is then a failure. Never a CI dependency: the model data is not
 /// redistributable, and the synthetic suite above carries the format
 /// contract.
 #[test]
+#[ignore = "needs a real libpinyin install (OXPINYIN_LIBPINYIN_DATA); run with --include-ignored"]
 fn reads_a_real_libpinyin_installation() {
     let Some(dir) = std::env::var_os("OXPINYIN_LIBPINYIN_DATA")
         .map(PathBuf::from)
         .filter(|dir| dir.join("gb_char.bin").is_file())
     else {
-        if std::env::var_os("OXPINYIN_DATAGEN_STRICT").is_some() {
-            panic!("OXPINYIN_DATAGEN_STRICT=1 but no libpinyin data at OXPINYIN_LIBPINYIN_DATA");
-        }
-        eprintln!("skipping: no real libpinyin data (set OXPINYIN_LIBPINYIN_DATA)");
-        return;
+        panic!("missing input: no real libpinyin data (set OXPINYIN_LIBPINYIN_DATA)")
     };
 
     let system = ["gb_char", "gbk_char", "opengram", "merged"];

@@ -6,17 +6,14 @@
 //! the record level for the DBMs (container bytes depend on the writing
 //! library's version) and byte-exact for the chunk files.
 //!
-//! Requires the model cache (`tools/model/fetch-model.sh`); set
-//! `OXPINYIN_DATAGEN_STRICT=1` to fail instead of skip when it is absent.
+//! Requires the model cache (`tools/model/fetch-model.sh`), so the test is
+//! `#[ignore]`d: run it with `--include-ignored`, and a missing cache is
+//! then a failure, never a skip.
 
 use std::path::PathBuf;
 
 use oxpinyin_datagen::write::{Backend, DbmFile};
 use oxpinyin_datagen::{addon, punct, system};
-
-fn strict() -> bool {
-    std::env::var_os("OXPINYIN_DATAGEN_STRICT").is_some()
-}
 
 fn model_dir() -> Option<PathBuf> {
     match pinyin_oracle::model_cache::locate_model_dir() {
@@ -70,14 +67,10 @@ fn assert_same_rows(
 }
 
 #[test]
+#[ignore = "needs the model20 cache (tools/model/fetch-model.sh); run with --include-ignored"]
 fn mini_compile_reproduces_the_committed_fixture_directory() {
     let Some(model) = model_dir() else {
-        assert!(
-            !strict(),
-            "OXPINYIN_DATAGEN_STRICT=1 but no model20 cache is present"
-        );
-        eprintln!("skipping: model20 cache absent (run tools/model/fetch-model.sh)");
-        return;
+        panic!("missing input: model20 cache absent (run tools/model/fetch-model.sh)")
     };
     let backend = compiled_backend();
     let fixtures = fixtures_w3(backend);

@@ -74,7 +74,7 @@ ls "$ours"
 # The differential proper.
 OXPINYIN_LIBPINYIN_DATA_DIR=$theirs PINYIN_MODEL_DIR=$model \
   cargo test --locked -p oxpinyin-datagen "${features[@]}" \
-  --test libpinyin_parity -- --nocapture
+  --test libpinyin_parity -- --include-ignored --nocapture
 
 # And the chunk files the CLI wrote, against libpinyin's, byte for byte
 # (the test above compares the in-memory compile; this is the on-disk

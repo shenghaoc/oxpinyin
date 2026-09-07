@@ -81,12 +81,12 @@ fn assert_counts_equal(rust: &Counts, live: &Counts) {
 }
 
 #[test]
+#[ignore = "needs the system-table export (PINYIN_EXPORT_DIR); run with --include-ignored"]
 fn fixture_emit_roundtrips_through_parse_interpolation2() {
     let Some((counts, _lexicon, emitted)) = rust_counts_and_text() else {
-        eprintln!(
-            "skipping: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"
-        );
-        return;
+        panic!(
+            "missing input: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"
+        )
     };
 
     // Nothing dropped: every T2 count has resolvable phrase text, so the
@@ -111,17 +111,10 @@ fn fixture_emit_roundtrips_through_parse_interpolation2() {
 
     let manifest_path = manifest_path();
     if !manifest_path.is_file() {
-        eprintln!(
-            "skipping golden compare: {} is not committed yet",
+        panic!(
+            "committed golden missing: {} is not committed yet",
             manifest_path.display()
-        );
-        eprintln!(
-            "--- rust emit --- unigrams {} bigrams {} fnv1a64 {:016x}",
-            counts.unigrams.len(),
-            counts.bigrams.len(),
-            fnv1a64(emitted.as_bytes())
-        );
-        return;
+        )
     }
     let manifest = parse_manifest(&std::fs::read_to_string(&manifest_path).expect("manifest"));
     assert_eq!(counts.unigrams.len(), manifest.unigrams, "unigram count");
@@ -172,6 +165,7 @@ fn run_live_export(
 }
 
 #[test]
+#[ignore = "needs the pin-built export_interpolation tool chain and PINYIN_GEN_NGRAM_DATA; run with --include-ignored"]
 fn rust_matches_live_export_interpolation() {
     let (Some(gen_binary_files), Some(gen_unigram), Some(gen_ngram), Some(export_interpolation)) = (
         locate_bin("PINYIN_GEN_BINARY_FILES"),
@@ -179,21 +173,20 @@ fn rust_matches_live_export_interpolation() {
         locate_bin("PINYIN_GEN_NGRAM"),
         locate_bin("PINYIN_EXPORT_INTERPOLATION"),
     ) else {
-        eprintln!(
-            "skipping live export_interpolation: set PINYIN_GEN_BINARY_FILES, \
+        panic!(
+            "missing input for the live export_interpolation: set PINYIN_GEN_BINARY_FILES, \
              PINYIN_GEN_UNIGRAM, PINYIN_GEN_NGRAM, and PINYIN_EXPORT_INTERPOLATION"
-        );
-        return;
+        )
     };
     let Some(data) = locate_data("PINYIN_GEN_NGRAM_DATA") else {
-        eprintln!("skipping live export_interpolation: PINYIN_GEN_NGRAM_DATA not set or empty");
-        return;
+        panic!(
+            "missing input for the live export_interpolation: PINYIN_GEN_NGRAM_DATA not set or empty"
+        )
     };
     let Some((rust, _, emitted)) = rust_counts_and_text() else {
-        eprintln!(
-            "skipping live export_interpolation: system tables not found (oxpinyin-datagen compile)"
-        );
-        return;
+        panic!(
+            "missing input for the live export_interpolation: system tables not found (oxpinyin-datagen compile)"
+        )
     };
     let fixture = std::fs::read(fixture_ngseg()).expect("fixture");
 

@@ -125,8 +125,8 @@ re-derives them:
 
 - **Regeneration (local)**: `oxpinyin-datagen compile --mini` re-derives
   the `fixtures/w3/` subset from the canonical model20 archive
-  row-for-row through the store API, and the strict local tier
-  (`OXPINYIN_DATAGEN_STRICT=1`, recipe in
+  row-for-row through the store API, and the local tier (the
+  `#[ignore]`d model-cache tests under `--include-ignored`, recipe in
   `docs/findings/datagen-model20.md`) additionally checks the full
   compilation against the frozen oracle-derived reference
   (`export_reference`) and across all three backends

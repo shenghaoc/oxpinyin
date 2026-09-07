@@ -75,6 +75,7 @@ fn pin_correction_rate(binary: &PathBuf, data_dir: &PathBuf) -> Result<String, S
 }
 
 #[test]
+#[ignore = "needs the pin-built eval_correction_rate and its data (PINYIN_EVAL_CORRECTION_RATE, ...); run with --include-ignored"]
 fn native_correction_rate_matches_pin_eval_correction_rate() {
     let (
         Some(binary),
@@ -92,12 +93,11 @@ fn native_correction_rate_matches_pin_eval_correction_rate() {
         env_path("PINYIN_EVAL_PHRASE_INDEX"),
     )
     else {
-        eprintln!(
-            "skipping live eval_correction_rate differential: set PINYIN_EVAL_CORRECTION_RATE, \
+        panic!(
+            "missing input for the live eval_correction_rate differential: set PINYIN_EVAL_CORRECTION_RATE, \
              PINYIN_EVAL_DATA (with evals2.text), PINYIN_EVAL_INTERPOLATION2, \
              PINYIN_EVAL_TABLE_CONF, PINYIN_EVAL_PINYIN_INDEX, PINYIN_EVAL_PHRASE_INDEX"
-        );
-        return;
+        )
     };
 
     // Pin side: run the oracle, capture its correction rate at %f width.

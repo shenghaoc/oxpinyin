@@ -126,13 +126,13 @@ fn committed_golden_is_well_formed() {
 }
 
 #[test]
+#[ignore = "needs the system-table export and the model20 cache (PINYIN_EXPORT_DIR, PINYIN_MODEL_DIR); run with --include-ignored"]
 fn rust_matches_committed_ngseg_golden() {
     let Some(segmenter) = open_segmenter() else {
-        eprintln!(
-            "skipping: system-table export or model20 cache not found \
+        panic!(
+            "missing input: system-table export or model20 cache not found \
              (PINYIN_EXPORT_DIR / PINYIN_MODEL_DIR)"
-        );
-        return;
+        )
     };
     let input = std::fs::read(fixture_input()).expect("fixture input");
     let rust = segmenter
@@ -140,13 +140,10 @@ fn rust_matches_committed_ngseg_golden() {
         .expect("segmenter cannot fail on the fixture");
     let golden_path = fixture_golden();
     if !golden_path.is_file() {
-        eprintln!(
-            "skipping golden compare: {} is not committed yet",
+        panic!(
+            "committed golden missing: {} is not committed yet",
             golden_path.display()
-        );
-        eprintln!("--- rust output ({} bytes) ---", rust.len());
-        eprint!("{rust}");
-        return;
+        )
     }
     let golden = std::fs::read_to_string(&golden_path).expect("golden");
     if let Some(diff) = first_divergence(&rust, &golden) {
@@ -163,19 +160,19 @@ fn rust_matches_committed_ngseg_golden() {
 }
 
 #[test]
+#[ignore = "needs the pin-built ngseg (PINYIN_NGSEG, PINYIN_NGSEG_DATA); run with --include-ignored"]
 fn committed_golden_matches_live_ngseg() {
     let Some(ngseg) = locate_bin("PINYIN_NGSEG") else {
-        eprintln!("skipping live ngseg: PINYIN_NGSEG not set and pin-build ngseg not found");
-        return;
+        panic!(
+            "missing input for the live ngseg: PINYIN_NGSEG not set and pin-build ngseg not found"
+        )
     };
     let Some(data) = locate_ngseg_data() else {
-        eprintln!("skipping live ngseg: PINYIN_NGSEG_DATA / oracle prefix data not found");
-        return;
+        panic!("missing input for the live ngseg: PINYIN_NGSEG_DATA / oracle prefix data not found")
     };
     let golden_path = fixture_golden();
     if !golden_path.is_file() {
-        eprintln!("skipping live ngseg: golden not committed");
-        return;
+        panic!("missing input for the live ngseg: golden not committed")
     }
     let live = run_ngseg(&ngseg, &data, &fixture_input()).expect("ngseg runs");
     let golden = std::fs::read_to_string(&golden_path).expect("golden");
@@ -185,18 +182,16 @@ fn committed_golden_matches_live_ngseg() {
 }
 
 #[test]
+#[ignore = "needs the export, the model20 cache and the pin-built ngseg; run with --include-ignored"]
 fn rust_matches_live_ngseg_when_both_exist() {
     let Some(segmenter) = open_segmenter() else {
-        eprintln!("skipping live rust-vs-ngseg: tables not found");
-        return;
+        panic!("missing input for the live rust-vs-ngseg: tables not found")
     };
     let Some(ngseg) = locate_bin("PINYIN_NGSEG") else {
-        eprintln!("skipping live rust-vs-ngseg: ngseg not found");
-        return;
+        panic!("missing input for the live rust-vs-ngseg: ngseg not found")
     };
     let Some(data) = locate_ngseg_data() else {
-        eprintln!("skipping live rust-vs-ngseg: ngseg data not found");
-        return;
+        panic!("missing input for the live rust-vs-ngseg: ngseg data not found")
     };
     let input_path = fixture_input();
     let input = std::fs::read(&input_path).expect("fixture input");
