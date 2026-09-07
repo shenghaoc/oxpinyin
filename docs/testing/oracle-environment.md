@@ -36,9 +36,12 @@ consumed by libpinyin's own data-generation targets.
 Canonical recipe: `tools/oracle/build-oracle.sh`. Its header comment lists
 the build dependencies a host needs.
 
-The script verifies every SHA-256 before extraction, builds both components
-from their pinned source archives with autotools, and prints the absolute
-path to the resulting `libpinyin` shared object. The libpinyin DBM backend is
+The script fetches each upstream source tree by pinned commit SHA
+(`git fetch --depth=1`, verified by `git rev-parse HEAD` equality — see
+the amendments below; the freeze originally used tag tarballs), verifies
+the model archive's SHA-256 before extraction, builds both components
+with autotools, and prints the absolute path to the resulting `libpinyin`
+shared object. The libpinyin DBM backend is
 pinned to Tkrzw; the deprecated Berkeley DB backend is not used. Its default
 installation prefix is `WORK_DIR/prefix`, resolved after option parsing. The prefix must be
 absent or empty so stale output cannot enter the oracle. The script resets
@@ -143,6 +146,11 @@ verification form moves, to match libpinyin's:
   carried an archive hash for either upstream, so the pin ref, every
   `oracle-pin.txt` a built prefix writes, and every fixture stamp are
   byte-identical before and after this change.
-- **Rationale:** GitHub regenerates archive tarballs and has changed
-  their compression before, so an archive hash can drift while a commit
-  SHA cannot; a tag can also be moved, which a commit SHA pin ignores.
+- **Rationale:** the two forms pin different things. An archive SHA-256
+  is byte-level identity of one tarball; GitHub regenerates archive
+  tarballs and has changed their compression before, so a still-valid
+  pin can start failing closed at the checksum with no upstream change.
+  A commit SHA is identity of the git tree itself, stable across any
+  re-serving of it, and unaffected by a moved tag. The model archive
+  stays on its SHA-256 because it is a plain file download, not a git
+  tree.
