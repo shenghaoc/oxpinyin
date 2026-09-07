@@ -188,6 +188,16 @@ jobs:
       - run: cargo test --locked --workspace
       - name: C++ pinyin.h smoke gate
         run: tools/bisection/run-cpp-smoke.sh
+      # The exported-symbol gate: each cdylib exports exactly its pin
+      # version script's set (libpinyin.ver 79, libzhuyin.ver 52) and
+      # leaks nothing else — in the development build (fixture hooks
+      # allowed) and in the packaged one (--features shipped, hooks
+      # compiled out). Cheap: only the two capi crates rebuild for the
+      # second mode.
+      - name: ABI export gate (development build)
+        run: tools/abi/check-exports.sh
+      - name: ABI export gate (shipped build)
+        run: tools/abi/check-exports.sh --shipped
       # The post-choose live-typing/train differential (sentence-surface's
       # §3 machinery). Self-skips unless the pin-built oracle
       # (PINYIN_ORACLE_PREFIX) and a real-unigram system dir

@@ -200,7 +200,6 @@ pub fn pinyin_set_double_pinyin_scheme(context: *mut PinyinContext, scheme: c_in
     config::pinyin_set_double_pinyin_scheme(context, scheme)
 }
 /// In-process wrapper for the `pinyin_set_full_pinyin_scheme` ABI symbol (see the C header).
-#[cfg(not(feature = "shipped"))]
 pub fn pinyin_set_full_pinyin_scheme(context: *mut PinyinContext, scheme: c_int) -> bool {
     config::pinyin_set_full_pinyin_scheme(context, scheme)
 }

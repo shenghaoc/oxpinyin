@@ -54,11 +54,15 @@ redb = [
     "oxpinyin-user/redb",
     "oxpinyin-facade/redb",
 ]
-# Compiles out the three exports outside the consumer union: two fixture
-# hooks and pinyin_set_full_pinyin_scheme, all `dlsym`ed by tools/bisection
-# drivers and called by neither reference consumer. Enabled only when building
+# Compiles out the two fixture hooks (`oxpinyin_init_for_fixtures`,
+# `oxpinyin_test_set_user_bigram`) that are not in pinyin.h and exist for
+# the ABI tests and the tools/bisection drivers. Enabled only when building
 # the shipped drop-in artifact (`cargo capi install --features shipped`), so
-# every in-tree run-*.sh keeps working untouched.
+# every in-tree run-*.sh keeps working untouched. Nothing in libpinyin.ver
+# is gated: `pinyin_set_full_pinyin_scheme` was, under the retired
+# consumer-union scope, until tools/abi/check-exports.sh caught the
+# shipped artifact one symbol short (2026-09-08). The gate runs in CI in
+# both modes.
 #
 # Deliberately a subtractive feature, which cargo features usually should not
 # be. The additive spelling (a default-on `harness` feature switched off with
