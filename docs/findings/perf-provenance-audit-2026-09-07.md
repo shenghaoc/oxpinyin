@@ -139,6 +139,29 @@ doing anything else.
 
 ## Provenance map
 
+### Method for the commit, configuration and harness columns
+
+These three columns were first filled by first-match pattern extraction, which
+under-reported all three; they have since been rebuilt by **reading each
+document**. What that method establishes and what it does not:
+
+- It establishes **what a document states**, which is not the same as what
+  ran. Where configuration is given as a value it is reproduced here.
+- It does **not** resolve delegation by reading the citing document alone.
+  Roughly half this corpus does not state configuration — it *points* at it,
+  in three distinguishable kinds tabulated under Delegation below. A cell
+  reading `→ D<n>` is a pointer, not a value, and is deliberately not
+  flattened into one: the pointing is a structural property of the corpus,
+  and collapsing it would hide it inside the artifact meant to surface it.
+- A delegation to a **script** is only resolvable by reading that script *at
+  the record's date*. No document in this corpus pins the revision of the
+  script it delegates to.
+- A delegation to an **unstated prior run** is not resolvable from the
+  document at all, and is marked as such rather than filled in.
+
+Multi-host records are shown as multi-host. Two exist, and both were
+previously mapped to one host.
+
 `side` is relative to the `a41605ea` window. `captures` reports what the two
 searches described above found: **yes** / **partial** where a tree was located
 and attributed, **none found** otherwise. "None found" is not "none exists" —
@@ -148,26 +171,64 @@ see the count, which the surface supports only as a lower bound.
 |---|---|---|---|---|---|---|
 | `findings/perf-backend-matrix-2026-09.md` | 2026-09-05 | `b5fdfad8` (2026-09-05T12:23:49Z) | **INSIDE** | x86_64, i7-9750H | `bisect --perf` | **yes** (x86_64) |
 | `perf/perf-baseline-kc-2026-09.md` | 2026-09-04, amended 2026-09-05 | `94b38948` (2026-09-04T00:45:03Z), amendment spans the window | **SPANS** | ARM64, Apple silicon | `bisect --perf` | **yes** (arm64) |
-| `perf/perf-so-size-2026-09.md` | 2026-09-04 | facade tip `b40e3542` (2026-09-04T18:19:07Z) plus a deliberate `a41605ea` arm | **STRADDLES** | x86_64 | criterion | none found |
+| `perf/perf-so-size-2026-09.md` | 2026-09-04 | `bf83ffb9` (x86_64 arms); facade tip `b40e3542`; deliberate `a41605ea` arm | **STRADDLES** | **two hosts** — x86_64/redb (Linux EL10) and ARM64/KC re-measurement | criterion | none found |
 | `findings/perf-store-opt-2026-09.md` | 2026-09-06 | `ab56dc79` (2026-09-05T15:41:34Z) | after | x86_64 | criterion | none found |
-| `findings/perf-backend-matrix-bdb-store-2026-09.md` | 2026-09-06 | not stated | after | storage backends | `bisect --perf` | none found |
+| `findings/perf-backend-matrix-bdb-store-2026-09.md` | 2026-09-06 | not stated | after | → D6 | `bisect --perf` | none found |
 | `findings/perf-keycost-first-alloc-2026-09-07.md` | 2026-09-07 | parent `87f25055` → `6886dc1f` | after | arm64, Apple silicon | `run-perf-same-data.sh` + `bisect --perf` | **yes** (arm64) |
 | `findings/runtime-direct-libpinyin-data-2026-09-02.md` | 2026-09-02 | not stated | before | not stated | not stated | none found |
 | `findings/perf-p2-chewing-table-2026-09-01.md` | 2026-09-01 | not stated | before | mini fixtures; KC/Tkrzw measured off-CI | not stated | none found |
 | `findings/perf-backend-matrix-2026-08-31.md` | 2026-08-31 | not stated | before | Apple silicon | `bisect --perf` | none found |
-| `findings/perf-baseline-kc-2026-08-31.md` | 2026-08-31 | not stated | before | Apple silicon | `bisect --perf` | **partial** — x86_64 passage only |
-| `findings/perf-baseline-kc-validation-2026-08-31.md` | 2026-08-31 | not stated | before | Apple silicon, arm64 | `run-perf-baseline.sh` | none found |
-| `findings/perf-mmap-system-indexes-2026-08-31.md` | 2026-08-31 | not stated | before | not stated (status: REJECTED) | not stated | none found |
-| `perf/perf-python-shared-engine-2026-08.md` | 2026-08-27 | not stated | before | not stated | not stated | none found |
-| `perf/perf-init-text-slurp-2026-08.md` | 2026-08-21 | not stated | before | not stated | `run-perf-baseline.sh` | **partial** — 4 of 5 arms (x86_64) |
-| `perf/perf-init-typed-map-2026-08.md` | 2026-08-21 | not stated | before | not stated | `run-perf-baseline.sh` | **yes** (x86_64) |
-| `perf/perf-fill-lookup-2026-08.md` | 2026-08-20 | not stated | before | not stated | not stated | none found |
-| `findings/data-load-audit-2026-08.md` | 2026-08-19 | not stated | before | i7-9750H | `run-perf-baseline.sh` | none found |
-| `perf/perf-alloc-2026-08.md` | 2026-08-19 | not stated | before | not stated | not stated | none found |
-| `perf/perf-stage2-harness-2026-08.md` | 2026-08-19 | not stated | before | not stated | not stated | none found |
-| `perf/perf-baseline-2026-08.md` | 2026-08-16 | not stated | before | not stated | not stated | none found |
-| `perf/perf-candidate-cap-2026-08.md` | 2026-08-16 (see below) | `f8e2c11d` | before | not stated | criterion (`scan_perf`) | none found |
-| `perf/perf-exploration.md` | 2026-08-14 | not stated | before | not stated | not stated | none found |
+| `findings/perf-baseline-kc-2026-08-31.md` | 2026-08-31 | not stated | before | **two hosts** — Docker Desktop on Apple silicon (body); podman 5.8.2 on RHEL 10.2, x86_64, 12 vCPU (2026-09-03 amendment) | `bisect --perf` | **partial** — x86_64 passage only |
+| `findings/perf-baseline-kc-validation-2026-08-31.md` | 2026-08-31 | `15e1b47` | before | Apple silicon, arm64 | `run-perf-baseline.sh` | none found |
+| `findings/perf-mmap-system-indexes-2026-08-31.md` | 2026-08-31 | not stated | before | → D5 | not stated (status: REJECTED) | none found |
+| `perf/perf-python-shared-engine-2026-08.md` | 2026-08-27 | `f2eedd7` (branch `feat/python-api`) | before | not stated | not stated | none found |
+| `perf/perf-init-text-slurp-2026-08.md` | 2026-08-21 | before `6b476b1` | before | → D3 | `run-w8-cycle.sh` **and** `run-perf-baseline.sh` (`PERF_RUNS=20 PERF_CYCLES=8 PERF_RAM_RUNS=10 PERF_CPU=3`) | **partial** — 4 of 5 arms (x86_64) |
+| `perf/perf-init-typed-map-2026-08.md` | 2026-08-21 | before `5f9bc7f` | before | → D2 | `run-w8-cycle.sh` | **yes** (x86_64) |
+| `perf/perf-fill-lookup-2026-08.md` | 2026-08-20 | before `337d8d5` (origin/main) | before | → D1 | `run-w8-cycle.sh` (`PERF_CYCLES=8`, `--profile profiling`, Callgrind) | none found |
+| `findings/data-load-audit-2026-08.md` | 2026-08-19 | not stated | before | i7-9750H, 12 logical CPUs, Linux 6.12, rustc 1.97.1 | `run-perf-baseline.sh` | none found |
+| `perf/perf-alloc-2026-08.md` | 2026-08-19 | not stated | before | → D4 | criterion + dhat | none found |
+| `perf/perf-stage2-harness-2026-08.md` | 2026-08-19 | not stated | before | not stated | criterion 0.8 + `run-w8-cycle.sh` | none found |
+| `perf/perf-baseline-2026-08.md` | 2026-08-16 | not stated | before | i7-9750H @ 2.60 GHz, 12 logical CPUs, pinned to CPU 3, Linux 6.12, rustc 1.97.1, cargo-c 0.10.24 | `bisect --perf` | none found |
+| `perf/perf-candidate-cap-2026-08.md` | 2026-08-16 (see below) | `f8e2c11d` | before | → D7 | criterion (`scan_perf`) | none found |
+| `perf/perf-exploration.md` | 2026-08-14 | `017a610` (PR #46) | before | 12 logical cores, one measurement thread unless noted, rustc 1.97.1; Callgrind `Ir` + dhat 0.3 | criterion + Callgrind + dhat | none found |
+
+## Delegation
+
+Seven records do not state their configuration; they point at it. The kind of
+pointer determines whether reading can resolve it.
+
+| id | record | what it says | kind | resolved? |
+|---|---|---|---|---|
+| D1 | `perf-fill-lookup-2026-08.md` | "same W8 8-cycle Callgrind path as #121 (`tools/profile/run-w8-cycle.sh`, `PERF_CYCLES=8`, `--profile profiling`)" | script | **yes** — see below |
+| D2 | `perf-init-typed-map-2026-08.md` | "same W8 protocol as #129/#121 — `tools/profile/run-w8-cycle.sh`" | script + document | **yes** — see below |
+| D3 | `perf-init-text-slurp-2026-08.md` | "same W8 protocol as #132/#129 — `run-w8-cycle.sh`… `run-perf-baseline.sh` dlopen scoreboard" | script + document | **yes** — see below |
+| D4 | `perf-alloc-2026-08.md` | "same crate-local Criterion/dhat harness as `docs/perf/perf-exploration.md`" | document | yes, by chaining to that document's stated host |
+| D5 | `perf-mmap-system-indexes-2026-08-31.md` | "Continues `perf-backend-matrix-2026-08-31.md`" | document | yes, by chaining — the target states Apple silicon |
+| D6 | `perf-backend-matrix-bdb-store-2026-09.md` | "extends the post-P6 4-cell matrix… same pin, same host family" | document | yes, by chaining to `perf-backend-matrix-2026-09.md` (x86_64, i7-9750H) |
+| D7 | `perf-candidate-cap-2026-08.md` | "Same machine, same `PINYIN_EXPORT_DIR` / `PINYIN_MODEL_DIR`, back-to-back" | unstated prior run | **no** — no antecedent exists in the document |
+
+### Resolving D1–D3: was the delegated-to harness stable?
+
+The three records claim mutual comparability through one script. Whether that
+holds is a question to answer, not assume, because the script has its own
+history: created `e5f9fbf1` (2026-08-20), then `af642b91` (2026-08-20),
+`b7a35f1f` (2026-08-23), `871139a1` (2026-09-07). One of those lands *between*
+the records — D1 is dated 2026-08-20, D2 and D3 2026-08-21.
+
+`af642b91` was read rather than assumed. In the script it adds model-cache
+verification and a `PINYIN_MODEL_CACHE` fallback for `MODEL_DIR`. The same
+commit also touches the measurement code — `benches/support/mod.rs` (+127) is
+that verification mirrored in, and `benches/stage2.rs` is a bench-identifier
+rename with a byte-identical body. **No measurement behaviour changed**, so
+the three records' "same W8 protocol" claim holds. `b7a35f1f` removed a
+dangling `oxpinyin-migrate` line and is cosmetic.
+
+Two consequences follow anyway, and they are recorded as observations 7 and 8:
+`871139a1` changed the script's `PIN_REF` to a different libpinyin pin, so the
+delegation is stable *among* these records but not forward to today; and the
+bench rename means the same measurement appears under two identifiers across
+the 2026-08-20/21 boundary.
+
 
 ## Observations
 
@@ -194,15 +255,22 @@ Stated as observations. No fix is proposed for any of them here.
    over the surveyed period, so "measured with `bisect --perf`" does not
    identify what was run.
 
-4. **Configuration is recorded unevenly.** Nine records name a host or ISA;
-   thirteen name nothing beyond the figures. Two hosts appear across the
-   corpus (Apple silicon arm64, i7-9750H x86_64), and per the session-offset
-   observation above, cross-record comparison of absolutes is unsafe even
-   within one host.
+4. **Configuration is stated, delegated, or absent — in roughly equal
+   parts.** After per-document reading: eleven records state a host or ISA
+   directly, seven delegate (see Delegation), and four state nothing. Two
+   hosts recur (Apple silicon arm64, i7-9750H x86_64) and **two records are
+   multi-host** — `perf-baseline-kc-2026-08-31.md` (Apple-silicon body, an
+   x86_64/RHEL amendment) and `perf-so-size-2026-09.md` (x86_64/redb arms, an
+   ARM64/KC re-measurement). Both were previously mapped to a single host.
+   Per the session-offset observation above, cross-record comparison of
+   absolutes is unsafe even within one host.
 
-5. **Measurement commit is stated in six records of twenty-two.** For the
-   rest, the only temporal anchor is a document date, which is when the note
-   was written, not necessarily when the measurement ran.
+5. **Measurement commit is stated in twelve records of twenty-two**, not the
+   six the pattern found. The additions are `017a610`, `337d8d5`, `5f9bc7f`,
+   `6b476b1`, `15e1b47` and `f2eedd7` — several of them the "before" commit of
+   a before/after pair, which is still a temporal anchor. For the remaining
+   ten the only anchor is a document date, which is when the note was written,
+   not necessarily when the measurement ran.
 
 6. **`perf-candidate-cap-2026-08.md` carries no internal date.** Its title
    says only "(2026-08)". The 2026-08-16 above is **established from git**,
@@ -212,23 +280,44 @@ Stated as observations. No fix is proposed for any of them here.
    git not settled it, this row would read "undated"; an inferred date in a
    provenance audit is the defect the audit exists to find.
 
-7. **The `configuration` and `harness` columns under-report, and are not
-   fixed here.** They were extracted by first-match pattern rather than by
-   reading each document, and the pattern misses what it does not anticipate.
-   Confirmed instances: `perf-baseline-kc-2026-08-31.md` is mapped as "Apple
-   silicon", but that document's own amendment environment records podman
-   5.8.2 on RHEL 10.2, x86_64 — the record covers two hosts and the map shows
-   one. `perf-baseline-2026-08.md` is mapped "not stated" while the document
-   states `i7-9750H, 12 logical CPUs`; `perf-exploration.md` likewise states
-   `12 logical cores`. Several 2026-08 records give `Host:` as an indirection
-   ("same W8 protocol as #132/#129") naming `tools/profile/run-w8-cycle.sh`,
-   which contradicts the `run-perf-baseline.sh` entry the pattern produced for
-   two of them. This is the same failure as the search surface it replaced —
-   a method that cannot see what it was not told to look for — and it needs
-   its own pass of per-document reading. **Until that lands, treat those two
-   columns as a lower bound on what the documents state.**
+7. **A live cross-reference silently changed meaning.** Three records say
+   they used "the same W8 protocol" and delegate to
+   `tools/profile/run-w8-cycle.sh`. On 2026-09-07, `871139a1` changed that
+   script's `PIN_REF` from `libpinyin-2.11.91-0c5e80e1…` to
+   `libpinyin-2.11.92-074a2219…`. The sentences in those documents did not
+   change, still read as assurances, and now point at a **different oracle**
+   than the one they were written about. This is a distinct defect class from
+   a wrong figure or a missing column: not an error at the time of writing,
+   but a reference whose truth value changed underneath it. No document in
+   this corpus pins the revision of the file it delegates to, so the class is
+   live wherever delegation occurs — which, per the Delegation table, is seven
+   records. **Nobody will look for this unless it has a name**, and the audit
+   had not named it before this pass.
 
-8. **`perf-mmap-system-indexes-2026-08-31.md` is marked REJECTED** —
+8. **And its inverse: a name changed while the measurement did not.**
+   `af642b91` renamed a criterion bench from `guess_sentence_get_sentence_0`
+   to `guess_sentence_get_sentence_0/full_nbest_post_116` with a
+   byte-identical body. A reader diffing bench identifiers across the
+   2026-08-20/21 boundary would conclude the measurement changed; it did not.
+   Taken with observation 7, identity and reference drift in opposite
+   directions, and both are invisible to anyone reading a single document.
+
+9. **The three rebuilt columns had the same weakness, and it is now fixed
+   rather than deferred.** `configuration`, `harness` and `at commit` were
+   first filled by first-match pattern, which cannot see what it was not told
+   to look for — the same failure as the search surface this document already
+   replaced, in three more columns. What the pattern got wrong, now corrected
+   by reading: `perf-baseline-kc-2026-08-31.md` mapped to "Apple silicon"
+   alone when its own amendment environment records podman 5.8.2 on RHEL 10.2,
+   x86_64; `perf-so-size-2026-09.md` mapped to x86_64 alone when it carries an
+   ARM64/KC re-measurement; `perf-baseline-2026-08.md` and
+   `perf-exploration.md` mapped "not stated" while both state a host;
+   `perf-init-text-slurp-2026-08.md` credited with one harness when it names
+   two; and six measurement commits missed entirely. The columns are no longer
+   a lower bound on what the documents state — they are what the documents
+   state, with delegation shown as delegation.
+
+10. **`perf-mmap-system-indexes-2026-08-31.md` is marked REJECTED** —
    architecture withdrawn, kept as a record. Its figures should not be cited
    as current regardless of provenance.
 
