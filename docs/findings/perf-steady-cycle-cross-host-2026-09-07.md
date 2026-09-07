@@ -353,6 +353,19 @@ Facts about what was and was not measured. Nothing here is a conclusion.
   order. Sizes were not interleaved with each other, so slow drift over the
   ~4.5-minute capture window is not separated from size effects; the four cells
   *were* interleaved round-robin within each size.
+- **The amd64 session's `n = 1` pass is bimodal in all four cells.** Pooled
+  steady samples split into a fast mode (per-run steady medians ≈ 30–38 ms)
+  and a slow mode (≈ 43–51 ms), with whole processes — not individual
+  cycles — in one mode or the other. Samples above 45 ms: oxpinyin-tkrzw
+  50/140, oxpinyin-kc 36/140, libpinyin-tkrzw 25/140, libpinyin-kc 11/140.
+  In the two oxpinyin cells, where that share is largest, the pooled `n = 1`
+  median lands between the modes — above their own `n ≥ 2` per-unit values
+  (28.7–29.9) — and oxpinyin-tkrzw's steady median (39.313) exceeds its cold
+  median (39.208), an ordering produced by two different mixtures. Slow
+  samples persist in the upper tails at every size (per-run steady-median
+  spread 1.1–1.8× at all five sizes); at `n ≥ 2` the pooled medians track
+  the fast mode. No cause is claimed here; the per-process `cycles_ns` are
+  in the capture.
 - **The `.so` size, install size and cross-host comparisons of absolute times
   are not part of this document.** Absolute timings from different hosts are
   not comparable directly; each host's section stands on its own.
