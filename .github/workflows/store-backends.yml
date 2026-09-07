@@ -28,11 +28,14 @@ name: Store backends
 #     "cross-backend conformance in one binary" job, which is
 #     architecturally impossible under exactly-one-backend.
 #   - store-backends-gate is the stable aggregate status check. It runs no
-#     tests; it only fails unless every backend child AND the
-#     backend-matrix job succeeded, so branch protection can keep requiring
-#     the historical "store backends (kyotocabinet / redb / tkrzw / lmdb)"
-#     context.
-#   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan and UBSan.
+#     tests; it only fails unless every backend child, the backend-matrix
+#     job AND both sanitizer arms succeeded, so branch protection can keep
+#     requiring the historical "store backends (kyotocabinet / redb /
+#     tkrzw / lmdb)" context.
+#   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan and UBSan,
+#     on a date-pinned nightly, and gates the merge (since 2026-09-08; it
+#     had been continue-on-error and outside the gate, so a finding on the
+#     FFI boundary could not fail anything).
 #
 # ROLLING TOOLCHAIN, deliberately unpinned: the jobs run inside
 # debian:testing because oxpinyin aims to be a viable libpinyin
@@ -335,35 +338,39 @@ jobs:
     needs:
       - store-features
       - backend-matrix
+      - tkrzw-sanitizers
     defaults:
       run:
         shell: bash
     steps:
-      - name: Aggregate the backend and matrix results
+      - name: Aggregate the backend, matrix and sanitizer results
         # Job results are bound through env rather than spliced into the
         # script body; the values are the closed set
         # success/failure/cancelled/skipped.
         env:
           FEATURES_RESULT: ${{ needs.store-features.result }}
           MATRIX_RESULT: ${{ needs.backend-matrix.result }}
+          SANITIZER_RESULT: ${{ needs.tkrzw-sanitizers.result }}
         run: |
           set -euo pipefail
           echo "store-features (matrix): ${FEATURES_RESULT}"
           echo "backend-matrix:          ${MATRIX_RESULT}"
+          echo "tkrzw-sanitizers:        ${SANITIZER_RESULT}"
           {
             echo "## store backends (aggregate gate)"
             echo ""
             echo "This job runs no tests. It is the stable aggregate status"
-            echo "check that fails unless every peer matrix child AND the"
-            echo "exactly-one-backend gate succeeded."
+            echo "check that fails unless every peer matrix child, the"
+            echo "exactly-one-backend gate AND both sanitizer arms succeeded."
             echo ""
             echo "| Upstream job | Result |"
             echo "|---|---|"
             echo "| store-features (matrix, all four peers) | ${FEATURES_RESULT} |"
             echo "| backend-matrix (exactly-one-backend gate) | ${MATRIX_RESULT} |"
+            echo "| tkrzw-sanitizers (ASan + UBSan) | ${SANITIZER_RESULT} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "${FEATURES_RESULT}" != "success" ] || [ "${MATRIX_RESULT}" != "success" ]; then
-            echo "::error::store-backends gate failed: store-features=${FEATURES_RESULT}, backend-matrix=${MATRIX_RESULT}" >&2
+          if [ "${FEATURES_RESULT}" != "success" ] || [ "${MATRIX_RESULT}" != "success" ] || [ "${SANITIZER_RESULT}" != "success" ]; then
+            echo "::error::store-backends gate failed: store-features=${FEATURES_RESULT}, backend-matrix=${MATRIX_RESULT}, tkrzw-sanitizers=${SANITIZER_RESULT}" >&2
             exit 1
           fi
           echo "store-backends gate: all upstream jobs succeeded"
@@ -392,13 +399,11 @@ jobs:
       run:
         shell: bash
 
-    # Non-blocking by policy: this job is excluded from the store-backends
-    # aggregate gate (which needs only store-features and
-    # store-conformance), so its red X protected nothing — a finding only
-    # failed the run as a whole. continue-on-error keeps the run green
-    # while the Report step still prints the findings summary (it keys off
-    # the test step's outcome: job.status reads 'success' under this flag).
-    continue-on-error: true
+    # Blocking since 2026-09-08: the job feeds the store-backends aggregate
+    # gate, so an ASan/UBSan finding on the FFI boundary fails the merge.
+    # (It had been continue-on-error and outside the gate — a red X that
+    # protected nothing.) Both arms had passed every main run for the
+    # preceding week on the nightly pinned below.
 
     strategy:
       fail-fast: true
@@ -407,7 +412,10 @@ jobs:
     env:
       # Beats rust-toolchain.toml's channel pin for this job only: sanitizer
       # builds require nightly rustc. Everything else keeps the pinned file.
-      RUSTUP_TOOLCHAIN: nightly
+      # Date-pinned so a nightly regression cannot red the gate on its own;
+      # bump the date deliberately, in its own commit, when a newer nightly
+      # is needed or the pinned one stops installing.
+      RUSTUP_TOOLCHAIN: nightly-2026-09-07
     steps:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
@@ -435,7 +443,7 @@ jobs:
         run: |
           set -euo pipefail
           curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain nightly
+            | sh -s -- -y --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN"
           printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
           # Visible to THIS step too: GITHUB_PATH only applies to later steps.
           . "$HOME/.cargo/env"

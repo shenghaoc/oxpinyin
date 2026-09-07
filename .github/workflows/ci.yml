@@ -89,8 +89,8 @@ env:
 
 # Five jobs:
 #   lint — rustfmt + clippy
-#   test — cargo test for the whole workspace, and the portable crates on
-#          macOS and Windows
+#   test — cargo test for the whole workspace, and the portable workspace
+#          (all but capi, zhuyin-capi, python) on macOS and Windows
 #   python — the oxpinyin Python binding on the container image's stock
 #            python3 — GIL-enabled CPython 3.14, since actions/setup-python
 #            cannot serve a container job and took the old '3.14t' selector
@@ -304,11 +304,16 @@ jobs:
         working-directory: crates/oxpinyin-python
         run: pytest -q
 
-  # The portable crates on the other two supported operating systems.
-  # structure.md marks core/data/user/engine portable; the oracle harness is
-  # portable too with its Linux-only `oracle-ffi` feature off, and it carries
-  # the graph and decode-level differentials. capi/oracle-ffi stay Linux-first
-  # and are covered by the job above.
+  # The portable crates on the other two supported operating systems:
+  # the whole workspace minus the three that are Linux-first or need a
+  # host interpreter — the two C-ABI crates (glib, cargo-c, Linux-only per
+  # structure.md) and the PyO3 binding (its wheel is CI'd in the python
+  # job above; non-Linux wheels are an open item in
+  # .kiro/specs/python-binding/tasks.md). Everything else — store, runtime,
+  # facade, datagen and the training crates included — is pure Rust under
+  # the redb backend and builds here (widened 2026-09-08 from the four
+  # engine crates plus the oracle harness, whose Linux-only `oracle-ffi`
+  # feature stays off with --no-default-features).
   #
   # Two jobs rather than a matrix: containers run on Linux runners only, so
   # a containerized matrix cannot cover these operating systems.
@@ -326,15 +331,13 @@ jobs:
       # pure-Rust peer, selected by disabling the default (tkrzw)
       # feature chain and passing --features redb so the exactly-one-backend
       # guard sees exactly one peer.
+      # --no-default-features --features redb selects the pure-Rust peer
+      # for every member at once (the exactly-one-backend guard sees one
+      # peer) and keeps pinyin-oracle's Linux-only `oracle-ffi` off even
+      # if it ever became a default feature.
       - run: >
-          cargo test --locked --no-default-features --features redb
-          -p oxpinyin-core -p oxpinyin-data -p oxpinyin-user -p oxpinyin-engine
-      # Separately and with --no-default-features --features redb, so
-      # oracle-ffi stays off even if it ever became a default feature — it
-      # links the pin-built libpinyin and is Linux-only; on this runner it
-      # would not build at all — and so the exactly-one-backend guard is
-      # satisfied.
-      - run: cargo test --locked -p pinyin-oracle --no-default-features --features redb
+          cargo test --locked --workspace --no-default-features --features redb
+          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi --exclude oxpinyin-python
 
   test-windows:
     runs-on: windows-latest
@@ -348,15 +351,13 @@ jobs:
       - run: rustup show active-toolchain
       # Same selection as the macOS leg above: redb only, because every
       # other backend requires Linux system libraries.
+      # --no-default-features --features redb selects the pure-Rust peer
+      # for every member at once (the exactly-one-backend guard sees one
+      # peer) and keeps pinyin-oracle's Linux-only `oracle-ffi` off even
+      # if it ever became a default feature.
       - run: >
-          cargo test --locked --no-default-features --features redb
-          -p oxpinyin-core -p oxpinyin-data -p oxpinyin-user -p oxpinyin-engine
-      # Separately and with --no-default-features --features redb, so
-      # oracle-ffi stays off even if it ever became a default feature — it
-      # links the pin-built libpinyin and is Linux-only; on this runner it
-      # would not build at all — and so the exactly-one-backend guard is
-      # satisfied.
-      - run: cargo test --locked -p pinyin-oracle --no-default-features --features redb
+          cargo test --locked --workspace --no-default-features --features redb
+          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi --exclude oxpinyin-python
 
   # Supply-chain gate. cargo-deny's advisories check consumes the same
   # RustSec DB cargo-audit uses, so this one job replaces both tools; the
