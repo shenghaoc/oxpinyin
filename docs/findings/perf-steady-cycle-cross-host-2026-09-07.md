@@ -194,11 +194,114 @@ the `after_last` snapshot.
 
 ## Environment — linux/amd64
 
-_Not yet collected._
+| Property | Value |
+|---|---|
+| Host | shared dev box: Intel Core i7-9750H, 6 cores / 12 threads (SMT on), governor `performance` under `intel_pstate` + HWP, 4500/800 MHz max/min; RHEL-family Linux; podman 5.8.2, rootless |
+| Container arch | `x86_64` — equal to the host arch; native build, not emulated (image `linux/amd64`, verified by `uname -m` in-container) |
+| Base image | `debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9` (the same multi-arch index digest the arm64 pass used; amd64 variant), apt from `snapshot.debian.org/archive/debian/20260831T000000Z` |
+| Built image | `oxpinyin-matrix:knob-amd64`, local build id `sha256:8768841b2c8a4f9af6045cbd02c46e776fd98b98438fa1951cc758d7552dd907` (a local id, not a registry digest — reproduce by rebuilding at the recipe commit) |
+| Recipe commit | `f79f665d18e34dfddc7101803afc85258cd6cdfc` — the first commit at which this recipe builds a native amd64 image at all (see Method's platform note) |
+| Kernel | `Linux 6.12.0-211.22.1.el10_2.x86_64 #1 SMP PREEMPT_DYNAMIC Wed Jun 10 08:07:11 EDT 2026` (host kernel, read from the measuring container) |
+| CPU | Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz, 12 logical CPUs; MemTotal 15,912,492 kB |
+| Toolchain | `rustc 1.97.1 (8bab26f4f 2026-07-14)`, `cargo 1.97.1 (c980f4866 2026-06-30)`; `rust-toolchain.toml` `channel = "1.97.1"` — match, no override |
+| Compiler | `gcc (Debian 15.3.0-2) 15.3.0` |
+| Cargo profile | `[profile.release]`: `lto = "fat"`, `codegen-units = 1`; no `debug`; **no `panic` override — `panic = "abort"` is absent** (the explicit `panic = "unwind"` sits in `[profile.profiling]`) |
+| Oracle | libpinyin **2.11.92**, pin `074a2219c90feaf962d0d24f034514033ece5f99`, built in-image from one SHA-verified checkout; both installs' `libpinyin.pc` read `Version: 2.11.92` |
+| libpinyin build flags | `./configure --disable-static --with-dbm=Tkrzw` and `--with-dbm=KyotoCabinet` |
+| oxpinyin build flags | `cargo build --locked --release -p oxpinyin-capi --no-default-features --features {kyotocabinet,tkrzw}`; `NEEDED` verified per artifact |
+| capi artifacts | KC `sha256:c45eae328a6568dc686f95f296f8d8fce0cab34e7769277b6134963d109f5eaa`, `NEEDED libkyotocabinet.so.16`, 1,665,544 bytes; Tkrzw `sha256:bf8d3b5707b5bc1bafc09670185b96770b73f596dd2eb57b8a9cba46bad4aec8`, `NEEDED libtkrzw.so.1`, 1,688,840 bytes; stripped; built once inside the measuring container and reused at every size |
+| Dataset | image-baked libpinyin installs, one shared directory per backend pair; the oxpinyin cells open the **same** directories (no oxpinyin-generated data) |
+| Capture window | 2026-09-07T15:14:25Z – 2026-09-07T15:29:56Z (UTC, from the measuring container) |
+| Prior x86_64 figures | none valid. No native x86_64 measurement of this harness existed before this session; the x86_64-labelled figures in `perf-backend-matrix-2026-09.md` were captured against the platform-pinned recipe and are emulated (Method, platform note). No session-offset comparison is therefore stated for this section. |
 
 ## Results — linux/amd64
 
-_Not yet collected._
+Medians [95% CI], milliseconds. `n` is `PERF_REPEATS`. 20 runs per cell per
+size; 140 pooled samples for steady, 20 for cold. The per-unit column is the
+steady median divided by `n` — arithmetic on this section's own medians.
+
+### Cold and steady cycle
+
+| cell | n | cold ms [95% CI] | steady ms [95% CI] | steady ÷ n ms |
+|---|---|---|---|---|
+| libpinyin-kc | 1 | 32.600 [32.218, 36.957] | 30.414 [30.136, 32.814] | 30.414 |
+| libpinyin-kc | 2 | 57.076 [56.089, 58.451] | 55.396 [54.311, 55.992] | 27.698 |
+| libpinyin-kc | 4 | 116.596 [111.164, 118.455] | 112.082 [108.234, 114.983] | 28.021 |
+| libpinyin-kc | 8 | 215.237 [212.978, 223.389] | 217.225 [213.220, 221.791] | 27.153 |
+| libpinyin-kc | 16 | 436.310 [421.823, 451.244] | 435.009 [429.958, 445.415] | 27.188 |
+| libpinyin-tkrzw | 1 | 35.714 [32.879, 43.568] | 31.524 [30.999, 39.665] | 31.524 |
+| libpinyin-tkrzw | 2 | 57.380 [56.554, 58.512] | 56.628 [55.457, 57.449] | 28.314 |
+| libpinyin-tkrzw | 4 | 116.417 [112.865, 124.537] | 116.558 [112.559, 119.493] | 29.140 |
+| libpinyin-tkrzw | 8 | 225.563 [223.492, 233.026] | 222.544 [220.340, 225.726] | 27.818 |
+| libpinyin-tkrzw | 16 | 444.916 [441.112, 448.581] | 445.235 [440.279, 456.305] | 27.827 |
+| oxpinyin-kc | 1 | 48.359 [36.853, 55.466] | 36.537 [32.504, 43.324] | 36.537 |
+| oxpinyin-kc | 2 | 61.067 [60.083, 63.707] | 58.389 [57.639, 60.785] | 29.195 |
+| oxpinyin-kc | 4 | 120.763 [115.904, 133.066] | 118.894 [113.346, 123.949] | 29.724 |
+| oxpinyin-kc | 8 | 234.538 [229.769, 246.963] | 229.958 [225.979, 237.625] | 28.745 |
+| oxpinyin-kc | 16 | 458.906 [450.535, 482.435] | 458.855 [451.064, 473.605] | 28.678 |
+| oxpinyin-tkrzw | 1 | 39.208 [37.827, 54.229] | 39.313 [33.130, 45.785] | 39.313 |
+| oxpinyin-tkrzw | 2 | 65.160 [63.566, 67.427] | 58.608 [57.156, 59.810] | 29.304 |
+| oxpinyin-tkrzw | 4 | 120.728 [119.224, 130.816] | 119.584 [115.464, 123.482] | 29.896 |
+| oxpinyin-tkrzw | 8 | 235.934 [229.895, 243.863] | 234.638 [226.741, 240.140] | 29.330 |
+| oxpinyin-tkrzw | 16 | 471.932 [449.121, 490.155] | 461.855 [450.636, 468.237] | 28.866 |
+
+### Init and first allocation
+
+Not workload-dependent by construction — both precede the timed cycles — and
+recorded so drift across the five passes is visible.
+
+| cell | n | init ms [95% CI] | first alloc ms [95% CI] |
+|---|---|---|---|
+| libpinyin-kc | 1 | 5.371 [5.171, 5.822] | 0.001 [0.001, 0.001] |
+| libpinyin-kc | 2 | 4.815 [4.735, 5.001] | 0.001 [0.001, 0.001] |
+| libpinyin-kc | 4 | 4.759 [4.628, 4.997] | 0.001 [0.001, 0.001] |
+| libpinyin-kc | 8 | 4.584 [4.506, 4.613] | 0.001 [0.001, 0.001] |
+| libpinyin-kc | 16 | 4.634 [4.541, 4.838] | 0.001 [0.001, 0.001] |
+| libpinyin-tkrzw | 1 | 2.302 [2.060, 2.956] | 0.001 [0.001, 0.001] |
+| libpinyin-tkrzw | 2 | 1.993 [1.952, 2.122] | 0.001 [0.001, 0.001] |
+| libpinyin-tkrzw | 4 | 2.045 [2.007, 2.277] | 0.001 [0.001, 0.001] |
+| libpinyin-tkrzw | 8 | 2.021 [1.958, 2.080] | 0.001 [0.001, 0.001] |
+| libpinyin-tkrzw | 16 | 1.936 [1.859, 1.962] | 0.001 [0.001, 0.001] |
+| oxpinyin-kc | 1 | 5.947 [5.787, 7.386] | 0.003 [0.003, 0.003] |
+| oxpinyin-kc | 2 | 5.033 [4.908, 5.337] | 0.002 [0.002, 0.002] |
+| oxpinyin-kc | 4 | 5.048 [4.868, 5.212] | 0.002 [0.002, 0.003] |
+| oxpinyin-kc | 8 | 4.968 [4.821, 5.137] | 0.002 [0.002, 0.003] |
+| oxpinyin-kc | 16 | 4.974 [4.790, 5.136] | 0.002 [0.002, 0.002] |
+| oxpinyin-tkrzw | 1 | 2.802 [2.523, 3.165] | 0.003 [0.002, 0.006] |
+| oxpinyin-tkrzw | 2 | 2.433 [2.356, 2.469] | 0.002 [0.002, 0.005] |
+| oxpinyin-tkrzw | 4 | 2.355 [2.307, 2.475] | 0.002 [0.002, 0.005] |
+| oxpinyin-tkrzw | 8 | 2.353 [2.307, 2.446] | 0.002 [0.002, 0.003] |
+| oxpinyin-tkrzw | 16 | 2.334 [2.242, 2.408] | 0.002 [0.002, 0.004] |
+
+### Memory, per size
+
+Medians, KiB, from the `ram-init` and `ram-cycle` modes (10 processes per cell
+per size per mode). `rss-init`/`hwm-init` are the `after_init` snapshot, which
+the harness takes after `pinyin_alloc_instance`; `rss-cycle`/`hwm-cycle` are
+the `after_last` snapshot.
+
+| cell | n | rss-init | hwm-init | rss-cycle | hwm-cycle |
+|---|---|---:|---:|---:|---:|
+| libpinyin-tkrzw | 1 | 12,682 | 12,682 | 19,220 | 19,220 |
+| libpinyin-tkrzw | 2 | 12,684 | 12,684 | 19,176 | 19,176 |
+| libpinyin-tkrzw | 4 | 12,664 | 12,664 | 19,176 | 19,176 |
+| libpinyin-tkrzw | 8 | 12,694 | 12,694 | 19,244 | 19,244 |
+| libpinyin-tkrzw | 16 | 12,704 | 12,704 | 19,218 | 19,218 |
+| libpinyin-kc | 1 | 17,246 | 17,246 | 23,092 | 23,092 |
+| libpinyin-kc | 2 | 17,278 | 17,278 | 23,166 | 23,166 |
+| libpinyin-kc | 4 | 17,258 | 17,258 | 23,114 | 23,114 |
+| libpinyin-kc | 8 | 17,252 | 17,252 | 23,130 | 23,130 |
+| libpinyin-kc | 16 | 17,166 | 17,166 | 23,156 | 23,156 |
+| oxpinyin-tkrzw | 1 | 14,058 | 14,058 | 23,372 | 23,434 |
+| oxpinyin-tkrzw | 2 | 14,106 | 14,106 | 23,384 | 23,422 |
+| oxpinyin-tkrzw | 4 | 14,130 | 14,130 | 23,358 | 23,430 |
+| oxpinyin-tkrzw | 8 | 14,108 | 14,108 | 23,458 | 23,476 |
+| oxpinyin-tkrzw | 16 | 14,096 | 14,096 | 23,402 | 23,420 |
+| oxpinyin-kc | 1 | 19,420 | 19,420 | 28,030 | 28,030 |
+| oxpinyin-kc | 2 | 19,458 | 19,458 | 28,022 | 28,022 |
+| oxpinyin-kc | 4 | 19,466 | 19,466 | 28,054 | 28,106 |
+| oxpinyin-kc | 8 | 19,392 | 19,392 | 28,006 | 28,080 |
+| oxpinyin-kc | 16 | 19,438 | 19,438 | 28,046 | 28,142 |
 
 ## Known caveats
 
