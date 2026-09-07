@@ -137,7 +137,7 @@ utils to the `PINYIN_*` gates. Running it produced:
 | KMM export/import | ✓ | ✓ | ✓ | **✓** | live: via gen+export |
 | KMM estimate (candidate score) | ✓ | ✓ | ✓ | ✓* | *deleted-interpolation EM shares the arithmetic proven live for λ below; committed golden |
 | KMM merge | ✓ | ✓ | ✓ | **✓** | live: merged record set matches pin |
-| KMM validate | ✓ | ✓ | ✓ | **✓** | live: verdict matches pin (both reject the W2-only small-corpus model) |
+| KMM validate | ✓ | ✓ | ✓ | **✓** | live: verdict matches pin (at the 2.11.91 pin both rejected the W2-only small-corpus model; since 074a221 both accept it — #357) |
 | KMM prune | ✓ | ✓ | ✓ | **✓** | live: pruned record set matches pin |
 | KMM → interpolation | ✓ | ✓ | ✓ | **✓** | live: byte-identical to pin `k_mixture_model_to_interpolation` |
 | λ (estimate_interpolation) | ✓ | ✓ | ✓ | **✓** | live: DELETED bigrams bit-exact, 153 per-context λ byte-identical at 6dp |
@@ -155,6 +155,13 @@ no-ops on a token that never appears as W1, so W2-only tokens get no header
 and the export order was reclassified from "matches the DBM order" to
 "token-ascending canonicalisation compared as a set" (the pin's order is
 Tkrzw hash order). See `kmm-arithmetic-audit.md` §2/§6 and the D6/D7 register.
+
+> **Superseded at the 074a221 pin (2026-09-07 UTC, #357).** Upstream
+> `7165d2a` makes the Tkrzw `set_array_header` create the row on a missing
+> key, so W2-only tokens now get a header-only `\1-gram` row (count 0, freq =
+> unigram freq). `generate.rs` was re-aligned, the differential goldens
+> re-derived, and the small-corpus `validate` rejection below no longer
+> applies. The live gate must be re-run against the 074a221 tools.
 
 **The two formerly gated stages, and what running them found.** ngseg-live
 and correction-rate-live both need the compiled `bigram.db`, built by the
