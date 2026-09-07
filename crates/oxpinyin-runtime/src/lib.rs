@@ -1136,6 +1136,53 @@ mod tests {
             .join(oxpinyin_data::DEFAULT_STORE_EXT)
     }
 
+    // `new_session`'s own gate, pinned. The engine gate has
+    // `real_unigrams_skip_the_key_cost_walk_but_the_fallback_keeps_it`;
+    // this one had nothing — the concurrency test below deliberately
+    // drives `cached_key_costs` directly, and `tests/assembly.rs`'s
+    // visibility test says in its own comment that its `new_session`
+    // calls assert nothing about the cache. So reverting the gate hunk
+    // at `new_session` and putting the unconditional
+    // `cached_key_costs()?.to_vec()` back would have left every test
+    // green while restoring the ~430-lookup walk on the shipped path.
+    //
+    // A white-box test is the only way to see this: the cache is a
+    // private field, so an integration test cannot observe whether a
+    // session populated it. `RuntimeLm` always reports real unigrams, so
+    // an opened runtime plus one session must leave the cache untouched.
+    #[test]
+    fn new_session_does_not_populate_the_key_cost_cache() {
+        let runtime = Runtime::open(&w3_dir(), None).expect("fixture opens");
+        assert!(
+            runtime.lm().has_real_unigrams(),
+            "vacuity guard: a runtime-backed model must report real \
+             unigrams, or the gate under test is never taken"
+        );
+        assert!(
+            runtime
+                .key_costs
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none(),
+            "a freshly opened runtime has not walked the key inventory"
+        );
+
+        runtime
+            .new_session(&oxpinyin_engine::EmptyConfigSource)
+            .expect("session");
+
+        assert!(
+            runtime
+                .key_costs
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none(),
+            "new_session must not walk the key inventory for a \
+             real-unigram model: the table it would build has no reader \
+             on this path"
+        );
+    }
+
     // The key-cost cache stamp must always name the visibility the table
     // was actually computed under, even when library visibility flips
     // race the rebuild walk: a torn walk published under a stale stamp
