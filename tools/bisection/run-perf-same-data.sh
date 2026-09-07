@@ -8,9 +8,11 @@
 # involved: this measures the drop-in configuration, the way a
 # distribution would ship it.
 #
-# Runs inside the perf-matrix container with the tree mounted at /work:
+# Runs inside the perf-matrix container with the tree mounted at /work,
+# on the measurement host itself — no --platform override: an emulated
+# run times the interpreter, not the implementations.
 #
-#   docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work \
+#   docker run --rm -v "$PWD":/work -w /work \
 #     -e CARGO_TARGET_DIR=/work/target-linux -v /tmp/perf-out:/out \
 #     oxpinyin-matrix:latest tools/bisection/run-perf-same-data.sh
 #
