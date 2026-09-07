@@ -137,7 +137,7 @@ utils to the `PINYIN_*` gates. Running it produced:
 | KMM export/import | ✓ | ✓ | ✓ | **✓** | live: via gen+export |
 | KMM estimate (candidate score) | ✓ | ✓ | ✓ | ✓* | *deleted-interpolation EM shares the arithmetic proven live for λ below; committed golden |
 | KMM merge | ✓ | ✓ | ✓ | **✓** | live: merged record set matches pin |
-| KMM validate | ✓ | ✓ | ✓ | **✓** | live: verdict matches pin (at the 2.11.91 pin both rejected the W2-only small-corpus model; since 074a221 both accept it — #357) |
+| KMM validate | ✓ | ✓ | ✓ | pending | live at the 2.11.91 pin: verdict matched (both rejected the W2-only small-corpus model). Since #357 the native accepts it, per 074a221's `set_array_header`; the 074a221 gate has not been rerun, so the L3 verdict is pending until that run is recorded |
 | KMM prune | ✓ | ✓ | ✓ | **✓** | live: pruned record set matches pin |
 | KMM → interpolation | ✓ | ✓ | ✓ | **✓** | live: byte-identical to pin `k_mixture_model_to_interpolation` |
 | λ (estimate_interpolation) | ✓ | ✓ | ✓ | **✓** | live: DELETED bigrams bit-exact, 153 per-context λ byte-identical at 6dp |
