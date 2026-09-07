@@ -46,27 +46,34 @@ struct RustChain {
     average: f64,
 }
 
-fn run_rust_chain(sample: &[u8]) -> Option<RustChain> {
-    let export = locate_export_dir()?;
-    let model = locate_model_dir()?;
+/// The Rust chain, or the reason it could not run: a missing input names
+/// the input, a processing failure carries the underlying error, so the
+/// panic in an `--include-ignored` run says which it was.
+fn run_rust_chain(sample: &[u8]) -> Result<RustChain, String> {
+    let export = locate_export_dir().ok_or_else(|| "missing input: system-table export not found (PINYIN_EXPORT_DIR; produce with oxpinyin-datagen compile)".to_owned())?;
+    let model = locate_model_dir().ok_or_else(|| "missing input: model20 cache not found (PINYIN_MODEL_DIR; run tools/model/fetch-model.sh)".to_owned())?;
     let paths = SegmenterPaths::from_dirs(&export, &model);
-    let segmenter = Segmenter::open(&paths, PINNED_LAMBDA).ok()?;
+    let segmenter =
+        Segmenter::open(&paths, PINNED_LAMBDA).map_err(|e| format!("Segmenter::open: {e}"))?;
     let lexicon = segmenter.lexicon();
 
     // T1: the T4b sample is consumed as-is — zero glue.
-    let ngseg_text = segmenter.segment_bytes(sample, false).ok()?;
+    let ngseg_text = segmenter
+        .segment_bytes(sample, false)
+        .map_err(|e| format!("segment_bytes: {e}"))?;
 
     // T2 + T3 + T4a.
-    let counts = count_ngseg(lexicon, &ngseg_text, true).ok()?;
-    let deleted = count_deleted(&ngseg_text, true).ok()?;
-    let lambda = estimate_lambda(&counts, &deleted).ok()?;
+    let counts =
+        count_ngseg(lexicon, &ngseg_text, true).map_err(|e| format!("count_ngseg: {e}"))?;
+    let deleted = count_deleted(&ngseg_text, true).map_err(|e| format!("count_deleted: {e}"))?;
+    let lambda = estimate_lambda(&counts, &deleted).map_err(|e| format!("estimate_lambda: {e}"))?;
     let interpolation = emit_interpolation2(&counts, lexicon);
     let per_context: BTreeMap<u32, String> = lambda
         .per_context
         .iter()
         .map(|(token, value)| (*token, format!("{value:.6}")))
         .collect();
-    Some(RustChain {
+    Ok(RustChain {
         ngseg_text,
         interpolation,
         per_context,
@@ -81,12 +88,7 @@ fn run_rust_chain(sample: &[u8]) -> Option<RustChain> {
 #[ignore = "needs the system-table export and the model20 cache (PINYIN_EXPORT_DIR, PINYIN_MODEL_DIR); run with --include-ignored"]
 fn rust_chain_consumes_t4b_sample_with_zero_glue() {
     let sample = std::fs::read(sample_path()).expect("committed sample");
-    let Some(chain) = run_rust_chain(&sample) else {
-        panic!(
-            "missing input: system-table export or model20 cache not found \
-             (PINYIN_EXPORT_DIR / PINYIN_MODEL_DIR)"
-        )
-    };
+    let chain = run_rust_chain(&sample).unwrap_or_else(|why| panic!("{why}"));
     let parsed = parse_interpolation_dump(&chain.interpolation);
     assert!(
         !parsed.unigrams.is_empty(),
@@ -283,11 +285,7 @@ fn end_to_end_matches_live_libpinyin_pipeline() {
         panic!("missing input for the live end-to-end: PINYIN_GEN_NGRAM_DATA not set or empty")
     };
     let sample = std::fs::read(sample_path()).expect("committed sample");
-    let Some(chain) = run_rust_chain(&sample) else {
-        panic!(
-            "missing input for the live end-to-end: system-table export / model20 cache not found"
-        )
-    };
+    let chain = run_rust_chain(&sample).unwrap_or_else(|why| panic!("{why}"));
 
     let pin_ngseg = pin_ngseg_output(&ngseg, &ngseg_data, &sample);
 

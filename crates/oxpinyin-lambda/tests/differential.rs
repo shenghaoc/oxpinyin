@@ -73,14 +73,20 @@ struct Estimate {
     lambda: Lambda,
 }
 
-fn rust_estimate() -> Option<Estimate> {
-    let export = locate_export_dir()?;
-    let lexicon = PhraseLexicon::from_system_dir(&export).ok()?;
-    let full = std::fs::read_to_string(fixture_ngseg()).ok()?;
-    let system = count_ngseg(&lexicon, &system_fold(&full), true).ok()?;
-    let deleted = count_deleted(&full, true).ok()?;
-    let lambda = estimate_lambda(&system, &deleted).ok()?;
-    Some(Estimate {
+/// The Rust side, or the reason it could not run: a missing input names
+/// the input, a processing failure carries the underlying error.
+fn rust_estimate() -> Result<Estimate, String> {
+    let export = locate_export_dir().ok_or_else(|| format!("missing input: system-table export not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"))?;
+    let lexicon = PhraseLexicon::from_system_dir(&export)
+        .map_err(|e| format!("PhraseLexicon::from_system_dir: {e}"))?;
+    let fixture = fixture_ngseg();
+    let full = std::fs::read_to_string(&fixture)
+        .map_err(|e| format!("committed fixture {}: {e}", fixture.display()))?;
+    let system = count_ngseg(&lexicon, &system_fold(&full), true)
+        .map_err(|e| format!("count_ngseg: {e}"))?;
+    let deleted = count_deleted(&full, true).map_err(|e| format!("count_deleted: {e}"))?;
+    let lambda = estimate_lambda(&system, &deleted).map_err(|e| format!("estimate_lambda: {e}"))?;
+    Ok(Estimate {
         system,
         deleted,
         lambda,
@@ -129,11 +135,7 @@ fn parse_manifest(text: &str) -> Manifest {
 #[test]
 #[ignore = "needs the system-table export (PINYIN_EXPORT_DIR); run with --include-ignored"]
 fn rust_lambda_matches_committed_manifest() {
-    let Some(estimate) = rust_estimate() else {
-        panic!(
-            "missing input: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"
-        )
-    };
+    let estimate = rust_estimate().unwrap_or_else(|why| panic!("{why}"));
     let path = manifest_path();
     if !path.is_file() {
         panic!("committed golden missing: {} not committed", path.display())
@@ -215,11 +217,7 @@ fn rust_lambda_matches_live_estimate_interpolation() {
             "missing input for the live estimate_interpolation: PINYIN_GEN_NGRAM_DATA not set or empty"
         )
     };
-    let Some(estimate) = rust_estimate() else {
-        panic!(
-            "missing input for the live estimate_interpolation: system tables not found (oxpinyin-datagen compile)"
-        )
-    };
+    let estimate = rust_estimate().unwrap_or_else(|why| panic!("{why}"));
 
     let full = std::fs::read(fixture_ngseg()).expect("fixture");
     let fold_a = system_fold(&String::from_utf8(full.clone()).expect("utf8")).into_bytes();

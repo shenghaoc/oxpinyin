@@ -36,13 +36,18 @@ fn manifest_path() -> PathBuf {
     repo_root().join("fixtures/w9/interpolation2.manifest")
 }
 
-fn rust_counts_and_text() -> Option<(Counts, PhraseLexicon, String)> {
-    let export = locate_export_dir()?;
-    let lexicon = PhraseLexicon::from_system_dir(&export).ok()?;
-    let text = std::fs::read_to_string(fixture_ngseg()).ok()?;
-    let counts = count_ngseg(&lexicon, &text, true).ok()?;
+/// The Rust side, or the reason it could not run: a missing input names
+/// the input, a processing failure carries the underlying error.
+fn rust_counts_and_text() -> Result<(Counts, PhraseLexicon, String), String> {
+    let export = locate_export_dir().ok_or_else(|| format!("missing input: system-table export not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"))?;
+    let lexicon = PhraseLexicon::from_system_dir(&export)
+        .map_err(|e| format!("PhraseLexicon::from_system_dir: {e}"))?;
+    let fixture = fixture_ngseg();
+    let text = std::fs::read_to_string(&fixture)
+        .map_err(|e| format!("committed fixture {}: {e}", fixture.display()))?;
+    let counts = count_ngseg(&lexicon, &text, true).map_err(|e| format!("count_ngseg: {e}"))?;
     let emitted = emit_interpolation2(&counts, &lexicon);
-    Some((counts, lexicon, emitted))
+    Ok((counts, lexicon, emitted))
 }
 
 /// Reports the first value divergence instead of dumping both maps.
@@ -83,11 +88,7 @@ fn assert_counts_equal(rust: &Counts, live: &Counts) {
 #[test]
 #[ignore = "needs the system-table export (PINYIN_EXPORT_DIR); run with --include-ignored"]
 fn fixture_emit_roundtrips_through_parse_interpolation2() {
-    let Some((counts, _lexicon, emitted)) = rust_counts_and_text() else {
-        panic!(
-            "missing input: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"
-        )
-    };
+    let (counts, _lexicon, emitted) = rust_counts_and_text().unwrap_or_else(|why| panic!("{why}"));
 
     // Nothing dropped: every T2 count has resolvable phrase text, so the
     // emit filters do not shrink the maps.
@@ -183,11 +184,7 @@ fn rust_matches_live_export_interpolation() {
             "missing input for the live export_interpolation: PINYIN_GEN_NGRAM_DATA not set or empty"
         )
     };
-    let Some((rust, _, emitted)) = rust_counts_and_text() else {
-        panic!(
-            "missing input for the live export_interpolation: system tables not found (oxpinyin-datagen compile)"
-        )
-    };
+    let (rust, _, emitted) = rust_counts_and_text().unwrap_or_else(|why| panic!("{why}"));
     let fixture = std::fs::read(fixture_ngseg()).expect("fixture");
 
     let live_text = run_live_export(
