@@ -10,6 +10,34 @@ performance investigation starts from `6886dc1f` and the residual
 ~1.24× first-result / ~1.16× steady gap — not from the pre-change
 ~2.8× first-result number, which this work halves.
 
+## Corrections to this record
+
+This document has been corrected since it was merged, and one claim it
+touches survives in places that cannot be edited. Collected here so a
+reader arriving at any one of them finds the whole picture.
+
+- **The oracle-validation claim** in the environment paragraph below was
+  false and is corrected in place; it also stands uncorrected in the
+  merged PR body, which is left intact as the record of what was
+  claimed at merge time.
+- **The "emulated 2026-09-05" claim is retracted, and three commit
+  messages still carry it.** `2959afd6` ("and are therefore emulated";
+  "no valid prior x86_64 figure exists"), `4b6189a2` ("first native
+  x86_64 measurement") and `f79f665d` (the full form, including a
+  3.7×-above-native figure) all assert that the 2026-09-05 x86_64
+  matrix ran under emulation. `79f2f7a8` retracted the inference and
+  `1059da87` walked the surrounding capability claims back to their
+  measured strength: the amd64 host's own native libpinyin steady
+  measures 30.4–31.5 ms, so an emulated pass would sit near 110 ms,
+  while the 2026-09-05 figures sit at 26.8–28.6 ms — at native speed,
+  and emulation does not outrun native silicon. Commit messages cannot
+  be amended once published, so those three remain. **The matrix
+  document needs correcting because its execution mode is unverified
+  and its configuration differs four ways — not because it was
+  emulated.**
+- **Session-ready RSS**, the baseline link path, and the RSS "parity"
+  wording were corrected mechanically; see the preceding commit.
+
 ## Executive summary
 
 - **Root cause.** The first `new_session` on a runtime walked the
@@ -61,7 +89,14 @@ relocated the cost: the [2026-09-05 x86_64
 matrix](perf-backend-matrix-2026-09.md) measured the relocated walk at
 56.9 ms (Tkrzw) / 42.1 ms (KC) and the resulting time-to-first-result
 at 1.71× / 2.25× of libpinyin, with steady cycles already at parity
-(0.94×/0.95×).
+(0.94×/0.95×). **That last citation inherits unverified provenance.**
+The 2026-09-05 matrix's execution mode is not on record and its
+configuration differs from this one in four ways; the cross-host
+record's Method section carries the detail. This is not a retraction —
+the figures may well be sound — but the 0.94×/0.95× steady reading,
+and the cross-host sign flip it implies against this document's own
+~1.16× arm64 steady, are pending that correction and should not be
+relied on until it lands.
 
 `6886dc1f` gates both construction sites on the same predicate that
 already decides which decoder runs (`has_real_unigrams()`:
@@ -78,9 +113,19 @@ Parent `87f25055` versus HEAD (`6886dc1f`), one pass each, on this
 host. The passes ran against the pre-rebase pair -- the parent was
 the landing tip when the change was cut -- and the chain was rebased
 onto the then-main tip `2a99761a` before opening the PR (the engine
-gained the #356 character-offset port underneath). Per the rebase
-discipline the oracle pins are re-validated on the rebased chain in
-CI; the numbers below describe the pre-rebase measurement.
+gained the #356 character-offset port underneath). **The oracle pins
+were not re-validated on the rebased chain.** An earlier version of
+this paragraph said they were re-validated in CI; CI cannot do that.
+The model20 archive is non-redistributable and never enters CI
+(`.github/workflows/store-backends.yml:49`: "The pin-built oracle and
+the model20 archive are deliberately NOT CI concerns… no CI job may
+download `model20.text.tar.gz`"), and every oracle-gated differential
+self-skips without a provisioned prefix
+(`.github/workflows/ci.yml:177`: "Self-skips unless the pin-built
+oracle (`PINYIN_ORACLE_PREFIX`)… present — runner-local only… never on
+GitHub-hosted runners"). Re-validating the pins after that rebase is
+outstanding runner-local work. The numbers below describe the
+pre-rebase measurement.
 
 | Property | Value |
 |---|---|
@@ -92,7 +137,7 @@ CI; the numbers below describe the pre-rebase measurement.
 | Harness | `tools/bisection/run-perf-same-data.sh` + `bisect --perf`; `bisect.c` byte-identical in both trees |
 | Script delta | the KC cell's one-line feature-selection fix (the core of `b7ee0cea`) applied **identically in both worktrees**; the NEEDED guard and summarizer fix in `b7ee0cea` postdate the passes and did not affect them |
 | Schedule | 20 interleaved speed rounds × 4 cells, `PERF_CYCLES=8`; 10 RAM rounds × {ram-init, ram-cycle}; `taskset -c 0` on every process |
-| Statistics | medians; 95% percentile-bootstrap CIs (10,000 resamples; whole-run resampling for pooled cycle metrics) |
+| Statistics | medians; 95% percentile-bootstrap CIs (10,000 resamples; whole-run resampling for pooled cycle metrics) — **computed by a script that was never committed, so no interval in this document is reproducible from the tree**. `tools/bisection/perf-ci.py` now implements exactly this method, but it is on the `perf/steady-cycle-workload-knob` branch and not yet in main, so this document cannot cite it; retrofitting these intervals is separate work. |
 | Drift control | both libpinyin cells measured in both passes |
 
 ARM64 qualification: absolute values are not comparable to the x86_64
