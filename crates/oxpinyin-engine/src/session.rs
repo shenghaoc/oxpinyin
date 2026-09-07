@@ -212,6 +212,10 @@ pub struct Session<D, L> {
     /// [`Session::set_collapse_sentence_rows_to_best`]; off (the pinyin
     /// surface's one-row-per-sentence law) by default.
     collapse_sentence_rows_to_best: bool,
+    /// The n-best trellis's `<nstore, nbest>` — libpinyin's `<2, 3>` by
+    /// default, libzhuyin's `<1, 1>` when a zhuyin facade sets it
+    /// ([`Session::set_nbest_shape`]).
+    nbest_shape: crate::nbest::NbestShape,
     /// Reused across keystrokes: the scan's candidate buffer.
     scratch_collected: Vec<Candidate>,
     /// Reused Schwartzian buffer for the three-key order.
@@ -304,6 +308,7 @@ where
             nbest_history: Vec::new(),
             sentence_lookup_active: false,
             collapse_sentence_rows_to_best: false,
+            nbest_shape: crate::nbest::NbestShape::default(),
             selection_committed: false,
             constraints: crate::constraint::ConstraintStore::default(),
             last_result: Vec::new(),
@@ -541,34 +546,42 @@ where
         let text = candidate.text().to_owned();
         let advance = candidate.consumed_bytes();
         let token = token_override.or_else(|| candidate.token());
-        // The chosen span in the store's coordinates. For the composition-
-        // anchored cached list, `anchor` is the composition offset and the
-        // candidate's `consumed_bytes` is measured from it; for a re-anchored
-        // window, `anchor` is that window's caller offset and the candidate's
-        // `consumed_bytes` is measured from IT (the pin's `m_begin = start`,
-        // `pinyin.cpp:2227`). Both drifts are the same expression: the span
-        // starts at `anchor` and advances by the candidate's own byte span.
-        let constraint_start = anchor;
+        // The chosen span in the store's coordinates — upstream's
+        // `add_constraint(m_begin, m_end, token)` (`pinyin.cpp:2582`,
+        // `zhuyin.cpp:1652,1659`). For the composition-anchored cached list,
+        // `anchor` is the composition offset and the candidate's
+        // `consumed_bytes` is measured from it; for an after-cursor window,
+        // `anchor` is that window's caller offset and `consumed_bytes` is
+        // measured from IT (the pin's `m_begin = start`, `pinyin.cpp:2227`)
+        // — both carry `span_start` 0, so the span starts at `anchor`. A
+        // before-cursor window is END-anchored at 0 with each row's own
+        // absolute `m_begin` in `span_start` and its absolute end in
+        // `consumed_bytes`: the span starts at `anchor + span_start`, not at
+        // the anchor, so choosing the second key's span constrains that key
+        // alone and leaves the leading key to the decode.
+        let span_start = anchor.saturating_add(candidate.span_start());
+        let constraint_start = span_start;
         let constraint_end = self.next_boundary(anchor.saturating_add(advance));
-        // Reject a window anchor before the composition offset: the
-        // candidate's span would regress `self.consumed`, a backward
-        // selection no frontend drives (a stale cursor behind the
-        // selection). Rejected, not reconciled — the gap handling below
-        // covers only the anchor == / > composition-offset shapes.
-        if anchor < self.consumed {
+        // Reject a span that starts before the composition offset: it would
+        // regress `self.consumed`, a backward selection no frontend drives
+        // (a stale cursor behind the selection). Rejected, not reconciled —
+        // the gap handling below covers only the start == / > composition-
+        // offset shapes.
+        if span_start < self.consumed {
             return Err(EngineError::SelectionAnchorBeforeComposition {
-                anchor,
+                anchor: span_start,
                 composition: self.consumed,
             });
         }
-        // The raw bytes between the composition offset and the window anchor
+        // The raw bytes between the composition offset and the span start
         // were typed without being selected. For a re-anchored selection
-        // (anchor > composition offset) they would otherwise be dropped from
-        // the committed/preedit text — the same gap the constraint rebuild
-        // preserves (`rebuild_selection_from_constraints`). The composition-
-        // anchored path (anchor == composition offset) has an empty gap.
-        let gap = if anchor > self.consumed {
-            self.raw.get(self.consumed..anchor).unwrap_or("")
+        // (span start > composition offset) they would otherwise be dropped
+        // from the committed/preedit text — the same gap the constraint
+        // rebuild preserves (`rebuild_selection_from_constraints`). The
+        // composition-anchored path (span start == composition offset) has
+        // an empty gap.
+        let gap = if span_start > self.consumed {
+            self.raw.get(self.consumed..span_start).unwrap_or("")
         } else {
             ""
         };
@@ -1096,6 +1109,19 @@ where
         self.collapse_sentence_rows_to_best = collapse;
     }
 
+    /// Selects the n-best trellis's `<nstore, nbest>` for this surface —
+    /// upstream instantiates `PhoneticLookup<2, 3>` for libpinyin
+    /// (`pinyin.cpp:55`) and `PhoneticLookup<1, 1>` for libzhuyin
+    /// (`zhuyin.cpp:50`), so the two facades prune the trellis to different
+    /// depths and extract a different number of sentence tails. The pinyin
+    /// shape is the default; a zhuyin facade sets
+    /// [`NbestShape::ZHUYIN`](crate::NbestShape::ZHUYIN) at instance
+    /// allocation, beside the sentence-row display law. Takes effect at the
+    /// next sentence lookup.
+    pub const fn set_nbest_shape(&mut self, shape: crate::nbest::NbestShape) {
+        self.nbest_shape = shape;
+    }
+
     /// What the shell should display.
     #[must_use]
     pub fn preedit(&self) -> Preedit {
@@ -1216,6 +1242,7 @@ where
             &self.model,
             &[],
             Some(&self.constraints),
+            self.nbest_shape,
         )?;
         // The full-matrix rows already carry the chosen prefix: a chosen
         // row's record is its own whole path, so no lookup-time history
@@ -1303,6 +1330,7 @@ where
             &self.model,
             &seeds,
             Some(&self.constraints),
+            self.nbest_shape,
         )?;
         self.last_result = self
             .nbest_rows
@@ -1343,6 +1371,7 @@ where
                 &self.model,
                 &self.history,
                 None,
+                self.nbest_shape,
             )?
         } else {
             let scorer = Scorer::with_key_costs(
@@ -1361,7 +1390,7 @@ where
             sentences
                 .into_iter()
                 .filter(|(candidate, _)| seen.insert(candidate.text().into()))
-                .take(crate::nbest::NBEST_ROWS)
+                .take(self.nbest_shape.nbest())
                 .map(|(candidate, tokens)| crate::nbest::NbestRow {
                     text: candidate.text().into(),
                     tokens,
@@ -2207,6 +2236,14 @@ where
             flush_window_batch(&mut window_addon, &mut group);
             if group.is_empty() {
                 continue;
+            }
+            // Every row of this slice spans `[start, offset)` — the pin's
+            // `template_item.m_begin = start; m_end = offset`
+            // (`zhuyin.cpp:1595`). The prefix graph's coordinates are
+            // absolute, so the start is recorded as such; the end is the
+            // row's `consumed_bytes` already.
+            for candidate in &mut group {
+                candidate.set_span_start(start);
             }
             // The pin ranks each `len` slice on its own, with the previous
             // token resolved at that slice's start.
@@ -5686,6 +5723,54 @@ mod tests {
                 .iter()
                 .any(|cand| cand.kind() == CandidateKind::Phrase && cand.text() == "你"),
             "the phrase survives the collapsed prepend"
+        );
+    }
+
+    /// A before-cursor row carries its own span start (upstream's
+    /// `m_begin`, `zhuyin.cpp:1595`), and choosing it constrains exactly
+    /// `[m_begin, m_end)`: the leading key is neither absorbed into the
+    /// chosen text nor lost, and the composition advances to the span's end.
+    #[test]
+    fn choosing_a_before_cursor_row_constrains_its_own_span() {
+        use super::CandidateKind;
+        use oxpinyin_facade_anchor::BEFORE_CURSOR_ANCHOR;
+        mod oxpinyin_facade_anchor {
+            pub const BEFORE_CURSOR_ANCHOR: usize = 0;
+        }
+
+        let mut session = train_session();
+        session.type_pinyin("nihao").expect("typing cannot fail");
+        let window = session
+            .candidates_ending_at(5)
+            .expect("offset 5 is in range");
+        let (index, row) = window
+            .iter()
+            .enumerate()
+            .find(|(_, cand)| cand.kind() == CandidateKind::Phrase && cand.text() == "好")
+            .expect("好 ends at 5 and is offered");
+        assert_eq!(row.span_start(), 2, "好 starts where `hao` starts");
+        assert_eq!(row.consumed_bytes(), 5, "…and ends at the lookup offset");
+        let after_cursor = session.candidates_at(2).expect("offset 2 is in range");
+        assert!(
+            after_cursor.iter().all(|cand| cand.span_start() == 0),
+            "an after-cursor window measures every row from its anchor"
+        );
+
+        session
+            .select_anchored(index, &window, BEFORE_CURSOR_ANCHOR)
+            .expect("the row is selectable");
+        assert_eq!(session.composition_offset(), 5);
+        let runs = session.constraints.runs();
+        assert_eq!(runs.len(), 1, "one forcing: {runs:?}");
+        assert_eq!(
+            (runs[0].0, runs[0].1, runs[0].3.as_str()),
+            (2, 5, "好"),
+            "the constraint is the row's own span, not [0, offset)"
+        );
+        assert_eq!(
+            session.preedit().text(),
+            "ni好",
+            "the leading key stays typed-but-unselected, as an after-cursor re-anchor keeps it"
         );
     }
 

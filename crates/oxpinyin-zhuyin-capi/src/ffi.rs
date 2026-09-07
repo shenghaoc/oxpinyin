@@ -44,7 +44,7 @@ pub(crate) fn cstr_to_owned_lossy(ptr: *const c_char) -> String {
 // `void *malloc(size_t)` and `void free(void *)` from the host's libc.
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut c_void;
-    fn free(ptr: *mut c_void);
+    pub(crate) fn free(ptr: *mut c_void);
 }
 
 /// Duplicates `s` into a fresh, NUL-terminated buffer using libc `malloc`

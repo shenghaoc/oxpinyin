@@ -154,6 +154,9 @@ pub struct ZhuyinCandidate {
     source_index: usize,
     /// Decoder cost that ranked this candidate; opaque — trust list order.
     cost: i64,
+    /// Where the span starts, in original input coordinates — upstream's
+    /// `m_begin`, the cursor a before-cursor choose answers.
+    span_begin: usize,
 }
 
 impl ZhuyinCandidate {
@@ -221,6 +224,8 @@ impl ZhuyinSession {
     #[must_use]
     pub fn open(runtime: &Runtime, mut session: RuntimeSession) -> Self {
         session.set_collapse_sentence_rows_to_best(true);
+        // libzhuyin's trellis is `PhoneticLookup<1, 1>` (`zhuyin.cpp:50`).
+        session.set_nbest_shape(oxpinyin_engine::NbestShape::ZHUYIN);
         let user = runtime.user_store();
         let core = InstanceCore::new(
             session,
@@ -419,7 +424,11 @@ impl ZhuyinSession {
         } else {
             None
         };
-        snapshot_candidates(self, &window_owned, before_cursor, before_end);
+        let anchor = match self.core.anchored_window.as_ref() {
+            Some((anchor, _)) => *anchor,
+            None => self.core.session.composition_offset(),
+        };
+        snapshot_candidates(self, &window_owned, before_cursor, before_end, anchor);
         if self.candidates.is_empty() && self.core.parsed_len == 0 {
             return false;
         }
@@ -448,8 +457,12 @@ impl ZhuyinSession {
     /// Returns [`EngineError::CandidateIndexOutOfRange`] for a stale index
     /// and forwards the session's selection failures.
     pub fn choose(&mut self, index: usize) -> Result<usize, EngineError> {
-        let (source_index, candidate_type) = match self.candidates.get(index) {
-            Some(candidate) => (candidate.source_index, candidate.candidate_type),
+        let (source_index, candidate_type, span_begin) = match self.candidates.get(index) {
+            Some(candidate) => (
+                candidate.source_index,
+                candidate.candidate_type,
+                candidate.span_begin,
+            ),
             None => {
                 return Err(EngineError::CandidateIndexOutOfRange {
                     index,
@@ -476,12 +489,18 @@ impl ZhuyinSession {
             });
         }
         self.core.anchored_window = None;
-        let end = if candidate_type == ZhuyinCandidateType::BestMatch {
-            self.core.parsed_len
-        } else if let Some(parse) = self.core.zhuyin_parse.as_ref() {
-            zhuyin_original_offset(parse, self.core.session.composition_offset())
-        } else {
-            self.core.session.composition_offset()
+        // `zhuyin_choose_candidate`'s return (`zhuyin.cpp:1644-1663`): the
+        // parse end for BEST_MATCH, the span's end for an after-cursor row,
+        // the span's START (`m_begin`) for a before-cursor row.
+        let end = match candidate_type {
+            ZhuyinCandidateType::BestMatch => self.core.parsed_len,
+            ZhuyinCandidateType::NormalBeforeCursor => span_begin,
+            _ => match self.core.zhuyin_parse.as_ref() {
+                Some(parse) => {
+                    zhuyin_original_offset(parse, self.core.session.composition_offset())
+                }
+                None => self.core.session.composition_offset(),
+            },
         };
         Ok(end)
     }
@@ -630,6 +649,7 @@ fn snapshot_candidates(
     window: &CandidateList,
     before_cursor: bool,
     before_end: Option<usize>,
+    anchor: usize,
 ) {
     let normal_type = if before_cursor {
         ZhuyinCandidateType::NormalBeforeCursor
@@ -644,6 +664,11 @@ fn snapshot_candidates(
         let consumed_bytes = match zhuyin_parse.as_ref() {
             Some(parse) => zhuyin_original_offset(parse, candidate.consumed_bytes()),
             None => candidate.consumed_bytes(),
+        };
+        let span_begin_session = anchor.saturating_add(candidate.span_start());
+        let span_begin = match zhuyin_parse.as_ref() {
+            Some(parse) => zhuyin_original_offset(parse, span_begin_session),
+            None => span_begin_session,
         };
         // Before-cursor law: only candidates whose span ENDS at the
         // requested original offset. At offset 0 no span ends there, so the
@@ -667,6 +692,7 @@ fn snapshot_candidates(
             consumed_bytes,
             source_index: window_index,
             cost: candidate.cost(),
+            span_begin,
         });
     }
 }

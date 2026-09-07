@@ -307,7 +307,17 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     } else {
         None
     };
-    crate::candidates::snapshot_candidates(&mut *inst, &window_owned, before_cursor, before_end);
+    let anchor = match inst.core.anchored_window.as_ref() {
+        Some((anchor, _)) => *anchor,
+        None => inst.core.session.composition_offset(),
+    };
+    crate::candidates::snapshot_candidates(
+        &mut *inst,
+        &window_owned,
+        before_cursor,
+        before_end,
+        anchor,
+    );
     // The pin answers `true` for a valid lookup into a non-empty matrix
     // even when no candidate spans the offset (the empty-col-window
     // shape, `zhuyin.cpp:1474,1549`); only an empty matrix (nothing

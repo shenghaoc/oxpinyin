@@ -193,16 +193,26 @@ pub extern "C" fn zhuyin_choose_candidate(
         return -1;
     }
     inst.core.anchored_window = None;
-    // The BEST_MATCH row answers the parse end; the normal rows answer
-    // their own span's end mapped back to original coordinates.
-    let end =
-        if inst.candidates[index].candidate_type == lookup_candidate_type_t::BEST_MATCH_CANDIDATE {
-            inst.core.parsed_len
-        } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-            oxpinyin_facade::zhuyin_original_offset(parse, inst.core.session.composition_offset())
-        } else {
-            inst.core.session.composition_offset()
-        };
+    // `zhuyin_choose_candidate`'s return (`zhuyin.cpp:1644-1663` at the
+    // pin): the BEST_MATCH row answers the parse end (`matrix.size() - 1`);
+    // an after-cursor row answers its span's end (`offset = m_end`); a
+    // before-cursor row answers its span's START (`offset = m_begin`) —
+    // the constraint is written on `[m_begin, m_end)` either way.
+    let chosen = &inst.candidates[index];
+    let end = match chosen.candidate_type {
+        lookup_candidate_type_t::BEST_MATCH_CANDIDATE => inst.core.parsed_len,
+        lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR => chosen.span_begin,
+        _ => {
+            if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+                oxpinyin_facade::zhuyin_original_offset(
+                    parse,
+                    inst.core.session.composition_offset(),
+                )
+            } else {
+                inst.core.session.composition_offset()
+            }
+        }
+    };
     end as c_int
 }
 
@@ -253,12 +263,17 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
 /// `before_cursor` selects the zhuyin enum tag for the normal rows. When
 /// `before_end` is `Some(end)`, only candidates whose consumed span ENDS at
 /// `end` (in original input coordinates) are kept — the before-cursor search
-/// law. `None` keeps every candidate (the after-cursor window).
+/// law. `None` keeps every candidate (the after-cursor window). `anchor` is
+/// the session-coordinate origin the window's rows are measured from (the
+/// lookup offset, the composition offset, or
+/// [`oxpinyin_facade::BEFORE_CURSOR_ANCHOR`]), so each row's absolute span
+/// start is `anchor + span_start()`.
 pub(crate) fn snapshot_candidates(
     inst: &mut CapiInstance,
     window: &oxpinyin_engine::CandidateList,
     before_cursor: bool,
     before_end: Option<usize>,
+    anchor: usize,
 ) {
     let normal_type = if before_cursor {
         lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR
@@ -281,6 +296,12 @@ pub(crate) fn snapshot_candidates(
             oxpinyin_facade::zhuyin_original_offset(parse, cand.consumed_bytes())
         } else {
             cand.consumed_bytes()
+        };
+        let span_begin_session = anchor.saturating_add(cand.span_start());
+        let span_begin = if let Some(parse) = zhuyin_parse.as_ref() {
+            oxpinyin_facade::zhuyin_original_offset(parse, span_begin_session)
+        } else {
+            span_begin_session
         };
         // Before-cursor law: only candidates whose span ENDS at the requested
         // original-offset. At offset 0 no span ends there (nothing precedes
@@ -307,6 +328,7 @@ pub(crate) fn snapshot_candidates(
             consumed_bytes,
             token: cand.token(),
             source_index: window_index,
+            span_begin,
         });
     }
 }
