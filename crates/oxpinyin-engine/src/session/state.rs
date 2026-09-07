@@ -46,11 +46,22 @@ where
         Self::init(config, paths, dictionary, model, key_costs)
     }
 
-    /// Builds a session over an already-computed key-cost table.
+    /// Builds a session over a caller-supplied key-cost table.
     ///
-    /// [`Runtime::new_session`](oxpinyin_runtime) uses this to skip the
-    /// per-session [`key_cost_table`] recomputation: the table is computed
-    /// once at [`Runtime::open`](oxpinyin_runtime) time and reused.
+    /// [`Runtime::new_session`](oxpinyin_runtime) uses this to avoid
+    /// recomputing [`key_cost_table`] for every session. The table is
+    /// **not** computed at `Runtime::open` time: `87f9a49e` deferred the
+    /// walk to the first session allocation, and `6886dc1f` removed it
+    /// from the real-unigram path altogether. A runtime-backed session
+    /// therefore passes an empty table, and only the pre-frequency
+    /// fallback branch walks one and memoises it per visibility mask.
+    ///
+    /// # Panics
+    ///
+    /// Debug builds only: panics when `key_costs` contradicts
+    /// [`LanguageModel::has_real_unigrams`] — see the [`Session::key_costs`]
+    /// field. Release builds do not check, and a violation is silent:
+    /// every absent key reads back as `UNKNOWN_COST`.
     pub fn new_with_key_costs(
         config: &dyn ConfigSource,
         paths: StoragePaths,
@@ -68,6 +79,25 @@ where
         model: L,
         key_costs: Vec<Cost>,
     ) -> Result<Self, EngineError> {
+        // The `key_costs` field documents a two-sided invariant: the table
+        // is empty exactly when the model carries real unigram
+        // frequencies. Neither side is enforced by the type, and neither
+        // failure is loud. A fallback model handed an empty table prices
+        // every edge at `UNKNOWN_COST` (`scoring.rs:228`, `:312` read
+        // through `.unwrap_or(UNKNOWN_COST)`) and decodes wrongly without
+        // erroring; a real-unigram model handed a full table silently
+        // reinstates the ~430-lookup walk that `6886dc1f` removed, for a
+        // value no reader on that path consults. Both are caller errors
+        // under the field's contract, and `new_with_key_costs` is public,
+        // so the check is stated equality rather than one-sided.
+        debug_assert_eq!(
+            model.has_real_unigrams(),
+            key_costs.is_empty(),
+            "key_costs must be empty exactly when the model has real \
+             unigrams (has_real_unigrams={}, key_costs.len()={})",
+            model.has_real_unigrams(),
+            key_costs.len(),
+        );
         Ok(Self {
             dictionary,
             model,

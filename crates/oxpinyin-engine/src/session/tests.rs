@@ -1342,6 +1342,45 @@ fn real_unigrams_skip_the_key_cost_walk_but_the_fallback_keeps_it() {
     );
 }
 
+// Non-vacuity for the `Session::init` invariant assert, both directions.
+// Gated on `debug_assertions`: the assert compiles out in release, so an
+// ungated `should_panic` would fail under `cargo test --release` rather than
+// report anything about the code.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "key_costs must be empty exactly when")]
+fn fallback_model_with_an_empty_key_cost_table_is_rejected() {
+    // The harmful direction: without the table the fallback scorer prices
+    // every edge at UNKNOWN_COST and decodes wrongly in silence.
+    let _ = Session::new_with_key_costs(
+        &EmptyConfigSource,
+        StoragePaths::new("user"),
+        Silent,
+        Silent,
+        Vec::new(),
+    );
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "key_costs must be empty exactly when")]
+fn real_unigram_model_with_a_populated_key_cost_table_is_rejected() {
+    // The wasteful direction: this is what reverting either gate looks like
+    // from the constructor's side.
+    let _ = Session::new_with_key_costs(
+        &EmptyConfigSource,
+        StoragePaths::new("user"),
+        Silent,
+        FixedUnigrams {
+            system: 14,
+            addon: 14,
+            total: 51_051_831,
+            addon_total: 25_525_916,
+        },
+        vec![oxpinyin_core::cost::UNKNOWN_COST; oxpinyin_core::SYLLABLE_KEY_COUNT],
+    );
+}
+
 #[test]
 fn addon_candidates_rank_on_their_own_amplified_scale() {
     use super::CandidateKind;
