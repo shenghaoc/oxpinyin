@@ -54,20 +54,24 @@ from the same digest. Two consequences for this record:
    `50afb7f6`; the amd64 pass runs at `f79f665d`.
 2. The one prior set of x86_64-labelled figures, in
    `perf-backend-matrix-2026-09.md` (2026-09-05), has unverified build
-   provenance: that pass used the platform-pinned recipe, and how its image
-   was actually built is not on record. Its timings are consistent with
-   native execution on its host, which is this amd64 host (same kernel
-   string), and that host has no arm64 execution capability: no binfmt_misc
-   handlers are registered, no qemu-user package is installed, no
-   qemu-aarch64 binary exists on it, and its current boot, 2026-08-29,
-   predates the pass. As configured it cannot execute an arm64 image, and
-   the pinned recipe cannot complete there as committed. A direct
-   qemu-penalty control was attempted for this record and could not be
-   taken: the arm64 image build on that host fails at the first RUN
-   (`Exec format error`) for the same reason, and enabling emulation
-   requires host-level packages this session does not install on a shared
-   machine. Correcting that document's record is separate work and out of
-   scope here.
+   provenance: that pass used the platform-pinned recipe, and how its
+   image was actually built is not on record. Its timings are consistent
+   with native execution on its host, which is this amd64 host (same
+   kernel string). This host, as found for this record, has no arm64
+   execution capability — no binfmt_misc handlers are registered, no
+   qemu-user package is installed, no qemu-aarch64 binary exists on it,
+   and its current boot began 2026-08-29, before the pass. None of that
+   is durable state: binfmt handlers are runtime state, registrable and
+   removable within one boot, and packages can be installed and removed
+   the same way. These facts describe the host today, not the host of
+   2026-09-05, and that pass's execution mode remains unverified; the
+   timing consistency is the load-bearing observation. The control that
+   would measure the qemu penalty directly was attempted and could not
+   be taken: the arm64 image build on this host fails today at the
+   first RUN (`Exec format error`), and enabling emulation requires
+   host-level packages this session does not install on a shared
+   machine. Correcting that document's record is separate work and out
+   of scope here.
 
 **Absolute times are not comparable across measurement sessions.** The
 instrument carries a whole-session offset. This sweep's `n = 1` steady cells
