@@ -2,8 +2,8 @@ name: verify-nightly
 
 # Tier-3 scheduled verification (docs/safety/ci-strategy.md): everything
 # too slow or too nightly for the PR gate. Findings here open issues —
-# they do not block merges unless a ratchet exists (Lizard's CCN limit is
-# the only ratchet).
+# they do not block merges unless a ratchet exists (two: Lizard's CCN
+# limit and the coverage floor).
 #
 # No trial lanes remain: the Miri, cargo-mutants and cargo-geiger jobs
 # were retired on 2026-09-01 (docs/findings/verify-nightly.md). There are
@@ -156,7 +156,11 @@ jobs:
           mkdir -p ~/.local/bin
           install -m755 cargo-llvm-cov ~/.local/bin
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - run: cargo llvm-cov --locked --workspace --no-default-features --features kyotocabinet --lcov --output-path lcov.info
+      # Coverage floor (ratchet, 2026-09-08): line coverage below 80%
+      # fails the lane. The 2026-08-29 baseline was 81.92% on this same
+      # kyotocabinet build; raise the floor when the number rises, never
+      # lower it to pass.
+      - run: cargo llvm-cov --locked --workspace --no-default-features --features kyotocabinet --lcov --output-path lcov.info --fail-under-lines 80
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-lcov
