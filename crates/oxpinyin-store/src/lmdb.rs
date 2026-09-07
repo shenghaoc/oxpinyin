@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 use heed::types::Bytes;
 use heed::{Database, EnvFlags, EnvOpenOptions, PutFlags, RwTxn, WithoutTls};
 
+use crate::common::validate_path;
 use crate::{RAW_TABLE, ReadStore, StoreError, Visitor, WriteStore, WriteTxn, validate_table_name};
 
 type Env = heed::Env<WithoutTls>;
@@ -56,13 +57,6 @@ impl fmt::Display for MapFullError {
 }
 
 impl std::error::Error for MapFullError {}
-
-fn validate_path(path: &Path) -> Result<(), StoreError> {
-    if path.as_os_str().as_encoded_bytes().contains(&0) {
-        return Err(StoreError::InvalidInput("path contains NUL"));
-    }
-    Ok(())
-}
 
 fn normalize_bound(bound: Bound<&[u8]>) -> Bound<&[u8]> {
     match bound {

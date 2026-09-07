@@ -796,6 +796,11 @@ pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = true;
 #[cfg(any(feature = "lmdb", feature = "redb"))]
 pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = false;
 
+/// Helpers shared by the framed and file-backed backends; every item is
+/// gated to the backends that use it (see the module docs).
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb"))]
+mod common;
+
 #[cfg(feature = "lmdb")]
 mod lmdb;
 #[cfg(feature = "lmdb")]

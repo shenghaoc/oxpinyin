@@ -50,51 +50,10 @@ mod ffi;
 use std::ops::Bound;
 use std::path::Path;
 
+use crate::common::{frame, in_bounds, prefix, unframe};
 use crate::{ReadStore, StoreError, Visitor, WriteStore, WriteTxn, validate_table_name};
 
 use ffi::{Db, DbType};
-
-/// The framing separator between a table name and a key.
-///
-/// Table names are validated NUL-free, so no framed prefix is a prefix of
-/// another: every table is a contiguous run of the tree whose internal
-/// order is the caller's key order.
-const SEPARATOR: u8 = 0;
-
-/// `table || 0x00 || key`.
-fn frame(table: &str, key: &[u8]) -> Vec<u8> {
-    let mut framed = Vec::with_capacity(table.len() + 1 + key.len());
-    framed.extend_from_slice(table.as_bytes());
-    framed.push(SEPARATOR);
-    framed.extend_from_slice(key);
-    framed
-}
-
-/// `table || 0x00` — the prefix every one of `table`'s rows carries.
-fn prefix(table: &str) -> Vec<u8> {
-    frame(table, &[])
-}
-
-/// The caller's key inside a framed one, or `None` if the framed key
-/// belongs to another table.
-fn unframe<'a>(prefix: &[u8], framed: &'a [u8]) -> Option<&'a [u8]> {
-    framed.strip_prefix(prefix)
-}
-
-/// Whether `key` falls inside `[lo, hi]`.
-fn in_bounds(key: &[u8], lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> bool {
-    let above = match lo {
-        Bound::Unbounded => true,
-        Bound::Included(bound) => key >= bound,
-        Bound::Excluded(bound) => key > bound,
-    };
-    let below = match hi {
-        Bound::Unbounded => true,
-        Bound::Included(bound) => key <= bound,
-        Bound::Excluded(bound) => key < bound,
-    };
-    above && below
-}
 
 /// A Kyoto Cabinet `TreeDB` store implementing both capability tiers.
 pub struct KcStore {
