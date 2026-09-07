@@ -41,8 +41,10 @@ oracle pin, or the sections below are not describing the same subject.
 **The image recipe pinned one platform until `f79f665d`.**
 `Dockerfile.perf-matrix` at `50afb7f6` hard-pinned `FROM
 --platform=linux/arm64` — a FROM pin overrides any `--platform` passed to the
-build — and fetched an aarch64-only rustup-init, so on an x86_64 host it
-could only produce an emulated arm64 image. `f79f665d` drops the pin and
+build — and fetched an aarch64-only rustup-init, so on an x86_64 host it could
+not build a native image at all: wherever binfmt emulation was registered it
+silently produced an emulated arm64 one, and anywhere else the build failed
+outright. `f79f665d` drops the pin and
 selects rustup-init per build arch; the pinned base digest is a multi-arch
 OCI index (amd64 and arm64 variants), so each host builds its native image
 from the same digest. Two consequences for this record:
@@ -50,10 +52,22 @@ from the same digest. Two consequences for this record:
 1. The arm64 pass is unaffected — its host's native platform was the pinned
    one, so its image is content-identical under either commit. It ran at
    `50afb7f6`; the amd64 pass runs at `f79f665d`.
-2. No valid prior x86_64 figure exists for this harness. The x86_64-labelled
-   figures in `perf-backend-matrix-2026-09.md` (2026-09-05) were captured on
-   an x86_64 host against the platform-pinned recipe and are therefore
-   emulated. Correcting that document is separate work and out of scope here.
+2. The one prior set of x86_64-labelled figures, in
+   `perf-backend-matrix-2026-09.md` (2026-09-05), has unverified build
+   provenance: that pass used the platform-pinned recipe, and how its image
+   was actually built is not on record. Its timings are consistent with
+   native execution on its host, which is this amd64 host (same kernel
+   string), and that host has no arm64 execution capability: no binfmt_misc
+   handlers are registered, no qemu-user package is installed, no
+   qemu-aarch64 binary exists on it, and its current boot, 2026-08-29,
+   predates the pass. As configured it cannot execute an arm64 image, and
+   the pinned recipe cannot complete there as committed. A direct
+   qemu-penalty control was attempted for this record and could not be
+   taken: the arm64 image build on that host fails at the first RUN
+   (`Exec format error`) for the same reason, and enabling emulation
+   requires host-level packages this session does not install on a shared
+   machine. Correcting that document's record is separate work and out of
+   scope here.
 
 **Absolute times are not comparable across measurement sessions.** The
 instrument carries a whole-session offset. This sweep's `n = 1` steady cells
@@ -212,7 +226,8 @@ the `after_last` snapshot.
 | capi artifacts | KC `sha256:c45eae328a6568dc686f95f296f8d8fce0cab34e7769277b6134963d109f5eaa`, `NEEDED libkyotocabinet.so.16`, 1,665,544 bytes; Tkrzw `sha256:bf8d3b5707b5bc1bafc09670185b96770b73f596dd2eb57b8a9cba46bad4aec8`, `NEEDED libtkrzw.so.1`, 1,688,840 bytes; stripped; built once inside the measuring container and reused at every size |
 | Dataset | image-baked libpinyin installs, one shared directory per backend pair; the oxpinyin cells open the **same** directories (no oxpinyin-generated data) |
 | Capture window | 2026-09-07T15:14:25Z – 2026-09-07T15:29:56Z (UTC, from the measuring container) |
-| Prior x86_64 figures | none valid. No native x86_64 measurement of this harness existed before this session; the x86_64-labelled figures in `perf-backend-matrix-2026-09.md` were captured against the platform-pinned recipe and are emulated (Method, platform note). No session-offset comparison is therefore stated for this section. |
+| Prior x86_64 figures | none comparable. The only prior steady-cycle figures labelled x86_64 (`perf-backend-matrix-2026-09.md`, 2026-09-05) were taken with a different oxpinyin tree (`b5fdfad8`, release `panic = "abort"`), a different oracle (2.11.91), datagen-compiled data directories, and `bisect.c` at that tree; their build provenance is unverified and their timings are consistent with native execution here (Method, platform note). No session-offset comparison is stated for this section. |
+| Emulation control | attempted, not taken: `podman build --platform linux/arm64` of this recipe fails on this host at the first RUN (`Exec format error` — no binfmt handler, no qemu-user package; see Method, platform note) |
 
 ## Results — linux/amd64
 
