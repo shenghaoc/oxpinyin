@@ -193,6 +193,15 @@ verifies its two upstreams asymmetrically: libpinyin by commit SHA
 tagged archive's SHA-256. A follow-up issue tracks moving ibus to
 commit-SHA verification; this PR does not change the ibus pin.
 
+**Resolved 2026-09-07 UTC (#369):** ibus-libpinyin is now fetched by
+commit SHA too, through the same `fetch_commit` path as libpinyin in
+`build-oracle.sh`; the provisioning mirror is `oracle-provisioning-pin-v3`
+with `ibus_libpinyin_archive_sha256` dropped. The pinned commit
+(`2d2cdac0…`, what the lightweight `1.16.5` tag resolves to upstream)
+and every prefix manifest field are unchanged, so no fixture or
+pin-stamped guard moves. Amendment recorded in
+`docs/testing/oracle-environment.md`.
+
 ## Issues filed from this verification
 
 - **#356** — port `pinyin_get_character_offset` true-on-invalid-phrase

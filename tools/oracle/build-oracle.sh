@@ -7,21 +7,24 @@ set -euo pipefail
 # and the DBM backend selected by --dbm (Tkrzw, Kyoto Cabinet or
 # Berkeley DB).
 
-# libpinyin is fetched by commit SHA and verified by commit SHA: no
-# release tag carries this pin (2.11.92 is untagged upstream, so the former
-# tag-tarball form cannot pin it), and an archive SHA-256 is weaker than it
-# looks -- GitHub regenerates archive tarballs and has changed its
-# compression before, so an archive hash can drift while a commit SHA
-# cannot. LIBPINYIN_VERSION is the version configure.ac reports; it names
-# the installed header dir and the pin ref, and the manifest key keeps its
-# schema name `libpinyin_tag` for compatibility with existing manifests.
+# Both upstreams are fetched by commit SHA and verified by commit SHA. For
+# libpinyin this is forced: no release tag carries this pin (2.11.92 is
+# untagged upstream, so the former tag-tarball form cannot pin it). For
+# ibus-libpinyin a tag exists (1.16.5, a lightweight tag pointing at
+# IBUS_LIBPINYIN_SHA), but an archive SHA-256 is weaker than it looks --
+# GitHub regenerates archive tarballs and has changed its compression
+# before, so an archive hash can drift while a commit SHA cannot -- and
+# verifying the two upstreams the same way keeps the provisioning mirror
+# symmetric (issue #369). LIBPINYIN_VERSION is the version configure.ac
+# reports; it names the installed header dir and the pin ref, and the
+# manifest key keeps its schema name `libpinyin_tag` for compatibility
+# with existing manifests.
 LIBPINYIN_VERSION=2.11.92
 LIBPINYIN_SHA=074a2219c90feaf962d0d24f034514033ece5f99
 LIBPINYIN_GIT_URL=https://github.com/libpinyin/libpinyin.git
 IBUS_LIBPINYIN_TAG=1.16.5
 IBUS_LIBPINYIN_SHA=2d2cdac0187101aa0cd7ac06694a8340721ddfbb
-IBUS_LIBPINYIN_URL=https://codeload.github.com/libpinyin/ibus-libpinyin/tar.gz/refs/tags/1.16.5
-IBUS_LIBPINYIN_ARCHIVE_SHA256=ab6d6cc371e4ec0cda1471ef968e9545de69a404958ecfb4e68545ef4b328646
+IBUS_LIBPINYIN_GIT_URL=https://github.com/libpinyin/ibus-libpinyin.git
 MODEL_URL=https://downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz
 MODEL_SHA256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
 # The pinned model20 export inventory (interpolation2.text + seventeen .table
@@ -58,8 +61,8 @@ usage() {
 	cat <<'EOF'
 Usage: build-oracle.sh [OPTIONS]
 
-Build the pinned libpinyin (git fetch verified by commit SHA) and the
-pinned ibus-libpinyin release from its verified archive.
+Build the pinned libpinyin and the pinned ibus-libpinyin, each fetched by
+commit SHA (git fetch --depth=1) and verified by git rev-parse.
 
 Options:
   --work-dir DIR       Download and build directory (default: $TMPDIR/oxpinyin-oracle)
@@ -231,28 +234,31 @@ fetch() {
 	printf '%s\n' "$path"
 }
 
-ibus_archive=$(fetch "ibus-libpinyin-$IBUS_LIBPINYIN_TAG.tar.gz" "$IBUS_LIBPINYIN_URL" "$IBUS_LIBPINYIN_ARCHIVE_SHA256")
-
-# Source directory is named by the commit SHA, never by the version: the
+# Fetch one upstream at a pinned commit into a fresh shallow checkout and
+# verify that the checked-out HEAD is exactly the pinned SHA. The source
+# directory is named by the commit SHA, never by the version or tag: the
 # version names the release line, the SHA names the tree that was built.
-lib_src=$work_dir/src/libpinyin-$LIBPINYIN_SHA
-rm -rf "$lib_src"
-mkdir -p "$lib_src"
-git init --quiet "$lib_src"
-if ! git -C "$lib_src" fetch --quiet --depth=1 "$LIBPINYIN_GIT_URL" "$LIBPINYIN_SHA"; then
-	printf 'git fetch of libpinyin %s failed\n' "$LIBPINYIN_SHA" >&2
-	exit 1
-fi
-git -C "$lib_src" checkout --quiet --detach FETCH_HEAD
-fetched_sha=$(git -C "$lib_src" rev-parse HEAD)
-if [[ $fetched_sha != "$LIBPINYIN_SHA" ]]; then
-	printf 'libpinyin commit mismatch: fetched %s, expected %s\n' "$fetched_sha" "$LIBPINYIN_SHA" >&2
-	exit 1
-fi
+fetch_commit() {
+	local name=$1 url=$2 sha=$3 src=$work_dir/src/$1-$3
+	rm -rf "$src"
+	mkdir -p "$src"
+	git init --quiet "$src"
+	if ! git -C "$src" fetch --quiet --depth=1 "$url" "$sha"; then
+		printf 'git fetch of %s %s failed\n' "$name" "$sha" >&2
+		exit 1
+	fi
+	git -C "$src" checkout --quiet --detach FETCH_HEAD
+	local fetched_sha
+	fetched_sha=$(git -C "$src" rev-parse HEAD)
+	if [[ $fetched_sha != "$sha" ]]; then
+		printf '%s commit mismatch: fetched %s, expected %s\n' "$name" "$fetched_sha" "$sha" >&2
+		exit 1
+	fi
+	printf '%s\n' "$src"
+}
 
-rm -rf "$work_dir/src/ibus-libpinyin-$IBUS_LIBPINYIN_TAG"
-tar -xzf "$ibus_archive" -C "$work_dir/src"
-ibus_src=$work_dir/src/ibus-libpinyin-$IBUS_LIBPINYIN_TAG
+lib_src=$(fetch_commit libpinyin "$LIBPINYIN_GIT_URL" "$LIBPINYIN_SHA")
+ibus_src=$(fetch_commit ibus-libpinyin "$IBUS_LIBPINYIN_GIT_URL" "$IBUS_LIBPINYIN_SHA")
 
 # The model data is the 18-file model20 export that build-oracle.sh drops into
 # libpinyin's data dir (make install then ships it to $prefix/lib/libpinyin/data).

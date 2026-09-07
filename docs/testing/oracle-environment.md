@@ -121,3 +121,28 @@ Rows above are the historical 2.11.91 freeze and stand unedited.
   2.11.91 and consumers build against `include/libpinyin-2.11.91/`;
   claiming an unreleased version would break drop-in. It moves only
   when upstream tags a release.
+
+## Amendment — ibus-libpinyin by commit SHA (2026-09-07 UTC, #369)
+
+The pin itself is unchanged: ibus-libpinyin stays `1.16.5` /
+`2d2cdac0187101aa0cd7ac06694a8340721ddfbb`. Only its fetch and
+verification form moves, to match libpinyin's:
+
+- **Fetch form:** `tools/oracle/build-oracle.sh` now fetches
+  ibus-libpinyin by commit SHA (`git fetch --depth=1 <repo> <sha>`,
+  `git checkout FETCH_HEAD`, verified by `git rev-parse HEAD` equality)
+  instead of downloading the `1.16.5` tag tarball and checking its
+  SHA-256. The archive URL and archive hash in the row above are
+  historical and no longer consulted by the recipe. `1.16.5` is a
+  lightweight tag upstream and resolves to exactly that commit
+  (`git ls-remote`, 2026-09-07 UTC).
+- **Provisioning mirror:** `tools/oracle/oracle-pin.txt` is schema
+  `oracle-provisioning-pin-v3`; `ibus_libpinyin_archive_sha256` is
+  dropped and both upstreams are verified symmetrically by commit SHA.
+  The prefix manifest (`schema=pinyin-oracle-v1`) is unchanged: it never
+  carried an archive hash for either upstream, so the pin ref, every
+  `oracle-pin.txt` a built prefix writes, and every fixture stamp are
+  byte-identical before and after this change.
+- **Rationale:** GitHub regenerates archive tarballs and has changed
+  their compression before, so an archive hash can drift while a commit
+  SHA cannot; a tag can also be moved, which a commit SHA pin ignores.
