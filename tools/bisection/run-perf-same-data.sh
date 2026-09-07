@@ -35,21 +35,33 @@ RAM_RUNS="${PERF_RAM_RUNS:-10}"
 TARGET="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
 mkdir -p "$OUT"
 
+# Build the capi .so for exactly one named backend. The backend is never
+# inherited from workspace defaults: the default flipped from kyotocabinet
+# to tkrzw at 05688575, and the KC cell's implicit-default build silently
+# produced a second tkrzw artifact whose processes failed pinyin_init on
+# KC-format data (aborting the whole matrix under `set -e`). The NEEDED
+# check after the build is the guard: it fails the run if the artifact
+# does not actually link the requested backend's system library, before
+# any cell can be measured against the wrong storage format.
 build_capi() {
-    local features=$1 out=$2
-    if [ -z "$features" ]; then
-        cargo build --locked --release -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml"
-    else
-        cargo build --locked --release -p oxpinyin-capi --no-default-features --features "$features" \
-            --manifest-path "$REPO_ROOT/Cargo.toml"
-    fi
+    local backend=$1 out=$2
+    [ -n "$backend" ] || { echo "fatal: build_capi requires an explicit backend" >&2; exit 1; }
+    cargo build --locked --release -p oxpinyin-capi --no-default-features --features "$backend" \
+        --manifest-path "$REPO_ROOT/Cargo.toml"
     cp "$TARGET/release/libpinyin_capi.so" "$out"
     strip --strip-all "$out"
+    local needed
+    needed=$(readelf -d "$out" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p')
+    case "$backend" in
+        kyotocabinet) echo "$needed" | grep -q '^libkyotocabinet\.so' ;;
+        tkrzw)        echo "$needed" | grep -q '^libtkrzw\.so' ;;
+        *) echo "fatal: build_capi: unknown backend '$backend'" >&2; exit 1 ;;
+    esac || { echo "fatal: $out does not link a $backend library (NEEDED: $(echo $needed))" >&2; exit 1; }
 }
 
 if [ -z "${OXPINYIN_KC_SO:-}" ]; then
     OXPINYIN_KC_SO="$OUT/libpinyin_capi-kc.so"
-    echo "--- building oxpinyin capi (kyotocabinet) ---"; build_capi "" "$OXPINYIN_KC_SO"
+    echo "--- building oxpinyin capi (kyotocabinet) ---"; build_capi kyotocabinet "$OXPINYIN_KC_SO"
 fi
 if [ -z "${OXPINYIN_TKRZW_SO:-}" ]; then
     OXPINYIN_TKRZW_SO="$OUT/libpinyin_capi-tkrzw.so"
@@ -116,7 +128,14 @@ def load(p):
     for line in open(p):
         line = line.strip()
         if line:
-            r = json.loads(line); rows.setdefault(r["backend"], []).append(r)
+            r = json.loads(line)
+            if "rss_kib" not in r:
+                # bisect nests the counters: ram-init rows carry them in
+                # after_init; ram-cycle rows peak in after_last (HWM is
+                # monotonic, so the last snapshot holds the process peak).
+                snap = r.get("after_init" if r.get("mode") == "ram-init" else "after_last", {})
+                r.update({k: snap[k] for k in ("rss_kib", "hwm_kib") if k in snap})
+            rows.setdefault(r["backend"], []).append(r)
     return rows
 speed, ram_init, ram_cycle = (load(p) for p in sys.argv[1:4])
 def med(xs): return statistics.median(xs) if xs else float("nan")
