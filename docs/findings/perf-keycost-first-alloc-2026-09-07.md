@@ -41,7 +41,7 @@ performance investigation starts from `6886dc1f` and the residual
 - **Measured effect of `6886dc1f`** (controlled parent→HEAD, arm64,
   four cells, both backends): first allocation ~17 ms → measurement
   floor (~1 µs); time-to-first-result ~2.78–2.82× → ~1.23–1.24× of
-  libpinyin; session-ready RSS −9.2 MiB on both backends; steady
+  libpinyin; session-ready RSS −8.98 MiB on both backends; steady
   state unchanged within the control band; `.so` size unchanged.
 - **Boundary.** The visibility-stamped key-cost cache is retained,
   now reachable only from the pre-frequency fallback branch
@@ -99,7 +99,7 @@ ARM64 qualification: absolute values are not comparable to the x86_64
 matrix (different ISA, host, container runtime); the controlled
 parent→HEAD delta is the result. The parent's walk here (17.0–17.4 ms)
 is consistent with the ARM64 KC baseline's 17.6 ms record
-([perf-baseline-kc-2026-09.md](perf-baseline-kc-2026-09.md)) and well
+([perf-baseline-kc-2026-09.md](../perf/perf-baseline-kc-2026-09.md)) and well
 under x86_64's 42.1/56.9 ms — the walk was always host-scaled dead
 work.
 
@@ -152,11 +152,14 @@ delta sits beneath alignment).
   control's own +1.9% / +1.1% drift. Implementation ratio
   1.158×/1.168× → 1.156×/1.180× — the small steady gap is
   host-dependent, as the x86_64 matrix already observed.
-- **session-ready RSS (−9.19 MiB both backends).** The harness
+- **session-ready RSS (−8.98 MiB both backends).** The harness
   snapshot lands after the alloc, so the parent's rows carried the
   walk's touched pages; HEAD drops them (libpinyin moved <1 MiB).
   oxpinyin-Tkrzw's session-ready footprint is now 12,840 KiB against
-  libpinyin's 12,738 KiB — parity.
+  libpinyin's 12,738 KiB: +0.8%, a point estimate over n = 10 RAM
+  processes with no interval. The acceptance gate's CI item (§8) covers
+  the speed axes only, so no interval was computed for this axis and
+  the two figures are not established as equal.
 - **ttf ratio.** 2.783× → 1.236× (Tkrzw), 2.816× → 1.235× (KC),
   same-pass quotients. The residual gap decomposes into the
   reallocated cold paging (~2.2 ms), init (~0.3 ms), and steady
