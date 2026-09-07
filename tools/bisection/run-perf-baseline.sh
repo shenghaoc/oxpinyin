@@ -18,7 +18,7 @@
 # perf-baseline / perf-validation images were unreferenced and had been
 # unbuildable since the tkrzw default flip; they were removed in #370.
 #
-#   docker build --platform linux/arm64 -f tools/bisection/Dockerfile.perf-matrix -t oxpinyin-matrix .
+#   docker build -f tools/bisection/Dockerfile.perf-matrix -t oxpinyin-matrix .
 #   docker run --rm -v /tmp/perf-out:/out -e PINYIN_ORACLE_PREFIX=/opt/libpinyin-tkrzw \
 #     -e OXPINYIN_PERF_WORK=/out oxpinyin-matrix bash tools/bisection/run-perf-baseline.sh
 #

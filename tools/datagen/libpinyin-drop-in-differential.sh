@@ -12,7 +12,7 @@
 # (tools/bisection/Dockerfile.perf-matrix), which carries both libpinyin
 # builds under /opt/libpinyin-{kc,tkrzw}.
 #
-#   docker run --rm --platform linux/arm64 -v "$PWD":/work -w /work \
+#   docker run --rm -v "$PWD":/work -w /work \
 #     -v "$PWD/target/model20/extracted":/model/extracted \
 #     oxpinyin-matrix:latest \
 #     tools/datagen/libpinyin-drop-in-differential.sh kc /model/extracted

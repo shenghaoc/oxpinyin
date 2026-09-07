@@ -6,14 +6,23 @@
 #   C. oxpinyin   + Tkrzw          (cargo feature: tkrzw)
 #   D. oxpinyin   + Kyoto Cabinet  (cargo feature: kyotocabinet, default)
 #
-# Run the full matrix:
-#   docker build --platform linux/arm64 -f tools/bisection/Dockerfile.perf-matrix -t oxpinyin-matrix .
+# Run the full matrix — build on the measurement host itself, with no
+# --platform override, so the image is native silicon:
+#   docker build -f tools/bisection/Dockerfile.perf-matrix -t oxpinyin-matrix .
 #   docker run --rm -v /tmp/matrix-out:/out oxpinyin-matrix
+#
+# Never build or run this matrix emulated: a platform differing from the
+# host times the interpreter, not the implementations. This FROM line
+# used to pin linux/arm64 outright, which forced every x86_64 build
+# through qemu with nothing in the output saying so.
 #
 # Interactive:
 #   docker run --rm -it -v /tmp/matrix-out:/out oxpinyin-matrix bash
 
-FROM --platform=linux/arm64 debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
+# Multi-arch OCI index (amd64, arm64, …): resolves to the build host's
+# native variant. Do not pin --platform here — it would override any
+# CLI platform choice and pin every host to one arch.
+FROM debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
 
 RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
     && echo 'deb http://snapshot.debian.org/archive/debian/20260831T000000Z testing main' \
@@ -40,14 +49,25 @@ RUN apt-get -o Acquire::Check-Valid-Until=false update \
     util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl --proto '=https' --tlsv1.2 -sSfL \
-    "https://static.rust-lang.org/rustup/archive/1.29.0/aarch64-unknown-linux-gnu/rustup-init" \
-    -o /tmp/rustup-init \
-    && echo "9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792  /tmp/rustup-init" \
+# rustup-init is per-arch: take the build host's own binary and verify it
+# against the pinned checksum for that arch
+# (static.rust-lang.org/rustup/archive/1.29.0/<arch>/rustup-init.sha256).
+RUN set -eu; \
+    case "$(uname -m)" in \
+        x86_64)  rustup_arch=x86_64-unknown-linux-gnu; \
+                 rustup_sha=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10 ;; \
+        aarch64) rustup_arch=aarch64-unknown-linux-gnu; \
+                 rustup_sha=9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792 ;; \
+        *) echo "unsupported build arch: $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl --proto '=https' --tlsv1.2 -sSfL \
+        "https://static.rust-lang.org/rustup/archive/1.29.0/$rustup_arch/rustup-init" \
+        -o /tmp/rustup-init \
+    && echo "$rustup_sha  /tmp/rustup-init" \
     | sha256sum -c - \
     && chmod +x /tmp/rustup-init \
     && /tmp/rustup-init -y --default-toolchain 1.97.1 --profile minimal \
-    --component clippy,rustfmt \
+       --component clippy,rustfmt \
     && rm /tmp/rustup-init
 ENV PATH="/root/.cargo/bin:${PATH}"
 
