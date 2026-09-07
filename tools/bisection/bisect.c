@@ -507,6 +507,21 @@ static uint64_t run_perf_cycle(const struct symbols *s, pinyin_instance_t *inst)
     return checksum;
 }
 
+/* One timed unit: `repeats` back-to-back corpus passes over the frozen
+ * 20-input cycle above. PERF_REPEATS scales the amount of work inside the
+ * timed region without touching the corpus, so input structure — every
+ * string, every prefix length, every reset — is identical at every size.
+ * At the default of 1 this returns run_perf_cycle's own checksum
+ * unchanged, so the default workload is the pre-knob workload exactly. */
+static uint64_t run_perf_unit(const struct symbols *s, pinyin_instance_t *inst,
+                              int repeats) {
+    uint64_t checksum = 0;
+
+    for (int r = 0; r < repeats; r++)
+        checksum ^= run_perf_cycle(s, inst);
+    return checksum;
+}
+
 static int perf_env_count(const char *name, int fallback) {
     const char *value = getenv(name);
     char *end = NULL;
@@ -550,7 +565,8 @@ static int run_perf_mode(int argc, char **argv) {
         fprintf(stderr,
                 "Usage: %s --perf <path-to-so> <systemdir>\n"
                 "  Environment: PERF_BACKEND (label), PERF_MODE\n"
-                "    (speed|ram-init|ram-cycle), PERF_CYCLES (default 8).\n",
+                "    (speed|ram-init|ram-cycle), PERF_CYCLES (default 8),\n"
+                "    PERF_REPEATS (corpus passes per cycle, default 1).\n",
                 argv[0]);
         return 1;
     }
@@ -561,6 +577,7 @@ static int run_perf_mode(int argc, char **argv) {
     const char *backend    = getenv("PERF_BACKEND");
     const char *mode       = getenv("PERF_MODE");
     int cycles             = perf_env_count("PERF_CYCLES", 8);
+    int repeats            = perf_env_count("PERF_REPEATS", 1);
 
     if (!backend)
         backend = so_path;
@@ -622,6 +639,7 @@ static int run_perf_mode(int argc, char **argv) {
     perf_json_string(system_dir);
     printf(",\"mode\":");
     perf_json_string(mode);
+    printf(",\"repeats\":%d", repeats);
     printf(",\"init_ns\":%llu,\"alloc_ns\":%llu,",
            (unsigned long long)(init_end - init_start),
            (unsigned long long)(alloc_end - alloc_start));
@@ -642,7 +660,7 @@ static int run_perf_mode(int argc, char **argv) {
 
         for (int i = 0; i < cycles; i++) {
             uint64_t start = now_ns();
-            perf_sink ^= run_perf_cycle(&sym, inst);
+            perf_sink ^= run_perf_unit(&sym, inst, repeats);
             uint64_t end = now_ns();
             cycle_ns[i] = end - start;
             if (i == 0)
