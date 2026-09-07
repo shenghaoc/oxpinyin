@@ -217,6 +217,8 @@ benchmark infrastructure:
 - `bisect.c`: pure C with dlopen/dlsym — architecture-independent.
 - `Dockerfile.perf-baseline`: base image is `debian:testing` without
   architecture pinning — builds natively on any supported platform.
+  (Removed in #370 along with `Dockerfile.perf-validation`; both were
+  unreferenced and superseded by `Dockerfile.perf-matrix`.)
 
 The fixes from `15e1b47` are general. An x86_64 build would use
 `lib/x86_64-linux-gnu/` and the dynamic discovery works unchanged.

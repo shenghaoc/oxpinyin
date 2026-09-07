@@ -12,6 +12,16 @@
 #   - cargo-c on PATH (stages oxpinyin-capi through cargo cinstall)
 #   - the pinned model20 archive/cache, fetched by tools/model/fetch-model.sh
 #
+# Reproducible container: the perf-matrix image (Dockerfile.perf-matrix)
+# carries the pin oracle at /opt/libpinyin-tkrzw plus every build dep the
+# tkrzw datagen default links (lz4, zstd). The former dedicated
+# perf-baseline / perf-validation images were unreferenced and had been
+# unbuildable since the tkrzw default flip; they were removed in #370.
+#
+#   docker build --platform linux/arm64 -f tools/bisection/Dockerfile.perf-matrix -t oxpinyin-matrix .
+#   docker run --rm -v /tmp/perf-out:/out -e PINYIN_ORACLE_PREFIX=/opt/libpinyin-tkrzw \
+#     -e OXPINYIN_PERF_WORK=/out oxpinyin-matrix bash tools/bisection/run-perf-baseline.sh
+#
 # Environment:
 #   PINYIN_ORACLE_PREFIX  oracle prefix
 #   OXPINYIN_PERF_WORK    work/stage/capture dir (default target/perf-baseline)

@@ -221,7 +221,10 @@ validation document for the corrected analysis.
 3. **`Dockerfile.perf-baseline`**: new reproducible benchmark container
    based on `debian:testing` (pinned by digest). Builds both oracle
    (libpinyin 2.11.91 + Tkrzw) and oxpinyin-capi (KC default) in a
-   single image.
+   single image. *Removed in #370:* it was never wired into any script
+   or workflow and became unbuildable after the tkrzw datagen default
+   flip; `Dockerfile.perf-matrix` supersedes it (see the usage header of
+   `run-perf-baseline.sh`).
 
 ## Amendments
 
