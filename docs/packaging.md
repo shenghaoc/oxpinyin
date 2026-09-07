@@ -193,6 +193,27 @@ prefix is a system path (`/usr`), because pkg-config elides
 `PKG_CONFIG_SYSROOT_DIR`, used by distro build roots) resolves the staged
 paths. This is the standard DESTDIR relocation mechanism, not a defect.
 
+## Export gate
+
+`tools/abi/check-exports.sh` is the mechanical form of the drop-in
+promise on the symbol side: it builds both cdylibs and proves the set of
+exported `pinyin_*` / `zhuyin_*` symbols is exactly the pin's version
+script — `crates/oxpinyin-capi/libpinyin.ver` (79) and
+`crates/oxpinyin-zhuyin-capi/libzhuyin.ver` (52), both checked in
+verbatim from the pin — with nothing missing and nothing extra, and that
+no other symbol leaks. CI runs it twice on every change: on the
+development build, where the two `oxpinyin_*` fixture hooks the ABI
+tests drive are the only permitted extras, and with `--features
+shipped`, the packaged artifact, where only the version script's set may
+remain. Its first run found the shipped library one symbol short
+(`pinyin_set_full_pinyin_scheme`, gated out under the retired
+consumer-union scope); nothing in a version script is gated any more.
+
+The version scripts are the record only: the shipped library carries no
+symbol versions (see `crates/oxpinyin-capi/build.rs` for why a
+`--version-script` link would break the drop-in), so the gate compares
+names, not versions.
+
 ## Release artifacts (`release-packages.yml`)
 
 Every published GitHub release triggers

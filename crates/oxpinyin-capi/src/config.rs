@@ -46,10 +46,12 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
 /// (3) switch the parse onto their pinned indexes. Other values report
 /// `false` and keep the previous scheme instead of aborting (the
 /// out-of-enum contract-lock is a separate workstream).
-/// Outside the consumer union: compiled out of the shipped artifact
-/// (`--features shipped`) so it exports exactly the union, per exception (d)
-/// of `docs/findings/compatibility-policy.md`.
-#[cfg(not(feature = "shipped"))]
+///
+/// Exported in every build: it is in the pin's `libpinyin.ver`. It was
+/// compiled out of the shipped artifact while the consumer-union scope
+/// (exception (d), retired 2026-09-06) stood; the export gate
+/// (`tools/abi/check-exports.sh --shipped`) found the packaged library
+/// one symbol short of the version script on 2026-09-08.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_full_pinyin_scheme(
     context: *mut PinyinContext,
