@@ -273,27 +273,28 @@ fn phrase_prefix_exists_survives_the_gbk_unload_and_the_reload_restores_the_fast
 
 // The key-cost table is a function of library visibility, so any cache of it
 // must be keyed on the visibility mask. This pins the invariant that makes
-// the mask stamp necessary — the table genuinely differs under a GBK unload
-// and is restored exactly on reload — across the open → session → unload →
-// session → reload → session sequence.
+// the mask stamp necessary: the table genuinely differs under a GBK unload
+// and is restored exactly on reload.
 //
-// The `new_session` calls here assert the sequence still builds sessions
-// without regress, not that it fills the cache: only the pre-frequency
-// fallback branch consults the key-cost cache, and a `RuntimeLm` always
-// reports real unigram frequencies, so `new_session` no longer walks. The
-// cache's own stamp-truth is covered by the crate's concurrency unit test.
+// This test used to be named `..._across_sessions` and interleaved three
+// `new_session` calls with the three table computations. Those calls
+// asserted nothing about key costs — only that a session still builds —
+// because a `RuntimeLm` always reports real unigram frequencies and so no
+// `new_session` call reaches the cache at all. They are dropped rather than
+// kept as incidental coverage: the session side of that gate is now pinned
+// directly by `new_session_does_not_populate_the_key_cost_cache` (a
+// white-box unit test in the crate, where the private cache is visible),
+// and the cache's stamp-truth under racing flips by
+// `key_costs_cache_stays_stamp_true_under_concurrent_visibility_flips`.
 #[test]
-fn key_costs_track_gbk_visibility_across_sessions() {
+fn gbk_visibility_changes_the_key_cost_table() {
     let runtime = Runtime::open(&w3_dir(), None).expect("open");
     let dict = runtime.dict();
     let lm = runtime.lm();
 
-    // The cache is stamped with the library-visibility mask; these direct
-    // computations are exactly what the fallback branch memoises per mask.
+    // These direct computations are exactly what the fallback branch
+    // memoises per visibility mask.
     let loaded = oxpinyin_core::scoring::key_cost_table(&dict, &lm).expect("key costs (loaded)");
-    runtime
-        .new_session(&EmptyConfigSource)
-        .expect("session (loaded)");
 
     assert!(runtime.unload_library(2), "first GBK unload arms the mask");
     let unloaded =
@@ -305,10 +306,6 @@ fn key_costs_track_gbk_visibility_across_sessions() {
         loaded, unloaded,
         "GBK unload must change the key-cost table, or the mask stamp is pointless"
     );
-    // A session built now must recompute against the unloaded visibility.
-    runtime
-        .new_session(&EmptyConfigSource)
-        .expect("session (GBK unloaded)");
 
     assert!(runtime.load_library(2), "reload clears the mask");
     let reloaded =
@@ -317,7 +314,4 @@ fn key_costs_track_gbk_visibility_across_sessions() {
         loaded, reloaded,
         "reload must restore the original key costs"
     );
-    runtime
-        .new_session(&EmptyConfigSource)
-        .expect("session (GBK reloaded)");
 }
