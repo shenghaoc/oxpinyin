@@ -18,7 +18,7 @@ Each host fills only its own Environment and Results sections.
 
 | Property | Value |
 |---|---|
-| Harness SHA | `50afb7f68c9d7e7fa1f1d7a008eb6d3f43107946` (tip of `perf/steady-cycle-workload-knob`) |
+| Harness SHA | arm64 pass `50afb7f68c9d7e7fa1f1d7a008eb6d3f43107946`; amd64 pass `f79f665d18e34dfddc7101803afc85258cd6cdfc` (tip of `perf/steady-cycle-workload-knob`). The harness itself — `bisect.c`, the measurement logic of `run-perf-same-data.sh`, `perf-ci.py` — is identical at the two commits; the newer one only fixes the image recipe's platform pin, see the note below. |
 | Script | `tools/bisection/run-perf-same-data.sh` driving `bisect --perf` |
 | Workload sizes | `PERF_REPEATS` ∈ {1, 2, 4, 8, 16} — passes over the frozen 20-input corpus inside one timed cycle |
 | Unit at size 1 | 20 inputs, one `pinyin_reset` each, 123 keystroke steps total; each step is one `pinyin_parse_more_full_pinyins` + `pinyin_guess_candidates` + `pinyin_get_n_candidate` |
@@ -30,14 +30,30 @@ Each host fills only its own Environment and Results sections.
 | Held fixed across sizes | database, `.so` binaries, backend, machine, configuration, and input structure — the two `oxpinyin-capi` artifacts are built once and reused for every size |
 
 **Image provenance — required, not optional.** Each host must build the
-container image from the harness SHA above, not from a cached image and not
-from "the branch tip" as found later. A cached `oxpinyin-matrix` image built
-before 2026-09-06 carries libpinyin **2.11.91**; the oracle pin moved to
-`074a2219…` / **2.11.92** in `871139a1` on that date. The arm64 pass in this
-document was taken on an image rebuilt at the harness SHA after that was
-discovered. The amd64 pass must be built from the identical commit, or the two
-hosts are running different oracles and the sections below are not describing
-the same subject.
+container image from the commit its own section records, not from a cached
+image and not from whatever the branch tip happens to be later. A cached
+`oxpinyin-matrix` image built before 2026-09-06 carries libpinyin **2.11.91**;
+the oracle pin moved to `074a2219…` / **2.11.92** in `871139a1` on that date.
+The arm64 pass in this document was taken on an image rebuilt at its harness
+commit after that was discovered. Both hosts' images must carry the same
+oracle pin, or the sections below are not describing the same subject.
+
+**The image recipe pinned one platform until `f79f665d`.**
+`Dockerfile.perf-matrix` at `50afb7f6` hard-pinned `FROM
+--platform=linux/arm64` — a FROM pin overrides any `--platform` passed to the
+build — and fetched an aarch64-only rustup-init, so on an x86_64 host it
+could only produce an emulated arm64 image. `f79f665d` drops the pin and
+selects rustup-init per build arch; the pinned base digest is a multi-arch
+OCI index (amd64 and arm64 variants), so each host builds its native image
+from the same digest. Two consequences for this record:
+
+1. The arm64 pass is unaffected — its host's native platform was the pinned
+   one, so its image is content-identical under either commit. It ran at
+   `50afb7f6`; the amd64 pass runs at `f79f665d`.
+2. No valid prior x86_64 figure exists for this harness. The x86_64-labelled
+   figures in `perf-backend-matrix-2026-09.md` (2026-09-05) were captured on
+   an x86_64 host against the platform-pinned recipe and are therefore
+   emulated. Correcting that document is separate work and out of scope here.
 
 **Absolute times are not comparable across measurement sessions.** The
 instrument carries a whole-session offset. This sweep's `n = 1` steady cells
