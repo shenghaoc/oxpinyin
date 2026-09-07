@@ -299,16 +299,16 @@ ibus-libpinyin 1.16.5's `src/` and **zero times** in fcitx-libpinyin's
 `src/`. Neither reference consumer can set the bit, so the differing
 law is unreachable through the drop-in surface.
 
-Class (d) here means *correctly out of scope*, not *wrong*. The pin's
+Class (d) here meant *correctly out of scope*, not *wrong*. The pin's
 `USE_TONE` branch was ported in #178 and the port is correct and
 internally consistent; the full-pinyin seam matches the pin, and the
-unported double/zhuyin shapes sit outside the consumer boundary rather
-than being an oversight. **This is not a revert target and no work is
-owed on it.** The entry stays in the register only so that a future
-consumer which does set `FORCE_TONE` finds the analysis already done
-instead of rediscovering it — at which point the double/zhuyin law
-enters scope and gets ported with a measured differential, as the (d)
-rule's "until a new consumer demonstrates a need" clause provides.
+double/zhuyin shapes — unported when this note was written — sat
+outside the consumer boundary rather than being an oversight. Since
+then the zhuyin batch seam (1671954, row 24) and the double-pinyin
+batch seam (#289) were ported anyway, and with (d) retired
+(2026-09-06) the last one, the pinyin facade's chewing batch seam, is
+row 30's open defect. The note is kept as the record of the original
+reasoning; row 16 carries the current status.
 
 **#17 — recorded as a revert target, with the evidence against it
 stated.** Both consumers OR the bits unconditionally before every
@@ -322,8 +322,8 @@ generally.
 
 The decision that was open here — whether (d) covers
 consumer-unreachable inputs or only uncalled symbols — was overtaken on
-2026-09-06 by the retirement of (d) itself (see the banner above): #17
-is a plain revert target and the pin's `0x0` gating gets ported.
+2026-09-06 by the retirement of (d) itself (see the banner above): row
+17 is a plain revert target and the pin's `0x0` gating gets ported.
 
 ## What is not an exception
 

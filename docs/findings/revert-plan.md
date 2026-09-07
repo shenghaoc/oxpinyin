@@ -15,9 +15,11 @@ merged as a document — the reverts landed as their own PRs).
 | 5 | #8 constraints across re-parse | closed (#217) |
 | 6 | #9 n-best row-choose cursor | closed (eca8d43b) |
 | 7 | #15 apostrophe-only consumption | closed (678f3259, 2026-08-26 — predates this plan; the register entry was not updated until 2026-09-06) |
+| 8 | #5b double out-of-enum scheme setter | **open** — the policy's other standing REVERT TARGET; it was never in this work order (added 2026-09-08, section 8 below) |
 
 The sections below are the 2026-08-28 text, kept as the record of what
-each revert had to prove.
+each revert had to prove, plus section 8 for the target the original
+list omitted.
 
 Driven by the classification table in
 `docs/findings/compatibility-policy.md`. Every entry that table marks
@@ -162,6 +164,25 @@ land with the measurements.
   `false` at the `_check_offset` abort shapes stays. Only the parse
   length moves. Class B2 of `uncovered-surface-differentials.md` inherits
   this entry.
+
+### 8 — Double-pinyin scheme setter, out-of-enum value (register #5b)
+
+- **Site:** `pinyin_set_double_pinyin_scheme`'s Rust wrapper
+  (`oxpinyin-capi`, the scheme setters; pinned today by
+  `tests/abi/contract.rs::double_out_of_enum_is_rejected_without_the_fallback_half_mutation`).
+- **Now:** an out-of-enum value (0, 7–29, 31+) answers `false` and the
+  live scheme, fallback table included, is untouched.
+- **Target:** the pin clears `m_fallback_table` first
+  (`pinyin_parser2.cpp:582`), the parser returns `false`, and the
+  wrapper ignores it and answers `true` (`pinyin.cpp:1154-1159`) — a
+  ZRM/PYJJ/XHE scheme silently loses its fallback while the caller is
+  told the call succeeded. Not an abort, so not class (c): the policy's
+  own boundary case (the "(c) covers aborts" paragraph), reproducible.
+- **Probe:** `tools/bisection/run-scheme-diff.sh` extended with the
+  out-of-enum values and a fallback-bearing scheme active, asserting
+  the return AND a following parse that would have used the fallback.
+- **Blocked on:** the oracle only. The contract test's expectation
+  inverts with the revert.
 
 ## Order to execute
 
