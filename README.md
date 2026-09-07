@@ -31,13 +31,14 @@ cargo test --locked --workspace --no-default-features --features redb  # portabl
 | `crates/*` | 25 crates, none stubs (grouped below); crate map in `.kiro/steering/structure.md` |
 | `ROADMAP.md` | Stages, pin, workstream names |
 | `AGENTS.md` | Agent/collaborator contract |
-| `docs/findings/` | Decisions, divergence records, audit trail |
+| `docs/runbooks/` | How to: backends, the oracle and differentials, benches, goldens and pins, releases |
+| `docs/findings/` | Decisions, divergence records, audit trail — indexed with a status per file |
 | `docs/perf/` | Performance measurement snapshots (Stage 2 baseline) |
 | `docs/testing/` | Corpus pipeline, oracle environment, fixture formats |
 | `docs/safety/` | MISRA-Rust mapping, audit, safety profile |
 | `docs/packaging.md` | cargo-c packaging and installed-tree layout |
 | `docs/python.md` | Python binding data requirements and API |
-| `tools/oracle/` | Pin build recipe |
+| `tools/oracle/` | Pin build recipe (`docs/runbooks/oracle.md`) |
 | `.kiro/` | Steering, specs (foundation/drop-in/python-binding), agent configs |
 
 | Group | Crates |

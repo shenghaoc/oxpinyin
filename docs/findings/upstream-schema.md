@@ -1,5 +1,8 @@
 # Findings — upstream GSettings schema
 
+> **Historical (pre-P6), 2026-09-08.** Kept as the record; not a
+> description of the current tree: the GSettings schema that fed the removed config layer; the engine has no settings store (structure.md, "Configuration model").
+
 Date: 2026-08-07 · Source tier: Architect capture; human freeze pending.
 
 ## Provenance

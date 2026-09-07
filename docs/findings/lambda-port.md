@@ -1,5 +1,8 @@
 # λ-estimator port — deleted-interpolation EM (W9-T3)
 
+> **Historical (pre-P6), 2026-09-08.** Kept as the record; not a
+> description of the current tree: the λ estimator is on the trainer path via evaluate.py, but this note predates the W9 re-audit and the P6 data layer; trainer-parity-audit.md is current.
+
 This documents the Rust `oxpinyin-lambda` crate, a value-level reproduction of
 libpinyin's held-out counting (`gen_deleted_ngram`) and its
 deleted-interpolation λ estimator (`estimate_interpolation`). It stacks on

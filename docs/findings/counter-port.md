@@ -1,5 +1,8 @@
 # Counter port — `gen_ngram` n-gram counting (W9-T2)
 
+> **Historical (pre-P6), 2026-09-08.** Kept as the record; not a
+> description of the current tree: oxpinyin-counter is off the trainer path (trainer-parity-audit.md §4); kept as the port record.
+
 This documents the Rust `oxpinyin-counter` crate, a value-level reproduction of
 libpinyin's `gen_ngram` counting stage. It consumes T1's segmented-token
 output and produces the unigram/bigram **integer counts** that W9-T3 (the
