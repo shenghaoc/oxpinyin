@@ -5,8 +5,8 @@
 A **survey**. For every document in this repository carrying performance
 figures anyone might cite, it records four things: when the measurement was
 taken and at which commit, which side of the `panic = "abort"` window it
-sits on, what configuration produced it, and whether the raw captures behind
-it still exist anywhere.
+sits on, what configuration produced it, and whether raw captures behind it
+were found by the searches described below.
 
 **It corrects nothing.** Where the survey observes a discrepancy it is stated
 as an observation with no proposed fix. The corrections this map implies are
@@ -14,33 +14,86 @@ separate work with separate review — including the correction to
 `perf-backend-matrix-2026-09.md`, which this audit was partly commissioned to
 inform and which is deliberately not attempted here.
 
-## The headline: the raw captures are gone
+## The search surface, and what it can support
 
-**Of the 22 figure-bearing records surveyed, exactly one still has its raw
-captures.** For the other 21 the published table is the only surviving
-artifact.
+**Superseding `caabdc27`.** That commit searched one host's home tree plus two
+named default paths — `/tmp/matrix-out` and `/tmp/perf-out` — called the search
+exhaustive, and reported that exactly one of 22 records retained raw captures.
+The search was not exhaustive and the count did not follow from it. The
+superseded claim stays in history; this section replaces it.
 
-This governs how much weight the corpus can carry, independently of what the
-provenance map below says about any individual record. A figure whose
-captures are gone cannot be re-derived — it can only be **re-measured**, which
-is a different operation producing a different number on a different day.
+The defect was the surface, not the number. So the surface comes first.
 
-The search was exhaustive on the measuring host: every `speed.jsonl` /
-`ram-cycle.jsonl` under the home tree, plus the harness scripts' default
-`/tmp/matrix-out` and `/tmp/perf-out` (reaped; `/private/tmp` is cleared by
-the system). Two capture trees survive:
+**Filename set.** `speed.jsonl`, `ram-init.jsonl`, `ram-cycle.jsonl` — the
+three files `bisect --perf` writes through `run-perf-matrix.sh` and
+`run-perf-same-data.sh`.
 
-| tree | backs | contents |
-|---|---|---|
-| `~/oxp-perf-b5fdfad/out` | `docs/perf/perf-baseline-kc-2026-09.md` | 49 JSONL files; per-commit subtrees under `pts/`, `pts3/`, `pts4/` |
-| `~/oxp-steady-cycle-arm64/out` | the 2026-09-07 cross-host record (open PR, not in main — outside this corpus) | 20 JSONL files across five workload sizes |
+**A filename search cannot establish survival for this corpus, because the
+corpus was not produced by one harness.** These three names do not reach
+criterion output, Callgrind output, or the `scoreboard` and
+`perf-init-slurp-*` directory forms that the W8 profile scripts write. Four
+of the trees recorded below were found *by other means* — by reading the
+documents and looking where they said to look — not by this search. Any
+record produced by a harness outside these three filenames is invisible to
+the search regardless of whether its captures exist. That is a property of
+the method, and it bounds every statement here.
 
-Re-measurement is further constrained by a known instrument behaviour: a
-whole-session offset of 9–11% co-moving across all four cells has been
-observed on the arm64 host between two sessions running the same harness on
-the same machine. **Absolute agreement is therefore not a valid verification
-criterion** for any re-measurement, and some of what this map records as
-configuration difference may be that offset instead.
+**arm64 search.** `find / -xdev \( -name speed.jsonl -o -name ram-init.jsonl
+-o -name ram-cycle.jsonl \)`, whole local filesystem, ~45 s. **Not
+exhaustive:** 1,648 paths were unreadable — 1,279 "Operation not permitted"
+(macOS TCC/SIP) and 369 "Permission denied" — concentrated under
+`/System/Volumes` (796), `/Users/shenghaochen` (510), `/private/var` (262)
+and `/System/Library` (69). Those paths were not searched.
+
+**arm64 container surface.** No podman is installed. Docker Desktop keeps
+container filesystems inside a VM disk image that is not searchable from the
+host, so a capture written inside a container and never bind-mounted out is
+invisible to this search. Every measurement run in this workstream did
+bind-mount its output — but that is a property of those runs, not of the
+search, and it establishes nothing about runs made by anyone else.
+
+**x86_64 search.** The same filename set over that host, plus its podman
+surfaces. Root-owned paths returned `EACCES` and were not searched.
+
+### Survival
+
+Corpus records first, then trees outside the corpus. The attribution column
+distinguishes what was checked against the published document on the machine
+writing this from what is accepted on the other host's report; the two are not
+the same and are not merged.
+
+| record | host | captures | coverage | attribution |
+|---|---|---|---|---|
+| `perf-baseline-kc-2026-09.md` | arm64 | `~/oxp-perf-b5fdfad/out` | full; per-commit arms including `a41605ea` and `noabort` | verified locally |
+| `perf-keycost-first-alloc-2026-09-07.md` | arm64 | `/private/tmp/perf-out-{parent,head}` | both passes; all 8 published session-ready RSS values reproduce exactly | verified locally |
+| `perf-backend-matrix-2026-09.md` | x86_64 | `~/matrix-x86/out` | 80 speed rows at `b5fdfad8` | medians confirmed present in the document here; reproduction accepted on report |
+| `perf-init-typed-map-2026-08.md` | x86_64 | `target/profile/{before,after}/scoreboard` | both arms | accepted on report |
+| `perf-init-text-slurp-2026-08.md` | x86_64 | four `target/perf-init-slurp-*` | **partial** — 4 of 5 arms; the `before 2` arm (init 232.528 ms) has no survivor | arm structure confirmed here; survival accepted on report |
+| `perf-baseline-kc-2026-08-31.md` | x86_64 | `/tmp/alloc-perf/out` | **partial** — the x86_64 amendment passage only, not the Apple-silicon body | passage confirmed present here; values accepted on report |
+| *outside the corpus* — 2026-09-07 cross-host record | arm64 | `~/oxp-steady-cycle-arm64/out` | 20 JSONL over five workload sizes | verified locally |
+| *outside the corpus* — same record, other host | x86_64 | amd64 cross-host tree | — | accepted on report |
+| *unattributed* | arm64 | `…/worktrees/separate-libpinyin-libzhuyin-7acdbb/target/perf-baseline` | 40 speed rows, `oracle`/`oxpinyin`, 2026-09-04T12:55Z | no record attributed |
+| *unattributable* | x86_64 | two `ibus-libpinyin/build/…` trees | same era and scale as `perf-baseline-2026-08.md`, but no pooling reproduces its medians | accepted on report |
+
+### The count
+
+**At least six of the 22 figure-bearing records retain raw captures**, two of
+those six only partially.
+
+"At least" is the strongest form the surface supports. It is a lower bound,
+not a total: both hosts left unreadable paths unsearched, neither reached
+container-internal filesystems, and the filename set does not cover every
+harness that produced this corpus. **No record may be called unbacked on the
+strength of this search** — only "no captures found by these two searches".
+
+A figure whose captures are genuinely gone cannot be re-derived; it can only
+be **re-measured**, which is a different operation producing a different
+number on a different day. Re-measurement is further constrained by a known
+instrument behaviour: a whole-session offset of 9–11% co-moving across all
+four cells has been observed on the arm64 host between two sessions running
+the same harness on the same machine. **Absolute agreement is therefore not a
+valid verification criterion** for any re-measurement, and some of what the
+map below records as configuration difference may be that offset instead.
 
 ## The `a41605ea` window
 
@@ -70,11 +123,14 @@ out/pts/{77c3fb78, 8147b7d7, 828e2033, 87f9a49e, 94b38948, a41605ea, b40e3542}/p
 
 each holding `speed.jsonl`, `ram-init.jsonl`, `ram-cycle.jsonl`.
 
-This makes the `panic = "abort"` delta **the only figure in the corpus that
-can be independently re-derived from raw data rather than re-measured** — and
-it is precisely the correction factor every in-window record would need. This
-audit does not re-derive it; that is separate work. What matters here is that
-the material exists and where it lives.
+Other records now also have surviving captures (see Survival above), so this
+tree is no longer the corpus's only re-derivable data. What remains unique to
+it is the **paired arms**: it is the only tree holding both an `a41605ea` and
+a `noabort` measurement of the same series, which makes the `panic = "abort"`
+delta itself re-derivable rather than merely re-measurable — and that delta is
+precisely the correction factor every in-window record would need. This audit
+does not re-derive it; that is separate work. What matters here is that the
+material exists and where it lives.
 
 **It is unbacked.** It sits in one home directory on one laptop, outside the
 repository, with no copy anywhere. One `rm -rf` and it joins the other
@@ -83,33 +139,35 @@ doing anything else.
 
 ## Provenance map
 
-`side` is relative to the `a41605ea` window. `captures` is whether raw JSONL
-behind the figures survives anywhere on the measuring host.
+`side` is relative to the `a41605ea` window. `captures` reports what the two
+searches described above found: **yes** / **partial** where a tree was located
+and attributed, **none found** otherwise. "None found" is not "none exists" —
+see the count, which the surface supports only as a lower bound.
 
 | record | measurement date | at commit | side | configuration | harness | captures |
 |---|---|---|---|---|---|---|
-| `findings/perf-backend-matrix-2026-09.md` | 2026-09-05 | `b5fdfad8` (2026-09-05T12:23:49Z) | **INSIDE** | x86_64, i7-9750H | `bisect --perf` | no |
-| `perf/perf-baseline-kc-2026-09.md` | 2026-09-04, amended 2026-09-05 | `94b38948` (2026-09-04T00:45:03Z), amendment spans the window | **SPANS** | ARM64, Apple silicon | `bisect --perf` | **yes** |
-| `perf/perf-so-size-2026-09.md` | 2026-09-04 | facade tip `b40e3542` (2026-09-04T18:19:07Z) plus a deliberate `a41605ea` arm | **STRADDLES** | x86_64 | criterion | no |
-| `findings/perf-store-opt-2026-09.md` | 2026-09-06 | `ab56dc79` (2026-09-05T15:41:34Z) | after | x86_64 | criterion | no |
-| `findings/perf-backend-matrix-bdb-store-2026-09.md` | 2026-09-06 | not stated | after | storage backends | `bisect --perf` | no |
-| `findings/perf-keycost-first-alloc-2026-09-07.md` | 2026-09-07 | parent `87f25055` → `6886dc1f` | after | arm64, Apple silicon | `run-perf-same-data.sh` + `bisect --perf` | no |
-| `findings/runtime-direct-libpinyin-data-2026-09-02.md` | 2026-09-02 | not stated | before | not stated | not stated | no |
-| `findings/perf-p2-chewing-table-2026-09-01.md` | 2026-09-01 | not stated | before | mini fixtures; KC/Tkrzw measured off-CI | not stated | no |
-| `findings/perf-backend-matrix-2026-08-31.md` | 2026-08-31 | not stated | before | Apple silicon | `bisect --perf` | no |
-| `findings/perf-baseline-kc-2026-08-31.md` | 2026-08-31 | not stated | before | Apple silicon | `bisect --perf` | no |
-| `findings/perf-baseline-kc-validation-2026-08-31.md` | 2026-08-31 | not stated | before | Apple silicon, arm64 | `run-perf-baseline.sh` | no |
-| `findings/perf-mmap-system-indexes-2026-08-31.md` | 2026-08-31 | not stated | before | not stated (status: REJECTED) | not stated | no |
-| `perf/perf-python-shared-engine-2026-08.md` | 2026-08-27 | not stated | before | not stated | not stated | no |
-| `perf/perf-init-text-slurp-2026-08.md` | 2026-08-21 | not stated | before | not stated | `run-perf-baseline.sh` | no |
-| `perf/perf-init-typed-map-2026-08.md` | 2026-08-21 | not stated | before | not stated | `run-perf-baseline.sh` | no |
-| `perf/perf-fill-lookup-2026-08.md` | 2026-08-20 | not stated | before | not stated | not stated | no |
-| `findings/data-load-audit-2026-08.md` | 2026-08-19 | not stated | before | i7-9750H | `run-perf-baseline.sh` | no |
-| `perf/perf-alloc-2026-08.md` | 2026-08-19 | not stated | before | not stated | not stated | no |
-| `perf/perf-stage2-harness-2026-08.md` | 2026-08-19 | not stated | before | not stated | not stated | no |
-| `perf/perf-baseline-2026-08.md` | 2026-08-16 | not stated | before | not stated | not stated | no |
-| `perf/perf-candidate-cap-2026-08.md` | 2026-08-16 (see below) | `f8e2c11d` | before | not stated | criterion (`scan_perf`) | no |
-| `perf/perf-exploration.md` | 2026-08-14 | not stated | before | not stated | not stated | no |
+| `findings/perf-backend-matrix-2026-09.md` | 2026-09-05 | `b5fdfad8` (2026-09-05T12:23:49Z) | **INSIDE** | x86_64, i7-9750H | `bisect --perf` | **yes** (x86_64) |
+| `perf/perf-baseline-kc-2026-09.md` | 2026-09-04, amended 2026-09-05 | `94b38948` (2026-09-04T00:45:03Z), amendment spans the window | **SPANS** | ARM64, Apple silicon | `bisect --perf` | **yes** (arm64) |
+| `perf/perf-so-size-2026-09.md` | 2026-09-04 | facade tip `b40e3542` (2026-09-04T18:19:07Z) plus a deliberate `a41605ea` arm | **STRADDLES** | x86_64 | criterion | none found |
+| `findings/perf-store-opt-2026-09.md` | 2026-09-06 | `ab56dc79` (2026-09-05T15:41:34Z) | after | x86_64 | criterion | none found |
+| `findings/perf-backend-matrix-bdb-store-2026-09.md` | 2026-09-06 | not stated | after | storage backends | `bisect --perf` | none found |
+| `findings/perf-keycost-first-alloc-2026-09-07.md` | 2026-09-07 | parent `87f25055` → `6886dc1f` | after | arm64, Apple silicon | `run-perf-same-data.sh` + `bisect --perf` | **yes** (arm64) |
+| `findings/runtime-direct-libpinyin-data-2026-09-02.md` | 2026-09-02 | not stated | before | not stated | not stated | none found |
+| `findings/perf-p2-chewing-table-2026-09-01.md` | 2026-09-01 | not stated | before | mini fixtures; KC/Tkrzw measured off-CI | not stated | none found |
+| `findings/perf-backend-matrix-2026-08-31.md` | 2026-08-31 | not stated | before | Apple silicon | `bisect --perf` | none found |
+| `findings/perf-baseline-kc-2026-08-31.md` | 2026-08-31 | not stated | before | Apple silicon | `bisect --perf` | **partial** — x86_64 passage only |
+| `findings/perf-baseline-kc-validation-2026-08-31.md` | 2026-08-31 | not stated | before | Apple silicon, arm64 | `run-perf-baseline.sh` | none found |
+| `findings/perf-mmap-system-indexes-2026-08-31.md` | 2026-08-31 | not stated | before | not stated (status: REJECTED) | not stated | none found |
+| `perf/perf-python-shared-engine-2026-08.md` | 2026-08-27 | not stated | before | not stated | not stated | none found |
+| `perf/perf-init-text-slurp-2026-08.md` | 2026-08-21 | not stated | before | not stated | `run-perf-baseline.sh` | **partial** — 4 of 5 arms (x86_64) |
+| `perf/perf-init-typed-map-2026-08.md` | 2026-08-21 | not stated | before | not stated | `run-perf-baseline.sh` | **yes** (x86_64) |
+| `perf/perf-fill-lookup-2026-08.md` | 2026-08-20 | not stated | before | not stated | not stated | none found |
+| `findings/data-load-audit-2026-08.md` | 2026-08-19 | not stated | before | i7-9750H | `run-perf-baseline.sh` | none found |
+| `perf/perf-alloc-2026-08.md` | 2026-08-19 | not stated | before | not stated | not stated | none found |
+| `perf/perf-stage2-harness-2026-08.md` | 2026-08-19 | not stated | before | not stated | not stated | none found |
+| `perf/perf-baseline-2026-08.md` | 2026-08-16 | not stated | before | not stated | not stated | none found |
+| `perf/perf-candidate-cap-2026-08.md` | 2026-08-16 (see below) | `f8e2c11d` | before | not stated | criterion (`scan_perf`) | none found |
+| `perf/perf-exploration.md` | 2026-08-14 | not stated | before | not stated | not stated | none found |
 
 ## Observations
 
@@ -154,7 +212,23 @@ Stated as observations. No fix is proposed for any of them here.
    git not settled it, this row would read "undated"; an inferred date in a
    provenance audit is the defect the audit exists to find.
 
-7. **`perf-mmap-system-indexes-2026-08-31.md` is marked REJECTED** —
+7. **The `configuration` and `harness` columns under-report, and are not
+   fixed here.** They were extracted by first-match pattern rather than by
+   reading each document, and the pattern misses what it does not anticipate.
+   Confirmed instances: `perf-baseline-kc-2026-08-31.md` is mapped as "Apple
+   silicon", but that document's own amendment environment records podman
+   5.8.2 on RHEL 10.2, x86_64 — the record covers two hosts and the map shows
+   one. `perf-baseline-2026-08.md` is mapped "not stated" while the document
+   states `i7-9750H, 12 logical CPUs`; `perf-exploration.md` likewise states
+   `12 logical cores`. Several 2026-08 records give `Host:` as an indirection
+   ("same W8 protocol as #132/#129") naming `tools/profile/run-w8-cycle.sh`,
+   which contradicts the `run-perf-baseline.sh` entry the pattern produced for
+   two of them. This is the same failure as the search surface it replaced —
+   a method that cannot see what it was not told to look for — and it needs
+   its own pass of per-document reading. **Until that lands, treat those two
+   columns as a lower bound on what the documents state.**
+
+8. **`perf-mmap-system-indexes-2026-08-31.md` is marked REJECTED** —
    architecture withdrawn, kept as a record. Its figures should not be cited
    as current regardless of provenance.
 
@@ -183,8 +257,10 @@ It establishes **provenance metadata** — date, commit, window side,
 configuration as recorded, harness as named — because that lives in the
 documents and in git, and it is verifiable today.
 
-It **cannot verify figures** for 21 of 22 records, because the raw captures
-do not exist. Any record it flags can only be re-measured, and
+It **cannot verify figures** for those records whose captures were not
+found — a set bounded below by the six in Survival above and not established
+as any particular size, because the search surface does not support a total.
+Such a record can only be re-measured, and
 re-measurement cannot be checked against the old absolutes: the 9–11%
 session offset means a faithful re-run will disagree with a correct original.
 A correction programme built on this map should treat re-measurement as
