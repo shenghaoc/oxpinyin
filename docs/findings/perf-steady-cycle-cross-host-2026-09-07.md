@@ -49,9 +49,22 @@ selects rustup-init per build arch; the pinned base digest is a multi-arch
 OCI index (amd64 and arm64 variants), so each host builds its native image
 from the same digest. Two consequences for this record:
 
-1. The arm64 pass is unaffected — its host's native platform was the pinned
-   one, so its image is content-identical under either commit. It ran at
-   `50afb7f6`; the amd64 pass runs at `f79f665d`.
+1. The arm64 pass is unaffected, and this was verified rather than argued.
+   Only two instructions differ on the arm64 path, and both were exercised
+   on the arm64 host at `f79f665d`: the unpinned base digest still resolves
+   to the arm64 variant there (`uname -m` in the pulled image reports
+   `aarch64`), and the new `case "$(uname -m)"` dispatch selects
+   `aarch64-unknown-linux-gnu` with checksum `9732d6c5…`, byte-identical to
+   the one the platform-pinned recipe used, which `sha256sum -c` accepts
+   against the downloaded binary. Both arches' pinned checksums also match
+   upstream's own published `rustup-init.sha256` for rustup 1.29.0. The
+   arm64 pass ran at `50afb7f6`; the amd64 pass runs at `f79f665d`.
+
+   "Unaffected" is a statement about installed content, not about image
+   identity. The Dockerfile text changed, so the build cache is invalidated
+   and a rebuild at `f79f665d` produces a **different local image id** from
+   the one the arm64 Environment row below records. That mismatch is
+   expected and is not evidence against this record.
 2. The one prior set of x86_64-labelled figures, in
    `perf-backend-matrix-2026-09.md` (2026-09-05), has unverified build
    provenance: that pass used the platform-pinned recipe, and how its
