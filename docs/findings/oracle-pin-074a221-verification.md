@@ -179,7 +179,11 @@ Built from the branch tree:
   (libtkrzw-dev does not pull them). Reproduced on pristine main
   `c6b371da` with the same package list: pre-existing main-side
   breakage, not introduced by this PR, and out of scope here — tracked
-  as #370.
+  as #370. **Resolved by deletion (#370):** neither image was referenced
+  by any script, doc-driven workflow, or CI job, and `Dockerfile.perf-matrix`
+  is a superset (same pin oracle at `/opt/libpinyin-tkrzw`, oxpinyin-KC
+  cell, interactive `bash` entry). `run-perf-baseline.sh` now documents
+  how to run inside the matrix container instead.
 
 ## Known inconsistency shipped with the pin
 
