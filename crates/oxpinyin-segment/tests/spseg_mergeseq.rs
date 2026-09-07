@@ -141,17 +141,16 @@ fn run_binary(binary: &Path, data: &Path, input: &Path) -> Result<String, String
 }
 
 #[test]
+#[ignore = "needs the pin-built spseg (PINYIN_SPSEG), its oracle data and the full export; run with --include-ignored"]
 fn rust_matches_live_spseg_when_present() {
     let (Some(binary), Some(data)) = (locate_binary("PINYIN_SPSEG"), locate_oracle_data()) else {
-        eprintln!("skipping live spseg: set PINYIN_SPSEG and the oracle data dir");
-        return;
+        panic!("missing input for the live spseg: set PINYIN_SPSEG and the oracle data dir")
     };
     // Live spseg needs the full pin data dir; the Rust side must load the
     // same phrase table via the export dir. This path only runs with the
     // full oracle present, so we reuse the oracle prefix's export if set.
     let Some(export) = oxpinyin_segment::locate_export_dir() else {
-        eprintln!("skipping live spseg: no full export for the Rust side");
-        return;
+        panic!("missing input for the live spseg: no full export for the Rust side")
     };
     let lexicon = PhraseLexicon::from_system_dir(&export).expect("export chunk files open");
     let input_path = repo_root().join("fixtures/w9/segmenter-han.txt");
@@ -164,15 +163,14 @@ fn rust_matches_live_spseg_when_present() {
 }
 
 #[test]
+#[ignore = "needs the pin-built mergeseq (PINYIN_MERGESEQ), its oracle data and the full export; run with --include-ignored"]
 fn rust_matches_live_mergeseq_when_present() {
     let (Some(binary), Some(data)) = (locate_binary("PINYIN_MERGESEQ"), locate_oracle_data())
     else {
-        eprintln!("skipping live mergeseq: set PINYIN_MERGESEQ and the oracle data dir");
-        return;
+        panic!("missing input for the live mergeseq: set PINYIN_MERGESEQ and the oracle data dir")
     };
     let Some(export) = oxpinyin_segment::locate_export_dir() else {
-        eprintln!("skipping live mergeseq: no full export for the Rust side");
-        return;
+        panic!("missing input for the live mergeseq: no full export for the Rust side")
     };
     let lexicon = PhraseLexicon::from_system_dir(&export).expect("export chunk files open");
     // mergeseq consumes a segmented stream: use the committed full-dict

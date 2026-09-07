@@ -127,17 +127,16 @@ fn parse_manifest(text: &str) -> Manifest {
 }
 
 #[test]
+#[ignore = "needs the system-table export (PINYIN_EXPORT_DIR); run with --include-ignored"]
 fn rust_lambda_matches_committed_manifest() {
     let Some(estimate) = rust_estimate() else {
-        eprintln!(
-            "skipping: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"
-        );
-        return;
+        panic!(
+            "missing input: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"
+        )
     };
     let path = manifest_path();
     if !path.is_file() {
-        eprintln!("skipping golden compare: {} not committed", path.display());
-        return;
+        panic!("committed golden missing: {} not committed", path.display())
     }
     let manifest = parse_manifest(&std::fs::read_to_string(&path).expect("manifest"));
 
@@ -187,6 +186,7 @@ fn rust_lambda_matches_committed_manifest() {
 }
 
 #[test]
+#[ignore = "needs the pin-built estimate_interpolation tool chain and PINYIN_GEN_NGRAM_DATA; run with --include-ignored"]
 fn rust_lambda_matches_live_estimate_interpolation() {
     let (
         Some(gen_binary_files),
@@ -204,22 +204,21 @@ fn rust_lambda_matches_live_estimate_interpolation() {
         locate_bin("PINYIN_EXPORT_INTERPOLATION"),
     )
     else {
-        eprintln!(
-            "skipping live estimate_interpolation: set PINYIN_GEN_BINARY_FILES, \
+        panic!(
+            "missing input for the live estimate_interpolation: set PINYIN_GEN_BINARY_FILES, \
              PINYIN_GEN_UNIGRAM, PINYIN_GEN_NGRAM, PINYIN_GEN_DELETED_NGRAM, \
              PINYIN_ESTIMATE_INTERPOLATION, PINYIN_EXPORT_INTERPOLATION"
-        );
-        return;
+        )
     };
     let Some(data) = locate_data("PINYIN_GEN_NGRAM_DATA") else {
-        eprintln!("skipping live estimate_interpolation: PINYIN_GEN_NGRAM_DATA not set or empty");
-        return;
+        panic!(
+            "missing input for the live estimate_interpolation: PINYIN_GEN_NGRAM_DATA not set or empty"
+        )
     };
     let Some(estimate) = rust_estimate() else {
-        eprintln!(
-            "skipping live estimate_interpolation: system tables not found (oxpinyin-datagen compile)"
-        );
-        return;
+        panic!(
+            "missing input for the live estimate_interpolation: system tables not found (oxpinyin-datagen compile)"
+        )
     };
 
     let full = std::fs::read(fixture_ngseg()).expect("fixture");

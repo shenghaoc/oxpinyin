@@ -26,15 +26,19 @@ fn repo_root() -> PathBuf {
         .join("..")
 }
 
-/// Reads a committed fixture, or `None` (a skip) when it is absent — a checkout
-/// without the W4 fixtures still builds, and the freshness test regenerates it.
+/// Reads a committed fixture. Absence is a failure, not a skip: the W4
+/// fixtures are tracked, and a test that silently passed without them
+/// would report parity it never checked. (The `#[ignore]`d freshness test
+/// regenerates them.)
 fn load(relative: &str) -> Option<String> {
     let path = repo_root().join(relative);
     match std::fs::read_to_string(&path) {
         Ok(text) => Some(text),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("fixture not found at {}; skipping", path.display());
-            None
+            panic!(
+                "committed fixture missing at {}: restore it or regenerate with bin oracle-candidate-structure",
+                path.display()
+            )
         }
         Err(error) => panic!(
             "fixture at {} is present but unreadable: {error}",

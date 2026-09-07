@@ -28,15 +28,15 @@ use pinyin_oracle::sentence_tail;
 /// W2 sample. A change to any of these is a pin move: re-measure and update
 /// §12 (a re-freeze the maintainer signs off), do not just edit the number.
 #[test]
+#[ignore = "needs the system-table export and the model20 cache (PINYIN_EXPORT_DIR, PINYIN_MODEL_DIR); run with --include-ignored"]
 fn sentence_surface_matches_the_declared_residual() {
     let mut session = match sentence_tail::open_session_from_env() {
         Ok(Some(session)) => session,
         Ok(None) => {
-            eprintln!(
-                "exported tables or model cache absent; skipping sentence-surface parity \
+            panic!(
+                "exported tables or model cache absent sentence-surface parity \
                  (set PINYIN_EXPORT_DIR + PINYIN_MODEL_DIR to run it)"
-            );
-            return;
+            )
         }
         Err(error) => panic!("cannot open port session: {error}"),
     };

@@ -73,26 +73,19 @@ fn assert_counts_equal(rust: &Counts, live: &Counts) {
 }
 
 #[test]
+#[ignore = "needs the system-table export (PINYIN_EXPORT_DIR); run with --include-ignored"]
 fn rust_matches_committed_manifest() {
     let Some(counts) = rust_counts() else {
-        eprintln!(
-            "skipping: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"
-        );
-        return;
+        panic!(
+            "missing input: system tables not found (${EXPORT_DIR_ENV} | {DEFAULT_EXPORT_DIR}; produce with oxpinyin-datagen compile)"
+        )
     };
     let manifest_path = manifest_path();
     if !manifest_path.is_file() {
-        eprintln!(
-            "skipping golden compare: {} is not committed yet",
+        panic!(
+            "committed golden missing: {} is not committed yet",
             manifest_path.display()
-        );
-        eprintln!("--- rust counts ---");
-        eprintln!(
-            "unigrams {} bigrams {}",
-            counts.unigrams.len(),
-            counts.bigrams.len()
-        );
-        return;
+        )
     }
     let manifest = parse_manifest(&std::fs::read_to_string(&manifest_path).expect("manifest"));
 
@@ -136,6 +129,7 @@ fn run_live_pipeline(
 }
 
 #[test]
+#[ignore = "needs the pin-built gen_ngram tool chain and PINYIN_GEN_NGRAM_DATA; run with --include-ignored"]
 fn rust_matches_live_gen_ngram() {
     let (Some(gen_binary_files), Some(gen_unigram), Some(gen_ngram), Some(export_interpolation)) = (
         locate_bin("PINYIN_GEN_BINARY_FILES"),
@@ -143,19 +137,18 @@ fn rust_matches_live_gen_ngram() {
         locate_bin("PINYIN_GEN_NGRAM"),
         locate_bin("PINYIN_EXPORT_INTERPOLATION"),
     ) else {
-        eprintln!(
-            "skipping live gen_ngram: set PINYIN_GEN_BINARY_FILES, PINYIN_GEN_UNIGRAM, \
+        panic!(
+            "missing input for the live gen_ngram: set PINYIN_GEN_BINARY_FILES, PINYIN_GEN_UNIGRAM, \
              PINYIN_GEN_NGRAM, and PINYIN_EXPORT_INTERPOLATION"
-        );
-        return;
+        )
     };
     let Some(data) = locate_data("PINYIN_GEN_NGRAM_DATA") else {
-        eprintln!("skipping live gen_ngram: PINYIN_GEN_NGRAM_DATA not set or empty");
-        return;
+        panic!("missing input for the live gen_ngram: PINYIN_GEN_NGRAM_DATA not set or empty")
     };
     let Some(rust) = rust_counts() else {
-        eprintln!("skipping live gen_ngram: system tables not found (oxpinyin-datagen compile)");
-        return;
+        panic!(
+            "missing input for the live gen_ngram: system tables not found (oxpinyin-datagen compile)"
+        )
     };
     let fixture = std::fs::read(fixture_ngseg()).expect("fixture");
 

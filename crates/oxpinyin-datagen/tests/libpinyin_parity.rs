@@ -164,14 +164,13 @@ fn assert_hash_equal(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &Path) 
 }
 
 #[test]
+#[ignore = "needs a pin-built libpinyin data dir (OXPINYIN_LIBPINYIN_DATA_DIR) and the model20 cache; run with --include-ignored"]
 fn drop_in_output_matches_the_pin_built_data_dir() {
     let Some(data) = data_dir() else {
-        eprintln!("OXPINYIN_LIBPINYIN_DATA_DIR unset — skipping");
-        return;
+        panic!("OXPINYIN_LIBPINYIN_DATA_DIR unset")
     };
     let Some(model) = model_dir() else {
-        eprintln!("no model20 cache — skipping");
-        return;
+        panic!("no model20 cache")
     };
 
     let (sys, _) = system::compile(&model, system::Subset::Full).expect("system");
