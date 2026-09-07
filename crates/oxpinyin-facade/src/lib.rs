@@ -43,7 +43,8 @@ pub use cursor::{KeyAt, SpanSource};
 pub use instance::{BEFORE_CURSOR_ANCHOR, InstanceCore};
 pub use offsets::{
     double_original_offset, double_session_offset, full_original_offset, full_session_offset,
-    zhuyin_lookup_session_offset, zhuyin_original_offset, zhuyin_session_offset,
+    zhuyin_lookup_session_offset, zhuyin_original_begin, zhuyin_original_offset,
+    zhuyin_session_offset,
 };
 pub use parse::{ToneForwarding, double_scheme, full_scheme, zhuyin_scheme};
 pub use predict::compute_prefixes;

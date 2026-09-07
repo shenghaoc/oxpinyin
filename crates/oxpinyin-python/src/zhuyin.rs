@@ -21,7 +21,8 @@ use oxpinyin_core::{ChewingKey, FullPinyinScheme, ZhuyinScheme};
 use oxpinyin_engine::{CandidateKind, CandidateList, EngineError};
 use oxpinyin_facade::{
     BEFORE_CURSOR_ANCHOR, InstanceCore, LiveOptions, ToneForwarding, ZHUYIN_DEFAULT_OPTION_WORD,
-    compute_prefixes, zhuyin_lookup_session_offset, zhuyin_original_offset, zhuyin_session_offset,
+    compute_prefixes, zhuyin_lookup_session_offset, zhuyin_original_begin, zhuyin_original_offset,
+    zhuyin_session_offset,
 };
 use oxpinyin_runtime::{Runtime, RuntimeSession};
 use oxpinyin_user::UserStore;
@@ -667,7 +668,7 @@ fn snapshot_candidates(
         };
         let span_begin_session = anchor.saturating_add(candidate.span_start());
         let span_begin = match zhuyin_parse.as_ref() {
-            Some(parse) => zhuyin_original_offset(parse, span_begin_session),
+            Some(parse) => zhuyin_original_begin(parse, span_begin_session),
             None => span_begin_session,
         };
         // Before-cursor law: only candidates whose span ENDS at the

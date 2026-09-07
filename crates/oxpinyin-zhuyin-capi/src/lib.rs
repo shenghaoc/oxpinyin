@@ -275,6 +275,42 @@ mod tests {
         zhuyin_fini(context);
     }
 
+    /// A before-cursor row whose span starts at the first key answers
+    /// cursor 0 — upstream's `m_begin` (`zhuyin.cpp:1660`), which the end
+    /// mapper would have turned into the first key's end.
+    #[test]
+    fn choosing_a_first_key_before_cursor_row_answers_zero() {
+        let (context, instance) = open();
+        let input = cstr("su3cl3");
+        assert_eq!(zhuyin_parse_more_chewings(instance, input.as_ptr()), 6);
+        assert!(zhuyin_guess_candidates_before_cursor(instance, 3));
+        let mut count = 0;
+        assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+        // Row 0 is the prepended BEST_MATCH sentence row; row 1 is the
+        // first phrase row of the spans ending at 3, all of which start
+        // at 0 (nothing precedes the first key).
+        assert!(count > 1);
+        let mut cand: *mut LookupCandidate = ptr::null_mut();
+        assert!(zhuyin_get_candidate(instance, 1, &raw mut cand));
+        // SAFETY: the instance is live; the borrow ends with the read.
+        let kind = unsafe { instance_mut(instance) }.candidates[1].candidate_type;
+        assert_eq!(
+            kind,
+            lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR
+        );
+        assert_eq!(
+            zhuyin_choose_candidate(instance, 3, cand),
+            0,
+            "m_begin of a first-key span is 0, not the key's end"
+        );
+        assert!(
+            zhuyin_clear_constraint(instance, 0),
+            "the forcing starts at the first key"
+        );
+        zhuyin_free_instance(instance);
+        zhuyin_fini(context);
+    }
+
     /// The zhuyin twin of issue #356: `zhuyin_get_character_offset` runs
     /// the same phrase-table search and matrix walk (`zhuyin.cpp:2148`
     /// at the pin). `su3cl3` is 你好 on the standard keyboard: the
