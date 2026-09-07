@@ -783,32 +783,36 @@ where
 
         for end in 1..=keys.len() {
             let first = end.saturating_sub(MAX_PHRASE_KEYS);
-            for start in first..end {
-                // TODO: avoid cloning — bounded by MAX_PHRASE_KEYS × input.
-                // The clone is here because the loop writes back into `best`
-                // while reading this entry; splitting the read and the write,
-                // or holding an index instead of the text, would remove it.
-                let Some((prefix_cost, prefix_text, prefix_history)) = best[start].clone() else {
+            // The cell being written (`best[end]`) sits strictly after every
+            // cell read in this round (`best[start]`, `start < end`), so the
+            // table splits into a read half and a write slot; the prefix is
+            // borrowed, not cloned, and only an improving span allocates.
+            let (settled, open) = best.split_at_mut(end);
+            let cell = &mut open[0];
+            for (start, prefix) in settled.iter().enumerate().skip(first) {
+                let Some((prefix_cost, prefix_text, prefix_history)) = prefix.as_ref() else {
                     continue;
                 };
                 let ranked =
-                    scorer.rank_phrases(&prefix_history, &keys[start..end], &kinds[start..end])?;
+                    scorer.rank_phrases(prefix_history, &keys[start..end], &kinds[start..end])?;
                 let Some((entry, cost)) = ranked.first() else {
                     continue;
                 };
 
                 let total = prefix_cost.saturating_add(*cost);
-                if best[end].as_ref().is_none_or(|(seen, ..)| total < *seen) {
-                    let mut text = prefix_text.clone();
+                if cell.as_ref().is_none_or(|(seen, ..)| total < *seen) {
+                    let mut text = String::with_capacity(prefix_text.len() + entry.text().len());
+                    text.push_str(prefix_text);
                     text.push_str(entry.text());
-                    let mut history = prefix_history.clone();
+                    let mut history = Vec::with_capacity(prefix_history.len() + 1);
+                    history.extend_from_slice(prefix_history);
                     history.push(entry.token());
-                    best[end] = Some((total, text, history));
+                    *cell = Some((total, text, history));
                 }
             }
         }
 
-        if let Some((cost, text, tokens)) = best[keys.len()].clone()
+        if let Some((cost, text, tokens)) = best.pop().flatten()
             && !text.is_empty()
         {
             let tokens = tokens[self.history.len()..].to_vec();
