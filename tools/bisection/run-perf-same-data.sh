@@ -19,6 +19,8 @@
 #   PERF_CPU     CPU to pin (default 0)
 #   PERF_RUNS    speed processes per cell (default 20)
 #   PERF_CYCLES  keystroke cycles per process (default 8)
+#   PERF_REPEATS corpus passes per timed cycle (default 1); scales the
+#       workload inside the timed region with the corpus frozen
 #   PERF_RAM_RUNS  RAM processes per cell (default 10)
 #   OXPINYIN_KC_SO / OXPINYIN_TKRZW_SO  prebuilt oxpinyin .so paths
 #       (default: cargo build --release from this tree, one per feature)
@@ -31,6 +33,7 @@ OUT="${MATRIX_OUT:-/out}"
 CPU="${PERF_CPU:-0}"
 RUNS="${PERF_RUNS:-20}"
 CYCLES="${PERF_CYCLES:-8}"
+REPEATS="${PERF_REPEATS:-1}"
 RAM_RUNS="${PERF_RAM_RUNS:-10}"
 TARGET="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
 mkdir -p "$OUT"
@@ -96,16 +99,18 @@ run_one() {
     if command -v taskset >/dev/null 2>&1; then
         taskset -c "$CPU" env LD_LIBRARY_PATH="$libdir" \
             PERF_BACKEND="$label" PERF_MODE="$mode" PERF_CYCLES="$CYCLES" \
+            PERF_REPEATS="$REPEATS" \
             "$SCRIPT_DIR/bisect" --perf "$so" "$data" >>"$outfile" 2>>"$OUT/$label-$mode.err"
     else
         env LD_LIBRARY_PATH="$libdir" \
             PERF_BACKEND="$label" PERF_MODE="$mode" PERF_CYCLES="$CYCLES" \
+            PERF_REPEATS="$REPEATS" \
             "$SCRIPT_DIR/bisect" --perf "$so" "$data" >>"$outfile" 2>>"$OUT/$label-$mode.err"
     fi
 }
 
 SPEED_JSONL="$OUT/speed.jsonl"; : > "$SPEED_JSONL"
-echo "--- speed: $RUNS alternating runs × $CYCLES cycles, CPU $CPU ---"
+echo "--- speed: $RUNS alternating runs × $CYCLES cycles × $REPEATS passes, CPU $CPU ---"
 for _ in $(seq 1 "$RUNS"); do
     for i in 0 1 2 3; do run_one "${LABELS[$i]}" "${SOS[$i]}" "${DATAS[$i]}" "${LIBS[$i]}" speed "$SPEED_JSONL"; done
 done
