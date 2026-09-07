@@ -901,6 +901,11 @@ seen in the same probe is a separate parity defect: issue #356.
 > shape. The R1 measurement below is reproduced on that path:
 > `pred-order-diff` is IDENTICAL on the pin's own KC `data/` (see the
 > predicted-candidate entry's P6 amendment).
+>
+> Everything below this banner — the harnesses, the 2,562 reorder lines,
+> the DIVERGE/order-only verdicts — is the 2026-08-30 measurement of the
+> removed compat path, kept verbatim as the historical record. It is not
+> the current result; the current result is the IDENTICAL above.
 
 - **Where:** the removed `oxpinyin-data/src/compat` module (libpinyin
   drop-in loader) and its removed
