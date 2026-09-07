@@ -234,18 +234,19 @@ revert targets is `revert-plan.md`.
 | 23 | Sanitizer scope on the tkrzw shim CI · native data-file naming · R1 measured on the compat paths | **no ABI divergence** | three dated records, not behaviour entries: a CI-instrumentation note, a file-naming decision (`installed-naming.md`), and a measurement whose subject was removed (its SUPERSEDED banner is itself amended 2026-09-06 — P6 restored direct reads of libpinyin's files) |
 | 24 | zhuyin batch `FORCE_TONE` law | **CLOSED** | 1671954: `ZhuyinParser::parse_with_options` honours the three per-keyboard shapes |
 | 25 | zhuyin candidate-tag grouping + `after(consumed)` terminal offset | **CLOSED** | both halves closed by the display-law collapse and the builder terminal mapping (amended 2026-08-31) |
-| 26 | zhuyin before-cursor candidate window | **CLOSED, with an OPEN DEFECT residual** | window builder closed (c2ad5925); the residual — a row whose span starts after the offset is constrained as `[0, offset)`, not `[start, offset)` — is plain integer bookkeeping, so no class fits and the corollary makes it mandatory. Measured against the pin 2026-09-05: no corpus input flips the 1-best. Blocked on a STOP: `Candidate` needs a span start and `Session::select_*` an end anchor (engine interface ask) |
+| 26 | zhuyin before-cursor candidate window | **CLOSED** (residual closed in code, #374) | window builder closed (c2ad5925); the residual — a row whose span starts after the offset was constrained as `[0, offset)` — closed 2026-09-06 with the maintainer's engine-interface approval: `Candidate::span_start` carries upstream's `m_begin`, the constraint is `[m_begin, m_end)`, and `zhuyin_choose_candidate` answers `m_begin` for a before-cursor row (`zhuyin.cpp:1660`). Owed: the three-input oracle battery from the Linux host |
 | 27 | zhuyin multi-syllable candidate construction | **CLOSED** | the divergence was the pinyin string-fill law, not the construction model (amended 2026-08-31) |
-| 28 | zhuyin n-best trellis constants `<1, 1>` vs the engine's `<2, 3>` | **OPEN DEFECT** | reproducible (per-surface const generics), not observable through today's libzhuyin candidate surface, so no gate moves; the pruning depth differs and becomes observable through any per-row sentence access. Fix shape recorded in the entry; touches `oxpinyin-engine`'s decoder, so it lands with a measured differential, not as a constant edit |
+| 28 | zhuyin n-best trellis constants `<1, 1>` vs the engine's `<2, 3>` | **CLOSED** in code (#374) | per-session `NbestShape` (`PINYIN` = `<2, 3>`, `ZHUYIN` = `<1, 1>`), set by both zhuyin facades at instance allocation; not observable through today's libzhuyin candidate surface, so no gate moves |
 | 29 | zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default | **no ABI divergence** | `CapiContext::open` seeds the pin's `USE_TONE \| FORCE_TONE`; entry kept as analysis for a future consumer |
 | 30 | pinyin-facade chewing batch seam does not forward `FORCE_TONE` | **OPEN DEFECT** | the register says it: no class fits, a defect to close; `ROADMAP.md` carries it as the bopomofo SPEC's one open implementation item. Observable only under a caller-set `FORCE_TONE` (pin consumes 0 on toneless `su`, oxpinyin 2). Fix shape: forward `inst.options().bits()` through `parse_with_options` plus a `FORCE_TONE` profile in `chewing-diff.c`. Not STOP-gated — the same one-line shape #289 used on the double-pinyin seam |
 | 31 | redb write-side emptiness probe creates the table it probes | **no ABI divergence** | a redb API constraint below the store traits; nothing above them observes it. Stage-2 store-trait note, not a compatibility entry |
 
 Totals at `2a99761a` (2026-09-06, oracle pin 074a2219): **(a)** 2 ·
 **(b)** 2 · **(c)** 10 · **(d)** 0 (class retired, see below) · **REVERT
-TARGET** 2 (rows 5b, 17) · **OPEN DEFECT** 3 (rows 26, 28, 30) ·
-**CLOSED** 11 (rows 3, 7, 8, 9, 12, 13, 15, 16, 24, 25, 27) · **no ABI
-divergence** 4 rows (2, 23, 29, 31).
+TARGET** 2 (rows 5b, 17) · **OPEN DEFECT** 1 (row 30) · **CLOSED** 13
+(rows 3, 7, 8, 9, 12, 13, 15, 16, 24, 25, 26, 27, 28 — 26 and 28 in code
+via #374, oracle battery owed) · **no ABI divergence** 4 rows (2, 23,
+29, 31).
 
 The 2026-08-28 totals were (a) 1 · (b) 2 · (c) 6 · (d) 1 · REVERT
 TARGET 7 · closed or not a divergence 2. Of the seven revert targets,
@@ -263,10 +264,10 @@ conditional.
    has not moved.
 3. **Row 17** — port the pin's `0x0` gating; unconditional since (d)
    was retired.
-4. **Rows 26 and 28** — the two `oxpinyin-engine` interface changes.
-   Approved by the maintainer 2026-09-06 with the instruction to copy
-   what libpinyin's source does; they land with the zhuyin differential
-   battery, not as a constant edit.
+4. **Rows 26 and 28** — landed in code (#374) under the maintainer's
+   2026-09-06 approval, copying libpinyin's source; the three-input
+   oracle battery for row 26 is owed from the Linux host before the
+   register entry drops its "in code" qualifier.
 
 ### Notes on the three entries whose class was not obvious
 
