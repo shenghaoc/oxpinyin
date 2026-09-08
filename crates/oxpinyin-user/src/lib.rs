@@ -1,9 +1,10 @@
-//! redb ACID store for user data: learning, frequencies, preferences.
-//! The redb major version is pinned. Internal crate — the supported
-//! public API is `oxpinyin-engine`.
+//! ACID store for user data over the compiled-in `DefaultStore` (tkrzw,
+//! Kyoto Cabinet, LMDB or redb — one per binary, selected by feature;
+//! see `oxpinyin-store`): learning, frequencies, preferences. Internal
+//! crate — the supported public API is `oxpinyin-engine`.
 //!
 //! W6-T1: the integer count [`seed`] arithmetic pinned in
-//! `docs/findings/user-store.md` §2, the redb count tables, and the first
+//! `docs/findings/user-store.md` §2, the count tables, and the first
 //! [`oxpinyin_core::UserModel`] implementor. W6-T2: the user phrase index and
 //! `USER_DICTIONARY` token allocation (§3), as additional tables in the same
 //! database. W6-T3 wires the store through [`oxpinyin_core::UserModel`] (typed

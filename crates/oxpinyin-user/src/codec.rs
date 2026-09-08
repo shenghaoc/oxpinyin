@@ -1,9 +1,10 @@
 //! Byte codec for user-store key/value types.
 //!
 //! Every type that appears in a user-store table definition has an `encode_*`
-//! / `decode_*` pair here.  Integers are big-endian so that `memcmp` on the
-//! encoded bytes reproduces redb's `Key::compare` (which decodes and compares
-//! values, not stored LE bytes).  Composite keys concatenate their
+//! / `decode_*` pair here.  Integers are big-endian so that byte order is
+//! numeric order under every backend's `memcmp`-style key comparison
+//! (the store seam orders keys by raw bytes; this also matches what redb's
+//! typed `Key::compare` would produce).  Composite keys concatenate their
 //! fixed-width prefix with the variable tail — no length prefix needed
 //! because the fixed half exactly delimits the split point.
 
