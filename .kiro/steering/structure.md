@@ -8,7 +8,7 @@ inclusion: always
 | oxpinyin-core | parser, SegmentGraph, k-best, scoring traits | forbid | yes | via engine |
 | oxpinyin-chewing | chewing/zhuyin layer: the packed chewing key, its renderers, and the frozen content tables — a dependency-free leaf *under* core, not a module over it (core depends on chewing) | forbid | yes | via capi, engine |
 | oxpinyin-data | load libpinyin-format tables (D3 route); drop-in readers for installed libpinyin data | deny (+mmap) | yes | via engine |
-| oxpinyin-user | ACID store over DefaultStore; a `user_meta` format-version row (`STORE_FORMAT_VERSION`) is stamped in the opening transaction — an un-stamped store is adopted and stamped in place, one stamped `0` or newer than the build refuses to open with a typed `IncompatibleFormat` error | forbid | yes | via engine |
+| oxpinyin-user | ACID store over DefaultStore; no format-version row, matching libpinyin's unversioned user files (ruling 2026-09-08, `docs/findings/user-store.md` §4) | forbid | yes | via engine |
 | oxpinyin-engine | session API — the supported Rust surface | forbid | yes | yes |
 | oxpinyin-facade | shared facade-orchestration layer (instance/context state machines, parse seams, cursor laws, the §9 user-data export materialization) consumed by both C-ABI facades and the Python binding; depends on core, engine, runtime and user — it holds the runtime's concrete dict/lm/user handles by value, so it forwards the whole backend feature matrix rather than staying generic over the engine traits | forbid | yes | via capi |
 | oxpinyin-capi | the libpinyin C ABI — `libpinyin.so.15`, all 79 `pinyin_*` exports, libpinyin's SONAME/header/pkg-config via cargo-c | allow | Linux | yes |
