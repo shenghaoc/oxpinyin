@@ -44,7 +44,7 @@ cargo test --locked --workspace --no-default-features --features redb  # portabl
 | Group | Crates |
 |---|---|
 | Engine / data / runtime / bindings | `oxpinyin-core`, `oxpinyin-chewing`, `oxpinyin-store`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-facade`, `oxpinyin-runtime`, `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, `oxpinyin-python` |
-| Training toolchain (never ships) | `oxpinyin-corpus`, `oxpinyin-segment`, `oxpinyin-kmm`, `oxpinyin-lambda`, `oxpinyin-word`, `oxpinyin-punct`, `oxpinyin-eval`, `oxpinyin-train`, `oxpinyin-datagen`; legacy, off the trainer path: `oxpinyin-counter`, `oxpinyin-emitter` |
+| Training toolchain (never ships) | `oxpinyin-corpus`, `oxpinyin-segment`, `oxpinyin-kmm`, `oxpinyin-lambda`, `oxpinyin-word`, `oxpinyin-punct`, `oxpinyin-eval`, `oxpinyin-train`, `oxpinyin-datagen`; legacy interpolation utilities the trainer never invokes but the others share: `oxpinyin-counter`, `oxpinyin-emitter` |
 | Tools | `oxpinyin-dictool` |
 | Oracle / testing | `pinyin-oracle`, `oxpinyin-testsupport` |
 

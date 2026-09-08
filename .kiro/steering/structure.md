@@ -22,9 +22,9 @@ inclusion: always
 | oxpinyin-corpus | training corpus front-end (zhwiki dump → ngseg raw text) | deny | yes | never |
 | oxpinyin-testsupport | shared test doubles (fixture Dictionary/LanguageModel); dev-only | forbid | yes | never |
 | oxpinyin-segment | training segmenter (`ngseg`; `spseg`/`mergeseq` per W9 re-audit) | deny | yes | never |
-| oxpinyin-counter | legacy n-gram counter (`gen_ngram`; off the trainer path — see trainer-parity-audit §4) | deny | yes | never |
+| oxpinyin-counter | legacy interpolation utility: `gen_ngram`, a libpinyin util the trainer never invokes (trainer-parity-audit §4) — kept because its counting machinery is shared by corpus, lambda, eval and train | deny | yes | never |
 | oxpinyin-lambda | training λ estimator (`estimate_interpolation` EM — on the trainer path via `evaluate.py`; `gen_deleted_ngram` held-out) | deny | yes | never |
-| oxpinyin-emitter | legacy `interpolation2.text` writer (`export_interpolation`; off the trainer path — see trainer-parity-audit §4) | deny | yes | never |
+| oxpinyin-emitter | legacy interpolation utility: `export_interpolation` → `interpolation2.text`, a libpinyin util the trainer never invokes (trainer-parity-audit §4) — kept; corpus and train emit through it | deny | yes | never |
 | oxpinyin-kmm | K-mixture-model pipeline (generate/estimate/merge/validate/prune/export/import/→interpolation) — W9 | deny | yes | never |
 | oxpinyin-punct | punctuation-table generator (`genpunct.py` reproduction) — W9 | deny | yes | never |
 | oxpinyin-word | word-recognition pipeline (populate/partialword/newword/markpinyin) — W9 | deny | yes | never |

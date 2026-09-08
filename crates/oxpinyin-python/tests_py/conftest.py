@@ -1,6 +1,8 @@
 """Shared fixtures: repository layout, fixture data, the native transcript."""
 
 import json
+import os
+import shlex
 import subprocess
 import sys
 import sysconfig
@@ -34,6 +36,18 @@ def resolve_input(case: dict) -> str:
         )
     return unit * times
 
+
+
+def _cargo_run_args() -> list[str]:
+    """Extra `cargo run` arguments for the native dumps.
+
+    The dumps build with the workspace default backend (tkrzw). A host
+    without that C library selects the pure-Rust peer through
+    ``OXPINYIN_PYTEST_CARGO_ARGS`` (e.g. ``--no-default-features --features
+    redb``) — the same selection the wheel was built with, so the binding
+    and the dump read the same ``fixtures/w3/<ext>`` set.
+    """
+    return shlex.split(os.environ.get("OXPINYIN_PYTEST_CARGO_ARGS", ""))
 
 @pytest.fixture(scope="session", autouse=True)
 def extension_imports_keep_the_gil_as_found():
@@ -135,6 +149,7 @@ def zhuyin_native_transcript(
         [
             "cargo",
             "run",
+            *_cargo_run_args(),
             "--quiet",
             "-p",
             "oxpinyin-python",
@@ -167,6 +182,7 @@ def native_transcript(
         [
             "cargo",
             "run",
+            *_cargo_run_args(),
             "--quiet",
             "-p",
             "oxpinyin-python",
