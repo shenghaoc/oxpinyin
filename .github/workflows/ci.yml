@@ -89,8 +89,11 @@ env:
 
 # Five jobs:
 #   lint — rustfmt + clippy
-#   test — cargo test for the whole workspace, and the portable workspace
-#          (all but capi, zhuyin-capi, python, dictool) on macOS and Windows;
+#   test — cargo test for the whole workspace (the ONE full sweep per
+#          PR), and the portable workspace (all but capi, zhuyin-capi,
+#          python, dictool, and the seven backend-independent training
+#          crates — corpus, counter, emitter, kmm, lambda, punct, word,
+#          which run once here on Linux) on macOS and Windows;
 #          python-portable builds and tests the binding's wheel there
 #   python — the oxpinyin Python binding on the container image's stock
 #            python3 — GIL-enabled CPython 3.14, since actions/setup-python
@@ -392,6 +395,7 @@ jobs:
   # a containerized matrix cannot cover these operating systems.
   test-macos:
     runs-on: macos-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -408,13 +412,23 @@ jobs:
       # for every member at once (the exactly-one-backend guard sees one
       # peer) and keeps pinyin-oracle's Linux-only `oracle-ffi` off even
       # if it ever became a default feature.
+      # The seven backend-independent training crates (corpus, counter,
+      # emitter, kmm, lambda, punct, word) are excluded: none touches the
+      # store chain, so their result is identical on every backend and
+      # every OS — they run once per PR in the Linux `test` job (and in
+      # the nightly overflow/nextest lanes). This lane keeps the crates
+      # whose behavior the platform can change.
       - run: >
           cargo test --locked --workspace --no-default-features --features redb
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi --exclude oxpinyin-python
           --exclude oxpinyin-dictool
+          --exclude oxpinyin-corpus --exclude oxpinyin-counter --exclude oxpinyin-emitter
+          --exclude oxpinyin-kmm --exclude oxpinyin-lambda --exclude oxpinyin-punct
+          --exclude oxpinyin-word
 
   test-windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -423,8 +437,9 @@ jobs:
         with:
           rust-cache: 'true'
       - run: rustup show active-toolchain
-      # Same selection as the macOS leg above: redb only, because every
-      # other backend requires Linux system libraries.
+      # Same selection and exclusions as the macOS leg above: redb only,
+      # because every other backend requires Linux system libraries, and
+      # the training crates ride only in the Linux `test` job.
       # --no-default-features --features redb selects the pure-Rust peer
       # for every member at once (the exactly-one-backend guard sees one
       # peer) and keeps pinyin-oracle's Linux-only `oracle-ffi` off even
@@ -433,6 +448,9 @@ jobs:
           cargo test --locked --workspace --no-default-features --features redb
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi --exclude oxpinyin-python
           --exclude oxpinyin-dictool
+          --exclude oxpinyin-corpus --exclude oxpinyin-counter --exclude oxpinyin-emitter
+          --exclude oxpinyin-kmm --exclude oxpinyin-lambda --exclude oxpinyin-punct
+          --exclude oxpinyin-word
 
   # Supply-chain gate. cargo-deny's advisories check consumes the same
   # RustSec DB cargo-audit uses, so this one job replaces both tools; the
