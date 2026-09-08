@@ -65,7 +65,7 @@ env:
   RUSTFLAGS: -D warnings
 
 # Five jobs:
-#   lint — rustfmt + clippy
+#   lint — rustfmt + clippy + the Lizard CCN ratchet
 #   test — cargo test for the whole workspace (the ONE full sweep per
 #          PR), and the portable workspace (all but capi, zhuyin-capi,
 #          python, dictool, and the seven backend-independent training
@@ -178,6 +178,17 @@ jobs:
       - run: tests/lint-crate-cfg-placement.test.sh
       - run: .github/scripts/lint-crate-cfg-placement.sh
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      # Complexity ratchet: no function may exceed CCN 40 (current max is
+      # 38, the user/store.rs quartet — a tracked refactor target, never
+      # allowed to grow past the limit). Moved here from verify-nightly
+      # on 2026-09-08: seconds of runtime, and a ratchet that fired only
+      # the night after a merge was a ratchet in name only.
+      # --break-system-packages: PEP 668 marking; this container is
+      # ephemeral, there is no system Python to protect. 1.24.0 is the
+      # release the ratchet was validated against locally.
+      - run: apt-get install -y --no-install-recommends python3-pip
+      - run: pip install --break-system-packages lizard==1.24.0
+      - run: lizard crates/ -l rust -C 40
 
   test:
     needs: changes

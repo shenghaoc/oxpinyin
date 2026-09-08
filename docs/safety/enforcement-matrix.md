@@ -47,7 +47,7 @@ warning, SCHED = scheduled analysis, REV = human review.
 | `Result`/`Option` never silently dropped | WARN (via CI `-D warnings` → HGATE) | HGATE | `rust::unused_must_use = deny` workspace lints |
 | Value-returning queries are `#[must_use]` | partial (341 attrs; store=0, codec/content gaps) | WARN→HGATE | `clippy::must_use_candidate = warn` + gap fixes; then the deny above bites |
 | Errors documented | partial | deferred by decision (PR-1 review round 1) | none: the two doc lints are enabled nowhere in the tree; a dedicated sweep is the planned vehicle |
-| Public API stability freezes (non_exhaustive, defaulted methods) | REV (intent recorded in structure.md) | unchanged | review only — no cargo-public-api snapshot or tooling artifact exists in the tree |
+| Public API stability freezes (non_exhaustive, defaulted methods) | REV + nightly snapshot (2026-09-08) | unchanged | the nightly `public-api` lane (verify-nightly.yml) diffs `cargo public-api -p oxpinyin-engine --simplified` against the committed `docs/api/oxpinyin-engine.public-api.txt`; the Python surface is pinned by `test_public_surface_is_frozen` (`crates/oxpinyin-python/tests_py/test_engine.py`); the C ABI by the export gate in ci.yml |
 
 ## E. Complexity & maintainability
 

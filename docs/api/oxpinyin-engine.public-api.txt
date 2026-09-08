@@ -1,0 +1,665 @@
+pub mod oxpinyin_engine
+#[non_exhaustive] pub enum oxpinyin_engine::CandidateKind
+pub oxpinyin_engine::CandidateKind::Addon
+pub oxpinyin_engine::CandidateKind::Fallback
+pub oxpinyin_engine::CandidateKind::Phrase
+pub oxpinyin_engine::CandidateKind::Sentence
+impl core::clone::Clone for oxpinyin_engine::CandidateKind
+pub fn oxpinyin_engine::CandidateKind::clone(&self) -> oxpinyin_engine::CandidateKind
+impl core::cmp::Eq for oxpinyin_engine::CandidateKind
+impl core::cmp::PartialEq for oxpinyin_engine::CandidateKind
+pub fn oxpinyin_engine::CandidateKind::eq(&self, &oxpinyin_engine::CandidateKind) -> bool
+impl core::fmt::Debug for oxpinyin_engine::CandidateKind
+pub fn oxpinyin_engine::CandidateKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for oxpinyin_engine::CandidateKind
+pub fn oxpinyin_engine::CandidateKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for oxpinyin_engine::CandidateKind
+impl core::marker::StructuralPartialEq for oxpinyin_engine::CandidateKind
+impl core::marker::Freeze for oxpinyin_engine::CandidateKind
+impl core::marker::Send for oxpinyin_engine::CandidateKind
+impl core::marker::Sync for oxpinyin_engine::CandidateKind
+impl core::marker::Unpin for oxpinyin_engine::CandidateKind
+impl core::marker::UnsafeUnpin for oxpinyin_engine::CandidateKind
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::CandidateKind
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::CandidateKind
+#[non_exhaustive] pub enum oxpinyin_engine::ConfigError
+pub oxpinyin_engine::ConfigError::InvalidValue
+pub oxpinyin_engine::ConfigError::InvalidValue::layer: alloc::string::String
+pub oxpinyin_engine::ConfigError::InvalidValue::line: usize
+pub oxpinyin_engine::ConfigError::InvalidValue::value: alloc::string::String
+pub oxpinyin_engine::ConfigError::MissingField
+pub oxpinyin_engine::ConfigError::MissingField::field: &'static str
+pub oxpinyin_engine::ConfigError::MissingField::layer: alloc::string::String
+pub oxpinyin_engine::ConfigError::MissingField::line: usize
+pub oxpinyin_engine::ConfigError::TypeMismatch
+pub oxpinyin_engine::ConfigError::TypeMismatch::expected: char
+pub oxpinyin_engine::ConfigError::TypeMismatch::found: char
+pub oxpinyin_engine::ConfigError::TypeMismatch::key: alloc::string::String
+pub oxpinyin_engine::ConfigError::TypeMismatch::layer: alloc::string::String
+pub oxpinyin_engine::ConfigError::UnknownType
+pub oxpinyin_engine::ConfigError::UnknownType::layer: alloc::string::String
+pub oxpinyin_engine::ConfigError::UnknownType::letter: alloc::string::String
+pub oxpinyin_engine::ConfigError::UnknownType::line: usize
+impl core::clone::Clone for oxpinyin_engine::ConfigError
+pub fn oxpinyin_engine::ConfigError::clone(&self) -> oxpinyin_engine::ConfigError
+impl core::cmp::Eq for oxpinyin_engine::ConfigError
+impl core::cmp::PartialEq for oxpinyin_engine::ConfigError
+pub fn oxpinyin_engine::ConfigError::eq(&self, &oxpinyin_engine::ConfigError) -> bool
+impl core::error::Error for oxpinyin_engine::ConfigError
+impl core::fmt::Debug for oxpinyin_engine::ConfigError
+pub fn oxpinyin_engine::ConfigError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for oxpinyin_engine::ConfigError
+pub fn oxpinyin_engine::ConfigError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for oxpinyin_engine::ConfigError
+impl core::marker::Freeze for oxpinyin_engine::ConfigError
+impl core::marker::Send for oxpinyin_engine::ConfigError
+impl core::marker::Sync for oxpinyin_engine::ConfigError
+impl core::marker::Unpin for oxpinyin_engine::ConfigError
+impl core::marker::UnsafeUnpin for oxpinyin_engine::ConfigError
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::ConfigError
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::ConfigError
+#[non_exhaustive] pub enum oxpinyin_engine::ConfigValue
+pub oxpinyin_engine::ConfigValue::Bool(bool)
+pub oxpinyin_engine::ConfigValue::Int(i32)
+pub oxpinyin_engine::ConfigValue::Int64(i64)
+pub oxpinyin_engine::ConfigValue::Text(alloc::string::String)
+impl oxpinyin_engine::ConfigValue
+pub const fn oxpinyin_engine::ConfigValue::as_bool(&self) -> core::option::Option<bool>
+pub const fn oxpinyin_engine::ConfigValue::as_int(&self) -> core::option::Option<i32>
+pub const fn oxpinyin_engine::ConfigValue::as_int64(&self) -> core::option::Option<i64>
+pub fn oxpinyin_engine::ConfigValue::as_text(&self) -> core::option::Option<&str>
+pub const fn oxpinyin_engine::ConfigValue::type_letter(&self) -> char
+impl core::clone::Clone for oxpinyin_engine::ConfigValue
+pub fn oxpinyin_engine::ConfigValue::clone(&self) -> oxpinyin_engine::ConfigValue
+impl core::cmp::Eq for oxpinyin_engine::ConfigValue
+impl core::cmp::PartialEq for oxpinyin_engine::ConfigValue
+pub fn oxpinyin_engine::ConfigValue::eq(&self, &oxpinyin_engine::ConfigValue) -> bool
+impl core::fmt::Debug for oxpinyin_engine::ConfigValue
+pub fn oxpinyin_engine::ConfigValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for oxpinyin_engine::ConfigValue
+pub fn oxpinyin_engine::ConfigValue::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for oxpinyin_engine::ConfigValue
+impl core::marker::Freeze for oxpinyin_engine::ConfigValue
+impl core::marker::Send for oxpinyin_engine::ConfigValue
+impl core::marker::Sync for oxpinyin_engine::ConfigValue
+impl core::marker::Unpin for oxpinyin_engine::ConfigValue
+impl core::marker::UnsafeUnpin for oxpinyin_engine::ConfigValue
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::ConfigValue
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::ConfigValue
+#[non_exhaustive] pub enum oxpinyin_engine::EngineError
+pub oxpinyin_engine::EngineError::CandidateIndexOutOfRange
+pub oxpinyin_engine::EngineError::CandidateIndexOutOfRange::index: usize
+pub oxpinyin_engine::EngineError::CandidateIndexOutOfRange::len: usize
+pub oxpinyin_engine::EngineError::Decode(oxpinyin_core::kbest::DecodeError)
+pub oxpinyin_engine::EngineError::Dictionary(alloc::string::String)
+pub oxpinyin_engine::EngineError::Graph(oxpinyin_core::graph::GraphError)
+pub oxpinyin_engine::EngineError::LanguageModel(alloc::string::String)
+pub oxpinyin_engine::EngineError::LookupOffsetInsideCharacter
+pub oxpinyin_engine::EngineError::LookupOffsetInsideCharacter::len: usize
+pub oxpinyin_engine::EngineError::LookupOffsetInsideCharacter::offset: usize
+pub oxpinyin_engine::EngineError::LookupOffsetOutOfRange
+pub oxpinyin_engine::EngineError::LookupOffsetOutOfRange::len: usize
+pub oxpinyin_engine::EngineError::LookupOffsetOutOfRange::offset: usize
+pub oxpinyin_engine::EngineError::LookupOffsetPastSeparator
+pub oxpinyin_engine::EngineError::LookupOffsetPastSeparator::normalized: usize
+pub oxpinyin_engine::EngineError::LookupOffsetPastSeparator::offset: usize
+pub oxpinyin_engine::EngineError::MatrixColumnAssert
+pub oxpinyin_engine::EngineError::MatrixColumnAssert::offset: usize
+pub oxpinyin_engine::EngineError::Scoring(oxpinyin_core::scoring::ScoringError)
+pub oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition
+pub oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition::anchor: usize
+pub oxpinyin_engine::EngineError::SelectionAnchorBeforeComposition::composition: usize
+pub oxpinyin_engine::EngineError::UserModel(alloc::string::String)
+pub oxpinyin_engine::EngineError::ZeroKeyOffsetCheck
+pub oxpinyin_engine::EngineError::ZeroKeyOffsetCheck::offset: usize
+impl core::clone::Clone for oxpinyin_engine::EngineError
+pub fn oxpinyin_engine::EngineError::clone(&self) -> oxpinyin_engine::EngineError
+impl core::cmp::Eq for oxpinyin_engine::EngineError
+impl core::cmp::PartialEq for oxpinyin_engine::EngineError
+pub fn oxpinyin_engine::EngineError::eq(&self, &oxpinyin_engine::EngineError) -> bool
+impl core::convert::From<oxpinyin_core::graph::GraphError> for oxpinyin_engine::EngineError
+pub fn oxpinyin_engine::EngineError::from(oxpinyin_core::graph::GraphError) -> Self
+impl core::convert::From<oxpinyin_core::kbest::DecodeError> for oxpinyin_engine::EngineError
+pub fn oxpinyin_engine::EngineError::from(oxpinyin_core::kbest::DecodeError) -> Self
+impl core::convert::From<oxpinyin_core::scoring::ScoringError> for oxpinyin_engine::EngineError
+pub fn oxpinyin_engine::EngineError::from(oxpinyin_core::scoring::ScoringError) -> Self
+impl core::error::Error for oxpinyin_engine::EngineError
+pub fn oxpinyin_engine::EngineError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for oxpinyin_engine::EngineError
+pub fn oxpinyin_engine::EngineError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for oxpinyin_engine::EngineError
+pub fn oxpinyin_engine::EngineError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for oxpinyin_engine::EngineError
+impl core::marker::Freeze for oxpinyin_engine::EngineError
+impl core::marker::Send for oxpinyin_engine::EngineError
+impl core::marker::Sync for oxpinyin_engine::EngineError
+impl core::marker::Unpin for oxpinyin_engine::EngineError
+impl core::marker::UnsafeUnpin for oxpinyin_engine::EngineError
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::EngineError
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::EngineError
+#[non_exhaustive] pub enum oxpinyin_engine::KeyOutcome
+pub oxpinyin_engine::KeyOutcome::Commit(alloc::string::String)
+pub oxpinyin_engine::KeyOutcome::Consumed
+pub oxpinyin_engine::KeyOutcome::Ignored
+impl core::clone::Clone for oxpinyin_engine::KeyOutcome
+pub fn oxpinyin_engine::KeyOutcome::clone(&self) -> oxpinyin_engine::KeyOutcome
+impl core::cmp::Eq for oxpinyin_engine::KeyOutcome
+impl core::cmp::PartialEq for oxpinyin_engine::KeyOutcome
+pub fn oxpinyin_engine::KeyOutcome::eq(&self, &oxpinyin_engine::KeyOutcome) -> bool
+impl core::fmt::Debug for oxpinyin_engine::KeyOutcome
+pub fn oxpinyin_engine::KeyOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for oxpinyin_engine::KeyOutcome
+impl core::marker::Freeze for oxpinyin_engine::KeyOutcome
+impl core::marker::Send for oxpinyin_engine::KeyOutcome
+impl core::marker::Sync for oxpinyin_engine::KeyOutcome
+impl core::marker::Unpin for oxpinyin_engine::KeyOutcome
+impl core::marker::UnsafeUnpin for oxpinyin_engine::KeyOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::KeyOutcome
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::KeyOutcome
+#[non_exhaustive] pub enum oxpinyin_engine::LogicalKey
+pub oxpinyin_engine::LogicalKey::Backspace
+pub oxpinyin_engine::LogicalKey::Character(char)
+pub oxpinyin_engine::LogicalKey::Delete
+pub oxpinyin_engine::LogicalKey::Down
+pub oxpinyin_engine::LogicalKey::End
+pub oxpinyin_engine::LogicalKey::Enter
+pub oxpinyin_engine::LogicalKey::Escape
+pub oxpinyin_engine::LogicalKey::Home
+pub oxpinyin_engine::LogicalKey::Left
+pub oxpinyin_engine::LogicalKey::PageDown
+pub oxpinyin_engine::LogicalKey::PageUp
+pub oxpinyin_engine::LogicalKey::Right
+pub oxpinyin_engine::LogicalKey::Space
+pub oxpinyin_engine::LogicalKey::Tab
+pub oxpinyin_engine::LogicalKey::Unknown
+pub oxpinyin_engine::LogicalKey::Up
+impl core::clone::Clone for oxpinyin_engine::LogicalKey
+pub fn oxpinyin_engine::LogicalKey::clone(&self) -> oxpinyin_engine::LogicalKey
+impl core::cmp::Eq for oxpinyin_engine::LogicalKey
+impl core::cmp::PartialEq for oxpinyin_engine::LogicalKey
+pub fn oxpinyin_engine::LogicalKey::eq(&self, &oxpinyin_engine::LogicalKey) -> bool
+impl core::fmt::Debug for oxpinyin_engine::LogicalKey
+pub fn oxpinyin_engine::LogicalKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for oxpinyin_engine::LogicalKey
+pub fn oxpinyin_engine::LogicalKey::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for oxpinyin_engine::LogicalKey
+impl core::marker::StructuralPartialEq for oxpinyin_engine::LogicalKey
+impl core::marker::Freeze for oxpinyin_engine::LogicalKey
+impl core::marker::Send for oxpinyin_engine::LogicalKey
+impl core::marker::Sync for oxpinyin_engine::LogicalKey
+impl core::marker::Unpin for oxpinyin_engine::LogicalKey
+impl core::marker::UnsafeUnpin for oxpinyin_engine::LogicalKey
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::LogicalKey
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::LogicalKey
+#[non_exhaustive] pub enum oxpinyin_engine::Selection
+pub oxpinyin_engine::Selection::Completed
+pub oxpinyin_engine::Selection::Continued
+impl core::clone::Clone for oxpinyin_engine::Selection
+pub fn oxpinyin_engine::Selection::clone(&self) -> oxpinyin_engine::Selection
+impl core::cmp::Eq for oxpinyin_engine::Selection
+impl core::cmp::PartialEq for oxpinyin_engine::Selection
+pub fn oxpinyin_engine::Selection::eq(&self, &oxpinyin_engine::Selection) -> bool
+impl core::fmt::Debug for oxpinyin_engine::Selection
+pub fn oxpinyin_engine::Selection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for oxpinyin_engine::Selection
+impl core::marker::StructuralPartialEq for oxpinyin_engine::Selection
+impl core::marker::Freeze for oxpinyin_engine::Selection
+impl core::marker::Send for oxpinyin_engine::Selection
+impl core::marker::Sync for oxpinyin_engine::Selection
+impl core::marker::Unpin for oxpinyin_engine::Selection
+impl core::marker::UnsafeUnpin for oxpinyin_engine::Selection
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::Selection
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::Selection
+#[non_exhaustive] pub enum oxpinyin_engine::SpanStyle
+pub oxpinyin_engine::SpanStyle::Converted
+pub oxpinyin_engine::SpanStyle::Raw
+pub oxpinyin_engine::SpanStyle::Selected
+impl core::clone::Clone for oxpinyin_engine::SpanStyle
+pub fn oxpinyin_engine::SpanStyle::clone(&self) -> oxpinyin_engine::SpanStyle
+impl core::cmp::Eq for oxpinyin_engine::SpanStyle
+impl core::cmp::PartialEq for oxpinyin_engine::SpanStyle
+pub fn oxpinyin_engine::SpanStyle::eq(&self, &oxpinyin_engine::SpanStyle) -> bool
+impl core::fmt::Debug for oxpinyin_engine::SpanStyle
+pub fn oxpinyin_engine::SpanStyle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for oxpinyin_engine::SpanStyle
+pub fn oxpinyin_engine::SpanStyle::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for oxpinyin_engine::SpanStyle
+impl core::marker::StructuralPartialEq for oxpinyin_engine::SpanStyle
+impl core::marker::Freeze for oxpinyin_engine::SpanStyle
+impl core::marker::Send for oxpinyin_engine::SpanStyle
+impl core::marker::Sync for oxpinyin_engine::SpanStyle
+impl core::marker::Unpin for oxpinyin_engine::SpanStyle
+impl core::marker::UnsafeUnpin for oxpinyin_engine::SpanStyle
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::SpanStyle
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::SpanStyle
+pub struct oxpinyin_engine::Candidate
+impl oxpinyin_engine::Candidate
+pub const fn oxpinyin_engine::Candidate::consumed_bytes(&self) -> usize
+pub const fn oxpinyin_engine::Candidate::consumed_keys(&self) -> usize
+pub const fn oxpinyin_engine::Candidate::cost(&self) -> oxpinyin_core::Cost
+pub const fn oxpinyin_engine::Candidate::kind(&self) -> oxpinyin_engine::CandidateKind
+pub const fn oxpinyin_engine::Candidate::nbest_index(&self) -> u8
+pub const fn oxpinyin_engine::Candidate::nbest_row(&self) -> core::option::Option<u8>
+pub const fn oxpinyin_engine::Candidate::span_start(&self) -> usize
+pub fn oxpinyin_engine::Candidate::text(&self) -> &str
+pub const fn oxpinyin_engine::Candidate::token(&self) -> core::option::Option<oxpinyin_core::vocab::PhraseToken>
+impl core::clone::Clone for oxpinyin_engine::Candidate
+pub fn oxpinyin_engine::Candidate::clone(&self) -> oxpinyin_engine::Candidate
+impl core::cmp::Eq for oxpinyin_engine::Candidate
+impl core::cmp::PartialEq for oxpinyin_engine::Candidate
+pub fn oxpinyin_engine::Candidate::eq(&self, &oxpinyin_engine::Candidate) -> bool
+impl core::fmt::Debug for oxpinyin_engine::Candidate
+pub fn oxpinyin_engine::Candidate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for oxpinyin_engine::Candidate
+impl core::marker::Freeze for oxpinyin_engine::Candidate
+impl core::marker::Send for oxpinyin_engine::Candidate
+impl core::marker::Sync for oxpinyin_engine::Candidate
+impl core::marker::Unpin for oxpinyin_engine::Candidate
+impl core::marker::UnsafeUnpin for oxpinyin_engine::Candidate
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::Candidate
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::Candidate
+pub struct oxpinyin_engine::CandidateList
+impl oxpinyin_engine::CandidateList
+pub fn oxpinyin_engine::CandidateList::get(&self, usize) -> core::option::Option<&oxpinyin_engine::Candidate>
+pub const fn oxpinyin_engine::CandidateList::is_empty(&self) -> bool
+pub fn oxpinyin_engine::CandidateList::iter(&self) -> core::slice::iter::Iter<'_, oxpinyin_engine::Candidate>
+pub const fn oxpinyin_engine::CandidateList::len(&self) -> usize
+impl core::clone::Clone for oxpinyin_engine::CandidateList
+pub fn oxpinyin_engine::CandidateList::clone(&self) -> oxpinyin_engine::CandidateList
+impl core::cmp::Eq for oxpinyin_engine::CandidateList
+impl core::cmp::PartialEq for oxpinyin_engine::CandidateList
+pub fn oxpinyin_engine::CandidateList::eq(&self, &oxpinyin_engine::CandidateList) -> bool
+impl core::default::Default for oxpinyin_engine::CandidateList
+pub fn oxpinyin_engine::CandidateList::default() -> oxpinyin_engine::CandidateList
+impl core::fmt::Debug for oxpinyin_engine::CandidateList
+pub fn oxpinyin_engine::CandidateList::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for oxpinyin_engine::CandidateList
+impl<'a> core::iter::traits::collect::IntoIterator for &'a oxpinyin_engine::CandidateList
+pub type &'a oxpinyin_engine::CandidateList::IntoIter = core::slice::iter::Iter<'a, oxpinyin_engine::Candidate>
+pub type &'a oxpinyin_engine::CandidateList::Item = &'a oxpinyin_engine::Candidate
+pub fn &'a oxpinyin_engine::CandidateList::into_iter(self) -> Self::IntoIter
+impl core::marker::Freeze for oxpinyin_engine::CandidateList
+impl core::marker::Send for oxpinyin_engine::CandidateList
+impl core::marker::Sync for oxpinyin_engine::CandidateList
+impl core::marker::Unpin for oxpinyin_engine::CandidateList
+impl core::marker::UnsafeUnpin for oxpinyin_engine::CandidateList
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::CandidateList
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::CandidateList
+pub struct oxpinyin_engine::Config
+impl oxpinyin_engine::Config
+pub const fn oxpinyin_engine::Config::from_map(alloc::collections::btree::map::BTreeMap<alloc::string::String, oxpinyin_engine::ConfigValue>) -> Self
+pub fn oxpinyin_engine::Config::is_empty(&self) -> bool
+pub fn oxpinyin_engine::Config::iter(&self) -> alloc::collections::btree::map::Iter<'_, alloc::string::String, oxpinyin_engine::ConfigValue>
+pub fn oxpinyin_engine::Config::len(&self) -> usize
+pub fn oxpinyin_engine::Config::set(&mut self, impl core::convert::Into<alloc::string::String>, oxpinyin_engine::ConfigValue) -> core::option::Option<oxpinyin_engine::ConfigValue>
+impl core::clone::Clone for oxpinyin_engine::Config
+pub fn oxpinyin_engine::Config::clone(&self) -> oxpinyin_engine::Config
+impl core::cmp::Eq for oxpinyin_engine::Config
+impl core::cmp::PartialEq for oxpinyin_engine::Config
+pub fn oxpinyin_engine::Config::eq(&self, &oxpinyin_engine::Config) -> bool
+impl core::default::Default for oxpinyin_engine::Config
+pub fn oxpinyin_engine::Config::default() -> Self
+impl core::fmt::Debug for oxpinyin_engine::Config
+pub fn oxpinyin_engine::Config::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for oxpinyin_engine::Config
+impl oxpinyin_engine::ConfigSource for oxpinyin_engine::Config
+pub fn oxpinyin_engine::Config::get(&self, &str) -> core::option::Option<&oxpinyin_engine::ConfigValue>
+pub fn oxpinyin_engine::Config::get_bool(&self, &str) -> core::option::Option<bool>
+pub fn oxpinyin_engine::Config::get_int(&self, &str) -> core::option::Option<i32>
+pub fn oxpinyin_engine::Config::get_int64(&self, &str) -> core::option::Option<i64>
+pub fn oxpinyin_engine::Config::get_text(&self, &str) -> core::option::Option<&str>
+impl<'a> core::iter::traits::collect::IntoIterator for &'a oxpinyin_engine::Config
+pub type &'a oxpinyin_engine::Config::IntoIter = alloc::collections::btree::map::Iter<'a, alloc::string::String, oxpinyin_engine::ConfigValue>
+pub type &'a oxpinyin_engine::Config::Item = (&'a alloc::string::String, &'a oxpinyin_engine::ConfigValue)
+pub fn &'a oxpinyin_engine::Config::into_iter(self) -> Self::IntoIter
+impl core::marker::Freeze for oxpinyin_engine::Config
+impl core::marker::Send for oxpinyin_engine::Config
+impl core::marker::Sync for oxpinyin_engine::Config
+impl core::marker::Unpin for oxpinyin_engine::Config
+impl core::marker::UnsafeUnpin for oxpinyin_engine::Config
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::Config
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::Config
+pub struct oxpinyin_engine::ConfigLayer
+impl oxpinyin_engine::ConfigLayer
+pub fn oxpinyin_engine::ConfigLayer::is_empty(&self) -> bool
+pub fn oxpinyin_engine::ConfigLayer::len(&self) -> usize
+pub fn oxpinyin_engine::ConfigLayer::name(&self) -> &str
+pub fn oxpinyin_engine::ConfigLayer::new(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn oxpinyin_engine::ConfigLayer::parse(impl core::convert::Into<alloc::string::String>, &str) -> core::result::Result<Self, oxpinyin_engine::ConfigError>
+pub fn oxpinyin_engine::ConfigLayer::with(self, impl core::convert::Into<alloc::string::String>, oxpinyin_engine::ConfigValue) -> Self
+impl core::clone::Clone for oxpinyin_engine::ConfigLayer
+pub fn oxpinyin_engine::ConfigLayer::clone(&self) -> oxpinyin_engine::ConfigLayer
+impl core::cmp::Eq for oxpinyin_engine::ConfigLayer
+impl core::cmp::PartialEq for oxpinyin_engine::ConfigLayer
+pub fn oxpinyin_engine::ConfigLayer::eq(&self, &oxpinyin_engine::ConfigLayer) -> bool
+impl core::default::Default for oxpinyin_engine::ConfigLayer
+pub fn oxpinyin_engine::ConfigLayer::default() -> oxpinyin_engine::ConfigLayer
+impl core::fmt::Debug for oxpinyin_engine::ConfigLayer
+pub fn oxpinyin_engine::ConfigLayer::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for oxpinyin_engine::ConfigLayer
+impl oxpinyin_engine::ConfigSource for oxpinyin_engine::ConfigLayer
+pub fn oxpinyin_engine::ConfigLayer::get(&self, &str) -> core::option::Option<&oxpinyin_engine::ConfigValue>
+pub fn oxpinyin_engine::ConfigLayer::get_bool(&self, &str) -> core::option::Option<bool>
+pub fn oxpinyin_engine::ConfigLayer::get_int(&self, &str) -> core::option::Option<i32>
+pub fn oxpinyin_engine::ConfigLayer::get_int64(&self, &str) -> core::option::Option<i64>
+pub fn oxpinyin_engine::ConfigLayer::get_text(&self, &str) -> core::option::Option<&str>
+impl core::marker::Freeze for oxpinyin_engine::ConfigLayer
+impl core::marker::Send for oxpinyin_engine::ConfigLayer
+impl core::marker::Sync for oxpinyin_engine::ConfigLayer
+impl core::marker::Unpin for oxpinyin_engine::ConfigLayer
+impl core::marker::UnsafeUnpin for oxpinyin_engine::ConfigLayer
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::ConfigLayer
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::ConfigLayer
+pub struct oxpinyin_engine::EmptyConfigSource
+impl core::clone::Clone for oxpinyin_engine::EmptyConfigSource
+pub fn oxpinyin_engine::EmptyConfigSource::clone(&self) -> oxpinyin_engine::EmptyConfigSource
+impl core::cmp::Eq for oxpinyin_engine::EmptyConfigSource
+impl core::cmp::PartialEq for oxpinyin_engine::EmptyConfigSource
+pub fn oxpinyin_engine::EmptyConfigSource::eq(&self, &oxpinyin_engine::EmptyConfigSource) -> bool
+impl core::default::Default for oxpinyin_engine::EmptyConfigSource
+pub fn oxpinyin_engine::EmptyConfigSource::default() -> oxpinyin_engine::EmptyConfigSource
+impl core::fmt::Debug for oxpinyin_engine::EmptyConfigSource
+pub fn oxpinyin_engine::EmptyConfigSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for oxpinyin_engine::EmptyConfigSource
+pub fn oxpinyin_engine::EmptyConfigSource::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for oxpinyin_engine::EmptyConfigSource
+impl core::marker::StructuralPartialEq for oxpinyin_engine::EmptyConfigSource
+impl oxpinyin_engine::ConfigSource for oxpinyin_engine::EmptyConfigSource
+pub fn oxpinyin_engine::EmptyConfigSource::get(&self, &str) -> core::option::Option<&oxpinyin_engine::ConfigValue>
+pub fn oxpinyin_engine::EmptyConfigSource::get_bool(&self, &str) -> core::option::Option<bool>
+pub fn oxpinyin_engine::EmptyConfigSource::get_int(&self, &str) -> core::option::Option<i32>
+pub fn oxpinyin_engine::EmptyConfigSource::get_int64(&self, &str) -> core::option::Option<i64>
+pub fn oxpinyin_engine::EmptyConfigSource::get_text(&self, &str) -> core::option::Option<&str>
+impl core::marker::Freeze for oxpinyin_engine::EmptyConfigSource
+impl core::marker::Send for oxpinyin_engine::EmptyConfigSource
+impl core::marker::Sync for oxpinyin_engine::EmptyConfigSource
+impl core::marker::Unpin for oxpinyin_engine::EmptyConfigSource
+impl core::marker::UnsafeUnpin for oxpinyin_engine::EmptyConfigSource
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::EmptyConfigSource
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::EmptyConfigSource
+pub struct oxpinyin_engine::KeyInput
+impl oxpinyin_engine::KeyInput
+pub fn oxpinyin_engine::KeyInput::character(char) -> Self
+pub const fn oxpinyin_engine::KeyInput::key(&self) -> oxpinyin_engine::LogicalKey
+pub const fn oxpinyin_engine::KeyInput::modifiers(&self) -> oxpinyin_engine::Modifiers
+pub fn oxpinyin_engine::KeyInput::new(oxpinyin_engine::LogicalKey, oxpinyin_engine::Modifiers, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn oxpinyin_engine::KeyInput::plain(oxpinyin_engine::LogicalKey) -> Self
+pub fn oxpinyin_engine::KeyInput::text(&self) -> &str
+impl core::clone::Clone for oxpinyin_engine::KeyInput
+pub fn oxpinyin_engine::KeyInput::clone(&self) -> oxpinyin_engine::KeyInput
+impl core::cmp::Eq for oxpinyin_engine::KeyInput
+impl core::cmp::PartialEq for oxpinyin_engine::KeyInput
+pub fn oxpinyin_engine::KeyInput::eq(&self, &oxpinyin_engine::KeyInput) -> bool
+impl core::fmt::Debug for oxpinyin_engine::KeyInput
+pub fn oxpinyin_engine::KeyInput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for oxpinyin_engine::KeyInput
+impl core::marker::Freeze for oxpinyin_engine::KeyInput
+impl core::marker::Send for oxpinyin_engine::KeyInput
+impl core::marker::Sync for oxpinyin_engine::KeyInput
+impl core::marker::Unpin for oxpinyin_engine::KeyInput
+impl core::marker::UnsafeUnpin for oxpinyin_engine::KeyInput
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::KeyInput
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::KeyInput
+pub struct oxpinyin_engine::MatrixKey
+impl oxpinyin_engine::MatrixKey
+pub const fn oxpinyin_engine::MatrixKey::end(self) -> usize
+pub const fn oxpinyin_engine::MatrixKey::is_empty(self) -> bool
+pub const fn oxpinyin_engine::MatrixKey::key(self) -> oxpinyin_core::vocab::SyllableKey
+pub const fn oxpinyin_engine::MatrixKey::len(self) -> usize
+pub const fn oxpinyin_engine::MatrixKey::new(oxpinyin_core::vocab::SyllableKey, u8, usize, usize) -> Self
+pub const fn oxpinyin_engine::MatrixKey::syllable_start(self) -> usize
+pub const fn oxpinyin_engine::MatrixKey::tone(self) -> u8
+impl core::clone::Clone for oxpinyin_engine::MatrixKey
+pub fn oxpinyin_engine::MatrixKey::clone(&self) -> oxpinyin_engine::MatrixKey
+impl core::cmp::Eq for oxpinyin_engine::MatrixKey
+impl core::cmp::PartialEq for oxpinyin_engine::MatrixKey
+pub fn oxpinyin_engine::MatrixKey::eq(&self, &oxpinyin_engine::MatrixKey) -> bool
+impl core::fmt::Debug for oxpinyin_engine::MatrixKey
+pub fn oxpinyin_engine::MatrixKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for oxpinyin_engine::MatrixKey
+pub fn oxpinyin_engine::MatrixKey::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for oxpinyin_engine::MatrixKey
+impl core::marker::StructuralPartialEq for oxpinyin_engine::MatrixKey
+impl core::marker::Freeze for oxpinyin_engine::MatrixKey
+impl core::marker::Send for oxpinyin_engine::MatrixKey
+impl core::marker::Sync for oxpinyin_engine::MatrixKey
+impl core::marker::Unpin for oxpinyin_engine::MatrixKey
+impl core::marker::UnsafeUnpin for oxpinyin_engine::MatrixKey
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::MatrixKey
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::MatrixKey
+pub struct oxpinyin_engine::Modifiers(_)
+impl oxpinyin_engine::Modifiers
+pub const oxpinyin_engine::Modifiers::ALT: Self
+pub const oxpinyin_engine::Modifiers::CONTROL: Self
+pub const oxpinyin_engine::Modifiers::NONE: Self
+pub const oxpinyin_engine::Modifiers::SHIFT: Self
+pub const oxpinyin_engine::Modifiers::SUPER: Self
+pub const fn oxpinyin_engine::Modifiers::bits(self) -> u8
+pub const fn oxpinyin_engine::Modifiers::contains(self, Self) -> bool
+pub const fn oxpinyin_engine::Modifiers::from_bits(u8) -> core::option::Option<Self>
+pub const fn oxpinyin_engine::Modifiers::has_command_modifier(self) -> bool
+pub const fn oxpinyin_engine::Modifiers::is_empty(self) -> bool
+impl core::clone::Clone for oxpinyin_engine::Modifiers
+pub fn oxpinyin_engine::Modifiers::clone(&self) -> oxpinyin_engine::Modifiers
+impl core::cmp::Eq for oxpinyin_engine::Modifiers
+impl core::cmp::PartialEq for oxpinyin_engine::Modifiers
+pub fn oxpinyin_engine::Modifiers::eq(&self, &oxpinyin_engine::Modifiers) -> bool
+impl core::default::Default for oxpinyin_engine::Modifiers
+pub fn oxpinyin_engine::Modifiers::default() -> oxpinyin_engine::Modifiers
+impl core::fmt::Debug for oxpinyin_engine::Modifiers
+pub fn oxpinyin_engine::Modifiers::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for oxpinyin_engine::Modifiers
+pub fn oxpinyin_engine::Modifiers::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for oxpinyin_engine::Modifiers
+pub fn oxpinyin_engine::Modifiers::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for oxpinyin_engine::Modifiers
+impl core::marker::StructuralPartialEq for oxpinyin_engine::Modifiers
+impl core::ops::bit::BitOr for oxpinyin_engine::Modifiers
+pub type oxpinyin_engine::Modifiers::Output = oxpinyin_engine::Modifiers
+pub fn oxpinyin_engine::Modifiers::bitor(self, Self) -> Self
+impl core::marker::Freeze for oxpinyin_engine::Modifiers
+impl core::marker::Send for oxpinyin_engine::Modifiers
+impl core::marker::Sync for oxpinyin_engine::Modifiers
+impl core::marker::Unpin for oxpinyin_engine::Modifiers
+impl core::marker::UnsafeUnpin for oxpinyin_engine::Modifiers
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::Modifiers
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::Modifiers
+pub struct oxpinyin_engine::NbestShape
+impl oxpinyin_engine::NbestShape
+pub const oxpinyin_engine::NbestShape::PINYIN: Self
+pub const oxpinyin_engine::NbestShape::ZHUYIN: Self
+pub const fn oxpinyin_engine::NbestShape::nbest(self) -> usize
+pub const fn oxpinyin_engine::NbestShape::nstore(self) -> usize
+impl core::clone::Clone for oxpinyin_engine::NbestShape
+pub fn oxpinyin_engine::NbestShape::clone(&self) -> oxpinyin_engine::NbestShape
+impl core::cmp::Eq for oxpinyin_engine::NbestShape
+impl core::cmp::PartialEq for oxpinyin_engine::NbestShape
+pub fn oxpinyin_engine::NbestShape::eq(&self, &oxpinyin_engine::NbestShape) -> bool
+impl core::default::Default for oxpinyin_engine::NbestShape
+pub fn oxpinyin_engine::NbestShape::default() -> Self
+impl core::fmt::Debug for oxpinyin_engine::NbestShape
+pub fn oxpinyin_engine::NbestShape::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for oxpinyin_engine::NbestShape
+impl core::marker::StructuralPartialEq for oxpinyin_engine::NbestShape
+impl core::marker::Freeze for oxpinyin_engine::NbestShape
+impl core::marker::Send for oxpinyin_engine::NbestShape
+impl core::marker::Sync for oxpinyin_engine::NbestShape
+impl core::marker::Unpin for oxpinyin_engine::NbestShape
+impl core::marker::UnsafeUnpin for oxpinyin_engine::NbestShape
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::NbestShape
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::NbestShape
+pub struct oxpinyin_engine::Preedit
+impl oxpinyin_engine::Preedit
+pub const fn oxpinyin_engine::Preedit::cursor(&self) -> usize
+pub const fn oxpinyin_engine::Preedit::is_empty(&self) -> bool
+pub fn oxpinyin_engine::Preedit::spans(&self) -> &[oxpinyin_engine::PreeditSpan]
+pub fn oxpinyin_engine::Preedit::text(&self) -> &str
+impl core::clone::Clone for oxpinyin_engine::Preedit
+pub fn oxpinyin_engine::Preedit::clone(&self) -> oxpinyin_engine::Preedit
+impl core::cmp::Eq for oxpinyin_engine::Preedit
+impl core::cmp::PartialEq for oxpinyin_engine::Preedit
+pub fn oxpinyin_engine::Preedit::eq(&self, &oxpinyin_engine::Preedit) -> bool
+impl core::default::Default for oxpinyin_engine::Preedit
+pub fn oxpinyin_engine::Preedit::default() -> oxpinyin_engine::Preedit
+impl core::fmt::Debug for oxpinyin_engine::Preedit
+pub fn oxpinyin_engine::Preedit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for oxpinyin_engine::Preedit
+impl core::marker::Freeze for oxpinyin_engine::Preedit
+impl core::marker::Send for oxpinyin_engine::Preedit
+impl core::marker::Sync for oxpinyin_engine::Preedit
+impl core::marker::Unpin for oxpinyin_engine::Preedit
+impl core::marker::UnsafeUnpin for oxpinyin_engine::Preedit
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::Preedit
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::Preedit
+pub struct oxpinyin_engine::PreeditSpan
+impl oxpinyin_engine::PreeditSpan
+pub const fn oxpinyin_engine::PreeditSpan::end(self) -> usize
+pub const fn oxpinyin_engine::PreeditSpan::is_empty(self) -> bool
+pub const fn oxpinyin_engine::PreeditSpan::len(self) -> usize
+pub const fn oxpinyin_engine::PreeditSpan::start(self) -> usize
+pub const fn oxpinyin_engine::PreeditSpan::style(self) -> oxpinyin_engine::SpanStyle
+impl core::clone::Clone for oxpinyin_engine::PreeditSpan
+pub fn oxpinyin_engine::PreeditSpan::clone(&self) -> oxpinyin_engine::PreeditSpan
+impl core::cmp::Eq for oxpinyin_engine::PreeditSpan
+impl core::cmp::PartialEq for oxpinyin_engine::PreeditSpan
+pub fn oxpinyin_engine::PreeditSpan::eq(&self, &oxpinyin_engine::PreeditSpan) -> bool
+impl core::fmt::Debug for oxpinyin_engine::PreeditSpan
+pub fn oxpinyin_engine::PreeditSpan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for oxpinyin_engine::PreeditSpan
+pub fn oxpinyin_engine::PreeditSpan::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for oxpinyin_engine::PreeditSpan
+impl core::marker::StructuralPartialEq for oxpinyin_engine::PreeditSpan
+impl core::marker::Freeze for oxpinyin_engine::PreeditSpan
+impl core::marker::Send for oxpinyin_engine::PreeditSpan
+impl core::marker::Sync for oxpinyin_engine::PreeditSpan
+impl core::marker::Unpin for oxpinyin_engine::PreeditSpan
+impl core::marker::UnsafeUnpin for oxpinyin_engine::PreeditSpan
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::PreeditSpan
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::PreeditSpan
+pub struct oxpinyin_engine::Session<D, L>
+impl<D, L> oxpinyin_engine::Session<D, L> where D: oxpinyin_core::Dictionary<Syllable = oxpinyin_core::vocab::SyllableKey, Entry = oxpinyin_core::vocab::PhraseEntry>, <D as oxpinyin_core::Dictionary>::Error: core::fmt::Display, L: oxpinyin_core::LanguageModel<Token = oxpinyin_core::vocab::PhraseToken>, <L as oxpinyin_core::LanguageModel>::Error: core::fmt::Display
+pub const fn oxpinyin_engine::Session<D, L>::candidates(&self) -> &oxpinyin_engine::CandidateList
+pub const fn oxpinyin_engine::Session<D, L>::composition_offset(&self) -> usize
+pub const fn oxpinyin_engine::Session<D, L>::dictionary(&self) -> &D
+pub const fn oxpinyin_engine::Session<D, L>::is_composing(&self) -> bool
+pub const fn oxpinyin_engine::Session<D, L>::language_model(&self) -> &L
+pub fn oxpinyin_engine::Session<D, L>::new(&dyn oxpinyin_engine::ConfigSource, oxpinyin_engine::StoragePaths, D, L) -> core::result::Result<Self, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::new_with_key_costs(&dyn oxpinyin_engine::ConfigSource, oxpinyin_engine::StoragePaths, D, L, alloc::vec::Vec<oxpinyin_core::Cost>) -> core::result::Result<Self, oxpinyin_engine::EngineError>
+pub const fn oxpinyin_engine::Session<D, L>::page_size(&self) -> usize
+pub const fn oxpinyin_engine::Session<D, L>::parsed_prefix_len(&self) -> usize
+pub const fn oxpinyin_engine::Session<D, L>::paths(&self) -> &oxpinyin_engine::StoragePaths
+pub fn oxpinyin_engine::Session<D, L>::preedit(&self) -> oxpinyin_engine::Preedit
+pub fn oxpinyin_engine::Session<D, L>::raw_input(&self) -> &str
+pub fn oxpinyin_engine::Session<D, L>::replace_raw(&mut self, &str) -> core::result::Result<(), oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::replace_raw_exact(&mut self, &str, &[oxpinyin_core::graph::ExactSegment]) -> core::result::Result<(), oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::reset(&mut self)
+pub fn oxpinyin_engine::Session<D, L>::reset_composition(&mut self)
+pub const fn oxpinyin_engine::Session<D, L>::scoring_config(&self) -> &oxpinyin_core::scoring::ScoringConfig
+pub const fn oxpinyin_engine::Session<D, L>::sentence_lookup_active(&self) -> bool
+pub fn oxpinyin_engine::Session<D, L>::sentence_text(&self, u8) -> core::option::Option<&str>
+pub fn oxpinyin_engine::Session<D, L>::set_collapse_sentence_rows_to_best(&mut self, bool)
+pub fn oxpinyin_engine::Session<D, L>::set_incomplete_pinyin(&mut self, bool) -> core::result::Result<(), oxpinyin_engine::EngineError>
+pub const fn oxpinyin_engine::Session<D, L>::set_nbest_shape(&mut self, oxpinyin_engine::NbestShape)
+pub fn oxpinyin_engine::Session<D, L>::set_options(&mut self, oxpinyin_core::options::OptionBits) -> core::result::Result<(), oxpinyin_engine::EngineError>
+pub const fn oxpinyin_engine::Session<D, L>::set_scoring_config(&mut self, oxpinyin_core::scoring::ScoringConfig)
+impl<D, L> oxpinyin_engine::Session<D, L> where D: oxpinyin_core::Dictionary<Syllable = oxpinyin_core::vocab::SyllableKey, Entry = oxpinyin_core::vocab::PhraseEntry>, <D as oxpinyin_core::Dictionary>::Error: core::fmt::Display, L: oxpinyin_core::LanguageModel<Token = oxpinyin_core::vocab::PhraseToken>, <L as oxpinyin_core::LanguageModel>::Error: core::fmt::Display
+pub fn oxpinyin_engine::Session<D, L>::candidates_at(&mut self, usize) -> core::result::Result<oxpinyin_engine::CandidateList, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::candidates_ending_at(&mut self, usize) -> core::result::Result<oxpinyin_engine::CandidateList, oxpinyin_engine::EngineError>
+impl<D, L> oxpinyin_engine::Session<D, L> where D: oxpinyin_core::Dictionary<Syllable = oxpinyin_core::vocab::SyllableKey, Entry = oxpinyin_core::vocab::PhraseEntry>, <D as oxpinyin_core::Dictionary>::Error: core::fmt::Display, L: oxpinyin_core::LanguageModel<Token = oxpinyin_core::vocab::PhraseToken>, <L as oxpinyin_core::LanguageModel>::Error: core::fmt::Display
+pub fn oxpinyin_engine::Session<D, L>::character_offset(&self, &str, usize) -> core::result::Result<core::option::Option<usize>, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::committed_parse_continues(&self, &[u8], &[u8]) -> bool
+pub fn oxpinyin_engine::Session<D, L>::full_parsed_len(&self) -> usize
+pub fn oxpinyin_engine::Session<D, L>::left_word_offset(&self, usize) -> core::result::Result<usize, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::lookup_offset_for_cursor(&self, usize) -> core::result::Result<usize, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::matrix_keys(&self) -> core::result::Result<(alloc::vec::Vec<oxpinyin_engine::MatrixKey>, usize), oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::normalized_lookup_offset(&self, usize) -> core::result::Result<usize, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::parse_continues(&self, &[u8], &[u8]) -> bool
+pub fn oxpinyin_engine::Session<D, L>::right_word_offset(&self, usize) -> core::result::Result<core::option::Option<usize>, oxpinyin_engine::EngineError>
+pub const fn oxpinyin_engine::Session<D, L>::selection_committed(&self) -> bool
+impl<D, L> oxpinyin_engine::Session<D, L> where D: oxpinyin_core::Dictionary<Syllable = oxpinyin_core::vocab::SyllableKey, Entry = oxpinyin_core::vocab::PhraseEntry>, <D as oxpinyin_core::Dictionary>::Error: core::fmt::Display, L: oxpinyin_core::LanguageModel<Token = oxpinyin_core::vocab::PhraseToken>, <L as oxpinyin_core::LanguageModel>::Error: core::fmt::Display
+pub fn oxpinyin_engine::Session<D, L>::clear_constraint(&mut self, usize) -> bool
+pub fn oxpinyin_engine::Session<D, L>::commit(&mut self) -> core::result::Result<alloc::string::String, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::composition_keys(&self) -> core::result::Result<alloc::vec::Vec<oxpinyin_core::vocab::SyllableKey>, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::select(&mut self, usize) -> core::result::Result<oxpinyin_engine::Selection, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::select_anchored(&mut self, usize, &oxpinyin_engine::CandidateList, usize) -> core::result::Result<oxpinyin_engine::Selection, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::select_anchored_promoted(&mut self, usize, &oxpinyin_engine::CandidateList, usize, oxpinyin_core::vocab::PhraseToken) -> core::result::Result<oxpinyin_engine::Selection, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::select_promoted(&mut self, usize, oxpinyin_core::vocab::PhraseToken) -> core::result::Result<oxpinyin_engine::Selection, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::selected_tokens(&self) -> &[oxpinyin_core::vocab::PhraseToken]
+pub fn oxpinyin_engine::Session<D, L>::train<U>(&self, &mut U) -> core::result::Result<(), oxpinyin_engine::EngineError> where U: oxpinyin_core::UserModel<Token = oxpinyin_core::vocab::PhraseToken>, <U as oxpinyin_core::UserModel>::Error: core::fmt::Display
+impl<D, L> oxpinyin_engine::Session<D, L> where D: oxpinyin_core::Dictionary<Syllable = oxpinyin_core::vocab::SyllableKey, Entry = oxpinyin_core::vocab::PhraseEntry>, <D as oxpinyin_core::Dictionary>::Error: core::fmt::Display, L: oxpinyin_core::LanguageModel<Token = oxpinyin_core::vocab::PhraseToken>, <L as oxpinyin_core::LanguageModel>::Error: core::fmt::Display
+pub fn oxpinyin_engine::Session<D, L>::guess_sentence(&mut self) -> core::result::Result<bool, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::guess_sentence_with_prefix(&mut self, &[oxpinyin_core::vocab::PhraseToken]) -> core::result::Result<bool, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::phrase_segment(&self, &str) -> core::result::Result<(bool, alloc::vec::Vec<oxpinyin_core::vocab::PhraseToken>), oxpinyin_engine::EngineError>
+impl<D, L> oxpinyin_engine::Session<D, L> where D: oxpinyin_core::Dictionary<Syllable = oxpinyin_core::vocab::SyllableKey, Entry = oxpinyin_core::vocab::PhraseEntry>, <D as oxpinyin_core::Dictionary>::Error: core::fmt::Display, L: oxpinyin_core::LanguageModel<Token = oxpinyin_core::vocab::PhraseToken>, <L as oxpinyin_core::LanguageModel>::Error: core::fmt::Display
+pub fn oxpinyin_engine::Session<D, L>::process_key(&mut self, &oxpinyin_engine::KeyInput) -> core::result::Result<oxpinyin_engine::KeyOutcome, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::type_pinyin(&mut self, &str) -> core::result::Result<oxpinyin_engine::KeyOutcome, oxpinyin_engine::EngineError>
+impl<D: core::clone::Clone, L: core::clone::Clone> core::clone::Clone for oxpinyin_engine::Session<D, L>
+pub fn oxpinyin_engine::Session<D, L>::clone(&self) -> oxpinyin_engine::Session<D, L>
+impl<D: core::fmt::Debug, L: core::fmt::Debug> core::fmt::Debug for oxpinyin_engine::Session<D, L>
+pub fn oxpinyin_engine::Session<D, L>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<D, L> core::marker::Freeze for oxpinyin_engine::Session<D, L> where D: core::marker::Freeze, L: core::marker::Freeze
+impl<D, L> core::marker::Send for oxpinyin_engine::Session<D, L> where D: core::marker::Send, L: core::marker::Send
+impl<D, L> core::marker::Sync for oxpinyin_engine::Session<D, L> where D: core::marker::Sync, L: core::marker::Sync
+impl<D, L> core::marker::Unpin for oxpinyin_engine::Session<D, L> where D: core::marker::Unpin, L: core::marker::Unpin
+impl<D, L> core::marker::UnsafeUnpin for oxpinyin_engine::Session<D, L> where D: core::marker::UnsafeUnpin, L: core::marker::UnsafeUnpin
+impl<D, L> core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::Session<D, L> where D: core::panic::unwind_safe::RefUnwindSafe, L: core::panic::unwind_safe::RefUnwindSafe
+impl<D, L> core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::Session<D, L> where D: core::panic::unwind_safe::UnwindSafe, L: core::panic::unwind_safe::UnwindSafe
+pub struct oxpinyin_engine::StoragePaths
+impl oxpinyin_engine::StoragePaths
+pub fn oxpinyin_engine::StoragePaths::new(impl core::convert::Into<std::path::PathBuf>) -> Self
+pub fn oxpinyin_engine::StoragePaths::system_data_dirs(&self) -> &[std::path::PathBuf]
+pub fn oxpinyin_engine::StoragePaths::user_data_dir(&self) -> &std::path::Path
+pub fn oxpinyin_engine::StoragePaths::with_system_dirs<I, P>(self, I) -> Self where I: core::iter::traits::collect::IntoIterator<Item = P>, P: core::convert::Into<std::path::PathBuf>
+impl core::clone::Clone for oxpinyin_engine::StoragePaths
+pub fn oxpinyin_engine::StoragePaths::clone(&self) -> oxpinyin_engine::StoragePaths
+impl core::cmp::Eq for oxpinyin_engine::StoragePaths
+impl core::cmp::PartialEq for oxpinyin_engine::StoragePaths
+pub fn oxpinyin_engine::StoragePaths::eq(&self, &oxpinyin_engine::StoragePaths) -> bool
+impl core::default::Default for oxpinyin_engine::StoragePaths
+pub fn oxpinyin_engine::StoragePaths::default() -> oxpinyin_engine::StoragePaths
+impl core::fmt::Debug for oxpinyin_engine::StoragePaths
+pub fn oxpinyin_engine::StoragePaths::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for oxpinyin_engine::StoragePaths
+impl core::marker::Freeze for oxpinyin_engine::StoragePaths
+impl core::marker::Send for oxpinyin_engine::StoragePaths
+impl core::marker::Sync for oxpinyin_engine::StoragePaths
+impl core::marker::Unpin for oxpinyin_engine::StoragePaths
+impl core::marker::UnsafeUnpin for oxpinyin_engine::StoragePaths
+impl core::panic::unwind_safe::RefUnwindSafe for oxpinyin_engine::StoragePaths
+impl core::panic::unwind_safe::UnwindSafe for oxpinyin_engine::StoragePaths
+pub const oxpinyin_engine::MAX_INPUT_BYTES: usize
+pub const oxpinyin_engine::UPSTREAM_DEFAULT_COUNT: usize
+pub trait oxpinyin_engine::ConfigSource
+pub fn oxpinyin_engine::ConfigSource::get(&self, &str) -> core::option::Option<&oxpinyin_engine::ConfigValue>
+pub fn oxpinyin_engine::ConfigSource::get_bool(&self, &str) -> core::option::Option<bool>
+pub fn oxpinyin_engine::ConfigSource::get_int(&self, &str) -> core::option::Option<i32>
+pub fn oxpinyin_engine::ConfigSource::get_int64(&self, &str) -> core::option::Option<i64>
+pub fn oxpinyin_engine::ConfigSource::get_text(&self, &str) -> core::option::Option<&str>
+impl oxpinyin_engine::ConfigSource for oxpinyin_engine::Config
+pub fn oxpinyin_engine::Config::get(&self, &str) -> core::option::Option<&oxpinyin_engine::ConfigValue>
+pub fn oxpinyin_engine::Config::get_bool(&self, &str) -> core::option::Option<bool>
+pub fn oxpinyin_engine::Config::get_int(&self, &str) -> core::option::Option<i32>
+pub fn oxpinyin_engine::Config::get_int64(&self, &str) -> core::option::Option<i64>
+pub fn oxpinyin_engine::Config::get_text(&self, &str) -> core::option::Option<&str>
+impl oxpinyin_engine::ConfigSource for oxpinyin_engine::ConfigLayer
+pub fn oxpinyin_engine::ConfigLayer::get(&self, &str) -> core::option::Option<&oxpinyin_engine::ConfigValue>
+pub fn oxpinyin_engine::ConfigLayer::get_bool(&self, &str) -> core::option::Option<bool>
+pub fn oxpinyin_engine::ConfigLayer::get_int(&self, &str) -> core::option::Option<i32>
+pub fn oxpinyin_engine::ConfigLayer::get_int64(&self, &str) -> core::option::Option<i64>
+pub fn oxpinyin_engine::ConfigLayer::get_text(&self, &str) -> core::option::Option<&str>
+impl oxpinyin_engine::ConfigSource for oxpinyin_engine::EmptyConfigSource
+pub fn oxpinyin_engine::EmptyConfigSource::get(&self, &str) -> core::option::Option<&oxpinyin_engine::ConfigValue>
+pub fn oxpinyin_engine::EmptyConfigSource::get_bool(&self, &str) -> core::option::Option<bool>
+pub fn oxpinyin_engine::EmptyConfigSource::get_int(&self, &str) -> core::option::Option<i32>
+pub fn oxpinyin_engine::EmptyConfigSource::get_int64(&self, &str) -> core::option::Option<i64>
+pub fn oxpinyin_engine::EmptyConfigSource::get_text(&self, &str) -> core::option::Option<&str>
+pub fn oxpinyin_engine::character_offset_over_keys<D>(&[u8], usize, &[oxpinyin_engine::MatrixKey], bool, &D, &str, usize) -> core::result::Result<core::option::Option<usize>, oxpinyin_engine::EngineError> where D: oxpinyin_core::Dictionary<Syllable = oxpinyin_core::vocab::SyllableKey, Entry = oxpinyin_core::vocab::PhraseEntry>, <D as oxpinyin_core::Dictionary>::Error: core::fmt::Display
+pub const fn oxpinyin_engine::check_lookup_offset_range(usize, usize) -> core::result::Result<usize, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::left_word_offset(&[u8], oxpinyin_core::options::OptionBits, usize) -> core::result::Result<usize, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::left_word_offset_over_spans(&[u8], usize, &[(usize, usize)], bool, usize) -> core::result::Result<usize, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::lookup_offset_for_cursor(&[u8], oxpinyin_core::options::OptionBits, usize) -> core::result::Result<usize, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::lookup_offset_over_spans(&[u8], usize, &[(usize, usize)], bool, usize) -> core::result::Result<usize, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::merge(&oxpinyin_engine::Config, &[oxpinyin_engine::ConfigLayer]) -> core::result::Result<oxpinyin_engine::Config, oxpinyin_engine::ConfigError>
+pub fn oxpinyin_engine::normalize_lookup_offset(&[u8], usize) -> core::result::Result<usize, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::right_word_offset(&[u8], oxpinyin_core::options::OptionBits, usize) -> core::result::Result<core::option::Option<usize>, oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::right_word_offset_over_spans(&[u8], usize, &[(usize, usize)], bool, usize) -> core::result::Result<core::option::Option<usize>, oxpinyin_engine::EngineError>
