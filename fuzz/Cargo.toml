@@ -61,5 +61,19 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "phrase-library"
+path = "fuzz_targets/phrase_library.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "table-conf"
+path = "fuzz_targets/table_conf.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]
