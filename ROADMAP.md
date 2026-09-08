@@ -99,7 +99,6 @@ open or pending:
 - W8 drop-in task 9 — the write path for learned user data in
   libpinyin's own user-file format (`.kiro/specs/drop-in/tasks.md`; the
   user store is `user_store.<ext>` today).
-- The Phase 0 F-E register (foundation task 4).
 
 Parked, not open: the W12 live-typing behaviours the parity sequence does
 not exercise (`docs/findings/live-typing.md`, no pin gates) and the

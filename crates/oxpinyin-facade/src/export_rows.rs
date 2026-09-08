@@ -24,7 +24,12 @@ impl ContextCore {
     /// exports an empty list.
     #[must_use]
     pub fn export_phrases(&self, index: u32) -> Option<Vec<ExportedPhrase>> {
-        let index = u8::try_from(index).ok()?;
+        // Match the two exportable libraries before narrowing, so every
+        // other index — including values past `u8::MAX` — is the empty
+        // list the doc promises rather than `None`.
+        let Ok(index) = u8::try_from(index) else {
+            return Some(Vec::new());
+        };
         if index != USER_DICTIONARY && index != NETWORK_DICTIONARY {
             return Some(Vec::new());
         }

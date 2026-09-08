@@ -13,8 +13,9 @@ Kiro always-loads `.kiro/steering/`; this file wins on any conflict.
 3. No local AI (no client neural/LLM inference).
 4. Nothing panics on any input; public APIs return `Result`.
 5. `unsafe`: `forbid` in oxpinyin-core/user/engine; `deny` in data (the
-   documented mmap exception) and store (scoped backend-FFI allows); FFI only in capi/oracle with
-   `// SAFETY:` per block. The allowlist is mechanical now: crate-root
+   documented mmap exception) and store (whose backend bindings sit under
+   module-scoped allows); the public C ABI's FFI only in capi/oracle;
+   `// SAFETY:` on every block. The allowlist is mechanical now: crate-root
    `#![forbid]`/scoped allows enforce it, and two Clippy lints enforce the
    comments — `undocumented_unsafe_blocks` requires a safety comment on
    every `unsafe` block, `missing_safety_doc` requires a `# Safety` doc

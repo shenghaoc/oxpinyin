@@ -30,7 +30,7 @@ use crate::sentence::{
     zhuyin_get_sentence, zhuyin_guess_sentence, zhuyin_guess_sentence_with_prefix,
 };
 use crate::test_support::{
-    TempUserDir, candidate, close, cstr, open, open_with_user, store_of, take_sentence, token_of,
+    TempUserDir, candidate, close, cstr, open, open_with_user, take_sentence, token_of, with_store,
 };
 
 /// The choose-then-train seed sequence through the wired zhuyin path:
@@ -47,28 +47,22 @@ fn train_records_the_pinned_doubling_sequence() {
 
     // 69 on first selection; the predecessor is sentence_start.
     assert!(zhuyin_train(instance));
-    {
-        let store = store_of(instance);
+    with_store(instance, |store| {
         assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 69);
         assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 69);
         assert_eq!(store.unigram_delta(t1).unwrap(), 483); // 69 * 7
-    }
+    });
 
     // 138 on reselection (count 207), then 414 (count 621).
     assert!(zhuyin_train(instance));
-    assert_eq!(
-        store_of(instance).bigram_count(SENTENCE_START, t1).unwrap(),
-        207
-    );
+    with_store(instance, |store| {
+        assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 207);
+    });
     assert!(zhuyin_train(instance));
-    assert_eq!(
-        store_of(instance).bigram_count(SENTENCE_START, t1).unwrap(),
-        621
-    );
-    assert_eq!(
-        store_of(instance).unigram_delta(t1).unwrap(),
-        483 + 966 + 2898
-    );
+    with_store(instance, |store| {
+        assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 621);
+        assert_eq!(store.unigram_delta(t1).unwrap(), 483 + 966 + 2898);
+    });
 
     // A new composition starts fresh at sentence_start: the explicit
     // reset (the frontend's reset-on-commit contract), then a different
@@ -79,11 +73,10 @@ fn train_records_the_pinned_doubling_sequence() {
     assert_ne!(t1, t2, "distinct rows carry distinct tokens");
     assert!(zhuyin_choose_candidate(instance, 0, second) > 0);
     assert!(zhuyin_train(instance));
-    {
-        let store = store_of(instance);
+    with_store(instance, |store| {
         assert_eq!(store.bigram_count(SENTENCE_START, t2).unwrap(), 69);
         assert_eq!(store.bigram_count(t1, t2).unwrap(), 0);
-    }
+    });
 
     close(context, instance);
 }
@@ -163,9 +156,11 @@ fn add_phrase_batch_writes_the_user_index() {
     ));
     zhuyin_end_add_phrases(iter);
 
-    let rows = store_of(instance)
-        .export_phrases_in(USER_DICTIONARY)
-        .expect("export the user index");
+    let rows = with_store(instance, |store| {
+        store
+            .export_phrases_in(USER_DICTIONARY)
+            .expect("export the user index")
+    });
     assert_eq!(
         rows,
         vec![oxpinyin_user::ExportedPhrase {
