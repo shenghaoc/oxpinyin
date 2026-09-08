@@ -304,3 +304,38 @@ impl InstanceCore {
         ZhuyinParser::with_scheme(scheme).symbols_for(key, use_tone)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use oxpinyin_core::{ZhuyinParser, ZhuyinScheme};
+
+    use super::*;
+
+    #[test]
+    fn scheme_dispatch_covers_the_header_discriminants_and_nothing_else() {
+        assert!((1..=3).all(|v| full_scheme(v).is_some()));
+        assert!(full_scheme(0).is_none() && full_scheme(4).is_none());
+        // Zhuyin: total over 1..=9 including the STANDARD_DVORAK slot (7).
+        assert!((1..=9).all(|v| zhuyin_scheme(v).is_some()));
+        assert_eq!(zhuyin_scheme(7), Some(ZhuyinScheme::StandardDvorak));
+        assert!(zhuyin_scheme(0).is_none() && zhuyin_scheme(10).is_none());
+        assert!((1..=6).all(|v| double_scheme(v).is_some()));
+        assert!(double_scheme(0).is_none() && double_scheme(7).is_none());
+        assert!(double_scheme(-1).is_none());
+    }
+
+    #[test]
+    fn exact_input_joins_keys_with_apostrophes_and_spans_each_one() {
+        let parse = ZhuyinParser::with_scheme(ZhuyinScheme::Standard).parse(b"su3cl3", true, false);
+        let (text, segments) = exact_input(parse.keys());
+        assert_eq!(text, "ni'hao");
+        assert_eq!(segments.len(), 2);
+        assert_eq!((segments[0].start(), segments[0].end()), (0, 2));
+        assert_eq!((segments[1].start(), segments[1].end()), (3, 6));
+        assert_eq!(segments[0].tone(), 3);
+        assert_eq!(segments[1].tone(), 3);
+        let no_keys: &[ZhuyinKey] = &[];
+        let (empty, none) = exact_input(no_keys);
+        assert!(empty.is_empty() && none.is_empty());
+    }
+}

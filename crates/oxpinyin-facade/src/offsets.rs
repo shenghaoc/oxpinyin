@@ -162,3 +162,118 @@ pub fn zhuyin_lookup_session_offset(
     }
     zhuyin_session_offset(parse, offset)
 }
+
+#[cfg(test)]
+mod tests {
+    use oxpinyin_core::{DoublePinyinParser, DoublePinyinScheme, ZhuyinParser, ZhuyinScheme};
+
+    use super::*;
+
+    /// `su3cl3` on the standard keyboard is 你好: two keys, `ni` over
+    /// original `[0, 3)` and `hao` over `[3, 6)`; the joined session
+    /// buffer is `ni'hao` (the syllable texts, no tones), so the
+    /// transformed key boundaries are 2 and 6 with the apostrophe at 2.
+    fn nihao() -> ZhuyinParse {
+        let parse = ZhuyinParser::with_scheme(ZhuyinScheme::Standard).parse(b"su3cl3", true, false);
+        assert_eq!(parse.consumed(), 6);
+        assert_eq!(parse.keys().len(), 2);
+        assert_eq!(
+            parse
+                .keys()
+                .iter()
+                .map(|k| (k.start(), k.end()))
+                .collect::<Vec<_>>(),
+            [(0, 3), (3, 6)]
+        );
+        parse
+    }
+
+    #[test]
+    fn zhuyin_original_offset_answers_the_end_of_the_key_it_falls_in() {
+        let parse = nihao();
+        // Inside or at the end of `ni` (transformed 0..=2): its original end.
+        assert_eq!(zhuyin_original_offset(&parse, 0), 3);
+        assert_eq!(zhuyin_original_offset(&parse, 1), 3);
+        assert_eq!(zhuyin_original_offset(&parse, 2), 3);
+        // Past the apostrophe, inside `hao` (transformed 3..=6): its end.
+        assert_eq!(zhuyin_original_offset(&parse, 3), 6);
+        assert_eq!(zhuyin_original_offset(&parse, 6), 6);
+        // Beyond the joined buffer: the parse's consumed length.
+        assert_eq!(zhuyin_original_offset(&parse, 40), 6);
+    }
+
+    #[test]
+    fn zhuyin_original_begin_answers_the_key_start_and_keeps_zero() {
+        let parse = nihao();
+        // The end mapper would turn a first-key start into that key's end.
+        assert_eq!(zhuyin_original_begin(&parse, 0), 0);
+        // The second key starts one past the apostrophe (transformed 3):
+        // the previous key's original end, 3.
+        assert_eq!(zhuyin_original_begin(&parse, 3), 3);
+    }
+
+    #[test]
+    fn zhuyin_session_offset_is_the_next_key_start() {
+        let parse = nihao();
+        assert_eq!(zhuyin_session_offset(&parse, 0), 0);
+        assert_eq!(zhuyin_session_offset(&parse, 2), 0);
+        // The key boundary maps to the right key's transformed start.
+        assert_eq!(zhuyin_session_offset(&parse, 3), 3);
+        assert_eq!(zhuyin_session_offset(&parse, 5), 3);
+        // Past every key: one past the last key plus its apostrophe.
+        assert_eq!(zhuyin_session_offset(&parse, 6), 7);
+    }
+
+    #[test]
+    fn zhuyin_lookup_offset_is_direction_dependent_at_a_boundary() {
+        let parse = nihao();
+        let session_len = "ni'hao".len();
+        // The boundary between the two keys: after-cursor takes the right
+        // key's start (3), before-cursor the left key's end (2).
+        assert_eq!(
+            zhuyin_lookup_session_offset(&parse, session_len, 3, false),
+            3
+        );
+        assert_eq!(
+            zhuyin_lookup_session_offset(&parse, session_len, 3, true),
+            2
+        );
+        // The terminal offset maps to the buffer's one-past-end either way.
+        assert_eq!(
+            zhuyin_lookup_session_offset(&parse, session_len, 6, false),
+            session_len
+        );
+        assert_eq!(
+            zhuyin_lookup_session_offset(&parse, session_len, 6, true),
+            session_len
+        );
+        // A before-cursor offset on no key boundary falls through to the end.
+        assert_eq!(
+            zhuyin_lookup_session_offset(&parse, session_len, 1, true),
+            session_len
+        );
+    }
+
+    #[test]
+    fn double_pinyin_mappers_round_trip_every_key_boundary() {
+        // The scheme's own reading of the input is the fixture: whatever
+        // keys ZRM produces, the two mappers must agree on their boundaries.
+        let parse = DoublePinyinParser::with_scheme(DoublePinyinScheme::Zrm).parse(b"nihk", false);
+        assert!(!parse.keys().is_empty(), "ZRM parses `nihk`");
+        let mut transformed = 0;
+        for key in parse.keys() {
+            let start = transformed;
+            let end = transformed + key.key().text().len();
+            // Transformed positions inside the key map to its original end.
+            assert_eq!(double_original_offset(&parse, start), key.end());
+            assert_eq!(double_original_offset(&parse, end), key.end());
+            // The original start maps back to the transformed start.
+            assert_eq!(double_session_offset(&parse, key.start()), start);
+            transformed = end + 1;
+        }
+        assert_eq!(
+            double_original_offset(&parse, transformed + 5),
+            parse.consumed()
+        );
+    }
+}
