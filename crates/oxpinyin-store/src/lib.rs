@@ -324,6 +324,19 @@ pub trait WriteStore: ReadStore {
     /// `f` land together on `Ok`, or none land on `Err` (full rollback).
     /// The closure sees its own writes.
     ///
+    /// # Durability
+    ///
+    /// A commit that returns is on **stable storage** on every backend:
+    /// redb and LMDB fsync as part of their (WAL / copy-on-write)
+    /// commit, and the Kyoto Cabinet and tkrzw backends follow their
+    /// commit with a hard `kcdbsync` / `Synchronize`. Surviving a
+    /// process crash is the floor; surviving power loss at any point
+    /// *after* `write` returned is the contract. One residual
+    /// difference, documented per backend: a crash *during* the commit
+    /// call itself can tear the batch on KC and tkrzw (no write-ahead
+    /// log), where redb and LMDB roll a torn commit back on the next
+    /// open.
+    ///
     /// The closure must not call [`WriteStore::write`] again. Backends may
     /// serialize write transactions, so a nested call can block forever.
     ///

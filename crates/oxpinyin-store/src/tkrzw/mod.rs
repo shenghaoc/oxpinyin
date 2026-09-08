@@ -64,17 +64,16 @@
 //! duration, so the batch lands as a unit against any other reader or
 //! writer.
 //!
-//! This is weaker than what redb and LMDB give. Their commits are
-//! crash-atomic: a torn write is rolled back on the next open. TreeDBM
-//! has no write-ahead log, so a crash *during* the `ProcessMulti` apply
-//! can leave part of a batch on disk. Every commit calls
-//! `Synchronize(hard=false)`: buffered data is flushed to the operating
-//! system, so once the call returns the file on disk is consistent and
-//! visible to any reader, including after a process crash. That is not
-//! stable storage, though — the bytes are in the kernel's hands, and a
-//! machine crash or power loss can still lose them. A backend
-//! comparison should record the difference rather than read `write` as
-//! three equivalent implementations.
+//! Every commit then calls `Synchronize(hard=true)`, so a commit that
+//! returns is on stable storage — durable against process crashes and
+//! power loss alike. What TreeDBM still cannot give is crash-*atomic*
+//! application: it has no write-ahead log, so a crash *during* the
+//! `ProcessMulti` apply can leave part of a batch on disk. redb and
+//! LMDB (WAL / copy-on-write) roll a torn commit back on the next open;
+//! this backend can tear mid-batch. That residual is the documented
+//! contract difference — recorded here rather than papered over,
+//! because closing it would need a WAL tkrzw does not offer without
+//! changing the file format libpinyin installs must share.
 //!
 //! # Platform and the library build
 //!
@@ -686,15 +685,19 @@ fn db_apply(db: &Db, mutations: &[Mutation]) -> Result<(), StoreError> {
     check(ok)
 }
 
-/// Flushes buffered writes to the operating system (`hard=false`).
+/// Flushes buffered writes to stable storage (`hard=true`): once this
+/// returns, the committed batch is on the device, surviving machine
+/// crashes and power loss — not merely visible to other processes.
 fn db_synchronize(db: &Db) -> Result<(), StoreError> {
     // SAFETY: the handle is open; the empty params string satisfies the
     // non-null assertion the C wrapper makes; no file processor is
-    // wanted, so both its slots are null.
+    // wanted, so both its slots are null. `hard=true` is the durability
+    // half of the `WriteStore::write` contract: every backend's commit
+    // is on stable storage before `write` returns.
     check(unsafe {
         ffi::tkrzw_dbm_synchronize(
             db.0.as_ptr(),
-            false,
+            true,
             None,
             std::ptr::null_mut(),
             c"".as_ptr(),
