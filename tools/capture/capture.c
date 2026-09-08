@@ -344,13 +344,283 @@ static bool capture_fc(pinyin_context_t *context) {
     return true;
 }
 
+/* ── ZH: the zhuyin parse battery (tests/test_zhuyin.cpp input class) ── */
+
+struct zhuyin_case {
+    const char *id;
+    const char *input;
+    ZhuyinScheme scheme;
+    pinyin_option_t flags;
+};
+
+/*
+ * Drives one zhuyin keystroke line through the pinyin facade's chewing
+ * batch entry — the same seam oxpinyin's facade replays through
+ * ZhuyinParser (use_tone and allow_incomplete read off the option word,
+ * force_tone never set on this facade). Per key, both renderings are
+ * captured: the pinyin string (tone digit appended by the oracle for a
+ * non-zero tone) and the zhuyin string (tone mark for tones 2..5), plus
+ * the keystroke span. The upstream test_zhuyin.cpp battery is
+ * stdin-line driven with no committed corpus, so the inputs here are
+ * authored in its shape: valid syllables with and without tone keys,
+ * tone-first junk, in-keyboard junk, empty, and a very-long line.
+ */
+static bool emit_zhuyin_case(pinyin_context_t *context,
+                             const struct zhuyin_case *zc) {
+    pinyin_instance_t *instance;
+    size_t parse_return;
+    size_t parsed_length;
+    size_t input_length = strlen(zc->input);
+    bool first_segment = true;
+    bool first_zhuyin = true;
+
+    if ((zc->flags & DYNAMIC_ADJUST) != 0) {
+        fprintf(stderr, "%s: dynamic adjustment must remain disabled\n",
+                zc->id);
+        return false;
+    }
+    if (!pinyin_set_options(context, zc->flags)) {
+        fprintf(stderr, "%s: pinyin_set_options failed\n", zc->id);
+        return false;
+    }
+    if (!pinyin_set_zhuyin_scheme(context, zc->scheme)) {
+        fprintf(stderr, "%s: pinyin_set_zhuyin_scheme failed\n", zc->id);
+        return false;
+    }
+
+    instance = pinyin_alloc_instance(context);
+    if (instance == NULL) {
+        fprintf(stderr, "%s: pinyin_alloc_instance failed\n", zc->id);
+        return false;
+    }
+
+    parse_return = pinyin_parse_more_chewings(instance, zc->input);
+    parsed_length = pinyin_get_parsed_input_length(instance);
+    if (parsed_length > input_length) {
+        fprintf(stderr, "%s: parsed length exceeds input length\n", zc->id);
+        pinyin_free_instance(instance);
+        return false;
+    }
+
+    fputs("schema=" CAPTURE_SCHEMA "\tpin_ref=", stdout);
+    print_escaped(oracle_pin_ref);
+    fputs("\tfamily=ZH\tcase=", stdout);
+    print_escaped(zc->id);
+    fputs("\tapi_sequence=pinyin_set_options,pinyin_set_zhuyin_scheme,"
+          "pinyin_alloc_instance,pinyin_parse_more_chewings,"
+          "pinyin_get_parsed_input_length",
+          stdout);
+    if (parsed_length > 0) {
+        fputs(",pinyin_get_pinyin_key,pinyin_get_pinyin_key_rest,"
+              "pinyin_get_pinyin_key_rest_positions,"
+              "pinyin_get_pinyin_string,pinyin_get_zhuyin_string",
+              stdout);
+    }
+    fputs(",pinyin_free_instance\tinput=", stdout);
+    print_escaped(zc->input);
+    fprintf(stdout,
+            "\tflags=0x%08x\tscheme=%d\tparse_return=%zu"
+            "\tparsed_input_length=%zu\tsegments=",
+            (unsigned int)zc->flags, (int)zc->scheme, parse_return,
+            parsed_length);
+
+    for (size_t offset = 0; offset < parsed_length;) {
+        ChewingKey *key = NULL;
+        ChewingKeyRest *rest = NULL;
+        gchar *pinyin = NULL;
+        guint16 begin = 0;
+        guint16 end = 0;
+
+        if (!pinyin_get_pinyin_key(instance, offset, &key) || key == NULL) {
+            ++offset;
+            continue;
+        }
+        if (!pinyin_get_pinyin_key_rest(instance, offset, &rest) ||
+            rest == NULL) {
+            if (!first_segment) {
+                fputc(',', stdout);
+            }
+            fprintf(stdout, "<missing-rest>@%zu", offset);
+            first_segment = false;
+            ++offset;
+            continue;
+        }
+        if (!pinyin_get_pinyin_key_rest_positions(instance, rest, &begin,
+                                                  &end)) {
+            if (!first_segment) {
+                fputc(',', stdout);
+            }
+            fprintf(stdout, "<missing-position>@%zu", offset);
+            first_segment = false;
+            ++offset;
+            continue;
+        }
+        if (!pinyin_get_pinyin_string(instance, key, &pinyin) ||
+            pinyin == NULL) {
+            if (!first_segment) {
+                fputc(',', stdout);
+            }
+            fprintf(stdout, "<missing-pinyin>@%zu", offset);
+            first_segment = false;
+            ++offset;
+            continue;
+        }
+
+        if (!first_segment) {
+            fputc(',', stdout);
+        }
+        print_escaped(pinyin);
+        fprintf(stdout, "@%u:%u", (unsigned int)begin, (unsigned int)end);
+        first_segment = false;
+        g_free(pinyin);
+        offset = end > offset ? end : offset + 1;
+    }
+
+    if (first_segment) {
+        fputc('-', stdout);
+    }
+
+    /* The zhuyin renderings, one per parsed key, same walk order. */
+    fputs("\tzhuyin=", stdout);
+    for (size_t offset = 0; offset < parsed_length;) {
+        ChewingKey *key = NULL;
+        ChewingKeyRest *rest = NULL;
+        gchar *zhuyin = NULL;
+        guint16 begin = 0;
+        guint16 end = 0;
+
+        if (!pinyin_get_pinyin_key(instance, offset, &key) || key == NULL) {
+            ++offset;
+            continue;
+        }
+        if (!pinyin_get_pinyin_key_rest(instance, offset, &rest) ||
+            rest == NULL ||
+            !pinyin_get_pinyin_key_rest_positions(instance, rest, &begin,
+                                                  &end)) {
+            ++offset;
+            continue;
+        }
+        if (!pinyin_get_zhuyin_string(instance, key, &zhuyin) ||
+            zhuyin == NULL) {
+            if (!first_zhuyin) {
+                fputc(',', stdout);
+            }
+            fputs("<missing-zhuyin>", stdout);
+            first_zhuyin = false;
+            ++offset;
+            continue;
+        }
+
+        if (!first_zhuyin) {
+            fputc(',', stdout);
+        }
+        print_escaped(zhuyin);
+        first_zhuyin = false;
+        g_free(zhuyin);
+        offset = end > offset ? end : offset + 1;
+    }
+    if (first_zhuyin) {
+        fputc('-', stdout);
+    }
+
+    fputs("\tremainder=", stdout);
+    print_escaped(zc->input + parsed_length);
+    fputc('\n', stdout);
+
+    pinyin_free_instance(instance);
+    return true;
+}
+
+static bool capture_zh(pinyin_context_t *context) {
+    /* The authored battery: standard-layout keystrokes first at the
+     * three option words that reach the parser (plain, USE_TONE,
+     * ZHUYIN_INCOMPLETE), then every other parseable keyboard on the
+     * same physical keystrokes, then the robustness tail. ZHUYIN_
+     * STANDARD_DVORAK (7) is upstream's setter abort and is excluded
+     * on purpose. */
+    static const struct zhuyin_case cases[] = {
+        {"std-nihao", "su3cl3", ZHUYIN_STANDARD, DEFAULT_FLAGS},
+        {"std-nihao-tone", "su3cl3", ZHUYIN_STANDARD,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"std-nihao-incomplete", "su3cl3", ZHUYIN_STANDARD,
+         (pinyin_option_t)(DEFAULT_FLAGS | ZHUYIN_INCOMPLETE)},
+        {"std-zhongguo", "5j/ej86", ZHUYIN_STANDARD,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"std-single", "su3", ZHUYIN_STANDARD,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"std-zero-tone", "sucl", ZHUYIN_STANDARD,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"std-tone-first", "3su3cl3", ZHUYIN_STANDARD,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"std-bare-tone", "3", ZHUYIN_STANDARD,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"std-junk-prefix", "!su3cl3", ZHUYIN_STANDARD,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"std-junk-middle", "su3!cl3", ZHUYIN_STANDARD,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"std-empty", "", ZHUYIN_STANDARD,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"hsu-nihao", "su3cl3", ZHUYIN_HSU,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"hsu-junk", "!su3cl3", ZHUYIN_HSU,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"ibm-nihao", "su3cl3", ZHUYIN_IBM,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"ibm-junk", "!su3cl3", ZHUYIN_IBM,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"ginyieh-nihao", "su3cl3", ZHUYIN_GINYIEH,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"ginyieh-junk", "!su3cl3", ZHUYIN_GINYIEH,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"eten-nihao", "su3cl3", ZHUYIN_ETEN,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"eten-junk", "!su3cl3", ZHUYIN_ETEN,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"eten26-nihao", "su3cl3", ZHUYIN_ETEN26,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"eten26-junk", "!su3cl3", ZHUYIN_ETEN26,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"hsu-dvorak-nihao", "su3cl3", ZHUYIN_HSU_DVORAK,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"hsu-dvorak-junk", "!su3cl3", ZHUYIN_HSU_DVORAK,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"dachen-cp26-nihao", "su3cl3", ZHUYIN_DACHEN_CP26,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+        {"dachen-cp26-junk", "!su3cl3", ZHUYIN_DACHEN_CP26,
+         (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)},
+    };
+    char *long_input = malloc(4097);
+
+    if (long_input == NULL) {
+        fputs("failed to allocate very-long input\n", stderr);
+        return false;
+    }
+    memset(long_input, '!', 4096);
+    long_input[4096] = '\0';
+
+    for (size_t index = 0; index < sizeof(cases) / sizeof(cases[0]);
+         ++index) {
+        if (!emit_zhuyin_case(context, &cases[index])) {
+            free(long_input);
+            return false;
+        }
+    }
+
+    const struct zhuyin_case long_case = {
+        "std-very-long-junk-4096", long_input, ZHUYIN_STANDARD,
+        (pinyin_option_t)(DEFAULT_FLAGS | USE_TONE)};
+    bool result = emit_zhuyin_case(context, &long_case);
+    free(long_input);
+    return result;
+}
+
 int main(int argc, char **argv) {
     pinyin_context_t *context;
     bool result;
 
     if (argc != 5) {
         fprintf(stderr,
-                "usage: %s F-A|F-C SYSTEM_DATA_DIR FRESH_USER_DIR PIN_REF\n",
+                "usage: %s F-A|F-C|ZH SYSTEM_DATA_DIR FRESH_USER_DIR PIN_REF\n",
                 argv[0]);
         return 2;
     }
@@ -370,6 +640,8 @@ int main(int argc, char **argv) {
         result = capture_fa(context);
     } else if (strcmp(argv[1], "F-C") == 0) {
         result = capture_fc(context);
+    } else if (strcmp(argv[1], "ZH") == 0) {
+        result = capture_zh(context);
     } else {
         fprintf(stderr, "unknown fixture family: %s\n", argv[1]);
         result = false;

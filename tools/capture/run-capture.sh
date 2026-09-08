@@ -86,8 +86,8 @@ if ((has_unstable_manifest)); then
 fi
 
 mkdir -p "$build_dir" "$output_dir"
-rm -rf "$build_dir/user-f-a" "$build_dir/user-f-c"
-mkdir -p "$build_dir/user-f-a" "$build_dir/user-f-c"
+rm -rf "$build_dir/user-f-a" "$build_dir/user-f-c" "$build_dir/user-zh"
+mkdir -p "$build_dir/user-f-a" "$build_dir/user-f-c" "$build_dir/user-zh"
 
 export PKG_CONFIG_PATH=$prefix/lib/pkgconfig
 cc -std=c11 -Wall -Wextra -Werror \
@@ -102,3 +102,6 @@ LD_LIBRARY_PATH=$prefix/lib \
 LD_LIBRARY_PATH=$prefix/lib \
 	"$build_dir/pinyin-capture" F-C "$system_dir" "$build_dir/user-f-c" \
 	"$oracle_pin_ref" >"$output_dir/f-c.txt"
+LD_LIBRARY_PATH=$prefix/lib \
+	"$build_dir/pinyin-capture" ZH "$system_dir" "$build_dir/user-zh" \
+	"$oracle_pin_ref" >"$output_dir/zhuyin-parse.txt"
