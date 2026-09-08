@@ -25,6 +25,12 @@ oxpinyin-capi = { path = "../crates/oxpinyin-capi", features = ["fuzz-api"] }
 # test-support crate, not oxpinyin-core (core defines the traits; testsupport
 # holds the in-memory test implementations).
 oxpinyin-testsupport = { path = "../crates/oxpinyin-testsupport" }
+# session-keys: the Rust session API is the supported surface; the
+# store backend rides the workspace default (tkrzw), as capi-commands
+# does.
+oxpinyin-engine = { path = "../crates/oxpinyin-engine" }
+# user-store-ops: arbitrary mutation interleavings over UserStore.
+oxpinyin-user = { path = "../crates/oxpinyin-user" }
 
 [[bin]]
 name = "parser"
@@ -71,6 +77,27 @@ bench = false
 [[bin]]
 name = "table-conf"
 path = "fuzz_targets/table_conf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chewing-parser"
+path = "fuzz_targets/chewing_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "session-keys"
+path = "fuzz_targets/session_keys.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "user-store-ops"
+path = "fuzz_targets/user_store_ops.rs"
 test = false
 doc = false
 bench = false
