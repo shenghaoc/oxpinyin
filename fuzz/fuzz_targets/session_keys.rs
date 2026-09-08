@@ -54,9 +54,10 @@ fn check_preedit(session: &Fixtures) {
     let text = preedit.text();
     let mut covered = 0_usize;
     for span in preedit.spans() {
-        assert!(
-            span.start() >= covered,
-            "preedit span {}..{} overlaps or regresses (cursor {covered})",
+        assert_eq!(
+            span.start(),
+            covered,
+            "preedit span {}..{} leaves a gap, overlaps, or regresses (cursor {covered})",
             span.start(),
             span.end()
         );
