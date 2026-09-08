@@ -48,7 +48,7 @@ where
 
     /// Builds a session over a caller-supplied key-cost table.
     ///
-    /// [`Runtime::new_session`](oxpinyin_runtime) uses this to avoid
+    /// `oxpinyin_runtime::Runtime::new_session` uses this to avoid
     /// recomputing [`key_cost_table`] for every session. The table is
     /// **not** computed at `Runtime::open` time: `87f9a49e` deferred the
     /// walk to the first session allocation, and `6886dc1f` removed it
@@ -59,7 +59,7 @@ where
     /// # Panics
     ///
     /// Debug builds only: panics when `key_costs` contradicts
-    /// [`LanguageModel::has_real_unigrams`] — see the [`Session::key_costs`]
+    /// [`LanguageModel::has_real_unigrams`] — see the `Session::key_costs`
     /// field. Release builds do not check, and a violation is silent:
     /// every absent key reads back as `UNKNOWN_COST`.
     pub fn new_with_key_costs(
@@ -196,7 +196,7 @@ where
     /// observable with a cursor past its input. A replacement that does
     /// not extend the covered selection span — a clamp below it, or a
     /// byte divergence inside it — reconciles the store and record
-    /// ([`Session::reconcile_replaced_selection`]), so
+    /// (`Session::reconcile_replaced_selection`), so
     /// [`Session::commit`] answers only text valid for the current
     /// input.
     ///

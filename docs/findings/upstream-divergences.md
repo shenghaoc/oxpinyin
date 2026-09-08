@@ -1377,9 +1377,28 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
   `choosing_a_before_cursor_row_constrains_its_own_span`, the C test
   `choosing_from_a_before_cursor_window_uses_that_window` (cursor 3,
   free cell at 0, forcing at 3, sentence 你好 after the re-guess) and the
-  zhuyin parity corpus. **Owed:** the three-input battery on the
-  pin-built oracle (cursor, sentence after the choose, sentence after
-  the re-guess) from the Linux host; this authoring host has no oracle.)
+  zhuyin parity corpus.)
+
+  (Amended 2026-09-08, **the owed battery run — IDENTICAL.** In the
+  perf-matrix container (`tools/bisection/Dockerfile.perf-matrix`,
+  arm64), libzhuyin built at the current pin 074a2219 with
+  `--with-dbm=Tkrzw --enable-libzhuyin` over the SHA-verified model20
+  export (`libzhuyin.so.15.0.0` sha256 `2109e10c…`, 23 data files built
+  by the pin's own `data/` step) against this tree's
+  `libzhuyin_capi.so` (default tkrzw) reading an
+  `oxpinyin-datagen compile --backend tkrzw` systemdir from the same
+  export. `tools/bisection/zhuyin-diff.c`: the standard battery is
+  byte-identical (2307 lines a side) and the default-off `choose`
+  battery is byte-identical (65 lines a side) — cursor 3 / 0 / 3 on
+  `su3cl3` / `su3u3` / `su3u3u3`, `get_sentence` after the choose 你好 /
+  你一 / 你意义 and after the re-guess 你好 / 拟议 / 你意义 on both
+  sides, windows 94 / 600 / 608 with row 1 好 / 拟议 / 意义. The
+  2026-09-05 table's three cursor cells (6/5/7 vs the pin's 3/0/3) are
+  the ones #374 closed; nothing else in the battery moved. Build note
+  for the next run: libpinyin's `configure` takes the DBM in its own
+  spelling (`Tkrzw`, as `tools/oracle/build-oracle.sh` maps it) — the
+  lower-case form is accepted silently and leaves every backend type
+  undefined.)
 
 ## zhuyin multi-syllable candidate construction — CLOSED (the zhuyin display law, not the construction model)
 

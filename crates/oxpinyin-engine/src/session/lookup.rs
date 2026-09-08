@@ -52,7 +52,7 @@ where
     /// constraint store, or the history — so a caller may build a window at a
     /// lookup offset without disturbing the cached list
     /// ([`Session::candidates_at`]). With `anchor == self.consumed` it
-    /// reproduces [`Session::refresh`]'s cached list exactly.
+    /// reproduces `Session::refresh`'s cached list exactly.
     /// Builds the working graph for `remaining` (the raw slice from
     /// `anchor`): the exact-mode chain when the session carries
     /// pre-parsed scheme segments, the parsed graph otherwise. A segment
@@ -262,7 +262,7 @@ where
     /// # Errors
     ///
     /// Returns [`EngineError`] when a backend fails during the scan, exactly
-    /// as the anchored [`Session::refresh`] does;
+    /// as the anchored `Session::refresh` does;
     /// [`EngineError::LookupOffsetOutOfRange`] when `offset` exceeds the raw
     /// buffer's one-past-end position — the pin reads its matrix out of
     /// bounds there, so no pinned behaviour exists and the offset is

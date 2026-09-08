@@ -10,7 +10,7 @@ differential, and a maintainer ruling recorded in the findings.
 | --- | --- | --- |
 | the mini data set, per backend | `fixtures/w3/<backend>/` | `oxpinyin-datagen compile --mini --backend <b> --model-dir $PINYIN_MODEL_DIR --out-dir fixtures/w3/<b>`; `fixtures_identity` (ignored) proves the compile reproduces the tree byte for byte |
 | W4 oracle goldens (candidates, structure, paths) | `fixtures/w4/oracle-*.txt` | the `pinyin-oracle` bins `oracle-candidates` (~3 h, full corpus), `oracle-candidate-structure`, `oracle_sentence_surface` (~1 min); the ignored `*_fixture_is_fresh` tests re-derive and compare |
-| trainer manifests and goldens | `crates/oxpinyin-{counter,emitter,lambda,segment}/tests/fixtures/` | the ignored differential tests print the Rust side; commit only after the live pin tool agrees |
+| trainer manifests and goldens | `fixtures/w9/` (`segmenter-han.txt`, `segmenter-ngseg.txt`, `counter-ngram.manifest`, `interpolation2.manifest`, `lambda-estimate.manifest`) | the ignored differential tests in counter, emitter, lambda and segment compare against these; regenerate with the pin tool the test names and commit only when it agrees |
 
 A missing golden is a test failure, never a skip (#373). Regenerate,
 diff, and commit the golden in the same change as the code that moved

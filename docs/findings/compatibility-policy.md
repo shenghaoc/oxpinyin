@@ -234,7 +234,7 @@ revert targets is `revert-plan.md`.
 | 23 | Sanitizer scope on the tkrzw shim CI · native data-file naming · R1 measured on the compat paths | **no ABI divergence** | three dated records, not behaviour entries: a CI-instrumentation note, a file-naming decision (`installed-naming.md`), and a measurement whose subject was removed (its SUPERSEDED banner is itself amended 2026-09-06 — P6 restored direct reads of libpinyin's files) |
 | 24 | zhuyin batch `FORCE_TONE` law | **CLOSED** | 1671954: `ZhuyinParser::parse_with_options` honours the three per-keyboard shapes |
 | 25 | zhuyin candidate-tag grouping + `after(consumed)` terminal offset | **CLOSED** | both halves closed by the display-law collapse and the builder terminal mapping (amended 2026-08-31) |
-| 26 | zhuyin before-cursor candidate window | **CLOSED** (residual closed in code, #374) | window builder closed (c2ad5925); the residual — a row whose span starts after the offset was constrained as `[0, offset)` — closed 2026-09-06 with the maintainer's engine-interface approval: `Candidate::span_start` carries upstream's `m_begin`, the constraint is `[m_begin, m_end)`, and `zhuyin_choose_candidate` answers `m_begin` for a before-cursor row (`zhuyin.cpp:1660`). Owed: the three-input oracle battery from the Linux host |
+| 26 | zhuyin before-cursor candidate window | **CLOSED** | window builder closed (c2ad5925); the residual — a row whose span starts after the offset was constrained as `[0, offset)` — closed by #374 (`Candidate::span_start` = upstream's `m_begin`, constraint `[m_begin, m_end)`, `zhuyin_choose_candidate` answers `m_begin`, `zhuyin.cpp:1660`) and **measured IDENTICAL on the pin-built libzhuyin at 074a2219** on 2026-09-08: the three-input choose battery byte-identical (register entry, second amendment) |
 | 27 | zhuyin multi-syllable candidate construction | **CLOSED** | the divergence was the pinyin string-fill law, not the construction model (amended 2026-08-31) |
 | 28 | zhuyin n-best trellis constants `<1, 1>` vs the engine's `<2, 3>` | **CLOSED** in code (#374) | per-session `NbestShape` (`PINYIN` = `<2, 3>`, `ZHUYIN` = `<1, 1>`), set by both zhuyin facades at instance allocation; not observable through today's libzhuyin candidate surface, so no gate moves |
 | 29 | zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default | **no ABI divergence** | `CapiContext::open` seeds the pin's `USE_TONE \| FORCE_TONE`; entry kept as analysis for a future consumer |
@@ -244,8 +244,9 @@ revert targets is `revert-plan.md`.
 Totals at `2a99761a` (2026-09-06, oracle pin 074a2219): **(a)** 2 ·
 **(b)** 2 · **(c)** 10 · **(d)** 0 (class retired, see below) · **REVERT
 TARGET** 2 (rows 5b, 17) · **OPEN DEFECT** 1 (row 30) · **CLOSED** 13
-(rows 3, 7, 8, 9, 12, 13, 15, 16, 24, 25, 26, 27, 28 — 26 and 28 in code
-via #374, oracle battery owed) · **no ABI divergence** 4 rows (2, 23,
+(rows 3, 7, 8, 9, 12, 13, 15, 16, 24, 25, 26, 27, 28 — 26 measured
+identical on the pin 2026-09-08; 28 in code via #374, not observable
+through today's surface) · **no ABI divergence** 4 rows (2, 23,
 29, 31).
 
 The 2026-08-28 totals were (a) 1 · (b) 2 · (c) 6 · (d) 1 · REVERT
@@ -265,9 +266,9 @@ conditional.
 3. **Row 17** — port the pin's `0x0` gating; unconditional since (d)
    was retired.
 4. **Rows 26 and 28** — landed in code (#374) under the maintainer's
-   2026-09-06 approval, copying libpinyin's source; the three-input
-   oracle battery for row 26 is owed from the Linux host before the
-   register entry drops its "in code" qualifier.
+   2026-09-06 approval, copying libpinyin's source; row 26's
+   three-input oracle battery ran on 2026-09-08 and is byte-identical.
+   Nothing is owed on either.
 
 ### Notes on the three entries whose class was not obvious
 
