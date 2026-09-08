@@ -15,7 +15,13 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
     // SAFETY: Both pointers are C strings from the caller (null OK).
     let system_path = cstr_to_owned_lossy(systemdir);
     let user_path = cstr_to_owned_lossy(userdir);
-    CapiContext::new(&system_path, &user_path).map_or(ptr::null_mut(), box_context)
+    match CapiContext::try_new(&system_path, &user_path) {
+        Ok(context) => box_context(context),
+        Err(error) => {
+            crate::ffi::log_warning(&format!("pinyin_init: {error} (systemdir {system_path:?})"));
+            ptr::null_mut()
+        }
+    }
 }
 
 /// Create a new pinyin context.
@@ -29,7 +35,10 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
 /// does — the pinyin and phrase DBMs, the per-library chunk files,
 /// `bigram.db`, `punct.bin`, the addon DBM pair, λ from `table.conf`.
 /// Returns NULL when `systemdir` is empty or a required file fails to
-/// open.
+/// open. The reason is logged through GLib at warning level under the
+/// `libpinyin` domain (the same channel an IBus or fcitx consumer already
+/// captures), since NULL alone cannot say which file was missing or
+/// corrupt; the return value is unchanged.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_init(
     systemdir: *const c_char,

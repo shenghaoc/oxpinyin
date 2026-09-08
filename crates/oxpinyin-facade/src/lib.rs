@@ -39,7 +39,7 @@ mod offsets;
 mod parse;
 mod predict;
 
-pub use context::{ContextCore, LiveOptions};
+pub use context::{ContextCore, LiveOptions, OpenFailure};
 pub use cursor::{KeyAt, SpanSource};
 pub use export_rows::ExportedBigramRow;
 pub use instance::{BEFORE_CURSOR_ANCHOR, InstanceCore};
