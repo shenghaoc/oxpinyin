@@ -86,25 +86,33 @@ pub use sentence::{
     zhuyin_guess_sentence_with_prefix,
 };
 
+// The behaviour battery: the training/import/dictionary entry points
+// driven through the C symbols themselves, the zhuyin twin of
+// oxpinyin-capi's e2e suite, over the shared test fixtures.
+#[cfg(test)]
+mod e2e_tests;
+#[cfg(test)]
+mod test_support;
+
 #[cfg(test)]
 mod tests {
-    use std::ffi::{CString, c_char};
-    use std::path::PathBuf;
+    use std::ffi::c_char;
     use std::ptr;
 
     use super::candidates::{
         zhuyin_choose_candidate, zhuyin_clear_constraint, zhuyin_get_candidate,
         zhuyin_get_n_candidate,
     };
-    use super::context::{zhuyin_fini, zhuyin_init};
-    use super::instance::{zhuyin_alloc_instance, zhuyin_free_instance};
+    use super::context::zhuyin_fini;
+    use super::instance::zhuyin_free_instance;
     use super::parse::zhuyin_parse_more_chewings;
     use super::sentence::{
         zhuyin_get_character_offset, zhuyin_get_sentence, zhuyin_guess_candidates_before_cursor,
         zhuyin_guess_sentence,
     };
     use super::state::instance_mut;
-    use super::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance, lookup_candidate_type_t};
+    use super::test_support::{candidate_text, cstr, open};
+    use super::types::{LookupCandidate, lookup_candidate_type_t};
 
     /// The Phase-1 correction, pinned: the zhuyin 4-value enum's exact
     /// discriminants. The zhuyin header (`zhuyin.h:41-45`) defines four
@@ -151,45 +159,6 @@ mod tests {
     fn opaque_handles_layout() {
         assert_eq!(std::mem::size_of::<super::types::ChewingKey>(), 2);
         assert_eq!(std::mem::size_of::<super::types::ChewingKeyRest>(), 4);
-    }
-
-    /// The committed mini fixture (`fixtures/w3/<backend ext>`), the same
-    /// data directory the pinyin crate's e2e tests open.
-    fn system_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("fixtures")
-            .join("w3")
-            .join(oxpinyin_data::DEFAULT_STORE_EXT)
-    }
-
-    fn cstr(value: &str) -> CString {
-        CString::new(value).expect("no interior NUL")
-    }
-
-    /// Opens the fixture context with no user directory (the corpus
-    /// driver's shape) and one instance on it.
-    fn open() -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
-        let system = cstr(system_dir().to_str().expect("UTF-8 path"));
-        let user = cstr("");
-        let context = zhuyin_init(system.as_ptr(), user.as_ptr());
-        assert!(!context.is_null(), "the mini fixture must open");
-        let instance = zhuyin_alloc_instance(context);
-        assert!(!instance.is_null());
-        (context, instance)
-    }
-
-    /// The text a snapshot row carries, by row index.
-    fn candidate_text(instance: *mut ZhuyinInstance, index: usize) -> String {
-        // SAFETY: `instance` is live and was produced by
-        // `zhuyin_alloc_instance`; the borrow ends with this function.
-        let inst = unsafe { instance_mut(instance) };
-        inst.candidates[index]
-            .text
-            .to_str()
-            .expect("candidate text is UTF-8")
-            .to_owned()
     }
 
     /// The zhuyin twin of the pinyin crate's
