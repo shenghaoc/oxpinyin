@@ -45,13 +45,16 @@
 # canonical home — so this script cannot drift from them.
 #
 # usage: nightly-fixture-differentials.sh [<work-dir>]
-# env:   PREFIX (default /opt/libpinyin-tkrzw) — where the pin is
-#        installed; the drop-in script expects exactly this path.
+#
+# The install prefix is fixed at /opt/libpinyin-tkrzw, not configurable:
+# libpinyin-drop-in-differential.sh hardcodes that path for its tkrzw
+# oracle, so an override here would build a pin the second script never
+# looks at.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 work=${1:-/tmp/oxpinyin-fixture-differentials}
-prefix=${PREFIX:-/opt/libpinyin-tkrzw}
+prefix=/opt/libpinyin-tkrzw
 
 # The pin, from the canonical script (never duplicated here).
 build_oracle=$repo/tools/oracle/build-oracle.sh
@@ -70,8 +73,10 @@ model=$repo/fixtures/datagen-toned
 mkdir -p "$work"
 
 # ── 1. fetch and build the pinned libpinyin (Tkrzw) ────────────────────────
+# The marker records which sha the checkout holds; a reused work dir is
+# refreshed whenever build-oracle.sh moves the pin.
 src=$work/libpinyin
-if [[ ! -f $src/.pin-ok ]]; then
+if [[ ! -f $src/.pin-ok || $(cat "$src/.pin-ok") != "$pin_sha" ]]; then
 	rm -rf "$src"
 	git init -q "$src"
 	git -C "$src" fetch --quiet --depth=1 "$pin_url" "$pin_sha"
@@ -83,7 +88,7 @@ if [[ ! -f $src/.pin-ok ]]; then
 		exit 2
 	fi
 	git -C "$src" checkout --quiet --detach FETCH_HEAD
-	touch "$src/.pin-ok"
+	printf '%s\n' "$pin_sha" > "$src/.pin-ok"
 fi
 
 # Seed the build's data dir with the committed toned model so `make
