@@ -2,8 +2,8 @@
 
 ## Overview
 
-Foundation is complete except the consolidated F-E evidence register (task
-4's second half). Phase 0 remains a hard gate for any new `[B]` slice: no
+Foundation is complete (task 4 closed 2026-09-08 against
+`docs/findings/robustness-evidence.md`). Phase 0 remains a hard gate for any new `[B]` slice: no
 implementation task is `ready` until its cited behavioural SPECs and
 fixtures are human-frozen.
 
@@ -23,14 +23,14 @@ fixtures are human-frozen.
 - [x] 3. **[A]** Capture the upstream schema verbatim with source ref and hash.
   _Requirements: R2_
 
-- [ ] 4. **[A]** Build the F-A/F-C capture harness and establish the F-E cross-lane evidence register.
+- [x] 4. **[A]** Build the F-A/F-C capture harness and establish the F-E cross-lane evidence register.
   - Done: the harness (`tools/capture/`) and the F-A/F-C freeze
     (`docs/findings/capture-fixtures.md`, `fixtures/foundation/f-a.txt`,
     `f-c.txt`).
-  - Open: the consolidated F-E register — the 13 cases' evidence is
-    recorded across the findings docs, but the register itself (all 13
-    cases, each with reproducible evidence in its applicable lane) is not
-    yet one artifact on main.
+  - Done: the consolidated F-E register is
+    `docs/findings/robustness-evidence.md` — all 14 cases (the 13 below
+    plus F-E-14, the apostrophe-only oracle abort), each with its lane
+    and a reproducible evidence entry. Closed 2026-09-08.
   - `F-E-01`: #566 NULL key-rest (`nih`, select valid prefix).
   - `F-E-02`: candidate-processing invalid access/session replay.
   - `F-E-03`: historical save-path configuration race.
