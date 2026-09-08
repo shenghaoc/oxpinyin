@@ -12,8 +12,8 @@ Kiro always-loads `.kiro/steering/`; this file wins on any conflict.
 2. Install-size budget: default payload ≤ pinned reference stack +10%.
 3. No local AI (no client neural/LLM inference).
 4. Nothing panics on any input; public APIs return `Result`.
-5. `unsafe`: `forbid` in oxpinyin-core; `deny` in data/user/engine (documented
-   mmap exception in data only); FFI only in capi/oracle with
+5. `unsafe`: `forbid` in oxpinyin-core/user/engine; `deny` in data (the
+   documented mmap exception) and store (scoped backend-FFI allows); FFI only in capi/oracle with
    `// SAFETY:` per block. The allowlist is mechanical now: crate-root
    `#![forbid]`/scoped allows enforce it, and two Clippy lints enforce the
    comments — `undocumented_unsafe_blocks` requires a safety comment on
@@ -61,7 +61,7 @@ divergence is an exception that must be argued into one of exactly three
 classes — (a) math, (b) memory safety, (c) availability. (Class (d),
 consumer scope, was retired 2026-09-06; the policy doc is authoritative
 on the current set.)
-Anything outside those four is a defect to be reverted, not a divergence to
+Anything outside those three is a defect to be reverted, not a divergence to
 be recorded. The policy carries the classes, their citations, and a
 classification of every existing register entry.
 

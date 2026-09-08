@@ -42,15 +42,15 @@ Build: `tools/oracle/build-oracle.sh` (optional container recipe alongside).
 Detailed task cards live under `.kiro/specs/` as they are derived. Until a
 SPEC is frozen, do not implement that slice.
 
-## Phase 0 (blocked feature work; now recorded)
+## Phase 0 (recorded; closed)
 
-Recorded — see `.kiro/specs/foundation/tasks.md` and findings. The one
-open Phase 0 item is the consolidated F-E cross-lane evidence register
-(foundation task 4): the 14 cases (F-E-01..13 enumerated in the spec,
-F-E-14 registered 2026-09-05) have their evidence spread across the
-findings and testing docs, not yet one artifact on main. Beside it, the
-Stage-2 open-items list below carries the W8 drop-in user-file write
-path.
+Recorded — see `.kiro/specs/foundation/tasks.md` and findings. The last
+Phase 0 item, the consolidated F-E cross-lane evidence register
+(foundation task 4), is `docs/findings/robustness-evidence.md`: all 14
+cases (F-E-01..13 from the spec, F-E-14 registered 2026-09-05), each
+with its lane and evidence entry, on main since 2026-08-30. Closed
+2026-09-08. The only Stage 1 item still open is the W8 drop-in
+user-file write path in the list below.
 
 | Need | Output |
 |---|---|
@@ -59,7 +59,7 @@ path.
 | Upstream schema | `docs/findings/upstream-schema.md` (recorded) |
 | Parser / path-set / scoring SPECs | frozen 2026-08-09: `docs/findings/parser-spec.md`, `parser-path-set.md`, `scoring-spec.md` |
 | Data load route (D3) | decided: oxpinyin-data loads libpinyin-format tables (`.kiro/steering/structure.md`); native production of those tables is W15 |
-| Capture harness + F-A fixtures | built: `tools/capture/`, `docs/testing/capture-fixtures.md`, `fixtures/foundation/f-a.txt`, `f-c.txt`; F-E register still open |
+| Capture harness + F-A fixtures | built: `tools/capture/`, `docs/testing/capture-fixtures.md`, `fixtures/foundation/f-a.txt`, `f-c.txt`; F-E register: `docs/findings/robustness-evidence.md` (14 cases) |
 
 ## Stage 1 workstreams (names only)
 
