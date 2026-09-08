@@ -35,9 +35,12 @@ Doctest step only if nextest lands. Gates: all hard.
 - Lizard report with CCN capped at 40 (`lizard crates/ -l rust -C 40`;
   ratchet vs current max 38).
 
-> STATUS: Tier 2 is documented but **not built** — no label-triggered
-> workflow exists. Of the tools above, llvm-cov and Lizard run in Tier 3's
-> verify-nightly schedule; geiger was retired 2026-09-01.
+> STATUS (2026-09-08): Tier 2 exists as path filters, not a label. The
+> llvm-cov floor (`coverage.yml`) runs on a PR when core, engine, user
+> or data change, and unconditionally from the nightly through
+> `workflow_call`. Lizard moved to the Tier 1 lint job. A nightly
+> `public-api` lane diffs the engine's `cargo public-api` snapshot.
+> geiger was retired 2026-09-01.
 - Windows/macOS keep today's portable test job; optionally add a
   `--no-default-features` store build to prove the feature-gated unsafe
   crates compile-out of the default path.
@@ -100,9 +103,10 @@ libchewing convention), they do not auto-block unless a ratchet exists
 | overflow release lane | | | ✔ | |
 | Kani | | | dropped | |
 | cargo-mutants | | | retired 2026-09-01 | |
-| llvm-cov | | planned (T2 not built) | ✔ report | planned (T4 not built) |
+| llvm-cov floor (77% lines) | | ✔ path-filtered (core/engine/user/data) | ✔ | planned (T4 not built) |
 | geiger | | planned (T2 not built) | retired 2026-09-01 | |
-| Lizard ratchet | | planned (T2 not built) | ✔ | |
+| Lizard ratchet | ✔ (lint job) | | | |
+| cargo-public-api snapshot (engine) | | | ✔ | |
 
 ## Cost/confidence rationale
 

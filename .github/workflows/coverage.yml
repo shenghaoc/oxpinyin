@@ -1,0 +1,81 @@
+name: coverage
+
+# Line-coverage floor (ratchet): the PR gate for the crates where the
+# math lives, and the nightly's coverage lane, from one job body. On a
+# pull request it runs only when core, engine, user or data change
+# (docs/safety/ci-strategy.md, Tier 2): a full-workspace llvm-cov run is
+# too slow to gate a docs PR, and those four crates are where a dropped
+# branch is a parity risk. verify-nightly.yml calls it unconditionally
+# (workflow_call) so the whole-tree number is measured every night
+# regardless of which paths a PR touched.
+#
+# Same container conventions as verify-nightly.yml: debian:testing,
+# deliberately unpinned — do not "stabilise" it.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - crates/oxpinyin-core/**
+      - crates/oxpinyin-engine/**
+      - crates/oxpinyin-user/**
+      - crates/oxpinyin-data/**
+      - .github/workflows/coverage.yml
+      - .github/actions/**
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+          rust-cache: 'true'
+      # cargo-llvm-cov is curl-pinned and checksum-verified like
+      # cargo-deny in ci.yml.
+      - name: Install pinned cargo-llvm-cov
+        run: |
+          ver=0.9.0
+          sum=bc2122fd7bd9b6d3eb371690ed085f82e5a8bf1851f4645ef521d12ed04b2616
+          curl -sSfL -o cargo-llvm-cov.tar.gz "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v${ver}/cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz"
+          echo "${sum}  cargo-llvm-cov.tar.gz" | sha256sum -c -
+          tar xzf cargo-llvm-cov.tar.gz
+          mkdir -p ~/.local/bin
+          install -m755 cargo-llvm-cov ~/.local/bin
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: cargo llvm-cov --locked --workspace --no-default-features --features kyotocabinet --lcov --output-path lcov.info
+      # Coverage floor (ratchet, 2026-09-08): line coverage below the
+      # floor fails the lane. The report step reuses the profile data the
+      # lcov run collected, prints the per-crate table so the number is in
+      # the log (the lcov run prints nothing, and the first floored run
+      # failed without saying by how much), then applies the floor.
+      # Measured 2026-09-08 on this build: 77.33% lines (78.38% regions,
+      # 77.00% functions); the 81.92% recorded on 2026-08-29 was not
+      # cargo-llvm-cov's line figure. Floor 77 = the measured number.
+      # Raise it when the number rises, never lower it to pass.
+      - run: cargo llvm-cov report --summary-only --fail-under-lines 77
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-lcov
+          path: lcov.info

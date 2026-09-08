@@ -201,3 +201,115 @@ def test_shared_engine_is_thread_safe(make_engine):
 
 def test_version_is_exposed():
     assert oxpinyin.__version__.startswith("0.1.")
+
+
+def test_public_surface_is_frozen():
+    """The Python surface is a supported surface (structure.md), so its
+    name set is pinned the way the engine's is by the cargo-public-api
+    snapshot and the C ABI's by the export gate. A deliberate addition
+    updates this list in the same change; an accidental one fails here.
+    """
+    # The zhuyin submodule joins the package namespace on first import, so
+    # import it here: the name set must not depend on test order.
+    import oxpinyin.zhuyin as zhuyin
+
+    assert oxpinyin.__all__ == ["Candidate", "Engine", "OxpinyinError", "__version__"]
+    assert sorted(n for n in dir(oxpinyin) if not n.startswith("_")) == [
+        "Candidate",
+        "Engine",
+        "OxpinyinError",
+        "zhuyin",
+    ]
+    assert sorted(n for n in dir(Engine) if not n.startswith("_")) == [
+        "candidates",
+        "candidates_at",
+        "close",
+        "commit",
+        "composing",
+        "composition_offset",
+        "from_fixture_dir",
+        "guess_sentence",
+        "input",
+        "lookup",
+        "parsed_len",
+        "preedit",
+        "reset",
+        "save",
+        "select",
+        "sentence",
+        "sentences",
+        "train",
+        "type_pinyin",
+    ]
+    assert sorted(n for n in dir(Candidate) if not n.startswith("_")) == [
+        "consumed_bytes",
+        "consumed_keys",
+        "cost",
+        "kind",
+        "nbest_index",
+        "text",
+    ]
+    assert issubclass(OxpinyinError, Exception)
+
+    assert zhuyin.__all__ == ["Candidate", "ChewingKey", "Engine"]
+    assert sorted(n for n in dir(zhuyin) if not n.startswith("_")) == [
+        "Candidate",
+        "ChewingKey",
+        "Engine",
+    ]
+    assert sorted(n for n in dir(zhuyin.Candidate) if not n.startswith("_")) == [
+        "candidate_type",
+        "consumed_bytes",
+        "cost",
+        "kind",
+        "nbest_index",
+        "text",
+    ]
+    assert sorted(n for n in dir(zhuyin.ChewingKey) if not n.startswith("_")) == [
+        "final",
+        "from_packed",
+        "from_pinyin",
+        "initial",
+        "luoma_pinyin_string",
+        "middle",
+        "packed",
+        "pinyin_string",
+        "secondary_zhuyin_string",
+        "shengmu_string",
+        "table_index",
+        "tone",
+        "yunmu_string",
+        "zhuyin_string",
+    ]
+    assert sorted(n for n in dir(zhuyin.Engine) if not n.startswith("_")) == [
+        "candidates",
+        "chewing_scheme",
+        "clear_constraint",
+        "close",
+        "commit",
+        "composing",
+        "composition_offset",
+        "from_fixture_dir",
+        "full_pinyin_scheme",
+        "guess_candidates",
+        "guess_sentence",
+        "guess_sentence_with_prefix",
+        "in_keyboard",
+        "input",
+        "lookup_chewing",
+        "lookup_full_pinyin",
+        "parse_chewing",
+        "parse_full_pinyin",
+        "parse_one_chewing",
+        "parse_one_full_pinyin",
+        "parsed_len",
+        "pinyin_string",
+        "preedit",
+        "reset",
+        "save",
+        "select",
+        "sentence",
+        "sentences",
+        "train",
+        "zhuyin_string",
+    ]

@@ -2,14 +2,15 @@ name: verify-nightly
 
 # Tier-3 scheduled verification (docs/safety/ci-strategy.md): everything
 # too slow or too nightly for the PR gate. Findings here open issues —
-# they do not block merges unless a ratchet exists (two: Lizard's CCN
-# limit and the coverage floor).
+# they do not block merges unless a ratchet exists (two: the coverage
+# floor and the public-API snapshot; Lizard's CCN limit moved to ci.yml's
+# lint job on 2026-09-08 — seconds of runtime, so it gates the PR).
 #
 # No trial lanes remain: the Miri, cargo-mutants and cargo-geiger jobs
 # were retired on 2026-09-01 (docs/findings/verify-nightly.md). There are
 # no continue-on-error lanes; every job in this workflow must be green.
-# Surviving lanes: fuzz-soak, differentials, overflow-lane, coverage,
-# lizard, nextest.
+# Surviving lanes: fuzz-soak, differentials, overflow-lane, coverage (via
+# coverage.yml, also the path-filtered PR gate), public-api, nextest.
 #
 # All jobs run in debian:testing containers in the store-backends.yml
 # style: the nightly lanes exist to surface drift early, and the rolling
@@ -29,9 +30,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # All five fuzz targets, 3 minutes each, ASan+LSan on by default with
-  # cargo-fuzz 0.13.2. The dict-loader corpus is seeded from the committed
-  # w3 tables so the decoder starts from valid headers.
+  # Every fuzz target, 3 minutes each, ASan+LSan on by default with
+  # cargo-fuzz 0.13.2. The list comes from `cargo fuzz list`, as in
+  # ci.yml's smoke pass, so a new target cannot be left out of the soak:
+  # the five-name literal this replaced silently skipped the three targets
+  # added on 2026-09-08. The dict-loader corpus is seeded from the
+  # committed w3 tables so the decoder starts from valid headers.
   fuzz-soak:
     runs-on: ubuntu-latest
       # Same ASan leeway as the tkrzw sanitizer job in store-backends.yml:
@@ -96,8 +100,13 @@ jobs:
         # coverage/edge counters in the log so a soak that explored
         # nothing is visible as one, not just green.
         run: |
+          mapfile -t targets < <(cargo +nightly-2026-08-01 fuzz list)
+          if [ "${#targets[@]}" -eq 0 ]; then
+            echo "::error::cargo fuzz list returned no targets"
+            exit 1
+          fi
           status=0
-          for target in parser dict-loader fixture-model double-pinyin capi-commands; do
+          for target in "${targets[@]}"; do
             echo "::group::fuzz $target"
             # setarch -R disables ASLR for the process tree: runner
             # kernels' mmap entropy exceeds ASan's shadow mapping, and an
@@ -188,61 +197,23 @@ jobs:
           rust-cache: 'true'
       - run: cargo test --locked --workspace --release --no-default-features --features kyotocabinet
 
-  # Coverage report (region/line) as an artifact, plus the line floor in
-  # the step below (77%, the measured 2026-09-08 figure; the 81.92%
-  # recorded on 2026-08-29 was not cargo-llvm-cov's line number).
-  # cargo-llvm-cov is curl-pinned and checksum-verified like cargo-deny
-  # in ci.yml.
+  # Coverage floor: the reusable job in coverage.yml, which is also the
+  # path-filtered PR gate. Called here unconditionally so the whole-tree
+  # number is measured nightly whatever a PR touched. The floor and its
+  # history live in that file.
   coverage:
-    runs-on: ubuntu-latest
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libkyotocabinet-dev libglib2.0-dev
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          safe-directory: 'true'
-          rustup: 'true'
-          rust-cache: 'true'
-      - name: Install pinned cargo-llvm-cov
-        run: |
-          ver=0.9.0
-          sum=bc2122fd7bd9b6d3eb371690ed085f82e5a8bf1851f4645ef521d12ed04b2616
-          curl -sSfL -o cargo-llvm-cov.tar.gz "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v${ver}/cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz"
-          echo "${sum}  cargo-llvm-cov.tar.gz" | sha256sum -c -
-          tar xzf cargo-llvm-cov.tar.gz
-          mkdir -p ~/.local/bin
-          install -m755 cargo-llvm-cov ~/.local/bin
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - run: cargo llvm-cov --locked --workspace --no-default-features --features kyotocabinet --lcov --output-path lcov.info
-      # Coverage floor (ratchet, 2026-09-08): line coverage below the
-      # floor fails the lane. The report step reuses the profile data the
-      # lcov run collected, prints the per-crate table so the number is in
-      # the log (the lcov run prints nothing, and the first floored run
-      # failed without saying by how much), then applies the floor.
-      # Measured 2026-09-08 on this build: 77.33% lines (78.38% regions,
-      # 77.00% functions); the 81.92% recorded on 2026-08-29 was not
-      # cargo-llvm-cov's line figure. Floor 77 = the measured number.
-      # Raise it when the number rises, never lower it to pass.
-      - run: cargo llvm-cov report --summary-only --fail-under-lines 77
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: coverage-lcov
-          path: lcov.info
+    uses: ./.github/workflows/coverage.yml
 
-  # Complexity ratchet: no function may exceed CCN 40 (current max is 38,
-  # the user/store.rs quartet — a tracked refactor target, never allowed
-  # to grow past the limit).
-  lizard:
+  # Public-API snapshot for the supported Rust surface (structure.md:
+  # "cargo-public-api snapshots apply to the supported surface only").
+  # The committed snapshot is docs/api/oxpinyin-engine.public-api.txt;
+  # any diff fails the lane. A deliberate surface change regenerates the
+  # file in the same PR (docs/runbooks/goldens-and-pins.md). The tool
+  # reads rustdoc JSON, which is nightly-only, so it shares the fuzz
+  # lane's pinned nightly; cargo-public-api is cargo-installed and
+  # version-pinned the way cargo-fuzz is above. The engine has no
+  # features and no store dependency, so no C library is needed.
+  public-api:
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see the header comment
@@ -253,18 +224,27 @@ jobs:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl python3-pip
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libssl-dev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
           safe-directory: 'true'
-      # --break-system-packages: PEP 668 marking; this container is
-      # ephemeral, there is no system Python to protect. 1.24.0 is the
-      # release the ratchet was validated against locally.
-      - run: pip install --break-system-packages lizard==1.24.0
-      - run: lizard crates/ -l rust -C 40
+      # libssl-dev above: cargo-public-api links openssl-sys; the first
+      # container run without it failed in that build script.
+      - name: Install the pinned nightly
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain nightly-2026-08-01
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+      - run: cargo install cargo-public-api --version 0.52.0 --locked
+      - name: Diff the engine's public API against the committed snapshot
+        run: |
+          set -euo pipefail
+          cargo +nightly-2026-08-01 public-api -p oxpinyin-engine --simplified > public-api.txt
+          diff -u docs/api/oxpinyin-engine.public-api.txt public-api.txt
 
   # nextest over the whole workspace: proven equivalent locally (751/751
   # vs cargo test). If this stays green on the schedule, flipping the PR

@@ -11,6 +11,8 @@ differential, and a maintainer ruling recorded in the findings.
 | the mini data set, per backend | `fixtures/w3/<backend>/` | `oxpinyin-datagen compile --mini --backend <b> --model-dir $PINYIN_MODEL_DIR --out-dir fixtures/w3/<b>`; `fixtures_identity` (ignored) proves the compile reproduces the tree byte for byte |
 | W4 oracle goldens (candidates, structure, paths) | `fixtures/w4/oracle-*.txt` | the `pinyin-oracle` bins `oracle-candidates` (~3 h, full corpus), `oracle-candidate-structure`, `oracle_sentence_surface` (~1 min); the ignored `*_fixture_is_fresh` tests re-derive and compare |
 | trainer manifests and goldens | `fixtures/w9/` (`segmenter-han.txt`, `segmenter-ngseg.txt`, `counter-ngram.manifest`, `interpolation2.manifest`, `lambda-estimate.manifest`) | the ignored differential tests in counter, emitter, lambda and segment compare against these; regenerate with the pin tool the test names and commit only when it agrees |
+| the engine's public-API snapshot | `docs/api/oxpinyin-engine.public-api.txt` | `cargo +nightly-2026-08-01 public-api -p oxpinyin-engine --simplified > docs/api/oxpinyin-engine.public-api.txt` with cargo-public-api 0.52.0 (the nightly `public-api` lane's exact pair; rustdoc JSON is nightly-only). A diff is a supported-surface change, so it is an ask; commit the regenerated file in the same change with the additions and removals named in the message |
+| the Python surface | `test_public_surface_is_frozen` in `crates/oxpinyin-python/tests_py/test_engine.py` | edit the pinned name lists in the same change as the binding, same ask |
 
 A missing golden is a test failure, never a skip (#373). Regenerate,
 diff, and commit the golden in the same change as the code that moved

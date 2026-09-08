@@ -22,12 +22,12 @@
 //! - **Garbage and truncated files.** Opening a store file that is not
 //!   a store must be a typed [`UserStoreError`] (or, on a backend that
 //!   recovers, a working empty store) — never a panic. The assessment's
-//!   "format version +1" case has no counterpart in the code: the user
-//!   store carries **no format-version field**
-//!   (`docs/findings/kyotocabinet-backend.md` records this; the
-//!   backend's own file header is the only version stamp), so there is
-//!   no version to forge — the garbage-file law is the honest
-//!   equivalent at this seam.
+//!   "format version +1" case is not here: when this suite was written
+//!   the store had no format-version field (the backend's own file
+//!   header was the only stamp), and the `user_meta` row main gained on
+//!   2026-09-08 (`docs/findings/user-store.md`) is under a pending
+//!   ruling on whether it stays; its `IncompatibleFormat` refusal gets
+//!   its own test once that settles.
 //!
 //! The child runs this same test binary under `--exact` with
 //! `OXPINYIN_USER_ACID_CHILD` naming the store path; the test itself
