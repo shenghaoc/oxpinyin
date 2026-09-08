@@ -45,11 +45,11 @@ oxpinyin-store = { path = "../oxpinyin-store", default-features = false }
 # (pinyin-oracle re-exports it for its own bins); datagen is its one
 # non-dev consumer — a dev-lane edge, since this crate never ships.
 oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
-
-[dev-dependencies]
-# Loader-level verification of produced tables through the real data path.
-# default-features = false so workspace `--no-default-features` runs are not
-# re-defaulted through this dev edge.
+# The shared MemoryChunk chunk-format module (checksum, header, mask) the
+# chunk writer shares with the runtime reader; tests additionally verify
+# produced tables through the real loader. default-features = false so
+# workspace `--no-default-features` runs are not re-defaulted through
+# this edge.
 oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
 
 [[bin]]

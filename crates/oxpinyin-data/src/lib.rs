@@ -27,6 +27,7 @@
 
 pub mod bigram_table;
 pub(crate) mod chewing_table;
+pub mod chunk_format;
 pub mod content;
 pub mod dict;
 pub mod interp;
