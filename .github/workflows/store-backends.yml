@@ -11,7 +11,9 @@ name: Store backends
 #
 # Four jobs:
 #   - store-features is a matrix over the four peer backends. Each child
-#     runs the whole workspace test suite under exactly ONE peer, on its
+#     runs the workspace's backend-relevant crates (everything but the
+#     seven backend-independent training crates — see the test step)
+#     under exactly ONE peer, on its
 #     own runner, so the four sweeps run in PARALLEL (fail-fast: false,
 #     max-parallel: 4) instead of sequentially inside one job. Every pass
 #     decodes real queries through the fixture tables, not just the store's
@@ -104,9 +106,11 @@ concurrency:
 jobs:
   store-features:
     # One matrix child per backend, each on its own runner: every backend is
-    # exercised through the whole workspace — a backend that "passes" only in
-    # the store's own unit tests and never reaches the decode path does not
-    # count. The alternate-backend children name the store's feature with
+    # exercised through the backend-relevant workspace (the seven
+    # backend-independent training crates are excluded — see the test
+    # step) — a backend that "passes" only in the store's own unit tests
+    # and never reaches the decode path does not count. The
+    # alternate-backend children name the store's feature with
     # member/feature syntax because the root manifest is virtual. The four
     # children run in parallel; the historical single-job serialisation of
     # these sweeps is gone.
@@ -178,6 +182,16 @@ jobs:
       # default). The matrix value is bound to a plain shell variable via env
       # indirection — ${{ }} inside a run: body is a template-injection
       # surface — and never spliced into a command.
+      #
+      # The sweep excludes the seven backend-independent training crates
+      # (corpus, counter, emitter, kmm, lambda, punct, word): none has a
+      # dependency on the store chain, so their result is byte-identical
+      # under every backend — they run once per PR in ci.yml's `test` job
+      # (the one full sweep) and in the nightly overflow/nextest lanes.
+      # What stays is everything a backend choice can change: the store
+      # itself, the user store, data readers, datagen writers, runtime,
+      # engine, facade, both C ABIs, dictool, the oracle harness, and the
+      # store-touching training crates (segment, eval, train).
       - name: Test the workspace under this backend
         id: backend-test
         env:
@@ -185,6 +199,15 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
+          excludes=(
+            --exclude oxpinyin-corpus
+            --exclude oxpinyin-counter
+            --exclude oxpinyin-emitter
+            --exclude oxpinyin-kmm
+            --exclude oxpinyin-lambda
+            --exclude oxpinyin-punct
+            --exclude oxpinyin-word
+          )
           case "$BACKEND" in
           # `--features <peer>` at `--workspace` scope enables that
           # feature on every workspace member that declares it, so the
@@ -203,19 +226,19 @@ jobs:
           # `backend-matrix` job proves it separately.
           kyotocabinet)
             echo "--- kyotocabinet (explicit) ---"
-            cargo test --locked --workspace --no-default-features --features kyotocabinet
+            cargo test --locked --workspace --no-default-features --features kyotocabinet "${excludes[@]}"
             ;;
           redb)
             echo "--- redb (workspace, pure-Rust peer) ---"
-            cargo test --locked --workspace --no-default-features --features redb
+            cargo test --locked --workspace --no-default-features --features redb "${excludes[@]}"
             ;;
           tkrzw)
             echo "--- tkrzw (the default) ---"
-            cargo test --locked --workspace
+            cargo test --locked --workspace "${excludes[@]}"
             ;;
           lmdb)
             echo "--- lmdb (workspace) ---"
-            cargo test --locked --workspace --no-default-features --features lmdb
+            cargo test --locked --workspace --no-default-features --features lmdb "${excludes[@]}"
             ;;
           *)
             echo "FAIL: unknown matrix.backend value '$BACKEND'" >&2
@@ -234,7 +257,7 @@ jobs:
             echo ""
             echo "Result: **$([ '${{ job.status }}' = 'success' ] && echo 'passed' || echo 'FAILED')**"
             echo ""
-            echo "Whole-workspace sweep under the ${BACKEND} backend only."
+            echo "Backend-relevant workspace sweep under the ${BACKEND} backend only."
             echo ""
             echo "| Backend | Wall clock |"
             echo "|---|---:|"
