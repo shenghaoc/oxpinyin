@@ -161,7 +161,6 @@ fuzz_target!(|data: &[u8]| {
         let command = data[cursor];
         cursor += 1;
         let payload = &data[cursor..];
-        let freshest = added.last().copied();
         match command % 8 {
             // add a phrase: 1..=15 chars from the payload, one key per
             // char (valid by construction)
@@ -261,6 +260,8 @@ fuzz_target!(|data: &[u8]| {
             }
         }
         check_totals(&store, &lefts);
+        // Read after the mutation so a fresh add is the row checked.
+        let freshest = added.last().copied();
         check_phrase_index(&store, freshest);
     }
     if let Ok(mut last) = LAST_PATH.lock() {

@@ -5,9 +5,10 @@
 //!
 //! What is tested, and what deliberately is not:
 //!
-//! - **Abort mid-batch.** A child process writes a known batch of
-//!   phrases through the public API (each `add_phrase` is one backend
-//!   transaction) and then `abort()`s — no graceful drop, no `save()`.
+//! - **Abort mid-batch.** A child process writes a fixed prefix of a
+//!   known batch through the public API (each `add_phrase` is one
+//!   backend transaction) and then `abort()`s partway — no graceful
+//!   drop, no `save()`.
 //!   The parent reopens the file and asserts the crash-consistency law
 //!   the architecture actually promises: the visible rows are exactly a
 //!   *prefix* of the batch, every row is internally complete (token,
@@ -40,6 +41,9 @@ use oxpinyin_user::{PinyinKey, UserStore};
 
 const CHILD_VAR: &str = "OXPINYIN_USER_ACID_CHILD";
 const BATCH: usize = 64;
+/// The child dies after this many writes, so the crash lands mid-batch
+/// and the survivors are bounded by a prefix shorter than the batch.
+const ABORT_AT: usize = 32;
 
 fn temp_path(tag: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
@@ -76,10 +80,11 @@ fn batch_phrase(index: usize) -> (String, Vec<PinyinKey>) {
     (text, keys)
 }
 
-/// The child role: write the batch, then die without unwinding.
+/// The child role: write a fixed prefix of the batch, then die without
+/// unwinding.
 fn run_child(path: &std::path::Path) {
     let mut store = UserStore::create_standalone(path).expect("child store opens");
-    for index in 0..BATCH {
+    for index in 0..ABORT_AT {
         let (text, keys) = batch_phrase(index);
         store.add_phrase(&text, &keys, None).expect("child add");
     }
@@ -120,8 +125,8 @@ fn abort_mid_batch_leaves_a_consistent_prefix() {
     let visible = store.phrases().expect("the crashed store reads");
     let texts: Vec<String> = visible.iter().map(|row| row.text().to_owned()).collect();
     assert!(
-        texts.len() <= BATCH,
-        "the crash cannot leave more rows than the batch wrote"
+        texts.len() <= ABORT_AT,
+        "the crash cannot leave more rows than the child wrote before aborting"
     );
 
     // The prefix law, order-insensitive over the row iteration: whatever
