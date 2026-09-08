@@ -1,6 +1,9 @@
 //! In-memory reverse index over [`crate::UserStore`] phrases.
 //!
-//! Rebuilds from the store when the write generation changes. Lookup order
+//! Rebuilds from the store when its *phrase* generation changes — a
+//! phrase or pronunciation row added, imported, or removed. Count-only
+//! training writes move the store's write generation but not this one,
+//! so a keystroke that trains never rebuilds the index. Lookup order
 //! is ascending library nibble then token, matching
 //! `_append_items` (`docs/findings/phrase-union.md` §3.3).
 
@@ -35,7 +38,7 @@ impl UserLookup {
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn from_store(store: &UserStore) -> Result<Self, UserStoreError> {
-        let generation = store.generation();
+        let generation = store.phrase_generation();
         let mut exact: BTreeMap<String, Vec<PhraseEntry>> = BTreeMap::new();
         let mut text_tokens: BTreeMap<String, Vec<u32>> = BTreeMap::new();
         let mut token_text: BTreeMap<u32, String> = BTreeMap::new();
@@ -86,7 +89,7 @@ impl UserLookup {
         })
     }
 
-    /// Rebuilds `cache` when `store`'s write generation has moved.
+    /// Rebuilds `cache` when `store`'s phrase generation has moved.
     ///
     /// # Errors
     ///
@@ -95,7 +98,7 @@ impl UserLookup {
         cache: &mut Option<(u64, Arc<Self>)>,
         store: &UserStore,
     ) -> Result<(), UserStoreError> {
-        let generation = store.generation();
+        let generation = store.phrase_generation();
         if let Some((seen, _)) = cache.as_ref()
             && *seen == generation
         {
@@ -106,7 +109,7 @@ impl UserLookup {
         Ok(())
     }
 
-    /// Store generation this snapshot was built against.
+    /// Store phrase generation this snapshot was built against.
     #[must_use]
     pub const fn generation(&self) -> u64 {
         self.generation

@@ -69,6 +69,10 @@ pub struct StoreInner<S: WriteStore> {
     /// leave the store reporting `UserCountDelta::ZERO` for every candidate,
     /// silently and permanently, however much data it wrote.
     pub(crate) write_generation: AtomicU64,
+    /// Bumped only by writes that change the phrase or pronunciation
+    /// tables; the reverse index keys its cache on this, so count-only
+    /// training writes never trigger a rebuild.
+    pub(crate) phrase_generation: AtomicU64,
     /// First gate on the decode read path: `false` answers `count_delta` and
     /// `unigram_delta` with zero from this one atomic, taking no mutex and
     /// opening no redb transaction. Recomputed at `open` and maintained only
