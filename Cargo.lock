@@ -835,7 +835,7 @@ dependencies = [
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-store",
- "pinyin-oracle",
+ "oxpinyin-testsupport",
 ]
 
 [[package]]

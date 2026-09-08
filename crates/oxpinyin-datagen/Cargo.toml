@@ -21,15 +21,15 @@ description = "model20 → oxpinyin runtime tables compiler for every storage ba
 default = ["tkrzw"]
 # Enable the Kyoto Cabinet producer (`--backend kyotocabinet`); mirrors
 # oxpinyin-store.
-kyotocabinet = ["oxpinyin-store/kyotocabinet"]
+kyotocabinet = ["oxpinyin-store/kyotocabinet", "oxpinyin-testsupport/kyotocabinet"]
 # Enable the LMDB producer (`--backend lmdb`); mirrors oxpinyin-store.
-lmdb = ["oxpinyin-store/lmdb"]
+lmdb = ["oxpinyin-store/lmdb", "oxpinyin-testsupport/lmdb"]
 # Enable the Tkrzw producer (`--backend tkrzw`); mirrors oxpinyin-store.
-tkrzw = ["oxpinyin-store/tkrzw"]
+tkrzw = ["oxpinyin-store/tkrzw", "oxpinyin-testsupport/tkrzw"]
 # The redb peer producer; forwarded to oxpinyin-store, which now gates
 # redb behind the same feature. Select with
 # `--no-default-features --features redb`.
-redb = ["oxpinyin-store/redb"]
+redb = ["oxpinyin-store/redb", "oxpinyin-testsupport/redb"]
 
 [lints]
 workspace = true
@@ -40,9 +40,11 @@ oxpinyin-core = { workspace = true }
 # default-features = false: the producer set is selected by this crate's own
 # features above, never dragged in by the store's default.
 oxpinyin-store = { path = "../oxpinyin-store", default-features = false }
-# Model-cache location and the pinned model20 constants only; the oracle
-# itself (oracle-ffi) is never linked by this crate.
-pinyin-oracle = { path = "../pinyin-oracle", default-features = false }
+# Model-cache location and the pinned model20 constants for the compile
+# defaults and the manifest. The locator's canonical home is testsupport
+# (pinyin-oracle re-exports it for its own bins); datagen is its one
+# non-dev consumer — a dev-lane edge, since this crate never ships.
+oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 
 [dev-dependencies]
 # Loader-level verification of produced tables through the real data path.
