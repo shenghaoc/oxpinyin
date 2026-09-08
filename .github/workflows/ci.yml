@@ -90,7 +90,8 @@ env:
 # Five jobs:
 #   lint — rustfmt + clippy
 #   test — cargo test for the whole workspace, and the portable workspace
-#          (all but capi, zhuyin-capi, python) on macOS and Windows
+#          (all but capi, zhuyin-capi, python, dictool) on macOS and Windows;
+#          python-portable builds and tests the binding's wheel there
 #   python — the oxpinyin Python binding on the container image's stock
 #            python3 — GIL-enabled CPython 3.14, since actions/setup-python
 #            cannot serve a container job and took the old '3.14t' selector
@@ -304,12 +305,81 @@ jobs:
         working-directory: crates/oxpinyin-python
         run: pytest -q
 
+  # The binding's wheel on the other two supported operating systems
+  # (.kiro/specs/python-binding/tasks.md item 5, closed 2026-09-08): the
+  # same source build, the same stable-ABI assertion and the same
+  # native-vs-Python parity suite as the Linux job above, under the
+  # pure-Rust redb backend (no C store library on these runners) and a
+  # GIL-enabled CPython 3.14 from actions/setup-python — the interpreter
+  # the Linux job also ends up on, so the cp310-abi3 tag is the same.
+  # Two jobs rather than a container matrix: containers are Linux-only.
+  python-portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      # maturin's PEP 517 backend reads this for the cargo build: select
+      # the redb peer for the extension exactly as the portable test lanes
+      # do for the crates.
+      MATURIN_PEP517_ARGS: --no-default-features --features redb,bindings
+      # The parity suite regenerates the native transcripts with
+      # `cargo run`; the same selection keeps them on the same fixture set.
+      OXPINYIN_PYTEST_CARGO_ARGS: --no-default-features --features redb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-cache: 'true'
+          rust-cache-key: python-portable
+      - run: rustup show active-toolchain
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+      - name: Build and install the wheel
+        working-directory: crates/oxpinyin-python
+        run: |
+          python -m pip install maturin==1.15.0 pytest==9.1.1
+          python -m pip install --no-build-isolation .
+      - name: Assert the wheel is the documented stable ABI
+        run: |
+          python - <<'PY' >&2
+          import importlib.metadata as metadata
+          import sys
+
+          wheel = metadata.distribution("oxpinyin").read_text("WHEEL") or ""
+          tags = [
+              line.split(":", 1)[1].strip()
+              for line in wheel.splitlines()
+              if line.startswith("Tag:")
+          ]
+          if not tags or any(not tag.startswith("cp310-abi3-") for tag in tags):
+              print(
+                  f"::error::built wheel tags {tags or '(none)'} are not the "
+                  "documented cp310-abi3; the interpreter or pyo3's stable-ABI "
+                  "selection moved. See docs/python.md, 'Supported platforms'."
+              )
+              sys.exit(1)
+          print(f"wheel tags: {tags}")
+          PY
+      - name: Rust runtime tests
+        run: cargo test --locked -p oxpinyin-python --no-default-features --features redb
+      - name: Binding tests and native-vs-Python parity
+        working-directory: crates/oxpinyin-python
+        run: python -m pytest -q
+
   # The portable crates on the other two supported operating systems:
   # the whole workspace minus the four that are Linux-first or need a
   # host interpreter — the two C-ABI crates (glib, cargo-c, Linux-only per
-  # structure.md), the PyO3 binding (its wheel is CI'd in the python job
-  # above; non-Linux wheels are an open item in
-  # .kiro/specs/python-binding/tasks.md), and oxpinyin-dictool, which
+  # structure.md), the PyO3 binding (its wheel is built and tested on
+  # these same runners by python-portable above), and oxpinyin-dictool, which
   # depends on oxpinyin-capi and so on glib-sys/pkg-config — the Windows
   # runner has neither, and structure.md's "portable" for dictool is
   # aspirational until that dependency is cut. Everything else — store,

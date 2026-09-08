@@ -274,10 +274,13 @@ candidate computation never depends on writable storage.
 
 ## Supported platforms
 
-CPython 3.14, on any platform PyO3 + maturin build for. CI exercises Linux;
-macOS and Windows run the same portable crates
-(`oxpinyin-core/data/user/engine`) that the portable CI job covers, but
-wheel builds there are currently untested.
+CPython 3.14, on any platform PyO3 + maturin build for. CI builds and
+tests the source wheel on Linux (the container job below) and, since
+2026-09-08, on macOS and Windows (`python-portable`: the same `pip
+install .` through maturin under the pure-Rust redb backend, the same
+stable-ABI assertion, the same native-vs-Python parity suite, on a
+GIL-enabled CPython 3.14 from `actions/setup-python`). No pre-built wheels
+are published; those three source builds are what is claimed.
 
 CI runs exactly one interpreter — the `debian:testing` image's stock
 `python3`, a **GIL-enabled** CPython 3.14 on Linux — and it builds from
@@ -298,9 +301,8 @@ free-threaded job used to emit a version-specific `cp314t` one. The job
 asserts that tag on the installed dist-info rather than trusting this
 paragraph — `debian:testing` is deliberately unpinned, and an interpreter that
 moved to 3.15 or to a free-threaded build would change the answer without
-touching a line of this file. This project publishes and tests no pre-built
-wheels, so nothing beyond that source build on GIL-enabled 3.14 is claimed
-here.
+touching a line of this file. This project publishes no pre-built wheels; the
+three source builds above on GIL-enabled 3.14 are what is claimed here.
 
 The two floors are deliberately different numbers, and both pins stay as they
 are. `abi3-py310` is the *binary* floor — what the built extension could load
