@@ -8,7 +8,8 @@ name: verify-nightly
 # No trial lanes remain: the Miri, cargo-mutants and cargo-geiger jobs
 # were retired on 2026-09-01 (docs/findings/verify-nightly.md). There are
 # no continue-on-error lanes; every job in this workflow must be green.
-# Surviving lanes: fuzz-soak, overflow-lane, coverage, lizard, nextest.
+# Surviving lanes: fuzz-soak, differentials, overflow-lane, coverage,
+# lizard, nextest.
 #
 # All jobs run in debian:testing containers in the store-backends.yml
 # style: the nightly lanes exist to surface drift early, and the rolling
@@ -94,6 +95,43 @@ jobs:
             echo "::endgroup::"
           done
           exit $status
+
+  # The fixture tier of the oracle differentials: build the pinned
+  # libpinyin (public source, SHA read from tools/oracle/build-oracle.sh
+  # and verified) with the COMMITTED toned mini-model standing in for
+  # the non-redistributable model20, then run both differential scripts
+  # a developer runs — tools/oracle/run-differentials.sh and the tkrzw
+  # drop-in — against it. This honors the no-model20-in-CI policy
+  # (store-backends.yml header) while turning the manual evidence into a
+  # nightly drift alarm. Parity over thin data is the property under
+  # test — both sides always see the same inputs — but the model20
+  # differentials remain the developer-machine workflow, and the suites
+  # whose corpora live in the model20 token space may prove thin here;
+  # a suite that cannot hold on toned data gets its inputs unwired
+  # (self-skip) rather than deleted.
+  differentials:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Bootstrap the runner essentials and oracle build deps (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make pkg-config autoconf automake autopoint libtool gettext libglib2.0-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libclang-dev
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+          rust-cache: 'true'
+      - name: Run the fixture-tier differentials
+        run: tools/oracle/nightly-fixture-differentials.sh
 
   # Latent-overflow lane: the releaseoptimized codepath with overflow
   # checks and debug assertions forced on (docs/safety/
