@@ -476,6 +476,16 @@ impl<S: WriteStore> GenericUserStore<S> {
         *self.count_cache() = None;
     }
 
+    /// [`Self::mark_committed_write`] for a write that changed the phrase
+    /// or pronunciation tables: also moves the phrase generation, which
+    /// is what [`UserLookup`] watches. Count-only writes (training,
+    /// bigram seeding) take the plain form, so a keystroke that trains
+    /// never pays for an index rebuild.
+    fn mark_committed_phrase_write(&self, db: MutexGuard<'_, S>, has_user_data: bool) {
+        self.inner.phrase_generation.fetch_add(1, Ordering::AcqRel);
+        self.mark_committed_write(db, has_user_data);
+    }
+
     fn init_and_wrap(db: S) -> Result<Arc<StoreInner<S>>, UserStoreError> {
         // The whole open runs in one write transaction, so the version
         // check, any migration, the stamp, and the totals/alloc seeding
@@ -540,6 +550,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             db: Mutex::new(db),
             dirty: AtomicBool::new(false),
             write_generation: AtomicU64::new(0),
+            phrase_generation: AtomicU64::new(0),
             has_user_data: AtomicBool::new(has_user_data),
         }))
     }
@@ -842,7 +853,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 Ok(Ok(token))
             }
         })??;
-        self.mark_committed_write(db, true);
+        self.mark_committed_phrase_write(db, true);
         Ok(token)
     }
 
@@ -923,7 +934,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
             Ok(Ok(token))
         })??;
-        self.mark_committed_write(db, true);
+        self.mark_committed_phrase_write(db, true);
         Ok(token)
     }
 
@@ -982,10 +993,19 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(None)
     }
 
-    /// Current write generation; [`UserLookup`] rebuilds when this changes.
+    /// Current write generation: moves on every committed write, counts
+    /// included.
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.write_generation()
+    }
+
+    /// Current phrase generation: moves only when a phrase or
+    /// pronunciation row was added, imported, or removed. [`UserLookup`]
+    /// rebuilds when this changes and on nothing else.
+    #[must_use]
+    pub fn phrase_generation(&self) -> u64 {
+        self.inner.phrase_generation.load(Ordering::Acquire)
     }
 
     /// Next token the store will allocate.
@@ -1279,7 +1299,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
             has_user_data_in_write_txn(txn)
         })?;
-        self.mark_committed_write(db, has_user_data);
+        self.mark_committed_phrase_write(db, has_user_data);
         Ok(())
     }
 
@@ -1379,7 +1399,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         result?.map_or_else(
             || Ok(false),
             |has_user_data| {
-                self.mark_committed_write(db, has_user_data);
+                self.mark_committed_phrase_write(db, has_user_data);
                 Ok(true)
             },
         )
@@ -2052,6 +2072,28 @@ mod tests {
 
                     let token2 = store.add_phrase("世界", &[30, 40], Some(10)).unwrap();
                     assert_eq!(store.unigram_delta(token2).unwrap(), 30);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn phrase_generation_moves_only_on_phrase_writes() {
+                    let path = temp_path("phrase-gen");
+                    let mut store = Store::create_standalone(&path).unwrap();
+                    assert_eq!(store.phrase_generation(), 0);
+                    let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                    assert_eq!(store.phrase_generation(), 1, "add_phrase is a phrase write");
+                    let before = store.phrase_generation();
+                    let write_before = store.generation();
+                    store.observe_selection(SENTENCE_START, token).unwrap();
+                    store.set_bigram_count(SENTENCE_START, token, 7).unwrap();
+                    assert!(store.generation() > write_before, "counts moved the write generation");
+                    assert_eq!(
+                        store.phrase_generation(),
+                        before,
+                        "training and bigram writes must not move the phrase generation"
+                    );
+                    assert!(store.remove_user_phrase(token).unwrap());
+                    assert_eq!(store.phrase_generation(), before + 1, "removal is a phrase write");
                     cleanup(&path);
                 }
 
