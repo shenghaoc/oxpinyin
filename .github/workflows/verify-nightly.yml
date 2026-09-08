@@ -123,17 +123,19 @@ jobs:
 
   # The fixture tier of the oracle differentials: build the pinned
   # libpinyin (public source, SHA read from tools/oracle/build-oracle.sh
-  # and verified) with the COMMITTED toned mini-model standing in for
-  # the non-redistributable model20, then run both differential scripts
-  # a developer runs — tools/oracle/run-differentials.sh and the tkrzw
-  # drop-in — against it. This honors the no-model20-in-CI policy
-  # (store-backends.yml header) while turning the manual evidence into a
-  # nightly drift alarm. Parity over thin data is the property under
-  # test — both sides always see the same inputs — but the model20
-  # differentials remain the developer-machine workflow, and the suites
-  # whose corpora live in the model20 token space may prove thin here;
-  # a suite that cannot hold on toned data gets its inputs unwired
-  # (self-skip) rather than deleted.
+  # and verified) and run, nightly, every differential gate COMMITTED
+  # fixtures can carry — the tkrzw drop-in (byte-exact datagen parity
+  # over the toned mini-model), ngseg live parity (toned tables), and
+  # the KMM gen/export/merge/validate + spseg live gates (committed w3
+  # tables, whose token space matches those gates' corpora). This
+  # honors the no-model20-in-CI policy (store-backends.yml header)
+  # while turning part of the manual evidence into a drift alarm. What
+  # committed data cannot carry stays on developer machines, each
+  # exclusion recorded by mechanism in the script header: the
+  # model20-token-space goldens and corpora (lambda, counter, ngseg
+  # goldens), mergeseq live (the pin emits a token outside the w3
+  # phrase table), KMM prune (the pin SIGSEGVs on that gate's fixture
+  # input), and eval (no interpolation2.text consistent with w3).
   differentials:
     runs-on: ubuntu-latest
     container:
