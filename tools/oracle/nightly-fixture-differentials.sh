@@ -97,6 +97,10 @@ data=$prefix/lib/libpinyin/data
 for f in table.conf phrase_index.bin pinyin_index.bin; do
 	[[ -f $data/$f ]] || { echo "installed data dir is missing $f" >&2; exit 2; }
 done
+# run-differentials' eval gate also requires, next to bigram.db, the
+# interpolation2.text it was imported from; `make install` ships only
+# build products, so carry the model's own copy in (it is that file).
+[[ -f $data/interpolation2.text ]] || cp "$model/interpolation2.text" "$data/"
 export LD_LIBRARY_PATH="$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # ── 2. the oxpinyin redb export of the SAME model ─────────────────────────
