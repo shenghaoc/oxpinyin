@@ -60,7 +60,9 @@ if [[ ! -f $src/.pin-ok ]]; then
 	rm -rf "$src"
 	git init -q "$src"
 	git -C "$src" fetch --quiet --depth=1 "$pin_url" "$pin_sha"
-	got=$(git -C "$src" rev-parse HEAD)
+	# A depth-1 fetch of a bare sha lands in FETCH_HEAD; HEAD is still
+	# unborn in this fresh repo, so the pin check reads FETCH_HEAD.
+	got=$(git -C "$src" rev-parse FETCH_HEAD)
 	if [[ $got != "$pin_sha" ]]; then
 		echo "pin mismatch: fetched $got, wanted $pin_sha" >&2
 		exit 2
