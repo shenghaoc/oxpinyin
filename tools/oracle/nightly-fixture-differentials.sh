@@ -141,10 +141,13 @@ run_suite() {
 }
 
 # Toned tier: ngseg live parity over raw han text — the corpus-free gate,
-# so any consistent table set carries it.
+# so any consistent table set carries it. The Rust side resolves its
+# tables through BOTH the export and the model dir (the segment tests'
+# locate_model_dir), so both point at the toned model.
 export PINYIN_NGSEG="$L/utils/segment/ngseg"
 export PINYIN_NGSEG_DATA="$data"
 export PINYIN_EXPORT_DIR="$export_dir"
+export PINYIN_MODEL_DIR="$model"
 run_suite "segment ngseg live parity (toned tables)" \
 	cargo test --locked -q -p oxpinyin-segment "${feat[@]}" --test differential -- \
 	--include-ignored rust_matches_live_ngseg
