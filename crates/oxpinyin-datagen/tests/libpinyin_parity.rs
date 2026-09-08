@@ -45,7 +45,7 @@ fn data_dir() -> Option<PathBuf> {
 }
 
 fn model_dir() -> Option<PathBuf> {
-    match pinyin_oracle::model_cache::locate_model_dir() {
+    match oxpinyin_testsupport::model_cache::locate_model_dir() {
         Ok(Some(dir)) => Some(dir),
         Ok(None) => None,
         Err(e) => panic!("model dir set but unusable: {e:?}"),

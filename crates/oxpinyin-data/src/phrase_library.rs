@@ -50,15 +50,10 @@ compile_error!(
      not supported."
 );
 
-/// `PHRASE_MASK` (`novel_types.h:41`): the library-local token bits a
-/// phrase-index slot is addressed by.
-const PHRASE_MASK: u32 = 0x00FF_FFFF;
-/// `c_separate` (`novel_types.h:126`).
-const SEPARATOR: u8 = b'#';
+use crate::chunk_format::{CHUNK_HEADER_SIZE, PHRASE_MASK, SEPARATOR, chunk_checksum};
+
 /// `sizeof(ChewingKey)` — a 16-bit bitfield (`chewing_key.h:41`).
 const CHEWING_KEY_SIZE: usize = 2;
-/// The MemoryChunk file header: `{length, checksum}`.
-const CHUNK_HEADER_SIZE: usize = 8;
 /// `phrase_item_header` (`phrase_index.h:56`): length, n-pron,
 /// unigram.
 const ITEM_HEADER_SIZE: usize = 6;
@@ -101,24 +96,6 @@ impl From<std::io::Error> for LibraryError {
 fn u32_at(bytes: &[u8], offset: usize) -> Option<u32> {
     let chunk = bytes.get(offset..offset.checked_add(4)?)?;
     Some(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-}
-
-/// `MemoryChunk::get_check_sum` (`memory_chunk.h:131-159`): the XOR of
-/// the payload's little-endian `u32` words, with any tail bytes folded
-/// in shifted by their position. Reproduced exactly — the header's
-/// checksum is what upstream verifies at `mmap` time.
-fn chunk_checksum(payload: &[u8]) -> u32 {
-    let mut checksum: u32 = 0;
-    let aligned = payload.len() & !0x3;
-    for word in payload[..aligned].chunks_exact(4) {
-        checksum ^= u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
-    }
-    let mut shift = 0_u32;
-    for &byte in &payload[aligned..] {
-        checksum ^= u32::from(byte) << shift;
-        shift += 8;
-    }
-    checksum
 }
 
 // ── mapped file ─────────────────────────────────────────────────────

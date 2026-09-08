@@ -36,15 +36,18 @@
 //! The checksum is `MemoryChunk::get_check_sum`: the XOR of the payload's
 //! little-endian `u32` words with tail bytes folded in shifted by position.
 //! It is recomputed by the runtime reader (`oxpinyin-data`'s
-//! `phrase_library`), so a wrong byte here makes the file unloadable.
+//! `phrase_library`), so a wrong byte here makes the file unloadable — both
+//! halves take it, with the `MemoryChunk` header layout and `PHRASE_MASK`,
+//! from `oxpinyin_data::chunk_format`, the one written copy.
 
 use crate::DatagenError;
+use oxpinyin_data::chunk_format::{CHUNK_HEADER_SIZE, SEPARATOR, chunk_checksum};
 
 /// `PHRASE_MASK` (`novel_types.h:41`): the library-local token bits a
-/// chunk slot is addressed by.
-pub const PHRASE_MASK: u32 = 0x00FF_FFFF;
-/// `c_separate` (`novel_types.h:126`).
-const SEPARATOR: u8 = b'#';
+/// chunk slot is addressed by. Re-exported from the shared format module
+/// for this crate's addon and system-table writers.
+pub use oxpinyin_data::chunk_format::PHRASE_MASK;
+
 /// Header `total_freq` + three offsets, then the first separator: where
 /// the offset array starts (`SubPhraseIndex::store`).
 const INDEX_ONE: u32 = 17;
@@ -66,21 +69,6 @@ pub struct ChunkItem {
     /// (`PhraseItem::add_pronunciation` sums duplicate exact key
     /// sequences).
     pub prons: Vec<(Vec<u16>, u32)>,
-}
-
-/// `MemoryChunk::get_check_sum` (`memory_chunk.h:131-159`).
-fn checksum(payload: &[u8]) -> u32 {
-    let mut sum: u32 = 0;
-    let aligned = payload.len() & !0x3;
-    for word in payload[..aligned].chunks_exact(4) {
-        sum ^= u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
-    }
-    let mut shift = 0_u32;
-    for &byte in &payload[aligned..] {
-        sum ^= u32::from(byte) << shift;
-        shift += 8;
-    }
-    sum
 }
 
 /// Serialises one library's phrase items into the complete chunk file.
@@ -187,9 +175,9 @@ pub fn build_chunk(items: &[(u32, ChunkItem)]) -> Result<Vec<u8>, DatagenError> 
     // ---- MemoryChunk header --------------------------------------------
     let length = u32::try_from(payload.len())
         .map_err(|_| DatagenError::Consistency("chunk payload overflows u32".to_owned()))?;
-    let mut file = Vec::with_capacity(8 + payload.len());
+    let mut file = Vec::with_capacity(CHUNK_HEADER_SIZE + payload.len());
     file.extend_from_slice(&length.to_le_bytes());
-    file.extend_from_slice(&checksum(&payload).to_le_bytes());
+    file.extend_from_slice(&chunk_checksum(&payload).to_le_bytes());
     file.extend_from_slice(&payload);
     Ok(file)
 }
@@ -227,7 +215,7 @@ mod tests {
         );
         let payload = &file[8..];
         assert_eq!(usize::try_from(length).unwrap(), payload.len());
-        assert_eq!(checksum(payload), csum);
+        assert_eq!(chunk_checksum(payload), csum);
 
         let total = u32::from_le_bytes(payload[0..4].try_into().unwrap());
         assert_eq!(total, 8); // 3 + 5
