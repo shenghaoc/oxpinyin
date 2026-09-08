@@ -66,6 +66,23 @@ const PHRASE_BY_TEXT: &str = "user_phrase_by_text";
 const PHRASE_BY_LIB_TEXT: &str = "user_phrase_by_lib_text";
 const PRONUNCIATION: &str = "user_pronunciation";
 const ALLOC: &str = "user_phrase_alloc";
+const META: &str = "user_meta";
+
+/// Sole key of the `user_meta` table: the store's format version,
+/// encoded with [`codec::encode_u64`].
+const FORMAT_VERSION_KEY: &[u8] = b"format_version";
+
+/// The user-store format version this build writes and understands.
+///
+/// Version 1 is the first stamped format; its layout is the one every
+/// store written since W6 already has, so adopting it changes no bytes
+/// outside the new `user_meta` row. A store stamped with a *lower*
+/// version migrates forward inside the opening transaction before use;
+/// a store stamped `0` or higher than this constant refuses to open
+/// ([`UserStoreError::IncompatibleFormat`]) rather than being read or
+/// reset silently. Bump this only together with a migration step in
+/// [`GenericUserStore::open`]'s stamping block.
+pub const STORE_FORMAT_VERSION: u64 = 1;
 
 /// Sole key in the `user_unigram_total` table.
 const UNIGRAM_TOTAL_KEY: u8 = 0;
@@ -98,6 +115,17 @@ pub enum UserStoreError {
     InvalidPhrase,
     /// No remaining token in the [`crate::USER_DICTIONARY`] 24-bit id space.
     TokenSpaceExhausted,
+    /// The store's stamped format version cannot be handled: it is newer
+    /// than [`STORE_FORMAT_VERSION`] (written by a newer oxpinyin), or it
+    /// is `0`, which no build ever stamps. The store is left untouched;
+    /// opening it needs the oxpinyin that wrote it or an explicit export.
+    IncompatibleFormat {
+        /// The version the store is stamped with.
+        found: u64,
+        /// The newest version this build supports
+        /// ([`STORE_FORMAT_VERSION`]).
+        supported: u64,
+    },
 }
 
 impl fmt::Display for UserStoreError {
@@ -113,6 +141,10 @@ impl fmt::Display for UserStoreError {
             Self::TokenSpaceExhausted => {
                 write!(f, "USER_DICTIONARY token space exhausted")
             }
+            Self::IncompatibleFormat { found, supported } => write!(
+                f,
+                "user store format version {found} is not supported by this build (supports up to {supported})"
+            ),
         }
     }
 }
@@ -122,9 +154,11 @@ impl std::error::Error for UserStoreError {
         match self {
             Self::Io(e) => Some(e),
             Self::Store(e) => Some(e),
-            Self::Decode | Self::AlreadyOpen | Self::InvalidPhrase | Self::TokenSpaceExhausted => {
-                None
-            }
+            Self::Decode
+            | Self::AlreadyOpen
+            | Self::InvalidPhrase
+            | Self::TokenSpaceExhausted
+            | Self::IncompatibleFormat { .. } => None,
         }
     }
 }
@@ -443,7 +477,45 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     fn init_and_wrap(db: S) -> Result<Arc<StoreInner<S>>, UserStoreError> {
+        // The whole open runs in one write transaction, so the version
+        // check, any migration, the stamp, and the totals/alloc seeding
+        // land together or not at all. The closure's inner result carries
+        // the typed version rejection past `write`'s `StoreError`
+        // channel, the same shape `add_phrase_in` uses.
         let has_user_data = db.write(|txn| {
+            let stamped = match txn.get(META, FORMAT_VERSION_KEY)? {
+                Some(bytes) => {
+                    let found = codec::decode_u64(&bytes)
+                        .map_err(|_| StoreError::Backend("corrupt format version".into()))?;
+                    // No build ever stamps 0; a zero row is corruption.
+                    if found == 0 || found > STORE_FORMAT_VERSION {
+                        return Ok(Err(UserStoreError::IncompatibleFormat {
+                            found,
+                            supported: STORE_FORMAT_VERSION,
+                        }));
+                    }
+                    Some(found)
+                }
+                None => None,
+            };
+            if stamped != Some(STORE_FORMAT_VERSION) {
+                // The migration ladder goes here. Version 1 is the first
+                // stamped format and no stamped store can be older, so
+                // today the only entry is the un-stamped store written
+                // before versioning (or a fresh file), and the ladder is
+                // the stamp itself. Each future format change appends its
+                // step between this comment and the `put`, bumps
+                // STORE_FORMAT_VERSION, and lets the stamp land only
+                // after the step succeeded — in this transaction, so a
+                // failed migration leaves the store byte-for-byte
+                // untouched.
+                txn.put(
+                    META,
+                    FORMAT_VERSION_KEY,
+                    &codec::encode_u64(STORE_FORMAT_VERSION),
+                )?;
+            }
+
             let total_key = codec::encode_u8(UNIGRAM_TOTAL_KEY);
             if txn.get(UNIGRAM_TOTAL, &total_key)?.is_none() {
                 let mut sum = 0_u64;
@@ -460,8 +532,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             if txn.get(ALLOC, &alloc_key)?.is_none() {
                 txn.put(ALLOC, &alloc_key, &codec::encode_token(FIRST_USER_TOKEN))?;
             }
-            has_user_data_in_write_txn(txn)
-        })?;
+            Ok(Ok(has_user_data_in_write_txn(txn)?))
+        })??;
 
         Ok(Arc::new(StoreInner {
             count_cache: Mutex::new(None),
@@ -930,6 +1002,20 @@ impl<S: WriteStore> GenericUserStore<S> {
         )
     }
 
+    /// The store's stamped format version (see [`STORE_FORMAT_VERSION`]).
+    ///
+    /// Every store that has been opened at least once carries the row,
+    /// so this reads back what the opening transaction stamped — the
+    /// current version for a fresh or migrated store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store cannot be read.
+    pub fn format_version(&self) -> Result<u64, UserStoreError> {
+        let db = self.database();
+        get_u64_or(&*db, META, FORMAT_VERSION_KEY, STORE_FORMAT_VERSION)
+    }
+
     /// `m_modified` (§4).
     #[must_use]
     pub fn is_modified(&self) -> bool {
@@ -1309,6 +1395,13 @@ impl GenericUserStore<DefaultStore> {
     /// initialised to [`FIRST_USER_TOKEN`]. A freshly opened store is clean:
     /// [`Self::save`] is a no-op until a training update records a change.
     ///
+    /// The store's format version is stamped and checked in the same
+    /// transaction: a file with no `user_meta` row (fresh, or written
+    /// before versioning) adopts [`STORE_FORMAT_VERSION`]; a file stamped
+    /// with an unsupported version — `0`, or newer than this build —
+    /// refuses to open with [`UserStoreError::IncompatibleFormat`]
+    /// instead of being read or reset.
+    ///
     /// Opening a path that is already open in this process returns a clone of
     /// the live handle (shared counts and shared §4 dirty flag) rather than a
     /// second database handle.
@@ -1516,6 +1609,114 @@ mod tests {
                         Err(UserStoreError::AlreadyOpen)
                     ));
                     drop(first);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn open_stamps_the_format_version_and_reopen_is_stable() {
+                    let path = temp_path("format-stamp");
+                    {
+                        let store = Store::create_standalone(&path).unwrap();
+                        assert_eq!(store.format_version().unwrap(), STORE_FORMAT_VERSION);
+                        assert!(!store.is_modified(), "stamping is not a §4 data write");
+                    }
+                    // The stamp is a plain row any backend handle reads back.
+                    {
+                        let db = <$backend>::create(&path).unwrap();
+                        let row = db.get(META, FORMAT_VERSION_KEY).unwrap();
+                        assert_eq!(
+                            row.as_deref(),
+                            Some(codec::encode_u64(STORE_FORMAT_VERSION).as_slice())
+                        );
+                    }
+                    let store = Store::create_standalone(&path).unwrap();
+                    assert_eq!(store.format_version().unwrap(), STORE_FORMAT_VERSION);
+                    assert!(
+                        !store.is_modified(),
+                        "a reopen of a current store stays clean"
+                    );
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn open_rejects_a_newer_format_version() {
+                    let path = temp_path("format-newer");
+                    {
+                        let store = Store::create_standalone(&path).unwrap();
+                        drop(store);
+                        let db = <$backend>::create(&path).unwrap();
+                        db.write(|txn| {
+                            txn.put(
+                                META,
+                                FORMAT_VERSION_KEY,
+                                &codec::encode_u64(STORE_FORMAT_VERSION + 1),
+                            )
+                        })
+                        .unwrap();
+                    }
+                    assert!(matches!(
+                        Store::create_standalone(&path),
+                        Err(UserStoreError::IncompatibleFormat {
+                            found,
+                            supported: STORE_FORMAT_VERSION
+                        }) if found == STORE_FORMAT_VERSION + 1
+                    ));
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn open_rejects_a_zero_format_version() {
+                    let path = temp_path("format-zero");
+                    {
+                        let db = <$backend>::create(&path).unwrap();
+                        db.write(|txn| {
+                            txn.put(META, FORMAT_VERSION_KEY, &codec::encode_u64(0))
+                        })
+                        .unwrap();
+                    }
+                    assert!(matches!(
+                        Store::create_standalone(&path),
+                        Err(UserStoreError::IncompatibleFormat {
+                            found: 0,
+                            ..
+                        })
+                    ));
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn open_rejects_an_undecodable_format_version() {
+                    let path = temp_path("format-junk");
+                    {
+                        let db = <$backend>::create(&path).unwrap();
+                        db.write(|txn| txn.put(META, FORMAT_VERSION_KEY, b"junk"))
+                            .unwrap();
+                    }
+                    assert!(matches!(
+                        Store::create_standalone(&path),
+                        Err(UserStoreError::Store(_))
+                    ));
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn a_pre_versioning_store_is_adopted_with_its_data_intact() {
+                    let path = temp_path("format-adopt");
+                    {
+                        let mut store = Store::create_standalone(&path).unwrap();
+                        store.observe_selection(SENTENCE_START, 10).unwrap();
+                        // A store written before versioning exists: every
+                        // data row present, no stamp. Strip only the stamp.
+                        let db = store.database();
+                        db.write(|txn| txn.remove(META, FORMAT_VERSION_KEY))
+                            .unwrap();
+                        drop(db);
+                        drop(store);
+                    }
+                    let store = Store::create_standalone(&path).unwrap();
+                    assert_eq!(store.format_version().unwrap(), STORE_FORMAT_VERSION);
+                    assert!(store.has_user_data());
+                    assert_eq!(store.bigram_count(SENTENCE_START, 10).unwrap(), 69);
                     cleanup(&path);
                 }
 
