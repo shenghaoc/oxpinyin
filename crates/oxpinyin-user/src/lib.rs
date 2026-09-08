@@ -13,14 +13,11 @@
 //! [`oxpinyin_core::UserCountDelta`] so decode can merge them additively with
 //! the system model. W6-T5 adds the save cycle behind `pinyin_save`: the §4
 //! `m_modified` gate ([`UserStore::is_modified`] / [`UserStore::save`]) over
-//! the store seam's per-commit durability (`WriteStore::write` returns only
-//! from stable storage on every backend) — there is no serialization step,
-//! because every training update is already committed atomically to disk. W6-T7 adds
+//! redb's per-commit durability — there is no serialization step, because
+//! every training update is already committed atomically to disk. W6-T7 adds
 //! the §9 export surface ([`UserStore::export_phrases`] /
 //! [`UserStore::export_bigrams`]) that backs the C ABI's export iterators and
-//! the W6 differential. Every store carries its format version in a
-//! `user_meta` row ([`STORE_FORMAT_VERSION`]); opening refuses a version
-//! this build cannot handle instead of reinterpreting old rows.
+//! the W6 differential.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 // Constitution §4, mechanically: library builds may not unwrap, expect,
@@ -48,6 +45,5 @@ pub use phrase::{
     is_user_file_token, is_user_token, phrase_index_library_index, phrase_index_make_token,
 };
 pub use store::{
-    ExportedPhrase, GenericUserStore, SENTENCE_START, STORE_FORMAT_VERSION, Token, UserStore,
-    UserStoreError,
+    ExportedPhrase, GenericUserStore, SENTENCE_START, Token, UserStore, UserStoreError,
 };

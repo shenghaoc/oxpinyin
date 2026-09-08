@@ -288,18 +288,14 @@ pinyin/phrase table indices that reach them; (d) the system-token unigram
 *deltas* (libpinyin's diff log; in oxpinyin a redb delta table — INFERRED
 mapping).
 
-**oxpinyin format version (2026-09-08).** libpinyin has no store version —
-its user files carry no magic and a schema change reinterprets them silently.
-The user store is oxpinyin's own container (§10 non-goal 1), so this is a
-new guarantee, not a registered upstream divergence: every store holds a
-`user_meta` table whose single `format_version` row
-(`STORE_FORMAT_VERSION`, currently 1) is stamped in the opening
-transaction. A store stamped newer than the build — or `0` — refuses to
-open with a typed `UserStoreError::IncompatibleFormat` instead of being
-read or reset; an un-stamped store (pre-versioning or fresh) is adopted
-and stamped in place. Future format changes append a migration step in
-that same transaction and bump the constant; a failed migration leaves
-the store byte-for-byte untouched.
+**No format version (ruling, 2026-09-08).** A `user_meta`/`format_version`
+row with a typed `IncompatibleFormat` refusal was added (aa40f4aa) and
+reverted the same day. libpinyin's user files carry no version, and the
+drop-in contract is to match them, not to add guarantees they lack; the
+backend's own file header stays the only stamp. A hostile or truncated
+file is a typed `UserStoreError`, never a panic
+(`crates/oxpinyin-user/tests/user_store_acid.rs`). Do not reintroduce a
+version row without a fresh ask.
 
 ---
 
