@@ -54,7 +54,9 @@ unsafe extern "C" {
 
 /// Converts one caller-owned export-iterator buffer into a Rust string and
 /// frees it with the matching libc `free` (the iterator allocates with
-/// [`owned_cstr`], i.e. libc `malloc`).
+/// [`owned_cstr`], i.e. libc `malloc`). Test-only since the §9 snapshot
+/// wrappers moved out; the tests read ABI-allocated buffers through it.
+#[cfg(test)]
 pub fn take_owned_cstr(ptr: *mut c_char) -> String {
     if ptr.is_null() {
         return String::new();

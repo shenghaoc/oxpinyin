@@ -842,7 +842,9 @@ dependencies = [
 name = "oxpinyin-dictool"
 version = "0.1.0"
 dependencies = [
- "oxpinyin-capi",
+ "oxpinyin-core",
+ "oxpinyin-facade",
+ "oxpinyin-user",
 ]
 
 [[package]]
