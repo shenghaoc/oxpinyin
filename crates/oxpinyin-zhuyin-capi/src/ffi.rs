@@ -1,4 +1,13 @@
 //! FFI boundary helpers — C-string conversion.
+//!
+//! Deliberately a per-facade file, not a shared module in
+//! `oxpinyin-facade`: every helper below is itself the unsafe edge
+//! (libc `malloc`/`free`, `CStr::from_ptr`), the facade crate is
+//! `forbid(unsafe_code)`, and the constitution's unsafe allowlist
+//! reaches only the two C-ABI crates — so this marshalling layer is
+//! duplicated between the facades by design and kept in step by
+//! review. The orchestration above it is shared; only the allocator
+//! boundary is not.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};

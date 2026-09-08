@@ -121,9 +121,12 @@ pub(crate) struct CapiCandidate {
     )]
     pub(crate) consumed_bytes: usize,
     /// The candidate's scoring token, snapshotted for training.
-    #[expect(
-        dead_code,
-        reason = "snapshotted in step with oxpinyin-capi; no reader on the zhuyin display law yet"
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "snapshotted in step with oxpinyin-capi; read by the in-crate tests only"
+        )
     )]
     pub(crate) token: Option<oxpinyin_core::PhraseToken>,
     /// The index this candidate held in the window it was snapshotted from.
