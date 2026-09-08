@@ -24,10 +24,15 @@ cargo bench -p oxpinyin-store --no-default-features --features redb --bench back
 cargo bench -p oxpinyin-capi --bench stage2 -- --profile-time 10
 ```
 
-A backend-specific bench must carry `required-features` in its
-`[[bench]]` entry, or `cargo clippy --workspace --all-targets` on the
-default backend fails to resolve its dependency (AGENTS.md, "Bench
-targets"). To run a bench in debug mode: `cargo test --bench <name>`.
+A backend-specific criterion bench — one that names a peer's optional
+dependency, such as heed for `lmdb` — must carry
+`required-features = ["<backend>"]` in its `[[bench]]` entry. CI runs
+`cargo clippy --workspace --all-targets` on the default backend, and
+without it the target fails to resolve the dependency instead of being
+skipped. Run one bench with `--bench <name>`; without it cargo also runs
+the lib under libtest, which rejects criterion flags such as
+`--profile-time`. To run a bench in debug mode: `cargo test --bench
+<name>` (AGENTS.md points here).
 
 ## The perf baseline (oracle vs installed oxpinyin)
 

@@ -119,10 +119,9 @@ lints.
 ## Dates
 
 All freeze-doc, findings, and patch-metadata dates are UTC, captured at
-run time from the machine executing the step, never hand-written. The
-failure this prevents: a hand-written local timestamp from a zone ahead
-of UTC (SGT, UTC+8) dates a record a day into the future — exactly what
-PR #363's first pass did, caught in review.
+run time from the machine executing the step (`date -u`), never
+hand-written: a local timestamp from a zone ahead of UTC dates a record
+into the future (PR #363).
 
 ## Toolchain
 
@@ -140,9 +139,8 @@ Do your work in a worktree, not the shared checkout — commit there,
 as found. Checking out an existing branch is `git worktree add
 /tmp/<name> <branch>`; a new branch needs `-b` (`git worktree add -b
 <branch> /tmp/<name>`); a truly detached worktree needs `--detach` with
-a commit (`git worktree add --detach /tmp/<name> <commit>`). The
-shim.cc collision came from two agents assuming sole ownership of one
-tree.
+a commit (`git worktree add --detach /tmp/<name> <commit>`). Two agents assuming
+sole ownership of one tree is how the shim.cc collision happened.
 
 ## Rebase discipline
 
@@ -157,12 +155,11 @@ builder recipe — artifacts your branch produced under the old scheme
 can survive the rebase textually intact and still be wrong. After
 rebasing, list the committed artifacts whose generators main changed
 since your branch point and regenerate them; do not let a
-conflict-free merge stand in for that. PR #363 vs #358 (the
-oracle-data manifest split) is the worked example: only an explicit
-ask surfaced it.
+conflict-free merge stand in for that (worked example: PR #363 vs
+#358, the oracle-data manifest split).
 
-Watch for the stale-base optical
-illusion (other people's merged work appearing as deletions). Re-run
+Watch for the stale-base optical illusion (other people's merged work
+appearing as deletions). Re-run
 pins after any rebase that changes the engine, capi, or data crates.
 Whoever merges later re-measures those pins rather than assuming the
 pre-rebase numbers still hold.
@@ -170,43 +167,19 @@ pre-rebase numbers still hold.
 fmt failures are merge blockers; a fmt-only commit is always safe
 when the diff is formatting-only and reviewed.
 
-## LMDB fixture sidecars
+## Operational rules that live with their procedures
 
-Opening a committed `fixtures/w3/lmdb/*` DBM rewrites its `-lock`
-sidecar — LMDB does that on every open, read-only included. The data
-files never change. The sidecars are gitignored
-(`/fixtures/**/*.lmdb-lock`) and untracked since 2026-09-06; if one ever
-shows up in `git status`, the ignore pattern regressed — fix the pattern,
-do not commit the file.
+The procedure-level rules used to accumulate here as incident notes;
+they now live where the procedure is documented, and this file only
+points at them:
 
-## Tests that need inputs CI never has
-
-A test that needs the model20 cache, the system-table export, a
-pin-built libpinyin tool or data dir, or opencc is `#[ignore = "needs
-…; run with --include-ignored"]`, and once run it panics on a missing
-input instead of printing "skipping" and passing (2026-09-06; ~30 tests
-used to do the latter, so a green run proved nothing). A committed
-golden or fixture that is missing is a failure too. `cargo test` shows
-them as ignored; `tools/oracle/run-differentials.sh` and the datagen
-drop-in differential pass `--include-ignored`. Do not add a new
-self-skipping test.
-
-## Oracle C-API gotchas
-
-`pinyin_train(instance, index)` trains the n-best result `index` and
-returns false unless `pinyin_guess_sentence` filled the n-best results
-first (`pinyin.cpp:2676` at the pin) — it does not consume the candidate
-list from `pinyin_guess_candidates`. `Session::train_top` exists to make
-this impossible to get wrong; harness and bench authors call it rather
-than `pinyin_train` directly.
-
-## Bench targets
-
-A backend-specific criterion bench — one that names a peer's optional
-dependency, such as heed for `lmdb` — must carry
-`required-features = ["<backend>"]` in its `[[bench]]` entry. CI runs
-`cargo clippy --workspace --all-targets` on the default backend, and
-without it the target fails to resolve the dependency instead of being
-skipped. Run one bench with `--bench <name>`; without it cargo also runs
-the lib under libtest, which rejects criterion flags such as
-`--profile-time`.
+- **Tests that need inputs CI never has** (model20, the system-table
+  export, pin-built tools, opencc) are `#[ignore = "needs …"]` and fail
+  on a missing input, never skip: `docs/testing/README.md`. Do not add a
+  self-skipping test.
+- **LMDB fixture sidecars** (`*.lmdb-lock`) are gitignored; one in
+  `git status` is a regressed ignore pattern: `docs/runbooks/backends.md`.
+- **Oracle C-API training** goes through `Session::train_top`, never
+  `pinyin_train` directly: `docs/runbooks/oracle.md`.
+- **Backend-specific benches** carry `required-features`; run one with
+  `--bench <name>`: `docs/runbooks/benches.md`.
