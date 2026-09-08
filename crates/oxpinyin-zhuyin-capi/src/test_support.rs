@@ -116,19 +116,23 @@ pub fn candidate_text(instance: *mut ZhuyinInstance, index: usize) -> String {
         .to_owned()
 }
 
-/// The instance's user store handle (the same connection the entry
-/// points write through; every update commits before returning).
-pub fn store_of(instance: *mut ZhuyinInstance) -> &'static oxpinyin_user::UserStore {
+/// Runs `f` against the instance's user store handle (the same
+/// connection the entry points write through; every update commits
+/// before returning). The borrow is scoped to the callback, so it cannot
+/// outlive the instance or its close.
+pub fn with_store<R>(
+    instance: *mut ZhuyinInstance,
+    f: impl FnOnce(&oxpinyin_user::UserStore) -> R,
+) -> R {
     // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`; the store is a value field, so the shared
-    // reference is valid while the instance lives. The `'static` lifetime
-    // is a test convenience: every use sits inside this function's caller
-    // and never outlives the instance.
+    // `zhuyin_alloc_instance`; the store is a value field, and the shared
+    // reference lives only for the duration of `f`.
     let inst = unsafe { instance_mut(instance) };
-    inst.core
+    f(inst
+        .core
         .user
         .as_ref()
-        .expect("instance carries a user store")
+        .expect("instance carries a user store"))
 }
 
 /// The token snapshotted on the candidate pointer.
