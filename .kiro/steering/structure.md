@@ -6,11 +6,11 @@ inclusion: always
 | Crate | Role | unsafe | Portable | Ships |
 |---|---|---|---|---|
 | oxpinyin-core | parser, SegmentGraph, k-best, scoring traits | forbid | yes | via engine |
-| oxpinyin-chewing | chewing/zhuyin layer; excisable module over core (D6 modularity) | deny | yes | via capi, engine |
+| oxpinyin-chewing | chewing/zhuyin layer: the packed chewing key, its renderers, and the frozen content tables — a dependency-free leaf *under* core, not a module over it (core depends on chewing) | deny | yes | via capi, engine |
 | oxpinyin-data | load libpinyin-format tables (D3 route); drop-in readers for installed libpinyin data | deny (+mmap) | yes | via engine |
 | oxpinyin-user | ACID store over DefaultStore; format-version from day one | deny | yes | via engine |
 | oxpinyin-engine | session API — the supported Rust surface | deny | yes | yes |
-| oxpinyin-facade | shared facade-orchestration layer (instance/context state machines, parse seams, cursor laws) consumed by both C-ABI facades | forbid | yes | via capi |
+| oxpinyin-facade | shared facade-orchestration layer (instance/context state machines, parse seams, cursor laws) consumed by both C-ABI facades; depends on core, engine, runtime and user — it holds the runtime's concrete dict/lm/user handles by value, so it forwards the whole backend feature matrix rather than staying generic over the engine traits | forbid | yes | via capi |
 | oxpinyin-capi | the libpinyin C ABI — `libpinyin.so.15`, all 79 `pinyin_*` exports, libpinyin's SONAME/header/pkg-config via cargo-c | allow | Linux | yes |
 | oxpinyin-zhuyin-capi | C ABI of libpinyin's zhuyin facade — `libzhuyin.so.15`, the `--enable-libzhuyin` counterpart (52 symbols, own SONAME); delegates to the same engine/chewing surface as oxpinyin-capi | allow | Linux | yes |
 | oxpinyin-python | PyO3 binding over the engine session API (Python consumers) | forbid | yes | wheel only |
@@ -33,11 +33,12 @@ inclusion: always
 
 **Centralized assembly:** the concrete construction of a decodable engine
 (system tables + unigram model + λ + optional user store + addon/punct
-wiring) lives in exactly one place, `oxpinyin-runtime`; capi,
-python, and future adapters consume it rather than assembling equivalents.
-This is deliberate so native and language-binding paths cannot silently
-diverge. It is glue over `oxpinyin-data`/`-user`/`-engine` public APIs — no
-algorithm belongs there.
+wiring) lives in exactly one place, `oxpinyin-runtime`; the facades
+(through `oxpinyin-facade`), capi, python, and future adapters consume it
+rather than assembling equivalents. This is deliberate so native and
+language-binding paths cannot silently diverge. It is glue over
+`oxpinyin-data`/`-user`/`-engine` public APIs — no algorithm belongs
+there.
 
 **Drop-in data path (P6, 2026-09-02):** there is no compatibility layer.
 `oxpinyin-data` reads libpinyin's own files through lazy readers — the
