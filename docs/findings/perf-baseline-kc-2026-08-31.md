@@ -1,7 +1,9 @@
 # Stage-2 Performance Baseline — KC Backend (2026-08-31)
 
-> **Superseded in part** by the validation pass
-> (`perf-baseline-kc-validation-2026-08-31.md`). Two corrections:
+> **Superseded** by the Stage-2 re-baseline
+> (`../perf/perf-baseline-kc-2026-09.md`, re-measured after the P1–P6
+> data-layer inversion) — and before that **in part** by the validation
+> pass (`perf-baseline-kc-validation-2026-08-31.md`). Two corrections:
 >
 > 1. **Init attribution**: the bottleneck is KC B-tree initialization
 >    (~89%), not `interpolation2.text` parsing (~5–11%). Init reads only

@@ -1,5 +1,9 @@
 # Performance Backend Matrix — 2026-08-31
 
+> **Superseded** by `perf-backend-matrix-2026-09.md` — the same 4-cell
+> matrix re-measured after the P1–P6 data-layer inversion. The
+> pre-inversion numbers below hold for the tree they cite.
+
 ## Executive summary
 
 A controlled 2×2 factorial experiment (implementation × backend)

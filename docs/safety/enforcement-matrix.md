@@ -74,7 +74,7 @@ warning, SCHED = scheduled analysis, REV = human review.
 | Parser fuzz smoke per PR | yes (10s) | PR gate: all five targets built, parser target smoke-run; every target soaks nightly | cargo-fuzz pinned nightly (existing job; the build-all step landed with `docs/findings/verify-nightly.md` finding 6) |
 | Corpus replay under Miri | no | ~~SCHED nightly~~ retired 2026-09-01 | the Miri lane was retired (`docs/findings/verify-nightly.md`) |
 | Fuzz soak | no | SCHED nightly | five targets × 3 min; one committed seed (`fuzz/corpus/parser/zhuan`), the rest of the corpus is seeded at run time |
-| Coverage visibility | no | SCHED nightly | cargo-llvm-cov report, no threshold |
+| Coverage floor | yes (nightly) | SCHED nightly | cargo-llvm-cov report plus the 77% line floor (`--fail-under-lines 77`, measured 2026-09-08; see verify-nightly.yml) |
 | Mutation score | no | ~~SCHED nightly (trial)~~ retired 2026-09-01 | the cargo-mutants lane was retired (`docs/findings/verify-nightly.md`) |
 
 ## H. Formal verification
@@ -102,7 +102,7 @@ warning, SCHED = scheduled analysis, REV = human review.
 | Constitution items 1–3 (broad appeal, size budget, no local AI) | product judgment |
 | Freeze discipline (SPECs, scorer API, path-set parity) | already enforced by review + oracle differentials; linting "don't change frozen semantics" is not mechanizable |
 | Rebase/worktree etiquette | git workflow, not code |
-| Commit trailer form | already mechanical: `.githooks/commit-msg` + CI R1–R4 |
+| Commit trailer form | already mechanical: `.githooks/commit-msg` + CI (R1, R2, R4 — no R3 was ever adopted) |
 | "When in doubt, STOP" | the meta-rule; cannot be a lint |
 
 ## Coverage of the MISRA-derived rule set

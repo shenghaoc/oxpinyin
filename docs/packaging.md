@@ -3,7 +3,7 @@
 This document records how `oxpinyin-capi` is packaged and installed as a
 shared/static C library, and the decisions behind it. The installed tree
 is a drop-in for libpinyin: consumers such as `ibus-libpinyin` link the
-51-symbol `pinyin.h` surface exactly as they link upstream — `libpinyin.pc`,
+79-symbol `pinyin.h` surface exactly as they link upstream — `libpinyin.pc`,
 `-lpinyin`, `libpinyin.so.15` — and need no source changes. The same
 applies to `oxpinyin-zhuyin-capi` and `libzhuyin`.
 

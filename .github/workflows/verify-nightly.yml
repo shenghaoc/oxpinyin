@@ -188,9 +188,11 @@ jobs:
           rust-cache: 'true'
       - run: cargo test --locked --workspace --release --no-default-features --features kyotocabinet
 
-  # Coverage report (region/line) as an artifact; no threshold gate —
-  # the baseline is 81.92% lines (measured 2026-08-29). cargo-llvm-cov
-  # is curl-pinned and checksum-verified like cargo-deny in ci.yml.
+  # Coverage report (region/line) as an artifact, plus the line floor in
+  # the step below (77%, the measured 2026-09-08 figure; the 81.92%
+  # recorded on 2026-08-29 was not cargo-llvm-cov's line number).
+  # cargo-llvm-cov is curl-pinned and checksum-verified like cargo-deny
+  # in ci.yml.
   coverage:
     runs-on: ubuntu-latest
     container:
