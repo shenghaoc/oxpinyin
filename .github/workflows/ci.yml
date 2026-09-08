@@ -571,6 +571,18 @@ jobs:
       # so this never runs --locked.
       - name: Verify fuzz manifest
         run: cargo +nightly-2026-08-01 metadata --manifest-path fuzz/Cargo.toml --format-version 1 --no-deps > /dev/null
+      # Fuzzing memory on the PR path too: restore the corpus the nightly
+      # soak has accumulated (same key prefix as verify-nightly.yml's
+      # fuzz-soak, so a PR smoke starts from that memory instead of the
+      # single committed seed). The PR's own run-id key saves whatever
+      # the 10s smokes learned, LRU-evicted like any cache.
+      - name: Restore the accumulated fuzz corpora
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
       - name: Build every fuzz target
         # Compile gate for the whole fuzz workspace. Only the parser is run
         # here; the other targets used to reach a compiler solely in the
@@ -626,3 +638,13 @@ jobs:
             echo "::endgroup::"
           done
           exit $status
+      # A smoke crash must survive the runner: cargo-fuzz writes the
+      # crash-* input under fuzz/artifacts/<target>/, and that file is
+      # the repro a fix needs. Uploaded only on failure, like the
+      # nightly soak does.
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crash-artifacts
+          path: fuzz/artifacts/

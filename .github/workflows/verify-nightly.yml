@@ -67,6 +67,19 @@ jobs:
           printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
           . "$HOME/.cargo/env"
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      # Fuzzing memory, half one: the corpora persist across nightly runs
+      # (latest-wins — the run-id key always misses so every run saves,
+      # the prefix restore-key always loads the newest save), so a soak
+      # starts where the last one ended instead of from the single
+      # committed seed. Restored before seeding: the seed step re-copies
+      # its fixture inputs over whatever the cache brought back.
+      - name: Restore the accumulated fuzz corpora
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
       - name: Seed corpora
         run: |
           shopt -s nullglob
@@ -79,7 +92,9 @@ jobs:
           fi
       - name: Soak each target
         # Every target runs even if an earlier one fails; the accumulated
-        # status is the step's exit code.
+        # status is the step's exit code. -print_final_stats leaves the
+        # coverage/edge counters in the log so a soak that explored
+        # nothing is visible as one, not just green.
         run: |
           status=0
           for target in parser dict-loader fixture-model double-pinyin capi-commands; do
@@ -88,13 +103,23 @@ jobs:
             # kernels' mmap entropy exceeds ASan's shadow mapping, and an
             # unprivileged container cannot lower vm.mmap_rnd_bits itself
             # (same rationale as store-backends.yml's sanitizer job).
-            if ! setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run "$target" -- -max_total_time=180 -timeout=15 -max_len=4096; then
+            if ! setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run "$target" -- -max_total_time=180 -timeout=15 -max_len=4096 -print_final_stats=1; then
               status=1
               echo "::error::fuzz target $target failed"
             fi
             echo "::endgroup::"
           done
           exit $status
+      # Fuzzing memory, half two: a crash survives the runner as an
+      # artifact (cargo-fuzz writes crash-* inputs under
+      # fuzz/artifacts/<target>/), not as a log line that dies with the
+      # job.
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crash-artifacts
+          path: fuzz/artifacts/
 
   # The fixture tier of the oracle differentials: build the pinned
   # libpinyin (public source, SHA read from tools/oracle/build-oracle.sh
