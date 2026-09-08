@@ -19,7 +19,7 @@ where
     /// (`pinyin_guess_sentence`, `pinyin.cpp:1373-1385`).
     ///
     /// With real unigrams this is the trellis port of upstream's
-    /// `PhoneticLookup<2, 3>` ([`crate::nbest`]); without them the
+    /// `PhoneticLookup<2, 3>` (`crate::nbest`); without them the
     /// pre-frequency per-path DP supplies up to three rows so the surface
     /// exists for every model. Rows survive further typing and selections
     /// until the next [`Session::guess_sentence`] or [`Session::reset`] —

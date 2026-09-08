@@ -196,7 +196,7 @@ where
     /// state and cannot fail, so the constitution's `Result` rule for
     /// fallible public APIs does not reach it. The state-changing halves
     /// of the parse pipeline are the fallible [`Session::replace_raw`]
-    /// and the infallible [`Session::reset_composition`]/[`reset`].
+    /// and the infallible [`Session::reset_composition`] / [`Session::reset`].
     #[must_use]
     pub fn parse_continues(&self, stored: &[u8], original: &[u8]) -> bool {
         !self.selection_committed
@@ -222,7 +222,7 @@ where
     /// state and cannot fail, so the constitution's `Result` rule for
     /// fallible public APIs does not reach it. The state-changing halves
     /// of the parse pipeline are the fallible [`Session::replace_raw`]
-    /// and the infallible [`Session::reset_composition`]/[`reset`].
+    /// and the infallible [`Session::reset_composition`] / [`Session::reset`].
     #[must_use]
     pub fn committed_parse_continues(&self, stored: &[u8], original: &[u8]) -> bool {
         self.selection_committed
