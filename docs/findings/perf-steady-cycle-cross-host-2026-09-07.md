@@ -1,5 +1,27 @@
 # Steady-cycle cross-host data record
 
+> **Superseding note (2026-09-08).** This record's numbers describe a tree
+> that no longer exists on `main`. Its harness commit is `f79f665d` on
+> `perf/steady-cycle-workload-knob`, which is **not an ancestor of `main`**;
+> from that tree's merge base with `main`, the engine's session layer was
+> subsequently rewritten (`session.rs` split into `session/`, ~6.3k insertions
+> / ~5.9k deletions across 17 files, including `c77ea97a` "the pooling DP
+> borrows its prefix cell instead of cloning it"). The steady-cycle ratios in
+> this document — including the arm64 1.158 / 1.157 and the amd64 ≈ 1.04 per
+> unit — are therefore properties of the 2026-09-07 tree, **not of the current
+> one**.
+>
+> A re-measurement on the same amd64 host, same protocol, same oracle pin, on
+> the current tree, finds the wall-clock ratio **below 1** (T = 0.9527 for the
+> shipped no-debug artifact) while the hardware instruction counter shows
+> oxpinyin executing 1.3537× the instructions. See
+> [perf-cycle-ir-differential-2026-09-08.md](perf-cycle-ir-differential-2026-09-08.md).
+> The debug-info layout hypothesis for this record's amd64 1.04 was tested and
+> falsified there.
+>
+> Nothing in this document is edited; it is retained as the raw capture of its
+> own session. Read every ratio in it as tree-scoped.
+
 ## Purpose
 
 Data only. No interpretation; see PR 3.
