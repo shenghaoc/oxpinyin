@@ -1,6 +1,12 @@
 # Parity-climb residual analysis
 
-Date: 2026-08-10 · Status: **measured after constant sweep**
+Date: 2026-08-10 · Status: **superseded — kept as the climb's record**
+
+> **Superseded 2026-08-22** by `docs/testing/corpus-tail.md`: the
+> candidate surface closed to bit-identical against the pin on all
+> 10,190 corpus rows at depth 10 (Class A residual zero). The top-1
+> rates below are the intermediate 2026-08-10 measurements, not the
+> current state of the tree.
 
 After bigram integration and the scoring-constant sweep
 (`docs/findings/scoring-constant-sweep.md`), full-corpus rates against

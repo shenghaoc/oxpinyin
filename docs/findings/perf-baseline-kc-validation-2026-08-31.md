@@ -1,5 +1,10 @@
 # KC Baseline Validation — 2026-08-31
 
+> **Superseded** by the Stage-2 re-baseline
+> (`../perf/perf-baseline-kc-2026-09.md`), re-measured after the P1–P6
+> data-layer inversion. The corrections recorded here were folded into
+> that re-baseline; the numbers below hold for the tree they cite.
+
 Validation pass on the KC performance baseline (`15e1b47`). The baseline
 document (`perf-baseline-kc-2026-08-31.md`) is preserved; this document
 records corrections, additional evidence, and the acceptance gate.

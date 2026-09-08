@@ -13,8 +13,8 @@ rules: `AGENTS.md`. Crate roles: `.kiro/steering/structure.md`.
 
 | Stage | Goal |
 |---|---|
-| **0** | Scaffold, pin, SPECs/fixtures (here) |
-| **1** | Exact-output parity with the pin-built libpinyin oracle (differential testing) |
+| **0** | Scaffold, pin, SPECs/fixtures (complete) |
+| **1** | Exact-output parity with the pin-built libpinyin oracle (differential testing) — complete: candidate surface bit-identical on all 10,190 corpus rows (`docs/testing/corpus-tail.md`) |
 | **2** | Measured upgrades — smaller binary, faster execution, lower RAM first (in progress, `docs/perf/`); model upgrades (trigram/KN, typo edges, own data) remain candidates — every divergence vs the Stage 1 baseline |
 
 Stage 1 uses installed/libpinyin-format tables (no redistribution required:
@@ -45,9 +45,12 @@ SPEC is frozen, do not implement that slice.
 ## Phase 0 (blocked feature work; now recorded)
 
 Recorded — see `.kiro/specs/foundation/tasks.md` and findings. The one
-open item is the consolidated F-E cross-lane evidence register (foundation
-task 4): the 13 cases' evidence is spread across the findings docs, not yet
-one artifact on main.
+open Phase 0 item is the consolidated F-E cross-lane evidence register
+(foundation task 4): the 14 cases (F-E-01..13 enumerated in the spec,
+F-E-14 registered 2026-09-05) have their evidence spread across the
+findings and testing docs, not yet one artifact on main. Beside it, the
+Stage-2 open-items list below carries the W8 drop-in user-file write
+path.
 
 | Need | Output |
 |---|---|

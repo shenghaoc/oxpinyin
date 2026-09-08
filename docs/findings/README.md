@@ -18,6 +18,10 @@ since moved past. Statuses:
   banner naming its current counterpart.
 - **open** — work still owed.
 
+A parenthetical after a status ("record (W12)", "verified (P3)") is a
+sub-note about scope or provenance, not a new status; the legend word in
+front is the status.
+
 Perf snapshots dated 2026-08-31 and later live here when they belong to
 a finding (backend matrix, store optimisations); the Stage-2 baseline
 series lives in `../perf/`.
@@ -72,14 +76,16 @@ series lives in `../perf/`.
 | [`parser-path-set`](parser-path-set.md) | Full-pinyin parser path-set SPEC | frozen |
 | [`parser-spec-contradiction-incomplete-keys`](parser-spec-contradiction-incomplete-keys.md) | Findings — frozen parser SPEC contradicts the pin on incomplete keys | historical |
 | [`parser-spec`](parser-spec.md) | Full-pinyin parser SPEC | frozen |
-| [`perf-backend-matrix-2026-08-31`](perf-backend-matrix-2026-08-31.md) | Performance Backend Matrix — 2026-08-31 | perf snapshot |
+| [`perf-backend-matrix-2026-08-31`](perf-backend-matrix-2026-08-31.md) | Performance Backend Matrix — 2026-08-31 | perf snapshot (superseded by `perf-backend-matrix-2026-09.md`) |
 | [`perf-backend-matrix-2026-09`](perf-backend-matrix-2026-09.md) | Performance Backend Matrix — 2026-09-05 | perf snapshot |
 | [`perf-backend-matrix-bdb-store-2026-09`](perf-backend-matrix-bdb-store-2026-09.md) | Performance Backend Matrix — BDB and the Store Tier — 2026-09-06 | perf snapshot |
-| [`perf-baseline-kc-2026-08-31`](perf-baseline-kc-2026-08-31.md) | Stage-2 Performance Baseline — KC Backend (2026-08-31) | perf snapshot |
-| [`perf-baseline-kc-validation-2026-08-31`](perf-baseline-kc-validation-2026-08-31.md) | KC Baseline Validation — 2026-08-31 | perf snapshot |
+| [`perf-baseline-kc-2026-08-31`](perf-baseline-kc-2026-08-31.md) | Stage-2 Performance Baseline — KC Backend (2026-08-31) | perf snapshot (superseded by `../perf/perf-baseline-kc-2026-09.md`) |
+| [`perf-baseline-kc-validation-2026-08-31`](perf-baseline-kc-validation-2026-08-31.md) | KC Baseline Validation — 2026-08-31 | perf snapshot (superseded by `../perf/perf-baseline-kc-2026-09.md`) |
 | [`perf-keycost-first-alloc-2026-09-07`](perf-keycost-first-alloc-2026-09-07.md) | Key-Cost Walk Elimination — 2026-09-07 | perf snapshot |
 | [`perf-mmap-system-indexes-2026-08-31`](perf-mmap-system-indexes-2026-08-31.md) | Sysimage: mmap-backed system pinyin/phrase indexes — 2026-08-31 | perf snapshot |
 | [`perf-p2-chewing-table-2026-09-01`](perf-p2-chewing-table-2026-09-01.md) | P2 performance findings — lazy ChewingTable vs eager PinyinIndex | perf snapshot |
+| [`perf-provenance-audit-2026-09-07`](perf-provenance-audit-2026-09-07.md) | Perf provenance audit — no record pins its harness; one commit silently repointed three docs' oracle | audit |
+| [`perf-steady-cycle-cross-host-2026-09-07`](perf-steady-cycle-cross-host-2026-09-07.md) | Steady keystroke cycle across hosts — arm64/amd64 vs libpinyin | perf snapshot |
 | [`perf-store-opt-2026-09`](perf-store-opt-2026-09.md) | Performance Store Optimizations — 2026-09-06 | perf snapshot |
 | [`phrase-dbm-format-2026-09-01`](phrase-dbm-format-2026-09-01.md) | libpinyin phrase-index DBM format — P3 source-level findings | verified (P3) |
 | [`phrase-union`](phrase-union.md) | Phrase-index union at lookup — W11 Phase 0 scope and proposed design | approved (W11 Phase 0) |
