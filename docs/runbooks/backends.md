@@ -45,9 +45,14 @@ on every store-affecting change (`store-backends.yml`, `backend-matrix`).
 `fixtures/w3/<kct|tkt|lmdb|redb>/` is the committed mini data set, one
 directory per backend, with libpinyin's own file names on KC and tkrzw.
 Regenerate with `oxpinyin-datagen compile --mini` from the model20 cache
-(`goldens-and-pins.md`). LMDB rewrites its `-lock` sidecar on every open;
-those are gitignored — one appearing in `git status` means the pattern
-regressed (AGENTS.md).
+(`goldens-and-pins.md`).
+
+Opening a committed `fixtures/w3/lmdb/*` DBM rewrites its `-lock`
+sidecar — LMDB does that on every open, read-only included; the data
+files never change. The sidecars are gitignored
+(`/fixtures/**/*.lmdb-lock`) and untracked since 2026-09-06. If one
+ever shows up in `git status`, the ignore pattern regressed: fix the
+pattern, do not commit the file (AGENTS.md points here).
 
 ## Switching is a format transition
 

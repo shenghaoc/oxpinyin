@@ -77,6 +77,16 @@ Exit 0 is identical on every driver; 2 prints each divergence. The
 per-surface drivers (`tools/bisection/run-*-diff.sh`) run one surface
 each; their headers say what they prove.
 
+### Training through the C API
+
+`pinyin_train(instance, index)` trains the n-best result `index` and
+returns false unless `pinyin_guess_sentence` filled the n-best results
+first (`pinyin.cpp:2676` at the pin) — it does not consume the candidate
+list from `pinyin_guess_candidates`. `Session::train_top` in
+`pinyin-oracle` exists to make this impossible to get wrong; harness
+and bench authors call it rather than `pinyin_train` directly
+(AGENTS.md points here).
+
 ## 5. What to do with a divergence
 
 Classify it against `docs/findings/compatibility-policy.md` before

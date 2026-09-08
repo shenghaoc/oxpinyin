@@ -5,10 +5,17 @@ The corpus pipeline, the oracle environment, the differential fixtures
 oracle is `../runbooks/oracle.md`; how goldens and pins are refreshed
 is `../runbooks/goldens-and-pins.md`.
 
-Tests that need inputs CI never has (model20, the export, pin-built
-tools, opencc) are `#[ignore]`d with the input named in the reason; run
-them with `--include-ignored` and they fail, never skip, on a missing
-input (AGENTS.md, "Tests that need inputs CI never has").
+## Tests that need inputs CI never has
+
+A test that needs the model20 cache, the system-table export, a
+pin-built libpinyin tool or data dir, or opencc is
+`#[ignore = "needs …; run with --include-ignored"]`, and once run it
+panics on a missing input instead of printing "skipping" and passing
+(2026-09-06; about 30 tests used to do the latter, so a green run proved
+nothing). A committed golden or fixture that is missing is a failure
+too. `cargo test` shows them as ignored; `tools/oracle/run-differentials.sh`
+and the datagen drop-in differential pass `--include-ignored`. Do not
+add a new self-skipping test (AGENTS.md points here).
 
 | Document | Subject |
 | --- | --- |
