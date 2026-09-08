@@ -31,8 +31,12 @@
 //! closure's writes go straight to the database inside the transaction,
 //! reads see them, and an `Err` rolls the whole thing back.
 //!
-//! Commits use `hard = 0` and then flush: durable against a process
-//! crash, not against power loss.
+//! Commits end with `kcdbsync(hard = 1)`: a commit that returns is on
+//! stable storage, durable against process crashes and power loss.
+//! A power cut *during* the commit itself can still tear the
+//! transaction — TreeDB writes through no write-ahead log — the same
+//! residual the tkrzw backend documents; redb and LMDB alone roll a
+//! torn commit back on the next open.
 //!
 //! # Threading
 //!
@@ -225,10 +229,12 @@ impl WriteStore for KcStore {
         match f(&mut txn) {
             Ok(out) => {
                 self.db.end_transaction(true)?;
-                // Push the commit to the operating system, so another
-                // process — or another handle in this one — reading the
-                // database observes it.
-                self.db.sync(false)?;
+                // Push the commit to stable storage (`hard = 1`): once
+                // `write` returns, the transaction is on the physical
+                // device, surviving machine crashes and power loss —
+                // the durability half of the `WriteStore::write`
+                // contract every backend keeps.
+                self.db.sync(true)?;
                 Ok(out)
             }
             Err(error) => {
@@ -249,8 +255,8 @@ impl WriteStore for KcStore {
         // through a copy of the whole file, which is not what the other
         // backends' `compact` does either (LMDB's successful `compact`
         // also does not shrink the file). Making the current state
-        // durable is the honest implementation.
-        self.db.sync(false)
+        // durable on the device is the honest implementation.
+        self.db.sync(true)
     }
 }
 
