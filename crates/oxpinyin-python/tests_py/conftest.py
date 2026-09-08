@@ -124,12 +124,12 @@ def fixture_w3(repo_root: Path, store_ext: str) -> Path:
 
 @pytest.fixture(scope="session")
 def parity_corpus(crate_dir: Path) -> dict:
-    return json.loads((crate_dir / "parity-corpus.json").read_text())
+    return json.loads((crate_dir / "parity-corpus.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="session")
 def zhuyin_parity_corpus(crate_dir: Path) -> dict:
-    return json.loads((crate_dir / "parity-corpus-zhuyin.json").read_text())
+    return json.loads((crate_dir / "parity-corpus-zhuyin.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="session")
