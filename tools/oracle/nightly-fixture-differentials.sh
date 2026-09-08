@@ -110,9 +110,11 @@ fi
 # ── 3. evals2.text in the toned token space (the pin's own ngseg) ─────────
 # The eval gate is skipped unless $data/evals2.text exists
 # (run-differentials.sh); generate it the documented way — the pin's
-# ngseg over raw text, run from the data dir it reads.
+# ngseg over raw text, run from the data dir it reads. `make install`
+# installs only the three data-build utils, so ngseg comes from the
+# build tree, the same path run-differentials.sh wires for its suites.
 if [[ ! -f $data/evals2.text ]]; then
-	(cd "$data" && "$prefix/bin/ngseg" "$repo/fixtures/w9/corpus-sample.txt" > evals2.text)
+	(cd "$data" && "$src/utils/segment/ngseg" "$repo/fixtures/w9/corpus-sample.txt" > evals2.text)
 fi
 
 # ── 4. both differential scripts, exactly as a developer runs them ─────────
