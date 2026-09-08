@@ -1,11 +1,12 @@
-//! `oxpinyin-dictool export`: user redb → classic ibus-libpinyin text.
+//! `oxpinyin-dictool export`: user store → classic ibus-libpinyin text.
 
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use pinyin_capi::{ExportedBigramRow, ExportedPhrase, user_bigram_rows, user_phrase_rows};
+use oxpinyin_facade::ExportedBigramRow;
+use oxpinyin_user::{ExportedPhrase, USER_DICTIONARY};
 
 use crate::context::UserImportContext;
 
@@ -90,8 +91,19 @@ fn write_rows<W: Write>(
 pub fn run(user_dir: &Path, output: Option<&Path>) -> Result<(), ExportError> {
     let context = UserImportContext::open(user_dir)
         .ok_or_else(|| ExportError::Context(user_dir.to_path_buf()))?;
-    let phrases = user_phrase_rows(context.as_ptr()).ok_or(ExportError::PhraseSnapshot)?;
-    let bigrams = user_bigram_rows(context.as_ptr()).ok_or(ExportError::BigramSnapshot)?;
+    let phrases = context
+        .core()
+        .export_phrases(u32::from(USER_DICTIONARY))
+        .ok_or(ExportError::PhraseSnapshot)?;
+    // The §9 bigram snapshot refuses rather than skip rows whose rendering
+    // needs system tables this user-store-only context does not carry.
+    if !context.core().can_render_export_bigrams() {
+        return Err(ExportError::BigramSnapshot);
+    }
+    let bigrams = context
+        .core()
+        .export_bigram_rows()
+        .ok_or(ExportError::BigramSnapshot)?;
 
     if let Some(path) = output {
         let mut file = fs::File::create(path).map_err(ExportError::Write)?;

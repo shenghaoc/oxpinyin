@@ -18,7 +18,7 @@
 use oxpinyin_core::{LanguageModel, PhraseToken};
 use std::ptr;
 
-use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, UserStore};
+use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, USER_DICTIONARY, UserStore};
 
 use crate::candidates::{
     pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_clear_constraint,
@@ -876,10 +876,15 @@ fn export_iterators_walk_the_stored_triples() {
     ));
     crate::iterators::pinyin_end_get_bigram_phrases(bigram);
 
-    // The safe Rust export wrappers drive the same ABI iterators and free
-    // the caller-owned buffers with the matching libc allocator.
+    // The shared facade materialization (what the zhuyin facade and
+    // oxpinyin-dictool also drive) renders the identical row set.
+    let rows = {
+        // SAFETY: `context` is a live `pinyin_init` handle.
+        let ctx = unsafe { crate::state::context_ref(context) };
+        ctx.export_bigram_rows().expect("render bigram rows")
+    };
     assert_eq!(
-        crate::user_bigram_rows(context).unwrap(),
+        rows,
         vec![crate::ExportedBigramRow {
             phrase: "你好".to_owned(),
             pinyin: "ni'hao".to_owned(),
@@ -892,14 +897,6 @@ fn export_iterators_walk_the_stored_triples() {
 }
 
 #[test]
-fn import_pinyin_canonicalizes_unseparated_and_trailing_bytes() {
-    let parsed = crate::import_pinyin("nihaoXYZ").expect("parses");
-    assert_eq!(parsed.key_count, 2);
-    assert_eq!(parsed.canonical, "ni'hao");
-    assert_eq!(crate::import_pinyin("ni'hao").unwrap().canonical, "ni'hao");
-}
-
-#[test]
 fn user_only_bigram_export_fails_when_rows_need_system_tables() {
     let user_dir = TempUserDir::new("user-only-bigram");
     let store_path = user_dir.path.join(user_store_file());
@@ -909,11 +906,20 @@ fn user_only_bigram_export_fails_when_rows_need_system_tables() {
     store.observe_selection(2, 3).expect("train system tokens");
     drop(store);
 
-    let context = crate::open_user_import_context(&user_dir.path);
-    assert!(!context.is_null());
-    assert!(crate::user_phrase_rows(context).unwrap().is_empty());
-    assert!(crate::user_bigram_rows(context).is_none());
-    crate::close_user_import_context(context);
+    // The user-only context is a facade concept now (the Rust-only capi
+    // constructor served the migration tool and moved with it): a core
+    // with no runtime must refuse to snapshot bigrams whose rendering
+    // needs system tables rather than skip them into an incomplete file.
+    let core = oxpinyin_facade::ContextCore::new_user_only(
+        user_dir.path.to_str().expect("UTF-8 path"),
+        oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,
+    )
+    .expect("user-only context core");
+    let phrases = core
+        .export_phrases(u32::from(USER_DICTIONARY))
+        .expect("phrase snapshot");
+    assert!(phrases.is_empty());
+    assert!(!core.can_render_export_bigrams());
 }
 
 #[test]

@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use pinyin_capi::import_pinyin;
+use oxpinyin_core::graph::FewestKeys;
 
 use crate::import::MAX_COUNT;
 
@@ -133,21 +133,25 @@ pub fn parse(text: &str) -> Result<Vec<Record>, ParseError> {
                 "phrase must be 1..=15 Unicode scalar values",
             ));
         }
-        let Some(parsed) = import_pinyin(pinyin) else {
+        // The import ABI's parse selection: longest parsed prefix under
+        // the frozen untuned full-pinyin inventory, fewest complete keys,
+        // trailing unparsed bytes ignored (`pinyin_iterator_add_phrase`).
+        let Some(parsed) = FewestKeys::parse(pinyin) else {
             return Err(ParseError::new(
                 line_number,
                 format!("pinyin does not parse: {pinyin:?}"),
             ));
         };
-        if parsed.key_count != phrase_len {
+        let key_count = parsed.keys().len();
+        if key_count != phrase_len {
             return Err(ParseError::new(
                 line_number,
                 format!(
-                    "pinyin has {} key(s) but the phrase has {phrase_len} character(s)",
-                    parsed.key_count
+                    "pinyin has {key_count} key(s) but the phrase has {phrase_len} character(s)"
                 ),
             ));
         }
+        let canonical = parsed.canonical();
 
         let count = match count_text {
             None => None,
@@ -171,19 +175,16 @@ pub fn parse(text: &str) -> Result<Vec<Record>, ParseError> {
             }
         };
 
-        if !seen.insert((phrase.to_owned(), parsed.canonical.clone())) {
+        if !seen.insert((phrase.to_owned(), canonical.clone())) {
             return Err(ParseError::new(
                 line_number,
-                format!(
-                    "duplicate (phrase, pinyin) pair: {phrase:?} {:?}",
-                    parsed.canonical
-                ),
+                format!("duplicate (phrase, pinyin) pair: {phrase:?} {canonical:?}"),
             ));
         }
 
         records.push(Record {
             phrase: phrase.to_owned(),
-            pinyin: parsed.canonical,
+            pinyin: canonical,
             count,
             line: line_number,
         });

@@ -24,11 +24,10 @@ use oxpinyin_engine::CandidateKind;
 /// `false`.
 const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
 use oxpinyin_facade::ContextCore;
+pub use oxpinyin_facade::ExportedBigramRow;
 pub use oxpinyin_facade::InstanceCore;
 pub use oxpinyin_runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
-use oxpinyin_user::{
-    ExportedPhrase, NETWORK_DICTIONARY, SENTENCE_START, USER_DICTIONARY, is_user_file_token,
-};
+use oxpinyin_user::ExportedPhrase;
 
 use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, PinyinContext, PinyinInstance};
 
@@ -59,21 +58,6 @@ impl CapiContext {
         Some(Self {
             core: ContextCore::open(
                 system_dir,
-                user_dir,
-                oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,
-            )?,
-        })
-    }
-
-    /// User-store-only context for standalone migration tools
-    /// (`oxpinyin-dictool import`). The C ABI `pinyin_init` still requires
-    /// system tables — its contract is a decoder context — while this
-    /// Rust-only constructor lets a tool drive the import/export/save trio
-    /// without carrying a system dictionary. `pinyin_alloc_instance` reports
-    /// `None` for such a context because there is nothing to decode with.
-    pub(crate) fn new_user_only(user_dir: &str) -> Option<Self> {
-        Some(Self {
-            core: ContextCore::new_user_only(
                 user_dir,
                 oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,
             )?,
@@ -155,139 +139,22 @@ impl CapiContext {
             .is_some_and(|runtime| runtime.unload_system_addon(index))
     }
 
-    /// §9 phrase-export materialization. [`USER_DICTIONARY`] and
-    /// [`NETWORK_DICTIONARY`] export their stored rows; any other index
-    /// exports an empty list.
+    /// §9 phrase-export materialization, shared with the zhuyin facade
+    /// and the standalone migration tool: [`ContextCore::export_phrases`].
     pub(crate) fn export_phrases(&self, index: u32) -> Option<Vec<ExportedPhrase>> {
-        let index = u8::try_from(index).ok()?;
-        if index != USER_DICTIONARY && index != NETWORK_DICTIONARY {
-            return Some(Vec::new());
-        }
-        self.core.user.as_ref()?.export_phrases_in(index).ok()
+        self.core.export_phrases(index)
     }
 
-    /// §9 bigram-export materialization with upstream's filters and
-    /// rendering (`pinyin_begin_get_bigram_phrases` in `pinyin.cpp`):
-    /// skip `sentence_start` predecessors and counts at or below the
-    /// first-seed threshold (`initial_seed − 1` = 68); phrase = prev text +
-    /// next text; pinyin = prev pinyin + `'` + next pinyin (one row per
-    /// pronunciation combination); count = stored × 2 (upstream's local
-    /// `unigram_factor`).
-    /// False when this context cannot render every exportable bigram row
-    /// (user-store-only, and at least one stored pair needs the system
-    /// phrase index). Callers must fail the snapshot rather than skip those
-    /// rows into an incomplete file.
+    /// §9 bigram-export renderability, shared: [`ContextCore::
+    /// can_render_export_bigrams`].
     pub(crate) fn can_render_export_bigrams(&self) -> bool {
-        const INITIAL_SEED: u64 = 23 * 3;
-        if self.core.runtime.is_some() {
-            return true;
-        }
-        let Some(store) = self.core.user.as_ref() else {
-            return true;
-        };
-        let Ok(raw) = store.export_bigrams() else {
-            return false;
-        };
-        !raw.iter().any(|(prev, cur, count)| {
-            *prev != SENTENCE_START
-                && *count >= INITIAL_SEED
-                && (!is_user_file_token(*prev) || !is_user_file_token(*cur))
-        })
+        self.core.can_render_export_bigrams()
     }
 
+    /// §9 bigram-export rows, shared: [`ContextCore::export_bigram_rows`].
     pub(crate) fn export_bigram_rows(&self) -> Option<Vec<ExportedBigramRow>> {
-        const INITIAL_SEED: u64 = 23 * 3;
-        let store = self.core.user.as_ref()?;
-        let raw = store.export_bigrams().ok()?;
-        let mut rows = Vec::new();
-        // Memoize the (text, pinyins) rendering: a system token recurs across
-        // many bigram rows and `render_token` is an O(pinyin-index) scan, so
-        // resolving it once per distinct token keeps the export off the
-        // rows×index quadratic.
-        let mut rendered: std::collections::HashMap<u32, Option<(String, Vec<String>)>> =
-            std::collections::HashMap::new();
-        for (prev, cur, count) in raw {
-            if prev == SENTENCE_START {
-                continue;
-            }
-            // Upstream's threshold is `initial_seed - 1` = 68.
-            if count < INITIAL_SEED {
-                continue;
-            }
-            let Some((prev_text, prev_pinyins)) = rendered
-                .entry(prev)
-                .or_insert_with(|| self.render_token(prev))
-                .clone()
-            else {
-                continue;
-            };
-            let Some((cur_text, cur_pinyins)) = rendered
-                .entry(cur)
-                .or_insert_with(|| self.render_token(cur))
-                .clone()
-            else {
-                continue;
-            };
-            let phrase = format!("{prev_text}{cur_text}");
-            for first in &prev_pinyins {
-                for second in &cur_pinyins {
-                    rows.push(ExportedBigramRow {
-                        phrase: phrase.clone(),
-                        pinyin: format!("{first}'{second}"),
-                        count: i64::try_from(count.saturating_mul(2)).unwrap_or(i64::MAX),
-                    });
-                }
-            }
-        }
-        Some(rows)
+        self.core.export_bigram_rows()
     }
-
-    /// `(text, pinyin spellings)` for a token: user tokens render from the
-    /// user store's phrase/pronunciation tables, system tokens from the
-    /// system phrase index and the pinyin index (reverse-scanned).
-    fn render_token(&self, token: u32) -> Option<(String, Vec<String>)> {
-        if is_user_file_token(token) {
-            let store = self.core.user.as_ref()?;
-            let phrase = store.phrase(token).ok().flatten()?;
-            // Render each reading through the shared `render_pinyin` helper,
-            // skipping any unrenderable one — the same rule `export_phrases`
-            // applies, so the phrase and bigram exports stay consistent.
-            let pinyins: Vec<String> = phrase
-                .pronunciations()
-                .iter()
-                .filter_map(oxpinyin_user::UserPronunciation::render_pinyin)
-                .collect();
-            if pinyins.is_empty() {
-                return None;
-            }
-            Some((phrase.text().to_owned(), pinyins))
-        } else {
-            let dict = self.core.runtime.as_ref()?.dict();
-            let text = dict.system().phrase_text(token)?;
-            let pinyins: Vec<String> = dict
-                .system()
-                .pronunciations(token)
-                .into_iter()
-                .map(|(pinyin, _freq)| pinyin)
-                .collect();
-            if pinyins.is_empty() {
-                return None;
-            }
-            Some((text, pinyins))
-        }
-    }
-}
-
-/// One rendered §9 bigram-export row: concatenated phrase text, the
-/// `'`-joined pronunciation of the pair, and the scaled count.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ExportedBigramRow {
-    /// Concatenated predecessor + successor phrase text.
-    pub phrase: String,
-    /// The `'`-joined pronunciation of the pair.
-    pub pinyin: String,
-    /// The rendered bigram count (`stored × 2`).
-    pub count: i64,
 }
 
 // ── Instance ────────────────────────────────────────────────────────────

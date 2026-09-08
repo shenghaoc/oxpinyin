@@ -11,15 +11,23 @@ description = "Conversions and the standalone vocabulary exporter."
 workspace = true
 
 [dependencies]
-# default-features = false so `--no-default-features` builds actually reach
-# the store's backend selection; the [features] block below forwards it.
-oxpinyin-capi = { path = "../oxpinyin-capi", default-features = false }
+# FewestKeys: the frozen untuned full-pinyin parse the import path shares
+# with the C ABI's `pinyin_iterator_add_phrase`.
+oxpinyin-core = { workspace = true }
+# The user-store-only context core and the §9 export materialization the
+# C ABI's export iterators also drive — the shared laws, no C types.
+# default-features = false so `--no-default-features` builds reach the
+# backend selection; the [features] block below forwards it.
+oxpinyin-facade = { path = "../oxpinyin-facade", default-features = false }
+oxpinyin-user = { path = "../oxpinyin-user", default-features = false }
 
 [features]
-# Backend selection, forwarded to the C ABI crate (one backend per binary;
-# see oxpinyin-store's [features] for the model and precedence).
+# Backend selection, forwarded down the facade→runtime/user chain (one
+# backend per binary; see oxpinyin-store's [features] for the model and
+# precedence). Dictool no longer depends on the C ABI crate, so it is
+# pure Rust under any backend and portable to macOS and Windows.
 default = ["tkrzw"]
-kyotocabinet = ["oxpinyin-capi/kyotocabinet"]
-tkrzw = ["oxpinyin-capi/tkrzw"]
-lmdb = ["oxpinyin-capi/lmdb"]
-redb = ["oxpinyin-capi/redb"]
+kyotocabinet = ["oxpinyin-facade/kyotocabinet", "oxpinyin-user/kyotocabinet"]
+tkrzw = ["oxpinyin-facade/tkrzw", "oxpinyin-user/tkrzw"]
+lmdb = ["oxpinyin-facade/lmdb", "oxpinyin-user/lmdb"]
+redb = ["oxpinyin-facade/redb", "oxpinyin-user/redb"]

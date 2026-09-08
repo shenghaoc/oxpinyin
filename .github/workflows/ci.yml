@@ -379,17 +379,18 @@ jobs:
         run: python -m pytest -q
 
   # The portable crates on the other two supported operating systems:
-  # the whole workspace minus the four that are Linux-first or need a
+  # the whole workspace minus the three that are Linux-first or need a
   # host interpreter — the two C-ABI crates (glib, cargo-c, Linux-only per
-  # structure.md), the PyO3 binding (its wheel is built and tested on
-  # these same runners by python-portable above), and oxpinyin-dictool, which
-  # depends on oxpinyin-capi and so on glib-sys/pkg-config — the Windows
-  # runner has neither, and structure.md's "portable" for dictool is
-  # aspirational until that dependency is cut. Everything else — store,
-  # runtime, facade, datagen and the training crates included — is pure
-  # Rust under the redb backend and builds here (widened 2026-09-08 from
-  # the four engine crates plus the oracle harness, whose Linux-only
-  # `oracle-ffi` feature stays off with --no-default-features).
+  # structure.md) and the PyO3 binding (its wheel is built and tested on
+  # these same runners by python-portable above). oxpinyin-dictool stopped
+  # being excluded when its C-ABI dependency was cut (it now drives the
+  # facade's §9 import/export machinery directly — pure Rust, no
+  # glib/pkg-config), so it builds and tests here like the rest of the
+  # portable set. Everything else — store, runtime, facade, datagen and
+  # the training crates included — is pure Rust under the redb backend
+  # and builds here (widened 2026-09-08 from the four engine crates plus
+  # the oracle harness, whose Linux-only `oracle-ffi` feature stays off
+  # with --no-default-features).
   #
   # Two jobs rather than a matrix: containers run on Linux runners only, so
   # a containerized matrix cannot cover these operating systems.
@@ -421,7 +422,6 @@ jobs:
       - run: >
           cargo test --locked --workspace --no-default-features --features redb
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi --exclude oxpinyin-python
-          --exclude oxpinyin-dictool
           --exclude oxpinyin-corpus --exclude oxpinyin-counter --exclude oxpinyin-emitter
           --exclude oxpinyin-kmm --exclude oxpinyin-lambda --exclude oxpinyin-punct
           --exclude oxpinyin-word
@@ -447,7 +447,6 @@ jobs:
       - run: >
           cargo test --locked --workspace --no-default-features --features redb
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi --exclude oxpinyin-python
-          --exclude oxpinyin-dictool
           --exclude oxpinyin-corpus --exclude oxpinyin-counter --exclude oxpinyin-emitter
           --exclude oxpinyin-kmm --exclude oxpinyin-lambda --exclude oxpinyin-punct
           --exclude oxpinyin-word

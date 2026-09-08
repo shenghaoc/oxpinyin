@@ -1,8 +1,10 @@
 //! `oxpinyin-dictool` — standalone vocabulary conversion tool.
 //!
 //! Import mode turns the pinned user-vocabulary text format
-//! (`docs/findings/dictool-format.md`) into the oxpinyin user redb store
-//! through the public C ABI import trio and `pinyin_save`.
+//! (`docs/findings/dictool-format.md`) into the oxpinyin user store
+//! through the facade's §9 import/export machinery — the same laws the
+//! C ABI's iterators drive, held as safe Rust (no C ABI dependency:
+//! portable to every supported platform, no glib).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

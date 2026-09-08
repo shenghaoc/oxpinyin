@@ -1,4 +1,4 @@
-//! `oxpinyin-dictool import`: text → C ABI import trio → save.
+//! `oxpinyin-dictool import`: text → user-store add batch → save.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -6,10 +6,8 @@ use std::fs;
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 
-use pinyin_capi::{
-    DEFAULT_PHRASE_COUNT, ExportedPhrase, ImportIterator, add_user_import_phrase,
-    begin_user_import, end_user_import, save_user_import_context, user_phrase_rows,
-};
+use oxpinyin_core::graph::FewestKeys;
+use oxpinyin_user::{DEFAULT_PHRASE_COUNT, ExportedPhrase, PinyinKey, USER_DICTIONARY, UserStore};
 
 use crate::context::UserImportContext;
 
@@ -29,9 +27,7 @@ pub enum ImportError {
     Parse(ParseError),
     /// The user-store context could not be opened.
     Context(PathBuf, String),
-    /// `pinyin_begin_add_phrases` returned null.
-    Begin,
-    /// `pinyin_iterator_add_phrase` rejected a parsed record.
+    /// A parsed record was rejected by the add path.
     Add {
         /// 1-based line number in the input file.
         line: usize,
@@ -57,7 +53,6 @@ impl fmt::Display for ImportError {
                     path.display()
                 )
             }
-            Self::Begin => write!(f, "pinyin_begin_add_phrases returned null"),
             Self::Add { line } => {
                 write!(
                     f,
@@ -77,7 +72,6 @@ impl std::error::Error for ImportError {
             Self::Parse(error) => Some(error),
             Self::Utf8(_, _)
             | Self::Context(_, _)
-            | Self::Begin
             | Self::Add { .. }
             | Self::Save
             | Self::Snapshot => None,
@@ -102,10 +96,30 @@ fn read_utf8(path: &Path) -> Result<String, ImportError> {
     }
 }
 
+/// One add through the store, with `pinyin_iterator_add_phrase`'s parse
+/// selection: the frozen untuned full-pinyin inventory under the
+/// longest-parsed-prefix then fewest-keys rule (`FewestKeys`), complete
+/// keys only, trailing unparsed bytes ignored.
+fn add_phrase(user: &mut UserStore, phrase: &str, pinyin: &str, count: u64) -> bool {
+    let Some(parsed) = FewestKeys::parse(pinyin) else {
+        return false;
+    };
+    let Some(keys) = parsed
+        .keys()
+        .iter()
+        .map(|key| PinyinKey::try_from(key.index()).ok())
+        .collect::<Option<Vec<PinyinKey>>>()
+    else {
+        return false;
+    };
+    user.add_phrase_in(USER_DICTIONARY, phrase, &keys, Some(count))
+        .is_ok()
+}
+
 /// Import `path` into the user store under `user_dir`.
 ///
 /// The directory is created when missing. Parsing is a full preflight, so a
-/// malformed file performs no writes. ABI adds are per-phrase committed
+/// malformed file performs no writes. Adds are per-phrase committed
 /// (upstream `pinyin.cpp:614-653` semantics); if one somehow fails after a
 /// valid parse, earlier adds remain, matching the source behaviour.
 pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
@@ -114,16 +128,18 @@ pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
 
     fs::create_dir_all(user_dir)
         .map_err(|error| ImportError::Read(user_dir.to_path_buf(), error))?;
-    let context = UserImportContext::open(user_dir).ok_or_else(|| {
+    let mut context = UserImportContext::open(user_dir).ok_or_else(|| {
         ImportError::Context(
             user_dir.to_path_buf(),
-            "open_user_import_context returned null".to_owned(),
+            "the user store could not be opened".to_owned(),
         )
     })?;
 
     // File count is a desired absolute floor; the ABI count is an add
     // amount (`docs/findings/dictool-format.md` §3).
-    let existing: HashMap<(String, String), u64> = user_phrase_rows(context.as_ptr())
+    let existing: HashMap<(String, String), u64> = context
+        .core()
+        .export_phrases(u32::from(USER_DICTIONARY))
         .ok_or(ImportError::Snapshot)?
         .into_iter()
         .map(
@@ -135,11 +151,9 @@ pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
         )
         .collect();
 
-    let iter: *mut ImportIterator = begin_user_import(context.as_ptr());
-    if iter.is_null() {
-        return Err(ImportError::Begin);
-    }
-
+    let Some(user) = context.user() else {
+        return Err(ImportError::Snapshot);
+    };
     let mut first_error = None;
     for record in &records {
         let key = (record.phrase.clone(), record.pinyin.clone());
@@ -155,14 +169,17 @@ pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
             continue;
         };
 
-        let delta_c = c_int::try_from(delta).map_err(|_| ImportError::Add { line: record.line })?;
-        if !add_user_import_phrase(iter, &record.phrase, &record.pinyin, delta_c) {
+        if !add_phrase(user, &record.phrase, &record.pinyin, delta) {
             first_error.get_or_insert(record.line);
         }
     }
 
-    end_user_import(iter);
-    let saved = save_user_import_context(context.as_ptr());
+    // `pinyin_end_add_phrases`' persistence side: the §4 dirty flag arms
+    // whether or not any add succeeded (upstream compacts and sets
+    // `m_modified` unconditionally, `pinyin.cpp:657-658`), so the gated
+    // save below compacts even for an all-no-op re-run.
+    user.mark_modified();
+    let saved = context.core_mut().save_user();
 
     if let Some(line) = first_error {
         return Err(ImportError::Add { line });
@@ -176,10 +193,6 @@ pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-
-    use pinyin_capi::{
-        PinyinContext, close_user_import_context, open_user_import_context, user_phrase_rows,
-    };
 
     use super::*;
 
@@ -195,8 +208,12 @@ mod tests {
         fs::write(file, text).expect("write fixture");
     }
 
-    fn exported(context: *mut PinyinContext) -> Vec<ExportedPhrase> {
-        user_phrase_rows(context).expect("user phrase rows")
+    fn exported(user_dir: &Path) -> Vec<ExportedPhrase> {
+        let context = UserImportContext::open(user_dir).expect("reopen user store");
+        context
+            .core()
+            .export_phrases(u32::from(USER_DICTIONARY))
+            .expect("user phrase rows")
     }
 
     #[test]
@@ -206,9 +223,7 @@ mod tests {
         write(&input, "你好 ni'hao 3\n世界 shi'jie 7\n词 ci 1\n");
 
         run(&dir.join("user"), &input).expect("first import");
-        let context = open_user_import_context(&dir.join("user"));
-        assert!(!context.is_null());
-        let first = exported(context);
+        let first = exported(&dir.join("user"));
         assert_eq!(
             first,
             vec![
@@ -229,15 +244,10 @@ mod tests {
                 },
             ]
         );
-        close_user_import_context(context);
-
         // Re-running the same input is a no-op for every pronunciation
         // count: the CLI treats file counts as desired state, so 3/7/1 stay.
         run(&dir.join("user"), &input).expect("second import");
-        let context = open_user_import_context(&dir.join("user"));
-        assert!(!context.is_null());
-        assert_eq!(exported(context), first);
-        close_user_import_context(context);
+        assert_eq!(exported(&dir.join("user")), first);
 
         // Frontend-style export text -> import -> export is row-identical
         // modulo ordering (no bigrams were trained, so export has only
@@ -265,17 +275,14 @@ mod tests {
         run(&dir.join("user"), &input).expect("first import");
         run(&dir.join("user"), &input).expect("second import is idempotent");
 
-        let context = open_user_import_context(&dir.join("user"));
-        assert!(!context.is_null());
         assert_eq!(
-            exported(context),
+            exported(&dir.join("user")),
             vec![ExportedPhrase {
                 text: "词".to_owned(),
                 pinyin: "ci".to_owned(),
                 count: 5,
             }]
         );
-        close_user_import_context(context);
     }
 
     #[test]
@@ -291,17 +298,14 @@ mod tests {
         // or lowers a stored pronunciation count.
         run(&dir.join("user"), &second).expect("second import");
 
-        let context = open_user_import_context(&dir.join("user"));
-        assert!(!context.is_null());
         assert_eq!(
-            exported(context),
+            exported(&dir.join("user")),
             vec![ExportedPhrase {
                 text: "词".to_owned(),
                 pinyin: "ci".to_owned(),
                 count: 5,
             }]
         );
-        close_user_import_context(context);
     }
 
     #[test]
@@ -326,10 +330,8 @@ mod tests {
         write(&input, "行 xing 4\n行 hang 2\n");
 
         run(&dir.join("user"), &input).expect("import");
-        let context = open_user_import_context(&dir.join("user"));
-        assert!(!context.is_null());
         assert_eq!(
-            exported(context),
+            exported(&dir.join("user")),
             vec![
                 ExportedPhrase {
                     text: "行".to_owned(),
@@ -343,7 +345,6 @@ mod tests {
                 },
             ]
         );
-        close_user_import_context(context);
     }
 
     #[test]
@@ -355,16 +356,13 @@ mod tests {
         run(&dir.join("user"), &input).expect("first import");
         run(&dir.join("user"), &input).expect("second import is idempotent");
 
-        let context = open_user_import_context(&dir.join("user"));
-        assert!(!context.is_null());
         assert_eq!(
-            exported(context),
+            exported(&dir.join("user")),
             vec![ExportedPhrase {
                 text: "你好".to_owned(),
                 pinyin: "ni'hao".to_owned(),
                 count: 3,
             }]
         );
-        close_user_import_context(context);
     }
 }
