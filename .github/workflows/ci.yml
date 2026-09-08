@@ -1,6 +1,9 @@
-# Path gates: CI runs only when code or a direct input of one of its jobs
-# changes, so docs-only changes skip lint, test, python, deny and fuzz
-# entirely (mirrors the path gate in store-backends.yml).
+# Path gates: CI runs its lanes only when code or a direct input of one
+# of its jobs changes, so docs-only changes skip lint, test, python,
+# deny and fuzz entirely. The gate moved from the workflow trigger to
+# the jobs themselves (2026-09-08): the workflow always starts, the
+# `changes` job computes one `run` flag from the path set below, and
+# every lane carries `if: needs.changes.outputs.run == 'true'`.
 #
 # Why each path is gated:
 #   - crates/** — any code change
@@ -24,7 +27,7 @@
 #   - clippy.toml — the lint job's Clippy configuration (msrv)
 #   - .github/actions/** — the bootstrap composite action every job runs
 #
-# Deliberately NOT gated (changes to these skip CI):
+# Deliberately NOT gated (changes to these skip every lane):
 #   - docs/** — findings, design docs, ROADMAP: no code
 #   - reference/** — memory safety docs: no code
 #   - .kiro/** — specs and steering: no code
@@ -32,53 +35,27 @@
 #   - .github/workflows/store-backends.yml — store-backends has its own
 #     trigger and its own path gate; ci.yml doesn't need to re-gate on it
 #
-# Branch-protection interaction: on a path-filtered run this workflow
-# never starts and reports no status, so a required status check pointed
-# at a job here would stay "Pending" ("Waiting for status to be
-# reported") and block the PR — GitHub has no setting to waive that;
-# only checks that actually report a status can pass. main currently
-# has no branch protection and no required checks, so nothing blocks
-# docs-only changes today. If required checks are ever added, require
-# an aggregate check from an always-on workflow, never jobs in this
-# path-gated one.
+# Branch-protection interaction: skipped lanes still REPORT (conclusion
+# `skipped`), which required status checks treat as satisfied, and the
+# always-running `ci-aggregate` job at the tail reports on every push
+# and PR no matter what changed — it is the shape a required check
+# needs. Require exactly `ci-aggregate` on main (nothing else): it
+# fails when any lane that should have run failed or was cancelled,
+# and when a gated-out lane was skipped despite its paths changing.
+# The path-set bypass (a PR editing ci.yml to skip its own lanes) is
+# closed as far as this workflow can close it — the aggregate compares
+# each lane's conclusion against the same `changes` output — but a PR
+# that rewrites the workflow itself can always rewrite its gates; that
+# residual is a branch-protection policy question (enforce for
+# administrators), not a workflow one.
 
 name: CI
 
 on:
   push:
     branches: [main]
-    paths:
-      - crates/**
-      - fuzz/**
-      - tools/**
-      - Cargo.toml
-      - Cargo.lock
-      - rust-toolchain.toml
-      - deny.toml
-      - .github/workflows/ci.yml
-      - .github/scripts/lint-crate-cfg-placement.sh
-      - tests/lint-crate-cfg-placement.test.sh
-      - fixtures/**
-      - tests/parity/**
-      - clippy.toml
-      - .github/actions/**
   pull_request:
     branches: [main]
-    paths:
-      - crates/**
-      - fuzz/**
-      - tools/**
-      - Cargo.toml
-      - Cargo.lock
-      - rust-toolchain.toml
-      - deny.toml
-      - .github/workflows/ci.yml
-      - .github/scripts/lint-crate-cfg-placement.sh
-      - tests/lint-crate-cfg-placement.test.sh
-      - fixtures/**
-      - tests/parity/**
-      - clippy.toml
-      - .github/actions/**
 
 permissions:
   contents: read
@@ -106,7 +83,53 @@ env:
 #   fuzz — bounded parser fuzz smoke test on a pinned nightly/tool version
 
 jobs:
+  # The path gate as a job: one `run` flag for the whole workflow (the
+  # lanes all share one input set, so they gate together). Runs first on
+  # every push and PR; each lane carries `if: needs.changes.outputs.run
+  # == 'true'` so it reports `skipped` — a conclusion, which unlike a
+  # workflow-level path filter still reaches required-check accounting.
+  #
+  # No third-party filter action: checkout with full history and diff
+  # against the event's base (the PR base sha; the previous pushed head
+  # on main). A missing base (first push, force-push rewrite, rebased
+  # base) falls back to running everything — the over-trigger direction,
+  # never the skip direction. Diffing the event base directly (not the
+  # merge-base) can only pick up extra files when the base moved under
+  # the event; that over-triggers too. The pathspec list is the one the
+  # header documents; keep the two in lockstep.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Compute the path-gate flag
+        id: gate
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            base='${{ github.event.pull_request.base.sha }}'
+          else
+            base='${{ github.event.before }}'
+          fi
+          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
+            echo "base $base unavailable; running every lane"
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only "$base" HEAD --             crates fuzz tools             Cargo.toml Cargo.lock rust-toolchain.toml deny.toml clippy.toml             .github/workflows/ci.yml             .github/scripts/lint-crate-cfg-placement.sh             tests/lint-crate-cfg-placement.test.sh             fixtures tests/parity .github/actions)
+          if [ -n "$changed" ]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml header
@@ -157,6 +180,8 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
   test:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml header
@@ -219,6 +244,8 @@ jobs:
   # interpreter is Debian's python3 from the container: actions/setup-python
   # does not support container jobs.
   python:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml header
@@ -317,6 +344,8 @@ jobs:
   # the Linux job also ends up on, so the cp310-abi3 tag is the same.
   # Two jobs rather than a container matrix: containers are Linux-only.
   python-portable:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -395,6 +424,8 @@ jobs:
   # Two jobs rather than a matrix: containers run on Linux runners only, so
   # a containerized matrix cannot cover these operating systems.
   test-macos:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
@@ -427,6 +458,8 @@ jobs:
           --exclude oxpinyin-word
 
   test-windows:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -462,6 +495,8 @@ jobs:
   # the image is deliberately unpinned for the same reason (see that
   # workflow's header).
   deny:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml
@@ -520,6 +555,8 @@ jobs:
           fi
 
   fuzz:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see store-backends.yml header
@@ -647,3 +684,65 @@ jobs:
         with:
           name: fuzz-crash-artifacts
           path: fuzz/artifacts/
+
+  # The single required check (the branch-protection target): always
+  # runs, always reports. Red only when a lane that should have run
+  # ended as anything but success, or when the path gate said run but a
+  # lane was skipped anyway (a broken `if`, or a PR narrowing its own
+  # gates). `skipped` with run=false is green: those lanes had no
+  # inputs on this change, which is exactly what a path gate means.
+  # store-backends.yml and verify-nightly.yml keep their own triggers
+  # and remain non-required lanes beside this one.
+  ci-aggregate:
+    needs:
+      [changes, lint, test, python, python-portable, test-macos, test-windows, deny, fuzz]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail when any lane failed, was cancelled, or skipped unjustly
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          GATED: ${{ needs.changes.outputs.run }}
+          LINT: ${{ needs.lint.result }}
+          TEST: ${{ needs.test.result }}
+          PYTHON: ${{ needs.python.result }}
+          PYTHON_PORTABLE: ${{ needs.python-portable.result }}
+          TEST_MACOS: ${{ needs.test-macos.result }}
+          TEST_WINDOWS: ${{ needs.test-windows.result }}
+          DENY: ${{ needs.deny.result }}
+          FUZZ: ${{ needs.fuzz.result }}
+        run: |
+          set -euo pipefail
+          status=0
+          if [ "$CHANGES" != success ]; then
+            echo "::error::the changes job ended as $CHANGES"
+            status=1
+          fi
+          lane() {
+            local name="$1" result="$2"
+            case "$result" in
+              success) ;;
+              skipped)
+                if [ "$GATED" = true ]; then
+                  echo "::error::$name skipped although the path gate said run"
+                  status=1
+                fi
+                ;;
+              *)
+                echo "::error::$name ended as $result"
+                status=1
+                ;;
+            esac
+          }
+          lane lint "$LINT"
+          lane test "$TEST"
+          lane python "$PYTHON"
+          lane python-portable "$PYTHON_PORTABLE"
+          lane test-macos "$TEST_MACOS"
+          lane test-windows "$TEST_WINDOWS"
+          lane deny "$DENY"
+          lane fuzz "$FUZZ"
+          if [ "$status" -eq 0 ]; then
+            echo "all lanes green (gated=$GATED)"
+          fi
+          exit $status
