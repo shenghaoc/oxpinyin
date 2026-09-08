@@ -133,7 +133,7 @@ fn resolve_model_dir(explicit: Option<&Path>) -> PathBuf {
     if let Some(dir) = explicit {
         return dir.to_path_buf();
     }
-    match pinyin_oracle::model_cache::locate_model_dir() {
+    match oxpinyin_testsupport::model_cache::locate_model_dir() {
         Ok(Some(dir)) => dir,
         Ok(None) => {
             eprintln!(
@@ -449,7 +449,7 @@ fn main() -> ExitCode {
 
     let manifest = Manifest {
         backend: options.backend,
-        model_sha256: pinyin_oracle::model_cache::MODEL20_SHA256.to_owned(),
+        model_sha256: oxpinyin_testsupport::model_cache::MODEL20_SHA256.to_owned(),
         producer_version: env!("CARGO_PKG_VERSION").to_owned(),
         tables: manifest,
     };
