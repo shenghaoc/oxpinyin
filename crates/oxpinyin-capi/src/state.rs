@@ -23,9 +23,9 @@ use oxpinyin_engine::CandidateKind;
 /// compatibility policy's availability class turns that abort into a
 /// `false`.
 const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
-use oxpinyin_facade::ContextCore;
 pub use oxpinyin_facade::ExportedBigramRow;
 pub use oxpinyin_facade::InstanceCore;
+use oxpinyin_facade::{ContextCore, OpenFailure};
 pub use oxpinyin_runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
 use oxpinyin_user::ExportedPhrase;
 
@@ -50,13 +50,14 @@ impl CapiContext {
     /// directory (a libpinyin install's own on Kyoto Cabinet and tkrzw)
     /// plus the optional user dir, seeded with `PINYIN_INCOMPLETE` (the
     /// pinyin facade's option word).
-    pub(crate) fn new(system_dir: &str, user_dir: &str) -> Option<Self> {
+    /// Opens a context; the failure is kept for `pinyin_init`'s log line.
+    pub(crate) fn try_new(system_dir: &str, user_dir: &str) -> Result<Self, OpenFailure> {
         // W8 fork-bootstrap wiring lives in the shared assembly: the
         // constructor opens the DBM handles and chunk mappings, installs λ
         // from table.conf when present, degrades an unusable user dir to
         // "no learning", and wires addons + punctuation.
-        Some(Self {
-            core: ContextCore::open(
+        Ok(Self {
+            core: ContextCore::try_open(
                 system_dir,
                 user_dir,
                 oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,

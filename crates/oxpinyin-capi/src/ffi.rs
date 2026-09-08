@@ -149,3 +149,25 @@ pub fn owned_cstr_list(items: &[impl AsRef<str>]) -> *mut *mut c_char {
     }
     arr
 }
+
+/// Logs `message` through GLib at warning level under the `libpinyin`
+/// domain. The library's only diagnostic channel: the C ABI's frozen
+/// return shapes (`false` / NULL) carry no reason, and glib is already
+/// linked for the ABI's `GArray`s. A message with an interior NUL is
+/// dropped rather than truncated.
+pub(crate) fn log_warning(message: &str) {
+    let Ok(message) = CString::new(message) else {
+        return;
+    };
+    // SAFETY: `g_log` is variadic; the `%s` format consumes exactly one
+    // `const char *`, and both the domain and the message are
+    // NUL-terminated buffers that outlive the call.
+    unsafe {
+        glib_sys::g_log(
+            c"libpinyin".as_ptr(),
+            glib_sys::G_LOG_LEVEL_WARNING,
+            c"%s".as_ptr(),
+            message.as_ptr(),
+        );
+    }
+}

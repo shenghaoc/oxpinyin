@@ -13,8 +13,8 @@
 //! 4-value candidate-type enum), and this facade's distinguishing
 //! seeds and sentence-row display law.
 
-use oxpinyin_facade::ContextCore;
 pub use oxpinyin_facade::InstanceCore;
+use oxpinyin_facade::{ContextCore, OpenFailure};
 
 use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, ZhuyinContext, ZhuyinInstance};
 
@@ -38,9 +38,10 @@ impl CapiContext {
     /// Opens a context the way `zhuyin_init` does: system tables plus the
     /// optional user dir, health-checked, with `USE_TONE | FORCE_TONE` as
     /// the seeding option word.
-    pub(crate) fn open(system_dir: &str, user_dir: &str) -> Option<Self> {
-        Some(Self {
-            core: ContextCore::open(
+    /// Opens a context; the failure is kept for `zhuyin_init`'s log line.
+    pub(crate) fn try_open(system_dir: &str, user_dir: &str) -> Result<Self, OpenFailure> {
+        Ok(Self {
+            core: ContextCore::try_open(
                 system_dir,
                 user_dir,
                 oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD,

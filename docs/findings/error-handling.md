@@ -330,6 +330,14 @@ Follow-ups, only if asked:
 Not follow-ups:
 
 - Reshaping `Session` / n-best / `sentence_text` onto `Result`
-- A C ABI error code channel
+- A C ABI error code channel — the return shapes stay `false` / NULL.
+  What did land (2026-09-08) is a *diagnostic* channel beside them:
+  `pinyin_init` and `zhuyin_init` log the typed open failure
+  (`oxpinyin_facade::OpenFailure`, wrapping the runtime's `OpenError`
+  with its path) through GLib at warning level under the `libpinyin` /
+  `libzhuyin` domain before answering NULL. No return value changed; a
+  consumer that could only see NULL can now read which file was missing
+  or unreadable from the same log an IBus or fcitx process already
+  captures.
 - Replacing `ffi_catch` with typed errors
 - Touching pin fixtures or candidate numbers

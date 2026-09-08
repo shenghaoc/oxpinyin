@@ -17,6 +17,8 @@ use crate::types::ZhuyinContext;
 /// Opens the system dictionary and language model tables from `systemdir`.
 /// Returns NULL when `systemdir` is empty, any table fails to open, or the
 /// system dir has no parsable `interpolation2.text` real-unigram model.
+/// The reason is logged through GLib at warning level under the
+/// `libzhuyin` domain; the return value is unchanged.
 ///
 /// **Divergence note (the pin seeds `USE_TONE | FORCE_TONE`).** The zhuyin
 /// facade's context defaults to `m_options = USE_TONE | FORCE_TONE`
@@ -36,9 +38,12 @@ pub extern "C" fn zhuyin_init(
     // SAFETY: Both pointers are C strings from the caller (null OK).
     let system_dir = cstr_to_owned_lossy(systemdir);
     let user_dir = cstr_to_owned_lossy(userdir);
-    match CapiContext::open(&system_dir, &user_dir) {
-        Some(ctx) => box_context(ctx),
-        None => ptr::null_mut(),
+    match CapiContext::try_open(&system_dir, &user_dir) {
+        Ok(ctx) => box_context(ctx),
+        Err(error) => {
+            crate::ffi::log_warning(&format!("zhuyin_init: {error} (systemdir {system_dir:?})"));
+            ptr::null_mut()
+        }
     }
 }
 

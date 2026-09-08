@@ -6,8 +6,38 @@ use std::sync::Arc;
 
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 use oxpinyin_engine::{Config, ConfigValue};
-use oxpinyin_runtime::{Runtime, user_store_file};
+use oxpinyin_runtime::{OpenError, Runtime, user_store_file};
 use oxpinyin_user::UserStore;
+
+/// Why a context did not open — what `pinyin_init` / `zhuyin_init` hide
+/// behind NULL. Carried out of [`ContextCore::try_open`] so the facades
+/// can log it; the return value stays NULL either way.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum OpenFailure {
+    /// The system directory argument was empty (upstream's first check).
+    EmptySystemDir,
+    /// The runtime could not open the system directory.
+    Runtime(OpenError),
+}
+
+impl core::fmt::Display for OpenFailure {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::EmptySystemDir => f.write_str("system directory is empty"),
+            Self::Runtime(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for OpenFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::EmptySystemDir => None,
+            Self::Runtime(error) => Some(error),
+        }
+    }
+}
 
 /// The live option/scheme state a context owns and every instance it
 /// allocates shares: `set_options`/`set_*_scheme` on the context remask
@@ -94,15 +124,32 @@ impl ContextCore {
     /// `ZHUYIN_DEFAULT_OPTION_WORD`).
     ///
     /// `None` is the C init's NULL: an empty system dir or a runtime
-    /// that cannot open.
+    /// that cannot open. [`Self::try_open`] says which.
     #[must_use]
     pub fn open(system_dir: &str, user_dir: &str, option_word: u32) -> Option<Self> {
+        Self::try_open(system_dir, user_dir, option_word).ok()
+    }
+
+    /// [`Self::open`] with the failure kept: the C facades log it before
+    /// answering NULL, so a consumer can tell a missing directory from a
+    /// corrupt table without re-running the open through Python.
+    ///
+    /// # Errors
+    ///
+    /// [`OpenFailure::EmptySystemDir`] for an empty `system_dir`;
+    /// [`OpenFailure::Runtime`] with the typed [`OpenError`] otherwise.
+    pub fn try_open(
+        system_dir: &str,
+        user_dir: &str,
+        option_word: u32,
+    ) -> Result<Self, OpenFailure> {
         if system_dir.is_empty() {
-            return None;
+            return Err(OpenFailure::EmptySystemDir);
         }
-        let runtime = Runtime::open(Path::new(system_dir), Some(Path::new(user_dir))).ok()?;
+        let runtime = Runtime::open(Path::new(system_dir), Some(Path::new(user_dir)))
+            .map_err(OpenFailure::Runtime)?;
         let user = runtime.user_store();
-        Some(Self {
+        Ok(Self {
             config: Config::default(),
             runtime: Some(runtime),
             user,
@@ -200,5 +247,41 @@ impl ContextCore {
     #[must_use]
     pub fn user_store(&self) -> Option<UserStore> {
         self.user.clone()
+    }
+}
+
+#[cfg(test)]
+mod open_failure_tests {
+    use super::{ContextCore, OpenFailure};
+    use crate::PINYIN_DEFAULT_OPTION_WORD as WORD;
+    use oxpinyin_runtime::OpenError;
+
+    #[test]
+    fn empty_system_dir_is_named() {
+        let failure = ContextCore::try_open("", "", WORD)
+            .err()
+            .expect("an empty system dir cannot open");
+        assert!(matches!(failure, OpenFailure::EmptySystemDir));
+        assert_eq!(failure.to_string(), "system directory is empty");
+        assert!(ContextCore::open("", "", WORD).is_none());
+    }
+
+    #[test]
+    fn missing_system_dir_carries_the_runtime_error_and_path() {
+        let dir =
+            std::env::temp_dir().join(format!("oxpinyin-facade-missing-{}", std::process::id()));
+        let dir = dir.to_str().expect("UTF-8 temp path");
+        let failure = ContextCore::try_open(dir, "", WORD)
+            .err()
+            .expect("a missing system dir cannot open");
+        let OpenFailure::Runtime(error) = &failure else {
+            panic!("expected a runtime failure, got {failure:?}");
+        };
+        assert!(matches!(error, OpenError::Missing(_)), "got {error:?}");
+        assert!(
+            failure.to_string().contains(dir),
+            "the message names the path: {failure}"
+        );
+        assert!(std::error::Error::source(&failure).is_some());
     }
 }
