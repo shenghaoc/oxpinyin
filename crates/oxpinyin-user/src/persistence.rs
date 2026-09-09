@@ -674,8 +674,34 @@ fn stage_dbm(
         Ok(())
     })?;
     drop(store);
+    // Some backends keep a lock sidecar beside the database (LMDB writes
+    // `<path>-lock`). It is stale once the handle drops, and the rename
+    // below moves only the data file — without this the user dir would
+    // accumulate one orphan per save, which no libpinyin install leaves.
+    remove_dbm_sidecars(dir, &tmp);
     staged.push((tmp, final_path));
     Ok(())
+}
+
+/// Removes sibling files a DBM backend created beside `dbm_path` (the
+/// `-lock` sidecar and anything else sharing its stem prefix). Absence is
+/// not an error: most backends create no sidecar at all.
+fn remove_dbm_sidecars(dir: &Path, dbm_path: &Path) {
+    let Some(stem) = dbm_path.file_name().and_then(|s| s.to_str()) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name != stem && name.starts_with(stem) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Writes one chunk file to its `.tmp` sibling and registers the rename.
@@ -791,14 +817,27 @@ mod tests {
         let state = state();
 
         save(&dir, &state, &originals, &versions(), 1).expect("save");
-        // No `.tmp` siblings survive the rename pass.
-        for entry in std::fs::read_dir(&dir).expect("readdir") {
-            let name = entry.expect("entry").file_name();
-            assert!(
-                !name.to_string_lossy().ends_with(".tmp"),
-                "stray tmp: {name:?}"
-            );
-        }
+        // The user dir holds exactly the pin's eleven names — the three
+        // DBMs under the backend's own names, the three USER_FILE chunks,
+        // the four `.dbin` logs, and `user.conf` — and nothing else. This
+        // is the assertion that catches an orphaned backend sidecar (LMDB
+        // writes a `-lock` file beside each DBM; the rename pass moves
+        // only the data file), which a literal `.tmp`-suffix check misses.
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .expect("readdir")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        let mut expected = vec![
+            UserDbm::Bigram.file_name(),
+            UserDbm::PinyinIndex.file_name(),
+            UserDbm::PhraseIndex.file_name(),
+            "user.conf".to_owned(),
+        ];
+        expected.extend(USER_LIBRARY_FILES.iter().map(|&(_, n)| n.to_owned()));
+        expected.extend(SYSTEM_LOG_FILES.iter().map(|&(_, n)| n.to_owned()));
+        expected.sort();
+        assert_eq!(names, expected, "the save left an unexpected file");
 
         let loaded = load(&dir, &originals, &versions()).expect("load");
         assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
