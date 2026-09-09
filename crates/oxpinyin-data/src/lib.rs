@@ -28,6 +28,7 @@
 pub mod bigram_table;
 pub(crate) mod chewing_table;
 pub mod chunk_format;
+pub mod chunk_write;
 pub mod content;
 pub mod dict;
 pub mod interp;
@@ -36,9 +37,12 @@ pub mod phrase_libraries;
 pub mod phrase_library;
 pub(crate) mod phrase_table;
 pub mod punct;
+pub mod single_gram;
 pub mod system_files;
 pub mod table;
 pub mod table_conf;
+pub mod table_entries;
+pub mod user_files;
 
 pub use bigram_table::BigramTable;
 pub use content::{ContentTable, LoadError, Record, TokenPair};
