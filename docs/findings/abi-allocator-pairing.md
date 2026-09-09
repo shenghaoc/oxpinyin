@@ -58,18 +58,43 @@ it does against the pin. Nothing recorded this before; the register's
 `false-allocates` note does, and the gate's driver exercises precisely that
 path.
 
-**(b) One out-param initialization asymmetry.** `pinyin_get_pinyin_strings`
-returns `false` for a key whose table index is 0 *without writing either
-out-param*, where the neighbouring single-string renderers (`render_key` in
-`cursor.rs`, `display_string_getter` in `keys.rs`) NULL theirs first. The
-caller must therefore initialize to NULL itself. This is not an allocator
-mismatch and it is left as it stands: whether the pin writes there is a
-question for a libpinyin checkout at the pinned commit, and no such tree was
-available on the host that ran this audit — changing it on inference would
-risk a parity regression for no memory-safety gain. The register records it as
-`false-untouched` so the contract is at least stated, and the drivers
-initialize every out-param to NULL, which is the consumer-side discipline that
-makes the difference invisible.
+**(b) One out-param initialization asymmetry — parity, confirmed against the
+pin.** `pinyin_get_pinyin_strings` returns `false` for a key whose table index
+is 0 *without writing either out-param*, where the neighbouring single-string
+renderers (`render_key` in `cursor.rs`, `display_string_getter` in `keys.rs`)
+NULL theirs first. The caller must therefore initialize to NULL itself. This is
+not an allocator mismatch, and it is upstream's own asymmetry rather than a
+divergence.
+
+Read from a fresh clone of libpinyin at the pinned commit `074a2219`
+(`2.11.92`), the cited blob hashed against the pin's tree (`src/pinyin.cpp` =
+`f27f7cf7`): the five getters sit consecutively, and the four single-string
+ones — `pinyin_get_zhuyin_string` `pinyin.cpp:2707-2716`,
+`pinyin_get_pinyin_string` `:2718-2727`, `pinyin_get_luoma_pinyin_string`
+`:2729-2738`, `pinyin_get_secondary_zhuyin_string` `:2740-2749` — each open
+with an unconditional `*utf8_str = NULL;` (`:2710`, `:2721`, `:2732`, `:2743`)
+*before* the `0 == key->get_table_index()` refusal. `pinyin_get_pinyin_strings`
+`:2751-2763`, immediately after them, refuses first (`:2755`) and only then
+writes, each out-param guarded by its own `if (shengmu)` / `if (yunmu)`
+(`:2758`, `:2760`). NULLing the out-params here would therefore be the
+divergence, not the fix; the audit's original caution was right, and oxpinyin
+needs no change.
+
+The one difference on this path is the NULL-argument guard: upstream
+dereferences `utf8_str` unconditionally in the four neighbours, while oxpinyin
+checks it first — the established memory-safety property of every entry point
+(`docs/safety/oxpinyin-safety-profile.md`), not a behaviour change on any
+non-NULL call. Where the pin guards its out-params, as it does here, oxpinyin's
+guard matches it exactly.
+
+§2(c)'s sweep then reclassified both slots `false-unreachable`, and that is the
+sharper answer: reaching this `false` at all needs a `ChewingKey` whose table
+index is 0, and the opaque typedef denies a conforming consumer one. The gate
+therefore does not probe this contract and does not pretend to — which is
+exactly why the source read above is what settles it. Where the driver cannot
+reach a path, the pin is the only evidence there is. The drivers still
+initialize every out-param to NULL regardless, which is the consumer-side
+discipline that makes the asymmetry invisible either way.
 
 **(c) Three of the audit's own out-param notes were wrong.** Recorded here
 because it is the point of the mechanism, not an aside: §3's fourth field
