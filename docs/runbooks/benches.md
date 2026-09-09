@@ -1,8 +1,9 @@
-# Benches — criterion, the perf baseline, and profiles
+# Benches — criterion, the perf baseline, the RSS diagnosis, and profiles
 
-Three tiers, none run by CI (`verify-nightly` has no perf lane): the
+Four tiers, none run by CI (`verify-nightly` has no perf lane): the
 criterion benches for a component, the C-ABI perf baseline against the
-oracle, and a sampled profile of the keystroke cycle. Numbers are only
+oracle, the RSS diagnosis that decomposes a resident set rather than
+sizing it, and a sampled profile of the keystroke cycle. Numbers are only
 comparable within one container on one host; every published snapshot
 (`docs/perf/`, `docs/findings/perf-*.md`) names both.
 
@@ -52,6 +53,89 @@ CPU; do it). `tools/bisection/run-perf-matrix.sh` is the four-backend
 form. For a parent-vs-HEAD comparison use one `CARGO_TARGET_DIR` per
 tree: cargo's freshness check is fooled by `git archive` mtimes and will
 reuse the wrong artifacts otherwise.
+
+## RSS diagnosis (where the resident set actually sits)
+
+`bisect --perf` in `PERF_MODE=rss-diag` answers a different question from
+the RAM modes: not how large the resident set is, but what it is made of.
+At init and again after the keystroke cycles it reads
+`/proc/self/smaps_rollup` (anonymous vs file-backed, the clean/dirty
+split) and `mallinfo2()` (heap high-water, retained free chunks, arena
+count), then calls `malloc_trim(0)` and reads both again — the one call
+that separates allocator retention from memory genuinely held.
+
+`tools/bisection/run-rss-diag.sh` drives the two cells round-robin over
+**one** data directory (the drop-in configuration: both engines open
+libpinyin's own installed `data/`) and writes `rounds.jsonl` plus an
+`identity.txt` naming every artifact by SHA-256:
+
+```sh
+tools/bisection/run-rss-diag.sh \
+    --lp /opt/libpinyin-kc/lib/libpinyin.so.15.0.0 \
+    --ox <shipped oxpinyin .so> \
+    --data /opt/libpinyin-kc/lib/libpinyin/data \
+    --out /tmp/rss-diag --rounds 12 --cycles 8
+```
+
+Two rules the harness enforces and a reader must not undo:
+
+* **`RSS_DIAG_DIR` belongs in its own round.** Setting it makes `bisect`
+  write the `/proc/self/maps`, `/proc/self/smaps` and `malloc_info`
+  dumps, and writing them allocates — which moves the very RSS the
+  `malloc_trim` delta measures. The runner takes the measurement rounds
+  with it unset and one mapping round per cell with it set.
+* **RSS is backend-sensitive.** Two cells on one backend give a valid
+  ratio; the absolute figures describe that backend's configuration and
+  do not stand in for another's.
+
+`tools/bisection/rss-smaps.py` turns a dump into a per-mapping `Rss`
+table, and `--diff A B` into the per-mapping delta that names which
+mappings carry a gap. `docs/findings/rss-attribution-2026-09-09.md` is
+the worked example.
+
+For live and peak **live** bytes on the Rust side, build the artifact
+with the non-default `alloc-count` feature; `bisect` resolves the
+`oxpinyin_alloc_*` readers with `dlsym` and reports `-1` when they are
+absent, so the JSON shape does not change between cells. The feature is
+never in a shipped artifact — `nm -D` is the check.
+
+### Attributing a heap gap to callers
+
+DHAT names the allocation *site*; naming its *caller* across the C-ABI
+boundary is where this goes wrong, and the failure looks like a result.
+
+**Valgrind's unwind of the dlopened Rust cdylib is not trustworthy above
+`kcdbget`.** It resolves the libpinyin cell correctly, and on the
+oxpinyin cell it produces symbol-table-plausible garbage — a chain with
+`Arc<T>::drop_slow` calling `dict::ucs4_walk_key`, and
+`pinyin_iterator_add_phrase` directly beneath `main`. Each address really
+does sit inside the function it names, so nothing looks broken. None of
+`--num-callers=24`, resolving at `addr - 1`, `debug = 2` with `lto =
+false`, or `-C force-frame-pointers=yes` changes it; all produce
+byte-identical stacks. Kyoto Cabinet debug symbols
+(`libkyotocabinet16v5-dbgsym`) do fix the KC half and nothing else. The
+worked case is
+`docs/findings/rss-attribution-2026-09-09.md`, "DHAT's cross-FFI stacks
+were wrong in a way that looked plausible".
+
+**Use callgrind caller→callee edges instead** — exact call counts, no
+stack walk. Two rules that produced wrong numbers before they were
+caught:
+
+* **Key on the callee's `(object, file, name)` triple, not the demangled
+  name.** `BasicDB::get(char const*, unsigned long, char*, unsigned
+  long)` is a substring of that function's own
+  `::VisitorImpl::visit_full`, and summing both gave 575 where the answer
+  was 152.
+* **An inlined callee has no call edge.** `BasicDB::check` and most
+  `BasicDB::get` sites inline into their caller, under-reporting by ~3×.
+  Where inlining is possible, count something that cannot be inlined — a
+  virtually-dispatched visitor, a heap allocation — and corroborate
+  against a second such marker.
+
+A profiling build may stand in for the shipped artifact here: block
+counts were identical across the shipped recipe, `debug = 2` with LTO
+off, and forced frame pointers.
 
 ## Profiles
 
