@@ -12,6 +12,13 @@
 //! - `train_write/{64,256}` — N bigram + N phrase rows in one write
 //!   transaction (its commit is the save). The store file is created per
 //!   iteration in untimed setup; the routine times writes + commit only.
+//! - `observe_commit` — **one** observation: the four read-modify-write
+//!   counter bumps `UserStore::update` commits, in one transaction, on a
+//!   pre-populated store. This is the per-commit unit; `train_write`
+//!   amortises a single commit over 128/512 puts and cannot resolve it.
+//! - `train_sentence/8` — eight of those, each its own transaction: the
+//!   shape `Session::train` runs for an eight-token sentence, which is the
+//!   user-visible unit built out of eight commits.
 //! - `user_db_open` — read-write open of a fresh copy of a pre-populated
 //!   user store, copying outside the timed window so every open sees
 //!   identical bytes.
@@ -37,6 +44,11 @@ use oxpinyin_store::{DEFAULT_STORE_EXT, RawReadStore, ReadStore, WriteStore};
 /// User-store table names, mirroring the user store's own tables.
 pub const BIGRAM: &str = "user_bigram";
 pub const PHRASE: &str = "user_phrase";
+/// The three further counter tables `UserStore::update` touches per
+/// observation, named as the user store names them.
+pub const BIGRAM_TOTAL: &str = "user_bigram_total";
+pub const UNIGRAM: &str = "user_unigram";
+pub const UNIGRAM_TOTAL: &str = "user_unigram_total";
 
 /// (stem, libpinyin file name, is-hash) for the six system DBMs — the same
 /// naming `oxpinyin-data`'s `SystemDbm` applies: libpinyin's own names on
@@ -96,6 +108,46 @@ pub fn run_train_write<S: WriteStore>(store: &S, n: usize) {
             Ok(())
         })
         .expect("train writes");
+}
+
+/// Read-modify-write of one big-endian `u64` counter, the shape every
+/// counter bump in `UserStore::update` takes (`txn_get_u64_or`, add, put).
+fn bump_counter(
+    txn: &mut dyn oxpinyin_store::WriteTxn,
+    table: &str,
+    key: &[u8],
+    delta: u64,
+) -> Result<(), oxpinyin_store::StoreError> {
+    let prev = txn
+        .get(table, key)?
+        .and_then(|bytes| <[u8; 8]>::try_from(bytes.as_slice()).ok())
+        .map_or(0, u64::from_be_bytes);
+    txn.put(table, key, &prev.saturating_add(delta).to_be_bytes())?;
+    Ok(())
+}
+
+/// **One** observation — one write transaction, one commit.
+///
+/// Mirrors `UserStore::update`: four read-modify-write counter bumps (the
+/// `(prev, cur)` bigram pair, `prev`'s bigram total, `cur`'s unigram delta,
+/// and the unigram grand total) inside a single transaction, whose commit is
+/// the save. `Session::train` calls `observe` once per token of the trained
+/// sentence, so every token pays a whole commit — the unit any per-commit
+/// cost, a backend's `fsync` included, is charged on. `train_write/{64,256}`
+/// amortises one commit over a 128- or 512-put batch and so cannot resolve
+/// that cost; this routine is the one that can.
+pub fn run_observe_commit<S: WriteStore>(store: &S, i: u64) {
+    store
+        .write(|txn| {
+            let (pair_key, _) = bigram_row(SEED, i);
+            bump_counter(txn, BIGRAM, &pair_key, 1)?;
+            bump_counter(txn, BIGRAM_TOTAL, &pair_key[..4], 1)?;
+            let (token_key, _) = phrase_row(SEED, i);
+            bump_counter(txn, UNIGRAM, &token_key, 7)?;
+            bump_counter(txn, UNIGRAM_TOTAL, &[0], 7)?;
+            Ok(())
+        })
+        .expect("observe commit");
 }
 
 fn count_rows<S: ReadStore>(store: &S, table: &str) -> u64 {
@@ -166,6 +218,39 @@ where
             },
             |store| {
                 run_train_write(&store, n);
+                store
+            },
+            BatchSize::PerIteration,
+        )
+    });
+}
+
+/// `observe_commit` / `train_sentence/N`: `commits` successive observations,
+/// each its own transaction, on a fresh copy of the pre-populated user store.
+///
+/// The copy and the open happen in untimed setup, so every iteration starts
+/// from byte-identical state and the routine times commits alone — the
+/// property that makes two backends', or two builds', numbers comparable.
+fn bench_observe_commits<S>(c: &mut Criterion, commits: u64, name: &'static str)
+where
+    S: WriteStore,
+{
+    let root = BenchRoot::new(&format!("observe-{commits}"));
+    let populated = root.path().join("populated.db");
+    populate_user_store::<S>(&populated);
+    let root_path = root.path().to_path_buf();
+
+    c.bench_function(name, move |b| {
+        b.iter_batched(
+            || {
+                let path = unique_path(&root_path);
+                std::fs::copy(&populated, &path).expect("copy populated user store");
+                S::create(&path).expect("open user store")
+            },
+            |store| {
+                for i in 0..commits {
+                    run_observe_commit(&store, i);
+                }
                 store
             },
             BatchSize::PerIteration,
@@ -362,6 +447,8 @@ where
     bench_init_load::<S>(&mut criterion);
     bench_train_write::<S>(&mut criterion, 64, "backend_matrix/train_write/64");
     bench_train_write::<S>(&mut criterion, 256, "backend_matrix/train_write/256");
+    bench_observe_commits::<S>(&mut criterion, 1, "backend_matrix/observe_commit");
+    bench_observe_commits::<S>(&mut criterion, 8, "backend_matrix/train_sentence/8");
     bench_user_db_open::<S>(&mut criterion);
     criterion.final_summary();
 }
