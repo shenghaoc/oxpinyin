@@ -22,7 +22,57 @@
 //! conformance line records explicitly: nothing upstream ships can read
 //! those files, and a same-backend oxpinyin pair is what stays conform.
 
+use crate::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
 use oxpinyin_store::{DEFAULT_STORE_DB_FORMAT, DEFAULT_STORE_EXT, DEFAULT_STORE_IS_LIBPINYIN_DBM};
+
+/// A `MemoryChunk` file that does not frame a valid payload.
+#[derive(Debug)]
+pub enum ChunkReadError {
+    /// Fewer bytes than the 8-byte header.
+    ShortHeader,
+    /// The payload length runs past the file's end.
+    TruncatedPayload,
+    /// The stored checksum does not match the payload.
+    ChecksumMismatch,
+}
+
+impl std::fmt::Display for ChunkReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let message = match self {
+            Self::ShortHeader => "shorter than the 8-byte header",
+            Self::TruncatedPayload => "payload length runs past the file end",
+            Self::ChecksumMismatch => "checksum mismatch",
+        };
+        write!(f, "memory chunk: {message}")
+    }
+}
+
+impl std::error::Error for ChunkReadError {}
+
+/// Strips and verifies a `MemoryChunk` file frame, returning the payload
+/// — the check `MemoryChunk::load` performs before any consumer sees
+/// bytes. The `.dbin` diff logs frame their logger record stream this
+/// way (`log->save` writes a plain `MemoryChunk`).
+///
+/// # Errors
+///
+/// Fails on a short header, a payload length past the file end, or a
+/// checksum mismatch. Trailing bytes beyond the framed payload are
+/// ignored, as upstream's reader does.
+pub fn read_chunk_payload(bytes: &[u8]) -> Result<&[u8], ChunkReadError> {
+    let header = bytes
+        .get(..CHUNK_HEADER_SIZE)
+        .ok_or(ChunkReadError::ShortHeader)?;
+    let length = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
+    let checksum = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+    let payload = bytes
+        .get(CHUNK_HEADER_SIZE..CHUNK_HEADER_SIZE + length)
+        .ok_or(ChunkReadError::TruncatedPayload)?;
+    if chunk_checksum(payload) != checksum {
+        return Err(ChunkReadError::ChecksumMismatch);
+    }
+    Ok(payload)
+}
 
 /// One of the three DBM files of a user directory.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -82,11 +132,8 @@ impl UserDbm {
 
 /// The USER_FILE sub-indexes' chunk files by nibble — `table.conf`'s
 /// `default …_DICTIONARY` USER_FILE rows' user filenames.
-pub const USER_LIBRARY_FILES: &[(u8, &str)] = &[
-    (5, "addon.bin"),
-    (6, "network.bin"),
-    (7, "user.bin"),
-];
+pub const USER_LIBRARY_FILES: &[(u8, &str)] =
+    &[(5, "addon.bin"), (6, "network.bin"), (7, "user.bin")];
 
 /// The SYSTEM_FILE libraries' diff-log files by nibble — `table.conf`'s
 /// `default …_DICTIONARY` SYSTEM_FILE rows' user filenames (the `.dbin`
@@ -199,10 +246,7 @@ impl UserTableInfo {
                 // not an error.
                 let token = value.trim();
                 database_format = Some(token.to_owned());
-            } else if let Some(counter) = line
-                .strip_prefix("open counter:")
-                .and_then(parse_u32)
-            {
+            } else if let Some(counter) = line.strip_prefix("open counter:").and_then(parse_u32) {
                 open_counter = counter;
             }
         }
@@ -363,17 +407,17 @@ pub fn decode_log_records(bytes: &[u8]) -> Result<Vec<LogRecord>, LogDecodeError
         Ok(value)
     };
     let take_bytes = |offset: &mut usize, len: u16| -> Result<&[u8], LogDecodeError> {
-            let start = *offset;
-            let end = start + usize::from(len);
-            if bytes.len() < end {
-                return Err(LogDecodeError(format!(
-                    "truncated {}-byte payload at {start}",
-                    usize::from(len)
-                )));
-            }
-            *offset = end;
-            Ok(&bytes[start..end])
-        };
+        let start = *offset;
+        let end = start + usize::from(len);
+        if bytes.len() < end {
+            return Err(LogDecodeError(format!(
+                "truncated {}-byte payload at {start}",
+                usize::from(len)
+            )));
+        }
+        *offset = end;
+        Ok(&bytes[start..end])
+    };
 
     while offset < bytes.len() {
         if bytes.len() < offset + LOG_TYPE_SIZE + 4 {
@@ -423,7 +467,9 @@ pub fn decode_log_records(bytes: &[u8]) -> Result<Vec<LogRecord>, LogDecodeError
                 }
                 let len = take_u16(&mut offset)?;
                 if usize::from(len) < 4 {
-                    return Err(LogDecodeError("MODIFY_HEADER payload has no total".to_owned()));
+                    return Err(LogDecodeError(
+                        "MODIFY_HEADER payload has no total".to_owned(),
+                    ));
                 }
                 // Two consecutive `len`-byte runs: the old totals, then
                 // the new — `next_record` hands one run to each payload.
@@ -434,8 +480,10 @@ pub fn decode_log_records(bytes: &[u8]) -> Result<Vec<LogRecord>, LogDecodeError
                     ));
                 }
                 let new_run = take_bytes(&mut offset, len)?;
-                let old_total = u32::from_le_bytes([old_run[0], old_run[1], old_run[2], old_run[3]]);
-                let new_total = u32::from_le_bytes([new_run[0], new_run[1], new_run[2], new_run[3]]);
+                let old_total =
+                    u32::from_le_bytes([old_run[0], old_run[1], old_run[2], old_run[3]]);
+                let new_total =
+                    u32::from_le_bytes([new_run[0], new_run[1], new_run[2], new_run[3]]);
                 LogRecord::ModifyHeader {
                     old_total,
                     new_total,
@@ -515,12 +563,44 @@ mod tests {
             assert_eq!(UserDbm::PinyinIndex.file_name(), "user_pinyin_index.bin");
             assert_eq!(UserDbm::PhraseIndex.file_name(), "user_phrase_index.bin");
         } else {
-            assert_eq!(UserDbm::Bigram.file_name(), format!("user_bigram.{DEFAULT_STORE_EXT}"));
+            assert_eq!(
+                UserDbm::Bigram.file_name(),
+                format!("user_bigram.{DEFAULT_STORE_EXT}")
+            );
         }
         assert!(UserDbm::Bigram.is_hash());
         assert!(!UserDbm::PinyinIndex.is_hash());
         assert_eq!(USER_LIBRARY_FILES[2], (7, "user.bin"));
         assert_eq!(SYSTEM_LOG_FILES[0], (1, "gb_char.dbin"));
+    }
+
+    #[test]
+    fn chunk_payload_round_trip_through_the_frame() {
+        let payload = encode_log_records(&[LogRecord::Add {
+            token: 7,
+            new_item: vec![1, 2, 3, 4],
+        }]);
+        let framed = crate::chunk_format::build_memory_chunk(&payload);
+        assert_eq!(read_chunk_payload(&framed).expect("frame"), &payload[..]);
+
+        // Hostile frames answer typed errors, never panic.
+        assert!(matches!(
+            read_chunk_payload(&framed[..7]),
+            Err(ChunkReadError::ShortHeader)
+        ));
+        let mut truncated = framed.clone();
+        truncated.truncate(framed.len() - 1);
+        assert!(matches!(
+            read_chunk_payload(&truncated),
+            Err(ChunkReadError::TruncatedPayload)
+        ));
+        let mut flipped = framed.clone();
+        let last = flipped.len() - 1;
+        flipped[last] ^= 0xFF;
+        assert!(matches!(
+            read_chunk_payload(&flipped),
+            Err(ChunkReadError::ChecksumMismatch)
+        ));
     }
 
     #[test]

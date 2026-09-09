@@ -29,6 +29,7 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
 pub mod codec;
+pub mod persistence;
 pub mod phrase;
 pub mod seed;
 

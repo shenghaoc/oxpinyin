@@ -52,6 +52,22 @@ pub fn chunk_checksum(payload: &[u8]) -> u32 {
     checksum
 }
 
+/// Frames a payload into a complete `MemoryChunk` file — the 8-byte
+/// `{length, checksum}` header over the payload, `MemoryChunk::save`'s
+/// output. The inverse of the header check every reader performs.
+#[must_use]
+pub fn build_memory_chunk(payload: &[u8]) -> Vec<u8> {
+    let mut file = Vec::with_capacity(CHUNK_HEADER_SIZE + payload.len());
+    file.extend_from_slice(
+        &u32::try_from(payload.len())
+            .unwrap_or(u32::MAX)
+            .to_le_bytes(),
+    );
+    file.extend_from_slice(&chunk_checksum(payload).to_le_bytes());
+    file.extend_from_slice(payload);
+    file
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,5 +92,15 @@ mod tests {
         assert_eq!(CHUNK_HEADER_SIZE, 8);
         assert_eq!(SEPARATOR, b'#');
         assert_eq!(PHRASE_MASK, 0x00FF_FFFF);
+    }
+
+    #[test]
+    fn build_memory_chunk_frames_the_pin_layout() {
+        let payload = [1_u8, 2, 3];
+        let file = build_memory_chunk(&payload);
+        assert_eq!(file.len(), 8 + 3);
+        assert_eq!(&file[..4], &3_u32.to_le_bytes());
+        assert_eq!(&file[4..8], &0x0003_0201_u32.to_le_bytes());
+        assert_eq!(&file[8..], &payload);
     }
 }

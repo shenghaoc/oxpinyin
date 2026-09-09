@@ -132,8 +132,9 @@ pub fn build_chunk(items: &[(u32, ChunkItem)]) -> Result<Vec<u8>, ChunkWriteErro
         if content.is_empty() {
             content.resize(usize::try_from(FIRST_ITEM_OFFSET).unwrap_or(0), 0);
         }
-        let offset = u32::try_from(content.len())
-            .map_err(|_| ChunkWriteError(format!("chunk slot {slot:#010x} offset overflows u32")))?;
+        let offset = u32::try_from(content.len()).map_err(|_| {
+            ChunkWriteError(format!("chunk slot {slot:#010x} offset overflows u32"))
+        })?;
         offsets.resize(usize::try_from(slot).unwrap_or(0) + 1, 0);
         offsets[usize::try_from(slot).unwrap_or(0)] = offset;
 
@@ -189,6 +190,170 @@ pub fn build_chunk(items: &[(u32, ChunkItem)]) -> Result<Vec<u8>, ChunkWriteErro
     file.extend_from_slice(&chunk_checksum(&payload).to_le_bytes());
     file.extend_from_slice(&payload);
     Ok(file)
+}
+
+/// Serialises one item into the `PhraseItem` wire form — the entry-area
+/// encoding above and the `PhraseIndexLogger`'s record payloads, which
+/// carry whole items (`append_record`'s `oldone`/`newone` chunks).
+#[must_use]
+pub fn encode_phrase_item(item: &ChunkItem) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.push(u8::try_from(item.phrase.len()).unwrap_or(u8::MAX));
+    bytes.push(u8::try_from(item.prons.len()).unwrap_or(u8::MAX));
+    bytes.extend_from_slice(&item.unigram.to_le_bytes());
+    for &code in &item.phrase {
+        bytes.extend_from_slice(&code.to_le_bytes());
+    }
+    for (keys, freq) in &item.prons {
+        for key in keys {
+            bytes.extend_from_slice(&key.to_le_bytes());
+        }
+        bytes.extend_from_slice(&freq.to_le_bytes());
+    }
+    bytes
+}
+
+/// Decodes one `PhraseItem` wire form — the inverse of
+/// [`encode_phrase_item`], for the logger payloads' replay.
+///
+/// # Errors
+///
+/// Fails when the header claims a shape that does not fit the bytes
+/// (length, pronunciation count, or run lengths).
+pub fn decode_phrase_item(bytes: &[u8]) -> Result<ChunkItem, ChunkWriteError> {
+    let phrase_length = *bytes
+        .first()
+        .ok_or_else(|| ChunkWriteError("phrase item: no phrase length byte".to_owned()))?
+        as usize;
+    let n_prons = *bytes
+        .get(1)
+        .ok_or_else(|| ChunkWriteError("phrase item: no pronunciation count byte".to_owned()))?
+        as usize;
+    let mut offset = 2;
+    let unigram = bytes
+        .get(offset..offset + 4)
+        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .ok_or_else(|| ChunkWriteError("phrase item: no unigram".to_owned()))?;
+    offset += 4;
+
+    let phrase_end = offset + 4 * phrase_length;
+    let phrase_area = bytes
+        .get(offset..phrase_end)
+        .ok_or_else(|| ChunkWriteError("phrase item: phrase text truncated".to_owned()))?;
+    let phrase: Vec<u32> = phrase_area
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    offset = phrase_end;
+
+    let mut prons = Vec::with_capacity(n_prons);
+    for _ in 0..n_prons {
+        let keys_end = offset + 2 * phrase_length;
+        let keys_area = bytes.get(offset..keys_end).ok_or_else(|| {
+            ChunkWriteError("phrase item: pronunciation keys truncated".to_owned())
+        })?;
+        let keys: Vec<u16> = keys_area
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        offset = keys_end;
+        let freq = bytes
+            .get(offset..offset + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .ok_or_else(|| {
+                ChunkWriteError("phrase item: pronunciation freq truncated".to_owned())
+            })?;
+        offset += 4;
+        prons.push((keys, freq));
+    }
+
+    Ok(ChunkItem {
+        phrase,
+        unigram,
+        prons,
+    })
+}
+
+/// Decodes a `SubPhraseIndex` payload — the reader half of
+/// [`build_chunk`]'s layout, at the writer's home so both stay beside
+/// the format they share. Returns the library's `total_freq` and its
+/// items in ascending slot order.
+///
+/// This is the shape inside every per-library chunk file (`gb_char.bin`
+/// and friends, `user.bin`, `addon.bin`), after the `MemoryChunk` frame
+/// ([`crate::user_files::read_chunk_payload`]); the runtime's
+/// mmap-backed reader (`phrase_library`) validates the same layout.
+///
+/// # Errors
+///
+/// Fails when the header, separators or offset bounds do not hold, or
+/// an item's stored shape overruns the entry area.
+pub fn decode_sub_phrase_index(
+    payload: &[u8],
+) -> Result<(u32, Vec<(u32, ChunkItem)>), ChunkWriteError> {
+    let header = payload
+        .get(..16)
+        .ok_or_else(|| ChunkWriteError("sub phrase index: short header".to_owned()))?;
+    let u32_at = |offset: usize| -> u32 {
+        u32::from_le_bytes([
+            header[offset],
+            header[offset + 1],
+            header[offset + 2],
+            header[offset + 3],
+        ])
+    };
+    let total = u32_at(0);
+    let index_one = u32_at(4) as usize;
+    let index_two = u32_at(8) as usize;
+    let index_three = u32_at(12) as usize;
+
+    if payload.get(16) != Some(&SEPARATOR) {
+        return Err(ChunkWriteError(
+            "sub phrase index: no lead separator".to_owned(),
+        ));
+    }
+    if index_one != 17 {
+        return Err(ChunkWriteError(format!(
+            "sub phrase index: index_one {index_one} is not the header end"
+        )));
+    }
+    let _ = index_two
+        .checked_sub(1)
+        .and_then(|at| payload.get(at))
+        .filter(|&&byte| byte == SEPARATOR)
+        .ok_or_else(|| ChunkWriteError("sub phrase index: no offset separator".to_owned()))?;
+    let _ = index_three
+        .checked_sub(1)
+        .and_then(|at| payload.get(at))
+        .filter(|&&byte| byte == SEPARATOR)
+        .ok_or_else(|| ChunkWriteError("sub phrase index: no entry separator".to_owned()))?;
+    if index_three > payload.len() {
+        return Err(ChunkWriteError(
+            "sub phrase index: past the payload end".to_owned(),
+        ));
+    }
+
+    let offset_array = payload
+        .get(index_one..index_two - 1)
+        .ok_or_else(|| ChunkWriteError("sub phrase index: no offset array".to_owned()))?;
+    let entry_area = payload
+        .get(index_two..index_three - 1)
+        .ok_or_else(|| ChunkWriteError("sub phrase index: no entry area".to_owned()))?;
+
+    let mut items = Vec::new();
+    for (slot, window) in offset_array.chunks_exact(4).enumerate() {
+        let offset = u32::from_le_bytes([window[0], window[1], window[2], window[3]]) as usize;
+        if offset == 0 {
+            continue;
+        }
+        let bytes = entry_area.get(offset..).ok_or_else(|| {
+            ChunkWriteError(format!("sub phrase index: slot {slot} offset out of range"))
+        })?;
+        let item = decode_phrase_item(bytes)
+            .map_err(|error| ChunkWriteError(format!("sub phrase index: slot {slot}: {error}")))?;
+        items.push((slot as u32, item));
+    }
+    Ok((total, items))
 }
 
 #[cfg(test)]
@@ -342,5 +507,81 @@ mod tests {
             ..item
         };
         assert!(build_chunk(&[(1, empty)]).is_err());
+    }
+
+    #[test]
+    fn sub_phrase_index_round_trips_through_build_chunk() {
+        let items = vec![
+            (
+                1,
+                ChunkItem {
+                    phrase: vec![0x4f60],
+                    unigram: 3,
+                    prons: vec![(vec![0x1234], 7)],
+                },
+            ),
+            (
+                3,
+                ChunkItem {
+                    phrase: vec![0x597d],
+                    unigram: 5,
+                    prons: vec![(vec![0x5678], 11)],
+                },
+            ),
+        ];
+        let file = build_chunk(&items).expect("build");
+        let payload = read_frame(&file);
+        let (total, decoded) = decode_sub_phrase_index(payload).expect("decode");
+        assert_eq!(total, 8);
+        assert_eq!(decoded, items);
+
+        // The pin's own empty-library bytes (19-byte payload) decode to
+        // an empty library.
+        let empty = build_chunk(&[]).expect("build");
+        let (total, decoded) = decode_sub_phrase_index(read_frame(&empty)).expect("decode");
+        assert_eq!(total, 0);
+        assert!(decoded.is_empty());
+
+        // Hostile payloads answer typed errors: a broken separator and a
+        // truncated payload.
+        let mut broken = payload.to_vec();
+        broken[16] = b'!';
+        assert!(decode_sub_phrase_index(&broken).is_err());
+        assert!(decode_sub_phrase_index(&payload[..payload.len() - 1]).is_err());
+    }
+
+    fn read_frame(file: &[u8]) -> &[u8] {
+        crate::user_files::read_chunk_payload(file).expect("frame")
+    }
+
+    #[test]
+    fn phrase_item_codec_round_trips_and_matches_the_entry_area() {
+        let item = ChunkItem {
+            phrase: vec![0x4f60, 0x597d],
+            unigram: 483,
+            prons: vec![(vec![0x1234, 0x5678], 7), (vec![0x1235, 0x5679], 2)],
+        };
+        let bytes = encode_phrase_item(&item);
+        // {u8 len, u8 npron, u32 unigram, 2×u32 text, 2×(2×u16 keys, u32 freq)}
+        assert_eq!(bytes.len(), 6 + 8 + 2 * (4 + 4));
+        assert_eq!(&bytes[..6], &[2, 2, 0xe3, 0x01, 0x00, 0x00]);
+        assert_eq!(decode_phrase_item(&bytes).expect("decode"), item);
+
+        // The entry area a built chunk stores for the item decodes the
+        // same way — one wire form, two containers.
+        let file = build_chunk(&[(1, item.clone())]).expect("build");
+        let body = &file[crate::chunk_format::CHUNK_HEADER_SIZE..];
+        let index_two =
+            usize::try_from(u32::from_le_bytes(body[8..12].try_into().unwrap())).unwrap();
+        let entry_area = &body[index_two..];
+        assert_eq!(&entry_area[8..8 + bytes.len()], &bytes[..]);
+    }
+
+    #[test]
+    fn phrase_item_decode_rejects_hostile_bytes() {
+        assert!(decode_phrase_item(&[]).is_err());
+        assert!(decode_phrase_item(&[2, 0, 1, 0, 0, 0]).is_err()); // no text
+        // A pron run that overruns.
+        assert!(decode_phrase_item(&[1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0x34]).is_err());
     }
 }

@@ -98,6 +98,9 @@ mod tests {
         // A 5-byte blob: total present, one stray byte.
         assert!(decode_single_gram(&[0, 0, 0, 0, 0]).is_err());
         // The empty gram — a bare total — is valid.
-        assert_eq!(decode_single_gram(&[7, 0, 0, 0]).expect("decode"), (7, vec![]));
+        assert_eq!(
+            decode_single_gram(&[7, 0, 0, 0]).expect("decode"),
+            (7, vec![])
+        );
     }
 }
