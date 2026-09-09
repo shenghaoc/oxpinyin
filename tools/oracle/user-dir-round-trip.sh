@@ -44,30 +44,37 @@ cc -O2 -o "$work/user_driver" "$script_dir/user_driver.c" \
    -L"$prefix/lib" -lpinyin $(pkg-config --libs glib-2.0) \
    -Wl,-rpath,"$(dirname "$so")"
 
-mkdir "$work/pin" "$work/ox"
+mkdir "$work/pin"
 
-printf '== Phase A: the pin trains, oxpinyin reads ==\n'
+printf '== Phase A: the pin trains a profile ==\n'
 "$work/user_driver" train "$data_dir" "$work/pin" "${inputs[@]}"
+# `pin.dump` is rendered before the in-place rewrite below, so the Phase C
+# diff compares the original against oxpinyin's load->save of it.
 "$work/user_driver" dump "$data_dir" "$work/pin" | sort > "$work/pin.dump"
 [[ -s $work/pin.dump ]] || { printf 'the pin dump is empty\n' >&2; exit 1; }
 
-printf '== Phase B: oxpinyin trains, the pin reads ==\n'
+printf '== Phase B: oxpinyin loads the pin profile and saves it back in place ==\n'
+# The Rust side does a pure load->save of the pin's own data through the
+# production Runtime — no oxpinyin training, so no decode or training
+# divergence (the n-best trellis, the pin's stale-buffer bigram export)
+# can enter the comparison.
 OX_SYSTEM_DIR="$data_dir" \
-OX_PIN_TRAINED_DIR="$work/pin" \
-OX_PIN_DUMP="$work/pin.dump" \
-OX_OX_TRAINED_DIR="$work/ox" \
-OX_OX_DUMP="$work/ox.dump" \
-OX_INPUTS="${inputs[*]}" \
-cargo test --locked --manifest-path "$root/Cargo.toml" -p oxpinyin-capi \
+OX_PIN_DIR="$work/pin" \
+cargo test --locked --manifest-path "$root/Cargo.toml" -p oxpinyin-runtime \
     --test user_dir_round_trip -- --ignored --nocapture
 
-"$work/user_driver" dump "$data_dir" "$work/ox" | sort > "$work/pin-reads-ox.dump"
+printf '== Phase C: the pin renders the original and oxpinyin rewrite ==\n'
+# The seamless direction, divergence-free: both dumps are rendered by the
+# *pin* over the *same* profile data, so its class-(b) bigram-export
+# artefact is common to both sides and cancels. If oxpinyin's read+write
+# is faithful, the rewrite renders byte-identically to the original.
+"$work/user_driver" dump "$data_dir" "$work/pin" | sort > "$work/pin-reads-ox.dump"
 
 if diff -u "$work/pin.dump" "$work/pin-reads-ox.dump" > "$work/diff.txt"; then
-    printf 'IDENTICAL: the pin reads oxpinyin'\''s profile as its own (%s rows)\n' \
+    printf 'IDENTICAL: the pin renders oxpinyin'\''s rewrite of its own profile byte-identically (%s rows)\n' \
         "$(wc -l < "$work/pin.dump" | tr -d ' ')"
 else
     cat "$work/diff.txt" >&2
-    printf 'DIVERGED: the pin'\''s export of oxpinyin'\''s profile differs\n' >&2
+    printf 'DIVERGED: oxpinyin'\''s load->save changed what the pin renders\n' >&2
     exit 1
 fi

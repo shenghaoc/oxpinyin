@@ -670,8 +670,28 @@ Semantics this reverts or preserves, on purpose:
 
 Verification: unit goldens and round-trips at every layer (codecs,
 persistence, bridge, e2e); the backend matrix through the
-`oxpinyin-validate` container (tkrzw and Kyoto Cabinet suites); and
-`tools/oracle/user-dir-round-trip.sh` — the seamless claim itself: the
-pin trains a profile and oxpinyin's §9 exports are line-identical to
-the pin's own dump; oxpinyin trains and saves and the pin's dump of
-that profile is line-identical to its own training's.
+`oxpinyin-validate` container (tkrzw and Kyoto Cabinet suites, plus
+redb/tkrzw on the host); and `tools/oracle/user-dir-round-trip.sh` —
+the seamless claim itself, measured on the pin-built oracle (Debian
+container, tkrzw, 2026-09-09: **PASSED**, 8/8 export rows
+byte-identical). Its design is a pure load→save round trip: the pin
+trains a profile, oxpinyin opens it through the production `Runtime`
+and saves it back **in place**, and the pin then renders the kept
+original dump and the rewritten profile and diffs the two. Both renders
+go through the pin's own exporter over the same underlying data, so the
+only variable is oxpinyin's read and write.
+
+The round trip deliberately does **not** compare renders of two
+independently trained profiles: an earlier harness did, and it asserted
+two registered divergences instead of file I/O — the pin's bigram-export
+iterator drops pinyin rows through its stale `get_pinyin_string` buffer
+(class (b), row 1 of the compatibility policy's table), and the pin and
+oxpinyin segment and train the same input differently (the n-best
+trellis, class (a), row 11). A raw DBM probe of the pin's
+`user_bigram.db` settled the file-I/O question directly: oxpinyin reads
+the pin's hash container back with every key and value identical (2
+grams, `疒→{的:69, 好:69}` total 138 and `sentence_start→疒:207`). The
+lesson for future harnesses on this surface: never put a render-vs-render
+assertion across two trainers or two renderers that carry registered
+divergences — diff one renderer over one dataset, or diff the raw
+containers.

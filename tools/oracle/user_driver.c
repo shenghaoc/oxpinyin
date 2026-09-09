@@ -35,6 +35,23 @@ static int train(const char *system_dir, const char *user_dir,
             fprintf(stderr, "parse failed: %s\n", inputs[i]);
             return 1;
         }
+        /* The ibus shape, §6: training follows a selection — an
+         * unconstrained train_result3 walks an empty constraint set and
+         * trains nothing. Choose candidate 0 (a sentence candidate),
+         * then train the constrained n-best. */
+        if (!pinyin_guess_candidates(instance, 0, 0)) {
+            fprintf(stderr, "guess candidates failed: %s\n", inputs[i]);
+            return 1;
+        }
+        lookup_candidate_t *candidate = NULL;
+        if (!pinyin_get_candidate(instance, 0, &candidate) || !candidate) {
+            fprintf(stderr, "no candidate: %s\n", inputs[i]);
+            return 1;
+        }
+        if (pinyin_choose_candidate(instance, 0, candidate) < 1) {
+            fprintf(stderr, "choose failed: %s\n", inputs[i]);
+            return 1;
+        }
         if (!pinyin_guess_sentence(instance)) {
             fprintf(stderr, "guess failed: %s\n", inputs[i]);
             return 1;
@@ -61,9 +78,12 @@ static int dump_phrases(pinyin_context_t *context) {
     while (pinyin_iterator_has_next_phrase(iter)) {
         gchar *phrase = NULL, *pinyin = NULL;
         gint count = -1;
+        /* A failed step is an unrenderable row, not a walk error: the
+         * iterator also reports false when it cannot render; stop as
+         * the frontend's export does. */
         if (!pinyin_iterator_get_next_phrase(iter, &phrase, &pinyin,
                                              &count))
-            return 1;
+            break;
         printf("P\t%s\t%s\t%d\n", phrase, pinyin, count);
         g_free(phrase);
         g_free(pinyin);
@@ -81,7 +101,7 @@ static int dump_bigrams(pinyin_context_t *context) {
         gint count = -1;
         if (!pinyin_bigram_iterator_get_next_phrase(iter, &phrase, &pinyin,
                                                     &count))
-            return 1;
+            break;
         printf("B\t%s\t%s\t%d\n", phrase, pinyin, count);
         g_free(phrase);
         g_free(pinyin);
