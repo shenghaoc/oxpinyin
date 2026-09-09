@@ -61,6 +61,11 @@ opaque_handle! {
     /// `pinyin_end_get_phrases`.
     ExportIterator
 }
+opaque_handle! {
+    /// `bigram_export_iterator_t` — one user-bigram export walk, owned
+    /// until `pinyin_end_get_bigram_phrases`.
+    BigramExportIterator
+}
 
 pub(crate) use glib_sys::g_free;
 pub(crate) use glib_sys::{GArray, g_array_free, g_array_new};
@@ -238,5 +243,25 @@ unsafe extern "C" {
         len: *mut c_uint,
         utf8_str: *mut *mut c_char,
     ) -> bool;
+
+    /// Begins exporting the trained user bigram. Returns NULL on failure.
+    pub(crate) fn pinyin_begin_get_bigram_phrases(
+        context: *mut PinyinContext,
+    ) -> *mut BigramExportIterator;
+
+    /// Whether the bigram export iterator has another phrase.
+    pub(crate) fn pinyin_bigram_iterator_has_next_phrase(iter: *mut BigramExportIterator) -> bool;
+
+    /// Writes newly allocated phrase and pinyin strings plus the count.
+    /// Both strings transfer ownership; release with [`g_free`].
+    pub(crate) fn pinyin_bigram_iterator_get_next_phrase(
+        iter: *mut BigramExportIterator,
+        phrase: *mut *mut c_char,
+        pinyin: *mut *mut c_char,
+        count: *mut c_int,
+    ) -> bool;
+
+    /// Ends the bigram export walk and frees the iterator.
+    pub(crate) fn pinyin_end_get_bigram_phrases(iter: *mut BigramExportIterator);
 
 }
