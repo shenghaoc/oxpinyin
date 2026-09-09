@@ -3,8 +3,10 @@
 ## Overview
 
 Status snapshot. The binary identity and the compat read path are merged
-and measured on three distro backends; the write path for user data and
-the shelved BerkeleyDB route remain.
+and measured on three distro backends; the remaining open item is task
+9 — same-backend user files read and written seamlessly (maintainer
+ruling 2026-09-09, `docs/findings/compatibility-policy.md` goal
+amendment) — and the BerkeleyDB route remains shelved.
 
 ## Tasks
 
@@ -39,9 +41,16 @@ the shelved BerkeleyDB route remain.
   (`docs/findings/upstream-divergences.md`, 2026-08-30).
   _Requirements: 4_
 
-- [ ] 9. MemoryChunk write path for user data — learned bigrams written
-  back in libpinyin's format.
-  _Requirements: 2_
+- [ ] 9. User files read and written in libpinyin's own formats, drop-in
+  set only (Kyoto Cabinet, tkrzw) — seamless in both directions with a
+  same-backend libpinyin (maintainer ruling 2026-09-09): read the user
+  state it left (`user_bigram.db`, `user_pinyin_index.bin`,
+  `user_phrase_index.bin`, `user.bin`, the `*.dbin` diff logs,
+  `user.conf`), save back what it picks up; answers the 2026-09-08
+  design review's finding that a swap starts blank. Fresh-start
+  applies only when the KV database backend actually changes (BDB
+  distros, redb/LMDB builds).
+  _Requirements: 2, 3, 4_
 
 - [ ] 10. BerkeleyDB compat path — SHELVED; revive only if a consumer
   requires it (incomplete implementation on `feat/bdb-backend`).

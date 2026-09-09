@@ -562,6 +562,11 @@ project memory).
    (a DBM/BerkeleyDB store), the `.bin` MemoryChunk dumps, or the phrase-index
    diff-logger byte layout. redb is the store; only the **values and
    semantics** are the target. This is the headline decision of this finding.
+   Amended 2026-09-09: overturned for the drop-in set (Kyoto Cabinet,
+   tkrzw) — same-backend pairs interoperate seamlessly, so reproducing
+   these binary formats is a goal there (drop-in task 9). The non-goal
+   stands only where the KV database backend actually changes
+   (`compatibility-policy.md`, goal amendment).
 
    **Measured cost of this decision, on Kyoto Cabinet
    ([`rss-attribution-2026-09-09.md`](rss-attribution-2026-09-09.md), Phase 2

@@ -59,7 +59,11 @@ replacement changes nothing observable.
 
 1. FOR every consumer-union symbol, given the same inputs and state, the
    whole observable output SHALL be byte-identical to the pinned libpinyin
-   2.11.91.
+   2.11.91. State includes the on-disk user state of a same-backend user
+   dir (Kyoto Cabinet↔Kyoto Cabinet, tkrzw↔tkrzw); a user dir in
+   another KV backend's format is outside the compared state — data
+   loss when the KV database backend changes is taken for granted
+   (compatibility policy goal amendment, 2026-09-09).
 2. Divergence SHALL be permitted only under classes (a) MATH, (b) MEMORY
    SAFETY, (c) AVAILABILITY, (d) CONSUMER SCOPE — see
    `docs/findings/compatibility-policy.md`.
@@ -83,3 +87,9 @@ a rule or a plan so that nothing is silently re-frozen.
    recorded as a constant, never a target.
 2. THE BerkeleyDB compat path SHALL remain SHELVED until a consumer needs
    it.
+3. THE per-backend user-data rule SHALL stay attributed in
+   `docs/findings/compatibility-policy.md` (goal amendment, 2026-09-09):
+   same-backend pairs interoperate seamlessly in both directions (task
+   9); across a genuine KV-backend change, fresh-start applies and the
+   value-level interchange is the migration path (user phrase
+   dictionary carried, trained bigram not).

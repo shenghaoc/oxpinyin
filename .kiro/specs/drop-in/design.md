@@ -73,8 +73,12 @@ tools/packaging/install.sh         — fills @prefix@/@libdir@ into the .pc
 
 ## Out of scope / shelved
 
-- The `MemoryChunk` write path for user data (learned bigrams written
-  back in libpinyin's format) — pending.
+- The `MemoryChunk` write path for user data (learned user state written
+  back in libpinyin's formats) — in scope as task 9, the seamless
+  same-backend requirement: user files read and written for the drop-in
+  set (Kyoto Cabinet, tkrzw), both directions
+  (`docs/findings/compatibility-policy.md`, goal amendment, 2026-09-09).
+  Fresh-start applies only across a genuine KV-backend change.
 - The BerkeleyDB compat path — SHELVED
   (`docs/findings/berkeleydb-compat-phase1.md`); the incomplete
   implementation lives on `feat/bdb-backend`.
