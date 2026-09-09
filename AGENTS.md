@@ -183,3 +183,9 @@ points at them:
   `pinyin_train` directly: `docs/runbooks/oracle.md`.
 - **Backend-specific benches** carry `required-features`; run one with
   `--bench <name>`: `docs/runbooks/benches.md`.
+- **Findings documents commit no captures.** The document records the
+  command that produced each figure; bulk evidence is attached to the PR
+  and linked from the document: `docs/runbooks/benches.md`. Where the
+  capture environment is ephemeral and the raw cannot be retained
+  anywhere, the document says so at the point of use rather than pointing
+  at a path that no longer exists.
