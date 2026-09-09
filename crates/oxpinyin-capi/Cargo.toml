@@ -76,6 +76,20 @@ redb = [
 # drop-in through `cargo cbuild --no-default-features`.)
 shipped = []
 
+# Installs a `GlobalAlloc` wrapper that counts allocating calls, requested
+# bytes, currently-live bytes and the peak of the live total, and exports
+# five `oxpinyin_alloc_*` readers for the bisection harness.
+#
+# Never enabled by default and never part of a shipped artifact: with the
+# feature off the module does not exist, no `#[global_allocator]` is
+# declared, and no symbol is exported. It exists because the two questions
+# the harness asks cannot be answered from outside the process — callgrind
+# links `vg_replace_malloc.c` into every tool, so the Ir it attributes to
+# allocation is valgrind's allocator rather than glibc's and it cannot
+# report requested bytes at all; and `/proc` RSS cannot separate live Rust
+# bytes from allocator retention, which is what the live/peak pair is for.
+alloc-count = []
+
 [lints.rust]
 unsafe_code = "allow" # FFI + glib marshalling only; // SAFETY: on every block
 missing_docs = "warn"
