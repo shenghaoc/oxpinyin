@@ -133,6 +133,10 @@ pub(crate) enum DbType {
     Tree,
     /// `HashDB`, unordered — used by `bigram.db`.
     Hash,
+    /// `StashDB`, in-memory — the container libpinyin's Kyoto Cabinet
+    /// *user* bigram lives in between snapshot load and dump
+    /// (`ngram_kyotodb.cpp:54-108`).
+    Stash,
 }
 
 impl DbType {
@@ -141,8 +145,24 @@ impl DbType {
         match self {
             Self::Tree => "kct",
             Self::Hash => "kch",
+            Self::Stash => "kcs",
         }
     }
+}
+
+/// A path as a NUL-terminated C string, with no `#` (which Kyoto Cabinet
+/// would read as the start of tuning parameters). Unlike [`Db::open`]'s
+/// spec this is the bare path — the snapshot calls take a filename, not a
+/// PolyDB open spec.
+fn cstring_path(path: &Path) -> Result<CString, StoreError> {
+    let bytes = path.as_os_str().as_bytes();
+    if bytes.contains(&b'#') {
+        return Err(StoreError::InvalidInput(
+            "store path contains '#', which Kyoto Cabinet reads as the start of \
+             tuning parameters",
+        ));
+    }
+    CString::new(bytes).map_err(|_| StoreError::InvalidInput("store path contains NUL"))
 }
 
 /// The pointer Kyoto Cabinet may read `bytes.len()` bytes through.
@@ -440,6 +460,46 @@ impl Db {
             return Err(self.error("kcdbsync"));
         }
         Ok(())
+    }
+
+    /// Reads a snapshot stream (`KCSS`) into this database —
+    /// `kcdbloadsnap`.
+    ///
+    /// libpinyin's Kyoto Cabinet *user* bigram is this and nothing else:
+    /// `Bigram::load_db` opens an in-memory `StashDB` and calls
+    /// `load_snapshot(dbfile)` on it (`ngram_kyotodb.cpp:54-64`), so the
+    /// file on disk is a snapshot of records, not a `HashDB` — its magic
+    /// is `KCSS`, and opening it as a hash database fails with "missing
+    /// magic data of the file". The *system* bigram is a genuine `HashDB`
+    /// file (`attach`, `ngram_kyotodb.cpp:110-119`); the two are different
+    /// containers and must not share one open path.
+    pub(crate) fn load_snapshot(&self, path: &Path) -> Result<(), StoreError> {
+        let spec = cstring_path(path)?;
+        // SAFETY: the handle is live and `spec` outlives the call.
+        if unsafe { sys::kcdbloadsnap(self.handle, spec.as_ptr()) } == 0 {
+            return Err(self.error("kcdbloadsnap"));
+        }
+        Ok(())
+    }
+
+    /// Writes this database's records out as a snapshot stream (`KCSS`) —
+    /// `kcdbdumpsnap`, the inverse of [`Self::load_snapshot`] and the
+    /// format `Bigram::save_db` leaves behind
+    /// (`ngram_kyotodb.cpp:82-101`: `unlink` then `dump_snapshot`).
+    pub(crate) fn dump_snapshot(&self, path: &Path) -> Result<(), StoreError> {
+        let spec = cstring_path(path)?;
+        // SAFETY: the handle is live and `spec` outlives the call.
+        if unsafe { sys::kcdbdumpsnap(self.handle, spec.as_ptr()) } == 0 {
+            return Err(self.error("kcdbdumpsnap"));
+        }
+        Ok(())
+    }
+
+    /// An in-memory `StashDB` — Kyoto Cabinet's `"-"` path with the stash
+    /// class forced, the container libpinyin's KC user bigram lives in
+    /// between its snapshot load and dump.
+    pub(crate) fn open_stash() -> Result<Self, StoreError> {
+        Self::open(Path::new("-"), DbType::Stash, false, true)
     }
 
     /// The number of records — `kcdbcount`.

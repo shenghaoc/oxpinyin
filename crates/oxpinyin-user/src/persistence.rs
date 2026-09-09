@@ -269,13 +269,17 @@ fn clean_user_files(dir: &Path) {
     }
 }
 
-/// The user bigram: the hash container's rows are the grams wholesale.
+/// The user bigram: the container's rows are the grams wholesale. The
+/// container is the backend's *user*-bigram form — a Kyoto Cabinet
+/// snapshot stream, a tkrzw hash file, the native container on redb/LMDB
+/// (`RawReadStore::open_user_bigram`); the system `bigram.db` is a
+/// different container on Kyoto Cabinet and must not share an open path.
 fn load_bigram(dir: &Path, loaded: &mut Loaded) {
     let path = dir.join(UserDbm::Bigram.file_name());
     if !path.exists() {
         return;
     }
-    let store = match DefaultStore::open_hash_read_only(&path) {
+    let store = match DefaultStore::open_user_bigram(&path) {
         Ok(store) => store,
         Err(error) => {
             loaded
@@ -510,7 +514,7 @@ pub fn save(
                 )
             })
             .collect();
-        stage_dbm(dir, UserDbm::Bigram, &bigram_rows, &mut staged)?;
+        stage_user_bigram(dir, &bigram_rows, &mut staged)?;
 
         // ---- the two index trees, rebuilt from the USER_FILE items ------
         let mut chewing_rows: Vec<ParsedRow> = Vec::new();
@@ -652,21 +656,41 @@ pub fn diff_records(
     records
 }
 
-/// Writes one DBM file's rows to its `.tmp` sibling (hash for the
-/// bigram, tree for the indexes) and registers the rename.
+/// Writes the user bigram to its `.tmp` sibling and registers the rename.
+///
+/// Routed through [`WriteStore::write_user_bigram`] rather than
+/// [`stage_dbm`]'s container create, because the user bigram is not a
+/// hash file on every backend: Kyoto Cabinet writes a snapshot stream of
+/// an in-memory stash (`ngram_kyotodb.cpp:82-101`) where tkrzw, redb and
+/// LMDB write a container at the path.
+fn stage_user_bigram(
+    dir: &Path,
+    rows: &[(Vec<u8>, Vec<u8>)],
+    staged: &mut Vec<(PathBuf, PathBuf)>,
+) -> Result<(), PersistenceError> {
+    let dbm = UserDbm::Bigram;
+    let final_path = dir.join(dbm.file_name());
+    let tmp = dir.join(format!("{}.tmp", dbm.file_name()));
+    DefaultStore::write_user_bigram(&tmp, rows)?;
+    remove_dbm_sidecars(dir, &tmp);
+    staged.push((tmp, final_path));
+    Ok(())
+}
+
+/// Writes one of the two index DBMs' rows to its `.tmp` sibling (a tree
+/// container on every backend) and registers the rename. The user bigram
+/// takes the separate [`stage_user_bigram`] route, since its container is
+/// backend-specific.
 fn stage_dbm(
     dir: &Path,
     dbm: UserDbm,
     rows: &[(Vec<u8>, Vec<u8>)],
     staged: &mut Vec<(PathBuf, PathBuf)>,
 ) -> Result<(), PersistenceError> {
+    debug_assert!(!dbm.is_hash(), "stage_dbm serves the two index trees");
     let final_path = dir.join(dbm.file_name());
     let tmp = dir.join(format!("{}.tmp", dbm.file_name()));
-    let store = if dbm.is_hash() {
-        DefaultStore::create_hash(&tmp)?
-    } else {
-        DefaultStore::create(&tmp)?
-    };
+    let store = DefaultStore::create(&tmp)?;
     store.write(|txn| {
         for (key, value) in rows {
             txn.put_raw(key, value)?;
@@ -996,15 +1020,20 @@ mod tests {
     }
 
     #[test]
-    fn the_bigram_hash_round_trips_through_the_container() {
+    fn the_bigram_round_trips_through_the_user_bigram_container() {
         let dir = tempdir("bigram");
         let originals = originals();
         save(&dir, &state(), &originals, &versions(), 1).expect("save");
 
-        // Point-read one gram through the backend, the way the runtime
-        // reads the system bigram.
+        // Point-read one gram through the *user-bigram* seam, which is
+        // where the container differs by backend: a Kyoto Cabinet
+        // snapshot stream of an in-memory stash, a tkrzw hash file, the
+        // native container on redb/LMDB. Opening it as a plain hash file
+        // is the bug this assertion exists to catch — on Kyoto Cabinet
+        // the user bigram is not a HashDB and a hash open answers
+        // "missing magic data of the file".
         let path = dir.join(UserDbm::Bigram.file_name());
-        let store = DefaultStore::open_hash_read_only(&path).expect("open");
+        let store = DefaultStore::open_user_bigram(&path).expect("open");
         let value = store.get_raw(&1_u32.to_le_bytes()).expect("get");
         let (total, records) = decode_single_gram(&value.expect("gram")).expect("decode");
         assert_eq!(total, 207);
@@ -1012,6 +1041,21 @@ mod tests {
             records,
             vec![(1, 69), (0x0100_0001, 138), (0x0700_0001, 69)]
         );
+
+        // The whole gram set walks back, not just one point read: the
+        // loader takes `range_raw` over the same container.
+        let mut seen = Vec::new();
+        store
+            .range_raw(
+                std::ops::Bound::Unbounded,
+                std::ops::Bound::Unbounded,
+                &mut |key, _value| {
+                    seen.push(u32::from_le_bytes([key[0], key[1], key[2], key[3]]));
+                    Ok(())
+                },
+            )
+            .expect("walk");
+        assert_eq!(seen, vec![1], "the profile holds one gram");
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }

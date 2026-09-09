@@ -197,6 +197,17 @@ impl crate::RawReadStore for KcStore {
             db: Db::open(path, DbType::Hash, true, false)?,
         })
     }
+
+    fn open_user_bigram(path: &Path) -> Result<Self, crate::StoreError> {
+        // Kyoto Cabinet's user bigram is a snapshot stream, not a hash
+        // file (`ngram_kyotodb.cpp:54-64`): open an in-memory stash and
+        // load the snapshot into it. The system bigram stays a HashDB file
+        // through `open_hash_read_only` above — the two are different
+        // containers and must not share one open.
+        let db = Db::open_stash()?;
+        db.load_snapshot(path)?;
+        Ok(Self { db })
+    }
 }
 
 impl WriteStore for KcStore {
@@ -210,6 +221,24 @@ impl WriteStore for KcStore {
         Ok(Self {
             db: Db::open(path, DbType::Hash, false, true)?,
         })
+    }
+
+    fn write_user_bigram(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError> {
+        // The inverse of `open_user_bigram`, mirroring the pin's
+        // `Bigram::save_db` (`ngram_kyotodb.cpp:82-101`): `unlink` the
+        // destination, then fill an in-memory stash and dump its snapshot
+        // there. A missing file is not an error — the pin tolerates
+        // `ENOENT` on its own unlink and fails on anything else.
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(StoreError::Io(e)),
+        }
+        let db = Db::open_stash()?;
+        for (key, value) in rows {
+            db.set(key, value)?;
+        }
+        db.dump_snapshot(path)
     }
 
     fn write<R>(

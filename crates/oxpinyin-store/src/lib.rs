@@ -320,6 +320,36 @@ pub trait WriteStore: ReadStore {
         Self::create(path)
     }
 
+    /// Writes `rows` to `path` as the **user** bigram container.
+    ///
+    /// The write half of [`RawReadStore::open_user_bigram`], and for the
+    /// same reason it is not [`Self::create_hash`]: libpinyin's Kyoto
+    /// Cabinet user bigram is a snapshot stream, produced by filling an
+    /// in-memory `StashDB` and calling `dump_snapshot`
+    /// (`ngram_kyotodb.cpp:82-101`), not by creating a hash file at the
+    /// path. tkrzw, redb and LMDB all write a genuine container there, so
+    /// the default is [`Self::create_hash`] plus a raw write — what those
+    /// three already did correctly.
+    ///
+    /// Rows arrive already sorted by key; the container's own order is
+    /// what matters on read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the container cannot be written.
+    fn write_user_bigram(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError>
+    where
+        Self: Sized,
+    {
+        let store = Self::create_hash(path)?;
+        store.write(|txn| {
+            for (key, value) in rows {
+                txn.put_raw(key, value)?;
+            }
+            Ok(())
+        })
+    }
+
     /// Run `f` inside an atomic write transaction.  All puts/removes in
     /// `f` land together on `Ok`, or none land on `Err` (full rollback).
     /// The closure sees its own writes.
@@ -433,6 +463,26 @@ pub trait RawReadStore: ReadStore {
         Self: Sized,
     {
         Self::open_read_only(path)
+    }
+
+    /// Opens the **user** bigram container at `path` for reading.
+    ///
+    /// This is *not* [`Self::open_hash_read_only`], and the two must not
+    /// share one implementation: libpinyin keeps its system and user
+    /// bigrams in different containers on Kyoto Cabinet. The system
+    /// `bigram.db` is a `HashDB` file (`attach`, `ngram_kyotodb.cpp:110`),
+    /// while the user `user_bigram.db` is a snapshot stream of an
+    /// in-memory `StashDB` (`load_db`'s `load_snapshot`,
+    /// `ngram_kyotodb.cpp:54-64`) — magic `KCSS`, which a hash open
+    /// rejects with "missing magic data of the file". On tkrzw both are
+    /// genuine hash files (`ngram_tkrzwdb.cpp:48-63`), and redb/LMDB have
+    /// no hash/tree/snapshot distinction, so the default — the hash
+    /// container — is correct for all three.
+    fn open_user_bigram(path: &std::path::Path) -> Result<Self, StoreError>
+    where
+        Self: Sized,
+    {
+        Self::open_hash_read_only(path)
     }
 }
 
@@ -1192,6 +1242,64 @@ mod tests {
                     assert_eq!(store.get("alpha", b"k1").unwrap(), Some(b"v1".to_vec()));
                     assert_eq!(store.get("beta", b"k2").unwrap(), Some(b"v2".to_vec()));
                     assert_eq!(store.get("alpha", b"k2").unwrap(), None);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                /// The user-bigram seam round trips on every backend, and
+                /// is its own pair rather than a plain hash open: libpinyin
+                /// keeps its user bigram in a *different* container than
+                /// its system bigram on Kyoto Cabinet (an in-memory stash
+                /// dumped as a `KCSS` snapshot, `ngram_kyotodb.cpp:54-101`,
+                /// vs the system's `HashDB` file).
+                ///
+                /// What this law does and does not catch: it pins that one
+                /// backend's `write_user_bigram` and `open_user_bigram`
+                /// agree with each other — so a regression that splits them
+                /// (one half a snapshot, the other a hash file) fails here.
+                /// It does **not** prove the format matches the pin's: the
+                /// original defect was hash-on-both-halves, which is
+                /// self-consistent and passes this law. Only the oracle
+                /// round trip — a real libpinyin writes the profile,
+                /// oxpinyin reads it — can catch that
+                /// (`tools/oracle/user-dir-round-trip.sh`).
+                #[test]
+                fn user_bigram_round_trips_through_its_own_seam() {
+                    let path = temp_path("user-bigram");
+                    let rows: Vec<(Vec<u8>, Vec<u8>)> = [1_u32, 2, 0x0100_0003]
+                        .iter()
+                        .map(|&tok| {
+                            (
+                                tok.to_le_bytes().to_vec(),
+                                // A `SingleGram` blob: total then one record.
+                                [&42_u32.to_le_bytes()[..], &tok.to_le_bytes()[..], &7_u32.to_le_bytes()[..]]
+                                    .concat(),
+                            )
+                        })
+                        .collect();
+                    <$store>::write_user_bigram(&path, &rows).unwrap();
+
+                    let store = <$store>::open_user_bigram(&path).unwrap();
+                    for (key, value) in &rows {
+                        assert_eq!(
+                            store.get_raw(key).unwrap().as_deref(),
+                            Some(&value[..]),
+                            "gram {key:?} must read back through the user-bigram seam"
+                        );
+                    }
+                    // The loader also walks the whole container.
+                    let mut walked = 0;
+                    store
+                        .range_raw(
+                            std::ops::Bound::Unbounded,
+                            std::ops::Bound::Unbounded,
+                            &mut |_k, _v| {
+                                walked += 1;
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(walked, rows.len(), "the walk must see every gram");
                     drop(store);
                     cleanup(&path);
                 }
