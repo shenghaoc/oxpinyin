@@ -88,6 +88,7 @@ series lives in `../perf/`.
 | [`perf-provenance-audit-2026-09-07`](perf-provenance-audit-2026-09-07.md) | Perf provenance audit — no record pins its harness; one commit silently repointed three docs' oracle | audit |
 | [`perf-steady-cycle-cross-host-2026-09-07`](perf-steady-cycle-cross-host-2026-09-07.md) | Steady keystroke cycle across hosts — arm64/amd64 vs libpinyin | perf snapshot |
 | [`perf-store-opt-2026-09`](perf-store-opt-2026-09.md) | Performance Store Optimizations — 2026-09-06 | perf snapshot |
+| [`perf-train-commit-fsync-2026-09-09`](perf-train-commit-fsync-2026-09-09.md) | Training-commit hard sync — measured cost of `8ca10158` on the tkrzw path | perf snapshot (decision owed) |
 | [`phrase-dbm-format-2026-09-01`](phrase-dbm-format-2026-09-01.md) | libpinyin phrase-index DBM format — P3 source-level findings | verified (P3) |
 | [`phrase-union`](phrase-union.md) | Phrase-index union at lookup — W11 Phase 0 scope and proposed design | approved (W11 Phase 0) |
 | [`pin-refreeze-2026-08`](pin-refreeze-2026-08.md) | Pin re-freeze — phonetic-initial incomplete expansion (2026-08) | approved (pin freeze) |
