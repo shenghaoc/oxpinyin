@@ -103,6 +103,11 @@ open or pending:
   directions with a same-backend libpinyin, per the 2026-09-09
   maintainer ruling (`docs/findings/compatibility-policy.md`, goal
   amendment); the runtime opens `user_store.<ext>` today.
+- The consumer-union probe gap — the differential suite does not yet
+  drive all 58 union symbols, so the uncovered ones are unverified
+  rather than compliant; closing it is work
+  (`docs/findings/compatibility-policy.md`, §(e) consequence 3),
+  tracked here rather than only in the policy.
 
 Parked, not open: the W12 live-typing behaviours the parity sequence does
 not exercise (`docs/findings/live-typing.md`, no pin gates) and the
