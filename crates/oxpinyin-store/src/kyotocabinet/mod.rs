@@ -165,7 +165,12 @@ impl crate::RawReadStore for KcStore {
             Bound::Included(key) | Bound::Excluded(key) => key.to_vec(),
         };
         let mut cursor = self.db.cursor()?;
-        if !cursor.jump_to(&start)? {
+        let positioned = if start.is_empty() {
+            cursor.jump_first()?
+        } else {
+            cursor.jump_to(&start)?
+        };
+        if !positioned {
             return Ok(());
         }
         while let Some(record) = cursor.next()? {

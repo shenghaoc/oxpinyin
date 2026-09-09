@@ -556,6 +556,21 @@ impl Cursor<'_> {
         self.positioning_outcome("kccurjumpkey")
     }
 
+    /// Positions at the first record — `kccurjump`, the no-key form.
+    ///
+    /// A key jump with the empty string is **not** equivalent on the hash
+    /// containers: KC's `kccurjumpkey("")` answers "no record" on a
+    /// HashDB that has records, so an unbounded raw walk must take this
+    /// form. `Ok(false)` when the database is empty.
+    pub(crate) fn jump_first(&mut self) -> Result<bool, StoreError> {
+        // SAFETY: the cursor handle is live.
+        let ok = unsafe { sys::kccurjump(self.handle) };
+        if ok != 0 {
+            return Ok(true);
+        }
+        self.positioning_outcome("kccurjump")
+    }
+
     /// A positioning call (`kccurjump` / `kccurjumpkey`) returned false:
     /// `Ok(false)` when the cursor's code is "no record" — an empty database
     /// or a key past the end — otherwise the backend error the code names.
