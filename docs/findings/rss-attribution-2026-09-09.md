@@ -1283,14 +1283,43 @@ is regenerable rather than merely asserted.
 JSONs) plus the two raw callgrind out-files and capture 2's four `smaps`
 dumps, neither of which was ever committed.
 
-**Attachment status: see PR #404.** This session could not attach it
-itself — GitHub exposes no API for pull-request comment attachments, and
-release creation is refused for this session type (`HTTP 403`, "Creating,
-editing, or deleting releases is not permitted for this session type"), so
-the bundle was handed over for attachment rather than uploaded. **If no
-link accompanies this paragraph, treat the bundle as not retained** and
-regenerate from the commands below; the SHA-256 above identifies it if it
-surfaces later.
+**The bundle was not retained.** It was assembled inside an ephemeral
+container and that container is gone. There is no link and there will not
+be one. Reproduce with the commands below instead; the SHA-256 is kept
+only so that anyone who does still hold a copy can verify it is the same
+bundle.
+
+### Toolchain and packages
+
+Ubuntu 24.04. One line, copy-pasteable; `autopoint` and `intltool` are
+load-bearing — libpinyin's `autoreconf --force --install` fails without
+them:
+
+```sh
+sudo apt-get update && sudo apt-get install -y \
+    build-essential pkg-config git curl autoconf automake libtool \
+    autotools-dev gettext autopoint intltool libglib2.0-dev \
+    libkyotocabinet-dev libsqlite3-dev libclang-dev zlib1g-dev
+```
+
+For the profiling passes only (§"What Step 1 uncovered" onward), plus the
+Kyoto Cabinet debug symbols that make its frames readable:
+
+```sh
+sudo apt-get install -y valgrind
+echo "deb http://ddebs.ubuntu.com $(lsb_release -cs) main universe" \
+    | sudo tee /etc/apt/sources.list.d/ddebs.list
+sudo apt-get install -y ubuntu-dbgsym-keyring && sudo apt-get update
+sudo apt-get install -y libkyotocabinet16v5-dbgsym
+```
+
+Rust comes from `rust-toolchain.toml` (1.97.1) via rustup; the shipping
+path additionally needs cargo-c:
+
+```sh
+cargo install cargo-c@0.10.25 --locked
+bash tools/model/fetch-model.sh          # SHA-verified model20 export
+```
 
 ### Cells
 
@@ -1324,6 +1353,49 @@ tools/packaging/release-stage.sh kyotocabinet \
 | §6 allocation counters | `cargo cinstall --locked --release -p oxpinyin-capi --no-default-features --features kyotocabinet,shipped,alloc-count --destdir=/opt/oxpinyin-kc-alloccount --prefix=/usr --libdir=/usr/lib`, then the `rss-diag` invocation above against that artifact. **Not retained** — see the note at the table |
 | symbolisation of Kyoto Cabinet frames | `libkyotocabinet16v5-dbgsym 1.2.80-1build1` from `ddebs.ubuntu.com`; the `.so` bytes are unchanged by installing it |
 | gate checks | `nm -D --defined-only <so> \| grep oxpinyin_alloc`; `readelf -d <so> \| grep NEEDED` |
+
+### Reading the captures back
+
+The commands above write the captures; these turn them into the tables in
+this document. Both readers are committed; the DHAT census is a one-liner
+because nothing in the tree reads DHAT and nothing needed to.
+
+```sh
+# §2 per-mapping tables and §3's growth table
+tools/bisection/rss-smaps.py --diff <out>/maps/L-smaps-init.txt \
+                                    <out>/maps/S-smaps-init.txt
+tools/bisection/rss-smaps.py --diff <out>/maps/L-smaps-cycle.txt \
+                                    <out>/maps/S-smaps-cycle.txt
+
+# Step 1's mapped extents and the r--s / rw-p / r--p perms: read from the
+# same dumps. rss-smaps.py does not emit those two columns.
+grep -B1 -E '^(Size|Rss):' <out>/maps/L-smaps-cycle.txt | grep -A1 'libpinyin/data'
+
+# check/get ladder, breadth tables, and both call chains. `calls` gives
+# calls TO a function; `callers` gives who called it, which is the only
+# sound source for the arrows -- valgrind's stack unwind is not (see the
+# tool finding in §"Three notes").
+tools/bisection/cg-calls.py <out>/cg.L calls   'ChewingLargeTable2::search(int'
+tools/bisection/cg-calls.py <out>/cg.S callers 'kcdbget'
+
+# Step 1's page-cache table and the Phase 2 block counts: a census of the
+# DHAT program points. `gb`/`gbk` are bytes/blocks live at the global
+# maximum; the 524,672 x 16 and 32,896 x 16 signatures are one
+# create_leaf_cache / create_inner_cache slot set each.
+python3 - <<'EOF'
+import collections, json
+for cell in ('L', 'S'):
+    d = json.load(open(f'dhat.{cell}'))
+    pps = d['pps']
+    print(cell, 'at t-gmax:',
+          sum(p.get('gb', 0) for p in pps), 'B in',
+          sum(p.get('gbk', 0) for p in pps), 'blocks')
+    sig = collections.Counter((p.get('gb', 0), p.get('gbk', 0)) for p in pps)
+    for (b, k), n in sorted(sig.items(), key=lambda kv: -kv[0][0])[:8]:
+        if b:
+            print(f'   {b:>10,} B x {k:>6,} blk -> {n} site(s)')
+EOF
+```
 
 ### What is not regenerable, and reads at lower strength
 
