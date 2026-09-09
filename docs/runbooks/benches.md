@@ -158,3 +158,49 @@ is the template; `docs/findings/perf-keycost-first-alloc-2026-09-07.md`
 a recent full example with confidence intervals and an acceptance
 gate). A change that trades time for space or the reverse must say so
 and justify it (AGENTS.md, "Source policy").
+
+### Evidence: what is committed and what is not
+
+**A findings document commits no captures.** Not DHAT JSON, not `/proc`
+`smaps` dumps, not callgrind out-files, not `perf` data. They are large,
+machine-generated, and unreviewable in a diff — and in at least one case
+the bulk of the file is a part the document itself records as unusable.
+
+What the document carries instead:
+
+1. **The command that produced each figure.** Not each class of figure —
+   each figure. Where two numbers come from different commands, different
+   inputs, or different runs, they get separate entries, because a shared
+   heading is exactly how one of them ends up with no provenance at all.
+   That is what makes a number regenerable once the capture is gone, and
+   it is the substitute for a path on a machine.
+2. **The capture bundle, attached to the pull request**, with its URL *in
+   the document* and not only in the PR description — a document that says
+   "evidence is attached to the PR" without a link has the same problem as
+   one pointing at `/tmp`. Record the bundle's SHA-256 alongside the link.
+   A release asset is an **additional** mirror if you want one, never a
+   substitute for the PR attachment.
+3. **An explicit note where a figure cannot be regenerated**, *at the
+   point of use*, so a weaker claim reads as one. Do not point at a path
+   that no longer exists.
+
+**The one exception to (2), and it is narrow.** If the capture environment
+was ephemeral and the bundle could not be retained anywhere — no
+attachment, no mirror, nothing to link — the document says so plainly, in
+place of the link, and (1) carries the whole reproduction burden. Keep the
+SHA-256 even then, so anyone still holding a copy can verify it. This is
+not a licence to skip the attachment when attaching is possible: it exists
+because it happened, in the record that prompted this rule, and a rule its
+own founding case violates is worse than no rule. When it applies, (1) is
+not "a Provenance section" but a complete recipe — toolchain, packages,
+builds, measurement commands, and the reader invocations that turn the
+captures into the document's tables.
+
+Small, human-readable, directly-cited artifacts are the exception that
+proves the rule — a SHA manifest, a pin file — and
+`docs/findings/oracle-pin-074a221-evidence/` is what that looks like.
+The line is bulk machine output, not evidence as such.
+
+Derived readers stay in `tools/bisection/` (`rss-smaps.py`,
+`cg-calls.py`): they are tools, not evidence, and they are what makes the
+pipeline reproducible for anyone holding the bundle.
