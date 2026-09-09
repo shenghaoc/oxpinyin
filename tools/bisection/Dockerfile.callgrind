@@ -1,0 +1,202 @@
+# Instruction-level differential environment for the steady keystroke cycle.
+#
+# Builds the Tkrzw cell pair only — libpinyin at the oracle pin and
+# oxpinyin — plus valgrind and the instrumented bisect harness, so one
+# harness binary can be run under callgrind against each `.so` in turn.
+# Because bisect.c drives both engines through the same C ABI, the same
+# harness against each library gives directly comparable totals.
+#
+#   docker build -f tools/bisection/Dockerfile.callgrind -t oxpinyin-callgrind .
+#   docker run --rm -v /tmp/cg-out:/out oxpinyin-callgrind bash tools/bisection/run-callgrind-differential.sh
+#
+# Never build or run this emulated: a platform differing from the host
+# profiles the interpreter, not the implementations. No --platform here.
+#
+# ── How this differs from Dockerfile.perf-matrix, and why ────────────
+#
+# 1. valgrind is installed. It is the only instrument available on a host
+#    with no PMU: this recipe's own target hosts include an Apple-silicon
+#    container, where hardware counters do not exist, and a Firecracker
+#    microVM, where perf_event_open answers ENOENT.
+# 2. `strip --strip-all` is NOT run. Stripping removes .symtab, and
+#    without it callgrind has no symbol to attribute Ir to — the
+#    differential would be one unnamed blob. This is the one change the
+#    profile cannot be taken without.
+# 3. oxpinyin is built with debug info for line-level attribution, via
+#    CARGO_PROFILE_RELEASE_DEBUG and NOT via RUSTFLAGS="-Cdebuginfo=1".
+#    RUSTFLAGS alone is silently useless here: cargo passes
+#    -Cstrip=debuginfo whenever the *profile* asks for no debug info, so
+#    the flag emits DWARF and cargo strips it right back out — verified
+#    on rustc 1.97.1, where the RUSTFLAGS-only build carries zero
+#    .debug_* sections. libpinyin needs no counterpart: autotools'
+#    default CFLAGS are already `-g -O2`.
+#
+#    Debug info is NOT free of side effects on the artifact, and the
+#    differential run measures that rather than assuming it away. The
+#    profile's debug level feeds cargo's crate metadata hash, which feeds
+#    every mangled symbol name, which feeds link order: the debug build's
+#    .text has the same size and the same instruction multiset as the
+#    stock one but different bytes, because ~1,700 functions land at
+#    different addresses. Instruction counts are unaffected by that;
+#    simulated cache and branch figures are not. Stage 2 of
+#    run-callgrind-differential.sh separates the two cases.
+# 4. The datagen step is dropped. This is the drop-in configuration
+#    run-perf-same-data.sh measures: both cells open libpinyin's own
+#    installed data directory, so there is no oxpinyin-generated data to
+#    compile.
+#
+# Everything else — base image digest, apt snapshot, oracle pin,
+# configure flags, cargo flags, release profile — is Dockerfile.perf-matrix
+# verbatim.
+
+# Multi-arch OCI index (amd64, arm64, …): resolves to the build host's
+# native variant. Do not pin --platform here.
+#
+# The digest is the image identity, so BASE_IMAGE exists only to name a
+# registry that can serve it: some networks reach Docker Hub's manifest
+# endpoint but not its blob CDN. Any override MUST carry this same
+# digest — a different digest is a different image and invalidates the
+# record. Verify with `docker image inspect --format '{{.RepoDigests}}'`.
+ARG BASE_IMAGE=debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
+FROM ${BASE_IMAGE}
+
+RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
+    && echo 'deb http://snapshot.debian.org/archive/debian/20260831T000000Z testing main' \
+    > /etc/apt/sources.list
+
+RUN apt-get -o Acquire::Check-Valid-Until=false update \
+    && apt-get install -y --no-install-recommends \
+    build-essential \
+    autoconf automake autopoint libtool \
+    pkg-config gettext gnome-common \
+    curl ca-certificates \
+    git \
+    tar \
+    python3 \
+    libglib2.0-dev \
+    libtkrzw-dev \
+    liblzma-dev \
+    liblz4-dev \
+    libzstd-dev \
+    zlib1g-dev \
+    libsqlite3-dev sqlite3 \
+    libclang-dev \
+    libssl-dev \
+    libibus-1.0-dev \
+    util-linux \
+    valgrind \
+    binutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# rustup-init is per-arch: take the build host's own binary and verify it
+# against the pinned checksum for that arch
+# (static.rust-lang.org/rustup/archive/1.29.0/<arch>/rustup-init.sha256).
+RUN set -eu; \
+    case "$(uname -m)" in \
+        x86_64)  rustup_arch=x86_64-unknown-linux-gnu; \
+                 rustup_sha=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10 ;; \
+        aarch64) rustup_arch=aarch64-unknown-linux-gnu; \
+                 rustup_sha=9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792 ;; \
+        *) echo "unsupported build arch: $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl --proto '=https' --tlsv1.2 -sSfL \
+        "https://static.rust-lang.org/rustup/archive/1.29.0/$rustup_arch/rustup-init" \
+        -o /tmp/rustup-init \
+    && echo "$rustup_sha  /tmp/rustup-init" \
+    | sha256sum -c - \
+    && chmod +x /tmp/rustup-init \
+    && /tmp/rustup-init -y --default-toolchain 1.97.1 --profile minimal \
+       --component clippy,rustfmt \
+    && rm /tmp/rustup-init
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Cargo parallelism, capped for small build VMs. This image's target hosts
+# include a Docker Desktop VM with its default ~8 GiB, where nproc-wide
+# jobs during the fat-LTO / codegen-units=1 link stages can exhaust memory
+# before any single job fails cleanly. Modest default; raise per host:
+#   docker build --build-arg cargo_jobs=8 -f tools/bisection/Dockerfile.callgrind .
+ARG cargo_jobs=4
+ENV CARGO_BUILD_JOBS=${cargo_jobs}
+
+RUN cargo install cargo-c@0.10.25 --locked
+
+COPY . /repo
+WORKDIR /repo
+
+# ── Shared: model data + libpinyin source ────────────────────────────
+
+RUN bash tools/model/fetch-model.sh
+
+# libpinyin source: git fetch pinned by commit SHA. Mirrors
+# tools/oracle/build-oracle.sh and Dockerfile.perf-matrix.
+RUN git init --quiet /tmp/libpinyin-src \
+    && git -C /tmp/libpinyin-src fetch --quiet --depth=1 \
+       https://github.com/libpinyin/libpinyin.git \
+       074a2219c90feaf962d0d24f034514033ece5f99 \
+    && [ "$(git -C /tmp/libpinyin-src rev-parse FETCH_HEAD)" = \
+       "074a2219c90feaf962d0d24f034514033ece5f99" ] \
+    && git -C /tmp/libpinyin-src checkout --quiet --detach FETCH_HEAD
+
+# ── libpinyin + Tkrzw (the oracle) ──────────────────────────────────
+# Not stripped: callgrind needs .symtab to name anything.
+
+RUN cp -a /tmp/libpinyin-src /tmp/build-A-src \
+    && cp target/model20/extracted/* /tmp/build-A-src/data/ \
+    && mkdir /tmp/build-A && mv /tmp/build-A-src /tmp/build-A/libpinyin-src \
+    && cd /tmp/build-A/libpinyin-src \
+    && autoreconf --force --install \
+    && ./configure --prefix=/opt/libpinyin-tkrzw --disable-static --with-dbm=Tkrzw \
+    && make -j"$(nproc)" && make install \
+    && rm -rf /tmp/build-A
+
+# ── oxpinyin + Tkrzw ────────────────────────────────────────────────
+# Same flags as the matrix recipe plus -Cdebuginfo=1. Not stripped.
+
+RUN CARGO_PROFILE_RELEASE_DEBUG=1 cargo cinstall --locked --release -p oxpinyin-capi \
+    --no-default-features --features tkrzw \
+    --destdir=/opt/oxpinyin-tkrzw/stage --prefix=/usr \
+    --manifest-path /repo/Cargo.toml
+
+# ── debug-info neutrality control ───────────────────────────────────
+# The same crate built with debug info off, kept so the differential run
+# can compare the two .text sections and classify any difference:
+# identical bytes, or identical instruction multiset at different
+# addresses, or genuinely different codegen (which stops the run).
+
+RUN cargo cinstall --locked --release -p oxpinyin-capi \
+    --no-default-features --features tkrzw \
+    --destdir=/opt/oxpinyin-nodebug/stage --prefix=/usr \
+    --manifest-path /repo/Cargo.toml
+
+# ── Allocation-counter build (non-default feature) ──────────────────
+# Auxiliary artifact only: exports oxpinyin_alloc_count/_bytes, which the
+# harness reads through dlsym. Never the artifact the Ir differential
+# profiles, and never shipped.
+
+RUN CARGO_PROFILE_RELEASE_DEBUG=1 cargo cinstall --locked --release -p oxpinyin-capi \
+    --no-default-features --features tkrzw,alloc-count \
+    --destdir=/opt/oxpinyin-alloccount/stage --prefix=/usr \
+    --manifest-path /repo/Cargo.toml
+
+# ── The instrumented bisect harness ─────────────────────────────────
+# -g for line attribution. Carries bisect_perf_cold_unit /
+# bisect_perf_steady_unit, the callgrind collection anchors.
+
+RUN gcc -std=gnu11 -Wall -Wextra -Werror -O2 -g \
+    -o /repo/tools/bisection/bisect \
+    /repo/tools/bisection/bisect.c -ldl
+
+# The two anchors must be distinct, externally visible symbols: if the
+# compiler folded them (they have identical bodies) the toggle would also
+# collect the cold cycle. Fail the build rather than mismeasure.
+RUN set -eu; \
+    cold=$(nm /repo/tools/bisection/bisect | awk '$3=="bisect_perf_cold_unit"{print $1}'); \
+    steady=$(nm /repo/tools/bisection/bisect | awk '$3=="bisect_perf_steady_unit"{print $1}'); \
+    [ -n "$cold" ] && [ -n "$steady" ] || { echo "fatal: collection anchors missing from symtab" >&2; exit 1; }; \
+    [ "$cold" != "$steady" ] || { echo "fatal: collection anchors folded to one address ($cold)" >&2; exit 1; }; \
+    echo "anchors ok: cold=$cold steady=$steady"
+
+ENV PERF_CPU=0
+ENV CG_OUT=/out
+
+CMD ["bash", "tools/bisection/run-callgrind-differential.sh"]

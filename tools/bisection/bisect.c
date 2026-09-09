@@ -23,19 +23,24 @@
 
 /* _DEFAULT_SOURCE alongside _POSIX_C_SOURCE: the RSS diagnostic mode calls
  * malloc_trim(3) and mallinfo2(3), glibc extensions that a bare
- * _POSIX_C_SOURCE definition hides. */
+ * _POSIX_C_SOURCE definition hides; syscall(2) backs the perf_event_open
+ * wrapper for the hardware instruction counter. */
 #define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include <dlfcn.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include <linux/perf_event.h>
+#include <sys/syscall.h>
 
 /* ── Opaque handle types (match pinyin.h) ─────────────────────────────── */
 
@@ -730,6 +735,46 @@ static uint64_t run_perf_unit(const struct symbols *s, pinyin_instance_t *inst,
     return checksum;
 }
 
+/* Callgrind collection anchors.
+ *
+ * `run_perf_unit` is static and inlinable, and it runs for every cycle
+ * index including 0 — the cold one. Neither property suits
+ * `--toggle-collect`, which needs a symbol that survives -O2 and that
+ * brackets only the steady cycles. These two `noinline`, externally
+ * visible forwarders give that: cycle 0 goes through the cold anchor,
+ * cycles 1..n-1 through the steady one, so
+ *
+ *   valgrind --tool=callgrind --collect-atstart=no \
+ *            --toggle-collect=bisect_perf_steady_unit
+ *
+ * counts exactly the steady keystroke cycles. Process start, dlopen,
+ * `pinyin_init`, `pinyin_alloc_instance` and the cold pass all stay
+ * outside the count.
+ *
+ * They live in the harness, not in either library, so the toggled region
+ * is identical for every `.so` the harness is pointed at — which is the
+ * whole reason a single harness driving both engines through one C ABI
+ * gives directly comparable totals.
+ *
+ * Cost when not under valgrind: one non-inlined call per cycle, against
+ * 123 keystroke steps per corpus pass. Identical in both cells. */
+uint64_t bisect_perf_cold_unit(const struct symbols *s, pinyin_instance_t *inst,
+                               int repeats);
+uint64_t bisect_perf_steady_unit(const struct symbols *s, pinyin_instance_t *inst,
+                                 int repeats);
+
+__attribute__((noinline)) uint64_t
+bisect_perf_cold_unit(const struct symbols *s, pinyin_instance_t *inst,
+                      int repeats) {
+    return run_perf_unit(s, inst, repeats);
+}
+
+__attribute__((noinline)) uint64_t
+bisect_perf_steady_unit(const struct symbols *s, pinyin_instance_t *inst,
+                        int repeats) {
+    return run_perf_unit(s, inst, repeats);
+}
+
 static int perf_env_count(const char *name, int fallback) {
     const char *value = getenv(name);
     char *end = NULL;
@@ -741,6 +786,32 @@ static int perf_env_count(const char *name, int fallback) {
     if (!end || *end || parsed < 1 || parsed > 100000)
         return fallback;
     return (int)parsed;
+}
+
+/* Hardware instruction counter for the malloc-interception distortion
+ * measurement (run-callgrind-differential.sh stage 5). Callgrind links
+ * vg_replace_malloc into every tool, so its Ir counts valgrind's
+ * simplified allocator where a native run pays glibc's; a hardware
+ * instructions counter over the same bracketed steady region measures
+ * the real thing, and the two engine ratios' difference is the measured
+ * distortion.
+ *
+ * Opened only when PERF_HW=instructions is set: without it no counter
+ * exists and the timed paths are untouched. exclude_kernel=1 keeps the
+ * counter usable under perf_event_paranoid=2; a container whose SELinux
+ * label or seccomp profile denies perf_event_open gets a diagnostic and
+ * an hw_errno field, never a failed run. */
+static long perf_open_instruction_counter(void) {
+    struct perf_event_attr attr;
+
+    memset(&attr, 0, sizeof attr);
+    attr.size = (uint32_t)sizeof attr;
+    attr.type = PERF_TYPE_HARDWARE;
+    attr.config = PERF_COUNT_HW_INSTRUCTIONS;
+    attr.disabled = 1;
+    attr.exclude_kernel = 1;
+    attr.exclude_hv = 1;
+    return syscall(SYS_perf_event_open, &attr, 0, -1, -1, 0);
 }
 
 static int resolve_perf_symbols(void *handle, struct symbols *s) {
@@ -930,10 +1001,60 @@ static int run_perf_mode(int argc, char **argv) {
             return 1;
         }
 
+        /* Snapshot at the boundary the callgrind toggle uses: after the
+         * cold cycle, so the steady deltas below cover exactly the cycles
+         * the Ir differential counts. */
+        struct alloc_counters alloc_steady_start;
+        int alloc_steady_captured = 0;
+
+        /* Same boundary for the hardware instruction counter: cycles
+         * 1..n-1, enabled and disabled around the steady anchor call, so
+         * the counted region is the one the callgrind toggle collects. */
+        int hw_wanted = getenv("PERF_HW") != NULL;
+        int hw_fd = -1;
+        int hw_errno = 0;
+        uint64_t hw_instructions = 0;
+        int hw_cycles = 0;
+
+        if (hw_wanted) {
+            hw_fd = (int)perf_open_instruction_counter();
+            if (hw_fd < 0) {
+                hw_errno = errno;
+                fprintf(stderr,
+                        "perf_event_open: %s (errno %d) — this run "
+                        "carries no hardware instruction counts\n",
+                        strerror(hw_errno), hw_errno);
+            }
+        }
+
         for (int i = 0; i < cycles; i++) {
+            if (i == 1 && alloc_syms.count && alloc_syms.bytes) {
+                read_alloc_counters(&alloc_syms, &alloc_steady_start);
+                alloc_steady_captured = 1;
+            }
+            if (i > 0 && hw_fd >= 0)
+                (void)ioctl(hw_fd, PERF_EVENT_IOC_ENABLE, 0);
             uint64_t start = now_ns();
-            perf_sink ^= run_perf_unit(&sym, inst, repeats);
+            /* Cycle 0 is the cold one and goes through its own anchor, so a
+             * callgrind toggle on the steady anchor never sees it. */
+            perf_sink ^= (i == 0)
+                             ? bisect_perf_cold_unit(&sym, inst, repeats)
+                             : bisect_perf_steady_unit(&sym, inst, repeats);
             uint64_t end = now_ns();
+            if (i > 0 && hw_fd >= 0) {
+                uint64_t counted = 0;
+
+                (void)ioctl(hw_fd, PERF_EVENT_IOC_DISABLE, 0);
+                if (read(hw_fd, &counted, sizeof counted) == (ssize_t)sizeof counted) {
+                    hw_instructions += counted;
+                    hw_cycles++;
+                }
+                /* read() does not reset the counter and enable/disable do
+                 * not zero it either: without this RESET every later read
+                 * would return the running total again and the sum below
+                 * would double-count earlier cycles. */
+                (void)ioctl(hw_fd, PERF_EVENT_IOC_RESET, 0);
+            }
             cycle_ns[i] = end - start;
             if (i == 0)
                 read_perf_memory(&after_first);
@@ -1000,6 +1121,25 @@ static int run_perf_mode(int argc, char **argv) {
             print_smaps_rollup("rollup_trim", &rollup_trim);
             putchar(',');
             print_arena_state("arena_trim", &arena_trim);
+        }
+        if (alloc_steady_captured && cycles > 1) {
+            struct alloc_counters alloc_steady_end;
+
+            read_alloc_counters(&alloc_syms, &alloc_steady_end);
+            printf(",\"steady_alloc_cycles\":%d"
+                   ",\"steady_alloc_count\":%lld"
+                   ",\"steady_alloc_bytes\":%lld",
+                   cycles - 1,
+                   alloc_steady_end.count - alloc_steady_start.count,
+                   alloc_steady_end.bytes - alloc_steady_start.bytes);
+        }
+        if (hw_fd >= 0) {
+            printf(",\"steady_hw_cycles\":%d"
+                   ",\"steady_hw_instructions\":%llu",
+                   hw_cycles, (unsigned long long)hw_instructions);
+            close(hw_fd);
+        } else if (hw_wanted) {
+            printf(",\"hw_errno\":%d", hw_errno);
         }
         free(cycle_ns);
     }
