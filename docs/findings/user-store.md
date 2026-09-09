@@ -613,3 +613,65 @@ project memory).
   frozen in `docs/findings/scoring-spec.md` / `docs/findings/lambda-port.md`.
   §5 depends only on the *structure* (λ blends bigram-vs-unigram; user/system
   is an additive pre-merge), which is SHOWN.
+
+---
+
+## 11. Implementation record — the store persists in libpinyin's own files (2026-09-09)
+
+Drop-in task 9 landed: the user dir's I/O is now the pin's own file set
+on every backend, so a same-backend pair (oxpinyin↔libpinyin on Kyoto
+Cabinet, likewise tkrzw) interoperate seamlessly in both directions —
+the maintainer's 2026-09-09 ruling as clarified (per KV backend family;
+data loss only when the backend actually changes, which `user.conf`'s
+`database format` conformance line enforces exactly as upstream's
+`check_format` does).
+
+Architecture — a session scratch behind the value engine:
+
+* `oxpinyin_data::user_files` — the inventory (`UserDbm`: libpinyin's
+  names on KC/tkrzw, `<stem>.<ext>` on redb/LMDB — "libpinyin with
+  redb"), the `user.conf` codec (`UserTableInfo`, `OPEN_COUNTER_LIMIT`
+  = 6, the counter ratchet, conformance), and the `PhraseIndexLogger`
+  record codec (add/remove/modify/header; MODIFY_HEADER carries the
+  payload length once, then two runs).
+* `oxpinyin_user::persistence` — load (`check_format` first: wipe on
+  non-conform, `user.conf` re-written with the ratcheted counter on
+  every init; then the bigram hash wholesale, the USER_FILE chunk
+  stores, and the `.dbin` logs replayed onto the original system
+  chunks with merge's stop-at-first-mismatch) and save (the pin's
+  `_write_files`+`_rename_files`: every file whole to a `.tmp` sibling,
+  then all renames). The two index DBMs are derivatives of the USER_FILE
+  items and are rebuilt at save, never read.
+* `oxpinyin_user::store_libpinyin` — `UserStore::open_libpinyin`: the
+  profile seeds a **session scratch** (temp file, backend container,
+  removed with the last handle), every W6 value operation runs unchanged
+  against it, and `save()` exports the session values back into the
+  file set. The value mapping is one-for-one: bigram rows are the
+  `SingleGram` grams; a user item is the `PHRASE` text + the
+  `PRONUNCIATION` rows (packed keys — one wire form) + the token's full
+  `UNIGRAM` accumulation (`count·3` base, `seed·7` training); a system
+  `.dbin` MODIFY is the original item with `unigram + delta`.
+
+Semantics this reverts or preserves, on purpose:
+
+* **The §4 gate is the pin's** — `m_modified` is armed only by training
+  and the import trio's `mark_modified` (the pin sets it in
+  `pinyin_train` and `pinyin_end_add_phrases` alone), so `pinyin_save`
+  before either is a no-op. The frozen dirty-gate test stands unedited.
+* **The W6-T5 durability deviation is reverted** — nothing durable
+  between saves; a crash loses the sub-timer window exactly as
+  upstream's does. `user_store.<ext>` leaves the user dir (it remains
+  the standalone-store helper for benches and the oracle scan harness).
+* Known gaps, disclosed: the value model tracks no per-pronunciation
+  delta for system tokens (pre-existing engine-model gap — the `.dbin`
+  MODIFYs carry unigram changes only), and a replayed REMOVE degrades
+  to a skip (`load`'s `skipped` list) because the value model cannot
+  express a removed system token.
+
+Verification: unit goldens and round-trips at every layer (codecs,
+persistence, bridge, e2e); the backend matrix through the
+`oxpinyin-validate` container (tkrzw and Kyoto Cabinet suites); and
+`tools/oracle/user-dir-round-trip.sh` — the seamless claim itself: the
+pin trains a profile and oxpinyin's §9 exports are line-identical to
+the pin's own dump; oxpinyin trains and saves and the pin's dump of
+that profile is line-identical to its own training's.
