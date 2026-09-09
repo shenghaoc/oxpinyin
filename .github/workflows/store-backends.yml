@@ -9,7 +9,7 @@ name: Store backends
 # — so cross-peer equivalence is proven by running the SAME test
 # suite through four separate builds, one per peer.
 #
-# Four jobs:
+# Five jobs:
 #   - store-features is a matrix over the four peer backends. Each child
 #     runs the workspace's backend-relevant crates (everything but the
 #     seven backend-independent training crates — see the test step)
@@ -31,13 +31,21 @@ name: Store backends
 #     architecturally impossible under exactly-one-backend.
 #   - store-backends-gate is the stable aggregate status check. It runs no
 #     tests; it only fails unless every backend child, the backend-matrix
-#     job AND both sanitizer arms succeeded, so branch protection can keep
-#     requiring the historical "store backends (kyotocabinet / redb /
-#     tkrzw / lmdb)" context.
+#     job, both sanitizer arms AND the file-ingress fuzz lane succeeded,
+#     so branch protection can keep requiring the historical "store
+#     backends (kyotocabinet / redb / tkrzw / lmdb)" context.
 #   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan and UBSan,
 #     on a date-pinned nightly, and gates the merge (since 2026-09-08; it
 #     had been continue-on-error and outside the gate, so a finding on the
 #     FFI boundary could not fail anything).
+#   - store-file-fuzz runs the `store-open` fuzz target under the LMDB
+#     peer with LMDB's own C instrumented. It is the only lane anywhere
+#     that builds the fuzz workspace under a non-default backend, and the
+#     only one that puts a store backend's C under a sanitizer AND
+#     libFuzzer's coverage. Read the scope note on the job before adding
+#     to it: the run is deliberately UNSEEDED, and
+#     docs/findings/store-file-ingress-fuzzing.md says why a seeded run
+#     cannot gate yet.
 #
 # ROLLING TOOLCHAIN, deliberately unpinned: the jobs run inside
 # debian:testing because oxpinyin aims to be a viable libpinyin
@@ -69,8 +77,10 @@ on:
       # Direct inputs added 2026-09-06: every child decodes the fixture
       # tables; backend-matrix runs tools/store/backend-matrix.sh; the
       # sanitizer job runs tools/kc/run-sanitizers.sh; every job runs the
-      # bootstrap composite action.
+      # bootstrap composite action. fuzz/** added 2026-09-10: the
+      # store-file-fuzz job builds and runs the fuzz workspace.
       - fixtures/**
+      - fuzz/**
       - tools/store/**
       - tools/kc/**
       - .github/actions/**
@@ -85,8 +95,10 @@ on:
       # Direct inputs added 2026-09-06: every child decodes the fixture
       # tables; backend-matrix runs tools/store/backend-matrix.sh; the
       # sanitizer job runs tools/kc/run-sanitizers.sh; every job runs the
-      # bootstrap composite action.
+      # bootstrap composite action. fuzz/** added 2026-09-10: the
+      # store-file-fuzz job builds and runs the fuzz workspace.
       - fixtures/**
+      - fuzz/**
       - tools/store/**
       - tools/kc/**
       - .github/actions/**
@@ -362,6 +374,7 @@ jobs:
       - store-features
       - backend-matrix
       - tkrzw-sanitizers
+      - store-file-fuzz
     defaults:
       run:
         shell: bash
@@ -374,29 +387,198 @@ jobs:
           FEATURES_RESULT: ${{ needs.store-features.result }}
           MATRIX_RESULT: ${{ needs.backend-matrix.result }}
           SANITIZER_RESULT: ${{ needs.tkrzw-sanitizers.result }}
+          FILE_FUZZ_RESULT: ${{ needs.store-file-fuzz.result }}
         run: |
           set -euo pipefail
           echo "store-features (matrix): ${FEATURES_RESULT}"
           echo "backend-matrix:          ${MATRIX_RESULT}"
           echo "tkrzw-sanitizers:        ${SANITIZER_RESULT}"
+          echo "store-file-fuzz:         ${FILE_FUZZ_RESULT}"
           {
             echo "## store backends (aggregate gate)"
             echo ""
             echo "This job runs no tests. It is the stable aggregate status"
             echo "check that fails unless every peer matrix child, the"
-            echo "exactly-one-backend gate AND both sanitizer arms succeeded."
+            echo "exactly-one-backend gate, both sanitizer arms AND the"
+            echo "instrumented file-ingress fuzz lane succeeded."
             echo ""
             echo "| Upstream job | Result |"
             echo "|---|---|"
             echo "| store-features (matrix, all four peers) | ${FEATURES_RESULT} |"
             echo "| backend-matrix (exactly-one-backend gate) | ${MATRIX_RESULT} |"
             echo "| tkrzw-sanitizers (ASan + UBSan) | ${SANITIZER_RESULT} |"
+            echo "| store-file-fuzz (instrumented LMDB) | ${FILE_FUZZ_RESULT} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "${FEATURES_RESULT}" != "success" ] || [ "${MATRIX_RESULT}" != "success" ] || [ "${SANITIZER_RESULT}" != "success" ]; then
-            echo "::error::store-backends gate failed: store-features=${FEATURES_RESULT}, backend-matrix=${MATRIX_RESULT}, tkrzw-sanitizers=${SANITIZER_RESULT}" >&2
+          if [ "${FEATURES_RESULT}" != "success" ] || [ "${MATRIX_RESULT}" != "success" ] || [ "${SANITIZER_RESULT}" != "success" ] || [ "${FILE_FUZZ_RESULT}" != "success" ]; then
+            echo "::error::store-backends gate failed: store-features=${FEATURES_RESULT}, backend-matrix=${MATRIX_RESULT}, tkrzw-sanitizers=${SANITIZER_RESULT}, store-file-fuzz=${FILE_FUZZ_RESULT}" >&2
             exit 1
           fi
           echo "store-backends gate: all upstream jobs succeeded"
+
+  store-file-fuzz:
+    # `store-open` — hostile bytes as a DBM file, opened through the
+    # store seam — under the LMDB peer with LMDB's own C instrumented.
+    #
+    # WHY THIS LANE EXISTS, precisely. `cargo fuzz` applies ASan and
+    # libFuzzer's coverage through RUSTFLAGS, so both stop at the Rust
+    # boundary; on tkrzw and Kyoto Cabinet the container is a distro
+    # shared object nothing here can rebuild. LMDB is the one C backend
+    # whose source is compiled by THIS build (`lmdb-master-sys` drives
+    # `cc` over mdb.c), so CFLAGS put it under the same sanitizer and the
+    # same coverage feedback as the Rust — the only place in CI where a
+    # store backend's C is instrumented at all. It is also the only lane
+    # anywhere that builds the fuzz workspace under a non-default
+    # backend: ci.yml's fuzz job and the nightly soak both ride the
+    # default tkrzw.
+    #
+    # SCOPE — read before extending. The run is deliberately UNSEEDED.
+    # `store-open` takes its input as a database file verbatim, so random
+    # bytes are refused at the header and the run covers the open-time
+    # rejection path plus the harness boot. Seeding the corpus from the
+    # committed fixtures (tools/store/seed-store-fuzz-corpus.sh) is what
+    # reaches the record decoders — and it reproduces a crash on three of
+    # the four peers, inside the container library rather than in code
+    # this repository owns. That is an open finding with a maintainer
+    # decision attached, NOT something to gate on:
+    # docs/findings/store-file-ingress-fuzzing.md. Do not add a seeding
+    # step here until that decision lands.
+    name: store file ingress fuzz (instrumented lmdb)
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+      # Same ASan leeway the tkrzw-sanitizers job needs: Docker's default
+      # seccomp profile blocks personality(2), which the setarch ASLR-off
+      # wrapper below uses.
+      options: --security-opt seccomp=unconfined
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      # The fuzz lanes' pinned nightly (ci.yml, verify-nightly.yml), not
+      # the sanitizer job's: this lane runs cargo-fuzz, and cargo-fuzz's
+      # pin is the one the other two fuzz lanes carry. Bump the two
+      # together.
+      NIGHTLY: nightly-2026-08-01
+    steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+
+      - name: Install build dependencies (apt)
+        # clang, not gcc, compiles mdb.c here: GCC's -fsanitize-coverage
+        # supports neither `inline-8bit-counters` nor `pc-table`, which
+        # are the forms cargo-fuzz asks rustc for, so only clang can put
+        # the C on the same feedback channel as the Rust. gcc/g++ stay
+        # for every other build script.
+        #
+        # libglib2.0-dev is NOT optional and is not about the backend: the
+        # fuzz workspace depends on oxpinyin-capi for the capi-commands
+        # target, so glib-sys is in the graph under every peer and its
+        # build script needs glib-2.0.pc. ci.yml's fuzz job installs it for
+        # the same reason. No libtkrzw/libkyotocabinet, though — those are
+        # the two peers this lane does not compile.
+        run: apt-get install -y --no-install-recommends gcc g++ make libc6-dev pkg-config util-linux clang libglib2.0-dev
+
+      - name: Install the pinned nightly with Rust sources
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain "$NIGHTLY" --component rust-src
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          . "$HOME/.cargo/env"
+          rustc --version
+          clang --version | head -1
+
+      - name: Install pinned cargo-fuzz
+        # The same pinned release and the same digest check as ci.yml's
+        # fuzz job; keep the three in lockstep.
+        run: |
+          set -euo pipefail
+          ver=0.13.2
+          sum=b5b704018b63e0f151c17a057ac53b5111e1db545d1b9f72fee79f08a545931c
+          curl -sSfL -o cargo-fuzz.tar.gz "https://github.com/rust-fuzz/cargo-fuzz/releases/download/${ver}/cargo-fuzz-${ver}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${sum}  cargo-fuzz.tar.gz" | sha256sum -c -
+          tar xzf cargo-fuzz.tar.gz
+          mkdir -p ~/.local/bin
+          install -m755 cargo-fuzz ~/.local/bin
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run store-open under the instrumented LMDB peer
+        id: file-fuzz
+        env:
+          CC: clang
+          # CFLAGS and NOT CXXFLAGS, on purpose: libfuzzer-sys compiles
+          # libFuzzer itself through cc::Build::cpp(true), and libFuzzer
+          # must not carry its own coverage instrumentation. mdb.c is C
+          # and libFuzzer is C++, so the two variables separate them
+          # exactly.
+          CFLAGS: -fsanitize=address -fsanitize-coverage=inline-8bit-counters,pc-table,trace-cmp -fno-omit-frame-pointer -g
+          # Same leeway and same reasons as tkrzw-sanitizers: LSan
+          # misclassifies the harness's process-lifetime allocations, and
+          # abort_on_error closes the loophole where a report prints yet
+          # the step goes green.
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
+          # The runner's gnu triple, pinned for the same reason ci.yml
+          # pins it: the cargo-fuzz release binary is a musl build and
+          # defaults the target to its own triple
+          # (rust-fuzz/cargo-fuzz#398), and ASan will not link musl's
+          # static libc.
+          triple=x86_64-unknown-linux-gnu
+          # setarch -R disables ASLR for the process tree: runner kernels'
+          # mmap entropy exceeds ASan's shadow mapping and an
+          # unprivileged container cannot lower vm.mmap_rnd_bits itself.
+          setarch "$(uname -m)" -R \
+            cargo "+$NIGHTLY" fuzz run --target "$triple" \
+            --no-default-features --features lmdb store-open \
+            -- -max_total_time=90 -timeout=15 -max_len=4096 -print_final_stats=1 \
+            2>&1 | tee /tmp/store-open.log
+          # A run that explored nothing is a broken harness, not a pass:
+          # the unseeded path still executes hundreds of thousands of
+          # inputs (measured: ~385k in 46s on a debian:testing container).
+          runs=$(sed -n 's/^stat::number_of_executed_units: *//p' /tmp/store-open.log | tail -1)
+          echo "executed units: ${runs:-0}"
+          if [ "${runs:-0}" -lt 1000 ]; then
+            echo "::error::store-open executed ${runs:-0} units; the harness is not running" >&2
+            exit 1
+          fi
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+          echo "runs=${runs}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: store-open-crash-artifacts
+          path: fuzz/artifacts/
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## store file ingress fuzz (instrumented lmdb)"
+            echo ""
+            echo "Result: **$([ '${{ steps.file-fuzz.outcome }}' = 'success' ] && echo 'clean' || echo 'FINDINGS PRESENT — STOP')**"
+            echo ""
+            echo "\`store-open\` under the LMDB peer, with mdb.c compiled by clang"
+            echo "under ASan and libFuzzer's coverage instrumentation. Unseeded by"
+            echo "design — see docs/findings/store-file-ingress-fuzzing.md."
+            echo ""
+            echo "| Phase | Executed units | Wall clock |"
+            echo "|---|---:|---:|"
+            echo "| unseeded instrumented run | ${{ steps.file-fuzz.outputs.runs || '—' }} | ${{ steps.file-fuzz.outputs.elapsed || '—' }}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   tkrzw-sanitizers:
     # The shim passes Rust callbacks into tkrzw's visitor dispatch

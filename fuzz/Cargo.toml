@@ -13,14 +13,61 @@ unsafe_code = "deny"
 [package.metadata]
 cargo-fuzz = true
 
+# Backend selection, forwarded down every store-reaching edge (one
+# backend per binary; see oxpinyin-store's [features] for the model).
+# The fuzz workspace carried no [features] block until `store-open`
+# landed: every target rode the default tkrzw, and no invocation could
+# reach a peer. `store-open` fuzzes the DBM container itself, so which
+# peer is compiled is the whole point of a run — and it is also what
+# decides whether the container's C is instrumented at all (the target's
+# module docs carry the matrix).
+#
+# Each store-reaching dependency below carries `default-features =
+# false` so `--no-default-features --features <peer>` actually reaches
+# the store's selection instead of unioning the peer with each
+# dependency's own default tkrzw — which the exactly-one-backend
+# `compile_error!` would refuse.
+[features]
+default = ["tkrzw"]
+kyotocabinet = [
+    "oxpinyin-capi/kyotocabinet",
+    "oxpinyin-data/kyotocabinet",
+    "oxpinyin-store/kyotocabinet",
+    "oxpinyin-testsupport/kyotocabinet",
+    "oxpinyin-user/kyotocabinet",
+]
+tkrzw = [
+    "oxpinyin-capi/tkrzw",
+    "oxpinyin-data/tkrzw",
+    "oxpinyin-store/tkrzw",
+    "oxpinyin-testsupport/tkrzw",
+    "oxpinyin-user/tkrzw",
+]
+lmdb = [
+    "oxpinyin-capi/lmdb",
+    "oxpinyin-data/lmdb",
+    "oxpinyin-store/lmdb",
+    "oxpinyin-testsupport/lmdb",
+    "oxpinyin-user/lmdb",
+]
+redb = [
+    "oxpinyin-capi/redb",
+    "oxpinyin-data/redb",
+    "oxpinyin-store/redb",
+    "oxpinyin-testsupport/redb",
+    "oxpinyin-user/redb",
+]
+
 [dependencies]
 libfuzzer-sys = "=0.4.13"
 oxpinyin-core = { path = "../crates/oxpinyin-core" }
 # dict-loader: hostile bytes through the table decoder (audit F-3 class).
-oxpinyin-data = { path = "../crates/oxpinyin-data" }
+oxpinyin-data = { path = "../crates/oxpinyin-data", default-features = false }
 # capi-commands: stateful session fuzzer over the C ABI (libchewing
 # fuzzer.rs shape). Linux-only, matching the fuzz CI job — as is capi.
-oxpinyin-capi = { path = "../crates/oxpinyin-capi", features = ["fuzz-api"] }
+oxpinyin-capi = { path = "../crates/oxpinyin-capi", default-features = false, features = [
+    "fuzz-api",
+] }
 # fixture-model: the fixture Dictionary/LanguageModel doubles live in the
 # test-support crate, not oxpinyin-core (core defines the traits; testsupport
 # holds the in-memory test implementations).
@@ -30,7 +77,11 @@ oxpinyin-testsupport = { path = "../crates/oxpinyin-testsupport" }
 # does.
 oxpinyin-engine = { path = "../crates/oxpinyin-engine" }
 # user-store-ops: arbitrary mutation interleavings over UserStore.
-oxpinyin-user = { path = "../crates/oxpinyin-user" }
+oxpinyin-user = { path = "../crates/oxpinyin-user", default-features = false }
+# store-open: the DBM container behind the store seam is the subject, so
+# the harness names the store tier directly rather than reaching it
+# through a consumer.
+oxpinyin-store = { path = "../crates/oxpinyin-store", default-features = false }
 
 [[bin]]
 name = "parser"
@@ -98,6 +149,13 @@ bench = false
 [[bin]]
 name = "user-store-ops"
 path = "fuzz_targets/user_store_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "store-open"
+path = "fuzz_targets/store_open.rs"
 test = false
 doc = false
 bench = false

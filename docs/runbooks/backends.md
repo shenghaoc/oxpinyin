@@ -54,6 +54,66 @@ files never change. The sidecars are gitignored
 ever shows up in `git status`, the ignore pattern regressed: fix the
 pattern, do not commit the file (AGENTS.md points here).
 
+## Fuzzing the file ingress
+
+The `store-open` fuzz target treats its input as a DBM file and opens it
+through both container classes the runtime uses
+(`ReadStore::open_read_only` for the tree tables,
+`RawReadStore::open_hash_read_only` for `bigram.db`), then drives every
+read the tier exposes. The backend under test is the one compiled in, so
+the peer selection is a `cargo fuzz` argument:
+
+```sh
+cargo +nightly fuzz run store-open                                            # tkrzw (default)
+cargo +nightly fuzz run store-open --no-default-features --features redb
+cargo +nightly fuzz run store-open --no-default-features --features lmdb
+cargo +nightly fuzz run store-open --no-default-features --features kyotocabinet
+```
+
+Random bytes are refused by every backend's header check, so an unseeded
+run only exercises open-time rejection. To reach the record decoders
+behind the header, seed the corpus with the committed store files for
+the backend you are running:
+
+```sh
+tools/store/seed-store-fuzz-corpus.sh lmdb
+```
+
+### How each backend gets instrumented
+
+`cargo fuzz` applies ASan and libFuzzer's coverage instrumentation
+through `RUSTFLAGS`, which reach Rust code only. What that means per
+peer:
+
+| backend | container code | instrumented by `cargo fuzz`? |
+| --- | --- | --- |
+| redb | pure Rust | yes — ASan and coverage feedback end to end |
+| lmdb | `mdb.c`, compiled in this build by `lmdb-master-sys` via `cc` | yes, when `CFLAGS` carries the flags (below) |
+| tkrzw | system `libtkrzw.so` | no — partial, via ASan's allocator and libc interceptors |
+| kyotocabinet | system `libkyotocabinet.so` | no — same as tkrzw |
+
+LMDB is the one C backend whose source is compiled in-tree, so it is the
+one whose C can be put under the same sanitizer and the same coverage
+feedback as the Rust:
+
+```sh
+CC=clang CFLAGS="-fsanitize=address -fsanitize-coverage=inline-8bit-counters,pc-table,trace-cmp -fno-omit-frame-pointer -g" cargo +nightly fuzz run store-open --no-default-features --features lmdb
+```
+
+`CFLAGS` and not `CXXFLAGS`: libfuzzer-sys compiles libFuzzer itself
+through `cc::Build::cpp(true)`, and libFuzzer must not carry its own
+coverage instrumentation. On tkrzw and Kyoto Cabinet the container is a
+distro shared object that nothing here can rebuild; the target still
+earns its place there because ASan replaces the process allocator and
+intercepts the libc memory routines process-wide, and because the code
+this repository owns — the `table || 0x00 || key` framing, the `i32`
+length conversions, the borrowed-record callbacks — is fully
+instrumented and is where a hostile file's influence lands.
+
+`docs/findings/store-file-ingress-fuzzing.md` records what each backend
+actually does under a seeded corpus, and why no lane gates on the seeded
+pass yet.
+
 ## Switching is a format transition
 
 A user store written by one backend is not opened by another; the file
