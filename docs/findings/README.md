@@ -96,6 +96,7 @@ series lives in `../perf/`.
 | [`residual-after-construction-freeze`](residual-after-construction-freeze.md) | Residual characterisation after the construction freeze | record |
 | [`revert-plan`](revert-plan.md) | Revert plan — the seven incompatible divergences | open (work order) |
 | [`robustness-evidence`](robustness-evidence.md) | F-E cross-lane robustness evidence register | register (F-E) |
+| [`rss-attribution-2026-09-09`](rss-attribution-2026-09-09.md) | Steady-cycle RSS — where the resident memory actually goes | perf snapshot (Kyoto Cabinet / Ubuntu; diagnosis complete, no fix; captures not committed — see its Provenance section; follow-ups #402, #403; tkrzw unmeasured) |
 | [`runtime-direct-libpinyin-data-2026-09-02`](runtime-direct-libpinyin-data-2026-09-02.md) | P6 — the production runtime reads libpinyin's own data directly | record (P6 — current data-layer architecture) |
 | [`scoring-constant-sweep`](scoring-constant-sweep.md) | Scoring constant sweep | measured (values frozen) |
 | [`scoring-spec`](scoring-spec.md) | Scoring SPEC | frozen |

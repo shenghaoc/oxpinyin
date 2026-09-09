@@ -562,6 +562,31 @@ project memory).
    (a DBM/BerkeleyDB store), the `.bin` MemoryChunk dumps, or the phrase-index
    diff-logger byte layout. redb is the store; only the **values and
    semantics** are the target. This is the headline decision of this finding.
+
+   **Measured cost of this decision, on Kyoto Cabinet
+   ([`rss-attribution-2026-09-09.md`](rss-attribution-2026-09-09.md), Phase 2
+   Step 1):** upstream's user bigram is an in-memory `StashDB` opened on
+   `"-"` and snapshotted to disk only at `pinyin_save`
+   (`ngram_kyotodb.cpp:53-62`, reached from `pinyin.cpp:399-401`); oxpinyin's
+   user store is a live on-disk database held open for the process lifetime.
+   Under the KC backend that is one more open `TreeDB`, whose page-cache
+   bucket arrays cost 1,082,240 B fixed by Kyoto Cabinet's default `#bnum`
+   alone — **1,057 KiB as DHAT measures it** (requested bytes live at the
+   global maximum, under valgrind), or **961 KiB rescaled onto the
+   natively measured `[heap]` gap**, the two instruments agreeing to about
+   10% on the total. Neither is an unqualified resident-heap figure and
+   the findings doc labels both wherever they appear. Alongside it,
+   **+196 KiB of resident file pages** — that one measured natively — and
+   **64 MiB of address space** (`HashDB::DEFMSIZ`), which is the whole of
+   oxpinyin's `VmSize` difference against libpinyin.
+
+   This is a **price tag on a settled decision, not a defect and not a fix
+   target**: the format choice is the headline of this finding and stands.
+   Recorded so the decision carries its cost, and so the RSS work does not
+   re-derive it as an addressable gap. The separable question it does raise —
+   whether the store needs to be *open* while idle, which is independent of
+   what format it uses — is untouched and unmeasured. The tkrzw default is
+   unmeasured; these are Kyoto Cabinet figures.
 2. **Not** the K-mixture-model path (out of scope, as in W9).
 3. **Not** reproducing the frontend's 5-minute debounce timer inside the
    library — that is frontend policy (§6); the library persists when
