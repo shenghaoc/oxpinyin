@@ -78,8 +78,41 @@ impl SystemDbm {
     }
 }
 
+/// The four system libraries by nibble and base name — `table.conf`'s
+/// `default …_DICTIONARY` rows. The base name is the library's identity
+/// across the whole pipeline: `<name>.table` is its model20 source,
+/// `<name>.bin` its chunk file ([`SYSTEM_LIBRARY_FILES`]). Shared with
+/// `oxpinyin-datagen`, which compiles the first into the second.
+pub const SYSTEM_LIBRARY_NAMES: &[(u8, &str)] = &[
+    (1, "gb_char"),
+    (2, "gbk_char"),
+    (3, "opengram"),
+    (4, "merged"),
+];
+
+/// The twelve addon libraries by addon index and base name —
+/// `table.conf`'s `addon N …` rows; see [`SYSTEM_LIBRARY_NAMES`] for what
+/// the name addresses.
+pub const ADDON_LIBRARY_NAMES: &[(u8, &str)] = &[
+    (4, "art"),
+    (5, "culture"),
+    (6, "economy"),
+    (7, "geology"),
+    (8, "history"),
+    (9, "life"),
+    (10, "nature"),
+    (11, "people"),
+    (12, "science"),
+    (13, "society"),
+    (14, "sport"),
+    (15, "technology"),
+];
+
 /// The four system libraries' chunk files by nibble — `table.conf`'s
 /// `default …_DICTIONARY` rows' system files.
+///
+/// `<name>.bin` for each of [`SYSTEM_LIBRARY_NAMES`], spelled out because
+/// a `const` cannot concatenate; the test below holds the two in step.
 pub const SYSTEM_LIBRARY_FILES: &[(u8, &str)] = &[
     (1, "gb_char.bin"),
     (2, "gbk_char.bin"),
@@ -91,6 +124,9 @@ pub const SYSTEM_LIBRARY_FILES: &[(u8, &str)] = &[
 /// `addon N …` rows. Addon indexes share the nibble space with the system
 /// libraries (art is 4, like merged) but live in a second facade upstream
 /// (`m_addon_phrase_index`), so they never collide.
+///
+/// `<name>.bin` for each of [`ADDON_LIBRARY_NAMES`], spelled out because
+/// a `const` cannot concatenate; the test below holds the two in step.
 pub const ADDON_LIBRARY_FILES: &[(u8, &str)] = &[
     (4, "art.bin"),
     (5, "culture.bin"),
@@ -133,5 +169,23 @@ mod tests {
         assert_eq!(addon_library_file(4), Some("art.bin"));
         assert_eq!(addon_library_file(15), Some("technology.bin"));
         assert_eq!(addon_library_file(3), None);
+    }
+
+    /// The chunk-file tables are the name tables with `.bin` appended.
+    /// `oxpinyin-datagen` compiles `<name>.table` into the chunk file this
+    /// crate opens, so a library added to one table and not the other
+    /// would give the two halves different library sets.
+    #[test]
+    fn chunk_file_tables_are_the_name_tables_plus_bin() {
+        for (names, files) in [
+            (SYSTEM_LIBRARY_NAMES, SYSTEM_LIBRARY_FILES),
+            (ADDON_LIBRARY_NAMES, ADDON_LIBRARY_FILES),
+        ] {
+            assert_eq!(names.len(), files.len());
+            for (&(name_nibble, name), &(file_nibble, file)) in names.iter().zip(files) {
+                assert_eq!(name_nibble, file_nibble);
+                assert_eq!(file, format!("{name}.bin"));
+            }
+        }
     }
 }

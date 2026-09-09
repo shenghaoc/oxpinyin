@@ -36,6 +36,7 @@ pub mod phrase_libraries;
 pub mod phrase_library;
 pub(crate) mod phrase_table;
 pub mod punct;
+pub mod row_format;
 pub mod system_files;
 pub mod table;
 pub mod table_conf;
@@ -57,6 +58,9 @@ pub use oxpinyin_core::UserCountDelta;
 pub use oxpinyin_store::{DEFAULT_STORE_EXT, DEFAULT_STORE_IS_LIBPINYIN_DBM, default_store_file};
 pub use phrase_libraries::PhraseLibraries;
 pub use punct::PunctTable;
-pub use system_files::{ADDON_LIBRARY_FILES, SYSTEM_LIBRARY_FILES, SystemDbm, addon_library_file};
+pub use system_files::{
+    ADDON_LIBRARY_FILES, ADDON_LIBRARY_NAMES, SYSTEM_LIBRARY_FILES, SYSTEM_LIBRARY_NAMES,
+    SystemDbm, addon_library_file,
+};
 pub use table::{GenericLookupTable, LookupTable, TableError};
 pub use table_conf::{Lambda, PINNED_LAMBDA, parse_table_conf_lambda, read_table_conf_lambda};

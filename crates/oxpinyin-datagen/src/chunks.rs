@@ -41,20 +41,14 @@
 //! from `oxpinyin_data::chunk_format`, the one written copy.
 
 use crate::DatagenError;
-use oxpinyin_data::chunk_format::{CHUNK_HEADER_SIZE, SEPARATOR, chunk_checksum};
+use oxpinyin_data::chunk_format::{
+    CHUNK_HEADER_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, SEPARATOR, chunk_checksum,
+};
 
 /// `PHRASE_MASK` (`novel_types.h:41`): the library-local token bits a
 /// chunk slot is addressed by. Re-exported from the shared format module
 /// for this crate's addon and system-table writers.
 pub use oxpinyin_data::chunk_format::PHRASE_MASK;
-
-/// Header `total_freq` + three offsets, then the first separator: where
-/// the offset array starts (`SubPhraseIndex::store`).
-const INDEX_ONE: u32 = 17;
-/// `add_phrase_item` reserves the first 8 entry-area bytes by bumping a
-/// zero content size to 8 on the first item; the first real item lives at
-/// offset 8, and a library with no items reserves nothing.
-const FIRST_ITEM_OFFSET: u32 = 8;
 
 /// One phrase entry of a library chunk.
 #[derive(Clone, Debug, Eq, PartialEq)]

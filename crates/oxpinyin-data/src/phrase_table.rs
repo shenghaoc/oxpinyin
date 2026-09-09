@@ -21,76 +21,11 @@
 
 use crate::chewing_table::{ChewingDbm, prefix_upper_bound};
 use crate::dict::DictError;
-
-// ── Key encoding ─────────────────────────────────────────────────
-
-/// Encodes a UTF-8 string into a UCS-4 DBM key (each char as `u32` LE).
-///
-/// This matches how libpinyin encodes phrase text for the `phrase_index.bin`
-/// DBM: `g_utf8_to_ucs4` produces a `gunichar[]` (= `guint32[]`), stored
-/// as raw bytes in native (LE) byte order.
-#[must_use]
-pub(crate) fn encode_ucs4_key(text: &str) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(text.len() * 4);
-    for ch in text.chars() {
-        buf.extend_from_slice(&(ch as u32).to_le_bytes());
-    }
-    buf
-}
-
+// The key and value layouts this reader shares with
+// `oxpinyin-datagen`'s writer: one written copy (`crate::row_format`).
 #[cfg(test)]
-/// Decodes a UCS-4 DBM key back to a UTF-8 string.
-///
-/// Returns `None` if the key length is not a multiple of 4 or if any
-/// 4-byte group is not a valid Unicode scalar value.
-#[must_use]
-pub(crate) fn decode_ucs4_key(key: &[u8]) -> Option<String> {
-    if !key.len().is_multiple_of(4) {
-        return None;
-    }
-    let mut text = String::with_capacity(key.len() / 4 * 3);
-    for chunk in key.chunks_exact(4) {
-        let code = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        text.push(char::from_u32(code)?);
-    }
-    Some(text)
-}
-
-// ── Value decoding ───────────────────────────────────────────────
-
-/// Decodes a DBM value into phrase tokens.
-///
-/// The value is a flat array of `u32` tokens (LE), 4 bytes each.
-/// Returns an empty Vec for an empty value (prefix marker).
-///
-/// # Errors
-///
-/// Returns `DictError::Parse` if the value length is not a multiple of 4.
-pub(crate) fn decode_tokens(value: &[u8]) -> Result<Vec<u32>, DictError> {
-    if value.is_empty() {
-        return Ok(Vec::new());
-    }
-    if !value.len().is_multiple_of(4) {
-        return Err(DictError::Parse(format!(
-            "phrase index value length {} is not a multiple of 4",
-            value.len(),
-        )));
-    }
-    Ok(value
-        .chunks_exact(4)
-        .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect())
-}
-
-#[cfg(test)]
-/// Encodes a slice of tokens into a DBM value.
-pub(crate) fn encode_tokens(tokens: &[u32]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(tokens.len() * 4);
-    for token in tokens {
-        buf.extend_from_slice(&token.to_le_bytes());
-    }
-    buf
-}
+use crate::row_format::phrase_index::encode_tokens;
+use crate::row_format::phrase_index::{decode_tokens, encode_ucs4_key};
 
 // ── PhraseTable ──────────────────────────────────────────────────
 
@@ -255,80 +190,6 @@ mod tests {
         let table = PhraseTable::new(Box::new(dbm));
         assert!(table.search_suggestion("你").unwrap().is_empty());
         assert!(table.search_suggestion("").unwrap().is_empty());
-    }
-
-    #[test]
-    fn encode_ucs4_key_single_char() {
-        let key = encode_ucs4_key("你");
-        assert_eq!(key.len(), 4);
-        let code = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
-        assert_eq!(code, '你' as u32);
-        assert_eq!(code, 0x4F60);
-    }
-
-    #[test]
-    fn encode_ucs4_key_multi_char() {
-        let key = encode_ucs4_key("你好");
-        assert_eq!(key.len(), 8);
-        let c0 = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
-        let c1 = u32::from_le_bytes([key[4], key[5], key[6], key[7]]);
-        assert_eq!(c0, '你' as u32);
-        assert_eq!(c1, '好' as u32);
-    }
-
-    #[test]
-    fn encode_ucs4_key_ascii() {
-        let key = encode_ucs4_key("ab");
-        assert_eq!(key.len(), 8);
-        assert_eq!(
-            u32::from_le_bytes([key[0], key[1], key[2], key[3]]),
-            'a' as u32
-        );
-        assert_eq!(
-            u32::from_le_bytes([key[4], key[5], key[6], key[7]]),
-            'b' as u32
-        );
-    }
-
-    #[test]
-    fn decode_ucs4_key_round_trip() {
-        let original = "中国人民";
-        let key = encode_ucs4_key(original);
-        let decoded = decode_ucs4_key(&key).unwrap();
-        assert_eq!(decoded, original);
-    }
-
-    #[test]
-    fn decode_ucs4_key_rejects_bad_length() {
-        assert!(decode_ucs4_key(&[0, 0, 0]).is_none());
-        assert!(decode_ucs4_key(&[0, 0, 0, 0, 0]).is_none());
-    }
-
-    #[test]
-    fn decode_ucs4_key_rejects_invalid_scalar() {
-        let mut key = encode_ucs4_key("x");
-        key[0..4].copy_from_slice(&0xD800_u32.to_le_bytes());
-        assert!(decode_ucs4_key(&key).is_none());
-    }
-
-    #[test]
-    fn decode_tokens_round_trip() {
-        let tokens = vec![0x01000001, 0x02000042];
-        let encoded = encode_tokens(&tokens);
-        assert_eq!(encoded.len(), 8);
-        let decoded = decode_tokens(&encoded).unwrap();
-        assert_eq!(decoded, tokens);
-    }
-
-    #[test]
-    fn decode_tokens_empty_is_prefix_marker() {
-        let decoded = decode_tokens(&[]).unwrap();
-        assert!(decoded.is_empty());
-    }
-
-    #[test]
-    fn decode_tokens_rejects_bad_length() {
-        assert!(decode_tokens(&[0, 0, 0]).is_err());
     }
 
     #[test]

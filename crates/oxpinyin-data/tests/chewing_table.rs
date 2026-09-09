@@ -8,9 +8,14 @@
 use std::path::PathBuf;
 
 use oxpinyin_core::ChewingKey;
+// The fixtures are written with the crate's own row schema, not a copy of
+// it: a layout change has to break the reader's behaviour here, never pass
+// because the test harness drifted along with it.
+use oxpinyin_data::row_format::pinyin_index::{
+    encode_complete_key as encode_complete, encode_incomplete_key as encode_incomplete,
+    encode_item, item2_stride,
+};
 use oxpinyin_store::{DefaultStore, RawReadStore, ReadStore, WriteStore};
-
-// ── Key/value encoding helpers (mirror chewing_table internals) ──
 
 fn key_no_tone(spelling: &str) -> ChewingKey {
     ChewingKey::from_pinyin(spelling).expect("valid spelling")
@@ -22,41 +27,10 @@ fn key_with_tone(spelling: &str, tone: u8) -> ChewingKey {
         .with_tone(tone)
 }
 
-fn encode_complete(keys: &[ChewingKey]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(keys.len() * 2);
-    for key in keys {
-        let zeroed = ChewingKey::new(key.initial, key.middle, key.final_, 0);
-        buf.extend_from_slice(&zeroed.to_packed().to_le_bytes());
-    }
-    buf
-}
-
-fn encode_incomplete(keys: &[ChewingKey]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(keys.len() * 2);
-    for key in keys {
-        let initial_only = ChewingKey::new(key.initial, 0, 0, 0);
-        buf.extend_from_slice(&initial_only.to_packed().to_le_bytes());
-    }
-    buf
-}
-
-fn item2_stride(phrase_length: usize) -> usize {
-    let raw = 4 + 2 * phrase_length;
-    (raw + 3) & !3
-}
-
 fn encode_items(entries: &[(u32, &[ChewingKey])]) -> Vec<u8> {
     let mut buf = Vec::new();
     for (token, keys) in entries {
-        let stride = item2_stride(keys.len());
-        let mut record = vec![0u8; stride];
-        record[..4].copy_from_slice(&token.to_le_bytes());
-        for (j, key) in keys.iter().enumerate() {
-            let packed = key.to_packed().to_le_bytes();
-            record[4 + j * 2] = packed[0];
-            record[4 + j * 2 + 1] = packed[1];
-        }
-        buf.extend_from_slice(&record);
+        buf.extend_from_slice(&encode_item(*token, keys));
     }
     buf
 }
