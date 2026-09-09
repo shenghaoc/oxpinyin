@@ -60,11 +60,28 @@ on the nightly.
 
 ### G1 — Size (noise floor: exactly zero)
 
-Build the real product path, not a proxy: `tools/packaging/install.sh
-libpinyin --prefix=/usr --destdir=…` (and again for `libzhuyin`), which runs
-`cargo cinstall`, with `--features shipped`. That is the artifact the release
-workflow ships and the one `tools/bisection/run-shipped-check.sh` argues is
-the product. Then `strip --strip-all`.
+Build the real product path, not a proxy: `tools/packaging/install.sh`, which
+runs `cargo cinstall` — the same path `release-packages.yml` ships and the one
+`tools/bisection/run-shipped-check.sh` argues is the product. Then
+`strip --strip-all`.
+
+The backend is named explicitly rather than inherited, and the two libraries
+do not take the same feature list:
+
+```sh
+tools/packaging/install.sh libpinyin --prefix=/usr --destdir=… \
+    -- --no-default-features --features "$BACKEND",shipped
+tools/packaging/install.sh libzhuyin --prefix=/usr --destdir=… \
+    -- --no-default-features --features "$BACKEND"
+```
+
+Two reasons for the shape. `default = ["tkrzw"]` on both capi crates means a
+bare `--features shipped` inherits whatever the default backend happens to be
+that month — the default has already flipped once (`05688575`), and a
+measurement lane must not change artifact silently when it does. And
+`oxpinyin-zhuyin-capi` has **no `shipped` feature** at all (its `[features]`
+block is `capi`, `default`, and the four backends), so passing one to it is a
+build error, not a no-op.
 
 Gated quantities, per artifact:
 
@@ -84,8 +101,17 @@ built on file size alone would inherit that blind spot; a real 4 KiB `.text`
 growth (the size of the `Custom`/`Box<dyn Error>` machinery that document
 removed) would pass unseen.
 
-Thresholds: section sum ≤ baseline + max(0.5%, 4096 B) → fail. Stripped file
-size ≤ baseline → fail on any increase.
+Thresholds, written as the predicates that fire:
+
+```text
+limit   = baseline_section_sum + max(baseline_section_sum * 0.005, 4096)
+fail if actual_section_sum   > limit
+fail if actual_stripped_size > baseline_stripped_size
+```
+
+The percentage allowance is 0.5% **of the baseline**, floored at 4096 B so a
+small artifact still gets one page of slack. Both predicates fail on
+*exceeding* the limit; equality passes, and a decrease always passes.
 
 **Not proposed yet: the §2 budget ceiling.** See "What needs a human
 decision", item 1 — "pinned reference stack" is not defined anywhere in the
@@ -101,10 +127,19 @@ G1 can only be a self-ratchet until someone defines the payload.
 routes cycle 0 through a separate cold anchor so a toggle on the steady one
 never sees it.
 
+Artifact: **G1's shipped `libpinyin` build**, reused rather than rebuilt — G2
+gates the product. That works against the fixture tables even though `shipped`
+compiles out `oxpinyin_init_for_fixtures`, because `bisect.c` falls back to
+`pinyin_init`, which `context.rs` documents as the same function: the fixture
+symbol "is `pinyin_init` under another name", both calling `init_context`.
+(`bisect.c`'s "prefer the non-header constructor" comment predates that and no
+longer describes a difference.)
+
 Workload: **`fixtures/w3/tkt`** — committed, frozen, already a CI path input,
-and already opened as a real drop-in directory by `tools/bisection/run-cpp-smoke.sh`
-inside the existing `test` job. No pin-built oracle, no model20 (which is
-non-redistributable and never enters CI), no network.
+matching the compiled backend, and already opened as a real drop-in directory
+by `tools/bisection/run-cpp-smoke.sh` inside the existing `test` job. No
+pin-built oracle, no model20 (which is non-redistributable and never enters
+CI), no network.
 
 Gate on the **per-object Ir for the oxpinyin object only** (callgrind's `ob=`
 attribution), not `PROGRAM TOTALS`. That excludes glibc, libtkrzw and the
@@ -131,11 +166,41 @@ oracle from CI entirely.
 
 ### G3 — Allocations per steady cycle (noise floor: exactly zero)
 
-A second artifact, `--features alloc-count`, run **natively** (no valgrind).
-`bisect.c` already resolves the five `oxpinyin_alloc_*` readers with `dlsym`
-and reports `-1` when absent, so the JSON shape is stable. Gate the delta of
-`oxpinyin_alloc_count` and `oxpinyin_alloc_bytes` across the steady cycles,
-plus `oxpinyin_alloc_peak_live_bytes`.
+A second, **diagnostic** artifact, run **natively** (no valgrind):
+
+```sh
+cargo build --locked --release -p oxpinyin-capi \
+    --no-default-features --features tkrzw,alloc-count
+```
+
+run against the fixture directory for the backend it was compiled with
+(`tkrzw` → `fixtures/w3/tkt`). `shipped` is deliberately absent and the two
+features are mutually exclusive in practice: the `nm -D` step below requires
+the shipped artifact to export **zero** `oxpinyin_alloc_*` symbols, so an
+artifact carrying both would fail the lane it belongs to.
+
+This is the one place the gate measures something other than the product
+artifact, and the difference is bounded: `--features shipped` compiles out
+exactly two symbols, and `oxpinyin_init_for_fixtures` is
+`crates/oxpinyin-capi/src/context.rs`'s own words "`pinyin_init` under another
+name" — a byte-identical alias calling the same `init_context`. Neither hook
+is on the steady keystroke anchor, so the G3 numbers describe the shipping
+code path.
+
+Gate the delta of `oxpinyin_alloc_count` and `oxpinyin_alloc_bytes` across the
+steady cycles, plus `oxpinyin_alloc_peak_live_bytes`.
+
+**Validate the readers before computing anything.** `bisect.c`'s
+`read_alloc_counters` sets each field to `-1` when its `dlsym` failed, so a
+run against an artifact built without `alloc-count` emits four `-1`s rather
+than failing — and a delta of `-1 − (-1)` is `0`, which reads as *zero
+allocations per cycle*: a spectacular improvement that would ratchet the
+baseline down to a number no real build can ever meet. So: any of
+`oxpinyin_alloc_count`, `oxpinyin_alloc_bytes` or
+`oxpinyin_alloc_peak_live_bytes` reading `-1` in any round is an
+`INSTRUMENT FAULT`, raised **before** two-round agreement is evaluated and
+before any comparison against the baseline. Agreeing rounds do not redeem it,
+and neither does a value that appears to improve on the baseline.
 
 Thresholds: **allocation count must not increase at all** (exact ratchet);
 bytes +1% (capacity rounding moves bytes without moving counts).
@@ -161,10 +226,29 @@ cross-host record's amd64 section, across five workload sizes:
 (±0.2%) — while the wall clock in the same table was bimodal.
 
 PR: reported as an artifact, not gated. Nightly, in the pinned image: fail at
-+3% against baseline. Split this way because RSS moves with glibc, the
-allocator and the kernel — constant *inside* one pinned image, not across an
-image refresh — and because 3% is ~12× the observed within-session spread yet
-far under the effects that matter (P1–P6 moved RSS 72,652 → 28,388 KiB).
++3% against baseline — ~12× the observed within-session spread, yet far under
+the effects that matter (P1–P6 moved RSS 72,652 → 28,388 KiB).
+
+**A pinned container image does not pin what RSS depends on.** glibc, the
+allocator and the measurement tools come from the image and are pinned by it;
+the **kernel is the host's**, and so is the GitHub runner image around it.
+GitHub rotates both on its own schedule, and page accounting, transparent
+hugepage policy and overcommit behaviour all live there. So the G4 gate's
+environment contract is larger than the image digest, and its fingerprint
+block carries, beyond the common set in mechanism 3 below:
+
+| field | source |
+|---|---|
+| runner image label + version | `$ImageVersion` / `$ImageOS` |
+| kernel identity | `uname -srvm` |
+| container image digest, and the apt snapshot date its packages came from | image metadata |
+| exact tool versions — `valgrind --version`, `readelf --version`, glibc, `libtkrzw` | in-image, recorded not assumed |
+
+A change in any of them makes a G4 delta uninterpretable, so it takes the same
+`BASELINE STALE` path as every other fingerprint field rather than being
+reported as a memory regression. `valgrind --version` is in the common set
+too, not only G4's: callgrind's Ir is a simulation, and a simulator version
+change moves G2's number without a line of oxpinyin changing.
 
 ## On what runner
 
@@ -198,14 +282,30 @@ artifact and the input. "Runner variance" in the timing sense cannot move
 them. This is the whole reason the metric set looks the way it does.
 
 **2. Two-round self-agreement, with a published floor per metric.** Each
-capture runs twice inside the same job:
+capture runs twice inside the same job. What a "round" covers differs per
+metric, and saying so is load-bearing — re-reading one binary twice tests
+nothing:
 
-| metric | required agreement | on disagreement |
-|---|---|---|
-| G1 size | exact | `INSTRUMENT FAULT` |
-| G2 Ir | ≤ 0.05% (floor measured at 0.031%) | `INSTRUMENT FAULT` |
-| G3 alloc count | exact | `INSTRUMENT FAULT` |
-| G4 RSS (nightly) | ≤ 1% between two 10-process passes | `INSTRUMENT FAULT` |
+| metric | a round is | agreement floor | compared to baseline |
+|---|---|---|---|
+| G1 size | a **full rebuild** into a fresh `--target-dir` and `--destdir`, restripped, remeasured | exact | round 1 |
+| G2 Ir | a **fresh callgrind process** over the same artifact (built once) | ≤ 0.05% (floor measured at 0.031%) | round 1 |
+| G3 alloc count | a **fresh native process** over the same artifact (built once) | exact | round 1 |
+| G4 RSS (nightly) | a **fresh 10-process pass**, median taken per pass | ≤ 1% between passes | median of the two passes |
+
+G1 rebuilds because build reproducibility is the thing that could silently
+move a size number; G2 and G3 build once and re-run, because the artifact is
+the input whose determinism they are not testing — the measurement process is.
+**Round 1 is the value compared to the baseline** for G1–G3 (round 2 exists to
+falsify round 1, not to be averaged with it); G4 compares the median of its
+two passes, since it is the one metric that is statistical rather than exact.
+
+Ordering is fixed and matters: **validity first, then agreement, then the
+baseline comparison.** A `-1` from any `oxpinyin_alloc_*` reader (G3, above),
+a missing ELF section, an empty callgrind output or an unresolved anchor
+symbol is an `INSTRUMENT FAULT` raised at the validity step — before rounds
+are compared to each other, so two rounds that agree on a missing reading can
+never be promoted into a valid G3 value.
 
 A fault fails the lane with a **different message and a different exit
 status** from a regression. "The number moved" and "the instrument was not
@@ -213,11 +313,21 @@ reliable on this runner today" are different findings and must never arrive
 looking the same — that is exactly how a flaky gate gets muted.
 
 **3. Environment fingerprint match — and this is where the un-homed rule
-lands.** The baseline file carries a fingerprint: container image digest,
-`rustc -vV`, glibc version, `libtkrzw` version, SHA-256 of the fixture tree,
-the build recipe, and **the harness commit**. The lane recomputes it. On any
-mismatch the lane does **not** compare numbers: it reports `BASELINE STALE`
-and fails, naming what moved.
+lands.** The baseline file carries a fingerprint: container image digest and
+its apt snapshot date, the GitHub runner image label and version, `uname
+-srvm`, `rustc -vV`, glibc, `libtkrzw`, `valgrind --version`, `readelf
+--version`, the SHA-256 of the fixture tree, the full build recipe (backend
+and feature list per artifact), and **the harness commit**. The lane
+recomputes it. On any mismatch the lane does **not** compare numbers: it
+reports `BASELINE STALE` and fails, naming what moved.
+
+The harness commit is the recorded commit of the harness inputs
+(`tools/bisection/bisect.c` and the scripts the lane runs), taken from the
+tree under test and written into the baseline — not left implicit in whatever
+the PR head happens to be. A PR that edits the harness therefore invalidates
+the baseline by construction and must refresh it in the same change, which is
+the intended behaviour rather than an obstacle: the alternative is a number
+compared against one produced by different code.
 
 The 2026-09-07 provenance audit found that no perf record pins its harness to
 a commit, and that this is the enabling mechanism for reference drift —
