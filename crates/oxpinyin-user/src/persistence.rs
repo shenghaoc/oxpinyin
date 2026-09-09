@@ -74,28 +74,7 @@ pub struct UserState {
     pub system_overrides: BTreeMap<u8, BTreeMap<u32, Option<ChunkItem>>>,
 }
 
-impl UserState {
-    /// The current item for a system-library slot — the override when
-    /// one exists, the original otherwise.
-    #[must_use]
-    pub fn system_item<'a>(
-        &'a self,
-        originals: &'a BTreeMap<u8, SystemLibrary>,
-        nibble: u8,
-        slot: u32,
-    ) -> Option<&'a ChunkItem> {
-        if let Some(item) = self
-            .system_overrides
-            .get(&nibble)
-            .and_then(|slots| slots.get(&slot))
-        {
-            return item.as_ref();
-        }
-        originals
-            .get(&nibble)
-            .and_then(|library| library.items.get(&slot))
-    }
-}
+impl UserState {}
 
 /// A persistence failure: I/O, a container, or a byte stream that does
 /// not parse.
@@ -149,6 +128,8 @@ pub struct Loaded {
     /// A non-conform profile was found and its files removed —
     /// `check_format`'s `_clean_user_files`, the ecosystem's own
     /// mechanism for "backend or model change discards user data".
+    /// Read by the tests here; the runtime wiring logs it.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub wiped: bool,
     /// Files whose bytes failed to parse; the profile continues without
     /// them (upstream's own degrade — `chunk->load` failure leaves an

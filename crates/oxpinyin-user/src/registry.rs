@@ -78,6 +78,11 @@ pub struct StoreInner<S: WriteStore> {
     /// opening no redb transaction. Recomputed at `open` and maintained only
     /// by `UserStore::mark_committed_write`.
     pub(crate) has_user_data: AtomicBool,
+    /// The libpinyin user-dir target when this store persists in the
+    /// pin's own file shapes (`open_libpinyin`): `save()` exports the
+    /// session values and writes the file set. `None` on plain
+    /// `open`/`create_standalone` stores.
+    pub(crate) libpinyin: Option<crate::store_libpinyin::Target>,
 }
 
 /// Declared last on [`crate::UserStore`] so this runs after the handle `Arc` dies.
@@ -145,10 +150,17 @@ fn absolutize(path: &Path) -> PathBuf {
 /// Lease held by a standalone store and its clones while its path is live.
 pub struct StandaloneLease {
     key: PathBuf,
+    /// A scratch file (the libpinyin session store) whose bytes die with
+    /// the last handle — unsaved learning must not linger in a world-
+    /// readable temp file once the session is over.
+    remove_on_drop: Option<PathBuf>,
 }
 
 impl Drop for StandaloneLease {
     fn drop(&mut self) {
+        if let Some(path) = self.remove_on_drop.take() {
+            let _ = std::fs::remove_file(path);
+        }
         let Some(registry) = OPEN_STANDALONE_STORES.get() else {
             return;
         };
@@ -175,7 +187,29 @@ pub fn acquire_standalone(path: &Path) -> Option<StandaloneLease> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if stores.insert(key.clone()) {
-        Some(StandaloneLease { key })
+        Some(StandaloneLease {
+            key,
+            remove_on_drop: None,
+        })
+    } else {
+        None
+    }
+}
+
+/// [`acquire_standalone`], for a session scratch file: the reservation
+/// behaves identically, and the file itself is removed when the last
+/// handle drops.
+pub fn acquire_scratch(path: &Path) -> Option<StandaloneLease> {
+    let key = registry_key(path);
+    let mut stores = OPEN_STANDALONE_STORES
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if stores.insert(key.clone()) {
+        Some(StandaloneLease {
+            key,
+            remove_on_drop: Some(path.to_path_buf()),
+        })
     } else {
         None
     }

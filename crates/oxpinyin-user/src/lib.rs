@@ -29,14 +29,15 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
 pub mod codec;
-pub mod persistence;
 pub mod phrase;
 pub mod seed;
 
 mod lookup;
 mod model;
+pub(crate) mod persistence;
 mod registry;
 mod store;
+pub(crate) mod store_libpinyin;
 
 pub use lookup::UserLookup;
 pub use phrase::{
