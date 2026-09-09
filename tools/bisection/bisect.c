@@ -21,10 +21,15 @@
  *   gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o bisect bisect.c -ldl
  */
 
+/* _DEFAULT_SOURCE alongside _POSIX_C_SOURCE: the RSS diagnostic mode calls
+ * malloc_trim(3) and mallinfo2(3), glibc extensions that a bare
+ * _POSIX_C_SOURCE definition hides. */
+#define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include <dlfcn.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -473,6 +478,209 @@ static void perf_print_memory(const char *tag, const struct perf_memory *m) {
     perf_print_memory_body(m);
 }
 
+/* ── RSS diagnosis instrument (PERF_MODE=rss-diag) ────────────────────
+ *
+ * Answers, for one process of either engine, where the resident set
+ * actually sits: how much of it is anonymous versus file-backed
+ * (smaps_rollup), which mappings carry it (/proc/self/maps), how much of
+ * it the allocator is merely retaining (malloc_trim(3) plus mallinfo2(3)),
+ * and how the split moves between "just initialized" and "after N
+ * keystroke cycles".
+ *
+ * Every reading is taken identically for libpinyin and for oxpinyin from
+ * inside the same driver, so the comparison is symmetric by construction.
+ * The /proc text dumps are gated on RSS_DIAG_DIR precisely because
+ * writing them allocates: a measurement round that reports the trim delta
+ * must leave RSS_DIAG_DIR unset, and a round that captures mappings is a
+ * separate round. Nothing in this block runs unless PERF_MODE=rss-diag.
+ */
+
+struct smaps_rollup {
+    long rss_kib;
+    long pss_kib;
+    long shared_clean_kib;
+    long shared_dirty_kib;
+    long private_clean_kib;
+    long private_dirty_kib;
+    long anonymous_kib;
+    long file_kib; /* derived: rss - anonymous, per smaps semantics */
+};
+
+static void smaps_rollup_reset(struct smaps_rollup *r) {
+    r->rss_kib = -1;
+    r->pss_kib = -1;
+    r->shared_clean_kib = -1;
+    r->shared_dirty_kib = -1;
+    r->private_clean_kib = -1;
+    r->private_dirty_kib = -1;
+    r->anonymous_kib = -1;
+    r->file_kib = -1;
+}
+
+static void read_smaps_rollup(struct smaps_rollup *r) {
+    FILE *f = fopen("/proc/self/smaps_rollup", "r");
+    char line[256];
+
+    smaps_rollup_reset(r);
+    if (!f)
+        return;
+
+    while (fgets(line, sizeof line, f)) {
+        unsigned long value = 0;
+        if (sscanf(line, "Rss: %lu kB", &value) == 1)
+            r->rss_kib = (long)value;
+        else if (sscanf(line, "Pss: %lu kB", &value) == 1)
+            r->pss_kib = (long)value;
+        else if (sscanf(line, "Shared_Clean: %lu kB", &value) == 1)
+            r->shared_clean_kib = (long)value;
+        else if (sscanf(line, "Shared_Dirty: %lu kB", &value) == 1)
+            r->shared_dirty_kib = (long)value;
+        else if (sscanf(line, "Private_Clean: %lu kB", &value) == 1)
+            r->private_clean_kib = (long)value;
+        else if (sscanf(line, "Private_Dirty: %lu kB", &value) == 1)
+            r->private_dirty_kib = (long)value;
+        else if (sscanf(line, "Anonymous: %lu kB", &value) == 1)
+            r->anonymous_kib = (long)value;
+    }
+    fclose(f);
+    if (r->rss_kib >= 0 && r->anonymous_kib >= 0)
+        r->file_kib = r->rss_kib - r->anonymous_kib;
+}
+
+static void print_smaps_rollup(const char *tag, const struct smaps_rollup *r) {
+    printf("\"%s\":{\"rss_kib\":%ld,\"pss_kib\":%ld,"
+           "\"shared_clean_kib\":%ld,\"shared_dirty_kib\":%ld,"
+           "\"private_clean_kib\":%ld,\"private_dirty_kib\":%ld,"
+           "\"anonymous_kib\":%ld,\"file_kib\":%ld}",
+           tag, r->rss_kib, r->pss_kib, r->shared_clean_kib,
+           r->shared_dirty_kib, r->private_clean_kib, r->private_dirty_kib,
+           r->anonymous_kib, r->file_kib);
+}
+
+struct arena_state {
+    long arena;      /* bytes obtained from sbrk (non-mmap heap)      */
+    long hblks;      /* count of mmap'd regions                        */
+    long hblkhd;     /* bytes in mmap'd regions                        */
+    long uordblks;   /* bytes in in-use chunks                         */
+    long fordblks;   /* bytes in free chunks retained by the allocator */
+    long keepcost;   /* releasable top-of-heap bytes                   */
+};
+
+static void read_arena_state(struct arena_state *a) {
+    struct mallinfo2 mi = mallinfo2();
+
+    a->arena = (long)mi.arena;
+    a->hblks = (long)mi.hblks;
+    a->hblkhd = (long)mi.hblkhd;
+    a->uordblks = (long)mi.uordblks;
+    a->fordblks = (long)mi.fordblks;
+    a->keepcost = (long)mi.keepcost;
+}
+
+static void print_arena_state(const char *tag, const struct arena_state *a) {
+    printf("\"%s\":{\"arena\":%ld,\"hblks\":%ld,\"hblkhd\":%ld,"
+           "\"uordblks\":%ld,\"fordblks\":%ld,\"keepcost\":%ld}",
+           tag, a->arena, a->hblks, a->hblkhd,
+           a->uordblks, a->fordblks, a->keepcost);
+}
+
+/* Copy a /proc text file verbatim. Returns 0 on success. The destination
+ * is <dir>/<tag>-<what>.txt; the caller owns naming. */
+static int dump_proc_text(const char *dir, const char *tag, const char *what,
+                          const char *src) {
+    char path[512];
+    FILE *in, *out;
+    char buffer[4096];
+    size_t n;
+
+    if (snprintf(path, sizeof path, "%s/%s-%s.txt", dir, tag, what)
+        >= (int)sizeof path)
+        return -1;
+    in = fopen(src, "r");
+    if (!in)
+        return -1;
+    out = fopen(path, "w");
+    if (!out) {
+        fclose(in);
+        return -1;
+    }
+    while ((n = fread(buffer, 1, sizeof buffer, in)) > 0) {
+        if (fwrite(buffer, 1, n, out) != n) {
+            fclose(in);
+            fclose(out);
+            return -1;
+        }
+    }
+    fclose(in);
+    return fclose(out) == 0 ? 0 : -1;
+}
+
+/* glibc's own arena XML, which mallinfo2 cannot express: per-arena free
+ * totals, the mmap threshold, and the system-bytes high-water. */
+static int dump_malloc_info(const char *dir, const char *tag) {
+    char path[512];
+    FILE *out;
+
+    if (snprintf(path, sizeof path, "%s/%s-mallocinfo.xml", dir, tag)
+        >= (int)sizeof path)
+        return -1;
+    out = fopen(path, "w");
+    if (!out)
+        return -1;
+    if (malloc_info(0, out) != 0) {
+        fclose(out);
+        return -1;
+    }
+    return fclose(out) == 0 ? 0 : -1;
+}
+
+/* The gated Rust counting allocator, when the artifact under test carries
+ * it (`--features alloc-count`, never in a shipped build). Absent from
+ * libpinyin and from any default oxpinyin artifact, so every field stays
+ * -1 there and the JSON shape does not change between cells. Live and
+ * peak-live are the RSS-relevant pair: cumulative count and cumulative
+ * bytes say nothing about resident memory. */
+struct alloc_counters {
+    long long count;
+    long long bytes;
+    long long live_bytes;
+    long long peak_live_bytes;
+};
+
+typedef uint64_t (*fn_alloc_u64)(void);
+
+typedef void (*fn_alloc_void)(void);
+
+struct alloc_counter_syms {
+    fn_alloc_u64 count;
+    fn_alloc_u64 bytes;
+    fn_alloc_u64 live;
+    fn_alloc_u64 peak;
+    fn_alloc_void reset_peak;
+};
+
+static void resolve_alloc_counters(void *handle, struct alloc_counter_syms *a) {
+    a->count = (fn_alloc_u64)dlsym(handle, "oxpinyin_alloc_count");
+    a->bytes = (fn_alloc_u64)dlsym(handle, "oxpinyin_alloc_bytes");
+    a->live = (fn_alloc_u64)dlsym(handle, "oxpinyin_alloc_live_bytes");
+    a->peak = (fn_alloc_u64)dlsym(handle, "oxpinyin_alloc_peak_live_bytes");
+    a->reset_peak = (fn_alloc_void)dlsym(handle, "oxpinyin_alloc_reset_peak");
+}
+
+static void read_alloc_counters(const struct alloc_counter_syms *a,
+                                struct alloc_counters *c) {
+    c->count = a->count ? (long long)a->count() : -1;
+    c->bytes = a->bytes ? (long long)a->bytes() : -1;
+    c->live_bytes = a->live ? (long long)a->live() : -1;
+    c->peak_live_bytes = a->peak ? (long long)a->peak() : -1;
+}
+
+static void print_alloc_counters(const char *tag, const struct alloc_counters *c) {
+    printf("\"%s\":{\"count\":%lld,\"bytes\":%lld,"
+           "\"live_bytes\":%lld,\"peak_live_bytes\":%lld}",
+           tag, c->count, c->bytes, c->live_bytes, c->peak_live_bytes);
+}
+
 /* One 20-input cycle. For every input the instance is reset, then each
  * accumulated ASCII prefix is parsed and decoded the way the C++ frontend
  * drives the keystroke path: parse, guess candidates, read the count. */
@@ -557,7 +765,14 @@ static void perf_remove_user_dir(char *user_dir) {
     if (strlen(user_dir) + 32 >= sizeof command)
         return;
     snprintf(command, sizeof command, "rm -rf -- '%s'", user_dir);
-    (void)system(command);
+    /* Best-effort cleanup of our own mkdtemp directory; a failure is not
+     * worth aborting a measurement over. The status is bound rather than
+     * cast away because system(3) is warn_unused_result under the
+     * _FORTIFY_SOURCE level Ubuntu's gcc enables by default, and a plain
+     * (void) cast does not satisfy it -- the harness would not build at
+     * -Werror outside the Debian container. */
+    int status = system(command);
+    (void)status;
 }
 
 static int run_perf_mode(int argc, char **argv) {
@@ -565,8 +780,15 @@ static int run_perf_mode(int argc, char **argv) {
         fprintf(stderr,
                 "Usage: %s --perf <path-to-so> <systemdir>\n"
                 "  Environment: PERF_BACKEND (label), PERF_MODE\n"
-                "    (speed|ram-init|ram-cycle), PERF_CYCLES (default 8),\n"
-                "    PERF_REPEATS (corpus passes per cycle, default 1).\n",
+                "    (speed|ram-init|ram-cycle|rss-diag), PERF_CYCLES\n"
+                "    (default 8), PERF_REPEATS (corpus passes per cycle,\n"
+                "    default 1). rss-diag additionally reports\n"
+                "    smaps_rollup and mallinfo2 at init and after the\n"
+                "    cycles, calls malloc_trim(0) and re-reads both;\n"
+                "    RSS_DIAG_DIR (with RSS_DIAG_TAG) also writes the\n"
+                "    /proc/self/maps, /proc/self/smaps and malloc_info\n"
+                "    dumps, which\n"
+                "    allocate and so belong in their own round.\n",
                 argv[0]);
         return 1;
     }
@@ -583,6 +805,18 @@ static int run_perf_mode(int argc, char **argv) {
         backend = so_path;
     if (!mode)
         mode = "speed";
+
+    /* RSS diagnosis. The /proc text dumps are opt-in on RSS_DIAG_DIR
+     * because writing them allocates: a round that reports the
+     * malloc_trim delta must run with RSS_DIAG_DIR unset. */
+    const bool rss_diag = strcmp(mode, "rss-diag") == 0;
+    const char *diag_dir = getenv("RSS_DIAG_DIR");
+    const char *diag_tag = getenv("RSS_DIAG_TAG");
+
+    if (diag_tag == NULL || *diag_tag == '\0')
+        diag_tag = "run";
+    if (!rss_diag)
+        diag_dir = NULL;
 
     char user_dir[] = "/tmp/bisect-perf-XXXXXX";
     if (!mkdtemp(user_dir)) {
@@ -629,7 +863,37 @@ static int run_perf_mode(int argc, char **argv) {
     }
 
     struct perf_memory after_init;
+    struct smaps_rollup rollup_init;
+    struct arena_state arena_init;
+
     read_perf_memory(&after_init);
+    struct alloc_counter_syms alloc_syms;
+    struct alloc_counters alloc_init;
+    struct alloc_counters alloc_cycle;
+
+    resolve_alloc_counters(handle, &alloc_syms);
+    if (rss_diag) {
+        read_smaps_rollup(&rollup_init);
+        read_arena_state(&arena_init);
+        read_alloc_counters(&alloc_syms, &alloc_init);
+        /* Bound the peak to the cycle region. Read initialization's
+         * counters first, then drop the peak to the current live total,
+         * so `alloc_cycle.peak_live_bytes` is the cycles' own high-water
+         * mark and not the larger of the two regions. Absent from
+         * libpinyin and from any default oxpinyin artifact, where the
+         * symbol does not resolve and this is a no-op. */
+        if (alloc_syms.reset_peak)
+            alloc_syms.reset_peak();
+        if (diag_dir) {
+            (void)dump_proc_text(diag_dir, diag_tag, "maps-init",
+                                 "/proc/self/maps");
+            (void)dump_proc_text(diag_dir, diag_tag, "smaps-init",
+                                 "/proc/self/smaps");
+            (void)dump_proc_text(diag_dir, diag_tag, "smaps-rollup-init",
+                                 "/proc/self/smaps_rollup");
+            (void)dump_malloc_info(diag_dir, diag_tag);
+        }
+    }
 
     printf("{\"backend\":");
     perf_json_string(backend);
@@ -644,6 +908,14 @@ static int run_perf_mode(int argc, char **argv) {
            (unsigned long long)(init_end - init_start),
            (unsigned long long)(alloc_end - alloc_start));
     perf_print_memory("after_init", &after_init);
+    if (rss_diag) {
+        putchar(',');
+        print_smaps_rollup("rollup_init", &rollup_init);
+        putchar(',');
+        print_arena_state("arena_init", &arena_init);
+        putchar(',');
+        print_alloc_counters("alloc_init", &alloc_init);
+    }
 
     if (strcmp(mode, "ram-init") != 0) {
         uint64_t *cycle_ns = calloc((size_t)cycles, sizeof *cycle_ns);
@@ -668,6 +940,46 @@ static int run_perf_mode(int argc, char **argv) {
         }
         read_perf_memory(&after_last);
 
+        /* The decisive experiment. Read the post-cycle state, then ask
+         * glibc to return everything it is merely retaining, then read
+         * the same state again. A gap that collapses here was allocator
+         * retention driven by transient churn; a gap that survives is
+         * held in live structures or in file-backed pages. */
+        struct smaps_rollup rollup_cycle;
+        struct arena_state arena_cycle;
+        struct perf_memory after_trim;
+        struct smaps_rollup rollup_trim;
+        struct arena_state arena_trim;
+        int trim_released = -1;
+
+        if (rss_diag) {
+            read_smaps_rollup(&rollup_cycle);
+            read_arena_state(&arena_cycle);
+            read_alloc_counters(&alloc_syms, &alloc_cycle);
+            if (diag_dir) {
+                (void)dump_proc_text(diag_dir, diag_tag, "maps-cycle",
+                                     "/proc/self/maps");
+                (void)dump_proc_text(diag_dir, diag_tag, "smaps-cycle",
+                                     "/proc/self/smaps");
+                (void)dump_proc_text(diag_dir, diag_tag,
+                                     "smaps-rollup-cycle",
+                                     "/proc/self/smaps_rollup");
+            }
+            trim_released = malloc_trim(0);
+            read_perf_memory(&after_trim);
+            read_smaps_rollup(&rollup_trim);
+            read_arena_state(&arena_trim);
+            if (diag_dir) {
+                (void)dump_proc_text(diag_dir, diag_tag, "maps-trim",
+                                     "/proc/self/maps");
+                (void)dump_proc_text(diag_dir, diag_tag, "smaps-trim",
+                                     "/proc/self/smaps");
+                (void)dump_proc_text(diag_dir, diag_tag,
+                                     "smaps-rollup-trim",
+                                     "/proc/self/smaps_rollup");
+            }
+        }
+
         printf(",\"cycles_ns\":[");
         for (int i = 0; i < cycles; i++)
             printf("%s%llu", i ? "," : "", (unsigned long long)cycle_ns[i]);
@@ -675,6 +987,20 @@ static int run_perf_mode(int argc, char **argv) {
         perf_print_memory_body(&after_first);
         printf(",\"after_last\":");
         perf_print_memory_body(&after_last);
+        if (rss_diag) {
+            putchar(',');
+            print_smaps_rollup("rollup_cycle", &rollup_cycle);
+            putchar(',');
+            print_arena_state("arena_cycle", &arena_cycle);
+            putchar(',');
+            print_alloc_counters("alloc_cycle", &alloc_cycle);
+            printf(",\"trim_released\":%d,\"after_trim\":", trim_released);
+            perf_print_memory_body(&after_trim);
+            putchar(',');
+            print_smaps_rollup("rollup_trim", &rollup_trim);
+            putchar(',');
+            print_arena_state("arena_trim", &arena_trim);
+        }
         free(cycle_ns);
     }
 

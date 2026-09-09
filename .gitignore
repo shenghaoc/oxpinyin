@@ -83,3 +83,29 @@ __pycache__/
 /target-fedora/
 /target-debian/
 /target-nixos/
+
+# Profiling passes build the same crate under alternate debug/LTO/frame-pointer
+# settings into their own CARGO_TARGET_DIRs, so the shipped artifact's target
+# dir is never invalidated (docs/runbooks/benches.md, "RSS diagnosis").
+/target-dbg/
+/target-fp/
+
+# Capture output from the measurement harnesses. Findings documents commit
+# no captures: they record the command that produced each figure, and bulk
+# evidence is attached to the PR (docs/runbooks/benches.md). These patterns
+# exist so a stray capture cannot be swept in by `git add -A`.
+/tools/bisection/*.out
+/tools/bisection/massif.*
+/tools/bisection/dhat.*
+*-smaps-init.txt
+*-smaps-cycle.txt
+*-smaps-trim.txt
+*-smaps-rollup-*.txt
+*-maps-init.txt
+*-maps-cycle.txt
+*-maps-trim.txt
+*-mallocinfo.xml
+callgrind.out.*
+dhat.out.*
+massif.out.*
+perf.data*
