@@ -57,7 +57,14 @@ notes are collected to report back to libpinyin once the rewrite is complete.
 **Before recording one, read `docs/findings/compatibility-policy.md`.** The
 goal is a drop-in replacement: rename the built object to `libpinyin.so.15`,
 put it on the library path, and unmodified consumers work against the data
-already on the system. Reproducing the pin is therefore the default, and
+already on the system — and user data when the KV database backend is
+unchanged: same-backend pairs (Kyoto Cabinet↔Kyoto Cabinet,
+tkrzw↔tkrzw) interoperate seamlessly in both directions. Data loss when
+the KV database backend actually changes is taken for granted
+(maintainer ruling 2026-09-09; the value-level import/export
+interchange is then the migration path — the policy's goal amendment).
+Do not re-raise either as an open trade-off. Reproducing the pin is
+therefore the default, and
 divergence is an exception that must be argued into one of exactly three
 classes — (a) math, (b) memory safety, (c) availability. (Class (d),
 consumer scope, was retired 2026-09-06; the policy doc is authoritative

@@ -8,6 +8,12 @@ the classification table re-synced with `upstream-divergences.md` at
 2026-08-28 are recorded, and the "PR 5" the original text named is
 `docs/findings/revert-plan.md` (#209, the work order), which never
 became a PR of its own; the reverts landed one by one (see the table).
+**Amended 2026-09-09:** the goal's byte-level guarantee is per KV
+backend family — same-backend pairs (Kyoto Cabinet↔Kyoto Cabinet,
+tkrzw↔tkrzw, oxpinyin↔libpinyin either direction) interoperate
+seamlessly, user data included; data loss when the KV database backend
+actually changes is taken for granted (maintainer ruling; recorded in
+place under "The goal this policy serves").
 
 ## The goal this policy serves
 
@@ -17,6 +23,45 @@ work against the data already on the system. Not a compatible
 reimplementation a consumer is ported to — the same binary interface,
 the same file formats, the same observable behaviour, with the consumer
 unchanged and unaware.
+
+> **Amended 2026-09-09 — same-backend user data is seamless (maintainer
+> ruling).** The guarantee is per KV database backend family: an
+> oxpinyin built on Kyoto Cabinet and a libpinyin built on Kyoto
+> Cabinet — likewise the tkrzw pair — read and write the same user
+> dir, and a swap in either direction carries the learned data with
+> it. oxpinyin reads the user state libpinyin left (`user_bigram.db`,
+> `user_pinyin_index.bin`, `user_phrase_index.bin`, `user.bin`, the
+> `*.dbin` diff logs, `user.conf` — characterized at the pin
+> `074a2219`: `pinyin_internal.h:55-66`, `_write_files`/
+> `_rename_files` `pinyin.cpp:922-1130`, the per-library user
+> filenames in `data/table.conf.in`), and `pinyin_save` writes back
+> what a same-backend libpinyin picks up (drop-in task 9, reopened
+> with exactly this scope; today's runtime still opens its own
+> `user_store.<ext>` and leaves those files untouched — the task
+> closes that gap). **Data loss when the KV database backend actually
+> changes is taken for granted** — a BDB-built libpinyin (Debian
+> stable, Ubuntu) against oxpinyin's KC/tkrzw builds, redb/LMDB builds
+> with no libpinyin counterpart, KC↔tkrzw transitions. There the
+> ecosystem's own fresh-start norm applies: libpinyin discards user
+> data across its own backend switches (Debian's 2.11.91-1
+> BerkeleyDB→Tkrzw carried a `debian/NEWS` warning: "all previous
+> user data will be lost after the upgrade") and across
+> model-version bumps (`check_format` → `_clean_user_files`,
+> `pinyin.cpp:172-199`), and it migrated nothing from its own
+> predecessors (W7, `legacy-migration.md`). Across a genuine backend
+> change the migration path is the library's value-level interchange —
+> the `pinyin_*_add_phrase*` import trio and the
+> `pinyin_*_get_(bigram_)phrases` export iterators (W6-T7) — which
+> carries the user *phrase dictionary* but not the trained *bigram*
+> (upstream's ABI has no bigram import); that residual asymmetry is a
+> cross-backend concern only. **Consequence for the E2E rule below:**
+> "state" includes the on-disk user state of a same-backend user dir;
+> a user dir in another backend's format is outside the compared
+> state, and a fresh start there is not a divergence. The BerkeleyDB
+> path (task 10) stays shelved behind its existing consumer-need gate
+> — a BDB revival would bring system and user files at once, on a
+> distro set whose own backend switch already discarded the user
+> data.
 
 That goal sets the default: **oxpinyin reproduces the pin.** Divergence
 is not a design freedom to be exercised where the Rust is nicer. It is

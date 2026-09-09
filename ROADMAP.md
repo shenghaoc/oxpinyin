@@ -49,8 +49,10 @@ Phase 0 item, the consolidated F-E cross-lane evidence register
 (foundation task 4), is `docs/findings/robustness-evidence.md`: all 14
 cases (F-E-01..13 from the spec, F-E-14 registered 2026-09-05), each
 with its lane and evidence entry, on main since 2026-08-30. Closed
-2026-09-08. The only Stage 1 item still open is the W8 drop-in
-user-file write path in the list below.
+2026-09-08. The W8 drop-in user-file read/write path, the last Stage 1
+item listed below, remains open — rescoped 2026-09-09 to the seamless
+same-backend requirement (maintainer ruling;
+`docs/findings/compatibility-policy.md`, goal amendment).
 
 | Need | Output |
 |---|---|
@@ -96,9 +98,11 @@ closed — W9, W10, W11, W13, W14 and W15 carry LANDED notes below, W12
 closed 2026-08-22, and `README.md` records Stage 1 as complete. Still
 open or pending:
 
-- W8 drop-in task 9 — the write path for learned user data in
-  libpinyin's own user-file format (`.kiro/specs/drop-in/tasks.md`; the
-  user store is `user_store.<ext>` today).
+- W8 drop-in task 9 — user files read and written in libpinyin's own
+  formats for the drop-in set (Kyoto Cabinet, tkrzw): seamless in both
+  directions with a same-backend libpinyin, per the 2026-09-09
+  maintainer ruling (`docs/findings/compatibility-policy.md`, goal
+  amendment); the runtime opens `user_store.<ext>` today.
 
 Parked, not open: the W12 live-typing behaviours the parity sequence does
 not exercise (`docs/findings/live-typing.md`, no pin gates) and the
@@ -125,7 +129,8 @@ shelved BerkeleyDB compat path (drop-in task 10).
   transparently open one backend's files with another, and old
   backend-specific user data is not carried across the switch. (This
   matches the model distributions use for libpinyin's own backend
-  transitions.)
+  transitions, and is policy since 2026-09-09:
+  `docs/findings/compatibility-policy.md`, goal amendment.)
 
 - **W15 LANDED.** The data pipeline inversion is complete: runtime tables
   are compiled natively from the canonical pinned `model20` archive for every
