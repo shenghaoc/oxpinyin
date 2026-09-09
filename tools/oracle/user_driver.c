@@ -60,6 +60,17 @@ static int train(const char *system_dir, const char *user_dir,
             fprintf(stderr, "train failed: %s\n", inputs[i]);
             return 1;
         }
+        /* ibus's `remember-every-input` path (§6): the committed
+         * sentence is also added as a user phrase, which is what writes
+         * user.bin and the two index trees. Without it the profile would
+         * be phrase-free and those files untested. */
+        char *sentence = NULL;
+        if (pinyin_get_sentence(instance, 0, &sentence) && sentence) {
+            if (!pinyin_remember_user_input(instance, sentence, -1))
+                fprintf(stderr, "remember failed: %s (%s)\n", inputs[i],
+                        sentence);
+            g_free(sentence);
+        }
     }
     pinyin_free_instance(instance);
 

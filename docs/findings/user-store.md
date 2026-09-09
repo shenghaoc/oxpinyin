@@ -691,8 +691,18 @@ measured against two real pin-built oracles on 2026-09-09:
 
 | pair | oracle DBM | result |
 |---|---|---|
-| oxpinyin ↔ libpinyin, **Kyoto Cabinet** | `--dbm kc` | **PASSED**, 8/8 export rows byte-identical |
-| oxpinyin ↔ libpinyin, **tkrzw** | `--dbm tkrzw` | **PASSED**, 8/8 export rows byte-identical |
+| oxpinyin ↔ libpinyin, **Kyoto Cabinet** | `--dbm kc` | **PASSED**, 10/10 export rows byte-identical |
+| oxpinyin ↔ libpinyin, **tkrzw** | `--dbm tkrzw` | **PASSED**, 10/10 export rows byte-identical |
+
+Each 10 rows are 2 phrase rows and 8 bigram rows: the driver runs ibus's
+`remember-every-input` path (`pinyin_get_sentence` →
+`pinyin_remember_user_input`) after each train, so the profile is not
+phrase-free and `user.bin` (27 → 115 bytes), `user_phrase_index.bin`
+(7 → 112) and `user_pinyin_index.bin` (7 → 173) all carry real content
+across the round trip. An earlier driver trained without remembering,
+which left those three files at their empty-library sizes and proved
+only the bigram and `.dbin` halves — the user phrases, the most visible
+part of a learned dictionary, were untested against a real libpinyin.
 
 The script takes oxpinyin's backend from `OX_CARGO_FEATURES`, which must
 match the oracle prefix's `--with-dbm` — the claim is per KV family, so
