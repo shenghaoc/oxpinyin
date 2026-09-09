@@ -1,0 +1,87 @@
+# libpinyin.alloc — the allocator-pairing register for the pinyin C ABI.
+#
+# Every pointer-shaped slot the frozen `pinyin.h` declares — a pointer
+# return, or a `T **` out-parameter — is classified here exactly once, and
+# `tools/abi/check-alloc-pairing.sh` proves three things against it: that
+# the register covers the header's slot set with nothing missing and
+# nothing extra; that each class agrees with the C type the header gives
+# the slot; and, by running a C++ consumer built from this file under
+# LeakSanitizer, that the declared deallocator is the one that actually
+# releases the allocation.
+#
+# Sibling of `libpinyin.ver`, and read the same way: the .ver file freezes
+# WHICH symbols cross the boundary, this one freezes WHAT CROSSES WITH
+# THEM. A new entry point with an out-pointer fails the gate until it is
+# classified here.
+#
+# Format — four whitespace-separated fields, `#` comments, blank lines
+# ignored:
+#
+#   <symbol>  <slot>  <class>  <notes>
+#
+#   <slot>   `return`, or the parameter's name as `pinyin.h` spells it.
+#   <class>  one of:
+#     handle:<fn>  an opaque handle; <fn> is the ONLY function that may
+#                  release it, and must itself be an exported symbol.
+#     g_free       a `gchar *` / `char *` the caller owns and releases
+#                  with `g_free`. Allocated by `ffi::owned_cstr`, i.e.
+#                  libc `malloc`: g_free has been a thin `free` wrapper
+#                  since GLib 2.46 removed the memory vtable, so the two
+#                  allocators are the same one. This is the pairing
+#                  assumption the dynamic half of the gate exercises.
+#     g_strfreev   a NULL-terminated `gchar **` the caller owns; both the
+#                  array and every string come from `ffi::owned_cstr_list`
+#                  (libc `malloc`), and `g_strfreev` g_free's each.
+#     borrowed     owned by the context or instance and released with it.
+#                  The caller must never free it.
+#   <notes>  comma-separated, or `-`. What the slot holds when the call
+#            answers `false` — the part of the contract a consumer gets
+#            wrong silently:
+#     false-allocates  the call can return `false` HAVING ALLOCATED, so a
+#                      consumer that frees only on `true` leaks. Upstream
+#                      parity, not an oxpinyin choice (`pinyin.cpp:3382-
+#                      3386, 3442-3445`).
+#     false-nulls      the out-param is NULL on every `false` return.
+#     false-untouched  the out-param may be left as the caller set it, so
+#                      the caller must initialize it to NULL.
+#     n/a              not applicable (the slot is a return value).
+
+# ── Handles: allocated by Box::into_raw, released by their destructor ──
+pinyin_init                              return      handle:pinyin_fini            n/a
+pinyin_alloc_instance                    return      handle:pinyin_free_instance   n/a
+pinyin_begin_add_phrases                 return      handle:pinyin_end_add_phrases n/a
+pinyin_begin_get_phrases                 return      handle:pinyin_end_get_phrases n/a
+pinyin_begin_get_bigram_phrases          return      handle:pinyin_end_get_bigram_phrases n/a
+
+# ── Borrowed pointers: never freed by the caller ──────────────────────
+# The context the instance was allocated from — the same pointer
+# `pinyin_init` returned, not a second handle.
+pinyin_get_context                       return      borrowed                      n/a
+pinyin_get_candidate                     candidate   borrowed                      false-untouched
+pinyin_get_candidate_string              utf8_str    borrowed                      false-untouched
+pinyin_get_pinyin_key                    key         borrowed                      false-untouched
+pinyin_get_pinyin_key_rest               key_rest    borrowed                      false-untouched
+
+# ── Caller-owned strings (g_free) ─────────────────────────────────────
+pinyin_get_sentence                      sentence    g_free                        false-nulls
+pinyin_get_full_pinyin_auxiliary_text    aux_text    g_free                        false-allocates
+pinyin_get_double_pinyin_auxiliary_text  aux_text    g_free                        false-allocates
+pinyin_get_chewing_auxiliary_text        aux_text    g_free                        false-allocates
+pinyin_get_pinyin_string                 utf8_str    g_free                        false-nulls
+pinyin_get_zhuyin_string                 utf8_str    g_free                        false-nulls
+pinyin_get_luoma_pinyin_string           utf8_str    g_free                        false-nulls
+pinyin_get_secondary_zhuyin_string       utf8_str    g_free                        false-nulls
+# The one g_free slot pair that does NOT null on `false`: the
+# table_index == 0 refusal returns before either out-param is written.
+pinyin_get_pinyin_strings                shengmu     g_free                        false-untouched
+pinyin_get_pinyin_strings                yunmu       g_free                        false-untouched
+pinyin_token_get_phrase                  utf8_str    g_free                        false-nulls
+# Both iterators answer `false` at exhaustion without writing, so the
+# loop must not free what it did not receive.
+pinyin_iterator_get_next_phrase          phrase      g_free                        false-untouched
+pinyin_iterator_get_next_phrase          pinyin      g_free                        false-untouched
+pinyin_bigram_iterator_get_next_phrase   phrase      g_free                        false-untouched
+pinyin_bigram_iterator_get_next_phrase   pinyin      g_free                        false-untouched
+
+# ── Caller-owned string vectors (g_strfreev) ──────────────────────────
+pinyin_in_chewing_keyboard               symbols     g_strfreev                    false-nulls

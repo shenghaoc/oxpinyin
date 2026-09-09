@@ -238,6 +238,15 @@ jobs:
         run: tools/abi/check-exports.sh
       - name: ABI export gate (shipped build)
         run: tools/abi/check-exports.sh --shipped
+      # The allocator-pairing gate: every pointer the two C ABIs hand a
+      # consumer is classified in libpinyin.alloc / libzhuyin.alloc, and a
+      # C++ consumer built from those registers releases each one with its
+      # declared deallocator under AddressSanitizer/LeakSanitizer. Catches a
+      # library-side leak, a borrowed pointer wrongly declared owned, and a
+      # new allocating entry point nobody classified. No extra apt package:
+      # the g++ installed above already carries libasan/liblsan.
+      - name: Allocator-pairing gate
+        run: tools/abi/check-alloc-pairing.sh
       # The post-choose live-typing/train differential (sentence-surface's
       # §3 machinery). Self-skips unless the pin-built oracle
       # (PINYIN_ORACLE_PREFIX) and a real-unigram system dir

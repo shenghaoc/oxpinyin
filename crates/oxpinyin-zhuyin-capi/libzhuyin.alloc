@@ -1,0 +1,38 @@
+# libzhuyin.alloc — the allocator-pairing register for the zhuyin C ABI.
+#
+# Sibling of `libzhuyin.ver` and of `crates/oxpinyin-capi/libpinyin.alloc`,
+# which carries the full format description and the rationale for each
+# class. `tools/abi/check-alloc-pairing.sh` reads both registers the same
+# way: it proves the register covers exactly the pointer-shaped slots
+# `zhuyin.h` declares, that each class agrees with the C type, and — by
+# running a C++ consumer under LeakSanitizer — that the declared
+# deallocator is the one that actually releases the allocation.
+#
+# Format: <symbol>  <slot>  <class>  <notes>; `#` comments, blanks ignored.
+# Classes: handle:<fn> | g_free | g_strfreev | borrowed.
+# Notes: false-allocates | false-nulls | false-untouched | n/a.
+#
+# The zhuyin facade marshals through its own `ffi.rs`, duplicated from the
+# pinyin one by design (the facade crate is `forbid(unsafe_code)` and the
+# constitution's unsafe allowlist reaches only the two C-ABI crates), so
+# the two registers are checked separately rather than shared.
+
+# ── Handles: allocated by Box::into_raw, released by their destructor ──
+zhuyin_init                              return      handle:zhuyin_fini            n/a
+zhuyin_alloc_instance                    return      handle:zhuyin_free_instance   n/a
+zhuyin_begin_add_phrases                 return      handle:zhuyin_end_add_phrases n/a
+
+# ── Borrowed pointers: never freed by the caller ──────────────────────
+zhuyin_get_candidate                     candidate   borrowed                      false-untouched
+zhuyin_get_candidate_string              utf8_str    borrowed                      false-untouched
+zhuyin_get_zhuyin_key                    key         borrowed                      false-untouched
+zhuyin_get_zhuyin_key_rest               key_rest    borrowed                      false-untouched
+
+# ── Caller-owned strings (g_free) ─────────────────────────────────────
+zhuyin_get_sentence                      sentence    g_free                        false-nulls
+zhuyin_get_zhuyin_string                 utf8_str    g_free                        false-nulls
+zhuyin_get_pinyin_string                 utf8_str    g_free                        false-nulls
+zhuyin_token_get_phrase                  utf8_str    g_free                        false-nulls
+
+# ── Caller-owned string vectors (g_strfreev) ──────────────────────────
+zhuyin_in_chewing_keyboard               symbols     g_strfreev                    false-nulls
