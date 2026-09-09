@@ -28,6 +28,7 @@ series lives in `../perf/`.
 
 | Document | Subject | Status |
 | --- | --- | --- |
+| [`abi-allocator-pairing`](abi-allocator-pairing.md) | ABI allocator pairing — the audit and the gate | contract (the two `.alloc` registers) + audit |
 | [`abi-subset`](abi-subset.md) | Findings — frontend-called libpinyin ABI subset | record (§6 is the 79/79 target; §1–5 the historical union) |
 | [`addon-choose-promotion`](addon-choose-promotion.md) | Addon choose-promotion (default nibble 5) — #105 | record (#105) |
 | [`all-off-tails`](all-off-tails.md) | Findings — W12 all-off TEXT-set tails (the six option-sweep residuals) | closed (row 17 parked here) |

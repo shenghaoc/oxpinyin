@@ -142,9 +142,10 @@ re-state these.
 
 F-3 (allocation-abort DoS via hostile data header) · F-1/F-2 (fixture
 arithmetic overflow) · F-6 (opaque-handle trust surface + `g_free`≡`free`
-pairing assumption — inherent to the C ABI, documented) · F-7 (five entry
-points without panic containment) · F-4 (three bare ABI `as` casts) ·
-F-11 (GArray layout read). No high-severity defects.
+pairing assumption — inherent to the C ABI; the library's half is gated
+since 2026-09-09, a stale handle from the consumer remains the residual) ·
+F-7 (five entry points without panic containment) · F-4 (three bare ABI
+`as` casts) · F-11 (GArray layout read). No high-severity defects.
 
 ## L. Highest-complexity functions (Lizard, measured)
 

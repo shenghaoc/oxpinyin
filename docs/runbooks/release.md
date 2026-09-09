@@ -16,9 +16,12 @@ and attaches them with a `SHA256SUMS` to the release.
 1. `main` green on `CI`, `Store backends` and the last `verify-nightly`.
 2. The ABI export gate passed on the tip (`tools/abi/check-exports.sh
    --shipped`; CI runs it on every change).
-3. Frozen pins unchanged since the last measured run, or re-measured
+3. The allocator-pairing gate passed on the tip
+   (`tools/abi/check-alloc-pairing.sh`; CI runs it on every change).
+   Linux only — `--static-only` is the portable half.
+4. Frozen pins unchanged since the last measured run, or re-measured
    (`goldens-and-pins.md`).
-4. Version streams agree (`docs/packaging.md`, "The four version
+5. Version streams agree (`docs/packaging.md`, "The four version
    streams"): the drop-in identity stays `2.11.91` until upstream tags a
    release; the crate version is the workspace's `0.x` lockstep.
 

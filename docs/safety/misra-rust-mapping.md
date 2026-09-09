@@ -233,7 +233,7 @@ prose: `clippy::undocumented_unsafe_blocks`, `clippy::missing_safety_doc`,
 | R.18.1–R.18.6 | pointer/array arithmetic and bounds | FFI pointer arithmetic. | Audited clean; `ptr::copy_nonoverlapping` with computed sizes only. |
 | R.19.1 | objects not treated as overlapping storage | union/aliasing — Miri's home turf. | Zero unions; review (the Miri lane that would have proven the store paths was retired 2026-09-01). |
 | R.21.3–R.21.10, R.21.12–R.21.21, R.21.24, R.21.26 | std-lib facilities with undefined/dangerous behaviour (`atexit`, signals, setjmp, qsort comparators, stdio internals…) | Reachable only via `extern "C"` re-implementation | None used; review guard (the geiger inventory was retired 2026-09-01). |
-| R.22.1–R.22.12, R.22.14–R.22.17, R.22.20 | resource acquire/release pairing (malloc/free, streams, locks) | The FFI ownership discipline. | Audited: every `malloc`'d string freed by contract (`g_free`), every `Box::into_raw` matched with `from_raw`; ownership rules documented per symbol. Residual risks logged (F-6 glib allocator pairing). |
+| R.22.1–R.22.12, R.22.14–R.22.17, R.22.20 | resource acquire/release pairing (malloc/free, streams, locks) | The FFI ownership discipline. | Gated: every `malloc`'d string freed by contract (`g_free`), every `Box::into_raw` matched with `from_raw`; ownership rules are a checked-in register per ABI (`libpinyin.alloc`, `libzhuyin.alloc`) and `tools/abi/check-alloc-pairing.sh` exercises each slot's declared deallocator under ASan/LSan every PR. Residual: a stale or double-passed handle from the consumer (F-6). |
 
 ## Table 3 — Guidelines not applicable to Rust (94)
 

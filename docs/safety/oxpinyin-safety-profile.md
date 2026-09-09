@@ -124,6 +124,7 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 | Activity | Cadence | Scope |
 |---|---|---|
 | fuzz smoke | every PR | all five targets built, parser target smoke-run (10s); every target runs in the nightly soak |
+| ASan/LSan allocator pairing | every PR | both C ABIs: every classified slot allocated and released by its declared deallocator, with a negative control (`docs/findings/abi-allocator-pairing.md`) |
 | fuzz soak | nightly | all targets, 10–30 min, corpus committed |
 | ~~Miri~~ | retired 2026-09-01 | — (`docs/findings/verify-nightly.md`) |
 | overflow-checks release test | nightly | `cargo test --release` with `-C overflow-checks -C debug-assertions` |
@@ -141,10 +142,26 @@ the highest-risk surfaces identified in `oxpinyin-audit.md`.
 Mechanized: the 55-symbol ABI is pinned to the checked-in `pinyin.h`
 (verified by the C++ smoke gate and contract tests); SAFETY comments
 enforced (Layer 2); panic containment enforced-by-review with the F-7
-cleanup. Remains judgment: ownership lifetime contracts of borrowed
-candidate pointers, the `g_free`/malloc pairing assumption, GArray layout
-reads in oracle — each already documented at its site; the profile adds a
-standing review checklist item rather than pretending a tool covers it.
+cleanup.
+
+Allocator pairing joined the mechanized set on 2026-09-09
+(`docs/findings/abi-allocator-pairing.md`). Every pointer-shaped slot the
+two frozen headers declare is classified in a checked-in register
+(`libpinyin.alloc`, `libzhuyin.alloc`) — handle, `g_free`, `g_strfreev`,
+or borrowed — and `tools/abi/check-alloc-pairing.sh` proves the register
+covers the header exactly, that each class agrees with the C type and each
+handle's destructor is exported, and, by running a C++ consumer under
+AddressSanitizer/LeakSanitizer, that the declared deallocator is the one
+that actually releases the allocation. That closes two of the three
+judgment items this row used to carry: the borrowed candidate pointers'
+ownership contract (an invalid free now fails the gate) and the
+`g_free`/malloc pairing assumption (exercised per slot, with a negative
+control so a dead sanitizer cannot pass). Coverage is asserted per slot,
+so the gate cannot go green by not testing.
+
+Remains judgment: GArray layout reads in oracle — caller-owned on both
+sides, documented at its site; the profile keeps a standing review
+checklist item rather than pretending a tool covers it.
 
 ## Layer 9 — style & docs (WARNING)
 
