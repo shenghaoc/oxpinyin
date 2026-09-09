@@ -18,58 +18,16 @@ use oxpinyin_store::{RawReadStore, WriteStore};
 
 use crate::{DatagenError, Entries};
 
-/// One of the six DBM files of a data directory (the datagen-side twin
-/// of `oxpinyin_data::SystemDbm`, kept here so this crate does not pull
-/// the runtime reader in).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DbmFile {
-    /// `pinyin_index.bin`.
-    PinyinIndex,
-    /// `phrase_index.bin`.
-    PhraseIndex,
-    /// `bigram.db` — the hash container.
-    Bigram,
-    /// `punct.bin`.
-    Punct,
-    /// `addon_pinyin_index.bin`.
-    AddonPinyinIndex,
-    /// `addon_phrase_index.bin`.
-    AddonPhraseIndex,
-}
-
-impl DbmFile {
-    /// The base name without extension.
-    #[must_use]
-    pub const fn stem(self) -> &'static str {
-        match self {
-            Self::PinyinIndex => "pinyin_index",
-            Self::PhraseIndex => "phrase_index",
-            Self::Bigram => "bigram",
-            Self::Punct => "punct",
-            Self::AddonPinyinIndex => "addon_pinyin_index",
-            Self::AddonPhraseIndex => "addon_phrase_index",
-        }
-    }
-
-    /// libpinyin's name (`src/pinyin_internal.h:57-66`).
-    #[must_use]
-    pub const fn libpinyin_name(self) -> &'static str {
-        match self {
-            Self::PinyinIndex => "pinyin_index.bin",
-            Self::PhraseIndex => "phrase_index.bin",
-            Self::Bigram => "bigram.db",
-            Self::Punct => "punct.bin",
-            Self::AddonPinyinIndex => "addon_pinyin_index.bin",
-            Self::AddonPhraseIndex => "addon_phrase_index.bin",
-        }
-    }
-
-    /// Whether the file is the hash container.
-    #[must_use]
-    pub const fn is_hash(self) -> bool {
-        matches!(self, Self::Bigram)
-    }
-}
+/// One of the six DBM files of a data directory.
+///
+/// The reader's own enum ([`oxpinyin_data::SystemDbm`]), re-exported under
+/// this crate's historical name: the stems, libpinyin's file names, and
+/// which file is the hash container are one written definition, so a
+/// producer here and a runtime open there cannot name different files.
+/// Only the *backend* mapping below is this crate's — the reader resolves
+/// names for the one backend its build selected, while a producer picks
+/// among the peers at run time.
+pub use oxpinyin_data::SystemDbm as DbmFile;
 
 /// A storage backend with a producer.
 ///

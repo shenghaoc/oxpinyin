@@ -6,6 +6,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+// The key and value layout this writer shares with `oxpinyin-data`'s
+// `PunctTable` reader: one written copy (`oxpinyin_data::row_format`).
+use oxpinyin_data::row_format::encode_token_key;
+use oxpinyin_data::row_format::punct::encode_puncts;
+
 use crate::{DatagenError, Entries};
 
 /// One `punct.table` row: token, phrase, punctuation, frequency.
@@ -103,16 +108,7 @@ fn group_rows(rows: &[PunctRow]) -> BTreeMap<u32, Vec<String>> {
 pub fn rows_to_entries(rows: &[PunctRow]) -> Entries {
     let mut entries: Entries = group_rows(rows)
         .into_iter()
-        .map(|(token, puncts)| {
-            let mut value = Vec::new();
-            for punct in puncts {
-                for ch in punct.chars() {
-                    value.extend_from_slice(&u32::from(ch).to_le_bytes());
-                }
-                value.extend_from_slice(&0_u32.to_le_bytes());
-            }
-            (token.to_le_bytes().to_vec(), value)
-        })
+        .map(|(token, puncts)| (encode_token_key(token).to_vec(), encode_puncts(&puncts)))
         .collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
     entries

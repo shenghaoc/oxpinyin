@@ -50,13 +50,9 @@ compile_error!(
      not supported."
 );
 
-use crate::chunk_format::{CHUNK_HEADER_SIZE, PHRASE_MASK, SEPARATOR, chunk_checksum};
-
-/// `sizeof(ChewingKey)` — a 16-bit bitfield (`chewing_key.h:41`).
-const CHEWING_KEY_SIZE: usize = 2;
-/// `phrase_item_header` (`phrase_index.h:56`): length, n-pron,
-/// unigram.
-const ITEM_HEADER_SIZE: usize = 6;
+use crate::chunk_format::{
+    CHEWING_KEY_SIZE, CHUNK_HEADER_SIZE, ITEM_HEADER_SIZE, PHRASE_MASK, SEPARATOR, chunk_checksum,
+};
 
 /// Why a phrase library could not be opened.
 #[derive(Debug)]
@@ -434,10 +430,12 @@ impl PhraseLibrary {
         // `index_two` sits past the offset array's separator, so it is
         // at least `index_one + 1` even for an empty array (an empty
         // library's array is zero slots, not a negative one).
-        // `index_three > index_two` keeps the entry area non-empty:
-        // `SubPhraseIndex::store` always leaves at least the 8 reserved
-        // bytes plus a separator, so the content section can never be
-        // zero-length — and the range built below subtracts one.
+        // `index_three > index_two` accounts for the entry area's own
+        // closing separator, which `SubPhraseIndex::store` always emits —
+        // the range built below subtracts it. The entry area itself may
+        // still be empty: a library with no items never reaches
+        // `add_phrase_item`'s `FIRST_ITEM_OFFSET` reservation, so the pin
+        // writes `index_two + 1 == index_three` for it.
         if index_two <= index_one || index_three <= index_two {
             return Err(bad("sub-index sections out of order"));
         }
@@ -524,8 +522,8 @@ impl PhraseLibrary {
         }
         let content = &self.payload()[self.content.clone()];
         // Offsets are 0-based into the entry area; the first item sits
-        // at 8 (`SubPhraseIndex::add_phrase_item` reserves bytes 0..8
-        // so 0 stays the "no item" sentinel).
+        // at `FIRST_ITEM_OFFSET` (`SubPhraseIndex::add_phrase_item`
+        // reserves those bytes so 0 stays the "no item" sentinel).
         let item_bytes = content.get(offset..)?;
         let item = PhraseItemView { bytes: item_bytes };
         let total = item.total_size()?;

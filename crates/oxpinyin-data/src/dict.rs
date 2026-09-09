@@ -144,9 +144,9 @@ fn resolve_suggestions(libraries: &PhraseLibraries, tokens: Vec<u32>) -> Vec<(u3
 /// suggestions can be merged in the same order.
 #[must_use]
 pub fn ucs4_walk_key(text: &str) -> Vec<u8> {
-    text.chars()
-        .flat_map(|ch| (ch as u32).to_le_bytes())
-        .collect()
+    // The walk key *is* the phrase index's DBM key — same encoder, so a
+    // change to the layout cannot reorder predictions here only.
+    crate::row_format::phrase_index::encode_ucs4_key(text)
 }
 
 /// The `SEARCH_CONTINUED` probe restricted to visible phrases: whether

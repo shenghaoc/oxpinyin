@@ -1,7 +1,8 @@
 //! Shared fixture builders for the lazy-reader integration tests.
 //!
 //! `ChunkBuilder` is a faithful `SubPhraseIndex::store` counterpart (the
-//! seed of the P5 native emitter): chunk header with upstream's checksum,
+//! seed of the P5 native emitter): chunk header with `chunk_format`'s
+//! checksum,
 //! the `'#'`-separated sections, and items written at `add_phrase_item`'s
 //! offsets (first item at 8, `0` = no item). The DBM helpers write bare
 //! keyspace rows (`put_raw`), the layout libpinyin's own DBMs and the P5
@@ -12,6 +13,10 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+// The chunk header, section offsets and checksum come from the crate's
+// own shared format module — the fixtures are built with the layout
+// under test, not a second copy of it.
+use oxpinyin_data::chunk_format::{FIRST_ITEM_OFFSET, INDEX_ONE, SEPARATOR, chunk_checksum};
 use oxpinyin_store::WriteStore;
 
 /// Builds one phrase-library chunk file from slot → item entries.
@@ -23,20 +28,6 @@ pub struct ChunkBuilder {
     total_freq: u32,
     /// slot → item parts.
     pub items: BTreeMap<usize, ItemParts>,
-}
-
-pub fn checksum(payload: &[u8]) -> u32 {
-    let mut sum: u32 = 0;
-    let aligned = payload.len() & !0x3;
-    for word in payload[..aligned].chunks_exact(4) {
-        sum ^= u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
-    }
-    let mut shift = 0_u32;
-    for &byte in &payload[aligned..] {
-        sum ^= u32::from(byte) << shift;
-        shift += 8;
-    }
-    sum
 }
 
 impl ChunkBuilder {
@@ -68,7 +59,7 @@ impl ChunkBuilder {
         };
 
         // Entry area: bytes 0..8 reserved, then items in slot order.
-        let mut content: Vec<u8> = vec![0; 8];
+        let mut content: Vec<u8> = vec![0; FIRST_ITEM_OFFSET as usize];
         let mut offsets = vec![0_u32; slots];
         for (&slot, (unigram, text, pronunciations)) in &self.items {
             offsets[slot] = content.len() as u32;
@@ -84,7 +75,7 @@ impl ChunkBuilder {
             }
         }
 
-        let index_one = 17_usize; // 4 words + separator, per store()
+        let index_one = INDEX_ONE as usize;
         let mut offset_array: Vec<u8> = Vec::new();
         for offset in &offsets {
             offset_array.extend_from_slice(&offset.to_le_bytes());
@@ -97,17 +88,17 @@ impl ChunkBuilder {
         payload.extend_from_slice(&(index_one as u32).to_le_bytes());
         payload.extend_from_slice(&(index_two as u32).to_le_bytes());
         payload.extend_from_slice(&(index_three as u32).to_le_bytes());
-        payload.push(b'#');
+        payload.push(SEPARATOR);
         payload.extend_from_slice(&vec![0; index_one - payload.len()]);
         payload.extend_from_slice(&offset_array);
-        payload.push(b'#');
+        payload.push(SEPARATOR);
         payload.extend_from_slice(&content);
-        payload.push(b'#');
+        payload.push(SEPARATOR);
         assert_eq!(payload.len(), index_three);
 
         let mut file = Vec::new();
         file.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-        file.extend_from_slice(&checksum(&payload).to_le_bytes());
+        file.extend_from_slice(&chunk_checksum(&payload).to_le_bytes());
         file.extend_from_slice(&payload);
         file
     }

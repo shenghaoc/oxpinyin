@@ -32,6 +32,29 @@ pub const SEPARATOR: u8 = b'#';
 /// The MemoryChunk file header: `{length, checksum}`.
 pub const CHUNK_HEADER_SIZE: usize = 8;
 
+/// `SubPhraseIndex::store`'s `index_one`: the payload's `total_freq` plus
+/// the three section offsets (`u32×4`) and the separator that closes
+/// them, so the offset array starts at byte 17. Constant in every
+/// upstream file, and no alignment requirement rides on it — the loader
+/// reads its `u32`s at unaligned offsets.
+pub const INDEX_ONE: u32 = 17;
+
+/// The entry area's first item offset. `SubPhraseIndex::add_phrase_item`
+/// bumps a zero content size to 8 on the first item, reserving bytes
+/// `0..8` so that `0` stays the offset array's "no item" sentinel. A
+/// library with no items reserves nothing and has an empty entry area
+/// (measured on the pin's own `gen_binary_files` output for an empty
+/// `.table`).
+pub const FIRST_ITEM_OFFSET: u32 = 8;
+
+/// `phrase_item_header` (`phrase_index.h:56`): `{u8 phrase_length,
+/// u8 n_pronunciations, u32 unigram}` ahead of every item's UCS-4 text.
+pub const ITEM_HEADER_SIZE: usize = 6;
+
+/// `sizeof(ChewingKey)` — a 16-bit bitfield (`chewing_key.h:41`), the
+/// width one pronunciation key occupies inside an item.
+pub const CHEWING_KEY_SIZE: usize = 2;
+
 /// `MemoryChunk::get_check_sum` (`memory_chunk.h:131-159`): the XOR of
 /// the payload's little-endian `u32` words, with any tail bytes folded
 /// in shifted by their position. Reproduced exactly — the header's
@@ -76,5 +99,16 @@ mod tests {
         assert_eq!(CHUNK_HEADER_SIZE, 8);
         assert_eq!(SEPARATOR, b'#');
         assert_eq!(PHRASE_MASK, 0x00FF_FFFF);
+    }
+
+    /// `index_one` is the four header words plus their separator, and the
+    /// item header is the two `u8` fields plus the `u32` unigram — the
+    /// arithmetic the writer emits and the reader walks.
+    #[test]
+    fn sub_phrase_index_constants_follow_their_field_sums() {
+        assert_eq!(INDEX_ONE as usize, 4 * 4 + 1);
+        assert_eq!(FIRST_ITEM_OFFSET, 8);
+        assert_eq!(ITEM_HEADER_SIZE, 1 + 1 + 4);
+        assert_eq!(CHEWING_KEY_SIZE, 2);
     }
 }

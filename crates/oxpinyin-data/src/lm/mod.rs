@@ -173,16 +173,10 @@ pub fn merge_bigram(
     }
 }
 
-/// One previous-token row of the system bigram.
-///
-/// `total` is the stored row total and equals `Σ count` over [`records`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BigramRow {
-    /// Sum of the successor counts.
-    pub total: u32,
-    /// `(next_token, count)` records, stored order.
-    pub records: Vec<(u32, u32)>,
-}
+/// One previous-token row of the system bigram — re-exported from
+/// [`crate::row_format::bigram`], where the row's on-disk layout lives so
+/// the reader and `oxpinyin-datagen`'s writer share one definition.
+pub use crate::row_format::bigram::BigramRow;
 
 /// Whether library `nibble` is visible under `mask` (bit `n` set =
 /// library `n` unloaded). `mask == 0` and nibbles outside the u32 bit

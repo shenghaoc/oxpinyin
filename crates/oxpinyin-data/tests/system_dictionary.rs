@@ -10,6 +10,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use oxpinyin_core::{ChewingKey, Completeness, Dictionary, SyllableKey};
+// The fixtures are written with the crate's own row schema, not a copy of
+// it: a layout change has to break the reader's behaviour here, never pass
+// because the test harness drifted along with it.
+use oxpinyin_data::row_format::phrase_index::{encode_tokens, encode_ucs4_key};
+use oxpinyin_data::row_format::pinyin_index::{
+    encode_complete_key as encode_complete, encode_incomplete_key as encode_incomplete, encode_item,
+};
 use oxpinyin_data::{SystemDbm, SystemDictionary};
 use oxpinyin_store::DefaultStore;
 
@@ -54,51 +61,12 @@ fn key(spelling: &str) -> ChewingKey {
     ChewingKey::from_pinyin(spelling).unwrap()
 }
 
-fn encode_complete(keys: &[ChewingKey]) -> Vec<u8> {
-    keys.iter()
-        .flat_map(|k| {
-            ChewingKey::new(k.initial, k.middle, k.final_, 0)
-                .to_packed()
-                .to_le_bytes()
-        })
-        .collect()
-}
-
-fn encode_incomplete(keys: &[ChewingKey]) -> Vec<u8> {
-    keys.iter()
-        .flat_map(|k| {
-            ChewingKey::new(k.initial, 0, 0, 0)
-                .to_packed()
-                .to_le_bytes()
-        })
-        .collect()
-}
-
-fn item2_stride(phrase_length: usize) -> usize {
-    (4 + 2 * phrase_length + 3) & !3
-}
-
 fn encode_items(entries: &[(u32, &[ChewingKey])]) -> Vec<u8> {
     let mut buf = Vec::new();
     for (token, keys) in entries {
-        let mut record = vec![0u8; item2_stride(keys.len())];
-        record[..4].copy_from_slice(&token.to_le_bytes());
-        for (j, k) in keys.iter().enumerate() {
-            record[4 + j * 2..6 + j * 2].copy_from_slice(&k.to_packed().to_le_bytes());
-        }
-        buf.extend_from_slice(&record);
+        buf.extend_from_slice(&encode_item(*token, keys));
     }
     buf
-}
-
-fn encode_ucs4_key(text: &str) -> Vec<u8> {
-    text.chars()
-        .flat_map(|ch| (ch as u32).to_le_bytes())
-        .collect()
-}
-
-fn encode_tokens(tokens: &[u32]) -> Vec<u8> {
-    tokens.iter().flat_map(|t| t.to_le_bytes()).collect()
 }
 
 // ── Fixture writers ──────────────────────────────────────────────

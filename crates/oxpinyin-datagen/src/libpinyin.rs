@@ -19,16 +19,22 @@
 use std::collections::BTreeMap;
 
 use oxpinyin_core::ChewingKey;
+// The row layouts this writer shares with `oxpinyin-data`'s readers: the
+// stride, the two key spaces, and the record encoders all have one
+// written copy there, so an emission here and a probe at runtime cannot
+// drift (`oxpinyin_data::row_format`).
+use oxpinyin_data::row_format::phrase_index::{encode_tokens, encode_ucs4_key_scalars};
+use oxpinyin_data::row_format::pinyin_index::{
+    encode_complete_key, encode_incomplete_key, encode_item,
+};
 
 use crate::Entries;
 
 /// `sizeof(PinyinIndexItem2<L>)` — the `u32` token field's alignment
 /// rounds the `4 + 2L` field sum up to the next multiple of 4
-/// (`docs/findings/pinyin-dbm-format-2026-09-01.md` §5).
-#[must_use]
-pub const fn item2_stride(phrase_length: usize) -> usize {
-    (4 + 2 * phrase_length + 3) & !3
-}
+/// (`docs/findings/pinyin-dbm-format-2026-09-01.md` §5). Re-exported from
+/// the shared row schema for this crate's callers and tests.
+pub use oxpinyin_data::row_format::pinyin_index::item2_stride;
 
 /// `pinyin_exact_compare2` (`pinyin_phrase3.h:33`): all initials across
 /// syllables first, then middle/final per syllable, then tone per
@@ -76,42 +82,9 @@ pub struct ParsedRow {
     pub keys: Vec<ChewingKey>,
 }
 
-/// The packed two-byte LE form of one key.
-fn pack(key: ChewingKey) -> [u8; 2] {
-    key.to_packed().to_le_bytes()
-}
-
-/// `compute_incomplete_chewing_index` (`pinyin_phrase3.h:171`): keep only
-/// each syllable's initial (middle, final, tone zero).
-fn incomplete_key(keys: &[ChewingKey]) -> Vec<u8> {
-    keys.iter()
-        .flat_map(|k| pack(ChewingKey::new(k.initial, 0, 0, 0)))
-        .collect()
-}
-
-/// `compute_chewing_index` (`pinyin_phrase3.h:160`): tone every syllable
-/// to zero, keep the rest.
-fn complete_key(keys: &[ChewingKey]) -> Vec<u8> {
-    keys.iter()
-        .flat_map(|k| pack(ChewingKey::new(k.initial, k.middle, k.final_, 0)))
-        .collect()
-}
-
 /// One keyspace's accumulated rows: packed key bytes → `(stored keys,
 /// token)` records in arrival order.
 type SpaceMap = BTreeMap<Vec<u8>, Vec<(Vec<ChewingKey>, u32)>>;
-
-/// Serialises one `PinyinIndexItem2<L>` record: token, then the stored
-/// keys (their original tones), then zero padding to the stride.
-fn encode_item(token: u32, keys: &[ChewingKey]) -> Vec<u8> {
-    let mut buf = vec![0_u8; item2_stride(keys.len())];
-    buf[..4].copy_from_slice(&token.to_le_bytes());
-    for (i, key) in keys.iter().enumerate() {
-        let bytes = pack(*key);
-        buf[4 + 2 * i..6 + 2 * i].copy_from_slice(&bytes);
-    }
-    buf
-}
 
 /// The pinyin index rows (`pinyin_index.bin` / `addon_pinyin_index.bin`).
 ///
@@ -139,7 +112,10 @@ pub fn pinyin_index_entries(rows: &[ParsedRow]) -> Entries {
         // (keyspace index, DBM key): incomplete first, then complete —
         // upstream's add_index order, though the two spaces never share
         // a file entry.
-        let dbm_keys = [incomplete_key(&row.keys), complete_key(&row.keys)];
+        let dbm_keys = [
+            encode_incomplete_key(&row.keys),
+            encode_complete_key(&row.keys),
+        ];
         for (space, dbm_key) in dbm_keys.into_iter().enumerate() {
             // Prefix markers: every proper prefix of this key exists in
             // the space (empty if never a stored key itself).
@@ -195,7 +171,7 @@ fn truncate_packed(key: &[u8], syllables: usize) -> Vec<u8> {
 pub fn phrase_index_entries(rows: &[(Vec<u32>, u32)]) -> Entries {
     let mut map: BTreeMap<Vec<u8>, Vec<u32>> = BTreeMap::new();
     for (phrase, token) in rows {
-        let key: Vec<u8> = phrase.iter().flat_map(|c| c.to_le_bytes()).collect();
+        let key = encode_ucs4_key_scalars(phrase);
         for prefix in 1..phrase.len() {
             map.entry(key[..4 * prefix].to_vec()).or_default();
         }
@@ -207,7 +183,7 @@ pub fn phrase_index_entries(rows: &[(Vec<u32>, u32)]) -> Entries {
     }
     map.into_iter()
         .map(|(key, tokens)| {
-            let value: Vec<u8> = tokens.iter().flat_map(|t| t.to_le_bytes()).collect();
+            let value = encode_tokens(&tokens);
             (key, value)
         })
         .collect()

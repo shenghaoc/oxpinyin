@@ -5,8 +5,11 @@
 //!      is the compiled-in peer, matching `oxpinyin_store::DefaultStore`
 //!      under the workspace's default feature set (tkrzw there).
 //!   2. The file names the producer writes are the names the runtime
-//!      reader (`oxpinyin_data::SystemDbm`) opens for the same backend:
-//!      libpinyin's own on the drop-in backends, `<stem>.<ext>` elsewhere.
+//!      reader opens for the same backend: libpinyin's own on the drop-in
+//!      backends, `<stem>.<ext>` elsewhere. The file *set* is no longer at
+//!      risk — `DbmFile` is `oxpinyin_data::SystemDbm` itself — so what is
+//!      checked is this crate's per-backend mapping against the reader's
+//!      compile-time one.
 //!   3. Each of the four peer backends knows its own extension and can be
 //!      selected explicitly on the command line.
 

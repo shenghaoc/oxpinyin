@@ -19,6 +19,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use oxpinyin_core::ChewingKey;
+// The bigram row layout this writer shares with `oxpinyin-data`'s
+// reader: one written copy (`oxpinyin_data::row_format`).
+use oxpinyin_data::row_format::bigram::{BigramRow, encode_value as encode_bigram_value};
+use oxpinyin_data::row_format::encode_token_key;
 
 use crate::chunks::ChunkItem;
 use crate::libpinyin::ParsedRow;
@@ -34,12 +38,10 @@ type BigramGroups = BTreeMap<u32, (u64, Vec<(u32, u32)>)>;
 
 /// The four default-loaded system libraries: token top byte and `.table`
 /// base name (table.conf `default …_DICTIONARY` lines).
-pub const SYSTEM_LIBRARIES: &[(u8, &str)] = &[
-    (1, "gb_char"),
-    (2, "gbk_char"),
-    (3, "opengram"),
-    (4, "merged"),
-];
+///
+/// The same table `oxpinyin-data` opens `<name>.bin` from — this compile
+/// writes exactly the chunk files that reader expects to find.
+pub use oxpinyin_data::SYSTEM_LIBRARY_NAMES;
 
 /// Pinyin keys kept in the mini fixture subset.
 ///
@@ -91,7 +93,7 @@ pub struct SystemOutput {
 /// Counters reported by a compile, for humans and CI logs.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SystemStats {
-    /// Rows read per library, index-aligned with [`SYSTEM_LIBRARIES`].
+    /// Rows read per library, index-aligned with [`SYSTEM_LIBRARY_NAMES`].
     pub library_rows: [u64; 4],
     /// Distinct pinyin spellings across the `.table` rows.
     pub index_keys: u64,
@@ -136,7 +138,7 @@ pub struct LibraryModel {
 /// The full semantic content of a model20 read.
 #[derive(Debug)]
 pub struct SemanticModel {
-    /// The four system libraries, in [`SYSTEM_LIBRARIES`] order.
+    /// The four system libraries, in [`SYSTEM_LIBRARY_NAMES`] order.
     pub libraries: Vec<LibraryModel>,
     /// Spelling → tokens, the mini-subset selector.
     pub raw_index: SpellingIndex,
@@ -173,7 +175,7 @@ fn parse_pinyin_keys(pinyin: &str) -> Option<Vec<ChewingKey>> {
 
 /// Reads a list of `.table` files into per-library semantic models:
 /// phrase records, parsed pinyin rows, and the spelling → tokens selector.
-/// Shared by the system compile ([`SYSTEM_LIBRARIES`]) and the addon
+/// Shared by the system compile ([`SYSTEM_LIBRARY_NAMES`]) and the addon
 /// compile ([`crate::addon`]).
 ///
 /// # Errors
@@ -277,7 +279,7 @@ pub fn read_libraries(
 /// Propagates [`read_libraries`] failures.
 fn read_tables(model_dir: &Path, model: &mut SemanticModel) -> Result<(), DatagenError> {
     let (libraries, row_counts) =
-        read_libraries(model_dir, SYSTEM_LIBRARIES, &mut model.raw_index)?;
+        read_libraries(model_dir, SYSTEM_LIBRARY_NAMES, &mut model.raw_index)?;
     model.stats.library_rows.copy_from_slice(&row_counts[..4]);
     model.libraries = libraries;
     Ok(())
@@ -539,13 +541,8 @@ pub fn compile(
         })?;
         // SingleGram::insert_freq keeps records token-ascending.
         records.sort_unstable_by_key(|(next, _)| *next);
-        let mut value = Vec::with_capacity(4 + records.len() * 8);
-        value.extend_from_slice(&total.to_le_bytes());
-        for (next, count) in records {
-            value.extend_from_slice(&next.to_le_bytes());
-            value.extend_from_slice(&count.to_le_bytes());
-        }
-        bigram_entries.push((token.to_le_bytes().to_vec(), value));
+        let value = encode_bigram_value(&BigramRow { total, records });
+        bigram_entries.push((encode_token_key(token).to_vec(), value));
     }
     bigram_entries.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -624,7 +621,7 @@ mod tests {
     }
 
     fn write_empty_libraries(dir: &std::path::Path, except: &str) {
-        for (_, name) in SYSTEM_LIBRARIES {
+        for (_, name) in SYSTEM_LIBRARY_NAMES {
             if *name != except {
                 write(&dir.join(format!("{name}.table")), "");
             }

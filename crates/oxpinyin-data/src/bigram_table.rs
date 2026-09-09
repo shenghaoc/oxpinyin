@@ -22,44 +22,13 @@ use oxpinyin_store::{DefaultStore, RawReadStore};
 use crate::chewing_table::{ChewingDbm, RawChewingDbm};
 use crate::dict::DictError;
 use crate::lm::BigramRow;
-use crate::table::TableError;
-
-// ── Value decoding ───────────────────────────────────────────────
-
-/// Decodes a bigram value as `(total, [{next_token, count}])`.
-///
-/// The frozen schema: 4 bytes `total` then 8-byte records.
-pub(crate) fn parse_bigram_value(data: &[u8]) -> Result<BigramRow, DictError> {
-    if data.len() < 4 || !(data.len() - 4).is_multiple_of(8) {
-        return Err(DictError::Parse(format!(
-            "bigram value length {} is not 4 + 8n",
-            data.len()
-        )));
-    }
-    let total = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-    let records = data[4..]
-        .chunks_exact(8)
-        .map(|chunk| {
-            (
-                u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
-                u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
-            )
-        })
-        .collect();
-    Ok(BigramRow { total, records })
-}
-
-/// Encodes a bigram row into a DBM value.
+// The key and value layout this reader shares with `oxpinyin-datagen`'s
+// writer: one written copy (`crate::row_format`).
 #[cfg(test)]
-pub(crate) fn encode_bigram_value(row: &BigramRow) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(4 + row.records.len() * 8);
-    buf.extend_from_slice(&row.total.to_le_bytes());
-    for &(next, count) in &row.records {
-        buf.extend_from_slice(&next.to_le_bytes());
-        buf.extend_from_slice(&count.to_le_bytes());
-    }
-    buf
-}
+use crate::row_format::bigram::encode_value as encode_bigram_value;
+use crate::row_format::bigram::parse_value as parse_bigram_value;
+use crate::row_format::encode_token_key;
+use crate::table::TableError;
 
 // ── BigramTable ──────────────────────────────────────────────────
 
@@ -92,7 +61,7 @@ impl BigramTable {
     ///
     /// Returns `None` when the token has no bigram entry.
     pub fn load_successors(&self, prev_token: u32) -> Result<Option<BigramRow>, DictError> {
-        let key = prev_token.to_le_bytes();
+        let key = encode_token_key(prev_token);
         match self.dbm.get(&key)? {
             None => Ok(None),
             // A present but empty value is malformed: a stored bigram
@@ -156,28 +125,6 @@ mod tests {
         ) -> Result<(), DictError> {
             unreachable!("the bigram reader never walks")
         }
-    }
-
-    #[test]
-    fn round_trip_bigram_value() {
-        let row = BigramRow {
-            total: 100,
-            records: vec![(0x01000010, 60), (0x01000020, 40)],
-        };
-        let encoded = encode_bigram_value(&row);
-        let decoded = parse_bigram_value(&encoded).unwrap();
-        assert_eq!(decoded.total, 100);
-        assert_eq!(decoded.records, vec![(0x01000010, 60), (0x01000020, 40)]);
-    }
-
-    #[test]
-    fn parse_rejects_short_value() {
-        assert!(parse_bigram_value(&[0, 0, 0]).is_err());
-    }
-
-    #[test]
-    fn parse_rejects_misaligned_value() {
-        assert!(parse_bigram_value(&[0; 7]).is_err());
     }
 
     #[test]

@@ -21,68 +21,13 @@ use oxpinyin_store::{DefaultStore, ReadStore};
 
 use crate::chewing_table::{ChewingDbm, RawChewingDbm};
 use crate::dict::DictError;
-use crate::table::TableError;
-
-/// Decodes a UCS-4 punctuation stream — u32 codepoints, each
-/// punctuation zero-terminated, concatenated (`PunctTableEntry::unescape`
-/// + `get_all_punctuations`, `punct_table.cpp:56-94`).
-///
-/// # Errors
-///
-/// Returns [`DictError::Parse`] when the value is not u32-aligned, ends
-/// without a terminator, or holds an undecodable scalar. Upstream reads
-/// past the buffer on such input (memory-safety class); the Rust reader
-/// refuses it instead (`docs/findings/upstream-divergences.md`).
-pub(crate) fn decode_puncts(value: &[u8]) -> Result<Vec<String>, DictError> {
-    if !value.len().is_multiple_of(4) {
-        return Err(DictError::Parse(
-            "punct value is not u32-aligned".to_owned(),
-        ));
-    }
-    let mut out = Vec::new();
-    let mut current = String::new();
-    let mut terminated = false;
-    for chunk in value.chunks_exact(4) {
-        let code = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        if code == 0 {
-            if current.is_empty() {
-                return Err(DictError::Parse(
-                    "punct value holds an empty punctuation".to_owned(),
-                ));
-            }
-            out.push(std::mem::take(&mut current));
-            terminated = true;
-            continue;
-        }
-        terminated = false;
-        let Some(scalar) = char::from_u32(code) else {
-            return Err(DictError::Parse(
-                "punct value holds an invalid UCS-4 scalar".to_owned(),
-            ));
-        };
-        current.push(scalar);
-    }
-    if !terminated {
-        return Err(DictError::Parse(
-            "punct value is not zero-terminated".to_owned(),
-        ));
-    }
-    Ok(out)
-}
-
-/// Encodes punctuation strings as a UCS-4 stream with u32 zero
-/// terminators — `PunctTableEntry::escape`'s layout.
+// The key and value layout this reader shares with `oxpinyin-datagen`'s
+// writer: one written copy (`crate::row_format`).
+use crate::row_format::encode_token_key;
+use crate::row_format::punct::decode_puncts;
 #[cfg(test)]
-pub(crate) fn encode_puncts(puncts: &[&str]) -> Vec<u8> {
-    let mut buf = Vec::new();
-    for punct in puncts {
-        for ch in punct.chars() {
-            buf.extend_from_slice(&(ch as u32).to_le_bytes());
-        }
-        buf.extend_from_slice(&0_u32.to_le_bytes());
-    }
-    buf
-}
+use crate::row_format::punct::encode_puncts;
+use crate::table::TableError;
 
 /// The read-only punctuation table over a DBM handle.
 ///
@@ -139,7 +84,7 @@ impl PunctTable {
         let Some(dbm) = self.dbm.as_ref() else {
             return Ok(Vec::new());
         };
-        let key = token.to_le_bytes();
+        let key = encode_token_key(token);
         match dbm.get(&key)? {
             // Upstream's load_entry conflates absent and empty (0 == value.size());
             // remove_punctuation can leave a stored chunk at size 0.
@@ -193,40 +138,6 @@ mod tests {
         assert!(!table.is_open());
         assert!(table.punctuations(0x01000295).unwrap().is_empty());
         assert!(!PunctTable::open_optional(std::path::Path::new("/no/such/punct.bin")).is_open());
-    }
-
-    #[test]
-    fn encode_decode_round_trip() {
-        let puncts = &["，", "。"];
-        let encoded = encode_puncts(puncts);
-        let decoded = decode_puncts(&encoded).unwrap();
-        assert_eq!(decoded, vec!["，", "。"]);
-    }
-
-    #[test]
-    fn decode_rejects_unaligned() {
-        assert!(decode_puncts("，".as_bytes()).is_err());
-        assert!(decode_puncts(b"\x00").is_err());
-        assert!(decode_puncts(b"").is_err());
-    }
-
-    #[test]
-    fn decode_rejects_unterminated() {
-        let one_codepoint = 0xFF0Cu32.to_le_bytes();
-        assert!(decode_puncts(&one_codepoint).is_err());
-    }
-
-    #[test]
-    fn decode_rejects_empty_field() {
-        let mut value = Vec::new();
-        value.extend_from_slice(&0u32.to_le_bytes());
-        assert!(decode_puncts(&value).is_err());
-
-        let mut value = Vec::new();
-        value.extend_from_slice(&0xFF0Cu32.to_le_bytes());
-        value.extend_from_slice(&0u32.to_le_bytes());
-        value.extend_from_slice(&0u32.to_le_bytes());
-        assert!(decode_puncts(&value).is_err());
     }
 
     #[test]

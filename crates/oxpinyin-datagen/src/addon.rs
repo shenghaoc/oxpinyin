@@ -25,20 +25,10 @@ use crate::{DatagenError, Entries, chunks, libpinyin};
 
 /// Addon libraries named in `table.conf` (`docs/findings/data-formats.md`
 /// §3.2): library index and `.table` base name.
-pub const ADDON_LIBRARIES: &[(u8, &str)] = &[
-    (4, "art"),
-    (5, "culture"),
-    (6, "economy"),
-    (7, "geology"),
-    (8, "history"),
-    (9, "life"),
-    (10, "nature"),
-    (11, "people"),
-    (12, "science"),
-    (13, "society"),
-    (14, "sport"),
-    (15, "technology"),
-];
+///
+/// The same table `oxpinyin-data` opens `<name>.bin` from — this compile
+/// writes exactly the chunk files that reader expects to find.
+pub use oxpinyin_data::ADDON_LIBRARY_NAMES;
 
 /// Pinyin keys kept in the mini fixture subset (art.table).
 const MINI_ART_KEYS: &[&str] = &["er'huang", "bo'cai", "ban'she"];
@@ -80,8 +70,8 @@ pub struct AddonOutput {
 /// library's range, or a chunk serialization failure.
 pub fn compile(model_dir: &Path, subset: Subset) -> Result<AddonOutput, DatagenError> {
     let libraries: &[(u8, &str)] = match subset {
-        Subset::Full => ADDON_LIBRARIES,
-        Subset::MiniFixture => &ADDON_LIBRARIES[..1],
+        Subset::Full => ADDON_LIBRARY_NAMES,
+        Subset::MiniFixture => &ADDON_LIBRARY_NAMES[..1],
     };
     // The spelling selector is unused here (the mini recipe below reads
     // the table again); addon rows never leak into the system tables
@@ -174,7 +164,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("oxpinyin-addon-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("art.table"), "er'huang\t二簧\t67108865\t100\n").unwrap();
-        for &(_, name) in &ADDON_LIBRARIES[1..] {
+        for &(_, name) in &ADDON_LIBRARY_NAMES[1..] {
             std::fs::write(dir.join(format!("{name}.table")), "").unwrap();
         }
         let out = compile(&dir, Subset::Full).unwrap();
