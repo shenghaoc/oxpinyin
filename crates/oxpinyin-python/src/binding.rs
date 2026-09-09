@@ -207,9 +207,10 @@ impl Engine {
     ///
     /// `system_dir` is a libpinyin data directory in the compiled-in
     /// backend's format (`pinyin_index`, `phrase_index`, `bigram` and the
-    /// per-library chunk files); `user_dir`, when given, holds
-    /// ``user_store.<ext>`` (the compiled-in backend's format) and
-    /// enables learning.
+    /// per-library chunk files); `user_dir`, when given, holds the user
+    /// profile in libpinyin's own file shapes (`user_bigram.db`, the
+    /// `.bin` DBM tables, `user.bin`, the `.dbin` logs, `user.conf` —
+    /// in the compiled-in backend's container) and enables learning.
     #[new]
     #[pyo3(signature = (system_dir, user_dir=None))]
     fn new(system_dir: PathBuf, user_dir: Option<PathBuf>) -> PyResult<Self> {

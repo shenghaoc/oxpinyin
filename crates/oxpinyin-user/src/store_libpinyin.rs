@@ -521,8 +521,7 @@ mod tests {
             assert_eq!(pron.count(), crate::phrase::DEFAULT_PHRASE_COUNT);
             assert_eq!(
                 store.unigram_delta(token).expect("delta"),
-                crate::phrase::DEFAULT_PHRASE_COUNT
-                    * crate::phrase::ADD_PHRASE_UNIGRAM_FACTOR
+                crate::phrase::DEFAULT_PHRASE_COUNT * crate::phrase::ADD_PHRASE_UNIGRAM_FACTOR
             );
 
             // The .dbin carries the system token's MODIFY; the user.bin

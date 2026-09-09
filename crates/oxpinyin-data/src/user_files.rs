@@ -170,7 +170,36 @@ impl SystemVersions {
             database_format: DEFAULT_STORE_DB_FORMAT,
         }
     }
+
+    /// The versions a system `table.conf` declares; the pin's values
+    /// (`7` / `14`, stable across 2.8.1→pin) when the file is absent
+    /// or silent.
+    #[must_use]
+    pub fn from_table_conf(text: &str) -> Self {
+        let mut binary_format_version = PINNED_BINARY_FORMAT_VERSION;
+        let mut model_data_version = PINNED_MODEL_DATA_VERSION;
+        for line in text.lines() {
+            if let Some(parsed) = line
+                .strip_prefix("binary format version:")
+                .and_then(|value| value.trim().parse().ok())
+            {
+                binary_format_version = parsed;
+            } else if let Some(parsed) = line
+                .strip_prefix("model data version:")
+                .and_then(|value| value.trim().parse().ok())
+            {
+                model_data_version = parsed;
+            }
+        }
+        Self::for_this_build(binary_format_version, model_data_version)
+    }
 }
+
+/// `binary format version` at the pin (`data/table.conf.in`), and at
+/// every libpinyin install since 2.8.1.
+pub const PINNED_BINARY_FORMAT_VERSION: u32 = 7;
+/// `model data version` at the pin — stable 2.8.1 through 2.11.92.
+pub const PINNED_MODEL_DATA_VERSION: u32 = 14;
 
 /// `OPEN_COUNTER_LIMIT` (`table_info.cpp:32`): an open counter above this
 /// marks the profile non-conform — upstream's periodic-rebuild heuristic.
@@ -650,6 +679,19 @@ mod tests {
             ..conform
         };
         assert!(rested.is_conform(&versions));
+
+        // The table.conf reader takes the pin's values when the file
+        // is silent, and the declared ones when it speaks.
+        assert_eq!(
+            SystemVersions::from_table_conf("lambda parameter:0.312699\n"),
+            SystemVersions::for_this_build(7, 14)
+        );
+        assert_eq!(
+            SystemVersions::from_table_conf(
+                "binary format version:9\nmodel data version:20\nlambda parameter:1\n"
+            ),
+            SystemVersions::for_this_build(9, 20)
+        );
 
         // Absent optional lines default, as upstream's fscanf tolerates.
         let sparse = UserTableInfo::parse("binary format version:7\nmodel data version:14\n")

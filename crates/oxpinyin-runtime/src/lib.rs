@@ -39,6 +39,7 @@ use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseToken,
     SyllableKey, UserCountDelta,
 };
+use oxpinyin_data::user_files::SystemVersions;
 use oxpinyin_data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
     SystemDictionary, default_store_file,
@@ -46,9 +47,15 @@ use oxpinyin_data::{
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
 use oxpinyin_user::{PinyinKey, UserLookup, UserStore};
 
-/// File name of the user store under the user data directory —
-/// `user_store.<ext>`, where the extension names the compiled-in backend
-/// (`kct` Kyoto Cabinet, `tkt` tkrzw, `lmdb` LMDB, `redb` redb).
+/// File name of a *standalone* user store — `user_store.<ext>`, the
+/// extension naming the compiled-in backend (`kct` Kyoto Cabinet, `tkt`
+/// tkrzw, `lmdb` LMDB, `redb` redb).
+///
+/// The **runtime's** user store no longer lives in such a file: it
+/// persists in libpinyin's own user-dir file set
+/// (`oxpinyin_user::persistence`), so a same-backend libpinyin reads and
+/// writes the same profile. This helper remains for the standalone
+/// stores tools stage (benches, the oracle scan harness).
 #[must_use]
 pub fn user_store_file() -> String {
     default_store_file("user_store")
@@ -889,10 +896,23 @@ impl Runtime {
 
         // An empty path means no user directory; otherwise an unusable
         // directory must not fail init either — training then refuses,
-        // upstream-style.
+        // upstream-style. The store persists in libpinyin's own user-dir
+        // file set (drop-in task 9): the profile is read through
+        // check_format, the session runs on a scratch, and `pinyin_save`
+        // writes the pin's files — a same-backend libpinyin picks them
+        // up seamlessly.
         let user = user_dir
             .filter(|dir| !dir.as_os_str().is_empty())
-            .and_then(|dir| UserStore::open(&dir.join(user_store_file())).ok());
+            .and_then(|dir| {
+                let versions = std::fs::read_to_string(system_dir.join("table.conf"))
+                    .ok()
+                    .map_or_else(
+                        || SystemVersions::from_table_conf(""),
+                        |text| SystemVersions::from_table_conf(&text),
+                    );
+                let originals = oxpinyin_user::system_originals(dict.libraries());
+                UserStore::open_libpinyin(dir, originals, versions).ok()
+            });
 
         let addons = Arc::new(RwLock::new(AddonSet {
             dict: AddonDictionary::open(system_dir).map_err(OpenError::Dict)?,

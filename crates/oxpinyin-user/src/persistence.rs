@@ -31,6 +31,7 @@ use oxpinyin_data::chunk_write::{
     ChunkItem, PHRASE_MASK, build_chunk, decode_phrase_item, decode_sub_phrase_index,
     encode_phrase_item,
 };
+use oxpinyin_data::phrase_libraries::PhraseLibraries;
 use oxpinyin_data::single_gram::{decode_single_gram, encode_single_gram};
 use oxpinyin_data::table_entries::{ParsedRow, phrase_index_entries, pinyin_index_entries};
 use oxpinyin_data::user_files::{
@@ -59,6 +60,53 @@ pub struct SystemLibrary {
     pub total: u32,
     /// Items by slot (`token & PHRASE_MASK`).
     pub items: BTreeMap<u32, ChunkItem>,
+}
+
+/// Builds the SYSTEM_FILE libraries' originals from the runtime's
+/// opened chunks — the `.dbin` diff base, and the conformance source
+/// for replaying a profile's logs. Items whose UCS-4 text does not
+/// decode are skipped (a malformed entry, never a panic).
+#[must_use]
+pub fn system_originals(libraries: &PhraseLibraries) -> BTreeMap<u8, SystemLibrary> {
+    let mut out = BTreeMap::new();
+    for &(nibble, _name) in SYSTEM_LOG_FILES {
+        let Some(library) = libraries.library((u32::from(nibble) << 24) | 1) else {
+            continue;
+        };
+        let mut items = BTreeMap::new();
+        for (token, view) in library.items() {
+            let Some(text) = view.phrase_text() else {
+                continue;
+            };
+            let prons: Vec<(Vec<u16>, u32)> = view
+                .pronunciations()
+                .map(|pron| {
+                    let packed = pron
+                        .keys
+                        .chunks_exact(2)
+                        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                        .collect();
+                    (packed, pron.freq)
+                })
+                .collect();
+            items.insert(
+                token & PHRASE_MASK,
+                ChunkItem {
+                    phrase: text.chars().map(u32::from).collect(),
+                    unigram: view.unigram(),
+                    prons,
+                },
+            );
+        }
+        out.insert(
+            nibble,
+            SystemLibrary {
+                total: library.total_freq(),
+                items,
+            },
+        );
+    }
+    out
 }
 
 /// The user state, in the value shapes the file set carries.
