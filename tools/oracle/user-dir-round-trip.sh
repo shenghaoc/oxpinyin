@@ -58,9 +58,19 @@ printf '== Phase B: oxpinyin loads the pin profile and saves it back in place ==
 # production Runtime — no oxpinyin training, so no decode or training
 # divergence (the n-best trellis, the pin's stale-buffer bigram export)
 # can enter the comparison.
+#
+# OX_CARGO_FEATURES selects oxpinyin's store backend and MUST match the
+# oracle prefix's `--with-dbm` (the seamless claim is per KV backend):
+# a KyotoCabinet-built libpinyin pairs with `--no-default-features
+# --features kyotocabinet`, tkrzw with the workspace default. The default
+# here is empty — the workspace default (tkrzw) — matching the default
+# `build-oracle.sh --dbm`.
+# shellcheck disable=SC2206
+feature_flags=(${OX_CARGO_FEATURES:-})
 OX_SYSTEM_DIR="$data_dir" \
 OX_PIN_DIR="$work/pin" \
 cargo test --locked --manifest-path "$root/Cargo.toml" -p oxpinyin-runtime \
+    "${feature_flags[@]}" \
     --test user_dir_round_trip -- --ignored --nocapture
 
 printf '== Phase C: the pin renders the original and oxpinyin rewrite ==\n'
