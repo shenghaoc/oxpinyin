@@ -50,6 +50,18 @@
 
 mod ffi;
 
+// Allocation counting for the keystroke-cycle differentials (call count,
+// requested bytes, live bytes, peak live bytes). Non-default feature,
+// absent from every default and every shipped build: with `alloc-count`
+// off there is no module, no `#[global_allocator]`, and no exported
+// `oxpinyin_alloc_*` symbol.
+#[cfg(feature = "alloc-count")]
+mod alloc_count;
+
+#[cfg(feature = "alloc-count")]
+#[global_allocator]
+static OXPINYIN_ALLOC_COUNTER: alloc_count::CountingAlloc = alloc_count::CountingAlloc;
+
 /// Rust-visible re-exports for the in-tree fuzz harness
 /// (`fuzz/fuzz_targets/capi_commands.rs`) and Rust-side contract tests.
 /// NOT a stable Rust API: the supported surfaces are the C ABI (pinyin.h)
