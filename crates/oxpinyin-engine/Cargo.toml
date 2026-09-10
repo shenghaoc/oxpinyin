@@ -21,3 +21,10 @@ compact_str.workspace = true
 [dev-dependencies]
 # Fixture-backed doubles shared with the other test suites.
 oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
+
+[features]
+# Off-by-default gate for the scan-matrix fan-out diagnostic driven by
+# issue #403: enables one test that prints per-input matrix and path
+# counters under --nocapture. Never enabled in CI or the shipped surface;
+# only turned on locally for the diagnostic.
+diagnostic_403 = []
