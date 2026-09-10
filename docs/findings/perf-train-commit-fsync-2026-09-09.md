@@ -1,4 +1,10 @@
-# Training-commit hard sync — measured cost — 2026-09-09
+# Training-commit hard sync — measured cost, and the sync-at-`save` fix
+
+**Measured 2026-09-09 · decided and implemented 2026-09-10** (both UTC,
+`date -u` at the step). The file name carries the measurement date, which
+is what it was opened to record; the decision in §7 and the change in
+§7.1 are a day later and are dated where they appear. Where this document
+says "the measurement", it means 2026-09-09.
 
 ## Status
 
@@ -30,9 +36,9 @@ regresses."* `pinyin_train` is not merely user-paced — it is called
 
 ## 1. Executive summary
 
-- **Per training commit, the hard sync adds 1.2–1.8 ms** on the default
+- **Per training commit, the hard sync adds 1.2–1.9 ms** on the default
   (tkrzw) backend. A commit goes from **0.039–0.156 ms** to
-  **1.21–2.00 ms** across three runs — a **13–31×** slowdown. (§5)
+  **1.21–2.00 ms** across four runs — a **13–31×** slowdown. (§5)
 - **The added cost is per *commit*, not per *row*.** A commit carrying 512
   puts pays the same ~1 ms as one carrying 4 (§5, `train_write/256` vs
   `observe_commit`). That is the signature of one fixed sync per
@@ -61,7 +67,7 @@ regresses."* `pinyin_train` is not merely user-paced — it is called
 ## 2. What was measured, and the two arms
 
 The comparison is a **three-line behavioural difference on one tree**, not
-two checkouts. Both arms are `7f44bbf2` (which carries the bench); the
+two checkouts. Both arms are the branch tip carrying the bench; the
 `pre` arm is that tree with `8ca10158` reverse-applied
 (`git apply --reverse`, verified to apply cleanly). Exactly three files
 differ — `tkrzw/mod.rs`, `kyotocabinet/mod.rs`, and the `WriteStore::write`
@@ -79,7 +85,7 @@ Verified in-run, printed in each arm's log:
 **The bench the measurement needed did not exist.** `backend_matrix`'s
 `train_write/{64,256}` put 128 and 512 rows inside **one** transaction, so
 a single commit is amortised over the whole batch and a per-commit cost
-cannot be resolved from them. `7f44bbf2` adds the two rows that can:
+cannot be resolved from them. The branch adds the two rows that can:
 
 - **`observe_commit`** — one observation: the four read-modify-write
   counter bumps `UserStore::update` commits (bigram pair, that `prev`'s
@@ -102,7 +108,7 @@ times commits alone.
 | Toolchain | 1.97.1 (`rust-toolchain.toml`), `--profile minimal` |
 | Backend | tkrzw (the workspace default), Debian `libtkrzw-dev` |
 | Store files | `/work/dbtmp` — a Docker named volume, **ext4 on `/dev/vda1`** |
-| Harness pin | bench at `7f44bbf2`; arms as §2 |
+| Harness pin | bench at `6d8c5f21`; arms as §2. §5.1–§5.3 were taken on the bench as first written; `6d8c5f21` corrected one counter key afterwards and §5.4 re-measures on the corrected bench |
 
 Store files deliberately sit on the named volume, not the container's
 overlay and not tmpfs, so the sync reaches a real block device.
@@ -160,11 +166,15 @@ header. The absolute counts include the shared untimed setup; the
 
 Three consequences worth stating so nobody re-derives them:
 
-- **`hard=false` issued no syscall at all.** Writes land in the mapping,
-  and the page cache already makes them visible to other processes and
-  durable against a *process* crash — which is exactly what the
-  pre-`8ca10158` module doc claimed. The change is `0 → 2` syscalls per
-  commit, not a cheaper sync made dearer.
+- **`hard=false` issued no durability syscall the trace covers.** The
+  traced set is `msync`, `fsync`, `fdatasync` and `sync_file_range`, and
+  none of them appears; this says nothing about syscalls outside that
+  set, which were not recorded. That is enough for the claim being made,
+  because writes land in the mapping and the page cache already makes
+  them visible to other processes and durable against a *process* crash
+  — exactly what the pre-`8ca10158` module doc claimed. The change is
+  `0 → 2` traced durability syscalls per commit, not a cheaper sync made
+  dearer.
 - **The synced region is fixed at ~539 KiB, whatever the commit touched.**
   Four changed records and 512 changed records cost the same sync. This is
   the direct cause of the flat per-commit delta in §5.
@@ -208,16 +218,43 @@ Run 2's `pre` arm was not measured: the run's syscall step exited on a
 `grep` that matched nothing — because the `pre` arm issues no durability
 syscalls at all (§4). Run 3 re-ran both arms and is the corrected pass.
 
-### 5.3 The headline, across all three runs
+### 5.3 The headline, across all runs
 
 | quantity | value |
 | --- | --- |
 | per-commit, sync off | **0.039 – 0.156 ms** |
 | per-commit, sync on | **1.21 – 2.00 ms** |
-| **added by the sync** | **+1.18 – +1.85 ms per commit** |
+| **added by the sync** | **+1.18 – +1.90 ms per commit** (§5.4 is the upper bound) |
 | ratio | **13× – 31×** |
 | eight-token sentence, sync off | 0.92 – 1.14 ms |
 | eight-token sentence, sync on | 6.34 – 19.09 ms |
+
+### 5.4 Re-measured on the corrected bench
+
+The bench's observation routine keyed its unigram bump off a token
+unrelated to the `(last, cur)` pair the same iteration wrote; `6d8c5f21`
+takes it from `pair_key[4..]` (`cur`) so the routine matches production
+and its own doc comment. Both keys are 4-byte tokens in comparable
+domains, so the correction should be performance-neutral — re-measured
+rather than assumed, at the §5.2 flags:
+
+| arm | `observe_commit` | `train_sentence/8` | traced durability syscalls |
+| --- | --- | --- | --- |
+| soft commit | 0.085 ms (median 0.079, CI [0.080, 0.090]) | 0.426 ms (median 0.397) | **0** |
+| hard commit | 1.982 ms (median 1.985, CI [1.878, 2.092]) | 6.428 ms (median 4.856) | **8** |
+
+The picture is reproduced: 0 vs 8 traced durability syscalls, and a
+per-commit delta of **+1.90 ms** (23×). Both arms land inside the ranges
+§5.3 already reports, except that this run's per-commit delta is a
+shade above the old upper bound, so §1 and §5.3 widen it to
+**+1.18 – 1.90 ms**. `train_write/{64,256}` are untouched by the
+correction — `run_train_write` did not change — so §5.1's rows for them
+stand as measured.
+
+The two arms here are "soft commit" and "hard commit" rather than
+`pre`/`post`: the bench never calls `compact`, and pre-`8ca10158` and
+the shipped fix both soft-sync in `write`, so for these rows the two are
+the same measurement.
 
 ## 6. Where the cost lands
 
@@ -388,7 +425,8 @@ the same flags as §5.2, so the comparison is like-for-like:
 alone (run 3 measured only `observe_commit`); run 1's 15.558 ms at the
 lighter flags gives the same picture. Both post-change rows land at or
 below the `pre` arm of §5, so the regression is fully recovered rather
-than merely reduced.
+than merely reduced. §5.4 re-runs both arms on the corrected bench and
+reproduces this: 0.085 ms against 1.982 ms per commit, a 23× recovery.
 
 ### Gates
 
@@ -408,8 +446,8 @@ mtime-based and both trees share crate names and paths.
 Tree preparation (host):
 
 ```sh
-git archive 7f44bbf2 | tar -x -C <post>
-git archive 7f44bbf2 | tar -x -C <pre>
+git archive 6d8c5f21 | tar -x -C <post>
+git archive 6d8c5f21 | tar -x -C <pre>
 git show 8ca10158 --format= > hardsync.patch
 ( cd <pre> && git apply --reverse ../hardsync.patch )
 ```
@@ -438,11 +476,12 @@ the other arm's artifacts) and a distinct bench-binary SHA-256 —
 ## 9. Evidence
 
 Per `docs/runbooks/benches.md`, this document commits no captures. The
-bundle — every run log (the three measurement runs, the bench gate run, and
-the post-change verification), all runner scripts, `fsyncprobe.c`, and
+bundle — every run log (the three measurement runs, the bench gate run,
+the post-change verification, and the corrected-bench revalidation), all
+runner scripts, `fsyncprobe.c`, and
 `hardsync.patch` — is retained on the measuring host at
 `~/Documents/oxpinyin-captures/train-commit-fsync-2026-09-09.tar.gz`,
-SHA-256 `f90ee722c80bfabf2ff0c919029adebf7722850ba03ab7b0024ecb89d1619df0`.
+SHA-256 `8ed6764f115c036e754a23d64c32ce199f6a92666b08b27ac2ec6a37171ca4f3`.
 It is to be attached to the pull request that carries this document, with
 the link added here at that point; until then the host path and the
 SHA-256 are what a holder can verify against, and §8 carries the full
