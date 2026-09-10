@@ -10,12 +10,18 @@
 #
 # Format: <symbol>  <slot>  <class>  <notes>; `#` comments, blanks ignored.
 # Classes: handle:<fn> | g_free | g_strfreev | borrowed.
-# Notes: false-allocates | false-nulls | false-untouched | n/a.
+# Notes: false-allocates | false-nulls | false-untouched | false-unreachable
+# | n/a — each EXECUTABLE, probed by alloc-pairing-zhuyin.cc against a
+# failure path a conforming consumer can reach.
 #
-# The zhuyin facade marshals through its own `ffi.rs`, duplicated from the
-# pinyin one by design (the facade crate is `forbid(unsafe_code)` and the
-# constitution's unsafe allowlist reaches only the two C-ABI crates), so
-# the two registers are checked separately rather than shared.
+# The zhuyin facade allocates through its own `ffi.rs` — `owned_cstr` and
+# `owned_cstr_list` are duplicated from the pinyin one by design, because
+# each is itself the unsafe edge and the constitution's unsafe allowlist
+# reaches only the two C-ABI crates. (The doc-light boilerplate above the
+# allocator — the handle casts and the `char **`-out sentence writer — is
+# macro-stamped from `oxpinyin-capi-marshal` since 2026-09-10; the
+# allocator boundary these registers describe is not.) The two registers
+# are therefore checked separately rather than shared.
 
 # ── Handles: allocated by Box::into_raw, released by their destructor ──
 zhuyin_init                              return      handle:zhuyin_fini            n/a
@@ -23,15 +29,18 @@ zhuyin_alloc_instance                    return      handle:zhuyin_free_instance
 zhuyin_begin_add_phrases                 return      handle:zhuyin_end_add_phrases n/a
 
 # ── Borrowed pointers: never freed by the caller ──────────────────────
-zhuyin_get_candidate                     candidate   borrowed                      false-untouched
-zhuyin_get_candidate_string              utf8_str    borrowed                      false-untouched
-zhuyin_get_zhuyin_key                    key         borrowed                      false-untouched
-zhuyin_get_zhuyin_key_rest               key_rest    borrowed                      false-untouched
+# The key getters NULL their out-param on the reachable refusal (no key at
+# the offset); the string getters' only non-NULL-argument `false` needs an
+# unset ChewingKey, which an opaque typedef denies a conforming consumer.
+zhuyin_get_candidate                     candidate   borrowed                      false-nulls
+zhuyin_get_candidate_string              utf8_str    borrowed                      false-unreachable
+zhuyin_get_zhuyin_key                    key         borrowed                      false-nulls
+zhuyin_get_zhuyin_key_rest               key_rest    borrowed                      false-nulls
 
 # ── Caller-owned strings (g_free) ─────────────────────────────────────
 zhuyin_get_sentence                      sentence    g_free                        false-nulls
-zhuyin_get_zhuyin_string                 utf8_str    g_free                        false-nulls
-zhuyin_get_pinyin_string                 utf8_str    g_free                        false-nulls
+zhuyin_get_zhuyin_string                 utf8_str    g_free                        false-unreachable
+zhuyin_get_pinyin_string                 utf8_str    g_free                        false-unreachable
 zhuyin_token_get_phrase                  utf8_str    g_free                        false-nulls
 
 # ── Caller-owned string vectors (g_strfreev) ──────────────────────────

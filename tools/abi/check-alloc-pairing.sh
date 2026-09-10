@@ -129,9 +129,11 @@ header_slots() {
 	done
 }
 
-# `<symbol> <slot> <class>` from a register file.
+# `<symbol> <slot> <class> <on-false>` from a register file — the whole
+# entry, so the dynamic half can compare all four fields against what the
+# driver actually did rather than just the symbol and slot name.
 register_slots() {
-	awk '!/^[[:space:]]*#/ && NF >= 3 { print $1, $2, $3 }' "$1"
+	awk '!/^[[:space:]]*#/ && NF >= 4 { print $1, $2, $3, $4 }' "$1"
 }
 
 # The `global:` names of a version script.
@@ -197,7 +199,7 @@ check_static() {
 	# Every registered symbol, and every destructor a handle names, must be
 	# a symbol the version script actually exports.
 	local symbol class dtor
-	while read -r symbol _ class; do
+	while read -r symbol _ class _; do
 		grep -qx "$symbol" "$WORK/$abi.ver" ||
 			fail "$symbol is in the register but not in $(basename "$ver")"
 		case "$class" in
@@ -271,6 +273,7 @@ check_dynamic() {
 	local abi=$1 src=$2 include=$3 lib=$4 reg=$5
 	local before=$status
 	echo "--- $abi: $(basename "$src") under AddressSanitizer/LeakSanitizer ---"
+	register_slots "$reg" | sort > "$WORK/$abi.register"
 
 	local user="$WORK/$abi-user"
 	rm -rf "$user" && mkdir -p "$user"
@@ -285,22 +288,41 @@ check_dynamic() {
 		return
 	fi
 
-	# Coverage: the driver's slot table must be the register's, and every
-	# slot must have been reached with a non-NULL pointer.
-	printf '%s\n' "$out" | awk '$1 == "SLOT" { print $2, $3, $4 }' | sort \
+	# The driver echoes the register's own class and note back with each
+	# slot, plus whether it reached the slot and whether it probed the
+	# false-return contract:
+	#   SLOT <symbol> <slot> <class> <on-false> hit|miss <probe state>
+	printf '%s\n' "$out" | awk '$1 == "SLOT" { print $2, $3, $4, $5, $6, $7 }' | sort \
 		> "$WORK/$abi.coverage"
+
 	local missed
-	missed=$(awk '$3 != "hit" { print $1, $2 }' "$WORK/$abi.coverage")
+	missed=$(awk '$5 != "hit" { print $1, $2 }' "$WORK/$abi.coverage")
 	if [[ -n $missed ]]; then
 		echo "  slots the driver never reached with a live pointer:"
 		printf '%s\n' "$missed" | sed 's/^/    /'
 		fail "unexercised slot — the pairing was not actually tested"
 	fi
+
+	# Every reachable false-return contract must have been probed. A note
+	# the driver never exercised is prose again, which is what this gate
+	# replaced; `false-unreachable` is the one way out, and it is an
+	# explicit claim in the register rather than a silent omission.
+	local unprobed
+	unprobed=$(awk '$6 == "unchecked" { print $1, $2, "(" $4 ")" }' "$WORK/$abi.coverage")
+	if [[ -n $unprobed ]]; then
+		echo "  false-return contracts the driver never probed:"
+		printf '%s\n' "$unprobed" | sed 's/^/    /'
+		fail "unprobed false-return contract"
+	fi
+
+	# The whole entry, not just the key: a class flipped from a handle to
+	# borrowed, a renamed destructor, or an edited note now fails here
+	# instead of passing because the symbol and slot name still line up.
 	local drift
-	drift=$(comm -3 <(cut -d' ' -f1,2 < "$WORK/$abi.coverage" | sort) \
-		"$WORK/$abi.register.keys")
+	drift=$(comm -3 <(cut -d' ' -f1,2,3,4 < "$WORK/$abi.coverage" | sort) \
+		"$WORK/$abi.register")
 	if [[ -n $drift ]]; then
-		echo "  driver slot table and register disagree:"
+		echo "  driver slot table and register disagree (<driver only / register only>):"
 		printf '%s\n' "$drift" | sed 's/^/    /'
 		fail "driver/register drift"
 	fi
@@ -319,9 +341,6 @@ check_dynamic() {
 	else
 		echo "  OK: negative control fired (exit $leak_rc, LeakSanitizer reported)"
 	fi
-	# The register is unused by name here, but naming it keeps the call
-	# sites symmetric with check_static and self-documenting.
-	: "$reg"
 }
 
 # ── Run ───────────────────────────────────────────────────────────────
