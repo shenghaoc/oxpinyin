@@ -23,8 +23,38 @@ selects tkrzw, and two backends at once is refused.
 | --- | --- | --- |
 | tkrzw | `libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libclang-dev pkg-config` | `tkrzw`, and `export LIBRARY_PATH="$(brew --prefix)/lib"` (see README: `cargo test` links lz4/zstd from there, `cargo check`/`clippy` never link and are not evidence) |
 | kyotocabinet | `libkyotocabinet-dev libclang-dev pkg-config` | not supported (the KC dylib does not dlopen on macOS; use a Linux container) |
-| lmdb | none (heed builds LMDB from source) | none |
+| lmdb | `liblmdb-dev libclang-dev pkg-config` | `lmdb` |
 | redb | none | none |
+
+Three of the four backends bind a **system** C library through its own
+header, and only redb is pure Rust. oxpinyin vendors none of them: there
+is no copy of `mdb.c`, of Kyoto Cabinet or of tkrzw compiled into any
+oxpinyin artifact, so each library is the one the distribution ships and
+patches. A build with the development package missing fails at
+`build.rs` with a message naming the package; it never falls back to
+downloading or compiling its own copy.
+
+### Packaging: runtime versus build dependencies
+
+For a downstream Linux package built with `--features lmdb`:
+
+| | Debian/Ubuntu | Fedora | Arch |
+| --- | --- | --- | --- |
+| **runtime** (`Depends`) | `liblmdb0` | `lmdb-libs` | `lmdb` |
+| **build** (`Build-Depends`) | `liblmdb-dev`, `libclang-dev`, `pkg-config` | `lmdb-devel`, `clang-devel`, `pkgconf` | `lmdb`, `clang`, `pkgconf` |
+
+`libclang` and `pkg-config` are build-time only: `pkg-config` locates the
+library and `bindgen` reads `lmdb.h` to generate the declarations. Neither
+is linked, and neither appears in the runtime dependency set. The same
+split applies to the tkrzw and Kyoto Cabinet backends against their own
+`lib*-dev` / `lib*` pairs.
+
+The generated bindings are not committed, deliberately: `MDB_val` and
+`MDB_stat` cross the ABI by layout rather than as opaque handles, and the
+`MDB_NOTFOUND` / `MDB_MAP_FULL` / `MDB_DBS_FULL` codes the backend
+branches on are `#define`s. Generating them from the installed header
+keeps the declarations and the linked `.so` in lockstep by construction.
+`crates/oxpinyin-store/build.rs` carries the full reasoning.
 
 The two C-ABI crates additionally need `libglib2.0-dev` and `g++`; they
 are Linux-first. `oxpinyin-dictool` depends on `oxpinyin-capi` and so

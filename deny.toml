@@ -3,8 +3,10 @@
 # cargo-audit; running both in CI would be redundant.
 
 [graph]
-# Audit the default build. Feature-gated dependency subtrees (lmdb/tkrzw,
+# Audit the default build. Feature-gated dependency subtrees (tkrzw,
 # oracle-ffi) are re-checked by the second, --all-features CI invocation.
+# `lmdb` no longer adds a Rust subtree at all: it binds the system
+# liblmdb through bindgen, which the other C backends already pull in.
 all-features = false
 
 [advisories]
@@ -13,13 +15,13 @@ yanked = "deny"
 # Deviation registry: every ignore carries its justification and a
 # review-by date inside the reason string; re-review on that date and
 # either renew or remove the entry.
-ignore = [
-    # bincode 1.x is unmaintained upstream; it reaches us only through
-    # heed-types behind the non-default `lmdb` feature (the default tkrzw
-    # path never links it). No fix exists until heed migrates or we drop
-    # the LMDB backend. Unmaintained, not a vulnerability.
-    { id = "RUSTSEC-2025-0141", reason = "transitive via heed-types behind the non-default lmdb feature; unmaintained, not a vulnerability; tkrzw is the default backend; review by 2027-02-28" },
-]
+# Empty: the one entry this registry carried (RUSTSEC-2025-0141, bincode
+# 1.x unmaintained) reached the graph only through heed-types behind the
+# `lmdb` feature. Its own note said "no fix exists until heed migrates or
+# we drop the LMDB backend" — the LMDB backend now binds the system
+# liblmdb directly and heed is gone from the tree, so bincode is
+# unreachable under every feature combination and the ignore with it.
+ignore = []
 
 [bans]
 # Duplicate versions are a Stage-2 binary-size signal, not a correctness

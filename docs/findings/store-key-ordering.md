@@ -32,9 +32,10 @@ All four backends satisfy exactly this rule:
   not use typed integer keys in the store; it uses the raw `&[u8]` path, which
   is pure memcmp. That distinction is the whole reason encoding choice matters
   below.)
-- **LMDB** (`heed`, feature `lmdb`). The environment is opened with only
-  `EnvFlags::NO_SUB_DIR` (plus `READ_ONLY` for read-only opens) —
-  `crates/oxpinyin-store/src/lmdb.rs`. No `MDB_INTEGERKEY`, no reverse
+- **LMDB** (the system liblmdb, feature `lmdb`). The environment is opened
+  with only `MDB_NOSUBDIR` and `MDB_NOTLS` (plus `MDB_RDONLY` for read-only
+  opens, `MDB_WRITEMAP` for writable ones) —
+  `crates/oxpinyin-store/src/lmdb/mod.rs`. No `MDB_INTEGERKEY`, no reverse
   or custom comparator is ever set, on the environment or on any database, so
   LMDB uses its **default byte-lexicographic (`memcmp`) comparator**.
   `MDB_INTEGERKEY` would compare in **native** endian order, which disagrees

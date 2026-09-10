@@ -15,13 +15,33 @@
 //! a fixed-seed splitmix64 stream, keys sorted ascending and big-endian
 //! so byte order equals numeric order, values random. No model fixture.
 //! Compile with `--no-default-features --features lmdb`.
+//!
+//! The bench drives the system LMDB C API directly, through the very
+//! declarations the backend uses: `ffi` below is `src/lmdb/ffi.rs`
+//! pulled in by path, so there is one generated binding surface in the
+//! crate rather than a second copy maintained here. The library's build
+//! script emits the `-llmdb` link directive for every target in this
+//! package, benches included, so nothing further is needed to link.
+#![expect(
+    unsafe_code,
+    reason = "the bench calls liblmdb directly; every block carries a SAFETY comment"
+)]
 
 use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion, Throughput, criterion_group, criterion_main};
-use heed::types::Bytes;
-use heed::{Database, Env, EnvFlags, EnvOpenOptions, PutFlags, RwTxn};
+use std::ffi::CString;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+
+#[path = "../src/lmdb/ffi.rs"]
+mod ffi;
+
+/// Panics with LMDB's own message unless `rc` is `MDB_SUCCESS`. A bench
+/// has no error path worth preserving: any failure here is a broken
+/// measurement, not a condition to report.
+fn ok(rc: std::ffi::c_int, what: &str) {
+    assert!(rc == 0, "{what} failed: {} (LMDB {rc})", ffi::strerror(rc));
+}
 
 /// Pair count, the same 272 sorted entries as the S4 measurement in #341.
 const N: usize = 272;
@@ -73,60 +93,101 @@ fn temp_dir() -> PathBuf {
     dir
 }
 
-/// Opens the environment the way the merged loader does: NO_SUB_DIR
-/// (single file at `path`) plus WRITE_MAP and NO_SYNC.
-#[expect(unsafe_code, reason = "heed's EnvOpenOptions::open is unsafe")]
-fn open_env(path: &Path) -> Env {
-    let mut opts = EnvOpenOptions::new();
-    opts.max_dbs(1);
-    opts.map_size(MAP_SIZE);
-    let flags = EnvFlags::NO_SUB_DIR | EnvFlags::WRITE_MAP | EnvFlags::NO_SYNC;
-    // SAFETY: we uphold LMDB's contract — a single process opens each
-    // data file with a consistent map-size, and heed's RwTxn borrow
-    // enforces the single-writer invariant within this process.
-    // `flags()` is unsafe because certain flag combinations can violate
-    // LMDB invariants (heed names NO_SYNC, NO_META_SYNC, NO_LOCK); our
-    // chosen flags (NO_SUB_DIR plus WRITE_MAP) stay out of that class,
-    // and this NO_SYNC user accepts reduced crash durability for a
-    // throwaway file that is deleted, never reopened, when the bench
-    // ends.
-    unsafe {
-        opts.flags(flags);
-        opts.open(path)
-    }
-    .expect("open env")
+/// Opens the environment the way the merged loader does: MDB_NOSUBDIR
+/// (single file at `path`) plus MDB_WRITEMAP and MDB_NOSYNC.
+///
+/// The caller closes the returned handle with `mdb_env_close` once the
+/// measurement is done, before removing the temp directory.
+fn open_env(path: &Path) -> *mut ffi::MDB_env {
+    let c_path = CString::new(path.as_os_str().as_encoded_bytes()).expect("path without NUL");
+    let mut env: *mut ffi::MDB_env = std::ptr::null_mut();
+    // SAFETY: `env` is a live out-pointer that LMDB fills on success.
+    ok(unsafe { ffi::mdb_env_create(&mut env) }, "mdb_env_create");
+    // SAFETY: the environment is created and not yet open, which is when
+    // both setters must be called.
+    ok(
+        unsafe { ffi::mdb_env_set_maxdbs(env, 1) },
+        "mdb_env_set_maxdbs",
+    );
+    // SAFETY: as above; MAP_SIZE is a 64 MiB page multiple.
+    ok(
+        unsafe { ffi::mdb_env_set_mapsize(env, MAP_SIZE) },
+        "mdb_env_set_mapsize",
+    );
+    // NO_SYNC costs crash durability, which a throwaway file that is
+    // deleted and never reopened does not need; WRITE_MAP and NOSUBDIR
+    // match what `LmdbStore::bulk_load_raw` opens with, which is the
+    // whole point of the comparison.
+    let flags = ffi::MDB_NOSUBDIR | ffi::MDB_NOTLS | ffi::MDB_WRITEMAP | ffi::MDB_NOSYNC;
+    // SAFETY: the environment is configured and unopened, and `c_path`
+    // outlives the call as a NUL-terminated path.
+    ok(
+        unsafe { ffi::mdb_env_open(env, c_path.as_ptr(), flags, 0o644) },
+        "mdb_env_open",
+    );
+    env
+}
+
+/// Begins a write transaction on `env`.
+fn write_txn(env: *mut ffi::MDB_env) -> *mut ffi::MDB_txn {
+    let mut txn: *mut ffi::MDB_txn = std::ptr::null_mut();
+    // SAFETY: the environment is open, no parent transaction is passed,
+    // and `txn` is a live out-pointer.
+    ok(
+        unsafe { ffi::mdb_txn_begin(env, std::ptr::null_mut(), 0, &mut txn) },
+        "mdb_txn_begin",
+    );
+    txn
+}
+
+/// One `mdb_put` with the arm's flags.
+fn put(txn: *mut ffi::MDB_txn, dbi: ffi::MDB_dbi, key: &[u8], value: &[u8], flags: u32) {
+    let mut k = ffi::val(key);
+    let mut v = ffi::val(value);
+    // SAFETY: the transaction is live and writable, `dbi` belongs to its
+    // environment, and both vals borrow slices that outlive the call —
+    // LMDB copies the record before returning.
+    ok(
+        unsafe { ffi::mdb_put(txn, dbi, &mut k, &mut v, flags) },
+        "mdb_put",
+    );
 }
 
 /// One arm; `put` closes over the write flags. Each iteration clears the
 /// table untimed, times the insert loop alone, then commits after the
 /// clock has stopped (cheap: NO_SYNC).
-fn bench_arm<F>(
+fn bench_arm(
     group: &mut BenchmarkGroup<'_, WallTime>,
     name: &str,
-    env: &Env,
-    db: &Database<Bytes, Bytes>,
+    env: *mut ffi::MDB_env,
+    dbi: ffi::MDB_dbi,
     pairs: &[Pair],
-    put: F,
-) where
-    F: Fn(&mut RwTxn<'_>, &[u8], &[u8]) -> heed::Result<()>,
-{
+    put_flags: u32,
+) {
     group.bench_function(name, |b| {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
             for _ in 0..iters {
                 // Untimed: start every iteration from an empty table.
-                let mut clear_txn = env.write_txn().expect("write_txn");
-                db.clear(&mut clear_txn).expect("clear");
-                clear_txn.commit().expect("commit");
+                // `mdb_drop` with del=0 empties the table and keeps the
+                // handle valid for the next iteration.
+                let clear_txn = write_txn(env);
+                // SAFETY: the transaction is live and writable and `dbi`
+                // belongs to its environment; del=0 keeps the DBI valid.
+                ok(unsafe { ffi::mdb_drop(clear_txn, dbi, 0) }, "mdb_drop");
+                // SAFETY: live and owned; the handle is freed by the call.
+                ok(unsafe { ffi::mdb_txn_commit(clear_txn) }, "mdb_txn_commit");
 
                 // Timed: the insert loop only.
-                let mut write_txn = env.write_txn().expect("write_txn");
+                let txn = write_txn(env);
                 let start = Instant::now();
                 for (key, value) in pairs {
-                    put(&mut write_txn, key.as_slice(), value.as_slice()).expect("put");
+                    put(txn, dbi, key.as_slice(), value.as_slice(), put_flags);
                 }
                 total += start.elapsed();
-                write_txn.commit().expect("commit");
+                // SAFETY: as above — the commit runs after the clock has
+                // stopped and frees the transaction.
+                ok(unsafe { ffi::mdb_txn_commit(txn) }, "mdb_txn_commit");
             }
             total
         });
@@ -145,36 +206,40 @@ fn bench_bulk_load(c: &mut Criterion) {
 
     let dir = temp_dir();
     let env = open_env(&dir.join("lmdb_bulk_load.mdb"));
-    let db: Database<Bytes, Bytes> = {
-        let mut wtxn = env.write_txn().expect("write_txn");
-        let db = env
-            .create_database(&mut wtxn, Some(oxpinyin_store::RAW_TABLE))
-            .expect("create_database");
-        wtxn.commit().expect("commit");
-        db
+    let dbi = {
+        let txn = write_txn(env);
+        let name = CString::new(oxpinyin_store::RAW_TABLE).expect("table name without NUL");
+        let mut dbi: ffi::MDB_dbi = 0;
+        // SAFETY: the transaction is live, `name` outlives the call as a
+        // NUL-terminated string, and `dbi` is a live out-param. No other
+        // transaction in this process calls `mdb_dbi_open`, which is the
+        // exclusion LMDB requires of it.
+        ok(
+            unsafe { ffi::mdb_dbi_open(txn, name.as_ptr(), ffi::MDB_CREATE, &mut dbi) },
+            "mdb_dbi_open",
+        );
+        // SAFETY: live and owned; committing is what makes the DBI valid
+        // env-wide for the transactions the arms open below.
+        ok(unsafe { ffi::mdb_txn_commit(txn) }, "mdb_txn_commit");
+        dbi
     };
 
     let mut group = c.benchmark_group("lmdb_bulk_load_272");
     group.throughput(Throughput::Elements(N as u64));
-    bench_arm(
-        &mut group,
-        "sequential_put",
-        &env,
-        &db,
-        &pairs,
-        |txn, key, value| db.put(txn, key, value),
-    );
+    bench_arm(&mut group, "sequential_put", env, dbi, &pairs, 0);
     bench_arm(
         &mut group,
         "sequential_put_append",
-        &env,
-        &db,
+        env,
+        dbi,
         &pairs,
-        |txn, key, value| db.put_with_flags(txn, PutFlags::APPEND, key, value),
+        ffi::MDB_APPEND,
     );
     group.finish();
 
-    drop(env);
+    // SAFETY: every transaction opened above was committed, so no handle
+    // outlives this close, and the environment is not named again.
+    unsafe { ffi::mdb_env_close(env) };
     let _ = std::fs::remove_dir_all(&dir);
 }
 

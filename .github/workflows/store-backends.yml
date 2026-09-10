@@ -166,16 +166,19 @@ jobs:
         # Every matrix child installs the full set so each lane is
         # self-contained regardless of scheduling order; the marginal apt
         # cost is deliberate (correctness over shaving install seconds).
-        # libtkrzw-dev: the tkrzw child builds the C++ shim against the distro
-        # library through pkg-config; the redb/lmdb children are pure Rust.
-        # libclang-dev: bindgen's runtime dependency for generating tkrzw FFI
-        # bindings from tkrzw_langc.h.
+        # libtkrzw-dev: the tkrzw child builds against the distro library
+        # through pkg-config; liblmdb-dev is the lmdb child's equivalent —
+        # that backend binds the SYSTEM LMDB and compiles no LMDB source of
+        # its own, so without the -dev package its build fails by design.
+        # Only redb is pure Rust.
+        # libclang-dev: bindgen's runtime dependency for generating the
+        # tkrzw, Kyoto Cabinet and LMDB FFI declarations from their headers.
         # Debian's libtkrzw-dev builds tkrzw with compression, so tkrzw.pc
         # demands -llzma -llz4 -lzstd -lz at link time; their -dev packages
         # must be present or every final link dies.
         # libkyotocabinet-dev: the explicit kyotocabinet child links the
         # distro Kyoto Cabinet; bindgen reads kclangc.h at build time.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblmdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
 
       # This child runs exactly one of four fixed cargo invocations, selected
       # by the matrix backend through a case over a closed set (fail-closed
@@ -310,13 +313,14 @@ jobs:
         # The matrix `cargo check`s the four valid peer selections in
         # turn, so it needs every peer's build-time C dependencies:
         # libkyotocabinet-dev + libtkrzw-dev (+ its compression -dev
-        # packages) and libclang-dev for bindgen; lmdb rides on heed and
-        # is pure Rust; redb is pure Rust. libglib2.0-dev is a Tier-C
+        # packages) + liblmdb-dev, and libclang-dev for bindgen, which
+        # generates all three C backends' declarations; only redb is pure
+        # Rust. libglib2.0-dev is a Tier-C
         # requirement: `pinyin_lookup_tokens` /
         # `pinyin_token_get_nth_pronunciation` delegate to
         # `g_array_append_vals` / `g_array_set_size`, so the shipped
         # `.so` NEEDS `libglib-2.0`.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblmdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
 
       - name: Exactly-one-backend invariant (13-case matrix)
         id: matrix-test
