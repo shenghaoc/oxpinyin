@@ -108,10 +108,21 @@ times commits alone.
 | Toolchain | 1.97.1 (`rust-toolchain.toml`), `--profile minimal` |
 | Backend | tkrzw (the workspace default), Debian `libtkrzw-dev` |
 | Store files | `/work/dbtmp` — a Docker named volume, **ext4 on `/dev/vda1`** |
-| Harness pin | bench at `6d8c5f21`; arms as §2. §5.1–§5.3 were taken on the bench as first written; `6d8c5f21` corrected one counter key afterwards and §5.4 re-measures on the corrected bench |
+| Harness pin | `crates/oxpinyin-store/benches/support/mod.rs`, git blob **`26469ef1`** (SHA-256 `d8948a7b…`); arms as §2 |
 
 Store files deliberately sit on the named volume, not the container's
 overlay and not tmpfs, so the sync reaches a real block device.
+
+**The harness is pinned by content, not by commit.** This row named a
+commit SHA until a rebase rewrote it, which is
+`perf-provenance-audit-2026-09-07`'s finding happening again in a live
+document: a branch-local SHA does not survive a rebase, and will not
+survive the rebase-merge that lands it either. A git blob hash does —
+`git cat-file -p 26469ef1` recovers the exact bench from any clone that
+has the objects, whatever happened to the commits around it. §5.1–§5.3
+were taken on the bench as first written; one counter key was corrected
+afterwards (the blob above is the corrected form) and §5.4 re-measures
+both arms on it.
 
 **Two honest limits on the absolute figures.**
 
@@ -232,7 +243,7 @@ syscalls at all (§4). Run 3 re-ran both arms and is the corrected pass.
 ### 5.4 Re-measured on the corrected bench
 
 The bench's observation routine keyed its unigram bump off a token
-unrelated to the `(last, cur)` pair the same iteration wrote; `6d8c5f21`
+unrelated to the `(last, cur)` pair the same iteration wrote; the corrected bench
 takes it from `pair_key[4..]` (`cur`) so the routine matches production
 and its own doc comment. Both keys are 4-byte tokens in comparable
 domains, so the correction should be performance-neutral — re-measured
@@ -446,11 +457,18 @@ mtime-based and both trees share crate names and paths.
 Tree preparation (host):
 
 ```sh
-git archive 6d8c5f21 | tar -x -C <post>
-git archive 6d8c5f21 | tar -x -C <pre>
+# <tip> = any commit carrying bench blob 26469ef1 (§3); verify with
+#   git cat-file -p 26469ef1 | shasum -a 256   # -> d8948a7b...
+git archive <tip> | tar -x -C <post>
+git archive <tip> | tar -x -C <pre>
 git show 8ca10158 --format= > hardsync.patch
 ( cd <pre> && git apply --reverse ../hardsync.patch )
 ```
+
+§5.4's two arms are simpler still: `<tip>` as-is is the soft arm, and the
+hard arm is `<tip>` with `write`'s `db_synchronize(db, false)` flipped to
+`true` — the bench never calls `compact`, so that one line is the whole
+difference.
 
 Container (`debian:testing` at the digest in §3; apt set = ci.yml's tkrzw
 list plus `strace`, `util-linux`, `python3`; rustup `--default-toolchain
