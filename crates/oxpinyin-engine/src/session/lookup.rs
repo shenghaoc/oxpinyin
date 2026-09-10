@@ -33,11 +33,11 @@ where
         // The cached list is anchored at the composition offset the session
         // owns. Reuse its buffer so the scan keeps its capacity across
         // keystrokes.
-        let anchor = self.consumed;
+        let anchor = self.record.consumed();
         let mut items = Vec::new();
-        self.candidates.swap_items(&mut items);
-        self.parsed_prefix = self.scan_window(anchor, &mut items)?;
-        self.candidates.swap_items(&mut items);
+        self.lookup.candidates.swap_items(&mut items);
+        self.lookup.parsed_prefix = self.scan_window(anchor, &mut items)?;
+        self.lookup.candidates.swap_items(&mut items);
         Ok(())
     }
 
@@ -46,13 +46,13 @@ where
     /// remaining slice from `anchor`.
     ///
     /// The window is a pure function of `(raw, anchor, constraint-derived
-    /// state)`: the scan reads `&self.raw[anchor..]` and the stored n-best
-    /// rows prepend the same way regardless of the anchor. It mutates only
-    /// the scan scratch and `out` — never the composition offset, the
-    /// constraint store, or the history — so a caller may build a window at a
-    /// lookup offset without disturbing the cached list
-    /// ([`Session::candidates_at`]). With `anchor == self.consumed` it
-    /// reproduces `Session::refresh`'s cached list exactly.
+    /// state)`: the scan reads `&self.input.as_str()[anchor..]` and the
+    /// stored n-best rows prepend the same way regardless of the anchor. It
+    /// mutates only the scan scratch and `out` — never the composition
+    /// offset, the constraint store, or the history — so a caller may build
+    /// a window at a lookup offset without disturbing the cached list
+    /// ([`Session::candidates_at`]). With `anchor == self.record.consumed()`
+    /// it reproduces `Session::refresh`'s cached list exactly.
     /// Builds the working graph for `remaining` (the raw slice from
     /// `anchor`): the exact-mode chain when the session carries
     /// pre-parsed scheme segments, the parsed graph otherwise. A segment
@@ -64,7 +64,7 @@ where
         anchor: usize,
         remaining: &[u8],
     ) -> Result<SegmentGraph, EngineError> {
-        if self.exact_segments.is_empty() {
+        if self.input.exact().is_empty() {
             return SegmentGraph::build_with_options(remaining, self.settings.options)
                 .map_err(EngineError::Graph);
         }
@@ -74,14 +74,16 @@ where
         // decoding `hao` over `an'hao`). Refuse instead: an empty exact
         // graph answers no candidates and a zero parse for this anchor.
         if self
-            .exact_segments
+            .input
+            .exact()
             .iter()
             .any(|segment| segment.start() < anchor && anchor < segment.end())
         {
             return SegmentGraph::build_exact(remaining, &[]).map_err(EngineError::Graph);
         }
         let rebased: Vec<ExactSegment> = self
-            .exact_segments
+            .input
+            .exact()
             .iter()
             .copied()
             .filter(|segment| segment.start() >= anchor)
@@ -103,7 +105,7 @@ where
         out: &mut Vec<Candidate>,
     ) -> Result<usize, EngineError> {
         out.clear();
-        if anchor >= self.raw.len() {
+        if anchor >= self.input.len() {
             // A fully-consumed (or past-end) anchor still carries its
             // sentence rows — upstream's window prepends `m_nbest_results`
             // whether or not any phrase candidate remains at the cursor (the
@@ -112,17 +114,22 @@ where
             return Ok(0);
         }
 
-        // Lift scratches before borrowing `raw`, so graph/scan can use
-        // `&self.raw[anchor..]` without cloning into CompactString.
-        let mut collected = core::mem::take(&mut self.scratch_collected);
+        // Lift the scratch out before borrowing `raw`, so graph/scan can
+        // use `&self.input.as_str()[anchor..]` without cloning into a
+        // CompactString. Destructured into owned locals so the scan body
+        // below reads exactly as before; reassembled and handed back at the
+        // end.
+        let Scratch {
+            mut collected,
+            mut ranked,
+            mut entries,
+            mut path,
+            mut window_phrase,
+            mut window_addon,
+        } = core::mem::take(&mut self.scratch);
         collected.clear();
-        let mut path = core::mem::take(&mut self.scratch_path);
-        let mut entries = core::mem::take(&mut self.scratch_entries);
-        let mut ranked = core::mem::take(&mut self.scratch_ranked);
-        let mut window_phrase = core::mem::take(&mut self.scratch_window_phrase);
-        let mut window_addon = core::mem::take(&mut self.scratch_window_addon);
 
-        let remaining = &self.raw[anchor..];
+        let remaining = &self.input.as_str()[anchor..];
         let graph = self.build_graph_at(anchor, remaining.as_bytes())?;
         // The trailing-run extension of `full_parsed_len`, applied to the
         // remaining slice (the pin's propagation runs on every parse).
@@ -228,12 +235,14 @@ where
 
         core::mem::swap(out, &mut collected);
         collected.clear();
-        self.scratch_collected = collected;
-        self.scratch_path = path;
-        self.scratch_entries = entries;
-        self.scratch_ranked = ranked;
-        self.scratch_window_phrase = window_phrase;
-        self.scratch_window_addon = window_addon;
+        self.scratch = Scratch {
+            collected,
+            ranked,
+            entries,
+            path,
+            window_phrase,
+            window_addon,
+        };
         Ok(parsed_prefix)
     }
 
@@ -272,25 +281,25 @@ where
     /// one-past-end is valid: `scan_window` answers the terminal sentence
     /// rows for it (the pin's reserved slot).
     pub fn candidates_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
-        if offset > self.raw.len() {
+        if offset > self.input.len() {
             return Err(EngineError::LookupOffsetOutOfRange {
                 offset,
-                len: self.raw.len(),
+                len: self.input.len(),
             });
         }
-        if !self.raw.is_char_boundary(offset) {
+        if !self.input.is_char_boundary(offset) {
             return Err(EngineError::LookupOffsetInsideCharacter {
                 offset,
-                len: self.raw.len(),
+                len: self.input.len(),
             });
         }
         let mut items = Vec::new();
-        if offset < self.raw.len() && !self.spans_a_matrix_key(offset)? {
+        if offset < self.input.len() && !self.spans_a_matrix_key(offset)? {
             items.push(Candidate::new(
-                compact_str::CompactString::from(&self.raw[offset..]),
+                compact_str::CompactString::from(&self.input.as_str()[offset..]),
                 CandidateKind::Fallback,
                 0,
-                self.raw.len() - offset,
+                self.input.len() - offset,
                 0,
                 None,
                 None,
@@ -335,23 +344,23 @@ where
     /// multi-byte character — the same refusals as
     /// [`Session::candidates_at`] — plus backend failures during the scan.
     pub fn candidates_ending_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
-        if offset > self.raw.len() {
+        if offset > self.input.len() {
             return Err(EngineError::LookupOffsetOutOfRange {
                 offset,
-                len: self.raw.len(),
+                len: self.input.len(),
             });
         }
-        if !self.raw.is_char_boundary(offset) {
+        if !self.input.is_char_boundary(offset) {
             return Err(EngineError::LookupOffsetInsideCharacter {
                 offset,
-                len: self.raw.len(),
+                len: self.input.len(),
             });
         }
         let mut items = Vec::new();
         // A span cannot end at the composition start, and an end on an
         // apostrophe separator byte is upstream's empty end column: the
         // window is the prepended sentence rows alone.
-        if offset == 0 || self.raw.as_bytes().get(offset - 1) == Some(&b'\'') {
+        if offset == 0 || self.input.as_bytes().get(offset - 1) == Some(&b'\'') {
             self.prepend_nbest_rows(&mut items);
             return Ok(CandidateList::from_vec(items));
         }
@@ -369,13 +378,14 @@ where
     /// coordinates are absolute from the buffer start, so no rebasing is
     /// needed at anchor 0.
     pub(super) fn build_prefix_graph(&self, offset: usize) -> Result<SegmentGraph, EngineError> {
-        let remaining = &self.raw.as_bytes()[..offset];
-        if self.exact_segments.is_empty() {
+        let remaining = &self.input.as_bytes()[..offset];
+        if self.input.exact().is_empty() {
             return SegmentGraph::build_with_options(remaining, self.settings.options)
                 .map_err(EngineError::Graph);
         }
         let rebased: Vec<ExactSegment> = self
-            .exact_segments
+            .input
+            .exact()
             .iter()
             .copied()
             .filter(|segment| segment.end() <= offset)
@@ -400,20 +410,19 @@ where
     ) -> Result<usize, EngineError> {
         out.clear();
         let graph = self.build_prefix_graph(offset)?;
-        let matrix = build_scan_matrix(
-            &graph,
-            self.settings.options,
-            self.exact_segments.is_empty(),
-        );
+        let matrix =
+            build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
         let bound = graph.consumed().min(offset);
 
-        let mut collected = core::mem::take(&mut self.scratch_collected);
+        let Scratch {
+            mut collected,
+            mut ranked,
+            mut entries,
+            mut path,
+            mut window_phrase,
+            mut window_addon,
+        } = core::mem::take(&mut self.scratch);
         collected.clear();
-        let mut path = core::mem::take(&mut self.scratch_path);
-        let mut entries = core::mem::take(&mut self.scratch_entries);
-        let mut ranked = core::mem::take(&mut self.scratch_ranked);
-        let mut window_phrase = core::mem::take(&mut self.scratch_window_phrase);
-        let mut window_addon = core::mem::take(&mut self.scratch_window_addon);
         let mut group: Vec<Candidate> = Vec::new();
 
         for start in 0..bound {
@@ -476,12 +485,14 @@ where
 
         out.append(&mut collected);
 
-        self.scratch_collected = collected;
-        self.scratch_path = path;
-        self.scratch_entries = entries;
-        self.scratch_ranked = ranked;
-        self.scratch_window_phrase = window_phrase;
-        self.scratch_window_addon = window_addon;
+        self.scratch = Scratch {
+            collected,
+            ranked,
+            entries,
+            path,
+            window_phrase,
+            window_addon,
+        };
 
         dedup_by_text_keep_first(out);
         self.prepend_nbest_rows(out);
@@ -510,14 +521,15 @@ where
     /// [`EngineError::Graph`] when the composition cannot be represented
     /// as a segment graph.
     pub(super) fn spans_a_matrix_key(&self, offset: usize) -> Result<bool, EngineError> {
-        if !self.exact_segments.is_empty() {
-            return Ok(self.raw.as_bytes().get(offset) == Some(&b'\'')
+        if !self.input.exact().is_empty() {
+            return Ok(self.input.as_bytes().get(offset) == Some(&b'\'')
                 || self
-                    .exact_segments
+                    .input
+                    .exact()
                     .iter()
                     .any(|segment| segment.start() == offset));
         }
-        let graph = SegmentGraph::build_with_options(self.raw.as_bytes(), self.settings.options)
+        let graph = SegmentGraph::build_with_options(self.input.as_bytes(), self.settings.options)
             .map_err(EngineError::Graph)?;
         // The split alternates are a full-pinyin-parse artifact — the same
         // law the scan applies (`build_scan_matrix`'s `divided` argument at
@@ -530,7 +542,7 @@ where
         {
             return Ok(true);
         }
-        Ok(offset < graph.consumed() && self.raw.as_bytes().get(offset) == Some(&b'\''))
+        Ok(offset < graph.consumed() && self.input.as_bytes().get(offset) == Some(&b'\''))
     }
 
     /// Prepends the stored n-best rows onto `collected`, head first, then
@@ -544,13 +556,13 @@ where
     /// Under [`Session::set_collapse_sentence_rows_to_best`] only the 1-best
     /// row is prepended — libzhuyin's display law.
     pub(super) fn prepend_nbest_rows(&mut self, collected: &mut Vec<Candidate>) {
-        if self.nbest_rows.is_empty() {
+        if self.sentence.rows.is_empty() {
             return;
         }
         let rows = if self.collapse_sentence_rows_to_best {
-            &self.nbest_rows[..1]
+            &self.sentence.rows[..1]
         } else {
-            &self.nbest_rows[..]
+            &self.sentence.rows[..]
         };
         let nbest_n = rows.len();
         collected.extend(rows.iter().enumerate().map(|(index, row)| {
@@ -585,15 +597,17 @@ where
         if offset == 0 {
             return Some(PhraseToken::new(crate::nbest::SENTENCE_START));
         }
-        if self.last_result.is_empty() {
+        if self.sentence.last_result.is_empty() {
             return None;
         }
         // `result[offset] != null_token`: a phrase must begin here.
-        self.last_result
+        self.sentence
+            .last_result
             .iter()
             .any(|span| span.start == offset)
             .then(|| {
-                self.last_result
+                self.sentence
+                    .last_result
                     .iter()
                     .filter(|span| span.start < offset)
                     .max_by_key(|span| span.start)
@@ -728,7 +742,8 @@ where
         // A dictionary phrase never spans more than MAX_PHRASE_KEYS keys, so
         // looking further is both pointless and quadratic in the input.
         for length in 1..=keys.len().min(MAX_PHRASE_KEYS) {
-            let ranked = scorer.rank_phrases(&self.history, &keys[..length], &kinds[..length])?;
+            let ranked =
+                scorer.rank_phrases(self.record.history(), &keys[..length], &kinds[..length])?;
             for (entry, cost) in ranked {
                 let token = entry.token();
                 into.push(Candidate::new(
@@ -779,7 +794,7 @@ where
 
         // best[i] is the cheapest way to spell keys[..i].
         let mut best: Vec<Option<(Cost, String, Vec<PhraseToken>)>> = vec![None; keys.len() + 1];
-        best[0] = Some((0, String::new(), self.history.clone()));
+        best[0] = Some((0, String::new(), self.record.history().to_vec()));
 
         for end in 1..=keys.len() {
             let first = end.saturating_sub(MAX_PHRASE_KEYS);
@@ -815,7 +830,7 @@ where
         if let Some((cost, text, tokens)) = best.pop().flatten()
             && !text.is_empty()
         {
-            let tokens = tokens[self.history.len()..].to_vec();
+            let tokens = tokens[self.record.history().len()..].to_vec();
             return Ok(vec![(
                 Candidate::new(
                     text,
@@ -884,7 +899,7 @@ where
         into: &mut Vec<Candidate>,
         scratch: &mut ScanScratch<'_>,
     ) -> Result<(), EngineError> {
-        let matrix = build_scan_matrix(graph, options, self.exact_segments.is_empty());
+        let matrix = build_scan_matrix(graph, options, self.input.exact().is_empty());
         let bound = graph.consumed();
         let mut end = 1usize;
         while end <= bound {

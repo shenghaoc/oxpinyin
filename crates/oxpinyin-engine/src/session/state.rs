@@ -103,29 +103,16 @@ where
             model,
             paths,
             settings: Settings::read(config),
-            raw: String::new(),
-            selected: String::new(),
-            consumed: 0,
-            parsed_prefix: 0,
-            exact_segments: Vec::new(),
-            candidates: CandidateList::default(),
-            history: Vec::new(),
             scoring: ScoringConfig::default(),
             key_costs,
-            nbest_rows: Vec::new(),
-            nbest_history: Vec::new(),
-            sentence_lookup_active: false,
             collapse_sentence_rows_to_best: false,
             nbest_shape: crate::nbest::NbestShape::default(),
-            selection_committed: false,
+            input: InputBuffer::default(),
+            record: SelectionRecord::default(),
             constraints: crate::constraint::ConstraintStore::default(),
-            last_result: Vec::new(),
-            scratch_collected: Vec::new(),
-            scratch_ranked: Vec::new(),
-            scratch_entries: Vec::new(),
-            scratch_path: SmallVec::new(),
-            scratch_window_phrase: Vec::new(),
-            scratch_window_addon: Vec::new(),
+            lookup: Lookup::default(),
+            sentence: SentenceState::default(),
+            scratch: Scratch::default(),
         })
     }
 
@@ -151,12 +138,8 @@ where
     /// go (`pinyin.cpp:2697` clears `m_constraints`).
     pub fn reset(&mut self) {
         self.reset_composition();
-        self.exact_segments.clear();
-        self.raw.clear();
-        self.selected.clear();
-        self.consumed = 0;
-        self.selection_committed = false;
-        self.history.clear();
+        self.input.clear();
+        self.record.clear();
         self.constraints.clear();
     }
 
@@ -179,12 +162,8 @@ where
     /// refreshes in one call, so this reset alone always leaves a
     /// consistent session.
     pub fn reset_composition(&mut self) {
-        self.parsed_prefix = 0;
-        self.candidates = CandidateList::default();
-        self.nbest_rows.clear();
-        self.nbest_history.clear();
-        self.last_result.clear();
-        self.sentence_lookup_active = false;
+        self.lookup.reset();
+        self.sentence.reset();
     }
 
     /// Replaces the raw input with `text` in one step — the capi parse
@@ -219,7 +198,7 @@ where
     /// Returns [`EngineError`] when the refresh under the new input hits
     /// a backend failure.
     pub fn replace_raw(&mut self, text: &str) -> Result<(), EngineError> {
-        self.exact_segments.clear();
+        self.input.clear_exact();
         let continuous = self.replacement_extends_selection(text);
         self.refill_raw(text);
         if !continuous {
@@ -254,12 +233,7 @@ where
     ) -> Result<(), EngineError> {
         let continuous = self.replacement_extends_selection(text);
         self.refill_raw(text);
-        let raw_len = self.raw.len();
-        self.exact_segments = segments
-            .iter()
-            .copied()
-            .filter(|segment| segment.end() <= raw_len)
-            .collect();
+        self.input.set_exact(segments);
         if !continuous {
             self.reconcile_replaced_selection()?;
         }
@@ -277,7 +251,7 @@ where
     /// combines the stale selection with the new raw suffix.
     pub(super) fn replacement_extends_selection(&self, text: &str) -> bool {
         text.as_bytes()
-            .starts_with(&self.raw.as_bytes()[..self.consumed])
+            .starts_with(&self.input.as_bytes()[..self.record.consumed()])
     }
 
     /// Reconciles the selection to a replacement it does not extend:
@@ -290,17 +264,14 @@ where
     /// composition re-opens at 0. The empty-record parse path pays only
     /// the continuity check.
     pub(super) fn reconcile_replaced_selection(&mut self) -> Result<(), EngineError> {
-        if self.consumed == 0 {
+        if self.record.consumed() == 0 {
             return Ok(());
         }
-        let graph = self.build_graph_at(0, self.raw.as_bytes())?;
+        let graph = self.build_graph_at(0, self.input.as_bytes())?;
         let bound = graph.consumed();
         if bound > 0 {
-            let matrix = build_scan_matrix(
-                &graph,
-                self.settings.options,
-                self.exact_segments.is_empty(),
-            );
+            let matrix =
+                build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
             self.constraints.validate(bound + 1, |start, end, token| {
                 crate::nbest::span_finds_token(&matrix, start, end, token, &self.dictionary)
             })?;
@@ -318,22 +289,13 @@ where
     /// refresh under their own parse mode (the exact seam must set its
     /// segments first).
     pub(super) fn refill_raw(&mut self, text: &str) {
-        self.raw.clear();
-        for character in text.chars() {
-            if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
-                break;
-            }
-            self.raw.push(character);
-        }
+        self.input.refill(text);
         // A stale consumed from the replaced composition may now sit inside
         // a multi-byte character of the new raw (`a` selected to consumed 1,
         // then `，` replaces it). `refresh`/`scan_window` slice
         // `raw[consumed..]`, so the clamp must land on a char boundary —
         // the composition restarts from the boundary before it.
-        self.consumed = self.consumed.min(self.raw.len());
-        while !self.raw.is_char_boundary(self.consumed) {
-            self.consumed -= 1;
-        }
+        self.record.clamp_consumed(self.input.as_str());
     }
 
     /// Filtered parse length of the remaining input after the last refresh.
@@ -343,7 +305,7 @@ where
     /// [`SegmentGraph::consumed`].
     #[must_use]
     pub const fn parsed_prefix_len(&self) -> usize {
-        self.parsed_prefix
+        self.lookup.parsed_prefix
     }
 
     /// Apply a live `incomplete-pinyin` change and refresh if composing.
@@ -375,7 +337,7 @@ where
             return Ok(());
         }
         self.settings.options = options;
-        if self.raw.is_empty() {
+        if self.input.is_empty() {
             return Ok(());
         }
         self.refresh()
@@ -420,28 +382,21 @@ where
     /// What the shell should display.
     #[must_use]
     pub fn preedit(&self) -> Preedit {
-        let remaining = &self.raw[self.consumed..];
-        if self.selected.is_empty() && remaining.is_empty() {
+        let selected = self.record.selected();
+        let remaining = &self.input.as_str()[self.record.consumed()..];
+        if selected.is_empty() && remaining.is_empty() {
             return Preedit::default();
         }
 
-        let mut text = self.selected.clone();
+        let mut text = selected.to_owned();
         text.push_str(remaining);
 
         let mut spans = Vec::with_capacity(2);
-        if !self.selected.is_empty() {
-            spans.push(PreeditSpan::new(
-                0,
-                self.selected.len(),
-                SpanStyle::Selected,
-            ));
+        if !selected.is_empty() {
+            spans.push(PreeditSpan::new(0, selected.len(), SpanStyle::Selected));
         }
         if !remaining.is_empty() {
-            spans.push(PreeditSpan::new(
-                self.selected.len(),
-                text.len(),
-                SpanStyle::Raw,
-            ));
+            spans.push(PreeditSpan::new(selected.len(), text.len(), SpanStyle::Raw));
         }
 
         let cursor = text.len();
@@ -457,7 +412,7 @@ where
     /// corpus pins were captured without a sentence guess.
     #[must_use]
     pub const fn candidates(&self) -> &CandidateList {
-        &self.candidates
+        &self.lookup.candidates
     }
 
     /// Whether a sentence lookup has run since the last reset.
@@ -468,14 +423,15 @@ where
     /// even when the lookup produced no rows.
     #[must_use]
     pub const fn sentence_lookup_active(&self) -> bool {
-        self.sentence_lookup_active
+        self.sentence.active()
     }
 
     /// The decoded text of n-best row `index`, best-first
     /// (`pinyin_get_sentence`'s payload). `None` when fewer rows exist.
     #[must_use]
     pub fn sentence_text(&self, index: u8) -> Option<&str> {
-        self.nbest_rows
+        self.sentence
+            .rows
             .get(usize::from(index))
             .map(|row| row.text.as_str())
             .filter(|text| !text.is_empty())
@@ -484,13 +440,13 @@ where
     /// The raw input typed so far.
     #[must_use]
     pub fn raw_input(&self) -> &str {
-        &self.raw
+        self.input.as_str()
     }
 
     /// Whether a composition is in progress.
     #[must_use]
     pub const fn is_composing(&self) -> bool {
-        !self.raw.is_empty()
+        !self.input.is_empty()
     }
 
     /// Bytes of the raw input consumed by selections so far — the
@@ -506,7 +462,7 @@ where
     /// reaching the same end).
     #[must_use]
     pub const fn composition_offset(&self) -> usize {
-        self.consumed
+        self.record.consumed()
     }
 
     /// Candidates per page, from the configuration the session was opened

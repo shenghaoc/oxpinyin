@@ -77,22 +77,21 @@ where
     /// Returns [`EngineError`] when refreshing candidates hits a backend
     /// failure.
     pub fn type_pinyin(&mut self, text: &str) -> Result<KeyOutcome, EngineError> {
-        let before = self.raw.len();
+        let before = self.input.len();
         for character in text.chars() {
             if !is_batch_input_character(character) {
                 continue;
             }
-            if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
+            // `try_push` exits exact mode on each accepted character and
+            // stops at the cap; ignored input never reaches it, so a batch
+            // that changes nothing leaves an exact composition alone.
+            if !self.input.try_push(character) {
                 break;
             }
-            self.raw.push(character);
         }
-        if self.raw.len() == before {
+        if self.input.len() == before {
             return Ok(KeyOutcome::Ignored);
         }
-        // Ignored input leaves an exact (scheme-parsed) composition alone;
-        // only a real buffer change exits exact mode.
-        self.exact_segments.clear();
         self.refresh()?;
         Ok(KeyOutcome::Consumed)
     }
@@ -101,35 +100,29 @@ where
         if !is_input_character(character) {
             return Ok(KeyOutcome::Ignored);
         }
-        if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
+        // `try_push` refuses the character at the cap (leaving a scheme
+        // composition intact) and otherwise exits exact mode as it appends
+        // — a rejected character never touches the chain.
+        if !self.input.try_push(character) {
             return Ok(KeyOutcome::Ignored);
         }
-        // The character is accepted: the buffer is about to change, so the
-        // exact chain's absolute spans go now — not before validation, or a
-        // rejected character would silently exit exact mode.
-        self.exact_segments.clear();
-        self.raw.push(character);
         self.refresh()?;
         Ok(KeyOutcome::Consumed)
     }
 
     pub(super) fn erase(&mut self) -> Result<KeyOutcome, EngineError> {
-        if self.consumed < self.raw.len() {
-            // The buffer is about to shrink: the exact chain's absolute
-            // spans would dangle past the new end. Operations that do not
-            // modify raw leave exact mode alone.
-            self.exact_segments.clear();
-            self.raw.pop();
+        if self.record.consumed() < self.input.len() {
+            // The buffer is about to shrink: `pop` drops the last byte and
+            // exits exact mode, whose absolute spans would dangle past the
+            // new end.
+            self.input.pop();
             self.refresh()?;
             return Ok(KeyOutcome::Consumed);
         }
-        if !self.selected.is_empty() {
+        if !self.record.selected().is_empty() {
             // The all-or-nothing un-select: the store goes with the
             // record, or a forcing would outlive its own selection.
-            self.selected.clear();
-            self.consumed = 0;
-            self.selection_committed = false;
-            self.history.clear();
+            self.record.clear();
             self.constraints.clear();
             self.refresh()?;
             return Ok(KeyOutcome::Consumed);
@@ -138,7 +131,7 @@ where
     }
 
     pub(super) fn accept_first(&mut self) -> Result<KeyOutcome, EngineError> {
-        if self.candidates.is_empty() {
+        if self.lookup.candidates.is_empty() {
             if self.is_composing() {
                 return Ok(KeyOutcome::Commit(self.commit()?));
             }

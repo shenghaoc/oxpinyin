@@ -25,15 +25,13 @@ where
     pub fn select(&mut self, index: usize) -> Result<Selection, EngineError> {
         // Clone the candidate out of the cached list first: `select_inner`
         // borrows `self` mutably, so it cannot also borrow `self.candidates`.
-        let candidate =
-            self.candidates
-                .get(index)
-                .cloned()
-                .ok_or(EngineError::CandidateIndexOutOfRange {
-                    index,
-                    len: self.candidates.len(),
-                })?;
-        self.select_inner(self.consumed, &candidate, None)
+        let candidate = self.lookup.candidates.get(index).cloned().ok_or(
+            EngineError::CandidateIndexOutOfRange {
+                index,
+                len: self.lookup.candidates.len(),
+            },
+        )?;
+        self.select_inner(self.record.consumed(), &candidate, None)
     }
 
     /// Chooses the candidate at `index`, recording `promoted_token` in the
@@ -53,15 +51,13 @@ where
         index: usize,
         promoted_token: PhraseToken,
     ) -> Result<Selection, EngineError> {
-        let candidate =
-            self.candidates
-                .get(index)
-                .cloned()
-                .ok_or(EngineError::CandidateIndexOutOfRange {
-                    index,
-                    len: self.candidates.len(),
-                })?;
-        self.select_inner(self.consumed, &candidate, Some(promoted_token))
+        let candidate = self.lookup.candidates.get(index).cloned().ok_or(
+            EngineError::CandidateIndexOutOfRange {
+                index,
+                len: self.lookup.candidates.len(),
+            },
+        )?;
+        self.select_inner(self.record.consumed(), &candidate, Some(promoted_token))
     }
 
     /// Chooses the candidate at `index` from an explicit candidate window
@@ -88,10 +84,10 @@ where
         window: &CandidateList,
         anchor: usize,
     ) -> Result<Selection, EngineError> {
-        if anchor > self.raw.len() {
+        if anchor > self.input.len() {
             return Err(EngineError::LookupOffsetOutOfRange {
                 offset: anchor,
-                len: self.raw.len(),
+                len: self.input.len(),
             });
         }
         let candidate = window
@@ -116,10 +112,10 @@ where
         anchor: usize,
         promoted_token: PhraseToken,
     ) -> Result<Selection, EngineError> {
-        if anchor > self.raw.len() {
+        if anchor > self.input.len() {
             return Err(EngineError::LookupOffsetOutOfRange {
                 offset: anchor,
-                len: self.raw.len(),
+                len: self.input.len(),
             });
         }
         let candidate = window
@@ -160,14 +156,14 @@ where
         let constraint_start = span_start;
         let constraint_end = self.next_boundary(anchor.saturating_add(advance));
         // Reject a span that starts before the composition offset: it would
-        // regress `self.consumed`, a backward selection no frontend drives
-        // (a stale cursor behind the selection). Rejected, not reconciled —
-        // the gap handling below covers only the start == / > composition-
-        // offset shapes.
-        if span_start < self.consumed {
+        // regress the composition offset, a backward selection no frontend
+        // drives (a stale cursor behind the selection). Rejected, not
+        // reconciled — the gap handling below covers only the start == / >
+        // composition-offset shapes.
+        if span_start < self.record.consumed() {
             return Err(EngineError::SelectionAnchorBeforeComposition {
                 anchor: span_start,
-                composition: self.consumed,
+                composition: self.record.consumed(),
             });
         }
         // The raw bytes between the composition offset and the span start
@@ -177,8 +173,11 @@ where
         // rebuild preserves (`rebuild_selection_from_constraints`). The
         // composition-anchored path (span start == composition offset) has
         // an empty gap.
-        let gap = if span_start > self.consumed {
-            self.raw.get(self.consumed..span_start).unwrap_or("")
+        let gap = if span_start > self.record.consumed() {
+            self.input
+                .as_str()
+                .get(self.record.consumed()..span_start)
+                .unwrap_or("")
         } else {
             ""
         };
@@ -190,15 +189,13 @@ where
             // the raw prefix in the committed text (upstream commits the
             // row's sentence text, pinyin_choose_candidate's NBEST branch
             // returning matrix.size() - 1). The composition-anchored path
-            // has an empty gap either way. The clone keeps `text`
-            // alive for the constraint write below.
-            self.selected.clone_from(&text);
+            // has an empty gap either way.
+            self.record.set_selected(&text);
         } else {
-            self.selected.push_str(gap);
-            self.selected.push_str(&text);
+            self.record.append_selected(gap, &text);
         }
         if let Some(token) = token {
-            self.history.push(token);
+            self.record.push_token(token);
         } else if let Some(rank) = candidate.nbest_row() {
             // A prepended n-best row records its whole token path —
             // upstream's `pinyin_choose_candidate` keeps the chosen
@@ -211,14 +208,14 @@ where
             // positional lookup then trains the wrong path. A fallback
             // sentence candidate carries no rank and no tokens; it records
             // nothing, exactly as before.
-            if let Some(row) = self.nbest_rows.get(usize::from(rank)) {
+            if let Some(row) = self.sentence.rows.get(usize::from(rank)) {
                 // The row replaces everything decoded since the lookup ran
                 // — the text side of that replace is the assign above. A
                 // normal selection made in between must leave no token in
                 // the record either, so restore the snapshot the rows were
                 // decoded against before extending with this row's path.
-                self.history.clone_from(&self.nbest_history);
-                self.history.extend(row.tokens.iter().copied());
+                self.record
+                    .reset_history_extend(&self.sentence.history, &row.tokens);
             }
         }
         // The §3 constraint writes (`pinyin_choose_candidate`,
@@ -227,9 +224,9 @@ where
         // differs from the 1-best (`diff_result`) — a row-0 choose
         // constrains nothing, exactly upstream.
         if let Some(rank) = candidate.nbest_row() {
-            let best = self.nbest_rows.first().map(|row| row.spans.as_slice());
-            let Some(chosen) = self.nbest_rows.get(usize::from(rank)) else {
-                self.consumed = constraint_end;
+            let best = self.sentence.rows.first().map(|row| row.spans.as_slice());
+            let Some(chosen) = self.sentence.rows.get(usize::from(rank)) else {
+                self.record.set_consumed(constraint_end);
                 self.refresh()?;
                 return Ok(self.selection_outcome());
             };
@@ -239,12 +236,12 @@ where
                 // fresh composition's row choose — whose store was never
                 // resized, `add` refusing every span past an empty cell
                 // count — cannot silently write nothing.
-                self.constraints.resize(self.raw.len() + 1);
+                self.constraints.resize(self.input.len() + 1);
                 self.constraints
-                    .diff_result(best, &chosen.spans, self.raw.len());
+                    .diff_result(best, &chosen.spans, self.input.len());
             }
         } else if let Some(token) = token {
-            self.constraints.resize(self.raw.len() + 1);
+            self.constraints.resize(self.input.len() + 1);
             self.constraints.add(
                 constraint_start,
                 constraint_end,
@@ -252,8 +249,9 @@ where
                 compact_str::CompactString::from(text.as_str()),
             );
         }
-        self.consumed = constraint_end;
-        self.selection_committed = constraint_end >= self.raw.len();
+        self.record.set_consumed(constraint_end);
+        self.record
+            .set_committed(constraint_end >= self.input.len());
         self.refresh()?;
 
         Ok(self.selection_outcome())
@@ -261,7 +259,7 @@ where
 
     /// The common tail of [`Session::select_inner`].
     pub(super) const fn selection_outcome(&self) -> Selection {
-        if self.consumed >= self.raw.len() {
+        if self.record.consumed() >= self.input.len() {
             Selection::Completed
         } else {
             Selection::Continued
@@ -314,13 +312,14 @@ where
         // cell: a forcing that failed to record changes the row and
         // window surfaces the differential probes, not the train output.
         let constrained = self
+            .sentence
             .last_result
             .iter()
             .any(|span| self.constraints.is_one_step_at(span.start));
         if constrained {
-            let mut context: Vec<PhraseToken> = Vec::with_capacity(self.last_result.len());
+            let mut context: Vec<PhraseToken> = Vec::with_capacity(self.sentence.last_result.len());
             let mut train_next = false;
-            for span in &self.last_result {
+            for span in &self.sentence.last_result {
                 let forced = self.constraints.is_one_step_at(span.start);
                 if train_next || forced {
                     train_next = forced;
@@ -331,8 +330,9 @@ where
             }
             return Ok(());
         }
-        for (index, token) in self.history.iter().enumerate() {
-            user.observe(&self.history[..index], token)
+        let history = self.record.history();
+        for (index, token) in history.iter().enumerate() {
+            user.observe(&history[..index], token)
                 .map_err(|error| EngineError::UserModel(error.to_string()))?;
         }
         Ok(())
@@ -361,40 +361,15 @@ where
     /// frontend tracks its own cursor — so the store is the engine's
     /// single source once forcings exist.
     pub(super) fn rebuild_selection_from_constraints(&mut self) {
-        let runs = self.constraints.runs();
-        if runs.is_empty() {
-            self.selected.clear();
-            self.consumed = 0;
-            self.history.clear();
-            self.selection_committed = false;
-            return;
-        }
         // Gaps between forced runs are free spans (diff_result forces only
         // the differing phrases); their text is the current buffer's bytes,
         // so the rebuilt record never drops raw input the forcings skip
-        // over — the preedit would otherwise lose exactly that gap.
-        let mut selected = String::new();
-        let mut cursor = 0_usize;
-        let mut history = Vec::with_capacity(runs.len());
-        for (start, end, token, text) in &runs {
-            if *start > cursor
-                && let Some(gap) = self.raw.get(cursor..*start)
-            {
-                selected.push_str(gap);
-            }
-            selected.push_str(text);
-            history.push(*token);
-            cursor = *end;
-        }
-        self.selected = selected;
-        self.consumed = cursor.min(self.raw.len());
-        self.history = history;
-        // A rebuild means the record changed under the selection — a
-        // cleared run or a validate drop — so the commit-branch shape no
-        // longer holds even when the surviving forcings still reach the
-        // buffer end. Leaving the flag set would make the next compatible
-        // re-parse start fresh and silently drop the survivors.
-        self.selection_committed = false;
+        // over — the preedit would otherwise lose exactly that gap. The
+        // record owns the rebuild (and the commit-branch flag it clears):
+        // this seam only hands it the surviving runs and the buffer.
+        let runs = self.constraints.runs();
+        self.record
+            .rebuild_from_constraints(self.input.as_str(), &runs);
     }
 
     /// The sentence recorded so far: the token of every phrase the user
@@ -406,7 +381,7 @@ where
     /// slice as the predecessor for predicted-candidate training (§2.3).
     #[must_use]
     pub fn selected_tokens(&self) -> &[PhraseToken] {
-        &self.history
+        self.record.history()
     }
 
     /// The current composition's syllable keys, in the engine's selected
@@ -424,7 +399,7 @@ where
     /// into a segment graph (an over-long input; the buffer is capped by
     /// [`MAX_INPUT_BYTES`]).
     pub fn composition_keys(&self) -> Result<Vec<SyllableKey>, EngineError> {
-        let graph = self.build_graph_at(0, self.raw.as_bytes())?;
+        let graph = self.build_graph_at(0, self.input.as_bytes())?;
         Ok(graph
             .fewest_keys(self.settings.incomplete())
             .into_iter()
@@ -440,8 +415,8 @@ where
     ///
     /// Returns [`EngineError`] when a backend fails while the session resets.
     pub fn commit(&mut self) -> Result<String, EngineError> {
-        let mut text = core::mem::take(&mut self.selected);
-        text.push_str(&self.raw[self.consumed..]);
+        let mut text = self.record.take_selected();
+        text.push_str(&self.input.as_str()[self.record.consumed()..]);
         self.reset();
         Ok(text)
     }
