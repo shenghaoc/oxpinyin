@@ -2565,3 +2565,312 @@ fn candidates_at_a_divided_split_column_answers_the_split_window() {
         "byte 5 is an empty column — fallback only"
     );
 }
+
+/// Off-by-default diagnostic for issue #403 — no assertion, prints only.
+///
+/// Simulates the RSS-report's keystroke cycle (CYCLE_INPUTS, one character
+/// added at a time) and, for each keystroke's scan matrix, enumerates every
+/// complete key-path from node 0 to every reachable end position without
+/// consulting a dictionary. Emits per-input rows and an aggregate JSON blob
+/// under a `[403]` prefix. Enable with `--features diagnostic_403` and pass
+/// `--nocapture` to see the output; nothing is asserted, so it always passes.
+///
+/// Two caveats to read the numbers with:
+/// (a) The real scan short-circuits window widening on `phrase_prefix_exists`
+///     returning false. This diagnostic never probes: it widens up to
+///     `graph.consumed()`. Absolute path counts are therefore upper bounds
+///     against the RSS report's 4,262 (oxpinyin) / 1,536 (upstream) figures;
+///     the *ratio* of paths-per-window and the unique/repeat histogram are
+///     what carry.
+/// (b) The unique / repeat set is keyed by the sequence of `(text, tone)`
+///     pairs, which is the same shape upstream's `ChewingTable::search` keys
+///     on (`chewing_key.h`), so a memoization-headroom judgement is
+///     appropriate.
+#[cfg(feature = "diagnostic_403")]
+#[test]
+fn diagnostic_403_scan_matrix_fanout() {
+    use std::collections::HashMap;
+
+    use oxpinyin_core::graph::SegmentGraph;
+    use oxpinyin_core::scoring::expand_keys;
+    use oxpinyin_core::{Completeness, OptionBits, SyllableKey};
+
+    // The 20-line RSS-report corpus, order preserved (matches
+    // `crates/pinyin-oracle/benches/support/mod.rs::CYCLE_INPUTS`).
+    const CYCLE_INPUTS: &[&str] = &[
+        "ni",
+        "wo",
+        "de",
+        "nihao",
+        "zhongguo",
+        "xian",
+        "fangan",
+        "xi'an",
+        "bu'tian",
+        "fan'gan",
+        "n",
+        "zh",
+        "chongke",
+        "caisho",
+        "paolen",
+        "waimenggu",
+        "lenglan",
+        "naoxion",
+        "liangniejue",
+        "chuaipengdengzaimiu",
+    ];
+
+    // Parity word (`docs/findings/option-bits.md`): PINYIN_INCOMPLETE (0x8)
+    // | USE_DIVIDED_TABLE (0x80) | USE_RESPLIT_TABLE (0x100) plus the
+    // harness's 0x2 bit — 0x18a. Fuzzy is off; USE_TONE is off.
+    const PARITY: u32 = 0x18a;
+
+    /// One complete key-path through a scan matrix, keyed on (text, tone).
+    type PathKey = Vec<(String, u8)>;
+
+    /// Enumerate every path from `node` to `end` under
+    /// [`super::lookup::visit_scan_key`] semantics, driving `out` and
+    /// stopping a branch whenever a scan key would overhang the window.
+    fn walk(
+        matrix: &[Vec<super::ScanKey>],
+        node: usize,
+        end: usize,
+        stack: &mut PathKey,
+        out: &mut Vec<PathKey>,
+    ) {
+        let Some(column) = matrix.get(node) else {
+            return;
+        };
+        for scan_key in column.iter().copied() {
+            let to = scan_key.to;
+            if to > end {
+                // Overhanging keys set `continued = true` and stop the branch.
+                continue;
+            }
+            stack.push((scan_key.key.text().to_string(), scan_key.tone));
+            if to == end {
+                out.push(stack.clone());
+            } else if stack.len() < super::MAX_PHRASE_LENGTH {
+                walk(matrix, to, end, stack, out);
+            }
+            stack.pop();
+        }
+    }
+
+    let options = OptionBits::from_bits(PARITY);
+
+    let mut agg_windows: u64 = 0;
+    let mut agg_paths: u64 = 0;
+    let mut agg_probes: u64 = 0;
+    let mut agg_matrix_entries: u64 = 0;
+    let mut sequence_counts: HashMap<PathKey, u32> = HashMap::new();
+    // Post-`expand_keys` probe keys: this is what actually hits
+    // `Dictionary::lookup_into` per path. If any key on the path is
+    // `Partial`, the path expands into every completion of that initial
+    // (`SCAN_EXPANSION_LIMIT` bounds the Cartesian product; a limit trip
+    // returns an empty list, i.e. zero probes).
+    let mut probe_key_counts: HashMap<Vec<String>, u32> = HashMap::new();
+
+    println!(
+        "[403] cycle inputs: {} lines, parity 0x{:x}",
+        CYCLE_INPUTS.len(),
+        PARITY
+    );
+    println!("[403] input,prefix_len,consumed,total_matrix_entries,windows,paths,unique_paths");
+    let mut total_keystrokes: u64 = 0;
+
+    for &input in CYCLE_INPUTS {
+        for prefix_len in 1..=input.len() {
+            // Respect UTF-8 boundaries: for ASCII inputs (all of CYCLE_INPUTS
+            // are ASCII-plus-apostrophe), byte length equals char length.
+            let prefix = &input[..prefix_len];
+            total_keystrokes += 1;
+
+            let Ok(graph) = SegmentGraph::build_with_options(prefix.as_bytes(), options) else {
+                continue;
+            };
+            let matrix = super::build_scan_matrix(&graph, options, true);
+            let consumed = graph.consumed();
+
+            let matrix_entries: usize = matrix.iter().map(std::vec::Vec::len).sum();
+            agg_matrix_entries += matrix_entries as u64;
+
+            let mut windows_here: u64 = 0;
+            let mut paths_here: u64 = 0;
+            let mut probes_here: u64 = 0;
+            let mut unique_here: std::collections::HashSet<PathKey> =
+                std::collections::HashSet::new();
+            for end in 1..=consumed {
+                // Skip windows the real widening loop skips: a window whose
+                // added byte is an apostrophe repeats the previous key
+                // sequence (see `collect_window_scan`'s inner `while`).
+                if prefix.as_bytes().get(end - 1) == Some(&b'\'') {
+                    continue;
+                }
+                // Do NOT skip on the end-column being empty: the real scan
+                // still calls `scan_paths(0, end)`, and only uses matrix[end]
+                // to decide whether to continue widening.
+                windows_here += 1;
+                let mut paths_at_end: Vec<PathKey> = Vec::new();
+                let mut stack: PathKey = Vec::new();
+                walk(&matrix, 0, end, &mut stack, &mut paths_at_end);
+                paths_here += paths_at_end.len() as u64;
+                for path in paths_at_end {
+                    *sequence_counts.entry(path.clone()).or_insert(0) += 1;
+                    unique_here.insert(path.clone());
+                    // Post-`expand_keys` probe count for this path (models
+                    // `search_scan_path` → `lookup_and_append` calls).
+                    let syllables: Vec<SyllableKey> = path
+                        .iter()
+                        .filter_map(|(text, _)| SyllableKey::from_text(text))
+                        .collect();
+                    if syllables.len() != path.len() {
+                        // Toneful spellings won't round-trip via
+                        // `from_text`; parity has USE_TONE off so this
+                        // should never fire.
+                        probes_here += 1;
+                        continue;
+                    }
+                    let has_partial = syllables
+                        .iter()
+                        .any(|key| key.completeness() == Completeness::Partial);
+                    let expansions: Vec<Vec<SyllableKey>> = if has_partial {
+                        expand_keys(&syllables, super::SCAN_EXPANSION_LIMIT)
+                            .into_iter()
+                            .map(|expanded| expanded.into_vec())
+                            .collect()
+                    } else {
+                        vec![syllables.clone()]
+                    };
+                    probes_here += expansions.len() as u64;
+                    for expanded in &expansions {
+                        let probe_key: Vec<String> =
+                            expanded.iter().map(|key| key.text().to_string()).collect();
+                        *probe_key_counts.entry(probe_key).or_insert(0) += 1;
+                    }
+                }
+            }
+            agg_windows += windows_here;
+            agg_paths += paths_here;
+            agg_probes += probes_here;
+            println!(
+                "[403] {},{},{},{},{},{},{},{}",
+                input,
+                prefix_len,
+                consumed,
+                matrix_entries,
+                windows_here,
+                paths_here,
+                probes_here,
+                unique_here.len(),
+            );
+        }
+    }
+
+    let unique_paths = sequence_counts.len() as u64;
+    let unique_probes = probe_key_counts.len() as u64;
+    let mut seen_1x = 0_u64;
+    let mut seen_2x = 0_u64;
+    let mut seen_3x = 0_u64;
+    let mut seen_4x = 0_u64;
+    let mut seen_5plus = 0_u64;
+    for count in sequence_counts.values() {
+        match *count {
+            1 => seen_1x += 1,
+            2 => seen_2x += 1,
+            3 => seen_3x += 1,
+            4 => seen_4x += 1,
+            _ => seen_5plus += 1,
+        }
+    }
+    // Histogram over the post-`expand_keys` probe count — the memoization
+    // question the RSS report calls out: this is the count of distinct
+    // syllable-key sequences that reach `Dictionary::lookup_into`, and how
+    // often each one repeats across the run.
+    let mut probe_seen_1x = 0_u64;
+    let mut probe_seen_2x = 0_u64;
+    let mut probe_seen_3x = 0_u64;
+    let mut probe_seen_4x = 0_u64;
+    let mut probe_seen_5plus = 0_u64;
+    for count in probe_key_counts.values() {
+        match *count {
+            1 => probe_seen_1x += 1,
+            2 => probe_seen_2x += 1,
+            3 => probe_seen_3x += 1,
+            4 => probe_seen_4x += 1,
+            _ => probe_seen_5plus += 1,
+        }
+    }
+    let paths_per_window = if agg_windows == 0 {
+        0.0_f64
+    } else {
+        agg_paths as f64 / agg_windows as f64
+    };
+    let unique_ratio = if agg_paths == 0 {
+        0.0_f64
+    } else {
+        unique_paths as f64 / agg_paths as f64
+    };
+
+    let probes_per_window = if agg_windows == 0 {
+        0.0_f64
+    } else {
+        agg_probes as f64 / agg_windows as f64
+    };
+    let unique_probe_ratio = if agg_probes == 0 {
+        0.0_f64
+    } else {
+        unique_probes as f64 / agg_probes as f64
+    };
+
+    println!("[403] --- aggregate ---");
+    println!("[403] keystrokes = {}", total_keystrokes);
+    println!("[403] windows    = {}", agg_windows);
+    println!("[403] paths      = {}", agg_paths);
+    println!("[403] probes     = {}", agg_probes);
+    println!("[403] unique paths  = {}", unique_paths);
+    println!("[403] unique probes = {}", unique_probes);
+    println!("[403] paths/window   = {:.3}", paths_per_window);
+    println!("[403] probes/window  = {:.3}", probes_per_window);
+    println!("[403] unique/paths   = {:.3}", unique_ratio);
+    println!("[403] unique/probes  = {:.3}", unique_probe_ratio);
+    println!("[403] matrix_entries_total = {}", agg_matrix_entries);
+    println!(
+        "[403] paths hist: 1x={} 2x={} 3x={} 4x={} 5+x={}",
+        seen_1x, seen_2x, seen_3x, seen_4x, seen_5plus
+    );
+    println!(
+        "[403] probes hist: 1x={} 2x={} 3x={} 4x={} 5+x={}",
+        probe_seen_1x, probe_seen_2x, probe_seen_3x, probe_seen_4x, probe_seen_5plus,
+    );
+    println!(
+        "[403-JSON] {{\"keystrokes\":{},\"windows\":{},\"paths\":{},\"probes\":{},\
+         \"unique_paths\":{},\"unique_probes\":{},\
+         \"paths_per_window\":{:.6},\"probes_per_window\":{:.6},\
+         \"unique_paths_ratio\":{:.6},\"unique_probes_ratio\":{:.6},\
+         \"matrix_entries\":{},\
+         \"paths_hist\":{{\"1x\":{},\"2x\":{},\"3x\":{},\"4x\":{},\"5+x\":{}}},\
+         \"probes_hist\":{{\"1x\":{},\"2x\":{},\"3x\":{},\"4x\":{},\"5+x\":{}}}}}",
+        total_keystrokes,
+        agg_windows,
+        agg_paths,
+        agg_probes,
+        unique_paths,
+        unique_probes,
+        paths_per_window,
+        probes_per_window,
+        unique_ratio,
+        unique_probe_ratio,
+        agg_matrix_entries,
+        seen_1x,
+        seen_2x,
+        seen_3x,
+        seen_4x,
+        seen_5plus,
+        probe_seen_1x,
+        probe_seen_2x,
+        probe_seen_3x,
+        probe_seen_4x,
+        probe_seen_5plus,
+    );
+}
