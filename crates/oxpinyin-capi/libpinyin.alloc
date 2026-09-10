@@ -34,17 +34,33 @@
 #                  (libc `malloc`), and `g_strfreev` g_free's each.
 #     borrowed     owned by the context or instance and released with it.
 #                  The caller must never free it.
-#   <notes>  comma-separated, or `-`. What the slot holds when the call
-#            answers `false` — the part of the contract a consumer gets
-#            wrong silently:
-#     false-allocates  the call can return `false` HAVING ALLOCATED, so a
-#                      consumer that frees only on `true` leaks. Upstream
-#                      parity, not an oxpinyin choice (`pinyin.cpp:3382-
-#                      3386, 3442-3445`).
-#     false-nulls      the out-param is NULL on every `false` return.
-#     false-untouched  the out-param may be left as the caller set it, so
-#                      the caller must initialize it to NULL.
-#     n/a              not applicable (the slot is a return value).
+#   <notes>  What the slot holds when the call answers `false` — the part
+#            of the contract a consumer gets wrong silently. Each value is
+#            EXECUTABLE: `tools/abi/alloc-pairing-*.cc` drives the failure
+#            path and asserts the stated state, and the gate rejects a
+#            register entry whose contract was never probed. "Reachable"
+#            means reachable by a CONFORMING consumer — valid handles and
+#            in-contract arguments, an empty parse or an exhausted
+#            iterator — never a NULL-argument refusal, which is caller
+#            misuse and where the pin would simply crash.
+#     false-allocates    the call can return `false` HAVING ALLOCATED, so a
+#                        consumer that frees only on `true` leaks. Upstream
+#                        parity, not an oxpinyin choice (`pinyin.cpp:3382-
+#                        3386, 3442-3445`).
+#     false-nulls        the out-param is NULL on the reachable `false`.
+#     false-untouched    the out-param is left as the caller set it, so the
+#                        caller must initialize it.
+#     false-unreachable  the call has failure paths, but none a conforming
+#                        consumer can reach, so no out-param state is
+#                        claimed. An explicit claim about reachability, not
+#                        a skip: challenge it in review like any other.
+#     n/a                the slot is a return value.
+#
+# Corrected 2026-09-10 when the notes became executable: six slots were
+# described from a reading of the code rather than from running it, and
+# three of those were wrong — pinyin_get_candidate, pinyin_get_pinyin_key
+# and pinyin_get_pinyin_key_rest all NULL their out-param on the reachable
+# refusal, where this file said they left it untouched.
 
 # ── Handles: allocated by Box::into_raw, released by their destructor ──
 pinyin_init                              return      handle:pinyin_fini            n/a
@@ -57,24 +73,25 @@ pinyin_begin_get_bigram_phrases          return      handle:pinyin_end_get_bigra
 # The context the instance was allocated from — the same pointer
 # `pinyin_init` returned, not a second handle.
 pinyin_get_context                       return      borrowed                      n/a
-pinyin_get_candidate                     candidate   borrowed                      false-untouched
-pinyin_get_candidate_string              utf8_str    borrowed                      false-untouched
-pinyin_get_pinyin_key                    key         borrowed                      false-untouched
-pinyin_get_pinyin_key_rest               key_rest    borrowed                      false-untouched
+pinyin_get_candidate                     candidate   borrowed                      false-nulls
+pinyin_get_candidate_string              utf8_str    borrowed                      false-unreachable
+pinyin_get_pinyin_key                    key         borrowed                      false-nulls
+pinyin_get_pinyin_key_rest               key_rest    borrowed                      false-nulls
 
 # ── Caller-owned strings (g_free) ─────────────────────────────────────
 pinyin_get_sentence                      sentence    g_free                        false-nulls
 pinyin_get_full_pinyin_auxiliary_text    aux_text    g_free                        false-allocates
 pinyin_get_double_pinyin_auxiliary_text  aux_text    g_free                        false-allocates
 pinyin_get_chewing_auxiliary_text        aux_text    g_free                        false-allocates
-pinyin_get_pinyin_string                 utf8_str    g_free                        false-nulls
-pinyin_get_zhuyin_string                 utf8_str    g_free                        false-nulls
-pinyin_get_luoma_pinyin_string           utf8_str    g_free                        false-nulls
-pinyin_get_secondary_zhuyin_string       utf8_str    g_free                        false-nulls
-# The one g_free slot pair that does NOT null on `false`: the
-# table_index == 0 refusal returns before either out-param is written.
-pinyin_get_pinyin_strings                shengmu     g_free                        false-untouched
-pinyin_get_pinyin_strings                yunmu       g_free                        false-untouched
+pinyin_get_pinyin_string                 utf8_str    g_free                        false-unreachable
+pinyin_get_zhuyin_string                 utf8_str    g_free                        false-unreachable
+pinyin_get_luoma_pinyin_string           utf8_str    g_free                        false-unreachable
+pinyin_get_secondary_zhuyin_string       utf8_str    g_free                        false-unreachable
+# The table_index == 0 refusal, the only non-NULL-argument `false` these
+# reach, needs an unset ChewingKey — and `ChewingKey` is an opaque typedef,
+# so a conforming consumer cannot make one. Unreachable, not unclaimed.
+pinyin_get_pinyin_strings                shengmu     g_free                        false-unreachable
+pinyin_get_pinyin_strings                yunmu       g_free                        false-unreachable
 pinyin_token_get_phrase                  utf8_str    g_free                        false-nulls
 # Both iterators answer `false` at exhaustion without writing, so the
 # loop must not free what it did not receive.

@@ -71,6 +71,24 @@ risk a parity regression for no memory-safety gain. The register records it as
 initialize every out-param to NULL, which is the consumer-side discipline that
 makes the difference invisible.
 
+**(c) Three of the audit's own out-param notes were wrong.** Recorded here
+because it is the point of the mechanism, not an aside: §3's fourth field
+began as prose derived from *reading* the code. When the gate was extended to
+*execute* those notes — drive each reachable failure path and assert the
+stated out-param state — three of them failed immediately.
+`pinyin_get_candidate`, `pinyin_get_pinyin_key` and
+`pinyin_get_pinyin_key_rest` (and their zhuyin twins) all NULL their
+out-param on the reachable refusal, where the register had said they left it
+untouched. A consumer trusting the prose would have initialized to NULL and
+been fine; one relying on "untouched" to keep a previous value would not.
+Six further slots were reclassified `false-unreachable`: their only
+non-NULL-argument `false` needs an unset `ChewingKey`, and `ChewingKey` is an
+opaque typedef, so a conforming consumer cannot fabricate one.
+
+The general lesson is the one this document exists to make mechanical: a
+register that is only read is a register that drifts. The notes are now
+executable, and the gate rejects any entry whose contract was never probed.
+
 ## 3. The gate
 
 `tools/abi/check-alloc-pairing.sh`, run in CI's `test` job beside the two
@@ -112,7 +130,29 @@ Three checks, then a control:
      allocate at first use are not the gate's subject. A leak reported in the
      second pass is a *per-call* leak — the kind a consumer accumulates one
      keystroke at a time. No suppression file, and so no risk of one growing
-     broad enough to hide a real leak.
+     broad enough to hide a real leak. Coverage is **cleared between the two
+     passes**: a slot the warm-up reached had no leak check run against it,
+     so carrying its bit forward would report coverage the measured pass
+     never earned.
+   - **No driver/register drift.** Each driver echoes the register's own
+     class and note back with every slot, and the script compares the whole
+     four-field entry rather than the symbol and slot name alone. A class
+     flipped from `handle:pinyin_fini` to `borrowed`, a renamed destructor,
+     or an edited note fails here instead of passing because the key still
+     lines up.
+   - **The notes are executable.** For every slot whose note is not `n/a` or
+     `false-unreachable`, the driver drives a failure path a *conforming*
+     consumer can reach — an empty parse, an out-of-range index, an
+     exhausted iterator, an unmapped key, `null_token` — and asserts the
+     state the register declares. Which assertion runs is read from the slot
+     table, never chosen at the call site, so a note that does not match the
+     library fails rather than being echoed back unchallenged. NULL-argument
+     refusals are deliberately not probed: that is caller misuse, and where
+     the pin would simply crash. A slot the driver never probes fails the
+     gate as `unprobed false-return contract`; `false-unreachable` is the one
+     way out, and it is an explicit, reviewable claim rather than a silent
+     omission — the driver fails too if it *does* reach a path the register
+     calls unreachable.
 4. **A negative control.** Each driver is built a second time with
    `-DOXPINYIN_ALLOC_PAIRING_LEAK`, which drops the frees, and that build is
    *required* to fail with a LeakSanitizer report. A sanitizer that silently
@@ -145,6 +185,11 @@ reverted afterwards; each is reproducible from the description alone:
 | point a handle at a destructor the `.ver` does not export | check 3's static half | `FAIL: … which libpinyin.ver does not export` |
 | a stray `owned_cstr` in `pinyin_get_full_pinyin_auxiliary_text` | a per-call leak, attributed to Rust source | `Direct leak of 27 byte(s) … in owned_cstr crates/oxpinyin-capi/src/ffi.rs:97` |
 | `g_free` on the borrowed candidate string | an invalid free | `AddressSanitizer: attempting double-free` |
+| flip a class in the register only | driver/register drift | `FAIL: driver/register drift`, naming the whole entry |
+| restore §2(c)'s original `false-untouched` note on `pinyin_get_candidate`, in the register *and* the driver | the probe rejects it | `is declared false-untouched but the out-param was NULLed` |
+| mark a probed slot `false-unreachable` | the reachability claim is contradicted | `the driver probed a failure path the register calls unreachable` |
+| delete one probe call | its note is prose again | `FAIL: unprobed false-return contract`, naming the slot |
+| run one exercise during the warm-up only | the measured pass earns no coverage for it | `slots the driver never reached with a live pointer: pinyin_in_chewing_keyboard symbols` |
 
 ## 5. What this does not cover
 

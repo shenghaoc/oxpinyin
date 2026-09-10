@@ -13,16 +13,20 @@
 // Two properties beyond "it did not crash":
 //
 //   Coverage. Every slot reports whether it was actually reached with a
-//   non-NULL pointer (`--coverage` prints one SLOT line per slot, and the
-//   script requires the set to equal the register's and every line to say
-//   `hit`). Without that a gate stays green by never exercising the
-//   allocation it claims to check.
+//   non-NULL pointer, and whether its false-return contract was probed
+//   (`--coverage` prints one SLOT line per slot carrying the register's own
+//   class and note, and the script requires the whole entry to match the
+//   register and every line to say `hit`). Without that a gate stays green
+//   by never exercising the allocation it claims to check — and a register
+//   line could drift from what the driver actually does.
 //
 //   Attribution. The whole lifecycle runs twice. The first pass runs inside
 //   __lsan_disable(), so the one-time statics the backend and glib allocate
 //   at first use are not this gate's subject; the second pass runs live, and
 //   a leak reported there is a PER-CALL leak — the kind a real consumer
-//   accumulates one keystroke at a time.
+//   accumulates one keystroke at a time. Coverage is CLEARED between the two
+//   passes: a slot reached only during the warm-up had no leak check run
+//   against it, so counting it as covered would overstate what was proven.
 //
 // Built with -DOXPINYIN_ALLOC_PAIRING_LEAK the TU deliberately drops one
 // free. The script builds that variant too and requires it to FAIL: an
@@ -39,47 +43,68 @@
 
 namespace {
 
-// One entry per line of crates/oxpinyin-capi/libpinyin.alloc. The names are
-// the register's two key fields; the script compares this set against the
-// file, so a register line with no slot here (or the reverse) fails the gate.
+// One entry per line of crates/oxpinyin-capi/libpinyin.alloc, carrying all
+// four of the register's fields. The script compares the whole entry, so a
+// register change the driver does not follow — a class flipped from
+// `handle:pinyin_fini` to `borrowed`, a destructor renamed, a false-note
+// edited — fails the gate rather than passing unnoticed.
 struct Slot {
     const char *symbol;
     const char *name;
+    const char *cls;       // handle:<fn> | g_free | g_strfreev | borrowed
+    const char *on_false;  // n/a | false-allocates | false-nulls
+                           // | false-untouched | false-unreachable
 };
 
 // clang-format off
 const Slot kSlots[] = {
-    {"pinyin_init",                             "return"},
-    {"pinyin_alloc_instance",                   "return"},
-    {"pinyin_begin_add_phrases",                "return"},
-    {"pinyin_begin_get_phrases",                "return"},
-    {"pinyin_begin_get_bigram_phrases",         "return"},
-    {"pinyin_get_context",                      "return"},
-    {"pinyin_get_candidate",                    "candidate"},
-    {"pinyin_get_candidate_string",             "utf8_str"},
-    {"pinyin_get_pinyin_key",                   "key"},
-    {"pinyin_get_pinyin_key_rest",              "key_rest"},
-    {"pinyin_get_sentence",                     "sentence"},
-    {"pinyin_get_full_pinyin_auxiliary_text",   "aux_text"},
-    {"pinyin_get_double_pinyin_auxiliary_text", "aux_text"},
-    {"pinyin_get_chewing_auxiliary_text",       "aux_text"},
-    {"pinyin_get_pinyin_string",                "utf8_str"},
-    {"pinyin_get_zhuyin_string",                "utf8_str"},
-    {"pinyin_get_luoma_pinyin_string",          "utf8_str"},
-    {"pinyin_get_secondary_zhuyin_string",      "utf8_str"},
-    {"pinyin_get_pinyin_strings",               "shengmu"},
-    {"pinyin_get_pinyin_strings",               "yunmu"},
-    {"pinyin_token_get_phrase",                 "utf8_str"},
-    {"pinyin_iterator_get_next_phrase",         "phrase"},
-    {"pinyin_iterator_get_next_phrase",         "pinyin"},
-    {"pinyin_bigram_iterator_get_next_phrase",  "phrase"},
-    {"pinyin_bigram_iterator_get_next_phrase",  "pinyin"},
-    {"pinyin_in_chewing_keyboard",              "symbols"},
+    {"pinyin_init",                             "return",    "handle:pinyin_fini",                  "n/a"},
+    {"pinyin_alloc_instance",                   "return",    "handle:pinyin_free_instance",         "n/a"},
+    {"pinyin_begin_add_phrases",                "return",    "handle:pinyin_end_add_phrases",       "n/a"},
+    {"pinyin_begin_get_phrases",                "return",    "handle:pinyin_end_get_phrases",       "n/a"},
+    {"pinyin_begin_get_bigram_phrases",         "return",    "handle:pinyin_end_get_bigram_phrases", "n/a"},
+    {"pinyin_get_context",                      "return",    "borrowed",                            "n/a"},
+    {"pinyin_get_candidate",                    "candidate", "borrowed",                            "false-nulls"},
+    {"pinyin_get_candidate_string",             "utf8_str",  "borrowed",                            "false-unreachable"},
+    {"pinyin_get_pinyin_key",                   "key",       "borrowed",                            "false-nulls"},
+    {"pinyin_get_pinyin_key_rest",              "key_rest",  "borrowed",                            "false-nulls"},
+    {"pinyin_get_sentence",                     "sentence",  "g_free",                              "false-nulls"},
+    {"pinyin_get_full_pinyin_auxiliary_text",   "aux_text",  "g_free",                              "false-allocates"},
+    {"pinyin_get_double_pinyin_auxiliary_text", "aux_text",  "g_free",                              "false-allocates"},
+    {"pinyin_get_chewing_auxiliary_text",       "aux_text",  "g_free",                              "false-allocates"},
+    {"pinyin_get_pinyin_string",                "utf8_str",  "g_free",                              "false-unreachable"},
+    {"pinyin_get_zhuyin_string",                "utf8_str",  "g_free",                              "false-unreachable"},
+    {"pinyin_get_luoma_pinyin_string",          "utf8_str",  "g_free",                              "false-unreachable"},
+    {"pinyin_get_secondary_zhuyin_string",      "utf8_str",  "g_free",                              "false-unreachable"},
+    {"pinyin_get_pinyin_strings",               "shengmu",   "g_free",                              "false-unreachable"},
+    {"pinyin_get_pinyin_strings",               "yunmu",     "g_free",                              "false-unreachable"},
+    {"pinyin_token_get_phrase",                 "utf8_str",  "g_free",                              "false-nulls"},
+    {"pinyin_iterator_get_next_phrase",         "phrase",    "g_free",                              "false-untouched"},
+    {"pinyin_iterator_get_next_phrase",         "pinyin",    "g_free",                              "false-untouched"},
+    {"pinyin_bigram_iterator_get_next_phrase",  "phrase",    "g_free",                              "false-untouched"},
+    {"pinyin_bigram_iterator_get_next_phrase",  "pinyin",    "g_free",                              "false-untouched"},
+    {"pinyin_in_chewing_keyboard",              "symbols",   "g_strfreev",                          "false-nulls"},
 };
 // clang-format on
 
 constexpr size_t kSlotCount = sizeof(kSlots) / sizeof(kSlots[0]);
 bool g_hit[kSlotCount];
+bool g_false_checked[kSlotCount];
+bool g_contract_broken = false;
+
+// Cleared between the warm-up and the measured pass: only what the measured
+// pass reached had a leak check run against it.
+void reset_coverage() {
+    for (size_t i = 0; i < kSlotCount; ++i) {
+        g_hit[i] = false;
+        g_false_checked[i] = false;
+    }
+}
+
+// A non-heap address a `false-untouched` probe can leave in an out-param and
+// recognise afterwards. Never dereferenced and never freed.
+char g_sentinel_byte = 0;
+gchar *const kSentinel = reinterpret_cast<gchar *>(&g_sentinel_byte);
 
 // `SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY`, the
 // sort mask every in-tree driver uses.
@@ -105,6 +130,85 @@ void mark(const char *symbol, const char *name, const void *ptr) {
     if (id < kSlotCount) {
         g_hit[id] = true;
     }
+}
+
+// ── False-return contracts ───────────────────────────────────────────
+//
+// The register's fourth field is the part of the contract a consumer gets
+// wrong silently: what an out-param holds when the call answers `false`.
+// These probes make it executable. Each drives a failure path a CONFORMING
+// consumer can reach — valid handles, in-contract arguments, an empty parse
+// or an exhausted iterator — never a NULL-argument refusal, which is caller
+// misuse and where the pin would simply crash.
+
+void contract_failed(const char *symbol, const char *name, const char *want,
+                     const char *saw) {
+    std::fprintf(stderr, "FAIL: %s/%s is declared %s but %s\n", symbol, name, want, saw);
+    std::fflush(stderr);
+    g_contract_broken = true;
+}
+
+// Applies whatever the REGISTER declares for this slot — the note is read
+// from the slot table, never chosen at the call site, so editing a note to
+// something the library does not do fails here instead of being echoed back
+// unchallenged.
+//
+// `out` is the out-param's value after the probed call; the caller pre-sets
+// it to kSentinel so "left alone" is distinguishable from "written NULL".
+// Returns the buffer when the declaration is `false-allocates`, so the
+// caller can release it through the register's deallocator; nullptr
+// otherwise.
+void *expect_declared(const char *symbol, const char *name, bool ret, void *out) {
+    const size_t id = slot_id(symbol, name);
+    if (id >= kSlotCount) {
+        return nullptr;
+    }
+    const char *want = kSlots[id].on_false;
+
+    if (std::strcmp(want, "n/a") == 0 || std::strcmp(want, "false-unreachable") == 0) {
+        contract_failed(symbol, name, want,
+                        "the driver probed a failure path the register calls unreachable");
+        return nullptr;
+    }
+    if (ret) {
+        contract_failed(symbol, name, want, "the probed call returned true");
+        return nullptr;
+    }
+
+    if (std::strcmp(want, "false-nulls") == 0) {
+        if (out == kSentinel) {
+            contract_failed(symbol, name, want, "the out-param was left untouched");
+        } else if (out != nullptr) {
+            contract_failed(symbol, name, want, "the out-param was left non-NULL");
+        } else {
+            g_false_checked[id] = true;
+        }
+        return nullptr;
+    }
+    if (std::strcmp(want, "false-untouched") == 0) {
+        if (out != kSentinel) {
+            contract_failed(symbol, name, want,
+                            out == nullptr ? "the out-param was NULLed"
+                                           : "the out-param was written");
+        } else {
+            g_false_checked[id] = true;
+        }
+        return nullptr;
+    }
+    if (std::strcmp(want, "false-allocates") == 0) {
+        if (out == kSentinel) {
+            contract_failed(symbol, name, want, "the out-param was left untouched");
+            return nullptr;
+        }
+        if (out == nullptr) {
+            contract_failed(symbol, name, want, "the out-param was NULL");
+            return nullptr;
+        }
+        g_false_checked[id] = true;
+        return out;
+    }
+    contract_failed(symbol, name, want, "that is not a note this driver understands");
+    return nullptr;
 }
 
 // A `g_free` slot: record that the pointer was really produced, then release
@@ -172,11 +276,8 @@ void exercise_key_strings(pinyin_instance_t *instance) {
     release_g_free("pinyin_get_pinyin_strings", "yunmu", yunmu);
 }
 
-// The three auxiliary-text getters, each called TWICE: once over a live
-// parse, and once after pinyin_reset. The second call is the point of the
-// exercise — the register marks these `false-allocates`, so the reset call
-// returns false having allocated an empty string, and a consumer that frees
-// only on `true` leaks one buffer per keystroke.
+// The three auxiliary-text getters over a live parse. Their `false` half is
+// a register contract (`false-allocates`) and lives in probe_false_contracts.
 void exercise_auxiliary_text(pinyin_instance_t *instance) {
     gchar *aux = nullptr;
     pinyin_get_full_pinyin_auxiliary_text(instance, 2, &aux);
@@ -188,20 +289,6 @@ void exercise_auxiliary_text(pinyin_instance_t *instance) {
 
     aux = nullptr;
     pinyin_get_chewing_auxiliary_text(instance, 2, &aux);
-    release_g_free("pinyin_get_chewing_auxiliary_text", "aux_text", aux);
-
-    pinyin_reset(instance);
-
-    aux = nullptr;
-    pinyin_get_full_pinyin_auxiliary_text(instance, 0, &aux);
-    release_g_free("pinyin_get_full_pinyin_auxiliary_text", "aux_text", aux);
-
-    aux = nullptr;
-    pinyin_get_double_pinyin_auxiliary_text(instance, 0, &aux);
-    release_g_free("pinyin_get_double_pinyin_auxiliary_text", "aux_text", aux);
-
-    aux = nullptr;
-    pinyin_get_chewing_auxiliary_text(instance, 0, &aux);
     release_g_free("pinyin_get_chewing_auxiliary_text", "aux_text", aux);
 }
 
@@ -333,6 +420,16 @@ void exercise_iterators(pinyin_context_t *context) {
             release_g_free("pinyin_iterator_get_next_phrase", "phrase", phrase);
             release_g_free("pinyin_iterator_get_next_phrase", "pinyin", pinyin);
         }
+        // Exhaustion is the reachable failure path: one more call must
+        // answer false without writing either out-param, so the consumer
+        // loop does not free what it never received.
+        gchar *phrase = kSentinel;
+        gchar *pinyin = kSentinel;
+        gint count = 0;
+        const bool more =
+            pinyin_iterator_get_next_phrase(export_iter, &phrase, &pinyin, &count);
+        expect_declared("pinyin_iterator_get_next_phrase", "phrase", more, phrase);
+        expect_declared("pinyin_iterator_get_next_phrase", "pinyin", more, pinyin);
         pinyin_end_get_phrases(export_iter);
     }
 
@@ -350,7 +447,88 @@ void exercise_iterators(pinyin_context_t *context) {
             release_g_free("pinyin_bigram_iterator_get_next_phrase", "phrase", phrase);
             release_g_free("pinyin_bigram_iterator_get_next_phrase", "pinyin", pinyin);
         }
+        gchar *phrase = kSentinel;
+        gchar *pinyin = kSentinel;
+        gint count = 0;
+        const bool more =
+            pinyin_bigram_iterator_get_next_phrase(bigram_iter, &phrase, &pinyin, &count);
+        expect_declared("pinyin_bigram_iterator_get_next_phrase", "phrase", more, phrase);
+        expect_declared("pinyin_bigram_iterator_get_next_phrase", "pinyin", more, pinyin);
         pinyin_end_get_bigram_phrases(bigram_iter);
+    }
+}
+
+// Every reachable false-return contract, driven from an empty parse. Runs
+// last in the lifecycle because it resets the instance.
+//
+// The `false-unreachable` slots are absent by construction: `ChewingKey` is
+// an opaque typedef, so a conforming consumer cannot fabricate the unset key
+// that is the only non-NULL-argument way into those refusals, and
+// pinyin_get_candidate_string answers true for every candidate the ABI
+// hands out. Those notes are a claim about reachability, and the script
+// requires them to be spelled `false-unreachable` rather than silently
+// skipped.
+void probe_false_contracts(pinyin_instance_t *instance) {
+    pinyin_reset(instance);
+
+    // false-allocates: an empty matrix answers false HAVING allocated an
+    // empty string (upstream's shape). Freeing on the false path is the
+    // whole point, so each buffer goes back through g_free.
+    // The three auxiliary-text getters: an empty matrix answers false
+    // HAVING allocated an empty string (upstream's shape). Freeing on the
+    // false path is the whole point, so each buffer goes back through
+    // g_free — expect_declared hands it back when the register says
+    // `false-allocates`.
+    gchar *aux = kSentinel;
+    bool ok = pinyin_get_full_pinyin_auxiliary_text(instance, 0, &aux);
+    release_g_free("pinyin_get_full_pinyin_auxiliary_text", "aux_text",
+                   static_cast<gchar *>(expect_declared(
+                       "pinyin_get_full_pinyin_auxiliary_text", "aux_text", ok, aux)));
+
+    aux = kSentinel;
+    ok = pinyin_get_double_pinyin_auxiliary_text(instance, 0, &aux);
+    release_g_free("pinyin_get_double_pinyin_auxiliary_text", "aux_text",
+                   static_cast<gchar *>(expect_declared(
+                       "pinyin_get_double_pinyin_auxiliary_text", "aux_text", ok, aux)));
+
+    aux = kSentinel;
+    ok = pinyin_get_chewing_auxiliary_text(instance, 0, &aux);
+    release_g_free("pinyin_get_chewing_auxiliary_text", "aux_text",
+                   static_cast<gchar *>(expect_declared("pinyin_get_chewing_auxiliary_text",
+                                                        "aux_text", ok, aux)));
+
+    // Nothing to decode, no key at any offset, no candidate at any index,
+    // no phrase behind null_token.
+    gchar *sentence = kSentinel;
+    ok = pinyin_get_sentence(instance, 0, &sentence);
+    expect_declared("pinyin_get_sentence", "sentence", ok, sentence);
+
+    lookup_candidate_t *candidate = reinterpret_cast<lookup_candidate_t *>(kSentinel);
+    ok = pinyin_get_candidate(instance, 0, &candidate);
+    expect_declared("pinyin_get_candidate", "candidate", ok, candidate);
+
+    ChewingKey *key = reinterpret_cast<ChewingKey *>(kSentinel);
+    ok = pinyin_get_pinyin_key(instance, 0, &key);
+    expect_declared("pinyin_get_pinyin_key", "key", ok, key);
+
+    ChewingKeyRest *key_rest = reinterpret_cast<ChewingKeyRest *>(kSentinel);
+    ok = pinyin_get_pinyin_key_rest(instance, 0, &key_rest);
+    expect_declared("pinyin_get_pinyin_key_rest", "key_rest", ok, key_rest);
+
+    guint len = 0;
+    gchar *utf8 = kSentinel;
+    ok = pinyin_token_get_phrase(instance, null_token, &len, &utf8);
+    expect_declared("pinyin_token_get_phrase", "utf8_str", ok, utf8);
+
+    // The first ASCII key the active scheme does not map.
+    for (char probe = 0x21; probe < 0x7f; ++probe) {
+        gchar **symbols = reinterpret_cast<gchar **>(kSentinel);
+        if (pinyin_in_chewing_keyboard(instance, probe, &symbols)) {
+            release_g_strfreev("pinyin_in_chewing_keyboard", "symbols", symbols);
+            continue;
+        }
+        expect_declared("pinyin_in_chewing_keyboard", "symbols", false, symbols);
+        break;
     }
 }
 
@@ -395,6 +573,7 @@ int lifecycle(const char *systemdir, const char *userdir) {
 
     exercise_auxiliary_text(instance);
     exercise_iterators(context);
+    probe_false_contracts(instance);
 
     pinyin_free_instance(instance);
     pinyin_fini(context);
@@ -422,6 +601,13 @@ int main(int argc, char **argv) {
         return warm;
     }
 
+    // Whatever the warm-up reached, it reached with the leak check disabled;
+    // carrying those bits forward would report coverage the measured pass
+    // never earned. The contract probes are cleared with them, and a
+    // contract broken during the warm-up still stands — it is a property of
+    // the library, not of which pass observed it.
+    reset_coverage();
+
     // Pass 2: the same lifecycle, live. Anything still held here was
     // allocated and not released by the declared deallocator.
     const int rc = lifecycle(argv[1], argv[2]);
@@ -432,12 +618,22 @@ int main(int argc, char **argv) {
 
     if (coverage) {
         for (size_t i = 0; i < kSlotCount; ++i) {
-            std::printf("SLOT %s %s %s\n", kSlots[i].symbol, kSlots[i].name,
-                        g_hit[i] ? "hit" : "miss");
+            const char *probed = "n-a";
+            if (std::strcmp(kSlots[i].on_false, "false-unreachable") == 0) {
+                probed = "unreachable";
+            } else if (std::strcmp(kSlots[i].on_false, "n/a") != 0) {
+                probed = g_false_checked[i] ? "checked" : "unchecked";
+            }
+            std::printf("SLOT %s %s %s %s %s %s\n", kSlots[i].symbol, kSlots[i].name,
+                        kSlots[i].cls, kSlots[i].on_false, g_hit[i] ? "hit" : "miss", probed);
         }
         std::fflush(stdout);
     }
 
+    if (g_contract_broken) {
+        std::fprintf(stderr, "FAIL: a declared false-return contract does not hold\n");
+        return 11;
+    }
     if (__lsan_do_recoverable_leak_check() != 0) {
         std::fprintf(stderr, "FAIL: LeakSanitizer reported a per-call leak\n");
         return 10;
