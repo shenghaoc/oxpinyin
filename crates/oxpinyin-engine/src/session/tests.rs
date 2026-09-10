@@ -21,13 +21,13 @@ fn ignored_type_input_preserves_exact_mode() {
         session.type_pinyin("  ").expect("ignored input"),
         KeyOutcome::Ignored
     );
-    assert!(session.exact_segments.len() == 2);
+    assert!(session.input.exact().len() == 2);
     // An accepted character does exit exact mode.
     assert_eq!(
         session.type_pinyin("h").expect("typed"),
         KeyOutcome::Consumed
     );
-    assert!(session.exact_segments.is_empty());
+    assert!(session.input.exact().is_empty());
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn a_rejected_character_preserves_exact_mode_and_backspace_clears_it() {
         KeyOutcome::Consumed
     );
     assert!(
-        session.exact_segments.is_empty(),
+        session.input.exact().is_empty(),
         "erase must drop the exact chain"
     );
 }
@@ -89,7 +89,7 @@ fn an_anchor_inside_an_exact_segment_decodes_nothing() {
         .expect("replace");
     // Anchor 1 sits inside the `ni` segment: the tail `hao` must not
     // decode across the skipped `i'` bytes.
-    let raw = session.raw.clone();
+    let raw = session.input.as_str().to_owned();
     let graph = session
         .build_graph_at(1, &raw.as_bytes()[1..])
         .expect("anchor inside a segment answers an empty graph");
@@ -615,7 +615,7 @@ fn a_fallback_sentence_never_records_row_tokens() {
     // One authored row whose text differs from the DP sentence the
     // fallback list also offers, so a fallback sentence candidate sits
     // beyond the row at a known place.
-    session.nbest_rows = vec![NbestRow {
+    session.sentence.rows = vec![NbestRow {
         text: "\u{884}".into(),
         tokens: vec![PhraseToken::new(9)],
         spans: Vec::new(),
@@ -641,7 +641,7 @@ fn a_fallback_sentence_never_records_row_tokens() {
     // row zero's tokens.
     session.reset();
     session.type_pinyin("nihao").expect("typing cannot fail");
-    session.nbest_rows = vec![NbestRow {
+    session.sentence.rows = vec![NbestRow {
         text: "\u{884}".into(),
         tokens: vec![PhraseToken::new(9)],
         spans: Vec::new(),
@@ -658,7 +658,7 @@ fn a_fallback_sentence_never_records_row_tokens() {
                 && candidate.text() == "\u{4f60}\u{597d}"
         })
         .expect("the fallback sentence is offered beyond the row");
-    assert!(fallback >= session.nbest_rows.len());
+    assert!(fallback >= session.sentence.rows.len());
     session.select(fallback).expect("the index is live");
     assert!(
         session.selected_tokens().is_empty(),
@@ -677,7 +677,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
     // and drops row 1, so the surviving 浩 row sits at list position 1
     // while its rank is 2 — the shape a positional record gets wrong
     // (the 你→浩 training divergence, `sentence-surface.md` §8).
-    session.nbest_rows = vec![
+    session.sentence.rows = vec![
         NbestRow {
             text: "\u{597d}".into(),
             tokens: vec![PhraseToken::new(0x100)],
@@ -734,7 +734,7 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
     // full input, so selecting it from a re-anchored window must commit
     // the row's text alone — never the typed-but-unselected gap (which
     // would duplicate the raw prefix).
-    session.nbest_rows = vec![NbestRow {
+    session.sentence.rows = vec![NbestRow {
         text: "你好".into(),
         tokens: vec![PhraseToken::new(0x100), PhraseToken::new(0x101)],
         spans: Vec::new(),
@@ -1985,7 +1985,7 @@ fn a_fresh_composition_row_choose_records_its_forcing() {
     session.type_pinyin("nihao").expect("typing cannot fail");
     // Hand-crafted rows whose rank-1 phrase differs from row 0's —
     // the shifted-row shape (`sentence-surface.md` §8).
-    session.nbest_rows = vec![
+    session.sentence.rows = vec![
         crate::nbest::NbestRow {
             text: "\u{597d}".into(),
             tokens: vec![PhraseToken::new(0x100)],
@@ -2206,7 +2206,7 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
     session
         .type_pinyin("nihaoshijie")
         .expect("typing cannot fail");
-    session.nbest_rows = vec![NbestRow {
+    session.sentence.rows = vec![NbestRow {
         text: "你好世界".into(),
         tokens: vec![
             PhraseToken::new(0x100),
@@ -2261,7 +2261,7 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
     session
         .type_pinyin("nihaoshijie")
         .expect("typing cannot fail");
-    session.nbest_rows = vec![row("你好世界", 10), row("你", 12)];
+    session.sentence.rows = vec![row("你好世界", 10), row("你", 12)];
 
     // Default — the pinyin law: both rows ride the prepend, and the
     // phrase 你 collides with the second row's own text and is dropped.
@@ -2382,7 +2382,7 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
     assert!(at_start.is_empty());
 
     // A guessed sentence rides the prepend at any offset.
-    session.nbest_rows = vec![NbestRow {
+    session.sentence.rows = vec![NbestRow {
         text: "你好".into(),
         tokens: vec![PhraseToken::new(0x100)],
         spans: Vec::new(),

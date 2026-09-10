@@ -53,7 +53,7 @@ where
     /// separator, which only a leading apostrophe run can cause (the walk
     /// never crosses byte 0).
     pub fn normalized_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
-        normalize_lookup_offset(self.raw.as_bytes(), offset)
+        normalize_lookup_offset(self.input.as_bytes(), offset)
     }
 
     /// Normalizes a user cursor position to a lookup offset over the
@@ -68,7 +68,11 @@ where
     /// error: like the pin, the cursor is clamped to the parsed length, so
     /// there is no out-of-range shape here.
     pub fn lookup_offset_for_cursor(&self, cursor: usize) -> Result<usize, EngineError> {
-        crate::cursor::lookup_offset_for_cursor(self.raw.as_bytes(), self.settings.options, cursor)
+        crate::cursor::lookup_offset_for_cursor(
+            self.input.as_bytes(),
+            self.settings.options,
+            cursor,
+        )
     }
 
     /// The word-level left move over the session's own buffer and options
@@ -85,7 +89,7 @@ where
     /// buffer's one-past-end position (upstream reads its matrix out of
     /// bounds there).
     pub fn left_word_offset(&self, offset: usize) -> Result<usize, EngineError> {
-        crate::cursor::left_word_offset(self.raw.as_bytes(), self.settings.options, offset)
+        crate::cursor::left_word_offset(self.input.as_bytes(), self.settings.options, offset)
     }
 
     /// The word-level right move over the session's own buffer and options
@@ -103,7 +107,7 @@ where
     /// buffer's one-past-end position (upstream reads its matrix out of
     /// bounds there).
     pub fn right_word_offset(&self, offset: usize) -> Result<Option<usize>, EngineError> {
-        crate::cursor::right_word_offset(self.raw.as_bytes(), self.settings.options, offset)
+        crate::cursor::right_word_offset(self.input.as_bytes(), self.settings.options, offset)
     }
 
     /// The composition's scan-matrix keys with their raw byte spans.
@@ -118,7 +122,7 @@ where
     /// [`EngineError::Graph`] when the raw buffer cannot be built into a
     /// segment graph.
     pub fn matrix_keys(&self) -> Result<(Vec<crate::cursor::MatrixKey>, usize), EngineError> {
-        crate::cursor::matrix_keys(self.raw.as_bytes(), self.settings.options)
+        crate::cursor::matrix_keys(self.input.as_bytes(), self.settings.options)
     }
 
     /// Lookup byte offset → character count within `phrase` over the
@@ -144,20 +148,17 @@ where
         // builds: pre-parsed scheme segments keep their boundaries and
         // gain no divided/resplit alternates, as every other law over
         // the session's matrix has it.
-        let graph = self.build_graph_at(0, self.raw.as_bytes())?;
+        let graph = self.build_graph_at(0, self.input.as_bytes())?;
         let parsed = graph.consumed();
-        let matrix = build_scan_matrix(
-            &graph,
-            self.settings.options,
-            self.exact_segments.is_empty(),
-        );
+        let matrix =
+            build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
         let keys: Vec<crate::cursor::MatrixKey> = matrix
             .iter()
             .flatten()
             .map(|key| crate::cursor::MatrixKey::new(key.key, key.tone, key.syllable_start, key.to))
             .collect();
         crate::character_offset_over_keys(
-            self.raw.as_bytes(),
+            self.input.as_bytes(),
             parsed,
             &keys,
             true,
@@ -173,7 +174,7 @@ where
     /// A pure query over valid state.
     #[must_use]
     pub const fn selection_committed(&self) -> bool {
-        self.selection_committed
+        self.record.committed()
     }
 
     /// Whether a re-parse of `original` continues the current composition
@@ -199,7 +200,7 @@ where
     /// and the infallible [`Session::reset_composition`] / [`Session::reset`].
     #[must_use]
     pub fn parse_continues(&self, stored: &[u8], original: &[u8]) -> bool {
-        !self.selection_committed
+        !self.record.committed()
             && !stored.is_empty()
             && (original.starts_with(stored) || stored.starts_with(original))
     }
@@ -225,7 +226,7 @@ where
     /// and the infallible [`Session::reset_composition`] / [`Session::reset`].
     #[must_use]
     pub fn committed_parse_continues(&self, stored: &[u8], original: &[u8]) -> bool {
-        self.selection_committed
+        self.record.committed()
             && !stored.is_empty()
             && (original.starts_with(stored) || stored.starts_with(original))
     }
@@ -242,16 +243,16 @@ where
     /// consumed even though no key covers it.
     #[must_use]
     pub fn full_parsed_len(&self) -> usize {
-        if self.raw.is_empty() {
+        if self.input.is_empty() {
             return 0;
         }
         // The exact chain drives the length when a scheme parse owns the
         // buffer: re-segmenting the joined text through the pinyin
         // inventory would under-report zhuyin-only spellings ("den" → 2).
-        self.build_graph_at(0, self.raw.as_bytes())
+        self.build_graph_at(0, self.input.as_bytes())
             .map_or(0, |graph| {
                 apostrophe_extended(
-                    self.raw.as_bytes(),
+                    self.input.as_bytes(),
                     graph
                         .fewest_keys(self.settings.incomplete())
                         .last()
@@ -266,8 +267,8 @@ where
     /// practice; it exists so a future input character class cannot turn a
     /// byte count into a slicing panic.
     pub(super) fn next_boundary(&self, offset: usize) -> usize {
-        let mut offset = offset.min(self.raw.len());
-        while !self.raw.is_char_boundary(offset) {
+        let mut offset = offset.min(self.input.len());
+        while !self.input.is_char_boundary(offset) {
             offset += 1;
         }
         offset

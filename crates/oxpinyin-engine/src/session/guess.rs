@@ -43,14 +43,11 @@ where
     ///
     /// Returns [`EngineError`] when a backend fails during the lookup.
     pub fn guess_sentence(&mut self) -> Result<bool, EngineError> {
-        self.nbest_rows.clear();
-        self.nbest_history.clear();
-        self.last_result.clear();
-        self.sentence_lookup_active = true;
-        if self.raw.is_empty() {
+        self.sentence.begin();
+        if self.input.is_empty() {
             return Ok(false);
         }
-        let remaining_empty = self.consumed >= self.raw.len();
+        let remaining_empty = self.record.consumed() >= self.input.len();
         if !remaining_empty && (!self.constraints.is_active() || !self.model.has_real_unigrams()) {
             return self.guess_over_remaining();
         }
@@ -60,16 +57,13 @@ where
             return Ok(false);
         }
 
-        let graph = self.build_graph_at(0, self.raw.as_bytes())?;
+        let graph = self.build_graph_at(0, self.input.as_bytes())?;
         let bound = graph.consumed();
         if bound == 0 {
             return Ok(false);
         }
-        let matrix = build_scan_matrix(
-            &graph,
-            self.settings.options,
-            self.exact_segments.is_empty(),
-        );
+        let matrix =
+            build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
 
         // `pinyin_update_constraints`: re-sync the store to the matrix —
         // grow with free cells (forcings survive typing), shrink by
@@ -85,7 +79,7 @@ where
             self.rebuild_selection_from_constraints();
         }
 
-        self.nbest_rows = crate::nbest::nbest_sentences(
+        self.sentence.rows = crate::nbest::nbest_sentences(
             &matrix,
             bound,
             &self.dictionary,
@@ -98,9 +92,10 @@ where
         // row's record is its own whole path, so no lookup-time history
         // snapshot stands behind it (the remaining-input walk's §10
         // snapshot-restore pair does not apply).
-        self.nbest_history.clear();
-        self.last_result = self
-            .nbest_rows
+        self.sentence.history.clear();
+        self.sentence.last_result = self
+            .sentence
+            .rows
             .first()
             .map_or_else(Vec::new, |row| row.spans.clone());
 
@@ -141,23 +136,17 @@ where
         &mut self,
         prefix_tokens: &[PhraseToken],
     ) -> Result<bool, EngineError> {
-        self.nbest_rows.clear();
-        self.nbest_history.clear();
-        self.last_result.clear();
-        self.sentence_lookup_active = true;
-        if self.raw.is_empty() {
+        self.sentence.begin();
+        if self.input.is_empty() {
             return Ok(false);
         }
-        let graph = self.build_graph_at(0, self.raw.as_bytes())?;
+        let graph = self.build_graph_at(0, self.input.as_bytes())?;
         let bound = graph.consumed();
         if bound == 0 {
             return Ok(false);
         }
-        let matrix = build_scan_matrix(
-            &graph,
-            self.settings.options,
-            self.exact_segments.is_empty(),
-        );
+        let matrix =
+            build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
 
         let mut store = core::mem::take(&mut self.constraints);
         let dropped = store.validate(bound + 1, |start, end, token| {
@@ -173,7 +162,7 @@ where
         let mut seeds = Vec::with_capacity(prefix_tokens.len() + 1);
         seeds.push(PhraseToken::new(crate::nbest::SENTENCE_START));
         seeds.extend_from_slice(prefix_tokens);
-        self.nbest_rows = crate::nbest::nbest_sentences_with_seeds(
+        self.sentence.rows = crate::nbest::nbest_sentences_with_seeds(
             &matrix,
             bound,
             &self.dictionary,
@@ -182,8 +171,9 @@ where
             Some(&self.constraints),
             self.nbest_shape,
         )?;
-        self.last_result = self
-            .nbest_rows
+        self.sentence.last_result = self
+            .sentence
+            .rows
             .first()
             .map_or_else(Vec::new, |row| row.spans.clone());
 
@@ -196,30 +186,27 @@ where
     /// history, the §10 text prefix, and the lookup-time history
     /// snapshot a later row choice restores.
     pub(super) fn guess_over_remaining(&mut self) -> Result<bool, EngineError> {
-        let remaining = &self.raw[self.consumed..];
+        let remaining = &self.input.as_str()[self.record.consumed()..];
         if remaining.is_empty() {
             return Ok(false);
         }
 
-        let graph = self.build_graph_at(self.consumed, remaining.as_bytes())?;
+        let graph = self.build_graph_at(self.record.consumed(), remaining.as_bytes())?;
         let bound = graph.consumed();
         if bound == 0 {
             return Ok(false);
         }
 
-        let offset = self.consumed;
-        self.nbest_rows = if self.model.has_real_unigrams() {
-            let matrix = build_scan_matrix(
-                &graph,
-                self.settings.options,
-                self.exact_segments.is_empty(),
-            );
+        let offset = self.record.consumed();
+        self.sentence.rows = if self.model.has_real_unigrams() {
+            let matrix =
+                build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
             crate::nbest::nbest_sentences(
                 &matrix,
                 bound,
                 &self.dictionary,
                 &self.model,
-                &self.history,
+                self.record.history(),
                 None,
                 self.nbest_shape,
             )?
@@ -254,22 +241,26 @@ where
         // The rows were seeded with the history as it stands right here;
         // a later row selection restores this snapshot before extending
         // the record with the row's own tokens.
-        self.nbest_history.clone_from(&self.history);
+        self.sentence.history.clear();
+        self.sentence
+            .history
+            .extend_from_slice(self.record.history());
         // The walk's positions are remaining-relative; the store and the
         // train result are absolute.
-        for row in &mut self.nbest_rows {
+        for row in &mut self.sentence.rows {
             for span in &mut row.spans {
                 span.start += offset;
             }
         }
-        self.last_result = self
-            .nbest_rows
+        self.sentence.last_result = self
+            .sentence
+            .rows
             .first()
             .map_or_else(Vec::new, |row| row.spans.clone());
 
-        if !self.selected.is_empty() {
-            for row in &mut self.nbest_rows {
-                let mut full = compact_str::CompactString::from(&self.selected);
+        if !self.record.selected().is_empty() {
+            for row in &mut self.sentence.rows {
+                let mut full = compact_str::CompactString::from(self.record.selected());
                 full.push_str(&row.text);
                 row.text = full;
             }

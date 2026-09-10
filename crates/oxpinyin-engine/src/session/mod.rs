@@ -133,26 +133,12 @@ impl Settings {
 /// silently stops describing the code.
 #[derive(Clone, Debug)]
 pub struct Session<D, L> {
+    // Backends and configuration. Read at construction (and, for the
+    // options, remasked live); never composition state.
     dictionary: D,
     model: L,
     paths: StoragePaths,
     settings: Settings,
-    raw: String,
-    selected: String,
-    consumed: usize,
-    /// Filtered parse length of the remaining input, from the last refresh.
-    parsed_prefix: usize,
-    /// Pre-parsed exact syllables over `raw` — the scheme-parse seam
-    /// (zhuyin, double pinyin). Empty is the full-pinyin mode, where the
-    /// scan parses `raw` itself; non-empty pins the graph to exactly
-    /// these keys, mirroring upstream's decoder receiving the scheme
-    /// parser's `ChewingKey`s (`docs/findings/bopomofo-spec.md` — the
-    /// joined text must never be re-segmented by the pinyin inventory).
-    /// Spans are absolute over the whole `raw` buffer; any input
-    /// replacement re-establishes them wholesale.
-    exact_segments: Vec<ExactSegment>,
-    candidates: CandidateList,
-    history: Vec<PhraseToken>,
     scoring: ScoringConfig,
     /// Per-key costs for the pre-frequency fallback scorer, and **empty
     /// whenever [`LanguageModel::has_real_unigrams`] holds**.
@@ -168,33 +154,28 @@ pub struct Session<D, L> {
     /// allocates instance state and performs no dictionary or model read
     /// (`src/pinyin.cpp:1310-1333` at the pin `0c5e80e1`).
     key_costs: Vec<Cost>,
-    /// Decoded n-best sentence rows, filled by [`Session::guess_sentence`]
-    /// and cleared by [`Session::reset`] — the `m_nbest_results` gate
-    /// (`docs/findings/sentence-surface.md` §1). Empty means no sentence
-    /// has been guessed for the current composition.
-    nbest_rows: Vec<crate::nbest::NbestRow>,
-    /// History snapshot taken beside [`Self::nbest_rows`] when the lookup
-    /// decoded them — the seed context the rows were decoded against.
-    /// Selecting an n-best row restores it before the row's tokens extend
-    /// the record, so a normal selection made between the lookup and the
-    /// row choice leaves no stale token behind — the record-side half of
-    /// the text assign (`docs/findings/sentence-surface.md` §10). Cleared
-    /// wherever `nbest_rows` is.
-    nbest_history: Vec<PhraseToken>,
-    /// Whether a sentence lookup has run for the current composition —
-    /// the half of the `m_nbest_results` gate an empty-but-active lookup
-    /// still satisfies: upstream's `pinyin_guess_sentence` clears the
-    /// results and attempts the search even on an empty key matrix, so a
-    /// later `pinyin_get_sentence` must answer false rather than fall
-    /// back to the pre-lookup raw form.
-    sentence_lookup_active: bool,
-    /// Whether a selection consumed the whole buffer — the commit-branch
-    /// shape. A composition completed by choosing re-parses fresh (the
-    /// frontend's reset-between-compositions contract, the #141 cursor
-    /// flows' pinned rule); a composition the buffer shrank INTO (the
-    /// cursor never moved, the backspace ate the tail) stays open, so a
-    /// re-extension continues it with the surviving forcings.
-    selection_committed: bool,
+    /// Whether the prepended sentence rows collapse onto the 1-best row —
+    /// libzhuyin's display law, set per surface via
+    /// [`Session::set_collapse_sentence_rows_to_best`]; off (the pinyin
+    /// surface's one-row-per-sentence law) by default. Surface config, set
+    /// once and surviving every reset — not part of [`Self::sentence`].
+    collapse_sentence_rows_to_best: bool,
+    /// The n-best trellis's `<nstore, nbest>` — libpinyin's `<2, 3>` by
+    /// default, libzhuyin's `<1, 1>` when a zhuyin facade sets it
+    /// ([`Session::set_nbest_shape`]). Surface config, like
+    /// [`Self::collapse_sentence_rows_to_best`].
+    nbest_shape: crate::nbest::NbestShape,
+
+    // Composition state, decomposed into types that own their invariants.
+    // Each groups the fields that move together, so an operation cannot
+    // reach state that is not meaningful for it — the input buffer without
+    // the cursor, the scan scratch without the selection record.
+    /// The raw input and its pre-parsed scheme chain — the [`MAX_INPUT_BYTES`]
+    /// cap and the exact-mode invariants.
+    input: InputBuffer,
+    /// What the user has chosen so far: text, cursor, token history, and
+    /// the commit-branch flag, kept mutually consistent.
+    record: SelectionRecord,
     /// The §3 constraint store — one cell per raw-buffer byte position,
     /// the coordinate space the scan matrix and the choose cursor share.
     /// Survives `reset_composition` (the parse path) exactly as
@@ -202,40 +183,76 @@ pub struct Session<D, L> {
     /// `pinyin_parse_more_full_pinyins`; cleared only by the full
     /// [`Session::reset`] (`pinyin_reset`'s rule).
     constraints: crate::constraint::ConstraintStore,
-    /// The last sentence lookup's 1-best phrases at their absolute
-    /// positions — upstream's `m_nbest_results[0]`, the result
-    /// `pinyin_train` walks against the constraint store
-    /// (`train_result3`). Cleared wherever the rows are.
-    last_result: Vec<crate::constraint::PhraseSpan>,
-    /// Whether the prepended sentence rows collapse onto the 1-best row —
-    /// libzhuyin's display law, set per surface via
-    /// [`Session::set_collapse_sentence_rows_to_best`]; off (the pinyin
-    /// surface's one-row-per-sentence law) by default.
-    collapse_sentence_rows_to_best: bool,
-    /// The n-best trellis's `<nstore, nbest>` — libpinyin's `<2, 3>` by
-    /// default, libzhuyin's `<1, 1>` when a zhuyin facade sets it
-    /// ([`Session::set_nbest_shape`]).
-    nbest_shape: crate::nbest::NbestShape,
-    /// Reused across keystrokes: the scan's candidate buffer.
-    scratch_collected: Vec<Candidate>,
-    /// Reused Schwartzian buffer for the three-key order.
-    scratch_ranked: Vec<(RankKey, Candidate)>,
-    /// Reused dictionary-hit buffer for one window-scan lookup.
-    scratch_entries: Vec<PhraseEntry>,
-    /// Reused scan path (phrase length ≤ 16).
-    scratch_path: SmallVec<[SyllableKey; 16]>,
-    /// Reused per-window scan batch, default facade.
-    scratch_window_phrase: Vec<Candidate>,
-    /// Reused per-window scan batch, addon facade.
-    scratch_window_addon: Vec<Candidate>,
+    /// The candidate list and the parse length behind it — the output of
+    /// one [`Session::refresh`].
+    lookup: Lookup,
+    /// The last sentence lookup's decoded rows and what a chosen row needs
+    /// — the `m_nbest_results` surface.
+    sentence: SentenceState,
+    /// Reused scan buffers, threaded through one window scan and handed
+    /// straight back — allocation reuse, never observable state.
+    scratch: Scratch,
 }
 
+/// The candidate list and the parse length behind it — the output of one
+/// [`Session::refresh`], anchored at the composition offset.
+#[derive(Clone, Debug, Default)]
+struct Lookup {
+    /// The current candidates, in rank order; sentence rows are prepended
+    /// once [`Session::guess_sentence`] has run for the composition.
+    candidates: CandidateList,
+    /// Filtered parse length of the remaining input from the last refresh
+    /// — the last byte of [`SegmentGraph::fewest_keys`] under the session's
+    /// `incomplete-pinyin` setting, not the unfiltered
+    /// [`SegmentGraph::consumed`].
+    parsed_prefix: usize,
+}
+
+impl Lookup {
+    /// Empties the candidate list and the cached parse length — the
+    /// parse-path reset (`reset_composition`).
+    fn reset(&mut self) {
+        self.candidates = CandidateList::default();
+        self.parsed_prefix = 0;
+    }
+}
+
+/// The window scan's reusable buffers. Taken out of the session for the
+/// duration of one scan so the scan can borrow `&self.input` while it
+/// fills them, then handed straight back. Always cleared before use, so
+/// their contents never carry state between scans.
+#[derive(Clone, Debug, Default)]
+struct Scratch {
+    /// The scan's candidate buffer.
+    collected: Vec<Candidate>,
+    /// Schwartzian buffer for the three-key order.
+    ranked: Vec<(RankKey, Candidate)>,
+    /// Dictionary-hit buffer for one window-scan lookup.
+    entries: Vec<PhraseEntry>,
+    /// One scan path (phrase length ≤ 16).
+    path: SmallVec<[SyllableKey; 16]>,
+    /// Per-window scan batch, default facade.
+    window_phrase: Vec<Candidate>,
+    /// Per-window scan batch, addon facade.
+    window_addon: Vec<Candidate>,
+}
+
+// The composition state is decomposed into types that own their own
+// invariants; each lives in its own module and the session composes them.
+mod buffer;
+mod record;
+mod sentence;
+
+use buffer::InputBuffer;
+use record::SelectionRecord;
+use sentence::SentenceState;
+
 // The `impl Session` is split by concern into the child modules below;
-// each holds one `impl<D, L> Session<D, L>` block over the same private
-// fields (children see the parent's private items) and nothing else.
-// The public surface is unchanged: every method keeps its path
-// `Session::name`. Shared state, constants, free functions and the
-// scan-matrix helpers stay here.
+// each holds one `impl<D, L> Session<D, L>` block over the session's
+// private fields (children see the parent's private items) and nothing
+// else. The public surface is unchanged: every method keeps its path
+// `Session::name`. Shared constants, free functions, the state types
+// above and the scan-matrix helpers stay here.
 mod guess;
 mod input;
 mod lookup;
