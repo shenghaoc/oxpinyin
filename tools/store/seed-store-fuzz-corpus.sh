@@ -9,12 +9,22 @@
 # libFuzzer valid containers to mutate and is what reaches the record
 # decoders behind the header.
 #
-# Seeding is deliberately a separate step, not a CI step. A seeded corpus
-# reproduces a crash on every backend measured so far, inside the
-# container library rather than in oxpinyin code — see
-# `docs/findings/store-file-ingress-fuzzing.md`, which also carries why
-# no lane gates on this target yet. Seed when you are hunting; do not
-# wire this into a lane before that finding is resolved.
+# Seeding is deliberately a separate step, not a CI step. `store-open`
+# itself does run in CI — store-backends.yml's store-file-fuzz job gates
+# on it under the instrumented LMDB peer, and ci.yml's fuzz smoke and the
+# nightly soak both pick it up from `cargo fuzz list` — but every one of
+# those runs it UNSEEDED, which is the open-time rejection path only.
+#
+# What these seeds add is the reason no lane runs them: from the
+# committed fixtures alone, a seeded pass faults Kyoto Cabinet and LMDB
+# inside 120 s, in the container library rather than in oxpinyin code.
+# redb and tkrzw survive these particular seeds — the mini fixtures are
+# mostly free space, so a mutation rarely lands on a live page — and fall
+# instead to a denser generated container; they are not exempt, just not
+# reachable from here. `docs/findings/store-file-ingress-fuzzing.md`
+# carries the measurements and the maintainer decision that is open on
+# them. Seed when you are hunting; do not wire this into a lane before
+# that decision lands.
 #
 # Usage:  tools/store/seed-store-fuzz-corpus.sh <kyotocabinet|redb|lmdb|tkrzw>
 #

@@ -58,10 +58,16 @@
 //!   Rust slice — is fully instrumented and is exactly where a hostile
 //!   file's influence lands.
 //!
+//! Every lane that runs this target runs it **unseeded**, which is the
+//! open-time rejection path only:
+//! `store-backends.yml`'s `store-file-fuzz` gates on it under the
+//! instrumented LMDB peer, and ci.yml's fuzz smoke and the nightly soak
+//! pick it up from `cargo fuzz list`.
 //! `docs/findings/store-file-ingress-fuzzing.md` carries the measured
-//! behaviour of each backend under this target and the reason no lane
-//! gates on it yet.
+//! behaviour of each backend under a *seeded* corpus and the reason no
+//! lane runs that pass yet.
 
+use std::io::Write;
 use std::ops::Bound;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -174,7 +180,27 @@ fn drive(store: &DefaultStore) -> u64 {
 
 fuzz_target!(|data: &[u8]| {
     let path = fresh_path();
-    if std::fs::write(&path, data).is_err() {
+    // `create_new` (O_CREAT|O_EXCL), not `fs::write`'s O_TRUNC: the name
+    // is predictable — a pid and a counter — in a shared temp directory,
+    // and an O_TRUNC open follows a symlink planted at that name, so the
+    // harness would truncate whatever it pointed at. Same reasoning as
+    // `tools/store/backend-matrix.sh`'s mktemp note. A refused create
+    // means the name was already taken: skip the input rather than write
+    // through whatever is there, and do not remove it either — deleting
+    // a file this target did not make is the same hazard turned around.
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    else {
+        return;
+    };
+    let written = file.write_all(data);
+    drop(file);
+    if written.is_err() {
+        // Ours, and half-written: `LAST_PATH` is not updated on this
+        // path, so nothing else would clean it up.
+        remove_store(&path);
         return;
     }
     // Both container classes, because the runtime opens both: the tree
