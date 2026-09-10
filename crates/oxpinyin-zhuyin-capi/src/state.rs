@@ -154,73 +154,17 @@ pub(crate) struct CapiInstance {
 }
 
 // ── Pointer casts ───────────────────────────────────────────────────────
-
-/// Casts a `*mut ZhuyinContext` to `&CapiContext`.
-///
-/// # Safety
-///
-/// `ptr` must be non-null and produced by `Box::into_raw(Box::new(
-/// CapiContext { .. }))`.
-pub(crate) unsafe fn context_ref<'a>(ptr: *mut ZhuyinContext) -> &'a CapiContext {
-    // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
-    unsafe { &*(ptr.cast::<CapiContext>()) }
-}
-
-/// Casts a `*mut ZhuyinContext` to `&mut CapiContext`.
-///
-/// # Safety
-///
-/// `ptr` must be non-null and produced by `Box::into_raw(Box::new(
-/// CapiContext { .. }))`. No other reference to the same context may exist.
-pub(crate) unsafe fn context_mut<'a>(ptr: *mut ZhuyinContext) -> &'a mut CapiContext {
-    // SAFETY: Caller guarantees the pointer is valid and unique for the chosen lifetime.
-    unsafe { &mut *(ptr.cast::<CapiContext>()) }
-}
-
-/// Casts a `*mut ZhuyinInstance` to `&CapiInstance`.
-///
-/// # Safety
-///
-/// `ptr` must be non-null and produced by `Box::into_raw(Box::new(
-/// CapiInstance { .. }))`.
-pub(crate) unsafe fn instance_ref<'a>(ptr: *mut ZhuyinInstance) -> &'a CapiInstance {
-    // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
-    unsafe { &*(ptr.cast::<CapiInstance>()) }
-}
-
-/// Casts a `*mut ZhuyinInstance` to `&mut CapiInstance`.
-///
-/// # Safety
-///
-/// `ptr` must be non-null and produced by `Box::into_raw(Box::new(
-/// CapiInstance { .. }))`. No other reference to the same instance may exist.
-pub(crate) unsafe fn instance_mut<'a>(ptr: *mut ZhuyinInstance) -> &'a mut CapiInstance {
-    // SAFETY: Caller guarantees the pointer is valid and unique for the chosen lifetime.
-    unsafe { &mut *(ptr.cast::<CapiInstance>()) }
-}
-
-/// Converts a `CapiContext` into a `*mut ZhuyinContext` for return to C.
-pub(crate) fn box_context(ctx: CapiContext) -> *mut ZhuyinContext {
-    Box::into_raw(Box::new(ctx)).cast()
-}
-
-/// Converts a `CapiInstance` into a `*mut ZhuyinInstance` for return to C.
-pub(crate) fn box_instance(inst: CapiInstance) -> *mut ZhuyinInstance {
-    Box::into_raw(Box::new(inst)).cast()
-}
-
-/// Casts a `*mut LookupCandidate` back to `&CapiCandidate`.
-///
-/// # Safety
-///
-/// `ptr` must be non-null and point into an active `CapiInstance::candidates`
-/// vec (produced by [`candidate_ptr`]).
-pub(crate) unsafe fn candidate_ref<'a>(ptr: *mut LookupCandidate) -> &'a CapiCandidate {
-    // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
-    unsafe { &*(ptr.cast::<CapiCandidate>()) }
-}
-
-/// Returns a `*mut LookupCandidate` pointing to a `CapiCandidate`.
-pub(crate) fn candidate_ptr(cand: &CapiCandidate) -> *mut LookupCandidate {
-    (cand as *const CapiCandidate as *mut CapiCandidate).cast()
+//
+// The opaque `ZhuyinContext` / `ZhuyinInstance` / `LookupCandidate` types in
+// the C header are zero-sized sentinels; the pointers actually address a
+// heap-allocated `CapiContext` / `CapiInstance` / `CapiCandidate`. The eight
+// cast/box helpers (context_ref/mut, instance_ref/mut, box_context/instance,
+// candidate_ref/ptr) are stamped by the shared marshalling macro so this
+// facade and the pinyin one cannot drift; the generated `unsafe` blocks land
+// here in the C-ABI crate, where the constitution's allowlist permits them.
+oxpinyin_capi_marshal::opaque_handle_casts! {
+    vis: pub(crate),
+    context: ZhuyinContext => CapiContext,
+    instance: ZhuyinInstance => CapiInstance,
+    candidate: LookupCandidate => CapiCandidate,
 }

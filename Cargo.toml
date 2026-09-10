@@ -8,6 +8,7 @@ members = [
   "crates/oxpinyin-user",
   "crates/oxpinyin-engine",
   "crates/oxpinyin-facade",
+  "crates/oxpinyin-capi-marshal",
   "crates/oxpinyin-capi",
   "crates/oxpinyin-python",
   "crates/oxpinyin-runtime",
