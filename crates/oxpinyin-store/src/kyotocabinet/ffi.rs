@@ -309,6 +309,33 @@ impl Db {
         read_only: bool,
         create: bool,
     ) -> Result<Self, StoreError> {
+        Self::open_with_tuning(path, db_type, read_only, create, "")
+    }
+
+    /// Opens `path` as `db_type`, appending `extra_tuning` after the
+    /// mandatory `#type=` parameter.
+    ///
+    /// `extra_tuning` is the concatenation of zero or more `#key=value`
+    /// tuning parameters — each starts with `#`, exactly the form that
+    /// follows `#type=` in the Kyoto Cabinet PolyDB open spec
+    /// (`kcpolydb.h:496-515`). An empty string reproduces [`Db::open`]
+    /// byte-for-byte, which is what [`Db::open`] itself passes.
+    ///
+    /// # Only reached in bench builds
+    ///
+    /// This is the entry point the `bench-internal` feature exposes; the
+    /// tuning knob it opens up is what shenghaoc/oxpinyin#402's time-side
+    /// measurement bench uses. Nothing in the shipping path calls this
+    /// with a non-empty `extra_tuning` — the mandatory `#type=` alone is
+    /// what libpinyin's C++ construction produces, and the two match by
+    /// design (see the module docstring).
+    pub(crate) fn open_with_tuning(
+        path: &Path,
+        db_type: DbType,
+        read_only: bool,
+        create: bool,
+        extra_tuning: &str,
+    ) -> Result<Self, StoreError> {
         check_runtime_version()?;
 
         // The path is handed to Kyoto Cabinet as bytes, with the tuning
@@ -322,9 +349,15 @@ impl Db {
                  tuning parameters",
             ));
         }
+        if !extra_tuning.is_empty() && !extra_tuning.starts_with('#') {
+            return Err(StoreError::InvalidInput(
+                "extra_tuning must start with '#' or be empty",
+            ));
+        }
         let mut spec = bytes.to_vec();
         spec.extend_from_slice(b"#type=");
         spec.extend_from_slice(db_type.tuning().as_bytes());
+        spec.extend_from_slice(extra_tuning.as_bytes());
         let spec =
             CString::new(spec).map_err(|_| StoreError::InvalidInput("store path contains NUL"))?;
 

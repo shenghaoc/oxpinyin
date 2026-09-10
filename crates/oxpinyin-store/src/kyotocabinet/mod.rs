@@ -71,6 +71,61 @@ pub struct KcStore {
     db: Db,
 }
 
+/// Hidden bench entry points.
+///
+/// Reserved for measurement work in this crate's `benches/` directory; the
+/// `bench-internal` feature is off by default and no shipping profile
+/// enables it. The tuning knob these open up (`#bnum=` on the
+/// read-only system TreeDBs) is what shenghaoc/oxpinyin#402 asks for a
+/// time-side measurement of before any change to the shipping open path
+/// could be argued for.
+///
+/// Not stable, not documented for external use, not part of any
+/// contract this backend keeps. Names live only under this feature so
+/// nothing else in the crate — tests, doc builds, the shipping default
+/// selection — can even see them.
+#[cfg(feature = "bench-internal")]
+impl KcStore {
+    /// Opens `path` read-only, appending `extra_tuning` after `#type=kct`.
+    ///
+    /// `extra_tuning` must start with `#` (`#bnum=4096`, `#bnum=4096#pccap=1m`,
+    /// …) or be empty. Empty reproduces [`KcStore::open_read_only`]
+    /// byte-for-byte.
+    #[doc(hidden)]
+    pub fn open_read_only_tuned(path: &Path, extra_tuning: &str) -> Result<Self, StoreError> {
+        Ok(Self {
+            db: Db::open_with_tuning(path, DbType::Tree, true, false, extra_tuning)?,
+        })
+    }
+
+    /// Same as [`Self::open_read_only_tuned`] but for `HashDB`.
+    #[doc(hidden)]
+    pub fn open_hash_read_only_tuned(path: &Path, extra_tuning: &str) -> Result<Self, StoreError> {
+        Ok(Self {
+            db: Db::open_with_tuning(path, DbType::Hash, true, false, extra_tuning)?,
+        })
+    }
+
+    /// Walks the raw keyspace (no table framing), calling `visit` with each
+    /// key. Stops on the first `Err` from `visit`. Used only to sample a
+    /// stable set of keys for the `kyotocabinet_bnum` bench; production
+    /// walks go through [`crate::RawReadStore::range_raw`].
+    #[doc(hidden)]
+    pub fn walk_raw_keys(
+        &self,
+        mut visit: impl FnMut(&[u8]) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        let mut cursor = self.db.cursor()?;
+        if !cursor.jump_to(&[])? {
+            return Ok(());
+        }
+        while let Some(record) = cursor.next()? {
+            visit(record.key())?;
+        }
+        Ok(())
+    }
+}
+
 impl KcStore {
     /// Walks `table`'s rows in ascending key order within `[lo, hi]`.
     ///

@@ -46,6 +46,13 @@ kyotocabinet = ["dep:bindgen"]
 # peer depends on it, so a KC/LMDB/tkrzw build carries none of redb's
 # code or its transitive dependencies.
 redb = ["dep:redb"]
+# `bench-internal` — exposes hidden test/bench-only helpers that would
+# otherwise be `pub(crate)`. Off by default; not part of `default`, not
+# reached by any shipping build. Currently just widens the Kyoto Cabinet
+# open path so the `kyotocabinet_bnum` bench can measure the
+# time/space trade shenghaoc/oxpinyin#402 asks for. Never enable this on
+# an artifact that ships.
+bench-internal = []
 
 [[bench]]
 name = "lmdb_bulk_load"
@@ -84,3 +91,13 @@ required-features = ["tkrzw"]
 name = "backend_matrix_kyotocabinet"
 harness = false
 required-features = ["kyotocabinet"]
+
+# Kyoto Cabinet `#bnum` time-and-space measurement (issue #402). Runs
+# only under the `bench-internal` feature — the tuning knob it drives is
+# reserved for measurements this bench performs, and the shipping open
+# path never accepts a non-default value. Linux-only in practice: the
+# resident-heap column reads `/proc/self/status` VmHWM.
+[[bench]]
+name = "kyotocabinet_bnum"
+harness = false
+required-features = ["kyotocabinet", "bench-internal"]

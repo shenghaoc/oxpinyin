@@ -14,6 +14,7 @@ comparable within one container on one host; every published snapshot
 | oxpinyin-capi | `stage2` | the export (`PINYIN_EXPORT_DIR`), the C-ABI surface |
 | oxpinyin-store | `backend_matrix_{tkrzw,kyotocabinet,lmdb,redb}` | `--features <backend>` (each is `required-features`-gated) |
 | oxpinyin-store | `lmdb_bulk_load`, `redb_is_empty` | the named backend |
+| oxpinyin-store | `kyotocabinet_bnum` | `--features kyotocabinet,bench-internal`; **an installed libpinyin `data/` via `OXPINYIN_BNUM_DATA_DIR`** for meaningful numbers (see below) |
 | oxpinyin-user | `export_phrases`, `phrase_read` | the export |
 | pinyin-oracle | `scan_perf`, `dbm_bench`, `alloc_profile` | the export, model20 (`dbm_bench` also the bench oracles) |
 
@@ -34,6 +35,68 @@ skipped. Run one bench with `--bench <name>`; without it cargo also runs
 the lib under libtest, which rejects criterion flags such as
 `--profile-time`. To run a bench in debug mode: `cargo test --bench
 <name>` (AGENTS.md points here).
+
+### `kyotocabinet_bnum` — the #402 time-side measurement
+
+Motivation: shenghaoc/oxpinyin#402 quantifies the space side of lowering
+`#bnum` on the five read-only system TreeDBs (~1,057 KiB → 80 KiB per
+TreeDB, ~4.77 MiB across the five). The time cost is unmeasured; without
+it the constitution's complexity rule refuses the change. This bench is
+that measurement.
+
+**Data.** The bench must run against an installed libpinyin `data/`
+directory — production files have ~10^4–10^5 records per TreeDB. The
+checked-in `fixtures/w3/kct/` has ~10^2 per TreeDB, which is far too few
+to exercise the leaf-cache hash-chain axis `#bnum` sizes; a run against
+it is a bench-harness smoke test, not evidence for #402.
+
+**Container recipe** (plain `debian:testing` + the standing apt set, same
+as the CI replay container). Debian's `libpinyin-data` package installs
+the data at `/usr/lib/libpinyin/data`:
+
+```sh
+tar -cf - --exclude=target --exclude=.git . | docker run --rm -i \
+    -v "$PWD/target-linux":/src/target \
+    debian:testing bash -c '
+    set -eu
+    apt-get update -qq
+    apt-get install -y --no-install-recommends \
+        curl ca-certificates git build-essential pkg-config clang \
+        libclang-dev libkyotocabinet-dev libpinyin-data
+    curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.97.1
+    . "$HOME/.cargo/env"
+    mkdir -p /src && tar -xf - -C /src && cd /src
+    OXPINYIN_BNUM_DATA_DIR=/usr/lib/libpinyin/data \
+        cargo bench \
+            --no-default-features --features kyotocabinet,bench-internal \
+            --bench kyotocabinet_bnum
+    '
+```
+
+Do **not** pass `-- --bench` here. `cargo bench` already appends `--bench`
+to the criterion binary, and criterion 0.8's clap rejects the flag when it
+is specified twice ("an argument cannot be used with one or more of the
+other specified arguments"). Add `-- --sample-size N --measurement-time
+Ns` if you want to shorten runs; a bare `cargo bench` uses the criterion
+defaults (100 samples / 5 s warmup / 5 s measurement).
+
+Reads: for each `#bnum` candidate (default 65,536; 16,384; 4,096; 1,024)
+a resident line on stderr and a criterion timing group on stdout — five
+TreeDB benches per group, each timing 512 (or the file's own record
+count if smaller) `get_raw` calls after a warmup pass. The space and
+time columns for the whole table sit alongside each other.
+
+**Reading the result.** The change proposed by #402 lands only if the
+time regression at `#bnum = 4,096` is measurably smaller than the ~4.77
+MiB space saving — the constitution's rule allows a regression in one
+dimension only when the other gains and the loss is minimised and
+justified. Numbers that show a lookup regression on a par with the space
+saving (as a fraction of their baselines, backend-scoped) argue against
+the change.
+
+**No capture committed.** The recipe above is what regenerates every
+figure; the run's output belongs on the issue or in the finding that
+proposes the change, not in-tree.
 
 ## The perf baseline (oracle vs installed oxpinyin)
 
