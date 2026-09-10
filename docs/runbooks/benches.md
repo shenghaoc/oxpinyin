@@ -25,8 +25,8 @@ cargo bench -p oxpinyin-store --no-default-features --features redb --bench back
 cargo bench -p oxpinyin-capi --bench stage2 -- --profile-time 10
 ```
 
-A backend-specific criterion bench — one that names a peer's optional
-dependency, such as heed for `lmdb` — must carry
+A backend-specific criterion bench — one that needs a peer's own
+build inputs, such as the system liblmdb for `lmdb` — must carry
 `required-features = ["<backend>"]` in its `[[bench]]` entry. CI runs
 `cargo clippy --workspace --all-targets` on the default backend, and
 without it the target fails to resolve the dependency instead of being

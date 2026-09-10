@@ -12,7 +12,6 @@ workspace = true
 
 [dependencies]
 redb = { workspace = true, optional = true }
-heed = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Backend micro-benches (benches/); workspace lock pins 0.8.
@@ -27,14 +26,17 @@ bindgen = { workspace = true, optional = true }
 # **Exactly one** is compiled in per build; a `compile_error!` in
 # `src/lib.rs` refuses builds that enable zero or two-or-more. The
 # corresponding implementation is the only one compiled, so an
-# unselected peer's dependency (redb, heed, bindgen) is not pulled in
+# unselected peer's dependency (redb, bindgen) is not pulled in
 # either.
 #
 # `tkrzw` is the enabled feature in the workspace's default set,
 # which is what "default" means here — select any peer explicitly with
 # `--no-default-features --features {kyotocabinet|redb|lmdb|tkrzw}`.
 default = ["tkrzw"]
-lmdb = ["dep:heed"]
+# LMDB binds the SYSTEM liblmdb through its own C header; bindgen is
+# build-time only (it needs libclang), exactly as the other two C
+# backends use it. No LMDB source is vendored or compiled here.
+lmdb = ["dep:bindgen"]
 tkrzw = ["dep:bindgen"]
 # Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);
 # the runtime dependency is the system libkyotocabinet the distro already
@@ -48,8 +50,8 @@ redb = ["dep:redb"]
 [[bench]]
 name = "lmdb_bulk_load"
 harness = false
-# heed is the `lmdb` peer's dependency, so `--all-targets` builds of the
-# other backends skip this target instead of failing to resolve it.
+# The bench drives the LMDB C API directly, so `--all-targets` builds of
+# the other backends skip this target instead of needing liblmdb.
 required-features = ["lmdb"]
 
 [[bench]]

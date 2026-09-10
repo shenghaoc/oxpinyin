@@ -102,10 +102,9 @@ record, enforced present-but-not-verified by Clippy, verified by review.
   (`unmaintained = "workspace" | "transitive" | "all"`), and because
   `deny.toml` omits the setting the default `unmaintained = "all"`
   applies — they fail unless recorded as an `ignore` entry in
-  `deny.toml` (the deviation registry, currently one: bincode via
-  heed-types/lmdb, with reason and review-by date), and a CI
-  `cargo tree` assertion keeps the default graph bincode-free so the
-  global ignore cannot mask it leaking beyond the lmdb path; licenses =
+  `deny.toml` (the deviation registry, **currently empty**: its one
+  entry, bincode via heed-types behind `lmdb`, went away with heed when
+  the LMDB backend moved to the system liblmdb); licenses =
   allow-list (GPL-3.0-or-later + permissive set, NCSA scoped to
   libfuzzer-sys via `[[licenses.exceptions]]`); **sources = crates.io
   registry only — git sources disallowed** (`unknown-git = "deny"`,
@@ -115,8 +114,10 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 - No new runtime dependency without ask (constitution) — `deny.toml`
   `bans.deny = [{ name = "..." }]` only if a concrete ban ever becomes
   policy; start empty.
-- Optional unsafe deps (`heed`, `cxx`) stay feature-gated and off the
-  default build. *(The geiger report that tracked them was retired
+- Optional unsafe deps stay feature-gated and off the default build;
+  the three C backends carry no optional Rust dependency at all now,
+  binding their system libraries through generated declarations
+  instead. *(The geiger report that tracked them was retired
   2026-09-01.)*
 
 ## Layer 7 — dynamic & formal verification (SCHEDULED ANALYSIS)

@@ -257,8 +257,10 @@ Because `redb` is now `optional = true` in `oxpinyin-store/Cargo.toml`
 (`redb = ["dep:redb"]`) and each peer's implementation is behind its
 own `#[cfg(feature = "<peer>")]`, a build that selects a non-redb peer
 does not pull in the redb crate or its transitive dependencies at
-all. The same is already true of `heed` (LMDB) and `bindgen`
-(KC/Tkrzw), which have always been optional.
+all. The same is already true of `bindgen`, the build-time dependency
+the three C backends (KC, Tkrzw, LMDB) share, which has always been
+optional. Those three add no runtime Rust dependency at all: each binds
+its system library through that library's own header.
 
 ### Verification
 
@@ -325,9 +327,10 @@ justified above and covered by tests. Every other axis matches.
       the guard's own message).
 - [x] **Binary/dependency footprint does not carry unused DB backends.**
       The `redb` dependency in `oxpinyin-store` is `optional = true`
-      behind the `redb` feature; `heed` (LMDB) and `bindgen` (KC/Tkrzw)
-      have always been optional. A KC/LMDB/Tkrzw build does not pull
-      in the redb crate.
+      behind the `redb` feature; `bindgen`, shared by the three C
+      backends (KC/Tkrzw/LMDB), has always been optional and is
+      build-time only. A KC/LMDB/Tkrzw build does not pull in the redb
+      crate.
 - [x] **Backend selection propagates consistently across the workspace.**
       Every store-reaching crate forwards its own `{kyotocabinet, redb,
       lmdb, tkrzw}` features down onto `oxpinyin-store`, so the guards

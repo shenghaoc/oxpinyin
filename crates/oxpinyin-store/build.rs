@@ -10,6 +10,7 @@
 //!
 //! * `kyotocabinet` — the Kyoto Cabinet C API (`kclangc.h`), on by default.
 //! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`).
+//! * `lmdb` — the LMDB C API (`lmdb.h`), from the system installation.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -17,6 +18,8 @@ fn main() {
     tkrzw::build();
     #[cfg(feature = "kyotocabinet")]
     kyotocabinet::build();
+    #[cfg(feature = "lmdb")]
+    lmdb::build();
 }
 
 /// Asks `pkg-config` for one field of `package`, split into individual
@@ -24,7 +27,7 @@ fn main() {
 /// `pkg-config` crate dependency for the handful of calls this script makes.
 /// Kyoto Cabinet does not always install a `.pc` file, so a miss is not
 /// fatal there — the caller falls back to the library name.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb"))]
 fn pkg_config(flag: &str, package: &str) -> Option<Vec<String>> {
     let output = std::process::Command::new("pkg-config")
         .arg(flag)
@@ -41,7 +44,7 @@ fn pkg_config(flag: &str, package: &str) -> Option<Vec<String>> {
 /// whitespace separates words, a backslash escapes the next character,
 /// and quotes group — so a pkg-config-escaped path containing spaces
 /// (`-I/opt/my\ headers`) stays one flag instead of being cut in two.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb"))]
 fn split_shell_words(line: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();
@@ -360,5 +363,165 @@ mod tkrzw {
                 println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
             }
         }
+    }
+}
+
+/// LMDB bindings, generated from the **system** `lmdb.h`.
+///
+/// # Why the system library and not a vendored copy
+///
+/// LMDB is a C library every target distribution already packages
+/// (Debian `liblmdb0` at runtime, `liblmdb-dev` to build; Fedora
+/// `lmdb-libs` / `lmdb-devel`; Arch `lmdb`). oxpinyin links that
+/// installation instead of compiling a second copy of `mdb.c` into its
+/// own artifact: one LMDB per system, patched by the distribution's
+/// security process rather than pinned inside a Rust dependency, and
+/// nothing for a downstream packager to un-vendor. This is the same
+/// arrangement the Kyoto Cabinet and tkrzw backends already have.
+///
+/// # Why generated fresh, not checked in
+///
+/// Unlike Kyoto Cabinet's opaque one-pointer handles, LMDB's ABI
+/// exposes real struct layout: `MDB_val` (`{ size_t mv_size; void
+/// *mv_data; }`) crosses every read and write, and `MDB_stat` carries
+/// six integer fields that `is_empty` reads. A checked-in binding could
+/// silently misread those against a differently-built library. The
+/// error codes are the other half — `MDB_NOTFOUND`, `MDB_MAP_FULL`,
+/// `MDB_DBS_FULL` are `#define`s the backend branches on, and the
+/// generated constants come from the same header as the linked `.so`.
+///
+/// Generating costs a build-time libclang, which this crate already
+/// requires for its other two C backends, and adds no new Rust
+/// dependency: `bindgen` is already the `tkrzw`/`kyotocabinet`
+/// build-dependency.
+#[cfg(feature = "lmdb")]
+mod lmdb {
+    /// Locates `lmdb.h` under the pkg-config include path, falling back
+    /// to the compiler's default include directory. LMDB's `.pc` on
+    /// Debian carries no `-I` at all (the header lands in
+    /// `/usr/include`), so the fallback is the normal case, not a
+    /// rescue path.
+    fn header(cflags: &[String]) -> Option<std::path::PathBuf> {
+        let mut dirs: Vec<std::path::PathBuf> = cflags
+            .iter()
+            .filter_map(|flag| flag.strip_prefix("-I"))
+            .map(std::path::PathBuf::from)
+            .collect();
+        dirs.push(std::path::PathBuf::from("/usr/include"));
+        dirs.into_iter()
+            .map(|dir| dir.join("lmdb.h"))
+            .find(|path| path.is_file())
+    }
+
+    pub fn build() {
+        // Same three pkg-config selectors the other C backends track:
+        // PKG_CONFIG_LIBDIR replaces the search-directory list outright
+        // and PKG_CONFIG_SYSROOT_DIR rewrites every discovered path, so
+        // either one alone can select a different LMDB.
+        println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
+        println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
+        println!("cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR");
+
+        println!("cargo:rerun-if-changed=src/lmdb/wrapper.h");
+        let cflags = super::pkg_config("--cflags", "lmdb").unwrap_or_default();
+        let Some(header) = header(&cflags) else {
+            panic!(
+                "liblmdb required: the `lmdb` feature links the SYSTEM LMDB and needs its \
+                 header lmdb.h, which was not found under `pkg-config --cflags lmdb` nor in \
+                 /usr/include. Install the distribution's development package \
+                 (Debian/Ubuntu: liblmdb-dev; Fedora: lmdb-devel; Arch: lmdb; macOS \
+                 Homebrew: lmdb), or build a different backend. oxpinyin deliberately does \
+                 NOT vendor or compile its own copy of LMDB, so there is no fallback to \
+                 download or build one -- see docs/runbooks/backends.md."
+            );
+        };
+        println!("cargo:rerun-if-changed={}", header.display());
+
+        match super::pkg_config("--libs", "lmdb") {
+            Some(libs) => {
+                for lib in &libs {
+                    if let Some(name) = lib.strip_prefix("-l") {
+                        println!("cargo:rustc-link-lib={name}");
+                    } else if let Some(path) = lib.strip_prefix("-L") {
+                        println!("cargo:rustc-link-search=native={path}");
+                        // Package-scoped, like every build-script
+                        // `rustc-link-arg` (see the Kyoto Cabinet module):
+                        // this rpath reaches this package's own lib, test
+                        // and bench artifacts and nothing else.
+                        println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
+                    }
+                }
+            }
+            // No usable `.pc`, but the header was found: name the library
+            // directly and let the loader's default path resolve it.
+            None => println!("cargo:rustc-link-lib=lmdb"),
+        }
+
+        // Exactly the entry points `src/lmdb/mod.rs` calls plus the types
+        // and codes they traffic in. Everything else in lmdb.h — the
+        // multi-value (`MDB_DUPSORT`) cursor surface, the reader table,
+        // the custom comparators, `mdb_env_copy` — stays unbound: an
+        // unbound API cannot be misused.
+        let mut builder = bindgen::Builder::default()
+            // The wrapper adds <unistd.h> beside the system <lmdb.h>;
+            // `sysconf`/`_SC_PAGESIZE` are the only things it brings.
+            .header("src/lmdb/wrapper.h")
+            .allowlist_function("sysconf")
+            .allowlist_var("_SC_PAGESIZE")
+            .allowlist_function("mdb_env_create")
+            .allowlist_function("mdb_env_open")
+            .allowlist_function("mdb_env_close")
+            .allowlist_function("mdb_env_sync")
+            .allowlist_function("mdb_env_set_mapsize")
+            .allowlist_function("mdb_env_set_maxdbs")
+            .allowlist_function("mdb_txn_begin")
+            .allowlist_function("mdb_txn_commit")
+            .allowlist_function("mdb_txn_abort")
+            .allowlist_function("mdb_dbi_open")
+            .allowlist_function("mdb_drop")
+            .allowlist_function("mdb_get")
+            .allowlist_function("mdb_put")
+            .allowlist_function("mdb_del")
+            .allowlist_function("mdb_stat")
+            .allowlist_function("mdb_cursor_open")
+            .allowlist_function("mdb_cursor_close")
+            .allowlist_function("mdb_cursor_get")
+            .allowlist_function("mdb_strerror")
+            .allowlist_type("MDB_env")
+            .allowlist_type("MDB_txn")
+            .allowlist_type("MDB_cursor")
+            .allowlist_type("MDB_dbi")
+            .allowlist_type("MDB_val")
+            .allowlist_type("MDB_stat")
+            .allowlist_type("MDB_cursor_op")
+            .allowlist_var("MDB_.*")
+            // `MDB_cursor_op::MDB_FIRST` reads as the C does at the call
+            // site, where the default flat spelling would not. Scoped to
+            // this one enum on purpose: as a global style it would also
+            // wrap `<unistd.h>`'s anonymous `_SC_*` enum in a generated
+            // module and hide `_SC_PAGESIZE`.
+            .constified_enum_module("MDB_cursor_op")
+            .derive_debug(false)
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
+
+        for arg in cflags {
+            builder = builder.clang_arg(arg);
+        }
+
+        let bindings = match builder.generate() {
+            Ok(bindings) => bindings,
+            Err(error) => panic!(
+                "liblmdb required: bindgen could not read the system lmdb.h at {} ({error}). \
+                 Generating these declarations needs libclang (Debian/Ubuntu: libclang-dev). \
+                 oxpinyin does not vendor LMDB; there is no fallback to a bundled copy.",
+                header.display()
+            ),
+        };
+
+        let out =
+            std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
+        bindings
+            .write_to_file(out.join("lmdb_bindings.rs"))
+            .expect("write generated LMDB declarations");
     }
 }
