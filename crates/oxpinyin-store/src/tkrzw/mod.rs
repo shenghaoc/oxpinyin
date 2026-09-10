@@ -64,9 +64,24 @@
 //! duration, so the batch lands as a unit against any other reader or
 //! writer.
 //!
-//! Every commit then calls `Synchronize(hard=true)`, so a commit that
-//! returns is on stable storage — durable against process crashes and
-//! power loss alike. What TreeDBM still cannot give is crash-*atomic*
+//! Every commit then calls `Synchronize(hard=false)`: buffered data is
+//! flushed to the operating system, so once the call returns the file
+//! is consistent and visible to any reader, and the write survives a
+//! process crash — the IME's included. It is not yet on the device.
+//! [`WriteStore::compact`] is the hard sync (`Synchronize(hard=true)`),
+//! and `UserStore::save` — the `pinyin_save` path — calls it, so the
+//! user's data reaches stable storage at the point the consumer asks
+//! for it.
+//!
+//! **That split is measured, not assumed.** `hard=true` on every commit
+//! costs +1.18–1.85 ms per commit here, because TreeDBM is mmap-backed
+//! and the sync is two `msync(MS_SYNC)` calls over the whole mapped
+//! region (~539 KiB) however few records the batch touched — a 13–31×
+//! per-commit regression on a path the C ABI runs synchronously from a
+//! keystroke. `docs/findings/perf-train-commit-fsync-2026-09-09.md`
+//! carries the measurement and the decision.
+//!
+//! What TreeDBM cannot give at any sync level is crash-*atomic*
 //! application: it has no write-ahead log, so a crash *during* the
 //! `ProcessMulti` apply can leave part of a batch on disk. redb and
 //! LMDB (WAL / copy-on-write) roll a torn commit back on the next open;
@@ -685,19 +700,22 @@ fn db_apply(db: &Db, mutations: &[Mutation]) -> Result<(), StoreError> {
     check(ok)
 }
 
-/// Flushes buffered writes to stable storage (`hard=true`): once this
-/// returns, the committed batch is on the device, surviving machine
-/// crashes and power loss — not merely visible to other processes.
-fn db_synchronize(db: &Db) -> Result<(), StoreError> {
+/// Flushes buffered writes.
+///
+/// `hard = false` hands the bytes to the operating system: the file is
+/// consistent and visible to every reader, and the write outlives a
+/// process crash. `hard = true` additionally puts them on the device,
+/// surviving power loss. Commits take the former and
+/// [`WriteStore::compact`] the latter — see the module docs for why the
+/// split is where it is.
+fn db_synchronize(db: &Db, hard: bool) -> Result<(), StoreError> {
     // SAFETY: the handle is open; the empty params string satisfies the
     // non-null assertion the C wrapper makes; no file processor is
-    // wanted, so both its slots are null. `hard=true` is the durability
-    // half of the `WriteStore::write` contract: every backend's commit
-    // is on stable storage before `write` returns.
+    // wanted, so both its slots are null.
     check(unsafe {
         ffi::tkrzw_dbm_synchronize(
             db.0.as_ptr(),
-            true,
+            hard,
             None,
             std::ptr::null_mut(),
             c"".as_ptr(),
@@ -829,7 +847,9 @@ impl WriteStore for TkrzwStore {
         }
         if !mutations.is_empty() {
             db_apply(db, &mutations)?;
-            db_synchronize(db)?;
+            // Soft: the commit is visible and process-crash durable.
+            // `compact` (the `pinyin_save` path) is the hard sync.
+            db_synchronize(db, false)?;
         }
         Ok(result)
     }
@@ -839,7 +859,9 @@ impl WriteStore for TkrzwStore {
             return Err(StoreError::ReadOnly);
         }
         db_rebuild(&self.db)?;
-        db_synchronize(&self.db)
+        // The store's one stable-storage point: `UserStore::save` calls
+        // it, so `pinyin_save` lands the user's data on the device.
+        db_synchronize(&self.db, true)
     }
 }
 

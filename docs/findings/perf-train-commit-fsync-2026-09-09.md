@@ -2,18 +2,24 @@
 
 ## Status
 
-**Measurement complete; no behaviour changed by this work.** `8ca10158`
-("fix(store): commit to stable storage on every backend", PR #393, on main
-at `340ef076`) closed its own report with: *"A perf-baseline measurement of
-the training-commit path on the Linux tkrzw host remains a follow-up before
-this ships in a release."* This document is that follow-up.
+**Measured, decided, implemented.** `8ca10158` ("fix(store): commit to
+stable storage on every backend", PR #393, on main at `340ef076`) closed
+its own report with: *"A perf-baseline measurement of the training-commit
+path on the Linux tkrzw host remains a follow-up before this ships in a
+release."* This document is that follow-up, and it now also records what
+was done about the answer.
 
-The cost is **material** and it lands on an interactive path, so the
-decision of what — if anything — to do about it is **owed to a human**.
-Three options are set out in §7 with the constitution and
-compatibility-policy arguments each has to clear. Nothing in this branch
-alters the sync behaviour: the only code change is the bench that can
-resolve a per-commit cost (`7f44bbf2`).
+The cost was **material** and lands on an interactive path (§5, §6). Three
+options were put to the maintainer (§7); **option 2 was chosen on
+2026-09-10** — the per-observation commit goes back to a soft sync, and
+the hard sync moves to `WriteStore::compact`, which `UserStore::save`
+already calls, so `pinyin_save` remains the point where the user's data
+reaches the device. §7.1 records the post-change measurement: the whole
+regression is recovered.
+
+The measurement in §3–§6 describes the code **as `8ca10158` left it** and
+is kept in that tense deliberately — it is the evidence the decision
+rests on, not a description of current `main`.
 
 One claim in `8ca10158`'s own report does not survive the measurement, and
 §6 says so plainly: *"Runtime writes are user-paced (train / choose /
@@ -265,12 +271,13 @@ place, and it is option 1's — noted there.
 
 ## 7. Options — for a human decision
 
-Listed with the argument each must clear. **None is implemented, and none
-should be without an explicit human decision:** this is an
-externally-visible durability contract, documented on `WriteStore::write`
-and in two backends' module docs, and AGENTS.md's STOP list covers it.
+Listed with the argument each had to clear. This is an externally-visible
+durability contract, documented on `WriteStore::write` and in two
+backends' module docs, and AGENTS.md's STOP list covers it, so none was
+implemented until the maintainer chose one. **Option 2 was chosen and is
+implemented (§7.1); options 1 and 3 were not taken.**
 
-### Option 1 — batch a sentence into one transaction
+### Option 1 — batch a sentence into one transaction *(not taken)*
 
 `Session::train` wraps its whole `observe` loop in a single write
 transaction: 8 commits → 1, recovering ~7/8 of the cost on the dominant
@@ -290,7 +297,7 @@ the saving is nearly the whole delta.
   abort. This is the one place where option 1 touches behaviour rather
   than only timing.
 
-### Option 2 — sync at `save`, not at every observation
+### Option 2 — sync at `save`, not at every observation *(**chosen**)*
 
 Restore `hard=false` / `sync(false)` on the per-observation commit and keep
 the hard sync in `compact()`, which `UserStore::save` already calls — so
@@ -312,7 +319,7 @@ essentially 100% of the cost.
 - **Smallest change of the three**, and it is close to a revert of two
   lines plus a doc correction.
 
-### Option 3 — a durability knob
+### Option 3 — a durability knob *(not taken)*
 
 Make the sync mode configurable.
 
@@ -323,10 +330,74 @@ Make the sync mode configurable.
   claim then has to be qualified by, and doubles the surface the store
   tests must cover, to serve no user who can reach it.
 
-**If the decision is to keep the current behaviour**, that is a coherent
-answer too — but it should be a decision recorded against the measured
-number, and `8ca10158`'s "no measured surface regresses" should be
-corrected where it is quotable.
+**Keeping `8ca10158`'s behaviour** would have been a coherent answer too,
+recorded against the measured number. It was not the one taken.
+
+## 7.1 What was implemented, and what it recovered
+
+Chosen 2026-09-10. Three files change, all in `oxpinyin-store`:
+
+- **tkrzw** — `db_synchronize` takes a `hard: bool`. `write` passes
+  `false`, `compact` passes `true`.
+- **Kyoto Cabinet** — `write` commits with `sync(false)`; `compact` keeps
+  `sync(true)`.
+- **`WriteStore` (the seam contract)** — `write`'s durability note now
+  promises only what every backend delivers: a commit that returns has
+  left the process, is visible to other readers, and survives a process
+  crash. **Stable storage is `compact`'s guarantee**, and the note says
+  so, with the measurement cited. redb and LMDB still fsync inside their
+  own commits; they exceed the floor, and the doc says callers must not
+  read that as the contract. Correcting this over-claim was half the
+  point: the architecture review's finding was that the label promised
+  more than the code delivered, and the fix for that is an accurate
+  label, not only a stronger sync.
+
+`compact` has exactly one production caller — `UserStore::save`
+(`crates/oxpinyin-user/src/store.rs:1101`) — so `pinyin_save` is the
+stable-storage point, which is precisely upstream's persistence point
+(§6). `oxpinyin-datagen` does not compact, so its table files are now
+OS-flushed rather than device-synced; for a build-time artifact producer
+that is the right trade — a power loss mid-build costs a rebuild, and the
+page cache keeps every later read coherent.
+
+### Verified, not assumed
+
+Same container and filesystem as §3. Syscall counts by `strace`, exactly
+as §4:
+
+| path | sync syscalls | |
+| --- | --- | --- |
+| `observe_commit`, one commit | **0** | was 2 × `msync(MS_SYNC)` |
+| `train_sentence/8`, eight commits | **0** | was 16 × `msync(MS_SYNC)` |
+| `save` → `compact` | **2** — `msync(PTR, 5120, MS_SYNC)`, `msync(PTR, 128, MS_SYNC)` | the hard sync, retained |
+
+The `save` row is the one that matters for the durability claim: the
+device-level sync did not disappear, it moved.
+
+### Recovered cost
+
+Criterion, `--sample-size 100 --measurement-time 30 --warm-up-time 5` —
+the same flags as §5.2, so the comparison is like-for-like:
+
+| row | hard sync (§5.2) | soft commit + hard `save` | recovered |
+| --- | --- | --- | --- |
+| `observe_commit` | 1.215 – 1.444 ms | **0.064 ms** (median 0.059, CI [0.060, 0.069]) | −1.15 to −1.38 ms, **19–23×** |
+| `train_sentence/8` | 19.090 ms | **0.366 ms** (median 0.367, CI [0.349, 0.383]) | −18.7 ms, **52×** |
+
+`train_sentence/8`'s hard-sync figure at these flags comes from run 2
+alone (run 3 measured only `observe_commit`); run 1's 15.558 ms at the
+lighter flags gives the same picture. Both post-change rows land at or
+below the `pre` arm of §5, so the regression is fully recovered rather
+than merely reduced.
+
+### Gates
+
+In-container on the changed tree: `cargo fmt --all --check` clean;
+`cargo clippy -p oxpinyin-store --all-targets -- -D warnings` clean on
+**all four** backends (the contract doc and both changed backends are
+peers behind one seam, so all four are the honest gate); store tests
+34 + 6 (tkrzw) and 29 + 6 (Kyoto Cabinet) pass; `oxpinyin-user`'s
+92 + 3 + 12 pass, which is where `save`/`compact` is exercised.
 
 ## 8. Provenance — the command behind each figure
 
@@ -353,6 +424,10 @@ list plus `strace`, `util-linux`, `python3`; rustup `--default-toolchain
 | §5.1 full matrix, per arm | `taskset -c 1 cargo bench -p oxpinyin-store --no-default-features --features tkrzw --bench backend_matrix_tkrzw -- '(train_write\|observe_commit\|train_sentence)' --sample-size 50 --measurement-time 12 --warm-up-time 3` |
 | §4 syscall counts, per arm/row | `taskset -c 1 strace -f -e trace=msync,fsync,fdatasync,sync_file_range -o tr.txt <bench-bin> --bench <row> --test` |
 | §5.2 repeats, per arm | `taskset -c 1 cargo bench -p oxpinyin-store --no-default-features --features tkrzw --bench backend_matrix_tkrzw -- 'observe_commit' --sample-size 100 --measurement-time 30 --warm-up-time 5` |
+| §7.1 syscalls, commit path | `strace -f -e trace=msync,fsync,fdatasync -o t.txt <bench-bin> --bench <row> --test` |
+| §7.1 syscalls, `save` path | `strace -f -e trace=msync,fsync,fdatasync -o s.txt cargo test -p oxpinyin-user save_reopen_roundtrip_preserves_counts_cursor_and_total` |
+| §7.1 recovered cost | the §5.2 command, run on the changed tree |
+| §7.1 gates | `cargo fmt --all --check`; `cargo clippy -p oxpinyin-store [--no-default-features --features <be>] --all-targets -- -D warnings` for each of the four backends; `cargo test -p oxpinyin-store` (tkrzw, kyotocabinet) and `cargo test -p oxpinyin-user` |
 | all criterion point estimates | read from `$CARGO_TARGET_DIR/criterion/**/new/estimates.json` (`mean`/`median`, `point_estimate` and `confidence_interval`) |
 
 Per-arm build integrity was checked in-run, not assumed: each arm reported
@@ -363,10 +438,11 @@ the other arm's artifacts) and a distinct bench-binary SHA-256 —
 ## 9. Evidence
 
 Per `docs/runbooks/benches.md`, this document commits no captures. The
-bundle — all three run logs, the three runner scripts, `fsyncprobe.c`, and
+bundle — every run log (the three measurement runs, the bench gate run, and
+the post-change verification), all runner scripts, `fsyncprobe.c`, and
 `hardsync.patch` — is retained on the measuring host at
 `~/Documents/oxpinyin-captures/train-commit-fsync-2026-09-09.tar.gz`,
-SHA-256 `d4cb0bf63bf5e15b3616911b9dea846ce1c3bf295462b40fab83481ec0cefcc1`.
+SHA-256 `f90ee722c80bfabf2ff0c919029adebf7722850ba03ab7b0024ecb89d1619df0`.
 It is to be attached to the pull request that carries this document, with
 the link added here at that point; until then the host path and the
 SHA-256 are what a holder can verify against, and §8 carries the full

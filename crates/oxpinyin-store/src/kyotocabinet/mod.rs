@@ -31,8 +31,15 @@
 //! closure's writes go straight to the database inside the transaction,
 //! reads see them, and an `Err` rolls the whole thing back.
 //!
-//! Commits end with `kcdbsync(hard = 1)`: a commit that returns is on
-//! stable storage, durable against process crashes and power loss.
+//! Commits end with `kcdbsync(hard = 0)`: the commit is pushed to the
+//! operating system, so another process — or another handle in this one
+//! — observes it and it survives a process crash, but it is not yet on
+//! the device. [`WriteStore::compact`] is the hard `kcdbsync(hard = 1)`,
+//! and `UserStore::save` (the `pinyin_save` path) calls it, so the
+//! user's data reaches stable storage where the consumer asks for it.
+//! The tkrzw backend documents the same split and the measurement
+//! behind it (`docs/findings/perf-train-commit-fsync-2026-09-09.md`).
+//!
 //! A power cut *during* the commit itself can still tear the
 //! transaction — TreeDB writes through no write-ahead log — the same
 //! residual the tkrzw backend documents; redb and LMDB alone roll a
@@ -229,12 +236,12 @@ impl WriteStore for KcStore {
         match f(&mut txn) {
             Ok(out) => {
                 self.db.end_transaction(true)?;
-                // Push the commit to stable storage (`hard = 1`): once
-                // `write` returns, the transaction is on the physical
-                // device, surviving machine crashes and power loss —
-                // the durability half of the `WriteStore::write`
-                // contract every backend keeps.
-                self.db.sync(true)?;
+                // Push the commit to the operating system (`hard = 0`),
+                // so another process — or another handle in this one —
+                // reading the database observes it, and a process crash
+                // cannot lose it. `compact` is the hard sync; see the
+                // module docs for why the device-level sync sits there.
+                self.db.sync(false)?;
                 Ok(out)
             }
             Err(error) => {
@@ -255,7 +262,9 @@ impl WriteStore for KcStore {
         // through a copy of the whole file, which is not what the other
         // backends' `compact` does either (LMDB's successful `compact`
         // also does not shrink the file). Making the current state
-        // durable on the device is the honest implementation.
+        // durable on the device is the honest implementation — and it is
+        // the store's one stable-storage point, which `UserStore::save`
+        // reaches through `pinyin_save`.
         self.db.sync(true)
     }
 }
