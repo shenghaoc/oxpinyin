@@ -96,6 +96,27 @@ the facade sizes (138,096 items, Σ item unigram 51,051,831), the
 dictionary lookups, the possibility, the phrase DBM, the suggestion walk,
 punctuation, the addon facade, and a decode — all through the public API.
 
+> **Build-recipe scope note (2026-09-10, #401).** §4's oxpinyin cells were built
+> by `tools/bisection/run-perf-same-data.sh`'s `build_capi` — `cargo build
+> --locked --release` + `strip --strip-all`, producing `libpinyin_capi.so`.
+> **That is not the shipping artifact**, which is `cargo cinstall`'s
+> `libpinyin.so.15.0.0` and is the faster of the two, so every §4 figure whose
+> subject is the oxpinyin `.so` **overstates the shipping product's cost**: the
+> "~1.5×" steady-state ratio, the cold-cycle and init ratios, and the oxpinyin
+> absolutes. The direction is certain; no corrected number is given, because
+> this record does not state its architecture and the effect differs by 2×
+> between the two measured (amd64 −0.064…−0.087 ratio units, arm64
+> −0.032…−0.038, steady-cycle wall clock only).
+>
+> Unaffected within §4: the four pin cells, the within-oxpinyin cross-backend
+> quotients, and the "Memory" paragraph, whose figures come from the
+> `open_profile` example and involve no shared object. One figure is worse than
+> affected — "~90–106× faster than before" divides a **cinstall** numerator
+> (`perf-backend-matrix-2026-08-31.md`) by this record's **cargo-build**
+> denominator; at ~100× the effect is noise and the claim survives, but it is
+> not like-for-like. See
+> [perf-build-recipe-audit-2026-09-10.md](perf-build-recipe-audit-2026-09-10.md).
+
 ## 4. Performance: the #260 four-cell matrix, same data per backend
 
 `tools/bisection/run-perf-same-data.sh` — cells A/B are the pin on its

@@ -9,7 +9,10 @@ since moved past. Statuses:
   STOP (AGENTS.md).
 - **register** — living lists (divergences, F-E evidence).
 - **record / verified / measured / audit / report** — what was found
-  when; the numbers hold for the tree they cite.
+  when; the numbers hold for the tree they cite — and, for a perf record,
+  only for the artifact it timed: `cargo cinstall` is the shipping path,
+  `cargo build` a bisection fixture, and the two do not run at the same
+  speed (`perf-build-recipe-audit-2026-09-10.md`).
 - **historical / shelved / closed** — kept as the record of a decision
   or a path since retired; not a description of the current tree.
 - **historical (pre-P6)** — written before the 2026-09-01/02 data-layer
@@ -82,6 +85,8 @@ series lives in `../perf/`.
 | [`perf-backend-matrix-bdb-store-2026-09`](perf-backend-matrix-bdb-store-2026-09.md) | Performance Backend Matrix — BDB and the Store Tier — 2026-09-06 | perf snapshot |
 | [`perf-baseline-kc-2026-08-31`](perf-baseline-kc-2026-08-31.md) | Stage-2 Performance Baseline — KC Backend (2026-08-31) | perf snapshot (superseded by `../perf/perf-baseline-kc-2026-09.md`) |
 | [`perf-baseline-kc-validation-2026-08-31`](perf-baseline-kc-validation-2026-08-31.md) | KC Baseline Validation — 2026-08-31 | perf snapshot (superseded by `../perf/perf-baseline-kc-2026-09.md`) |
+| [`perf-build-recipe-audit-2026-09-10`](perf-build-recipe-audit-2026-09-10.md) | Build-recipe provenance — which perf records timed the shipping `cinstall` artifact and which a `cargo build` fixture (#401) | audit |
+| [`perf-cycle-ir-differential-2026-09-08`](perf-cycle-ir-differential-2026-09-08.md) | Steady-cycle differential and arch spread — amd64 + arm64; the tree/recipe controls | perf snapshot |
 | [`perf-keycost-first-alloc-2026-09-07`](perf-keycost-first-alloc-2026-09-07.md) | Key-Cost Walk Elimination — 2026-09-07 | perf snapshot |
 | [`perf-mmap-system-indexes-2026-08-31`](perf-mmap-system-indexes-2026-08-31.md) | Sysimage: mmap-backed system pinyin/phrase indexes — 2026-08-31 | perf snapshot |
 | [`perf-p2-chewing-table-2026-09-01`](perf-p2-chewing-table-2026-09-01.md) | P2 performance findings — lazy ChewingTable vs eager PinyinIndex | perf snapshot |
