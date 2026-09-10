@@ -19,6 +19,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use oxpinyin_core::ChewingKey;
+// The taglib line grammar this reader shares with `oxpinyin-data`'s
+// `interp` reader: one written copy
+// (`oxpinyin_data::interp_grammar`).
+use oxpinyin_data::interp_grammar::{self, BIGRAM_VALUES, Line, UNIGRAM_VALUES};
 // The bigram row layout this writer shares with `oxpinyin-data`'s
 // reader: one written copy (`oxpinyin_data::row_format`).
 use oxpinyin_data::row_format::bigram::{BigramRow, encode_value as encode_bigram_value};
@@ -315,74 +319,82 @@ fn read_interpolation(model_dir: &Path, model: &mut SemanticModel) -> Result<(),
     let mut section = Section::Header;
     for (number, line) in text.lines().enumerate() {
         let number = number + 1;
-        match line {
-            "\\data model interpolation" => {
+        // The tag's positional-value count is the section's:
+        // `import_interpolation.cpp:128` registers `\item` with 2 inside
+        // `\1-gram` and `:163` with 4 inside `\2-gram`.
+        let wanted = match section {
+            Section::Bigram => BIGRAM_VALUES,
+            Section::Header | Section::Unigram => UNIGRAM_VALUES,
+        };
+        let mut values = [""; BIGRAM_VALUES];
+        let parsed = interp_grammar::read(line, &mut values[..wanted])
+            .map_err(|error| bad_line(&text_path, number, &error.to_string()))?;
+        match parsed {
+            Line::Data { model: name } => {
                 if section != Section::Header {
                     return Err(bad_line(&text_path, number, "repeated \\data header"));
                 }
-            }
-            "\\1-gram" => section = Section::Unigram,
-            "\\2-gram" => section = Section::Bigram,
-            "\\end" => break,
-            _ if line.starts_with("\\item ") => {
-                let rest = line["\\item ".len()..].trim();
-                let fields = rest.split_whitespace().collect::<Vec<_>>();
-                match section {
-                    Section::Unigram => {
-                        let [token, word, keyword, count] = fields[..] else {
-                            return Err(bad_line(&text_path, number, "malformed \\item"));
-                        };
-                        if keyword != "count" {
-                            return Err(bad_line(&text_path, number, "expected `count` keyword"));
-                        }
-                        validate_pair(&phrases, token, word, &mut model.stats.special_tokens)
-                            .map_err(|m| bad_line(&text_path, number, &m))?;
-                        let token = token
-                            .parse::<u32>()
-                            .map_err(|_| bad_line(&text_path, number, "bad token"))?;
-                        let count = parse_count(count, &text_path, number)?;
-                        let entry = model.unigrams.entry(token).or_insert(0);
-                        *entry += u64::from(count);
-                    }
-                    Section::Bigram => {
-                        let [token1, word1, token2, word2, keyword, count] = fields[..] else {
-                            return Err(bad_line(&text_path, number, "malformed \\item"));
-                        };
-                        if keyword != "count" {
-                            return Err(bad_line(&text_path, number, "expected `count` keyword"));
-                        }
-                        validate_pair(&phrases, token1, word1, &mut model.stats.special_tokens)
-                            .map_err(|m| bad_line(&text_path, number, &m))?;
-                        validate_pair(&phrases, token2, word2, &mut model.stats.special_tokens)
-                            .map_err(|m| bad_line(&text_path, number, &m))?;
-                        let token1 = token1
-                            .parse::<u32>()
-                            .map_err(|_| bad_line(&text_path, number, "bad token"))?;
-                        let token2 = token2
-                            .parse::<u32>()
-                            .map_err(|_| bad_line(&text_path, number, "bad token"))?;
-                        let count = parse_count(count, &text_path, number)?;
-                        let entry = model.bigram.entry(token1).or_default();
-                        if entry.1.iter().any(|(next, _)| *next == token2) {
-                            return Err(DatagenError::Consistency(format!(
-                                "duplicate 2-gram pair {token1:#010x} → {token2:#010x}"
-                            )));
-                        }
-                        entry.1.push((token2, count));
-                        entry.0 += u64::from(count);
-                    }
-                    Section::Header => {
-                        return Err(bad_line(
-                            &text_path,
-                            number,
-                            "\\item before a \\N-gram header",
-                        ));
-                    }
+                if name != "interpolation" {
+                    return Err(bad_line(
+                        &text_path,
+                        number,
+                        &format!("expected `model interpolation`, got {name:?}"),
+                    ));
                 }
             }
-            _ => {
-                return Err(bad_line(&text_path, number, "unexpected line"));
-            }
+            Line::OneGram => section = Section::Unigram,
+            Line::TwoGram => section = Section::Bigram,
+            Line::End => break,
+            Line::Item { count } => match section {
+                Section::Unigram => {
+                    let (token, word) = (values[0], values[1]);
+                    validate_pair(&phrases, token, word, &mut model.stats.special_tokens)
+                        .map_err(|m| bad_line(&text_path, number, &m))?;
+                    let token = token
+                        .parse::<u32>()
+                        .map_err(|_| bad_line(&text_path, number, "bad token"))?;
+                    let count = parse_count(count, &text_path, number)?;
+                    // `add_unigram_frequency` is `freq += delta`
+                    // (`phrase_index.cpp:173`), so a repeated token sums
+                    // and a zero count is a no-op rather than an error.
+                    // This crate is that tool's port and reproduces both;
+                    // `oxpinyin_data::interp`, the decoder's loader,
+                    // refuses them — see
+                    // `docs/findings/interpolation2-grammar.md`.
+                    let entry = model.unigrams.entry(token).or_insert(0);
+                    *entry += u64::from(count);
+                }
+                Section::Bigram => {
+                    let (token1, word1) = (values[0], values[1]);
+                    let (token2, word2) = (values[2], values[3]);
+                    validate_pair(&phrases, token1, word1, &mut model.stats.special_tokens)
+                        .map_err(|m| bad_line(&text_path, number, &m))?;
+                    validate_pair(&phrases, token2, word2, &mut model.stats.special_tokens)
+                        .map_err(|m| bad_line(&text_path, number, &m))?;
+                    let token1 = token1
+                        .parse::<u32>()
+                        .map_err(|_| bad_line(&text_path, number, "bad token"))?;
+                    let token2 = token2
+                        .parse::<u32>()
+                        .map_err(|_| bad_line(&text_path, number, "bad token"))?;
+                    let count = parse_count(count, &text_path, number)?;
+                    let entry = model.bigram.entry(token1).or_default();
+                    if entry.1.iter().any(|(next, _)| *next == token2) {
+                        return Err(DatagenError::Consistency(format!(
+                            "duplicate 2-gram pair {token1:#010x} → {token2:#010x}"
+                        )));
+                    }
+                    entry.1.push((token2, count));
+                    entry.0 += u64::from(count);
+                }
+                Section::Header => {
+                    return Err(bad_line(
+                        &text_path,
+                        number,
+                        "\\item before a \\N-gram header",
+                    ));
+                }
+            },
         }
     }
     Ok(())
