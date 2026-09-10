@@ -326,16 +326,31 @@ pub trait WriteStore: ReadStore {
     ///
     /// # Durability
     ///
-    /// A commit that returns is on **stable storage** on every backend:
-    /// redb and LMDB fsync as part of their (WAL / copy-on-write)
-    /// commit, and the Kyoto Cabinet and tkrzw backends follow their
-    /// commit with a hard `kcdbsync` / `Synchronize`. Surviving a
-    /// process crash is the floor; surviving power loss at any point
-    /// *after* `write` returned is the contract. One residual
-    /// difference, documented per backend: a crash *during* the commit
-    /// call itself can tear the batch on KC and tkrzw (no write-ahead
-    /// log), where redb and LMDB roll a torn commit back on the next
-    /// open.
+    /// A commit that returns has left the process on every backend: it
+    /// is visible to any other reader and survives a **process** crash.
+    /// That is the floor the seam guarantees, and it is what `write`
+    /// promises — no more.
+    ///
+    /// **Stable storage is [`WriteStore::compact`]'s guarantee, not
+    /// this one.** The Kyoto Cabinet and tkrzw backends commit with a
+    /// soft `kcdbsync` / `Synchronize` and hard-sync in `compact`;
+    /// `UserStore::save` calls `compact`, so `pinyin_save` is where the
+    /// user's data reaches the device. redb and LMDB exceed the floor —
+    /// they fsync inside their own (WAL / copy-on-write) commit — and
+    /// callers must not read that as the contract.
+    ///
+    /// Syncing every commit to the device instead was measured at
+    /// +1.18–1.85 ms per commit on tkrzw, a 13–31× per-commit
+    /// regression on a path the C ABI runs synchronously from a
+    /// keystroke, for a durability window narrower than the one
+    /// upstream libpinyin already leaves open;
+    /// `docs/findings/perf-train-commit-fsync-2026-09-09.md` carries
+    /// the numbers and the decision.
+    ///
+    /// One residual difference, documented per backend: a crash
+    /// *during* the commit call itself can tear the batch on KC and
+    /// tkrzw (no write-ahead log), where redb and LMDB roll a torn
+    /// commit back on the next open.
     ///
     /// The closure must not call [`WriteStore::write`] again. Backends may
     /// serialize write transactions, so a nested call can block forever.
@@ -348,10 +363,14 @@ pub trait WriteStore: ReadStore {
         f: impl FnOnce(&mut dyn WriteTxn) -> Result<R, StoreError>,
     ) -> Result<R, StoreError>;
 
-    /// Perform backend-dependent compaction work.
+    /// Perform backend-dependent compaction work, and put the store on
+    /// **stable storage**.
     ///
     /// redb rewrites the file and reclaims free pages. LMDB reuses freed pages
     /// in place, so its successful implementation does not shrink the file.
+    /// Kyoto Cabinet and tkrzw hard-sync here — see
+    /// [`WriteStore::write`]'s durability note, which explains why the
+    /// device-level sync sits on this call and not on every commit.
     ///
     /// # Errors
     ///
