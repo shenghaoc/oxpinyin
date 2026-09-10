@@ -58,8 +58,16 @@ impl ChunkBuilder {
             max_slot + 1
         };
 
-        // Entry area: bytes 0..8 reserved, then items in slot order.
-        let mut content: Vec<u8> = vec![0; FIRST_ITEM_OFFSET as usize];
+        // Entry area: `add_phrase_item` bumps a zero content size to
+        // `FIRST_ITEM_OFFSET` on the *first* item, so a library with no
+        // items reserves nothing and stores an empty entry area — the
+        // 19-byte payload the pin's own `gen_binary_files` writes for an
+        // empty `.table`.
+        let mut content: Vec<u8> = if self.items.is_empty() {
+            Vec::new()
+        } else {
+            vec![0; FIRST_ITEM_OFFSET as usize]
+        };
         let mut offsets = vec![0_u32; slots];
         for (&slot, (unigram, text, pronunciations)) in &self.items {
             offsets[slot] = content.len() as u32;

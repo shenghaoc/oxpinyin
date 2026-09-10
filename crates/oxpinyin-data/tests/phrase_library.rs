@@ -52,8 +52,16 @@ impl ChunkBuilder {
             max_slot + 1
         };
 
-        // Entry area: bytes 0..8 reserved, then items in slot order.
-        let mut content: Vec<u8> = vec![0; FIRST_ITEM_OFFSET as usize];
+        // Entry area: `add_phrase_item` bumps a zero content size to
+        // `FIRST_ITEM_OFFSET` on the *first* item, so a library with no
+        // items reserves nothing and stores an empty entry area — the
+        // 19-byte payload the pin's own `gen_binary_files` writes for an
+        // empty `.table`.
+        let mut content: Vec<u8> = if self.items.is_empty() {
+            Vec::new()
+        } else {
+            vec![0; FIRST_ITEM_OFFSET as usize]
+        };
         let mut offsets = vec![0_u32; slots];
         for (&slot, (unigram, text, pronunciations)) in &self.items {
             offsets[slot] = content.len() as u32;
@@ -173,6 +181,24 @@ fn empty_library_answers_the_one_to_one_range() {
     // `get_range`'s skip-empty branch: an offset array with only zero
     // slots answers 1..1.
     let bytes = ChunkBuilder::new(0).build();
+    // The empty library's canonical shape, measured on the pin's own
+    // `gen_binary_files` output for an empty `.table`: header, three
+    // section offsets one byte apart, three separators, and *no* entry
+    // area — `add_phrase_item` never ran, so nothing was reserved. The
+    // same vector `oxpinyin-datagen`'s `build_chunk_of_no_items_matches_the_pin`
+    // pins on the writer side.
+    assert_eq!(
+        bytes,
+        [
+            19, 0, 0, 0, // payload length
+            51, 35, 35, 0, // checksum
+            0, 0, 0, 0, // total_freq
+            17, 0, 0, 0, // index_one
+            18, 0, 0, 0, // index_two: no offset array
+            19, 0, 0, 0, // index_three: no entry area
+            b'#', b'#', b'#'
+        ]
+    );
     let path = write_temp("empty", &bytes);
     let library = PhraseLibrary::open(&path).expect("empty but well-formed");
     assert_eq!(library.token_range(), 1..1);
