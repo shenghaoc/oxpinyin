@@ -10,6 +10,27 @@ performance investigation starts from `6886dc1f` and the residual
 ~1.24× first-result / ~1.16× steady gap — not from the pre-change
 ~2.8× first-result number, which this work halves.
 
+> **Build-recipe scope note (2026-09-10, #401).** The oxpinyin cells in this
+> record were built by `run-perf-same-data.sh`'s `build_capi` — `cargo build
+> --locked --release` + `strip --strip-all`, producing `libpinyin_capi.so`.
+> **That is not the shipping artifact**, which is `cargo cinstall`'s
+> `libpinyin.so.15.0.0`; the cargo-build fixture is the slower of the two, so
+> the cross-implementation figures here **overstate the shipping product's
+> cost**. On arm64 the measured recipe effect on the steady-cycle ratio is
+> −0.032 to −0.038 ratio units
+> ([perf-cycle-ir-differential-2026-09-08.md](perf-cycle-ir-differential-2026-09-08.md)),
+> so the "~1.16× steady" headline reads high; no magnitude is established for
+> the init, first-alloc, cold-cycle, ttf or RSS axes, on which the effect has
+> never been measured. The "Stripped `.so` size: 1,576,960 bytes" line describes
+> the fixture, not the shipped library (1,816,024 B on this architecture) — a
+> different object, not a biased number.
+>
+> **The result this record exists for is unaffected.** First allocation
+> ~17 ms → ~1 µs, the cold-cycle deltas, the closure check and the RSS delta are
+> same-recipe parent→HEAD comparisons in which a whole-artifact scale factor
+> cancels. See
+> [perf-build-recipe-audit-2026-09-10.md](perf-build-recipe-audit-2026-09-10.md).
+
 ## Corrections to this record
 
 This document has been corrected since it was merged, and one claim it

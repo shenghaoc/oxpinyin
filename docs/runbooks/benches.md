@@ -159,6 +159,43 @@ a recent full example with confidence intervals and an acceptance
 gate). A change that trades time for space or the reverse must say so
 and justify it (AGENTS.md, "Source policy").
 
+### State the build recipe, per artifact
+
+**Which artifact was timed is part of the measurement, not a detail of it.**
+Name the exact cargo command line for every timed oxpinyin artifact, and give
+its `sha256`, `NEEDED` list and byte size.
+`docs/findings/perf-steady-cycle-cross-host-2026-09-07.md:155` is the worked
+example.
+
+This is not bookkeeping. `cargo cinstall` is the shipping path
+(`.github/workflows/release-packages.yml` → `tools/packaging/install.sh`;
+`libpinyin.so.15.0.0`, plus `--features shipped` for the drop-in), while
+`cargo build` produces `libpinyin_capi.so`, a bisection fixture nothing
+installs — and the two do **not** run at the same speed. The measured recipe
+effect on the steady keystroke-cycle ratio is −0.064 to −0.087 ratio units on
+amd64 and −0.032 to −0.038 on arm64
+(`docs/findings/perf-cycle-ir-differential-2026-09-08.md`), with no mechanism
+established. A record that does not say which one it built cannot be read as a
+statement about the product.
+
+Two shortcuts do not substitute for the command line, and both have already
+misled a reader:
+
+- **The artifact filename discriminates only after `d32557e3`
+  (2026-08-29T16:33:26Z)**, which introduced the `libpinyin.so.15` SONAME.
+  Before it, cargo-c installed under the same `libpinyin_capi.so` name the
+  cargo build produces.
+- **Naming `run-perf-same-data.sh` is not naming a recipe.** Its
+  `OXPINYIN_KC_SO` / `OXPINYIN_TKRZW_SO` variables take a prebuilt `.so` and
+  skip `build_capi` entirely.
+
+`tools/profile/run-w8-cycle.sh` is a third case worth naming explicitly: it
+stages through `cargo cinstall` but with `--profile profiling` (thin LTO, line
+tables, `panic = "unwind"`), so it is neither the fixture nor the product.
+
+The audit of which existing records sit where is
+`docs/findings/perf-build-recipe-audit-2026-09-10.md`.
+
 ### Evidence: what is committed and what is not
 
 **A findings document commits no captures.** Not DHAT JSON, not `/proc`

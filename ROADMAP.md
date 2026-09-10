@@ -166,8 +166,14 @@ shelved BerkeleyDB compat path (drop-in task 10).
   pin-built `libpinyin.so` and oxpinyin's C ABI open one unchanged
   libpinyin `data/` and are byte-identical on every surface but the two
   registered divergences. Init fell from ~100× the pin to within ~1.3×
-  (`docs/perf/perf-baseline-kc-2026-09.md`,
-  `docs/findings/perf-backend-matrix-2026-09.md`).
+  (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`, whose
+  oxpinyin cells were built by `cargo build`, not the shipping
+  `cargo cinstall` — see
+  `docs/findings/perf-build-recipe-audit-2026-09-10.md`). Measured since on
+  the shipping path: init at 1.16× (Tkrzw) / 1.12× (KC)
+  (`docs/findings/perf-backend-matrix-2026-09.md`) and 4.9× after the
+  key-cost deferral moved work out of init
+  (`docs/perf/perf-baseline-kc-2026-09.md`).
 
 - **W7 is flat, not a task stack.** One deliverable: classic text-format
   interop via oxpinyin-dictool (import + export). The line-oriented
@@ -362,9 +368,13 @@ measured against the pin in the same container:
 - **Measurement harness** (2026-08-19): Criterion groups on the C-ABI
   surface, the `profiling` cargo profile, `tools/profile/run-w8-cycle.sh`.
 - **P1–P6 data-layer inversion** (2026-09-01 → 2026-09-02): the runtime
-  reads libpinyin's own file formats directly (W15 note above). x86_64,
-  same data directory as the pin: init within ~1.1× (KC) / ~1.3× (tkrzw)
-  of the pin, from ~100× before (`docs/findings/perf-backend-matrix-2026-09.md`).
+  reads libpinyin's own file formats directly (W15 note above). Same data
+  directory as the pin: init within ~1.1× (KC) / ~1.3× (tkrzw)
+  of the pin, from ~100× before
+  (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md` — a
+  `cargo build` artifact, not the shipping `cargo cinstall` one, so it reads
+  high, and it states no host architecture;
+  `docs/findings/perf-build-recipe-audit-2026-09-10.md`).
   ARM64/KC re-baseline: init 102 → 21 ms, RSS 72,652 → 28,388 KiB,
   runtime data 101.80 → 36.88 MiB (`docs/perf/perf-baseline-kc-2026-09.md`).
 - **Release profile**: fat LTO + one codegen unit
@@ -374,7 +384,19 @@ measured against the pin in the same container:
   LMDB and user-store hot paths, measured in
   `docs/findings/perf-store-opt-2026-09.md` (S5, F4).
 
-Next targets named by the P6 finding: per-instance `pinyin_alloc_instance`
-key-cost table (~16.5 ms, memoize or defer) and the steady-state candidate
-lookup (~1.5× the pin). Model upgrades (trigram/KN, typo edges, own data)
-have no landed work and remain candidates behind the same gate.
+The two targets the P6 finding named have both moved on, and its figures for
+them should not be quoted as current. The per-instance `pinyin_alloc_instance`
+key-cost table (P6: ~16.5 ms) was deferred to first `new_session` on 2026-09-04
+and then **eliminated** on 2026-09-07 (`6886dc1f`,
+`docs/findings/perf-keycost-first-alloc-2026-09-07.md`). The steady-state
+candidate lookup (P6: ~1.5× the pin) has been re-measured three times since —
+at parity on amd64, ~1.16× on arm64, and below 1 on the current tree
+(`docs/findings/perf-backend-matrix-2026-09.md`,
+`docs/findings/perf-keycost-first-alloc-2026-09-07.md`,
+`docs/findings/perf-cycle-ir-differential-2026-09-08.md`); P6's own figure
+additionally reads high because its artifact was a `cargo build` fixture rather
+than the shipping `cargo cinstall` library
+(`docs/findings/perf-build-recipe-audit-2026-09-10.md`). The current Stage-2
+target is allocation churn on the steady cycle, per the IR differential. Model
+upgrades (trigram/KN, typo edges, own data) have no landed work and remain
+candidates behind the same gate.

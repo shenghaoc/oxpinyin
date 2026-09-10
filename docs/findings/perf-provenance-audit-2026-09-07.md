@@ -192,6 +192,27 @@ see the count, which the surface supports only as a lower bound.
 | `perf/perf-candidate-cap-2026-08.md` | 2026-08-16 (see below) | `f8e2c11d` | before | → D7 | criterion (`scan_perf`) | none found |
 | `perf/perf-exploration.md` | 2026-08-14 | `017a610` (PR #46) | before | 12 logical cores, one measurement thread unless noted, rustc 1.97.1; Callgrind `Ir` + dhat 0.3 | criterion + Callgrind + dhat | none found |
 
+> **Two amendments from the 2026-09-10 build-recipe audit (#401).** Recorded
+> here rather than edited into the table above, so the map stays the record of
+> what this pass established.
+>
+> 1. **The map has no build-recipe column, and it needed one.** None of the six
+>    columns distinguishes a `cargo build` + `strip` artifact
+>    (`libpinyin_capi.so`, a bisection fixture) from the shipping
+>    `cargo cinstall` one (`libpinyin.so.15.0.0`) — and the two do not run at
+>    the same speed. That gap is why #401 had to be a separate audit; the
+>    per-record recipe verdicts are in
+>    [perf-build-recipe-audit-2026-09-10.md](perf-build-recipe-audit-2026-09-10.md).
+> 2. **One harness cell is wrong.** `perf-backend-matrix-bdb-store-2026-09.md`
+>    is mapped to `bisect --perf`. The record contains no occurrence of the
+>    string `bisect`; it states its harness as criterion at `:99-103`, with the
+>    exact `cargo bench -p oxpinyin-store … --bench backend_matrix_<backend>`
+>    and `cargo bench -p pinyin-oracle … --bench dbm_bench` command lines at
+>    `:231-238`. This is observation 9's failure mode surviving into the
+>    rebuilt columns: the row's configuration was correctly marked as delegated
+>    (D6) while its harness was filled from the chained-to record rather than
+>    from the record itself.
+
 ## Delegation
 
 Seven records do not state their configuration; they point at it. The kind of
