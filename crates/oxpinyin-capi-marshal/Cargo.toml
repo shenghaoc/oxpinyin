@@ -1,0 +1,17 @@
+[package]
+name = "oxpinyin-capi-marshal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Declarative marshalling macros shared by the two C-ABI facades (oxpinyin-capi, oxpinyin-zhuyin-capi). Macro-only: no compiled unsafe of its own."
+
+# Macro-only crate: it exports `macro_rules!` whose bodies carry the
+# `unsafe` marshalling edge, which is type/borrow/lint-checked in the
+# capi crate that EXPANDS them, not here. So this crate itself compiles no
+# unsafe and inherits the workspace `unsafe_code = "deny"` unchanged.
+[lints]
+workspace = true
+
+[dependencies]

@@ -774,6 +774,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "glib-sys",
+ "oxpinyin-capi-marshal",
  "oxpinyin-chewing",
  "oxpinyin-core",
  "oxpinyin-data",
@@ -783,6 +784,10 @@ dependencies = [
  "oxpinyin-testsupport",
  "oxpinyin-user",
 ]
+
+[[package]]
+name = "oxpinyin-capi-marshal"
+version = "0.1.0"
 
 [[package]]
 name = "oxpinyin-chewing"
@@ -992,6 +997,7 @@ name = "oxpinyin-zhuyin-capi"
 version = "0.1.0"
 dependencies = [
  "glib-sys",
+ "oxpinyin-capi-marshal",
  "oxpinyin-chewing",
  "oxpinyin-core",
  "oxpinyin-data",

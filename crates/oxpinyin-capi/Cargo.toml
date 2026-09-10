@@ -104,6 +104,10 @@ missing_safety_doc = "deny"
 must_use_candidate = "warn"
 
 [dependencies]
+# Marshalling macros shared with oxpinyin-zhuyin-capi (macro-only, no
+# compiled code): the opaque-handle pointer casts and the char**-out
+# sentence writer expand into this crate, where the unsafe is allowed.
+oxpinyin-capi-marshal = { path = "../oxpinyin-capi-marshal" }
 oxpinyin-chewing = { path = "../oxpinyin-chewing" }
 oxpinyin-core.workspace = true
 # default-features = false on the store-reaching edges (the workspace table

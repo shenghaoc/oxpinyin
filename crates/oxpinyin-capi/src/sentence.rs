@@ -3,7 +3,7 @@
 use std::ffi::CString;
 use std::os::raw::c_char;
 
-use crate::ffi::{cstr_to_strict, cstr_to_string, owned_cstr};
+use crate::ffi::{cstr_to_strict, cstr_to_string};
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t, sort_option_t};
 
@@ -173,34 +173,10 @@ pub extern "C" fn pinyin_get_sentence(
     write_owned_sentence(&text, sentence)
 }
 
-/// Writes `text` through the caller-owned out-param: `false` on an empty
-/// text, an interior NUL, or allocation failure, with the out-param nulled
-/// on every failure path.
-fn write_owned_sentence(text: &str, sentence: *mut *mut c_char) -> bool {
-    if text.is_empty() {
-        if !sentence.is_null() {
-            // SAFETY: Caller null-checks the out-param.
-            unsafe {
-                *sentence = std::ptr::null_mut();
-            }
-        }
-        return false;
-    }
-    if !sentence.is_null() {
-        // SAFETY: Null-checked above. `owned_cstr` returns null on an
-        // interior NUL or allocation failure; otherwise ownership
-        // transfers to the caller, which frees it with `g_free`.
-        let owned = owned_cstr(text);
-        // SAFETY: Null-checked above.
-        unsafe {
-            *sentence = owned;
-        }
-        if owned.is_null() {
-            return false;
-        }
-    }
-    true
-}
+// The `char **`-out sentence writer, stamped from the shared marshalling
+// macro (byte-identical to the zhuyin facade's). `crate::ffi::owned_cstr` is
+// this facade's libc-`malloc` duplicator — the per-facade allocator edge.
+oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::owned_cstr);
 
 /// Get the character offset within `phrase` for a lookup byte offset.
 ///

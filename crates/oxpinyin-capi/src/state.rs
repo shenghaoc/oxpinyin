@@ -223,85 +223,16 @@ pub struct CapiInstance {
 
 // ── Pointer casts ───────────────────────────────────────────────────────
 //
-// The opaque `PinyinContext` / `PinyinInstance` types in the C header are
-// zero-sized sentinels. What the pointer actually addresses is a heap-
-// allocated `CapiContext` / `CapiInstance`. These helpers centralise the
-// cast so each call site stays readable.
-
-/// Casts a `*mut PinyinContext` to `&CapiContext`.
-///
-/// # Safety
-///
-/// `ptr` must be non-null and produced by `Box::into_raw(Box::new(CapiContext { .. }))`.
-/// The returned reference must not outlive the `Box` (i.e. must not be used
-/// after `pinyin_fini` reconstructs and drops it), and must not be stored in a
-/// `CapiInstance` or any other longer-lived location.
-pub unsafe fn context_ref<'a>(ptr: *mut PinyinContext) -> &'a CapiContext {
-    // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
-    unsafe { &*(ptr.cast::<CapiContext>()) }
-}
-
-/// Casts a `*mut PinyinContext` to `&mut CapiContext`.
-///
-/// # Safety
-///
-/// `ptr` must be non-null and produced by `Box::into_raw(Box::new(CapiContext { .. }))`.
-/// No other reference to the same context may exist, and the returned
-/// reference must not outlive the `Box` (i.e. must not be used after
-/// `pinyin_fini` reconstructs and drops it) or be stored in a `CapiInstance`.
-pub unsafe fn context_mut<'a>(ptr: *mut PinyinContext) -> &'a mut CapiContext {
-    // SAFETY: Caller guarantees the pointer is valid and unique for the chosen lifetime.
-    unsafe { &mut *(ptr.cast::<CapiContext>()) }
-}
-
-/// Casts a `*mut PinyinInstance` to `&CapiInstance`.
-///
-/// # Safety
-///
-/// `ptr` must be non-null and produced by `Box::into_raw(Box::new(CapiInstance { .. }))`.
-/// The returned reference must not outlive the `Box` (i.e. must not be used
-/// after `pinyin_free_instance` reconstructs and drops it), and must not be
-/// stored in any longer-lived location.
-pub unsafe fn instance_ref<'a>(ptr: *mut PinyinInstance) -> &'a CapiInstance {
-    // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
-    unsafe { &*(ptr.cast::<CapiInstance>()) }
-}
-
-/// Casts a `*mut PinyinInstance` to `&mut CapiInstance`.
-///
-/// # Safety
-///
-/// `ptr` must be non-null and produced by `Box::into_raw(Box::new(CapiInstance { .. }))`.
-/// No other reference to the same instance may exist, and the returned
-/// reference must not outlive the `Box` (i.e. must not be used after
-/// `pinyin_free_instance` reconstructs and drops it) or be stored elsewhere.
-pub unsafe fn instance_mut<'a>(ptr: *mut PinyinInstance) -> &'a mut CapiInstance {
-    // SAFETY: Caller guarantees the pointer is valid and unique for the chosen lifetime.
-    unsafe { &mut *(ptr.cast::<CapiInstance>()) }
-}
-
-/// Converts a `CapiContext` into a `*mut PinyinContext` for return to C.
-pub fn box_context(ctx: CapiContext) -> *mut PinyinContext {
-    Box::into_raw(Box::new(ctx)).cast()
-}
-
-/// Converts a `CapiInstance` into a `*mut PinyinInstance` for return to C.
-pub fn box_instance(inst: CapiInstance) -> *mut PinyinInstance {
-    Box::into_raw(Box::new(inst)).cast()
-}
-
-/// Casts a `*mut LookupCandidate` back to `&CapiCandidate`.
-///
-/// # Safety
-///
-/// `ptr` must be non-null and point into an active `CapiInstance::candidates`
-/// vec (produced by [`candidate_ptr`]).
-pub unsafe fn candidate_ref<'a>(ptr: *mut LookupCandidate) -> &'a CapiCandidate {
-    // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
-    unsafe { &*(ptr.cast::<CapiCandidate>()) }
-}
-
-/// Returns a `*mut LookupCandidate` pointing to a `CapiCandidate`.
-pub const fn candidate_ptr(cand: &CapiCandidate) -> *mut LookupCandidate {
-    (cand as *const CapiCandidate as *mut CapiCandidate).cast()
+// The opaque `PinyinContext` / `PinyinInstance` / `LookupCandidate` types in
+// the C header are zero-sized sentinels; the pointers actually address a
+// heap-allocated `CapiContext` / `CapiInstance` / `CapiCandidate`. The eight
+// cast/box helpers (context_ref/mut, instance_ref/mut, box_context/instance,
+// candidate_ref/ptr) are stamped by the shared marshalling macro so this
+// facade and the zhuyin one cannot drift; the generated `unsafe` blocks land
+// here in the C-ABI crate, where the constitution's allowlist permits them.
+oxpinyin_capi_marshal::opaque_handle_casts! {
+    vis: pub,
+    context: PinyinContext => CapiContext,
+    instance: PinyinInstance => CapiInstance,
+    candidate: LookupCandidate => CapiCandidate,
 }
