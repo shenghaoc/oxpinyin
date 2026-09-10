@@ -140,6 +140,23 @@ pub mod pinyin_index {
     /// Serialises one `PinyinIndexItem2<L>` record: token, then the
     /// stored keys (their original tones), then zero padding to
     /// [`item2_stride`].
+    ///
+    /// `keys.len()` **is** the record's `L`, and a DBM value is a packed
+    /// array of records that all share one `L` — the phrase length
+    /// [`decode_items`] is later handed, which upstream derives from the
+    /// key (`key.len() / 2` syllables). So a caller assembling a value
+    /// must pass the same non-empty `keys` length for every record in it;
+    /// `L = 0` and mixed lengths do not name any value this format can
+    /// express.
+    ///
+    /// Both are unreachable from the compiler that writes these files —
+    /// `parse_pinyin_keys` refuses an empty syllable, and rows are grouped
+    /// by their encoded key, so one value's records share a syllable count
+    /// by construction. Neither is guarded here, because the guard that
+    /// matters is on the read side: [`decode_items`] rejects `L = 0` and
+    /// any value whose length is not a whole multiple of its stride, so a
+    /// record stream written out of contract is refused rather than
+    /// misparsed.
     #[must_use]
     pub fn encode_item(token: u32, keys: &[ChewingKey]) -> Vec<u8> {
         let mut buf = vec![0_u8; item2_stride(keys.len())];
@@ -152,8 +169,17 @@ pub mod pinyin_index {
 
     /// Serialises a whole DBM value: the records back to back, each at
     /// [`item2_stride`].
+    ///
+    /// Fixture helper, not part of the schema's surface: the compiler
+    /// writes values record by record through [`encode_item`], and
+    /// nothing outside this crate's tests assembles one from
+    /// [`PinyinIndexItem`]s. Kept crate- and test-scoped so the
+    /// mixed-`L` value it would happily build for a caller who passes
+    /// items of differing key counts is not reachable from the public
+    /// API — see [`encode_item`] for that contract.
+    #[cfg(test)]
     #[must_use]
-    pub fn encode_items(items: &[PinyinIndexItem]) -> Vec<u8> {
+    pub(crate) fn encode_items(items: &[PinyinIndexItem]) -> Vec<u8> {
         let mut buf = Vec::new();
         for item in items {
             buf.extend_from_slice(&encode_item(item.token, &item.keys));
@@ -557,6 +583,44 @@ mod tests {
         assert!(decode_items(&[0; 7], 1).is_err());
         assert!(decode_items(&[0; 8], 0).is_err());
         assert!(decode_items(&[], 1).unwrap().is_empty());
+    }
+
+    /// `encode_item`'s contract, enforced where it matters: a record
+    /// stream written outside it is refused by the reader, not
+    /// misparsed. Both shapes are unreachable from the compiler; this
+    /// pins that neither could slip past as a plausible value if one
+    /// ever were.
+    #[test]
+    fn a_record_stream_written_out_of_contract_is_refused_on_read() {
+        use pinyin_index::{decode_items, encode_item, item2_stride};
+        // L = 0: four bytes of bare token, which names no phrase length.
+        let degenerate = encode_item(0x0100_0001, &[]);
+        assert_eq!(degenerate.len(), 4);
+        assert!(decode_items(&degenerate, 0).is_err(), "L = 0 is refused");
+        assert!(
+            decode_items(&degenerate, 1).is_err(),
+            "and it is not a whole L=1 record either"
+        );
+        // Mixed L in one value: an L=1 record followed by an L=3 record
+        // is 8 + 12 bytes, which no single stride divides evenly.
+        let mut mixed = encode_item(0x0100_0001, &[ChewingKey::new(1, 0, 2, 0)]);
+        mixed.extend_from_slice(&encode_item(
+            0x0100_0002,
+            &[
+                ChewingKey::new(1, 0, 2, 0),
+                ChewingKey::new(3, 0, 4, 0),
+                ChewingKey::new(5, 0, 6, 0),
+            ],
+        ));
+        assert_eq!(mixed.len(), item2_stride(1) + item2_stride(3));
+        assert!(
+            decode_items(&mixed, 1).is_err(),
+            "20 is not a multiple of 8"
+        );
+        assert!(
+            decode_items(&mixed, 3).is_err(),
+            "nor of 12 — neither length claims the stream"
+        );
     }
 
     #[test]
