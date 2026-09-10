@@ -22,6 +22,30 @@
 //! `\2-gram` section of the text export adds nothing the decoder does not
 //! already have.
 //!
+//! # Grammar, and the one place this reader is stricter than upstream
+//!
+//! Lines are read through [`oxpinyin_data::interp_grammar`](crate::interp_grammar),
+//! the shared port of libpinyin's `taglib_read` — the same module
+//! `oxpinyin-datagen`'s model20 compile reads them through, so the two
+//! cannot drift on what a line *means*. What each does with a
+//! well-formed-but-contradictory record is deliberately different, and the
+//! difference is the recorded one:
+//!
+//! * `import_interpolation` sums a repeated `\1-gram` token
+//!   (`add_unigram_frequency` is `freq += delta`) and accepts a zero
+//!   count. `oxpinyin-datagen`, which is that tool's port, reproduces
+//!   both.
+//! * This reader **refuses** both. It is not a port of the tool; it is the
+//!   decoder's loader, and no conforming producer of this format can emit
+//!   either record — `export_interpolation` walks tokens ascending and
+//!   skips zero frequencies (`:85-95`), `k_mixture_model_to_interpolation`
+//!   skips them too (`:132`), and `oxpinyin-emitter` reproduces both
+//!   filters. A file carrying one is corrupt, and summing a corrupt model
+//!   into the decoder loses the evidence that it was corrupt.
+//!
+//! `docs/findings/interpolation2-grammar.md` carries the measurements and
+//! the rationale.
+//!
 //! The model archive is fetched at build time into an ignored cache
 //! (`tools/model/fetch-model.sh`); nothing in this module bakes frequencies in
 //! or discovers the cache path — the caller passes the extracted file.
@@ -31,8 +55,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-/// Marker line that opens the section this reader consumes.
-const ONE_GRAM_HEADER: &str = "\\1-gram";
+use crate::interp_grammar::{self, Line, UNIGRAM_VALUES};
 
 /// Why an interpolation2.text read failed.
 #[derive(Debug)]
@@ -155,86 +178,6 @@ pub fn parse_interpolation2(path: &Path) -> Result<UnigramTable, InterpolationEr
     parse_interpolation2_from_reader(path, BufReader::new(file))
 }
 
-/// The field spans an item line's one walk needs: the head and token
-/// fields, the count value, and the second-to-last field (the `count`
-/// keyword).
-///
-/// `split_whitespace().collect::<Vec<&str>>()` cost one allocation and a
-/// Unicode-whitespace iterator per line across the ~64k-item section; the
-/// walk keeps only four spans and the field count, which is every input
-/// the validation reads. The phrase text between token and `count` is
-/// spanned over, never split.
-struct ItemLineSpans<'a> {
-    /// Field 0 — must be `\item`; `None` when the line has no fields.
-    head: Option<&'a str>,
-    /// Field 1 — the phrase token; `None` when there is no second field.
-    token: Option<&'a str>,
-    /// Field `n - 2` — must be `count`; `None` when there are fewer than
-    /// two fields.
-    second_to_last: Option<&'a str>,
-    /// Field `n - 1` — the count value; `None` when the line has no fields.
-    last: Option<&'a str>,
-    /// Number of whitespace-separated fields.
-    field_count: usize,
-}
-
-/// Walks `line` once, gathering [`ItemLineSpans`]. Whitespace is
-/// [`char::is_whitespace`] — exactly what `str::split_whitespace` splits
-/// on — so field boundaries match the previous `Vec<&str>` split,
-/// including non-ASCII separators inside the phrase text. ASCII bytes
-/// (the `\item`, token, and count fields) skip the UTF-8 decode but keep
-/// the char predicate: `u8::is_ascii_whitespace` would diverge on U+000B,
-/// which `char::is_whitespace` counts as whitespace.
-fn span_item_line(line: &str) -> ItemLineSpans<'_> {
-    let mut spans = ItemLineSpans {
-        head: None,
-        token: None,
-        second_to_last: None,
-        last: None,
-        field_count: 0,
-    };
-    let mut run_start: Option<usize> = None;
-    let mut index = 0;
-    while index < line.len() {
-        let byte = line.as_bytes()[index];
-        // `index` only ever advances over whole characters, so it stays a
-        // char boundary and multi-byte characters decode exactly once.
-        let (whitespace, width) = if byte.is_ascii() {
-            (char::from(byte).is_whitespace(), 1)
-        } else {
-            line[index..]
-                .chars()
-                .next()
-                .map_or((true, 1), |ch| (ch.is_whitespace(), ch.len_utf8()))
-        };
-        if whitespace {
-            if let Some(start) = run_start.take() {
-                close_field(&mut spans, line, start, index);
-            }
-        } else {
-            run_start.get_or_insert(index);
-        }
-        index += width;
-    }
-    if let Some(start) = run_start {
-        close_field(&mut spans, line, start, line.len());
-    }
-    spans
-}
-
-/// Records one `[start, end)` field: counts it, and keeps the spans the
-/// validation reads (head, token, and the rolling last two fields).
-fn close_field<'a>(spans: &mut ItemLineSpans<'a>, line: &'a str, start: usize, end: usize) {
-    spans.field_count += 1;
-    let field = &line[start..end];
-    match spans.field_count {
-        1 => spans.head = Some(field),
-        2 => spans.token = Some(field),
-        _ => {}
-    }
-    spans.second_to_last = spans.last.replace(field);
-}
-
 /// Sorts the records by phrase token.
 ///
 /// The section is not token-ordered, so a sort is unavoidable; sorting
@@ -251,24 +194,45 @@ fn sort_records(records: &mut [(u32, u64)]) {
     }
 }
 
+/// Which section of the export the reader is inside.
+///
+/// Mirrors `import_interpolation`'s `parse_body` / `parse_unigram` pair
+/// (`utils/storage/import_interpolation.cpp:91-156`): an `\item` before
+/// any `\N-gram` header is a line `parse_body` has no tag registered for,
+/// which upstream answers with an `assert` abort.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Section {
+    /// Before the first `\N-gram` header.
+    Header,
+    /// Inside `\1-gram` — the payload this reader consumes.
+    Unigram,
+    /// Inside `\2-gram` before ever seeing `\1-gram`. Reached only by a
+    /// file that orders the sections the other way round, which no
+    /// producer emits; its `\item` lines are skipped without being read,
+    /// because this reader does not consume bigram records.
+    Bigram,
+}
+
 /// Parses the `\1-gram` section from an already-open reader.
 ///
-/// Same validation as [`parse_interpolation2`]: missing `\1-gram`, zero
-/// counts, and duplicate tokens are errors. `path` is only used in
-/// [`InterpolationError::Read`].
+/// Same grammar as [`parse_interpolation2`], read through
+/// [`crate::interp_grammar`]; same policy on duplicate tokens and zero
+/// counts, which this reader refuses (see the module docs). `path` is
+/// only used in [`InterpolationError::Read`].
 ///
 /// # Errors
 ///
-/// Returns [`InterpolationError`] for a read failure, a malformed item
-/// line, a duplicate token, a zero count, or a stream that ends before
-/// the `\1-gram` header.
+/// Returns [`InterpolationError`] for a read failure, a line the pinned
+/// taglib grammar refuses, a duplicate token, a zero count, or a stream
+/// that ends before the `\1-gram` header.
 pub fn parse_interpolation2_from_reader<R: BufRead>(
     path: &Path,
     mut reader: R,
 ) -> Result<UnigramTable, InterpolationError> {
     let mut buffer = String::new();
     let mut line_number = 0_usize;
-    let mut in_section = false;
+    let mut section = Section::Header;
+    let mut saw_unigram = false;
     let mut records: Vec<(u32, u64)> = Vec::new();
 
     loop {
@@ -285,65 +249,94 @@ pub fn parse_interpolation2_from_reader<R: BufRead>(
         line_number += 1;
         let line = buffer.trim_end_matches(['\r', '\n']);
 
-        if !in_section {
-            in_section = line == ONE_GRAM_HEADER;
-            continue;
-        }
-        // `\2-gram`, `\end` or any other section line ends the payload;
-        // `\item` lines are the payload itself.
-        if line.starts_with('\\') && !line.starts_with("\\item") {
-            break;
-        }
-        if line.is_empty() {
+        // Bigram-before-unigram: only the next section tag matters, so
+        // the ~1.9M item lines of that section are never field-parsed.
+        // This is the one state where a line is not read through the
+        // grammar, and it costs a `starts_with` rather than a walk.
+        if section == Section::Bigram && !line.starts_with('\\') {
             continue;
         }
 
-        // `\item <id> <text...> count <count>`; the text is ignored because
-        // the token already identifies the phrase. Fields are checked so a
-        // future phrase text containing spaces still parses.
-        let fields = span_item_line(line);
-        if fields.field_count < 5
-            || fields.head != Some("\\item")
-            || fields.second_to_last != Some("count")
-        {
-            return Err(InterpolationError::Parse {
+        let mut values = [""; UNIGRAM_VALUES];
+        let parsed =
+            interp_grammar::read(line, &mut values).map_err(|error| InterpolationError::Parse {
                 line: line_number,
-                detail: format!("expected `\\item <id> <text> count <count>`, got {line:?}"),
-            });
-        }
-        let token = fields
-            .token
-            .unwrap_or_default()
-            .parse::<u32>()
-            .map_err(|_| InterpolationError::Parse {
-                line: line_number,
-                detail: format!(
-                    "phrase token {:?} is not a u32",
-                    fields.token.unwrap_or_default()
-                ),
+                detail: error.to_string(),
             })?;
-        // `field_count >= 5` guarantees the last field exists.
-        let count_field = fields.last.unwrap_or_default();
-        let count = count_field
-            .parse::<u64>()
-            .map_err(|_| InterpolationError::Parse {
-                line: line_number,
-                detail: format!("unigram count {count_field:?} is not a u64"),
-            })?;
-        if count == 0 {
-            return Err(InterpolationError::Parse {
-                line: line_number,
-                detail: "unigram count is zero".to_owned(),
-            });
+
+        match parsed {
+            // `parse_unigram` returns at `\2-gram` and `\end`
+            // (`import_interpolation.cpp:144-147`). With the payload
+            // already read there is nothing further this reader wants.
+            Line::TwoGram | Line::End if saw_unigram => break,
+            Line::TwoGram => section = Section::Bigram,
+            Line::End => break,
+            Line::OneGram => {
+                section = Section::Unigram;
+                saw_unigram = true;
+            }
+            // A `\data` line inside a section is `BEGIN_LINE` reaching
+            // `parse_unigram`'s `default: abort()` (`:148-149`); only the
+            // header line, consumed by `parse_headline` before the body
+            // starts, is in the grammar.
+            Line::Data { model } => {
+                if section != Section::Header {
+                    return Err(InterpolationError::Parse {
+                        line: line_number,
+                        detail: "repeated \\data header".to_owned(),
+                    });
+                }
+                if model != "interpolation" {
+                    return Err(InterpolationError::Parse {
+                        line: line_number,
+                        detail: format!("expected `model interpolation`, got {model:?}"),
+                    });
+                }
+            }
+            Line::Item { count } => {
+                match section {
+                    Section::Unigram => {}
+                    Section::Bigram => continue,
+                    Section::Header => {
+                        return Err(InterpolationError::Parse {
+                            line: line_number,
+                            detail: "\\item before a \\N-gram header".to_owned(),
+                        });
+                    }
+                }
+                let token = values[0]
+                    .parse::<u32>()
+                    .map_err(|_| InterpolationError::Parse {
+                        line: line_number,
+                        detail: format!("phrase token {:?} is not a u32", values[0]),
+                    })?;
+                let count = count
+                    .parse::<u64>()
+                    .map_err(|_| InterpolationError::Parse {
+                        line: line_number,
+                        detail: format!("unigram count {count:?} is not a u64"),
+                    })?;
+                // Policy, not grammar: `import_interpolation` accepts a
+                // zero count and `oxpinyin-datagen` reproduces that. See
+                // the module docs for why the decoder's loader does not.
+                if count == 0 {
+                    return Err(InterpolationError::Parse {
+                        line: line_number,
+                        detail: "unigram count is zero".to_owned(),
+                    });
+                }
+                records.push((token, count));
+            }
         }
-        records.push((token, count));
     }
 
-    if !in_section {
+    if !saw_unigram {
         return Err(InterpolationError::MissingOneGram);
     }
 
     sort_records(&mut records);
+    // Policy, not grammar: upstream sums a repeated token
+    // (`add_unigram_frequency` is `freq += delta`, `phrase_index.cpp:173`).
     if let Some(pair) = records.windows(2).find(|pair| pair[0].0 == pair[1].0) {
         return Err(InterpolationError::Parse {
             line: line_number,
@@ -451,36 +444,78 @@ mod tests {
     }
 
     #[test]
-    fn span_walk_matches_split_whitespace_fields() {
-        // Every line shape the validation reads: head, token, and the
-        // last two fields must be the ones `split_whitespace` would give
-        // — including non-ASCII separators (U+3000) and multi-word text.
+    fn whitespace_in_the_phrase_text_follows_the_taglib_parity_rule() {
+        // Before this reader shared `interp_grammar`, it took the last
+        // two fields as `count <value>` and accepted both of these. The
+        // pin refuses both (measured; see the findings document), and so
+        // does `oxpinyin-datagen`.
         for line in [
-            "\\item 10 甲 count 5",
-            "  \\item  +10 甲 乙\tcount  007 ",
-            "\\item 10 \u{3000}甲\u{3000} count 5",
-            // U+000B separates fields for `char::is_whitespace` even
-            // though `u8::is_ascii_whitespace` says no.
-            "\\item\u{b}10\u{b}甲\u{b}count\u{b}5",
-            "\\item 10 甲\u{c}count 5",
-            "\\item",
-            "\\item 10",
-            "\\item 10 x count",
-            "",
-            "   ",
-            "\\item 10 x y count 5",
+            "\\item 10 \u{7532} \u{4e59} count 5",
+            "\\item 10 x y z w count 5",
         ] {
-            let spans = super::span_item_line(line);
-            let fields: Vec<&str> = line.split_whitespace().collect();
-            assert_eq!(spans.field_count, fields.len(), "field count for {line:?}");
-            assert_eq!(spans.head, fields.first().copied(), "head for {line:?}");
-            assert_eq!(spans.token, fields.get(1).copied(), "token for {line:?}");
-            assert_eq!(
-                spans.second_to_last,
-                fields.len().checked_sub(2).map(|i| fields[i]),
-                "second-to-last for {line:?}"
+            let text = format!("\\1-gram\n{line}\n");
+            let result = super::parse_interpolation2_from_reader(
+                std::path::Path::new("memory"),
+                std::io::Cursor::new(text.as_bytes()),
             );
-            assert_eq!(spans.last, fields.last().copied(), "last for {line:?}");
+            assert!(
+                matches!(result, Err(InterpolationError::Parse { line: 2, .. })),
+                "expected {line:?} to be refused, got {result:?}"
+            );
         }
+        // The even-tail shape the pin accepts is accepted here too: the
+        // second positional value is `a`, and `b`/`c` are dropped.
+        let table = super::parse_interpolation2_from_reader(
+            std::path::Path::new("memory"),
+            std::io::Cursor::new(&b"\\1-gram\n\\item 10 a b c count 5\n"[..]),
+        )
+        .expect("even tail reads");
+        assert_eq!(table.count(10), Some(5));
+    }
+
+    #[test]
+    fn an_unrecognised_line_is_an_error_wherever_it_sits() {
+        // Upstream's `taglib_read` refuses it and `check_result` aborts.
+        // This reader used to ignore anything before `\1-gram` outright.
+        for text in [
+            "junk\n\\1-gram\n\\item 10 \u{7532} count 5\n",
+            "\\1-gram\n\\item 10 \u{7532} count 5\njunk\n",
+        ] {
+            let result = super::parse_interpolation2_from_reader(
+                std::path::Path::new("memory"),
+                std::io::Cursor::new(text.as_bytes()),
+            );
+            assert!(
+                matches!(result, Err(InterpolationError::Parse { .. })),
+                "expected {text:?} to be refused, got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_item_before_any_section_header_is_an_error() {
+        let result = super::parse_interpolation2_from_reader(
+            std::path::Path::new("memory"),
+            std::io::Cursor::new(&b"\\item 10 x count 5\n\\1-gram\n"[..]),
+        );
+        assert!(matches!(
+            result,
+            Err(InterpolationError::Parse { line: 1, .. })
+        ));
+    }
+
+    #[test]
+    fn a_blank_line_is_refused_rather_than_dereferenced() {
+        // `taglib_read` takes `tokens[0]` — NULL for a blank line — and
+        // hands it to `strcmp`; the pin-built tool segfaults. Constitution
+        // item 4: a typed error, never a crash.
+        let result = super::parse_interpolation2_from_reader(
+            std::path::Path::new("memory"),
+            std::io::Cursor::new(&b"\\1-gram\n\n\\item 10 x count 5\n"[..]),
+        );
+        assert!(matches!(
+            result,
+            Err(InterpolationError::Parse { line: 2, .. })
+        ));
     }
 }

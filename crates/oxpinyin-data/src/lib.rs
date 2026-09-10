@@ -32,6 +32,7 @@ pub mod chunk_write;
 pub mod content;
 pub mod dict;
 pub mod interp;
+pub mod interp_grammar;
 pub mod lm;
 pub mod phrase_libraries;
 pub mod phrase_library;
