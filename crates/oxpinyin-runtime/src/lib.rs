@@ -652,6 +652,15 @@ impl Dictionary for RuntimeDict {
         // trained store's user items are not folded in.
         Ok(self.visible_item_count())
     }
+
+    /// Both seams under this facade handle partial-key queries with one
+    /// probe: the system dictionary's DBM is double-indexed at datagen time
+    /// (see [`SystemDictionary`]), and `UserLookup` mirrors that with a
+    /// `by_initial` index (`crates/oxpinyin-user/src/lookup.rs`). Addon
+    /// facades share the DBM shape.
+    fn handles_partial_keys(&self) -> bool {
+        true
+    }
 }
 
 /// The bigram language model with the user-count overlay.

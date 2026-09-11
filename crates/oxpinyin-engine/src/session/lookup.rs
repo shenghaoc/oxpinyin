@@ -984,9 +984,10 @@ where
     /// The table search on one complete key-path, and the prefix probe that
     /// decides whether the window keeps widening.
     ///
-    /// A path with any incomplete syllable is looked up once, unexpanded:
-    /// [`Dictionary::lookup_into`] routes the query through its
-    /// incomplete-projected index — `ChewingTable::search` at
+    /// A path with any incomplete syllable is looked up once when the
+    /// dictionary advertises [`Dictionary::handles_partial_keys`], routing
+    /// through its incomplete-projected index —
+    /// `ChewingTable::search` at
     /// `crates/oxpinyin-data/src/chewing_table.rs:342-356` for the system
     /// path, `UserLookup::lookup` for the user overlay — mirroring
     /// upstream's `ChewingLargeTable2::search`
@@ -994,13 +995,21 @@ where
     /// selects the incomplete or complete index by
     /// `contains_incomplete_pinyin` and issues one `search_internal`
     /// either way. Previously this site enumerated completions via
-    /// `expand_keys` first, driving the fan-out
+    /// [`expand_keys`] unconditionally, driving the fan-out
     /// [`docs/findings/scan-matrix-fanout-2026-09-10.md`](../../docs/findings/scan-matrix-fanout-2026-09-10.md)
     /// measured (~9× amplification from matrix path to probe); the
     /// datagen side already writes both keyspaces at
     /// `crates/oxpinyin-datagen/src/libpinyin.rs:142`, and the user store
     /// now mirrors that with its `by_initial` index, so the expansion is
-    /// redundant.
+    /// redundant against a dictionary that opts in.
+    ///
+    /// For dictionaries whose implementation is exact-key only —
+    /// fixture-backed doubles, mocks, non-DBM back-ends — the fallback
+    /// still enumerates completions through [`expand_keys`] and issues one
+    /// lookup per expansion. Those callers see behaviour unchanged from
+    /// before the fan-out fix; the seam grows by a defaulted-to-`false`
+    /// trait method rather than a partial-key contract every implementor
+    /// has to hold.
     pub(super) fn search_scan_path(
         &self,
         buf: &mut ScanBuf<'_>,
@@ -1013,7 +1022,24 @@ where
             continued,
             entries,
         } = buf;
-        self.lookup_and_append(path, path.len(), end, system, addon, entries)?;
+        let has_incomplete = path
+            .iter()
+            .any(|key| key.completeness() == Completeness::Partial);
+
+        if has_incomplete && !self.dictionary.handles_partial_keys() {
+            for sequence in expand_keys(path, SCAN_EXPANSION_LIMIT) {
+                self.lookup_and_append(
+                    sequence.as_slice(),
+                    path.len(),
+                    end,
+                    system,
+                    addon,
+                    entries,
+                )?;
+            }
+        } else {
+            self.lookup_and_append(path, path.len(), end, system, addon, entries)?;
+        }
 
         let can_extend = self
             .dictionary

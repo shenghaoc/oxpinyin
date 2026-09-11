@@ -380,6 +380,14 @@ impl Dictionary for SystemDictionary {
             .map(PhraseToken::new)
             .collect()
     }
+
+    /// The DBM double-indexes each row under both incomplete and complete
+    /// keyspaces (`crates/oxpinyin-datagen/src/libpinyin.rs:142`), and
+    /// [`super::chewing_table::ChewingTable::search`] dispatches on
+    /// `contains_incomplete` — so a partial-key query answers in one probe.
+    fn handles_partial_keys(&self) -> bool {
+        true
+    }
 }
 
 // ── the addon facade ─────────────────────────────────────────────
