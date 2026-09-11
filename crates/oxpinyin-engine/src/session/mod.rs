@@ -15,10 +15,10 @@ use smallvec::SmallVec;
 
 use oxpinyin_core::graph::{Edge, EdgeKind, ExactSegment, SegmentGraph};
 use oxpinyin_core::kbest::{DecodedPath, k_best};
-use oxpinyin_core::scoring::{Scorer, ScoringConfig, ScoringError, expand_keys, key_cost_table};
+use oxpinyin_core::scoring::{Scorer, ScoringConfig, ScoringError, key_cost_table};
 use oxpinyin_core::{
-    Completeness, Cost, Dictionary, LanguageModel, MergedGram, OptionBits, PhraseEntry,
-    PhraseToken, SyllableKey, UserModel,
+    Cost, Dictionary, LanguageModel, MergedGram, OptionBits, PhraseEntry, PhraseToken, SyllableKey,
+    UserModel,
 };
 
 use crate::candidate::{Candidate, CandidateKind, CandidateList};

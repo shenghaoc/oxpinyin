@@ -15,10 +15,26 @@ use oxpinyin_core::{Completeness, PhraseEntry, PhraseToken, SyllableKey, syllabl
 use crate::store::{UserStore, UserStoreError};
 
 /// Default-facade lookup over user-file phrases (network nibble 6, user 7).
+///
+/// The lookup carries two parallel indices over the stored pronunciations,
+/// mirroring upstream's `ChewingLargeTable2::add_index` at
+/// `chewing_large_table2.cpp:184-197`, which writes each phrase into both
+/// its incomplete-projected and its complete keyspaces so a query with an
+/// incomplete syllable answers in one probe:
+///
+/// - [`exact`](Self::exact) — complete-index: full apostrophe-joined pinyin
+///   text → the phrases stored under it, token-ascending.
+/// - [`by_initial`](Self::by_initial) — incomplete-projected index: the
+///   pinyin's initial-only projection (each syllable reduced to its
+///   `syllable_initial`) → `(stored full pinyin, entry)` pairs, so
+///   [`Self::lookup`] on a query whose keys mix complete and incomplete
+///   syllables can filter the bucket by syllable equality without
+///   enumerating completions in the scan.
 #[derive(Clone, Debug, Default)]
 pub struct UserLookup {
     generation: u64,
     exact: BTreeMap<String, Vec<PhraseEntry>>,
+    by_initial: BTreeMap<String, Vec<(String, PhraseEntry)>>,
     pinyin_keys: Box<[String]>,
     initial_keys: Box<[String]>,
     text_tokens: BTreeMap<String, Vec<u32>>,
@@ -40,6 +56,7 @@ impl UserLookup {
     pub fn from_store(store: &UserStore) -> Result<Self, UserStoreError> {
         let generation = store.phrase_generation();
         let mut exact: BTreeMap<String, Vec<PhraseEntry>> = BTreeMap::new();
+        let mut by_initial: BTreeMap<String, Vec<(String, PhraseEntry)>> = BTreeMap::new();
         let mut text_tokens: BTreeMap<String, Vec<u32>> = BTreeMap::new();
         let mut token_text: BTreeMap<u32, String> = BTreeMap::new();
         let mut pinyin_keys: Vec<String> = Vec::new();
@@ -56,13 +73,12 @@ impl UserLookup {
                 let Some(pinyin) = pronunciation.render_pinyin() else {
                     continue;
                 };
-                exact
-                    .entry(pinyin.clone())
+                let entry = PhraseEntry::new(PhraseToken::new(token), phrase.text().to_owned());
+                exact.entry(pinyin.clone()).or_default().push(entry.clone());
+                by_initial
+                    .entry(initial_of(&pinyin))
                     .or_default()
-                    .push(PhraseEntry::new(
-                        PhraseToken::new(token),
-                        phrase.text().to_owned(),
-                    ));
+                    .push((pinyin.clone(), entry));
                 pinyin_keys.push(pinyin.clone());
                 initial_keys.push(initial_of(&pinyin));
             }
@@ -70,6 +86,19 @@ impl UserLookup {
 
         for entries in exact.values_mut() {
             entries.sort_by_key(|entry| entry.token().value());
+        }
+        for bucket in by_initial.values_mut() {
+            // Order matches `exact`'s per-bucket sort: token ascending.
+            // Ties on token break on the stored pinyin, so a store with
+            // two pronunciations of one phrase keeps a deterministic
+            // order.
+            bucket.sort_by(|left, right| {
+                left.1
+                    .token()
+                    .value()
+                    .cmp(&right.1.token().value())
+                    .then_with(|| left.0.cmp(&right.0))
+            });
         }
         for tokens in text_tokens.values_mut() {
             tokens.sort_unstable();
@@ -82,6 +111,7 @@ impl UserLookup {
         Ok(Self {
             generation,
             exact,
+            by_initial,
             pinyin_keys: pinyin_keys.into_boxed_slice(),
             initial_keys: initial_keys.into_boxed_slice(),
             text_tokens,
@@ -115,16 +145,43 @@ impl UserLookup {
         self.generation
     }
 
-    /// Phrases whose stored pinyin is `syllables` joined by `'`.
+    /// Phrases whose stored pinyin matches `syllables` under upstream's
+    /// `pinyin_compare_with_tones`
+    /// (`docs/findings/pinyin-dbm-format-2026-09-01.md`): equal length, and
+    /// syllable-by-syllable, the stored pronunciation's syllable equals the
+    /// query when the query syllable is complete, or shares its initial
+    /// when the query syllable is incomplete.
+    ///
+    /// A query with any incomplete syllable is routed through the
+    /// initial-projected index [`Self::by_initial`], the same "one
+    /// incomplete-index probe per key path" upstream's
+    /// `ChewingLargeTable2::search` (`chewing_large_table2.cpp:161-172` at
+    /// pin `074a2219`) uses — so the scan never needs to enumerate the
+    /// key's completions to find matching user entries.
     #[must_use]
     pub fn lookup(&self, syllables: &[SyllableKey]) -> Vec<PhraseEntry> {
         if syllables.is_empty() {
             return Vec::new();
         }
-        self.exact
-            .get(&index_key(syllables))
-            .cloned()
-            .unwrap_or_default()
+        let has_incomplete = syllables
+            .iter()
+            .any(|key| key.completeness() == Completeness::Partial);
+        if !has_incomplete {
+            return self
+                .exact
+                .get(&index_key(syllables))
+                .cloned()
+                .unwrap_or_default();
+        }
+        let initial = initial_key(syllables);
+        let Some(bucket) = self.by_initial.get(&initial) else {
+            return Vec::new();
+        };
+        bucket
+            .iter()
+            .filter(|(pinyin, _)| stored_matches_query(pinyin, syllables))
+            .map(|(_, entry)| entry.clone())
+            .collect()
     }
 
     /// `SEARCH_CONTINUED` probe over user-file pinyin keys.
@@ -186,6 +243,32 @@ impl UserLookup {
 
 fn index_key(syllables: &[SyllableKey]) -> String {
     join_with_apostrophe(syllables.iter().map(|syllable| syllable.text()))
+}
+
+/// `pinyin_compare_with_tones` (`pinyin_phrase3.h:68-115`) syllable-by-syllable
+/// against a stored apostrophe-joined pinyin: same length; every complete
+/// query syllable equals the stored syllable text; every incomplete query
+/// syllable's initial equals the stored syllable's `syllable_initial`.
+///
+/// This is the filter the incomplete-space bucket needs, mirroring the
+/// `keys_match` post-filter that `crates/oxpinyin-data/src/chewing_table.rs:342-356`
+/// applies to `ChewingTable::search`'s returned records.
+fn stored_matches_query(stored_pinyin: &str, query: &[SyllableKey]) -> bool {
+    let mut parts = stored_pinyin.split('\'');
+    for query_key in query {
+        let Some(stored) = parts.next() else {
+            return false;
+        };
+        let matches = if query_key.completeness() == Completeness::Complete {
+            stored == query_key.text()
+        } else {
+            syllable_initial(stored) == Some(query_key.text())
+        };
+        if !matches {
+            return false;
+        }
+    }
+    parts.next().is_none()
 }
 
 fn initial_key(syllables: &[SyllableKey]) -> String {
@@ -265,6 +348,99 @@ mod tests {
         assert_eq!(entries[0].text(), "拟");
         assert_eq!(entries[1].text(), "你");
         assert!(lookup.phrase_prefix_exists(&[key("ni")]));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `lookup` with an incomplete syllable at the head of the query must
+    /// find every user entry whose stored first-syllable initial matches
+    /// the query, without callers enumerating completions — the
+    /// [`by_initial`](UserLookup::by_initial) index mirrors upstream's
+    /// incomplete keyspace at `chewing_large_table2.cpp:184-197`. Regresses
+    /// shenghaoc/oxpinyin#403's fix.
+    #[test]
+    fn lookup_answers_a_single_syllable_incomplete_query_from_by_initial() {
+        let path = temp_path("incomplete-single");
+        let mut store = UserStore::open(&path).unwrap();
+        let ni = u16::try_from(SyllableKey::from_text("ni").unwrap().index())
+            .expect("frozen syllable inventory fits u16");
+        let na = u16::try_from(SyllableKey::from_text("na").unwrap().index())
+            .expect("frozen syllable inventory fits u16");
+        let hao = u16::try_from(SyllableKey::from_text("hao").unwrap().index())
+            .expect("frozen syllable inventory fits u16");
+        store
+            .add_phrase_in(USER_DICTIONARY, "你", &[ni], Some(5))
+            .unwrap();
+        store
+            .add_phrase_in(USER_DICTIONARY, "那", &[na], Some(5))
+            .unwrap();
+        store
+            .add_phrase_in(USER_DICTIONARY, "号", &[hao], Some(5))
+            .unwrap();
+        let lookup = UserLookup::from_store(&store).unwrap();
+
+        let n_partial =
+            SyllableKey::from_text("n").expect("initial-only 'n' is in the incomplete inventory");
+        assert_eq!(
+            n_partial.completeness(),
+            Completeness::Partial,
+            "'n' resolves to the initial-only key"
+        );
+        let entries = lookup.lookup(&[n_partial]);
+        let texts: Vec<&str> = entries.iter().map(|entry| entry.text()).collect();
+        assert!(texts.contains(&"你"), "expected 你 in {texts:?}");
+        assert!(texts.contains(&"那"), "expected 那 in {texts:?}");
+        assert!(
+            !texts.contains(&"号"),
+            "hao does not start with n: {texts:?}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A two-syllable query where the first key is incomplete and the
+    /// second is complete must still filter by the second syllable
+    /// (`keys_match`'s complete-only rule at
+    /// `crates/oxpinyin-data/src/chewing_table.rs:431-451`). Regresses
+    /// shenghaoc/oxpinyin#403's fix.
+    #[test]
+    fn lookup_filters_mixed_incomplete_and_complete_syllables() {
+        let path = temp_path("incomplete-mixed");
+        let mut store = UserStore::open(&path).unwrap();
+        let ni = u16::try_from(SyllableKey::from_text("ni").unwrap().index())
+            .expect("frozen syllable inventory fits u16");
+        let na = u16::try_from(SyllableKey::from_text("na").unwrap().index())
+            .expect("frozen syllable inventory fits u16");
+        let hao = u16::try_from(SyllableKey::from_text("hao").unwrap().index())
+            .expect("frozen syllable inventory fits u16");
+        let li = u16::try_from(SyllableKey::from_text("li").unwrap().index())
+            .expect("frozen syllable inventory fits u16");
+        // Two matching phrases: (ni, hao) and (na, hao); one non-matching
+        // (li, hao) — starts with 'l' not 'n'.
+        store
+            .add_phrase_in(USER_DICTIONARY, "你好", &[ni, hao], Some(5))
+            .unwrap();
+        store
+            .add_phrase_in(USER_DICTIONARY, "那号", &[na, hao], Some(5))
+            .unwrap();
+        store
+            .add_phrase_in(USER_DICTIONARY, "礼号", &[li, hao], Some(5))
+            .unwrap();
+        let lookup = UserLookup::from_store(&store).unwrap();
+
+        let n_partial =
+            SyllableKey::from_text("n").expect("initial-only 'n' is in the incomplete inventory");
+        assert_eq!(
+            n_partial.completeness(),
+            Completeness::Partial,
+            "'n' resolves to the initial-only key"
+        );
+        let entries = lookup.lookup(&[n_partial, key("hao")]);
+        let texts: Vec<&str> = entries.iter().map(|entry| entry.text()).collect();
+        assert!(texts.contains(&"你好"), "expected 你好 in {texts:?}");
+        assert!(texts.contains(&"那号"), "expected 那号 in {texts:?}");
+        assert!(
+            !texts.contains(&"礼号"),
+            "礼 starts with l, must not match n-partial: {texts:?}"
+        );
         let _ = std::fs::remove_file(&path);
     }
 }
