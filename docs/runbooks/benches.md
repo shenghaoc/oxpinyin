@@ -36,67 +36,93 @@ the lib under libtest, which rejects criterion flags such as
 `--profile-time`. To run a bench in debug mode: `cargo test --bench
 <name>` (AGENTS.md points here).
 
-### `kyotocabinet_bnum` — the #402 time-side measurement
+### `kyotocabinet_bnum` — the #402 time-and-space measurement
 
 Motivation: shenghaoc/oxpinyin#402 quantifies the space side of lowering
-`#bnum` on the five read-only system TreeDBs (~1,057 KiB → 80 KiB per
-TreeDB, ~4.77 MiB across the five). The time cost is unmeasured; without
-it the constitution's complexity rule refuses the change. This bench is
-that measurement.
+`#bnum` on the five read-only system TreeDBs deterministically (~1,057
+KiB → ~80 KiB per TreeDB, ~4.77 MiB across the five). This bench
+produces the matching time-side number.
 
-**Data.** The bench must run against an installed libpinyin `data/`
-directory — production files have ~10^4–10^5 records per TreeDB. The
-checked-in `fixtures/w3/kct/` has ~10^2 per TreeDB, which is far too few
-to exercise the leaf-cache hash-chain axis `#bnum` sizes; a run against
-it is a bench-harness smoke test, not evidence for #402.
+**Not a local-change proposal.** oxpinyin passes the same open
+parameters libpinyin does (no `#bnum=`, `#msiz=`, `#pccap=`, `#apow=`,
+`#fpow=`, `#psiz=` or `#opts=`), and that is the standing policy —
+external-library handling matches upstream. Tuning `#bnum` locally
+would be a case-3 configuration divergence outside
+[`compatibility-policy.md`](../findings/compatibility-policy.md)'s
+three exception classes. The measurement's audience is an upstream
+report (Kyoto Cabinet, or libpinyin itself), not this repo's shipping
+open path.
 
-**Container recipe** (plain `debian:testing` + the standing apt set, same
-as the CI replay container). Debian's `libpinyin-data` package installs
-the data at `/usr/lib/libpinyin/data`:
+**Data.** The bench needs a Kyoto Cabinet-format libpinyin `data/`
+directory containing all five system TreeDBs — `pinyin_index.bin`,
+`addon_pinyin_index.bin`, `phrase_index.bin`, `addon_phrase_index.bin`,
+`punct.bin` — with production-scale record counts (~10^4–10^5 per
+TreeDB). Distro coverage:
+
+* **Fedora arm64** ships `libpinyin` linked against
+  `libkyotocabinet.so.16` and installs `libpinyin-data` (KC-format) at
+  `/usr/lib64/libpinyin/data`. **Use this for the measurement.**
+* **Debian testing** ships `libpinyin-data` at
+  `/usr/lib/aarch64-linux-gnu/libpinyin/data` (multi-arch, arch varies),
+  built against tkrzw — not readable as `TreeDB` and not usable for this
+  bench. See memory: `distro-libpinyin-data-matrix`.
+* The checked-in `fixtures/w3/kct/` has ~10^2 records per TreeDB, so a
+  run against it is a harness smoke test only, not measurement of the
+  `#bnum` axis.
+
+**Container recipe** (Fedora arm64):
 
 ```sh
 tar -cf - --exclude=target --exclude=.git . | docker run --rm -i \
+    --platform linux/arm64 \
     -v "$PWD/target-linux":/src/target \
-    debian:testing bash -c '
+    fedora:latest bash -c '
     set -eu
-    apt-get update -qq
-    apt-get install -y --no-install-recommends \
-        curl ca-certificates git build-essential pkg-config clang \
-        libclang-dev libkyotocabinet-dev libpinyin-data
-    curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.97.1
+    dnf install -y --setopt=install_weak_deps=False -q \
+        gcc gcc-c++ make pkgconf-pkg-config git \
+        clang-devel llvm-devel \
+        kyotocabinet kyotocabinet-devel \
+        libpinyin libpinyin-data \
+        curl ca-certificates
+    curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.97.1 --profile minimal
     . "$HOME/.cargo/env"
     mkdir -p /src && tar -xf - -C /src && cd /src
-    OXPINYIN_BNUM_DATA_DIR=/usr/lib/libpinyin/data \
+    OXPINYIN_BNUM_DATA_DIR=/usr/lib64/libpinyin/data \
         cargo bench \
             --no-default-features --features kyotocabinet,bench-internal \
             --bench kyotocabinet_bnum
     '
 ```
 
-Do **not** pass `-- --bench` here. `cargo bench` already appends `--bench`
-to the criterion binary, and criterion 0.8's clap rejects the flag when it
-is specified twice ("an argument cannot be used with one or more of the
-other specified arguments"). Add `-- --sample-size N --measurement-time
-Ns` if you want to shorten runs; a bare `cargo bench` uses the criterion
-defaults (100 samples / 5 s warmup / 5 s measurement).
+Do **not** pass `-- --bench` here. `cargo bench` already appends
+`--bench` to the criterion binary, and criterion 0.8's clap rejects the
+flag when it is specified twice ("an argument cannot be used with one or
+more of the other specified arguments"). Add `-- --sample-size N
+--measurement-time Ns` if you want to shorten runs; a bare `cargo bench`
+uses the criterion defaults (100 samples / 5 s warmup / 5 s measurement).
 
 Reads: for each `#bnum` candidate (default 65,536; 16,384; 4,096; 1,024)
-a resident line on stderr and a criterion timing group on stdout — five
-TreeDB benches per group, each timing 512 (or the file's own record
-count if smaller) `get_raw` calls after a warmup pass. The space and
-time columns for the whole table sit alongside each other.
+a resident line on stderr (VmHWM in a fresh child process per group)
+and a criterion timing group on stdout — five TreeDB benches per group,
+each timing 512 (or the file's own record count if smaller) `get_raw`
+calls after a warmup pass. Space and time columns sit alongside each
+other in one output.
 
-**Reading the result.** The change proposed by #402 lands only if the
-time regression at `#bnum = 4,096` is measurably smaller than the ~4.77
-MiB space saving — the constitution's rule allows a regression in one
-dimension only when the other gains and the loss is minimised and
-justified. Numbers that show a lookup regression on a par with the space
-saving (as a fraction of their baselines, backend-scoped) argue against
-the change.
+**Reading the result.** VmHWM at the ~13 MiB total footprint has ~1
+MiB per-process jitter, so the header arithmetic
+(`kcplantdb.h:2399-2409` / `:2822-2830`) is the authoritative source for
+per-configuration bytes; treat the bench's resident column as a
+sanity check. The timing table is the load-bearing output: it says
+what lookup cost falling from `#bnum=65,536` to lower values on the
+read-only system TreeDBs actually is, in µs per 512-key sweep. That
+number belongs on shenghaoc/oxpinyin#402 (and, if it is stable and
+favourable, on an upstream report drafted from
+[`upstream-report-drafts.md`](../findings/upstream-report-drafts.md)) —
+not in this repo's shipping open path.
 
 **No capture committed.** The recipe above is what regenerates every
-figure; the run's output belongs on the issue or in the finding that
-proposes the change, not in-tree.
+figure; run output belongs on the issue or in the upstream-report
+draft, not in-tree.
 
 ## The perf baseline (oracle vs installed oxpinyin)
 

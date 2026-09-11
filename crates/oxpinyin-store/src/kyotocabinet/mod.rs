@@ -73,12 +73,14 @@ pub struct KcStore {
 
 /// Hidden bench entry points.
 ///
-/// Reserved for measurement work in this crate's `benches/` directory; the
-/// `bench-internal` feature is off by default and no shipping profile
-/// enables it. The tuning knob these open up (`#bnum=` on the
-/// read-only system TreeDBs) is what shenghaoc/oxpinyin#402 asks for a
-/// time-side measurement of before any change to the shipping open path
-/// could be argued for.
+/// Reserved for measurement work in this crate's `benches/` directory;
+/// the `bench-internal` feature is off by default and no shipping
+/// profile enables it. The tuning knob these open up is what
+/// shenghaoc/oxpinyin#402's time-side measurement bench uses to
+/// characterise a Kyoto Cabinet default for an upstream report; the
+/// shipping open path itself matches libpinyin's untuned open
+/// byte-for-byte and stays that way (see
+/// `docs/findings/compatibility-policy.md`).
 ///
 /// Not stable, not documented for external use, not part of any
 /// contract this backend keeps. Names live only under this feature so

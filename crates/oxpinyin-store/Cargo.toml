@@ -49,9 +49,9 @@ redb = ["dep:redb"]
 # `bench-internal` — exposes hidden test/bench-only helpers that would
 # otherwise be `pub(crate)`. Off by default; not part of `default`, not
 # reached by any shipping build. Currently just widens the Kyoto Cabinet
-# open path so the `kyotocabinet_bnum` bench can measure the
-# time/space trade shenghaoc/oxpinyin#402 asks for. Never enable this on
-# an artifact that ships.
+# open path so the `kyotocabinet_bnum` bench (shenghaoc/oxpinyin#402)
+# can characterise a KC default; nothing in the shipping open path
+# depends on this widening. Never enable this on an artifact that ships.
 bench-internal = []
 
 [[bench]]
