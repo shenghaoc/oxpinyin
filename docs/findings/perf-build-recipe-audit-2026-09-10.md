@@ -58,7 +58,7 @@ wall-clock ratio against pin-built libpinyin.
 Every one of the twelve windows excludes zero with consistent sign.
 
 The issue body's **+11.0% (n=8) / +8.6% (n=16)** are the *one-window* figures;
-[the record supersedes them in part at `:101`](perf-cycle-ir-differential-2026-09-08.md)
+[the record supersedes them in part at `:103-110`](perf-cycle-ir-differential-2026-09-08.md)
 and the three-window bands above are what stands.
 
 Four limits bound every use of those numbers, and they are the reason this audit
@@ -171,7 +171,7 @@ the product's.
 
 Corpus: the 22 figure-bearing records of
 [perf-provenance-audit-2026-09-07.md](perf-provenance-audit-2026-09-07.md), plus
-the seven documents added or identified since. Verdicts:
+the eight documents added or identified since. Verdicts:
 
 - **AFFECTED** — the timed oxpinyin artifact came from `cargo build` + `strip`;
   the record describes a fixture and overstates the shipping product's cost.
@@ -207,6 +207,7 @@ reading it, and a record in the second cannot.
 | `perf-so-size-2026-09.md` | not affected | criterion; quotes `cinstall` figures | states its own bench; quoted `.so` figures chain to the KC baseline series |
 | `perf-store-opt-2026-09.md` | N/A | criterion, no `.so` | states it |
 | `perf-backend-matrix-bdb-store-2026-09.md` | N/A | criterion, no `.so` | states it — `:99-103`, `:231-238` |
+| `perf-train-commit-fsync-2026-09-09.md` | N/A | criterion, no `.so` | states it — `:480-487`, and **pins its harness by blob hash** (`:111`) |
 | `perf-p2-chewing-table-2026-09-01.md` | N/A | in-tree example binary | states it |
 | `data-load-audit-2026-08.md` | N/A | in-tree example binary | states it — `:18`, `:25` |
 | `perf-alloc-2026-08.md` | N/A | criterion + dhat | delegated to `perf-exploration.md` |
@@ -335,12 +336,12 @@ against `d8de0ab2`, the parent.
 
 | ROADMAP | figure | axis |
 |---|---|---|
-| `:387-395` | "the steady-state candidate lookup (P6: ~1.5× the pin)" | steady cycle — **the one figure the established band quantifies** |
-| `:384-387` | "key-cost table (P6: ~16.5 ms)" | oxpinyin absolute, alloc axis — inherits the recipe, unquantified |
-| `:158`, `:363-364` | "init within ~1.1× (KC) / ~1.3× (tkrzw) of the pin" | init axis — inherits the recipe, unquantified |
+| `:397-405` | "the steady-state candidate lookup (P6: ~1.5× the pin)" | steady cycle — **the one figure the established band quantifies** |
+| `:394-397` | "key-cost table (P6: ~16.5 ms)" | oxpinyin absolute, alloc axis — inherits the recipe, unquantified |
+| `:168`, `:373-374` | "init within ~1.1× (KC) / ~1.3× (tkrzw) of the pin" | init axis — inherits the recipe, unquantified |
 
-The rest — `:374` init 102 → 21 ms and RSS 72,652 → 28,388 KiB, `:375` runtime
-data 101.80 → 36.88 MiB, `:378` +5.5% for −64 KiB — trace to
+The rest — `:384` init 102 → 21 ms and RSS 72,652 → 28,388 KiB, `:385` runtime
+data 101.80 → 36.88 MiB, `:388` +5.5% for −64 KiB — trace to
 `perf-baseline-kc-2026-09.md`, a cinstall record, and are clean on this axis.
 
 **And the citation hid the exposure.** Before this commit
@@ -361,18 +362,18 @@ recorded only. Pre-fix text is cited against `d8de0ab2`, the parent.
 - **stale target — fixed.** `@d8de0ab2:367-368` presented the key-cost table as
   a pending next target. It was deferred on 2026-09-04
   (`perf-baseline-kc-2026-09.md:307`) and eliminated on 2026-09-07
-  (`perf-keycost-first-alloc-2026-09-07.md:5-11`). Now `:384-387`, which says so.
+  (`perf-keycost-first-alloc-2026-09-07.md:5-11`). Now `:394-397`, which says so.
 - **stale ratio — fixed.** `@d8de0ab2:369`'s ~1.5× is superseded three times
   over: 0.94×/0.95× at parity (`perf-backend-matrix-2026-09.md:22-23`), ~1.16×
   steady (`perf-keycost-first-alloc-2026-09-07.md`), and below 1 on the current
   tree (`perf-steady-cycle-cross-host-2026-09-07.md:14-17`). This compounds with
   #401 in the same direction but is independent of it: re-measuring on the
-  current tree would have caught it whatever the recipe. Now `:387-395`.
+  current tree would have caught it whatever the recipe. Now `:397-405`.
 - **unsourced host — fixed.** `@d8de0ab2:356` labelled the P1–P6 figures
   "x86_64". Their source record states no host architecture anywhere; the label
   appears to have come from the record ROADMAP mis-cited, which is x86_64.
-  Removed, and the absence is now stated at `:367`.
-- **frozen intermediate — recorded, not fixed.** `:374`'s "init 102 → 21 ms"
+  Removed, and the absence is now stated at `:377`.
+- **frozen intermediate — recorded, not fixed.** `:384`'s "init 102 → 21 ms"
   quotes `perf-baseline-kc-2026-09.md:306` while the next row of the same table
   (`:307`) records init falling further to 3.3 ms, and that record's own result
   table has 3.216 ms. Left deliberately: which of that table's rows ROADMAP
@@ -401,13 +402,19 @@ within-pass quotients where the recipe cancels.
 ## Observations
 
 1. **The corpus is mostly clean, and that is a finding, not a relief.** Three
-   records of 29 are affected. The reason is not discipline: it is that the
+   records of 30 are affected. The reason is not discipline: it is that the
    affected harness existed for only five days before the control caught it
    (`d509041e`, 2026-09-03 → the #394 control, 2026-09-08). Every record before
    it ran on `run-perf-baseline.sh` or `run-w8-cycle.sh`, both of which have used
    `cargo cinstall` since their first commit. **A recipe divergence was
    introduced silently and would have propagated indefinitely**; what bounded the
    damage was the interval, not the process.
+
+   The process is starting to close it independently, though.
+   `perf-train-commit-fsync-2026-09-09.md`, which landed while this audit was in
+   review, pins its harness by **git blob hash** (`:111`) rather than by script
+   name — the exact gap the 2026-09-07 provenance audit named as its observation
+   3, fixed in the one place that can fix it, the record itself.
 
 2. **A new defect class: the cross-recipe quotient.** `runtime-direct…:139`'s
    "~90–106× faster than before" divides a cinstall numerator by a cargo-build
