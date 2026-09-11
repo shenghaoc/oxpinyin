@@ -237,6 +237,34 @@ pub trait Dictionary {
     fn phrase_index_item_count(&self) -> Result<u64, Self::Error> {
         Ok(0)
     }
+
+    /// Whether [`Self::lookup_into`] and [`Self::lookup_addon_into`] accept
+    /// queries whose syllables mix complete and initial-only keys under
+    /// upstream's `pinyin_compare_with_tones` matching rule.
+    ///
+    /// A `true` return says the implementor's stored index answers a query
+    /// with any [`Completeness::Partial`] syllable in one call, returning
+    /// every record whose stored keys match the query — a complete syllable
+    /// exactly, an initial-only syllable by shared initial. That is the
+    /// libpinyin `chewing_large_table2.cpp:161-172` (pin `074a2219`)
+    /// contract: `add_index` writes each phrase into both the incomplete-
+    /// projected and the complete keyspace at `:184-197`, and `search`
+    /// dispatches on `contains_incomplete_pinyin`. The oxpinyin
+    /// [`SystemDictionary`](../../oxpinyin-data/src/dict.rs) and
+    /// [`UserLookup`](../../oxpinyin-user/src/lookup.rs) both hold that
+    /// invariant.
+    ///
+    /// A `false` return (the default) says the implementor answers only
+    /// exact-key queries and callers must enumerate completions themselves
+    /// — that is the behaviour of fixture-backed dictionaries that store
+    /// entries under complete-key sequences alone. The window-scan caller
+    /// consults this flag and expands partial paths through
+    /// [`crate::scoring::expand_keys`] when it is false, so implementations
+    /// stay compatible without a scan-side branch per implementor.
+    #[must_use]
+    fn handles_partial_keys(&self) -> bool {
+        false
+    }
 }
 
 impl<D: Dictionary + ?Sized> Dictionary for &D {
@@ -285,6 +313,10 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
 
     fn phrase_index_item_count(&self) -> Result<u64, Self::Error> {
         (**self).phrase_index_item_count()
+    }
+
+    fn handles_partial_keys(&self) -> bool {
+        (**self).handles_partial_keys()
     }
 }
 
