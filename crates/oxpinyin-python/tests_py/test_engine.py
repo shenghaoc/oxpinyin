@@ -149,10 +149,17 @@ def test_train_and_save_persist_user_state(tmp_path, fixture_w3):
     engine.train()
     assert engine.save() is True  # dirty → saved
     assert engine.save() is False  # now clean again
-    # The store file's extension names the compiled-in backend (.tkt by
-    # default, .redb under --no-default-features, …); assert a store file
-    # exists without pinning which one.
-    assert any(user_dir.glob("user_store.*"))
+    # The user dir persists in libpinyin's own file set (drop-in task 9):
+    # user.conf is backend-independent, and the three DBMs carry the
+    # compiled-in backend's container — libpinyin's own names on Kyoto
+    # Cabinet and tkrzw (user_bigram.db), `<stem>.<ext>` on redb and LMDB
+    # (user_bigram.redb). Assert the set without pinning which backend.
+    assert (user_dir / "user.conf").exists()
+    assert any(user_dir.glob("user_bigram.*"))
+    assert any(user_dir.glob("user_pinyin_index.*"))
+    assert any(user_dir.glob("user_phrase_index.*"))
+    # The old bespoke scratch never appears in the user dir.
+    assert not any(user_dir.glob("user_store.*"))
 
     # a second engine over the same user state loads it cleanly
     reloaded = Engine.from_fixture_dir(str(fixture_w3), str(user_dir))

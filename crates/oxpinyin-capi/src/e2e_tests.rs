@@ -37,7 +37,6 @@ use crate::state::{instance_mut, instance_ref};
 use crate::test_support::{DEFAULT_SORT, TempUserDir, candidate, cstr, open, system_dir};
 use crate::types::{LookupCandidate, PinyinInstance};
 use crate::user_data::pinyin_remember_user_input;
-use oxpinyin_runtime::user_store_file;
 
 /// The instance's user store handle (the same connection the entry points
 /// write through; every update commits before returning).
@@ -471,29 +470,41 @@ fn an_instance_without_a_selection_has_nothing_to_train() {
 fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
     let user_dir = TempUserDir::new("save");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    let store_file = user_dir.path.join(user_store_file());
+    // `pinyin_init` writes the profile marker (`check_format`'s
+    // user.conf, counter ratchet and all); the durable store is the
+    // pin's file set, written only at `pinyin_save`.
+    let marker = user_dir.path.join("user.conf");
+    assert!(marker.exists(), "init writes the user.conf marker");
 
     // A clean context: pinyin_save is the §4 unmodified no-op (upstream
-    // returns false, pinyin.cpp:1136) and leaves the file untouched.
-    let before = std::fs::metadata(&store_file)
-        .expect("store file exists")
+    // returns false, pinyin.cpp:1136) and leaves every file untouched.
+    let before = std::fs::metadata(&marker)
+        .expect("marker exists")
         .modified()
         .expect("mtime");
     assert!(!pinyin_save(context));
-    let after = std::fs::metadata(&store_file)
-        .expect("store file exists")
+    let after = std::fs::metadata(&marker)
+        .expect("marker exists")
         .modified()
         .expect("mtime");
-    assert_eq!(before, after, "a clean save must not touch the file");
+    assert_eq!(before, after, "a clean save must not touch the profile");
     assert!(!pinyin_save(context));
 
-    // Train once: the save gate arms, a dirty save returns true and clears.
+    // Train once: the save gate arms, a dirty save returns true, clears,
+    // and leaves the pin's own files behind — the bigram hash among them.
     let first = candidate(instance, "nihao", 0);
     let t1 = token_of(instance, first);
     assert!(pinyin_choose_candidate(instance, 0, first) > 0);
     assert!(pinyin_train(instance, 0));
     assert!(pinyin_save(context));
     assert!(!pinyin_save(context), "the save cleared m_modified");
+    assert!(
+        user_dir
+            .path
+            .join(oxpinyin_data::user_files::UserDbm::Bigram.file_name())
+            .exists(),
+        "the dirty save wrote the user bigram"
+    );
 
     // Decode against the populated store (T4's merge) — the state the
     // reopened store must reproduce.
@@ -511,8 +522,8 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
     };
 
     // Teardown does NOT save (the §6 shutdown decision: upstream has no
-    // flush) — the counts survive anyway because every training update is
-    // a durable redb commit.
+    // flush) — the counts survive because the dirty save above already
+    // wrote the profile, exactly the pin's own durability shape.
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
 
@@ -899,22 +910,24 @@ fn export_iterators_walk_the_stored_triples() {
 #[test]
 fn user_only_bigram_export_fails_when_rows_need_system_tables() {
     let user_dir = TempUserDir::new("user-only-bigram");
-    let store_path = user_dir.path.join(user_store_file());
-    let mut store = UserStore::open(&store_path).expect("open empty store");
-    // System tokens (library nibble != 7). One training seed (69) is at
-    // the §9 first-seed threshold, so a real export would emit a row.
-    store.observe_selection(2, 3).expect("train system tokens");
-    drop(store);
-
     // The user-only context is a facade concept now (the Rust-only capi
     // constructor served the migration tool and moved with it): a core
     // with no runtime must refuse to snapshot bigrams whose rendering
     // needs system tables rather than skip them into an incomplete file.
-    let core = oxpinyin_facade::ContextCore::new_user_only(
+    let mut core = oxpinyin_facade::ContextCore::new_user_only(
         user_dir.path.to_str().expect("UTF-8 path"),
         oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,
     )
     .expect("user-only context core");
+    // System tokens (library nibble != 7). One training seed (69) is at
+    // the §9 first-seed threshold, so a real export would emit a row.
+    // Trained through the context's own session handle — one open per
+    // user dir, shared.
+    core.user
+        .as_mut()
+        .expect("user-only core owns a store")
+        .observe_selection(2, 3)
+        .expect("train system tokens");
     let phrases = core
         .export_phrases(u32::from(USER_DICTIONARY))
         .expect("phrase snapshot");

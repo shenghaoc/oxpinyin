@@ -93,8 +93,9 @@ impl ZhuyinEngine {
 impl ZhuyinEngine {
     /// Opens a production engine over `system_dir`.
     ///
-    /// `user_dir`, when given, holds ``user_store.<ext>`` (the compiled-in
-    /// backend's format) and enables learning.
+    /// `user_dir`, when given, holds the user profile in libpinyin's
+    /// own file shapes (the compiled-in backend's container) and
+    /// enables learning.
     #[new]
     #[pyo3(signature = (system_dir, user_dir=None))]
     fn new(system_dir: PathBuf, user_dir: Option<PathBuf>) -> PyResult<Self> {

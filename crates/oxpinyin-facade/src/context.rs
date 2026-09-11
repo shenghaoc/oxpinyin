@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 use oxpinyin_engine::{Config, ConfigValue};
-use oxpinyin_runtime::{OpenError, Runtime, user_store_file};
+use oxpinyin_runtime::{OpenError, Runtime};
+use oxpinyin_user::SystemVersions;
 use oxpinyin_user::UserStore;
 
 /// Why a context did not open — what `pinyin_init` / `zhuyin_init` hide
@@ -165,7 +166,16 @@ impl ContextCore {
         if user_dir.is_empty() {
             return None;
         }
-        let user = UserStore::open(&Path::new(user_dir).join(user_store_file())).ok()?;
+        // The standalone user context persists in the pin's user-dir
+        // file set too: no system dir is opened, so the diff base is
+        // empty (system-token deltas do not persist from a user-only
+        // context) and the conformance triple is the pin's.
+        let user = UserStore::open_libpinyin(
+            Path::new(user_dir),
+            std::collections::BTreeMap::new(),
+            SystemVersions::from_table_conf(""),
+        )
+        .ok()?;
         Some(Self {
             config: Config::default(),
             runtime: None,
