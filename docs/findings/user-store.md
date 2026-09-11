@@ -368,6 +368,14 @@ the frontend drives the lifecycle.
 (`src/PYPLibPinyinCandidates.cc:180-196`): `pinyin_remove_user_candidate`
 (`:193`), only for `CANDIDATE_USER` / `CANDIDATE_LONGER_USER`.
 
+**Durability is save-gated (task 9)** — training lives in the session
+scratch and reaches the pin's files only at `pinyin_save`; a crash
+before the save loses the sub-timer window, exactly as upstream's does.
+(The W6-T5 per-commit-durability deviation is thereby reverted; see
+§11.) Before task 9, this section recorded redb's per-commit guarantee
+as removing that window — the store now reproduces the pin's call
+pattern *and* the pin's loss window.
+
 **Persistence is a debounced timer, not focus-out** — `modified()`
 (`src/PYLibPinyin.cc:216-225`) restarts a `GTimer` and (re)arms
 `g_timeout_add_seconds(LIBPINYIN_SAVE_TIMEOUT = 300, timeoutCallback)`.
@@ -562,11 +570,6 @@ project memory).
    (a DBM/BerkeleyDB store), the `.bin` MemoryChunk dumps, or the phrase-index
    diff-logger byte layout. redb is the store; only the **values and
    semantics** are the target. This is the headline decision of this finding.
-   Amended 2026-09-09: overturned for the drop-in set (Kyoto Cabinet,
-   tkrzw) — same-backend pairs interoperate seamlessly, so reproducing
-   these binary formats is a goal there (drop-in task 9). The non-goal
-   stands only where the KV database backend actually changes
-   (`compatibility-policy.md`, goal amendment).
 
    **Measured cost of this decision, on Kyoto Cabinet
    ([`rss-attribution-2026-09-09.md`](rss-attribution-2026-09-09.md), Phase 2
@@ -618,3 +621,122 @@ project memory).
   frozen in `docs/findings/scoring-spec.md` / `docs/findings/lambda-port.md`.
   §5 depends only on the *structure* (λ blends bigram-vs-unigram; user/system
   is an additive pre-merge), which is SHOWN.
+
+---
+
+## 11. Implementation record — the store persists in libpinyin's own files (2026-09-09)
+
+Drop-in task 9 landed: the user dir's I/O is now the pin's own file set
+on every backend, so a same-backend pair (oxpinyin↔libpinyin on Kyoto
+Cabinet, likewise tkrzw) interoperate seamlessly in both directions —
+the maintainer's 2026-09-09 ruling as clarified (per KV backend family;
+data loss only when the backend actually changes, which `user.conf`'s
+`database format` conformance line enforces exactly as upstream's
+`check_format` does).
+
+Architecture — a session scratch behind the value engine:
+
+* `oxpinyin_data::user_files` — the inventory (`UserDbm`: libpinyin's
+  names on KC/tkrzw, `<stem>.<ext>` on redb/LMDB — "libpinyin with
+  redb"), the `user.conf` codec (`UserTableInfo`, `OPEN_COUNTER_LIMIT`
+  = 6, the counter ratchet, conformance), and the `PhraseIndexLogger`
+  record codec (add/remove/modify/header; MODIFY_HEADER carries the
+  payload length once, then two runs).
+* `oxpinyin_user::persistence` — load (`check_format` first: wipe on
+  non-conform, `user.conf` re-written with the ratcheted counter on
+  every init; then the user bigram wholesale, the USER_FILE chunk
+  stores, and the `.dbin` logs replayed onto the original system
+  chunks with merge's stop-at-first-mismatch) and save (the pin's
+  `_write_files`+`_rename_files`: every file whole to a `.tmp` sibling,
+  then all renames). The two index DBMs are derivatives of the USER_FILE
+  items and are rebuilt at save, never read.
+* **The user bigram's container is backend-specific, and is not the
+  system bigram's container** — the fact that produced this section's
+  one real defect. On Kyoto Cabinet the *system* `bigram.db` is a
+  `HashDB` file (`attach`, `ngram_kyotodb.cpp:110`) but the *user*
+  `user_bigram.db` is an in-memory `StashDB` dumped as a snapshot stream,
+  magic `KCSS` (`load_db`/`save_db`'s `load_snapshot`/`dump_snapshot`,
+  `ngram_kyotodb.cpp:54-101`). tkrzw uses a `HashDBM` file for both
+  (`ngram_tkrzwdb.cpp:48-84`). So the store carries its own seam —
+  `RawReadStore::open_user_bigram` / `WriteStore::write_user_bigram` —
+  whose default is the hash container (correct for tkrzw, and for redb
+  and LMDB, which have no such distinction) and which Kyoto Cabinet
+  overrides with the stash-plus-snapshot form. Opening the user bigram
+  through the *system* bigram's hash path answers
+  `kcdbopen: missing magic data of the file` on Kyoto Cabinet.
+* `oxpinyin_user::store_libpinyin` — `UserStore::open_libpinyin`: the
+  profile seeds a **session scratch** (temp file, backend container,
+  removed with the last handle), every W6 value operation runs unchanged
+  against it, and `save()` exports the session values back into the
+  file set. The value mapping is one-for-one: bigram rows are the
+  `SingleGram` grams; a user item is the `PHRASE` text + the
+  `PRONUNCIATION` rows (packed keys — one wire form) + the token's full
+  `UNIGRAM` accumulation (`count·3` base, `seed·7` training); a system
+  `.dbin` MODIFY is the original item with `unigram + delta`.
+
+Semantics this reverts or preserves, on purpose:
+
+* **The §4 gate is the pin's** — `m_modified` is armed only by training
+  and the import trio's `mark_modified` (the pin sets it in
+  `pinyin_train` and `pinyin_end_add_phrases` alone), so `pinyin_save`
+  before either is a no-op. The frozen dirty-gate test stands unedited.
+* **The W6-T5 durability deviation is reverted** — nothing durable
+  between saves; a crash loses the sub-timer window exactly as
+  upstream's does. `user_store.<ext>` leaves the user dir (it remains
+  the standalone-store helper for benches and the oracle scan harness).
+* Known gaps, disclosed: the value model tracks no per-pronunciation
+  delta for system tokens (pre-existing engine-model gap — the `.dbin`
+  MODIFYs carry unigram changes only), and a replayed REMOVE degrades
+  to a skip (`load`'s `skipped` list) because the value model cannot
+  express a removed system token.
+
+Verification: unit goldens and round-trips at every layer (codecs,
+persistence, bridge, e2e); the backend matrix through the
+`oxpinyin-validate` container (Kyoto Cabinet and tkrzw suites, 282 and
+287 tests) plus redb, LMDB and tkrzw on the host; and
+`tools/oracle/user-dir-round-trip.sh` — the seamless claim itself,
+measured against two real pin-built oracles on 2026-09-09:
+
+| pair | oracle DBM | result |
+|---|---|---|
+| oxpinyin ↔ libpinyin, **Kyoto Cabinet** | `--dbm kc` | **PASSED**, 10/10 export rows byte-identical |
+| oxpinyin ↔ libpinyin, **tkrzw** | `--dbm tkrzw` | **PASSED**, 10/10 export rows byte-identical |
+
+Each 10 rows are 2 phrase rows and 8 bigram rows: the driver runs ibus's
+`remember-every-input` path (`pinyin_get_sentence` →
+`pinyin_remember_user_input`) after each train, so the profile is not
+phrase-free and `user.bin` (27 → 115 bytes), `user_phrase_index.bin`
+(7 → 112) and `user_pinyin_index.bin` (7 → 173) all carry real content
+across the round trip. An earlier driver trained without remembering,
+which left those three files at their empty-library sizes and proved
+only the bigram and `.dbin` halves — the user phrases, the most visible
+part of a learned dictionary, were untested against a real libpinyin.
+
+The script takes oxpinyin's backend from `OX_CARGO_FEATURES`, which must
+match the oracle prefix's `--with-dbm` — the claim is per KV family, so
+each pair is driven against a same-backend oracle. Its design is a pure
+load→save round trip: the pin trains a profile, oxpinyin opens it through
+the production `Runtime` and saves it back **in place**, and the pin then
+renders the kept original dump and the rewritten profile and diffs the
+two. Both renders go through the pin's own exporter over the same
+underlying data, so the only variable is oxpinyin's read and write.
+
+The Kyoto Cabinet leg is the reason this round trip exists in this shape.
+An earlier harness compared renders of two *independently trained*
+profiles and so asserted two registered divergences instead of file I/O —
+the pin's bigram-export iterator drops pinyin rows through its stale
+`get_pinyin_string` buffer (class (b), row 1 of the compatibility
+policy's table), and the pin and oxpinyin segment and train the same
+input differently (the n-best trellis, class (a), row 11). Worse, it only
+ever ran the tkrzw oracle, where the user bigram happens to be a hash
+file, so the Kyoto Cabinet container difference went untested: the first
+KC run loaded **zero** grams
+(`kcdbopen: missing magic data of the file`) and exposed the
+user-bigram-container defect above. A raw DBM probe of the pin's tkrzw
+`user_bigram.db` had settled the value question directly (oxpinyin read
+the container back with every key and value identical: `疒→{的:69,
+好:69}` total 138 and `sentence_start→疒:207`). The lesson for future
+harnesses on this surface: never put a render-vs-render assertion across
+two trainers or two renderers that carry registered divergences — diff
+one renderer over one dataset, or diff the raw containers — and never
+verify a per-backend claim on one backend.

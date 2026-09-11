@@ -41,7 +41,7 @@ amendment) — and the BerkeleyDB route remains shelved.
   (`docs/findings/upstream-divergences.md`, 2026-08-30).
   _Requirements: 4_
 
-- [ ] 9. User files read and written in libpinyin's own formats, drop-in
+- [x] 9. User files read and written in libpinyin's own formats, drop-in
   set only (Kyoto Cabinet, tkrzw) — seamless in both directions with a
   same-backend libpinyin (maintainer ruling 2026-09-09): read the user
   state it left (`user_bigram.db`, `user_pinyin_index.bin`,
@@ -49,7 +49,10 @@ amendment) — and the BerkeleyDB route remains shelved.
   `user.conf`), save back what it picks up; answers the 2026-09-08
   design review's finding that a swap starts blank. Fresh-start
   applies only when the KV database backend actually changes (BDB
-  distros, redb/LMDB builds).
+  distros, redb/LMDB builds). Done for the same-backend read/write and
+  the reverse-direction oracle; the system-token REMOVE log record is
+  disclosed as a skip, not lossless replay
+  (`docs/findings/user-store.md` §11).
   _Requirements: 2, 3, 4_
 
 - [ ] 10. BerkeleyDB compat path — SHELVED; revive only if a consumer
