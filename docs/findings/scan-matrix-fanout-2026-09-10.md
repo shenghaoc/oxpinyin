@@ -15,9 +15,9 @@ The two sites, side by side:
 
 | step | oxpinyin | libpinyin pin `074a2219` |
 |---|---|---|
-| scan visits a complete key-path with an incomplete key | `crates/oxpinyin-engine/src/session/lookup.rs:986-996` — `expand_keys(path, SCAN_EXPANSION_LIMIT)` returns the Cartesian product of every incomplete syllable's `phonetic_initial` completions; each expansion is one `lookup_and_append` call | `src/storage/chewing_large_table2.cpp:161-172` — `ChewingLargeTable2::search` picks the incomplete or complete index by `contains_incomplete_pinyin(keys)` and issues a single `search_internal(phrase_length, index, keys, ranges)` |
-| DBM writes | `crates/oxpinyin-datagen/src/libpinyin.rs:132-149` — each row is written under **both** the incomplete and complete keyspaces (line 142's `dbm_keys = [incomplete_key(&row.keys), complete_key(&row.keys)]`), mirroring upstream's two-space add | `src/storage/chewing_large_table2.cpp:184-197` — `add_index` calls `add_index_internal` for both `compute_incomplete_chewing_index` and `compute_chewing_index` |
-| DBM reads | `crates/oxpinyin-data/src/chewing_table.rs:342-356` — `ChewingTable::search` uses `index_key(keys)` which routes to `encode_incomplete_key` when the query has any partial syllable, then one `dbm.get`; matches are refined by `keys_match` (partial syllables accept every final) | one `search_internal`, same shape |
+| scan visits a complete key-path with an incomplete key | `crates/oxpinyin-engine/src/session/lookup.rs:1025-1040` — `expand_keys(path, SCAN_EXPANSION_LIMIT)` returns the Cartesian product of every incomplete syllable's `phonetic_initial` completions; each expansion is one `lookup_and_append` call | `src/storage/chewing_large_table2.cpp:161-172` — `ChewingLargeTable2::search` picks the incomplete or complete index by `contains_incomplete_pinyin(keys)` and issues a single `search_internal(phrase_length, index, keys, ranges)` |
+| DBM writes | `crates/oxpinyin-data/src/table_entries.rs:87-113` — each row is written under **both** the incomplete and complete keyspaces (line 95's `dbm_keys = [encode_incomplete_key(&row.keys), encode_complete_key(&row.keys)]`), mirroring upstream's two-space add | `src/storage/chewing_large_table2.cpp:184-197` — `add_index` calls `add_index_internal` for both `compute_incomplete_chewing_index` and `compute_chewing_index` |
+| DBM reads | `crates/oxpinyin-data/src/chewing_table.rs:202-216` — `ChewingTable::search` uses `index_key(keys)` which routes to `encode_incomplete_key` when the query has any partial syllable, then one `dbm.get`; matches are refined by `keys_match` (partial syllables accept every final) | one `search_internal`, same shape |
 
 The datagen-layer symmetry (both engines double-index at build time) plus
 the DBM-layer symmetry (both accept incomplete queries by routing to the
@@ -97,14 +97,14 @@ Unique-to-total probe ratio is 0.726: **72.6 % of probes hit a syllable-key sequ
 - **Extra keys in the scan matrix.** From source:
   [`build_scan_matrix`](../../crates/oxpinyin-engine/src/session/mod.rs) applies the
   same tables upstream applies (RESPLIT, DIVIDED, fuzzy) plus a
-  key-only dedupe at `crates/oxpinyin-engine/src/session/mod.rs:574` that
+  key-only dedupe at `crates/oxpinyin-engine/src/session/mod.rs:591` that
   upstream does not; every path that produces oxpinyin's matrix entries
   produces at most upstream's. The measurement dumps
   `matrix_entries_total = 245` over 123 keystroke cycles — ~2 entries
   per prefix graph — consistent with that source read. Matrix column
   contents are not the amplifier.
 - **Tone / fuzzy matrix materialisation** — the leading hypothesis in
-  the issue text. Parity has `USE_TONE` off and fuzzy off (`docs/findings/option-bits.md` §"Bit values" and `crates/oxpinyin-engine/src/session/mod.rs:572-574`),
+  the issue text. Parity has `USE_TONE` off and fuzzy off (`docs/findings/option-bits.md` §"Bit values" and `crates/oxpinyin-engine/src/session/mod.rs:589-591`),
   so `fuzzy_additions` and `keep_first_in_column(true)` are no-ops for
   this workload. The measured `matrix_entries_total` confirms — nothing
   here for fuzzy to materialise.
@@ -148,7 +148,7 @@ Concretely, in the order a follow-up PR should take:
 
 1. Add an initial-only index to `UserLookup` (mirror upstream's
    `add_index`'s incomplete-space write; the datagen side already does
-   this at `crates/oxpinyin-datagen/src/libpinyin.rs:142`).
+   this at `crates/oxpinyin-data/src/table_entries.rs:95-98`).
 2. Route `UserLookup::lookup` through it when the query is
    incomplete, so incomplete user-store queries return the same set the
    current `expand_keys` fan-out delivers.
