@@ -805,6 +805,25 @@ pub const DEFAULT_STORE_EXT: &str = "lmdb";
 #[cfg(feature = "redb")]
 pub const DEFAULT_STORE_EXT: &str = "redb";
 
+/// The backend's `database format:` token — the string `user.conf`'s
+/// conformance check compares (`table_info.cpp`'s
+/// `to/from_table_database_format_type`: exactly `BerkeleyDB`,
+/// `KyotoCabinet`, `Tkrzw` upstream), so a same-backend pair stays
+/// conform and every cross-backend pair answers non-conform. The redb
+/// and LMDB tokens are ours — libpinyin has no such build, which is the
+/// point: nothing it ships can read them.
+#[cfg(feature = "kyotocabinet")]
+pub const DEFAULT_STORE_DB_FORMAT: &str = "KyotoCabinet";
+/// See the Kyoto Cabinet definition: tkrzw is upstream's third token.
+#[cfg(feature = "tkrzw")]
+pub const DEFAULT_STORE_DB_FORMAT: &str = "Tkrzw";
+/// See the Kyoto Cabinet definition: LMDB's token is oxpinyin-only.
+#[cfg(feature = "lmdb")]
+pub const DEFAULT_STORE_DB_FORMAT: &str = "LMDB";
+/// See the Kyoto Cabinet definition: redb's token is oxpinyin-only.
+#[cfg(feature = "redb")]
+pub const DEFAULT_STORE_DB_FORMAT: &str = "Redb";
+
 /// `<stem>.<DEFAULT_STORE_EXT>` — the on-disk name of a native table for
 /// the compiled-in backend.
 #[must_use]

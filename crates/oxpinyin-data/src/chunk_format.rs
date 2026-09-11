@@ -75,6 +75,42 @@ pub fn chunk_checksum(payload: &[u8]) -> u32 {
     checksum
 }
 
+/// A payload that does not fit the `MemoryChunk` header's `u32` length
+/// field. The one framing policy this module owns: refuse rather than
+/// clamp — a clamped length names a file the reader would misparse.
+#[derive(Debug)]
+pub struct ChunkFrameError(usize);
+
+impl std::fmt::Display for ChunkFrameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "payload of {} bytes exceeds the u32 length field",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for ChunkFrameError {}
+
+/// Frames a payload into a complete `MemoryChunk` file — the 8-byte
+/// `{length, checksum}` header over the payload, `MemoryChunk::save`'s
+/// output. The inverse of the header check every reader performs, and
+/// the **only** framing implementation: every chunk writer goes through
+/// here, so the overflow policy is one policy.
+///
+/// # Errors
+///
+/// Fails when the payload exceeds the header's `u32` length field.
+pub fn build_memory_chunk(payload: &[u8]) -> Result<Vec<u8>, ChunkFrameError> {
+    let length = u32::try_from(payload.len()).map_err(|_| ChunkFrameError(payload.len()))?;
+    let mut file = Vec::with_capacity(CHUNK_HEADER_SIZE + payload.len());
+    file.extend_from_slice(&length.to_le_bytes());
+    file.extend_from_slice(&chunk_checksum(payload).to_le_bytes());
+    file.extend_from_slice(payload);
+    Ok(file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,6 +131,14 @@ mod tests {
     }
 
     #[test]
+    fn framing_refuses_a_payload_beyond_the_length_field() {
+        // A 2^32-byte payload cannot be named by the header's field;
+        // the single framing refuses rather than clamping.
+        let huge = vec![0_u8; u32::MAX as usize + 1];
+        assert!(build_memory_chunk(&huge).is_err());
+    }
+
+    #[test]
     fn header_and_mask_are_the_upstream_values() {
         assert_eq!(CHUNK_HEADER_SIZE, 8);
         assert_eq!(SEPARATOR, b'#');
@@ -110,5 +154,15 @@ mod tests {
         assert_eq!(FIRST_ITEM_OFFSET, 8);
         assert_eq!(ITEM_HEADER_SIZE, 1 + 1 + 4);
         assert_eq!(CHEWING_KEY_SIZE, 2);
+    }
+
+    #[test]
+    fn build_memory_chunk_frames_the_pin_layout() {
+        let payload = [1_u8, 2, 3];
+        let file = build_memory_chunk(&payload).expect("frame");
+        assert_eq!(file.len(), 8 + 3);
+        assert_eq!(&file[..4], &3_u32.to_le_bytes());
+        assert_eq!(&file[4..8], &0x0003_0201_u32.to_le_bytes());
+        assert_eq!(&file[8..], &payload);
     }
 }
