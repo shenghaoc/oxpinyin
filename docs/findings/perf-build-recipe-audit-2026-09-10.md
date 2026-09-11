@@ -188,9 +188,9 @@ reading it, and a record in the second cannot.
 
 | record | verdict | recipe | resolved from |
 |---|---|---|---|
-| `perf-steady-cycle-cross-host-2026-09-07.md` | **AFFECTED** | `cargo build` + strip | **states it** — `:169` and `:278`, both hosts, with per-artifact sha256, `NEEDED` and byte size |
-| `perf-keycost-first-alloc-2026-09-07.md` | **AFFECTED** | `cargo build` + strip | harness row `:158` names `run-perf-same-data.sh`; script read at the record's date |
-| `runtime-direct-libpinyin-data-2026-09-02.md` | **AFFECTED** | `cargo build` + strip | §4 `:122` names `run-perf-same-data.sh`; §4 landed in `d509041e`, the script's own introducing commit |
+| `perf-steady-cycle-cross-host-2026-09-07.md` | **AFFECTED** | `cargo build` + strip | **states it** — `:172` and `:281`, both hosts, with per-artifact sha256, `NEEDED` and byte size |
+| `perf-keycost-first-alloc-2026-09-07.md` | **AFFECTED** | `cargo build` + strip | harness row `:160` names `run-perf-same-data.sh`; script read at the record's date |
+| `runtime-direct-libpinyin-data-2026-09-02.md` | **AFFECTED** | `cargo build` + strip | §4 `:125` names `run-perf-same-data.sh`; §4 landed in `d509041e`, the script's own introducing commit |
 | `perf-cycle-ir-differential-2026-09-08.md` | **MIXED** | both, deliberately | states it — cells X/Y are `cargo build`, Z/S `cinstall`; it is the control that found the effect |
 | `rss-attribution-2026-09-09.md` | not affected | `cinstall --features …,shipped` | **states it** — `:159`, with sha256, SONAME and byte size. The only record that timed the *literal* product |
 | `perf-backend-matrix-2026-09.md` | not affected | `cinstall` | **states it** — `:51-52` |
@@ -235,7 +235,7 @@ affected record the figures do not all move together. Three classes:
 ### `perf-steady-cycle-cross-host-2026-09-07.md`
 
 Both passes built `cargo build --locked --release -p oxpinyin-capi
---no-default-features --features {kyotocabinet,tkrzw}` (`:169` arm64, `:278`
+--no-default-features --features {kyotocabinet,tkrzw}` (`:172` arm64, `:281`
 amd64) and published the sha256, `NEEDED` and byte size of each artifact. Its
 Tkrzw sha256 `bf8d3b57…` is the one `run-tree-recipe-control.sh` pins as
 `RECORD_X_SHA` — the control rebuilt this record's exact artifact, which is why
@@ -249,34 +249,34 @@ it was not stated. A scope note is added by this audit.
 
 ### `perf-keycost-first-alloc-2026-09-07.md`
 
-Harness row `:158` names `run-perf-same-data.sh`; the adjacent "Script delta"
+Harness row `:160` names `run-perf-same-data.sh`; the adjacent "Script delta"
 row names a modification to `build_capi` itself, so the cargo-build path is not
 in doubt. arm64, where the effect is roughly half amd64's.
 
-- **Moves** — the implementation ratios `:219` (1.158×/1.168× → 1.156×/1.180×)
-  and the "~1.16× steady" headline (`:10`, `:319`); the ttf ratios `:229`
+- **Moves** — the implementation ratios `:221` (1.158×/1.168× → 1.156×/1.180×)
+  and the "~1.16× steady" headline (`:10`, `:321`); the ttf ratios `:231`
   (2.783× → 1.236×, 2.816× → 1.235×) and "~1.24× first-result"; the
   session-ready RSS comparison "12,840 KiB against libpinyin's 12,738 KiB:
-  +0.8%" (`:225-227`); every oxpinyin absolute in the two matrices (`:182-185`,
-  `:191-194`).
+  +0.8%" (`:226-228`); every oxpinyin absolute in the two matrices (`:184-187`,
+  `:193-196`).
 - **Robust** — the headline result. First allocation ~17 ms → ~1 µs is a
   same-recipe parent→HEAD comparison separated by four orders of magnitude on
-  its own axis (`:205-209`); so are the cold-cycle deltas and the closure check
-  (`:210-216`), the steady parent→HEAD movement against the libpinyin control's
-  own drift (`:217-218`), and the RSS delta `−8.98 MiB` (`:221`). The libpinyin
+  its own axis (`:207-211`); so are the cold-cycle deltas and the closure check
+  (`:212-218`), the steady parent→HEAD movement against the libpinyin control's
+  own drift (`:219-220`), and the RSS delta `−8.98 MiB` (`:223`). The libpinyin
   cells are the in-image pin build and were never touched by `build_capi`.
 
   Two of those bullets carry **both** classes at once and must be read a line at
-  a time: the steady bullet (`:217-220`) states a robust parent→HEAD movement and
-  then a moving implementation ratio, and the RSS bullet (`:221-228`) a robust
+  a time: the steady bullet (`:219-222`) states a robust parent→HEAD movement and
+  then a moving implementation ratio, and the RSS bullet (`:223-230`) a robust
   −8.98 MiB delta and then a moving +0.8% comparison against libpinyin.
 
-  **"Same-pass" is not the same property as "same-recipe".** `:229` labels the
+  **"Same-pass" is not the same property as "same-recipe".** `:231` labels the
   ttf ratios "same-pass quotients", which is true and is what makes them immune
   to session drift — but both arms of a *cross-implementation* ratio are not
   built the same way, so a scale factor on the oxpinyin arm does not cancel. The
   phrase protects against a different hazard than this one.
-- **Describes a different object outright** — `:199`, "Stripped `.so` size:
+- **Describes a different object outright** — `:201`, "Stripped `.so` size:
   1,576,960 bytes". That is the size of the `libpinyin_capi.so` fixture; the
   arm64 cinstall artifact in the control is 1,816,024 B
   ([`:1056-1059`](perf-cycle-ir-differential-2026-09-08.md)). **The two numbers
@@ -292,20 +292,21 @@ absolute steady figures or its `.so` size line.
 
 ### `runtime-direct-libpinyin-data-2026-09-02.md`
 
-§4 `:122` names `run-perf-same-data.sh`. **Its filename date is not its
+§4 `:125` names `run-perf-same-data.sh`. **Its filename date is not its
 measurement date**: §4 was added in `d509041e` (2026-09-03T15:51:27Z), the same
 commit that introduced the script. A date-based check would have cleared this
 record wrongly.
 
-- **Moves** — "steady-state is ~12.2 ms vs the pin's ~8.1 ms (~1.5×)" (`:147`),
-  restated as §6 item 1 (`:186`); the cold-cycle ratio; the init ratios "within
-  ~1.1× and ~1.3× of the pin" (`:136`); every oxpinyin absolute in the §4 table.
-- **Robust** — the four pin cells in full, and the within-oxpinyin cross-backend
-  quotients (KC vs Tkrzw), both sides of which came out of one pass.
-- **Recipe axis absent** — the §4 "Memory" paragraph (`:153-156`), produced by
+- **Moves** — "steady-state is ~12.2 ms vs the pin's ~8.1 ms (~1.5×)" (`:150`),
+  restated as §6 item 1 (`:189`); the cold-cycle ratio; the init ratios "within
+  ~1.1× and ~1.3× of the pin" (`:139`); every oxpinyin absolute in the §4 table.
+- **Robust** — the two pin cells (libpinyin + Tkrzw, libpinyin + KC) in full,
+  and the within-oxpinyin cross-backend quotients (KC vs Tkrzw), both sides of
+  which came out of one pass.
+- **Recipe axis absent** — the §4 "Memory" paragraph (`:156-159`), produced by
   the `open_profile` example, which links the crate directly and dlopens nothing.
 - **Cross-recipe, and worse than affected** — "~90–106× faster than before"
-  (`:136`). Its numerator is the #260 baseline from
+  (`:139`). Its numerator is the #260 baseline from
   `perf-backend-matrix-2026-08-31.md`, a **cinstall** record; its denominator is
   this record's **cargo-build** figure. At ~100× the effect is noise and the
   quotient survives, but it is not like-for-like, and no reader could tell.
@@ -327,44 +328,56 @@ Nine perf figures on five lines. Three trace to
 `runtime-direct-libpinyin-data-2026-09-02.md` and are therefore on the
 cargo-build path:
 
+Line numbers are `ROADMAP.md` **as this commit leaves it** — the same commit
+re-attributes and qualifies these three, so each cited line now carries the
+figure *and* its scope caveat. Where the pre-fix text matters, it is cited
+against `d8de0ab2`, the parent.
+
 | ROADMAP | figure | axis |
 |---|---|---|
-| `:369` | "the steady-state candidate lookup (~1.5× the pin)" | steady cycle — **the one figure the established band quantifies** |
-| `:368` | "key-cost table (~16.5 ms…)" | oxpinyin absolute, alloc axis — inherits the recipe, unquantified |
-| `:158`, `:356-357` | "init within ~1.1× (KC) / ~1.3× (tkrzw) of the pin" | init axis — inherits the recipe, unquantified |
+| `:387-395` | "the steady-state candidate lookup (P6: ~1.5× the pin)" | steady cycle — **the one figure the established band quantifies** |
+| `:384-387` | "key-cost table (P6: ~16.5 ms)" | oxpinyin absolute, alloc axis — inherits the recipe, unquantified |
+| `:158`, `:363-364` | "init within ~1.1× (KC) / ~1.3× (tkrzw) of the pin" | init axis — inherits the recipe, unquantified |
 
-The rest — `:358` init 102 → 21 ms and RSS 72,652 → 28,388 KiB, `:359` runtime
-data 101.80 → 36.88 MiB, `:362` +5.5% for −64 KiB — trace to
+The rest — `:374` init 102 → 21 ms and RSS 72,652 → 28,388 KiB, `:375` runtime
+data 101.80 → 36.88 MiB, `:378` +5.5% for −64 KiB — trace to
 `perf-baseline-kc-2026-09.md`, a cinstall record, and are clean on this axis.
 
-**And the citation hides the exposure.** `:158` and `:356-357` attach the
-~1.1× / ~1.3× init pair to `perf-backend-matrix-2026-09.md` and
-`perf-baseline-kc-2026-09.md` — two **cinstall** records. Neither contains those
+**And the citation hid the exposure.** Before this commit
+(`ROADMAP.md@d8de0ab2:158`, `:356-357`) the ~1.1× / ~1.3× init pair was
+attached to `perf-backend-matrix-2026-09.md` and `perf-baseline-kc-2026-09.md`
+— two **cinstall** records. Neither contains those
 numbers: the first reports init at 1.16× (Tkrzw) / 1.12× (KC) (`:17-18`), the
-second at 4.9× (`:52`). The pair is verbatim the P6 record's `:136`, which is on
+second at 4.9× (`:52`). The pair is verbatim the P6 record's `:139`, which is on
 the cargo-build harness. **A reader checking provenance by following ROADMAP's
-own citations would clear these figures wrongly** — which is precisely the
+own citations would have cleared these figures wrongly** — precisely the
 failure mode this audit exists to catch, arriving by a different route.
 
-Three further ROADMAP defects surfaced here. They are **not** #401 defects and
-are recorded so they are not lost, not fixed here:
+Four further ROADMAP defects surfaced here. **None is a #401 defect** — each
+would have been there whatever the build recipe — but three were fixed in this
+commit rather than left standing beside a corrected citation, and the fourth is
+recorded only. Pre-fix text is cited against `d8de0ab2`, the parent.
 
-- **stale target** — `:367-368` presents the key-cost table as a pending next
-  target. It was deferred on 2026-09-04 (`perf-baseline-kc-2026-09.md:307`) and
-  eliminated on 2026-09-07 (`perf-keycost-first-alloc-2026-09-07.md:5-11`).
-- **stale ratio** — `:369`'s ~1.5× is superseded three times over: 0.94×/0.95×
-  at parity (`perf-backend-matrix-2026-09.md:22-23`), ~1.16× steady
-  (`perf-keycost-first-alloc-2026-09-07.md`), and below 1 on the current tree
-  (`perf-steady-cycle-cross-host-2026-09-07.md:14-17`). This compounds with
+- **stale target — fixed.** `@d8de0ab2:367-368` presented the key-cost table as
+  a pending next target. It was deferred on 2026-09-04
+  (`perf-baseline-kc-2026-09.md:307`) and eliminated on 2026-09-07
+  (`perf-keycost-first-alloc-2026-09-07.md:5-11`). Now `:384-387`, which says so.
+- **stale ratio — fixed.** `@d8de0ab2:369`'s ~1.5× is superseded three times
+  over: 0.94×/0.95× at parity (`perf-backend-matrix-2026-09.md:22-23`), ~1.16×
+  steady (`perf-keycost-first-alloc-2026-09-07.md`), and below 1 on the current
+  tree (`perf-steady-cycle-cross-host-2026-09-07.md:14-17`). This compounds with
   #401 in the same direction but is independent of it: re-measuring on the
-  current tree would have caught it whatever the recipe.
-- **unsourced host** — `:356` labelled the P1–P6 figures "x86_64". Their
-  source record states no host architecture anywhere; the label appears to
-  have come from the record ROADMAP mis-cited, which is x86_64. Removed.
-- **frozen intermediate** — `:358`'s "init 102 → 21 ms" quotes
-  `perf-baseline-kc-2026-09.md:306` while the next row of the same table
+  current tree would have caught it whatever the recipe. Now `:387-395`.
+- **unsourced host — fixed.** `@d8de0ab2:356` labelled the P1–P6 figures
+  "x86_64". Their source record states no host architecture anywhere; the label
+  appears to have come from the record ROADMAP mis-cited, which is x86_64.
+  Removed, and the absence is now stated at `:367`.
+- **frozen intermediate — recorded, not fixed.** `:374`'s "init 102 → 21 ms"
+  quotes `perf-baseline-kc-2026-09.md:306` while the next row of the same table
   (`:307`) records init falling further to 3.3 ms, and that record's own result
-  table has 3.216 ms.
+  table has 3.216 ms. Left deliberately: which of that table's rows ROADMAP
+  should quote is a roadmap-content decision, not a provenance correction, and
+  it is not this audit's to make.
 
 ### `ci-perf-size-gate-proposal-2026-09-09.md`
 
@@ -396,7 +409,7 @@ within-pass quotients where the recipe cancels.
    introduced silently and would have propagated indefinitely**; what bounded the
    damage was the interval, not the process.
 
-2. **A new defect class: the cross-recipe quotient.** `runtime-direct…:136`'s
+2. **A new defect class: the cross-recipe quotient.** `runtime-direct…:139`'s
    "~90–106× faster than before" divides a cinstall numerator by a cargo-build
    denominator. Neither record is wrong; the quotient is not like-for-like and no
    reader could tell. This class is invisible to a per-record audit — it only
@@ -415,7 +428,7 @@ within-pass quotients where the recipe cancels.
    citation hid the record entirely.
 
 4. **A size figure is not a biased number, it is a different object.**
-   `perf-keycost-first-alloc…:199`'s "1,576,960 bytes" is the size of
+   `perf-keycost-first-alloc…:201`'s "1,576,960 bytes" is the size of
    `libpinyin_capi.so`. The shipping artifact on that architecture is 1,816,024 B.
    No correction factor connects them: one is the size of a file that ships and
    the other is the size of a file that does not.

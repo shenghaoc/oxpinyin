@@ -171,12 +171,14 @@ This is not bookkeeping. `cargo cinstall` is the shipping path
 (`.github/workflows/release-packages.yml` → `tools/packaging/install.sh`;
 `libpinyin.so.15.0.0`, plus `--features shipped` for the drop-in), while
 `cargo build` produces `libpinyin_capi.so`, a bisection fixture nothing
-installs — and the two do **not** run at the same speed. The measured recipe
-effect on the steady keystroke-cycle ratio is −0.064 to −0.087 ratio units on
-amd64 and −0.032 to −0.038 on arm64
-(`docs/findings/perf-cycle-ir-differential-2026-09-08.md`), with no mechanism
-established. A record that does not say which one it built cannot be read as a
-statement about the product.
+installs — and the two do **not** run at the same speed. On the steady
+keystroke-cycle ratio the shipping artifact measures **0.064 to 0.087 ratio
+units lower on amd64 and 0.032 to 0.038 lower on arm64**
+(`docs/findings/perf-cycle-ir-differential-2026-09-08.md`, which publishes the
+signed form `Z÷L − Y÷L` — `Z` the cinstall cell, `Y` the cargo-build one — so
+its own tables read negative), with no mechanism established. A record that
+does not say which one it built cannot be read as a statement about the
+product.
 
 Two shortcuts do not substitute for the command line, and both have already
 misled a reader:

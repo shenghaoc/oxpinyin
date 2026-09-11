@@ -168,7 +168,8 @@ shelved BerkeleyDB compat path (drop-in task 10).
   registered divergences. Init fell from ~100× the pin to within ~1.3×
   (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`, whose
   oxpinyin cells were built by `cargo build`, not the shipping
-  `cargo cinstall` — see
+  `cargo cinstall`; the two ends of that ~100× were built differently, so it
+  is not a like-for-like quotient — see
   `docs/findings/perf-build-recipe-audit-2026-09-10.md`). Measured since on
   the shipping path: init at 1.16× (Tkrzw) / 1.12× (KC)
   (`docs/findings/perf-backend-matrix-2026-09.md`) and 4.9× after the
@@ -374,7 +375,12 @@ measured against the pin in the same container:
   (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md` — a
   `cargo build` artifact, not the shipping `cargo cinstall` one, so it reads
   high, and it states no host architecture;
-  `docs/findings/perf-build-recipe-audit-2026-09-10.md`).
+  `docs/findings/perf-build-recipe-audit-2026-09-10.md`). The "~100× before"
+  is **cross-recipe and not like-for-like**: its baseline is the `cinstall`
+  #260 matrix (`docs/findings/perf-backend-matrix-2026-08-31.md`) and its
+  endpoint the `cargo build` figure above. At that magnitude the recipe is
+  noise and the improvement is real, but the two ends were not built the
+  same way.
   ARM64/KC re-baseline: init 102 → 21 ms, RSS 72,652 → 28,388 KiB,
   runtime data 101.80 → 36.88 MiB (`docs/perf/perf-baseline-kc-2026-09.md`).
 - **Release profile**: fat LTO + one codegen unit

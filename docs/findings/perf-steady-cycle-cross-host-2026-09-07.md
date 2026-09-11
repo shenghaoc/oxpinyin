@@ -24,13 +24,16 @@
 >
 > **Build-recipe scope note (2026-09-10, #401).** A second, independent scope
 > limit on the same numbers. Both passes timed a `cargo build --locked --release`
-> + `strip` artifact (`:155` arm64, `:264` amd64) — `libpinyin_capi.so`, a
+> + `strip` artifact (`:172` arm64, `:281` amd64) — `libpinyin_capi.so`, a
 > bisection fixture. **The shipping artifact is `cargo cinstall`'s
 > `libpinyin.so.15.0.0`, and it is the faster of the two**, so every
-> cross-implementation ratio here overstates the shipping product's cost:
-> −0.064 to −0.087 ratio units on amd64 and −0.032 to −0.038 on arm64, steady
+> cross-implementation ratio here overstates the shipping product's cost — by
+> **0.064 to 0.087 ratio units on amd64 and 0.032 to 0.038 on arm64**, steady
 > keystroke-cycle wall clock only
 > ([perf-cycle-ir-differential-2026-09-08.md](perf-cycle-ir-differential-2026-09-08.md)).
+> That control publishes the effect as the signed quantity `Z÷L − Y÷L`, where
+> `Z` is the cinstall cell and `Y` the cargo-build one, so its own tables read
+> −0.064…−0.087; the overstatement is that magnitude with the sign flipped.
 > This record's own artifact provenance is what made the effect measurable: the
 > control pins its Tkrzw `sha256:bf8d3b57…` as `RECORD_X_SHA` and rebuilt it
 > exactly. Read every ratio as tree-scoped **and** recipe-scoped. See

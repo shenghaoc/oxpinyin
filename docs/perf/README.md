@@ -7,11 +7,21 @@ belong to a finding (the backend matrix, store optimisations, the
 key-cost walk) are filed under `../findings/perf-*.md` and indexed there.
 
 A snapshot's numbers are scoped to the container and host it names **and to
-the artifact it timed**. `cargo cinstall` is the shipping path; `cargo build`
-produces `libpinyin_capi.so`, a bisection fixture nothing installs, and it is
-the slower of the two. Which records sit where:
-`../findings/perf-build-recipe-audit-2026-09-10.md`. What a new record must
-state: `../runbooks/benches.md`, "State the build recipe, per artifact".
+the artifact it timed**. Three recipes appear in this directory, and only one
+of them is the product:
+
+- `cargo cinstall --release` — the shipping path (`libpinyin.so.15.0.0`, plus
+  `--features shipped` for the drop-in);
+- `cargo build --release` + `strip` — `libpinyin_capi.so`, a bisection fixture
+  nothing installs, and the slower of the two;
+- `cargo cinstall --profile profiling` — what `../../tools/profile/run-w8-cycle.sh`
+  stages (thin LTO, line tables, `panic = "unwind"`). Off the fixture path, but
+  not the shipping artifact either, and that third gap is unmeasured. The W8
+  snapshots here sit on it.
+
+Which records sit where: `../findings/perf-build-recipe-audit-2026-09-10.md`.
+What a new record must state: `../runbooks/benches.md`, "State the build
+recipe, per artifact".
 
 | Document | Subject |
 | --- | --- |
