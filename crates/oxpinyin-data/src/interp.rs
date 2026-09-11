@@ -55,7 +55,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use crate::interp_grammar::{self, Line, UNIGRAM_VALUES};
+use crate::interp_grammar::{self, BIGRAM_VALUES, Line, UNIGRAM_VALUES};
 
 /// Why an interpolation2.text read failed.
 #[derive(Debug)]
@@ -208,8 +208,10 @@ enum Section {
     Unigram,
     /// Inside `\2-gram` before ever seeing `\1-gram`. Reached only by a
     /// file that orders the sections the other way round, which no
-    /// producer emits; its `\item` lines are skipped without being read,
-    /// because this reader does not consume bigram records.
+    /// producer emits. Its lines are still read through the grammar —
+    /// with the four-value `\item` shape `parse_bigram` registers
+    /// (`import_interpolation.cpp:163`) — and only their *records* are
+    /// dropped, because this reader does not consume bigram counts.
     Bigram,
 }
 
@@ -232,6 +234,7 @@ pub fn parse_interpolation2_from_reader<R: BufRead>(
     let mut buffer = String::new();
     let mut line_number = 0_usize;
     let mut section = Section::Header;
+    let mut saw_data = false;
     let mut saw_unigram = false;
     let mut records: Vec<(u32, u64)> = Vec::new();
 
@@ -249,20 +252,23 @@ pub fn parse_interpolation2_from_reader<R: BufRead>(
         line_number += 1;
         let line = buffer.trim_end_matches(['\r', '\n']);
 
-        // Bigram-before-unigram: only the next section tag matters, so
-        // the ~1.9M item lines of that section are never field-parsed.
-        // This is the one state where a line is not read through the
-        // grammar, and it costs a `starts_with` rather than a walk.
-        if section == Section::Bigram && !line.starts_with('\\') {
-            continue;
-        }
-
-        let mut values = [""; UNIGRAM_VALUES];
-        let parsed =
-            interp_grammar::read(line, &mut values).map_err(|error| InterpolationError::Parse {
+        // The tag's positional-value count is the section's:
+        // `import_interpolation.cpp:128` registers `\item` with 2 inside
+        // `\1-gram`, `:163` with 4 inside `\2-gram`. Same selection as
+        // `oxpinyin-datagen`'s reader — every line of every section goes
+        // through the grammar, so a file this reader accepts is one the
+        // pinned tool would also have read.
+        let wanted = match section {
+            Section::Bigram => BIGRAM_VALUES,
+            Section::Header | Section::Unigram => UNIGRAM_VALUES,
+        };
+        let mut values = [""; BIGRAM_VALUES];
+        let parsed = interp_grammar::read(line, &mut values[..wanted]).map_err(|error| {
+            InterpolationError::Parse {
                 line: line_number,
                 detail: error.to_string(),
-            })?;
+            }
+        })?;
 
         match parsed {
             // `parse_unigram` returns at `\2-gram` and `\end`
@@ -275,12 +281,16 @@ pub fn parse_interpolation2_from_reader<R: BufRead>(
                 section = Section::Unigram;
                 saw_unigram = true;
             }
-            // A `\data` line inside a section is `BEGIN_LINE` reaching
-            // `parse_unigram`'s `default: abort()` (`:148-149`); only the
-            // header line, consumed by `parse_headline` before the body
-            // starts, is in the grammar.
+            // Upstream consumes exactly one `\data`, in `parse_headline`
+            // before the body starts (`import_interpolation.cpp:287-295`).
+            // Every later line goes through `parse_body`, where `\data` is
+            // still a registered tag and `BEGIN_LINE` falls to
+            // `default: abort()` (`:114-115`) — so a second one is refused
+            // wherever it sits, not only after a section header. Tracking
+            // that separately from `section` is what makes two consecutive
+            // `\data` lines an error rather than a silent accept.
             Line::Data { model } => {
-                if section != Section::Header {
+                if saw_data || section != Section::Header {
                     return Err(InterpolationError::Parse {
                         line: line_number,
                         detail: "repeated \\data header".to_owned(),
@@ -292,6 +302,7 @@ pub fn parse_interpolation2_from_reader<R: BufRead>(
                         detail: format!("expected `model interpolation`, got {model:?}"),
                     });
                 }
+                saw_data = true;
             }
             Line::Item { count } => {
                 match section {
@@ -428,6 +439,80 @@ mod tests {
         let result = parse_interpolation2(&path);
         std::fs::remove_file(&path).ok();
         assert!(matches!(result, Err(InterpolationError::Parse { .. })));
+    }
+
+    /// Regression: the `\2-gram`-first path used to skip any line not
+    /// starting with a literal backslash, so a `\1-gram` tag written with
+    /// leading whitespace — which `split_line` accepts, because it skips
+    /// leading whitespace before `tokens[0]` — was never seen and the file
+    /// came back `MissingOneGram`. Every line goes through the grammar now.
+    #[test]
+    fn a_whitespace_prefixed_one_gram_tag_after_two_gram_is_found() {
+        let bytes = b"\\data model interpolation\n\\2-gram\n\
+                      \\item 1 a 2 b count 3\n  \\1-gram\n\
+                      \\item 10 x count 5\n\\end\n";
+        let table = super::parse_interpolation2_from_reader(
+            std::path::Path::new("memory"),
+            std::io::Cursor::new(&bytes[..]),
+        )
+        .expect("the \\1-gram section is found through the leading whitespace");
+        assert_eq!(table.count(10), Some(5));
+    }
+
+    /// A line the pinned tool refuses is refused here too, in whichever
+    /// section it sits: `parse_bigram` reads every line through the same
+    /// `taglib_read` and aborts on a refusal
+    /// (`import_interpolation.cpp:166-218`). The records of that section
+    /// are still dropped — only their validity is checked.
+    #[test]
+    fn a_refused_line_inside_two_gram_is_an_error() {
+        let bytes = b"\\data model interpolation\n\\2-gram\n\
+                      utter garbage not a tag\n\\1-gram\n\
+                      \\item 10 x count 5\n\\end\n";
+        let result = super::parse_interpolation2_from_reader(
+            std::path::Path::new("memory"),
+            std::io::Cursor::new(&bytes[..]),
+        );
+        assert!(matches!(
+            result,
+            Err(InterpolationError::Parse { line: 3, .. })
+        ));
+    }
+
+    /// A `\2-gram` `\item` is read with the four-value shape, so one that
+    /// is well-formed for the two-value unigram shape is still refused —
+    /// the parity rule, applied in the section it belongs to.
+    #[test]
+    fn a_two_gram_item_is_read_with_the_four_value_shape() {
+        let bytes = b"\\data model interpolation\n\\2-gram\n\
+                      \\item 1 a count 3\n\\1-gram\n\
+                      \\item 10 x count 5\n\\end\n";
+        let result = super::parse_interpolation2_from_reader(
+            std::path::Path::new("memory"),
+            std::io::Cursor::new(&bytes[..]),
+        );
+        assert!(matches!(
+            result,
+            Err(InterpolationError::Parse { line: 3, .. })
+        ));
+    }
+
+    /// Upstream takes exactly one `\data`, in `parse_headline`; a second
+    /// reaches `parse_body`'s `default: abort()`. Two consecutive ones
+    /// used to pass, because the guard only asked whether a section had
+    /// started.
+    #[test]
+    fn a_second_data_header_is_refused_even_before_a_section() {
+        let bytes = b"\\data model interpolation\n\\data model interpolation\n\
+                      \\1-gram\n\\item 10 x count 5\n\\end\n";
+        let result = super::parse_interpolation2_from_reader(
+            std::path::Path::new("memory"),
+            std::io::Cursor::new(&bytes[..]),
+        );
+        assert!(matches!(
+            result,
+            Err(InterpolationError::Parse { line: 2, .. })
+        ));
     }
 
     #[test]
