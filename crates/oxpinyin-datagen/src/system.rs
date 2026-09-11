@@ -317,6 +317,7 @@ fn read_interpolation(model_dir: &Path, model: &mut SemanticModel) -> Result<(),
     }
     let text = std::fs::read_to_string(&text_path)?;
     let mut section = Section::Header;
+    let mut saw_data = false;
     for (number, line) in text.lines().enumerate() {
         let number = number + 1;
         // The tag's positional-value count is the section's:
@@ -330,8 +331,13 @@ fn read_interpolation(model_dir: &Path, model: &mut SemanticModel) -> Result<(),
         let parsed = interp_grammar::read(line, &mut values[..wanted])
             .map_err(|error| bad_line(&text_path, number, &error.to_string()))?;
         match parsed {
+            // One `\data` only, and `parse_headline` takes it before the
+            // body starts (`import_interpolation.cpp:287-295`); a later one
+            // reaches `parse_body`'s `default: abort()` (`:114-115`).
+            // `saw_data` is tracked apart from `section` so that two
+            // consecutive `\data` lines are refused too.
             Line::Data { model: name } => {
-                if section != Section::Header {
+                if saw_data || section != Section::Header {
                     return Err(bad_line(&text_path, number, "repeated \\data header"));
                 }
                 if name != "interpolation" {
@@ -341,6 +347,7 @@ fn read_interpolation(model_dir: &Path, model: &mut SemanticModel) -> Result<(),
                         &format!("expected `model interpolation`, got {name:?}"),
                     ));
                 }
+                saw_data = true;
             }
             Line::OneGram => section = Section::Unigram,
             Line::TwoGram => section = Section::Bigram,

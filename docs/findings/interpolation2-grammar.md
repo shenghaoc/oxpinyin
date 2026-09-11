@@ -167,6 +167,49 @@ faithful port: its fixed 4-field (unigram) / 6-field (bigram) slice
 pattern refuses `\item 10 甲 count 5 foo bar`, which the pin accepts. Both
 readers now go through the shared module, so both are faithful.
 
+## §4b Two more, found in review
+
+Review of the first cut of this change caught two places where the
+shared grammar was reached for but not actually reached *through*. Both
+are now closed, and both were measured against the pin the same way.
+
+**A `\2-gram`-first file skipped its own section without reading it.**
+`data`'s reader short-circuited any line in that state not starting with
+a literal `\`, on the argument that it consumes no bigram records. Two
+consequences, both real:
+
+- `  \1-gram` — a section tag written with leading whitespace, which
+  `split_line` accepts because it skips whitespace before `tokens[0]` —
+  never matched the `starts_with('\\')` test, so the section was never
+  entered and the file came back `MissingOneGram`. The pin reads that
+  file without complaint.
+- A line the pin refuses (`parse_bigram` reads every line through the
+  same `taglib_read` and aborts on a refusal,
+  `import_interpolation.cpp:166-218`) was silently swallowed.
+
+The reader now selects the section's positional-value count —
+`UNIGRAM_VALUES` (2) or `BIGRAM_VALUES` (4),
+`import_interpolation.cpp:128` and `:163` — and reads **every** line of
+**every** section through the grammar, dropping only the bigram
+*records*. That is what `datagen` already did; the two now agree by
+construction rather than by comment.
+
+**A second `\data` header was accepted.** Both readers tested
+`section != Section::Header`, which refuses a `\data` after a section
+header but accepts two consecutive ones at the top of the file.
+Upstream takes exactly one, in `parse_headline`, *before* the body
+loop starts (`:287-295`); every later line goes through `parse_body`,
+where `\data` is still a registered tag and `BEGIN_LINE` falls to
+`default: abort()` (`:114-115`). Both readers now track `saw_data`
+separately from the section state and refuse a repeat wherever it sits.
+
+Not closed, and deliberately so: upstream also requires the `\data` line
+to be **present and first** (`main` exits `ENODATA` when
+`parse_headline` fails on line 1), while both readers accept a file that
+has none. That is a third rule on the same line, it is not what review
+raised, and changing it would refuse `\1-gram`-only inputs that existing
+callers and fixtures rely on. Owed work, with its own decision.
+
 ## §5 The one recorded divergence: duplicate tokens and zero counts
 
 Grammar is shared; **policy on a well-formed-but-contradictory record is
