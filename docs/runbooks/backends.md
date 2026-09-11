@@ -23,7 +23,7 @@ selects tkrzw, and two backends at once is refused.
 | --- | --- | --- |
 | tkrzw | `libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libclang-dev pkg-config` | `tkrzw`, and `export LIBRARY_PATH="$(brew --prefix)/lib"` (see README: `cargo test` links lz4/zstd from there, `cargo check`/`clippy` never link and are not evidence) |
 | kyotocabinet | `libkyotocabinet-dev libclang-dev pkg-config` | not supported (the KC dylib does not dlopen on macOS; use a Linux container) |
-| lmdb | `liblmdb-dev libclang-dev pkg-config` | `lmdb` |
+| lmdb | `liblmdb-dev libclang-dev pkg-config` | `lmdb pkgconf`; libclang ships with the Xcode Command Line Tools. If `pkg-config --cflags lmdb` comes back empty, add Homebrew's metadata directory: `export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig"` |
 | redb | none | none |
 
 Three of the four backends bind a **system** C library through its own
@@ -48,6 +48,14 @@ library and `bindgen` reads `lmdb.h` to generate the declarations. Neither
 is linked, and neither appears in the runtime dependency set. The same
 split applies to the tkrzw and Kyoto Cabinet backends against their own
 `lib*-dev` / `lib*` pairs.
+
+An installation `pkg-config` cannot find — a custom prefix, or a build
+that ships no `.pc` file — is reachable without it:
+`OXPINYIN_LMDB_INCLUDE_DIR` prepends a header directory and
+`OXPINYIN_LMDB_LIB_DIR` adds a link-search path and an rpath, mirroring
+the `OXPINYIN_KC_*` pair. `BINDGEN_EXTRA_CLANG_ARGS` reaches bindgen as
+usual. All four are tracked by `build.rs`, so changing one regenerates
+the declarations instead of leaving a stale `lmdb_bindings.rs` behind.
 
 The generated bindings are not committed, deliberately: `MDB_val` and
 `MDB_stat` cross the ABI by layout rather than as opaque handles, and the
