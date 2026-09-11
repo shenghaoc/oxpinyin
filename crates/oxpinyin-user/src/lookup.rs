@@ -251,7 +251,7 @@ fn index_key(syllables: &[SyllableKey]) -> String {
 /// syllable's initial equals the stored syllable's `syllable_initial`.
 ///
 /// This is the filter the incomplete-space bucket needs, mirroring the
-/// `keys_match` post-filter that `crates/oxpinyin-data/src/chewing_table.rs:342-356`
+/// `keys_match` post-filter that `crates/oxpinyin-data/src/chewing_table.rs:202-216`
 /// applies to `ChewingTable::search`'s returned records.
 fn stored_matches_query(stored_pinyin: &str, query: &[SyllableKey]) -> bool {
     let mut parts = stored_pinyin.split('\'');

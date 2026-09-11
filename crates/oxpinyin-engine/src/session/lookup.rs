@@ -988,7 +988,7 @@ where
     /// dictionary advertises [`Dictionary::handles_partial_keys`], routing
     /// through its incomplete-projected index —
     /// `ChewingTable::search` at
-    /// `crates/oxpinyin-data/src/chewing_table.rs:342-356` for the system
+    /// `crates/oxpinyin-data/src/chewing_table.rs:202-216` for the system
     /// path, `UserLookup::lookup` for the user overlay — mirroring
     /// upstream's `ChewingLargeTable2::search`
     /// (`chewing_large_table2.cpp:161-172` at pin `074a2219`), which
@@ -999,7 +999,7 @@ where
     /// [`docs/findings/scan-matrix-fanout-2026-09-10.md`](../../docs/findings/scan-matrix-fanout-2026-09-10.md)
     /// measured (~9× amplification from matrix path to probe); the
     /// datagen side already writes both keyspaces at
-    /// `crates/oxpinyin-datagen/src/libpinyin.rs:142`, and the user store
+    /// `crates/oxpinyin-data/src/table_entries.rs:95-98`, and the user store
     /// now mirrors that with its `by_initial` index, so the expansion is
     /// redundant against a dictionary that opts in.
     ///
