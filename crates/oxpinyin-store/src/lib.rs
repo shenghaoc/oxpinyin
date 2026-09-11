@@ -320,6 +320,59 @@ pub trait WriteStore: ReadStore {
         Self::create(path)
     }
 
+    /// Writes `rows` to `path` as the **user** bigram container.
+    ///
+    /// The write half of [`RawReadStore::open_user_bigram`], and for the
+    /// same reason it is not [`Self::create_hash`]: libpinyin's Kyoto
+    /// Cabinet user bigram is a snapshot stream, produced by filling an
+    /// in-memory `StashDB` and calling `dump_snapshot`
+    /// (`ngram_kyotodb.cpp:82-101`), not by creating a hash file at the
+    /// path. tkrzw, redb and LMDB all write a genuine container there, so
+    /// the default is [`Self::create_hash`] plus a raw write — what those
+    /// three already did correctly.
+    ///
+    /// Rows arrive already sorted by key; the container's own order is
+    /// what matters on read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the container cannot be written.
+    fn write_user_bigram(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError>
+    where
+        Self: Sized,
+    {
+        // Atomic replacement: build the whole container at a sibling
+        // temporary, compact it, close it, then rename it over `path`.
+        // Removing `path` up front and writing in place would destroy
+        // the previous profile if creation, insertion, or compaction
+        // failed — and a rename(2) over an existing file is itself
+        // atomic, so the profile is always the old one or the new one,
+        // never a mix.
+        let tmp = sibling_temp(path);
+        let mut store = Self::create_hash(&tmp)?;
+        store.write(|txn| {
+            for (key, value) in rows {
+                txn.put_raw(key, value)?;
+            }
+            Ok(())
+        })?;
+        // The hard sync sits at save, matching the backend-wide
+        // write/compact split: `write` reaches the operating system,
+        // `compact` the device.
+        store.compact()?;
+        drop(store);
+        std::fs::rename(&tmp, path).map_err(StoreError::Io)?;
+        // The backend may have left a lock sidecar beside the *temporary*
+        // (LMDB creates `<file>-lock` on open); it is stale once the
+        // handle drops and the rename moved only the data file.
+        if let (Some(name), Some(dir)) = (tmp.file_name().and_then(|n| n.to_str()), tmp.parent()) {
+            for suffix in ["-lock", "-shm"] {
+                let _ = std::fs::remove_file(dir.join(format!("{name}{suffix}")));
+            }
+        }
+        Ok(())
+    }
+
     /// Run `f` inside an atomic write transaction.  All puts/removes in
     /// `f` land together on `Ok`, or none land on `Err` (full rollback).
     /// The closure sees its own writes.
@@ -453,6 +506,37 @@ pub trait RawReadStore: ReadStore {
     {
         Self::open_read_only(path)
     }
+
+    /// Opens the **user** bigram container at `path` for reading.
+    ///
+    /// This is *not* [`Self::open_hash_read_only`], and the two must not
+    /// share one implementation: libpinyin keeps its system and user
+    /// bigrams in different containers on Kyoto Cabinet. The system
+    /// `bigram.db` is a `HashDB` file (`attach`, `ngram_kyotodb.cpp:110`),
+    /// while the user `user_bigram.db` is a snapshot stream of an
+    /// in-memory `StashDB` (`load_db`'s `load_snapshot`,
+    /// `ngram_kyotodb.cpp:54-64`) — magic `KCSS`, which a hash open
+    /// rejects with "missing magic data of the file". On tkrzw both are
+    /// genuine hash files (`ngram_tkrzwdb.cpp:48-63`), and redb/LMDB have
+    /// no hash/tree/snapshot distinction, so the default — the hash
+    /// container — is correct for all three.
+    fn open_user_bigram(path: &std::path::Path) -> Result<Self, StoreError>
+    where
+        Self: Sized,
+    {
+        Self::open_hash_read_only(path)
+    }
+}
+
+/// `<name>.<ext>.tmp` beside `path` — the staged-replacement sibling
+/// [`WriteStore::write_user_bigram`] builds before the atomic rename.
+pub(crate) fn sibling_temp(path: &Path) -> std::path::PathBuf {
+    let mut name = path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
+    name.push(".tmp");
+    path.with_file_name(name)
 }
 
 // ── Shared: table-name validation ──────────────────────────────────
@@ -805,25 +889,6 @@ pub const DEFAULT_STORE_EXT: &str = "lmdb";
 #[cfg(feature = "redb")]
 pub const DEFAULT_STORE_EXT: &str = "redb";
 
-/// The backend's `database format:` token — the string `user.conf`'s
-/// conformance check compares (`table_info.cpp`'s
-/// `to/from_table_database_format_type`: exactly `BerkeleyDB`,
-/// `KyotoCabinet`, `Tkrzw` upstream), so a same-backend pair stays
-/// conform and every cross-backend pair answers non-conform. The redb
-/// and LMDB tokens are ours — libpinyin has no such build, which is the
-/// point: nothing it ships can read them.
-#[cfg(feature = "kyotocabinet")]
-pub const DEFAULT_STORE_DB_FORMAT: &str = "KyotoCabinet";
-/// See the Kyoto Cabinet definition: tkrzw is upstream's third token.
-#[cfg(feature = "tkrzw")]
-pub const DEFAULT_STORE_DB_FORMAT: &str = "Tkrzw";
-/// See the Kyoto Cabinet definition: LMDB's token is oxpinyin-only.
-#[cfg(feature = "lmdb")]
-pub const DEFAULT_STORE_DB_FORMAT: &str = "LMDB";
-/// See the Kyoto Cabinet definition: redb's token is oxpinyin-only.
-#[cfg(feature = "redb")]
-pub const DEFAULT_STORE_DB_FORMAT: &str = "Redb";
-
 /// `<stem>.<DEFAULT_STORE_EXT>` — the on-disk name of a native table for
 /// the compiled-in backend.
 #[must_use]
@@ -846,6 +911,25 @@ pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = true;
 /// oxpinyin-only containers.
 #[cfg(any(feature = "lmdb", feature = "redb"))]
 pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = false;
+
+/// The backend's `database format:` token — the string `user.conf`'s
+/// conformance check compares (`table_info.cpp`'s
+/// `to/from_table_database_format_type`: exactly `BerkeleyDB`,
+/// `KyotoCabinet`, `Tkrzw` upstream), so a same-backend pair stays
+/// conform and every cross-backend pair answers non-conform. The redb
+/// and LMDB tokens are ours — libpinyin has no such build, which is the
+/// point: nothing it ships can read them.
+#[cfg(feature = "kyotocabinet")]
+pub const DEFAULT_STORE_DB_FORMAT: &str = "KyotoCabinet";
+/// See the Kyoto Cabinet definition: tkrzw is upstream's third token.
+#[cfg(feature = "tkrzw")]
+pub const DEFAULT_STORE_DB_FORMAT: &str = "Tkrzw";
+/// See the Kyoto Cabinet definition: LMDB's token is oxpinyin-only.
+#[cfg(feature = "lmdb")]
+pub const DEFAULT_STORE_DB_FORMAT: &str = "LMDB";
+/// See the Kyoto Cabinet definition: redb's token is oxpinyin-only.
+#[cfg(feature = "redb")]
+pub const DEFAULT_STORE_DB_FORMAT: &str = "Redb";
 
 /// Helpers shared by the framed and file-backed backends; every item is
 /// gated to the backends that use it (see the module docs).
@@ -1211,6 +1295,64 @@ mod tests {
                     assert_eq!(store.get("alpha", b"k1").unwrap(), Some(b"v1".to_vec()));
                     assert_eq!(store.get("beta", b"k2").unwrap(), Some(b"v2".to_vec()));
                     assert_eq!(store.get("alpha", b"k2").unwrap(), None);
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                /// The user-bigram seam round trips on every backend, and
+                /// is its own pair rather than a plain hash open: libpinyin
+                /// keeps its user bigram in a *different* container than
+                /// its system bigram on Kyoto Cabinet (an in-memory stash
+                /// dumped as a `KCSS` snapshot, `ngram_kyotodb.cpp:54-101`,
+                /// vs the system's `HashDB` file).
+                ///
+                /// What this law does and does not catch: it pins that one
+                /// backend's `write_user_bigram` and `open_user_bigram`
+                /// agree with each other — so a regression that splits them
+                /// (one half a snapshot, the other a hash file) fails here.
+                /// It does **not** prove the format matches the pin's: the
+                /// original defect was hash-on-both-halves, which is
+                /// self-consistent and passes this law. Only the oracle
+                /// round trip — a real libpinyin writes the profile,
+                /// oxpinyin reads it — can catch that
+                /// (`tools/oracle/user-dir-round-trip.sh`).
+                #[test]
+                fn user_bigram_round_trips_through_its_own_seam() {
+                    let path = temp_path("user-bigram");
+                    let rows: Vec<(Vec<u8>, Vec<u8>)> = [1_u32, 2, 0x0100_0003]
+                        .iter()
+                        .map(|&tok| {
+                            (
+                                tok.to_le_bytes().to_vec(),
+                                // A `SingleGram` blob: total then one record.
+                                [&42_u32.to_le_bytes()[..], &tok.to_le_bytes()[..], &7_u32.to_le_bytes()[..]]
+                                    .concat(),
+                            )
+                        })
+                        .collect();
+                    <$store>::write_user_bigram(&path, &rows).unwrap();
+
+                    let store = <$store>::open_user_bigram(&path).unwrap();
+                    for (key, value) in &rows {
+                        assert_eq!(
+                            store.get_raw(key).unwrap().as_deref(),
+                            Some(&value[..]),
+                            "gram {key:?} must read back through the user-bigram seam"
+                        );
+                    }
+                    // The loader also walks the whole container.
+                    let mut walked = 0;
+                    store
+                        .range_raw(
+                            std::ops::Bound::Unbounded,
+                            std::ops::Bound::Unbounded,
+                            &mut |_k, _v| {
+                                walked += 1;
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(walked, rows.len(), "the walk must see every gram");
                     drop(store);
                     cleanup(&path);
                 }
