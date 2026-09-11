@@ -671,8 +671,12 @@ mod tests {
         let freqs: Vec<u32> = item.pronunciations().map(|p| p.freq).collect();
         assert_eq!(freqs, vec![104, 793]);
         // Both keyspaces + prefix markers: "a", "b", "ya" are all
-        // one-syllable → 3 real keys + no proper prefixes = 3 + 3 = 6.
-        assert_eq!(out.pinyin_index.len(), 6);
+        // one-syllable → 3 real keys + no proper prefixes = 3 + 3 = 6,
+        // less one: "a" and "ya" share initial 0, so their incomplete
+        // keys are the same bytes and upstream appends both records
+        // under that one key (table_entries merges rather than emitting
+        // a duplicate row the DBM would collapse by last-write-wins).
+        assert_eq!(out.pinyin_index.len(), 5);
         // Phrase index: two phrases, each a single character → no markers.
         assert_eq!(out.phrase_index.len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
