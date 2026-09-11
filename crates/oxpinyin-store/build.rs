@@ -396,13 +396,15 @@ mod tkrzw {
 /// build-dependency.
 #[cfg(feature = "lmdb")]
 mod lmdb {
-    /// Locates `lmdb.h` under the pkg-config include path, falling back
+    /// Locates `lmdb.h` under the discovered include path, falling back
     /// to the compiler's default include directory. LMDB's `.pc` on
     /// Debian carries no `-I` at all (the header lands in
     /// `/usr/include`), so the fallback is the normal case, not a
-    /// rescue path.
-    fn header(cflags: &[String]) -> Option<std::path::PathBuf> {
-        let mut dirs: Vec<std::path::PathBuf> = cflags
+    /// rescue path; a Homebrew `lmdb.pc` does carry one, and
+    /// `OXPINYIN_LMDB_INCLUDE_DIR` prepends an explicit directory ahead
+    /// of both.
+    fn header(clang_args: &[String]) -> Option<std::path::PathBuf> {
+        let mut dirs: Vec<std::path::PathBuf> = clang_args
             .iter()
             .filter_map(|flag| flag.strip_prefix("-I"))
             .map(std::path::PathBuf::from)
@@ -414,25 +416,52 @@ mod lmdb {
     }
 
     pub fn build() {
-        // Same three pkg-config selectors the other C backends track:
-        // PKG_CONFIG_LIBDIR replaces the search-directory list outright
-        // and PKG_CONFIG_SYSROOT_DIR rewrites every discovered path, so
-        // either one alone can select a different LMDB.
+        println!("cargo:rerun-if-changed=src/lmdb/wrapper.h");
+        // Every input that can change the generated declarations or the
+        // library they are generated against, so a change reruns this
+        // script instead of leaving `lmdb_bindings.rs` stale. The same
+        // set the Kyoto Cabinet module tracks.
+        println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
+        println!("cargo:rerun-if-env-changed=OXPINYIN_LMDB_INCLUDE_DIR");
+        println!("cargo:rerun-if-env-changed=OXPINYIN_LMDB_LIB_DIR");
+        // All three pkg-config selectors: PKG_CONFIG_LIBDIR replaces the
+        // search-directory list outright and PKG_CONFIG_SYSROOT_DIR
+        // rewrites every discovered path, so either one alone can select
+        // a different LMDB.
         println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
         println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
         println!("cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR");
 
-        println!("cargo:rerun-if-changed=src/lmdb/wrapper.h");
-        let cflags = super::pkg_config("--cflags", "lmdb").unwrap_or_default();
-        let Some(header) = header(&cflags) else {
+        // pkg-config first, then the explicit override ahead of it: an
+        // installation outside the default prefix that ships no `.pc`
+        // file is otherwise unreachable, which is why the Kyoto Cabinet
+        // module carries the same pair.
+        let mut clang_args: Vec<String> = super::pkg_config("--cflags", "lmdb").unwrap_or_default();
+        if let Ok(dir) = std::env::var("OXPINYIN_LMDB_INCLUDE_DIR") {
+            clang_args.insert(0, format!("-I{dir}"));
+        }
+        if let Ok(dir) = std::env::var("OXPINYIN_LMDB_LIB_DIR") {
+            println!("cargo:rustc-link-search=native={dir}");
+            // Package-scoped, like every build-script `rustc-link-arg`
+            // (see the Kyoto Cabinet module): this rpath reaches this
+            // package's own lib, test and bench artifacts and nothing
+            // else. Any other artifact must find the library through
+            // LD_LIBRARY_PATH or its own rpath.
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
+        }
+        let Some(header) = header(&clang_args) else {
             panic!(
                 "liblmdb required: the `lmdb` feature links the SYSTEM LMDB and needs its \
-                 header lmdb.h, which was not found under `pkg-config --cflags lmdb` nor in \
-                 /usr/include. Install the distribution's development package \
-                 (Debian/Ubuntu: liblmdb-dev; Fedora: lmdb-devel; Arch: lmdb; macOS \
-                 Homebrew: lmdb), or build a different backend. oxpinyin deliberately does \
-                 NOT vendor or compile its own copy of LMDB, so there is no fallback to \
-                 download or build one -- see docs/runbooks/backends.md."
+                 header lmdb.h, which was found neither under `pkg-config --cflags lmdb` \
+                 nor in the default include directory. Install the platform's development \
+                 package (Debian/Ubuntu: liblmdb-dev; Fedora: lmdb-devel; Arch: lmdb; \
+                 macOS Homebrew: lmdb, whose lmdb.pc needs \
+                 PKG_CONFIG_PATH=\"$(brew --prefix)/lib/pkgconfig\" if pkg-config does not \
+                 already search it), or point OXPINYIN_LMDB_INCLUDE_DIR and \
+                 OXPINYIN_LMDB_LIB_DIR at an installation directly, or build a different \
+                 backend. oxpinyin deliberately does NOT vendor or compile its own copy of \
+                 LMDB, so there is no fallback to download or build one -- see \
+                 docs/runbooks/backends.md."
             );
         };
         println!("cargo:rerun-if-changed={}", header.display());
@@ -504,7 +533,7 @@ mod lmdb {
             .derive_debug(false)
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
-        for arg in cflags {
+        for arg in clang_args {
             builder = builder.clang_arg(arg);
         }
 
