@@ -57,21 +57,21 @@ pub const SENTENCE_START: Token = 1;
 
 // ── table names ───────────────────────────────────────────────────
 
-const BIGRAM: &str = "user_bigram";
-const BIGRAM_TOTAL: &str = "user_bigram_total";
-const UNIGRAM: &str = "user_unigram";
-const UNIGRAM_TOTAL: &str = "user_unigram_total";
-const PHRASE: &str = "user_phrase";
-const PHRASE_BY_TEXT: &str = "user_phrase_by_text";
-const PHRASE_BY_LIB_TEXT: &str = "user_phrase_by_lib_text";
-const PRONUNCIATION: &str = "user_pronunciation";
-const ALLOC: &str = "user_phrase_alloc";
+pub(crate) const BIGRAM: &str = "user_bigram";
+pub(crate) const BIGRAM_TOTAL: &str = "user_bigram_total";
+pub(crate) const UNIGRAM: &str = "user_unigram";
+pub(crate) const UNIGRAM_TOTAL: &str = "user_unigram_total";
+pub(crate) const PHRASE: &str = "user_phrase";
+pub(crate) const PHRASE_BY_TEXT: &str = "user_phrase_by_text";
+pub(crate) const PHRASE_BY_LIB_TEXT: &str = "user_phrase_by_lib_text";
+pub(crate) const PRONUNCIATION: &str = "user_pronunciation";
+pub(crate) const ALLOC: &str = "user_phrase_alloc";
 
 /// Sole key in the `user_unigram_total` table.
-const UNIGRAM_TOTAL_KEY: u8 = 0;
+pub(crate) const UNIGRAM_TOTAL_KEY: u8 = 0;
 
 /// Sole key in the `user_phrase_alloc` table.
-const ALLOC_CURSOR: u8 = 0;
+pub(crate) const ALLOC_CURSOR: u8 = 0;
 
 /// Which seed rule an update applies.
 #[derive(Clone, Copy)]
@@ -98,6 +98,9 @@ pub enum UserStoreError {
     InvalidPhrase,
     /// No remaining token in the [`crate::USER_DICTIONARY`] 24-bit id space.
     TokenSpaceExhausted,
+    /// The libpinyin user-dir persistence failed (I/O, container, or a
+    /// byte stream that does not parse).
+    Persistence(String),
 }
 
 impl fmt::Display for UserStoreError {
@@ -113,6 +116,9 @@ impl fmt::Display for UserStoreError {
             Self::TokenSpaceExhausted => {
                 write!(f, "USER_DICTIONARY token space exhausted")
             }
+            Self::Persistence(message) => {
+                write!(f, "libpinyin user-dir persistence: {message}")
+            }
         }
     }
 }
@@ -122,9 +128,11 @@ impl std::error::Error for UserStoreError {
         match self {
             Self::Io(e) => Some(e),
             Self::Store(e) => Some(e),
-            Self::Decode | Self::AlreadyOpen | Self::InvalidPhrase | Self::TokenSpaceExhausted => {
-                None
-            }
+            Self::Decode
+            | Self::AlreadyOpen
+            | Self::InvalidPhrase
+            | Self::TokenSpaceExhausted
+            | Self::Persistence(_) => None,
         }
     }
 }
@@ -171,7 +179,7 @@ fn txn_get_u64(txn: &dyn WriteTxn, table: &str, key: &[u8]) -> Result<Option<u64
     )
 }
 
-fn txn_get_u64_or(
+pub(crate) fn txn_get_u64_or(
     txn: &dyn WriteTxn,
     table: &str,
     key: &[u8],
@@ -355,6 +363,21 @@ pub struct GenericUserStore<S: WriteStore> {
 /// `--no-default-features --features {redb|lmdb|tkrzw}`.
 pub type UserStore = GenericUserStore<DefaultStore>;
 
+impl<S: WriteStore> GenericUserStore<S> {
+    /// Crate-visible handle assembly for the libpinyin constructor
+    /// ([`crate::store_libpinyin`]), which owns a scratch lease.
+    pub(crate) fn from_parts(
+        inner: Arc<StoreInner<S>>,
+        lease: Option<Arc<StandaloneLease>>,
+    ) -> Self {
+        Self {
+            inner,
+            _standalone_lease: lease,
+            _lease: RegistryLease,
+        }
+    }
+}
+
 impl<S: WriteStore> Clone for GenericUserStore<S> {
     fn clone(&self) -> Self {
         Self {
@@ -375,7 +398,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// Locks the shared store handle, recovering from a poisoned lock
     /// (constitution §4: nothing here panics, so a poisoned mutex must not
     /// brick the store either).
-    fn database(&self) -> MutexGuard<'_, S> {
+    pub(crate) fn database(&self) -> MutexGuard<'_, S> {
         self.inner
             .db
             .lock()
@@ -480,6 +503,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             write_generation: AtomicU64::new(0),
             phrase_generation: AtomicU64::new(0),
             has_user_data: AtomicBool::new(has_user_data),
+            libpinyin: None,
+            scratch_lease: None,
         }))
     }
 
@@ -1091,6 +1116,23 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn save(&mut self) -> Result<bool, UserStoreError> {
         if !self.is_modified() {
             return Ok(false);
+        }
+        // The libpinyin branch: export the session values and write the
+        // pin's whole file set (`.tmp` + rename). The scratch compaction
+        // below still runs — it keeps the session store tidy — but the
+        // durable write is the file set, not the scratch.
+        if let Some(target) = self.inner.libpinyin.clone() {
+            // Arc clone: the originals hold every system item (~138k
+            // ChunkItems) and a dirty save must not copy them — both
+            // halves take the Arc by reference.
+            let state = crate::store_libpinyin::export_state(self, &target.originals)?;
+            crate::persistence::save(
+                &target.dir,
+                &state,
+                &target.originals,
+                &target.versions,
+                target.open_counter,
+            )?;
         }
         // Dropping the cache is no longer forced by the backend — no read
         // view outlives a call, so nothing pins pages against compaction —

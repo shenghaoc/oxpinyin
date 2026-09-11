@@ -37,6 +37,7 @@ mod model;
 pub mod persistence;
 mod registry;
 mod store;
+pub(crate) mod store_libpinyin;
 
 pub use lookup::UserLookup;
 pub use oxpinyin_data::user_files::SystemVersions;
