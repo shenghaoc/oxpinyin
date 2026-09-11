@@ -47,12 +47,20 @@ Feature `diagnostic_403` is off by default (see
 
 **Two caveats to read the numbers with:**
 
-1. The diagnostic widens up to `graph.consumed()` without consulting
-   `phrase_prefix_exists` (no DBM is loaded). Real widening
-   short-circuits earlier when the prefix probe returns false, so
-   ABSOLUTE window and path counts are lower bounds on the RSS report's
-   figures. The ratio `probes_per_window` and the unique/repeat histogram
-   are the load-bearing quantities.
+1. The diagnostic is a **matrix-only enumeration** — it builds a graph
+   and a scan matrix per keystroke, walks every end position in
+   `1..=graph.consumed()`, and counts paths and post-`expand_keys`
+   probes without any DBM. Real widening from
+   [`collect_window_scan`](../../crates/oxpinyin-engine/src/session/lookup.rs) breaks early
+   on `!continued` (matrix column empty, no overhang, no prefix probe
+   hit), which cuts iterations off; real widening also keeps going while
+   `phrase_prefix_exists` is true, which walks past matrix-column
+   emptiness the diagnostic cannot re-enter. **These are two different
+   aggregates and are not directly comparable at the ABSOLUTE level.**
+   What is comparable is the ratio `probes_per_window` (the diagnostic
+   sees ~3.97; the RSS callgrind saw ~4.11) and the mechanism the
+   `expand_keys` inflation names. The 581-vs-1,038 gap is left
+   unexplained here and does not carry any conclusion.
 2. Sequence keys are `(text, tone)`; parity has `USE_TONE` off, so tone
    is always 0 and the key reduces to the syllable text. This is the
    same shape `ChewingTable::search`'s incomplete-index consumes.
@@ -70,10 +78,11 @@ Feature `diagnostic_403` is off by default (see
 | unique / probes | 0.726 | — |
 | matrix entries (sum over all cycles) | 245 | — |
 
-Absolute totals here are about half the RSS numbers because unbounded
-widening is not the real widening (see caveat 1); the **9.0× jump from
-matrix paths (256) to probes (2,308)** is the effect of `expand_keys`
-alone.
+Absolute totals differ from the RSS numbers because the two harnesses
+measure different aggregates (see caveat 1). The load-bearing comparison
+is `probes_per_window` — 3.97 here against RSS's 4.11 — and the
+**9.0× jump from matrix paths (256) to probes (2,308)** for this
+harness alone, which isolates the effect of `expand_keys`.
 
 **Probe histogram — the memoization question the RSS report calls out:**
 
@@ -85,23 +94,27 @@ Unique-to-total probe ratio is 0.726: **72.6 % of probes hit a syllable-key sequ
 
 ## Ruled out
 
-- **Extra keys in the scan matrix.** The measurement dumps
-  `matrix_entries_total = 245` over 123 keystroke cycles; that is
-  ~2 entries per prefix graph on average, of the same order upstream's
-  `fill_matrix` + `resplit_step` + `inner_split_step` would produce.
-  `keep_first_in_column(false)` at `crates/oxpinyin-engine/src/session/mod.rs:574` dedupes
-  post-`divided_additions`; the matrix column contents are not the
-  amplifier.
-- **Extra windows.** The diagnostic's 581 windows for unbounded widening
-  is *below* RSS's 1,038 real windows, so widening breadth is not the
-  amplifier either. (See caveat 1 for the discrepancy direction — real
-  widening probes more than unbounded widening walks, because the real
-  walk continues into paths whose complete extensions the diagnostic
-  cannot see without the DBM.)
+- **Extra keys in the scan matrix.** From source:
+  [`build_scan_matrix`](../../crates/oxpinyin-engine/src/session/mod.rs) applies the
+  same tables upstream applies (RESPLIT, DIVIDED, fuzzy) plus a
+  key-only dedupe at `crates/oxpinyin-engine/src/session/mod.rs:574` that
+  upstream does not; every path that produces oxpinyin's matrix entries
+  produces at most upstream's. The measurement dumps
+  `matrix_entries_total = 245` over 123 keystroke cycles — ~2 entries
+  per prefix graph — consistent with that source read. Matrix column
+  contents are not the amplifier.
 - **Tone / fuzzy matrix materialisation** — the leading hypothesis in
   the issue text. Parity has `USE_TONE` off and fuzzy off (`docs/findings/option-bits.md` §"Bit values" and `crates/oxpinyin-engine/src/session/mod.rs:572-574`),
   so `fuzzy_additions` and `keep_first_in_column(true)` are no-ops for
-  this workload. The measured `matrix_entries_total` confirms.
+  this workload. The measured `matrix_entries_total` confirms — nothing
+  here for fuzzy to materialise.
+
+**Note on windows.** The 581-vs-1,038 gap between this diagnostic and
+the RSS callgrind is left unexplained; see caveat 1. It does not carry
+any ruling one way or the other on window breadth. The mechanism call
+rests on the source symmetry above and the 9.0× matrix-to-probe
+inflation the same harness measures internally, both of which are
+independent of the window-count discrepancy.
 
 ## Left open — pin-side unique-key measurement
 
