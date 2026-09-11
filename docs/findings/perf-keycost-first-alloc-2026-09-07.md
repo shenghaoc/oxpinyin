@@ -16,14 +16,16 @@ performance investigation starts from `6886dc1f` and the residual
 > **That is not the shipping artifact**, which is `cargo cinstall`'s
 > `libpinyin.so.15.0.0`; the cargo-build fixture is the slower of the two, so
 > the cross-implementation figures here **overstate the shipping product's
-> cost**. On arm64 the measured recipe effect on the steady-cycle ratio is
-> −0.032 to −0.038 ratio units
-> ([perf-cycle-ir-differential-2026-09-08.md](perf-cycle-ir-differential-2026-09-08.md)),
-> so the "~1.16× steady" headline reads high; no magnitude is established for
-> the init, first-alloc, cold-cycle, ttf or RSS axes, on which the effect has
-> never been measured. The "Stripped `.so` size: 1,576,960 bytes" line describes
-> the fixture, not the shipped library (1,816,024 B on this architecture) — a
-> different object, not a biased number.
+> cost**. On arm64 the shipping artifact measures **0.032 to 0.038 ratio units
+> lower**
+> ([perf-cycle-ir-differential-2026-09-08.md](perf-cycle-ir-differential-2026-09-08.md)
+> publishes this signed, as `Z÷L − Y÷L` with `Z` the cinstall cell and `Y` the
+> cargo-build one, hence −0.032…−0.038 in its tables), so the "~1.16× steady"
+> headline reads high; no magnitude is established for the init, first-alloc,
+> cold-cycle, ttf or RSS axes, on which the effect has never been measured.
+> The "Stripped `.so` size: 1,576,960 bytes" line describes the fixture, not
+> the shipped library (1,816,024 B on this architecture) — a different object,
+> not a biased number.
 >
 > **The result this record exists for is unaffected.** First allocation
 > ~17 ms → ~1 µs, the cold-cycle deltas, the closure check and the RSS delta are

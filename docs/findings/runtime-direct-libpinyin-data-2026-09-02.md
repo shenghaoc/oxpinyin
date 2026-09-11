@@ -105,11 +105,14 @@ punctuation, the addon facade, and a decode — all through the public API.
 > "~1.5×" steady-state ratio, the cold-cycle and init ratios, and the oxpinyin
 > absolutes. The direction is certain; no corrected number is given, because
 > this record does not state its architecture and the effect differs by 2×
-> between the two measured (amd64 −0.064…−0.087 ratio units, arm64
-> −0.032…−0.038, steady-cycle wall clock only).
+> between the two measured: the shipping artifact runs **0.064–0.087 ratio
+> units lower on amd64 and 0.032–0.038 lower on arm64**, steady-cycle wall
+> clock only. (The control publishes these signed, as `Z÷L − Y÷L` with `Z` the
+> cinstall cell and `Y` the cargo-build one, hence the negatives in its tables.)
 >
-> Unaffected within §4: the four pin cells, the within-oxpinyin cross-backend
-> quotients, and the "Memory" paragraph, whose figures come from the
+> Unaffected within §4: the two pin cells (libpinyin + Tkrzw, libpinyin + KC),
+> the within-oxpinyin cross-backend quotients, and the "Memory" paragraph,
+> whose figures come from the
 > `open_profile` example and involve no shared object. One figure is worse than
 > affected — "~90–106× faster than before" divides a **cinstall** numerator
 > (`perf-backend-matrix-2026-08-31.md`) by this record's **cargo-build**
