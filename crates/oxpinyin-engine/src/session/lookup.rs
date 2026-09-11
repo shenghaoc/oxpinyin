@@ -882,9 +882,10 @@ where
     /// reaches. At each `[start, end)` window every key-path through the scan
     /// matrix — the selected parse plus the resplit/divided additions,
     /// `docs/findings/matrix-split-tables.md` — is enumerated and the phrase
-    /// table is searched on the accumulated sequence; initial-only keys expand
-    /// through [`expand_keys`]. Every phrase found is appended with its
-    /// `[start, end)` span.
+    /// table is searched on the accumulated sequence; a key path with any
+    /// initial-only key is looked up once through the DBM's
+    /// incomplete-projected index (see [`Self::search_scan_path`]). Every
+    /// phrase found is appended with its `[start, end)` span.
     ///
     /// Widening is prefix-driven: a window whose sequences cannot extend to
     /// any stored phrase stops the scan (the pin's continued-search probe,
@@ -982,6 +983,24 @@ where
 
     /// The table search on one complete key-path, and the prefix probe that
     /// decides whether the window keeps widening.
+    ///
+    /// A path with any incomplete syllable is looked up once, unexpanded:
+    /// [`Dictionary::lookup_into`] routes the query through its
+    /// incomplete-projected index — `ChewingTable::search` at
+    /// `crates/oxpinyin-data/src/chewing_table.rs:342-356` for the system
+    /// path, `UserLookup::lookup` for the user overlay — mirroring
+    /// upstream's `ChewingLargeTable2::search`
+    /// (`chewing_large_table2.cpp:161-172` at pin `074a2219`), which
+    /// selects the incomplete or complete index by
+    /// `contains_incomplete_pinyin` and issues one `search_internal`
+    /// either way. Previously this site enumerated completions via
+    /// `expand_keys` first, driving the fan-out
+    /// [`docs/findings/scan-matrix-fanout-2026-09-10.md`](../../docs/findings/scan-matrix-fanout-2026-09-10.md)
+    /// measured (~9× amplification from matrix path to probe); the
+    /// datagen side already writes both keyspaces at
+    /// `crates/oxpinyin-datagen/src/libpinyin.rs:142`, and the user store
+    /// now mirrors that with its `by_initial` index, so the expansion is
+    /// redundant.
     pub(super) fn search_scan_path(
         &self,
         buf: &mut ScanBuf<'_>,
@@ -994,24 +1013,7 @@ where
             continued,
             entries,
         } = buf;
-        let has_incomplete = path
-            .iter()
-            .any(|key| key.completeness() == Completeness::Partial);
-
-        if has_incomplete {
-            for sequence in expand_keys(path, SCAN_EXPANSION_LIMIT) {
-                self.lookup_and_append(
-                    sequence.as_slice(),
-                    path.len(),
-                    end,
-                    system,
-                    addon,
-                    entries,
-                )?;
-            }
-        } else {
-            self.lookup_and_append(path, path.len(), end, system, addon, entries)?;
-        }
+        self.lookup_and_append(path, path.len(), end, system, addon, entries)?;
 
         let can_extend = self
             .dictionary
