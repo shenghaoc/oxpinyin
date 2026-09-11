@@ -621,15 +621,32 @@ fn scan(
         return Err(status_error());
     };
     let iter = Iter(iter);
-    // SAFETY: `start` outlives the call with a true length, and the
-    // iterator belongs to the open database above.
-    check(unsafe {
-        ffi::tkrzw_dbm_iter_jump(
-            iter.0.as_ptr(),
-            start.as_ptr().cast::<c_char>(),
-            c_len(&start)?,
-        )
-    })?;
+    // An empty start is the unbounded walk's first record: the no-key
+    // iter-first form. A key jump with the empty string is not
+    // equivalent on the hash containers — tkrzw's HashDBM answers
+    // NOT_FOUND for `Jump("")` on a file that has records — and a
+    // *bounded* jump answers NOT_FOUND for a non-empty start when no
+    // record meets the lower bound (an empty database, or one whose keys
+    // all fall before it), which is an empty scan, not an error.
+    // SAFETY: the iterator belongs to the open database above, and
+    // `start` outlives the call with a true length.
+    let positioned = unsafe {
+        if start.is_empty() {
+            ffi::tkrzw_dbm_iter_first(iter.0.as_ptr())
+        } else {
+            ffi::tkrzw_dbm_iter_jump(
+                iter.0.as_ptr(),
+                start.as_ptr().cast::<c_char>(),
+                c_len(&start)?,
+            )
+        }
+    };
+    if !positioned {
+        if last_status().0 == STATUS_NOT_FOUND_ERROR {
+            return Ok(());
+        }
+        return Err(status_error());
+    }
     loop {
         // SAFETY: the iterator is positioned and open; the callback
         // argument is `&mut ctx`, which outlives this call, and the

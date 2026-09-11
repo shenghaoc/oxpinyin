@@ -133,6 +133,10 @@ pub(crate) enum DbType {
     Tree,
     /// `HashDB`, unordered — used by `bigram.db`.
     Hash,
+    /// `StashDB`, in-memory — the container libpinyin's Kyoto Cabinet
+    /// *user* bigram lives in between snapshot load and dump
+    /// (`ngram_kyotodb.cpp:54-108`).
+    Stash,
 }
 
 impl DbType {
@@ -141,8 +145,19 @@ impl DbType {
         match self {
             Self::Tree => "kct",
             Self::Hash => "kch",
+            Self::Stash => "kcs",
         }
     }
+}
+
+/// A path as a NUL-terminated C string. Unlike [`Db::open`]'s spec this
+/// is the bare path — the snapshot calls take a literal filename, not a
+/// PolyDB open spec, so `#` needs no rejection here (it would only be
+/// tuning-parameter syntax where a spec is parsed). Interior NUL bytes
+/// remain the one thing a C filename cannot carry.
+fn cstring_path(path: &Path) -> Result<CString, StoreError> {
+    let bytes = path.as_os_str().as_bytes();
+    CString::new(bytes).map_err(|_| StoreError::InvalidInput("store path contains NUL"))
 }
 
 /// The pointer Kyoto Cabinet may read `bytes.len()` bytes through.
@@ -442,6 +457,62 @@ impl Db {
         Ok(())
     }
 
+    /// Reads a snapshot stream (`KCSS`) into this database —
+    /// `kcdbloadsnap`.
+    ///
+    /// libpinyin's Kyoto Cabinet *user* bigram is this and nothing else:
+    /// `Bigram::load_db` opens an in-memory `StashDB` and calls
+    /// `load_snapshot(dbfile)` on it (`ngram_kyotodb.cpp:54-64`), so the
+    /// file on disk is a snapshot of records, not a `HashDB` — its magic
+    /// is `KCSS`, and opening it as a hash database fails with "missing
+    /// magic data of the file". The *system* bigram is a genuine `HashDB`
+    /// file (`attach`, `ngram_kyotodb.cpp:110-119`); the two are different
+    /// containers and must not share one open path.
+    pub(crate) fn load_snapshot(&self, path: &Path) -> Result<(), StoreError> {
+        let spec = cstring_path(path)?;
+        // SAFETY: the handle is live and `spec` outlives the call.
+        if unsafe { sys::kcdbloadsnap(self.handle, spec.as_ptr()) } == 0 {
+            return Err(self.error("kcdbloadsnap"));
+        }
+        Ok(())
+    }
+
+    /// Writes this database's records out as a snapshot stream (`KCSS`) —
+    /// `kcdbdumpsnap`, the inverse of [`Self::load_snapshot`] and the
+    /// format `Bigram::save_db` leaves behind
+    /// (`ngram_kyotodb.cpp:82-101`: `unlink` then `dump_snapshot`).
+    pub(crate) fn dump_snapshot(&self, path: &Path) -> Result<(), StoreError> {
+        let spec = cstring_path(path)?;
+        // SAFETY: the handle is live and `spec` outlives the call.
+        if unsafe { sys::kcdbdumpsnap(self.handle, spec.as_ptr()) } == 0 {
+            return Err(self.error("kcdbdumpsnap"));
+        }
+        Ok(())
+    }
+
+    /// Marks this handle read-only, in place, after a load-time fill.
+    ///
+    /// The user-bigram open loads a snapshot into a writable in-memory
+    /// stash (the stash class opens writer, and `load_snapshot` needs
+    /// that); the seam itself is read-only, so the fill ends by sealing
+    /// the handle — a later `write` on it answers [`StoreError::ReadOnly`]
+    /// instead of mutating memory that nothing would ever dump.
+    pub(crate) fn into_read_only(mut self) -> Self {
+        // Mutate in place and return `self`: constructing a new `Db` from
+        // `self.handle` would drop the original at the end of the call,
+        // and `Db`'s `Drop` closes and deletes the handle — leaving the
+        // returned value pointing at freed memory.
+        self.read_only = true;
+        self
+    }
+
+    /// An in-memory `StashDB` — Kyoto Cabinet's `"-"` path with the stash
+    /// class forced, the container libpinyin's KC user bigram lives in
+    /// between its snapshot load and dump.
+    pub(crate) fn open_stash() -> Result<Self, StoreError> {
+        Self::open(Path::new("-"), DbType::Stash, false, true)
+    }
+
     /// The number of records — `kcdbcount`.
     ///
     /// A negative return (the header's `int64_t` failure value under some
@@ -554,6 +625,21 @@ impl Cursor<'_> {
             return Ok(true);
         }
         self.positioning_outcome("kccurjumpkey")
+    }
+
+    /// Positions at the first record — `kccurjump`, the no-key form.
+    ///
+    /// A key jump with the empty string is **not** equivalent on the hash
+    /// containers: KC's `kccurjumpkey("")` answers "no record" on a
+    /// HashDB that has records, so an unbounded raw walk must take this
+    /// form. `Ok(false)` when the database is empty.
+    pub(crate) fn jump_first(&mut self) -> Result<bool, StoreError> {
+        // SAFETY: the cursor handle is live.
+        let ok = unsafe { sys::kccurjump(self.handle) };
+        if ok != 0 {
+            return Ok(true);
+        }
+        self.positioning_outcome("kccurjump")
     }
 
     /// A positioning call (`kccurjump` / `kccurjumpkey`) returned false:

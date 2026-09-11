@@ -164,26 +164,33 @@ impl crate::RawReadStore for KcStore {
         hi: Bound<&[u8]>,
         visit: &mut Visitor<'_>,
     ) -> Result<(), crate::StoreError> {
-        // One cursor, positioned once and advanced by the step of
-        // `cursor.next()`, exactly as `walk` does for framed tables —
-        // here over the file's bare keyspace.
-        let start = match lo {
-            Bound::Unbounded | Bound::Included(&[]) | Bound::Excluded(&[]) => Vec::new(),
-            Bound::Included(key) | Bound::Excluded(key) => key.to_vec(),
-        };
+        // The contract is ascending key order, but a cursor over the
+        // unordered containers (HashDB, and the StashDB the user bigram
+        // loads into) walks in bucket order — jump positions at a hash
+        // slot, not at the first key at or above a lower bound. Collect
+        // every row, sort by key, and apply the bounds here: the only
+        // walk that is correct on all three container classes. TreeDB
+        // rows arrive sorted, so the sort is a no-op re-sort there.
         let mut cursor = self.db.cursor()?;
-        if !cursor.jump_to(&start)? {
+        if !cursor.jump_first()? {
             return Ok(());
         }
+        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         while let Some(record) = cursor.next()? {
-            let key = record.key();
-            if matches!(lo, Bound::Excluded(bound) if key == bound) {
+            rows.push((record.key().to_vec(), record.value().to_vec()));
+        }
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        for (key, value) in rows {
+            if matches!(lo, Bound::Excluded(bound) if key == *bound) {
                 continue;
             }
-            if !in_bounds(key, Bound::Unbounded, hi) {
+            if matches!(lo, Bound::Included(bound) if key[..] < *bound) {
+                continue;
+            }
+            if !in_bounds(&key, Bound::Unbounded, hi) {
                 return Ok(());
             }
-            visit(key, record.value())?;
+            visit(&key, &value)?;
         }
         Ok(())
     }
@@ -199,6 +206,22 @@ impl crate::RawReadStore for KcStore {
             db: Db::open(path, DbType::Hash, true, false)?,
         })
     }
+
+    fn open_user_bigram(path: &Path) -> Result<Self, crate::StoreError> {
+        // Kyoto Cabinet's user bigram is a snapshot stream, not a hash
+        // file (`ngram_kyotodb.cpp:54-64`): open an in-memory stash and
+        // load the snapshot into it. The system bigram stays a HashDB file
+        // through `open_hash_read_only` above — the two are different
+        // containers and must not share one open.
+        let db = Db::open_stash()?;
+        db.load_snapshot(path)?;
+        // The seam is read-only even though the stash class opens
+        // writer: seal it so a stray `write` cannot mutate memory that
+        // no dump would ever persist.
+        Ok(Self {
+            db: db.into_read_only(),
+        })
+    }
 }
 
 impl WriteStore for KcStore {
@@ -212,6 +235,23 @@ impl WriteStore for KcStore {
         Ok(Self {
             db: Db::open(path, DbType::Hash, false, true)?,
         })
+    }
+
+    fn write_user_bigram(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError> {
+        // The inverse of `open_user_bigram`, mirroring the pin's
+        // `Bigram::save_db` (`ngram_kyotodb.cpp:82-101`) — unlink then
+        // dump — with the unlink deferred into an atomic rename: the
+        // snapshot is dumped to a sibling temporary first, so a failure
+        // anywhere before the rename leaves the previous profile intact
+        // instead of destroyed.
+        let tmp = crate::sibling_temp(path);
+        let db = Db::open_stash()?;
+        for (key, value) in rows {
+            db.set(key, value)?;
+        }
+        db.dump_snapshot(&tmp)?;
+        std::fs::rename(&tmp, path).map_err(StoreError::Io)?;
+        Ok(())
     }
 
     fn write<R>(

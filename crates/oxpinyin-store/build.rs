@@ -193,6 +193,11 @@ mod kyotocabinet {
             .allowlist_function("kcdbset")
             .allowlist_function("kcdbremove")
             .allowlist_function("kcdbsync")
+            // libpinyin's Kyoto Cabinet *user* bigram is an in-memory
+            // StashDB persisted as a snapshot stream, not a HashDB file
+            // (ngram_kyotodb.cpp:54-108); these two are that format.
+            .allowlist_function("kcdbloadsnap")
+            .allowlist_function("kcdbdumpsnap")
             .allowlist_function("kcdbcount")
             .allowlist_function("kcdbcursor")
             .allowlist_function("kcdbbegintran")
