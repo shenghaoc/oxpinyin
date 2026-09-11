@@ -325,10 +325,12 @@ impl Db {
     ///
     /// This is the entry point the `bench-internal` feature exposes; the
     /// tuning knob it opens up is what shenghaoc/oxpinyin#402's time-side
-    /// measurement bench uses. Nothing in the shipping path calls this
-    /// with a non-empty `extra_tuning` — the mandatory `#type=` alone is
-    /// what libpinyin's C++ construction produces, and the two match by
-    /// design (see the module docstring).
+    /// measurement bench uses to characterise the cost of a Kyoto Cabinet
+    /// default for an upstream report. Nothing in the shipping path calls
+    /// this with a non-empty `extra_tuning` — the mandatory `#type=`
+    /// alone is what libpinyin's C++ construction produces, and matching
+    /// upstream on external-library handling is the standing policy
+    /// (see the module docstring).
     pub(crate) fn open_with_tuning(
         path: &Path,
         db_type: DbType,

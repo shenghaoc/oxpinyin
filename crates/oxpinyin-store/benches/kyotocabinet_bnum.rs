@@ -10,11 +10,19 @@
 //! system tables the engine holds open.
 //!
 //! What the issue leaves unmeasured is the time side. Fewer buckets means
-//! longer hash chains inside each `LinkedHashMap` slot, so lookup cost rises
-//! from a page-cache hit. `AGENTS.md`'s complexity rule — a change may
-//! worsen time or space but not both — requires the time cost to exist as a
-//! measured number before any decision to lower `#bnum` in the shipping
-//! open path could be argued for. This bench is the time-side measurement.
+//! longer hash chains inside each `LinkedHashMap` slot, so lookup cost may
+//! rise from a page-cache hit. This bench is that time-side measurement.
+//!
+//! # Not a local-change proposal
+//!
+//! oxpinyin passes the same KC open parameters libpinyin does (no
+//! `#bnum=`, `#msiz=`, `#pccap=` etc.), and that alignment is the
+//! standing policy — external-library handling matches upstream. Tuning
+//! `#bnum` locally would be a case-3 configuration divergence outside
+//! `docs/findings/compatibility-policy.md`'s three exception classes and
+//! is not on the table for this repo's shipping open path. The audience
+//! for this bench's numbers is an upstream report — Kyoto Cabinet, or
+//! libpinyin itself, which carries the same untuned default.
 //!
 //! # Design
 //!
@@ -56,11 +64,16 @@
 //! `KcStore` are visible. The data dimension the bench measures is
 //! selected by an environment variable:
 //!
+//! Meaningful numbers need a Kyoto Cabinet-format libpinyin `data/`
+//! directory containing all five system TreeDBs at production scale
+//! (~10^4–10^5 records each). Fedora arm64's `libpinyin-data` is the
+//! only shipping distro that packages it in KC format today — Debian
+//! testing packages the same version against tkrzw — and lands the data
+//! at `/usr/lib64/libpinyin/data`. The checked-in `fixtures/w3/kct/` has
+//! ~10^2 records per TreeDB and is a harness smoke test only.
+//!
 //! ```sh
-//! # Against an installed libpinyin data directory (the input a #bnum
-//! # decision must actually come from — the checked-in w3 fixture has
-//! # far too few records per TreeDB to exercise `#bnum`):
-//! OXPINYIN_BNUM_DATA_DIR=/usr/lib/libpinyin/data \
+//! OXPINYIN_BNUM_DATA_DIR=/usr/lib64/libpinyin/data \
 //!     cargo bench \
 //!         --no-default-features --features kyotocabinet,bench-internal \
 //!         --bench kyotocabinet_bnum
@@ -75,9 +88,10 @@
 //!
 //! Linux-only in practice: the resident-heap column reads
 //! `/proc/self/status` VmHWM after opening all five system TreeDBs at each
-//! candidate `#bnum`, so on non-Linux hosts that column reports
-//! `unavailable` — the timing side still runs, but the space/time trade
-//! this bench exists to quantify needs both columns.
+//! candidate `#bnum` in a fresh child process, so on non-Linux hosts that
+//! column reports `unavailable`. The timing column still runs; the
+//! header arithmetic is authoritative on the space side either way, so
+//! the missing resident column doesn't gate the measurement.
 //!
 //! No capture is committed. The commands above are what regenerate every
 //! figure this bench produces.
