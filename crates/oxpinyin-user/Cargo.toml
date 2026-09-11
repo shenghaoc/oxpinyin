@@ -12,18 +12,23 @@ workspace = true
 
 [dependencies]
 oxpinyin-core = { workspace = true }
+# The user store persists in libpinyin's own file shapes; the codecs
+# (chunk builder, tree record builders, SingleGram, the logger and
+# user.conf codecs) live in oxpinyin-data beside their readers.
+oxpinyin-data = { workspace = true }
 # The workspace table carries default-features = false for this edge; the
 # [features] block below forwards the backend selection.
 oxpinyin-store = { workspace = true }
 
 [features]
-# Backend selection, forwarded to oxpinyin-store (one backend per binary;
-# see the store's [features] for the model and precedence).
+# Backend selection, forwarded to oxpinyin-data and oxpinyin-store (one
+# backend per binary; see the store's [features] for the model and
+# precedence).
 default = ["tkrzw"]
-kyotocabinet = ["oxpinyin-store/kyotocabinet"]
-lmdb = ["oxpinyin-store/lmdb"]
-tkrzw = ["oxpinyin-store/tkrzw"]
-redb = ["oxpinyin-store/redb"]
+kyotocabinet = ["oxpinyin-data/kyotocabinet", "oxpinyin-store/kyotocabinet"]
+lmdb = ["oxpinyin-data/lmdb", "oxpinyin-store/lmdb"]
+tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-store/tkrzw"]
+redb = ["oxpinyin-data/redb", "oxpinyin-store/redb"]
 
 [dev-dependencies]
 # Store micro-benches (benches/); workspace lock pins 0.8.

@@ -767,6 +767,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "oxpinyin-core",
+ "oxpinyin-data",
  "oxpinyin-store",
  "proptest",
  "redb",
