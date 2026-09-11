@@ -5,6 +5,22 @@ lists editing CI policy as a hard forbid without an ask, and every item
 under "What needs a human decision" below is such an ask. Written at
 `a118485b`.
 
+Reviewed on the build-recipe axis by
+[`../findings/perf-build-recipe-audit-2026-09-10.md`](../findings/perf-build-recipe-audit-2026-09-10.md),
+which found the design sound (all four gates are self-ratchets, so the recipe
+cancels) and the G3 argument short one term. That term is now in G3, and the
+per-artifact recipe block that audit's convention asks for is in the baseline
+schema.
+
+**Provenance of the figures quoted here.** Two of the absolutes used as
+illustration — the amd64 bimodal medians in "The constraint that shapes
+everything", and G4's RSS bands — come from
+`../findings/perf-steady-cycle-cross-host-2026-09-07.md`, whose oxpinyin arm
+was built by `cargo build` rather than the shipping `cargo cinstall`. Both are
+used only to characterise **runner noise**, and every conclusion drawn from
+them rests on within-pass quotients where the recipe cancels. No threshold in
+this document is derived from a cross-recipe comparison.
+
 ## The gap this fills
 
 Constitution §2 (install-size budget) and the Stage 2 targets — smaller
@@ -180,12 +196,38 @@ the shipped artifact to export **zero** `oxpinyin_alloc_*` symbols, so an
 artifact carrying both would fail the lane it belongs to.
 
 This is the one place the gate measures something other than the product
-artifact, and the difference is bounded: `--features shipped` compiles out
-exactly two symbols, and `oxpinyin_init_for_fixtures` is
-`crates/oxpinyin-capi/src/context.rs`'s own words "`pinyin_init` under another
-name" — a byte-identical alias calling the same `init_context`. Neither hook
-is on the steady keystroke anchor, so the G3 numbers describe the shipping
-code path.
+artifact, and the difference has **two** terms, not one.
+
+*Feature axis.* `--features shipped` compiles out exactly two symbols, and
+`oxpinyin_init_for_fixtures` is `crates/oxpinyin-capi/src/context.rs`'s own
+words "`pinyin_init` under another name" — a byte-identical alias calling the
+same `init_context`. Neither hook is on the steady keystroke anchor.
+
+*Recipe axis.* G1 and G2 build through `tools/packaging/install.sh`
+(`cargo cinstall`, the shipping path); G3 builds with `cargo build` + `strip`,
+which `docs/findings/perf-build-recipe-audit-2026-09-10.md` establishes is a
+**different artifact**, not merely a differently-named one — on the steady
+keystroke-cycle ratio the two differ by 0.064–0.087 units on amd64 and
+0.032–0.038 on arm64, with **no mechanism established**. The first version of
+this section bounded the G3 difference entirely on the feature axis and left
+this term unstated; that audit's review of this document named the omission,
+and this paragraph is the correction.
+
+*Why the conclusion survives both terms.* All four gates are **self-ratchets**
+— oxpinyin against its own baseline, the same recipe on both sides of every
+comparison — so the recipe contributes exactly zero to any gated delta. It
+would matter only if a G3 number were quoted against a figure produced by the
+other recipe, which is the cross-recipe-quotient defect class that audit
+identifies as invisible to any per-document check. Hence the rule in the
+baseline schema below: **every artifact carries its own recipe block**, so a
+future reader dividing one of these numbers by another can see whether the two
+are like-for-like without reconstructing it.
+
+That also fixes the axis on which nothing may be claimed. The recipe control
+was run on steady-cycle wall clock only; the audit's limit 1 states that for
+allocation counts, instruction counts, RSS and binary size **no magnitude may
+be stated** for the recipe effect. This proposal states none: G3's numbers are
+compared only to G3's own baseline.
 
 Gate the delta of `oxpinyin_alloc_count` and `oxpinyin_alloc_bytes` across the
 steady cycles, plus `oxpinyin_alloc_peak_live_bytes`.
@@ -346,9 +388,61 @@ happens inside CI, because none of them is valid there.
 
 ## The baseline file
 
-A committed JSON file: fingerprint block, per-metric values, the UTC capture
-timestamp (`date -u` at run time, per AGENTS.md "Dates"), and a
-`justification` field.
+A committed JSON file. The shape, because a proposal that asks for a gate
+should show the artifact the gate reads:
+
+```jsonc
+{
+  "captured_utc": "2026-09-09T16:17:11Z",   // date -u at run time, never written by hand
+  "fingerprint": {
+    "image_digest":   "sha256:dab11cdb…",
+    "apt_snapshot":   "20260831T000000Z",
+    "runner_image":   "ubuntu24/20260901.1",  // $ImageOS / $ImageVersion
+    "kernel":         "Linux 6.12.0-… x86_64", // uname -srvm
+    "rustc":          "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "glibc":          "2.42",
+    "libtkrzw":       "1.0.30",
+    "valgrind":       "3.26.0",
+    "readelf":        "GNU binutils 2.47",
+    "fixture_sha256": "…",                    // over fixtures/w3/tkt, sorted
+    "harness_commit": "a118485b…"             // of bisect.c + the lane's scripts
+  },
+  "artifacts": {
+    // benches.md, "State the build recipe, per artifact": the exact command
+    // line, sha256, NEEDED and byte size, for EVERY artifact measured.
+    "shipped_libpinyin": {
+      "recipe": "tools/packaging/install.sh libpinyin --prefix=/usr --destdir=… -- --no-default-features --features tkrzw,shipped",
+      "installed_name": "libpinyin.so.15.0.0",
+      "sha256": "…", "needed": ["libtkrzw.so.1", "libglib-2.0.so.0"], "bytes": 1446528
+    },
+    "shipped_libzhuyin": { "recipe": "…--no-default-features --features tkrzw", "sha256": "…", "needed": [], "bytes": 0 },
+    "alloccount_libpinyin": {
+      "recipe": "cargo build --locked --release -p oxpinyin-capi --no-default-features --features tkrzw,alloc-count",
+      "installed_name": "libpinyin_capi.so — a fixture; nothing installs it",
+      "sha256": "…", "needed": ["libtkrzw.so.1"], "bytes": 0
+    }
+  },
+  "metrics": {
+    "g1": { "section_sum": 0, "stripped_size": 0, "payload_bytes": 0 },
+    "g2": { "ir_oxpinyin_object": 0, "ir_program_total": 0 },
+    "g3": { "alloc_count_per_cycle": 0, "alloc_bytes_per_cycle": 0, "peak_live_bytes": 0 },
+    "g4": { "rss_init_kib": 0, "rss_cycle_kib": 0, "hwm_cycle_kib": 0 }
+  },
+  "capture_params": {
+    "g2": { "cg_cycles": 4, "cg_repeats": 1, "rounds": 2 },
+    "g3": { "cycles": 8, "repeats": 1, "rounds": 2 },
+    "g4": { "processes_per_pass": 10, "passes": 2 },
+    "cpu": 0
+  },
+  "justification": null   // a docs/** path; required when a gated value rises
+}
+```
+
+The `artifacts` block is not decoration. `docs/runbooks/benches.md` now
+requires every record to name the exact cargo command line, `sha256`, `NEEDED`
+list and byte size per timed artifact; a gate that writes that block on every
+run enforces the convention mechanically instead of relying on whoever writes
+the next record remembering to.
 
 Refreshing it is an ordinary PR that regenerates the file from the lane's own
 uploaded artifact. When a gated value moves **upward**, the lane requires the
@@ -378,14 +472,51 @@ required check. Its inputs (`crates/**`, `tools/**`, `fixtures/**`,
 `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`) are already in the gate
 set; the baseline file is the one addition.
 
-Cost: dominated by two `lto = "fat"` + `codegen-units = 1` release builds
-(shipped, and alloc-count) plus the zhuyin capi for size. The measurement
-itself is seconds — callgrind at `CG_CYCLES=4` over a ~9 ms cycle under a
-~50× interpreter is a couple of seconds per round, and the fixture tables are
-smaller than the records' full ones. **I have not measured the lane on a
-GitHub runner and am not going to guess a minute figure.** Phase 0 measures
-it, and the number is an input to the Phase 2 decision, not an assumption
-behind it.
+### The lane, step by step
+
+```text
+ 1  probe        tools/env-probe/probe-perf-event-open.c  → record, never depend on
+ 2  fingerprint  compute; compare to baseline      → mismatch: BASELINE STALE (exit 3)
+ 3  build        cinstall libpinyin  (tkrzw,shipped)      round 1
+ 4  build        cinstall libzhuyin  (tkrzw)              round 1
+ 5  build        cargo build alloc-count (tkrzw,alloc-count)
+ 6  guard        nm -D shipped | grep oxpinyin_alloc_  → non-empty: FAULT (exit 2)
+ 7  G1           strip, readelf -S, stat; rebuild 3-4 into fresh dirs → round 2
+ 8  G2           callgrind × 2 rounds over the step-3 artifact
+ 9  G3           native × 2 rounds; validate readers ≠ -1 first
+10  G4           2 × 10-process passes (nightly gates, PR reports)
+11  validate     any -1 / missing section / empty callgrind → FAULT (exit 2)
+12  agree        round 1 vs round 2 per metric floor → FAULT (exit 2)
+13  compare      round 1 (G4: median of passes) vs baseline → REGRESSION (exit 1)
+14  upload       the run's own baseline-shaped JSON, always, pass or fail
+```
+
+Step 14 matters as much as the gate: a refresh PR is then "download the
+artifact, commit it", not "re-derive the file by hand".
+
+| exit | meaning | who acts |
+|---|---|---|
+| 0 | within every threshold | — |
+| 1 | `REGRESSION` — a gated value exceeded its limit | the PR author: fix, or raise the baseline with a `justification` |
+| 2 | `INSTRUMENT FAULT` — the measurement is not trustworthy | re-run once; if it persists, the lane is broken, not the PR |
+| 3 | `BASELINE STALE` — the environment moved | refresh the baseline in its own PR, then rebase |
+
+Exit 1 and exit 2 must never be collapsed. A gate whose flakes and whose real
+findings look alike gets muted, and then it is worse than no gate.
+
+### Cost
+
+Dominated by three release builds under `lto = "fat"` + `codegen-units = 1`
+(shipped libpinyin, shipped libzhuyin, alloc-count), doubled for G1's round 2.
+The measurement itself is seconds — callgrind at `CG_CYCLES=4` over a ~9 ms
+cycle under a ~50× interpreter is a couple of seconds per round, and the
+fixture tables are smaller than the records' full ones. **I have not measured
+the lane on a GitHub runner and am not going to guess a minute figure.**
+Phase 0 measures it, and the number is an input to the Phase 2 decision, not
+an assumption behind it. If the rebuild for G1's round 2 turns out to dominate,
+dropping it to a nightly-only check is the first thing to trade away — it tests
+build reproducibility, which is the least likely of the four to regress
+silently.
 
 ## Rollout — three phases, three separate asks
 

@@ -390,14 +390,24 @@ exactly zero to any gated delta. G1 and G2 build the product path through
 because it needs `--features alloc-count`, which cannot coexist with `shipped`.
 
 It nonetheless **never names cinstall-vs-cargo-build as a hazard**. G3 is the
-near-miss: `:182-184` notices that it "is the one place the gate measures
+near-miss: `:198-199` notices that it "is the one place the gate measures
 something other than the product artifact" and then bounds that difference
 entirely in terms of the two `shipped` fixture hooks — the feature axis — with
 the recipe axis unmentioned. The conclusion holds; the argument is missing a
-term. Two of its quoted absolutes (`:39` amd64 bimodal medians, `:225-226` RSS
+term. Two of its quoted absolutes (`:55` amd64 bimodal medians, `:267-268` RSS
 bands) come from the affected cross-host record, but both are used only as
 illustrations of runner noise, and every conclusion drawn from them rests on
 within-pass quotients where the recipe cancels.
+
+> **Addressed (2026-09-12 UTC).** The missing term is now in the proposal:
+> G3 states the recipe axis alongside the feature axis, cites this audit's
+> established band and its limit 1 (no magnitude on the allocation axis), and
+> rests the conclusion on the self-ratchet property this section identified.
+> The proposal also carries a provenance note for the two quoted absolutes,
+> and its baseline schema now writes a per-artifact recipe block on every run,
+> which is the cross-recipe-quotient class in observation 2 made visible at
+> the point of use. The line citations in the paragraph above were recomputed
+> against the edited document; the findings themselves are unchanged.
 
 ## Observations
 
