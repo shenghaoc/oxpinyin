@@ -407,8 +407,11 @@ within-pass quotients where the recipe cancels.
 > previous night rather than against a baseline, is the agreed direction
 > and is not yet implemented. The
 > document at that path is now the decision record, so the line citations
-> in the paragraph above no longer resolve; they described the proposal
-> text, which `git log --follow` still has. **The finding itself stands on
+> in the paragraph above no longer resolve. They describe the proposal text
+> as merged in PR #407, commit
+> `d8de0ab2092bc090fce431277968b44fb533da2a`, at the same path
+> (`docs/perf/ci-perf-size-gate-proposal-2026-09-09.md`); read them against
+> that commit's version of the file. **The finding itself stands on
 > its own and is unaffected by the rejection:** cinstall and `cargo build`
 > produce different artifacts, and any future record that times one while
 > citing the other is wrong whether or not a gate ever existed.
