@@ -11,8 +11,11 @@
 //! point read. The algorithms stay where they
 //! belong — decoding/composition in `oxpinyin-engine`, tables and model math
 //! in `oxpinyin-data`, user state in `oxpinyin-user` — and the user-count
-//! overlay arithmetic lives in `oxpinyin-data`'s `*_with_user_delta` methods,
-//! which [`RuntimeLm`] merely feeds. Centralizing the assembly here is what
+//! overlay arithmetic lives in `oxpinyin-data`'s `*_with_user_delta` methods
+//! and `merge_bigram_row`, which [`RuntimeLm`] merely feeds. The one
+//! ordering law held here is [`merge_suggestion_rows`], the pinned
+//! suggestion row order the facades rank predicted candidates in.
+//! Centralizing the assembly here is what
 //! keeps the C ABI (`oxpinyin-capi`) and the Python binding
 //! (`oxpinyin-python`) from silently diverging: one construction, one set of
 //! parity-tested semantics.
@@ -28,7 +31,7 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![warn(missing_docs)]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -43,7 +46,7 @@ use oxpinyin_core::{
 use oxpinyin_data::user_files::SystemVersions;
 use oxpinyin_data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
-    SystemDictionary, default_store_file,
+    SystemDictionary, default_store_file, merge_bigram_row, ucs4_walk_key,
 };
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
 use oxpinyin_user::{PinyinKey, UserLookup, UserStore};
@@ -60,6 +63,42 @@ use oxpinyin_user::{PinyinKey, UserLookup, UserStore};
 #[must_use]
 pub fn user_store_file() -> String {
     default_store_file("user_store")
+}
+
+/// Orders the system and user `suggest_after` rows the way
+/// `_compute_predicted_prefix_candidates` receives them
+/// (`pinyin.cpp:2371-2405`): `FacadePhraseTable3::search_suggestion` runs
+/// the system phrase table then the user one, each filing tokens into
+/// its library's array in the DBM's cursor order (byte-lexical over the
+/// UCS-4 keys), and `reduce_tokens` concatenates the arrays library by
+/// library. So: grouped by library nibble ascending — the system
+/// libraries 1–4, then the user library 7 — and inside a group the UCS-4
+/// walk order, token ascending within one text. The system rows arrive
+/// in that order already (`SystemDictionary::suggest_after`); the user
+/// rows are re-keyed here because the user store walks its own map in
+/// UTF-8 order, which differs from the little-endian UCS-4 bytes upstream
+/// sorts by.
+///
+/// Lives beside the other pinned data+user compositions this crate holds
+/// (the [`RuntimeLm`] overlay feed), so the C-ABI facades and the Python
+/// binding share one suggestion ordering instead of each assembling an
+/// equivalent against [`ucs4_walk_key`].
+#[must_use]
+pub fn merge_suggestion_rows(
+    system: &[(u32, String)],
+    user_rows: &[(u32, String)],
+) -> Vec<(u32, String)> {
+    let mut user: Vec<(u32, String)> = user_rows.to_vec();
+    user.sort_by(|a, b| {
+        ucs4_walk_key(&a.1)
+            .cmp(&ucs4_walk_key(&b.1))
+            .then(a.0.cmp(&b.0))
+    });
+    let mut merged = Vec::with_capacity(system.len() + user.len());
+    merged.extend(system.iter().cloned());
+    merged.extend(user);
+    merged.sort_by_key(|(token, _)| token >> 24);
+    merged
 }
 
 // ── Open errors ─────────────────────────────────────────────────────────
@@ -713,48 +752,26 @@ impl LanguageModel for RuntimeLm {
 
     /// Upstream's Gate 2 (`pinyin.cpp:2209-2213`): the system gram and the
     /// user gram loaded once each and merged, as ONE row the caller indexes
-    /// per candidate.
-    ///
-    /// `merge_single_gram` is additive over both the per-token counts and
-    /// the row totals, which `merge_counts` already encodes for the n-best
-    /// path; this applies it across the whole row instead of one pair at a
-    /// time, so a guess costs two row loads rather than two per candidate.
+    /// per candidate. The merge arithmetic is
+    /// [`oxpinyin_data::merge_bigram_row`] — the row-shaped form of the §5
+    /// additive law `merge_bigram` encodes per pair — so the guess path and
+    /// the n-best scoring path share one definition; this method only
+    /// loads the two rows and maps the errors.
     fn merged_successors(&self, prev: &Self::Token) -> Result<Option<MergedGram>, Self::Error> {
         let system = self.inner.load_successors(prev.value())?;
-        let user = match self.user.as_ref() {
-            None => None,
-            Some(store) => {
-                let rows = store
+        let (user_rows, user_total) = match self.user.as_ref() {
+            None => (Vec::new(), 0),
+            Some(store) => (
+                store
                     .bigram_successors(prev.value())
-                    .map_err(|error| LmError::User(error.to_string()))?;
-                let total = store
+                    .map_err(|error| LmError::User(error.to_string()))?,
+                store
                     .bigram_total(prev.value())
-                    .map_err(|error| LmError::User(error.to_string()))?;
-                (!rows.is_empty() || total != 0).then_some((rows, total))
-            }
+                    .map_err(|error| LmError::User(error.to_string()))?,
+            ),
         };
-        // `merge_single_gram` answers false when both loads miss, and the
-        // pin then leaves `merged_gram` empty so every possibility is zero.
-        if system.is_none() && user.is_none() {
-            return Ok(None);
-        }
-        let mut counts: BTreeMap<u32, u64> = BTreeMap::new();
-        let mut total: u64 = 0;
-        if let Some(row) = system {
-            total = total.saturating_add(u64::from(row.total));
-            for (token, count) in row.records {
-                let slot = counts.entry(token).or_default();
-                *slot = slot.saturating_add(u64::from(count));
-            }
-        }
-        if let Some((rows, user_total)) = user {
-            total = total.saturating_add(user_total);
-            for (token, count) in rows {
-                let slot = counts.entry(token).or_default();
-                *slot = slot.saturating_add(count);
-            }
-        }
-        Ok(Some(MergedGram::new(total, counts.into_iter().collect())))
+        Ok(merge_bigram_row(system.as_ref(), &user_rows, user_total)
+            .map(|(records, total)| MergedGram::new(total, records)))
     }
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
@@ -1321,5 +1338,24 @@ mod tests {
                 "cached table must be the true loaded-visibility table, not a torn walk"
             );
         }
+    }
+
+    #[test]
+    fn suggestion_rows_group_by_library_then_walk_the_ucs4_keys() {
+        // The pin's list: system library groups first, the user library
+        // last, each in the DBM's byte-lexical UCS-4 order — not text
+        // (UTF-8 / code point) order. U+4E50 sorts before U+4F2D by code
+        // point but after it by little-endian bytes (0x50 > 0x2D).
+        let system = vec![
+            (0x0200_0001, "中年".to_owned()),
+            (0x0100_0010, "中华".to_owned()),
+        ];
+        let user_rows = vec![
+            (0x0700_0001, "中乐".to_owned()), // U+4E50
+            (0x0700_0002, "中伭".to_owned()), // U+4F2D
+        ];
+        let merged = merge_suggestion_rows(&system, &user_rows);
+        let texts: Vec<&str> = merged.iter().map(|(_, text)| text.as_str()).collect();
+        assert_eq!(texts, ["中华", "中年", "中伭", "中乐"]);
     }
 }

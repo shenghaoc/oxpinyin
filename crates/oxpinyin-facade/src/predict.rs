@@ -1,8 +1,9 @@
 //! Phrase prediction: the prefix → token resolution seeding
-//! `guess_sentence_with_prefix`.
+//! `guess_sentence_with_prefix`, and the merged suggestion rows
+//! `_compute_predicted_prefix_candidates` ranks.
 
 use oxpinyin_runtime::RuntimeDict;
-use oxpinyin_user::UserStore;
+use oxpinyin_user::{UserLookup, UserStore};
 
 /// Resolves a prefix string to the phrase tokens its tail substrings
 /// name, in the order `guess_sentence_with_prefix` consumes them
@@ -19,7 +20,7 @@ pub fn compute_prefixes(dict: &RuntimeDict, user: Option<&UserStore>, prefix: &s
     if chars.is_empty() {
         return Vec::new();
     }
-    let user_lookup = user.and_then(|store| oxpinyin_user::UserLookup::from_store(store).ok());
+    let user_lookup = user.and_then(|store| UserLookup::from_store(store).ok());
     let max = chars.len().min(oxpinyin_user::MAX_PHRASE_LENGTH);
     let mut tokens = Vec::new();
     for length in 1..=max {
@@ -36,4 +37,38 @@ pub fn compute_prefixes(dict: &RuntimeDict, user: Option<&UserStore>, prefix: &s
         }
     }
     tokens
+}
+
+/// The system and user `suggest_after` rows for `prefix`, merged in the
+/// order `_compute_predicted_prefix_candidates` receives them.
+///
+/// System rows come from the loaded phrase table filtered by the
+/// loaded-library mask — the same gate [`compute_prefixes`] applies on
+/// the prefix path; user rows from the user store's phrase inventory.
+/// The ordering law itself is
+/// [`oxpinyin_runtime::merge_suggestion_rows`], held with this crate's
+/// other shared orchestration so the C-ABI facades and the Python
+/// binding rank one suggestion order rather than each assembling an
+/// equivalent.
+#[must_use]
+pub fn merged_suggestions(
+    dict: &RuntimeDict,
+    user: Option<&UserStore>,
+    prefix: &str,
+) -> Vec<(u32, String)> {
+    let system: Vec<(u32, String)> = dict
+        .system()
+        .suggest_after(prefix)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(token, _)| dict.library_visible_token(*token))
+        .collect();
+    let user_rows = if let Some(store) = user
+        && let Ok(lookup) = UserLookup::from_store(store)
+    {
+        lookup.suggest_after(prefix)
+    } else {
+        Vec::new()
+    };
+    oxpinyin_runtime::merge_suggestion_rows(&system, &user_rows)
 }

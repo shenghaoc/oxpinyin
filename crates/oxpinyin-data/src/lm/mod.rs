@@ -38,6 +38,7 @@
 //! through the shared library mask: its items answer no unigram and its
 //! total leaves the denominator, as freeing the sub-index does upstream.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
@@ -171,6 +172,49 @@ pub fn merge_bigram(
         None if user_total > 0 => Some((user_count, user_total)),
         None => None,
     }
+}
+
+/// Merged `(records, total)` for one whole `prev → *` successor row with
+/// the §5 overlay applied across the row — the row-shaped form of
+/// [`merge_bigram`]. Upstream's Gate 2 (`pinyin.cpp:2209-2213`) loads the
+/// system gram and the user gram once each and merges them as ONE row the
+/// caller then indexes per candidate, so the row totals merge once rather
+/// than once per pair.
+///
+/// `None` is the both-loads-miss of [`merge_bigram`]: no system row and a
+/// user side contributing nothing (no rows, zero total). Unlike the
+/// per-pair form, a present system row with a zero total still merges —
+/// the pin's `merge_single_gram` builds the merged gram whenever either
+/// load answers, and a row-level miss would drop the row's records.
+///
+/// Records are the union of both sides' tokens, each count a
+/// [`merge_counts`] saturating add, ascending by token.
+#[must_use]
+pub fn merge_bigram_row(
+    system: Option<&BigramRow>,
+    user_rows: &[(u32, u64)],
+    user_total: u64,
+) -> Option<(Vec<(u32, u64)>, u64)> {
+    if system.is_none() && user_rows.is_empty() && user_total == 0 {
+        return None;
+    }
+    let mut counts: BTreeMap<u32, u64> = BTreeMap::new();
+    let mut total: u64 = 0;
+    if let Some(row) = system {
+        total = merge_counts(total, u64::from(row.total));
+        for (token, count) in &row.records {
+            let slot = counts.entry(*token).or_default();
+            *slot = merge_counts(*slot, u64::from(*count));
+        }
+    }
+    if !user_rows.is_empty() || user_total > 0 {
+        total = merge_counts(total, user_total);
+        for (token, count) in user_rows {
+            let slot = counts.entry(*token).or_default();
+            *slot = merge_counts(*slot, *count);
+        }
+    }
+    Some((counts.into_iter().collect(), total))
 }
 
 /// One previous-token row of the system bigram — re-exported from
@@ -583,5 +627,71 @@ fn ratio_cost((numerator, denominator): (u128, u128)) -> Option<Cost> {
     match surprisal(numerator, denominator) {
         UNKNOWN_COST => None,
         cost => Some(cost),
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::{BigramRow, merge_bigram, merge_bigram_row};
+
+    fn row(total: u32, records: &[(u32, u32)]) -> BigramRow {
+        BigramRow {
+            total,
+            records: records.to_vec(),
+        }
+    }
+
+    #[test]
+    fn row_merge_is_none_only_when_both_sides_miss() {
+        // No system row, no user rows, zero user total: the
+        // both-loads-miss of `merge_single_gram`.
+        assert!(merge_bigram_row(None, &[], 0).is_none());
+        // A user side that contributes anything keeps the row alive …
+        let (records, total) = merge_bigram_row(None, &[], 7).expect("user total alone merges");
+        assert!(records.is_empty());
+        assert_eq!(total, 7);
+        // … and so does any user row. The merged total is each side's
+        // *stored* row total added — not a sum recomputed from the rows —
+        // so a store that reports rows but a zero total contributes zero,
+        // the same additive law the runtime's guess path always used.
+        let (records, total) = merge_bigram_row(None, &[(9, 1)], 0).expect("user rows alone merge");
+        assert_eq!(records, [(9, 1)]);
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn row_merge_unions_tokens_with_saturating_counts() {
+        let system = row(10, &[(1, 3), (2, 4)]);
+        let (records, total) =
+            merge_bigram_row(Some(&system), &[(2, 5), (3, 6)], 11).expect("both sides merge");
+        assert_eq!(records, [(1, 3), (2, 9), (3, 6)]);
+        assert_eq!(total, 21);
+    }
+
+    #[test]
+    fn row_merge_keeps_a_zero_total_system_row() {
+        // The per-pair `merge_bigram` drops a zero-total pair; the row
+        // form must not — the pin's `merge_single_gram` answers true as
+        // soon as one load answers, and dropping the row would lose its
+        // records.
+        let system = row(0, &[(5, 2)]);
+        let (records, total) =
+            merge_bigram_row(Some(&system), &[], 0).expect("system row alone merges");
+        assert_eq!(records, [(5, 2)]);
+        assert_eq!(total, 0);
+        assert_eq!(merge_bigram(Some((2, 0)), 0, 0), None);
+    }
+
+    #[test]
+    fn row_merge_saturates_instead_of_wrapping() {
+        let system = row(u32::MAX, &[(1, u32::MAX)]);
+        let (records, total) = merge_bigram_row(
+            Some(&system),
+            &[(1, u64::MAX - u64::from(u32::MAX) + 1)],
+            u64::MAX - u64::from(u32::MAX) + 1,
+        )
+        .expect("saturated merge");
+        assert_eq!(records, [(1, u64::MAX)]);
+        assert_eq!(total, u64::MAX);
     }
 }

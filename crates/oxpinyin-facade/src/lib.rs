@@ -49,7 +49,7 @@ pub use offsets::{
     zhuyin_session_offset,
 };
 pub use parse::{ToneForwarding, double_scheme, full_scheme, zhuyin_scheme};
-pub use predict::compute_prefixes;
+pub use predict::{compute_prefixes, merged_suggestions};
 
 /// The option word `pinyin_init` seeds (`PINYIN_INCOMPLETE`, and nothing
 /// else) — the pinyin facade's distinguishing default.
