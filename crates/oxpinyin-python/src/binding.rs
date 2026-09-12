@@ -107,21 +107,24 @@ pub(crate) fn lock_error() -> PyErr {
     OxpinyinError::new_err("engine lock poisoned by a failed operation")
 }
 
-/// One opened oxpinyin engine over oxpinyin or libpinyin system data.
+/// One opened oxpinyin engine over a system data directory.
 ///
-/// Create with a system data directory in either supported layout; pass
-/// ``user_dir`` to enable learning. Usable as a :pykeyword:`with` block,
-/// though nothing needs releasing — see :meth:`close`.
+/// Create with the directory and, to enable learning, a ``user_dir``.
+/// Usable as a :pykeyword:`with` block, though nothing needs releasing —
+/// see :meth:`close`.
 ///
-/// * Native oxpinyin layout — the ``pinyin_index``, ``phrase_index`` and
-///   ``bigram`` tables in the compiled-in backend's format (``.tkt`` by
-///   default).
-/// * libpinyin layout — a directory as installed by the distro's
-///   ``libpinyin-data`` package (``pinyin_index.bin``, ``phrase_index.bin``,
-///   the content-table ``.bin`` files and ``bigram.db``), detected by file
-///   header and decoded at load time; the ``bigram.db`` must come from a
-///   Kyoto-Cabinet- or tkrzw-built libpinyin — a Berkeley-DB-built
-///   directory (RHEL's packaging among them) is refused, not misread.
+/// The directory is opened in place through the runtime's own readers,
+/// the way ``pinyin_init`` does — no layout detection, no conversion, a
+/// handle plus a point read per file. Exactly one store backend is
+/// compiled into the wheel (``oxpinyin._native.__store_ext__`` names it),
+/// and it fixes the DBM file names: libpinyin's own (``pinyin_index.bin``,
+/// ``phrase_index.bin``, ``bigram.db``, the content-table ``.bin`` files)
+/// under Kyoto Cabinet and tkrzw, so an unmodified libpinyin ``data/``
+/// built with the same backend opens as is; ``<stem>.<ext>`` under redb
+/// and LMDB, which only ``oxpinyin-datagen`` writes. A directory written by
+/// another backend is a missing-file or unreadable-container error, not a
+/// misread. The user directory, when given, is read and written in
+/// libpinyin's own user-file set.
 ///
 /// Shareable across threads one call at a time: every call takes an internal
 /// lock, so a single call is atomic, but a *sequence* of calls is not — the

@@ -15,7 +15,8 @@ requiring libpinyin.
 ```python
 import oxpinyin
 
-engine = oxpinyin.Engine.from_fixture_dir("fixtures/w3")
+# one data directory per backend; "tkt" is the default (tkrzw) build's
+engine = oxpinyin.Engine("fixtures/w3/tkt")
 for candidate in engine.lookup("nihao"):
     print(candidate.text)   # 你好, 你, 尼, ...
 ```
@@ -30,27 +31,29 @@ maturin develop            # inside an activated venv, or:
 pip install .              # builds a wheel through PEP 517 + maturin
 ```
 
-The engine needs oxpinyin's own system data: `pinyin_index`,
-`phrase_index` and `bigram` tables in the compiled-in backend's
-format. The four peer backends produce four distinct extensions — `.tkt`
-under the default selection (tkrzw), `.redb` with
-`--no-default-features --features redb`, `.lmdb` with
-`--no-default-features --features lmdb`, `.kct` with
-`--no-default-features --features kyotocabinet`. Optional `punct.<ext>` adds
-predicted-punctuation rows; its absence simply yields no predicted
-punctuation. The repository's committed mini fixture (`fixtures/w3`) works
-through `Engine.from_fixture_dir`; production model directories
-additionally carry `interpolation2.text` (the real-unigram model) and are
-opened with `Engine(system_dir)`. No libpinyin install is required —
-only these data files.
+The engine opens a libpinyin-format system data directory: the
+`pinyin_index`, `phrase_index` and `bigram` DBMs, the per-library chunk
+files (`gb_char.bin` … `merged.bin`), and optionally `table.conf`,
+`punct` and the addon DBM pair. Exactly one store backend is compiled
+into a wheel, and it fixes the DBM file names: libpinyin's own
+(`pinyin_index.bin`, `bigram.db`, …) under the default selection (tkrzw)
+and with `--no-default-features --features kyotocabinet`, so an
+unmodified libpinyin install's `data/` opens as is; `<stem>.<ext>`
+(`pinyin_index.redb`, `bigram.lmdb`, …) with `--features redb` or
+`--features lmdb`. `oxpinyin._native.__store_ext__` reports the
+compiled-in extension — a directory listing cannot tell a Kyoto Cabinet
+set from a tkrzw one. The repository's committed mini fixture is one
+directory per backend, `fixtures/w3/<ext>`; production directories are
+what `oxpinyin-datagen compile` writes, or a libpinyin install's data.
+No libpinyin install is linked — only its data files are read.
 
 ## API sketch
 
-- `Engine(system_dir, user_dir=None)` — open over converted data;
-  `user_dir` enables learning (`train`/`save` persist to it).
-  - Requires `interpolation2.text`; missing or unparsable models raise.
-- `Engine.from_fixture_dir(system_dir, user_dir=None)` — fixture semantics
-  for development against the committed mini tables.
+- `Engine(system_dir, user_dir=None)` — open over a system data directory;
+  `user_dir` enables learning (`train`/`save` persist to it, in
+  libpinyin's own user-dir file set). Missing or unreadable data raises.
+- `Engine.from_fixture_dir(system_dir, user_dir=None)` — kept for API
+  compatibility; opens exactly what `Engine(system_dir)` opens.
 - `engine.lookup(text)` → `list[Candidate]`, each call a fresh query.
 - Stateful workflow: `type_pinyin`, `candidates`, `candidates_at(offset)`,
   `select(index)` → `"continued" | "completed"`, `commit()`, `reset()`.
@@ -93,9 +96,9 @@ internal lock and run with the GIL released.
 cargo test -p oxpinyin-runtime                      # Rust side (shared assembly)
 cargo test -p oxpinyin-python                       # binding crate
 cargo run -p oxpinyin-python --bin native-dump -- \
-    parity-corpus.json ../../fixtures/w3 native.json  # native transcript
+    parity-corpus.json ../../fixtures/w3/tkt native.json  # native transcript
 cargo run -p oxpinyin-python --bin zhuyin-dump -- \
-    parity-corpus-zhuyin.json ../../fixtures/w3 zhuyin-native.json
+    parity-corpus-zhuyin.json ../../fixtures/w3/tkt zhuyin-native.json
 pytest                                              # binding + parity vs above
 ```
 

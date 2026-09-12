@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! cargo run -p oxpinyin-python --bin native-dump -- \
-//!     crates/oxpinyin-python/parity-corpus.json fixtures/w3 native.json
+//!     crates/oxpinyin-python/parity-corpus.json fixtures/w3/tkt native.json
 //! ```
 
 use std::path::PathBuf;
