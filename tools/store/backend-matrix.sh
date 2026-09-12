@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # backend-matrix.sh — prove the exactly-one-backend invariant.
 #
-# The four oxpinyin store backends (kyotocabinet, redb, lmdb, tkrzw) are
-# peer implementations behind one trait surface, and every build has
-# exactly one of them. This script drives that invariant end-to-end:
+# The five oxpinyin store backends (kyotocabinet, redb, lmdb, tkrzw,
+# bdb) are peer implementations behind one trait surface, and every build
+# has exactly one of them. This script drives that invariant end-to-end:
 #
-#   1. The default selection and each of the four explicit ones is a
+#   1. The default selection and each of the five explicit ones is a
 #      green `cargo check --locked -p oxpinyin-store`.
-#   2. Every one of the six pairwise combinations, and a three-way
+#   2. Every one of the ten pairwise combinations, and a three-way
 #      combination, refuses to compile with the `compile_error!` message
 #      from `crates/oxpinyin-store/src/lib.rs`.
 #   3. The zero-backend build refuses with the same guard.
@@ -38,7 +38,8 @@ for peer in "" \
     "--no-default-features --features kyotocabinet" \
     "--no-default-features --features redb" \
     "--no-default-features --features lmdb" \
-    "--no-default-features --features tkrzw"; do
+    "--no-default-features --features tkrzw" \
+    "--no-default-features --features bdb"; do
     label=${peer:-default (tkrzw)}
     printf '── valid: %s\n' "$label"
     if cargo check --locked -p oxpinyin-store $peer >"$LOG" 2>&1; then
@@ -52,15 +53,19 @@ for peer in "" \
 done
 
 # Every invalid combination must be refused by the compile_error guard.
-# Six pairs plus a three-way plus a zero-backend case.
+# Ten pairs plus a three-way plus a zero-backend case.
 for combo in \
     "kyotocabinet,redb" \
     "kyotocabinet,lmdb" \
     "kyotocabinet,tkrzw" \
+    "kyotocabinet,bdb" \
     "redb,lmdb" \
     "redb,tkrzw" \
+    "redb,bdb" \
     "lmdb,tkrzw" \
-    "kyotocabinet,redb,lmdb"; do
+    "lmdb,bdb" \
+    "tkrzw,bdb" \
+    "kyotocabinet,redb,lmdb,bdb"; do
     printf '── invalid: --features %s\n' "$combo"
     if cargo check --locked -p oxpinyin-store --no-default-features --features "$combo" \
         >"$LOG" 2>&1; then
