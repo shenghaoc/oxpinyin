@@ -179,11 +179,13 @@ pub fn merge_bigram(
 pub use crate::row_format::bigram::BigramRow;
 
 /// Whether library `nibble` is visible under `mask` (bit `n` set =
-/// library `n` unloaded). `mask == 0` and nibbles outside the u32 bit
+/// library `n` unloaded).
+///
+/// `mask == 0` and nibbles outside the u32 bit
 /// range are trivially visible — the same rule the runtime's dictionary
 /// applies.
 #[must_use]
-pub fn library_visible(mask: u32, nibble: u8) -> bool {
+pub const fn library_visible(mask: u32, nibble: u8) -> bool {
     mask == 0 || nibble >= 32 || mask & (1_u32 << nibble) == 0
 }
 
@@ -269,7 +271,7 @@ impl BigramLanguageModel {
 
     /// The facade's phrase libraries this model reads unigrams from.
     #[must_use]
-    pub fn libraries(&self) -> &Arc<PhraseLibraries> {
+    pub const fn libraries(&self) -> &Arc<PhraseLibraries> {
         &self.libraries
     }
 

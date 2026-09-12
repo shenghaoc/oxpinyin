@@ -10,8 +10,8 @@
 //! | `user_bigram.db` | the build DBM's **hash** | `Bigram::save_db` |
 //! | `user_pinyin_index.bin` | the build DBM's **tree** (despite the extension) | `ChewingLargeTable2::save_db` |
 //! | `user_phrase_index.bin` | the build DBM's tree | `PhraseLargeTable3::save_db` |
-//! | `user.bin`, `addon.bin`, `network.bin` | `MemoryChunk` images (the USER_FILE sub-indexes 7, 5, 6) | `FacadePhraseIndex::store` |
-//! | `gb_char.dbin`, `gbk_char.dbin`, `opengram.dbin`, `merged.dbin` | `MemoryChunk` images of `PhraseIndexLogger` records (the SYSTEM_FILE libraries' diffs) | `FacadePhraseIndex::diff` |
+//! | `user.bin`, `addon.bin`, `network.bin` | `MemoryChunk` images (the `USER_FILE` sub-indexes 7, 5, 6) | `FacadePhraseIndex::store` |
+//! | `gb_char.dbin`, `gbk_char.dbin`, `opengram.dbin`, `merged.dbin` | `MemoryChunk` images of `PhraseIndexLogger` records (the `SYSTEM_FILE` libraries' diffs) | `FacadePhraseIndex::diff` |
 //! | `user.conf` | text | `UserTableInfo::save` |
 //!
 //! On the two backends libpinyin itself builds against (Kyoto Cabinet,
@@ -51,7 +51,9 @@ impl std::error::Error for ChunkReadError {}
 
 /// Strips and verifies a `MemoryChunk` file frame, returning the payload
 /// — the check `MemoryChunk::load` performs before any consumer sees
-/// bytes. The `.dbin` diff logs frame their logger record stream this
+/// bytes.
+///
+/// The `.dbin` diff logs frame their logger record stream this
 /// way (`log->save` writes a plain `MemoryChunk`).
 ///
 /// # Errors
@@ -123,21 +125,23 @@ impl UserDbm {
     }
 
     /// Whether the file is a hash container (`user_bigram.db` is a KC
-    /// HashDB / tkrzw HashDBM; the two index files are trees).
+    /// `HashDB` / tkrzw `HashDBM`; the two index files are trees).
     #[must_use]
     pub const fn is_hash(self) -> bool {
         matches!(self, Self::Bigram)
     }
 }
 
-/// The USER_FILE sub-indexes' chunk files by nibble — `table.conf`'s
-/// `default …_DICTIONARY` USER_FILE rows' user filenames.
+/// The `USER_FILE` sub-indexes' chunk files by nibble — `table.conf`'s
+/// `default …_DICTIONARY` `USER_FILE` rows' user filenames.
 pub const USER_LIBRARY_FILES: &[(u8, &str)] =
     &[(5, "addon.bin"), (6, "network.bin"), (7, "user.bin")];
 
-/// The SYSTEM_FILE libraries' diff-log files by nibble — `table.conf`'s
-/// `default …_DICTIONARY` SYSTEM_FILE rows' user filenames (the `.dbin`
-/// logs `_write_files` writes through `FacadePhraseIndex::diff`).
+/// The `SYSTEM_FILE` libraries' diff-log files by nibble.
+///
+/// `table.conf`'s `default …_DICTIONARY` `SYSTEM_FILE` rows' user
+/// filenames (the `.dbin` logs `_write_files` writes through
+/// `FacadePhraseIndex::diff`).
 pub const SYSTEM_LOG_FILES: &[(u8, &str)] = &[
     (1, "gb_char.dbin"),
     (2, "gbk_char.dbin"),
@@ -163,7 +167,7 @@ impl SystemVersions {
     /// This build's identity — the versions of the system `table.conf`
     /// it opens, paired with its own backend token.
     #[must_use]
-    pub fn for_this_build(binary_format_version: u32, model_data_version: u32) -> Self {
+    pub const fn for_this_build(binary_format_version: u32, model_data_version: u32) -> Self {
         Self {
             binary_format_version,
             model_data_version,
@@ -531,7 +535,9 @@ pub fn decode_log_records(bytes: &[u8]) -> Result<Vec<LogRecord>, LogDecodeError
 }
 
 /// A record payload whose length does not fit the format's `u16` length
-/// field. `build_chunk` accepts items up to 255 characters × 255
+/// field.
+///
+/// `build_chunk` accepts items up to 255 characters × 255
 /// pronunciations, which encodes past `u16::MAX`; upstream's
 /// `append_record` truncates silently (`guint16 len = newone->size()`),
 /// and we refuse instead of writing a record stream the reader would
@@ -669,8 +675,7 @@ mod tests {
         assert_eq!(
             text,
             format!(
-                "binary format version:7\nmodel data version:14\ndatabase format:{}\nopen counter:0\n",
-                DEFAULT_STORE_DB_FORMAT
+                "binary format version:7\nmodel data version:14\ndatabase format:{DEFAULT_STORE_DB_FORMAT}\nopen counter:0\n"
             )
         );
         let parsed = UserTableInfo::parse(&text).expect("parse");

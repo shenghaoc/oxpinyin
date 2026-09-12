@@ -1,8 +1,8 @@
 //! libpinyin's `punct.bin` — the predicted-punctuation table, read
 //! directly.
 //!
-//! libpinyin stores the punctuation table as a **TreeDB** (KC) /
-//! **TreeDBM** (Tkrzw) — same container class as the pinyin and phrase
+//! libpinyin stores the punctuation table as a **`TreeDB`** (KC) /
+//! **`TreeDBM`** (Tkrzw) — same container class as the pinyin and phrase
 //! indexes. The key is a `phrase_token_t` (4 bytes LE); the value is a
 //! raw UCS-4 stream (`PunctTableEntry::escape`, `punct_table.cpp:40-54`):
 //! each punctuation is its UCS-4 codepoints followed by a u32 zero
@@ -49,7 +49,7 @@ impl PunctTable {
     }
 
     /// Opens a punct DBM lazily (no scan). `punct.bin` is a KC
-    /// **TreeDB** / Tkrzw **TreeDBM** — the plain read-only open.
+    /// **`TreeDB`** / Tkrzw **`TreeDBM`** — the plain read-only open.
     ///
     /// # Errors
     ///
@@ -136,14 +136,14 @@ mod tests {
     fn an_empty_table_answers_nothing() {
         let table = PunctTable::empty();
         assert!(!table.is_open());
-        assert!(table.punctuations(0x01000295).unwrap().is_empty());
+        assert!(table.punctuations(0x0100_0295).unwrap().is_empty());
         assert!(!PunctTable::open_optional(std::path::Path::new("/no/such/punct.bin")).is_open());
     }
 
     #[test]
     fn lookup_finds_punctuation() {
         let dbm = MemoryDbm::new();
-        let token: u32 = 0x01000295;
+        let token: u32 = 0x0100_0295;
         let value = encode_puncts(&["，", "。"]);
         dbm.put(token.to_le_bytes().to_vec(), value);
 
@@ -156,15 +156,15 @@ mod tests {
     fn lookup_miss_returns_empty() {
         let dbm = MemoryDbm::new();
         let table = PunctTable::new(Box::new(dbm));
-        let result = table.punctuations(0x01000295).unwrap();
+        let result = table.punctuations(0x0100_0295).unwrap();
         assert!(result.is_empty());
     }
 
     #[test]
     fn malformed_value_does_not_panic() {
         let dbm = MemoryDbm::new();
-        dbm.put(0x01000295_u32.to_le_bytes().to_vec(), vec![0xFF; 3]);
+        dbm.put(0x0100_0295_u32.to_le_bytes().to_vec(), vec![0xFF; 3]);
         let table = PunctTable::new(Box::new(dbm));
-        assert!(table.punctuations(0x01000295).is_err());
+        assert!(table.punctuations(0x0100_0295).is_err());
     }
 }

@@ -1,8 +1,8 @@
 //! Direct reader for libpinyin's `pinyin_index.bin` DBM — the Rust
 //! equivalent of `ChewingLargeTable2`.
 //!
-//! libpinyin stores the pinyin index as a backend DBM (KC TreeDB or Tkrzw
-//! TreeDBM) with two key spaces sharing one file:
+//! libpinyin stores the pinyin index as a backend DBM (KC `TreeDB` or Tkrzw
+//! `TreeDBM`) with two key spaces sharing one file:
 //!
 //! - **Complete index:** key = packed `ChewingKey[L]` with every tone
 //!   zeroed, value = `PinyinIndexItem2<L>[]` with the original tones.
@@ -24,7 +24,7 @@ use crate::dict::DictError;
 // emission there cannot drift (`crate::row_format`).
 #[cfg(test)]
 use crate::row_format::pinyin_index::encode_items;
-pub(crate) use crate::row_format::pinyin_index::{
+pub use crate::row_format::pinyin_index::{
     PinyinIndexItem, decode_items, encode_complete_key, encode_incomplete_key,
 };
 
@@ -33,18 +33,18 @@ pub(crate) use crate::row_format::pinyin_index::{
 /// The callback a [`ChewingDbm::walk`] hands each `(key, value)` row to;
 /// `Ok(true)` stops the walk — the backend abandons the underlying scan
 /// right there rather than skipping the remaining rows.
-pub(crate) type RowVisitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<bool, DictError> + 'a;
+pub type RowVisitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<bool, DictError> + 'a;
 
 /// The callback [`ChewingTable::walk_extensions`] hands each non-empty
 /// extension row's `(syllable count, records)` to; `Ok(true)` stops the
 /// walk.
-pub(crate) type ExtensionVisitor<'a> =
+pub type ExtensionVisitor<'a> =
     dyn FnMut(usize, &[PinyinIndexItem]) -> Result<bool, DictError> + 'a;
 
-/// An abstraction over the DBM access method, so the ChewingTable can
+/// An abstraction over the DBM access method, so the `ChewingTable` can
 /// read both libpinyin's raw DBM files (KC/Tkrzw with no table framing)
 /// and oxpinyin's store-backed files (redb/LMDB with table framing).
-pub(crate) trait ChewingDbm {
+pub trait ChewingDbm {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError>;
 
     /// Every row whose key lies in `[lo, hi)` (`hi = None` — to the end),
@@ -67,7 +67,7 @@ pub(crate) trait ChewingDbm {
 /// keys starting with `prefix`. `None` when no such bound exists (every
 /// byte is `0xFF`), which callers read as "to the end".
 #[must_use]
-pub(crate) fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
+pub fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
     let last = prefix.iter().rposition(|&byte| byte != 0xFF)?;
     let mut bound = prefix[..=last].to_vec();
     bound[last] = bound[last].wrapping_add(1);
@@ -75,17 +75,17 @@ pub(crate) fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Wraps a [`RawReadStore`](oxpinyin_store::RawReadStore) for raw
-/// (unframed) DBM access — the mode libpinyin's pinyin_index.bin needs.
+/// (unframed) DBM access — the mode libpinyin's `pinyin_index.bin` needs.
 ///
 /// KC and Tkrzw backends skip table framing and hand the key straight
 /// to the underlying library, matching libpinyin's flat keyspace. redb
 /// and LMDB delegate to the well-known `"data"` table.
-pub(crate) struct RawChewingDbm<S> {
+pub struct RawChewingDbm<S> {
     store: S,
 }
 
 impl<S> RawChewingDbm<S> {
-    pub(crate) fn new(store: S) -> Self {
+    pub(crate) const fn new(store: S) -> Self {
         Self { store }
     }
 }
@@ -170,7 +170,7 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
 ///
 /// Does not materialize the entire index at open time. Lookups are
 /// point reads against the DBM backend.
-pub(crate) struct ChewingTable {
+pub struct ChewingTable {
     dbm: Box<dyn ChewingDbm + Send + Sync>,
 }
 
@@ -262,13 +262,13 @@ impl ChewingTable {
 /// `contains_incomplete_pinyin` (`pinyin_phrase3.h:146`): a syllable with
 /// neither middle nor final is an initial-only (incomplete) key.
 #[must_use]
-pub(crate) fn contains_incomplete(keys: &[ChewingKey]) -> bool {
+pub fn contains_incomplete(keys: &[ChewingKey]) -> bool {
     keys.iter().any(|key| key.middle == 0 && key.final_ == 0)
 }
 
 /// The DBM key `ChewingLargeTable2::search` computes for a query.
 #[must_use]
-pub(crate) fn index_key(keys: &[ChewingKey]) -> Vec<u8> {
+pub fn index_key(keys: &[ChewingKey]) -> Vec<u8> {
     if contains_incomplete(keys) {
         encode_incomplete_key(keys)
     } else {
@@ -288,7 +288,7 @@ pub(crate) fn index_key(keys: &[ChewingKey]) -> Vec<u8> {
 /// tones, and returns at the first difference; equality is order
 /// independent, so this checks per syllable.
 #[must_use]
-pub(crate) fn keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
+pub fn keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
     query.len() == stored.len() && prefix_keys_match(query, stored)
 }
 
@@ -297,7 +297,7 @@ pub(crate) fn keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
 /// `chewing_large_table2.h`), the comparison the suggestion path applies
 /// to longer records.
 #[must_use]
-pub(crate) fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
+pub fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
     if stored.len() < query.len() {
         return false;
     }
@@ -391,7 +391,7 @@ mod tests {
         let dbm = MemoryDbm::new();
         let ba = ChewingKey::from_pinyin("ba").unwrap();
         let ba_item = PinyinIndexItem {
-            token: 0x01000001,
+            token: 0x0100_0001,
             keys: vec![ba.with_tone(1)],
         };
         let key = encode_complete_key(&[ba]);
@@ -399,7 +399,7 @@ mod tests {
         dbm.put(key, value);
         let ikey = encode_incomplete_key(&[ba]);
         let ivalue = encode_items(&[PinyinIndexItem {
-            token: 0x01000001,
+            token: 0x0100_0001,
             keys: vec![ChewingKey::new(ba.initial, 0, 0, 0)],
         }]);
         dbm.put(ikey, ivalue);
@@ -412,7 +412,7 @@ mod tests {
         let ba = ChewingKey::from_pinyin("ba").unwrap();
         let items = table.search(&[ba]).unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].token, 0x01000001);
+        assert_eq!(items[0].token, 0x0100_0001);
     }
 
     #[test]
@@ -420,11 +420,11 @@ mod tests {
         let dbm = MemoryDbm::new();
         let ba = ChewingKey::from_pinyin("ba").unwrap();
         let ba1 = PinyinIndexItem {
-            token: 0x01000001,
+            token: 0x0100_0001,
             keys: vec![ba.with_tone(1)],
         };
         let ba3 = PinyinIndexItem {
-            token: 0x01000002,
+            token: 0x0100_0002,
             keys: vec![ba.with_tone(3)],
         };
         let key = encode_complete_key(&[ba]);
@@ -433,11 +433,11 @@ mod tests {
 
         let items = table.search(&[ba.with_tone(1)]).unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].token, 0x01000001);
+        assert_eq!(items[0].token, 0x0100_0001);
 
         let items = table.search(&[ba.with_tone(3)]).unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].token, 0x01000002);
+        assert_eq!(items[0].token, 0x0100_0002);
 
         let items = table.search(&[ba]).unwrap();
         assert_eq!(items.len(), 2);
@@ -459,7 +459,7 @@ mod tests {
 
         let key2 = encode_complete_key(&[ni, hao]);
         let item = PinyinIndexItem {
-            token: 0x01000099,
+            token: 0x0100_0099,
             keys: vec![ni.with_tone(3), hao.with_tone(3)],
         };
         dbm.put(key2, encode_items(&[item]));
@@ -494,11 +494,11 @@ mod tests {
             encode_incomplete_key(&[b]),
             encode_items(&[
                 PinyinIndexItem {
-                    token: 0x01000001,
+                    token: 0x0100_0001,
                     keys: vec![ba.with_tone(1)],
                 },
                 PinyinIndexItem {
-                    token: 0x01000002,
+                    token: 0x0100_0002,
                     keys: vec![bo.with_tone(2)],
                 },
             ]),
@@ -527,11 +527,11 @@ mod tests {
             encode_incomplete_key(&[n, h]),
             encode_items(&[
                 PinyinIndexItem {
-                    token: 0x01000099,
+                    token: 0x0100_0099,
                     keys: vec![ni.with_tone(3), hao.with_tone(3)],
                 },
                 PinyinIndexItem {
-                    token: 0x01000098,
+                    token: 0x0100_0098,
                     keys: vec![na.with_tone(4), hao.with_tone(3)],
                 },
             ]),
@@ -541,7 +541,7 @@ mod tests {
         // those whose first syllable is `ni`.
         let items = table.search(&[ni, h]).unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].token, 0x01000099);
+        assert_eq!(items[0].token, 0x0100_0099);
     }
 
     #[test]
@@ -554,14 +554,14 @@ mod tests {
         dbm.put(
             encode_complete_key(&[ni, hao]),
             encode_items(&[PinyinIndexItem {
-                token: 0x01000099,
+                token: 0x0100_0099,
                 keys: vec![ni.with_tone(3), hao.with_tone(3)],
             }]),
         );
         dbm.put(
             encode_complete_key(&[ni, men]),
             encode_items(&[PinyinIndexItem {
-                token: 0x02000001,
+                token: 0x0200_0001,
                 keys: vec![ni.with_tone(3), men.with_tone(0)],
             }]),
         );
@@ -569,7 +569,7 @@ mod tests {
         dbm.put(
             encode_complete_key(&[hao]),
             encode_items(&[PinyinIndexItem {
-                token: 0x01000011,
+                token: 0x0100_0011,
                 keys: vec![hao.with_tone(3)],
             }]),
         );
