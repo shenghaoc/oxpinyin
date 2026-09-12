@@ -81,7 +81,7 @@ impl CandidateIndex {
 
     /// Gathers scored candidates (`gatherModels`), keeping insertion order.
     #[must_use]
-    pub fn from_candidates(candidates: Vec<Candidate>) -> Self {
+    pub const fn from_candidates(candidates: Vec<Candidate>) -> Self {
         Self { candidates }
     }
 
@@ -115,13 +115,13 @@ impl CandidateIndex {
 
     /// The number of candidates.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.candidates.len()
     }
 
     /// Whether there are no candidates.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.candidates.is_empty()
     }
 
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn index_line_round_trips() {
-        let candidate = candidate("model-candidates-0.db", 0.312699);
+        let candidate = candidate("model-candidates-0.db", 0.312_699);
         let parsed = Candidate::parse(&candidate.index_line()).expect("parse");
         assert_eq!(parsed, candidate);
     }

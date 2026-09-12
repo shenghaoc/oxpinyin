@@ -96,10 +96,14 @@ pub struct CandidateModel {
 }
 
 /// Generates candidate models from segmented documents, reproducing
-/// `generate.py`'s accumulate-and-roll-over loop: documents are added into the
-/// current candidate in index order; a segmented file below the minimum size
-/// is skipped; once the aggregated segmented size exceeds
-/// `candidate_model_size` the candidate is closed and the next begins. The
+/// `generate.py`'s accumulate-and-roll-over loop.
+///
+/// Documents are added into the current candidate in index order; a
+/// segmented file below the minimum size is skipped; once the aggregated
+/// segmented size exceeds `candidate_model_size` the candidate is closed
+/// and the next begins.
+///
+/// The
 /// document that trips the threshold is part of the candidate it closes.
 ///
 /// Unlike upstream, an empty trailing candidate (when the last document closed
@@ -180,8 +184,10 @@ pub struct ScoredCandidate {
 }
 
 /// Scores each candidate with `estimate_k_mixture_model` against the deleted
-/// model — the candidate's `EstimateScore` (average λ) — and gathers the
-/// records (`estimate.py`'s `walkThroughModels` + `gatherModels`).
+/// model and gathers the records (`estimate.py`'s `walkThroughModels` +
+/// `gatherModels`).
+///
+/// The candidate's `EstimateScore` is its average λ.
 ///
 /// # Errors
 ///
@@ -210,9 +216,10 @@ pub fn score_candidates(
     Ok(scored)
 }
 
-/// The gather + sort of scored candidates (`gatherModels` → `sortModels`):
-/// the unsorted index, the sorted index, and the scored candidates in sorted
-/// (descending) order carrying their models for the merge.
+/// The gather + sort of scored candidates (`gatherModels` → `sortModels`).
+///
+/// The unsorted index, the sorted index, and the scored candidates in
+/// sorted (descending) order carrying their models for the merge.
 pub struct SortedCandidates {
     /// `estimate.index` — records in gather order.
     pub gathered: CandidateIndex,
@@ -258,9 +265,12 @@ pub struct FinalModel {
 }
 
 /// Merges the top `merge_number` sorted candidates, validates, exports,
-/// prunes, validates, exports, and converts to `interpolation2.text`
-/// (`tryprune.py`'s `mergeSomeModels` → validate → export → prune → validate →
-/// export → convert). The sorted models must be in descending score order,
+/// prunes, validates, exports, and converts to `interpolation2.text`.
+///
+/// `tryprune.py`'s `mergeSomeModels` → validate → export → prune →
+/// validate → export → convert.
+///
+/// The sorted models must be in descending score order,
 /// which [`gather_and_sort`] guarantees and [`CandidateIndex::top_n`] re-checks.
 ///
 /// # Errors
@@ -408,9 +418,12 @@ pub struct EvalInputs<'a, D, P> {
 }
 
 /// Runs the whole main pipeline in memory from segmented documents to the
-/// final model, λ, and correction rate — segment is done by the caller (it
-/// owns the [`Segmenter`]); this drives generate → estimate → sort → merge →
-/// prune → convert → evaluate. The persistent orchestrator adds files and
+/// final model, λ, and correction rate.
+///
+/// Segment is done by the caller (it owns the [`Segmenter`]); this drives
+/// generate → estimate → sort → merge → prune → convert → evaluate.
+///
+/// The persistent orchestrator adds files and
 /// resumability around the same calls.
 ///
 /// # Errors

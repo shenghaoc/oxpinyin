@@ -7,7 +7,7 @@
 //! and new words by prefix/postfix entropy, and assigns each recognized
 //! word its pinyin and frequency — emitting `recognized.txt`.
 //!
-//! The Python original's per-order SQLite databases and FTS3 phrase index
+//! The Python original's per-order `SQLite` databases and FTS3 phrase index
 //! become the ordered maps of [`NgramTables`]; the crate is self-contained
 //! (the segmented stream carries the word text; the dictionary word list
 //! and pinyin list are supplied as files) and never ships with the engine.

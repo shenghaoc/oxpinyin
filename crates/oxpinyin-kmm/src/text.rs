@@ -185,7 +185,9 @@ fn parse_bigram_item(model: &mut KMixtureModel, line: &str) -> Result<(), KmmErr
 }
 
 /// Streaming `k_mixture_model_to_interpolation`: KMM text → interpolation
-/// text. The `\1-gram` `count` becomes the KMM `freq` field (the unigram
+/// text.
+///
+/// The `\1-gram` `count` becomes the KMM `freq` field (the unigram
 /// frequency), dropping `sentence_start` and zero-freq rows; the `\2-gram`
 /// `count` is the KMM pair `count` (`m_WC`).
 ///
@@ -273,7 +275,9 @@ fn malformed(line: &str, why: &str) -> KmmError {
     }
 }
 
-/// Canonicalises a KMM text file: `import` then `export`. Used by the
+/// Canonicalises a KMM text file: `import` then `export`.
+///
+/// Used by the
 /// `export`/`import` CLI subcommands, which in the text-native model are
 /// the same round-trip (upstream's `.db`↔text directions collapse).
 ///
@@ -285,7 +289,7 @@ pub fn canonicalize(text: &str) -> Result<String, KmmError> {
 }
 
 /// Merges the `texts` columns of two models (used by `merge`).
-pub(crate) fn merge_texts(into: &mut BTreeMap<u32, String>, from: &BTreeMap<u32, String>) {
+pub fn merge_texts(into: &mut BTreeMap<u32, String>, from: &BTreeMap<u32, String>) {
     for (token, text) in from {
         into.entry(*token).or_insert_with(|| text.clone());
     }

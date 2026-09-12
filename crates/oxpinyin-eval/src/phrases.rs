@@ -20,7 +20,7 @@ pub struct SystemPhraseSource<'a> {
 impl<'a> SystemPhraseSource<'a> {
     /// Wraps a system dictionary.
     #[must_use]
-    pub fn new(dictionary: &'a SystemDictionary) -> Self {
+    pub const fn new(dictionary: &'a SystemDictionary) -> Self {
         Self { dictionary }
     }
 }

@@ -208,38 +208,35 @@ fn train_word_pair(
     count: u32,
     params: GenerateParams,
 ) {
-    match gram.items.get(&token2).copied() {
-        Some(mut item) => {
-            let cap = params
-                .max_occurs
-                .max(ceil_mul(item.mr, params.max_increase_rate));
-            if count > cap {
-                subtract_unigram(unigram, token2, count);
-                return;
-            }
-            item.wc = item.wc.wrapping_add(count);
-            item.n_n_0 = item.n_n_0.wrapping_add(1);
-            if count == 1 {
-                item.n_1 = item.n_1.wrapping_add(1);
-            }
-            item.mr = item.mr.max(count);
-            gram.items.insert(token2, item);
+    if let Some(mut item) = gram.items.get(&token2).copied() {
+        let cap = params
+            .max_occurs
+            .max(ceil_mul(item.mr, params.max_increase_rate));
+        if count > cap {
+            subtract_unigram(unigram, token2, count);
+            return;
         }
-        None => {
-            if count > params.max_occurs {
-                subtract_unigram(unigram, token2, count);
-                return;
-            }
-            gram.items.insert(
-                token2,
-                ArrayItem {
-                    wc: count,
-                    n_n_0: 1,
-                    n_1: u32::from(count == 1),
-                    mr: count,
-                },
-            );
+        item.wc = item.wc.wrapping_add(count);
+        item.n_n_0 = item.n_n_0.wrapping_add(1);
+        if count == 1 {
+            item.n_1 = item.n_1.wrapping_add(1);
         }
+        item.mr = item.mr.max(count);
+        gram.items.insert(token2, item);
+    } else {
+        if count > params.max_occurs {
+            subtract_unigram(unigram, token2, count);
+            return;
+        }
+        gram.items.insert(
+            token2,
+            ArrayItem {
+                wc: count,
+                n_n_0: 1,
+                n_1: u32::from(count == 1),
+                mr: count,
+            },
+        );
     }
     // Reached only when the pair was not skipped: grow the array header WC.
     gram.header_wc = gram.header_wc.wrapping_add(count);
@@ -376,8 +373,7 @@ mod tests {
             !model
                 .grams
                 .get(&10)
-                .map(|g| g.items.contains_key(&20))
-                .unwrap_or(false)
+                .is_some_and(|g| g.items.contains_key(&20))
         );
     }
 

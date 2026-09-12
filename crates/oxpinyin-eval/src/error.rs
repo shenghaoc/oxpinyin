@@ -54,7 +54,9 @@ pub enum EvalError {
 impl fmt::Display for EvalError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io { path, source } => write!(formatter, "cannot access {path:?}: {source}"),
+            Self::Io { path, source } => {
+                write!(formatter, "cannot access {}: {source}", path.display())
+            }
             Self::Malformed { detail } => write!(formatter, "malformed input: {detail}"),
             Self::Lambda { detail } => write!(formatter, "lambda estimation: {detail}"),
             Self::NoPronunciation { token } => {
