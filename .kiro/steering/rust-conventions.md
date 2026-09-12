@@ -27,10 +27,21 @@ enabled (tkrzw in the default set; `--no-default-features --features
 `--with-dbm` model. No runtime dispatch and no fallback: `oxpinyin-store`
 emits a `compile_error!` when zero or more than one backend is enabled.
 
+**Dependencies (maintainer, 2026-09-12):** a Rust library is used as Rust
+(redb; `glib-sys` is the C binding of a C library). The non-Rust database
+backends — Kyoto Cabinet, tkrzw, LMDB — are used through the ABIs their
+maintainers provide, which are C: `kclangc.h`, `tkrzw_langc.h`, `lmdb.h`,
+bound with bindgen over the system headers and linked to the
+distribution's own libraries. Nothing vendors or compiles C or C++ into
+oxpinyin, and the C++ interfaces are never used — a Rust program gains
+nothing from them, and they carry no ABI stability across compilers,
+standard libraries or library versions; the C API is the maintainer's
+stability promise.
+
 **C struct parsing:** packed upstream structures are parsed by explicit
 byte-offset reads (`u32::from_le_bytes` and friends) into owned fields —
 never by casting a byte slice to a packed struct, never via unaligned
-pointer reads. The reference pattern is `oxpinyin-data/src/memory_chunk.rs`:
+pointer reads. The reference pattern is `oxpinyin-data/src/chunk_format.rs`:
 an 8-byte header (u32 LE length, then u32 XOR checksum over the data
 section, mirrored from `memory_chunk.h::get_check_sum`) followed by the
 payload, checksum verified before use.

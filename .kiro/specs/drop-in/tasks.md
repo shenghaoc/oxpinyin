@@ -2,11 +2,11 @@
 
 ## Overview
 
-Status snapshot. The binary identity and the compat read path are merged
-and measured on three distro backends; the remaining open item is task
-9 — same-backend user files read and written seamlessly (maintainer
+Status snapshot. The binary identity, the direct data path (P6) and
+task 9 — same-backend user files read and written seamlessly (maintainer
 ruling 2026-09-09, `docs/findings/compatibility-policy.md` goal
-amendment) — and the BerkeleyDB route remains shelved.
+amendment; landed 2026-09-09) — are merged and measured on three distro
+backends; the BerkeleyDB route remains shelved.
 
 ## Tasks
 
@@ -17,22 +17,24 @@ amendment) — and the BerkeleyDB route remains shelved.
   `libpinyin.pc` with the installed naming (#206, #192).
   _Requirements: 1_
 
-- [x] 3. Implement `CompatLayout` detection and the compat load path (#228).
+- [x] 3. Open installed libpinyin data (#228, as a compatibility layer;
+  superseded 2026-09-02 by P6's direct readers —
+  `docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`).
   _Requirements: 2_
 
 - [x] 4. Implement the `MemoryChunk` reader with checksum verification (#228).
   _Requirements: 2_
 
-- [x] 5. Measure the Kyoto Cabinet compat path on Fedora rawhide
+- [x] 5. Measure the drop-in (Kyoto Cabinet) on Fedora rawhide
   (kyotocabinet 1.2.80): 1,571/1,571 rows, sorted sets byte-identical,
   order-only.
   _Requirements: 2, 4_
 
-- [x] 6. Measure the tkrzw compat path on Debian testing: the same shape —
+- [x] 6. Measure the drop-in (tkrzw) on Debian testing: the same shape —
   1,571/1,571 rows, sets identical, order-only.
   _Requirements: 2, 4_
 
-- [x] 7. Measure the Kyoto Cabinet compat path on NixOS
+- [x] 7. Measure the drop-in (Kyoto Cabinet) on NixOS
   (nixpkgs-unstable): identical to Fedora; punct rows identical, order
   included.
   _Requirements: 2_
@@ -55,6 +57,6 @@ amendment) — and the BerkeleyDB route remains shelved.
   (`docs/findings/user-store.md` §11).
   _Requirements: 2, 3, 4_
 
-- [ ] 10. BerkeleyDB compat path — SHELVED; revive only if a consumer
+- [ ] 10. BerkeleyDB backend — SHELVED; revive only if a consumer
   requires it (incomplete implementation on `feat/bdb-backend`).
   _Requirements: 2_

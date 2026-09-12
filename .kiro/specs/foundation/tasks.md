@@ -77,8 +77,9 @@ fixtures are human-frozen.
     (#192).
   _Requirements: R7_
 
-- [x] 11. **[B]** Implement the compat read path and measure it on the distro backends.
-  - `CompatLayout` detection + `MemoryChunk` reader (#228); measured
+- [x] 11. **[B]** Open installed libpinyin data and measure it on the distro backends.
+  - the #228 reader (since replaced by P6's direct readers) + the
+    `MemoryChunk` reader; measured
     order-only with sets byte-identical, 1,571/1,571 rows, on Fedora
     rawhide (Kyoto Cabinet), Debian testing (tkrzw) and NixOS (Kyoto
     Cabinet); the divergence attributed to R1's defined-order rule.

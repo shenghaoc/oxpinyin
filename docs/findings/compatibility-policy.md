@@ -8,7 +8,15 @@ the classification table re-synced with `upstream-divergences.md` at
 2026-08-28 are recorded, and the "PR 5" the original text named is
 `docs/findings/revert-plan.md` (#209, the work order), which never
 became a PR of its own; the reverts landed one by one (see the table).
-**Amended 2026-09-09:** the goal's byte-level guarantee is per KV
+**Amended 2026-09-12 (maintainer):** the E2E rule's pin is libpinyin
+2.11.92 at `074a2219` — the repository is feature-complete, at measured
+parity under this policy's exceptions with one open defect (row 30, the
+pinyin facade's chewing batch `FORCE_TONE` seam), and the pin was moved
+to libpinyin's latest commit on 2026-09-06
+(`docs/testing/oracle-environment.md`); and the goal amendment's task-9
+gap closed on 2026-09-09, and row 2's basis no longer cites the
+cancelled migration tool. **Amended 2026-09-09:** the goal's byte-level
+guarantee is per KV
 backend family — same-backend pairs (Kyoto Cabinet↔Kyoto Cabinet,
 tkrzw↔tkrzw, oxpinyin↔libpinyin either direction) interoperate
 seamlessly, user data included; data loss when the KV database backend
@@ -36,9 +44,11 @@ unchanged and unaware.
 > `_rename_files` `pinyin.cpp:922-1130`, the per-library user
 > filenames in `data/table.conf.in`), and `pinyin_save` writes back
 > what a same-backend libpinyin picks up (drop-in task 9, reopened
-> with exactly this scope; today's runtime still opens its own
-> `user_store.<ext>` and leaves those files untouched — the task
-> closes that gap). **Data loss when the KV database backend actually
+> with exactly this scope; landed 2026-09-09 —
+> `docs/findings/user-store.md` §11, measured both ways on Kyoto
+> Cabinet and tkrzw by `tools/oracle/user-dir-round-trip.sh`; until
+> then the runtime opened its own `user_store.<ext>` and left those
+> files untouched, and the maintainer confirmed the closure 2026-09-12). **Data loss when the KV database backend actually
 > changes is taken for granted** — a BDB-built libpinyin (Debian
 > stable, Ubuntu) against oxpinyin's KC/tkrzw builds, redb/LMDB builds
 > with no libpinyin counterpart, KC↔tkrzw transitions. There the
@@ -198,7 +208,10 @@ exceptions to.
 
 > **E2E I/O COMPATIBILITY RULE:** For every exported symbol in the
 > consumer union, given the same inputs and state, oxpinyin MUST return
-> byte-identical outputs to the pinned libpinyin 2.11.91 at `0c5e80e` —
+> byte-identical outputs to the pinned libpinyin 2.11.92 at `074a2219`
+> (the pin since 2026-09-06; the rule was written at 2.11.91 / `0c5e80e`,
+> against which the candidate surface is byte-identical —
+> `docs/testing/oracle-environment.md`) —
 > except where one of the named exceptions (a)/(b)/(c) ((d) retired 2026-09-06)
 > explicitly applies. Exporting a symbol that returns a wrong value is
 > worse than not exporting it: the consumer gets a silent wrong answer
@@ -252,7 +265,7 @@ revert targets is `revert-plan.md`.
 | # | Entry | Class | Basis |
 | --- | --- | --- | --- |
 | 1 | Bigram export iterator's pinyin buffer | **(b)** | pin segfaults on a repeated export cycle; stale C buffer aliasing has no safe-Rust reproduction |
-| 2 | Public bigram export is a rendering surface | **no ABI divergence** | the C ABI reproduces the rendering; only the internal migration tool reads the raw store |
+| 2 | Public bigram export is a rendering surface | **no ABI divergence** | the C ABI reproduces the rendering; nothing in-tree reads the raw store — the internal migration tool that would have was cancelled (`legacy-migration.md`, SHELVED on `feat/w7-t2-legacy-migrate`; maintainer confirmation 2026-09-12) |
 | 3 | HANYU full pinyin ignores tone digits under `USE_TONE` | **CLOSED** | ported; `PARSE_AUX_IDENTICAL` |
 | 4 | Tone digit on an initial-only key aborts the phrase search | **(c)** | pin SIGABRTs on `n4` under `USE_TONE\|PINYIN_INCOMPLETE` (`pinyin_phrase3.h:146-156`) |
 | 5a | Scheme setters — double `CUSTOMIZED` (30) | **(c)** | aborts mid-call (`pinyin_parser2.cpp:611-612`) |
@@ -274,7 +287,7 @@ revert targets is `revert-plan.md`.
 | 18 | The pinyin index DBMs carry uninitialized struct padding | **(b)** | upstream copies a stack struct's tail padding into the DBM; datagen zeroes it and the reader never touches it |
 | 19 | `pinyin_get_character_offset`'s recursion asserts answer `false` | **(c)** | pin SIGABRTs at `pinyin.cpp:3152` / `:3166` (and the #14 family's range and `_check_offset` asserts); the unbounded `cached_tokens` read (`:3172`) is a (b) sub-shape answered as a deterministic miss |
 | 20 | One bigram-prediction row differs on the pin's own data (trellis residual) | **(a)** | downstream of row 11: the trained count for `测测 → 你` straddles the `m_count ≥ 10` filter because the trellis residual picks a different phrase; one `union-diff` line, everything else identical |
-| 21 | The single-key surface aborts the pin where oxpinyin answers `false` | **(c)** | `assert` on apostrophes in `parse_one_key` (`pinyin_parser2.cpp:170`), `assert(index < PHRASE_INDEX_LIBRARY_COUNT)` on unload (`pinyin.cpp:499`), empty-input over-reads; pinned in `tests/abi/keys.rs` |
+| 21 | The single-key surface aborts the pin where oxpinyin answers `false` | **(c)** | `assert` on apostrophes in `parse_one_key` (`pinyin_parser2.cpp:170`), `assert(index < PHRASE_INDEX_LIBRARY_COUNT)` on unload (`pinyin.cpp:499`), empty-input over-reads; pinned in `crates/oxpinyin-capi/tests/abi/keys.rs` |
 | 22 | Empty-string phrase lookup SIGFPEs the pin | **(c)** | `pinyin_phrase_segment(instance, "")` divides by the zero span length; oxpinyin answers `false`. A crash on caller input is the (c) shape whether the signal is ABRT or FPE |
 | 23 | Sanitizer scope on the tkrzw shim CI · native data-file naming · R1 measured on the compat paths | **no ABI divergence** | three dated records, not behaviour entries: a CI-instrumentation note, a file-naming decision (`installed-naming.md`), and a measurement whose subject was removed (its SUPERSEDED banner is itself amended 2026-09-06 — P6 restored direct reads of libpinyin's files) |
 | 24 | zhuyin batch `FORCE_TONE` law | **CLOSED** | 1671954: `ZhuyinParser::parse_with_options` honours the three per-keyboard shapes |
@@ -282,7 +295,7 @@ revert targets is `revert-plan.md`.
 | 26 | zhuyin before-cursor candidate window | **CLOSED** | window builder closed (c2ad5925); the residual — a row whose span starts after the offset was constrained as `[0, offset)` — closed by #374 (`Candidate::span_start` = upstream's `m_begin`, constraint `[m_begin, m_end)`, `zhuyin_choose_candidate` answers `m_begin`, `zhuyin.cpp:1660`) and **measured IDENTICAL on the pin-built libzhuyin at 074a2219** on 2026-09-08: the three-input choose battery byte-identical (register entry, second amendment) |
 | 27 | zhuyin multi-syllable candidate construction | **CLOSED** | the divergence was the pinyin string-fill law, not the construction model (amended 2026-08-31) |
 | 28 | zhuyin n-best trellis constants `<1, 1>` vs the engine's `<2, 3>` | **CLOSED** in code (#374) | per-session `NbestShape` (`PINYIN` = `<2, 3>`, `ZHUYIN` = `<1, 1>`), set by both zhuyin facades at instance allocation; not observable through today's libzhuyin candidate surface, so no gate moves |
-| 29 | zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default | **no ABI divergence** | `CapiContext::open` seeds the pin's `USE_TONE \| FORCE_TONE`; entry kept as analysis for a future consumer |
+| 29 | zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default | **no ABI divergence** | `CapiContext::try_open` seeds the pin's `USE_TONE \| FORCE_TONE`; entry kept as analysis for a future consumer |
 | 30 | pinyin-facade chewing batch seam does not forward `FORCE_TONE` | **OPEN DEFECT** | the register says it: no class fits, a defect to close; `ROADMAP.md` carries it as the bopomofo SPEC's one open implementation item. Observable only under a caller-set `FORCE_TONE` (pin consumes 0 on toneless `su`, oxpinyin 2). Fix shape: forward `inst.options().bits()` through `parse_with_options` plus a `FORCE_TONE` profile in `chewing-diff.c`. Not STOP-gated — the same one-line shape #289 used on the double-pinyin seam |
 | 31 | redb write-side emptiness probe creates the table it probes | **no ABI divergence** | a redb API constraint below the store traits; nothing above them observes it. Stage-2 store-trait note, not a compatibility entry |
 
