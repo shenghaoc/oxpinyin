@@ -91,60 +91,60 @@ fn write_pinyin_index(path: &std::path::Path) {
         // Complete keyspace.
         (
             encode_complete(&[ni]),
-            encode_items(&[(0x01000010, &[ni3][..]), (0x02000010, &[ni2][..])]),
+            encode_items(&[(0x0100_0010, &[ni3][..]), (0x0200_0010, &[ni2][..])]),
         ),
         (
             encode_complete(&[key("hao")]),
-            encode_items(&[(0x01000011, &[hao3][..])]),
+            encode_items(&[(0x0100_0011, &[hao3][..])]),
         ),
         (
             encode_complete(&[ni, key("hao")]),
-            encode_items(&[(0x01000099, &[ni3, hao3][..])]),
+            encode_items(&[(0x0100_0099, &[ni3, hao3][..])]),
         ),
         (
             encode_complete(&[ni, men]),
-            encode_items(&[(0x02000098, &[ni3, men][..])]),
+            encode_items(&[(0x0200_0098, &[ni3, men][..])]),
         ),
         (
             encode_complete(&[key("zhong")]),
-            encode_items(&[(0x01000020, &[zhong1][..])]),
+            encode_items(&[(0x0100_0020, &[zhong1][..])]),
         ),
         (
             encode_complete(&[key("guo")]),
-            encode_items(&[(0x01000021, &[guo2][..])]),
+            encode_items(&[(0x0100_0021, &[guo2][..])]),
         ),
         (
             encode_complete(&[key("zhong"), key("guo")]),
-            encode_items(&[(0x010000A0, &[zhong1, guo2][..])]),
+            encode_items(&[(0x0100_00A0, &[zhong1, guo2][..])]),
         ),
         // Incomplete keyspace: the same records under initial-only keys.
         (
             encode_incomplete(&[n]),
-            encode_items(&[(0x01000010, &[ni3][..]), (0x02000010, &[ni2][..])]),
+            encode_items(&[(0x0100_0010, &[ni3][..]), (0x0200_0010, &[ni2][..])]),
         ),
         (
             encode_incomplete(&[h]),
-            encode_items(&[(0x01000011, &[hao3][..])]),
+            encode_items(&[(0x0100_0011, &[hao3][..])]),
         ),
         (
             encode_incomplete(&[n, h]),
-            encode_items(&[(0x01000099, &[ni3, hao3][..])]),
+            encode_items(&[(0x0100_0099, &[ni3, hao3][..])]),
         ),
         (
             encode_incomplete(&[n, m]),
-            encode_items(&[(0x02000098, &[ni3, men][..])]),
+            encode_items(&[(0x0200_0098, &[ni3, men][..])]),
         ),
         (
             encode_incomplete(&[z]),
-            encode_items(&[(0x01000020, &[zhong1][..])]),
+            encode_items(&[(0x0100_0020, &[zhong1][..])]),
         ),
         (
             encode_incomplete(&[g]),
-            encode_items(&[(0x01000021, &[guo2][..])]),
+            encode_items(&[(0x0100_0021, &[guo2][..])]),
         ),
         (
             encode_incomplete(&[z, g]),
-            encode_items(&[(0x010000A0, &[zhong1, guo2][..])]),
+            encode_items(&[(0x0100_00A0, &[zhong1, guo2][..])]),
         ),
     ];
     write_raw_rows::<DefaultStore>(path, &rows);
@@ -154,24 +154,24 @@ fn write_phrase_index(path: &std::path::Path) {
     let rows: Vec<(Vec<u8>, Vec<u8>)> = vec![
         (
             encode_ucs4_key("你"),
-            encode_tokens(&[0x01000010, 0x02000010]),
+            encode_tokens(&[0x0100_0010, 0x0200_0010]),
         ),
-        (encode_ucs4_key("好"), encode_tokens(&[0x01000011])),
-        (encode_ucs4_key("中"), encode_tokens(&[0x01000020])),
-        (encode_ucs4_key("国"), encode_tokens(&[0x01000021])),
-        (encode_ucs4_key("你好"), encode_tokens(&[0x01000099])),
-        (encode_ucs4_key("你们"), encode_tokens(&[0x02000098])),
-        (encode_ucs4_key("中国"), encode_tokens(&[0x010000A0])),
+        (encode_ucs4_key("好"), encode_tokens(&[0x0100_0011])),
+        (encode_ucs4_key("中"), encode_tokens(&[0x0100_0020])),
+        (encode_ucs4_key("国"), encode_tokens(&[0x0100_0021])),
+        (encode_ucs4_key("你好"), encode_tokens(&[0x0100_0099])),
+        (encode_ucs4_key("你们"), encode_tokens(&[0x0200_0098])),
+        (encode_ucs4_key("中国"), encode_tokens(&[0x0100_00A0])),
         // A phrase of two tokens from two libraries.
         (
             encode_ucs4_key("的"),
-            encode_tokens(&[0x010005DB, 0x020005DB]),
+            encode_tokens(&[0x0100_05DB, 0x0200_05DB]),
         ),
     ];
     write_raw_rows::<DefaultStore>(path, &rows);
 }
 
-/// The gb_char chunk file: the nibble-1 items with their text and
+/// The `gb_char` chunk file: the nibble-1 items with their text and
 /// pronunciations. 你 carries two toned readings (ni3 ×5, ni2 ×3).
 fn write_gb_char_chunk(path: &std::path::Path) {
     let ni3 = key("ni").with_tone(3);
@@ -229,7 +229,7 @@ fn single_syllable_lookup_resolves_only_loaded_libraries() {
     // upstream's NULL-array skip.
     assert_eq!(entries.len(), 1, "{entries:?}");
     assert_eq!(entries[0].text(), "你");
-    assert_eq!(entries[0].token().value(), 0x01000010);
+    assert_eq!(entries[0].token().value(), 0x0100_0010);
 }
 
 #[test]
@@ -326,11 +326,11 @@ fn lookup_into_matches_lookup() {
 fn token_surface_resolves_through_the_chunk_file() {
     let fix = Fixture::new();
     let dict = fix.dict();
-    assert_eq!(dict.phrase_text(0x01000099).as_deref(), Some("你好"));
-    assert_eq!(dict.phrase_text(0x02000010), None, "unloaded library");
-    assert_eq!(dict.phrase_text(0xFFFFFFFF), None);
-    assert_eq!(dict.unigram_count(0x01000010), Some(5));
-    let prons = dict.pronunciations(0x01000010);
+    assert_eq!(dict.phrase_text(0x0100_0099).as_deref(), Some("你好"));
+    assert_eq!(dict.phrase_text(0x0200_0010), None, "unloaded library");
+    assert_eq!(dict.phrase_text(0xFFFF_FFFF), None);
+    assert_eq!(dict.unigram_count(0x0100_0010), Some(5));
+    let prons = dict.pronunciations(0x0100_0010);
     assert_eq!(prons.len(), 2);
     assert_eq!(prons[0], ("ni".to_owned(), 5));
     assert_eq!(prons[1], ("ni".to_owned(), 3));
@@ -341,9 +341,9 @@ fn token_surface_resolves_through_the_chunk_file() {
 fn tokens_for_text_reads_the_phrase_dbm() {
     let fix = Fixture::new();
     let dict = fix.dict();
-    assert_eq!(dict.tokens_for_text("你好").unwrap(), vec![0x01000099]);
+    assert_eq!(dict.tokens_for_text("你好").unwrap(), vec![0x0100_0099]);
     let tokens = dict.tokens_for_text("的").unwrap();
-    assert_eq!(tokens, vec![0x010005DB, 0x020005DB]);
+    assert_eq!(tokens, vec![0x0100_05DB, 0x0200_05DB]);
     assert!(dict.tokens_for_text("不存在").unwrap().is_empty());
     assert!(dict.tokens_for_text("").unwrap().is_empty());
     let via_trait = Dictionary::tokens_for_text(&dict, "你");
@@ -356,7 +356,7 @@ fn suggest_after_walks_the_longer_phrases() {
     let dict = fix.dict();
     // 你 → 你好 (loaded) and 你们 (unloaded, dropped); defined order.
     let rows = dict.suggest_after("你").unwrap();
-    assert_eq!(rows, vec![(0x01000099, "你好".to_owned())]);
+    assert_eq!(rows, vec![(0x0100_0099, "你好".to_owned())]);
     assert!(dict.suggest_after("你好").unwrap().is_empty());
     assert!(dict.suggest_after("无").unwrap().is_empty());
     assert!(dict.suggest_after("").unwrap().is_empty());

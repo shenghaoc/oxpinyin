@@ -22,10 +22,12 @@ use crate::phrase_library::{LibraryError, PhraseLibrary};
 
 pub use crate::system_files::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
 
-/// One pronunciation of a library item: the joined pinyin spelling and
-/// the pronunciation frequency — the rendering surface the export and
-/// token-introspection paths need (`FacadePhraseIndex::get_phrase_item`
-/// over `PhraseItem::get_nth_pronunciation`).
+/// One pronunciation of a library item.
+///
+/// The joined pinyin spelling and the pronunciation frequency — the
+/// rendering surface the export and token-introspection paths need
+/// (`FacadePhraseIndex::get_phrase_item` over
+/// `PhraseItem::get_nth_pronunciation`).
 pub struct LibraryPronunciation {
     /// `'`-joined pinyin spelling, tone digits dropped (the consumers
     /// resolve it back to tone-less syllable keys).
@@ -134,10 +136,9 @@ impl PhraseLibraries {
     /// Drops library `nibble` — `FacadePhraseIndex::unload`. `true` when
     /// a library was loaded there.
     pub fn unload(&mut self, nibble: u8) -> bool {
-        match self.by_nibble.get_mut(usize::from(nibble)) {
-            Some(slot) => slot.take().is_some(),
-            None => false,
-        }
+        self.by_nibble
+            .get_mut(usize::from(nibble))
+            .is_some_and(|slot| slot.take().is_some())
     }
 
     /// Whether library `nibble` is loaded.
@@ -216,7 +217,7 @@ impl PhraseLibraries {
             .enumerate()
             .filter_map(move |(nibble, slot)| {
                 let loaded = slot.as_ref()?;
-                visible(nibble as u8).then_some(loaded)
+                visible(u8::try_from(nibble).unwrap_or(u8::MAX)).then_some(loaded)
             })
     }
 
@@ -294,7 +295,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let mut libs = PhraseLibraries::open(&dir, SYSTEM_LIBRARY_STEMS).unwrap();
         assert!(libs.is_empty());
-        assert!(libs.phrase_text(0x01000001).is_none());
+        assert!(libs.phrase_text(0x0100_0001).is_none());
         assert_eq!(libs.unigram_total(), 0);
         assert_eq!(libs.item_count(), 0);
         assert!(!libs.is_loaded(1));

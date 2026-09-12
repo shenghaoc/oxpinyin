@@ -137,10 +137,13 @@ fn resolve_suggestions(libraries: &PhraseLibraries, tokens: Vec<u32>) -> Vec<(u3
     rows
 }
 
-/// The byte-lexical sort key of a phrase text in a UCS-4 keyed DBM: the
-/// little-endian `u32` scalars concatenated — the cursor order
+/// The byte-lexical sort key of a phrase text in a UCS-4 keyed DBM.
+///
+/// The little-endian `u32` scalars concatenated — the cursor order
 /// `PhraseLargeTable3` walks, which `pinyin_guess_predicted_candidates`
-/// exposes as the order of tied rows. Public so the user seam's
+/// exposes as the order of tied rows.
+///
+/// Public so the user seam's
 /// suggestions can be merged in the same order.
 #[must_use]
 pub fn ucs4_walk_key(text: &str) -> Vec<u8> {
@@ -222,7 +225,7 @@ impl SystemDictionary {
     /// The facade's phrase libraries, shared with the language model
     /// (the unigram counts live in the chunk items).
     #[must_use]
-    pub fn libraries(&self) -> &Arc<PhraseLibraries> {
+    pub const fn libraries(&self) -> &Arc<PhraseLibraries> {
         &self.libraries
     }
 
@@ -588,9 +591,8 @@ impl AddonDictionary {
     ///
     /// Returns [`DictError`] when the DBM read or the value decode fails.
     pub fn tokens_for_text(&self, text: &str) -> Result<Vec<u32>, DictError> {
-        match self.phrase.as_ref() {
-            Some(table) => table.search(text),
-            None => Ok(Vec::new()),
-        }
+        self.phrase
+            .as_ref()
+            .map_or_else(|| Ok(Vec::new()), |table| table.search(text))
     }
 }

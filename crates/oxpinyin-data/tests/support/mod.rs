@@ -31,7 +31,7 @@ pub struct ChunkBuilder {
 }
 
 impl ChunkBuilder {
-    pub fn new(total_freq: u32) -> Self {
+    pub const fn new(total_freq: u32) -> Self {
         Self {
             total_freq,
             items: BTreeMap::new(),
@@ -70,9 +70,10 @@ impl ChunkBuilder {
         };
         let mut offsets = vec![0_u32; slots];
         for (&slot, (unigram, text, pronunciations)) in &self.items {
-            offsets[slot] = content.len() as u32;
-            content.push(text.chars().count() as u8);
-            content.push(pronunciations.len() as u8);
+            offsets[slot] = u32::try_from(content.len()).expect("fixture content fits u32");
+            content.push(u8::try_from(text.chars().count()).expect("fixture text fits u8"));
+            content
+                .push(u8::try_from(pronunciations.len()).expect("fixture pronunciations fit u8"));
             content.extend_from_slice(&unigram.to_le_bytes());
             for ch in text.chars() {
                 content.extend_from_slice(&(ch as u32).to_le_bytes());
@@ -93,9 +94,21 @@ impl ChunkBuilder {
 
         let mut payload = Vec::new();
         payload.extend_from_slice(&self.total_freq.to_le_bytes());
-        payload.extend_from_slice(&(index_one as u32).to_le_bytes());
-        payload.extend_from_slice(&(index_two as u32).to_le_bytes());
-        payload.extend_from_slice(&(index_three as u32).to_le_bytes());
+        payload.extend_from_slice(
+            &u32::try_from(index_one)
+                .expect("index_one fits u32")
+                .to_le_bytes(),
+        );
+        payload.extend_from_slice(
+            &u32::try_from(index_two)
+                .expect("index_two fits u32")
+                .to_le_bytes(),
+        );
+        payload.extend_from_slice(
+            &u32::try_from(index_three)
+                .expect("index_three fits u32")
+                .to_le_bytes(),
+        );
         payload.push(SEPARATOR);
         payload.extend_from_slice(&vec![0; index_one - payload.len()]);
         payload.extend_from_slice(&offset_array);
@@ -105,7 +118,11 @@ impl ChunkBuilder {
         assert_eq!(payload.len(), index_three);
 
         let mut file = Vec::new();
-        file.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        file.extend_from_slice(
+            &u32::try_from(payload.len())
+                .expect("fixture payload fits u32")
+                .to_le_bytes(),
+        );
         file.extend_from_slice(&chunk_checksum(&payload).to_le_bytes());
         file.extend_from_slice(&payload);
         file

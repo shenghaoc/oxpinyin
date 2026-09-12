@@ -90,43 +90,43 @@ fn write_fixture(path: &std::path::Path) {
             // "ba" → 八 (ba1), 把 (ba3)
             txn.put_raw(
                 &encode_complete(&[key_no_tone("ba")]),
-                &encode_items(&[(0x01000001, &[ba1][..]), (0x01000002, &[ba3][..])]),
+                &encode_items(&[(0x0100_0001, &[ba1][..]), (0x0100_0002, &[ba3][..])]),
             )?;
 
             // "ni" → 你 (ni3) — also a prefix for "ni hao"
             txn.put_raw(
                 &encode_complete(&[key_no_tone("ni")]),
-                &encode_items(&[(0x01000010, &[ni3][..])]),
+                &encode_items(&[(0x0100_0010, &[ni3][..])]),
             )?;
 
             // "hao" → 好 (hao3)
             txn.put_raw(
                 &encode_complete(&[key_no_tone("hao")]),
-                &encode_items(&[(0x01000011, &[hao3][..])]),
+                &encode_items(&[(0x0100_0011, &[hao3][..])]),
             )?;
 
             // "ni hao" → 你好
             txn.put_raw(
                 &encode_complete(&[key_no_tone("ni"), key_no_tone("hao")]),
-                &encode_items(&[(0x01000099, &[ni3, hao3][..])]),
+                &encode_items(&[(0x0100_0099, &[ni3, hao3][..])]),
             )?;
 
             // "zhong" → 中 — also a prefix for "zhong guo"
             txn.put_raw(
                 &encode_complete(&[key_no_tone("zhong")]),
-                &encode_items(&[(0x01000020, &[zhong1][..])]),
+                &encode_items(&[(0x0100_0020, &[zhong1][..])]),
             )?;
 
             // "guo" → 国
             txn.put_raw(
                 &encode_complete(&[key_no_tone("guo")]),
-                &encode_items(&[(0x01000021, &[guo2][..])]),
+                &encode_items(&[(0x0100_0021, &[guo2][..])]),
             )?;
 
             // "zhong guo" → 中国
             txn.put_raw(
                 &encode_complete(&[key_no_tone("zhong"), key_no_tone("guo")]),
-                &encode_items(&[(0x010000A0, &[zhong1, guo2][..])]),
+                &encode_items(&[(0x0100_00A0, &[zhong1, guo2][..])]),
             )?;
 
             // Incomplete (initial-only) index entries.
@@ -134,15 +134,15 @@ fn write_fixture(path: &std::path::Path) {
             txn.put_raw(
                 &encode_incomplete(&[key_no_tone("ba")]),
                 &encode_items(&[
-                    (0x01000001, &[b_initial][..]),
-                    (0x01000002, &[b_initial][..]),
+                    (0x0100_0001, &[b_initial][..]),
+                    (0x0100_0002, &[b_initial][..]),
                 ]),
             )?;
 
             let n_initial = ChewingKey::new(key_no_tone("ni").initial, 0, 0, 0);
             txn.put_raw(
                 &encode_incomplete(&[key_no_tone("ni")]),
-                &encode_items(&[(0x01000010, &[n_initial][..])]),
+                &encode_items(&[(0x0100_0010, &[n_initial][..])]),
             )?;
 
             Ok(())
@@ -162,7 +162,7 @@ fn single_syllable_lookup_finds_ba() {
     assert_eq!(data.len() % stride, 0);
     assert_eq!(data.len() / stride, 2, "two items for ba");
     let token = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-    assert_eq!(token, 0x01000001);
+    assert_eq!(token, 0x0100_0001);
     let packed = u16::from_le_bytes([data[4], data[5]]);
     assert_eq!(ChewingKey::from_packed(packed), key_with_tone("ba", 1));
 }
@@ -176,7 +176,7 @@ fn multi_syllable_lookup_finds_nihao() {
     let stride = item2_stride(2);
     assert_eq!(data.len(), stride, "one item for ni hao");
     let token = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-    assert_eq!(token, 0x01000099);
+    assert_eq!(token, 0x0100_0099);
 }
 
 #[test]
