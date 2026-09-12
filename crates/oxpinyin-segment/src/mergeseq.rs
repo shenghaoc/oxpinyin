@@ -36,7 +36,7 @@ struct Merger {
 }
 
 impl Merger {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             unichars: Vec::new(),
             queue: Vec::new(),
@@ -84,11 +84,12 @@ impl Merger {
 
     /// Emit and drop the front token (`pop_first_token`, `mergeseq.cpp:125-145`).
     fn pop_first_token(&mut self) {
+        use std::fmt::Write as _;
         let Some(info) = self.queue.first().copied() else {
             return;
         };
         let text: String = self.unichars[..info.char_len].iter().collect();
-        self.output.push_str(&format!("{} {text}\n", info.token));
+        let _ = writeln!(self.output, "{} {text}", info.token);
         self.unichars.drain(0..info.char_len);
         self.queue.remove(0);
     }

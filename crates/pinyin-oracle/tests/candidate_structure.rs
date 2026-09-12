@@ -30,10 +30,10 @@ fn repo_root() -> PathBuf {
 /// fixtures are tracked, and a test that silently passed without them
 /// would report parity it never checked. (The `#[ignore]`d freshness test
 /// regenerates them.)
-fn load(relative: &str) -> Option<String> {
+fn load(relative: &str) -> String {
     let path = repo_root().join(relative);
     match std::fs::read_to_string(&path) {
-        Ok(text) => Some(text),
+        Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             panic!(
                 "committed fixture missing at {}: restore it or regenerate with bin oracle-candidate-structure",
@@ -60,12 +60,8 @@ fn pin_ref(raw: &str) -> Option<&str> {
 
 #[test]
 fn structure_fixture_matches_sister_triples() {
-    let Some(sister) = load(SISTER_FIXTURE) else {
-        return;
-    };
-    let Some(structure) = load(STRUCTURE_FIXTURE) else {
-        return;
-    };
+    let sister = load(SISTER_FIXTURE);
+    let structure = load(STRUCTURE_FIXTURE);
 
     // Both fixtures must be stamped by the same pin, and it must be the frozen
     // one; otherwise the two are not comparable.
