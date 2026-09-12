@@ -136,7 +136,7 @@ fn assert_rows_equal_ignoring_padding(name: &str, generated: &[(Vec<u8>, Vec<u8>
 }
 
 /// Per-key point comparison plus a count comparison for the hash
-/// container (`bigram.db`): a KC HashDB cursor cannot be positioned from
+/// container (`bigram.db`): a KC `HashDB` cursor cannot be positioned from
 /// the empty key (unordered container), so every generated key is looked
 /// up in the real file and its value compared. That direction alone
 /// would miss real rows the generator did not emit; the count assertion
@@ -155,7 +155,7 @@ fn assert_hash_equal(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &Path) 
     let real_count = store.count_raw().expect("count_raw");
     assert_eq!(
         generated.len(),
-        real_count as usize,
+        usize::try_from(real_count).expect("row count fits usize"),
         "{name}: {} real rows vs {} generated — the real file holds rows the generator did not emit",
         real_count,
         generated.len()

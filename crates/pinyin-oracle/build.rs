@@ -30,17 +30,17 @@ fn main() {
     // The bench-prefix relaxation below weakens the frozen pin-ref check by
     // design, so it must be impossible in CI: parity and capture runs link
     // the tkrzw oracle under the full check.
-    if std::env::var_os("CI").is_some() && std::env::var_os("PINYIN_BENCH_DBM").is_some() {
-        panic!("PINYIN_BENCH_DBM must not be set in CI");
-    }
+    assert!(
+        !(std::env::var_os("CI").is_some() && std::env::var_os("PINYIN_BENCH_DBM").is_some()),
+        "PINYIN_BENCH_DBM must not be set in CI"
+    );
     if let Some(value) = std::env::var_os("PINYIN_BENCH_DBM") {
         let value = value.to_string_lossy();
-        if value != "kc" && value != "bdb" {
-            panic!(
-                "PINYIN_BENCH_DBM must be 'kc' or 'bdb'; for the tkrzw parity \
-                 oracle, leave it unset"
-            );
-        }
+        assert!(
+            !(value != "kc" && value != "bdb"),
+            "PINYIN_BENCH_DBM must be 'kc' or 'bdb'; for the tkrzw parity \
+             oracle, leave it unset"
+        );
     }
 
     let prefix = match locate_prefix() {

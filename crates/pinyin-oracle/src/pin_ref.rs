@@ -19,7 +19,9 @@ pub const MANIFEST_FILE_NAME: &str = "oracle-pin.txt";
 
 /// Expected (`pin_ref`, manifest `dbm=` name) for a bench-only oracle prefix:
 /// the frozen ref with its DBM suffix replaced, so the tag, commit and model
-/// stay pinned and only the backend differs. `None` for any name other than
+/// stay pinned and only the backend differs.
+///
+/// `None` for any name other than
 /// `"kc"` and `"bdb"` — the tkrzw oracle is the frozen ref itself and needs
 /// no relaxed form. Shared by `build.rs` and `pin.rs` so the link-time and
 /// run-time checks accept exactly the same strings.

@@ -337,7 +337,9 @@ fn replace_file(path: &Path) -> Result<(), DatagenError> {
 }
 
 /// Writes rows into a fresh tree container at `path` through the raw
-/// (unframed) keyspace — what libpinyin's own DBMs store. KC and Tkrzw
+/// (unframed) keyspace — what libpinyin's own DBMs store.
+///
+/// KC and Tkrzw
 /// write the file's bare keyspace (their `RawReadStore` reads read it
 /// back unchanged); redb and LMDB delegate to the well-known raw table,
 /// the same delegation the raw reads use.
@@ -385,7 +387,7 @@ fn verify_raw<S: RawReadStore>(path: &Path, entries: &Entries) -> Result<(), Dat
             Ok(())
         },
     )?;
-    verify_rows(path, entries, rows)
+    verify_rows(path, entries, &rows)
 }
 
 /// The LMDB bulk path: the same rows [`write_raw_with`] writes, in one
@@ -405,10 +407,11 @@ fn write_raw_lmdb(path: &Path, entries: &Entries) -> Result<(), DatagenError> {
 }
 
 /// Writes rows into a fresh **hash** container at `path` (libpinyin's
-/// `bigram.db` container class — KC HashDB / Tkrzw HashDBM; redb and LMDB
-/// have one container class and open it either way), then verifies
-/// every raw row reads back by point read (a KC HashDB cursor cannot be
-/// positioned from the empty key).
+/// `bigram.db` container class — KC `HashDB` / Tkrzw `HashDBM`; redb and LMDB
+/// have one container class and open it either way).
+///
+/// Then verifies every raw row reads back by point read (a KC `HashDB`
+/// cursor cannot be positioned from the empty key).
 ///
 /// An existing file at `path` is replaced.
 ///
@@ -472,7 +475,7 @@ fn write_hash_lmdb(path: &Path, entries: &Entries) -> Result<(), DatagenError> {
 fn verify_rows(
     path: &Path,
     entries: &Entries,
-    rows: Vec<(Vec<u8>, Vec<u8>)>,
+    rows: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<(), DatagenError> {
     let mut expected = entries.clone();
     expected.sort_by(|a, b| a.0.cmp(&b.0));

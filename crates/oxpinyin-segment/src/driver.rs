@@ -149,7 +149,7 @@ fn emit_run(
 ///
 /// Shared with the `spseg` driver ([`crate::spseg`]), which reuses this
 /// exact line framing (`spseg.cpp:264-267` mirrors `ngseg.cpp:184-186`).
-pub(crate) fn getline_lines(input: &[u8]) -> impl Iterator<Item = &[u8]> {
+pub fn getline_lines(input: &[u8]) -> impl Iterator<Item = &[u8]> {
     let mut rest = input;
     std::iter::from_fn(move || {
         if rest.is_empty() {

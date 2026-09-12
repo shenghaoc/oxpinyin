@@ -100,12 +100,13 @@ fn run(args: &[String], stage: Stage) -> Cli {
     let table = counts.to_table();
     match output {
         Some(path) => fs::write(&path, table.as_bytes())
-            .map_err(|source| format!("cannot write {path:?}: {source}"))?,
+            .map_err(|source| format!("cannot write {}: {source}", path.display()))?,
         None => io::stdout().lock().write_all(table.as_bytes())?,
     }
     Ok(())
 }
 
 fn read(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    fs::read_to_string(path).map_err(|source| format!("cannot read {path:?}: {source}").into())
+    fs::read_to_string(path)
+        .map_err(|source| format!("cannot read {}: {source}", path.display()).into())
 }

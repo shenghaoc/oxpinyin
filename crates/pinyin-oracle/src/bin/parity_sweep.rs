@@ -119,15 +119,17 @@ fn main() -> ExitCode {
     .filter(|name| !dir.join(name).is_file())
     .collect();
     if !missing.is_empty() {
+        let dir = dir.display();
         eprintln!(
-            "missing {missing:?} in {dir:?}; run oxpinyin-datagen compile --out-dir {dir:?}, \
+            "missing {missing:?} in {dir}; run oxpinyin-datagen compile --out-dir {dir}, \
              or point it at a libpinyin data dir of the same backend"
         );
         return ExitCode::from(2);
     }
 
     let dict = SystemDictionary::open(dir).unwrap_or_else(|error| {
-        eprintln!("cannot open system dictionary from {dir:?}: {error}");
+        let dir = dir.display();
+        eprintln!("cannot open system dictionary from {dir}: {error}");
         std::process::exit(2);
     });
     let mut lm = BigramLanguageModel::open(
@@ -135,7 +137,8 @@ fn main() -> ExitCode {
         std::sync::Arc::clone(dict.libraries()),
     )
     .unwrap_or_else(|error| {
-        eprintln!("cannot open bigram model from {dir:?}: {error}");
+        let dir = dir.display();
+        eprintln!("cannot open bigram model from {dir}: {error}");
         std::process::exit(2);
     });
     lm.set_lambda_from_table_conf(&dir.join("table.conf"));
