@@ -9,7 +9,7 @@
 //! the re-anchored window — lives in [`oxpinyin_facade`]'s
 //! `ContextCore`/`InstanceCore`, shared with the zhuyin facade; this file
 //! keeps only the C-facing shell: the context back-pointer, the ABI key
-//! slots, the CString candidate snapshot, and this facade's §9
+//! slots, the `CString` candidate snapshot, and this facade's §9
 //! user-data export machinery.
 
 use std::ffi::CString;

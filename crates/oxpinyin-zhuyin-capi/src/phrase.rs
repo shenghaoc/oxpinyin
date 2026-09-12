@@ -60,7 +60,7 @@ pub extern "C" fn zhuyin_get_n_phrase(instance: *mut ZhuyinInstance, num: *mut G
     if !num.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *num = count as GUint;
+            *num = GUint::try_from(count).unwrap_or(GUint::MAX);
         }
     }
     true

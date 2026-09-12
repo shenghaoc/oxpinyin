@@ -107,33 +107,33 @@ fn full_pinyin_one_key_surface() {
     assert!(pinyin_parse_full_pinyin(
         fixture.instance,
         cstr("ni").as_ptr(),
-        &mut key
+        &raw mut key
     ));
     assert_eq!(key.packed, 43, "initial n(11) | medial i(1) packing");
 
     let mut rendered: *mut pinyin_capi::GChar = std::ptr::null_mut();
     assert!(pinyin_get_pinyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert_eq!(take(rendered).as_deref(), Some("ni"));
     assert!(pinyin_get_zhuyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert_eq!(take(rendered).as_deref(), Some("ㄋㄧ"));
     assert!(pinyin_get_luoma_pinyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert_eq!(take(rendered).as_deref(), Some("ni"));
     assert!(pinyin_get_secondary_zhuyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert_eq!(
         take(rendered).as_deref(),
@@ -146,7 +146,7 @@ fn full_pinyin_one_key_surface() {
     assert!(!pinyin_parse_full_pinyin(
         fixture.instance,
         cstr("nihao").as_ptr(),
-        &mut key
+        &raw mut key
     ));
     assert_eq!(key.packed, 0, "failed full-pinyin parse zeroes the key");
 
@@ -154,27 +154,30 @@ fn full_pinyin_one_key_surface() {
     assert!(!pinyin_parse_full_pinyin(
         fixture.instance,
         cstr("ni'hao").as_ptr(),
-        &mut key
+        &raw mut key
     ));
 
     // Initial-only keys parse and render; is_incomplete answers true.
     assert!(pinyin_parse_full_pinyin(
         fixture.instance,
         cstr("b").as_ptr(),
-        &mut key
+        &raw mut key
     ));
-    assert!(pinyin_get_pinyin_is_incomplete(fixture.instance, &mut key));
+    assert!(pinyin_get_pinyin_is_incomplete(
+        fixture.instance,
+        &raw mut key
+    ));
     assert!(pinyin_get_pinyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert_eq!(take(rendered).as_deref(), Some("b"));
     // Luoma/secondary for an initial-only key are the pin's "None" rows.
     assert!(pinyin_get_luoma_pinyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert_eq!(take(rendered).as_deref(), Some("None"));
 }
@@ -191,20 +194,20 @@ fn full_pinyin_tone_law() {
     assert!(!pinyin_parse_full_pinyin(
         fixture.instance,
         cstr("ni3").as_ptr(),
-        &mut key
+        &raw mut key
     ));
 
     fixture.set_options(USE_TONE);
     assert!(pinyin_parse_full_pinyin(
         fixture.instance,
         cstr("ni3").as_ptr(),
-        &mut key
+        &raw mut key
     ));
     let mut rendered: *mut pinyin_capi::GChar = std::ptr::null_mut();
     assert!(pinyin_get_pinyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert_eq!(take(rendered).as_deref(), Some("ni3"));
 
@@ -212,7 +215,7 @@ fn full_pinyin_tone_law() {
     assert!(pinyin_parse_full_pinyin(
         fixture.instance,
         cstr("ni").as_ptr(),
-        &mut key
+        &raw mut key
     ));
 
     // FORCE_TONE nested inside USE_TONE: the toneless form is refused.
@@ -220,12 +223,12 @@ fn full_pinyin_tone_law() {
     assert!(!pinyin_parse_full_pinyin(
         fixture.instance,
         cstr("ni").as_ptr(),
-        &mut key
+        &raw mut key
     ));
     assert!(pinyin_parse_full_pinyin(
         fixture.instance,
         cstr("ni3").as_ptr(),
-        &mut key
+        &raw mut key
     ));
 
     // FORCE_TONE without USE_TONE is inert (the pin's nesting).
@@ -233,7 +236,7 @@ fn full_pinyin_tone_law() {
     assert!(pinyin_parse_full_pinyin(
         fixture.instance,
         cstr("ni").as_ptr(),
-        &mut key
+        &raw mut key
     ));
 }
 
@@ -249,13 +252,13 @@ fn double_pinyin_one_key_surface() {
     assert!(pinyin_parse_double_pinyin(
         fixture.instance,
         cstr("ni").as_ptr(),
-        &mut key
+        &raw mut key
     ));
     let mut rendered: *mut pinyin_capi::GChar = std::ptr::null_mut();
     assert!(pinyin_get_pinyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert_eq!(take(rendered).as_deref(), Some("ni"));
 
@@ -264,7 +267,7 @@ fn double_pinyin_one_key_surface() {
     assert!(!pinyin_parse_double_pinyin(
         fixture.instance,
         cstr("ni3").as_ptr(),
-        &mut key
+        &raw mut key
     ));
     assert_eq!(key.packed, 43, "prior key untouched on failure");
 
@@ -272,12 +275,12 @@ fn double_pinyin_one_key_surface() {
     assert!(pinyin_parse_double_pinyin(
         fixture.instance,
         cstr("ni3").as_ptr(),
-        &mut key
+        &raw mut key
     ));
     assert!(pinyin_get_pinyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert_eq!(take(rendered).as_deref(), Some("ni3"));
 
@@ -286,12 +289,12 @@ fn double_pinyin_one_key_surface() {
     assert!(!pinyin_parse_double_pinyin(
         fixture.instance,
         cstr("ni").as_ptr(),
-        &mut key
+        &raw mut key
     ));
     assert!(pinyin_parse_double_pinyin(
         fixture.instance,
         cstr("ni3").as_ptr(),
-        &mut key
+        &raw mut key
     ));
 
     // The incomplete single-key probe under PINYIN_INCOMPLETE.
@@ -299,12 +302,12 @@ fn double_pinyin_one_key_surface() {
     assert!(pinyin_parse_double_pinyin(
         fixture.instance,
         cstr("z").as_ptr(),
-        &mut key
+        &raw mut key
     ));
     assert!(pinyin_get_pinyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert_eq!(take(rendered).as_deref(), Some("z"));
 }
@@ -322,34 +325,37 @@ fn chewing_one_key_surface() {
     assert!(pinyin_parse_chewing(
         fixture.instance,
         cstr("18").as_ptr(),
-        &mut key
+        &raw mut key
     ));
     let mut rendered: *mut pinyin_capi::GChar = std::ptr::null_mut();
     assert!(pinyin_get_pinyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert_eq!(take(rendered).as_deref(), Some("ba"));
     assert!(pinyin_get_zhuyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert_eq!(take(rendered).as_deref(), Some("ㄅㄚ"));
-    assert!(!pinyin_get_pinyin_is_incomplete(fixture.instance, &mut key));
+    assert!(!pinyin_get_pinyin_is_incomplete(
+        fixture.instance,
+        &raw mut key
+    ));
 
     // Tone: `3` is a tone key on STANDARD under USE_TONE.
     fixture.set_options(USE_TONE);
     assert!(pinyin_parse_chewing(
         fixture.instance,
         cstr("183").as_ptr(),
-        &mut key
+        &raw mut key
     ));
     assert!(pinyin_get_pinyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert_eq!(take(rendered).as_deref(), Some("ba3"));
 
@@ -359,15 +365,18 @@ fn chewing_one_key_surface() {
     assert!(!pinyin_parse_chewing(
         fixture.instance,
         cstr("1").as_ptr(),
-        &mut key
+        &raw mut key
     ));
     fixture.set_options(1 << 4);
     assert!(pinyin_parse_chewing(
         fixture.instance,
         cstr("1").as_ptr(),
-        &mut key
+        &raw mut key
     ));
-    assert!(pinyin_get_pinyin_is_incomplete(fixture.instance, &mut key));
+    assert!(pinyin_get_pinyin_is_incomplete(
+        fixture.instance,
+        &raw mut key
+    ));
 }
 
 /// `pinyin_get_pinyin_strings`: shengmu/yunmu render separately, NULL
@@ -380,16 +389,16 @@ fn pinyin_strings_contract() {
     assert!(pinyin_parse_full_pinyin(
         fixture.instance,
         cstr("ba").as_ptr(),
-        &mut key
+        &raw mut key
     ));
 
     let mut shengmu: *mut pinyin_capi::GChar = std::ptr::null_mut();
     let mut yunmu: *mut pinyin_capi::GChar = std::ptr::null_mut();
     assert!(pinyin_get_pinyin_strings(
         fixture.instance,
-        &mut key,
-        &mut shengmu,
-        &mut yunmu
+        &raw mut key,
+        &raw mut shengmu,
+        &raw mut yunmu
     ));
     assert_eq!(take(shengmu).as_deref(), Some("b"));
     assert_eq!(take(yunmu).as_deref(), Some("a"));
@@ -398,8 +407,8 @@ fn pinyin_strings_contract() {
     shengmu = std::ptr::null_mut();
     assert!(pinyin_get_pinyin_strings(
         fixture.instance,
-        &mut key,
-        &mut shengmu,
+        &raw mut key,
+        &raw mut shengmu,
         std::ptr::null_mut()
     ));
     assert_eq!(take(shengmu).as_deref(), Some("b"));
@@ -411,8 +420,8 @@ fn pinyin_strings_contract() {
     let kept = sentinel;
     assert!(!pinyin_get_pinyin_strings(
         fixture.instance,
-        &mut key,
-        &mut sentinel,
+        &raw mut key,
+        &raw mut sentinel,
         std::ptr::null_mut()
     ));
     assert_eq!(sentinel, kept, "out-param untouched on the failing guard");
@@ -421,14 +430,14 @@ fn pinyin_strings_contract() {
     let mut rendered: *mut pinyin_capi::GChar = std::ptr::dangling_mut::<pinyin_capi::GChar>();
     assert!(!pinyin_get_pinyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert!(rendered.is_null());
     assert!(!pinyin_get_zhuyin_string(
         fixture.instance,
-        &mut key,
-        &mut rendered
+        &raw mut key,
+        &raw mut rendered
     ));
     assert!(rendered.is_null());
 }
@@ -441,7 +450,10 @@ fn toned_initial_only_key_is_incomplete_without_aborting() {
     let fixture = Fixture::new("keys-toned-incomplete");
     // middle 0, final 0, tone 3.
     let mut key = ChewingKey { packed: 3 << 12 };
-    assert!(pinyin_get_pinyin_is_incomplete(fixture.instance, &mut key));
+    assert!(pinyin_get_pinyin_is_incomplete(
+        fixture.instance,
+        &raw mut key
+    ));
 }
 
 /// `pinyin_get_context` hands back the allocating context handle; null

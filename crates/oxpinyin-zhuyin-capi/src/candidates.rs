@@ -34,7 +34,7 @@ pub extern "C" fn zhuyin_get_n_candidate(instance: *mut ZhuyinInstance, num: *mu
     if !num.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *num = inst.candidates.len() as GUint;
+            *num = GUint::try_from(inst.candidates.len()).unwrap_or(GUint::MAX);
         }
     }
     true
@@ -61,25 +61,22 @@ pub extern "C" fn zhuyin_get_candidate(
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     let idx = index as usize;
-    match inst.candidates.get(idx) {
-        Some(cand) => {
-            if !candidate.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *candidate = candidate_ptr(cand);
-                }
+    if let Some(cand) = inst.candidates.get(idx) {
+        if !candidate.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *candidate = candidate_ptr(cand);
             }
-            true
         }
-        None => {
-            if !candidate.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *candidate = std::ptr::null_mut();
-                }
+        true
+    } else {
+        if !candidate.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *candidate = std::ptr::null_mut();
             }
-            false
         }
+        false
     }
 }
 
@@ -213,7 +210,7 @@ pub extern "C" fn zhuyin_choose_candidate(
             }
         }
     };
-    end as c_int
+    c_int::try_from(end).unwrap_or(c_int::MAX)
 }
 
 /// Clear the constraint a prior choose pinned, by offset.
@@ -232,11 +229,9 @@ pub extern "C" fn zhuyin_clear_constraint(instance: *mut ZhuyinInstance, offset:
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    let session_offset = if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+    let session_offset = inst.core.zhuyin_parse.as_ref().map_or(offset, |parse| {
         oxpinyin_facade::zhuyin_session_offset(parse, offset)
-    } else {
-        offset
-    };
+    });
     inst.core.session.clear_constraint(session_offset)
 }
 
@@ -268,7 +263,7 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
 /// lookup offset, the composition offset, or
 /// [`oxpinyin_facade::BEFORE_CURSOR_ANCHOR`]), so each row's absolute span
 /// start is `anchor + span_start()`.
-pub(crate) fn snapshot_candidates(
+pub fn snapshot_candidates(
     inst: &mut CapiInstance,
     window: &oxpinyin_engine::CandidateList,
     before_cursor: bool,
@@ -288,21 +283,17 @@ pub(crate) fn snapshot_candidates(
         if cand.kind() == CandidateKind::Fallback {
             continue;
         }
-        let text = match std::ffi::CString::new(cand.text().as_bytes()) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Ok(text) = std::ffi::CString::new(cand.text().as_bytes()) else {
+            continue;
         };
-        let consumed_bytes = if let Some(parse) = zhuyin_parse.as_ref() {
-            oxpinyin_facade::zhuyin_original_offset(parse, cand.consumed_bytes())
-        } else {
-            cand.consumed_bytes()
-        };
+        let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
+            || cand.consumed_bytes(),
+            |parse| oxpinyin_facade::zhuyin_original_offset(parse, cand.consumed_bytes()),
+        );
         let span_begin_session = anchor.saturating_add(cand.span_start());
-        let span_begin = if let Some(parse) = zhuyin_parse.as_ref() {
+        let span_begin = zhuyin_parse.as_ref().map_or(span_begin_session, |parse| {
             oxpinyin_facade::zhuyin_original_begin(parse, span_begin_session)
-        } else {
-            span_begin_session
-        };
+        });
         // Before-cursor law: only candidates whose span ENDS at the requested
         // original-offset. At offset 0 no span ends there (nothing precedes
         // the first key), so the before-cursor window is empty — not the whole

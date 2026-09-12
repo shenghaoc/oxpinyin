@@ -32,7 +32,7 @@ pub unsafe fn cstr_to_string(ptr: *const c_char) -> String {
 /// because the pin's `g_return_val_if_fail(num_of_chars == ucs4_len,
 /// FALSE)` gate (`pinyin.cpp:1450-1452`) rejects exactly the inputs a
 /// lossy conversion would paper over.
-pub(crate) fn cstr_to_strict(ptr: *const c_char) -> Option<String> {
+pub fn cstr_to_strict(ptr: *const c_char) -> Option<String> {
     if ptr.is_null() {
         return None;
     }
@@ -150,12 +150,12 @@ pub fn owned_cstr_list(items: &[impl AsRef<str>]) -> *mut *mut c_char {
     arr
 }
 
-/// Logs `message` through GLib at warning level under the `libpinyin`
+/// Logs `message` through `GLib` at warning level under the `libpinyin`
 /// domain. The library's only diagnostic channel: the C ABI's frozen
 /// return shapes (`false` / NULL) carry no reason, and glib is already
 /// linked for the ABI's `GArray`s. A message with an interior NUL is
 /// dropped rather than truncated.
-pub(crate) fn log_warning(message: &str) {
+pub fn log_warning(message: &str) {
     let Ok(message) = CString::new(message) else {
         return;
     };
