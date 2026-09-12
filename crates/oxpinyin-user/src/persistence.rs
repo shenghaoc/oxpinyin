@@ -7,10 +7,10 @@
 //!
 //! * load — `check_format` (user.conf conformance, the open counter,
 //!   `_clean_user_files` on a non-conform profile), then the bigram
-//!   hash, the USER_FILE chunk stores (`user.bin`, `addon.bin`,
-//!   `network.bin`), and the SYSTEM_FILE `.dbin` logs replayed onto the
+//!   hash, the `USER_FILE` chunk stores (`user.bin`, `addon.bin`,
+//!   `network.bin`), and the `SYSTEM_FILE` `.dbin` logs replayed onto the
 //!   original system chunks. The two index DBMs (`user_pinyin_index.bin`,
-//!   `user_phrase_index.bin`) are pure derivatives of the USER_FILE
+//!   `user_phrase_index.bin`) are pure derivatives of the `USER_FILE`
 //!   items — every index row was added by the same `add_index` walk that
 //!   inserted the item — so they are rebuilt at save and not read.
 //! * save — the pin's `_write_files` + `_rename_files`: every file is
@@ -63,9 +63,11 @@ pub struct SystemLibrary {
     pub items: BTreeMap<u32, ChunkItem>,
 }
 
-/// Builds the SYSTEM_FILE libraries' originals from the runtime's
+/// Builds the `SYSTEM_FILE` libraries' originals from the runtime's
 /// opened chunks — the `.dbin` diff base, and the conformance source
-/// for replaying a profile's logs. Items whose UCS-4 text does not
+/// for replaying a profile's logs.
+///
+/// Items whose UCS-4 text does not
 /// decode are skipped (a malformed entry, never a panic).
 #[must_use]
 pub fn system_originals(libraries: &PhraseLibraries) -> BTreeMap<u8, SystemLibrary> {
@@ -115,9 +117,9 @@ pub fn system_originals(libraries: &PhraseLibraries) -> BTreeMap<u8, SystemLibra
 pub struct UserState {
     /// The user bigram by previous token.
     pub bigram: BTreeMap<u32, Gram>,
-    /// The USER_FILE sub-indexes (5, 6, 7) by nibble, items by slot.
+    /// The `USER_FILE` sub-indexes (5, 6, 7) by nibble, items by slot.
     pub libraries: BTreeMap<u8, BTreeMap<u32, ChunkItem>>,
-    /// The SYSTEM_FILE libraries' touched items by nibble and slot:
+    /// The `SYSTEM_FILE` libraries' touched items by nibble and slot:
     /// `Some(item)` modifies the original, `None` removes it. A slot
     /// absent here still answers its original item.
     pub system_overrides: BTreeMap<u8, BTreeMap<u32, Option<ChunkItem>>>,
@@ -342,7 +344,7 @@ fn load_bigram(dir: &Path, loaded: &mut Loaded) {
     remove_dbm_sidecars(dir, &path);
 }
 
-/// The USER_FILE chunk stores.
+/// The `USER_FILE` chunk stores.
 fn load_libraries(dir: &Path, loaded: &mut Loaded) {
     for &(nibble, name) in USER_LIBRARY_FILES {
         let path = dir.join(name);
@@ -418,12 +420,11 @@ fn load_logs(dir: &Path, originals: &BTreeMap<u8, SystemLibrary>, loaded: &mut L
         let mut overrides: BTreeMap<u32, Option<ChunkItem>> = BTreeMap::new();
         let current =
             |overrides: &BTreeMap<u32, Option<ChunkItem>>, slot: u32| -> Option<ChunkItem> {
-                match overrides.get(&slot) {
-                    Some(item) => item.clone(),
-                    None => original
+                overrides.get(&slot).cloned().flatten().or_else(|| {
+                    original
                         .and_then(|library| library.items.get(&slot))
-                        .cloned(),
-                }
+                        .cloned()
+                })
             };
 
         for record in records {
@@ -489,8 +490,8 @@ fn load_logs(dir: &Path, originals: &BTreeMap<u8, SystemLibrary>, loaded: &mut L
                 } => {
                     // The header must land on the current total; a
                     // mismatch is merge's failure return.
-                    let now =
-                        system_new_total(original.unwrap_or(&SystemLibrary::default()), &overrides);
+                    let fallback = SystemLibrary::default();
+                    let now = system_new_total(original.unwrap_or(&fallback), &overrides);
                     if now != old_total {
                         loaded
                             .skipped
@@ -515,9 +516,11 @@ fn load_logs(dir: &Path, originals: &BTreeMap<u8, SystemLibrary>, loaded: &mut L
 }
 
 /// The library's new `total_freq` — the original plus the overrides'
-/// deltas, `m_total_freq`'s incremental arithmetic recomputed
-/// deterministically (saturating; upstream drops a delta that would
-/// overflow instead, an edge no training run reaches).
+/// deltas.
+///
+/// `m_total_freq`'s incremental arithmetic recomputed deterministically
+/// (saturating; upstream drops a delta that would overflow instead, an
+/// edge no training run reaches).
 #[must_use]
 pub fn system_new_total(
     original: &SystemLibrary,
@@ -676,6 +679,10 @@ pub fn save(
 /// The minimal log a save leaves for one system library — the header
 /// record plus a record per changed slot, in ascending token walk
 /// (`SubPhraseIndex::diff`'s order).
+///
+/// # Errors
+///
+/// Returns the store's error when a diff walk or record append fails.
 pub fn diff_records(
     nibble: u8,
     original: &SystemLibrary,
@@ -696,10 +703,10 @@ pub fn diff_records(
     slots.dedup();
 
     for slot in slots {
-        let current = match overrides.get(&slot) {
-            Some(item) => item.as_ref(),
-            None => original.items.get(&slot),
-        };
+        let current = overrides
+            .get(&slot)
+            .and_then(|item| item.as_ref())
+            .or_else(|| original.items.get(&slot));
         let token = token_of(nibble, slot);
         match (original.items.get(&slot), current) {
             (Some(old), Some(new)) => {
@@ -1105,7 +1112,7 @@ mod tests {
                 .state
                 .system_overrides
                 .get(&1)
-                .is_none_or(|slots| slots.is_empty())
+                .is_none_or(std::collections::BTreeMap::is_empty)
         );
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
@@ -1331,6 +1338,7 @@ mod tests {
     /// Every row of every DBM and every chunk payload in `dir`, as one
     /// canonical hex dump sorted by key — the golden's exact form.
     fn dump_user_dir(dir: &Path) -> String {
+        use std::fmt::Write as _;
         let mut out = String::new();
         for dbm in [UserDbm::Bigram, UserDbm::PinyinIndex, UserDbm::PhraseIndex] {
             let path = dir.join(dbm.file_name());
@@ -1351,9 +1359,9 @@ mod tests {
                 )
                 .expect("walk");
             rows.sort();
-            out.push_str(&format!("## {} ({} rows)\n", dbm.stem(), rows.len()));
+            let _ = writeln!(out, "## {} ({} rows)", dbm.stem(), rows.len());
             for (k, v) in rows {
-                out.push_str(&format!("  {} = {}\n", hex(&k), hex(&v)));
+                let _ = writeln!(out, "  {} = {}", hex(&k), hex(&v));
             }
         }
         for name in [
@@ -1367,11 +1375,12 @@ mod tests {
         ] {
             let bytes = std::fs::read(dir.join(name)).expect("chunk file");
             let payload = read_chunk_payload(&bytes).expect("frame");
-            out.push_str(&format!(
-                "## {name} ({} payload bytes)\n  {}\n",
+            let _ = writeln!(
+                out,
+                "## {name} ({} payload bytes)\n  {}",
                 payload.len(),
                 hex(payload)
-            ));
+            );
         }
         out
     }

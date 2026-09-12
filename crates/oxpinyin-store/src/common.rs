@@ -24,7 +24,7 @@ use crate::validate_table_name;
 /// another's, so every table is a contiguous run of the ordered keyspace
 /// whose internal order is the caller's key order.
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-pub(crate) const SEPARATOR: u8 = 0;
+pub const SEPARATOR: u8 = 0;
 
 /// `table || 0x00 || key`. The caller has validated `table`.
 #[cfg(feature = "kyotocabinet")]
@@ -51,7 +51,7 @@ pub(crate) fn prefix(table: &str) -> Vec<u8> {
 ///
 /// [`StoreError::InvalidInput`] for an invalid table name.
 #[cfg(feature = "tkrzw")]
-pub(crate) fn table_prefix(table: &str) -> Result<Vec<u8>, StoreError> {
+pub fn table_prefix(table: &str) -> Result<Vec<u8>, StoreError> {
     validate_table_name(table)?;
     let mut prefix = Vec::with_capacity(table.len() + 1);
     prefix.extend_from_slice(table.as_bytes());
@@ -61,7 +61,7 @@ pub(crate) fn table_prefix(table: &str) -> Result<Vec<u8>, StoreError> {
 
 /// `prefix || key` for a prefix from [`table_prefix`].
 #[cfg(feature = "tkrzw")]
-pub(crate) fn framed(prefix: &[u8], key: &[u8]) -> Vec<u8> {
+pub fn framed(prefix: &[u8], key: &[u8]) -> Vec<u8> {
     let mut framed = Vec::with_capacity(prefix.len() + key.len());
     framed.extend_from_slice(prefix);
     framed.extend_from_slice(key);
@@ -82,7 +82,7 @@ pub(crate) fn unframe<'a>(prefix: &[u8], framed: &'a [u8]) -> Option<&'a [u8]> {
 /// (`empty_bounds_never_match_or_error`). LMDB normalises the same
 /// bounds for heed's range API instead of testing keys one by one.
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-pub(crate) fn in_bounds(key: &[u8], lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> bool {
+pub fn in_bounds(key: &[u8], lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> bool {
     let above_lo = match lo {
         Bound::Unbounded => true,
         Bound::Included(bound) => key >= bound,
@@ -102,7 +102,7 @@ pub(crate) fn in_bounds(key: &[u8], lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> bool 
 ///
 /// [`StoreError::InvalidInput`] when the path contains a NUL byte.
 #[cfg(any(feature = "tkrzw", feature = "lmdb"))]
-pub(crate) fn validate_path(path: &Path) -> Result<(), StoreError> {
+pub fn validate_path(path: &Path) -> Result<(), StoreError> {
     if path.as_os_str().as_encoded_bytes().contains(&0) {
         return Err(StoreError::InvalidInput("path contains NUL"));
     }

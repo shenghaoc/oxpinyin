@@ -302,7 +302,7 @@ pub trait WriteStore: ReadStore {
     /// Open or create a **hash** store file in read-write mode — the
     /// write half of [`RawReadStore::open_hash_read_only`].
     ///
-    /// libpinyin's `bigram.db` is a KC **HashDB** / Tkrzw **HashDBM**
+    /// libpinyin's `bigram.db` is a KC **`HashDB`** / Tkrzw **`HashDBM`**
     /// while its other DBMs are tree containers; datagen writes the
     /// bigram through this constructor so the reader's hash open finds a
     /// hash file. The default implementation delegates to
@@ -451,6 +451,10 @@ pub trait WriteStore: ReadStore {
 /// name since those backends do not have a flat-keyspace concept.
 pub trait RawReadStore: ReadStore {
     /// Read a single raw key. Returns `None` if absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend read fails.
     fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Visit raw (unframed) rows whose keys fall in `[lo, hi]`, ascending
@@ -462,6 +466,11 @@ pub trait RawReadStore: ReadStore {
     /// Backends without a flat keyspace (redb, LMDB) delegate to the
     /// well-known [`RAW_TABLE`], the same delegation [`Self::get_raw`]
     /// uses; KC and Tkrzw walk the file's real keyspace.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend walk fails; a visitor
+    /// error aborts the walk and propagates.
     fn range_raw(
         &self,
         lo: Bound<&[u8]>,
@@ -474,7 +483,7 @@ pub trait RawReadStore: ReadStore {
     /// The number of raw (unframed) rows — the count half of the raw
     /// keyspace [`RawReadStore::range_raw`] walks. The hash containers
     /// (`bigram.db`) are unordered on some backends, so a completeness
-    /// check that cannot walk them (a KC HashDB cursor has no ordered
+    /// check that cannot walk them (a KC `HashDB` cursor has no ordered
     /// first position) compares per-key values through [`Self::get_raw`]
     /// and closes the reverse direction through this count.
     ///
@@ -495,11 +504,15 @@ pub trait RawReadStore: ReadStore {
 
     /// Opens a hash-DB file in read-only mode (for `bigram.db`).
     ///
-    /// libpinyin's `bigram.db` uses KC **HashDB** / Tkrzw **HashDBM**,
+    /// libpinyin's `bigram.db` uses KC **`HashDB`** / Tkrzw **`HashDBM`**,
     /// while the other DBM files use TreeDB/TreeDBM. The default
     /// implementation delegates to [`ReadStore::open_read_only`] (correct
     /// for redb and LMDB, which have no hash/tree distinction). KC and
     /// Tkrzw override this to select the hash container class.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend open fails.
     fn open_hash_read_only(path: &std::path::Path) -> Result<Self, StoreError>
     where
         Self: Sized,
@@ -520,6 +533,10 @@ pub trait RawReadStore: ReadStore {
     /// genuine hash files (`ngram_tkrzwdb.cpp:48-63`), and redb/LMDB have
     /// no hash/tree/snapshot distinction, so the default — the hash
     /// container — is correct for all three.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend open fails.
     fn open_user_bigram(path: &std::path::Path) -> Result<Self, StoreError>
     where
         Self: Sized,
@@ -533,7 +550,7 @@ pub trait RawReadStore: ReadStore {
 pub(crate) fn sibling_temp(path: &Path) -> std::path::PathBuf {
     let mut name = path
         .file_name()
-        .map(|n| n.to_os_string())
+        .map(std::ffi::OsStr::to_os_string)
         .unwrap_or_default();
     name.push(".tmp");
     path.with_file_name(name)
@@ -879,7 +896,7 @@ pub type DefaultStore = RedbStore;
 /// extension is naming, not detection.
 #[cfg(feature = "kyotocabinet")]
 pub const DEFAULT_STORE_EXT: &str = "kct";
-/// File extension for [`DefaultStore`]'s native tables (tkrzw TreeDBM).
+/// File extension for [`DefaultStore`]'s native tables (tkrzw `TreeDBM`).
 #[cfg(feature = "tkrzw")]
 pub const DEFAULT_STORE_EXT: &str = "tkt";
 /// File extension for [`DefaultStore`]'s native tables (LMDB).
@@ -1964,11 +1981,15 @@ mod tests {
         fn expected_value(i: u32) -> [u8; 32] {
             let mut value = [0u8; 32];
             for (j, byte) in value.iter_mut().enumerate() {
-                *byte = i.wrapping_add(j as u32) as u8;
+                *byte = u8::try_from(
+                    i.wrapping_add(u32::try_from(j).expect("loop index fits u32")) & 0xFF,
+                )
+                .expect("masked byte fits u8");
             }
             value
         }
 
+        const RECORDS: u32 = 10_000;
         let path = std::env::temp_dir().join(format!(
             "oxpinyin-store-tkrzw-scan-many-{}.tkrzw",
             std::process::id(),
@@ -1977,7 +1998,6 @@ mod tests {
         let _cleanup = RemoveTkrzw(path.clone());
         let store = TkrzwStore::create(&path).unwrap();
 
-        const RECORDS: u32 = 10_000;
         store
             .write(|txn| {
                 for i in 0..RECORDS {

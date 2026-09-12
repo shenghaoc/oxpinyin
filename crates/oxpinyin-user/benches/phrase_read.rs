@@ -40,7 +40,10 @@ fn seed(store: &mut UserStore) -> Vec<Token> {
         for j in 0..PRONUNCIATIONS_PER_PHRASE {
             // Same text, distinct key sequence: one token, 16 pronunciations.
             let keys: Vec<u16> = (0..chars)
-                .map(|k| 1 + ((i as usize + k) % 200) as u16 + u16::from(k == 0) * j)
+                .map(|k| {
+                    u16::try_from(1 + (i as usize + k) % 200).unwrap_or(u16::MAX)
+                        + u16::from(k == 0) * j
+                })
                 .collect();
             token = store.add_phrase(&text, &keys, Some(3)).expect("add_phrase");
         }

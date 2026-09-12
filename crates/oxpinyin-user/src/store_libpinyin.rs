@@ -53,7 +53,7 @@ use crate::store::{
 /// original system chunks (the `.dbin` diff base), the conformance
 /// triple and the open counter `pinyin_save` re-writes.
 #[derive(Clone, Debug)]
-pub(crate) struct Target {
+pub struct Target {
     /// The user directory holding the profile.
     pub(crate) dir: PathBuf,
     /// The system libraries by nibble, as loaded at open.
@@ -160,12 +160,11 @@ impl GenericUserStore<DefaultStore> {
         // created up front; on a lost race it is the loser's own fresh
         // dir, removed here, never the winner's.
         let scratch_dir = create_scratch_dir(user_dir).map_err(UserStoreError::Io)?;
-        let lease = match registry::acquire_scratch(&token, scratch_dir.clone()) {
-            Some(lease) => Arc::new(lease),
-            None => {
-                let _ = std::fs::remove_dir_all(&scratch_dir);
-                return Err(UserStoreError::AlreadyOpen);
-            }
+        let lease = if let Some(lease) = registry::acquire_scratch(&token, scratch_dir.clone()) {
+            Arc::new(lease)
+        } else {
+            let _ = std::fs::remove_dir_all(&scratch_dir);
+            return Err(UserStoreError::AlreadyOpen);
         };
         let lease = Some(lease);
 
@@ -174,10 +173,10 @@ impl GenericUserStore<DefaultStore> {
             // Upstream prints its own note when check_format cleans the
             // profile (`table_info.cpp` load failure, `user.conf` open);
             // this is ours, for the same operator-facing reason.
+            let user_dir = user_dir.display();
             eprintln!(
-                "oxpinyin: non-conforming user profile wiped (user dir {:?}, \
-                 see docs/findings/compatibility-policy.md)",
-                user_dir
+                "oxpinyin: non-conforming user profile wiped (user dir {user_dir}, \
+                 see docs/findings/compatibility-policy.md)"
             );
         }
 
@@ -349,7 +348,7 @@ fn seed_txn(
 /// Reads the session values back into the persistence shape — the
 /// export half of the value mapping, [`GenericUserStore::save`]'s
 /// libpinyin branch.
-pub(crate) fn export_state<S: WriteStore>(
+pub fn export_state<S: WriteStore>(
     store: &GenericUserStore<S>,
     originals: &BTreeMap<u8, SystemLibrary>,
 ) -> Result<UserState, UserStoreError> {
@@ -514,7 +513,8 @@ fn pinyin_keys_to_packed(ids: &[crate::phrase::PinyinKey]) -> Option<Vec<u16>> {
     ids.iter()
         .map(|&id| {
             let syllable = oxpinyin_core::SyllableKey::from_index(usize::from(id))?;
-            oxpinyin_core::ChewingKey::from_pinyin(syllable.text()).map(|key| key.to_packed())
+            oxpinyin_core::ChewingKey::from_pinyin(syllable.text())
+                .map(oxpinyin_core::ChewingKey::to_packed)
         })
         .collect()
 }
@@ -640,7 +640,11 @@ mod tests {
             let item = user_items
                 .get(&(token & crate::phrase::PHRASE_MASK))
                 .expect("item");
-            assert_eq!(item.unigram, crate::phrase::DEFAULT_PHRASE_COUNT as u32 * 3);
+            assert_eq!(
+                item.unigram,
+                u32::try_from(crate::phrase::DEFAULT_PHRASE_COUNT * 3)
+                    .expect("small default count")
+            );
             let overrides = state.system_overrides.get(&1).expect("overrides");
             let modified = overrides
                 .get(&(0x0100_0001 & crate::phrase::PHRASE_MASK))
@@ -731,7 +735,9 @@ mod tests {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("oxpinyin-user");
-        let parent = token.parent().unwrap_or(std::path::Path::new("/tmp"));
+        let parent = token
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("/tmp"));
         let leftovers: Vec<_> = std::fs::read_dir(parent)
             .map(|entries| {
                 entries
