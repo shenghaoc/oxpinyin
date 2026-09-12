@@ -88,8 +88,10 @@ a rule or a plan so that nothing is silently re-frozen.
 1. THE predicted-row order (R1) SHALL follow the defined text-ascending
    order, per Requirement 3's bounded exception; the pin's order SHALL be
    recorded as a constant, never a target.
-2. THE BerkeleyDB backend SHALL remain SHELVED until a consumer needs
-   it.
+2. THE BerkeleyDB backend SHALL interoperate with same-backend
+   libpinyin user data per the goal amendment (task 10, landed
+   2026-09-12: the fifth store peer, non-default, libdb 5.3 only —
+   `docs/findings/berkeleydb-backend.md`).
 3. THE per-backend user-data rule SHALL stay attributed in
    `docs/findings/compatibility-policy.md` (goal amendment, 2026-09-09):
    same-backend pairs interoperate seamlessly in both directions (task

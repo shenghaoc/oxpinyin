@@ -1,11 +1,16 @@
 # BerkeleyDB compat — the open items Phase 2 inherits
 
-> **Status: OBSOLETE.** The libpinyin compat layer as a whole (Berkeley
-> DB, Kyoto Cabinet, tkrzw, and its detection/loader machinery) has been
-> removed under the corrected architecture: oxpinyin reads only its own
-> peer-backend tables (KC, redb, LMDB, tkrzw) and does not read
-> libpinyin's own DBM files. This document is preserved as a historical
-> record of the shelved Phase 1 research only.
+> **Status: resolved 2026-09-12.** The OBSOLETE banner below described
+> the interim architecture in which no backend read libpinyin's own
+> files; P6 (2026-09-02) and task 9 (2026-09-09) reversed that, and the
+> BerkeleyDB backend landed on top of them. Every open item in this
+> checklist is answered by `docs/findings/berkeleydb-backend.md`:
+> the system data half reads through the raw seams (§1's `$(libdir)`
+> path is the oracle's install layout), §2's memcmp order is asserted
+> by the real-file walks and the shared key-ordering suite, §3's codec
+> simplification is moot (the native profile keeps its own codec; the
+> libpinyin formats live at the persistence seam), §4's shim is
+> hand-written bindgen over the system db.h, and §5's decision held.
 
 Date: 2026-08-28 · Status: **structured hand-off; one item awaiting a
 maintainer decision** · Branch: `claude/pr4-berkeleydb-compat`.

@@ -60,9 +60,9 @@ tools/packaging/install.sh              — fills @prefix@/@libdir@ into the .pc
   `table.conf` (λ), `punct` and the addon DBM pair. The caller supplies
   the directory (`StoragePaths`); no distro layout is auto-detected.
 - The DBM file names follow the compiled-in backend family: libpinyin's
-  own (`pinyin_index.bin`, `bigram.db`, …) on Kyoto Cabinet and tkrzw,
-  so an unmodified install's `data/` opens as is; `<stem>.<ext>` on redb
-  and LMDB, which no libpinyin build writes. On every backend the
+  own (`pinyin_index.bin`, `bigram.db`, …) on Kyoto Cabinet, tkrzw and
+  Berkeley DB, so an unmodified install's `data/` opens as is;
+  `<stem>.<ext>` on redb and LMDB, which no libpinyin build writes. On every backend the
   directory `oxpinyin-datagen compile` writes opens the same way.
 - Nothing is converted or scanned at open — a handle plus a point read
   per file, chunk files mmapped and checksummed. There is no
@@ -104,8 +104,9 @@ Fresh-start applies only across a genuine KV-backend change.
 
 ## Out of scope / shelved
 
-- The BerkeleyDB backend — SHELVED
-  (`docs/findings/berkeleydb-compat-phase1.md`); the incomplete
-  implementation lives on `feat/bdb-backend`.
+- ~~The BerkeleyDB backend — SHELVED~~ Landed 2026-09-12 as the fifth
+  store peer (`docs/findings/berkeleydb-backend.md`); the shelved
+  first cut on `feat/bdb-backend` supplied its FFI shape and
+  byte-layout evidence.
 
 **Reference:** [libpinyin wiki](https://github.com/libpinyin/libpinyin/wiki) — the n-gram model format, internals and multiple-dictionary layout are documented there; the pinned source (`074a2219`) is the authority where the two differ.

@@ -6,7 +6,8 @@ Status snapshot. The binary identity, the direct data path (P6) and
 task 9 — same-backend user files read and written seamlessly (maintainer
 ruling 2026-09-09, `docs/findings/compatibility-policy.md` goal
 amendment; landed 2026-09-09) — are merged and measured on three distro
-backends; the BerkeleyDB route remains shelved.
+backends; task 10, the BerkeleyDB backend, landed 2026-09-12
+(`docs/findings/berkeleydb-backend.md`).
 
 ## Tasks
 
@@ -57,6 +58,13 @@ backends; the BerkeleyDB route remains shelved.
   (`docs/findings/user-store.md` §11).
   _Requirements: 2, 3, 4_
 
-- [ ] 10. BerkeleyDB backend — SHELVED; revive only if a consumer
-  requires it (incomplete implementation on `feat/bdb-backend`).
+- [x] 10. BerkeleyDB backend — the fifth store peer (`--features bdb`),
+  un-shelved 2026-09-12 on the consumer ask; the system `bigram.db` is
+  itself BDB, so every session on a BerkeleyDB distro opens it through
+  this backend. Verified in Debian-testing and Fedora-44 containers
+  against a pin-built `--with-dbm=BerkeleyDB` oracle: real-file walks,
+  both round-trip directions, sanitizers
+  (`docs/findings/berkeleydb-backend.md`, which also records the
+  pre-existing `user_driver.c` regression it found in the differential
+  harness — broken for every backend, not this one).
   _Requirements: 2_

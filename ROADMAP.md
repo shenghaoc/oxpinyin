@@ -111,8 +111,9 @@ row 30, the pinyin facade's chewing batch `FORCE_TONE` seam. `README.md`
 states Stage 1 the same way.
 
 Parked, not open: the W12 live-typing behaviours the parity sequence does
-not exercise (`docs/findings/live-typing.md`, no pin gates) and the
-shelved BerkeleyDB backend (drop-in task 10).
+not exercise (`docs/findings/live-typing.md`, no pin gates). The
+BerkeleyDB backend (drop-in task 10) landed 2026-09-12 and is no longer
+parked.
 
 ### Workstream notes (recorded as decisions settle)
 
@@ -230,9 +231,13 @@ shelved BerkeleyDB backend (drop-in task 10).
   readers it uses for its own output (W15 note). Task 9, learned user
   data read and written in libpinyin's own user-file format, landed
   2026-09-09 (`docs/findings/user-store.md` §11); task 10, the
-  BerkeleyDB backend, is shelved until a consumer requires it. The spec's
-  design and requirements were brought to the P6 architecture and the
-  79-symbol surface on 2026-09-12.
+  BerkeleyDB backend, landed 2026-09-12 on the consumer ask as the fifth
+  store peer — non-default, libdb 5.3 only, verified against a
+  `--with-dbm=BerkeleyDB` oracle in Debian and Fedora containers
+  (`docs/findings/berkeleydb-backend.md`, which also records the
+  `user_driver.c` regression it found in the round-trip harness). The
+  spec's design and requirements were brought to the P6 architecture and
+  the 79-symbol surface on 2026-09-12.
 
   Stage-2 baselines were measured while Stage-1 parity work continued —
   those numbers are prerequisites for improving against them. Parity
