@@ -297,7 +297,17 @@ impl Db {
                 return Ok(None);
             }
             if code == sys::DB_BUFFER_SMALL {
+                // The same self-contradiction guard `Cursor::get` carries:
+                // libdb reports the size it needed, so the buffer grows and
+                // the retry fits. A `DB_BUFFER_SMALL` whose reported size
+                // the buffer already covers would otherwise spin forever.
+                let was = buf.len();
                 grow(&mut buf, value_dbt.size);
+                if buf.len() == was {
+                    return Err(StoreError::Backend(
+                        "DB->get keeps returning DB_BUFFER_SMALL with a buffer it says fits".into(),
+                    ));
+                }
                 continue;
             }
             check(code, "DB->get")?;
