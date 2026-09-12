@@ -25,7 +25,7 @@ recipe, per artifact".
 
 | Document | Subject |
 | --- | --- |
-| [`ci-perf-size-gate-proposal-2026-09-09`](ci-perf-size-gate-proposal-2026-09-09.md) | Perf-and-size CI gate — proposal (2026-09-09) |
+| [`ci-perf-size-gate-proposal-2026-09-09`](ci-perf-size-gate-proposal-2026-09-09.md) | Perf and size in CI — PR gate **rejected**, nightly snapshot series adopted in principle (2026-09-12) |
 | [`perf-alloc-2026-08`](perf-alloc-2026-08.md) | Stage-2 allocation pass — W8 candidate-cycle (2026-08-19) |
 | [`perf-baseline-2026-08`](perf-baseline-2026-08.md) | W8 performance baseline — oracle vs installed oxpinyin (2026-08) |
 | [`perf-baseline-kc-2026-09`](perf-baseline-kc-2026-09.md) | Stage-2 Performance Baseline — KC Backend (2026-09) |
