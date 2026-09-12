@@ -18,14 +18,14 @@
 //! ```
 //!
 //! Each scenario runs in a child process (a re-exec of this binary) so
-//! VmHWM measures that scenario alone; the child baseline is common to
+//! `VmHWM` measures that scenario alone; the child baseline is common to
 //! every scenario.  Training pairs derive deterministically from the
 //! seed, and every scenario body is one generic function over
 //! `S: WriteStore` — the peer set differs only in `S`.
 //!
 //! The point of interest: the decode-time count memo should flatten the
-//! raw storage delta measured by `backend_bench` (point_get /
-//! prefix_scan in `crates/oxpinyin-store/examples/backend_bench.rs`).
+//! raw storage delta measured by `backend_bench` (`point_get` /
+//! `prefix_scan` in `crates/oxpinyin-store/examples/backend_bench.rs`).
 //! Compare `first_query_ms` and `us_per_cached_query` against
 //! `backend_bench`'s `us_per_get`.
 //!
