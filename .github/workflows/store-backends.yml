@@ -9,35 +9,41 @@ name: Store backends
 # — so cross-peer equivalence is proven by running the SAME test
 # suite through four separate builds, one per peer.
 #
-# Four jobs:
-#   - store-features is a matrix over the four peer backends. Each child
+# Five jobs:
+#   - store-features is a matrix over the five peer backends. Each child
 #     runs the workspace's backend-relevant crates (everything but the
 #     seven backend-independent training crates — see the test step)
 #     under exactly ONE peer, on its
-#     own runner, so the four sweeps run in PARALLEL (fail-fast: false,
-#     max-parallel: 4) instead of sequentially inside one job. Every pass
+#     own runner, so the five sweeps run in PARALLEL (fail-fast: false)
+#     instead of sequentially inside one job. Every pass
 #     decodes real queries through the fixture tables, not just the store's
-#     own unit tests. The matrix value only selects one of four fixed,
+#     own unit tests. The matrix value only selects one of five fixed,
 #     repository-controlled cargo invocations (see the case in the test
 #     step); no command is built from untrusted event input.
 #   - backend-matrix is an INDEPENDENT job — it has no needs edge to the
-#     matrix, so it schedules concurrently with all four backend children.
-#     It runs `tools/store/backend-matrix.sh`, which proves the four valid
+#     matrix, so it schedules concurrently with all five backend children.
+#     It runs `tools/store/backend-matrix.sh`, which proves the five valid
 #     peer selections each `cargo check --workspace` cleanly AND that
-#     every one of the six pairwise plus one three-way combinations plus
-#     the zero-backend build is refused by the exactly-one-backend
-#     `compile_error!` guards. This is what replaced the old
-#     "cross-backend conformance in one binary" job, which is
+#     every one of the ten pairwise combinations plus multi-way
+#     combinations plus the zero-backend build is refused by the
+#     exactly-one-backend `compile_error!` guards. This is what replaced
+#     the old "cross-backend conformance in one binary" job, which is
 #     architecturally impossible under exactly-one-backend.
 #   - store-backends-gate is the stable aggregate status check. It runs no
 #     tests; it only fails unless every backend child, the backend-matrix
-#     job AND both sanitizer arms succeeded, so branch protection can keep
+#     job AND both sanitizer jobs succeeded, so branch protection can keep
 #     requiring the historical "store backends (kyotocabinet / redb /
 #     tkrzw / lmdb)" context.
 #   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan and UBSan,
 #     on a date-pinned nightly, and gates the merge (since 2026-09-08; it
 #     had been continue-on-error and outside the gate, so a finding on the
 #     FFI boundary could not fail anything).
+#   - bdb-sanitizers runs the Berkeley DB feature's suite under ASan and
+#     the C call-pattern harnesses under ASan+UBSan
+#     (`tools/bdb/run-sanitizers.sh`), gating the merge like the tkrzw
+#     lane: on a BerkeleyDB distro the system bigram.db is BDB and every
+#     session opens it through this FFI, so the instrumentation is
+#     load-bearing, not precautionary.
 #
 # ROLLING TOOLCHAIN, deliberately unpinned: the jobs run inside
 # debian:testing because oxpinyin aims to be a viable libpinyin
@@ -68,11 +74,13 @@ on:
       - .github/workflows/store-backends.yml
       # Direct inputs added 2026-09-06: every child decodes the fixture
       # tables; backend-matrix runs tools/store/backend-matrix.sh; the
-      # sanitizer job runs tools/kc/run-sanitizers.sh; every job runs the
-      # bootstrap composite action.
+      # sanitizer jobs run tools/kc/run-sanitizers.sh and
+      # tools/bdb/run-sanitizers.sh; every job runs the bootstrap
+      # composite action.
       - fixtures/**
       - tools/store/**
       - tools/kc/**
+      - tools/bdb/**
       - .github/actions/**
   pull_request:
     branches: [main]
@@ -84,11 +92,13 @@ on:
       - .github/workflows/store-backends.yml
       # Direct inputs added 2026-09-06: every child decodes the fixture
       # tables; backend-matrix runs tools/store/backend-matrix.sh; the
-      # sanitizer job runs tools/kc/run-sanitizers.sh; every job runs the
-      # bootstrap composite action.
+      # sanitizer jobs run tools/kc/run-sanitizers.sh and
+      # tools/bdb/run-sanitizers.sh; every job runs the bootstrap
+      # composite action.
       - fixtures/**
       - tools/store/**
       - tools/kc/**
+      - tools/bdb/**
       - .github/actions/**
 
 permissions:
@@ -125,15 +135,16 @@ jobs:
 
     strategy:
       # fail-fast: false so one backend's failure does not cancel the other
-      # three children — every backend's result is reported independently.
+      # four children — every backend's result is reported independently.
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 5
       matrix:
         backend:
           - kyotocabinet
           - redb
           - tkrzw
           - lmdb
+          - bdb
 
     steps:
       # debian:testing ships a minimal base without bash or git; the
@@ -178,9 +189,12 @@ jobs:
         # must be present or every final link dies.
         # libkyotocabinet-dev: the explicit kyotocabinet child links the
         # distro Kyoto Cabinet; bindgen reads kclangc.h at build time.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblmdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
+        # libdb-dev: the bdb child's equivalent (a metapackage resolving
+        # to libdb5.3-dev) — that backend binds the SYSTEM libdb and
+        # compiles no Berkeley DB source of its own.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblmdb-dev libdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
 
-      # This child runs exactly one of four fixed cargo invocations, selected
+      # This child runs exactly one of five fixed cargo invocations, selected
       # by the matrix backend through a case over a closed set (fail-closed
       # default). The matrix value is bound to a plain shell variable via env
       # indirection — ${{ }} inside a run: body is a template-injection
@@ -242,6 +256,10 @@ jobs:
           lmdb)
             echo "--- lmdb (workspace) ---"
             cargo test --locked --workspace --no-default-features --features lmdb "${excludes[@]}"
+            ;;
+          bdb)
+            echo "--- bdb (workspace) ---"
+            cargo test --locked --workspace --no-default-features --features bdb "${excludes[@]}"
             ;;
           *)
             echo "FAIL: unknown matrix.backend value '$BACKEND'" >&2
@@ -310,19 +328,19 @@ jobs:
           rust-cache-key: backend-matrix
 
       - name: Install build dependencies (apt)
-        # The matrix `cargo check`s the four valid peer selections in
+        # The matrix `cargo check`s the five valid peer selections in
         # turn, so it needs every peer's build-time C dependencies:
         # libkyotocabinet-dev + libtkrzw-dev (+ its compression -dev
-        # packages) + liblmdb-dev, and libclang-dev for bindgen, which
-        # generates all three C backends' declarations; only redb is pure
-        # Rust. libglib2.0-dev is a Tier-C
+        # packages) + liblmdb-dev + libdb-dev, and libclang-dev for
+        # bindgen, which generates the four C backends' declarations;
+        # only redb is pure Rust. libglib2.0-dev is a Tier-C
         # requirement: `pinyin_lookup_tokens` /
         # `pinyin_token_get_nth_pronunciation` delegate to
         # `g_array_append_vals` / `g_array_set_size`, so the shipped
         # `.so` NEEDS `libglib-2.0`.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblmdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblmdb-dev libdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
 
-      - name: Exactly-one-backend invariant (13-case matrix)
+      - name: Exactly-one-backend invariant (18-case matrix)
         id: matrix-test
         run: |
           set -euo pipefail
@@ -345,7 +363,7 @@ jobs:
             echo ""
             echo "| Phase | Wall clock |"
             echo "|---|---:|"
-            echo "| 13-case matrix | ${{ steps.matrix-test.outputs.elapsed || '—' }}s |"
+            echo "| 18-case matrix | ${{ steps.matrix-test.outputs.elapsed || '—' }}s |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   store-backends-gate:
@@ -354,18 +372,20 @@ jobs:
     # keep resolving after the store-features job became a matrix and
     # after `store-conformance` was replaced by `backend-matrix`. It
     # builds and tests nothing; it only aggregates the results of the
-    # four backend children and the backend-matrix job via the
+    # five backend children and the backend-matrix job via the
     # documented `needs.<job>.result` semantics. For a matrix upstream,
     # that result is success only when EVERY matrix child succeeded, and
-    # failure if any child failed — so this gate is red unless all four
-    # peer builds and the exactly-one-backend gate are green.
-    name: store backends (kyotocabinet / redb / tkrzw / lmdb)
+    # failure if any child failed — so this gate is red unless all five
+    # peer builds, the exactly-one-backend gate and both sanitizer jobs
+    # are green.
+    name: store backends (kyotocabinet / redb / tkrzw / lmdb / bdb)
     runs-on: ubuntu-latest
     if: ${{ always() }}
     needs:
       - store-features
       - backend-matrix
       - tkrzw-sanitizers
+      - bdb-sanitizers
     defaults:
       run:
         shell: bash
@@ -378,26 +398,29 @@ jobs:
           FEATURES_RESULT: ${{ needs.store-features.result }}
           MATRIX_RESULT: ${{ needs.backend-matrix.result }}
           SANITIZER_RESULT: ${{ needs.tkrzw-sanitizers.result }}
+          BDB_SANITIZER_RESULT: ${{ needs.bdb-sanitizers.result }}
         run: |
           set -euo pipefail
           echo "store-features (matrix): ${FEATURES_RESULT}"
           echo "backend-matrix:          ${MATRIX_RESULT}"
           echo "tkrzw-sanitizers:        ${SANITIZER_RESULT}"
+          echo "bdb-sanitizers:          ${BDB_SANITIZER_RESULT}"
           {
             echo "## store backends (aggregate gate)"
             echo ""
             echo "This job runs no tests. It is the stable aggregate status"
             echo "check that fails unless every peer matrix child, the"
-            echo "exactly-one-backend gate AND both sanitizer arms succeeded."
+            echo "exactly-one-backend gate AND both sanitizer jobs succeeded."
             echo ""
             echo "| Upstream job | Result |"
             echo "|---|---|"
-            echo "| store-features (matrix, all four peers) | ${FEATURES_RESULT} |"
+            echo "| store-features (matrix, all five peers) | ${FEATURES_RESULT} |"
             echo "| backend-matrix (exactly-one-backend gate) | ${MATRIX_RESULT} |"
             echo "| tkrzw-sanitizers (ASan + UBSan) | ${SANITIZER_RESULT} |"
+            echo "| bdb-sanitizers (ASan + UBSan) | ${BDB_SANITIZER_RESULT} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "${FEATURES_RESULT}" != "success" ] || [ "${MATRIX_RESULT}" != "success" ] || [ "${SANITIZER_RESULT}" != "success" ]; then
-            echo "::error::store-backends gate failed: store-features=${FEATURES_RESULT}, backend-matrix=${MATRIX_RESULT}, tkrzw-sanitizers=${SANITIZER_RESULT}" >&2
+          if [ "${FEATURES_RESULT}" != "success" ] || [ "${MATRIX_RESULT}" != "success" ] || [ "${SANITIZER_RESULT}" != "success" ] || [ "${BDB_SANITIZER_RESULT}" != "success" ]; then
+            echo "::error::store-backends gate failed: store-features=${FEATURES_RESULT}, backend-matrix=${MATRIX_RESULT}, tkrzw-sanitizers=${SANITIZER_RESULT}, bdb-sanitizers=${BDB_SANITIZER_RESULT}" >&2
             exit 1
           fi
           echo "store-backends gate: all upstream jobs succeeded"
@@ -565,4 +588,83 @@ jobs:
             echo "| Phase | Wall clock |"
             echo "|---|---:|"
             echo "| instrumented suite | ${{ steps.sanitize-tests.outputs.elapsed || '—' }}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  bdb-sanitizers:
+    # The Berkeley DB feature's own suite under ASan, plus the C
+    # call-pattern harnesses under ASan+UBSan, via the same
+    # tools/bdb/run-sanitizers.sh developers run locally. The hazards
+    # are the DBT plumbing and cursor buffers (Rust, ASan) and the
+    # SingleGram chunk arithmetic the C harness mirrors (ASan+UBSan —
+    # rustc has no `undefined` sanitizer, so the C half is where UBSan
+    # has something to instrument). On a BerkeleyDB distro the system
+    # bigram.db is BDB and every session opens it through this FFI, so
+    # the lane gates the merge like tkrzw-sanitizers does.
+    #
+    # debian:testing deliberately unpinned like every job here. The
+    # harness half needs libdb-dev (the system libdb the backend links
+    # and the -ldb it compiles against) and gcc for the C probes.
+    name: bdb backend sanitizers
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+      # ASan requires the same seccomp leeway as the tkrzw lane above.
+      options: --security-opt seccomp=unconfined
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      # Beats rust-toolchain.toml's channel pin for this job only, same
+      # date pin and rationale as the tkrzw lane above.
+      RUSTUP_TOOLCHAIN: nightly-2026-09-07
+
+    steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+
+      - name: Install build dependencies (apt)
+        # libdb-dev resolves to libdb5.3-dev — the system libdb this
+        # backend binds (and whose db.h bindgen reads); libclang-dev is
+        # bindgen's runtime dependency; gcc builds the C harnesses.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libdb-dev
+
+      - name: Install nightly Rust (sanitizer support)
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN"
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          . "$HOME/.cargo/env"
+          rustc --version
+
+      - name: Run the bdb sanitizer gate
+        id: sanitize-tests
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
+          bash tools/bdb/run-sanitizers.sh
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## bdb-sanitizers"
+            echo ""
+            echo "Result: **$([ '${{ steps.sanitize-tests.outcome }}' = 'success' ] && echo 'clean — zero findings' || echo 'FINDINGS PRESENT — STOP')**"
+            echo ""
+            echo "| Phase | Wall clock |"
+            echo "|---|---:|"
+            echo "| instrumented suite + C harnesses | ${{ steps.sanitize-tests.outputs.elapsed || '—' }}s |"
           } >> "$GITHUB_STEP_SUMMARY"
