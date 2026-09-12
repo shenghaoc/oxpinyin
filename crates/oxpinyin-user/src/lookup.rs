@@ -386,7 +386,10 @@ mod tests {
             "'n' resolves to the initial-only key"
         );
         let entries = lookup.lookup(&[n_partial]);
-        let texts: Vec<&str> = entries.iter().map(|entry| entry.text()).collect();
+        let texts: Vec<&str> = entries
+            .iter()
+            .map(oxpinyin_core::PhraseEntry::text)
+            .collect();
         assert!(texts.contains(&"你"), "expected 你 in {texts:?}");
         assert!(texts.contains(&"那"), "expected 那 in {texts:?}");
         assert!(
@@ -434,7 +437,10 @@ mod tests {
             "'n' resolves to the initial-only key"
         );
         let entries = lookup.lookup(&[n_partial, key("hao")]);
-        let texts: Vec<&str> = entries.iter().map(|entry| entry.text()).collect();
+        let texts: Vec<&str> = entries
+            .iter()
+            .map(oxpinyin_core::PhraseEntry::text)
+            .collect();
         assert!(texts.contains(&"你好"), "expected 你好 in {texts:?}");
         assert!(texts.contains(&"那号"), "expected 那号 in {texts:?}");
         assert!(

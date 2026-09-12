@@ -218,7 +218,11 @@ fn a_truncated_store_file_is_a_typed_error() {
     }
     let full = std::fs::metadata(&path).expect("seeded file stats").len();
     let body = std::fs::read(&path).expect("seeded file reads");
-    std::fs::write(&path, &body[..(full as usize / 2)]).expect("truncated write");
+    std::fs::write(
+        &path,
+        &body[..usize::try_from(full / 2).expect("seeded size fits usize")],
+    )
+    .expect("truncated write");
 
     match UserStore::open(&path) {
         Err(_typed) => {}
