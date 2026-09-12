@@ -1,8 +1,8 @@
 //! Direct reader for libpinyin's `phrase_index.bin` DBM — the Rust
 //! equivalent of `PhraseLargeTable3`.
 //!
-//! libpinyin stores the phrase table as a backend DBM (KC TreeDB or Tkrzw
-//! TreeDBM) mapping **UCS-4 phrase text** → **`u32 token[]`**.
+//! libpinyin stores the phrase table as a backend DBM (KC `TreeDB` or Tkrzw
+//! `TreeDBM`) mapping **UCS-4 phrase text** → **`u32 token[]`**.
 //!
 //! - **Key:** each character of the phrase encoded as a `guint32` (4 bytes
 //!   LE on LE platforms), concatenated. A 2-character phrase like 你好 has
@@ -34,7 +34,7 @@ use crate::row_format::phrase_index::{decode_tokens, encode_ucs4_key};
 ///
 /// Does not materialize the entire index at open time. Lookups are
 /// point reads against the DBM backend.
-pub(crate) struct PhraseTable {
+pub struct PhraseTable {
     dbm: Box<dyn ChewingDbm + Send + Sync>,
 }
 
@@ -56,10 +56,9 @@ impl PhraseTable {
             return Ok(Vec::new());
         }
         let key = encode_ucs4_key(text);
-        match self.dbm.get(&key)? {
-            Some(value) => decode_tokens(&value),
-            None => Ok(Vec::new()),
-        }
+        self.dbm
+            .get(&key)?
+            .map_or_else(|| Ok(Vec::new()), |value| decode_tokens(&value))
     }
 
     /// Tokens of every stored phrase that starts with `prefix` and is
@@ -171,22 +170,25 @@ mod tests {
         dbm.put(encode_ucs4_key("你"), Vec::new());
         dbm.put(
             encode_ucs4_key("你好"),
-            encode_tokens(&[0x01000099, 0x02000001]),
+            encode_tokens(&[0x0100_0099, 0x0200_0001]),
         );
-        dbm.put(encode_ucs4_key("你好吗"), encode_tokens(&[0x03000005]));
-        dbm.put(encode_ucs4_key("你们"), encode_tokens(&[0x01000098]));
-        dbm.put(encode_ucs4_key("好"), encode_tokens(&[0x01000011]));
+        dbm.put(encode_ucs4_key("你好吗"), encode_tokens(&[0x0300_0005]));
+        dbm.put(encode_ucs4_key("你们"), encode_tokens(&[0x0100_0098]));
+        dbm.put(encode_ucs4_key("好"), encode_tokens(&[0x0100_0011]));
         let table = PhraseTable::new(Box::new(dbm));
         let mut tokens = table.search_suggestion("你").unwrap();
         tokens.sort_unstable();
-        assert_eq!(tokens, vec![0x01000098, 0x01000099, 0x02000001, 0x03000005]);
+        assert_eq!(
+            tokens,
+            vec![0x0100_0098, 0x0100_0099, 0x0200_0001, 0x0300_0005]
+        );
         // The prefix's own tokens are not suggestions.
         let tokens = table.search_suggestion("你好").unwrap();
-        assert_eq!(tokens, vec![0x03000005]);
+        assert_eq!(tokens, vec![0x0300_0005]);
         // A prefix that is no key at all answers nothing, even though
         // longer phrases would extend it.
         let dbm = MemoryDbm::new();
-        dbm.put(encode_ucs4_key("你好"), encode_tokens(&[0x01000099]));
+        dbm.put(encode_ucs4_key("你好"), encode_tokens(&[0x0100_0099]));
         let table = PhraseTable::new(Box::new(dbm));
         assert!(table.search_suggestion("你").unwrap().is_empty());
         assert!(table.search_suggestion("").unwrap().is_empty());
@@ -196,19 +198,19 @@ mod tests {
     fn search_finds_exact_phrase() {
         let dbm = MemoryDbm::new();
         let key = encode_ucs4_key("你好");
-        let value = encode_tokens(&[0x01000099]);
+        let value = encode_tokens(&[0x0100_0099]);
         dbm.put(key, value);
 
         let table = PhraseTable::new(Box::new(dbm));
         let tokens = table.search("你好").unwrap();
-        assert_eq!(tokens, vec![0x01000099]);
+        assert_eq!(tokens, vec![0x0100_0099]);
     }
 
     #[test]
     fn search_returns_multiple_tokens() {
         let dbm = MemoryDbm::new();
         let key = encode_ucs4_key("中");
-        let value = encode_tokens(&[0x01000020, 0x02000020]);
+        let value = encode_tokens(&[0x0100_0020, 0x0200_0020]);
         dbm.put(key, value);
 
         let table = PhraseTable::new(Box::new(dbm));
@@ -246,7 +248,7 @@ mod tests {
     #[test]
     fn has_key_finds_existing() {
         let dbm = MemoryDbm::new();
-        dbm.put(encode_ucs4_key("好"), encode_tokens(&[0x01000011]));
+        dbm.put(encode_ucs4_key("好"), encode_tokens(&[0x0100_0011]));
 
         let table = PhraseTable::new(Box::new(dbm));
         assert!(table.has_key("好").unwrap());

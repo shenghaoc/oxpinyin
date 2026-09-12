@@ -29,17 +29,21 @@ pub const PHRASE_MASK: u32 = 0x00FF_FFFF;
 /// `c_separate` (`novel_types.h:126`).
 pub const SEPARATOR: u8 = b'#';
 
-/// The MemoryChunk file header: `{length, checksum}`.
+/// The `MemoryChunk` file header: `{length, checksum}`.
 pub const CHUNK_HEADER_SIZE: usize = 8;
 
 /// `SubPhraseIndex::store`'s `index_one`: the payload's `total_freq` plus
 /// the three section offsets (`u32×4`) and the separator that closes
-/// them, so the offset array starts at byte 17. Constant in every
+/// them, so the offset array starts at byte 17.
+///
+/// Constant in every
 /// upstream file, and no alignment requirement rides on it — the loader
 /// reads its `u32`s at unaligned offsets.
 pub const INDEX_ONE: u32 = 17;
 
-/// The entry area's first item offset. `SubPhraseIndex::add_phrase_item`
+/// The entry area's first item offset.
+///
+/// `SubPhraseIndex::add_phrase_item`
 /// bumps a zero content size to 8 on the first item, reserving bytes
 /// `0..8` so that `0` stays the offset array's "no item" sentinel. A
 /// library with no items reserves nothing and has an empty entry area
@@ -57,7 +61,9 @@ pub const CHEWING_KEY_SIZE: usize = 2;
 
 /// `MemoryChunk::get_check_sum` (`memory_chunk.h:131-159`): the XOR of
 /// the payload's little-endian `u32` words, with any tail bytes folded
-/// in shifted by their position. Reproduced exactly — the header's
+/// in shifted by their position.
+///
+/// Reproduced exactly — the header's
 /// checksum is what upstream verifies at `mmap` time, what the writer
 /// stamps, and what the reader recomputes.
 #[must_use]
@@ -95,7 +101,9 @@ impl std::error::Error for ChunkFrameError {}
 
 /// Frames a payload into a complete `MemoryChunk` file — the 8-byte
 /// `{length, checksum}` header over the payload, `MemoryChunk::save`'s
-/// output. The inverse of the header check every reader performs, and
+/// output.
+///
+/// The inverse of the header check every reader performs, and
 /// the **only** framing implementation: every chunk writer goes through
 /// here, so the overflow policy is one policy.
 ///
@@ -124,7 +132,7 @@ mod tests {
         assert_eq!(chunk_checksum(&[1, 0, 0, 0]), 1);
         assert_eq!(chunk_checksum(&[1, 0, 0, 0, 2, 0, 0, 0]), 3);
         // Tail bytes shift up by 8 per position: 0x030201.
-        assert_eq!(chunk_checksum(&[1, 2, 3]), 0x030201);
+        assert_eq!(chunk_checksum(&[1, 2, 3]), 0x0003_0201);
         // A leading zero word contributes nothing; the tail byte is the
         // low byte of the checksum.
         assert_eq!(chunk_checksum(&[0, 0, 0, 0, 9]), 9);

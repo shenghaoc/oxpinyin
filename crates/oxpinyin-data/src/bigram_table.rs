@@ -1,6 +1,6 @@
 //! Lazy reader for libpinyin's `bigram.db` — direct DBM consumption.
 //!
-//! libpinyin stores the bigram as a **HashDB** (KC) / **HashDBM** (Tkrzw),
+//! libpinyin stores the bigram as a **`HashDB`** (KC) / **`HashDBM`** (Tkrzw),
 //! while the other DBM files use TreeDB/TreeDBM. The store's
 //! `RawReadStore::open_hash_read_only` selects the correct container class.
 //!
@@ -46,7 +46,7 @@ impl BigramTable {
     }
 
     /// Opens a bigram DBM lazily (no scan). libpinyin's `bigram.db` is
-    /// a KC **HashDB** / Tkrzw **HashDBM**, so the open goes through
+    /// a KC **`HashDB`** / Tkrzw **`HashDBM`**, so the open goes through
     /// `RawReadStore::open_hash_read_only`.
     ///
     /// # Errors
@@ -60,6 +60,12 @@ impl BigramTable {
     /// Loads successor records for `prev_token`.
     ///
     /// Returns `None` when the token has no bigram entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read fails, or `Parse` when a
+    /// stored value is malformed (an empty value is corruption, reported
+    /// rather than masked as a clean miss).
     pub fn load_successors(&self, prev_token: u32) -> Result<Option<BigramRow>, DictError> {
         let key = encode_token_key(prev_token);
         match self.dbm.get(&key)? {
@@ -75,6 +81,10 @@ impl BigramTable {
     }
 
     /// Returns `(count, total)` for the `prev → next` transition.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`DictError`] from [`Self::load_successors`].
     pub fn transition(&self, prev: u32, next: u32) -> Result<Option<(u32, u32)>, DictError> {
         let Some(row) = self.load_successors(prev)? else {
             return Ok(None);
@@ -83,8 +93,7 @@ impl BigramTable {
             .records
             .iter()
             .find(|(next_token, _)| *next_token == next)
-            .map(|(_, count)| *count)
-            .unwrap_or(0);
+            .map_or(0, |(_, count)| *count);
         Ok(Some((count, row.total)))
     }
 }
@@ -132,14 +141,14 @@ mod tests {
         let dbm = MemoryDbm::new();
         let row = BigramRow {
             total: 50,
-            records: vec![(0x01000099, 50)],
+            records: vec![(0x0100_0099, 50)],
         };
         dbm.put(
-            0x01000010_u32.to_le_bytes().to_vec(),
+            0x0100_0010_u32.to_le_bytes().to_vec(),
             encode_bigram_value(&row),
         );
         let table = BigramTable::new(Box::new(dbm));
-        let result = table.load_successors(0x01000010).unwrap().unwrap();
+        let result = table.load_successors(0x0100_0010).unwrap().unwrap();
         assert_eq!(result.total, 50);
         assert_eq!(result.records.len(), 1);
     }
@@ -148,7 +157,7 @@ mod tests {
     fn load_successors_miss_returns_none() {
         let dbm = MemoryDbm::new();
         let table = BigramTable::new(Box::new(dbm));
-        assert!(table.load_successors(0x01000010).unwrap().is_none());
+        assert!(table.load_successors(0x0100_0010).unwrap().is_none());
     }
 
     #[test]
@@ -156,14 +165,14 @@ mod tests {
         let dbm = MemoryDbm::new();
         let row = BigramRow {
             total: 100,
-            records: vec![(0x01000099, 60), (0x010000A0, 40)],
+            records: vec![(0x0100_0099, 60), (0x0100_00A0, 40)],
         };
         dbm.put(
-            0x01000010_u32.to_le_bytes().to_vec(),
+            0x0100_0010_u32.to_le_bytes().to_vec(),
             encode_bigram_value(&row),
         );
         let table = BigramTable::new(Box::new(dbm));
-        let (count, total) = table.transition(0x01000010, 0x01000099).unwrap().unwrap();
+        let (count, total) = table.transition(0x0100_0010, 0x0100_0099).unwrap().unwrap();
         assert_eq!(count, 60);
         assert_eq!(total, 100);
     }
@@ -173,14 +182,14 @@ mod tests {
         let dbm = MemoryDbm::new();
         let row = BigramRow {
             total: 100,
-            records: vec![(0x01000099, 100)],
+            records: vec![(0x0100_0099, 100)],
         };
         dbm.put(
-            0x01000010_u32.to_le_bytes().to_vec(),
+            0x0100_0010_u32.to_le_bytes().to_vec(),
             encode_bigram_value(&row),
         );
         let table = BigramTable::new(Box::new(dbm));
-        let (count, total) = table.transition(0x01000010, 0xFFFFFFFF).unwrap().unwrap();
+        let (count, total) = table.transition(0x0100_0010, 0xFFFF_FFFF).unwrap().unwrap();
         assert_eq!(count, 0);
         assert_eq!(total, 100);
     }
@@ -188,9 +197,9 @@ mod tests {
     #[test]
     fn malformed_value_does_not_panic() {
         let dbm = MemoryDbm::new();
-        dbm.put(0x01000010_u32.to_le_bytes().to_vec(), vec![0xFF; 5]);
+        dbm.put(0x0100_0010_u32.to_le_bytes().to_vec(), vec![0xFF; 5]);
         let table = BigramTable::new(Box::new(dbm));
-        assert!(table.load_successors(0x01000010).is_err());
+        assert!(table.load_successors(0x0100_0010).is_err());
     }
 
     #[test]
@@ -198,8 +207,8 @@ mod tests {
         // A present key whose value is empty is corruption, not a miss:
         // libpinyin never stores a zero-length SingleGram. Surface it.
         let dbm = MemoryDbm::new();
-        dbm.put(0x01000010_u32.to_le_bytes().to_vec(), Vec::new());
+        dbm.put(0x0100_0010_u32.to_le_bytes().to_vec(), Vec::new());
         let table = BigramTable::new(Box::new(dbm));
-        assert!(table.load_successors(0x01000010).is_err());
+        assert!(table.load_successors(0x0100_0010).is_err());
     }
 }

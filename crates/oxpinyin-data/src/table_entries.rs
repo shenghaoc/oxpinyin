@@ -10,11 +10,11 @@
 //! proper prefix of every stored key exists as an empty-value
 //! continuation marker, and record order within a value follows
 //! `pinyin_exact_compare2` with token ascending for identical keys
-//! (`ChewingTableEntry::add_index`'s equal_range insert before the first
+//! (`ChewingTableEntry::add_index`'s `equal_range` insert before the first
 //! greater token).
 //!
-//! Rows come out sorted by ascending key bytes; KC TreeDB and tkrzw
-//! TreeDBM both order byte-lexically, so the sorted writer order is also
+//! Rows come out sorted by ascending key bytes; KC `TreeDB` and tkrzw
+//! `TreeDBM` both order byte-lexically, so the sorted writer order is also
 //! the container's physical order. `oxpinyin-datagen` writes the system
 //! tables with this and `oxpinyin-user`'s persistence writes the user
 //! `user_pinyin_index.bin` / `user_phrase_index.bin` — a user table entry
@@ -37,7 +37,7 @@ pub type Entries = Vec<(Vec<u8>, Vec<u8>)>;
 /// syllables first, then middle/final per syllable, then tone per
 /// syllable. This is the comparator the value arrays are sorted by
 /// (`ChewingTableEntry::add_index`'s `phrase_exact_less_than2`
-/// equal_range).
+/// `equal_range`).
 fn exact_compare2(lhs: &[ChewingKey], rhs: &[ChewingKey]) -> std::cmp::Ordering {
     let len = lhs.len();
     debug_assert_eq!(len, rhs.len());
