@@ -445,7 +445,7 @@ fn tier_c_overlay_delta_flips_predicted_order_on_fixture_scale() {
     );
     assert!(crate::sentence::pinyin_guess_candidates(instance, 0, 0x1e));
     let mut candidate: *mut crate::types::LookupCandidate = std::ptr::null_mut();
-    assert!(pinyin_get_candidate(instance, 0, &mut candidate));
+    assert!(pinyin_get_candidate(instance, 0, &raw mut candidate));
     assert!(pinyin_choose_candidate(instance, 0, candidate) > 0);
     assert!(crate::candidates::pinyin_train(instance, 0));
 
