@@ -2,7 +2,7 @@
 
 ## Overview
 
-Shipped and documented in `docs/python.md`. Open items below.
+Shipped and documented in `docs/python.md`. All items closed 2026-09-08.
 
 ## Tasks
 

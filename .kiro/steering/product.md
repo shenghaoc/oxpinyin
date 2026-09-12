@@ -8,6 +8,16 @@ drop-in replacement at the `libpinyin.so.15` ABI. Claims: re-expression is
 fine; never replace / succeed / outperform. Scoped measurements only. See
 `ROADMAP.md` and `AGENTS.md`.
 
+**Goal (maintainer, 2026-09-12).** The shipped object is a libpinyin
+shared object indistinguishable from libpinyin's own except for the
+established exceptions — the compatibility policy's classes, the
+frozen sentence residual, and until it closes the one open defect the
+policy carries (row 30): the same SONAME and exports, the same data and
+user files, the same behaviour, measured against the pin. The pin follows
+libpinyin's default-branch tip (`074a2219`, 2.11.92 — the tip on
+2026-09-12, verified). Other programs use oxpinyin through the C ABI
+exactly as they use libpinyin; that ABI is the product.
+
 **Stage 1 — oracle parity.** The candidate surface agrees with the pinned,
 source-built libpinyin 2.11.92 oracle bit-identically on every W2 corpus
 input at depth 10: top-1 10,190/10,190, top-5-set 10,190, absent 0,
@@ -30,8 +40,9 @@ tkrzw carry libpinyin's file names). Measured drop-in on Fedora rawhide
 (Kyoto Cabinet), Debian testing (tkrzw) and NixOS — 1,571/1,571 rows
 each, sets byte-identical, order-only, the whole divergence attributed
 to R1's defined-order rule (`docs/findings/upstream-divergences.md`).
-Still open in the drop-in spec: task 9, the write path for learned user
-data in libpinyin's own user-file format. The BerkeleyDB compat path is
+Task 9 — learned user data read and written in libpinyin's own user-file
+format, seamless with a same-backend libpinyin — landed 2026-09-09
+(`docs/findings/user-store.md` §11). The BerkeleyDB backend is
 SHELVED (`docs/findings/berkeleydb-compat-phase1.md`).
 
 **Storage.** Four backends, compile-time selected, exactly one per
@@ -49,10 +60,10 @@ hot-path work have landed, each measured against the pin in the same
 container. Named next targets: the per-instance key-cost table at
 `pinyin_alloc_instance` and steady-state candidate lookup. **Python:**
 `oxpinyin-python` serves the engine session API over PyO3 (not the C
-ABI), written for free-threaded CPython 3.14t with the GIL released
-around engine calls; the spec carries three open items (interpreter
-floor, non-Linux wheels, GIL-build claim —
-`.kiro/specs/python-binding/tasks.md`). **Frontends:**
+ABI), written to be correct on free-threaded CPython with the GIL released
+around engine calls and tested on GIL-enabled CPython 3.14 (Linux, macOS
+and Windows source builds); the spec's items all closed 2026-09-08
+(`.kiro/specs/python-binding/tasks.md`). **Frontends:**
 no frontend drives the ABI end-to-end yet; fcitx5-oxpinyin appears in the
 findings as a reference consumer, not a shipped driver.
 

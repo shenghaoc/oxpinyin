@@ -4,7 +4,9 @@ oxpinyin is a portable Rust re-expression of libpinyin. Stage 1 = parity
 with the pin-built oracle; Stage 2 = measured upgrades. Roadmap:
 `ROADMAP.md`. Crate map: `.kiro/steering/structure.md`.
 
-Kiro always-loads `.kiro/steering/`; this file wins on any conflict.
+`.kiro/steering/` follows Kiro's steering format (<https://kiro.dev/docs/>)
+without the Kiro IDE or CLI — read it as always-loaded context; this
+file wins on any conflict.
 
 ## Constitution
 

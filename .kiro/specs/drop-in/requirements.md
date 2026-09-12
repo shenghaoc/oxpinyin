@@ -12,8 +12,9 @@ the goal, the mechanisms and the remaining work.
 
 - **Consumer_union** — the 58 exported symbols the two reference consumers
   (ibus-libpinyin 1.16.5, fcitx-libpinyin) call.
-- **Compat_path** — reading installed libpinyin data directly, without
-  conversion.
+- **Direct_data_path** — opening installed libpinyin data in place, through
+  the runtime's own readers, without conversion or a compatibility layer
+  (P6, 2026-09-02).
 - **R1** — the predicted-candidate row-order divergence; oxpinyin's
   defined order is text-ascending (maintainer decision, 2026-08-25).
 
@@ -31,10 +32,11 @@ so that unmodified consumers link and run.
 2. THE header SHALL install under `include/libpinyin-2.11.91/`.
 3. THE pkg-config file SHALL ship as `libpinyin.pc` exposing `pkgdatadir`,
    `database_format` and `exec_prefix`.
-4. THE exported surface SHALL be the 58-symbol consumer union, no more and
-   no less.
+4. THE exported surface SHALL be the full live upstream ABI — 79
+   `pinyin_*` symbols (`docs/findings/abi-subset.md` §6) — of which the
+   58-symbol consumer union is the subset the reference consumers call.
 
-### Requirement 2: Compat read path for installed data
+### Requirement 2: Direct read of installed data
 
 **User Story:** As a packager, I want oxpinyin to consume the installed
 libpinyin data so that no conversion step ships.
@@ -42,7 +44,8 @@ libpinyin data so that no conversion step ships.
 #### Acceptance Criteria
 
 1. WHEN `pinyin_init` is pointed at a libpinyin data directory THEN the
-   runtime SHALL detect the layout and open the compat path.
+   runtime SHALL open it in place through the same readers it uses for
+   its own output — no layout detection, no conversion.
 2. THE reader SHALL parse libpinyin's `MemoryChunk` container (8-byte
    header: u32 LE length, u32 XOR checksum) and verify before use.
 3. THE path SHALL cover Kyoto Cabinet installs (Fedora, NixOS) and tkrzw
@@ -59,7 +62,7 @@ replacement changes nothing observable.
 
 1. FOR every consumer-union symbol, given the same inputs and state, the
    whole observable output SHALL be byte-identical to the pinned libpinyin
-   2.11.91. State includes the on-disk user state of a same-backend user
+   2.11.92 at `074a2219` (the pin since 2026-09-06). State includes the on-disk user state of a same-backend user
    dir (Kyoto Cabinet↔Kyoto Cabinet, tkrzw↔tkrzw); a user dir in
    another KV backend's format is outside the compared state — data
    loss when the KV database backend changes is taken for granted
@@ -85,7 +88,7 @@ a rule or a plan so that nothing is silently re-frozen.
 1. THE predicted-row order (R1) SHALL follow the defined text-ascending
    order, per Requirement 3's bounded exception; the pin's order SHALL be
    recorded as a constant, never a target.
-2. THE BerkeleyDB compat path SHALL remain SHELVED until a consumer needs
+2. THE BerkeleyDB backend SHALL remain SHELVED until a consumer needs
    it.
 3. THE per-backend user-data rule SHALL stay attributed in
    `docs/findings/compatibility-policy.md` (goal amendment, 2026-09-09):

@@ -13,6 +13,7 @@ inclusion: always
 | oxpinyin-facade | shared facade-orchestration layer (instance/context state machines, parse seams, cursor laws, the §9 user-data export materialization) consumed by both C-ABI facades and the Python binding; depends on core, engine, runtime and user — it holds the runtime's concrete dict/lm/user handles by value, so it forwards the whole backend feature matrix rather than staying generic over the engine traits | forbid | yes | via capi |
 | oxpinyin-capi | the libpinyin C ABI — `libpinyin.so.15`, all 79 `pinyin_*` exports, libpinyin's SONAME/header/pkg-config via cargo-c | allow | Linux | yes |
 | oxpinyin-zhuyin-capi | C ABI of libpinyin's zhuyin facade — `libzhuyin.so.15`, the `--enable-libzhuyin` counterpart (52 symbols, own SONAME); delegates to the same engine/chewing surface as oxpinyin-capi | allow | Linux | yes |
+| oxpinyin-capi-marshal | declarative marshalling macros shared by the two C-ABI facades (opaque-handle casts, the `char **`-out sentence writer); macro-only, no compiled unsafe of its own | forbid | yes | via capi, zhuyin-capi |
 | oxpinyin-python | PyO3 binding over the engine session API (Python consumers) | forbid | yes | wheel only |
 | oxpinyin-runtime | concrete assembly shared by consumers (tables+model+user wiring → Session) | forbid | yes | via capi/python |
 | pinyin-oracle | differential harness vs pinned libpinyin | allow | Linux | never |

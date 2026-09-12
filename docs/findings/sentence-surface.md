@@ -1,6 +1,10 @@
 # Sentence surface (W14)
 
-Date: 2026-08-17 · Status: characterization (pre-implementation), then record
+Date: 2026-08-17 · Status: **frozen** — §12's residual is a permanent
+Stage-1 divergence by maintainer ruling 2026-09-02, re-frozen 2026-09-04 at
+491 / 396 / 390 after P6 (header brought in line with §12 on 2026-09-12,
+maintainer ruling). §§1–11 are the characterization (pre-implementation)
+and the record that led there.
 
 The three-part W14 divergence (#100): sentence candidates do not emit with
 real unigrams, the merged rows are not typed `NBEST_MATCH`, and

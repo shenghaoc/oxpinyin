@@ -19,8 +19,8 @@ record.
 
 **(a) MATH** — platform-dependent floating-point accumulation: a
 transcendental in the accumulation, not merely a float in the call graph.
-The sentence-surface residual lives here, recommended to freeze as
-permanent; the freeze is the maintainer's call.
+The sentence-surface residual lives here, frozen as permanent
+(maintainer ruling 2026-09-02, re-frozen 2026-09-04 at 491/396/390).
 
 **(b) MEMORY SAFETY** — upstream is UB and Rust structurally prevents it;
 covers only cases where reproduction is structurally impossible.
@@ -37,3 +37,9 @@ scope; "no consumer calls it" is a priority signal, not an exception.
 A stub returning `false` is not compliance — it is a defect. Probe coverage
 is itself a deliverable: a consumer-union symbol with no differential probe
 is unverified, not compliant.
+
+**Amendments carried by the canonical policy** (`docs/findings/compatibility-policy.md`):
+the user-data guarantee is per KV backend family (2026-09-09; task 9
+landed the same day), the pin is libpinyin's default-branch tip
+`074a2219` (2026-09-12), and one defect stays open — row 30, the pinyin
+facade's chewing batch `FORCE_TONE` seam.

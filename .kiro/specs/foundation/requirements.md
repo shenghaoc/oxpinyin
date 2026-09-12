@@ -102,17 +102,19 @@ libpinyin's names so that unmodified consumers link against it and run.
    -version-info 15:0). 2. The header SHALL install under
    `include/libpinyin-2.11.91/`. 3. The pkg-config file SHALL ship as
    `libpinyin.pc` exposing `pkgdatadir`, `database_format` and
-   `exec_prefix`. 4. The exported surface SHALL be the 58-symbol consumer
-   union measured from the two reference consumers (#206, 58/58).
+   `exec_prefix`. 4. The exported surface SHALL be the full live upstream ABI — 79
+   `pinyin_*` symbols (`docs/findings/abi-subset.md` §6) — of which the
+   58-symbol consumer union measured from the two reference consumers
+   (#206, 58/58) is the subset they call.
 
-### Requirement R8: Compat read path for installed libpinyin data
+### Requirement R8: Direct read of installed libpinyin data
 
 **User Story:** As a packager, I want oxpinyin to consume the installed
 libpinyin data so that no data conversion ships.
 
 1. WHEN `pinyin_init` is pointed at a libpinyin data directory THEN the
-   runtime SHALL detect the layout (`CompatLayout::detect`) and open the
-   compat path. 2. The reader SHALL parse libpinyin's `MemoryChunk`
+   runtime SHALL open it in place through its own readers (P6; no layout
+   detection, no conversion). 2. The reader SHALL parse libpinyin's `MemoryChunk`
    container (8-byte header: u32 LE length, u32 XOR checksum) and verify
    the checksum before use. 3. The path SHALL cover Kyoto Cabinet installs
    (Fedora, NixOS) and tkrzw installs (Debian). 4. On every measured
