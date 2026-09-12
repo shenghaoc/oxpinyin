@@ -93,12 +93,26 @@ gcc -std=gnu11 -O2 -o "$BISECT" tools/bisection/bisect.c -ldl
 # page-quantized on these hosts (perf-so-size-2026-09.md measured seven
 # distinct probe cdylibs all reporting an identical 266,736 B), so a real
 # few-KiB change can land with a zero file-size delta.
+# Parsed in python rather than awk. `strtonum` is a gawk extension and Debian
+# ships mawk, so the awk form died on this runner -- and it was wrong besides:
+# readelf prints "  [ 1] .text", which awk splits as "[", "1]", ".text", so a
+# $2 name test only ever matched two-digit section indices and $6 was the
+# offset, not the size. It would have returned a plausible-looking wrong number
+# wherever gawk happened to be installed.
 section_sum() {
-	readelf -S -W "$1" | awk '
-		$2 ~ /^\.(text|rodata|data\.rel\.ro|rela\.dyn|eh_frame|eh_frame_hdr|gcc_except_table)$/ {
-			total += strtonum("0x" $6)
-		}
-		END { printf "%d\n", total }'
+	readelf -S -W "$1" | python3 -c '
+import re, sys
+WANT = {".text", ".rodata", ".data.rel.ro", ".rela.dyn",
+        ".eh_frame", ".eh_frame_hdr", ".gcc_except_table"}
+# [Nr] Name Type Address Off Size ...  — all three numerics are hex.
+ROW = re.compile(r"\s*\[\s*\d+\]\s+(\S+)\s+\S+\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+([0-9a-fA-F]+)")
+total = 0
+for line in sys.stdin:
+    m = ROW.match(line)
+    if m and m.group(1) in WANT:
+        total += int(m.group(2), 16)
+print(total)
+'
 }
 
 # ── allocations ─────────────────────────────────────────────────────────

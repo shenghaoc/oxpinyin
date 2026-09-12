@@ -410,3 +410,6 @@ jobs:
           name: perf-snapshot-${{ github.run_id }}
           path: snapshot.json
           retention-days: 90
+          # The step is always() so a failed measurement still uploads what it
+          # got; when it got nothing, say so quietly instead of warning.
+          if-no-files-found: ignore
