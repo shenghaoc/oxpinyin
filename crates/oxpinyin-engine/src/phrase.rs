@@ -71,17 +71,14 @@ struct Step {
 
 impl Step {
     fn relax(&mut self, node: Node) {
-        match self.index.get(&node.token.value()) {
-            Some(&position) => {
-                let existing = &mut self.content[position];
-                if node.cost < existing.cost {
-                    *existing = node;
-                }
+        if let Some(&position) = self.index.get(&node.token.value()) {
+            let existing = &mut self.content[position];
+            if node.cost < existing.cost {
+                *existing = node;
             }
-            None => {
-                self.index.insert(node.token.value(), self.content.len());
-                self.content.push(node);
-            }
+        } else {
+            self.index.insert(node.token.value(), self.content.len());
+            self.content.push(node);
         }
     }
 
@@ -108,7 +105,7 @@ impl Step {
 /// # Errors
 ///
 /// Propagates the model's step-cost failures.
-pub(crate) fn phrase_segment<D, L>(
+pub fn phrase_segment<D, L>(
     dictionary: &D,
     model: &L,
     sentence: &str,

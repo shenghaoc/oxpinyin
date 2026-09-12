@@ -2270,7 +2270,7 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
         .candidates()
         .iter()
         .filter(|cand| cand.kind() == CandidateKind::Sentence)
-        .map(|cand| cand.text())
+        .map(super::super::candidate::Candidate::text)
         .collect();
     assert_eq!(sentences, ["你好世界", "你"]);
     assert!(
@@ -2290,7 +2290,7 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
         .candidates()
         .iter()
         .filter(|cand| cand.kind() == CandidateKind::Sentence)
-        .map(|cand| cand.text())
+        .map(super::super::candidate::Candidate::text)
         .collect();
     assert_eq!(sentences, ["你好世界"]);
     assert!(

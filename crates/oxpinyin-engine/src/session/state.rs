@@ -43,7 +43,7 @@ where
         } else {
             key_cost_table(&dictionary, &model)?
         };
-        Self::init(config, paths, dictionary, model, key_costs)
+        Ok(Self::init(config, paths, dictionary, model, key_costs))
     }
 
     /// Builds a session over a caller-supplied key-cost table.
@@ -62,6 +62,12 @@ where
     /// [`LanguageModel::has_real_unigrams`] — see the `Session::key_costs`
     /// field. Release builds do not check, and a violation is silent:
     /// every absent key reads back as `UNKNOWN_COST`.
+    ///
+    /// # Errors
+    ///
+    /// Construction with a caller-supplied key-cost table is currently
+    /// infallible; the `Result` return keeps this constructor's shape
+    /// aligned with [`Self::new`], whose fallback walk can fail.
     pub fn new_with_key_costs(
         config: &dyn ConfigSource,
         paths: StoragePaths,
@@ -69,7 +75,7 @@ where
         model: L,
         key_costs: Vec<Cost>,
     ) -> Result<Self, EngineError> {
-        Self::init(config, paths, dictionary, model, key_costs)
+        Ok(Self::init(config, paths, dictionary, model, key_costs))
     }
 
     pub(super) fn init(
@@ -78,7 +84,7 @@ where
         dictionary: D,
         model: L,
         key_costs: Vec<Cost>,
-    ) -> Result<Self, EngineError> {
+    ) -> Self {
         // The `key_costs` field documents a two-sided invariant: the table
         // is empty exactly when the model carries real unigram
         // frequencies. Neither side is enforced by the type, and neither
@@ -98,7 +104,7 @@ where
             model.has_real_unigrams(),
             key_costs.len(),
         );
-        Ok(Self {
+        Self {
             dictionary,
             model,
             paths,
@@ -113,7 +119,7 @@ where
             lookup: Lookup::default(),
             sentence: SentenceState::default(),
             scratch: Scratch::default(),
-        })
+        }
     }
 
     /// Replaces the scoring weights used by subsequent refreshes.
@@ -355,14 +361,14 @@ where
     /// reads `get_result(0)` (`zhuyin.cpp:1327-1330`, `:990-995` at the pin
     /// 0c5e80e1). Identical strings then collide in
     /// `_remove_duplicated_items_by_phrase_string`, which physically removes
-    /// the duplicates while keeping the BEST_MATCH row
+    /// the duplicates while keeping the `BEST_MATCH` row
     /// (`zhuyin.cpp:1425-1438`), so the observable list carries exactly one
     /// sentence row no matter how many n-best sentences were decoded.
     /// Prepending only the 1-best row is that pipeline's net effect, and it
     /// is what keeps the phrase rows upstream keeps: a phrase whose text
     /// equals a non-first row's own text never collides there (the rows all
     /// display the 1-best string), so it must not be absorbed here either.
-    pub fn set_collapse_sentence_rows_to_best(&mut self, collapse: bool) {
+    pub const fn set_collapse_sentence_rows_to_best(&mut self, collapse: bool) {
         self.collapse_sentence_rows_to_best = collapse;
     }
 

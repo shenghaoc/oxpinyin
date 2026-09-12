@@ -267,7 +267,7 @@ pub struct RuntimeDict {
     punct: Arc<PunctTable>,
     /// The `add_unigram_frequency` overlay: in-memory per-token deltas
     /// over the baked counts. Upstream writes the same deltas into its
-    /// in-memory FacadePhraseIndex and nothing persists them
+    /// in-memory `FacadePhraseIndex` and nothing persists them
     /// (`pinyin_save` flushes user data exclusively), so the overlay is
     /// the faithful shape: shared per context, gone at fini.
     unigram_overlay: Arc<Mutex<HashMap<u32, u64>>>,
@@ -425,7 +425,7 @@ impl RuntimeDict {
         let overlay = self
             .unigram_overlay
             .lock()
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         overlay.get(&token).copied()
     }
 
@@ -444,7 +444,10 @@ impl RuntimeDict {
         }
         let found = {
             let system_found = self.system_unigram_count(token).is_some();
-            let addons = self.addons.read().unwrap_or_else(|p| p.into_inner());
+            let addons = self
+                .addons
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let addon_found = addons.unigram_freq(token).is_some();
             let user_found = self
                 .user
@@ -472,7 +475,7 @@ impl RuntimeDict {
         let mut overlay = self
             .unigram_overlay
             .lock()
-            .unwrap_or_else(|p| p.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let entry = overlay.entry(token).or_insert(0);
         *entry = entry.saturating_add(delta);
         true
@@ -488,7 +491,10 @@ impl RuntimeDict {
     /// The addon library's stored unigram count for `token`.
     #[must_use]
     pub fn addon_unigram_frequency(&self, token: u32) -> Option<u64> {
-        let addons = self.addons.read().unwrap_or_else(|p| p.into_inner());
+        let addons = self
+            .addons
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         addons.unigram_freq(token)
     }
 
@@ -943,9 +949,10 @@ impl Runtime {
                         SystemVersions::from_table_conf("")
                     }
                     Err(e) => {
+                        let system_dir = system_dir.display();
                         eprintln!(
                             "oxpinyin: table.conf unreadable (system dir \
-                             {system_dir:?}: {e}); user store degraded to \
+                             {system_dir}: {e}); user store degraded to \
                              no-user-state rather than risk wiping the profile"
                         );
                         return None;
@@ -959,9 +966,10 @@ impl Runtime {
                 // profile cleaned) is logged inside `open_libpinyin`.
                 UserStore::open_libpinyin(dir, originals, versions)
                     .map_err(|error| {
+                        let dir = dir.display();
                         eprintln!(
                             "oxpinyin: user store degraded to no-user-state \
-                             (user dir {dir:?}: {error})"
+                             (user dir {dir}: {error})"
                         );
                         error
                     })
@@ -1279,6 +1287,8 @@ mod tests {
     // stay covered here for the branch that does.
     #[test]
     fn key_costs_cache_stays_stamp_true_under_concurrent_visibility_flips() {
+        const ROUNDS: usize = 12;
+        const FLIP_PAIRS: usize = 20_000;
         let runtime = Runtime::open(&w3_dir(), None).expect("fixture opens");
         let dict = runtime.dict();
         let lm = runtime.lm();
@@ -1292,8 +1302,6 @@ mod tests {
         );
         assert!(runtime.load_library(2), "reload clears the mask");
 
-        const ROUNDS: usize = 12;
-        const FLIP_PAIRS: usize = 20_000;
         for _ in 0..ROUNDS {
             let _ = runtime.unload_library(2);
             runtime
