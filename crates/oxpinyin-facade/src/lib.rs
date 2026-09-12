@@ -56,6 +56,6 @@ pub use predict::compute_prefixes;
 pub const PINYIN_DEFAULT_OPTION_WORD: u32 = oxpinyin_core::PINYIN_INCOMPLETE;
 
 /// The option word `zhuyin_init` seeds (`USE_TONE | FORCE_TONE`,
-/// `zhuyin.cpp:272` at the pin) — the zhuyin facade's distinguishing
+/// `zhuyin.cpp:273` at both pins) — the zhuyin facade's distinguishing
 /// default: incomplete OFF, unlike `pinyin_init`.
 pub const ZHUYIN_DEFAULT_OPTION_WORD: u32 = oxpinyin_core::USE_TONE | oxpinyin_core::FORCE_TONE;

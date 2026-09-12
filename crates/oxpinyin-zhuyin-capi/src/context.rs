@@ -22,7 +22,7 @@ use crate::types::ZhuyinContext;
 ///
 /// **Divergence note (the pin seeds `USE_TONE | FORCE_TONE`).** The zhuyin
 /// facade's context defaults to `m_options = USE_TONE | FORCE_TONE`
-/// (`zhuyin.cpp:272` at the pin 0c5e80e1), unlike `pinyin_init`, which seeds
+/// (`zhuyin.cpp:273` at 0c5e80e1 and at the 074a2219 pin), unlike `pinyin_init`, which seeds
 /// only `PINYIN_INCOMPLETE`. The zhuyin parser honours `FORCE_TONE` nested
 /// inside `USE_TONE` for the Simple and CP26 keyboards
 /// (`zhuyin_parser2.cpp:178,602`) and unconditionally for Discrete

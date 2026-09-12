@@ -8,7 +8,7 @@
 //! with the pinned oracle when the pin changes:
 //!
 //! ```text
-//! cargo run -p pinyin-oracle --features oracle-ffi --bin oracle-sentence-surface
+//! cargo run -p pinyin-oracle --features oracle-ffi --bin oracle_sentence_surface
 //! ```
 
 // Only the feature-on build formats strings; ungated, the import would be

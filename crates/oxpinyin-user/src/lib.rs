@@ -12,9 +12,11 @@
 //! the C ABI. W6-T4 exposes the stored counts as a
 //! [`oxpinyin_core::UserCountDelta`] so decode can merge them additively with
 //! the system model. W6-T5 adds the save cycle behind `pinyin_save`: the §4
-//! `m_modified` gate ([`UserStore::is_modified`] / [`UserStore::save`]) over
-//! redb's per-commit durability — there is no serialization step, because
-//! every training update is already committed atomically to disk. W6-T7 adds
+//! `m_modified` gate ([`UserStore::is_modified`] / [`UserStore::save`]).
+//! Since drop-in task 9 (`docs/findings/user-store.md` §11) the session
+//! runs on a scratch store and `save` exports its values into the pin's
+//! own user file set (`.tmp` + rename), so nothing is durable between
+//! saves — the pin's own shape. W6-T7 adds
 //! the §9 export surface ([`UserStore::export_phrases`] /
 //! [`UserStore::export_bigrams`]) that backs the C ABI's export iterators and
 //! the W6 differential.

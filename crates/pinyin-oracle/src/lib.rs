@@ -9,7 +9,7 @@
 //!
 //! # Layering
 //!
-//! Everything except [`live`] is pure and always compiled, so the protocol rules
+//! Everything except [`live`] and its private `ffi` block is pure and always compiled, so the protocol rules
 //! stay under test on every platform with no oracle present:
 //!
 //! - [`pin`] decides whether a prefix is the frozen oracle;
