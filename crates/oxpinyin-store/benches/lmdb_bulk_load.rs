@@ -22,6 +22,14 @@
 //! crate rather than a second copy maintained here. The library's build
 //! script emits the `-llmdb` link directive for every target in this
 //! package, benches included, so nothing further is needed to link.
+// The gate mirrors this target's `required-features`: cargo already skips
+// the bench when LMDB is not the selected backend, but rust-analyzer
+// analyzes required-features targets regardless and would flag the ffi
+// module's bindgen include as unresolved under every other backend's
+// feature set. It sits above the `expect` so a false gate strips the
+// expectation together with the code it governs — an empty crate with a
+// live `#![expect(unsafe_code)]` would report the expectation unfulfilled.
+#![cfg(feature = "lmdb")]
 #![expect(
     unsafe_code,
     reason = "the bench calls liblmdb directly; every block carries a SAFETY comment"

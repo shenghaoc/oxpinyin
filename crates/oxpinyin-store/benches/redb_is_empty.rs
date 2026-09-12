@@ -27,6 +27,12 @@
 //! src/lib.rs) — redb validates declared key/value types on open, so a
 //! differently typed definition would not exercise the production path.
 
+// The gate mirrors this target's `required-features`: cargo already skips
+// the bench when redb is not the selected backend, but rust-analyzer
+// analyzes required-features targets regardless and would flag the `redb`
+// imports as unresolved under every other backend's feature set.
+#![cfg(feature = "redb")]
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
