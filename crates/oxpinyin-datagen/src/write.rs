@@ -7,9 +7,9 @@
 //! re-opened read-only and every row compared against the compiled rows:
 //! a file is only reported written after it reads back identical.
 //!
-//! On Kyoto Cabinet and tkrzw the files carry libpinyin's own names and
-//! are the drop-in set; on redb and LMDB the same records live in that
-//! backend's container under `<stem>.<ext>`.
+//! On Kyoto Cabinet, tkrzw and Berkeley DB the files carry libpinyin's own
+//! names and are the drop-in set; on redb and LMDB the same records live
+//! in that backend's container under `<stem>.<ext>`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,7 +31,7 @@ pub use oxpinyin_data::SystemDbm as DbmFile;
 
 /// A storage backend with a producer.
 ///
-/// The four variants are peers behind the same `WriteStore`; the same
+/// The five variants are peers behind the same `WriteStore`; the same
 /// compiled row stream reads back identically under each. [`Self::DEFAULT`]
 /// resolves to the peer whose feature the build carries — tkrzw under the
 /// workspace's default feature set — matching `oxpinyin_store::DefaultStore`;
@@ -156,9 +156,9 @@ impl Backend {
 
     /// The `database format:` token of the emitted `table.conf` — the
     /// string the corresponding libpinyin build writes
-    /// (`SystemTableInfo2::load` accepts `KyotoCabinet` / `Tkrzw`); the
-    /// oxpinyin-only containers name themselves, which only oxpinyin's
-    /// λ reader ever sees.
+    /// (`SystemTableInfo2::load` accepts `BerkeleyDB` / `KyotoCabinet` /
+    /// `Tkrzw`); the oxpinyin-only containers name themselves, which only
+    /// oxpinyin's λ reader ever sees.
     #[must_use]
     pub const fn database_format_token(self) -> &'static str {
         match self {

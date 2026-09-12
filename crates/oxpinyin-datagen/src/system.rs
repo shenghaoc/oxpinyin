@@ -8,8 +8,8 @@
 //! formats — the byte-level output of upstream's `gen_binary_files` +
 //! `import_interpolation` + `gen_unigram` chain: per-library chunk files,
 //! the two index DBMs' row streams, and the `bigram.db` row stream. Every
-//! backend writes the same rows; on Kyoto Cabinet and tkrzw they are the
-//! files a libpinyin install of that DBM ships.
+//! backend writes the same rows; on Kyoto Cabinet, tkrzw and Berkeley DB
+//! they are the files a libpinyin install of that DBM ships.
 //!
 //! Formats: `docs/findings/pinyin-dbm-format-2026-09-01.md`,
 //! `phrase-dbm-format-2026-09-01.md`, `bigram-punct-format-2026-09-01.md`,

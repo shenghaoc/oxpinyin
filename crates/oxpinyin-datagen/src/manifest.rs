@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn manifest_renders_every_field() {
-        // The four `Backend` enum variants are always defined (the
+        // The five `Backend` enum variants are always defined (the
         // exactly-one-backend gate lives on the *implementations*, not
         // on the enum variants), so `Backend::Redb` is a valid fixture
         // value here without pulling redb's writer in. The rendered

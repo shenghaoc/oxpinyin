@@ -56,13 +56,13 @@ never *linked*.
 | `user.conf`, `user_bigram`, `user_pinyin_index`, `user_phrase_index`, `user.bin`, `*.dbin` | written into `user_dir` by `save()` | learning persistence, in libpinyin's own user-dir file set |
 
 The DBM files take the name of the backend the build was compiled
-against. Kyoto Cabinet (`kct`) and tkrzw (`tkt`, the default selection)
-are the DBMs libpinyin itself builds against, so their files carry
-libpinyin's own names — `pinyin_index.bin`, `phrase_index.bin`,
-`bigram.db`, `punct.bin`, `addon_*_index.bin`. redb
+against. Kyoto Cabinet (`kct`), tkrzw (`tkt`, the default selection) and
+Berkeley DB (`db`) are the DBMs libpinyin itself builds against, so
+their files carry libpinyin's own names — `pinyin_index.bin`,
+`phrase_index.bin`, `bigram.db`, `punct.bin`, `addon_*_index.bin`. redb
 (`--no-default-features --features redb`) and LMDB (`--features lmdb`)
 write `<stem>.<ext>` instead — `pinyin_index.redb`, `bigram.lmdb`, and
-so on — and cannot open a libpinyin install directly. All four backends
+so on — and cannot open a libpinyin install directly. All five backends
 are first-class; the same logical row stream reads back identically
 under each. Exactly one backend is compiled into a wheel, and
 `oxpinyin._native.__store_ext__` reports which: a directory listing

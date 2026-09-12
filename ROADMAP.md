@@ -19,9 +19,9 @@ rules: `AGENTS.md`. Crate roles: `.kiro/steering/structure.md`.
 
 Stage 1 uses installed/libpinyin-format tables (no redistribution required:
 `docs/findings/model-provenance.md` — build-time fetch of the pinned model20
-archive, compiled by `oxpinyin-datagen`; on Kyoto Cabinet and tkrzw an
-unmodified libpinyin install's `data/` opens as is). Stage 2 is optional and
-measurement-gated.
+archive, compiled by `oxpinyin-datagen`; on Kyoto Cabinet, tkrzw and
+Berkeley DB an unmodified libpinyin install's `data/` opens as is).
+Stage 2 is optional and measurement-gated.
 
 ## Reference pin
 
@@ -126,14 +126,14 @@ parked.
   surface, and any single build compiles in exactly one of them
   (`DefaultStore`; `oxpinyin-store` refuses a build with zero or more
   than one backend feature at compile time). tkrzw is the feature in the
-  workspace's default set; the other three are selected explicitly with
-  `--no-default-features --features {kyotocabinet|lmdb|redb}`. redb is
-  the pure-Rust portability fallback; KC/tkrzw/LMDB are C dependencies.
-  System data files carry libpinyin's own names on Kyoto Cabinet and
-  tkrzw (the drop-in set) and `<stem>.<ext>` on redb and LMDB; the user
-  dir is libpinyin's own file set under the same naming rule (`user.conf`
-  names the backend family, and a non-conforming profile is wiped on
-  open as upstream's `check_format` does). Switching
+  workspace's default set; the other four are selected explicitly with
+  `--no-default-features --features {kyotocabinet|lmdb|redb|bdb}`. redb
+  is the pure-Rust portability fallback; KC/tkrzw/LMDB/BDB are C
+  dependencies. System data files carry libpinyin's own names on Kyoto
+  Cabinet, tkrzw and Berkeley DB (the drop-in set) and `<stem>.<ext>` on
+  redb and LMDB; the user dir is libpinyin's own file set under the same
+  naming rule (`user.conf` names the backend family, and a non-conforming
+  profile is wiped on open as upstream's `check_format` does). Switching
   backends is a storage-format transition — the runtime does not
   transparently open one backend's files with another, and old
   backend-specific user data is not carried across the switch. (This
@@ -143,11 +143,12 @@ parked.
 
 - **W15 LANDED.** The data pipeline inversion is complete: runtime tables
   are compiled natively from the canonical pinned `model20` archive for every
-  storage backend (tkrzw, Kyoto Cabinet, LMDB, redb) — no producer consumes
-  libpinyin-generated runtime data. Implemented in `crates/oxpinyin-datagen`;
-  all four backend producers are feature-gated in its `Cargo.toml`. The
-  retired `oxpinyin-migrate` route (oracle ABI export + verbatim Tkrzw
-  conversion) was proven unnecessary by the native compilation.
+  storage backend (tkrzw, Kyoto Cabinet, LMDB, redb, Berkeley DB) — no
+  producer consumes libpinyin-generated runtime data. Implemented in
+  `crates/oxpinyin-datagen`; all five backend producers are feature-gated
+  in its `Cargo.toml`. The retired `oxpinyin-migrate` route (oracle ABI
+  export + verbatim Tkrzw conversion) was proven unnecessary by the
+  native compilation.
   Architecture and the canonical-source invariant:
   `docs/findings/datagen-model20.md`.
 
@@ -156,8 +157,8 @@ parked.
   own build produces — the sixteen per-library chunk files (byte-exact
   against the pin), `pinyin_index.bin`, `phrase_index.bin`, `bigram.db`,
   `punct.bin`, the `addon_*` pair and `table.conf` — through the selected
-  backend; on Kyoto Cabinet and tkrzw under libpinyin's names, on redb
-  and LMDB as the same records in that backend's container
+  backend; on Kyoto Cabinet, tkrzw and Berkeley DB under libpinyin's
+  names, on redb and LMDB as the same records in that backend's container
   (`docs/findings/datagen-compat-2026-09-01.md`; the pre-P6 native
   schema and its serializers are gone). The production runtime reads
   those files directly through lazy readers — a handle plus a mmap per

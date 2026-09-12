@@ -1226,10 +1226,10 @@ mod tests {
   040000000000000004000000000000000000"#;
 
     /// The records a fixed user state produces, byte-for-byte, on every
-    /// backend. The four peer builds cannot share a process (the
+    /// backend. The five peer builds cannot share a process (the
     /// exactly-one-backend invariant), so this golden is the
     /// cross-backend equivalence check the store crate uses elsewhere:
-    /// each build asserts the same bytes, and CI runs all four. It is
+    /// each build asserts the same bytes, and CI runs all five. It is
     /// what makes "the same records in whichever container the build
     /// selected" a tested claim rather than an assertion in a doc — the
     /// objective's "as though it were libpinyin with redb or LMDB".
