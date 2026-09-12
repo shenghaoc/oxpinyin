@@ -124,6 +124,21 @@ d["metrics"]["alloc_count_per_cycle"] = None'
 expect 0 "a null metric is not a 100% improvement" "$DIR"
 says "a null is called out as unmeasured" "not measured"
 
+# --- a zero predecessor is not a free pass ---------------------------------
+# alloc_count_per_cycle can legitimately be 0. Going 0 -> positive is the one
+# transition most worth seeing, and a percentage of a zero baseline hides it.
+ZERO="$WORK/zero"; mkdir -p "$ZERO"
+write_snap "$WORK/snap.json" '
+d["captured_utc"] = "2026-09-11T03:00:00Z"
+d["metrics"]["alloc_count_per_cycle"] = 0'
+expect 0 "seed a series with a zero metric" "$ZERO" --append
+write_snap "$WORK/snap.json" 'd["metrics"]["alloc_count_per_cycle"] = 5'
+expect 1 "zero to positive is flagged" "$ZERO"
+says "and is described as from zero" "from zero"
+
+write_snap "$WORK/snap.json" 'd["metrics"]["alloc_count_per_cycle"] = 0'
+expect 0 "zero to zero is not flagged" "$ZERO"
+
 # --- a malformed snapshot is a tool error, not a finding -------------------
 printf 'not json {' > "$WORK/snap.json"
 expect 2 "malformed snapshot" "$DIR"
@@ -131,11 +146,32 @@ expect 2 "malformed snapshot" "$DIR"
 write_snap "$WORK/snap.json" 'del d["metrics"]'
 expect 2 "snapshot with no metrics block" "$DIR"
 
+# --- structurally invalid input, which is valid JSON -----------------------
+# Each of these parses, then blows up somewhere deep in the comparison unless
+# the shape is checked first.
+write_snap "$WORK/snap.json" 'd["metrics"]["section_sum"] = "1000000"'
+expect 2 "a string metric is malformed, not compared" "$DIR"
+
+printf '[1, 2, 3]' > "$WORK/snap.json"
+expect 2 "a JSON list is malformed" "$DIR"
+
 # --- a corrupt predecessor degrades to 'no predecessor' --------------------
 CORRUPT="$WORK/corrupt"; mkdir -p "$CORRUPT"
 printf 'garbage' > "$CORRUPT/20260911T030000-aaaaaaaaaaaa.json"
 write_snap "$WORK/snap.json" 'pass'
 expect 0 "a corrupt predecessor does not fail the lane" "$CORRUPT"
+
+# A predecessor that is valid JSON but the wrong shape takes the same path,
+# rather than raising out of prev.get() or the subtraction.
+SHAPE="$WORK/shape"; mkdir -p "$SHAPE"
+printf '[1, 2, 3]' > "$SHAPE/20260911T030000-aaaaaaaaaaaa.json"
+write_snap "$WORK/snap.json" 'pass'
+expect 0 "a list predecessor is treated as missing" "$SHAPE"
+says "and says so" "nothing to compare"
+
+printf '{"metrics": {"section_sum": "big"}}' > "$SHAPE/20260911T030001-bbbbbbbbbbbb.json"
+write_snap "$WORK/snap.json" 'pass'
+expect 0 "a string-metric predecessor is treated as missing" "$SHAPE"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

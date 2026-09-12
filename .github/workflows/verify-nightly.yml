@@ -345,8 +345,14 @@ jobs:
       # misses so a save always happens, the prefix restore-key always loads
       # the newest save. A miss is normal (first run, or an eviction) and the
       # lane reports "nothing to compare" rather than failing.
+      # restore/save split rather than the combined actions/cache, because the
+      # combined action's post step is `post-if: success()`. The compare step
+      # below exits non-zero on a flagged move, which would skip the save and
+      # drop the very sample that was flagged — the next night would then
+      # compare against an older predecessor and could miss the move entirely.
+      # Save explicitly, with `if: always()`, and fail after it.
       - name: Restore the snapshot series
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .perf-series
           key: perf-snapshot-${{ github.run_id }}
@@ -357,15 +363,37 @@ jobs:
       # --append only on the schedule. A manual run gets the full report and
       # writes nothing, so an off-cadence sample cannot silently become
       # tomorrow's baseline.
+      # The exit status is captured rather than allowed to end the step, so the
+      # save below still runs. It is re-raised after the save.
       - name: Compare against the previous night and report
+        id: compare
         run: |
-          set -euo pipefail
+          set -uo pipefail
           args=(--snapshot snapshot.json --series-dir .perf-series
                 --summary "$GITHUB_STEP_SUMMARY")
           if [ "$GITHUB_EVENT_NAME" = schedule ]; then
             args+=(--append)
           fi
-          tools/perf-gate/series.py "${args[@]}"
+          status=0
+          tools/perf-gate/series.py "${args[@]}" || status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -gt 1 ]; then
+            echo "::error::series.py failed with $status"
+            exit "$status"
+          fi
+      # Only the schedule writes, so a workflow_dispatch run cannot become the
+      # predecessor the next real night compares against.
+      - name: Save the snapshot series
+        if: always() && github.event_name == 'schedule'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .perf-series
+          key: perf-snapshot-${{ github.run_id }}
+      - name: Re-raise a flagged comparison
+        if: steps.compare.outputs.status == '1'
+        run: |
+          echo "::warning::a metric moved more than the attention threshold; see the job summary"
+          exit 1
       # The durable copy. The cache is evictable; artifacts are not, so the
       # history survives an eviction even though the night-over-night
       # comparison skips that one night. Uploaded whether or not the compare
