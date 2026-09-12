@@ -919,7 +919,7 @@ fn parse_fallback(input: &[u8], tables: SchemeTables) -> Option<SyllableKey> {
 /// `ZhuyinScheme` from `src/storage/pinyin_custom2.h:122-133`.
 ///
 /// Eight of the nine keyboards parse ([`ZhuyinParser`]: Standard, Hsu,
-/// Ibm, Ginyieh, Eten, Eten26, HsuDvorak, DachenCp26); `StandardDvorak`
+/// Ibm, Ginyieh, Eten, Eten26, `HsuDvorak`, `DachenCp26`); `StandardDvorak`
 /// is the one gap — upstream's setter aborts on it
 /// (`zhuyin_parser2.cpp:291-295`, recorded in
 /// `docs/findings/upstream-divergences.md`), and the oxpinyin setters

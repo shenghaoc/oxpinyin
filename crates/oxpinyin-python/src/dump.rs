@@ -260,6 +260,11 @@ fn top_texts(session: &RuntimeSession) -> Vec<String> {
 /// the same session type the binding wraps — replayed through the
 /// corpus-header procedure the pytest driver mirrors through
 /// `oxpinyin.zhuyin`.
+///
+/// # Errors
+///
+/// Returns [`RunError`] when the runtime cannot open `system_dir` or a
+/// case's replay fails.
 pub fn run_zhuyin_corpus(corpus: &Value, system_dir: &Path) -> Result<Value, RunError> {
     let runtime = Runtime::open(system_dir, None).map_err(|error| RunError(error.to_string()))?;
 
@@ -300,38 +305,32 @@ fn run_zhuyin_case(facade: &mut ZhuyinSession, case: &Value) -> Result<Value, Ru
         // Corpus-authored values fit in a byte (see the corpus header); an
         // out-of-range value saturates into the unknown-scheme refusal.
         let byte = u8::try_from(value).unwrap_or(u8::MAX);
-        match chewing_scheme_from_value(byte) {
-            Some(scheme) => {
-                if !facade.set_chewing_scheme(scheme) {
-                    events.push(json!({
-                        "type": "scheme_error",
-                        "message": dvorak_scheme_message(),
-                    }));
-                    return Ok(json!({ "name": name, "events": events }));
-                }
-            }
-            None => {
+        if let Some(scheme) = chewing_scheme_from_value(byte) {
+            if !facade.set_chewing_scheme(scheme) {
                 events.push(json!({
                     "type": "scheme_error",
-                    "message": unknown_chewing_scheme_message(byte),
+                    "message": dvorak_scheme_message(),
                 }));
                 return Ok(json!({ "name": name, "events": events }));
             }
+        } else {
+            events.push(json!({
+                "type": "scheme_error",
+                "message": unknown_chewing_scheme_message(byte),
+            }));
+            return Ok(json!({ "name": name, "events": events }));
         }
     }
     if let Some(value) = case.get("full_scheme").and_then(Value::as_u64) {
         let byte = u8::try_from(value).unwrap_or(u8::MAX);
-        match full_scheme_from_value(byte) {
-            Some(scheme) => {
-                facade.set_full_scheme(scheme);
-            }
-            None => {
-                events.push(json!({
-                    "type": "scheme_error",
-                    "message": unknown_full_scheme_message(byte),
-                }));
-                return Ok(json!({ "name": name, "events": events }));
-            }
+        if let Some(scheme) = full_scheme_from_value(byte) {
+            facade.set_full_scheme(scheme);
+        } else {
+            events.push(json!({
+                "type": "scheme_error",
+                "message": unknown_full_scheme_message(byte),
+            }));
+            return Ok(json!({ "name": name, "events": events }));
         }
     }
 
@@ -414,8 +413,7 @@ fn run_zhuyin_case(facade: &mut ZhuyinSession, case: &Value) -> Result<Value, Ru
         let offset = spec
             .get("offset")
             .and_then(Value::as_u64)
-            .map(|offset| usize::try_from(offset).unwrap_or(usize::MAX))
-            .unwrap_or(0);
+            .map_or(0, |offset| usize::try_from(offset).unwrap_or(usize::MAX));
         let before = spec.get("before").and_then(Value::as_bool).unwrap_or(false);
         let ran = facade.guess_candidates(offset, before);
         events.push(json!({

@@ -6,7 +6,7 @@
 //! Cabinet or tkrzw). The perf-matrix container provides both
 //! (`/opt/libpinyin-{kc,tkrzw}/lib/libpinyin/data`); local runs without
 //! the variable skip. The C-ABI half of the invariant — libpinyin.so and
-//! libpinyin_capi.so on the same directory, every driver's log identical
+//! `libpinyin_capi.so` on the same directory, every driver's log identical
 //! — is `tools/bisection/run-same-data-dir-diff.sh`.
 //!
 //! Nothing here is converted, imported or copied: the directory is the

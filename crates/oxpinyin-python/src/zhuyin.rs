@@ -78,7 +78,7 @@ pub fn unknown_chewing_scheme_message(value: u8) -> String {
     format!("unknown zhuyin keyboard scheme {value}")
 }
 
-/// Message for the unimplemented StandardDvorak slot — shared like above.
+/// Message for the unimplemented `StandardDvorak` slot — shared like above.
 #[must_use]
 pub const fn dvorak_scheme_message() -> &'static str {
     "zhuyin keyboard StandardDvorak (7) is not implemented"
@@ -249,7 +249,8 @@ impl ZhuyinSession {
             .live
             .zhuyin_scheme
             .load(std::sync::atomic::Ordering::Relaxed);
-        chewing_scheme_from_value(value as u8).unwrap_or(ZhuyinScheme::Standard)
+        chewing_scheme_from_value(u8::try_from(value).unwrap_or(u8::MAX))
+            .unwrap_or(ZhuyinScheme::Standard)
     }
 
     /// Selects a chewing keyboard — the `zhuyin_set_chewing_scheme` law:
@@ -275,7 +276,8 @@ impl ZhuyinSession {
             .live
             .full_scheme
             .load(std::sync::atomic::Ordering::Relaxed);
-        full_scheme_from_value(value as u8).unwrap_or(FullPinyinScheme::Hanyu)
+        full_scheme_from_value(u8::try_from(value).unwrap_or(u8::MAX))
+            .unwrap_or(FullPinyinScheme::Hanyu)
     }
 
     /// Selects the full-pinyin scheme — the `zhuyin_set_full_pinyin_scheme`
@@ -366,12 +368,9 @@ impl ZhuyinSession {
         if !self.core.session.is_composing() {
             return false;
         }
-        let normalized = match self.core.validate_lookup_offset(offset) {
-            Ok(normalized) => normalized,
-            Err(_) => {
-                self.candidates.clear();
-                return false;
-            }
+        let Ok(normalized) = self.core.validate_lookup_offset(offset) else {
+            self.candidates.clear();
+            return false;
         };
         self.candidates.clear();
         let session_offset = match self.core.zhuyin_parse.as_ref() {
@@ -384,13 +383,10 @@ impl ZhuyinSession {
             None => normalized,
         };
         let window_owned: CandidateList = if before_cursor {
-            let window = match self.core.session.candidates_ending_at(session_offset) {
-                Ok(window) => window,
-                Err(_) => {
-                    self.core.anchored_window = None;
-                    self.candidates.clear();
-                    return false;
-                }
+            let Ok(window) = self.core.session.candidates_ending_at(session_offset) else {
+                self.core.anchored_window = None;
+                self.candidates.clear();
+                return false;
             };
             // The before-cursor window is re-anchored just like the
             // after-cursor one: `snapshot_candidates` records each row's
@@ -407,12 +403,11 @@ impl ZhuyinSession {
             {
                 None
             } else {
-                match self.core.session.candidates_at(session_offset) {
-                    Ok(window) => Some((session_offset, window)),
-                    Err(_) => {
-                        self.candidates.clear();
-                        return false;
-                    }
+                if let Ok(window) = self.core.session.candidates_at(session_offset) {
+                    Some((session_offset, window))
+                } else {
+                    self.candidates.clear();
+                    return false;
                 }
             };
             match self.core.anchored_window.as_ref() {
@@ -511,10 +506,11 @@ impl ZhuyinSession {
     /// offset maps into session coordinates under the active chewing parse
     /// first. Returns the session's bool (false for a free cell).
     pub fn clear_constraint(&mut self, offset: usize) -> bool {
-        let session_offset = match self.core.zhuyin_parse.as_ref() {
-            Some(parse) => zhuyin_session_offset(parse, offset),
-            None => offset,
-        };
+        let session_offset = self
+            .core
+            .zhuyin_parse
+            .as_ref()
+            .map_or(offset, |parse| zhuyin_session_offset(parse, offset));
         self.core.session.clear_constraint(session_offset)
     }
 
@@ -587,7 +583,7 @@ impl ZhuyinSession {
 
     /// Whether a composition is in progress.
     #[must_use]
-    pub fn is_composing(&self) -> bool {
+    pub const fn is_composing(&self) -> bool {
         self.core.session.is_composing()
     }
 
@@ -623,7 +619,7 @@ impl ZhuyinSession {
     }
 
     /// Renders the key's pinyin spelling under the live full-pinyin scheme
-    /// — the `zhuyin_get_pinyin_string` law: Luoma and SecondaryZhuyin
+    /// — the `zhuyin_get_pinyin_string` law: Luoma and `SecondaryZhuyin`
     /// dispatch to their own renderers, Hanyu and everything else to the
     /// plain pinyin one. `None` is upstream's `false`.
     #[must_use]
@@ -662,15 +658,14 @@ fn snapshot_candidates(
         if candidate.kind() == CandidateKind::Fallback {
             continue;
         }
-        let consumed_bytes = match zhuyin_parse.as_ref() {
-            Some(parse) => zhuyin_original_offset(parse, candidate.consumed_bytes()),
-            None => candidate.consumed_bytes(),
-        };
+        let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
+            || candidate.consumed_bytes(),
+            |parse| zhuyin_original_offset(parse, candidate.consumed_bytes()),
+        );
         let span_begin_session = anchor.saturating_add(candidate.span_start());
-        let span_begin = match zhuyin_parse.as_ref() {
-            Some(parse) => zhuyin_original_begin(parse, span_begin_session),
-            None => span_begin_session,
-        };
+        let span_begin = zhuyin_parse.as_ref().map_or(span_begin_session, |parse| {
+            zhuyin_original_begin(parse, span_begin_session)
+        });
         // Before-cursor law: only candidates whose span ENDS at the
         // requested original offset. At offset 0 no span ends there, so the
         // before-cursor window is empty — not the whole composition. The

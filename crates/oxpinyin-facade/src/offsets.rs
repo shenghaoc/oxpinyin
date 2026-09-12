@@ -57,10 +57,9 @@ pub fn zhuyin_original_offset(parse: &ZhuyinParse, offset: usize) -> usize {
 /// key's boundary) through the end mapper answers that; 0 stays 0.
 #[must_use]
 pub fn zhuyin_original_begin(parse: &ZhuyinParse, start: usize) -> usize {
-    match start.checked_sub(1) {
-        None => 0,
-        Some(before) => zhuyin_original_offset(parse, before),
-    }
+    start
+        .checked_sub(1)
+        .map_or(0, |before| zhuyin_original_offset(parse, before))
 }
 
 /// The Luoma/secondary-zhuyin sibling of [`double_original_offset`]: the
@@ -82,7 +81,9 @@ pub fn full_original_offset(parse: &FullPinyinIndexParse, offset: usize) -> usiz
 
 /// Maps an original-input offset to the transformed session offset — the
 /// inverse of [`double_original_offset`]: the transformed start of the
-/// first key whose original span ends past `offset`. A key-boundary
+/// first key whose original span ends past `offset`.
+///
+/// A key-boundary
 /// offset therefore maps to the next key's start, the position a forced
 /// run at that key would sit at.
 #[must_use]
@@ -123,13 +124,9 @@ pub fn full_session_offset(parse: &FullPinyinIndexParse, offset: usize) -> usize
     transformed
 }
 
-/// Maps an original zhuyin-input lookup offset to the session raw-buffer
-/// offset for the candidate-guess family — the libzhuyin facade's law.
+///
+///
 /// The terminal offset (`offset == consumed`) maps to the session
-/// buffer's one-past-end — upstream's matrix reserved slot, where the
-/// span walk yields nothing and only the prepended sentence rows answer
-/// — which the per-key walk in [`zhuyin_session_offset`] overruns by one
-/// trailing apostrophe.
 ///
 /// The mapping is direction-dependent because a key boundary between two
 /// syllables is two session positions at once: the end of the left key

@@ -138,7 +138,7 @@ fn fixture_lines() -> Vec<CaptureLine> {
 
 /// The scheme discriminants the facade's `zhuyin_scheme` mapping accepts,
 /// mirrored here so the fixture drives the same keyboards. 7
-/// (StandardDvorak) is upstream's setter abort and never appears.
+/// (`StandardDvorak`) is upstream's setter abort and never appears.
 fn scheme_for(value: u8) -> ZhuyinScheme {
     match value {
         1 => ZhuyinScheme::Standard,
@@ -207,7 +207,11 @@ fn zhuyin_parse_matches_the_frozen_oracle_pin() {
             line.case
         );
 
-        let zhuyin: Vec<String> = parsed.keys().iter().map(|key| key.display()).collect();
+        let zhuyin: Vec<String> = parsed
+            .keys()
+            .iter()
+            .map(oxpinyin_core::ZhuyinKey::display)
+            .collect();
         let expected_zhuyin = if line.zhuyin == "-" {
             String::new()
         } else {

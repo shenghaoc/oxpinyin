@@ -41,9 +41,11 @@ use crate::context::LiveOptions;
 pub const BEFORE_CURSOR_ANCHOR: usize = 0;
 
 /// State behind a facade's instance handle, minus the C parts: everything
-/// the two C-ABI crates' `CapiInstance`s held in identical shape. The C
+/// the two C-ABI crates' `CapiInstance`s held in identical shape.
+///
+/// The C
 /// layers hold one of these plus their ABI-only fields (the context
-/// back-pointer, the `#[repr(C)]` key slots, the CString candidate
+/// back-pointer, the `#[repr(C)]` key slots, the `CString` candidate
 /// snapshot).
 pub struct InstanceCore {
     /// The shared runtime's concrete session — the same assembly every
@@ -85,7 +87,7 @@ pub struct InstanceCore {
     pub zhuyin_parse: Option<ZhuyinParse>,
     /// Original Zhuyin input for sentence/preedit fallback display.
     pub zhuyin_input: String,
-    /// Most recent full-pinyin index parse (LUOMA / SECONDARY_ZHUYIN),
+    /// Most recent full-pinyin index parse (LUOMA / `SECONDARY_ZHUYIN`),
     /// when the last parse call was the full-pinyin entry point under
     /// such a scheme. Used for aux-text rendering over the raw input.
     pub full_parse: Option<FullPinyinIndexParse>,
@@ -97,7 +99,7 @@ impl InstanceCore {
     /// Assembles an instance's state from the context's allocation — the
     /// `alloc_instance` law, minus the C handle wiring.
     #[must_use]
-    pub fn new(
+    pub const fn new(
         session: RuntimeSession,
         user: Option<UserStore>,
         dict: RuntimeDict,
@@ -208,6 +210,11 @@ impl InstanceCore {
     /// The chain order is the union of the two facades'; a facade that
     /// never populates one of the parse states simply never takes that
     /// branch, which preserves its law exactly.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when `offset` exceeds the active parse's
+    /// consumed input, per the range law above.
     pub fn validate_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
         if let Some(parse) = self.zhuyin_parse.as_ref() {
             return check_lookup_offset_range(parse.consumed(), offset);
