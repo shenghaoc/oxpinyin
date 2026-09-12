@@ -137,9 +137,11 @@ fn parse_manifest(text: &str) -> Manifest {
 fn rust_lambda_matches_committed_manifest() {
     let estimate = rust_estimate().unwrap_or_else(|why| panic!("{why}"));
     let path = manifest_path();
-    if !path.is_file() {
-        panic!("committed golden missing: {} not committed", path.display())
-    }
+    assert!(
+        path.is_file(),
+        "committed golden missing: {} not committed",
+        path.display()
+    );
     let manifest = parse_manifest(&std::fs::read_to_string(&path).expect("manifest"));
 
     assert_eq!(

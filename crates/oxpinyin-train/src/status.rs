@@ -225,6 +225,7 @@ impl fmt::Display for Scalar {
 impl Status {
     /// The flat-JSON body, keys in a fixed canonical order for determinism.
     fn to_json(&self) -> String {
+        use std::fmt::Write as _;
         let mut fields: Vec<(String, Scalar)> = Vec::new();
         // Epochs first, in stage order, then the scalar fields in a stable
         // canonical order. Order is immaterial to `json.loads`, but a fixed
@@ -267,7 +268,7 @@ impl Status {
             if index > 0 {
                 json.push_str(", ");
             }
-            json.push_str(&format!("\"{key}\": {value}"));
+            let _ = write!(json, "\"{key}\": {value}");
         }
         json.push('}');
         json
@@ -287,31 +288,31 @@ impl Status {
     /// Dispatches one parsed `key: number` pair into its typed slot. Unknown
     /// keys (and epoch keys for non-main-pipeline stages) are ignored.
     fn assign(&mut self, key: &str, scalar: Scalar) {
-        let as_u64 = || match scalar {
+        let as_count = || match scalar {
             Scalar::Int(value) => value,
             Scalar::Float(value) => value as u64,
         };
-        let as_f64 = || match scalar {
+        let as_score = || match scalar {
             Scalar::Int(value) => value as f64,
             Scalar::Float(value) => value,
         };
         match key {
-            "SegmentEpoch" => drop(self.epochs.insert(Stage::Segment, as_u64() as u32)),
-            "GenerateEpoch" => drop(self.epochs.insert(Stage::Generate, as_u64() as u32)),
-            "EstimateEpoch" => drop(self.epochs.insert(Stage::Estimate, as_u64() as u32)),
-            "PruneEpoch" => drop(self.epochs.insert(Stage::Prune, as_u64() as u32)),
-            "EvaluateEpoch" => drop(self.epochs.insert(Stage::Evaluate, as_u64() as u32)),
-            "GenerateStart" => self.generate_start = Some(as_u64()),
-            "GenerateEnd" => self.generate_end = Some(as_u64()),
-            "GenerateTextEnd" => self.generate_text_end = Some(as_u64()),
-            "GenerateModelEnd" => self.generate_model_end = Some(as_u64() as u32),
-            "EstimateScore" => self.estimate_score = Some(as_f64()),
-            "PruneMergeNumber" => self.prune_merge_number = Some(as_u64()),
-            "PruneK" => self.prune_k = Some(as_u64()),
-            "PruneCDF" => self.prune_cdf = Some(as_f64()),
-            "PruneModelSize" => self.prune_model_size = Some(as_u64()),
-            "EvaluateAverageLambda" => self.evaluate_average_lambda = Some(as_f64()),
-            "EvaluateCorrectionRate" => self.evaluate_correction_rate = Some(as_f64()),
+            "SegmentEpoch" => drop(self.epochs.insert(Stage::Segment, as_count() as u32)),
+            "GenerateEpoch" => drop(self.epochs.insert(Stage::Generate, as_count() as u32)),
+            "EstimateEpoch" => drop(self.epochs.insert(Stage::Estimate, as_count() as u32)),
+            "PruneEpoch" => drop(self.epochs.insert(Stage::Prune, as_count() as u32)),
+            "EvaluateEpoch" => drop(self.epochs.insert(Stage::Evaluate, as_count() as u32)),
+            "GenerateStart" => self.generate_start = Some(as_count()),
+            "GenerateEnd" => self.generate_end = Some(as_count()),
+            "GenerateTextEnd" => self.generate_text_end = Some(as_count()),
+            "GenerateModelEnd" => self.generate_model_end = Some(as_count() as u32),
+            "EstimateScore" => self.estimate_score = Some(as_score()),
+            "PruneMergeNumber" => self.prune_merge_number = Some(as_count()),
+            "PruneK" => self.prune_k = Some(as_count()),
+            "PruneCDF" => self.prune_cdf = Some(as_score()),
+            "PruneModelSize" => self.prune_model_size = Some(as_count()),
+            "EvaluateAverageLambda" => self.evaluate_average_lambda = Some(as_score()),
+            "EvaluateCorrectionRate" => self.evaluate_correction_rate = Some(as_score()),
             _ => {} // ignore unknown keys
         }
     }
@@ -469,7 +470,7 @@ mod tests {
         status.sign(Stage::Generate);
         status.generate_text_end = Some(42);
         status.generate_model_end = Some(3);
-        status.estimate_score = Some(0.312699);
+        status.estimate_score = Some(0.312_699);
         status.prune_k = Some(3);
         status.prune_cdf = Some(0.99);
         status.evaluate_correction_rate = Some(0.5);

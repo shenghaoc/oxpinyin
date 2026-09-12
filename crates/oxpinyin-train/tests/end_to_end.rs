@@ -5,7 +5,7 @@
 //! corpus on disk and drives the whole native workflow through the persistent
 //! [`Trainer`] — segment → generate candidates → estimate + sort → merge →
 //! prune → convert → estimate λ → apply → correction rate — with no Python,
-//! `make`, SQLite, or libpinyin. It verifies every material stage's on-disk
+//! `make`, `SQLite`, or libpinyin. It verifies every material stage's on-disk
 //! product and the final (interpolation model, λ, correction rate), and that a
 //! second run resumes to the identical result.
 //!
@@ -112,8 +112,7 @@ impl TempDir {
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
+                .map_or(0, |d| d.as_nanos())
         ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("temp dir");

@@ -251,7 +251,7 @@ impl PinDir {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         for entry in data.read_dir().map_err(|e| e.to_string())?.flatten() {
-            if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            if entry.file_type().is_ok_and(|t| t.is_file()) {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
                 // The built binary model the pin utils load from the cwd, plus
@@ -406,10 +406,7 @@ fn rust_kmm_matches_pin_gen_and_export() {
 #[test]
 #[ignore = "needs the pin-built KMM tools and data (PINYIN_KMM_TO_INTERP, ...); run with --include-ignored"]
 fn rust_kmm_matches_pin_to_interpolation() {
-    let (Some(to_interp), Some(data)) = (
-        locate_bin("PINYIN_KMM_TO_INTERP"),
-        Some(()).and(locate_data()),
-    ) else {
+    let (Some(to_interp), Some(data)) = (locate_bin("PINYIN_KMM_TO_INTERP"), locate_data()) else {
         panic!(
             "missing input for the live to-interpolation differential: set PINYIN_KMM_TO_INTERP, \
              PINYIN_GEN_NGRAM_DATA"

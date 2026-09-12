@@ -69,7 +69,9 @@ pub enum TrainError {
 impl fmt::Display for TrainError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io { path, source } => write!(formatter, "cannot access {path:?}: {source}"),
+            Self::Io { path, source } => {
+                write!(formatter, "cannot access {}: {source}", path.display())
+            }
             Self::Malformed { detail } => write!(formatter, "malformed input: {detail}"),
             Self::EpochTooNew {
                 stage,
