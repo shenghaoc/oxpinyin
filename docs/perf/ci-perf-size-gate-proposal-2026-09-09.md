@@ -529,6 +529,14 @@ artifact, commit it", not "re-derive the file by hand".
 Exit 1 and exit 2 must never be collapsed. A gate whose flakes and whose real
 findings look alike gets muted, and then it is worse than no gate.
 
+Steps 11–13 — the decision logic, and the only part of the lane with rules
+rather than commands — are implemented in `tools/perf-gate/check.py`, with
+`tools/perf-gate/check.test.sh` covering every exit path. That is a tool, not
+CI policy: nothing runs it until the lane exists, and the lane is what needs
+the ask. It is there so Phase 0 can be run by hand — capture, check, read the
+exit code — and so that the rules above are reviewable as code rather than as
+a description of code that might later be written differently.
+
 ### Cost
 
 Dominated by release builds under `lto = "fat"` + `codegen-units = 1`: **five**
