@@ -229,18 +229,18 @@ fn append_predicted_prefix(
         return;
     }
     let limit = prefix_len.saturating_mul(2).saturating_add(1);
-    // Merge the system and user seams by TEXT before ranking: both
-    // `suggest_after` results are already text-ascending (the reverse-map
-    // walk, token-ascending within one text), and the defined prediction
-    // order is text-ascending across BOTH seams — a plain concatenation
-    // would put every system row before a user row regardless of text. That
-    // is only text-safe today because the two seams settle in different
-    // (length, frequency) tie groups (system baked > 0, user rows always
-    // baked 0 — user tokens never appear in the system unigram map); the
-    // facade's merged order keeps a future cross-seam tie group
-    // text-ascending, with the system row first when a text is shared. The
-    // stable sort below keeps both inside their (length, frequency) tie
-    // groups (`upstream-divergences.md`, "Predicted-candidate tie order").
+    // Both `suggest_after` results arrive text-ascending within their own
+    // seam (the reverse-map walk, token-ascending within one text); the
+    // facade's merge orders the union by library nibble first — the
+    // system libraries 1–4, then the user library 7 — preserving each
+    // group's walk order, so a shared text keeps the system row first.
+    // The stable sort below then orders by (length, frequency) and keeps
+    // that merged order inside each tie group. The seams never share a
+    // tie group today (system baked > 0, user rows always baked 0 — user
+    // tokens never appear in the system unigram map), so the observable
+    // list happens to be text-ascending; a future cross-seam tie group
+    // would settle library-first, not text-ascending
+    // (`upstream-divergences.md`, "Predicted-candidate tie order").
     let suggestions = oxpinyin_facade::merged_suggestions(dict, user, prefix);
     // The pin divides by the phrase-index total, live per call
     // (`pinyin.cpp:1813-1814`): the facade's Σ item unigram over the
