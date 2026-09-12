@@ -337,8 +337,13 @@ jobs:
         run: |
           apt-get install -y --no-install-recommends \
             gcc g++ make pkg-config libclang-dev libtkrzw-dev liblzma-dev \
-            liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev binutils \
-            valgrind python3 util-linux
+            liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev libssl-dev \
+            binutils valgrind python3 util-linux
+      # libssl-dev above: cargo-c pulls openssl-sys through the cargo crate,
+      # and without it the build script dies with "Could not find directory of
+      # OpenSSL installation" — the same way cargo-public-api did in the
+      # public-api job, which is why that job installs it too. Confirmed by
+      # dispatching this lane once without it.
       - run: cargo install cargo-c --version 0.10.25 --locked
       # Its own cache namespace: perf-snapshot-, disjoint from fuzz-corpus-.
       # Same latest-wins shape the fuzz soak uses — the run-id key always
