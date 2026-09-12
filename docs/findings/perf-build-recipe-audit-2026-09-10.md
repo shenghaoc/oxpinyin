@@ -399,7 +399,7 @@ bands) come from the affected cross-host record, but both are used only as
 illustrations of runner noise, and every conclusion drawn from them rests on
 within-pass quotients where the recipe cancels.
 
-> **Addressed (2026-09-12 UTC).** The missing term is now in the proposal:
+> **Addressed (2026-09-11 UTC).** The missing term is now in the proposal:
 > G3 states the recipe axis alongside the feature axis, cites this audit's
 > established band and its limit 1 (no magnitude on the allocation axis), and
 > rests the conclusion on the self-ratchet property this section identified.

@@ -388,8 +388,14 @@ happens inside CI, because none of them is valid there.
 
 ## The baseline file
 
-A committed JSON file. The shape, because a proposal that asks for a gate
-should show the artifact the gate reads:
+A committed **strict JSON** file — `json.load` with no extensions, because the
+gate reads it in CI and a hand-added comment must not be able to break the
+lane.
+
+The block below is therefore **illustrative, not the file format**: it is
+JSONC purely so each field can be annotated, and the values are elided
+(`…`, zero bytes) because they are properties of a future capture. The emitted
+file carries no comments and no elisions.
 
 ```jsonc
 {
@@ -411,11 +417,15 @@ should show the artifact the gate reads:
     // benches.md, "State the build recipe, per artifact": the exact command
     // line, sha256, NEEDED and byte size, for EVERY artifact measured.
     "shipped_libpinyin": {
-      "recipe": "tools/packaging/install.sh libpinyin --prefix=/usr --destdir=… -- --no-default-features --features tkrzw,shipped",
+      "recipe": "tools/packaging/install.sh libpinyin --prefix=/usr --destdir=<stage> -- --no-default-features --features tkrzw,shipped",
       "installed_name": "libpinyin.so.15.0.0",
       "sha256": "…", "needed": ["libtkrzw.so.1", "libglib-2.0.so.0"], "bytes": 1446528
     },
-    "shipped_libzhuyin": { "recipe": "…--no-default-features --features tkrzw", "sha256": "…", "needed": [], "bytes": 0 },
+    "shipped_libzhuyin": {
+      "recipe": "tools/packaging/install.sh libzhuyin --prefix=/usr --destdir=<stage> -- --no-default-features --features tkrzw",
+      "installed_name": "libzhuyin.so.15.0.0",
+      "sha256": "…", "needed": ["libtkrzw.so.1", "libglib-2.0.so.0"], "bytes": 0
+    },
     "alloccount_libpinyin": {
       "recipe": "cargo build --locked --release -p oxpinyin-capi --no-default-features --features tkrzw,alloc-count",
       "installed_name": "libpinyin_capi.so — a fixture; nothing installs it",
@@ -443,6 +453,21 @@ requires every record to name the exact cargo command line, `sha256`, `NEEDED`
 list and byte size per timed artifact; a gate that writes that block on every
 run enforces the convention mechanically instead of relying on whoever writes
 the next record remembering to.
+
+Which means the block has to be checkable, or it decays into the prose it
+replaced. Two rules:
+
+- **`recipe` is the command the lane actually ran**, written out in full, with
+  one normalization: the per-run staging directory is recorded as `<stage>`.
+  That path is a `mktemp` scratch location with no bearing on the artifact,
+  and leaving it verbatim would change the string on every run and make the
+  fingerprint compare unequal to itself.
+- **The gate rejects an incomplete recipe** as `BASELINE STALE` (exit 3), not
+  as a pass: any `recipe` that is empty, contains an ellipsis, or carries an
+  unexpanded `<…>` token other than the one normalized `<stage>` fails the
+  check. A baseline whose provenance field has been hand-edited into a
+  fragment is the failure mode this whole block exists to prevent, so it must
+  not be the one thing the gate takes on trust.
 
 Refreshing it is an ordinary PR that regenerates the file from the lane's own
 uploaded artifact. When a gated value moves **upward**, the lane requires the
@@ -506,8 +531,11 @@ findings look alike gets muted, and then it is worse than no gate.
 
 ### Cost
 
-Dominated by three release builds under `lto = "fat"` + `codegen-units = 1`
-(shipped libpinyin, shipped libzhuyin, alloc-count), doubled for G1's round 2.
+Dominated by release builds under `lto = "fat"` + `codegen-units = 1`: **five**
+of them. The two cinstall builds (shipped libpinyin, shipped libzhuyin) run
+twice, because G1's round 2 rebuilds steps 3–4 into fresh directories; the
+alloc-count build runs once, since G3's second round re-runs the measurement
+process rather than the build.
 The measurement itself is seconds — callgrind at `CG_CYCLES=4` over a ~9 ms
 cycle under a ~50× interpreter is a couple of seconds per round, and the
 fixture tables are smaller than the records' full ones. **I have not measured
