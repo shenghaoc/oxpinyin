@@ -1,5 +1,15 @@
 # oxpinyin source audit — findings (working tree `2382bdd`)
 
+> **Status (2026-09-12):** measured at `2382bdd` (2026-08-27); every line
+> anchor, count and "today" statement below is that tree's. Since then:
+> the `ffi_catch` wrapper was removed (2026-09-05), the fuzz corpus grew
+> to ten targets, Lizard gates PRs in the `lint` job, the exported ABI is
+> 79 `pinyin_*` + 52 `zhuyin_*` symbols, unsafe is forbidden in 21 of
+> 26 crates (20 at the crate root, `oxpinyin-python` at the manifest) and
+> compiled only in capi, zhuyin-capi, oracle,
+> store and data's mmap module, the workspace has 26 crates and a
+> 173-package lockfile. `enforcement-matrix.md` carries the current state.
+
 Methods: full-tree greps with per-hit manual classification; two read-only
 sub-audits (unsafe/FFI; panic/arithmetic) over all 13 crates; Lizard 1.24.0
 and Clippy 1.97 runs. Textual matches were **not** counted as violations

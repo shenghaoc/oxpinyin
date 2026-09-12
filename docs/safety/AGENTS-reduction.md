@@ -1,5 +1,15 @@
 # AGENTS.md reduction — prose rules that can become mechanics
 
+> **Status (2026-09-12):** measured at `2382bdd` (2026-08-27); every line
+> anchor, count and "today" statement below is that tree's. Since then:
+> the `ffi_catch` wrapper was removed (2026-09-05), the fuzz corpus grew
+> to ten targets, Lizard gates PRs in the `lint` job, the exported ABI is
+> 79 `pinyin_*` + 52 `zhuyin_*` symbols, unsafe is forbidden in 21 of
+> 26 crates (20 at the crate root, `oxpinyin-python` at the manifest) and
+> compiled only in capi, zhuyin-capi, oracle,
+> store and data's mmap module, the workspace has 26 crates and a
+> 173-package lockfile. `enforcement-matrix.md` carries the current state.
+
 Companion to the profile. Principle: AGENTS.md should keep architecture,
 workflow, rationale, commands, and inherently-contextual instructions; every
 rule that a tool can enforce should migrate to Cargo/CI and then *shrink to a
@@ -47,13 +57,13 @@ Rationale + method; the LICENSE compatibility is enforced by
 `cargo deny licenses` (GPL-3.0-or-later list). **Assisted only** for the
 license half; the method text stays.
 
-## Suggested AGENTS.md delta (after PR-1..PR-4 land)
+## Suggested AGENTS.md delta — LANDED (now `AGENTS.md`, constitution §5)
 
 ```diff
  5. `unsafe`: `forbid` in oxpinyin-core; `deny` in data/user/engine …
 +5. The allowlist is mechanical: safe crates carry crate-root
-+   `#![forbid(unsafe_code)]` (or `[lints]` tables, as oxpinyin-python and
-+   oxpinyin-runtime do); `data` stays `#![deny]` reserving its documented
++   `#![forbid(unsafe_code)]` (or `[lints]` tables, as oxpinyin-python
++   does; oxpinyin-runtime and oxpinyin-facade carry both); `data` stays `#![deny]` reserving its documented
 +   mmap exception; store scopes allows to lmdb.rs/tkrzw; capi/oracle allow
 +   with `// SAFETY:` per block, enforced by Clippy's
 +   undocumented_unsafe_blocks/missing_safety_doc — CI will tell you; this

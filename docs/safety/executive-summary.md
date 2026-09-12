@@ -13,7 +13,7 @@ two-column model and the Safety-Critical-Rust-Consortium distillation;
 carry Rust-adjusted categories (see `misra-rust-mapping.md`).
 
 **Headline**: oxpinyin's code is already close to the profile's target
-state — zero unsafe outside three audited crates, 100% SAFETY-comment
+state — unsafe compiled only in the C-ABI, oracle, store and data-mmap crates, 100% SAFETY-comment
 coverage, zero unwrap/expect/panic in library production code,
 saturating arithmetic on the decode path, clean `clippy::all`. What is
 missing is *mechanization*: most of that excellence is prose-enforced
@@ -23,13 +23,13 @@ biggest rules to hard failures.
 
 ## A. Top 20 highest-value changes (ordered)
 
-1. `#![forbid(unsafe_code)]` in the 8 remaining safe crates (core proves
-   the pattern) — makes the constitution's §5 allowlist mechanical. F-12.
+1. `#![forbid(unsafe_code)]` in the 8 then-remaining safe crates (core proves
+   the pattern; landed on 20 crate roots plus Python's manifest, 21 of 26) — makes the constitution's §5 allowlist mechanical. F-12.
 2. `clippy::undocumented_unsafe_blocks` + `missing_safety_doc` denied in
-   capi/oracle — makes "SAFETY per block" (195/195 today) enforced, not
+   capi/oracle — makes "SAFETY per block" (195/195 at 2382bdd; 416 `// SAFETY:` comments today under `crates/*/src` excluding `*_tests.rs`/`test_support.rs`, 460 counting the test files under `crates/*/src` too) enforced, not
    admired.
 3. Panic containment denies (`unwrap_used`, `expect_used`, `panic`,
-   `panic_in_result_fn`) via `cfg_attr(not(test))` in the eleven library crates (incl. capi, oracle, runtime, python, datagen)
+   `panic_in_result_fn`) via `cfg_attr(not(test))` in the library crates (eleven then; thirteen crate roots today, incl. capi, zhuyin-capi, oracle, runtime, facade, python, datagen)
    — locks in the existing zero-panic state at zero churn (measured).
 4. `cargo deny` (advisories/bans/licenses/sources) as the sole supply-chain
    PR gate — closes the only fully unenforced layer.
@@ -38,7 +38,7 @@ biggest rules to hard failures.
 6. Fix F-1/F-2 (`fixture.rs:309,364` unchecked u64/u128 arithmetic — the
    production twins are already saturating; convert these too).
 7. `unused_must_use = deny` + `must_use_candidate = warn` + close the
-   must_use gaps (store=0 attrs; content/codec) — MISRA R.17.7 mechanized.
+   must_use gaps (store=0 attrs at 2382bdd, 6 today — F-10 fixed; content/codec) — MISRA R.17.7 mechanized.
 8. Cast lints at warn (`cast_possible_truncation`/`precision_loss`/
    `sign_loss`, 107 sites) — the largest untracked safe-Rust hazard class
    becomes visible; FFI seams get justified allows.
@@ -46,7 +46,8 @@ biggest rules to hard failures.
    `capi-commands` (stateful ABI session fuzzer, libchewing-precedented)
    — the two highest-yield shapes for an IME.
 10. F-7: bring the five unwrapped capi entry points under `ffi_catch` (or
-    document their non-panicability at the fn).
+    document their non-panicability at the fn) — moot since 2026-09-05:
+    the wrapper itself was removed (b6dd5c6f).
 11. fuzz workspace lints (F-8): `[lints.rust] unsafe_code = "deny"`.
 12. Nightly fuzz soak with committed corpus + ASan (10–30 min).
 13. Nightly "paranoid" lane: release tests with `overflow-checks` +
@@ -123,7 +124,7 @@ re-state these.
   group enables; restriction group enables; release `overflow-checks` in
   shipped profiles (nightly lane instead); nightly-only rustfmt options.
   *(One dated override, 2026-09-05, commit b6dd5c6f: `panic = "abort"`
-  for shipped artifacts — rejected above as defeating `ffi_catch` — is
+  for shipped artifacts — rejected above as defeating the then-existing `ffi_catch` — is
   now CONDITIONAL ACCEPT in `[profile.release]`. The REJECT's premise
   is gone twice over: the UB rationale for catching at `extern "C"`
   boundaries has been false since Rust 1.81 (rust-lang/rust#116088),
@@ -144,22 +145,22 @@ F-3 (allocation-abort DoS via hostile data header) · F-1/F-2 (fixture
 arithmetic overflow) · F-6 (opaque-handle trust surface + `g_free`≡`free`
 pairing assumption — inherent to the C ABI; the library's half is gated
 since 2026-09-09, a stale handle from the consumer remains the residual) ·
-F-7 (five entry points without panic containment) · F-4 (three bare ABI
+F-7 (closed twice over: the three iterator-end entry points were wrapped, then the wrapper itself was removed 2026-09-05) · F-4 (three bare ABI
 `as` casts) · F-11 (GArray layout read). No high-severity defects.
 
 ## L. Highest-complexity functions (Lizard, measured)
 
 `user/store.rs`: `add_phrase_in` 38, `mask_out` 33, `remove_user_phrase`
 31, `promote_addon_phrase` 22; `engine/nbest.rs nbest_sentences` 22 and
-`session.rs build_scan_matrix` 16 (parity-critical — leave until Stage 2);
+`session/mod.rs build_scan_matrix` 16 (parity-critical — leave until Stage 2);
 parsers 16–19 (legitimate table-driven); everything else ≤15 (avg CCN
 2.5 across 2,283 functions).
 
 ## M. Highest-value fuzz targets
 
-`capi-commands` (stateful 55-symbol ABI driving incl. adversarial iterator
+`capi-commands` (stateful 79-symbol ABI driving incl. adversarial iterator
 lifecycles and config mutation) > `dict-loader` (bytes→data decode, F-3
-class; libchewing `trieloader` precedent) > `scheme`/`codec` > existing
+class; libchewing `trieloader` precedent) > `scheme`/`codec` (landed since as `double-pinyin`, `table-conf`, `user-store-ops`, `phrase-library`, `chewing-parser`, `session-keys`, `fixture-model`) > existing
 `parser` with parity-corpus seeds and nightly soak.
 
 ## N. Highest-value Miri tests
@@ -190,8 +191,8 @@ same list; decide ratchets after the first nightly's distribution.
 Opaque-handle provenance (stale/double-free = UB by contract) · iterator
 begin/end pairing convention · borrowed candidate-string lifetimes ·
 `malloc`/`g_free` cross-allocator assumption · GArray layout read ·
-`usize→c_int` truncations · unwind containment (ffi_catch + Rust ≥1.81
-abort-at-ABI backstop). Mitigations: contract tests, C++ smoke gate,
+`usize→c_int` truncations · unwind containment (Rust ≥1.81 abort-at-ABI; the
+`ffi_catch` wrapper was removed 2026-09-05). Mitigations: contract tests, C++ smoke gate,
 SAFETY-lint enforcement, the capi-commands fuzzer, and the review
 checklist items already documented at each site.
 
@@ -239,5 +240,5 @@ nothing judgment-bearing is deleted.
 | `oxpinyin-audit.md` | source-tree findings register F-1…F-12 |
 | `ci-strategy.md` | 4-tier CI design |
 | `AGENTS-reduction.md` | prose → mechanics migration table |
-| `upstream-test-strategies.md` | libpinyin/libchewing tests+fuzzer study and imports |
+| `../testing/upstream-test-strategies.md` | libpinyin/libchewing tests+fuzzer study and imports |
 | `proposed-config-diffs.md` | reviewable patches for Cargo/CI/clippy/deny/hooks |

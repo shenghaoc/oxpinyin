@@ -34,10 +34,10 @@ would be cargo-cult). The boundary is the `unsafe` policy (Layer 2) and the
 
 | Crate(s) | Rule | Mechanism |
 |---|---|---|
-| core, engine, user, segment, counter, lambda, emitter, corpus, dictool | **no unsafe, ever, not even locally** | crate-root `#![forbid(unsafe_code)]` (the pattern `oxpinyin-core` already proves composes with the workspace `deny`); `forbid` cannot be re-allowed by any inner attribute |
-| data | no unsafe today; one documented future exception (mmap) | keeps `#![deny(unsafe_code)]` + module-scoped allows when/if mmap lands — `forbid` would foreclose the reserved exception, so deny is the deliberate choice |
-| store | unsafe confined to `lmdb.rs` and `tkrzw/*` | workspace `deny` + the existing module-scoped `#![allow(unsafe_code)]` in exactly those files (a module allow is precisely what `forbid` forbids — deny+scoped-allow *is* the minimal trusted region here) |
-| capi, oracle | unsafe allowed, but every block justified & every `unsafe fn` documented | `[lints.clippy] undocumented_unsafe_blocks = "deny"`, `missing_safety_doc = "deny"`, plus `rust::unsafe_op_in_unsafe_fn = "deny"`; `// SAFETY:` prose stays as the human-readable half |
+| every crate except data, store, capi, zhuyin-capi and pinyin-oracle — 21 of 26: 20 at the crate root, `oxpinyin-python` at the manifest (`[lints.rust] unsafe_code = "forbid"`); `oxpinyin-capi-marshal` included (its unsafe is macro text that expands inside the facades) | **no unsafe, ever, not even locally** | crate-root `#![forbid(unsafe_code)]` (the pattern `oxpinyin-core` already proves composes with the workspace `deny`); `forbid` cannot be re-allowed by any inner attribute |
+| data | one documented exception: the mmap-backed phrase-library reader (`phrase_library.rs`, module-scoped allow) | keeps `#![deny(unsafe_code)]` + that one module-scoped allow — `forbid` would foreclose the exception, so deny is the deliberate choice |
+| store | unsafe confined to the three C-backed backend modules (`kyotocabinet/*`, `lmdb/*`, `tkrzw/*`) | workspace `deny` + module-scoped allows in exactly those modules (a module allow is precisely what `forbid` forbids — deny+scoped-allow *is* the minimal trusted region here) |
+| capi, zhuyin-capi, oracle | unsafe allowed, but every block justified & every `unsafe fn` documented | `[lints.clippy] undocumented_unsafe_blocks = "deny"`, `missing_safety_doc = "deny"`, plus `rust::unsafe_op_in_unsafe_fn = "deny"`; `// SAFETY:` prose stays as the human-readable half |
 | all | ~~dependency unsafe inventoried~~ **not enforced** (retired 2026-09-01) | first-party unsafe inventory is the lint structure itself; the scheduled `cargo geiger` dependency report was retired 2026-09-01 (`docs/findings/verify-nightly.md`) — no job inventories dependency unsafe today; accepted loss |
 
 Deviation mechanism: none for `forbid` crates (by design — that is the
@@ -48,7 +48,7 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 
 1. Public APIs return `Result`/`Option` for every fallible operation
    (constitution §4) — enforced by type-system convention + review.
-2. **Library crates** (core/engine/user/data/store/segment): `unwrap_used`,
+2. **Library crates** (thirteen crate roots: core/engine/user/data/store/segment, runtime, facade, python, datagen, capi, zhuyin-capi, pinyin-oracle): `unwrap_used`,
    `expect_used`, `panic`, `panic_in_result_fn` denied at crate root;
    `#[cfg(test)]` modules carry a single justified `#![allow]` each. Today
    this passes with **zero** code changes (measured) — it locks the
@@ -57,15 +57,13 @@ record, enforced present-but-not-verified by Clippy, verified by review.
    provable internal invariants may be `debug_assert!`; each surviving
    release `assert` (2 today, in `parser.rs`) carries its "internal bug
    trip" justification comment. Asserts in tests unrestricted.
-4. FFI boundary: `ffi_catch` wraps 53 of the 55 C API entry points — F-7
-   brought the three iterator-`end` drops under the wrapper. The two
-   remaining unwrapped entry points (the trivial scalar writers
-   `pinyin_get_pinyin_key_rest`/`..._positions` in `cursor.rs`) are
-   intentional: null-check-and-write bodies documented as non-panicking;
-   they gain the wrapper the day that stops holding.
-5. `panic = "abort"` is **not** part of the profile (it would neutralize
-   `ffi_catch` for the cdylib). Rust ≥1.81's abort-at-ABI is the backstop
-   for *escapes*, which Layer 3.2 makes structurally unlikely.
+4. FFI boundary: the `ffi_catch` wrapper (53 of 55 entry points at
+   2382bdd) was removed 2026-09-05 (b6dd5c6f). Containment is structural:
+   the Layer 3.2 no-panic lints plus Rust ≥1.81's abort-at-ABI.
+5. `panic = "abort"` is **not** in the release profile: tried and
+   reverted 2026-09-05 for its measured keystroke-cycle cost
+   (`enforcement-matrix.md` §C). Abort-at-ABI is the backstop for
+   *escapes*, which Layer 3.2 makes structurally unlikely.
 
 ## Layer 4 — arithmetic & conversion policy (HARD CI GATE + WARNING)
 
@@ -96,7 +94,8 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 ## Layer 6 — dependency & supply chain (HARD CI GATE)
 
 - `cargo deny --locked check` on every PR, for the root workspace
-  (default and `--all-features`) and the fuzz workspace's own graph:
+  (default and `--all-features`) and the fuzz workspace's own graph (that
+  one at its current resolution, not `--locked`):
   vulnerabilities = deny; **yanked = deny**; unmaintained advisories are
   configurable in cargo-deny 0.20.2
   (`unmaintained = "workspace" | "transitive" | "all"`), and because
@@ -124,15 +123,15 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 
 | Activity | Cadence | Scope |
 |---|---|---|
-| fuzz smoke | every PR | all five targets built, parser target smoke-run (10s); every target runs in the nightly soak |
+| fuzz smoke | every PR | all ten targets built and each smoke-run (10 s); every target runs in the nightly soak |
 | ASan/LSan allocator pairing | every PR | both C ABIs: every classified slot allocated and released by its declared deallocator, with a negative control (`docs/findings/abi-allocator-pairing.md`) |
-| fuzz soak | nightly | all targets, 10–30 min, corpus committed |
+| fuzz soak | nightly | all ten targets, 3 min each; one committed seed (`fuzz/corpus/parser/zhuan`), the rest cache-restored or seeded at run time |
 | ~~Miri~~ | retired 2026-09-01 | — (`docs/findings/verify-nightly.md`) |
 | overflow-checks release test | nightly | `cargo test --release` with `-C overflow-checks -C debug-assertions` |
 | ~~mutation score~~ | retired 2026-09-01 | — (`docs/findings/verify-nightly.md`) |
 | coverage report | nightly | llvm-cov, report-only |
 | ~~Kani harnesses~~ | dropped (toolchain age) | — |
-| Lizard | nightly | CCN≤40 ratchet from current max 38 |
+| Lizard | every PR (`lint` job, since 2026-09-08) | CCN≤40 gate; max 38 when measured |
 | ~~geiger~~ | retired 2026-09-01 | — (`docs/findings/verify-nightly.md`) |
 
 None of these claim correctness; each is bug-finding machinery pointed at
@@ -140,10 +139,10 @@ the highest-risk surfaces identified in `oxpinyin-audit.md`.
 
 ## Layer 8 — FFI-specific policy (HARD CI GATE + HUMAN REVIEW)
 
-Mechanized: the 55-symbol ABI is pinned to the checked-in `pinyin.h`
-(verified by the C++ smoke gate and contract tests); SAFETY comments
-enforced (Layer 2); panic containment enforced-by-review with the F-7
-cleanup.
+Mechanized: the 79-symbol `pinyin_*` and 52-symbol `zhuyin_*` ABIs are pinned to the checked-in `libpinyin.ver`/`libzhuyin.ver` and headers (`tools/abi/check-exports.sh`, every PR),
+verified further by the C++ smoke gate and contract tests; SAFETY comments
+enforced (Layer 2); panic containment structural since the `ffi_catch`
+removal (the Layer 3.2 lints plus abort-at-ABI).
 
 Allocator pairing joined the mechanized set on 2026-09-09
 (`docs/findings/abi-allocator-pairing.md`). Every pointer-shaped slot the
