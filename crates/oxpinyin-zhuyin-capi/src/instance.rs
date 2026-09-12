@@ -22,10 +22,8 @@ pub extern "C" fn zhuyin_alloc_instance(context: *mut ZhuyinContext) -> *mut Zhu
 
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
     let ctx = unsafe { context_ref(context) };
-    match ctx.alloc_instance(context) {
-        Some(inst) => box_instance(inst),
-        None => ptr::null_mut(),
-    }
+    ctx.alloc_instance(context)
+        .map_or(ptr::null_mut(), box_instance)
 }
 
 /// Free a zhuyin instance.
@@ -78,7 +76,7 @@ pub extern "C" fn zhuyin_reset(instance: *mut ZhuyinInstance) -> bool {
     dead_code,
     reason = "upstream-declared helper kept off the export list; no in-crate caller yet"
 )]
-pub(crate) fn zhuyin_get_context(instance: *mut ZhuyinInstance) -> *mut ZhuyinContext {
+pub fn zhuyin_get_context(instance: *mut ZhuyinInstance) -> *mut ZhuyinContext {
     if instance.is_null() {
         return ptr::null_mut();
     }

@@ -26,10 +26,11 @@ pub const EXPORT_DIR_ENV: &str = "PINYIN_EXPORT_DIR";
 /// construction; duplicated because testsupport is dev-only here.
 pub const DEFAULT_EXPORT_DIR: &str = "/tmp/oxpinyin-export";
 
-/// DBMs the segmenter needs from the system data directory: the phrase
-/// DBM (present in any complete directory; the lexicon itself reads the
-/// chunk files) and the bigram, both under the compiled-in backend's names
-/// (`SystemDbm::file_name`).
+/// DBMs the segmenter needs from the system data directory.
+///
+/// The phrase DBM (present in any complete directory; the lexicon itself
+/// reads the chunk files) and the bigram, both under the compiled-in
+/// backend's names (`SystemDbm::file_name`).
 pub const EXPORT_DBMS: &[SystemDbm] = &[SystemDbm::PhraseIndex, SystemDbm::Bigram];
 
 /// Files the segmenter needs from the fetched model20 cache.

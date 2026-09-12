@@ -42,7 +42,9 @@ pub enum KmmError {
 impl fmt::Display for KmmError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io { path, source } => write!(formatter, "cannot access {path:?}: {source}"),
+            Self::Io { path, source } => {
+                write!(formatter, "cannot access {}: {source}", path.display())
+            }
             Self::Malformed { detail } => write!(formatter, "malformed input: {detail}"),
             Self::Invalid { detail } => write!(formatter, "invalid k mixture model: {detail}"),
             Self::Domain { detail } => write!(formatter, "prune domain error: {detail}"),

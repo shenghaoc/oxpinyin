@@ -87,7 +87,7 @@ pub mod pinyin_index {
     }
 
     /// The packed two-byte little-endian form of one key.
-    fn pack(key: ChewingKey) -> [u8; 2] {
+    const fn pack(key: ChewingKey) -> [u8; 2] {
         key.to_packed().to_le_bytes()
     }
 
@@ -268,7 +268,8 @@ pub mod phrase_index {
     use super::push_ucs4;
 
     /// Encodes a UTF-8 string into a UCS-4 DBM key (each char as `u32`
-    /// LE) — how libpinyin encodes phrase text for the phrase index:
+    /// LE) — how libpinyin encodes phrase text for the phrase index.
+    ///
     /// `g_utf8_to_ucs4` produces a `gunichar[]` (= `guint32[]`), stored
     /// as raw bytes in native (LE) byte order.
     #[must_use]

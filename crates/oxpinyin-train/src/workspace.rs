@@ -59,7 +59,7 @@ pub struct Trainer {
 impl Trainer {
     /// A trainer with the given config, paths, and segmentation method.
     #[must_use]
-    pub fn new(config: TrainConfig, paths: TrainerPaths, method: SegmentMethod) -> Self {
+    pub const fn new(config: TrainConfig, paths: TrainerPaths, method: SegmentMethod) -> Self {
         Self {
             config,
             paths,
@@ -93,8 +93,8 @@ impl Trainer {
         create_dir(&self.paths.model_dir)?;
         create_dir(&self.paths.final_dir)?;
 
-        let segmented = self.segment_stage(segmenter, index)?;
-        let candidates = self.generate_stage(&segmented)?;
+        let segment_docs = self.segment_stage(segmenter, index)?;
+        let candidates = self.generate_stage(&segment_docs)?;
         let sorted = self.estimate_stage(candidates, scoring_deleted)?;
         let final_model = self.prune_stage(&sorted, tryname)?;
         self.evaluate_stage(&final_model, eval, tryname, sorted.models.len())
@@ -178,7 +178,7 @@ impl Trainer {
 
         // Clean any stale candidate/report files past what we now emit, then
         // persist each candidate with its per-model Generate status.
-        self.cleanup_candidates_from(candidates.len() as u32)?;
+        self.cleanup_candidates_from(u32::try_from(candidates.len()).unwrap_or(u32::MAX))?;
         for candidate in &candidates {
             let model_path = self.candidate_path(candidate.number);
             write(&model_path, &oxpinyin_kmm::export(&candidate.model))?;
@@ -189,8 +189,8 @@ impl Trainer {
             status.store(&Status::path_for(&model_path))?;
         }
 
-        index_status.generate_text_end = Some(segmented.len() as u64);
-        index_status.generate_model_end = Some(candidates.len() as u32);
+        index_status.generate_text_end = Some(u64::try_from(segmented.len()).unwrap_or(u64::MAX));
+        index_status.generate_model_end = Some(u32::try_from(candidates.len()).unwrap_or(u32::MAX));
         index_status.sign(Stage::Generate);
         index_status.store(&index_status_path)?;
 
@@ -306,7 +306,8 @@ impl Trainer {
                     kmm_merged_text: read(&trydir.join("kmm_merged.text")).unwrap_or_default(),
                     kmm_pruned_text: read(&trydir.join("kmm_pruned.text")).unwrap_or_default(),
                     interpolation2,
-                    merge_number: status.prune_merge_number.unwrap_or(0) as usize,
+                    merge_number: usize::try_from(status.prune_merge_number.unwrap_or(0))
+                        .unwrap_or(usize::MAX),
                     model_size,
                 });
             }

@@ -40,7 +40,9 @@ pub const fn full_scheme(value: i32) -> Option<FullPinyinScheme> {
     }
 }
 
-/// The zhuyin-scheme dispatch over the header discriminants. Total over
+/// The zhuyin-scheme dispatch over the header discriminants.
+///
+/// Total over
 /// 1..=9 — the `STANDARD_DVORAK` (7) abort slot parses nothing but is a
 /// real header value; the C setters refuse it before it can be stored.
 #[must_use]

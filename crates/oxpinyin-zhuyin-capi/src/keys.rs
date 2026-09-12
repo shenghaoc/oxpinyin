@@ -3,7 +3,7 @@
 //! The single-key parsers are pure probes of (live options, one string).
 //! The display getters read the key a caller hands them through the packed
 //! ABI word. `zhuyin_get_pinyin_string` dispatches on the context's
-//! full-pinyin scheme (Hanyu / Luoma / SecondaryZhuyin) — the zhuyin-facade
+//! full-pinyin scheme (Hanyu / Luoma / `SecondaryZhuyin`) — the zhuyin-facade
 //! distinction the pinyin facade's `pinyin_get_pinyin_string` does not make
 //! (`zhuyin.cpp:1743-1766`).
 
@@ -47,14 +47,13 @@ pub extern "C" fn zhuyin_parse_full_pinyin(
     unsafe {
         *onekey = ChewingKey::ZERO;
     }
-    match inst.core.parse_one_full_pinyin(&text, true) {
-        Some(key) => {
+    inst.core
+        .parse_one_full_pinyin(&text, true)
+        .is_some_and(|key| {
             // SAFETY: Null-checked above.
             unsafe { *onekey = ChewingKey::from_core(key) };
             true
-        }
-        None => false,
-    }
+        })
 }
 
 /// Parse one chewing (bopomofo) keystroke string into a key.
@@ -84,14 +83,11 @@ pub extern "C" fn zhuyin_parse_chewing(
     let inst = unsafe { instance_ref(instance) };
     // SAFETY: Null-checked above.
     let text = unsafe { cstr_to_string(onechewing) };
-    match inst.core.parse_one_chewing(&text) {
-        Some(key) => {
-            // SAFETY: Null-checked above.
-            unsafe { *onekey = ChewingKey::from_core(key) };
-            true
-        }
-        None => false,
-    }
+    inst.core.parse_one_chewing(&text).is_some_and(|key| {
+        // SAFETY: Null-checked above.
+        unsafe { *onekey = ChewingKey::from_core(key) };
+        true
+    })
 }
 
 /// `zhuyin_get_zhuyin_string` — render the key's zhuyin spelling.
@@ -107,7 +103,12 @@ pub extern "C" fn zhuyin_get_zhuyin_string(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    display_string_getter(instance, key, utf8_str, |core| core.zhuyin_string())
+    display_string_getter(
+        instance,
+        key,
+        utf8_str,
+        oxpinyin_core::ChewingKey::zhuyin_string,
+    )
 }
 
 /// `zhuyin_get_pinyin_string` — render the key's pinyin spelling, dispatching

@@ -198,7 +198,9 @@ pub fn locate_model_dir() -> Result<Option<PathBuf>, ModelDirError> {
 /// Environment variable naming the system data (export) directory.
 pub const EXPORT_DIR_ENV: &str = "PINYIN_EXPORT_DIR";
 
-/// Default export directory when [`EXPORT_DIR_ENV`] is unset. The one
+/// Default export directory when [`EXPORT_DIR_ENV`] is unset.
+///
+/// The one
 /// definition for the harness, benches and oracle bins; `oxpinyin-segment`
 /// carries its own equal copy because it must not depend on this crate.
 pub const DEFAULT_EXPORT_DIR: &str = "/tmp/oxpinyin-export";
@@ -212,10 +214,11 @@ pub fn resolve_export_dir() -> PathBuf {
 }
 
 /// `/tmp/oxpinyin-export` or `$PINYIN_EXPORT_DIR`: a system data
-/// directory for the compiled-in backend (a libpinyin install's `data/`
-/// on Kyoto Cabinet and tkrzw, an `oxpinyin-datagen compile` output
-/// anywhere); asserts the three required DBMs exist, so benches refuse to
-/// start on data-less hosts.
+/// directory for the compiled-in backend.
+///
+/// A libpinyin install's `data/` on Kyoto Cabinet and tkrzw, an
+/// `oxpinyin-datagen compile` output anywhere; asserts the three required
+/// DBMs exist, so benches refuse to start on data-less hosts.
 ///
 /// # Panics
 ///
@@ -235,7 +238,8 @@ pub fn export_dir() -> PathBuf {
     dir
 }
 
-/// The three required DBM file names for the compiled-in backend —
+/// The three required DBM file names for the compiled-in backend.
+///
 /// libpinyin's own on Kyoto Cabinet and tkrzw (`pinyin_index.bin`,
 /// `phrase_index.bin`, `bigram.db`), `<stem>.<ext>` on redb and LMDB
 /// (`oxpinyin_data::SystemDbm` is the authority; this crate sits below

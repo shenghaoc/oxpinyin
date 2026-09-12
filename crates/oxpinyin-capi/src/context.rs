@@ -35,8 +35,8 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
 /// does — the pinyin and phrase DBMs, the per-library chunk files,
 /// `bigram.db`, `punct.bin`, the addon DBM pair, λ from `table.conf`.
 /// Returns NULL when `systemdir` is empty or a required file fails to
-/// open. The reason is logged through GLib at warning level under the
-/// `libpinyin` domain (the same channel an IBus or fcitx consumer already
+/// open. The reason is logged through `GLib` at warning level under the
+/// `libpinyin` domain (the same channel an `IBus` or fcitx consumer already
 /// captures), since NULL alone cannot say which file was missing or
 /// corrupt; the return value is unchanged.
 #[unsafe(no_mangle)]

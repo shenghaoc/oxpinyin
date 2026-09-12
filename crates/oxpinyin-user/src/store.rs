@@ -57,21 +57,21 @@ pub const SENTENCE_START: Token = 1;
 
 // ── table names ───────────────────────────────────────────────────
 
-pub(crate) const BIGRAM: &str = "user_bigram";
-pub(crate) const BIGRAM_TOTAL: &str = "user_bigram_total";
-pub(crate) const UNIGRAM: &str = "user_unigram";
-pub(crate) const UNIGRAM_TOTAL: &str = "user_unigram_total";
-pub(crate) const PHRASE: &str = "user_phrase";
-pub(crate) const PHRASE_BY_TEXT: &str = "user_phrase_by_text";
-pub(crate) const PHRASE_BY_LIB_TEXT: &str = "user_phrase_by_lib_text";
-pub(crate) const PRONUNCIATION: &str = "user_pronunciation";
-pub(crate) const ALLOC: &str = "user_phrase_alloc";
+pub const BIGRAM: &str = "user_bigram";
+pub const BIGRAM_TOTAL: &str = "user_bigram_total";
+pub const UNIGRAM: &str = "user_unigram";
+pub const UNIGRAM_TOTAL: &str = "user_unigram_total";
+pub const PHRASE: &str = "user_phrase";
+pub const PHRASE_BY_TEXT: &str = "user_phrase_by_text";
+pub const PHRASE_BY_LIB_TEXT: &str = "user_phrase_by_lib_text";
+pub const PRONUNCIATION: &str = "user_pronunciation";
+pub const ALLOC: &str = "user_phrase_alloc";
 
 /// Sole key in the `user_unigram_total` table.
-pub(crate) const UNIGRAM_TOTAL_KEY: u8 = 0;
+pub const UNIGRAM_TOTAL_KEY: u8 = 0;
 
 /// Sole key in the `user_phrase_alloc` table.
-pub(crate) const ALLOC_CURSOR: u8 = 0;
+pub const ALLOC_CURSOR: u8 = 0;
 
 /// Which seed rule an update applies.
 #[derive(Clone, Copy)]
@@ -179,7 +179,7 @@ fn txn_get_u64(txn: &dyn WriteTxn, table: &str, key: &[u8]) -> Result<Option<u64
     )
 }
 
-pub(crate) fn txn_get_u64_or(
+pub fn txn_get_u64_or(
     txn: &dyn WriteTxn,
     table: &str,
     key: &[u8],
@@ -358,15 +358,17 @@ pub struct GenericUserStore<S: WriteStore> {
 
 /// Default user store backed by [`DefaultStore`] — whichever peer
 /// backend (Kyoto Cabinet, redb, LMDB, tkrzw) the build was compiled
-/// against. tkrzw is the default selection under the workspace's
-/// default feature set; the other three peers are selected with
-/// `--no-default-features --features {kyotocabinet|redb|lmdb}`.
+/// against.
+///
+/// tkrzw is the default selection under the workspace's default feature
+/// set; the other three peers are selected with `--no-default-features
+/// --features {kyotocabinet|redb|lmdb}`.
 pub type UserStore = GenericUserStore<DefaultStore>;
 
 impl<S: WriteStore> GenericUserStore<S> {
     /// Crate-visible handle assembly for the libpinyin constructor
     /// ([`crate::store_libpinyin`]), which owns a scratch lease.
-    pub(crate) fn from_parts(
+    pub(crate) const fn from_parts(
         inner: Arc<StoreInner<S>>,
         lease: Option<Arc<StandaloneLease>>,
     ) -> Self {

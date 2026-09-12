@@ -71,7 +71,7 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     let count = if count == -1 {
         None
     } else if count >= 0 {
-        Some(count as u64)
+        Some(u64::try_from(count).unwrap_or(0))
     } else {
         return false;
     };
@@ -90,7 +90,7 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     let keys: Vec<PinyinKey> = parsed
         .keys()
         .iter()
-        .map(|key| key.index() as PinyinKey)
+        .map(|key| PinyinKey::try_from(key.index()).unwrap_or(PinyinKey::MAX))
         .collect();
     user.add_phrase_in(handle.index, &phrase, &keys, count)
         .is_ok()

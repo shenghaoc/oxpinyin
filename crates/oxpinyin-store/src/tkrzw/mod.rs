@@ -2,9 +2,9 @@
 //!
 //! Enabled by the `tkrzw` cargo feature. Mirrors libpinyin at `0c5e80e`
 //! (`src/storage/tkrzwdb_utils.h`, `chewing_large_table2_tkrzwdb.cpp`,
-//! `ngram_tkrzwdb.cpp`): the database is tkrzw's TreeDBM. The binding
+//! `ngram_tkrzwdb.cpp`): the database is tkrzw's `TreeDBM`. The binding
 //! reaches it through `tkrzw_langc.h` — `tkrzw_dbm_open` with `dbm=tree`
-//! selects TreeDBM, and passing no comparator parameter leaves its
+//! selects `TreeDBM`, and passing no comparator parameter leaves its
 //! default `LexicalKeyComparator` in place, so records sort by plain
 //! unsigned byte order and oxpinyin's big-endian key codec keeps the
 //! ordering it has under redb and LMDB. No C++ header, class, or
@@ -44,7 +44,7 @@
 //!
 //! # One keyspace, many tables
 //!
-//! A TreeDBM file is a single flat keyspace, while [`ReadStore`] and
+//! A `TreeDBM` file is a single flat keyspace, while [`ReadStore`] and
 //! [`WriteStore`] are addressed by `(table, key)`. Records are therefore
 //! stored under `table-name || 0x00 || key`. The framing is
 //! prefix-free — table names are validated NUL-free, so no framed
@@ -74,14 +74,14 @@
 //! for it.
 //!
 //! **That split is measured, not assumed.** `hard=true` on every commit
-//! costs +1.18–1.85 ms per commit here, because TreeDBM is mmap-backed
+//! costs +1.18–1.85 ms per commit here, because `TreeDBM` is mmap-backed
 //! and the sync is two `msync(MS_SYNC)` calls over the whole mapped
 //! region (~539 KiB) however few records the batch touched — a 13–31×
 //! per-commit regression on a path the C ABI runs synchronously from a
 //! keystroke. `docs/findings/perf-train-commit-fsync-2026-09-09.md`
 //! carries the measurement and the decision.
 //!
-//! What TreeDBM cannot give at any sync level is crash-*atomic*
+//! What `TreeDBM` cannot give at any sync level is crash-*atomic*
 //! application: it has no write-ahead log, so a crash *during* the
 //! `ProcessMulti` apply can leave part of a batch on disk. redb and
 //! LMDB (WAL / copy-on-write) roll a torn commit back on the next open;
@@ -427,8 +427,11 @@ unsafe extern "C" fn walk_row(
     // lengths — is kept by the only caller that can reach this.
     let (key, value) = unsafe {
         (
-            std::slice::from_raw_parts(key_ptr.cast::<u8>(), key_len as usize),
-            std::slice::from_raw_parts(value_ptr.cast::<u8>(), value_len as usize),
+            std::slice::from_raw_parts(key_ptr.cast::<u8>(), usize::try_from(key_len).unwrap_or(0)),
+            std::slice::from_raw_parts(
+                value_ptr.cast::<u8>(),
+                usize::try_from(value_len).unwrap_or(0),
+            ),
         )
     };
     // SAFETY: `arg` is the address of the `ScanCtx` local in `scan`,
@@ -489,8 +492,12 @@ unsafe extern "C" fn get_value(
         // SAFETY: `value_ptr` is tkrzw's record memory for the record
         // being processed — pinned, non-null, with `value_len` its true
         // size.
-        let value =
-            unsafe { std::slice::from_raw_parts(value_ptr.cast::<u8>(), value_len as usize) };
+        let value = unsafe {
+            std::slice::from_raw_parts(
+                value_ptr.cast::<u8>(),
+                usize::try_from(value_len).unwrap_or(0),
+            )
+        };
         // SAFETY: `arg` is the address of the `Option<Vec<u8>>` local
         // in the calling `get`, passed as the callback argument. Only
         // this callback receives it, only the one `tkrzw_dbm_process`
@@ -559,7 +566,7 @@ fn db_count(db: &Db) -> Result<u64, StoreError> {
     // record counter and touches no borrowed buffers.
     let count = unsafe { ffi::tkrzw_dbm_count(db.0.as_ptr()) };
     if count >= 0 {
-        return Ok(count as u64);
+        return Ok(u64::try_from(count).unwrap_or(0));
     }
     Err(status_error())
 }
@@ -577,7 +584,7 @@ fn db_get(db: &Db, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
             key.as_ptr().cast::<c_char>(),
             c_len(key)?,
             Some(get_value),
-            (&mut slot as *mut Option<Vec<u8>>).cast::<c_void>(),
+            (&raw mut slot).cast::<c_void>(),
             false,
         )
     };
@@ -656,7 +663,7 @@ fn scan(
             ffi::tkrzw_dbm_iter_process(
                 iter.0.as_ptr(),
                 Some(walk_row),
-                (&mut ctx as *mut ScanCtx<'_, '_>).cast::<c_void>(),
+                (&raw mut ctx).cast::<c_void>(),
                 false,
             )
         };
@@ -675,10 +682,7 @@ fn scan(
             break;
         }
     }
-    match ctx.error.take() {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
+    ctx.error.take().map_or(Ok(()), Err)
 }
 
 /// Applies every buffered mutation in one `ProcessMulti` batch: tkrzw
@@ -850,10 +854,7 @@ impl WriteStore for TkrzwStore {
         let result = f(&mut txn)?;
         let mut mutations: Vec<Mutation> = Vec::with_capacity(txn.buffer.len());
         for (key, slot) in txn.buffer {
-            let (value, remove) = match slot {
-                Some(value) => (value, false),
-                None => (Vec::new(), true),
-            };
+            let (value, remove) = slot.map_or((Vec::new(), true), |value| (value, false));
             mutations.push(Mutation {
                 key_size: c_len(&key)?,
                 value_size: c_len(&value)?,

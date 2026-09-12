@@ -114,7 +114,7 @@ fn mini_compile_reproduces_the_committed_fixture_directory() {
     // fixture; the count proves the frozen fixture holds no extra rows.
     let frozen_count = backend.count_hash(&bigram).unwrap();
     assert_eq!(
-        frozen_count as usize,
+        usize::try_from(frozen_count).expect("row count fits usize"),
         tables.bigram.len(),
         "bigram.db: {} frozen rows vs {} generated",
         frozen_count,

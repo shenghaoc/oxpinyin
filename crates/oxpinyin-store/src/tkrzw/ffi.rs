@@ -34,7 +34,7 @@
 //! # Status codes
 //!
 //! The C enum's numbering is the ABI (`tkrzw_langc.h` pins
-//! SUCCESS=0 … APPLICATION_ERROR=13, identical to the C++ `Status::Code`
+//! SUCCESS=0 … `APPLICATION_ERROR=13`, identical to the C++ `Status::Code`
 //! it casts from). The generated `TKRZW_STATUS_*` constants are what the
 //! wrapper matches on; `super` static-asserts the three it names against
 //! the pinned numbers so an upstream renumbering fails the build rather

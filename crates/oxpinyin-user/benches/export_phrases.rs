@@ -33,7 +33,7 @@ fn seed(store: &mut UserStore, n: u32) {
     for i in 0..n {
         let text = format!("phrase_{i}");
         let keys: Vec<u16> = (0..text.chars().count())
-            .map(|j| 1 + ((i as usize + j) % 300) as u16)
+            .map(|j| u16::try_from(1 + (i as usize + j) % 300).unwrap_or(u16::MAX))
             .collect();
         store.add_phrase(&text, &keys, Some(3)).expect("add_phrase");
     }

@@ -68,7 +68,7 @@ impl ChewingKey {
 
     /// Decodes the word for the renderers.
     #[must_use]
-    pub(crate) fn to_core(self) -> oxpinyin_chewing::ChewingKey {
+    pub(crate) const fn to_core(self) -> oxpinyin_chewing::ChewingKey {
         oxpinyin_chewing::ChewingKey::from_packed(self.packed)
     }
 }
@@ -147,7 +147,7 @@ pub enum ZhuyinScheme {
     ZHUYIN_HSU = 2,
     /// IBM layout.
     ZHUYIN_IBM = 3,
-    /// GinYieh layout.
+    /// `GinYieh` layout.
     ZHUYIN_GINYIEH = 4,
     /// Eten layout.
     ZHUYIN_ETEN = 5,
@@ -188,17 +188,17 @@ pub type PinyinOptionT = u32;
 /// `phrase_token_t` — `guint32`.
 pub type PhraseTokenT = u32;
 
-/// `guint` — GLib unsigned int (= `c_uint`).
+/// `guint` — `GLib` unsigned int (= `c_uint`).
 pub type GUint = c_uint;
 
-/// `gint` — GLib signed int (= `c_int`).
+/// `gint` — `GLib` signed int (= `c_int`).
 #[expect(
     dead_code,
     reason = "C ABI mirror: emitted into the header by cbindgen, unreferenced from Rust"
 )]
 pub type GInt = c_int;
 
-/// `gchar` — GLib char (= `c_char`).
+/// `gchar` — `GLib` char (= `c_char`).
 pub type GChar = c_char;
 
 /// `null_token` = 0 (`novel_types.h:121`, tag 2.11.91).

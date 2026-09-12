@@ -70,8 +70,8 @@ impl SystemDbm {
         }
     }
 
-    /// Whether the file is a hash container (`bigram.db` is a KC HashDB /
-    /// tkrzw HashDBM; every other DBM is a tree).
+    /// Whether the file is a hash container (`bigram.db` is a KC `HashDB` /
+    /// tkrzw `HashDBM`; every other DBM is a tree).
     #[must_use]
     pub const fn is_hash(self) -> bool {
         matches!(self, Self::Bigram)
@@ -79,7 +79,9 @@ impl SystemDbm {
 }
 
 /// The four system libraries by nibble and base name — `table.conf`'s
-/// `default …_DICTIONARY` rows. The base name is the library's identity
+/// `default …_DICTIONARY` rows.
+///
+/// The base name is the library's identity
 /// across the whole pipeline: `<name>.table` is its model20 source,
 /// `<name>.bin` its chunk file ([`SYSTEM_LIBRARY_FILES`]). Shared with
 /// `oxpinyin-datagen`, which compiles the first into the second.
@@ -121,7 +123,9 @@ pub const SYSTEM_LIBRARY_FILES: &[(u8, &str)] = &[
 ];
 
 /// The twelve addon libraries' chunk files by addon index — `table.conf`'s
-/// `addon N …` rows. Addon indexes share the nibble space with the system
+/// `addon N …` rows.
+///
+/// Addon indexes share the nibble space with the system
 /// libraries (art is 4, like merged) but live in a second facade upstream
 /// (`m_addon_phrase_index`), so they never collide.
 ///

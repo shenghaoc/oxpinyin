@@ -304,7 +304,7 @@ impl<'a> Tokens<'a> {
 
 /// `g_unichar_isgraph` — "printable and not a space".
 ///
-/// **Divergence, bounded and recorded:** GLib decides this from its own
+/// **Divergence, bounded and recorded:** `GLib` decides this from its own
 /// Unicode tables, which also exclude format characters and unassigned
 /// code points; this asks only whether the character is neither
 /// whitespace nor a control character. The two agree on every ASCII
@@ -313,7 +313,7 @@ impl<'a> Tokens<'a> {
 /// all ASCII digits, ASCII keywords and CJK phrase text). They differ
 /// only on format/unassigned code points, which no producer of this
 /// format emits. See `docs/findings/interpolation2-grammar.md`.
-fn is_graph(c: char) -> bool {
+const fn is_graph(c: char) -> bool {
     !c.is_whitespace() && !c.is_control()
 }
 

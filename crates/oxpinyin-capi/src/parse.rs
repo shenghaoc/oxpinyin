@@ -5,7 +5,7 @@
 //! continue-or-restart rule, the scheme dispatch, the exact-input drive,
 //! the LUOMA / `SECONDARY_ZHUYIN` index branch — live there once, shared
 //! with the zhuyin facade. This facade's chewing seam forwards
-//! [`ToneForwarding::PinFacade`] (FORCE_TONE does not cross it — the
+//! [`ToneForwarding::PinFacade`] (`FORCE_TONE` does not cross it — the
 //! recorded open divergence); the zhuyin facade forwards the whole word.
 
 use std::os::raw::c_char;
@@ -166,7 +166,8 @@ pub extern "C" fn pinyin_in_chewing_keyboard(
     // `i8`.
     #[allow(
         clippy::unnecessary_cast,
-        reason = "c_char is u8 on aarch64 Linux and i8 elsewhere; expect would fail on one of them"
+        clippy::cast_sign_loss,
+        reason = "c_char is u8 on aarch64 Linux and i8 elsewhere, so a                   TryFrom conversion would fail to compile on one of them;                   the i8-to-u8 wrap is byte identity, and wrapped negatives                   (>= 0x80) match no keyboard table entry"
     )]
     let mapped = inst.core.in_keyboard(key as u8);
     if mapped.is_empty() {

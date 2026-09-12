@@ -42,7 +42,7 @@ impl InputBuffer {
 
     /// The raw input as bytes — the coordinate space every scan, matrix
     /// and offset law reads.
-    pub(super) fn as_bytes(&self) -> &[u8] {
+    pub(super) const fn as_bytes(&self) -> &[u8] {
         self.raw.as_bytes()
     }
 

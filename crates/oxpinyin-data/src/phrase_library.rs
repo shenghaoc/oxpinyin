@@ -113,7 +113,7 @@ mod map {
     /// `PROT_READ` where upstream maps read-write-private because its
     /// item views may be mutated in memory; this reader never writes,
     /// and a read-only mapping is strictly safer for the same bytes.
-    pub(crate) struct MappedFile {
+    pub struct MappedFile {
         /// First byte of the mapping (or of the heap fallback).
         data: *const u8,
         /// Mapping length in bytes.
@@ -143,6 +143,10 @@ mod map {
 
         #[cfg(unix)]
         fn from_file(file: std::fs::File, len: usize) -> Result<Self, LibraryError> {
+            use std::os::fd::AsRawFd;
+            // Historic cross-Unix values (Linux, macOS, the BSDs agree).
+            const PROT_READ: i32 = 0x1;
+            const MAP_PRIVATE: i32 = 0x02;
             if len == 0 {
                 // mmap rejects zero lengths; an empty heap buffer
                 // represents the empty mapping without a syscall.
@@ -152,10 +156,6 @@ mod map {
                     heap: Some(Box::new([])),
                 });
             }
-            use std::os::fd::AsRawFd;
-            // Historic cross-Unix values (Linux, macOS, the BSDs agree).
-            const PROT_READ: i32 = 0x1;
-            const MAP_PRIVATE: i32 = 0x02;
             // SAFETY (mmap): the platform's own mapping entry point,
             // declared below verbatim so no dependency is needed. Its
             // invariants hold by construction on entry: `addr` is null
@@ -204,7 +204,7 @@ mod map {
 
         /// The mapped bytes. The slice borrows `self`, so the mapping
         /// outlives every view taken over it.
-        pub(crate) fn as_slice(&self) -> &[u8] {
+        pub(crate) const fn as_slice(&self) -> &[u8] {
             // SAFETY (slice): `data` is non-null and `len` bytes from it
             // are readable for the whole life of `self` — guaranteed by
             // `mmap` (released only in `Drop`, which borrowck keeps
@@ -261,10 +261,11 @@ mod map {
 
 // ── phrase item view ────────────────────────────────────────────────
 
-/// One pronunciation of a phrase item: the packed `ChewingKey` bytes
-/// (`2·phrase_length` of them — opaque at this layer; P2's chewing
-/// reader owns their bitfield semantics) and the pronunciation's
-/// frequency.
+/// One pronunciation of a phrase item.
+///
+/// The packed `ChewingKey` bytes (`2·phrase_length` of them — opaque at
+/// this layer; P2's chewing reader owns their bitfield semantics) and the
+/// pronunciation's frequency.
 #[derive(Clone, Copy)]
 pub struct PronunciationView<'a> {
     /// The packed `ChewingKey[L]` bytes, in stored order.
@@ -276,7 +277,9 @@ pub struct PronunciationView<'a> {
 
 /// A phrase item as it sits in the mapped entry area — upstream's
 /// `PhraseItem` over `SubPhraseIndex::get_phrase_item`'s view, without
-/// the copy: `get_phrase_length`/`get_n_pronunciation`/
+/// the copy.
+///
+/// `get_phrase_length`/`get_n_pronunciation`/
 /// `get_unigram_frequency`/`get_phrase_string`/
 /// `get_nth_pronunciation` become reads below.
 #[derive(Clone, Copy)]
@@ -470,7 +473,7 @@ impl PhraseLibrary {
 
     /// `SubPhraseIndex::get_phrase_index_total_freq`.
     #[must_use]
-    pub fn total_freq(&self) -> u32 {
+    pub const fn total_freq(&self) -> u32 {
         self.total_freq
     }
 
@@ -488,7 +491,7 @@ impl PhraseLibrary {
             }
             end -= 1;
         }
-        1..end.max(1) as u32
+        1..u32::try_from(end.max(1)).unwrap_or(u32::MAX)
     }
 
     /// The offset-array entry of a slot, or `None` outside the array.
@@ -540,7 +543,10 @@ impl PhraseLibrary {
     /// lookup goes through the phrase DBM).
     pub fn items(&self) -> impl Iterator<Item = (u32, PhraseItemView<'_>)> + '_ {
         let slots = (self.offsets.end - self.offsets.start) / 4;
-        (0..slots).filter_map(move |slot| self.item_at_slot(slot).map(|item| (slot as u32, item)))
+        (0..slots).filter_map(move |slot| {
+            self.item_at_slot(slot)
+                .map(|item| (u32::try_from(slot).unwrap_or(u32::MAX), item))
+        })
     }
 }
 

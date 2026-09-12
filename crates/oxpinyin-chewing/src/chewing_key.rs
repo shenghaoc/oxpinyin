@@ -248,7 +248,12 @@ mod chewing_key_data_tests {
                 + usize::from(row.middle))
                 * NUM_FINALS
                 + usize::from(row.final_)];
-            assert_eq!(entry, index as i16, "row {index} ({})", row.pinyin);
+            assert_eq!(
+                entry,
+                i16::try_from(index).expect("table index fits i16"),
+                "row {index} ({})",
+                row.pinyin
+            );
         }
     }
 

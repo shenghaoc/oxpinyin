@@ -32,12 +32,12 @@ impl UserImportContext {
     }
 
     /// The mutable core, for the store-writing import path.
-    pub(crate) fn core_mut(&mut self) -> &mut ContextCore {
+    pub(crate) const fn core_mut(&mut self) -> &mut ContextCore {
         &mut self.core
     }
 
     /// The context's user store, mutably, for the add batch.
-    pub(crate) fn user(&mut self) -> Option<&mut UserStore> {
+    pub(crate) const fn user(&mut self) -> Option<&mut UserStore> {
         self.core.user.as_mut()
     }
 }

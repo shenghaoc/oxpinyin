@@ -59,10 +59,11 @@ pub struct AddonOutput {
     pub phrase_index: Entries,
 }
 
-/// Compiles the addon tables: one merged `addon_pinyin_index` /
-/// `addon_phrase_index` DBM pair and one chunk file per library, all with
-/// `gen_unigram`'s +1 applied (no `\1-gram` counts exist for addon tokens
-/// in the pinned model).
+/// Compiles the addon tables.
+///
+/// One merged `addon_pinyin_index` / `addon_phrase_index` DBM pair and
+/// one chunk file per library, all with `gen_unigram`'s +1 applied (no
+/// `\1-gram` counts exist for addon tokens in the pinned model).
 ///
 /// # Errors
 ///

@@ -124,8 +124,8 @@ pub fn compute_gamma(n: u32, n_0: u32, n_1: u32) -> Parameter {
     1.0 - Parameter::from(n_1) / Parameter::from(n.wrapping_sub(n_0))
 }
 
-/// `B` (`k_mixture_model.h:52-65`): the special case `T − n_1 == 0 &&
-/// N − n_0 − n_1 == 0` returns `2`; otherwise `(T − n_1)/(N − n_0 − n_1)`.
+///
+///
 /// All differences are `guint32` (`wrapping_sub`), as in `compute_gamma`.
 #[must_use]
 pub fn compute_b(n: u32, t: u32, n_0: u32, n_1: u32) -> Parameter {

@@ -80,7 +80,7 @@ impl ChewingKey {
 
     /// Decodes the word for the renderers.
     #[must_use]
-    pub(crate) fn to_core(self) -> oxpinyin_chewing::ChewingKey {
+    pub(crate) const fn to_core(self) -> oxpinyin_chewing::ChewingKey {
         oxpinyin_chewing::ChewingKey::from_packed(self.packed)
     }
 }

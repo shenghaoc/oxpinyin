@@ -1,7 +1,7 @@
 //! End-to-end KMM pipeline over a small, hand-verifiable fixture, exercising
 //! every transformation the trainer's main pipeline chains:
 //! generate → estimate → merge → validate → prune → export → import →
-//! k_mixture_model_to_interpolation.
+//! `k_mixture_model_to_interpolation`.
 
 use std::path::PathBuf;
 
@@ -104,7 +104,7 @@ fn merge_equals_combined_run() {
 /// End-to-end over a real segmented corpus: consume the committed `spseg`
 /// output (the segment stage's real product over the W3 phrase index) and
 /// run the whole KMM chain — generate → estimate → merge → validate →
-/// prune → export → to-interpolation — with no Python, SQLite, `make`, or
+/// prune → export → to-interpolation — with no Python, `SQLite`, `make`, or
 /// libpinyin. Proves the main training pipeline runs natively (completion
 /// criteria §9, §14).
 #[test]

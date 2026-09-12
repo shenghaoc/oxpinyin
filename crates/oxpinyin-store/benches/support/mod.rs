@@ -29,7 +29,7 @@
 //!
 //! RAM is a separate axis and a separate mode: `--vmhwm` re-executes this
 //! binary as one child per operation and reports each child's
-//! `/proc/self/status` VmHWM. Do not mix the two axes in one table.
+//! `/proc/self/status` `VmHWM`. Do not mix the two axes in one table.
 
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
@@ -205,7 +205,7 @@ where
                 drop(stores);
             }
             total
-        })
+        });
     });
 }
 
@@ -226,7 +226,7 @@ where
                 store
             },
             BatchSize::PerIteration,
-        )
+        );
     });
 }
 
@@ -259,7 +259,7 @@ where
                 store
             },
             BatchSize::PerIteration,
-        )
+        );
     });
 }
 
@@ -284,7 +284,7 @@ where
                 remove_db_files(&target);
             }
             total
-        })
+        });
     });
 }
 
@@ -334,12 +334,13 @@ where
             run_train_write::<S>(&store, n);
         }
         "user_db_open" => {
-            let populated = std::env::var_os("BACKEND_MATRIX_POPULATED")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
+            let populated = std::env::var_os("BACKEND_MATRIX_POPULATED").map_or_else(
+                || {
                     eprintln!("backend_matrix: user_db_open child needs BACKEND_MATRIX_POPULATED");
                     std::process::exit(2);
-                });
+                },
+                PathBuf::from,
+            );
             let once = root.path().join("once.db");
             std::fs::copy(&populated, &once).expect("copy populated user store");
             let store = S::create(&once).expect("open user store");
@@ -383,8 +384,7 @@ fn spawn_child(args: &[&str], env: Option<(&str, &Path)>) -> Vec<(String, String
 fn lookup<'a>(rows: &'a [(String, String)], key: &str) -> &'a str {
     rows.iter()
         .find(|(k, _)| k == key)
-        .map(|(_, v)| v.as_str())
-        .unwrap_or("-")
+        .map_or("-", |(_, v)| v.as_str())
 }
 
 fn run_vmhwm_parent(backend: &str) {
@@ -491,7 +491,7 @@ fn phrase_row(seed: u64, i: u64) -> ([u8; 4], String) {
     let h = row_hash(seed, i ^ 0x5A5A_5A5A);
     let token = TOKEN_BASE + i % PHRASE_TOKEN_DOMAIN;
     let char_count = 2 + h % 3;
-    let mut text = String::with_capacity(3 * char_count as usize);
+    let mut text = String::with_capacity(3 * usize::try_from(char_count).unwrap_or(usize::MAX));
     for k in 0..char_count {
         let code = 0x4E00 + ((h >> (9 * k + 4)) & 0x1FF);
         text.push(char::from_u32(u32::try_from(code).unwrap()).unwrap_or('词'));
@@ -526,7 +526,7 @@ fn unique_path(root: &Path) -> PathBuf {
 
 /// Owns one bench's temporary root directory and removes it, with everything
 /// written under it, on drop. Without the guard every run would leave a
-/// per-pid root behind (bench_root names embed the pid, so later runs never
+/// per-pid root behind (`bench_root` names embed the pid, so later runs never
 /// clean earlier ones) until temp storage fills and bench setup starts
 /// failing.
 ///
@@ -557,7 +557,7 @@ impl Drop for BenchRoot {
     }
 }
 
-/// Removes a store file plus its `-lock` sidecar, the backend_bench pattern
+/// Removes a store file plus its `-lock` sidecar, the `backend_bench` pattern
 /// (LMDB writes the sidecar on every open).
 fn remove_db_files(path: &Path) {
     let _ = std::fs::remove_file(path);

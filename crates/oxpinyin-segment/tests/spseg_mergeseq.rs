@@ -1,5 +1,5 @@
 //! Differential parity for the fewest-words `spseg` and the phrase-merge
-//! `mergeseq`, over the committed `fixtures/w3` phrase_index.
+//! `mergeseq`, over the committed `fixtures/w3` `phrase_index`.
 //!
 //! Unlike the `ngseg` differential (which needs the full system-table
 //! export and so skips on CI), `spseg` and `mergeseq` consult only the

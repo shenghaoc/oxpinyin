@@ -6,7 +6,7 @@
 //! (`src/storage/phrase_index.cpp`), reached after `compact()` rebuilds a
 //! sub-index in ascending token order. `oxpinyin-datagen` writes the
 //! system libraries' files with it; the user store writes `user.bin`,
-//! `addon.bin` and `network.bin` with it — the USER_FILE sub-indexes,
+//! `addon.bin` and `network.bin` with it — the `USER_FILE` sub-indexes,
 //! whose whole-store files the pin's `_write_files` produces through the
 //! same `store` path.
 //!
@@ -187,9 +187,11 @@ pub fn build_chunk(items: &[(u32, ChunkItem)]) -> Result<Vec<u8>, ChunkWriteErro
     crate::chunk_format::build_memory_chunk(&payload).map_err(|e| ChunkWriteError(e.to_string()))
 }
 
-/// Serialises one item into the `PhraseItem` wire form — the entry-area
-/// encoding above and the `PhraseIndexLogger`'s record payloads, which
-/// carry whole items (`append_record`'s `oldone`/`newone` chunks).
+/// Serialises one item into the `PhraseItem` wire form.
+///
+/// The entry-area encoding above and the `PhraseIndexLogger`'s record
+/// payloads, which carry whole items (`append_record`'s
+/// `oldone`/`newone` chunks).
 ///
 /// The shape contract is [`build_chunk`]'s, checked here too because a
 /// logger record with a short pronunciation run would decode wrong:
@@ -302,7 +304,9 @@ pub fn decode_phrase_item(bytes: &[u8]) -> Result<ChunkItem, ChunkWriteError> {
 
 /// Decodes a `SubPhraseIndex` payload — the reader half of
 /// [`build_chunk`]'s layout, at the writer's home so both stay beside
-/// the format they share. Returns the library's `total_freq` and its
+/// the format they share.
+///
+/// Returns the library's `total_freq` and its
 /// items in ascending slot order.
 ///
 /// This is the shape inside every per-library chunk file (`gb_char.bin`
@@ -377,7 +381,7 @@ pub fn decode_sub_phrase_index(
         })?;
         let item = decode_phrase_item(bytes)
             .map_err(|error| ChunkWriteError(format!("sub phrase index: slot {slot}: {error}")))?;
-        items.push((slot as u32, item));
+        items.push((u32::try_from(slot).unwrap_or(u32::MAX), item));
     }
     Ok((total, items))
 }
