@@ -29,7 +29,7 @@ pub unsafe fn cstr_to_string(ptr: *const c_char) -> String {
 
 /// Converts a nullable C string to an owned [`String`], `None` unless the
 /// bytes are valid UTF-8.
-pub(crate) fn cstr_to_strict(ptr: *const c_char) -> Option<String> {
+pub fn cstr_to_strict(ptr: *const c_char) -> Option<String> {
     if ptr.is_null() {
         return None;
     }
@@ -42,7 +42,7 @@ pub(crate) fn cstr_to_strict(ptr: *const c_char) -> Option<String> {
 
 /// Safe wrapper for C ABI entry points, which own the null/invalid-UTF-8
 /// contract at the boundary.
-pub(crate) fn cstr_to_owned_lossy(ptr: *const c_char) -> String {
+pub fn cstr_to_owned_lossy(ptr: *const c_char) -> String {
     // SAFETY: `cstr_to_string` requires a null-terminated pointer when
     // non-null. The only callers are `extern "C"` entry points, whose
     // contract to C is exactly that; a violation is the caller's C-level
@@ -59,10 +59,9 @@ unsafe extern "C" {
 /// Duplicates `s` into a fresh, NUL-terminated buffer using libc `malloc`
 /// (which `g_free`/`free` can release). Returns null on an interior NUL byte
 /// or allocation failure.
-pub(crate) fn owned_cstr(s: &str) -> *mut c_char {
-    let cstr = match CString::new(s) {
-        Ok(c) => c,
-        Err(_) => return ptr::null_mut::<c_char>(),
+pub fn owned_cstr(s: &str) -> *mut c_char {
+    let Ok(cstr) = CString::new(s) else {
+        return ptr::null_mut::<c_char>();
     };
     let bytes = cstr.as_bytes_with_nul();
     // SAFETY: `malloc` returns a valid `bytes.len()`-byte allocation or null.
@@ -81,7 +80,7 @@ pub(crate) fn owned_cstr(s: &str) -> *mut c_char {
 /// NULL-terminated array of [`owned_cstr`] pointers for `g_strfreev`.
 ///
 /// Returns null if any allocation fails (and frees whatever was allocated).
-pub(crate) fn owned_cstr_list(items: &[impl AsRef<str>]) -> *mut *mut c_char {
+pub fn owned_cstr_list(items: &[impl AsRef<str>]) -> *mut *mut c_char {
     let n = items.len();
     let bytes = n
         .checked_add(1)
@@ -121,12 +120,12 @@ pub(crate) fn owned_cstr_list(items: &[impl AsRef<str>]) -> *mut *mut c_char {
     arr
 }
 
-/// Logs `message` through GLib at warning level under the `libzhuyin`
+/// Logs `message` through `GLib` at warning level under the `libzhuyin`
 /// domain. The library's only diagnostic channel: the C ABI's frozen
 /// return shapes (`false` / NULL) carry no reason, and glib is already
 /// linked for the ABI's `GArray`s. A message with an interior NUL is
 /// dropped rather than truncated.
-pub(crate) fn log_warning(message: &str) {
+pub fn log_warning(message: &str) {
     let Ok(message) = CString::new(message) else {
         return;
     };

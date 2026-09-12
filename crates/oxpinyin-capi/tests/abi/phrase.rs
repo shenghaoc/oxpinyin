@@ -71,13 +71,13 @@ fn segment(fixture: &Fixture, sentence: &str) -> bool {
 
 fn n_phrase(fixture: &Fixture) -> u32 {
     let mut num: u32 = 0;
-    assert!(pinyin_get_n_phrase(fixture.instance, &mut num));
+    assert!(pinyin_get_n_phrase(fixture.instance, &raw mut num));
     num
 }
 
 fn phrase_token(fixture: &Fixture, index: u32) -> Option<u32> {
     let mut token: pinyin_capi::PhraseTokenT = 0;
-    if pinyin_get_phrase_token(fixture.instance, index, &mut token) {
+    if pinyin_get_phrase_token(fixture.instance, index, &raw mut token) {
         Some(token)
     } else {
         None
@@ -110,7 +110,11 @@ fn segment_two_adjacent_phrases() {
 
     // Out-of-range: false with the out-param zeroed.
     let mut token: pinyin_capi::PhraseTokenT = 0xBEEF;
-    assert!(!pinyin_get_phrase_token(fixture.instance, 4, &mut token));
+    assert!(!pinyin_get_phrase_token(
+        fixture.instance,
+        4,
+        &raw mut token
+    ));
     assert_eq!(token, 0, "zeroed before the bounds check");
 }
 
@@ -165,7 +169,11 @@ fn plain_predicted_candidates_match_the_with_punctuations_body() {
     // pipeline tests' option.
     assert!(pinyin_guess_candidates(fixture.instance, 0, 0x1e));
     let mut candidate: *mut LookupCandidate = std::ptr::null_mut();
-    assert!(pinyin_get_candidate(fixture.instance, 0, &mut candidate));
+    assert!(pinyin_get_candidate(
+        fixture.instance,
+        0,
+        &raw mut candidate
+    ));
     assert!(pinyin_choose_candidate(fixture.instance, 0, candidate) > 0);
     assert!(pinyin_train(fixture.instance, 0));
 
@@ -174,14 +182,18 @@ fn plain_predicted_candidates_match_the_with_punctuations_body() {
         fixture.instance,
         cstr("你").as_ptr()
     ));
-    assert!(pinyin_get_n_candidate(fixture.instance, &mut num));
+    assert!(pinyin_get_n_candidate(fixture.instance, &raw mut num));
     assert!(num > 0, "the planted bigram predicts rows");
 
     for index in 0..num {
         let mut row: *mut LookupCandidate = std::ptr::null_mut();
-        assert!(pinyin_get_candidate(fixture.instance, index, &mut row));
+        assert!(pinyin_get_candidate(fixture.instance, index, &raw mut row));
         let mut kind = lookup_candidate_type_t::NBEST_MATCH_CANDIDATE;
-        assert!(pinyin_get_candidate_type(fixture.instance, row, &mut kind));
+        assert!(pinyin_get_candidate_type(
+            fixture.instance,
+            row,
+            &raw mut kind
+        ));
         assert_ne!(
             kind,
             lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE,
@@ -218,7 +230,7 @@ fn prefix_seeded_sentence_guess() {
         cstr("你好").as_ptr()
     ));
     let mut sentence: *mut c_char = std::ptr::null_mut();
-    assert!(pinyin_get_sentence(fixture.instance, 0, &mut sentence));
+    assert!(pinyin_get_sentence(fixture.instance, 0, &raw mut sentence));
     let text = take_sentence(sentence);
     assert!(
         text.contains("你好"),
@@ -297,7 +309,7 @@ impl TokenArray {
         Self { array }
     }
 
-    fn array_ptr(&mut self) -> *mut GArray {
+    const fn array_ptr(&mut self) -> *mut GArray {
         self.array
     }
 
@@ -380,8 +392,8 @@ fn token_get_phrase_round_trips() {
     assert!(pinyin_token_get_phrase(
         fixture.instance,
         token,
-        &mut len,
-        &mut rendered
+        &raw mut len,
+        &raw mut rendered
     ));
     assert_eq!(len as usize, 2, "len is the character count");
     assert_eq!(
@@ -393,15 +405,15 @@ fn token_get_phrase_round_trips() {
         fixture.instance,
         token,
         std::ptr::null_mut(),
-        &mut rendered
+        &raw mut rendered
     ));
 
     let unknown = 0x09FF_FFFF;
     assert!(!pinyin_token_get_phrase(
         fixture.instance,
         unknown,
-        &mut len,
-        &mut rendered
+        &raw mut len,
+        &raw mut rendered
     ));
     assert!(rendered.is_null());
 }
@@ -426,7 +438,7 @@ fn token_pronunciation_surface() {
     assert!(pinyin_token_get_n_pronunciation(
         fixture.instance,
         token,
-        &mut num
+        &raw mut num
     ));
     assert!(num >= 1);
 
@@ -485,7 +497,7 @@ fn token_unigram_read_and_overlay_write() {
     assert!(pinyin_token_get_unigram_frequency(
         fixture.instance,
         token,
-        &mut freq
+        &raw mut freq
     ));
     let before = freq;
 
@@ -497,7 +509,7 @@ fn token_unigram_read_and_overlay_write() {
     assert!(pinyin_token_get_unigram_frequency(
         fixture.instance,
         token,
-        &mut freq
+        &raw mut freq
     ));
     assert_eq!(freq, before + 7, "the overlay delta lands");
 
@@ -506,7 +518,7 @@ fn token_unigram_read_and_overlay_write() {
     assert!(!pinyin_token_get_unigram_frequency(
         fixture.instance,
         absent,
-        &mut freq
+        &raw mut freq
     ));
     assert!(!pinyin_token_add_unigram_frequency(
         fixture.instance,

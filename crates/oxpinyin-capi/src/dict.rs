@@ -95,7 +95,7 @@ pub extern "C" fn pinyin_lookup_tokens(
         g_array_append_vals(
             tokenarray,
             tokens.as_ptr().cast::<c_void>(),
-            tokens.len() as c_uint,
+            c_uint::try_from(tokens.len()).unwrap_or(0),
         );
     }
     true
@@ -138,7 +138,7 @@ pub extern "C" fn pinyin_token_get_phrase(
     if !len.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *len = intro.text.chars().count() as GUint;
+            *len = GUint::try_from(intro.text.chars().count()).unwrap_or(GUint::MAX);
         }
     }
     if !utf8_str.is_null() {
@@ -189,7 +189,7 @@ pub extern "C" fn pinyin_token_get_n_pronunciation(
     if !num.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *num = intro.pronunciations.len() as GUint;
+            *num = GUint::try_from(intro.pronunciations.len()).unwrap_or(GUint::MAX);
         }
     }
     true
@@ -254,7 +254,7 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
         g_array_append_vals(
             keys,
             packed.as_ptr().cast::<c_void>(),
-            packed.len() as c_uint,
+            c_uint::try_from(packed.len()).unwrap_or(0),
         );
     }
     true

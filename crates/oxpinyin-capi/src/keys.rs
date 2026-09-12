@@ -38,7 +38,7 @@ use crate::types::{ChewingKey, GChar, PinyinInstance};
 /// Upstream zeroes `*onekey` before its probe, so a failed parse leaves
 /// the zero key (`pinyin.cpp:1484`); the probe itself is
 /// `FullPinyinParser2::parse_one_key` over the live option word, with
-/// the FORCE_TONE law inside `USE_TONE`.
+/// the `FORCE_TONE` law inside `USE_TONE`.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_parse_full_pinyin(
     instance: *mut PinyinInstance,
@@ -59,14 +59,13 @@ pub extern "C" fn pinyin_parse_full_pinyin(
     unsafe {
         *onekey = ChewingKey::ZERO;
     }
-    match inst.core.parse_one_full_pinyin(&text, false) {
-        Some(key) => {
+    inst.core
+        .parse_one_full_pinyin(&text, false)
+        .is_some_and(|key| {
             // SAFETY: Null-checked above.
             unsafe { *onekey = ChewingKey::from_core(key) };
             true
-        }
-        None => false,
-    }
+        })
 }
 
 /// Parse one double pinyin into a key.
@@ -98,14 +97,11 @@ pub extern "C" fn pinyin_parse_double_pinyin(
     let inst = unsafe { instance_ref(instance) };
     // SAFETY: Null-checked above.
     let text = unsafe { cstr_to_string(onepinyin) };
-    match inst.core.parse_one_double_pinyin(&text) {
-        Some(key) => {
-            // SAFETY: Null-checked above.
-            unsafe { *onekey = ChewingKey::from_core(key) };
-            true
-        }
-        None => false,
-    }
+    inst.core.parse_one_double_pinyin(&text).is_some_and(|key| {
+        // SAFETY: Null-checked above.
+        unsafe { *onekey = ChewingKey::from_core(key) };
+        true
+    })
 }
 
 /// Parse one chewing (bopomofo) keystroke string into a key.
@@ -137,14 +133,11 @@ pub extern "C" fn pinyin_parse_chewing(
     let inst = unsafe { instance_ref(instance) };
     // SAFETY: Null-checked above.
     let text = unsafe { cstr_to_string(onechewing) };
-    match inst.core.parse_one_chewing(&text) {
-        Some(key) => {
-            // SAFETY: Null-checked above.
-            unsafe { *onekey = ChewingKey::from_core(key) };
-            true
-        }
-        None => false,
-    }
+    inst.core.parse_one_chewing(&text).is_some_and(|key| {
+        // SAFETY: Null-checked above.
+        unsafe { *onekey = ChewingKey::from_core(key) };
+        true
+    })
 }
 
 // ── Display getters ──────────────────────────────────────────────────
@@ -185,7 +178,12 @@ pub extern "C" fn pinyin_get_luoma_pinyin_string(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    display_string_getter(instance, key, utf8_str, |core| core.luoma_pinyin_string())
+    display_string_getter(
+        instance,
+        key,
+        utf8_str,
+        oxpinyin_core::ChewingKey::luoma_pinyin_string,
+    )
 }
 
 /// Get the secondary zhuyin string of a chewing key.
@@ -197,7 +195,7 @@ pub extern "C" fn pinyin_get_luoma_pinyin_string(
 ///                                         gchar ** utf8_str);
 /// ```
 ///
-/// The SECONDARY_ZHUYIN index spelling; like luoma, the first tone gets
+/// The `SECONDARY_ZHUYIN` index spelling; like luoma, the first tone gets
 /// its digit (`chewing_key.cpp:107-121`); caller-owned string.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_secondary_zhuyin_string(

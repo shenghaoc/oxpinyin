@@ -1553,7 +1553,7 @@ fn unloading_gbk_hides_its_tokens_from_the_candidate_surface() {
     // preserves.
     assert!(pinyin_guess_sentence(instance));
     let mut sentence: *mut std::os::raw::c_char = ptr::null_mut();
-    assert!(pinyin_get_sentence(instance, 0, &mut sentence));
+    assert!(pinyin_get_sentence(instance, 0, &raw mut sentence));
     assert!(
         !sentence.is_null(),
         "sentence decode must yield an n-best row"
@@ -1588,12 +1588,12 @@ fn collect_gbk_candidate_tokens(instance: *mut PinyinInstance, input: &str) -> V
     let inst = unsafe { instance_ref(instance) };
     inst.candidates
         .iter()
-        .filter_map(|c| c.token.map(|t| t.value()))
+        .filter_map(|c| c.token.map(oxpinyin_core::PhraseToken::value))
         .filter(|token| (token >> 24) == 2)
         .collect()
 }
 
-/// Parse-termination gates: C1 (FORCE_TONE) and B2 (stop bytes), plus the
+/// Parse-termination gates: C1 (`FORCE_TONE`) and B2 (stop bytes), plus the
 /// inherited apostrophe class — measured first-hand on the rebuilt pin and
 /// in the uncovered-surface differential's phase-B/phase-C probes.
 #[cfg(test)]
