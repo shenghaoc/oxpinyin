@@ -130,6 +130,12 @@ impl SplitMix64 {
         low + self.below(high - low + 1)
     }
 
+    // Inference note for callers: bind the returned element before use
+    // and pass `as_slice()` on the argument side. rust-analyzer solves
+    // this generic parameter unidirectionally — `push_str(rng.pick(x))`
+    // binds `T = str` from the return position and then flags the
+    // argument — so every caller binds first. rustc accepts the inline
+    // spellings too; these are the ones legible to both.
     fn pick<'item, T>(&mut self, items: &'item [T]) -> &'item T {
         &items[self.below(items.len())]
     }
@@ -229,7 +235,8 @@ fn fill(
 fn join_syllables(rng: &mut SplitMix64, count: usize) -> String {
     let mut text = String::new();
     for _ in 0..count {
-        text.push_str(rng.pick(&FULL_PINYIN_SYLLABLES));
+        let syllable = rng.pick(FULL_PINYIN_SYLLABLES.as_slice());
+        text.push_str(syllable);
     }
     text
 }
@@ -308,7 +315,8 @@ pub fn generate() -> Vec<Stratum> {
             if rng.below(4) == 0 && !text.is_empty() {
                 text.push('\'');
             }
-            text.push_str(rng.pick(&prefixes));
+            let prefix = rng.pick(prefixes.as_slice());
+            text.push_str(prefix);
             text
         }),
     });
@@ -320,7 +328,8 @@ pub fn generate() -> Vec<Stratum> {
             let count = rng.between(1, 4);
             let mut text = String::new();
             for _ in 0..count {
-                text.push_str(rng.pick(&ambiguous));
+                let syllable = rng.pick(ambiguous.as_slice());
+                text.push_str(syllable);
             }
             text
         }),
