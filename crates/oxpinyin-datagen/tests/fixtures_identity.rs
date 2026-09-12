@@ -26,6 +26,7 @@ fn model_dir() -> Option<PathBuf> {
 fn compiled_backend() -> Backend {
     [
         (cfg!(feature = "kyotocabinet"), Backend::KyotoCabinet),
+        (cfg!(feature = "bdb"), Backend::BerkeleyDb),
         (cfg!(feature = "tkrzw"), Backend::Tkrzw),
         (cfg!(feature = "lmdb"), Backend::Lmdb),
         (cfg!(feature = "redb"), Backend::Redb),

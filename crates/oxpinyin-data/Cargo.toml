@@ -21,6 +21,7 @@ oxpinyin-store = { workspace = true }
 # see the store's [features] for the model and precedence).
 default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-store/kyotocabinet"]
+bdb = ["oxpinyin-store/bdb"]
 tkrzw = ["oxpinyin-store/tkrzw"]
 lmdb = ["oxpinyin-store/lmdb"]
 redb = ["oxpinyin-store/redb"]

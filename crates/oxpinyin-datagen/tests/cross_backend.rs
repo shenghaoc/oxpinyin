@@ -45,6 +45,9 @@ fn compiled_backend() -> Backend {
     if cfg!(feature = "kyotocabinet") {
         backends.push(Backend::KyotoCabinet);
     }
+    if cfg!(feature = "bdb") {
+        backends.push(Backend::BerkeleyDb);
+    }
     if cfg!(feature = "redb") {
         backends.push(Backend::Redb);
     }

@@ -52,6 +52,10 @@ pub enum Backend {
     /// Kyoto Cabinet — libpinyin's `--with-dbm=KyotoCabinet` files.
     /// Requires the `kyotocabinet` cargo feature.
     KyotoCabinet,
+    /// Berkeley DB — libpinyin's `--with-dbm=BerkeleyDB` files (its
+    /// original DBM and the configure default). Requires the `bdb` cargo
+    /// feature.
+    BerkeleyDb,
 }
 
 impl Backend {
@@ -63,6 +67,11 @@ impl Backend {
     /// the default selection is.
     #[cfg(feature = "kyotocabinet")]
     pub const DEFAULT: Self = Self::KyotoCabinet;
+
+    /// The default selected backend for a normal `oxpinyin-datagen
+    /// compile` run — matches `oxpinyin_store::DefaultStore`.
+    #[cfg(feature = "bdb")]
+    pub const DEFAULT: Self = Self::BerkeleyDb;
 
     /// The default selected backend for a normal `oxpinyin-datagen
     /// compile` run — matches `oxpinyin_store::DefaultStore` (tkrzw under
@@ -91,8 +100,9 @@ impl Backend {
             "lmdb" => Ok(Self::Lmdb),
             "tkrzw" => Ok(Self::Tkrzw),
             "kyotocabinet" => Ok(Self::KyotoCabinet),
+            "bdb" | "berkeleydb" => Ok(Self::BerkeleyDb),
             other => Err(DatagenError::Consistency(format!(
-                "unknown backend {other:?} (expected redb, lmdb, tkrzw, or kyotocabinet)"
+                "unknown backend {other:?} (expected redb, lmdb, tkrzw, kyotocabinet, or bdb)"
             ))),
         }
     }
@@ -105,6 +115,7 @@ impl Backend {
             Self::Lmdb => cfg!(feature = "lmdb"),
             Self::Tkrzw => cfg!(feature = "tkrzw"),
             Self::KyotoCabinet => cfg!(feature = "kyotocabinet"),
+            Self::BerkeleyDb => cfg!(feature = "bdb"),
         }
     }
 
@@ -118,6 +129,7 @@ impl Backend {
             Self::Lmdb => "lmdb",
             Self::Tkrzw => "tkt",
             Self::KyotoCabinet => "kct",
+            Self::BerkeleyDb => "db",
         }
     }
 
@@ -130,6 +142,7 @@ impl Backend {
             Self::Lmdb => "lmdb",
             Self::Tkrzw => "tkrzw",
             Self::KyotoCabinet => "kyotocabinet",
+            Self::BerkeleyDb => "bdb",
         }
     }
 
@@ -138,7 +151,7 @@ impl Backend {
     /// records and name for name the files.
     #[must_use]
     pub const fn is_libpinyin_dbm(self) -> bool {
-        matches!(self, Self::KyotoCabinet | Self::Tkrzw)
+        matches!(self, Self::KyotoCabinet | Self::Tkrzw | Self::BerkeleyDb)
     }
 
     /// The `database format:` token of the emitted `table.conf` — the
@@ -151,6 +164,7 @@ impl Backend {
         match self {
             Self::KyotoCabinet => "KyotoCabinet",
             Self::Tkrzw => "Tkrzw",
+            Self::BerkeleyDb => "BerkeleyDB",
             Self::Redb => "redb",
             Self::Lmdb => "LMDB",
         }
@@ -211,6 +225,8 @@ impl Backend {
             Self::Tkrzw => write_raw_with::<oxpinyin_store::TkrzwStore>(path, entries),
             #[cfg(feature = "kyotocabinet")]
             Self::KyotoCabinet => write_raw_with::<oxpinyin_store::KcStore>(path, entries),
+            #[cfg(feature = "bdb")]
+            Self::BerkeleyDb => write_raw_with::<oxpinyin_store::BdbStore>(path, entries),
             backend => Err(not_compiled(backend)),
         }
     }
@@ -232,6 +248,8 @@ impl Backend {
             Self::Tkrzw => write_hash_with::<oxpinyin_store::TkrzwStore>(path, entries),
             #[cfg(feature = "kyotocabinet")]
             Self::KyotoCabinet => write_hash_with::<oxpinyin_store::KcStore>(path, entries),
+            #[cfg(feature = "bdb")]
+            Self::BerkeleyDb => write_hash_with::<oxpinyin_store::BdbStore>(path, entries),
             backend => Err(not_compiled(backend)),
         }
     }
@@ -261,6 +279,8 @@ impl Backend {
             Self::Redb => collect::<oxpinyin_store::RedbStore>(path),
             #[cfg(feature = "kyotocabinet")]
             Self::KyotoCabinet => collect::<oxpinyin_store::KcStore>(path),
+            #[cfg(feature = "bdb")]
+            Self::BerkeleyDb => collect::<oxpinyin_store::BdbStore>(path),
             #[cfg(feature = "lmdb")]
             Self::Lmdb => collect::<oxpinyin_store::LmdbStore>(path),
             #[cfg(feature = "tkrzw")]
@@ -288,6 +308,8 @@ impl Backend {
             Self::Lmdb => get::<oxpinyin_store::LmdbStore>(path, key),
             #[cfg(feature = "tkrzw")]
             Self::Tkrzw => get::<oxpinyin_store::TkrzwStore>(path, key),
+            #[cfg(feature = "bdb")]
+            Self::BerkeleyDb => get::<oxpinyin_store::BdbStore>(path, key),
             backend => Err(not_compiled(backend)),
         }
     }
@@ -313,6 +335,8 @@ impl Backend {
             Self::Lmdb => count::<oxpinyin_store::LmdbStore>(path),
             #[cfg(feature = "tkrzw")]
             Self::Tkrzw => count::<oxpinyin_store::TkrzwStore>(path),
+            #[cfg(feature = "bdb")]
+            Self::BerkeleyDb => count::<oxpinyin_store::BdbStore>(path),
             backend => Err(not_compiled(backend)),
         }
     }

@@ -20,6 +20,7 @@ workspace = true
 # picks a peer.
 default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-segment/kyotocabinet"]
+bdb = ["oxpinyin-segment/bdb"]
 tkrzw = ["oxpinyin-segment/tkrzw"]
 lmdb = ["oxpinyin-segment/lmdb"]
 redb = ["oxpinyin-segment/redb"]

@@ -23,6 +23,7 @@ oxpinyin-store = { workspace = true }
 [features]
 default = []
 kyotocabinet = ["oxpinyin-store/kyotocabinet"]
+bdb = ["oxpinyin-store/bdb"]
 tkrzw = ["oxpinyin-store/tkrzw"]
 lmdb = ["oxpinyin-store/lmdb"]
 redb = ["oxpinyin-store/redb"]

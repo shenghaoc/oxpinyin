@@ -20,6 +20,7 @@ use oxpinyin_datagen::write::{Backend, DbmFile};
 fn default_backend_matches_store_default() {
     let compiled_in = [
         (cfg!(feature = "kyotocabinet"), Backend::KyotoCabinet),
+        (cfg!(feature = "bdb"), Backend::BerkeleyDb),
         (cfg!(feature = "tkrzw"), Backend::Tkrzw),
         (cfg!(feature = "lmdb"), Backend::Lmdb),
         (cfg!(feature = "redb"), Backend::Redb),
@@ -40,6 +41,7 @@ fn default_backend_matches_store_default() {
 fn compiled_backend_names_match_the_runtime_reader() {
     let backend = [
         (cfg!(feature = "kyotocabinet"), Backend::KyotoCabinet),
+        (cfg!(feature = "bdb"), Backend::BerkeleyDb),
         (cfg!(feature = "tkrzw"), Backend::Tkrzw),
         (cfg!(feature = "lmdb"), Backend::Lmdb),
         (cfg!(feature = "redb"), Backend::Redb),
