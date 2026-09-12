@@ -177,10 +177,9 @@ fn parse_pinyin_keys(pinyin: &str) -> Option<Vec<ChewingKey>> {
     Some(keys)
 }
 
-/// Reads a list of `.table` files into per-library semantic models:
-/// phrase records, parsed pinyin rows, and the spelling → tokens selector.
+///
+///
 /// Shared by the system compile ([`SYSTEM_LIBRARY_NAMES`]) and the addon
-/// compile ([`crate::addon`]).
 ///
 /// # Errors
 ///
