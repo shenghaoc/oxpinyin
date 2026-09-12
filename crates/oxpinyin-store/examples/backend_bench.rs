@@ -52,6 +52,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "bdb")]
+use oxpinyin_store::BdbStore;
 #[cfg(feature = "kyotocabinet")]
 use oxpinyin_store::KcStore;
 #[cfg(feature = "lmdb")]
@@ -257,6 +259,8 @@ fn run_child(backend: &str, scenario: &str) {
         "lmdb" => dispatch::<LmdbStore>(scenario),
         #[cfg(feature = "tkrzw")]
         "tkrzw" => dispatch::<TkrzwStore>(scenario),
+        #[cfg(feature = "bdb")]
+        "bdb" | "berkeleydb" => dispatch::<BdbStore>(scenario),
         other => {
             // Normalize the `kc` alias to the actual cargo feature name.
             // "kc" is accepted as an input alias on the KC arm, but the

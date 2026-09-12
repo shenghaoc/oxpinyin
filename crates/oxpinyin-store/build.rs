@@ -11,6 +11,7 @@
 //! * `kyotocabinet` — the Kyoto Cabinet C API (`kclangc.h`), on by default.
 //! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`).
 //! * `lmdb` — the LMDB C API (`lmdb.h`), from the system installation.
+//! * `bdb` — the Berkeley DB C API (`db.h`), from the system libdb.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -20,6 +21,8 @@ fn main() {
     kyotocabinet::build();
     #[cfg(feature = "lmdb")]
     lmdb::build();
+    #[cfg(feature = "bdb")]
+    bdb::build();
 }
 
 /// Asks `pkg-config` for one field of `package`, split into individual
@@ -27,7 +30,12 @@ fn main() {
 /// `pkg-config` crate dependency for the handful of calls this script makes.
 /// Kyoto Cabinet does not always install a `.pc` file, so a miss is not
 /// fatal there — the caller falls back to the library name.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb"))]
+#[cfg(any(
+    feature = "kyotocabinet",
+    feature = "tkrzw",
+    feature = "lmdb",
+    feature = "bdb"
+))]
 fn pkg_config(flag: &str, package: &str) -> Option<Vec<String>> {
     let output = std::process::Command::new("pkg-config")
         .arg(flag)
@@ -44,7 +52,12 @@ fn pkg_config(flag: &str, package: &str) -> Option<Vec<String>> {
 /// whitespace separates words, a backslash escapes the next character,
 /// and quotes group — so a pkg-config-escaped path containing spaces
 /// (`-I/opt/my\ headers`) stays one flag instead of being cut in two.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb"))]
+#[cfg(any(
+    feature = "kyotocabinet",
+    feature = "tkrzw",
+    feature = "lmdb",
+    feature = "bdb"
+))]
 fn split_shell_words(line: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();
@@ -556,6 +569,170 @@ mod lmdb {
             std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
         bindings
             .write_to_file(out.join("lmdb_bindings.rs"))
-            .expect("write generated LMDB declarations");
+            .expect("write generated LMDB bindings");
+    }
+}
+
+/// Berkeley DB bindings, generated from the **system** `db.h`.
+///
+/// # Why the system library and not a vendored copy
+///
+/// Same arrangement as LMDB (see that module), with the interoperability
+/// argument stronger still: the entire point of this backend is to read
+/// and write the very `bigram.db`/`user_bigram.db` files the user's own
+/// libpinyin wrote through the distro's libdb, so linking a second,
+/// vendored Berkeley DB would read those files with the wrong writer.
+/// No maintained Rust binding links the system library either — the
+/// `libdb`/`libdb-sys` crates (last published 2020) compile and
+/// statically link their own vendored copy, which is exactly the wrong
+/// shape (`docs/findings/berkeleydb-compat-phase1.md`).
+///
+/// # Why generated fresh, not checked in
+///
+/// `DB`, `DBT` and `DBC` expose real struct layout — `DBT` crosses every
+/// read and write, and `DB`'s member-function pointers are the whole
+/// call surface. A checked-in binding would freeze one release's layout
+/// and silently misread a differently-built library; the strong "we
+/// write the user's profile with these calls" failure mode is why this
+/// module also refuses, at run time, a libdb whose major.minor the
+/// backend's format survey did not cover (see `src/bdb/ffi.rs`).
+///
+/// # Target release
+///
+/// libdb 5.3 — the last Sleepycat-licensed line, which is what both
+/// Debian (`libdb-dev` → `libdb5.3-dev`) and Fedora (`libdb-devel`)
+/// ship, and what libpinyin's `--with-dbm=BerkeleyDB` builds against.
+/// Oracle relicensed 6.0+ to AGPL and the distros froze at 5.3.28; the
+/// Homebrew formula carries 18.1, which this backend declines rather
+/// than guesses at.
+#[cfg(feature = "bdb")]
+mod bdb {
+    use std::path::PathBuf;
+
+    /// Locates `db.h` under the discovered include path. Neither target
+    /// distro ships a `db.pc` (Debian's `libdb5.3-dev` and Fedora's
+    /// `libdb-devel` both install headers and no pkg-config file), so
+    /// the fixed directories are the normal case and pkg-config a
+    /// bonus: `/usr/include/db.h` (Debian, and Fedora's top-level
+    /// symlink), `/usr/include/libdb/db.h` (Fedora's real location),
+    /// `/usr/include/db5/db.h` (historical Ubuntu).
+    fn db_header(clang_args: &[String]) -> Option<PathBuf> {
+        let mut dirs: Vec<PathBuf> = clang_args
+            .iter()
+            .filter_map(|flag| flag.strip_prefix("-I"))
+            .map(PathBuf::from)
+            .collect();
+        for extra in ["/usr/include", "/usr/include/libdb", "/usr/include/db5"] {
+            let dir = PathBuf::from(extra);
+            if !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+        }
+        dirs.into_iter()
+            .map(|dir| dir.join("db.h"))
+            .find(|path| path.is_file())
+    }
+
+    pub fn build() {
+        println!("cargo:rerun-if-changed=src/bdb/wrapper.h");
+        println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
+        println!("cargo:rerun-if-env-changed=OXPINYIN_BDB_INCLUDE_DIR");
+        println!("cargo:rerun-if-env-changed=OXPINYIN_BDB_LIB_DIR");
+        // All three pkg-config selectors, as the sibling modules track:
+        // either one alone can point pkg-config at a different libdb.
+        println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
+        println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
+        println!("cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR");
+
+        // pkg-config first (a hit is a bonus — no target distro ships a
+        // db.pc), then the explicit override ahead of it, then the fixed
+        // header directories.
+        let mut clang_args: Vec<String> = super::pkg_config("--cflags", "libdb")
+            .or_else(|| super::pkg_config("--cflags", "db"))
+            .unwrap_or_default();
+        if let Ok(dir) = std::env::var("OXPINYIN_BDB_INCLUDE_DIR") {
+            clang_args.insert(0, format!("-I{dir}"));
+        }
+        if let Ok(dir) = std::env::var("OXPINYIN_BDB_LIB_DIR") {
+            println!("cargo:rustc-link-search=native={dir}");
+            // Package-scoped, like every build-script `rustc-link-arg`
+            // (see the Kyoto Cabinet module): reaches this package's own
+            // lib, test and bench artifacts and nothing else.
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
+        }
+        let Some(header) = db_header(&clang_args) else {
+            panic!(
+                "libdb required: the `bdb` feature links the SYSTEM Berkeley DB and needs its \
+                 header db.h, which was found nowhere on the include path. Install the \
+                 platform's development package (Debian/Ubuntu: libdb-dev, which resolves to \
+                 libdb5.3-dev; Fedora: libdb-devel; Arch: db) — the same one libpinyin's \
+                 --with-dbm=BerkeleyDB build uses — or point OXPINYIN_BDB_INCLUDE_DIR and \
+                 OXPINYIN_BDB_LIB_DIR at an installation directly. oxpinyin deliberately does \
+                 NOT vendor or compile its own copy of Berkeley DB, so there is no fallback to \
+                 download or build one -- see docs/runbooks/backends.md."
+            );
+        };
+        println!("cargo:rerun-if-changed={}", header.display());
+
+        match super::pkg_config("--libs", "libdb").or_else(|| super::pkg_config("--libs", "db")) {
+            Some(libs) => {
+                for lib in &libs {
+                    if let Some(name) = lib.strip_prefix("-l") {
+                        println!("cargo:rustc-link-lib={name}");
+                    } else if let Some(path) = lib.strip_prefix("-L") {
+                        println!("cargo:rustc-link-search=native={path}");
+                        // Package-scoped, like every build-script
+                        // `rustc-link-arg` (see the Kyoto Cabinet module).
+                        println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
+                    }
+                }
+            }
+            // No `.pc` on either target distro: name the library directly
+            // (both ship an unversioned `libdb.so` dev symlink) and let the
+            // loader's default path resolve it.
+            None => println!("cargo:rustc-link-lib=db"),
+        }
+
+        // Exactly the entry points `src/bdb/ffi.rs` calls plus the types
+        // and codes they traffic in — the small surface libpinyin itself
+        // uses, where every `open` passes NULL for both the environment
+        // and the transaction. Everything else in db.h — environments,
+        // transactions, replication, secondary indices, the statistics
+        // and verification surface — stays unbound: an unbound API
+        // cannot be misused.
+        let mut builder = bindgen::Builder::default()
+            .header("src/bdb/wrapper.h")
+            .allowlist_function("db_create")
+            .allowlist_function("db_strerror")
+            .allowlist_function("db_version")
+            .allowlist_type("DB")
+            .allowlist_type("DBC")
+            .allowlist_type("DBT")
+            .allowlist_type("DBTYPE")
+            .allowlist_var("DB_.*")
+            .allowlist_var("DB_VERSION_.*")
+            .layout_tests(false)
+            .derive_debug(false)
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
+
+        for arg in clang_args {
+            builder = builder.clang_arg(arg);
+        }
+
+        let bindings = match builder.generate() {
+            Ok(bindings) => bindings,
+            Err(error) => panic!(
+                "libdb required: bindgen could not read the system db.h at {} ({error}). \
+                 Generating these declarations needs libclang (Debian/Ubuntu: libclang-dev; \
+                 Fedora: clang-devel). oxpinyin does not vendor Berkeley DB; there is no \
+                 fallback to a bundled copy.",
+                header.display()
+            ),
+        };
+
+        let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
+        bindings
+            .write_to_file(out.join("bdb_bindings.rs"))
+            .expect("write generated Berkeley DB declarations");
     }
 }

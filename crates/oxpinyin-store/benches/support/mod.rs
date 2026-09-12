@@ -505,7 +505,7 @@ fn system_dbm_files() -> Vec<PathBuf> {
     SYSTEM_DBMS
         .iter()
         .map(|(stem, libpinyin_name, _)| {
-            if matches!(DEFAULT_STORE_EXT, "kct" | "tkt") {
+            if matches!(DEFAULT_STORE_EXT, "kct" | "tkt" | "db") {
                 PathBuf::from(libpinyin_name)
             } else {
                 PathBuf::from(format!("{stem}.{DEFAULT_STORE_EXT}"))

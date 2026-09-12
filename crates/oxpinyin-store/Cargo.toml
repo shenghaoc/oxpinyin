@@ -21,7 +21,7 @@ criterion = "0.8"
 bindgen = { workspace = true, optional = true }
 
 [features]
-# The four backends (kyotocabinet, redb, lmdb, tkrzw) are peer
+# The five backends (kyotocabinet, redb, lmdb, tkrzw, bdb) are peer
 # implementations behind the store's `ReadStore`/`WriteStore` traits.
 # **Exactly one** is compiled in per build; a `compile_error!` in
 # `src/lib.rs` refuses builds that enable zero or two-or-more. The
@@ -31,10 +31,10 @@ bindgen = { workspace = true, optional = true }
 #
 # `tkrzw` is the enabled feature in the workspace's default set,
 # which is what "default" means here — select any peer explicitly with
-# `--no-default-features --features {kyotocabinet|redb|lmdb|tkrzw}`.
+# `--no-default-features --features {kyotocabinet|redb|lmdb|tkrzw|bdb}`.
 default = ["tkrzw"]
 # LMDB binds the SYSTEM liblmdb through its own C header; bindgen is
-# build-time only (it needs libclang), exactly as the other two C
+# build-time only (it needs libclang), exactly as the other C
 # backends use it. No LMDB source is vendored or compiled here.
 lmdb = ["dep:bindgen"]
 tkrzw = ["dep:bindgen"]
@@ -42,8 +42,13 @@ tkrzw = ["dep:bindgen"]
 # the runtime dependency is the system libkyotocabinet the distro already
 # ships.
 kyotocabinet = ["dep:bindgen"]
+# Berkeley DB backend — libpinyin's original DBM and the third drop-in
+# set. bindgen is build-time only; the runtime dependency is the system
+# libdb 5.3 the distro already ships (Debian libdb-dev, Fedora
+# libdb-devel), the same library that wrote the files it must read.
+bdb = ["dep:bindgen"]
 # redb, the pure-Rust peer. The `redb` crate itself is optional: no other
-# peer depends on it, so a KC/LMDB/tkrzw build carries none of redb's
+# peer depends on it, so a KC/LMDB/tkrzw/BDB build carries none of redb's
 # code or its transitive dependencies.
 redb = ["dep:redb"]
 # `bench-internal` — exposes hidden test/bench-only helpers that would
@@ -91,6 +96,11 @@ required-features = ["tkrzw"]
 name = "backend_matrix_kyotocabinet"
 harness = false
 required-features = ["kyotocabinet"]
+
+[[bench]]
+name = "backend_matrix_bdb"
+harness = false
+required-features = ["bdb"]
 
 # Kyoto Cabinet `#bnum` time-and-space measurement (issue #402). Runs
 # only under the `bench-internal` feature — the tuning knob it drives is

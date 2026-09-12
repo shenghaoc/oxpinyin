@@ -3,30 +3,32 @@
 //! This crate defines an ordered byte-KV interface split into two
 //! capability tiers — [`ReadStore`] (point get, ranged scan, full scan,
 //! emptiness check) and [`WriteStore`] (creation, atomic multi-table
-//! writes, compaction) — and provides four peer implementations behind
+//! writes, compaction) — and provides five peer implementations behind
 //! it: [`KcStore`] on Kyoto Cabinet, [`RedbStore`] on redb, [`LmdbStore`]
-//! on LMDB, and [`TkrzwStore`] on tkrzw. All four are first-class and
-//! interchangeable: any oxpinyin binary picks exactly one at compile time
-//! via the cargo features and calls it through the same trait surface,
-//! and a table produced by any of them satisfies the same logical
-//! contract as the others. Tkrzw is the default *selection* (the
-//! feature enabled when no other is named), not a privileged
-//! implementation. Consumers depend on the narrowest tier they need; the
-//! concrete backend the current build resolves to is the [`DefaultStore`]
-//! alias.
+//! on LMDB, [`TkrzwStore`] on tkrzw, and [`BdbStore`] on Berkeley DB.
+//! All five are first-class and interchangeable: any oxpinyin binary
+//! picks exactly one at compile time via the cargo features and calls it
+//! through the same trait surface, and a table produced by any of them
+//! satisfies the same logical contract as the others. Tkrzw is the
+//! default *selection* (the feature enabled when no other is named), not
+//! a privileged implementation. Consumers depend on the narrowest tier
+//! they need; the concrete backend the current build resolves to is the
+//! [`DefaultStore`] alias.
 //!
 //! # Key ordering
 //!
 //! Keys are ordered by ascending **byte** order (`memcmp` on the raw stored
 //! key bytes) and nothing else — the store never decodes a key, so it has no
-//! notion of integer order.  All four backends satisfy exactly this: redb's
+//! notion of integer order.  All five backends satisfy exactly this: redb's
 //! `Key for &[u8]` is a byte compare; the LMDB backend sets no integer or
 //! custom comparator (so LMDB's default lexicographic one applies); and the
 //! tkrzw backend installs no comparator, so `TreeDBM` uses its default
 //! `LexicalKeyComparator` (plain unsigned byte order); and the Kyoto Cabinet
 //! backend opens `TreeDB` with no `rcomp` tuning parameter, exactly as
 //! libpinyin does, so Kyoto Cabinet's default `LEXICALCOMP` applies — again
-//! byte order, shorter key first on a shared prefix.  Any further backend
+//! byte order, shorter key first on a shared prefix; and the Berkeley DB
+//! backend opens `DB_BTREE` with no `set_bt_compare`, exactly as libpinyin
+//! does, so BDB's default bytewise comparator applies.  Any further backend
 //! must match that default lexicographic comparator.  The encodings each
 //! layer chooses on top of this rule (data little-endian = byte order,
 //! intentionally not integer order; user big-endian = integer order) are
@@ -42,15 +44,15 @@
 
 // ── Exactly-one-backend invariant, enforced at compile time ────────────
 //
-// The four store backends (kyotocabinet, redb, lmdb, tkrzw) are peer
+// The five store backends (kyotocabinet, redb, lmdb, tkrzw, bdb) are peer
 // implementations behind the store's trait surface, and every oxpinyin
 // build has exactly one of them. Cargo features are additive under
 // unification, so a plausible-looking `cargo build --features redb`
 // silently combines redb with the default tkrzw feature — precisely the
 // slide these guards refuse. Every consumer crate forwards its own
-// `{kyotocabinet, redb, lmdb, tkrzw}` features onto this crate, so this
-// one guard suffices for the whole workspace.
-//
+// `{kyotocabinet, redb, lmdb, tkrzw, bdb}` features onto this crate, so
+// this one guard suffices for the whole workspace.
+
 // The zero-backend case is refused too — a build with no backend has no
 // `DefaultStore` type to assemble the runtime around, and the resulting
 // "unresolved type" error a downstream consumer would hit is a worse
@@ -61,12 +63,13 @@
     feature = "redb",
     feature = "lmdb",
     feature = "tkrzw",
+    feature = "bdb",
 )))]
 compile_error!(
     "oxpinyin-store: no store backend selected. Enable exactly one of \
-     `tkrzw` (the default), `kyotocabinet`, `redb`, or `lmdb`. On the \
+     `tkrzw` (the default), `kyotocabinet`, `redb`, `lmdb`, or `bdb`. On the \
      command line: `cargo build` for the default (tkrzw), or \
-     `cargo build --no-default-features --features {kyotocabinet|redb|lmdb}` \
+     `cargo build --no-default-features --features {kyotocabinet|redb|lmdb|bdb}` \
      for a peer."
 );
 
@@ -74,16 +77,20 @@ compile_error!(
     all(feature = "kyotocabinet", feature = "redb"),
     all(feature = "kyotocabinet", feature = "lmdb"),
     all(feature = "kyotocabinet", feature = "tkrzw"),
+    all(feature = "kyotocabinet", feature = "bdb"),
     all(feature = "redb", feature = "lmdb"),
     all(feature = "redb", feature = "tkrzw"),
+    all(feature = "redb", feature = "bdb"),
     all(feature = "lmdb", feature = "tkrzw"),
+    all(feature = "lmdb", feature = "bdb"),
+    all(feature = "tkrzw", feature = "bdb"),
 ))]
 compile_error!(
     "oxpinyin-store: more than one store backend selected. Exactly one \
-     of `tkrzw`, `kyotocabinet`, `redb`, `lmdb` may be enabled per \
+     of `tkrzw`, `kyotocabinet`, `redb`, `lmdb`, `bdb` may be enabled per \
      build. A build that names an alternate peer must also disable the \
      workspace's default feature set: \
-     `cargo build --no-default-features --features {kyotocabinet|redb|lmdb}`."
+     `cargo build --no-default-features --features {kyotocabinet|redb|lmdb|bdb}`."
 );
 
 use std::fmt;
@@ -837,17 +844,17 @@ impl WriteTxn for RedbWriteTxn<'_> {
 // ── The default backend: compile-time selection ───────────────────────
 //
 // One backend per oxpinyin binary. The four backend implementations
-// (Kyoto Cabinet, redb, LMDB, tkrzw) are peers behind the store's trait
-// interface, so `DefaultStore` resolves to a single concrete type at
-// compile time and everything above it is already generic over
-// `ReadStore` / `WriteStore`. The cfg chain below is exactly that
-// selection: it picks the enabled backend feature; a multi-feature build
-// resolves deterministically along the chain order (kyotocabinet > tkrzw
-// > lmdb > redb). The chain order is a tie-break for the additive
-// unification, not a hierarchy — Tkrzw is only the enabled
-// feature that the workspace's default set carries, and any single
-// `--features <backend>` on `--no-default-features` selects that
-// backend's peer implementation instead.
+// (Kyoto Cabinet, redb, LMDB, tkrzw, Berkeley DB) are peers behind the
+// store's trait interface, so `DefaultStore` resolves to a single
+// concrete type at compile time and everything above it is already
+// generic over `ReadStore` / `WriteStore`. The cfg chain below is
+// exactly that selection: it picks the enabled backend feature; a
+// multi-feature build resolves deterministically along the chain order
+// (kyotocabinet > tkrzw > lmdb > redb > bdb). The chain order is a
+// tie-break for the additive unification, not a hierarchy — Tkrzw is
+// only the enabled feature that the workspace's default set carries,
+// and any single `--features <backend>` on `--no-default-features`
+// selects that backend's peer implementation instead.
 
 // Each `cfg(feature = ...)` block below is exclusive — the exactly-one-
 // backend guards at the top of this file refuse builds where more than
@@ -874,6 +881,11 @@ pub type DefaultStore = LmdbStore;
 #[cfg(feature = "redb")]
 pub type DefaultStore = RedbStore;
 
+/// The default store backend — Berkeley DB, on
+/// `--no-default-features --features bdb`.
+#[cfg(feature = "bdb")]
+pub type DefaultStore = BdbStore;
+
 /// File extension for [`DefaultStore`]'s native tables — one per peer;
 /// the store forces its database type through open parameters, so the
 /// extension is naming, not detection.
@@ -888,6 +900,12 @@ pub const DEFAULT_STORE_EXT: &str = "lmdb";
 /// File extension for [`DefaultStore`]'s native tables (redb).
 #[cfg(feature = "redb")]
 pub const DEFAULT_STORE_EXT: &str = "redb";
+/// File extension for [`DefaultStore`]'s native tables (Berkeley DB).
+/// The DBM files libpinyin itself uses carry its own names
+/// (`bigram.db`, `pinyin_index.bin`, …); this extension names this
+/// backend's session-scratch and datagen-native containers.
+#[cfg(feature = "bdb")]
+pub const DEFAULT_STORE_EXT: &str = "db";
 
 /// `<stem>.<DEFAULT_STORE_EXT>` — the on-disk name of a native table for
 /// the compiled-in backend.
@@ -896,19 +914,20 @@ pub fn default_store_file(stem: &str) -> String {
     format!("{stem}.{DEFAULT_STORE_EXT}")
 }
 
-/// Whether [`DefaultStore`] is one of the two DBM libraries libpinyin
-/// itself builds against (`--with-dbm=KyotoCabinet` / `--with-dbm=Tkrzw`).
+/// Whether [`DefaultStore`] is one of the DBM libraries libpinyin
+/// itself builds against (`--with-dbm=BerkeleyDB`,
+/// `--with-dbm=KyotoCabinet` / `--with-dbm=Tkrzw`).
 ///
-/// For these two, a libpinyin install's data directory *is* this
+/// For these three, a libpinyin install's data directory *is* this
 /// backend's file set — same container library, same records, same
 /// file names (`pinyin_index.bin`, `bigram.db`, …) — so the runtime opens
 /// it unchanged, and `oxpinyin-datagen` writes the same names. redb and
 /// LMDB hold the same records in their own containers under their own
 /// extensions; no libpinyin build can open those, and none needs to.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = true;
-/// See the Kyoto Cabinet / tkrzw definition: redb and LMDB are
-/// oxpinyin-only containers.
+/// See the Berkeley DB / Kyoto Cabinet / tkrzw definition: redb and LMDB
+/// are oxpinyin-only containers.
 #[cfg(any(feature = "lmdb", feature = "redb"))]
 pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = false;
 
@@ -930,10 +949,19 @@ pub const DEFAULT_STORE_DB_FORMAT: &str = "LMDB";
 /// See the Kyoto Cabinet definition: redb's token is oxpinyin-only.
 #[cfg(feature = "redb")]
 pub const DEFAULT_STORE_DB_FORMAT: &str = "Redb";
+/// See the Kyoto Cabinet definition: Berkeley DB is upstream's original
+/// token — the DBM a bare `./configure` libpinyin builds against.
+#[cfg(feature = "bdb")]
+pub const DEFAULT_STORE_DB_FORMAT: &str = "BerkeleyDB";
 
 /// Helpers shared by the framed and file-backed backends; every item is
 /// gated to the backends that use it (see the module docs).
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "lmdb"))]
+#[cfg(any(
+    feature = "kyotocabinet",
+    feature = "tkrzw",
+    feature = "lmdb",
+    feature = "bdb"
+))]
 mod common;
 
 #[cfg(feature = "lmdb")]
@@ -945,6 +973,11 @@ pub use lmdb::LmdbStore;
 mod tkrzw;
 #[cfg(feature = "tkrzw")]
 pub use tkrzw::TkrzwStore;
+
+#[cfg(feature = "bdb")]
+mod bdb;
+#[cfg(feature = "bdb")]
+pub use bdb::BdbStore;
 
 #[cfg(feature = "kyotocabinet")]
 pub mod kyotocabinet;
@@ -1595,7 +1628,7 @@ mod tests {
     // its own fixture writer. A read-only backend would invoke only
     // `store_read_tests!`. Each group is gated by the peer's feature —
     // the exactly-one-backend guards refuse combined builds, so at most
-    // one of these four groups is ever compiled.
+    // one of these five groups is ever compiled.
     #[cfg(feature = "redb")]
     store_read_tests!(redb_read, RedbStore, RedbStore, "redb");
     #[cfg(feature = "redb")]
@@ -1615,6 +1648,11 @@ mod tests {
     store_read_tests!(kc_read, KcStore, KcStore, "kc");
     #[cfg(feature = "kyotocabinet")]
     store_write_tests!(kc_write, KcStore, "kc");
+
+    #[cfg(feature = "bdb")]
+    store_read_tests!(bdb_read, BdbStore, BdbStore, "db");
+    #[cfg(feature = "bdb")]
+    store_write_tests!(bdb_write, BdbStore, "db");
 
     /// Removes the borrowed path on drop, so a panicking test leaves no
     /// file behind in `std::env::temp_dir()`. redb keeps no `-lock`
@@ -1656,6 +1694,8 @@ mod tests {
         assert_eq!(super::DEFAULT_STORE_EXT, "lmdb");
         #[cfg(feature = "redb")]
         assert_eq!(super::DEFAULT_STORE_EXT, "redb");
+        #[cfg(feature = "bdb")]
+        assert_eq!(super::DEFAULT_STORE_EXT, "db");
     }
 
     #[test]
@@ -1750,6 +1790,27 @@ mod tests {
             );
         }
         assert_type_eq::<super::LmdbStore>();
+    }
+
+    /// `--no-default-features --features bdb` resolves `DefaultStore`
+    /// to `BdbStore` — the Berkeley DB peer, libpinyin's original DBM.
+    /// The type is `Send` and `Sync` under the `DB_THREAD` +
+    /// `DB_DBT_USERMEM` configuration `src/bdb/ffi.rs` documents.
+    #[cfg(feature = "bdb")]
+    #[test]
+    fn default_store_is_bdb_when_only_bdb_is_on() {
+        fn assert_type_eq<T>()
+        where
+            T: 'static,
+            super::DefaultStore: 'static,
+        {
+            assert_eq!(
+                std::any::TypeId::of::<super::DefaultStore>(),
+                std::any::TypeId::of::<T>(),
+                "DefaultStore must resolve to the expected concrete backend"
+            );
+        }
+        assert_type_eq::<super::BdbStore>();
     }
 
     #[cfg(feature = "redb")]
