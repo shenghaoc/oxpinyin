@@ -36,6 +36,13 @@
 //! VmHWM. Do not mix the two axes in one table.
 
 #![allow(missing_docs)]
+// The gate mirrors this target's `required-features`: cargo already skips
+// the bench without `oracle-ffi`, but rust-analyzer analyzes
+// required-features targets regardless and would flag the `Oracle*`
+// imports (that feature's `ffi` module) as unresolved on any host where
+// the feature is off — which is every non-Linux host, since the feature
+// is Linux-only.
+#![cfg(feature = "oracle-ffi")]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

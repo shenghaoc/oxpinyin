@@ -97,6 +97,12 @@
 //! figure this bench produces.
 
 #![allow(missing_docs)]
+// The gate mirrors this target's `required-features`: cargo already skips
+// the bench outside a `kyotocabinet` + `bench-internal` selection, but
+// rust-analyzer analyzes required-features targets regardless and would
+// flag the `#[cfg(feature = "bench-internal")]` helpers and the KC imports
+// as unresolved under every other backend's feature set.
+#![cfg(all(feature = "kyotocabinet", feature = "bench-internal"))]
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
