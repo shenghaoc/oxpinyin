@@ -2,6 +2,18 @@
 
 Date: 2026-08-11 · Status: **measured**
 
+> **Status (2026-09-12):** the numbers here are the 2026-08 measurements at
+> pin `0c5e80e` over the 2026-08 fixture (10,190 inputs, 98,930 prefix
+> rows). The committed `fixtures/w4/oracle-candidates.txt` now carries
+> 10,465 inputs (10,312 distinct, 10,037 with candidates, 97,442 triples);
+> the sentence surface re-froze at 491/396/390 on 2026-09-04; the gate test
+> named below (`real_tables_session_reports_parity`) was deleted in
+> `b7a35f1f`, and the
+> surviving gates are `oracle_candidates_fixture_is_fresh`,
+> `sentence_surface_fixture_is_fresh` and
+> `sentence_surface_matches_the_declared_residual`; the pin moved to
+> `074a2219` on 2026-09-06.
+
 ## Problem
 
 The first candidate of a fresh composition has no bigram history, so it ranks by
@@ -58,4 +70,4 @@ empty-history unigram alone.
 ## Implementation constraint
 
 No trait signatures or scoring-spec SPEC were changed. The sweep is local to
-the LM's empty-history branch (`lm/mod.rs:441-443`).
+the LM's empty-history branch (`lm/mod.rs:394-396` today).

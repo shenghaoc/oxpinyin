@@ -137,7 +137,8 @@ matter for parity; nothing in this module claims to be one of them.
 
 ## Replacing this with real data
 
-W3's loaders implement the same two traits over redb-backed tables. The
+W3's loaders implement the same two traits over the compiled-in store
+backend's tables. The
 integration is a change of two type arguments at the `Session::new` call site.
 Nothing in `oxpinyin-core`'s decoder, and nothing in `oxpinyin-engine`'s session,
 mentions either implementation.

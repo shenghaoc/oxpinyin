@@ -8,6 +8,13 @@ import. Sources inspected (2026-08-27):
   `make-check.yml`)
 - `codeberg.org/chewing/libchewing` — `tests/` and `fuzzer/` (and its CI)
 
+The observations below were made from the default-branch tips of
+2026-08-27: libpinyin `55e9051189db5d2f07723edebc5611eb63e52d3c` (tip
+from 2026-08-19 until 2026-09-02) and libchewing
+`179a02f0629c1137050c736acddc17c9424bf1d2` (tip from 2026-07-17 until
+2026-09-06) — the same revisions `upstream-test-coverage.md` audited;
+verified against both projects' histories on 2026-09-12.
+
 ## libpinyin `tests/`
 
 Layout: four top-level interactive drivers (`test_pinyin.cpp`,
@@ -40,7 +47,7 @@ merge paths, `data/lm` ngram math, `data/dict`+`table` phrase storage,
 complexity audit: the `user/store.rs` quartet (CCN 38/33/31/22) is exactly
 where libpinyin has the most granular per-storage tests and oxpinyin has
 the fewest per-function ones — that correlation drives the coverage/mutation
-priority in `ci-strategy.md`.
+priority in `../safety/ci-strategy.md`.
 
 ## libchewing `tests/`
 
@@ -110,15 +117,15 @@ AFL++ lane were ever added, prefer the distro package + version-pinned
 - README documents AFL++ usage, seed dirs, per-harness args; fuzzing is a
   local/manual activity, not a CI gate.
 
-**Why this matters for oxpinyin**: the current single fuzz target covers
-the safe parser only. The libchewing precedent shows the two harness shapes
+**Why this matters for oxpinyin**: at the time of this study the single fuzz target covered
+the safe parser only; ten targets exist today (`fuzz/Cargo.toml`). The libchewing precedent shows the two harness shapes
 with the best historical yield for an IME:
 
 1. **`capi-commands`** — a stateful session fuzzer through
-   `oxpinyin-capi`'s own 55-symbol ABI (bytes → `process_key`-equivalents,
+   `oxpinyin-capi`'s own 79-symbol ABI (bytes → `process_key`-equivalents,
    guess, candidate walks, config setters, iterator begin/end pairings in
    adversarial orders — double-`end` and use-after-`end` are exactly the
-   trust boundary documented in `oxpinyin-audit.md` F-6). This exercises
+   trust boundary documented in `../safety/oxpinyin-audit.md` F-6). This exercises
    the FFI conversion/ownership layer that the parser target cannot
    reach. Implementation note: lives in the existing nightly `fuzz/`
    workspace (Linux-only matches the CI fuzz job); the harness itself is
@@ -127,16 +134,16 @@ with the best historical yield for an IME:
    instrumentation, selected as `-s address` (Sanitizer::Address) — the
    Rust-side spelling of what lands in RUSTFLAGS — and on Linux the
    AddressSanitizer build includes LeakSanitizer by default, so leaks and
-   heap errors surface without extra flags. Native FFI coverage is
-   **planned, not current**: it exists only once this target and its CI
-   command land — today's `parser` target never links the C ABI.
+   heap errors surface without extra flags. Native FFI coverage
+   landed: `capi-commands` (`fuzz/fuzz_targets/capi_commands.rs`) links
+   the C ABI and runs in the PR smoke and the nightly soak.
    
    Semantic postconditions to assert per command, **for valid command
    sequences only** (define before implementing; reuse the contract
-   expectations in `crates/oxpinyin-capi/src/contract_tests.rs`, which
+   expectations in `crates/oxpinyin-capi/tests/abi/contract.rs`, which
    already pins the scheme-setter behavior):
-   - every entry point returns, never aborts (ffi_catch turns panics into
-     `false`/`NULL` fallbacks — an abort is a finding);
+   - every entry point returns, never aborts (the no-panic lints plus abort-at-ABI
+     replace the removed `ffi_catch`; an abort is a finding);
    - rejected config setters return `false` **and leave the effective
      parsing behavior unchanged**: probe with a scheme-specific parse
      (e.g. a double-pinyin key sequence) before and after the rejected
@@ -160,7 +167,7 @@ with the best historical yield for an IME:
    `oxpinyin-data`'s decode path (the F-3 class), the trieloader
    translated to oxpinyin's formats.
 
-Both were already proposed in `tooling-evaluation.md` §16 on trust-boundary
+Both were already proposed in `../safety/tooling-evaluation.md` §16 on trust-boundary
 grounds; the libchewing study adds empirical weight (these are the shapes a
 decade of IME fuzzing converged on) and the config-mutation trick (fold
 `pinyin_set_*` setters into the command alphabet).
@@ -175,6 +182,6 @@ decade of IME fuzzing converged on) and the config-mutation trick (fold
 | Random keystroke soak | — | randkeystroke + simulate | 10s libFuzzer smoke | nightly soak with corpus |
 | Valgrind/ASan stress | — | stresstest.py | — | nightly fuzz soak (ASan default) |
 | ABI size/pin guard | — | test-struct-size.c | checked-in pinyin.h + C++ smoke gate | none — keep |
-| Stateful C-API fuzzer | — | fuzzer.rs (AFL++) | — | **add `capi-commands` target** |
-| Hostile data-file fuzzer | — | trieloader/cdbloader | — | **add `dict-loader` target** |
+| Stateful C-API fuzzer | — | fuzzer.rs (AFL++) | `capi-commands` (landed) | done |
+| Hostile data-file fuzzer | — | trieloader/cdbloader | `dict-loader`, `phrase-library`, `table-conf`, `fixture-model` (landed) | done |
 | Interactive oracle tools | 4 REPL drivers | debug-chewing-shell.sh | oracle harness bins | none — equivalent exists |

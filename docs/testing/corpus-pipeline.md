@@ -2,7 +2,8 @@
 
 Date: 2026-08-15 · Status: **tier-1 invariants green; tier-2 end-to-end
 differential value-identical against the pin-built 2.11.91 trainer
-chain** · Crate: `oxpinyin-corpus` (never ships).
+chain (measured 2026-08-15; the oracle pin moved to 2.11.92 / `074a2219`
+on 2026-09-06 and this leg has not been re-run there)** · Crate: `oxpinyin-corpus` (never ships).
 
 This is the corpus front-end of the W9 trainer. It converts a
 Chinese-Wikipedia XML dump into the line-oriented raw text that
@@ -137,7 +138,7 @@ Confirmed via the LSP (rust-analyzer hover on
 `oxpinyin_segment::Segmenter::segment_bytes`):
 `pub fn segment_bytes(&self, input: &[u8], extra_enter: bool) -> Result<String, SegmentError>`
 — line-oriented UTF-8, one sentence per line. T4b's writer emits
-exactly that byte shape (asserted in `tests/invariants.rs`), and the
+exactly that byte shape (asserted in `crates/oxpinyin-corpus/tests/invariants.rs`), and the
 tier-2 test feeds the committed sample bytes into `segment_bytes` with
 no transformation — the same bytes are fed to pin `ngseg`, and the two
 segmentations are asserted byte-identical before any counting.
@@ -238,8 +239,8 @@ no corpus, no model bytes are committed.
 
 | Claim | Source | Tag |
 |---|---|---|
-| T1 input type `segment_bytes(&[u8], bool)` | `crates/oxpinyin-segment/src/lib.rs:101` (LSP hover) | SHOWN |
-| T1 line rule: one `\n` stripped, never `\r` | `crates/oxpinyin-segment/src/driver.rs:143-164` | SHOWN |
+| T1 input type `segment_bytes(&[u8], bool)` | `crates/oxpinyin-segment/src/lib.rs:111` (LSP hover) | SHOWN |
+| T1 line rule: one `\n` stripped, never `\r` | `crates/oxpinyin-segment/src/driver.rs:147-168` | SHOWN |
 | T2 consumes T1's stdout text | `oxpinyin_counter::count_ngseg` (LSP hover) | SHOWN |
 | T4a renders `interpolation2.text` | `oxpinyin_emitter::emit_interpolation2` (LSP hover) | SHOWN |
 | λ tolerance: 6 dp byte-identical, `\|Δaverage\| < 1e-6` | `docs/findings/lambda-port.md` §4.3 | SHOWN |

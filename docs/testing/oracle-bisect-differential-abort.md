@@ -167,7 +167,8 @@ continues normally** for all tested inputs.
 None on this side. No code, test, or pin change. Recorded here so future
 runs of the optional differential form of `run-bisect.sh` have a pointer
 to the known upstream cause rather than being re-diagnosed. The oracle pin
-stays at `0c5e80e` until the next formal pin bump.
+moved from `0c5e80e` to `074a2219` on 2026-09-06 (`oracle-environment.md`);
+the `_check_offset` assertion has not been re-probed at the new pin.
 
 ## Addendum (2026-08-26) — fourth sighting: the word-move second check, and a corrected call site
 

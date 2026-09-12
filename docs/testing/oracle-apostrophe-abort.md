@@ -7,6 +7,13 @@ Status: **registered as F-E-14.** Harness guard accepted (maintainer decision
 (reported 2026-08-06 via the frontend path). Our API-level repro (lone
 apostrophe) is a simpler trigger.
 
+> **Closure (2026-08-21, recorded 2026-09-12):** the apostrophe-policy
+> difference noted below for `ni''hao` was aligned under W12 Class B —
+> `docs/findings/parser-path-set.md` now records `ni''hao` → `[ni, hao]`
+> with an empty remainder, and the parser consumes it
+> (`docs/testing/corpus-tail.md`, Class B). The repro pin here is `0c5e80e1`
+> (2.11.91); the pin moved to `074a2219` on 2026-09-06.
+
 ## Summary
 
 On the pinned oracle, an input consisting only of ASCII apostrophes makes
@@ -95,10 +102,12 @@ Two side observations worth registering separately:
   usable pinyin string, which the harness records as `<missing-pinyin>`. Until
   now that shape was modelled but unobserved, since no F-A case triggers it.
 - `ni''hao` shows the oracle consuming all 7 bytes across a doubled
-  apostrophe, where `docs/findings/parser-path-set.md` freezes our parser to
-  stop at `ni` with remainder `''hao`. That is a genuine apostrophe-policy
-  difference, not a bug on either side, and it is what the divergence taxonomy
-  should classify.
+  apostrophe, where `docs/findings/parser-path-set.md` at the time froze our
+  parser to stop at `ni` with remainder `''hao` — historical: closed under
+  W12 Class B on 2026-08-21, and the parser now answers `[ni, hao]` with an
+  empty remainder (closure note above). At the time it was a genuine
+  apostrophe-policy difference, not a bug on either side, and what the
+  divergence taxonomy classified.
 
 ## Guard adopted in W2-T3 — accepted
 
