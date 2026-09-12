@@ -2384,8 +2384,8 @@ mod tests {
     /// in-process. Instead each build proves the *current* peer, driven
     /// through the generic user store, produces bigram walks and
     /// successor scans in ascending (prev, cur) integer order — the
-    /// big-endian key property. Running all four peer builds (KC / redb
-    /// / LMDB / Tkrzw) through CI gives the same four-way equivalence
+    /// big-endian key property. Running all five peer builds (KC / redb
+    /// / LMDB / Tkrzw / BDB) through CI gives the same five-way equivalence
     /// coverage the earlier in-process check gave.
     #[test]
     fn bigram_walks_and_successors_follow_be_integer_order() {

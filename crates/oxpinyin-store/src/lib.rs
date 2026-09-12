@@ -843,7 +843,7 @@ impl WriteTxn for RedbWriteTxn<'_> {
 
 // ── The default backend: compile-time selection ───────────────────────
 //
-// One backend per oxpinyin binary. The four backend implementations
+// One backend per oxpinyin binary. The five backend implementations
 // (Kyoto Cabinet, redb, LMDB, tkrzw, Berkeley DB) are peers behind the
 // store's trait interface, so `DefaultStore` resolves to a single
 // concrete type at compile time and everything above it is already
@@ -1038,7 +1038,7 @@ fn map_compaction_error(e: redb::CompactionError) -> StoreError {
 
 #[cfg(test)]
 mod tests {
-    // Each of the four peer backends can produce its own use-line tests
+    // Each of the five peer backends can produce its own use-line tests
     // — the imports below are gated to whichever peer is compiled. Under
     // the exactly-one-backend invariant, at most one peer is enabled per
     // build, so at most one branch of each `cfg` fires.
@@ -1671,14 +1671,14 @@ mod tests {
 
     // ── Default-backend policy: mechanical invariants ──────────────────
     //
-    // The workspace policy: the four peer backends (KC, redb, LMDB, tkrzw)
-    // are equal implementations behind the store's trait surface; KC is
-    // the default *selection* (the feature enabled by the workspace's
-    // default set), not a privileged one. These tests catch any accidental
-    // slide back to "redb default" (or any other silent reordering) — a
-    // plain string check on `DEFAULT_STORE_EXT` pinned to the feature the
-    // build is running under, plus a compile-time type-identity check on
-    // `DefaultStore`.
+    // The workspace policy: the five peer backends (KC, redb, LMDB,
+    // tkrzw, BDB) are equal implementations behind the store's trait
+    // surface; KC is the default *selection* (the feature enabled by the
+    // workspace's default set), not a privileged one. These tests catch
+    // any accidental slide back to "redb default" (or any other silent
+    // reordering) — a plain string check on `DEFAULT_STORE_EXT` pinned to
+    // the feature the build is running under, plus a compile-time
+    // type-identity check on `DefaultStore`.
 
     #[test]
     fn default_store_ext_matches_the_compiled_backend() {
@@ -2385,8 +2385,8 @@ mod tests {
     // byte order must diverge from integer order across the 256
     // boundary. Under the exactly-one-backend invariant the tests
     // cannot cross-compare two peers in one process, so each build
-    // runs them against its own `DefaultStore`. Running all four peer
-    // builds (KC / redb / LMDB / Tkrzw) through CI gives the same
+    // runs them against its own `DefaultStore`. Running all five peer
+    // builds (KC / redb / LMDB / Tkrzw / BDB) through CI gives the same
     // coverage the earlier in-process three-way check gave: each peer
     // independently satisfies the byte-order contract, and the
     // expected walk order is computed mathematically (sort the keys)
@@ -2613,7 +2613,7 @@ mod tests {
         // Under exactly-one-backend, cross-peer equivalence cannot be
         // proven in one process. Instead each build proves *its* peer
         // matches the mathematical byte-ordered sequence; running all
-        // four peer builds through CI proves the four-way equivalence.
+        // five peer builds through CI proves the five-way equivalence.
 
         #[test]
         fn for_each_matches_the_byte_ordered_sequence_le_keys() {

@@ -7,7 +7,7 @@
 #
 #   1. The default selection and each of the five explicit ones is a
 #      green `cargo check --locked -p oxpinyin-store`.
-#   2. Every one of the ten pairwise combinations, and a three-way
+#   2. Every one of the ten pairwise combinations, and a four-way
 #      combination, refuses to compile with the `compile_error!` message
 #      from `crates/oxpinyin-store/src/lib.rs`.
 #   3. The zero-backend build refuses with the same guard.
@@ -53,7 +53,7 @@ for peer in "" \
 done
 
 # Every invalid combination must be refused by the compile_error guard.
-# Ten pairs plus a three-way plus a zero-backend case.
+# Ten pairs plus a four-way plus a zero-backend case.
 for combo in \
     "kyotocabinet,redb" \
     "kyotocabinet,lmdb" \

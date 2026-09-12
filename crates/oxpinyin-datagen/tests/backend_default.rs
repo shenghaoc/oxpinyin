@@ -10,7 +10,7 @@
 //!      risk — `DbmFile` is `oxpinyin_data::SystemDbm` itself — so what is
 //!      checked is this crate's per-backend mapping against the reader's
 //!      compile-time one.
-//!   3. Each of the four peer backends knows its own extension and can be
+//!   3. Each of the five peer backends knows its own extension and can be
 //!      selected explicitly on the command line.
 
 use oxpinyin_datagen::write::{Backend, DbmFile};
@@ -103,7 +103,7 @@ fn peer_backends_report_their_expected_extensions() {
     assert_eq!(Backend::Tkrzw.extension(), "tkt");
 }
 
-/// The `--backend` argument parser accepts each of the four peer names
+/// The `--backend` argument parser accepts each of the five peer names
 /// spelled the way the CLI's usage line advertises.
 #[test]
 fn parse_accepts_each_peer_backend_name() {

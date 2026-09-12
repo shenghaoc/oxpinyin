@@ -1,21 +1,21 @@
 name: Store backends
 
-# Backend coverage for the four peer store backends on a rolling
-# toolchain. The four peers (Kyoto Cabinet, redb, LMDB, tkrzw) are
-# equal implementations behind the store's trait surface; tkrzw is the
-# workspace's default selection. Exactly one peer is compiled per
+# Backend coverage for the five peer store backends on a rolling
+# toolchain. The five peers (Kyoto Cabinet, redb, LMDB, tkrzw, Berkeley
+# DB) are equal implementations behind the store's trait surface; tkrzw
+# is the workspace's default selection. Exactly one peer is compiled per
 # build — the exactly-one-backend invariant is enforced at compile
 # time by two `compile_error!` guards in `crates/oxpinyin-store/src/lib.rs`
 # — so cross-peer equivalence is proven by running the SAME test
-# suite through four separate builds, one per peer.
+# suite through five separate builds, one per peer.
 #
 # Five jobs:
 #   - store-features is a matrix over the five peer backends. Each child
 #     runs the workspace's backend-relevant crates (everything but the
 #     seven backend-independent training crates — see the test step)
 #     under exactly ONE peer, on its
-#     own runner, so the five sweeps run in PARALLEL (fail-fast: false)
-#     instead of sequentially inside one job. Every pass
+#     own runner, so the five sweeps run in PARALLEL (fail-fast: false,
+#     max-parallel: 5) instead of sequentially inside one job. Every pass
 #     decodes real queries through the fixture tables, not just the store's
 #     own unit tests. The matrix value only selects one of five fixed,
 #     repository-controlled cargo invocations (see the case in the test
@@ -24,16 +24,18 @@ name: Store backends
 #     matrix, so it schedules concurrently with all five backend children.
 #     It runs `tools/store/backend-matrix.sh`, which proves the five valid
 #     peer selections each `cargo check --workspace` cleanly AND that
-#     every one of the ten pairwise combinations plus multi-way
-#     combinations plus the zero-backend build is refused by the
+#     every one of the ten pairwise combinations plus a four-way
+#     combination plus the zero-backend build is refused by the
 #     exactly-one-backend `compile_error!` guards. This is what replaced
 #     the old "cross-backend conformance in one binary" job, which is
 #     architecturally impossible under exactly-one-backend.
 #   - store-backends-gate is the stable aggregate status check. It runs no
 #     tests; it only fails unless every backend child, the backend-matrix
-#     job AND both sanitizer jobs succeeded, so branch protection can keep
-#     requiring the historical "store backends (kyotocabinet / redb /
-#     tkrzw / lmdb)" context.
+#     job AND both sanitizer jobs succeeded. Its display name tracks the
+#     peer set — it gained "/ bdb" with the fifth peer — which it is free
+#     to do because main's required-status-check context has been the
+#     single `ci-aggregate` since 2026-09-08; before that the name was
+#     held fixed because branch protection named it directly.
 #   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan and UBSan,
 #     on a date-pinned nightly, and gates the merge (since 2026-09-08; it
 #     had been continue-on-error and outside the gate, so a finding on the
@@ -367,10 +369,10 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   store-backends-gate:
-    # Stable aggregate status check. Preserves the historical job
-    # display name so branch-protection required-status-check contexts
-    # keep resolving after the store-features job became a matrix and
-    # after `store-conformance` was replaced by `backend-matrix`. It
+    # Stable aggregate status check. The display name lists the peers
+    # and is extended as peers land (bdb, 2026-09-12); it is no longer
+    # pinned to a historical string, because main's required context is
+    # the single `ci-aggregate` (2026-09-08) rather than this job. It
     # builds and tests nothing; it only aggregates the results of the
     # five backend children and the backend-matrix job via the
     # documented `needs.<job>.result` semantics. For a matrix upstream,
