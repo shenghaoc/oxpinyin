@@ -406,9 +406,9 @@ within-pass quotients where the recipe cancels.
 > represents the work. A nightly snapshot series, compared against the
 > previous night rather than against a baseline, is the agreed direction and
 > is implemented as the `perf-snapshot` job in
-> `.github/workflows/verify-nightly.yml`. The
-> document at that path is now the decision record, so the line citations
-> in the paragraph above no longer resolve. They describe the proposal text
+> `.github/workflows/verify-nightly.yml`. The document at that path is now
+> the decision record, so the line citations in the paragraph above no
+> longer resolve. They describe the proposal text
 > as merged in PR #407, commit
 > `d8de0ab2092bc090fce431277968b44fb533da2a`, at the same path
 > (`docs/perf/ci-perf-size-gate-proposal-2026-09-09.md`); read them against

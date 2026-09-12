@@ -108,7 +108,7 @@ that fails a build has to be defensible every single night.
 | section byte sums, stripped size | yes | yes | deterministic; moves only on code or toolchain |
 | allocations per steady cycle | yes | yes | a pure function of the code path |
 | callgrind Ir (oxpinyin object) | yes | yes | simulated, exact |
-| RSS at init and after cycle | yes | no | environment-sensitive; a trend to read, not a trigger |
+| RSS after the first and last cycle | yes | no | environment-sensitive; a trend to read, not a trigger |
 | **wall clock** | **no** | **no** | the evidence against it is unchanged — see reason 3 above and `perf-stage2-harness-2026-08.md`'s instruction not to make its benches a required check |
 
 "Flag" means draw a human's attention — an issue, a summary line — never
@@ -151,7 +151,7 @@ protection, nothing on the PR path.
 |---|---|
 | `tools/perf-gate/snapshot.sh` | builds the shipped artifact through `cinstall` and an `alloc-count` fixture build, measures, emits one JSON sample with the environment recorded beside the numbers |
 | `tools/perf-gate/series.py` | appends to the series, compares against the previous sample, writes the step summary |
-| `tools/perf-gate/series.test.sh` | 21 cases over the rules above |
+| `tools/perf-gate/series.test.sh` | 30 cases over the rules above |
 
 Two implementation notes worth knowing when reading a report:
 

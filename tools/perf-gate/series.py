@@ -58,7 +58,7 @@ FLAGGABLE = ("section_sum", "stripped_size", "alloc_count_per_cycle",
              "alloc_bytes_per_cycle", "ir_oxpinyin_object")
 # Recorded and reported, never flagged. RSS moves with the allocator, the
 # kernel and the host; the series is a trend to read, not a trigger.
-REPORT_ONLY = ("rss_init_kib", "rss_cycle_kib")
+REPORT_ONLY = ("rss_first_cycle_kib", "rss_last_cycle_kib")
 
 ALL_METRICS = FLAGGABLE + REPORT_ONLY
 
