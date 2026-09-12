@@ -34,35 +34,51 @@ binary, so the comparison can never go stale against a golden file.
 
 ## Model and data requirements
 
-The engine reads oxpinyin's own data files, produced by the repository's
-data toolchain. A libpinyin installation is never linked or read.
+The engine opens a backend-specific system data directory the way
+`pinyin_init` does — a handle plus a point read per file, nothing scanned
+at open. Two kinds of directory exist. On Kyoto Cabinet and tkrzw the
+files are libpinyin's own, so an unmodified libpinyin install's `data/`
+*is* a valid `system_dir` and libpinyin can read what oxpinyin writes; on
+redb and LMDB the same logical tables live in oxpinyin's own containers,
+which no libpinyin build can open. On every backend the directory
+`oxpinyin-datagen compile` writes is valid. A libpinyin installation is
+never *linked*.
 
 | File | Required | Purpose |
 |---|---|---|
-| `pinyin_index.<ext>` | yes | syllable index |
-| `phrase_index.<ext>` | yes | phrase table |
-| `bigram.<ext>` | yes | bigram language model |
-| `interpolation2.text` | production mode | real unigram frequencies driving the pinned candidate ranking |
-| `table.conf` | optional | λ override; pinned default otherwise |
-| `user_store.<ext>` | created in `user_dir` | learning persistence |
+| `pinyin_index` | yes | syllable index (`ChewingLargeTable2`) |
+| `phrase_index` | yes | phrase table (`PhraseLargeTable3`) |
+| `bigram` | yes | bigram language model |
+| `gb_char.bin`, `gbk_char.bin`, `opengram.bin`, `merged.bin` | for that library to load — an absent chunk leaves its library unloaded, the open still succeeds | the four system libraries' phrase chunks (mmap, checksummed) |
+| `addon_pinyin_index`, `addon_phrase_index` + `art.bin` … `technology.bin` | optional (opened when present) | the twelve addon libraries |
+| `punct` | optional | punctuation table |
+| `table.conf` | optional | λ override; the pinned default otherwise |
+| `user.conf`, `user_bigram`, `user_pinyin_index`, `user_phrase_index`, `user.bin`, `*.dbin` | written into `user_dir` by `save()` | learning persistence, in libpinyin's own user-dir file set |
 
-`<ext>` names the peer backend the build was compiled against: `tkt`
-(tkrzw — the default selection), `redb` under
-`--no-default-features --features redb`, `kct` with
-`--no-default-features --features kyotocabinet`, `lmdb` with
-`--no-default-features --features lmdb`. All four backends are
-first-class; the same logical row stream reads back identically under
-each.
+The DBM files take the name of the backend the build was compiled
+against. Kyoto Cabinet (`kct`) and tkrzw (`tkt`, the default selection)
+are the DBMs libpinyin itself builds against, so their files carry
+libpinyin's own names — `pinyin_index.bin`, `phrase_index.bin`,
+`bigram.db`, `punct.bin`, `addon_*_index.bin`. redb
+(`--no-default-features --features redb`) and LMDB (`--features lmdb`)
+write `<stem>.<ext>` instead — `pinyin_index.redb`, `bigram.lmdb`, and
+so on — and cannot open a libpinyin install directly. All four backends
+are first-class; the same logical row stream reads back identically
+under each. Exactly one backend is compiled into a wheel, and
+`oxpinyin._native.__store_ext__` reports which: a directory listing
+cannot tell a `kct` set from a `tkt` one, so read the constant rather
+than guessing.
 
 The pinned model is fetched with `tools/model/fetch-model.sh`, then
-compiled into the tables above by `oxpinyin-datagen compile ...`
-(defaults to the compiled-in default backend, tkrzw; pass
-`--backend {redb|lmdb|kyotocabinet}` on a build enabling that peer). The committed mini fixture `fixtures/w3` has
-no `interpolation2.text`; open it through `Engine.from_fixture_dir`,
-which falls back to flat counts derived from the phrase index. That mode
-exists for development and tests — production engines need the
-real-unigram model, which is why `Engine(system_dir)` raises
-`FileNotFoundError` without it.
+compiled into the directory above by `oxpinyin-datagen compile ...`
+(defaults to the compiled-in backend, tkrzw; pass
+`--backend {redb|lmdb|kyotocabinet}` on a build enabling that peer). The
+committed mini fixture is one directory per backend, `fixtures/w3/<ext>`
+— `fixtures/w3` itself holds no tables, so open
+`fixtures/w3/` + `__store_ext__`. `Engine.from_fixture_dir` is retained
+for API compatibility and opens exactly what `Engine(system_dir)` opens;
+the fixture sets are real (small) data directories now, and there is no
+separate fixture mode.
 
 **Backend transitions are storage-format migrations, not compatibility
 transitions.** Switching from one peer backend to another (e.g. KC to
@@ -190,7 +206,7 @@ batch law, not a binding limitation — the parity corpus pins both the toned
 path and the refusal.
 
 Parity for zhuyin is binding-layer parity only: `zhuyin-dump` replays
-`parity-corpus-zhuyin.json` (27 cases) through the pure-Rust session and
+`parity-corpus-zhuyin.json` (28 cases) through the pure-Rust session and
 `test_zhuyin_parity.py` replays it through the binding. That proves the
 Python wrapper does not diverge from the orchestration it drives — a narrower claim
 than `oxpinyin-zhuyin-capi`'s own oracle-vs-upstream differentials, which
@@ -272,6 +288,22 @@ directory must already exist; opening it is best-effort like the C ABI —
 failures degrade to "no user state" rather than failing construction, so
 candidate computation never depends on writable storage.
 
+The user directory holds libpinyin's own file set, not a private store
+(drop-in task 9, 2026-09-09; `docs/findings/user-store.md` §11): `user.conf`,
+the user bigram, the two user index DBMs, the `user.bin` phrase chunk and
+the `*.dbin` diff logs, with libpinyin's file names on Kyoto Cabinet and
+tkrzw and `<stem>.<ext>` on redb and LMDB. A same-backend libpinyin reads
+and writes the same profile. Opening runs the pin's `check_format`: a
+profile whose `user.conf` names another backend family or model version
+is wiped, exactly as libpinyin does. `save()` writes every file whole to
+a `.tmp` sibling, then renames them one by one with `user.conf` last, as
+libpinyin's `_write_files`/`_rename_files` do: a crash before the rename
+pass leaves the previous profile intact, a crash during it can leave a
+mix of old and new files — the same window libpinyin has — and loading
+applies no recovery beyond `check_format`. Learning since the last
+`save()` is not durable, as upstream. No
+`user_store.<ext>` file ever appears in the directory.
+
 ## Supported platforms
 
 CPython 3.14, on any platform PyO3 + maturin build for. CI builds and
@@ -351,13 +383,13 @@ selected). Each peer backend's own coverage belongs to the separate
 store/backend differential tests, not to Python parity.
 
 Known gap: no corpus case opens a `user_dir`. All 18 cases run against
-`fixtures/w3` with user learning off, on both sides — `native-dump` calls
-`Runtime::open_fixtures(system_dir, None)` and the pytest driver calls
+`fixtures/w3/<ext>` with user learning off, on both sides — `native-dump`
+calls `Runtime::open(system_dir, None)` and the pytest driver calls
 `Engine.from_fixture_dir(system_dir)` with `user_dir` defaulting to `None`
 — so the user-overlay ranking path is never compared native-vs-Python.
 That path is covered only in part.
 `test_engine.py::test_train_and_save_persist_user_state` exercises
-persistence and reload — `save()` flipping dirty→clean, the store file
+persistence and reload — `save()` flipping dirty→clean, the pin's user files
 appearing, a second engine over the same `user_dir` loading it and
 serving stable lookups — but it selects candidate 0, the already-top
 entry, so a no-op learning update would pass it too. That an overlay
