@@ -1,5 +1,5 @@
 //! `oxpinyin-train` — the one native command that runs the whole trainer main
-//! workflow, no Python, `make`, SQLite, or libpinyin binaries.
+//! workflow, no Python, `make`, `SQLite`, or libpinyin binaries.
 //!
 //! ```text
 //! raw corpus → segment → generate candidates → estimate + sort →
@@ -10,8 +10,8 @@
 //! Usage:
 //!   oxpinyin-train --text-dir DIR --model-dir DIR --final-dir DIR \
 //!                  --index corpus.index --held-out held.segmented \
-//!                  --evals evals2.text --pinyin-index pinyin_index.<ext> \
-//!                  --phrase-index phrase_index.<ext> \
+//!                  --evals evals2.text --pinyin-index `pinyin_index`.<ext> \
+//!                  --phrase-index `phrase_index`.<ext> \
 //!                  [--bigram bigram.<ext> --interpolation2 interpolation2.text \
 //!                   --table-conf table.conf] \
 //!                  [--merge N] [-k N] [--CDF F] [--fast] [--skip-pi-gram] NAME
@@ -159,27 +159,26 @@ fn run() -> Cli {
 /// error rather than a silent fall-back to a discovered model.
 fn build_segmenter(args: &Args) -> Cli<Segmenter> {
     let lambda = load_lambda(args.table_conf.as_deref()).unwrap_or(PINNED_LAMBDA);
-    match (&args.phrase_index, &args.bigram, &args.interpolation2) {
-        (Some(phrase_index), Some(bigram), Some(interpolation2)) => {
-            let system_dir = phrase_index
-                .parent()
-                .ok_or("--phrase-index must have a parent directory holding the chunk files")?
-                .to_path_buf();
-            let paths = SegmenterPaths {
-                system_dir,
-                bigram: bigram.clone(),
-                interpolation2: interpolation2.clone(),
-            };
-            Ok(Segmenter::open(&paths, lambda)?)
+    if let (Some(phrase_index), Some(bigram), Some(interpolation2)) =
+        (&args.phrase_index, &args.bigram, &args.interpolation2)
+    {
+        let system_dir = phrase_index
+            .parent()
+            .ok_or("--phrase-index must have a parent directory holding the chunk files")?
+            .to_path_buf();
+        let paths = SegmenterPaths {
+            system_dir,
+            bigram: bigram.clone(),
+            interpolation2: interpolation2.clone(),
+        };
+        Ok(Segmenter::open(&paths, lambda)?)
+    } else {
+        if args.bigram.is_some() || args.interpolation2.is_some() {
+            return Err(
+                "--phrase-index, --bigram, and --interpolation2 must be given together".into(),
+            );
         }
-        _ => {
-            if args.bigram.is_some() || args.interpolation2.is_some() {
-                return Err(
-                    "--phrase-index, --bigram, and --interpolation2 must be given together".into(),
-                );
-            }
-            Ok(Segmenter::discover(args.table_conf.as_deref())?)
-        }
+        Ok(Segmenter::discover(args.table_conf.as_deref())?)
     }
 }
 
@@ -236,7 +235,8 @@ fn require<T>(value: Option<T>, flag: &str) -> Cli<T> {
 }
 
 fn read(path: &Path) -> Cli<String> {
-    std::fs::read_to_string(path).map_err(|source| format!("cannot read {path:?}: {source}").into())
+    std::fs::read_to_string(path)
+        .map_err(|source| format!("cannot read {}: {source}", path.display()).into())
 }
 
 fn next(iter: &mut impl Iterator<Item = String>, flag: &str) -> Cli<String> {

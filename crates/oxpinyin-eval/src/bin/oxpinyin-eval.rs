@@ -3,8 +3,8 @@
 //! Usage:
 //!   oxpinyin-eval --interpolation2 interpolation2.text \
 //!                 --held-out held.seg --evals evals2.text \
-//!                 --pinyin-index pinyin_index.<ext> \
-//!                 --phrase-index phrase_index.<ext> [--skip-pi-gram]
+//!                 --pinyin-index `pinyin_index`.<ext> \
+//!                 --phrase-index `phrase_index`.<ext> [--skip-pi-gram]
 //!
 //! Reproduces evaluate.py with no Python, libpinyin, `make`, or external
 //! evaluator: parse interpolation2.text → estimate λ over the held-out
@@ -98,7 +98,8 @@ fn run() -> Cli {
 }
 
 fn read(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    fs::read_to_string(path).map_err(|source| format!("cannot read {path:?}: {source}").into())
+    fs::read_to_string(path)
+        .map_err(|source| format!("cannot read {}: {source}", path.display()).into())
 }
 
 fn next(

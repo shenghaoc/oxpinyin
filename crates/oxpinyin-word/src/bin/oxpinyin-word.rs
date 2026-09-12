@@ -84,12 +84,13 @@ fn run_recognize(args: &[String]) -> Cli {
 
     match output {
         Some(path) => fs::write(&path, recognized.as_bytes())
-            .map_err(|source| format!("cannot write {path:?}: {source}"))?,
+            .map_err(|source| format!("cannot write {}: {source}", path.display()))?,
         None => io::stdout().lock().write_all(recognized.as_bytes())?,
     }
     Ok(())
 }
 
 fn read(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    fs::read_to_string(path).map_err(|source| format!("cannot read {path:?}: {source}").into())
+    fs::read_to_string(path)
+        .map_err(|source| format!("cannot read {}: {source}", path.display()).into())
 }

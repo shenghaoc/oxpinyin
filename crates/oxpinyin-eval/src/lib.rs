@@ -47,9 +47,10 @@ pub fn parse_interpolation2(text: &str) -> Counts {
 }
 
 /// Estimates λ over the candidate's counts against a held-out deleted model
-/// and returns it as the exact `table.conf` rational, matching `evaluate.py`
-/// estimating with `estimate_interpolation` and writing `{:.6}` into
-/// `table.conf`.
+/// and returns it as the exact `table.conf` rational.
+///
+/// Matches `evaluate.py` estimating with `estimate_interpolation` and
+/// writing `{:.6}` into `table.conf`.
 ///
 /// # Errors
 ///
@@ -84,9 +85,10 @@ pub fn lambda_from_f64(value: f64) -> Result<Lambda, EvalError> {
 }
 
 /// Builds the native evaluation model from the candidate counts with λ
-/// applied, floored over the phrase lexicon (`lexicon`) the way
-/// `evaluate.py`'s `make` rebuilds the runtime model (`gen_binary_files` +
-/// `import_interpolation` + `gen_unigram`).
+/// applied, floored over the phrase lexicon (`lexicon`).
+///
+/// The way `evaluate.py`'s `make` rebuilds the runtime model
+/// (`gen_binary_files` + `import_interpolation` + `gen_unigram`).
 #[must_use]
 pub fn build_model(
     counts: &Counts,

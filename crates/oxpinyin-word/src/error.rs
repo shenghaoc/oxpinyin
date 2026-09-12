@@ -30,7 +30,9 @@ pub enum WordError {
 impl fmt::Display for WordError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io { path, source } => write!(formatter, "cannot access {path:?}: {source}"),
+            Self::Io { path, source } => {
+                write!(formatter, "cannot access {}: {source}", path.display())
+            }
             Self::Malformed { detail } => write!(formatter, "malformed input: {detail}"),
             Self::MissingPinyin { phrase } => {
                 write!(formatter, "no pinyin for phrase {phrase:?}")
