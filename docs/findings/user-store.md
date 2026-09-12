@@ -682,8 +682,8 @@ Semantics this reverts or preserves, on purpose:
   before either is a no-op. The frozen dirty-gate test stands unedited.
 * **The W6-T5 durability deviation is reverted** — nothing durable
   between saves; a crash loses the sub-timer window exactly as
-  upstream's does. `user_store.<ext>` leaves the user dir (it remains
-  the standalone-store helper for benches and the oracle scan harness).
+  upstream's does. `user_store.<ext>` leaves the user dir (`user_store_file` stays a public helper for standalone stores; no
+  in-tree caller remains).
 * Known gaps, disclosed: the value model tracks no per-pronunciation
   delta for system tokens (pre-existing engine-model gap — the `.dbin`
   MODIFYs carry unigram changes only), and a replayed REMOVE degrades

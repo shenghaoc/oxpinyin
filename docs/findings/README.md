@@ -77,7 +77,7 @@ series lives in `../perf/`.
 | [`option-bits`](option-bits.md) | Findings — option bits | record (W10 Phase 0) |
 | [`oracle-data-reproducibility`](oracle-data-reproducibility.md) | Oracle data reproducibility | record (issue #358) |
 | [`oracle-pin-074a221-verification`](oracle-pin-074a221-verification.md) | Oracle pin 0c5e80e1 → 074a2219 — verification record | record (pin bump) |
-| [`parity-climb-residual`](parity-climb-residual.md) | Parity-climb residual analysis | record |
+| [`parity-climb-residual`](parity-climb-residual.md) | Parity-climb residual analysis | historical (superseded 2026-08-22 by `../testing/corpus-tail.md`) |
 | [`parser-path-set`](parser-path-set.md) | Full-pinyin parser path-set SPEC | frozen |
 | [`parser-spec-contradiction-incomplete-keys`](parser-spec-contradiction-incomplete-keys.md) | Findings — frozen parser SPEC contradicts the pin on incomplete keys | historical |
 | [`parser-spec`](parser-spec.md) | Full-pinyin parser SPEC | frozen |
@@ -89,7 +89,7 @@ series lives in `../perf/`.
 | [`perf-build-recipe-audit-2026-09-10`](perf-build-recipe-audit-2026-09-10.md) | Build-recipe provenance — which perf records timed the shipping `cinstall` artifact and which a `cargo build` fixture (#401) | audit |
 | [`perf-cycle-ir-differential-2026-09-08`](perf-cycle-ir-differential-2026-09-08.md) | Steady-cycle differential and arch spread — amd64 + arm64; the tree/recipe controls | perf snapshot |
 | [`perf-keycost-first-alloc-2026-09-07`](perf-keycost-first-alloc-2026-09-07.md) | Key-Cost Walk Elimination — 2026-09-07 | perf snapshot |
-| [`perf-mmap-system-indexes-2026-08-31`](perf-mmap-system-indexes-2026-08-31.md) | Sysimage: mmap-backed system pinyin/phrase indexes — 2026-08-31 | perf snapshot |
+| [`perf-mmap-system-indexes-2026-08-31`](perf-mmap-system-indexes-2026-08-31.md) | Sysimage: mmap-backed system pinyin/phrase indexes — 2026-08-31 | perf snapshot (architecture REJECTED 2026-09-01; measurement kept) |
 | [`perf-p2-chewing-table-2026-09-01`](perf-p2-chewing-table-2026-09-01.md) | P2 performance findings — lazy ChewingTable vs eager PinyinIndex | perf snapshot |
 | [`perf-provenance-audit-2026-09-07`](perf-provenance-audit-2026-09-07.md) | Perf provenance audit — no record pins its harness; one commit silently repointed three docs' oracle | audit |
 | [`perf-steady-cycle-cross-host-2026-09-07`](perf-steady-cycle-cross-host-2026-09-07.md) | Steady keystroke cycle across hosts — arm64/amd64 vs libpinyin | perf snapshot |
@@ -100,12 +100,13 @@ series lives in `../perf/`.
 | [`pin-refreeze-2026-08`](pin-refreeze-2026-08.md) | Pin re-freeze — phonetic-initial incomplete expansion (2026-08) | approved (pin freeze) |
 | [`pinyin-dbm-format-2026-09-01`](pinyin-dbm-format-2026-09-01.md) | libpinyin pinyin-index DBM format — P2 source-level findings | verified (P2) |
 | [`prediction-punct`](prediction-punct.md) | Prediction punctuation — Option A | record (#104) |
-| [`preedit-key-accessor-phase1`](preedit-key-accessor-phase1.md) | The preedit key family — Phase 1 explain-back | record (Phase 1 explain-back) |
+| [`preedit-key-accessor-phase1`](preedit-key-accessor-phase1.md) | The preedit key family — Phase 1 explain-back | record (Phase 1 explain-back; Phase 2 landed with the 79/79 work, `crates/oxpinyin-capi/src/cursor.rs`) |
 | [`residual-after-construction-freeze`](residual-after-construction-freeze.md) | Residual characterisation after the construction freeze | record |
 | [`revert-plan`](revert-plan.md) | Revert plan — the seven incompatible divergences | open (work order) |
 | [`robustness-evidence`](robustness-evidence.md) | F-E cross-lane robustness evidence register | register (F-E) |
 | [`rss-attribution-2026-09-09`](rss-attribution-2026-09-09.md) | Steady-cycle RSS — where the resident memory actually goes | perf snapshot (Kyoto Cabinet / Ubuntu; diagnosis complete, no fix; captures not committed — see its Provenance section; follow-ups #402, #403; tkrzw unmeasured) |
 | [`runtime-direct-libpinyin-data-2026-09-02`](runtime-direct-libpinyin-data-2026-09-02.md) | P6 — the production runtime reads libpinyin's own data directly | record (P6 — current data-layer architecture) |
+| [`scan-matrix-fanout-2026-09-10`](scan-matrix-fanout-2026-09-10.md) | Scan-matrix path fan-out attribution — probe-time expansion (#403) | record (mechanism; fix landed 7b7e7610 / ba7be5be) |
 | [`scoring-constant-sweep`](scoring-constant-sweep.md) | Scoring constant sweep | measured (values frozen) |
 | [`scoring-spec`](scoring-spec.md) | Scoring SPEC | frozen |
 | [`segment-graph`](segment-graph.md) | SegmentGraph SPEC | frozen |

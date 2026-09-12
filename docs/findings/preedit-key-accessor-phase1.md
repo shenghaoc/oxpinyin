@@ -1,7 +1,9 @@
 # The preedit key family — Phase 1 explain-back
 
-Date: 2026-08-28 · Status: **Phase 1 only; no code. Awaiting
-confirmation before Phase 2.** · Branch: `feat/preedit-key-accessor`.
+Date: 2026-08-28 · Status: **Phase 1 explain-back; Phase 2 landed** with
+the 79/79 W8 work (#189, 2026-08-28 — `pinyin_get_pinyin_key` and the
+key-rest family in `crates/oxpinyin-capi/src/cursor.rs`). Written on
+`feat/preedit-key-accessor` while awaiting confirmation.
 
 STOP #1 was: `pinyin_get_pinyin_key` is missing,
 `pinyin_get_pinyin_key_rest` and `_positions` are stubs returning

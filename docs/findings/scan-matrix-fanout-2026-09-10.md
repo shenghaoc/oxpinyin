@@ -7,6 +7,12 @@ here**; the mechanism identification is behaviour-inert against the
 parity gate only after a user-store change that this session does not
 have the environment to validate.
 
+> **Status (2026-09-12):** the fix landed after this record — `7b7e7610`
+> drops the probe-time `expand_keys` and indexes the user store by
+> initial, and `ba7be5be` gates it on the `Dictionary::handles_partial_keys`
+> contract (`crates/oxpinyin-engine/src/session/lookup.rs`). Step 3 below
+> is done in that form.
+
 ## The finding
 
 **oxpinyin's `search_scan_path` inflates every incomplete-containing key-path into the Cartesian product of that path's completions before probing, while the DBM already stores each phrase under its incomplete-index and would answer the raw path in one probe.** The expansion is the redundant work.
@@ -144,7 +150,8 @@ uses an exact-text-only `HashMap`. Its neighbour
 already keeps two indices (`initial_keys` and `pinyin_keys`); extending
 the `lookup` path to use them is the shape the fix needs.
 
-Concretely, in the order a follow-up PR should take:
+Concretely, in the order the follow-up took — steps 1–3 landed in
+`7b7e7610` and `ba7be5be`; steps 4 and 5 remain:
 
 1. Add an initial-only index to `UserLookup` (mirror upstream's
    `add_index`'s incomplete-space write; the datagen side already does
@@ -162,10 +169,9 @@ Concretely, in the order a follow-up PR should take:
    probes → ~1,536 (matching upstream's callgrind), live blocks →
    ~22,832 (the 40 % addressable RSS term).
 
-Steps 1–3 alone are STOP items until the parity gate has run. This
-session records the mechanism and its measurement; the change itself is
-someone else's turn under the constitution's rebase discipline and
-concurrent-sessions rules.
+Steps 1–3 have landed (`7b7e7610`, `ba7be5be`); the parity gate (step 4)
+and the RSS remeasurement (step 5) are the remaining actions. This
+record's session recorded the mechanism and its measurement only.
 
 ## Provenance
 

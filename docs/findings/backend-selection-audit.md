@@ -15,7 +15,7 @@ answered against oxpinyin, and the resulting comparison.
 
 libpinyin: pinned commit
 `0c5e80e1200f84fab185d1c5bde458b770a0636c` (tag `2.11.91`;
-`docs/findings/oracle-environment.md`).
+`docs/testing/oracle-environment.md`).
 
 - `configure.ac`, `src/storage/Makefile.am`,
   `src/pinyin_internal.h`, `src/storage/ngram_bdb.cpp`,
