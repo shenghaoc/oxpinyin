@@ -1,14 +1,15 @@
 //! Helpers shared by the backends that frame every table into one
-//! keyspace (Kyoto Cabinet, tkrzw) and by the file-backed ones that hand
-//! a path to a C library (tkrzw, LMDB). One definition each: the framing
-//! scheme, the range-bound test and the path check used to live once per
-//! backend, byte-identical, and a fix to one copy could miss the others.
+//! keyspace (Kyoto Cabinet, tkrzw, Berkeley DB) and by the file-backed
+//! ones that hand a path to a C library (tkrzw, LMDB, Berkeley DB). One
+//! definition each: the framing scheme, the range-bound test and the
+//! path check used to live once per backend, byte-identical, and a fix
+//! to one copy could miss the others.
 //!
 //! Each item is compiled only for the backends that use it, so a
 //! single-backend build (the exactly-one-backend invariant) carries no
 //! dead helper.
 
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 use std::ops::Bound;
 #[cfg(any(feature = "tkrzw", feature = "lmdb"))]
 use std::path::Path;
@@ -23,11 +24,11 @@ use crate::validate_table_name;
 /// what makes the framing prefix-free — no table's prefix is a prefix of
 /// another's, so every table is a contiguous run of the ordered keyspace
 /// whose internal order is the caller's key order.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 pub(crate) const SEPARATOR: u8 = 0;
 
 /// `table || 0x00 || key`. The caller has validated `table`.
-#[cfg(feature = "kyotocabinet")]
+#[cfg(any(feature = "kyotocabinet", feature = "bdb"))]
 pub(crate) fn frame(table: &str, key: &[u8]) -> Vec<u8> {
     let mut framed = Vec::with_capacity(table.len() + 1 + key.len());
     framed.extend_from_slice(table.as_bytes());
@@ -38,7 +39,7 @@ pub(crate) fn frame(table: &str, key: &[u8]) -> Vec<u8> {
 
 /// `table || 0x00` — the prefix every one of `table`'s rows carries.
 /// The caller has validated `table`.
-#[cfg(feature = "kyotocabinet")]
+#[cfg(any(feature = "kyotocabinet", feature = "bdb"))]
 pub(crate) fn prefix(table: &str) -> Vec<u8> {
     frame(table, &[])
 }
@@ -70,7 +71,7 @@ pub(crate) fn framed(prefix: &[u8], key: &[u8]) -> Vec<u8> {
 
 /// The caller's key inside a framed one, or `None` if the framed key
 /// belongs to another table.
-#[cfg(feature = "kyotocabinet")]
+#[cfg(any(feature = "kyotocabinet", feature = "bdb"))]
 pub(crate) fn unframe<'a>(prefix: &[u8], framed: &'a [u8]) -> Option<&'a [u8]> {
     framed.strip_prefix(prefix)
 }
@@ -81,7 +82,7 @@ pub(crate) fn unframe<'a>(prefix: &[u8], framed: &'a [u8]) -> Option<&'a [u8]> {
 /// for none but the empty key, which is what the shared read suite pins
 /// (`empty_bounds_never_match_or_error`). LMDB normalises the same
 /// bounds for heed's range API instead of testing keys one by one.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 pub(crate) fn in_bounds(key: &[u8], lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> bool {
     let above_lo = match lo {
         Bound::Unbounded => true,
@@ -109,7 +110,10 @@ pub(crate) fn validate_path(path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
-#[cfg(all(test, any(feature = "kyotocabinet", feature = "tkrzw")))]
+#[cfg(all(
+    test,
+    any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb")
+))]
 mod tests {
     use super::*;
 
