@@ -46,19 +46,27 @@ rather than working around them:
 - **The before/after problem dissolves.** There is no attempt to produce a
   pair inside one run. Night *N* is compared to night *N−1*, each measured
   on its own runner, and what accumulates is a **series** rather than a
-  single reading against a single baseline. A series is also what makes an
-  environment change legible: a toolchain bump shows up as a one-time step
-  in the level, our own work shows up as a trend or a jump on a known day.
-  A one-shot gate cannot tell those apart; a history can.
+  single reading against a single baseline. What a history adds over a
+  one-shot reading is **temporal** attribution: it localizes the night on
+  which a level changed. It does **not** by itself say whether the cause
+  was the toolchain, the runner image, or our own commits — a step and a
+  large source change look identical in the numbers alone. Separating them
+  requires the environment to be recorded **with each sample**, so that a
+  move can be read against whether the environment moved too; see "What it
+  would record".
 - **Nothing blocks.** Tier 3's existing failure policy applies — "nightly
   findings open issues, they do not auto-block unless a ratchet exists"
   (`../safety/ci-strategy.md`). A regression lands and is seen the next
   morning. That is the accepted cost, and it is the same deal the fuzz
   soak already runs on.
 - **Cross-platform stops mattering**, because the series does not claim to
-  represent both platforms. It is one environment's trend line over the
-  shared source; macOS work still appears in it, since the code is the
-  same code.
+  represent both platforms. It is one Linux environment's trend line, and
+  it covers **only the code paths that environment executes** — the shared
+  ones. Anything behind `cfg(target_os = "macos")`, any macOS-specific
+  allocator, linker or filesystem behaviour, and any divergence that only
+  appears on that platform stay **unmeasured**. The series is silent about
+  them rather than covering them, and it must not be read as coverage of
+  work done on a Mac.
 - **The unpinned container becomes a feature.** `verify-nightly.yml`'s own
   header says the nightly lanes "exist to surface drift early, and the
   rolling distro toolchain is part of what they exercise". A size series
@@ -68,7 +76,24 @@ rather than working around them:
 - **No new mechanism is needed to keep the series.** The fuzz-soak job
   already persists state across nightly runs with `actions/cache` — run-id
   key, prefix restore-key, latest-wins — and a snapshot series can use the
-  same pattern. Nothing is committed to the tree.
+  same pattern. Nothing is committed to the tree. Three conditions on it:
+
+  - **Its own namespace.** A `perf-snapshot-` key prefix, disjoint from
+    `fuzz-corpus-`. Two lanes sharing a prefix would restore each other's
+    payloads.
+  - **Only the schedule writes.** `verify-nightly.yml` carries both
+    `schedule` and `workflow_dispatch`. A manual run may measure and report
+    freely, but must **never** append to the series or overwrite the cache:
+    an off-cadence sample taken to test something would otherwise become
+    the predecessor the next real night compares against. Gate the persist
+    step on `github.event_name == 'schedule'`.
+  - **A missing predecessor is normal, not an error.** The cache is not
+    durable — GitHub evicts unused entries, and the first run has nothing
+    to restore. With no predecessor the lane records its sample, reports
+    that there is nothing to compare, and succeeds. Each sample is *also*
+    uploaded as a workflow artifact, which outlives the cache, so the
+    history survives an eviction even though the night-over-night
+    comparison skips one night.
 
 ### What it would record, and what it must not threshold
 
@@ -94,8 +119,8 @@ fail a merge.
 - **Day-granularity attribution.** A moved number points at everything
   merged since the last nightly, not at one PR. Narrowing it is a manual
   bisect, as with the fuzz soak.
-- **One platform.** It says nothing about macOS beyond what the shared
-  source implies.
+- **One platform.** It measures shared code paths on Linux only; macOS-
+  specific paths and behaviour are unmeasured, not covered.
 
 ## What this settles
 
@@ -104,6 +129,16 @@ date: it means **the pinned version of libpinyin**. The rejected proposal
 had listed the term as undefined and made a budget ceiling conditional on
 someone defining it. It is defined, and the budget is measured against the
 pin.
+
+Which pin is a recorded freeze, not a floating reference:
+**libpinyin 2.11.92**, commit `074a2219c90feaf962d0d24f034514033ece5f99`
+(upstream `main` at the time; untagged there), recorded in
+[`../testing/oracle-environment.md`](../testing/oracle-environment.md)
+under its 2026-09-06 UTC amendment, where the earlier
+`2.11.91`/`0c5e80e1` rows stand unedited as the previous freeze. Moving
+the pin is a reviewed change to that document, not something a measurement
+may do on its own — a budget whose reference can drift silently is not a
+budget.
 
 ## Next step
 
