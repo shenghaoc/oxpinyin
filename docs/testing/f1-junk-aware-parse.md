@@ -2,6 +2,18 @@
 
 Date: 2026-08-11 · Status: **landed — top-1 63%→64%, absent 177→70 on fixtures/w4/oracle-candidates.txt (10,190 inputs)**
 
+> **Status (2026-09-12):** the numbers here are the 2026-08 measurements at
+> pin `0c5e80e` over the 2026-08 fixture (10,190 inputs, 98,930 prefix
+> rows). The committed `fixtures/w4/oracle-candidates.txt` now carries
+> 10,465 inputs (10,312 distinct, 10,037 with candidates, 97,442 triples);
+> the sentence surface re-froze at 491/396/390 on 2026-09-04; the gate test these
+> numbers came from, `real_tables_session_reports_parity` in the
+> `real_tables_integration` suite named below, was deleted in `b7a35f1f`, and the
+> surviving gates are `oracle_candidates_fixture_is_fresh`,
+> `sentence_surface_fixture_is_fresh` and
+> `sentence_surface_matches_the_declared_residual`; the pin moved to
+> `074a2219` on 2026-09-06.
+
 ## Observed oracle behaviour (fixture only)
 
 From `fixtures/w4/oracle-candidates.txt` (rank-1 lines, verbatim):

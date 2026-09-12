@@ -2,6 +2,18 @@
 
 Date: 2026-08-11 · Status: **measured — negative result**
 
+> **Status (2026-09-12):** the numbers here are the 2026-08 measurements at
+> pin `0c5e80e` over the 2026-08 fixture (10,190 inputs, 98,930 prefix
+> rows). The committed `fixtures/w4/oracle-candidates.txt` now carries
+> 10,465 inputs (10,312 distinct, 10,037 with candidates, 97,442 triples);
+> the sentence surface re-froze at 491/396/390 on 2026-09-04; the gate test
+> named below (`real_tables_session_reports_parity`) was deleted in
+> `b7a35f1f`, and the
+> surviving gates are `oracle_candidates_fixture_is_fresh`,
+> `sentence_surface_fixture_is_fresh` and
+> `sentence_surface_matches_the_declared_residual`; the pin moved to
+> `074a2219` on 2026-09-06.
+
 ## Hypothesis
 
 Move the bigram transition cost from `Session::refresh` (post-k-best ranking)
@@ -10,7 +22,7 @@ bigram transitions are cheap. The `EdgeCost` trait already has the right
 signature:
 
 ```rust
-fn cost(prev: Option<&Edge>, edge: &Edge) -> Cost
+fn cost(&self, previous: Option<&Edge>, edge: &Edge) -> Cost
 ```
 
 The `BigramLanguageModel` is already loaded in the `Scorer` and phrase tokens
@@ -20,7 +32,7 @@ are available via dictionary lookup. The change is to charge
 ## Implementation
 
 - `Scorer` gained `best_tokens: Vec<Option<PhraseToken>>` — the cheapest
-  phrase token per `SyllableKey` (428 keys), built in `key_cost_table` via
+  phrase token per `SyllableKey` (428 keys then; `SYLLABLE_KEY_COUNT` is 440 today), built in `key_cost_table` via
   `dictionary.lookup(&[key])` + `model.score(&[], token, 0)`.
 - `Scorer::with_key_costs` changed from `const fn` to `fn` to carry the
   token table.

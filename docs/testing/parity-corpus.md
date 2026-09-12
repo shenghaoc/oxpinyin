@@ -158,7 +158,7 @@ byte-identical files, which is the W2-T2 acceptance criterion.
 ## Reproducibility contract
 
 The acceptance criterion is that generating twice yields identical output. That
-is enforced as a test rather than a manual step: `tests/parity_corpus.rs`
+is enforced as a test rather than a manual step: `crates/pinyin-oracle/tests/parity_corpus.rs`
 regenerates every stratum in memory and asserts byte equality against the
 committed files, so drift fails CI on the portable tier with no oracle present.
 It also checks that the directory holds exactly the generated strata, that the

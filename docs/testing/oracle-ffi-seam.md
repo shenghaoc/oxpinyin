@@ -47,7 +47,9 @@ Hand-written declarations, not `bindgen`.
 
 `bindgen` would add a build-dependency tree to the workspace, and adding
 dependencies without an explicit ask is a hard forbid in `AGENTS.md`. The
-required surface is 17 functions over four opaque types, so a hand-written
+required surface was 17 functions over five opaque types at W2-T1 (the
+original text said four; the binding's first revision and the list below
+both had five) and is 29 over six today, so a hand-written
 `extern "C"` block is smaller than the tooling it replaces, is reviewable
 against the hashes above, and keeps `Cargo.lock` unchanged. The W2-T1 card
 permits either choice.
@@ -74,53 +76,63 @@ load-bearing and must not be "simplified" later.
 
 ## Opaque types
 
-`pinyin_context_t`, `pinyin_instance_t`, `lookup_candidate_t`, `ChewingKey` and
-`ChewingKeyRest` are declared as opaque `extern type`-style zero-field structs
+`pinyin_context_t`, `pinyin_instance_t`, `lookup_candidate_t`, `ChewingKey`,
+`ChewingKeyRest` and, since the W6 differential, `export_iterator_t`
+(`ExportIterator`) are declared as opaque `extern type`-style zero-field structs
 with private fields. Their layout is never assumed, never constructed on the
 Rust side, and never dereferenced except by passing the pointer back to
 libpinyin.
 
 ## Function subset
 
-The W2-T1 card scopes the subset to: init context, parse, candidates to depth
-10, reset and free. That is 17 symbols.
+The W2-T1 card scoped the subset to: init context, parse, candidates to
+depth 10, reset and free — 17 symbols. The seam has since grown with the
+harness: sentence conversion (W14), candidate type and n-best index, the
+key-rest positions, training and saving (W6), the phrase export iterator
+and the token lookups (the W6 differential). The authoritative list is
+the `extern "C"` block in `crates/pinyin-oracle/src/ffi.rs`; as of
+2026-09-12 it declares these 29 symbols (Rust spellings; every `bool`
+return is C `_Bool`, see Scalar mapping):
 
-```c
-pinyin_context_t * pinyin_init(const char * systemdir, const char * userdir);
-void  pinyin_fini(pinyin_context_t * context);
-bool  pinyin_set_options(pinyin_context_t * context, pinyin_option_t options);
-pinyin_instance_t * pinyin_alloc_instance(pinyin_context_t * context);
-void  pinyin_free_instance(pinyin_instance_t * instance);
-bool  pinyin_reset(pinyin_instance_t * instance);
-size_t pinyin_parse_more_full_pinyins(pinyin_instance_t * instance,
-                                      const char * pinyins);
-size_t pinyin_get_parsed_input_length(pinyin_instance_t * instance);
-bool  pinyin_guess_candidates(pinyin_instance_t * instance, size_t offset,
-                              guint sort_option);
-bool  pinyin_get_n_candidate(pinyin_instance_t * instance, guint * num);
-bool  pinyin_get_candidate(pinyin_instance_t * instance, guint index,
-                           lookup_candidate_t ** candidate);
-bool  pinyin_get_candidate_string(pinyin_instance_t * instance,
-                                  lookup_candidate_t * candidate,
-                                  const gchar ** utf8_str);
-bool  pinyin_get_pinyin_key(pinyin_instance_t * instance, size_t offset,
-                            ChewingKey ** key);
-bool  pinyin_get_pinyin_key_rest(pinyin_instance_t * instance, size_t offset,
-                                 ChewingKeyRest ** key_rest);
-bool  pinyin_get_pinyin_key_rest_positions(pinyin_instance_t * instance,
-                                           ChewingKeyRest * key_rest,
-                                           guint16 * begin, guint16 * end);
-bool  pinyin_get_pinyin_string(pinyin_instance_t * instance, ChewingKey * key,
-                              gchar ** utf8_str);
-bool  pinyin_get_pinyin_is_incomplete(pinyin_instance_t * instance,
-                                      ChewingKey * key);
-void  g_free(void * mem);   /* GLib, for owned gchar* returns */
+```text
+pinyin_init(systemdir: *const c_char, userdir: *const c_char) -> *mut PinyinContext
+pinyin_fini(context: *mut PinyinContext)
+pinyin_set_options(context: *mut PinyinContext, options: PinyinOption) -> bool
+pinyin_alloc_instance(context: *mut PinyinContext) -> *mut PinyinInstance
+pinyin_free_instance(instance: *mut PinyinInstance)
+pinyin_reset(instance: *mut PinyinInstance) -> bool
+pinyin_parse_more_full_pinyins(instance: *mut PinyinInstance, pinyins: *const c_char) -> usize
+pinyin_get_parsed_input_length(instance: *mut PinyinInstance) -> usize
+pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool
+pinyin_get_sentence(instance: *mut PinyinInstance, index: u8, sentence: *mut *mut c_char) -> bool
+pinyin_guess_candidates(instance: *mut PinyinInstance, offset: usize, sort_option: c_uint) -> bool
+pinyin_get_n_candidate(instance: *mut PinyinInstance, num: *mut c_uint) -> bool
+pinyin_get_candidate(instance: *mut PinyinInstance, index: c_uint, candidate: *mut *mut LookupCandidate) -> bool
+pinyin_get_candidate_string(instance: *mut PinyinInstance, candidate: *mut LookupCandidate, utf8_str: *mut *const c_char) -> bool
+pinyin_get_candidate_type(instance: *mut PinyinInstance, candidate: *mut LookupCandidate, candidate_type: *mut c_int) -> bool
+pinyin_get_candidate_nbest_index(instance: *mut PinyinInstance, candidate: *mut LookupCandidate, index: *mut u8) -> bool
+pinyin_get_pinyin_key(instance: *mut PinyinInstance, offset: usize, key: *mut *mut ChewingKey) -> bool
+pinyin_get_pinyin_key_rest(instance: *mut PinyinInstance, offset: usize, key_rest: *mut *mut ChewingKeyRest) -> bool
+pinyin_get_pinyin_key_rest_positions(instance: *mut PinyinInstance, key_rest: *mut ChewingKeyRest, begin: *mut u16, end: *mut u16) -> bool
+pinyin_get_pinyin_string(instance: *mut PinyinInstance, key: *mut ChewingKey, utf8_str: *mut *mut c_char) -> bool
+pinyin_get_pinyin_is_incomplete(instance: *mut PinyinInstance, key: *mut ChewingKey) -> bool
+pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool
+pinyin_save(context: *mut PinyinContext) -> bool
+pinyin_begin_get_phrases(context: *mut PinyinContext, index: c_uint) -> *mut ExportIterator
+pinyin_iterator_has_next_phrase(iter: *mut ExportIterator) -> bool
+pinyin_iterator_get_next_phrase(iter: *mut ExportIterator, phrase: *mut *mut c_char, pinyin: *mut *mut c_char, count: *mut c_int) -> bool
+pinyin_end_get_phrases(iter: *mut ExportIterator)
+pinyin_lookup_tokens(instance: *mut PinyinInstance, phrase: *const c_char, tokenarray: *mut GArray) -> bool
+pinyin_token_get_phrase(instance: *mut PinyinInstance, token: u32, len: *mut c_uint, utf8_str: *mut *mut c_char) -> bool
 ```
 
-15 of these appear in the 52-symbol frontend-called queue in
-`docs/findings/abi-subset.md`. `pinyin_get_pinyin_is_incomplete` does not;
-`abi-subset.md` explicitly permits harness-only symbols in `pinyin-oracle`
-without expanding the `oxpinyin-capi` surface. `g_free` is GLib, not libpinyin.
+GLib, not libpinyin: `g_free` (owned `gchar*` returns), `g_array_new` /
+`g_array_free` (the token array `pinyin_lookup_tokens` fills).
+
+23 of these carry a row in the live frontend-called list of
+`docs/findings/abi-subset.md` §1 (50 symbols); the other 6
+(`pinyin_get_parsed_input_length`, `pinyin_get_pinyin_key`, `pinyin_get_pinyin_string`, `pinyin_get_pinyin_is_incomplete`, `pinyin_lookup_tokens`, `pinyin_token_get_phrase`) are harness-only, which `abi-subset.md` explicitly permits in
+`pinyin-oracle` without expanding the `oxpinyin-capi` surface.
 
 ## Constants
 
@@ -226,7 +238,11 @@ with the oracle installed.
 
 ## Non-goals
 
-Sentence conversion, candidate selection, prediction, user-phrase iteration,
-training and saving are outside this subset. Adding a symbol requires updating
-this finding first. Depth beyond 10 candidates is out of scope: the capture
-protocol and W2-T3 comparison both stop at 10.
+Candidate selection (`pinyin_choose_candidate`), prediction, the addon and
+import surfaces, and the zhuyin facade are outside this subset — the
+differentials that need them drive the built libraries through the C
+drivers under `tools/bisection/`, not through this binding. Sentence
+conversion, training, saving and the phrase export iterator, listed as
+non-goals at W2-T1, are in the subset now (above). Adding a symbol still
+means updating this finding. Depth beyond 10 candidates is out of scope:
+the capture protocol and W2-T3 comparison both stop at 10.
