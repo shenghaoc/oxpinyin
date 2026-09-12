@@ -282,3 +282,98 @@ jobs:
       - run: cargo nextest run --locked --workspace --no-default-features --features kyotocabinet
       # doctests stay on cargo test (nextest does not run them)
       - run: cargo test --locked --workspace --doc --no-default-features --features kyotocabinet
+
+  # Perf-and-size snapshot series. NOT a gate: it measures the tree once a
+  # night, compares tonight against the previous sample, and reports. Nothing
+  # here runs on the PR path and nothing here blocks a merge.
+  #
+  # The per-PR gate this replaces was rejected as infeasible — a gate is a
+  # before-and-after comparison and a PR run cannot produce a trustworthy
+  # pair. The decision, the reasons, and what this lane may and may not claim
+  # are in docs/perf/ci-perf-size-gate-proposal-2026-09-09.md. Three of its
+  # rules are load-bearing here:
+  #
+  #   - Record freely, threshold almost nothing. A flag means "a human should
+  #     look", never "this merge is bad".
+  #   - The series localizes WHEN a level moved, not WHY. The environment is
+  #     recorded with each sample, and a move across an environment change is
+  #     reported as unattributable rather than flagged.
+  #   - Only the schedule writes the series. A workflow_dispatch run measures
+  #     and reports, but must never become the predecessor the next real
+  #     night compares against.
+  #
+  # Wall clock is deliberately absent. The image stays unpinned like every
+  # other lane here: a size series that steps when the toolchain moves is
+  # reporting something true, and that is what this workflow is for.
+  perf-snapshot:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+      # tkrzw is the default backend and the one the w3 fixture directory the
+      # snapshot opens was compiled for. valgrind supplies the instruction
+      # count; it is optional by design — snapshot.sh records null rather than
+      # zero when it is absent, so losing it degrades the sample instead of
+      # corrupting the series.
+      - name: Install build and measurement dependencies (apt)
+        run: |
+          apt-get install -y --no-install-recommends \
+            gcc g++ make pkg-config libclang-dev libtkrzw-dev liblzma-dev \
+            liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev binutils \
+            valgrind python3 util-linux
+      - run: cargo install cargo-c --version 0.10.25 --locked
+      # Its own cache namespace: perf-snapshot-, disjoint from fuzz-corpus-.
+      # Same latest-wins shape the fuzz soak uses — the run-id key always
+      # misses so a save always happens, the prefix restore-key always loads
+      # the newest save. A miss is normal (first run, or an eviction) and the
+      # lane reports "nothing to compare" rather than failing.
+      - name: Restore the snapshot series
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .perf-series
+          key: perf-snapshot-${{ github.run_id }}
+          restore-keys: |
+            perf-snapshot-
+      - name: Measure
+        run: tools/perf-gate/snapshot.sh --out snapshot.json --backend tkrzw
+      # --append only on the schedule. A manual run gets the full report and
+      # writes nothing, so an off-cadence sample cannot silently become
+      # tomorrow's baseline.
+      - name: Compare against the previous night and report
+        run: |
+          set -euo pipefail
+          args=(--snapshot snapshot.json --series-dir .perf-series
+                --summary "$GITHUB_STEP_SUMMARY")
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            args+=(--append)
+          fi
+          tools/perf-gate/series.py "${args[@]}"
+      # The durable copy. The cache is evictable; artifacts are not, so the
+      # history survives an eviction even though the night-over-night
+      # comparison skips that one night. Uploaded whether or not the compare
+      # step flagged something.
+      - name: Upload the snapshot
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perf-snapshot-${{ github.run_id }}
+          path: snapshot.json
+          retention-days: 90
