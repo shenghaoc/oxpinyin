@@ -25,7 +25,9 @@ pub enum PunctError {
 impl fmt::Display for PunctError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io { path, source } => write!(formatter, "cannot access {path:?}: {source}"),
+            Self::Io { path, source } => {
+                write!(formatter, "cannot access {}: {source}", path.display())
+            }
             Self::Malformed { detail } => write!(formatter, "malformed input: {detail}"),
         }
     }

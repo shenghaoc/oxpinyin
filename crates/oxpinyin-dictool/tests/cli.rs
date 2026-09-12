@@ -217,7 +217,7 @@ fn export_of_a_fresh_user_dir_is_clean() {
     assert!(ok, "export from a fresh user dir must succeed: {stderr}");
     let body = std::fs::read_to_string(&out).expect("export reads");
     assert!(
-        body.lines().all(|line| line.is_empty()),
+        body.lines().all(str::is_empty),
         "no phrase rows can exist yet: {body:?}"
     );
     std::fs::remove_dir_all(&work).ok();

@@ -139,12 +139,11 @@ fn rust_matches_committed_ngseg_golden() {
         .segment_bytes(&input, false)
         .expect("segmenter cannot fail on the fixture");
     let golden_path = fixture_golden();
-    if !golden_path.is_file() {
-        panic!(
-            "committed golden missing: {} is not committed yet",
-            golden_path.display()
-        )
-    }
+    assert!(
+        golden_path.is_file(),
+        "committed golden missing: {} is not committed yet",
+        golden_path.display()
+    );
     let golden = std::fs::read_to_string(&golden_path).expect("golden");
     if let Some(diff) = first_divergence(&rust, &golden) {
         panic!("Rust segmenter diverges from committed ngseg golden: {diff}");
@@ -171,9 +170,10 @@ fn committed_golden_matches_live_ngseg() {
         panic!("missing input for the live ngseg: PINYIN_NGSEG_DATA / oracle prefix data not found")
     };
     let golden_path = fixture_golden();
-    if !golden_path.is_file() {
-        panic!("missing input for the live ngseg: golden not committed")
-    }
+    assert!(
+        golden_path.is_file(),
+        "missing input for the live ngseg: golden not committed"
+    );
     let live = run_ngseg(&ngseg, &data, &fixture_input()).expect("ngseg runs");
     let golden = std::fs::read_to_string(&golden_path).expect("golden");
     if let Some(diff) = first_divergence(&live, &golden) {

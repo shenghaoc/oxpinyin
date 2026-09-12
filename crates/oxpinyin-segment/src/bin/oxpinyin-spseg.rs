@@ -65,13 +65,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     let lexicon = PhraseLexicon::from_system_dir(&export)?;
 
-    let bytes = match input {
-        Some(path) => fs::read(&path)?,
-        None => {
-            let mut buf = Vec::new();
-            io::stdin().read_to_end(&mut buf)?;
-            buf
-        }
+    let bytes = if let Some(path) = input {
+        fs::read(&path)?
+    } else {
+        let mut buf = Vec::new();
+        io::stdin().read_to_end(&mut buf)?;
+        buf
     };
     let rendered = spseg::segment_bytes(&lexicon, &bytes, extra_enter);
 

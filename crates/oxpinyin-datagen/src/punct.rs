@@ -1,7 +1,9 @@
 //! Punctuation table: `punct.table` text → token-keyed punctuation lists
-//! in `PunctTableEntry::escape`'s layout (`punct_table.cpp:40-54`): a raw
-//! UCS-4 stream, each punctuation's codepoints followed by a u32 zero
-//! terminator (`docs/findings/bigram-punct-format-2026-09-01.md` §2).
+//! in `PunctTableEntry::escape`'s layout (`punct_table.cpp:40-54`).
+//!
+//! A raw UCS-4 stream, each punctuation's codepoints followed by a u32
+//! zero terminator
+//! (`docs/findings/bigram-punct-format-2026-09-01.md` §2).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -94,9 +96,10 @@ fn group_rows(rows: &[PunctRow]) -> BTreeMap<u32, Vec<String>> {
 }
 
 /// Serialises rows into `PunctTableEntry::escape`'s layout
-/// (`punct_table.cpp:40-54`): token → raw UCS-4 stream, each punctuation's
-/// codepoints followed by a u32 zero terminator, successive punctuations
-/// concatenated.
+/// (`punct_table.cpp:40-54`).
+///
+/// Token → raw UCS-4 stream, each punctuation's codepoints followed by a
+/// u32 zero terminator, successive punctuations concatenated.
 ///
 /// Entries are emitted in ascending key-byte order — the crate-wide
 /// [`Entries`](crate::Entries) contract. The keys stay little-endian

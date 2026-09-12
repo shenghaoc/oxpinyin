@@ -111,12 +111,11 @@ fn fixture_emit_roundtrips_through_parse_interpolation2() {
     }
 
     let manifest_path = manifest_path();
-    if !manifest_path.is_file() {
-        panic!(
-            "committed golden missing: {} is not committed yet",
-            manifest_path.display()
-        )
-    }
+    assert!(
+        manifest_path.is_file(),
+        "committed golden missing: {} is not committed yet",
+        manifest_path.display()
+    );
     let manifest = parse_manifest(&std::fs::read_to_string(&manifest_path).expect("manifest"));
     assert_eq!(counts.unigrams.len(), manifest.unigrams, "unigram count");
     assert_eq!(counts.bigrams.len(), manifest.bigrams, "bigram count");
