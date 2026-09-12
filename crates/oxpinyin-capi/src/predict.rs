@@ -236,26 +236,12 @@ fn append_predicted_prefix(
     // would put every system row before a user row regardless of text. That
     // is only text-safe today because the two seams settle in different
     // (length, frequency) tie groups (system baked > 0, user rows always
-    // baked 0 — user tokens never appear in the system unigram map); merge
-    // instead so a future cross-seam tie group stays text-ascending, with
-    // the system row first when a text is shared. The stable sort below
-    // keeps both inside their (length, frequency) tie groups
-    // (`upstream-divergences.md`, "Predicted-candidate tie order").
-    let system: Vec<(u32, String)> = dict
-        .system()
-        .suggest_after(prefix)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|(token, _)| dict.library_visible_token(*token))
-        .collect();
-    let user_rows = if let Some(store) = user
-        && let Ok(lookup) = oxpinyin_user::UserLookup::from_store(store)
-    {
-        lookup.suggest_after(prefix)
-    } else {
-        Vec::new()
-    };
-    let suggestions = merge_suggestions(&system, &user_rows);
+    // baked 0 — user tokens never appear in the system unigram map); the
+    // facade's merged order keeps a future cross-seam tie group
+    // text-ascending, with the system row first when a text is shared. The
+    // stable sort below keeps both inside their (length, frequency) tie
+    // groups (`upstream-divergences.md`, "Predicted-candidate tie order").
+    let suggestions = oxpinyin_facade::merged_suggestions(dict, user, prefix);
     // The pin divides by the phrase-index total, live per call
     // (`pinyin.cpp:1813-1814`): the facade's Σ item unigram over the
     // libraries that are loaded (Tier C's library mask can shrink it) plus
@@ -332,36 +318,9 @@ fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<Strin
     dict.system().phrase_text(token)
 }
 
-/// Orders the system and user `suggest_after` rows the way
-/// `_compute_predicted_prefix_candidates` receives them
-/// (`pinyin.cpp:2371-2405`): `FacadePhraseTable3::search_suggestion` runs
-/// the system phrase table then the user one, each filing tokens into
-/// its library's array in the DBM's cursor order (byte-lexical over the
-/// UCS-4 keys), and `reduce_tokens` concatenates the arrays library by
-/// library. So: grouped by library nibble ascending — the system
-/// libraries 1–4, then the user library 7 — and inside a group the UCS-4
-/// walk order, token ascending within one text. The system rows arrive
-/// in that order already (`SystemDictionary::suggest_after`); the user
-/// rows are re-keyed here because the user store walks its own map in
-/// UTF-8 order, which differs from the little-endian UCS-4 bytes upstream
-/// sorts by.
-fn merge_suggestions(system: &[(u32, String)], user_rows: &[(u32, String)]) -> Vec<(u32, String)> {
-    let mut user: Vec<(u32, String)> = user_rows.to_vec();
-    user.sort_by(|a, b| {
-        oxpinyin_data::ucs4_walk_key(&a.1)
-            .cmp(&oxpinyin_data::ucs4_walk_key(&b.1))
-            .then(a.0.cmp(&b.0))
-    });
-    let mut merged = Vec::with_capacity(system.len() + user.len());
-    merged.extend(system.iter().cloned());
-    merged.extend(user);
-    merged.sort_by_key(|(token, _)| token >> 24);
-    merged
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{amplified_frequency, merge_suggestions};
+    use super::amplified_frequency;
 
     #[test]
     fn amplified_law_mirrors_the_session_pinning_values() {
@@ -385,23 +344,5 @@ mod tests {
     #[test]
     fn amplified_law_zero_total_is_zero() {
         assert_eq!(amplified_frequency(100, 0), 0);
-    }
-    #[test]
-    fn merge_suggestions_groups_by_library_then_walks_the_ucs4_keys() {
-        // The pin's list: system library groups first, the user library
-        // last, each in the DBM's byte-lexical UCS-4 order — not text
-        // (UTF-8 / code point) order. U+4E50 sorts before U+4F2D by code
-        // point but after it by little-endian bytes (0x50 > 0x2D).
-        let system = vec![
-            (0x0200_0001, "中年".to_owned()),
-            (0x0100_0010, "中华".to_owned()),
-        ];
-        let user_rows = vec![
-            (0x0700_0001, "中乐".to_owned()), // U+4E50
-            (0x0700_0002, "中伭".to_owned()), // U+4F2D
-        ];
-        let merged = merge_suggestions(&system, &user_rows);
-        let texts: Vec<&str> = merged.iter().map(|(_, text)| text.as_str()).collect();
-        assert_eq!(texts, ["中华", "中年", "中伭", "中乐"]);
     }
 }

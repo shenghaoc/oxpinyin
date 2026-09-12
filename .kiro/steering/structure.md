@@ -40,11 +40,11 @@ rather than assembling equivalents. This is deliberate so native and
 language-binding paths cannot silently diverge. It is wiring over `oxpinyin-data`/`-user`/`-engine` public APIs;
 what algorithm it does hold is deliberate and pinned — the user-count
 overlay feed (the arithmetic itself lives in `oxpinyin-data`'s
-`*_with_user_delta` methods) and the key-cost cache's seqlock — both
-cited against the pin in its source. (The review that corrected this
-paragraph also noted the bigram-merge arithmetic there duplicates
-`merge_bigram` already exported by data; folding that in is an open
-follow-up.)
+`*_with_user_delta` methods, and the whole-row Gate 2 merge in its
+`merge_bigram_row`), the key-cost cache's seqlock, and the
+suggestion-merge row order (`merge_suggestion_rows`, the ordering the
+C-ABI facades consume through `oxpinyin-facade::merged_suggestions`) —
+all cited against the pin in its source.
 
 **Drop-in data path (P6, 2026-09-02):** there is no compatibility layer.
 `oxpinyin-data` reads libpinyin's own files through lazy readers — the
