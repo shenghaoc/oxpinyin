@@ -48,7 +48,9 @@ pub const NBEST_ROWS: usize = 3;
 
 /// The two template constants of upstream's `PhoneticLookup<nstore,
 /// nbest>`: values kept per `(position, token)` trellis node, and sentence
-/// tails extracted. libpinyin is `<2, 3>` (`pinyin.cpp:55`), libzhuyin is
+/// tails extracted.
+///
+/// libpinyin is `<2, 3>` (`pinyin.cpp:55`), libzhuyin is
 /// `<1, 1>` (`zhuyin.cpp:50`); upstream asserts `nstore <= nbest`
 /// (`phonetic_lookup.h:715`), which the two named shapes satisfy and no
 /// other constructor exists to violate.
@@ -418,7 +420,7 @@ where
 /// initial node, upstream's `fill_prefixes` over `m_prefixes =
 /// [sentence_start] + _compute_prefixes(prefix)` — the exact shape
 /// `pinyin_guess_sentence_with_prefix` drives.
-pub(crate) fn nbest_sentences_with_seeds<D, L>(
+pub fn nbest_sentences_with_seeds<D, L>(
     matrix: &[Vec<ScanKey>],
     bound: usize,
     dictionary: &D,

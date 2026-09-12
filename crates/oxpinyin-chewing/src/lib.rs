@@ -17,7 +17,7 @@
 //! `pinyin_parse_chewing` and `pinyin_get_zhuyin_string` unconditional),
 //! and neither does this workspace.
 //!
-//! The parse_one_key seams live in `oxpinyin-core` (on the scheme
+//! The `parse_one_key` seams live in `oxpinyin-core` (on the scheme
 //! parsers), not here: they consume the frozen parser tables core owns
 //! (`zhuyin_map`, the double-pinyin scheme tables, the alias-gated
 //! syllable inventory), and relocating them would either duplicate that

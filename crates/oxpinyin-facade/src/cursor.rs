@@ -21,7 +21,9 @@ use crate::instance::InstanceCore;
 
 /// The active parse mode's span source: the coordinate input bytes, its
 /// parsed length, the key spans `(start, end)`, and whether `'` is a
-/// zero-key separator in that mode. `None` for plain full pinyin, whose
+/// zero-key separator in that mode.
+///
+/// `None` for plain full pinyin, whose
 /// law runs over the session's own buffer.
 pub struct SpanSource<'a> {
     /// The mode's own input buffer.

@@ -13,13 +13,13 @@
 //! choose end-offset chains, the sentence-row display law).
 //!
 //! What this crate does **not** do is unify per-facade parity decisions.
-//! Where the two facades' pins diverge — FORCE_TONE forwarding on the
+//! Where the two facades' pins diverge — `FORCE_TONE` forwarding on the
 //! chewing seam, the `PINYIN_CORRECT_ALL` mask on the one-key full-pinyin
 //! probe — the shared law is parameterized and each facade passes its own
 //! arm, so a divergence stays greppable instead of buried.
 //!
 //! No C types cross this boundary: the crates above this one own the
-//! `#[repr(C)]` shapes, the pointer casts, and the CString snapshots.
+//! `#[repr(C)]` shapes, the pointer casts, and the `CString` snapshots.
 
 // Constitution §4, mechanically: library builds may not unwrap, expect,
 // or panic. Inline #[cfg(test)] modules are exempt (see the allow below
