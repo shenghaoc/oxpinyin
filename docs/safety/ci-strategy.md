@@ -1,10 +1,11 @@
 # CI strategy — tiered verification for oxpinyin (proposal)
 
 Design goal: maximum confidence per CI-minute, four tiers, nothing heavy on
-the PR path. Existing jobs (keep): `lint` (fmt ×2 workspaces + clippy
-`-D warnings`), `test` (+ C++ smoke gate + live-typing differential),
-`test-portable` (mac/win), `fuzz` (pinned nightly; builds all five targets,
-~10s smoke run of each).
+the PR path. Jobs as of 2026-09-12 (`ci.yml`): `changes`, `lint` (fmt ×2 workspaces +
+clippy `-D warnings` + Lizard), `test` (+ C++ smoke gate + live-typing
+differential), `python` / `python-portable`, `test-macos` / `test-windows`,
+`deny`, `fuzz` (pinned nightly; builds all ten targets, ~10s smoke run of
+each) and `ci-aggregate`, the single required check.
 Estimated costs below are rough additive deltas on a cached runner.
 
 ## Tier 1 — FAST PR GATE (every push/PR, ~+2 min over today)
@@ -16,8 +17,8 @@ cargo clippy --locked --workspace --all-targets -- -D warnings   # existing, now
 cargo clippy --locked -p oxpinyin-capi -p pinyin-oracle --all-targets -- -D warnings   # + FFI-crate lints
 cargo nextest run --workspace (or cargo test)  # existing runner, nextest optional
 cargo test --doc                               # only if nextest adopted
-cargo deny check advisories bans licenses sources   # NEW, ~40–90s cold, cacheable DB
-fuzz: build all five targets, smoke-run every target (~10s each)   # existing job; all five targets soak nightly
+cargo deny --locked check                      # landed as the `deny` job: root default, root --all-features, fuzz graph
+fuzz: build all ten targets, smoke-run every target (~10s each)   # existing job; all ten targets soak nightly
 ```
 
 Rationale per addition: `cargo deny` is the only supply-chain gate (one
@@ -41,9 +42,10 @@ Doctest step only if nextest lands. Gates: all hard.
 > `workflow_call`. Lizard moved to the Tier 1 lint job. A nightly
 > `public-api` lane diffs the engine's `cargo public-api` snapshot.
 > geiger was retired 2026-09-01.
-- Windows/macOS keep today's portable test job; optionally add a
-  `--no-default-features` store build to prove the feature-gated unsafe
-  crates compile-out of the default path.
+- Windows/macOS keep today's portable test jobs; `store-backends.yml`
+  (`store-features`, `backend-matrix`, `store-backends-gate`,
+  `tkrzw-sanitizers`) proves every backend selection compiles and runs
+  the C-backed ones under ASan/UBSan.
 
 ## Tier 3 — NIGHTLY / SCHEDULED (one runner, serial, ~30–60 min)
 
@@ -53,8 +55,9 @@ Doctest step only if nextest lands. Gates: all hard.
    shape: byte→command alphabet over keys, guess, candidate walks,
    config setters, adversarial iterator begin/end ordering; exercises
    F-6/F-7 surface), `dict-loader` (bytes→data decode; F-3 class),
-   `scheme` (double-pinyin/config parsing), `codec` (user DB roundtrip +
-   hostile bytes).
+   `scheme` and `codec` — landed since as `double-pinyin`, `table-conf`,
+   `user-store-ops`, `phrase-library`, `chewing-parser`, `session-keys`
+   and `fixture-model` (ten targets in `fuzz/Cargo.toml`).
 2. ~~**Miri**: `cargo +nightly miri test --no-default-features --features redb
    -p oxpinyin-core -p oxpinyin-store` (redb is the pure-Rust peer Miri
    can reason about; the C-backed peers are covered by the ABI smoke
@@ -79,8 +82,9 @@ libchewing convention), they do not auto-block unless a ratchet exists
 - Full `cargo deny` (advisories re-checked at tag time). *(The geiger
   report attachment was retired with the lane, 2026-09-01.)*
 - Release-profile validation: build the cargo-c artifact, verify the
-  exported symbol set equals `pinyin.h`'s 55 (scripted `nm` diff — today
-  this is implied by the smoke gate; make it explicit at release).
+  exported symbol set equals `libpinyin.ver`'s 79 and `libzhuyin.ver`'s 52
+  (`tools/abi/check-exports.sh`, already run on every PR for the
+  development and the shipped build).
 - FFI checks: C++ smoke gate + contract tests on the built artifact
   (existing content, promoted to required-for-tag).
 - Confirm no `panic=abort` / no `overflow-checks` in shipped profiles

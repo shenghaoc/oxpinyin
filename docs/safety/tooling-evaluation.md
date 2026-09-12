@@ -1,5 +1,15 @@
 # Tooling evaluation — oxpinyin safety/quality toolchain study
 
+> **Status (2026-09-12):** measured at `2382bdd` (2026-08-27); every line
+> anchor, count and "today" statement below is that tree's. Since then:
+> the `ffi_catch` wrapper was removed (2026-09-05), the fuzz corpus grew
+> to ten targets, Lizard gates PRs in the `lint` job, the exported ABI is
+> 79 `pinyin_*` + 52 `zhuyin_*` symbols, unsafe is forbidden in 21 of
+> 26 crates (20 at the crate root, `oxpinyin-python` at the manifest) and
+> compiled only in capi, zhuyin-capi, oracle,
+> store and data's mmap module, the workspace has 26 crates and a
+> 173-package lockfile. `enforcement-matrix.md` carries the current state.
+
 Status: proposal. Every recommendation is classified ADOPT / ADOPT SELECTIVELY /
 TRIAL / DEFER / REJECT with evidence from this working tree (commit `2382bdd`)
 and, where marked *measured*, from runs performed during the study
@@ -513,8 +523,8 @@ makes the editor surface the same failures CI enforces (clippy::all denied)
 — the human/agent parity this study aims for. Inlay hints (types, parameter
 names, chaining) are personal preference; borrow/lifetime overlays help in
 the FFI crates. `.lsp.json` presence in a checkout is tool noise, not
-project config. **Verdict: ADOPT (one committed settings file, explicitly
-not CI-enforced).**
+project config. **Verdict: DROP — was ADOPT (one committed settings file, explicitly
+not CI-enforced); superseded by §22 and dropped in review.**
 
 ## 22. Pre-commit / local workflow
 
