@@ -28,10 +28,15 @@ SQLite 3 and the DBM (`libtkrzw-dev` by default; `--dbm` selects Kyoto
 Cabinet or Berkeley DB for the bench oracles).
 
 ```sh
-tools/oracle/build-oracle.sh            # fetches libpinyin by commit SHA, verifies, builds
+tools/oracle/build-oracle.sh --prefix ~/.local/opt/pinyin-oracle   # fetches libpinyin by commit SHA, verifies, builds
 ```
 
-Default prefix `~/.local/opt/pinyin-oracle` (`PINYIN_ORACLE_PREFIX`).
+The `--prefix` above is the default the differential and perf runners
+read from `PINYIN_ORACLE_PREFIX`, so the build and the runners meet
+without further settings. Without `--prefix` the script installs to
+`${TMPDIR:-/tmp}/oxpinyin-oracle/prefix` (`/tmp/oxpinyin-oracle/prefix`
+when `TMPDIR` is unset), and the runners find it only if
+`PINYIN_ORACLE_PREFIX` points there.
 The script writes a manifest the differential runners compare against
 `oracle-pin.txt` before trusting the prefix. The container recipes in
 `tools/bisection/Dockerfile.perf-matrix` carry a prebuilt oracle at
@@ -42,7 +47,7 @@ The script writes a manifest the differential runners compare against
 The Rust side reads a system data directory it compiled itself:
 
 ```sh
-cargo run -p oxpinyin-datagen -- compile --backend redb \
+cargo run -p oxpinyin-datagen --no-default-features --features redb -- compile --backend redb \
     --model-dir "$PINYIN_MODEL_DIR" --out-dir /tmp/oxpinyin-export
 export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 ```
@@ -53,8 +58,17 @@ export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 ## 4. Run the differentials
 
 ```sh
-tools/oracle/run-differentials.sh
+tools/oracle/run-differentials.sh --libpinyin <built libpinyin tree> \
+    --data <built system data dir> --export "$PINYIN_EXPORT_DIR" \
+    --model "$PINYIN_MODEL_DIR"
 ```
+
+The script takes explicit paths (`--libpinyin`, `--data` and `--export`
+are required, `--model` optional) and exits 2 without them. The shell
+expands the `PINYIN_EXPORT_DIR` and `PINYIN_MODEL_DIR` exports from steps
+1 and 3 into those arguments before the script starts; the script itself
+discovers nothing, and with `PINYIN_EXPORT_DIR` unset `--export` is empty
+and the run fails.
 
 Wires the `PINYIN_*` variables and runs the `#[ignore]`d differential
 tests with `--include-ignored` (KMM, segment, lambda, counter, eval when

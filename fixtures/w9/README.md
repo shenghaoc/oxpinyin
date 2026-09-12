@@ -15,7 +15,7 @@ phrase_index** (`fixtures/w3/phrase_index.<backend>`) rather than the full
 system export. The W3 table is a real, committed system table but a
 *subset* of the shipped dictionary, so some single Han characters segment
 as unknown (`0 …`) runs. Because that table is committed, the `spseg`
-differential (`tests/spseg_mergeseq.rs`) runs unconditionally on CI; the
+differential (`crates/oxpinyin-segment/tests/spseg_mergeseq.rs`) runs unconditionally on CI; the
 live cross-check against pin-built `spseg` runs only when `PINYIN_SPSEG`
 and the full oracle data dir are set.
 

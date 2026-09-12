@@ -358,9 +358,8 @@ data_unstable_manifest=$prefix/oracle-data-unstable.sha256
 # through the DBM-backed generation path (see
 # docs/findings/oracle-data-reproducibility.md). Those six go into the
 # informational manifest, which is tamper-evident within one prefix but
-# never comparable across builds. Everything else (the seventeen domain
-# phrase tables plus the gb/gbk character tables) is byte-identical across
-# clean builds and forms the reproducible gate: oracle-data.sha256, and its
+# never comparable across builds. Everything else — the seventeen files the
+# reproducible manifest gates — is byte-identical across clean builds and forms the reproducible gate: oracle-data.sha256, and its
 # data_manifest_sha256 line in oracle-pin.txt, is a pure function of the
 # pin, so two prefixes of the same pin agree on it.
 DATA_UNSTABLE_FILES=(

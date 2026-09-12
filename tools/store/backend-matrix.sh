@@ -5,8 +5,8 @@
 # peer implementations behind one trait surface, and every build has
 # exactly one of them. This script drives that invariant end-to-end:
 #
-#   1. Each of the four valid selections is a green `cargo check
-#      --workspace`.
+#   1. The default selection and each of the four explicit ones is a
+#      green `cargo check --locked -p oxpinyin-store`.
 #   2. Every one of the six pairwise combinations, and a three-way
 #      combination, refuses to compile with the `compile_error!` message
 #      from `crates/oxpinyin-store/src/lib.rs`.
@@ -39,7 +39,7 @@ for peer in "" \
     "--no-default-features --features redb" \
     "--no-default-features --features lmdb" \
     "--no-default-features --features tkrzw"; do
-    label=${peer:-default (KC)}
+    label=${peer:-default (tkrzw)}
     printf '── valid: %s\n' "$label"
     if cargo check --locked -p oxpinyin-store $peer >"$LOG" 2>&1; then
         printf '   PASS\n'

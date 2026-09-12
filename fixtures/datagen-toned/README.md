@@ -1,8 +1,8 @@
 # Toned mini model
 
-A seventeen-file model directory in the pinned model20 layout (the same
-inventory `oxpinyin-testsupport::model_cache::EXPECTED_MODEL_FILES`
-checks), small enough to read by eye and carrying what the pinned model
+An eighteen-file model directory in the pinned model20 layout —
+seventeen `.table` files plus `interpolation2.text`, the same inventory
+`oxpinyin-testsupport::model_cache::EXPECTED_MODEL_FILES` checks, small enough to read by eye and carrying what the pinned model
 does not: **tone digits**.
 
 `gb_char.table` stores four readings of one syllable under one
