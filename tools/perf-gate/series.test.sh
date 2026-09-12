@@ -38,7 +38,7 @@ d = {
         "section_sum": 1000000, "stripped_size": 1446528,
         "alloc_count_per_cycle": 120, "alloc_bytes_per_cycle": 40960,
         "ir_oxpinyin_object": 2000000,
-        "rss_init_kib": 14000, "rss_cycle_kib": 23000,
+        "rss_first_cycle_kib": 14000, "rss_last_cycle_kib": 23000,
     },
 }
 exec(expr)
@@ -113,7 +113,7 @@ says "and says why it is not" "unattributable"
 says "and names what moved" "cc"
 
 # --- RSS is a trend, never a trigger ---------------------------------------
-write_snap "$WORK/snap.json" 'd["metrics"]["rss_cycle_kib"] = 30000'
+write_snap "$WORK/snap.json" 'd["metrics"]["rss_last_cycle_kib"] = 30000'
 expect 0 "a 30% RSS move is reported, not flagged" "$DIR"
 says "RSS is marked as trend only" "trend only"
 

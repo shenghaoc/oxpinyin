@@ -138,8 +138,10 @@ else:
 }
 
 # ── RSS ─────────────────────────────────────────────────────────────────
-# rss_kib/hwm_kib are nested under after_first (post-init) and after_last
-# (post-cycle), not at the top level. Recorded as a trend; never a trigger.
+# rss_kib/hwm_kib are nested under after_first and after_last, not at the top
+# level. after_first is written after cycle 0 — a COMPLETED cycle, not after
+# init — so the fields are named for that rather than for an init snapshot the
+# speed mode never takes. Recorded as a trend; never a trigger.
 rss_json() {
 	local i
 	for ((i = 0; i < RSS_PROCESSES; i++)); do
@@ -154,8 +156,8 @@ def med(tag, key):
     vals = [r[tag][key] for r in rows
             if isinstance(r.get(tag), dict) and isinstance(r[tag].get(key), (int, float))]
     return int(statistics.median(vals)) if vals else None
-print(json.dumps({"rss_init_kib": med("after_first", "rss_kib"),
-                  "rss_cycle_kib": med("after_last", "rss_kib")}))'
+print(json.dumps({"rss_first_cycle_kib": med("after_first", "rss_kib"),
+                  "rss_last_cycle_kib": med("after_last", "rss_kib")}))'
 }
 
 # ── instructions ────────────────────────────────────────────────────────
@@ -223,7 +225,8 @@ doc = {
         "binutils": run("readelf", "--version"),
         "backend": "$BACKEND",
         "fixture_sha256": h.hexdigest(),
-        "cpu_pinned": $PINNED,
+        # $PINNED is the JSON literal true/false, not Python's True/False.
+        "cpu_pinned": json.loads("$PINNED"),
         "harness_commit": run("git", "log", "-1", "--format=%H", "--",
                               "tools/bisection/bisect.c", "tools/perf-gate"),
     },
@@ -243,6 +246,13 @@ doc = {
         **json.loads('''$IR'''),
     },
 }
+for field, value in (("commit", doc["commit"]),
+                     ("harness_commit", doc["environment"]["harness_commit"])):
+    if value == "unknown":
+        sys.exit(f"fatal: {field} could not be resolved — a sample with no "
+                 f"provenance must not enter the series (is this a git "
+                 f"checkout, and is safe.directory set?)")
+
 with open(out, "w") as fh:
     json.dump(doc, fh, indent=2, sort_keys=True)
     fh.write("\n")
