@@ -12,7 +12,7 @@ comparable within one container on one host; every published snapshot
 | crate | bench | needs |
 | --- | --- | --- |
 | oxpinyin-capi | `stage2` | the export (`PINYIN_EXPORT_DIR`), the C-ABI surface |
-| oxpinyin-store | `backend_matrix_{tkrzw,kyotocabinet,lmdb,redb}` | `--features <backend>` (each is `required-features`-gated) |
+| oxpinyin-store | `backend_matrix_{tkrzw,kyotocabinet,bdb,lmdb,redb}` | `--features <backend>` (each is `required-features`-gated) |
 | oxpinyin-store | `lmdb_bulk_load`, `redb_is_empty` | the named backend |
 | oxpinyin-store | `kyotocabinet_bnum` | `--features kyotocabinet,bench-internal`; **an installed libpinyin `data/` via `OXPINYIN_BNUM_DATA_DIR`** for meaningful numbers (see below) |
 | oxpinyin-user | `export_phrases`, `phrase_read` | the export |
