@@ -9,7 +9,7 @@
 //! the re-anchored window — lives in [`oxpinyin_facade`]'s
 //! `ContextCore`/`InstanceCore`, shared with the pinyin facade; this file
 //! keeps only the zhuyin-facing shell: the context back-pointer, the ABI
-//! key slots, the CString candidate snapshot (with the zhuyin-local
+//! key slots, the `CString` candidate snapshot (with the zhuyin-local
 //! 4-value candidate-type enum), and this facade's distinguishing
 //! seeds and sentence-row display law.
 
@@ -25,10 +25,10 @@ use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, ZhuyinContext, Z
 /// Superseded by [`oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD`]; kept as
 /// the crate-local name the tests cite.
 #[cfg(test)]
-pub(crate) const ZHUYIN_DEFAULT_OPTIONS: u32 = oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD;
+pub const ZHUYIN_DEFAULT_OPTIONS: u32 = oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD;
 
 /// State behind `zhuyin_context_t *`.
-pub(crate) struct CapiContext {
+pub struct CapiContext {
     /// The shared orchestration half: assembly, user store, layered
     /// configuration, and the live option/scheme word.
     pub(crate) core: ContextCore,
@@ -99,7 +99,7 @@ impl CapiContext {
 
 /// One snapshotted candidate, stored inside `CapiInstance` so that
 /// `lookup_candidate_t *` can borrow into it across C calls.
-pub(crate) struct CapiCandidate {
+pub struct CapiCandidate {
     pub(crate) text: std::ffi::CString,
     /// The four fields below are snapshotted exactly as the pinyin facade
     /// snapshots them, but this facade's display law reads only `text`,
@@ -139,7 +139,7 @@ pub(crate) struct CapiCandidate {
 }
 
 /// State behind `zhuyin_instance_t *`.
-pub(crate) struct CapiInstance {
+pub struct CapiInstance {
     /// The owning context's C handle.
     pub(crate) context: *mut ZhuyinContext,
     /// The orchestration half — session, shared handles, live option

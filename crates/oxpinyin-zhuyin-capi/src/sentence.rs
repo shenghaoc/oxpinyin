@@ -86,17 +86,16 @@ pub extern "C" fn zhuyin_get_sentence(
     let inst = unsafe { instance_ref(instance) };
     if inst.core.session.sentence_lookup_active() {
         const INDEX: u8 = 0;
-        return match inst.core.session.sentence_text(INDEX) {
-            Some(decoded) => write_owned_sentence(decoded, sentence),
-            None => {
-                if !sentence.is_null() {
-                    // SAFETY: Null-checked above.
-                    unsafe {
-                        *sentence = std::ptr::null_mut();
-                    }
+        return if let Some(decoded) = inst.core.session.sentence_text(INDEX) {
+            write_owned_sentence(decoded, sentence)
+        } else {
+            if !sentence.is_null() {
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *sentence = std::ptr::null_mut();
                 }
-                false
             }
+            false
         };
     }
     let text = if inst
@@ -219,12 +218,9 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     if !inst.core.session.is_composing() {
         return false;
     }
-    let normalized = match inst.core.validate_lookup_offset(offset) {
-        Ok(normalized) => normalized,
-        Err(_) => {
-            inst.candidates.clear();
-            return false;
-        }
+    let Ok(normalized) = inst.core.validate_lookup_offset(offset) else {
+        inst.candidates.clear();
+        return false;
     };
     inst.candidates.clear();
     // The before-cursor entry searches the spans ENDING at the offset
@@ -248,13 +244,10 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         normalized
     };
     let window_owned: oxpinyin_engine::CandidateList = if before_cursor {
-        let window = match inst.core.session.candidates_ending_at(session_offset) {
-            Ok(window) => window,
-            Err(_) => {
-                inst.core.anchored_window = None;
-                inst.candidates.clear();
-                return false;
-            }
+        let Ok(window) = inst.core.session.candidates_ending_at(session_offset) else {
+            inst.core.anchored_window = None;
+            inst.candidates.clear();
+            return false;
         };
         // The before-cursor window is re-anchored just like the
         // after-cursor one: `snapshot_candidates` records each row's index
@@ -270,12 +263,11 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         inst.core.anchored_window = if session_offset <= inst.core.session.composition_offset() {
             None
         } else {
-            match inst.core.session.candidates_at(session_offset) {
-                Ok(window) => Some((session_offset, window)),
-                Err(_) => {
-                    inst.candidates.clear();
-                    return false;
-                }
+            if let Ok(window) = inst.core.session.candidates_at(session_offset) {
+                Some((session_offset, window))
+            } else {
+                inst.candidates.clear();
+                return false;
             }
         };
         match inst.core.anchored_window.as_ref() {

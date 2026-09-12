@@ -218,10 +218,10 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_ref(context) };
-    match ctx.core.runtime.as_ref() {
-        Some(runtime) => runtime.load_library(index as u32),
-        None => false,
-    }
+    ctx.core
+        .runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.load_library(index as u32))
 }
 
 /// Unload a default phrase library by index.
