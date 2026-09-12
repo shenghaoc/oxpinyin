@@ -26,6 +26,7 @@ oxpinyin-store = { workspace = true }
 # precedence).
 default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-data/kyotocabinet", "oxpinyin-store/kyotocabinet"]
+bdb = ["oxpinyin-data/bdb", "oxpinyin-store/bdb"]
 lmdb = ["oxpinyin-data/lmdb", "oxpinyin-store/lmdb"]
 tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-store/tkrzw"]
 redb = ["oxpinyin-data/redb", "oxpinyin-store/redb"]

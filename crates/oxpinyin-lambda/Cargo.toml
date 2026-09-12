@@ -19,6 +19,7 @@ workspace = true
 # default selection.
 default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-segment/kyotocabinet", "oxpinyin-counter/kyotocabinet"]
+bdb = ["oxpinyin-segment/bdb", "oxpinyin-counter/bdb"]
 tkrzw = ["oxpinyin-segment/tkrzw", "oxpinyin-counter/tkrzw"]
 lmdb = ["oxpinyin-segment/lmdb", "oxpinyin-counter/lmdb"]
 redb = ["oxpinyin-segment/redb", "oxpinyin-counter/redb"]

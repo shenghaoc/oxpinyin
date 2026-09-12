@@ -28,6 +28,7 @@ oxpinyin-user = { path = "../oxpinyin-user", default-features = false }
 # pure Rust under any backend and portable to macOS and Windows.
 default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-facade/kyotocabinet", "oxpinyin-user/kyotocabinet"]
+bdb = ["oxpinyin-facade/bdb", "oxpinyin-user/bdb"]
 tkrzw = ["oxpinyin-facade/tkrzw", "oxpinyin-user/tkrzw"]
 lmdb = ["oxpinyin-facade/lmdb", "oxpinyin-user/lmdb"]
 redb = ["oxpinyin-facade/redb", "oxpinyin-user/redb"]

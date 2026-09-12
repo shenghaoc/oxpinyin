@@ -1000,11 +1000,19 @@ mod tests {
         save(&dir, &state(), &originals, &versions(), 3).expect("save");
         assert!(dir.join("user.bin").exists());
 
-        // A cross-backend marker never conforms.
+        // A cross-backend marker never conforms. `BerkeleyDB` was the
+        // obvious foreign token while no backend carried it; the bdb
+        // build IS BerkeleyDB, so its foreign marker is a different real
+        // upstream token (any of the three that is not this build's
+        // `DEFAULT_STORE_DB_FORMAT` would do).
+        let foreign_token = match oxpinyin_store::DEFAULT_STORE_DB_FORMAT {
+            "BerkeleyDB" => "KyotoCabinet",
+            _ => "BerkeleyDB",
+        };
         let foreign = UserTableInfo {
             binary_format_version: 7,
             model_data_version: 14,
-            database_format: Some("BerkeleyDB".to_owned()),
+            database_format: Some(foreign_token.to_owned()),
             open_counter: 0,
         };
         std::fs::write(dir.join(USER_CONF), foreign.to_text()).expect("write");

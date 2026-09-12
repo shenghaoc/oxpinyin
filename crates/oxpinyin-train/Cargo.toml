@@ -25,6 +25,13 @@ kyotocabinet = [
     "oxpinyin-eval/kyotocabinet",
     "oxpinyin-data/kyotocabinet",
 ]
+bdb = [
+    "oxpinyin-segment/bdb",
+    "oxpinyin-counter/bdb",
+    "oxpinyin-lambda/bdb",
+    "oxpinyin-eval/bdb",
+    "oxpinyin-data/bdb",
+]
 tkrzw = [
     "oxpinyin-segment/tkrzw",
     "oxpinyin-counter/tkrzw",

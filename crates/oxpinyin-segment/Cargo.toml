@@ -21,6 +21,7 @@ workspace = true
 # `--no-default-features --features {kyotocabinet|redb|lmdb}` picks a peer.
 default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-data/kyotocabinet"]
+bdb = ["oxpinyin-data/bdb"]
 tkrzw = ["oxpinyin-data/tkrzw"]
 lmdb = ["oxpinyin-data/lmdb"]
 redb = ["oxpinyin-data/redb"]

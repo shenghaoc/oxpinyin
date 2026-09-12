@@ -38,6 +38,10 @@ kyotocabinet = [
     "oxpinyin-runtime/kyotocabinet",
     "oxpinyin-user/kyotocabinet",
 ]
+bdb = [
+    "oxpinyin-runtime/bdb",
+    "oxpinyin-user/bdb",
+]
 tkrzw = ["oxpinyin-runtime/tkrzw", "oxpinyin-user/tkrzw"]
 lmdb = ["oxpinyin-runtime/lmdb", "oxpinyin-user/lmdb"]
 redb = ["oxpinyin-runtime/redb", "oxpinyin-user/redb"]

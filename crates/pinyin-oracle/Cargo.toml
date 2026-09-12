@@ -25,6 +25,7 @@ oracle-ffi = ["dep:glib-sys"]
 # Backend selection, forwarded through oxpinyin-data (one backend per
 # binary; see oxpinyin-store's [features] for the model and precedence).
 kyotocabinet = ["oxpinyin-data/kyotocabinet"]
+bdb = ["oxpinyin-data/bdb"]
 tkrzw = ["oxpinyin-data/tkrzw"]
 lmdb = ["oxpinyin-data/lmdb"]
 redb = ["oxpinyin-data/redb"]

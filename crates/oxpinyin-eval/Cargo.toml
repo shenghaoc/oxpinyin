@@ -23,6 +23,11 @@ kyotocabinet = [
     "oxpinyin-counter/kyotocabinet",
     "oxpinyin-lambda/kyotocabinet",
 ]
+bdb = [
+    "oxpinyin-data/bdb",
+    "oxpinyin-counter/bdb",
+    "oxpinyin-lambda/bdb",
+]
 tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-counter/tkrzw", "oxpinyin-lambda/tkrzw"]
 lmdb = ["oxpinyin-data/lmdb", "oxpinyin-counter/lmdb", "oxpinyin-lambda/lmdb"]
 redb = ["oxpinyin-data/redb", "oxpinyin-counter/redb", "oxpinyin-lambda/redb"]

@@ -45,6 +45,12 @@ kyotocabinet = [
     "oxpinyin-user/kyotocabinet",
     "oxpinyin-facade/kyotocabinet",
 ]
+bdb = [
+    "oxpinyin-runtime/bdb",
+    "oxpinyin-data/bdb",
+    "oxpinyin-user/bdb",
+    "oxpinyin-facade/bdb",
+]
 tkrzw = [
     "oxpinyin-runtime/tkrzw",
     "oxpinyin-data/tkrzw",

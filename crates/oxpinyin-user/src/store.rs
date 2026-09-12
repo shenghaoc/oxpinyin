@@ -2364,7 +2364,7 @@ mod tests {
     }
 
     // Exactly-one-backend: the store's compile-time guards refuse
-    // combined builds, so at most one of these four peer test suites
+    // combined builds, so at most one of these five peer test suites
     // is compiled per build; each peer's own suite exercises the
     // generic user store's contract over that peer.
     #[cfg(feature = "redb")]
@@ -2375,6 +2375,8 @@ mod tests {
     user_store_tests!(tkrzw, oxpinyin_store::TkrzwStore, "tkrzw");
     #[cfg(feature = "kyotocabinet")]
     user_store_tests!(kc, oxpinyin_store::KcStore, "kc");
+    #[cfg(feature = "bdb")]
+    user_store_tests!(bdb, oxpinyin_store::BdbStore, "db");
 
     // ── Cross-backend equivalence (features `lmdb` / `tkrzw`) ─────
 
