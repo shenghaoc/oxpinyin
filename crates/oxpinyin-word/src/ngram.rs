@@ -1,7 +1,7 @@
 //! `populate.py` — count 1..N-gram word-history counts from the segmented
 //! corpus, pruning rare rows.
 //!
-//! Upstream keeps one SQLite database per n-gram order, keyed by the
+//! Upstream keeps one `SQLite` database per n-gram order, keyed by the
 //! space-fenced word sequence `" w1 w2 … "`; this port keeps ordered maps
 //! with the same string keys, so the partial-word merge (`partial.rs`) can
 //! do the same space-fenced substitution. Each order slides a window of
@@ -33,7 +33,7 @@ impl NgramTables {
 
     /// The highest n-gram order tracked.
     #[must_use]
-    pub fn max_order(&self) -> usize {
+    pub const fn max_order(&self) -> usize {
         self.max_order
     }
 
@@ -120,15 +120,12 @@ impl NgramTables {
     /// (`UPDATE … OR INSERT`, `partialword.py:95-101`). Returns whether the
     /// row was newly inserted.
     pub fn add(&mut self, order: usize, fenced: &str, delta: u64) -> bool {
-        match self.tables[order].get_mut(fenced) {
-            Some(freq) => {
-                *freq += delta;
-                false
-            }
-            None => {
-                self.tables[order].insert(fenced.to_owned(), delta);
-                true
-            }
+        if let Some(freq) = self.tables[order].get_mut(fenced) {
+            *freq += delta;
+            false
+        } else {
+            self.tables[order].insert(fenced.to_owned(), delta);
+            true
         }
     }
 }

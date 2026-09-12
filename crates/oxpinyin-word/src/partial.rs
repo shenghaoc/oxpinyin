@@ -10,7 +10,7 @@
 //! sequences collapse and feed new bigrams into the next pass. It stops
 //! when a pass finds nothing new or after [`MAXIMUM_ITERATION`] passes.
 //!
-//! Upstream backs the orders with SQLite and the phrase search with an
+//! Upstream backs the orders with `SQLite` and the phrase search with an
 //! FTS3 table; this port uses the ordered maps of [`NgramTables`] and the
 //! same space-fenced string substitution, so the merge is byte-faithful to
 //! the Python `partition` walk (which merges one occurrence at a time and
@@ -54,9 +54,11 @@ impl PartialWord {
 }
 
 /// The partial-word frequency threshold (`computeThreshold`,
-/// `partialword.py:39-65`): dictionary words with unigram freq ≥
-/// [`WORD_MINIMUM_OCCURRENCE`], sorted ascending, indexed at the
-/// `int(len * 0.5)`-from-the-end position.
+/// `partialword.py:39-65`).
+///
+/// Dictionary words with unigram freq ≥ [`WORD_MINIMUM_OCCURRENCE`],
+/// sorted ascending, indexed at the `int(len * 0.5)`-from-the-end
+/// position.
 ///
 /// # Errors
 ///
@@ -82,7 +84,7 @@ pub fn compute_threshold(
 
 /// The Python `[-int(len * ratio)]` index into an ascending list: `int()`
 /// truncates, and `[-0]` is `[0]`.
-pub(crate) fn threshold_index(len: usize, ratio: f64) -> usize {
+pub fn threshold_index(len: usize, ratio: f64) -> usize {
     let pos = (len as f64 * ratio) as usize;
     if pos == 0 { 0 } else { len - pos }
 }

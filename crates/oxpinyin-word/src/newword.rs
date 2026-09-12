@@ -119,8 +119,10 @@ fn entropy_threshold(
 }
 
 /// Filters the partial words to new words (`filterPartialWord`,
-/// `newword.py:215-249`): keep a word whose prefix and postfix entropy both
-/// clear their thresholds, deduplicating by word in first-seen order.
+/// `newword.py:215-249`).
+///
+/// Keeps a word whose prefix and postfix entropy both clear their
+/// thresholds, deduplicating by word in first-seen order.
 ///
 /// # Errors
 ///

@@ -1,5 +1,5 @@
 //! Native trainer orchestrator — the whole `libpinyin/trainer` main workflow
-//! in Rust, no Python, `make`, SQLite, or libpinyin binaries.
+//! in Rust, no Python, `make`, `SQLite`, or libpinyin binaries.
 //!
 //! The trainer's main pipeline is a chain of Python drivers over the KMM
 //! tools:

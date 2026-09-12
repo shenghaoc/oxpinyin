@@ -178,9 +178,11 @@ fn sentence_keys<P: PhraseSource>(
 ) -> Result<Vec<SyllableKey>, EvalError> {
     let mut keys = Vec::new();
     for &token in sentence {
-        let token_keys = phrases.best_keys(token).ok_or(EvalError::NoPronunciation {
-            token: token.value(),
-        })?;
+        let token_keys = phrases
+            .best_keys(token)
+            .ok_or_else(|| EvalError::NoPronunciation {
+                token: token.value(),
+            })?;
         keys.extend(token_keys);
     }
     Ok(keys)
@@ -195,7 +197,7 @@ fn sentence_text<P: PhraseSource>(
 ) -> Result<String, EvalError> {
     let mut text = String::new();
     for &token in sentence {
-        let phrase = phrases.text(token).ok_or(EvalError::NoText {
+        let phrase = phrases.text(token).ok_or_else(|| EvalError::NoText {
             token: token.value(),
         })?;
         text.push_str(&phrase);
@@ -532,7 +534,7 @@ mod tests {
         );
     }
 
-    /// A minimal map-backed PhraseSource for the error tests: keys and text
+    /// A minimal map-backed `PhraseSource` for the error tests: keys and text
     /// per token, either absent.
     struct MapSource {
         keys: BTreeMap<u32, Vec<SyllableKey>>,

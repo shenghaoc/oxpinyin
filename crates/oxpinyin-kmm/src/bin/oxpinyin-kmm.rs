@@ -70,7 +70,8 @@ Subcommands (model files are the KMM text format):
 type Cli<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 fn read_text(path: &Path) -> Cli<String> {
-    fs::read_to_string(path).map_err(|source| format!("cannot read {path:?}: {source}").into())
+    fs::read_to_string(path)
+        .map_err(|source| format!("cannot read {}: {source}", path.display()).into())
 }
 
 fn read_stdin() -> Cli<String> {
@@ -85,7 +86,7 @@ fn write_output(path: Option<&Path>, text: &str) -> Cli {
     match path {
         Some(path) => {
             fs::write(path, text.as_bytes())
-                .map_err(|source| format!("cannot write {path:?}: {source}"))?;
+                .map_err(|source| format!("cannot write {}: {source}", path.display()))?;
         }
         None => io::stdout().lock().write_all(text.as_bytes())?,
     }
@@ -143,6 +144,7 @@ fn run_generate(args: &[String]) -> Cli {
 }
 
 fn run_estimate(args: &[String]) -> Cli {
+    use std::fmt::Write as _;
     let mut bigram: Option<PathBuf> = None;
     let mut deleted: Option<PathBuf> = None;
     let mut iter = args.iter();
@@ -161,9 +163,9 @@ fn run_estimate(args: &[String]) -> Cli {
 
     let mut out = String::new();
     for (token, lambda) in &result.per_token {
-        out.push_str(&format!("token:{token} lambda:{}\n", printf_f(*lambda)));
+        let _ = writeln!(out, "token:{token} lambda:{}", printf_f(*lambda));
     }
-    out.push_str(&format!("average lambda:{}\n", printf_f(result.average)));
+    let _ = writeln!(out, "average lambda:{}", printf_f(result.average));
     io::stdout().lock().write_all(out.as_bytes())?;
     Ok(())
 }
@@ -240,7 +242,7 @@ fn run_prune(args: &[String]) -> Cli {
             "--CDF" => {
                 cdf = next(&mut iter, "--CDF")?
                     .parse()
-                    .map_err(|_| "invalid --CDF")?
+                    .map_err(|_| "invalid --CDF")?;
             }
             other => {
                 if file.replace(PathBuf::from(other)).is_some() {

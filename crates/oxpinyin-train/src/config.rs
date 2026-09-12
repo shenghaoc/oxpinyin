@@ -98,7 +98,7 @@ impl Default for TrainConfig {
 impl TrainConfig {
     /// The generate-stage parameters for `oxpinyin_kmm::GenerateParams`.
     #[must_use]
-    pub fn generate_params(&self) -> oxpinyin_kmm::GenerateParams {
+    pub const fn generate_params(&self) -> oxpinyin_kmm::GenerateParams {
         oxpinyin_kmm::GenerateParams {
             max_occurs: self.maximum_occurs_allowed,
             max_increase_rate: self.maximum_increase_rates_allowed,
