@@ -134,10 +134,12 @@ rss_json() {
 	done | python3 -c '
 import json, statistics, sys
 rows = [json.loads(l) for l in sys.stdin if l.strip()]
-if not rows:
-    print(json.dumps({"rss_init_kib": None, "rss_cycle_kib": None})); raise SystemExit
 def med(tag, key):
-    return int(statistics.median(r.get(tag, {}).get(key, 0) for r in rows))
+    # Absence is not zero. A default of 0 here would record a missing
+    # measurement as a real one and invent an RSS cliff in the series.
+    vals = [r[tag][key] for r in rows
+            if isinstance(r.get(tag), dict) and isinstance(r[tag].get(key), (int, float))]
+    return int(statistics.median(vals)) if vals else None
 print(json.dumps({"rss_init_kib": med("after_first", "rss_kib"),
                   "rss_cycle_kib": med("after_last", "rss_kib")}))'
 }
@@ -160,18 +162,9 @@ ir_json() {
 		echo '{"ir_oxpinyin_object": null}'
 		return
 	}
-	python3 - "$cg" <<'PY'
-import re, sys
-total, inside = 0, False
-for line in open(sys.argv[1], errors="replace"):
-    if line.startswith("ob="):
-        inside = "libpinyin" in line
-    elif inside and re.match(r"^[0-9+\-*]", line):
-        parts = line.split()
-        if len(parts) >= 2 and parts[1].isdigit():
-            total += int(parts[1])
-print('{"ir_oxpinyin_object": %d}' % total if total else '{"ir_oxpinyin_object": null}')
-PY
+	local ir
+	ir=$(python3 "$PWD/tools/perf-gate/callgrind-ir.py" "$cg" libpinyin)
+	printf '{"ir_oxpinyin_object": %s}\n' "$ir"
 }
 
 echo "==> measuring"

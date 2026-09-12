@@ -63,12 +63,35 @@ REPORT_ONLY = ("rss_init_kib", "rss_cycle_kib")
 ALL_METRICS = FLAGGABLE + REPORT_ONLY
 
 
+def valid(doc: object) -> bool:
+    """Is this a snapshot we can compare, structurally?
+
+    Valid JSON is not enough. A list, or a metric that is a string, gets past
+    json.loads and then raises somewhere deep in the comparison — an uncaught
+    traceback where the contract says either "treat it as missing" (a
+    predecessor) or "exit 2" (this run's own snapshot). One validator serves
+    both so the two answers cannot drift apart.
+    """
+    if not isinstance(doc, dict):
+        return False
+    metrics = doc.get("metrics")
+    if not isinstance(metrics, dict):
+        return False
+    return all(v is None or (isinstance(v, (int, float)) and not isinstance(v, bool))
+               for v in metrics.values())
+
+
 def load(path: Path) -> dict:
     try:
-        return json.loads(path.read_text())
+        doc = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         print(f"malformed snapshot {path}: {exc}", file=sys.stderr)
         raise SystemExit(2)
+    if not valid(doc):
+        print(f"malformed snapshot {path}: not an object with numeric-or-null "
+              f"metrics", file=sys.stderr)
+        raise SystemExit(2)
+    return doc
 
 
 def previous(series_dir: Path, current_name: str) -> dict | None:
@@ -81,11 +104,12 @@ def previous(series_dir: Path, current_name: str) -> dict | None:
     if not samples:
         return None
     try:
-        return json.loads(samples[-1].read_text())
+        doc = json.loads(samples[-1].read_text())
     except (OSError, json.JSONDecodeError):
         # A corrupt predecessor is a missing predecessor. The series continues
         # from tonight rather than failing on yesterday's bad write.
         return None
+    return doc if valid(doc) else None
 
 
 def env_delta(a: dict, b: dict) -> list[str]:
@@ -112,10 +136,7 @@ def main() -> int:
     args = ap.parse_args()
 
     snap = load(args.snapshot)
-    metrics = snap.get("metrics")
-    if not isinstance(metrics, dict):
-        print("snapshot has no metrics block", file=sys.stderr)
-        return 2
+    metrics = snap["metrics"]  # load() has already validated the shape
 
     args.series_dir.mkdir(parents=True, exist_ok=True)
     stamp = snap.get("captured_utc", "unknown").replace(":", "").replace("-", "")
@@ -164,15 +185,21 @@ def main() -> int:
                 note = "not measured" if now is None else "no predecessor value"
             else:
                 diff = now - before
+                # A zero predecessor has no percentage. Treating it as 0% (the
+                # first version did) silently exempts the one transition most
+                # worth seeing: a metric that was genuinely zero — no
+                # allocations on the steady path, say — becoming non-zero.
+                from_zero = before == 0 and now != 0
                 pct = (diff / before) if before else 0.0
-                delta = f"{diff:+,} ({pct:+.2%})"
+                delta = f"{diff:+,} (—)" if before == 0 else f"{diff:+,} ({pct:+.2%})"
                 if key in REPORT_ONLY:
                     note = "trend only"
                 elif moved_env:
                     note = "unattributable"
-                elif abs(pct) > ATTENTION:
+                elif from_zero or abs(pct) > ATTENTION:
                     note = "**flagged**"
-                    flagged.append(f"{key}: {before:,} → {now:,} ({pct:+.2%})")
+                    shown = "from zero" if from_zero else f"{pct:+.2%}"
+                    flagged.append(f"{key}: {before:,} → {now:,} ({shown})")
             lines.append(f"| `{key}` | {fmt(before)} | {fmt(now)} | {delta} | {note} |")
 
     if args.append:
