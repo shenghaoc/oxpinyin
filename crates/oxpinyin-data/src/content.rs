@@ -142,7 +142,9 @@ fn parse_header(data: &[u8]) -> Result<Header, LoadError> {
         return Err(LoadError::TooShort { len: data.len() });
     }
     let data_size = read_u32_le(data, 0);
-    let computed = (data.len() as u32).wrapping_sub(8);
+    let computed = u32::try_from(data.len())
+        .unwrap_or(u32::MAX)
+        .wrapping_sub(8);
     if data_size != computed {
         return Err(LoadError::DataSizeMismatch {
             expected: data_size,
