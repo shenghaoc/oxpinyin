@@ -29,7 +29,8 @@ set -uo pipefail
 #      token space — e.g. the pin's own `ngseg` over raw text) in that dir;
 #      without them the evaluator gate is reported as skipped, not failed.
 #   3. The oxpinyin-format model export (redb), produced by:
-#        oxpinyin-datagen compile --backend redb \
+#        cargo run -p oxpinyin-datagen --no-default-features --features redb -- \
+#            compile --backend redb \
 #            --model-dir <model20 dir> --out-dir <export dir>
 #
 # Usage:

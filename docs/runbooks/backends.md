@@ -74,7 +74,8 @@ inherits that.
 tools/store/backend-matrix.sh
 ```
 
-Runs `cargo check --workspace` for the four valid selections and proves
+Runs `cargo check --locked -p oxpinyin-store` for the default selection
+and each of the four explicit ones, and proves
 every multi-backend and zero-backend combination is refused. CI runs it
 on every store-affecting change (`store-backends.yml`, `backend-matrix`).
 
@@ -94,7 +95,10 @@ pattern, do not commit the file (AGENTS.md points here).
 
 ## Switching is a format transition
 
-A user store written by one backend is not opened by another; the file
-extension names the backend (`user_store.<kct|tkt|lmdb|redb>`). This
+A user dir written by one backend is not opened by another: `user.conf`'s
+`database format` line names the backend family, and a profile that does
+not conform is wiped on open exactly as libpinyin's `check_format` does;
+the DBM files carry libpinyin's names on Kyoto Cabinet and tkrzw and
+`<stem>.<ext>` on redb and LMDB. This
 matches what distributions do for libpinyin's own backend switches
 (`ROADMAP.md`, "tkrzw is the default selected backend").

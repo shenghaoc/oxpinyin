@@ -44,7 +44,7 @@ tools/packaging/release-stage.sh tkrzw --prefix=/usr --libdir=/usr/lib/x86_64-li
     --dest=target/release-stage/tkrzw
 tools/packaging/release-deb.sh  tkrzw <version> target/release-stage/tkrzw /usr/lib/x86_64-linux-gnu <outdir>
 tools/packaging/release-rpm.sh  kyotocabinet <version> target/release-stage/kyotocabinet <outdir>
-tools/packaging/release-arch.sh kyotocabinet <version> target/release-stage/kyotocabinet <outdir>
+tools/packaging/release-arch.sh kyotocabinet <version> target/release-stage/kyotocabinet <outdir> --data=<arch data dir> --data-version=<ver>  # without --data the package cannot init on the system it replaced
 ```
 
 Each maker's header states its arguments; the workflow is the reference

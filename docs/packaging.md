@@ -78,7 +78,10 @@ those exist only in the source tree and the Rust artifact names under
 The user-data guarantee is per KV backend family, and the release lanes
 match each distro's own backend — that is the point of the lane table
 above (maintainer ruling 2026-09-09:
-`docs/findings/compatibility-policy.md`, goal amendment):
+`docs/findings/compatibility-policy.md`, goal amendment). The profile in
+question is the one ibus-libpinyin keeps under `~/.cache/ibus/libpinyin/`
+— the directory the [libpinyin FAQ](https://github.com/libpinyin/libpinyin/wiki/libpinyin-FAQ)
+tells users to reset by deleting its `user.conf`:
 
 - **Same backend, seamless.** A Fedora or Arch lane (Kyoto Cabinet)
   reads the user state a KC-built libpinyin leaves — `user_bigram.db`,
@@ -86,9 +89,10 @@ above (maintainer ruling 2026-09-09:
   `*.dbin` diff logs, `user.conf` — and saves back what a KC-built
   libpinyin picks up; the Debian lane (tkrzw) does the same against a
   tkrzw-built libpinyin. Swap either direction; the learned data
-  carries. This is drop-in task 9 — until it lands, the runtime opens
-  its own `user_store.<ext>` and leaves the previous library's files
-  untouched, so treat the lanes as not-yet-seamless for user data.
+  carries. This is drop-in task 9, landed 2026-09-09 and measured
+  against pin-built Kyoto Cabinet and tkrzw oracles by
+  `tools/oracle/user-dir-round-trip.sh` (`docs/findings/user-store.md`
+  §11).
 - **Backend actually changed, data loss taken for granted.** BDB-built
   libpinyin (Debian stable, Ubuntu) against these lanes, redb/LMDB
   builds, KC↔tkrzw transitions: fresh start, the norm libpinyin's own

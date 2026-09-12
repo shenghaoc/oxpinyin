@@ -10,8 +10,9 @@ files at this level:
   `pinyin_index`, `phrase_index`, `bigram`, `punct`, the `addon_*` pair
   (libpinyin's own file names on `kct/` and `tkt/` — Kyoto Cabinet and
   tkrzw are the DBMs libpinyin builds against; `<stem>.<ext>` on `redb/`
-  and `lmdb/`), the sixteen per-library chunk files (`gb_char.bin` …
-  `technology.bin`, byte-identical across the four), `table.conf`, and the
+  and `lmdb/`), the five per-library chunk files the `--mini` subset reaches
+  (`gb_char.bin`, `gbk_char.bin`, `opengram.bin`, `merged.bin`, `art.bin`,
+  byte-identical across the four), `table.conf`, and the
   producer's `datagen-manifest.txt`. The subset is `system::MINI_KEYS`
   and `addon::MINI_ART_KEYS`: the phrases those spellings reference, with
   their real `\1-gram` counts and bigram rows restricted to the

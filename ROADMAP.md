@@ -28,7 +28,8 @@ measurement-gated.
 Authoritative freeze: `docs/testing/oracle-environment.md`  
 (libpinyin `2.11.92` / ibus-libpinyin `1.16.5` / model archive SHA-256s).
 
-Build: `tools/oracle/build-oracle.sh` (optional container recipe alongside).
+Build: `tools/oracle/build-oracle.sh`; `tools/bisection/Dockerfile.perf-matrix`
+carries a prebuilt oracle at `/opt/libpinyin-tkrzw` for the perf work.
 
 ## How work proceeds
 
@@ -90,28 +91,28 @@ assembly layers under both C ABIs and the Python binding),
 `docs/findings/chewing-crate-seam.md`), `oxpinyin-zhuyin-capi`
 (`libzhuyin.so.15`, upstream's `--enable-libzhuyin` counterpart, 52
 symbols), `oxpinyin-python` (`docs/python.md`; spec
-`.kiro/specs/python-binding/`, three open items), and
+`.kiro/specs/python-binding/`, all items closed 2026-09-08), and
 `oxpinyin-testsupport` (dev-only).
 
-**Stage 1 status (2026-09-06):** every workstream above has landed or
-closed — W9, W10, W11, W13, W14 and W15 carry LANDED notes below, W12
-closed 2026-08-22, and `README.md` records Stage 1 as complete. Still
-open or pending:
-
-- W8 drop-in task 9 — user files read and written in libpinyin's own
-  formats for the drop-in set (Kyoto Cabinet, tkrzw): seamless in both
-  directions with a same-backend libpinyin, per the 2026-09-09
-  maintainer ruling (`docs/findings/compatibility-policy.md`, goal
-  amendment); the runtime opens `user_store.<ext>` today.
-- The consumer-union probe gap — the differential suite does not yet
-  drive all 58 union symbols, so the uncovered ones are unverified
-  rather than compliant; closing it is work
-  (`docs/findings/compatibility-policy.md`, §(e) consequence 3),
-  tracked here rather than only in the policy.
+**Stage 1 status (2026-09-12).** *Implementation:* complete — every
+workstream above has landed or closed (W9, W10, W11, W13, W14 and W15
+carry LANDED notes below, W12 closed 2026-08-22), and W8 drop-in task 9
+landed 2026-09-09: user files are read and written in libpinyin's own
+formats, seamless in both directions with a same-backend libpinyin per
+the 2026-09-09 maintainer ruling (`docs/findings/compatibility-policy.md`,
+goal amendment), measured by `tools/oracle/user-dir-round-trip.sh`
+against Kyoto Cabinet and tkrzw oracles (`docs/findings/user-store.md`
+§11). *Verification:* one gap open — the differential suite does not yet
+drive all 58 consumer-union symbols, so the uncovered ones are
+unverified rather than compliant; closing it is work
+(`docs/findings/compatibility-policy.md`, §(e) consequence 3), tracked
+here rather than only in the policy. One defect open under the policy:
+row 30, the pinyin facade's chewing batch `FORCE_TONE` seam. `README.md`
+states Stage 1 the same way.
 
 Parked, not open: the W12 live-typing behaviours the parity sequence does
 not exercise (`docs/findings/live-typing.md`, no pin gates) and the
-shelved BerkeleyDB compat path (drop-in task 10).
+shelved BerkeleyDB backend (drop-in task 10).
 
 ### Workstream notes (recorded as decisions settle)
 
@@ -129,7 +130,9 @@ shelved BerkeleyDB compat path (drop-in task 10).
   the pure-Rust portability fallback; KC/tkrzw/LMDB are C dependencies.
   System data files carry libpinyin's own names on Kyoto Cabinet and
   tkrzw (the drop-in set) and `<stem>.<ext>` on redb and LMDB; the user
-  store is `user_store.<ext>` (`kct`/`tkt`/`lmdb`/`redb`). Switching
+  dir is libpinyin's own file set under the same naming rule (`user.conf`
+  names the backend family, and a non-conforming profile is wiped on
+  open as upstream's `check_format` does). Switching
   backends is a storage-format transition — the runtime does not
   transparently open one backend's files with another, and old
   backend-specific user data is not carried across the switch. (This
@@ -165,7 +168,8 @@ shelved BerkeleyDB compat path (drop-in task 10).
   end to end by `tools/bisection/run-same-data-dir-diff.sh`: the
   pin-built `libpinyin.so` and oxpinyin's C ABI open one unchanged
   libpinyin `data/` and are byte-identical on every surface but the two
-  registered divergences. Init fell from ~100× the pin to within ~1.3×
+  registered divergences — the predicted-candidate tie order and the
+  single `union-diff` bigram-prediction row (policy row 20). Init fell from ~100× the pin to within ~1.3×
   (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`, whose
   oxpinyin cells were built by `cargo build`, not the shipping
   `cargo cinstall`; the two ends of that ~100× were built differently, so it
@@ -223,12 +227,12 @@ shelved BerkeleyDB compat path (drop-in task 10).
   divergence the R1 defined-order rule (`docs/findings/upstream-divergences.md`,
   2026-08-30). Since P6 (2026-09-02) there is no compat layer at all:
   the runtime reads an unmodified install's `data/` through the same
-  readers it uses for its own output (W15 note). Open in the drop-in
-  spec: task 9, the write path for learned user data in libpinyin's own
-  user-file format; task 10, the BerkeleyDB compat path, is shelved until
-  a consumer requires it. The spec's design/requirements text still
-  describes the pre-P6 `compat/` modules and the 58-symbol consumer
-  union; the code and `abi-subset.md` §6 are the current record.
+  readers it uses for its own output (W15 note). Task 9, learned user
+  data read and written in libpinyin's own user-file format, landed
+  2026-09-09 (`docs/findings/user-store.md` §11); task 10, the
+  BerkeleyDB backend, is shelved until a consumer requires it. The spec's
+  design and requirements were brought to the P6 architecture and the
+  79-symbol surface on 2026-09-12.
 
   Stage-2 baselines were measured while Stage-1 parity work continued —
   those numbers are prerequisites for improving against them. Parity
@@ -385,7 +389,9 @@ measured against the pin in the same container:
   runtime data 101.80 → 36.88 MiB (`docs/perf/perf-baseline-kc-2026-09.md`).
 - **Release profile**: fat LTO + one codegen unit
   (`docs/perf/perf-so-size-2026-09.md`); `panic = "abort"` was tried and
-  reverted (1b0c84a0, +5.5% keystroke cycle for −64 KiB).
+  reverted (1b0c84a0, +5.7% keystroke cycle for −64 KiB — the revert's
+  commit subject says 5.5%; the records give +5.5–5.7% steady, the
+  baseline `docs/perf/perf-baseline-kc-2026-09.md` +5.7%).
 - **Store/user-crate optimisation** (2026-09-05 → 2026-09-06): redb,
   LMDB and user-store hot paths, measured in
   `docs/findings/perf-store-opt-2026-09.md` (S5, F4).
