@@ -1,11 +1,12 @@
 # Perf and size in CI — the PR gate rejected, nightly snapshots adopted in principle (2026-09-12 UTC)
 
-Status: **the per-PR gate is rejected and will not be built. A nightly
-snapshot series is the agreed direction, not yet implemented** — the lane
-is a CI-policy change and that ask is open. This file replaces the
-proposal it used to carry; the full design is in history (`git log
---follow` this path, PR #407) and the path is kept so inbound references
-resolve to the decision.
+Status: **the per-PR gate is rejected and will not be built. The nightly
+snapshot series is implemented** — `perf-snapshot` in
+`.github/workflows/verify-nightly.yml`, with `tools/perf-gate/snapshot.sh`
+and `tools/perf-gate/series.py`. This file replaces the proposal it used
+to carry; the proposal text is preserved at this path as merged in PR #407
+(commit `d8de0ab2092bc090fce431277968b44fb533da2a`), and the path is kept
+so inbound references resolve to the decision.
 
 ## What was rejected, and what was not
 
@@ -140,10 +141,25 @@ the pin is a reviewed change to that document, not something a measurement
 may do on its own — a budget whose reference can drift silently is not a
 budget.
 
-## Next step
+## As built
 
-Implementing the nightly lane is a CI-policy change to
-`.github/workflows/verify-nightly.yml`, which AGENTS.md puts behind an
-explicit ask. It is a much smaller ask than the rejected one: a
+The lane is `perf-snapshot` in `.github/workflows/verify-nightly.yml`: a
 non-required Tier 3 job, no change to `ci-aggregate`, no effect on branch
-protection, nothing added to the PR path. That ask is open.
+protection, nothing on the PR path.
+
+| piece | what it does |
+|---|---|
+| `tools/perf-gate/snapshot.sh` | builds the shipped artifact through `cinstall` and an `alloc-count` fixture build, measures, emits one JSON sample with the environment recorded beside the numbers |
+| `tools/perf-gate/series.py` | appends to the series, compares against the previous sample, writes the step summary |
+| `tools/perf-gate/series.test.sh` | 21 cases over the rules above |
+
+Two implementation notes worth knowing when reading a report:
+
+- **A flagged move exits non-zero**, which turns the nightly job red. That
+  is the attention mechanism, and it blocks nothing: this job is not a
+  required check. A move across an environment change never flags.
+- **Instruments degrade rather than lie.** No valgrind means
+  `ir_oxpinyin_object` is `null`, not `0`; an artifact without the
+  `alloc-count` readers records `null` allocations. `series.py` never
+  compares a `null`, so a missing instrument cannot read as a 100%
+  improvement.
