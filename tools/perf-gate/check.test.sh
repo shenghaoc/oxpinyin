@@ -189,6 +189,20 @@ patch "$WORK/capture.json" "$WORK/probe.json" '
 for r in d["rounds"]["g3"]: r["alloc_count_per_cycle"] = 119'
 expect 0 "G3 one fewer allocation"
 
+# --- the capture/check schema handshake ------------------------------------
+# capture.sh --stub emits the shape without measuring. Two assertions: the
+# stub is refused outright, and with the flag removed it is schema-complete
+# enough for the checker to reach its comparison stage. The first is what
+# makes the second safe to have.
+./capture.sh --stub --out "$WORK/stub.json" >/dev/null
+cp "$WORK/stub.json" "$WORK/probe.json"
+expect 2 "capture.sh --stub is refused as a stub"
+
+patch "$WORK/stub.json" "$WORK/probe.json" '
+del d["stub"]
+d["fingerprint"] = json.load(open("'"$WORK"'/baseline.json"))["fingerprint"]'
+expect 0 "stub schema satisfies the checker once de-stubbed"
+
 # --- G4: reported on a PR, gated on the nightly ----------------------------
 patch "$WORK/capture.json" "$WORK/probe.json" '
 for r in d["rounds"]["g4"]: r["rss_cycle_kib"] = 24500'

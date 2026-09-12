@@ -306,7 +306,18 @@ def main() -> int:
         baseline = load(args.baseline)
         capture = load(args.capture)
 
-        # Stale before fault before regression: a baseline that does not
+        # The stub check comes first, ahead even of the fingerprint. A stub
+        # carries a stub fingerprint, so the fingerprint check would fire on it
+        # and report "the environment moved" — true in the letter and useless
+        # in the diagnosis, since the document is not a measurement at all.
+        # Answer the most specific question that applies.
+        if capture.get("stub"):
+            raise Fault(
+                "capture is a schema stub (capture.sh --stub) — it carries no "
+                "measurement and can never satisfy a gate"
+            )
+
+        # Then stale before fault before regression: a baseline that does not
         # describe this environment makes every downstream number
         # uninterpretable, so there is nothing to fault or compare.
         check_recipes(baseline, "baseline")
