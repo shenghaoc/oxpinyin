@@ -12,8 +12,8 @@
 //! ```text
 //! pinned model20 ──► libpinyin's own build ──► libpinyin's data dir ─┐
 //!        │                                                            ├─► differential
-//!        ├──► oxpinyin-datagen (kyotocabinet, default) ► KC data dir ─┤   (same files)
-//!        ├──► oxpinyin-datagen (tkrzw) ─────────────────► Tkrzw data dir┤
+//!        ├──► oxpinyin-datagen (kyotocabinet) ──────────► KC data dir ─┤   (same files)
+//!        ├──► oxpinyin-datagen (tkrzw, default) ────────► Tkrzw data dir┤
 //!        ├──► oxpinyin-datagen (redb) ──────────────────► redb data dir ┤   (same records,
 //!        └──► oxpinyin-datagen (lmdb) ──────────────────► LMDB data dir ┘    own container)
 //! ```

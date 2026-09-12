@@ -1,18 +1,23 @@
-//! C ABI subset of libpinyin's public API (79 of the 79 live upstream
-//! `pinyin_*` symbols — the full live ABI, target closed).
+//! The C ABI of libpinyin's public API — the full live surface, all 79
+//! `pinyin_*` symbols `libpinyin.ver` exports, built as `libpinyin.so.15`.
 //!
 //! Every `#[unsafe(no_mangle)] pub extern "C" fn` matches the signature in
-//! `libpinyin/src/pinyin.h` (tag 2.11.91) symbol-for-symbol. The surface is
-//! the fork's 51-symbol W8 bootstrap call set — the 50 pinned ibus-libpinyin
-//! 1.16.5 symbols plus `pinyin_get_parsed_input_length` — and
-//! `pinyin_clear_constraint`, a libpinyin ABI symbol that belongs in
-//! oxpinyin's capi and never shimmed in a frontend.
+//! upstream's `src/pinyin.h` at the pin (`074a2219`, 2.11.92)
+//! symbol-for-symbol; that header is byte-identical to tag 2.11.91's, and
+//! the checked-in `pinyin.h` is that file. History: the W8 bootstrap set
+//! was the 50 pinned ibus-libpinyin 1.16.5 symbols plus
+//! `pinyin_get_parsed_input_length` and `pinyin_clear_constraint`; the
+//! surface closed on the full 79 on 2026-08-30 (`docs/findings/abi-subset.md`
+//! §6).
 //!
 //! ## Panic discipline
 //!
-//! Nothing here may panic on any input: every library crate in the
-//! workspace denies `clippy::unwrap_used`/`expect_used`/`panic`/
-//! `panic_in_result_fn` outside tests, so the engine layer returns
+//! Nothing here may panic on any input: the library crates on this
+//! facade's path (`oxpinyin-core`, `-data`, `-store`, `-engine`, `-facade`,
+//! `-runtime`, `-user` and this crate) deny `clippy::unwrap_used`/
+//! `expect_used`/`panic`/`panic_in_result_fn` outside tests —
+//! `oxpinyin-chewing` and the macro-only `oxpinyin-capi-marshal` carry no
+//! such lint and are review-covered — so the engine layer returns
 //! `Result` everywhere and the entry-point bodies are panic-free by
 //! construction. Rust (since 1.81) aborts the process when a panic
 //! reaches an `extern "C"` boundary, so if a bug ever produced a panic

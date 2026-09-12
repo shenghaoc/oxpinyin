@@ -14,7 +14,8 @@
 //! model (`SYSTEM_BIGRAM` + phrase-index unigram, floor included) and the
 //! held-out counts it derives here, and produces λ — the value the decode
 //! path currently hardcodes as an authored constant
-//! (`oxpinyin-data/src/lm.rs` `LAMBDA_NUMERATOR/LAMBDA_DENOMINATOR = 1/2`).
+//! (`oxpinyin-data/src/lm/mod.rs` seeds λ from `table_conf::Lambda::PINNED`
+//! = 0.312699 unless a `table.conf` overrides it).
 //! This crate makes λ *derived*; it does **not** change the decode path.
 //! See `docs/findings/lambda-port.md`.
 //!

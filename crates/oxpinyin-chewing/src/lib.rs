@@ -2,15 +2,15 @@
 //!
 //! Upstream builds one engine into two facades: `libzhuyin.la` compiles
 //! `$(pinyin_SOURCES) zhuyin.cpp` against its own version script and its
-//! own installed header (`src/Makefile.am:108-126`, `configure.ac:140-144`
-//! at the pin) — the boundary is facade file + version script + configure
+//! own installed header (`src/Makefile.am:108-125`, `configure.ac:138-144`
+//! at 0c5e80e1, unchanged at the 074a2219 pin) — the boundary is facade file + version script + configure
 //! flag, never inside the engine. This crate mirrors that cut for the
-//! chewing-key machinery a second facade would share: the packed
+//! chewing-key machinery the second facade shares: the packed
 //! [`ChewingKey`], its display renderers, and the frozen
 //! `content_table` / `chewing_key_table` port.
 //!
-//! Adding a `zhuyin_*` facade later is purely additive: a new facade
-//! crate depending on this one (and on the parser surface it needs), plus
+//! Adding the `zhuyin_*` facade was purely additive: `oxpinyin-zhuyin-capi`
+//! depends on this crate (and on the parser surface it needs) and carries
 //! its own `#[no_mangle]` wrappers. Nothing here is feature-gated and no
 //! existing export moves — upstream's `ENABLE_LIBZHUYIN` never strips
 //! chewing from `libpinyin.so` (`libpinyin.ver` keeps

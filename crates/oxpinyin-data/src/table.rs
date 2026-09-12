@@ -8,8 +8,8 @@
 //! # Backend selection
 //!
 //! One peer backend per binary, resolved by `oxpinyin-store`'s
-//! compile-time selection (Kyoto Cabinet is the default; redb, LMDB and
-//! tkrzw are the other peers, each selected with
+//! compile-time selection (tkrzw is the default; Kyoto Cabinet, redb and
+//! LMDB are the other peers, each selected with
 //! `--no-default-features --features <peer>`).  The committed fixtures
 //! carry one file per peer's extension so tests can exercise each
 //! independently.

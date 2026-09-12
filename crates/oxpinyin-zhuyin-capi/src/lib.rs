@@ -3,7 +3,7 @@
 //!
 //! Upstream builds this as a SEPARATE shared object from `$(pinyin_SOURCES)
 //! zhuyin.cpp` with its own version script (`src/Makefile.am:108-125`,
-//! `configure.ac:138-144` at the pin 0c5e80e1): `libzhuyin.so.15`, not
+//! `configure.ac:138-144` at 0c5e80e1 — 2.11.91 — unchanged at the 074a2219 pin): `libzhuyin.so.15`, not
 //! additional symbols in `libpinyin.so.15`. This crate mirrors that cut for
 //! the Rust world: a new workspace member producing `libzhuyin.so.15`, with
 //! no change to `oxpinyin-capi` (which keeps building `libpinyin.so.15`).
@@ -25,9 +25,12 @@
 //!
 //! ## Panic discipline
 //!
-//! Nothing here may panic on any input: every library crate in the
-//! workspace denies `clippy::unwrap_used`/`expect_used`/`panic`/
-//! `panic_in_result_fn` outside tests, so the entry-point bodies are
+//! Nothing here may panic on any input: the library crates on this
+//! facade's path (`oxpinyin-core`, `-data`, `-store`, `-engine`, `-facade`,
+//! `-runtime`, `-user` and this crate) deny `clippy::unwrap_used`/
+//! `expect_used`/`panic`/`panic_in_result_fn` outside tests —
+//! `oxpinyin-chewing` and the macro-only `oxpinyin-capi-marshal` carry no
+//! such lint and are review-covered — so the entry-point bodies are
 //! panic-free by construction. Rust (since 1.81) aborts the process when
 //! a panic reaches an `extern "C"` boundary, so if a bug ever produced a
 //! panic the failure would be a loud abort, not undefined behaviour.

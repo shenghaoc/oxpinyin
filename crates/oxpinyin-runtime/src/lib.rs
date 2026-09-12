@@ -18,6 +18,7 @@
 //! parity-tested semantics.
 //!
 //! Pure Rust; no FFI of any kind, `unsafe_code` forbidden.
+#![forbid(unsafe_code)]
 // Constitution §4, mechanically: library builds may not unwrap, expect,
 // or panic. Inline #[cfg(test)] modules are exempt (see the allow below
 // their declaration); tests/, benches/ and examples/ are separate crates.
@@ -54,8 +55,8 @@ use oxpinyin_user::{PinyinKey, UserLookup, UserStore};
 /// The **runtime's** user store no longer lives in such a file: it
 /// persists in libpinyin's own user-dir file set
 /// (`oxpinyin_user::persistence`), so a same-backend libpinyin reads and
-/// writes the same profile. This helper remains for the standalone
-/// stores tools stage (benches, the oracle scan harness).
+/// writes the same profile. The helper is kept as a public name for
+/// standalone stores; no in-tree caller remains.
 #[must_use]
 pub fn user_store_file() -> String {
     default_store_file("user_store")

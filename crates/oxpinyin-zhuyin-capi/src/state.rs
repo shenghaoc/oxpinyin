@@ -19,7 +19,7 @@ use oxpinyin_facade::{ContextCore, OpenFailure};
 use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, ZhuyinContext, ZhuyinInstance};
 
 /// `USE_TONE | FORCE_TONE` — the option word `zhuyin_init` seeds
-/// (`zhuyin.cpp:272` at the pin 0c5e80e1). This is the zhuyin facade's
+/// (`zhuyin.cpp:273` at 0c5e80e1 and at the 074a2219 pin). This is the zhuyin facade's
 /// distinguishing default: `pinyin_init` seeds only `PINYIN_INCOMPLETE`.
 ///
 /// Superseded by [`oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD`]; kept as

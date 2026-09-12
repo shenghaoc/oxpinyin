@@ -358,9 +358,9 @@ pub struct GenericUserStore<S: WriteStore> {
 
 /// Default user store backed by [`DefaultStore`] — whichever peer
 /// backend (Kyoto Cabinet, redb, LMDB, tkrzw) the build was compiled
-/// against. Kyoto Cabinet is the default selection under the workspace's
+/// against. tkrzw is the default selection under the workspace's
 /// default feature set; the other three peers are selected with
-/// `--no-default-features --features {redb|lmdb|tkrzw}`.
+/// `--no-default-features --features {kyotocabinet|redb|lmdb}`.
 pub type UserStore = GenericUserStore<DefaultStore>;
 
 impl<S: WriteStore> GenericUserStore<S> {
