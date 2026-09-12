@@ -430,7 +430,7 @@ where
             // `SEARCH_NONE` start (`search_matrix`,
             // `phonetic_key_matrix.cpp:416-418`): the span contributes
             // nothing and the walk skips it.
-            if matrix.get(start).is_none_or(|column| column.is_empty()) {
+            if matrix.get(start).is_none_or(std::vec::Vec::is_empty) {
                 continue;
             }
             let mut continued = false;
