@@ -569,7 +569,7 @@ mod lmdb {
             std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
         bindings
             .write_to_file(out.join("lmdb_bindings.rs"))
-            .expect("write generated LMDB bindings");
+            .expect("write generated LMDB declarations");
     }
 }
 
