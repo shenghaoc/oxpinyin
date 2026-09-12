@@ -44,11 +44,14 @@ is complete, these notes are collected to report back to libpinyin.
   hidden, pronunciations are expanded as a Cartesian product, and
   per-predecessor totals are unreachable.
 - **What oxpinyin does instead:** the C ABI reproduces that rendering for
-  compatibility; the one-time migration tool does not use the lossy iterator
-  and instead links the pinned `libstorage.a` through a dump shim to read the
-  raw user-store values (`docs/findings/legacy-migration.md` §3).
-- **Externally observable:** yes — the C ABI surface matches; the migration
-  tool is an internal tool and keeps the full value surface.
+  compatibility. The full value surface is reachable only below the public
+  iterators; the one-time migration tool that would have read it (linking
+  the pinned `libstorage.a` through a dump shim,
+  `docs/findings/legacy-migration.md` §3) was cancelled — that document is
+  SHELVED and the implementation stays on the parked branch
+  `feat/w7-t2-legacy-migrate`.
+- **Externally observable:** yes — the C ABI surface matches the pin's
+  rendering; nothing in-tree reads the raw store.
 
 ### HANYU full pinyin ignores tone digits under USE_TONE — CLOSED
 
@@ -102,7 +105,7 @@ is complete, these notes are collected to report back to libpinyin.
 
 The #109 contract-lock (all rows verified at `0c5e80e1`; oxpinyin
 answers `false` and keeps the previous scheme in every case, pinned by
-`contract_tests.rs`):
+`crates/oxpinyin-capi/tests/abi/contract.rs`):
 
 - **double CUSTOMIZED (30)** — upstream aborts mid-call inside
   `DoublePinyinParser2::set_scheme` (`pinyin_parser2.cpp:611-612`)
@@ -396,14 +399,16 @@ inputs (the pin-built `.so` SIGABRTs).
   transcendental), which *is* bit-reproducible and ported to 100%.
 - **Externally observable:** yes, on the sentence surface only. Against
   the pinned oracle over a 496-input W2 sample
-  (`fixtures/w4/oracle-sentence-surface.txt`): 1-best 488/496, n-best
-  distinct-set 385/496, n-best ordered / first-6 rows 379/496; the 117
+  (`fixtures/w4/oracle-sentence-surface.txt`): 1-best 491/496, n-best
+  distinct-set 396/496, n-best ordered / first-6 rows 390/496; the 106
   ordered misses are all trellis-side (0 candidate-surface leaks). The
   candidate surface, which does not share this arithmetic, is
-  bit-identical. Recorded as the measured Stage-1 sentence residual in
-  `sentence-surface.md` §12 (recommended as a permanent divergence; the
-  freeze is the maintainer's call); enumerate with the read-only
-  `pinyin-oracle` `sentence-tail` binary.
+  bit-identical. Frozen as a permanent Stage-1 divergence by maintainer
+  ruling 2026-09-02 at 488/385/379 and re-frozen 2026-09-04 at 491/396/390
+  after P6 (`345af16d`) moved the trellis's P_unigram source —
+  `sentence-surface.md` §12, asserted by
+  `crates/pinyin-oracle/tests/sentence_surface_parity.rs`; enumerate with
+  the read-only `pinyin-oracle` `sentence-tail` binary.
 
 ### Predicted-candidate tie order is the Tkrzw HashDBM bucket walk
 
@@ -424,8 +429,10 @@ inputs (the pin-built `.so` SIGABRTs).
   Deterministic for a given file and tkrzw version; not expressible as a
   sort key over (text, token, library).
 - **What oxpinyin does instead:** the prediction pipeline has three
-  stages. (1) Collection — `SystemDictionary::suggest_after`
-  (`crates/oxpinyin-data/src/dict.rs:196-217`) walks a
+  stages (pre-P6 description, kept as the record; the P6 amendment below
+  carries the current mechanism). (1) Collection —
+  `SystemDictionary::suggest_after`
+  (then `crates/oxpinyin-data/src/dict.rs:196-217`) walked a
   `BTreeMap<String, Vec<u32>>` in text order, collecting every phrase that
   starts with the prefix, then sorts that collection by token ascending.
   (2) Ranking — `guess_predicted` (`crates/oxpinyin-capi/src/predict.rs`)
@@ -480,7 +487,7 @@ not reproducibly so." Two consequences, stated explicitly:
 
 **Completed (fix/predicted-text-order):** the token pre-sorts are gone —
 three sites, not two: `SystemDictionary::suggest_after`
-(`dict.rs:215`), `append_predicted_prefix` (`predict.rs`), and the user
+(`dict.rs`; since P6 `search_suggestion` + `resolve_suggestions`), `append_predicted_prefix` (`predict.rs`), and the user
 seam `UserLookup::suggest_after` (`oxpinyin-user/src/lookup.rs`). The
 `BTreeMap` text-ascending walk (token-ascending within one text) now
 survives the stable sort's tie groups, on the system and user seams
@@ -492,7 +499,8 @@ key, populated user store included); the oracle comparison remains the
 recorded drift constant, *not* a target of zero.
 
 **Homograph nuance (frontend-invisible):** within one text the
-per-text token vector stays token-ascending (`build_text_tokens`), so
+per-text token vector stays token-ascending (`build_text_tokens` then;
+`resolve_suggestions` in `crates/oxpinyin-data/src/dict.rs` since P6), so
 a homograph row keeps the same surviving token under the defined order;
 the one case that can differ is a system-vs-user text duplicate — the
 system row now always precedes the user row, so with a populated user
@@ -567,7 +575,7 @@ Text, candidate type and counts cannot.
   still normalizes or refuses via
   `CapiInstance::validate_lookup_offset`
   (`Session::normalized_lookup_offset` → `EngineError::LookupOffsetPastSeparator`)
-  — the no-abort policy already recorded in `oracle-bisect-differential-abort.md`.
+  — the no-abort policy already recorded in `docs/testing/oracle-bisect-differential-abort.md`.
 - **Externally observable:** not in practice — no known frontend passes a
   mid-syllable offset to `pinyin_guess_candidates`; fcitx5-oxpinyin and
   ibus-libpinyin both snap the cursor with `pinyin_get_pinyin_offset` first,
@@ -621,7 +629,7 @@ Text, candidate type and counts cannot.
   Frontends driving Ctrl+Left/Right at a tail cursor see the
   difference; no pinned differential is possible at the abort points.
   The fifth distinct finding in the `_check_offset` family: the three
-  sightings consolidated in `oracle-bisect-differential-abort.md`
+  sightings consolidated in `docs/testing/oracle-bisect-differential-abort.md`
   (the W11 bisect abort, the ibus-libpinyin#570 guess-seam pattern,
   and the shared root cause), the guess-seam leading-run answered as
   `LookupOffsetPastSeparator`, and this cursor-helper seam.
@@ -674,7 +682,7 @@ seen in the same probe is a separate parity defect: issue #356.
   `FullPinyinParser2` (`src/storage/pinyin_parser2.cpp`): the pin emits a
   zero `ChewingKey` per `'` separator and counts it in `m_parsed_len` —
   measured on the pin: `'` → parse_return 1, `''` → 2, `'''` → 3
-  (the table in `oracle-apostrophe-abort.md`, F-E-14).
+  (the table in `docs/testing/oracle-apostrophe-abort.md`, F-E-14).
 - **Mechanism:** the pin's DP walks a separator-only input by emitting
   zero keys, so an all-apostrophe composition has a non-empty matrix
   (lone zero keys at every position) and a consumed length equal to the
@@ -698,7 +706,7 @@ seen in the same probe is a separate parity defect: issue #356.
   parser stop consuming"), recorded here so B2's closing work INHERITS
   it instead of rediscovering it; the sibling abort on the same input
   (`pinyin_get_pinyin_key`) remains F-E-14 in
-  `oracle-apostrophe-abort.md`.
+  `docs/testing/oracle-apostrophe-abort.md`.
 
 ### The single-key surface aborts the pin where oxpinyin answers `false`
 
@@ -723,7 +731,7 @@ seen in the same probe is a separate parity defect: issue #356.
   refuse (`false`, zero key for the full-pinyin entry, which zeroes
   `*onekey` before its probe exactly like the pin), an out-of-range
   addon index answers `false`, empty input refuses. All pinned by the
-  Rust ABI suite (`tests/abi/keys.rs`); the differential excludes these
+  Rust ABI suite (`crates/oxpinyin-capi/tests/abi/keys.rs`); the differential excludes these
   shapes with the exclusion documented in the driver.
 - **Externally observable:** yes — upstream SIGABRTs on the same calls
   oxpinyin answers. Report-back batch: file with the scheme-setter and
@@ -764,7 +772,7 @@ seen in the same probe is a separate parity defect: issue #356.
   neither shape. Report-back batch: file with the `_check_offset` assert
   family.
 
-### FORCE_TONE — scheme-specific: full-pinyin batch and all one-key seams honour scheme law; zhuyin batch closed (1671954); double-pinyin batch seam remains
+### FORCE_TONE — scheme-specific: every seam honours its scheme law except the pinyin facade's chewing batch (its own entry below); zhuyin batch closed (1671954); double-pinyin batch closed (5ec782ea)
 
 - **Upstream source cite:** `src/storage/pinyin_parser2.cpp:412` and
   `:448` (`DoublePinyinParser2::parse_one_key`: `if (options & FORCE_TONE
@@ -808,17 +816,53 @@ seen in the same probe is a separate parity defect: issue #356.
   `zhuyin_parser2.cpp:176-180, :373, :387, :602`. Measured: the
   `tools/bisection/zhuyin-diff.c` differential converges on the batch parse.
   This closes the zhuyin batch seam. The double-pinyin batch seam
-  (`pinyin_parse_more_double_pinyins`) remains open: the
-  `pinyin_parser2.cpp:412` length-3 gate is not yet implemented on that path
-  and belongs with the eventual double-pinyin SPEC freeze.
-- **Externally observable:** on the one-key seams and the zhuyin batch
-  seam, no longer — all answer identically to the pin under every
-  FORCE_TONE profile (one-key seams: D3 gate; zhuyin batch: 1671954).
-  On the double-pinyin batch seam, yes — `pinyin_parse_more_double_pinyins`
-  with FORCE_TONE set produces the full-pinyin behaviour (effective only
-  inside `USE_TONE`) rather than the pin's length-3 gate
-  (`pinyin_parser2.cpp:412`). The full-pinyin seam itself matches the pin
-  (capi e2e `parse_termination` module, harness phase-C 0x60 probes closed).
+  (`pinyin_parse_more_double_pinyins`) was closed subsequently — see the
+  Double-pinyin batch closure amendment below.
+- **Externally observable:** no longer on the one-key seams, the
+  libzhuyin batch seam and the double-pinyin batch seam — all answer
+  identically to the pin under every FORCE_TONE profile (one-key seams:
+  D3 gate; zhuyin batch: 1671954; double-pinyin batch: 5ec782ea). Still
+  on the pinyin facade's chewing batch seam (`pinyin_parse_more_chewings`,
+  `ToneForwarding::PinFacade` does not forward FORCE_TONE) — its own
+  entry below, row 30 of the policy table. The
+  full-pinyin seam itself matches the pin (capi e2e `parse_termination`
+  module, harness phase-C 0x60 probes closed).
+- **Freeze correction (2026-09-02, historical).** Before the batch
+  closure, the freeze-time observable-shape sentence read as if the batch
+  seam applied the full-pinyin FORCE_TONE law; the batch parser of that
+  time was more precisely option-blind: it ran the tone-less profile
+  whatever the caller's option word (the greedy walk rejected every
+  three-byte key and retried length 2). The divergence was the same in
+  every FORCE_TONE profile — oxpinyin observably less restrictive than
+  the pin (which consumes nothing at all under FORCE_TONE without
+  USE_TONE, and three-byte toned keys under USE_TONE|FORCE_TONE) — but
+  the mechanism was absence of the law, not the full-pinyin law. The
+  frozen SPEC fixed the law; the Double-pinyin batch closure amendment
+  below implemented it.
+- **Double-pinyin batch closure (5ec782ea, 2026-09-02).** The batch
+  double-pinyin `parse` surface (`pinyin_parse_more_double_pinyins`) now
+  honours the frozen SPEC's Tone law: the caller's full option word
+  crosses the seam (the pin's `options = context->m_options`,
+  `src/pinyin.cpp:1543`) and drives `DoublePinyinParser::parse_with_options`
+  — the additive option-word seam the zhuyin batch closure established.
+  `FORCE_TONE` rejects any key that is not exactly three bytes
+  (`pinyin_parser2.cpp:412`); a three-byte key carries its trailing
+  `1`..`5` digit as the tone only under `USE_TONE` (`:439-451`), so
+  FORCE_TONE without USE_TONE consumes nothing at all. The parsed tone
+  rides the key into the exact segments. Measured in the debian-testing
+  gate container against the pinned tkrzw oracle over full model20 KC
+  tables: the scheme differential is byte-identical for double schemes
+  1, 2, 4, 5, 6 including the new `tonelaw` probe section (142 lines
+  each: three FORCE_TONE/USE_TONE profiles over thirteen tone-digit
+  inputs) and for all eight bopomofo keyboards; `run-key-surface-diff.sh`
+  stays IDENTICAL (2,131 probe lines). Revert-and-check: the pristine
+  parser diverges from the pin on 130 of the new probe lines under the
+  same driver. The one residual in the comparison — scheme 3 (Ziguang)
+  NBEST row 2 on `zhrgguor` (pin 宗人光卓然 / oxpinyin 总人光卓然; the
+  1-best and 2-best rows agree) — is the pre-existing §12 trellis
+  hypothesis-selection class, unchanged by this closure (the same
+  revert-check reproduces it) and first surfaced by the full-model
+  scheme sweep.
 
 ### Empty-string phrase lookup SIGFPEs the pin
 
@@ -874,13 +918,18 @@ seen in the same probe is a separate parity defect: issue #356.
   Kyoto-Cabinet-built libpinyin still writes `bigram.db`.
 - **oxpinyin behaviour:** the same one-backend-per-binary compile-time
   selection (the `DefaultStore` cfg chain, precedence
-  kyotocabinet > tkrzw > lmdb > redb), but native tables carry the backend's
-  own extension (`pinyin_index.kct`/`.tkt`/`.lmdb`/`.redb`), so a directory
-  self-describes which backend wrote it and mixed deployments cannot
-  misread a file through the wrong engine.
-- **Externally observable:** only in oxpinyin's NATIVE data directories.
-  The libpinyin drop-in/compat path reads libpinyin's own fixed names
-  (`bigram.db`, `*.bin`) unchanged, so no libpinyin consumer sees the
+  kyotocabinet > tkrzw > lmdb > redb), but the file names follow the backend
+  family since P6 (`345af16d`): on Kyoto Cabinet and tkrzw — the two DBMs
+  libpinyin itself builds against — the files carry libpinyin's own
+  constants (`pinyin_index.bin`, `bigram.db`, …), so an install is name-
+  and byte-compatible; only the oxpinyin-only containers (redb, LMDB)
+  carry `<stem>.<ext>` (`pinyin_index.redb`/`.lmdb`).
+  `DEFAULT_STORE_IS_LIBPINYIN_DBM` (`crates/oxpinyin-store/src/lib.rs`) is
+  the switch.
+- **Externally observable:** only in redb and LMDB data directories,
+  which no libpinyin build can open anyway; on Kyoto Cabinet and tkrzw the
+  files are libpinyin's own fixed names (`bigram.db`, `*.bin`), so no
+  libpinyin consumer sees a
   difference; recorded because the naming intentionally diverges from the
   pin's constants rather than mirroring them.
 
@@ -1509,8 +1558,9 @@ tags.
   `USE_TONE` for the Simple / CP26 keyboards and unconditionally for
   Discrete (`zhuyin_parser2.cpp:178,373,387,602`); `ZHUYIN_INCOMPLETE` is
   OFF by default.
-- **What oxpinyin does instead:** `CapiContext::open` seeds the same
-  `USE_TONE | FORCE_TONE` word and defaults `incomplete` to `false`
+- **What oxpinyin does instead:** `CapiContext::try_open` seeds the same
+  `USE_TONE | FORCE_TONE` word (`ZHUYIN_DEFAULT_OPTIONS`,
+  `crates/oxpinyin-zhuyin-capi/src/state.rs`) and defaults `incomplete` to `false`
   (matching the pin). The FORCE_TONE law is delegated to
   `oxpinyin_core::ZhuyinParser::parse_with_options`, which honours it in the
   Simple/CP26 (nested) and Discrete (unconditional) shapes — the
@@ -1579,8 +1629,10 @@ freezes — was never in that enumeration. This entry completes it.
   stack region during `gen_binary_files` — unreproducible garbage
   (observed `17, 236` and `90, 237` in the pin's real files).
 - **What oxpinyin does instead:** datagen zeroes the padding
-  (`libpinyin::encode_item`), and the runtime reader
-  (`chewing_table::decode_pinyin_index_value`) reads only the token and
+  (`oxpinyin_data::row_format::pinyin_index::encode_item`, written from
+  `crates/oxpinyin-data/src/table_entries.rs`), and the runtime reader
+  (`pinyin_index::decode_items` via `ChewingTable::search`,
+  `crates/oxpinyin-data/src/chewing_table.rs`) reads only the token and
   key fields within each stride, never the padding.
 - **Externally observable:** no — the reader never touches the padding
   bytes, so a libpinyin runtime consuming either file decodes identical

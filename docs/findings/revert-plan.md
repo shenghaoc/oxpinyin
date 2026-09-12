@@ -156,7 +156,7 @@ land with the measurements.
   apostrophe run is consumed only as propagation toward a following key.
 - **Now:** `'` → 0, `''` → 0, `'''` → 0.
 - **Target:** the pin emits a zero `ChewingKey` per separator and counts
-  it: `'` → 1, `''` → 2, `'''` → 3 (measured, `oracle-apostrophe-abort.md`
+  it: `'` → 1, `''` → 2, `'''` → 3 (measured, `docs/testing/oracle-apostrophe-abort.md`
   F-E-14).
 - **Probe:** `pinyin_parse_more_full_pinyins` return and
   `pinyin_get_parsed_input_length` on apostrophe-only input.
