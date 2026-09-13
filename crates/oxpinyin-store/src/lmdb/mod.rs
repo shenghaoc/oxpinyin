@@ -36,9 +36,13 @@
 //!
 //! # Unsafe waiver
 //!
-//! This module and its [`ffi`] carry an explicit `allow(unsafe_code)`:
-//! the generated declarations are unsafe by nature and every LMDB call
-//! goes through one. The waiver is scoped to this backend by decision —
+//! This module and its [`ffi`] each carry an explicit
+//! `expect(unsafe_code)`: the generated declarations are unsafe by
+//! nature and every LMDB call goes through one. This module needs its
+//! own, unlike the Kyoto Cabinet backend's safe wrapper — the `Env`,
+//! `Txn` and `Cursor` RAII types call `mdb_*` directly, and the
+//! `unsafe impl Send`/`Sync` for `Env` sits here rather than in
+//! [`ffi`]. The waiver is scoped to this backend by decision —
 //! the workspace outside it stays `deny` — and it waives safety
 //! ceremony, not correctness: every block carries a `SAFETY` comment,
 //! and the shared read and write suites gate this backend like any

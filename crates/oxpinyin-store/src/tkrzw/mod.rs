@@ -110,10 +110,14 @@
 //!
 //! # Unsafe waiver
 //!
-//! This module and its `ffi` carry an explicit `allow(unsafe_code)`:
-//! bindgen's declarations are unsafe by nature, and the callback
-//! plumbing needs a handful of hand-written `unsafe` blocks (raw token
-//! derefs, documented at each site). That waiver is scoped to the tkrzw
+//! This module and its `ffi` each carry an explicit
+//! `expect(unsafe_code)`: bindgen's declarations are unsafe by nature,
+//! and the callback plumbing needs a handful of hand-written `unsafe`
+//! blocks (raw token derefs, documented at each site). This module
+//! needs its own, unlike the Kyoto Cabinet backend's safe wrapper — the
+//! `unsafe extern "C"` record callbacks (`walk_row`, `get_value`,
+//! `apply_one`) and the `unsafe impl Send`/`Sync` for `Db` live here,
+//! not in `ffi`. That waiver is scoped to the tkrzw
 //! backend by decision — the workspace outside it stays `deny` — and it
 //! waives safety ceremony, not correctness: the shared read and write
 //! suites gate this backend like any other.
