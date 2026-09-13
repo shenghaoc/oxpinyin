@@ -53,14 +53,16 @@
 //!
 //! Durability is the other way round: it is *stronger* here, not weaker.
 //! Each commit ends with `DB->sync`, which is the only flush libdb
-//! offers an environment-less handle and which issues `fdatasync`, so
-//! once `write` returns the batch is on the device rather than merely in
-//! the operating system's hands. This backend cannot offer the soft
-//! commit tier Kyoto Cabinet and tkrzw use;
-//! [`crate::WriteStore::compact`] calls the same `DB->sync` and so owes
-//! nothing `write` has not already paid. The sync does not repair the
-//! atomicity: the apply pass writes one record at a time and the sync
-//! follows it, so a crash mid-apply leaves a durable prefix.
+//! offers an environment-less handle, so once `write` returns the batch
+//! is on the device rather than merely in the operating system's hands.
+//! This backend cannot offer the soft commit tier Kyoto Cabinet and
+//! tkrzw use; [`crate::WriteStore::compact`] calls the same `DB->sync`
+//! and so owes nothing `write` has not already paid. The sync does not
+//! repair the atomicity: the apply pass writes one record at a time and
+//! the sync follows it, so a crash mid-apply leaves part of the batch
+//! applied — and a crash that tears one of those page writes can
+//! corrupt the database outright, which re-opening does not repair;
+//! recovery is from a known-good copy.
 //!
 //! Matching libpinyin here is the point: a transactional environment
 //! would write log and region files beside the user's profile, which

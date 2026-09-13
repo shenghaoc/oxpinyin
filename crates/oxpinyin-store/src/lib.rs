@@ -363,9 +363,12 @@ pub trait WriteStore: ReadStore {
             }
             Ok(())
         })?;
-        // The hard sync sits at save, matching the backend-wide
-        // write/compact split: `write` reaches the operating system,
-        // `compact` the device.
+        // The hard sync sits with this `compact`, and only one of
+        // this default's users still owes it there: tkrzw's `write`
+        // reaches the operating system and its `compact` the device,
+        // so the device sync must land before the rename. redb, LMDB
+        // and Berkeley DB already reach stable storage in `write`;
+        // their `compact` here is compaction work, not durability.
         store.compact()?;
         drop(store);
         std::fs::rename(&tmp, path).map_err(StoreError::Io)?;
@@ -399,9 +402,9 @@ pub trait WriteStore: ReadStore {
     /// the floor: redb and LMDB fsync inside their own (WAL /
     /// copy-on-write) commit, and Berkeley DB has no softer primitive to
     /// offer — `DB->sync` is the only flush libdb gives an
-    /// environment-less handle and it issues `fdatasync`, while skipping
-    /// it would strand the batch in a private mpool no other process can
-    /// read. Callers must not read any of that as the contract.
+    /// environment-less handle, while skipping it would strand the
+    /// batch in a private mpool no other process can read. Callers must
+    /// not read any of that as the contract.
     ///
     /// Syncing every commit to the device instead was measured at
     /// +1.18–1.85 ms per commit on tkrzw, a 13–31× per-commit
@@ -419,7 +422,9 @@ pub trait WriteStore: ReadStore {
     /// torn commit back on the next open. Berkeley DB reaching the
     /// device on every commit does not buy atomicity back: it applies
     /// the buffered rows one at a time and syncs after, so a crash
-    /// mid-apply leaves a durable prefix.
+    /// mid-apply leaves part of the batch applied — and a crash that
+    /// tears a page write can corrupt the file itself, recoverable
+    /// only from a known-good copy.
     ///
     /// The closure must not call [`WriteStore::write`] again. Backends may
     /// serialize write transactions, so a nested call can block forever.
