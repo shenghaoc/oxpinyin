@@ -395,9 +395,13 @@ pub trait WriteStore: ReadStore {
     /// this one.** The Kyoto Cabinet and tkrzw backends commit with a
     /// soft `kcdbsync` / `Synchronize` and hard-sync in `compact`;
     /// `UserStore::save` calls `compact`, so `pinyin_save` is where the
-    /// user's data reaches the device. redb and LMDB exceed the floor —
-    /// they fsync inside their own (WAL / copy-on-write) commit — and
-    /// callers must not read that as the contract.
+    /// user's data reaches the device. redb, LMDB and Berkeley DB exceed
+    /// the floor: redb and LMDB fsync inside their own (WAL /
+    /// copy-on-write) commit, and Berkeley DB has no softer primitive to
+    /// offer — `DB->sync` is the only flush libdb gives an
+    /// environment-less handle and it issues `fdatasync`, while skipping
+    /// it would strand the batch in a private mpool no other process can
+    /// read. Callers must not read any of that as the contract.
     ///
     /// Syncing every commit to the device instead was measured at
     /// +1.18–1.85 ms per commit on tkrzw, a 13–31× per-commit
@@ -405,12 +409,17 @@ pub trait WriteStore: ReadStore {
     /// keystroke, for a durability window narrower than the one
     /// upstream libpinyin already leaves open;
     /// `docs/findings/perf-train-commit-fsync-2026-09-09.md` carries
-    /// the numbers and the decision.
+    /// the numbers and the decision. That measurement is tkrzw's. The
+    /// equivalent per-commit cost on Berkeley DB, which has no soft tier
+    /// to fall back to, has not been measured.
     ///
     /// One residual difference, documented per backend: a crash
-    /// *during* the commit call itself can tear the batch on KC and
-    /// tkrzw (no write-ahead log), where redb and LMDB roll a torn
-    /// commit back on the next open.
+    /// *during* the commit call itself can tear the batch on KC, tkrzw
+    /// and Berkeley DB (no write-ahead log), where redb and LMDB roll a
+    /// torn commit back on the next open. Berkeley DB reaching the
+    /// device on every commit does not buy atomicity back: it applies
+    /// the buffered rows one at a time and syncs after, so a crash
+    /// mid-apply leaves a durable prefix.
     ///
     /// The closure must not call [`WriteStore::write`] again. Backends may
     /// serialize write transactions, so a nested call can block forever.
@@ -428,9 +437,13 @@ pub trait WriteStore: ReadStore {
     ///
     /// redb rewrites the file and reclaims free pages. LMDB reuses freed pages
     /// in place, so its successful implementation does not shrink the file.
-    /// Kyoto Cabinet and tkrzw hard-sync here — see
-    /// [`WriteStore::write`]'s durability note, which explains why the
-    /// device-level sync sits on this call and not on every commit.
+    /// Berkeley DB is LMDB's shape here: `DB->compact` wants a
+    /// transaction this backend never opens, so it syncs instead and the
+    /// file does not shrink. Kyoto Cabinet and tkrzw hard-sync here —
+    /// see [`WriteStore::write`]'s durability note, which explains why
+    /// the device-level sync sits on this call and not on every commit
+    /// for those two. Berkeley DB has already paid it at every commit,
+    /// so for that peer this call adds no durability.
     ///
     /// # Errors
     ///
