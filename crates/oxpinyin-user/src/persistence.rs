@@ -420,7 +420,7 @@ fn load_logs(dir: &Path, originals: &BTreeMap<u8, SystemLibrary>, loaded: &mut L
         let mut overrides: BTreeMap<u32, Option<ChunkItem>> = BTreeMap::new();
         let current =
             |overrides: &BTreeMap<u32, Option<ChunkItem>>, slot: u32| -> Option<ChunkItem> {
-                overrides.get(&slot).cloned().flatten().or_else(|| {
+                overrides.get(&slot).cloned().unwrap_or_else(|| {
                     original
                         .and_then(|library| library.items.get(&slot))
                         .cloned()
@@ -703,10 +703,14 @@ pub fn diff_records(
     slots.dedup();
 
     for slot in slots {
+        // An override entry always wins — including `Some(None)`, an
+        // explicit removal: flattening it into the original item here
+        // would drop the Remove record and resurrect the phrase on
+        // reopen.
         let current = overrides
             .get(&slot)
-            .and_then(|item| item.as_ref())
-            .or_else(|| original.items.get(&slot));
+            .map(|item| item.as_ref())
+            .unwrap_or_else(|| original.items.get(&slot));
         let token = token_of(nibble, slot);
         match (original.items.get(&slot), current) {
             (Some(old), Some(new)) => {
@@ -961,6 +965,54 @@ mod tests {
         assert!(!loaded.wiped);
         assert_eq!(loaded.open_counter, 2); // the ratchet
         assert_eq!(loaded.state, state);
+
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn diff_records_emits_remove_for_an_explicit_removal() {
+        // A `Some(None)` override is a removal, not "fall back to the
+        // original item": collapsing the two lookups drops the Remove
+        // record (review on #447).
+        let originals = originals();
+        let original = &originals[&1];
+        let overrides: BTreeMap<u32, Option<ChunkItem>> = BTreeMap::from([(1_u32, None)]);
+
+        let records = diff_records(1, original, &overrides).expect("diff");
+        assert!(matches!(
+            records.as_slice(),
+            [
+                LogRecord::ModifyHeader {
+                    old_total: 150,
+                    new_total: 50
+                },
+                LogRecord::Remove {
+                    token: 0x0100_0001,
+                    ..
+                }
+            ]
+        ));
+    }
+
+    #[test]
+    fn removed_system_phrase_stays_removed_across_save_and_reopen() {
+        let dir = tempdir("removal-round-trip");
+        let originals = originals();
+        let mut state = state();
+        state
+            .system_overrides
+            .get_mut(&1)
+            .expect("library")
+            .insert(2_u32, None);
+
+        save(&dir, &state, &originals, &versions(), 1).expect("save");
+        let loaded = load(&dir, &originals, &versions()).expect("load");
+        assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
+        assert_eq!(
+            loaded.state.system_overrides[&1].get(&2),
+            Some(&None),
+            "the removal did not survive the save-then-reopen"
+        );
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
