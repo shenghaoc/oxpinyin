@@ -1,6 +1,7 @@
 # Store key-ordering contract — one place for the whole stack
 
-Date: 2026-08-24 (updated 2026-08-25 for the tkrzw backend) · Status:
+Date: 2026-08-24 (updated 2026-08-25 for the tkrzw backend, 2026-09-12
+for the Berkeley DB backend) · Status:
 **audit finding** (verification + tests only; no key encoding changed) ·
 Branch: `audit/store-key-ordering`.
 
@@ -21,7 +22,7 @@ property of the stored bytes: the store never decodes a key, so it has no
 notion of "integer order". Any meaning a key's bytes carry is imposed by the
 layer that encoded them.
 
-All four backends satisfy exactly this rule:
+All five backends satisfy exactly this rule:
 
 - **redb** (the pure-Rust peer backend; `--no-default-features --features redb`).
   The store uses `TableDefinition<&[u8], &[u8]>`. redb's
@@ -41,8 +42,8 @@ All four backends satisfy exactly this rule:
   `MDB_INTEGERKEY` would compare in **native** endian order, which disagrees
   with redb's memcmp on big-endian targets and on any multi-byte key that
   crosses a 256 boundary even on little-endian targets. It must never be set.
-- **tkrzw** (`cxx` shim over TreeDBM, feature `tkrzw`). `open_db`
-  (`crates/oxpinyin-store/src/tkrzw/shim.cc`) calls
+- **tkrzw** (`cxx` shim over TreeDBM, feature `tkrzw`; the default selection
+  since 2026-09-05). `open_db` (`crates/oxpinyin-store/src/tkrzw/shim.cc`) calls
   `db->dbm.Open(path, writable, options)` with `options` being only
   `File::OPEN_DEFAULT` or `File::OPEN_NO_CREATE`. **The fourth argument —
   `TreeDBM::TuningParameters` — is omitted**, so it is default-constructed and
@@ -52,26 +53,38 @@ All four backends satisfy exactly this rule:
   exactly as libpinyin's `tkrzwdb_utils.h` leaves it. This is stated in both
   `tkrzw/shim.h` and `tkrzw/mod.rs`. It is checked directly by
   `tkrzw_orders_keys_as_unsigned_bytes` (which probes `0x80..=0xff`, the high
-  half a *signed*-char comparison would misplace) and, against redb and LMDB,
-  by the cross-backend equivalence tests below.
-- **Kyoto Cabinet** (feature `kyotocabinet`; the DEFAULT backend). `KcStore`
-  opens a `TreeDB` with no `rcomp` tuning parameter
+  half a *signed*-char comparison would misplace) and by the per-peer
+  byte-order tests below.
+- **Kyoto Cabinet** (feature `kyotocabinet`). `KcStore` opens a `TreeDB`
+  with no `rcomp` tuning parameter
   (`crates/oxpinyin-store/src/kyotocabinet/`), so Kyoto Cabinet's default
   record comparator applies: **`LEXICALCOMP` — byte-wise, shorter key first
   on a shared prefix** — exactly libpinyin's own configuration
   (`phrase_large_table3_kyotodb.cpp` and `chewing_large_table2_kyotodb.cpp`
-  install no comparator either). Verified by the same cross-backend
-  conformance suite over keys that cross 256 in the first and in a later
-  element.
+  install no comparator either). Verified by the same per-peer byte-order
+  suite over keys that cross 256 in the first and in a later element.
+- **Berkeley DB** (feature `bdb`; libpinyin's original DBM). `BdbStore`
+  opens a `DB_BTREE` with **no `set_bt_compare`**
+  (`crates/oxpinyin-store/src/bdb/ffi.rs`), so libdb's default B-tree
+  comparator applies: **byte-wise `memcmp`, shorter key first on a shared
+  prefix** — exactly the configuration libpinyin itself uses
+  (`phrase_large_table3_bdb.cpp` and `chewing_large_table2_bdb.cpp` install
+  no comparator either). Confirmed experimentally rather than taken from the
+  documentation: `tools/bdb/btree-order.c` opens a `DB_BTREE` the way
+  libpinyin does — no environment, no transaction, no comparator — and
+  prints the walk over little-endian `u32` array keys crossing 256 in the
+  first and in a later element, which comes back in raw-byte order, not
+  integer order (`docs/findings/berkeleydb-backend.md`). Setting a
+  comparator here would silently reorder files libpinyin wrote.
 
 **Obligation discharged, and carried forward.** When this note was first
 written, "a new backend must match the default lexicographic comparator" was a
-forward-looking promise with two backends in hand. A third backend, tkrzw, has
-since arrived and been verified against exactly that requirement (above). **Any
-further backend must likewise leave the default lexicographic (memcmp)
-comparator in place** — integer comparators, locale collation, reverse order,
-or a signed-char compare all break cross-backend parity and are out of
-contract.
+forward-looking promise with two backends in hand. Every backend added since —
+tkrzw (2026-08-25) and Berkeley DB (2026-09-12), the fifth peer — has been
+verified against exactly that requirement (above). **Any further backend must
+likewise leave the default lexicographic (memcmp) comparator in place** —
+integer comparators, locale collation, reverse order, or a signed-char
+compare all break cross-backend parity and are out of contract.
 
 ## What each layer encodes, and why it is consistent
 
@@ -145,9 +158,9 @@ fixed-width big-endian `prev` prefix brackets exactly the successors of
 `prev`, and they come back in ascending integer `cur` order. `codec.rs`'s
 `order` proptest module already checks this encoding against redb's typed
 `(u32,u32)` compare order; the tests added by this audit extend it to the
-cross-backend and 256-boundary cases across the backends those suites
-compile in (the store suite: all four; the user suite: redb, LMDB and
-tkrzw — see the inventory below).
+per-peer and 256-boundary cases in whichever backend the build compiles in
+— one peer per binary in both the store and the user suite, five peer
+builds across CI (see the inventory below).
 
 ## Layer consistency (encode ↔ decode)
 
@@ -169,28 +182,37 @@ key encoding was changed.**
 ## Tests that pin this (added by the audit)
 
 - `crates/oxpinyin-store/src/lib.rs` — the `tests::key_ordering` module (folded
-  into the store suite alongside the per-tier groups, not a separate file):
-  every compiled backend yields byte-identical `for_each` and `range`
-  sequences on key sets that cross 256 — under the default features that is
-  **redb == Kyoto Cabinet**, and
-  `cargo test -p oxpinyin-store --features "kyotocabinet,tkrzw,lmdb"` (the
-  store-backends CI gate's conformance pass) is the full four-way
-  **redb == Kyoto Cabinet == tkrzw == LMDB** check; plus, redb-only, that
-  swapping an encode site's endianness changes the observed walk order
-  (non-vacuity).
+  into the store suite alongside the per-tier groups, not a separate file).
+  The exactly-one-backend invariant is a `compile_error!` guard, so a single
+  binary holds exactly one peer and cross-peer equivalence **cannot** be
+  proven in process. Each build instead proves that *its* `DefaultStore`
+  yields `for_each` and `range` sequences equal to the mathematical
+  byte-ordered sequence on key sets that cross 256; the store-backends CI
+  matrix, which runs all five peer builds, is what turns those five
+  independent results into **redb == Kyoto Cabinet == tkrzw == LMDB ==
+  Berkeley DB**. Plus, in every build, that swapping an encode site's
+  endianness changes the observed walk order (non-vacuity). The invariant
+  itself is proven separately by `tools/store/backend-matrix.sh` (the
+  `backend-matrix` CI job), which checks that each of the five single-feature
+  selections compiles and that every pairwise combination, a four-way
+  combination, and the zero-backend build are refused by the guard — this
+  replaced the older "cross-backend conformance in one binary" job, which the
+  invariant makes architecturally impossible.
 - `crates/oxpinyin-data/src/table.rs` tests — the load-without-sort invariant:
   the store walk of 256-crossing LE keys is already `LeByteKey`-sorted (fast
   path taken) while the same walk is *not* integer-sorted (a loader assuming
   integer order would break).
 - `crates/oxpinyin-user/src/store.rs` tests — the bigram successor scan
   returns the complete, correctly ordered successor set across 256 under the
-  `user_store_tests!` macro's arms (**redb, LMDB and tkrzw**; the Kyoto
-  Cabinet backend is covered by the store crate's four-way conformance suite
-  above, not by this macro), and the raw bigram walk is identical across every
-  backend the user crate's cross-backend test compiles in, each backend's own
-  walk asserted to be in integer order. Flipping `encode_token_pair`'s
-  endianness reddens the check on every one of those backends, not just
-  redb.
+  `user_store_tests!` macro, which now carries an arm for **all five peers**
+  (`redb`, `lmdb`, `tkrzw`, `kc`, `bdb`), each `#[cfg]`-gated on its feature
+  so exactly one suite compiles per build — Kyoto Cabinet is covered by its
+  own arm now, not by a separate conformance suite. Alongside them,
+  `bigram_walks_and_successors_follow_be_integer_order` asserts the current
+  peer's raw bigram walk and successor scans come back in ascending
+  `(prev, cur)` integer order, and that the set walked equals the set
+  written. Flipping `encode_token_pair`'s endianness reddens that check on
+  whichever peer the build compiles in, so it reddens on all five across CI.
 
 ## 256-boundary blind spot
 

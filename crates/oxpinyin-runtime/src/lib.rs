@@ -4,11 +4,11 @@
 //! `pinyin_init` does — the pinyin and phrase DBMs, the per-library
 //! chunk files, `bigram.db`, `punct.bin`, the addon DBM pair, λ from
 //! `table.conf` — installs the optional user store, and hands out
-//! [`Session`]s over the merged backends. On Kyoto Cabinet and tkrzw that
-//! directory is an unmodified libpinyin install's `data/`; on every
-//! backend it is what `oxpinyin-datagen compile` writes. Nothing is
-//! scanned at open: every reader in `oxpinyin-data` is a handle plus a
-//! point read. The algorithms stay where they
+//! [`Session`]s over the merged backends. On Kyoto Cabinet, tkrzw and
+//! Berkeley DB that directory is an unmodified libpinyin install's
+//! `data/`; on every backend it is what `oxpinyin-datagen compile`
+//! writes. Nothing is scanned at open: every reader in `oxpinyin-data`
+//! is a handle plus a point read. The algorithms stay where they
 //! belong — decoding/composition in `oxpinyin-engine`, tables and model math
 //! in `oxpinyin-data`, user state in `oxpinyin-user` — and the user-count
 //! overlay arithmetic lives in `oxpinyin-data`'s `*_with_user_delta` methods
@@ -882,14 +882,14 @@ impl Runtime {
     /// Opens a system data directory the way `pinyin_init` does.
     ///
     /// `system_dir` holds the compiled-in backend's DBMs
-    /// (`SystemDbm::file_name` — libpinyin's own names on Kyoto Cabinet
-    /// and tkrzw, `<stem>.<ext>` on redb and LMDB), the per-library chunk
-    /// files, and optionally `table.conf` (λ), `punct.bin`, and the addon
-    /// DBM pair. On Kyoto Cabinet and tkrzw an unmodified libpinyin
-    /// install's `data/` opens as is. When `user_dir` is given, the
-    /// learning store opens too (its creation or read failure degrades to
-    /// "no user state", matching the C ABI so a bad user dir cannot fail
-    /// init).
+    /// (`SystemDbm::file_name` — libpinyin's own names on Kyoto Cabinet,
+    /// tkrzw and Berkeley DB, `<stem>.<ext>` on redb and LMDB), the
+    /// per-library chunk files, and optionally `table.conf` (λ),
+    /// `punct.bin`, and the addon DBM pair. On Kyoto Cabinet, tkrzw and
+    /// Berkeley DB an unmodified libpinyin install's `data/` opens as is.
+    /// When `user_dir` is given, the learning store opens too (its
+    /// creation or read failure degrades to "no user state", matching the
+    /// C ABI so a bad user dir cannot fail init).
     ///
     /// Nothing is read beyond the handles: the DBMs are opened, the chunk
     /// files mapped and checksummed, `table.conf` parsed for λ.

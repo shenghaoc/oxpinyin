@@ -257,8 +257,8 @@ system_dir_require_complete() {
 	local missing=() file
 	# A system data directory holds the chunk files, table.conf, and the
 	# DBMs under the compiled-in backend's names: libpinyin's own
-	# (pinyin_index.bin, bigram.db, ...) on Kyoto Cabinet and tkrzw,
-	# <stem>.<ext> on redb and LMDB.
+	# (pinyin_index.bin, bigram.db, ...) on Kyoto Cabinet, tkrzw and
+	# Berkeley DB, <stem>.<ext> on redb and LMDB.
 	for file in gb_char.bin table.conf; do
 		[[ -f $dir/$file ]] || missing+=("$file")
 	done
@@ -275,8 +275,8 @@ system_dir_require_complete() {
 		printf '\nMissing:\n'
 		printf '  %s\n' "${missing[@]}"
 		printf '\nA system data directory is an oxpinyin-datagen compile output, or\n'
-		printf 'a libpinyin install'"'"'s data/ on Kyoto Cabinet and tkrzw: the chunk\n'
-		printf 'files, table.conf, and the DBMs under the backend'"'"'s names.\n'
+		printf 'a libpinyin install'"'"'s data/ on Kyoto Cabinet, tkrzw or Berkeley DB:\n'
+		printf 'the chunk files, table.conf, and the DBMs under the backend'"'"'s names.\n'
 	} >&2
 	exit 3
 }
