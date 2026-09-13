@@ -181,8 +181,8 @@ pub struct SystemDictionary {
 
 impl SystemDictionary {
     /// Opens the default facade from a system data directory — a
-    /// libpinyin install's `data/` on Kyoto Cabinet and tkrzw, an
-    /// `oxpinyin-datagen` output directory on every backend
+    /// libpinyin install's `data/` on Kyoto Cabinet, tkrzw and Berkeley
+    /// DB, an `oxpinyin-datagen` output directory on every backend
     /// ([`SystemDbm::file_name`] names the DBMs, [`SYSTEM_LIBRARY_FILES`]
     /// the chunk files).
     ///

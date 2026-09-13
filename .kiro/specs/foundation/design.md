@@ -29,19 +29,22 @@ InputParser — unsealed, defaulted growth.
 **Drop-in data path (P6, `crates/oxpinyin-data`, `crates/oxpinyin-runtime`):**
 `Runtime::open` opens a libpinyin data directory in place the way
 `pinyin_init` does — the DBMs (libpinyin's own file names on Kyoto
-Cabinet and tkrzw, `<stem>.<ext>` on redb and LMDB), the `MemoryChunk`
-files mmapped and checksummed, `table.conf` for λ — through the same
-readers it uses for oxpinyin's own output. There is no compatibility
-layer and no layout detection; the caller supplies the directory. The
-#228 `CompatLayout` reader this replaced is recorded in
+Cabinet, tkrzw and Berkeley DB, `<stem>.<ext>` on redb and LMDB), the
+`MemoryChunk` files mmapped and checksummed, `table.conf` for λ — through
+the same readers it uses for oxpinyin's own output. There is no
+compatibility layer and no layout detection; the caller supplies the
+directory. The #228 `CompatLayout` reader this replaced is recorded in
 `docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`.
 
-**Storage model:** four backends, compile-time selected through the
-`DefaultStore` `#[cfg]` chain (kyotocabinet > tkrzw > lmdb > redb; KC
-default), one per binary, mirroring libpinyin's own `--with-dbm`. Runtime
-tables are compiled natively from the pinned model20 archive for every
-backend (`oxpinyin-datagen`); parity verification stays local-only — the
-model20 archive is non-redistributable and never enters CI.
+**Storage model:** five backends, compile-time selected through the
+`DefaultStore` `#[cfg]` chain (kyotocabinet, tkrzw, lmdb, redb, bdb;
+tkrzw the default selection since 2026-09-05), exactly one per binary —
+a `compile_error!` guard refuses a build naming none or more than one, so
+no precedence order survives to fall back on — mirroring libpinyin's own
+`--with-dbm`. Runtime tables are compiled natively from the pinned model20
+archive for every backend (`oxpinyin-datagen`); parity verification stays
+local-only — the model20 archive is non-redistributable and never enters
+CI.
 
 **Python binding seam:** `oxpinyin-python` consumes the same
 `oxpinyin-runtime` assembly as the C ABI over PyO3 — the rlib route, no

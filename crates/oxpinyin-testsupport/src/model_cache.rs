@@ -213,9 +213,9 @@ pub fn resolve_export_dir() -> PathBuf {
 
 /// `/tmp/oxpinyin-export` or `$PINYIN_EXPORT_DIR`: a system data
 /// directory for the compiled-in backend (a libpinyin install's `data/`
-/// on Kyoto Cabinet and tkrzw, an `oxpinyin-datagen compile` output
-/// anywhere); asserts the three required DBMs exist, so benches refuse to
-/// start on data-less hosts.
+/// on Kyoto Cabinet, tkrzw and Berkeley DB, an `oxpinyin-datagen
+/// compile` output anywhere); asserts the three required DBMs exist, so
+/// benches refuse to start on data-less hosts.
 ///
 /// # Panics
 ///
@@ -236,10 +236,10 @@ pub fn export_dir() -> PathBuf {
 }
 
 /// The three required DBM file names for the compiled-in backend —
-/// libpinyin's own on Kyoto Cabinet and tkrzw (`pinyin_index.bin`,
-/// `phrase_index.bin`, `bigram.db`), `<stem>.<ext>` on redb and LMDB
-/// (`oxpinyin_data::SystemDbm` is the authority; this crate sits below
-/// it).
+/// libpinyin's own on Kyoto Cabinet, tkrzw and Berkeley DB
+/// (`pinyin_index.bin`, `phrase_index.bin`, `bigram.db`),
+/// `<stem>.<ext>` on redb and LMDB (`oxpinyin_data::SystemDbm` is the
+/// authority; this crate sits below it).
 #[must_use]
 pub fn system_dbm_names() -> [String; 3] {
     if oxpinyin_store::DEFAULT_STORE_IS_LIBPINYIN_DBM {
