@@ -2,7 +2,13 @@
 
 Date: 2026-09-12 · Status: **implemented and verified on Debian testing
 and Fedora 44, both libdb 5.3.28**; the peer is non-default (tkrzw stays
-the workspace default) and Linux-only in practice.
+the workspace default). macOS (2026-09-13): clippy and the full store
+suite also pass there, against Homebrew `berkeley-db@5` — 5.3.28 under
+the Sleepycat license, the surveyed version — with the two
+`OXPINYIN_BDB_*` overrides pointing at the keg; 36 passed / 0 failed /
+4 ignored, the same counts as Linux. The default `berkeley-db` formula
+(18.1, AGPL-3.0-only) remains unusable. Recipe:
+`docs/runbooks/backends.md`.
 
 Phase 1's survey is `berkeleydb-compat-phase1.md` and its checklist is
 `berkeleydb-compat-open-items.md`; the shelved first implementation on
