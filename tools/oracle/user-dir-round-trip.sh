@@ -52,6 +52,17 @@ printf '== Phase A: the pin trains a profile ==\n'
 # diff compares the original against oxpinyin's load->save of it.
 "$work/user_driver" dump "$data_dir" "$work/pin" | sort > "$work/pin.dump"
 [[ -s $work/pin.dump ]] || { printf 'the pin dump is empty\n' >&2; exit 1; }
+# The profile must carry grams, not just phrases. `pinyin_remember_user_input`
+# writes the phrase rows on its own, so a driver that selects a candidate
+# installing no CONSTRAINT_ONESTEP still yields a non-empty dump while
+# `train_result3` stores nothing (it gates its whole body on a constraint being
+# present). That is how the 939400c6 driver went unnoticed: Phase A looked fine
+# and the gram-free profile only surfaced two phases later, as the Rust side's
+# `!bigram.is_empty()`. Assert it here, where the cause is.
+grep -q '^B' "$work/pin.dump" || {
+    printf 'the pin trained no bigram rows: the driver chose a candidate that installs no constraint\n' >&2
+    exit 1
+}
 
 printf '== Phase B: oxpinyin loads the pin profile and saves it back in place ==\n'
 # The Rust side does a pure load->save of the pin's own data through the

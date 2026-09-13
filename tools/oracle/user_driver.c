@@ -1,8 +1,9 @@
 /* user_driver.c — pin-side driver for the user-dir round trip.
  *
  * Modes:
- *   train    <system> <user> <input>... parse+guess+train each input
- *                                      (sentence n-best index 0), then save
+ *   train    <system> <user> <input>... parse, guess, select, train and
+ *                                      remember each input the way ibus
+ *                                      drives the library, then save
  *   dump     <system> <user>            print the §9 exports, one line each:
  *                                      "P\t<phrase>\t<pinyin>\t<count>"
  *                                      "B\t<phrase>\t<pinyin>\t<count>"
@@ -22,6 +23,154 @@
 #include <glib.h>
 #include "pinyin.h"
 
+/* ibus's default candidate order (`PYPConfig.cc:151`): phrase length,
+ * then pinyin length, then frequency. Passing 0 — as this driver used
+ * to — asks for no ordering at all, which leaves "the first NORMAL
+ * candidate" an arbitrary rare single character (`疒` for `nihao`)
+ * rather than the word a user would pick. That is not only cosmetic:
+ * the grams those rare characters produce segfault the pin's own
+ * bigram-export iterator on the BerkeleyDB oracle (the class-(b)
+ * use-after-free, compatibility-policy row 1), while the rows a real
+ * selection produces export cleanly on all three DBMs.
+ *
+ * Neither SORT_WITHOUT_SENTENCE_CANDIDATE nor
+ * SORT_WITHOUT_LONGER_CANDIDATE is set, so the n-best and longer
+ * candidates are still prepended exactly as a real frontend sees them;
+ * the scan below simply walks past them. */
+#define DRIVER_SORT_OPTION \
+    (SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY)
+
+/* The first NORMAL_CANDIDATE in the current list, or NULL.
+ *
+ * Candidate 0 is deliberately not what this returns. Once
+ * m_nbest_results is populated, _prepend_sentence_candidates puts an
+ * NBEST_MATCH_CANDIDATE at position 0 (pinyin.cpp:1934), and choosing
+ * one at n-best index 0 runs diff_result(best, best)
+ * (pinyin.cpp:2515-2521), which `continue`s past every equal token
+ * (phonetic_lookup.cpp:187) and so reaches add_constraint for none of
+ * them. train_result3 gates its entire body — the m_user_bigram->store
+ * included — on a constraint being present at the position
+ * (phonetic_lookup.h:866), so a train after that selection writes
+ * nothing at all. ibus refuses the same case outright: it trains an
+ * n-best selection only `if (index != 0)`
+ * (PYPLibPinyinCandidates.cc:116).
+ *
+ * A NORMAL_CANDIDATE is ibus's "the user picked a word" path, and
+ * choosing one reaches constraints->add_constraint (pinyin.cpp:2582),
+ * which installs the CONSTRAINT_ONESTEP training reads. */
+static lookup_candidate_t *first_normal_candidate(pinyin_instance_t *instance) {
+    guint n_candidates = 0;
+    if (!pinyin_get_n_candidate(instance, &n_candidates))
+        return NULL;
+
+    for (guint i = 0; i < n_candidates; ++i) {
+        lookup_candidate_t *candidate = NULL;
+        if (!pinyin_get_candidate(instance, i, &candidate) || !candidate)
+            continue;
+        lookup_candidate_type_t type;
+        if (!pinyin_get_candidate_type(instance, candidate, &type))
+            continue;
+        if (NORMAL_CANDIDATE == type)
+            return candidate;
+    }
+    return NULL;
+}
+
+/* One input, in the order ibus drives the library.
+ *
+ * PYPFullPinyinEditor::updatePinyin parses and then calls
+ * pinyin_guess_sentence on every keystroke, and PhoneticEditor::update
+ * lists candidates only afterwards (PYPPhoneticEditor.cc:355) — so
+ * m_nbest_results is always populated before pinyin_guess_candidates
+ * runs. Listing candidates first, as this driver used to, gives the
+ * first input no sentence candidate at all and every later input the
+ * leaked n-best results of the one before it: neither
+ * pinyin_parse_more_full_pinyins (pinyin.cpp:1497-1525) nor
+ * pinyin_guess_candidates clears them.
+ *
+ * The selection loop is PhoneticEditor::selectCandidateInternal
+ * (PYPPhoneticEditor.cc:494-511): choose at the lookup cursor, re-guess
+ * the sentence under the new constraint, advance, repeat. Upstream's own
+ * end test compares that key-position cursor against a character count,
+ * so the end of the input is taken here from the call ibus makes right
+ * after it — pinyin_get_pinyin_key_rest, which is false once the cursor
+ * passes the last key position (pinyin.cpp:2950) and is in the cursor's
+ * own unit. */
+static int train_one(pinyin_instance_t *instance, const char *input) {
+    if ((int)strlen(input) !=
+        pinyin_parse_more_full_pinyins(instance, input)) {
+        fprintf(stderr, "parse failed: %s\n", input);
+        return 1;
+    }
+    if (!pinyin_guess_sentence(instance)) {
+        fprintf(stderr, "guess failed: %s\n", input);
+        return 1;
+    }
+
+    size_t cursor = 0;
+    ChewingKeyRest *key_rest = NULL;
+    while (pinyin_get_pinyin_key_rest(instance, cursor, &key_rest)) {
+        if (!pinyin_guess_candidates(instance, cursor,
+                                     DRIVER_SORT_OPTION)) {
+            fprintf(stderr, "guess candidates failed: %s\n", input);
+            return 1;
+        }
+        lookup_candidate_t *candidate = first_normal_candidate(instance);
+        if (!candidate) {
+            fprintf(stderr, "no normal candidate at %zu: %s\n", cursor,
+                    input);
+            return 1;
+        }
+        /* add_constraint returns 0 when the span does not fit the
+         * constraint array (phonetic_lookup.cpp:64), which leaves the
+         * cursor where it was: a selection that cannot advance would
+         * spin here rather than fail. */
+        int next = pinyin_choose_candidate(instance, cursor, candidate);
+        if (next <= (int)cursor) {
+            fprintf(stderr, "choose failed at %zu: %s\n", cursor, input);
+            return 1;
+        }
+        cursor = (size_t)next;
+        if (!pinyin_guess_sentence(instance)) {
+            fprintf(stderr, "guess failed after choose: %s\n", input);
+            return 1;
+        }
+    }
+
+    if (!pinyin_train(instance, 0)) {
+        fprintf(stderr, "train failed: %s\n", input);
+        return 1;
+    }
+
+    /* ibus's `remember-every-input` path (§6): the committed
+     * sentence is also added as a user phrase, which is what writes
+     * user.bin and the two index trees. Without it the profile would
+     * be phrase-free and those files untested — so a failed remember
+     * is a failed run, not a note: a silent skip here would let a
+     * green differential through without those files exercised. */
+    char *sentence = NULL;
+    if (!pinyin_get_sentence(instance, 0, &sentence) || !sentence) {
+        fprintf(stderr, "no sentence to remember: %s\n", input);
+        return 1;
+    }
+    if (!pinyin_remember_user_input(instance, sentence, -1)) {
+        fprintf(stderr, "remember failed: %s (%s)\n", input, sentence);
+        g_free(sentence);
+        return 1;
+    }
+    g_free(sentence);
+
+    /* PhoneticEditor::reset (PYPPhoneticEditor.cc:341): a committed
+     * sentence clears the instance. Only pinyin_reset clears
+     * m_constraints and m_nbest_results (pinyin.cpp:2693), so without
+     * it each input trains against the state its predecessor left. */
+    if (!pinyin_reset(instance)) {
+        fprintf(stderr, "reset failed: %s\n", input);
+        return 1;
+    }
+    return 0;
+}
+
 static int train(const char *system_dir, const char *user_dir,
                  char **inputs, int n_inputs) {
     pinyin_context_t *context = pinyin_init(system_dir, user_dir);
@@ -30,53 +179,8 @@ static int train(const char *system_dir, const char *user_dir,
 
     pinyin_instance_t *instance = pinyin_alloc_instance(context);
     for (int i = 0; i < n_inputs; ++i) {
-        if ((int)strlen(inputs[i]) !=
-            pinyin_parse_more_full_pinyins(instance, inputs[i])) {
-            fprintf(stderr, "parse failed: %s\n", inputs[i]);
+        if (train_one(instance, inputs[i]))
             return 1;
-        }
-        /* The ibus shape, §6: training follows a selection — an
-         * unconstrained train_result3 walks an empty constraint set and
-         * trains nothing. Choose candidate 0 (a sentence candidate),
-         * then train the constrained n-best. */
-        if (!pinyin_guess_candidates(instance, 0, 0)) {
-            fprintf(stderr, "guess candidates failed: %s\n", inputs[i]);
-            return 1;
-        }
-        lookup_candidate_t *candidate = NULL;
-        if (!pinyin_get_candidate(instance, 0, &candidate) || !candidate) {
-            fprintf(stderr, "no candidate: %s\n", inputs[i]);
-            return 1;
-        }
-        if (pinyin_choose_candidate(instance, 0, candidate) < 1) {
-            fprintf(stderr, "choose failed: %s\n", inputs[i]);
-            return 1;
-        }
-        if (!pinyin_guess_sentence(instance)) {
-            fprintf(stderr, "guess failed: %s\n", inputs[i]);
-            return 1;
-        }
-        if (!pinyin_train(instance, 0)) {
-            fprintf(stderr, "train failed: %s\n", inputs[i]);
-            return 1;
-        }
-        /* ibus's `remember-every-input` path (§6): the committed
-         * sentence is also added as a user phrase, which is what writes
-         * user.bin and the two index trees. Without it the profile would
-         * be phrase-free and those files untested — so a failed remember
-         * is a failed run, not a note: a silent skip here would let a
-         * green differential through without those files exercised. */
-        char *sentence = NULL;
-        if (!pinyin_get_sentence(instance, 0, &sentence) || !sentence) {
-            fprintf(stderr, "no sentence to remember: %s\n", inputs[i]);
-            return 1;
-        }
-        if (!pinyin_remember_user_input(instance, sentence, -1)) {
-            fprintf(stderr, "remember failed: %s (%s)\n", inputs[i], sentence);
-            g_free(sentence);
-            return 1;
-        }
-        g_free(sentence);
     }
     pinyin_free_instance(instance);
 

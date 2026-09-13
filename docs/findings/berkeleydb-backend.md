@@ -111,28 +111,95 @@ a tkrzw twin was built for comparison. With
   the profile oxpinyin wrote through the BDB backend and renders the
   expected phrases.
 - **Phases A–C (the pin trains, oxpinyin loads and saves in place, the
-  pin re-renders)**: **blocked by a pre-existing harness regression,
-  not by this backend.** The committed `user_driver.c` chooses
-  candidate 0 — an n-best candidate whose `diff_result(best, best)`
-  installs no `CONSTRAINT_ONESTEP` — so the pin's `train_result3`
-  stores no user-bigram grams on *any* backend (traced against
+  pin re-renders)**: **were blocked by a pre-existing harness
+  regression, not by this backend — fixed 2026-09-13.** The `939400c6`
+  `user_driver.c` chose candidate 0 — an n-best candidate whose
+  `diff_result(best, best)` installs no `CONSTRAINT_ONESTEP` — so the
+  pin's `train_result3` stored no user-bigram grams (traced against
   instrumented oracles: zero `Bigram::store` calls;
   `ForwardPhoneticConstraints::diff_result` skips equal tokens). The
   `a_pin_profile…` test's `!bigram.is_empty()` assertion therefore
-  fails against a freshly built tkrzw oracle exactly as it does
-  against the BDB one — the differential has been broken for every
+  failed against a freshly built tkrzw oracle exactly as it did
+  against the BDB one — the differential had been broken for every
   backend since `939400c6` (2026-09-11) created it, and CI never runs
   it (local-only, `--include-ignored`).
   With grams restored through an uncommitted probe driver (the same
   driver with the candidate index changed to 1 — the shape of a real
-  non-default selection), **the full A–C round trip passes on BDB and
+  non-default selection), **the full A–C round trip passed on BDB and
   on tkrzw identically**: oxpinyin's load→save of the pin's trained
-  profile preserves it byte-for-byte (7 dump rows, 5 gram rows, the
-  pin's own re-render `IDENTICAL` both ways).
-- Fixing `user_driver.c` (and re-validating the differential's claim)
-  is left to its own change: the driver defines what the differential
-  measures, and that is a maintainer decision, not a backend PR's
-  errand.
+  profile preserved it byte-for-byte (7 dump rows, 5 gram rows, the
+  pin's own re-render `IDENTICAL` both ways). The committed fix
+  supersedes that probe; its own figures are in
+  `docs/findings/user-store.md` §11.
+
+Two corrections to the account above, both read from the pin at
+`074a2219` (`src/pinyin.cpp` blob `f27f7cf7`,
+`src/lookup/phonetic_lookup.cpp` `4205630d`,
+`src/lookup/phonetic_lookup.h` `c092e761`):
+
+1. **"stores no grams on *any* backend" was an observation, not a
+   consequence of the candidate index.** Candidate 0 is an
+   `NBEST_MATCH_CANDIDATE` only once `m_nbest_results` is non-empty,
+   and only `_prepend_sentence_candidates` (`pinyin.cpp:1934`) puts one
+   there — fed solely by `pinyin_guess_sentence` (`pinyin.cpp:1372`),
+   which that driver called *after* `pinyin_guess_candidates`. On the
+   first input there was therefore no sentence candidate at all, and
+   candidate 0 was whatever `_prepend_longer_candidates`
+   (`pinyin.cpp:1870`) had prepended, or a `NORMAL_CANDIDATE`. A
+   `LONGER_CANDIDATE` trains unigram only and installs no constraint
+   (`pinyin.cpp:2523`); a `NORMAL_CANDIDATE` *would* have trained. The
+   zero-`Bigram::store` trace is real, but it follows from the inputs
+   used, not from the index alone.
+2. **A second, independent defect went unrecorded: the driver never
+   reset the instance between inputs.**
+   `pinyin_parse_more_full_pinyins` (`pinyin.cpp:1497-1525`) clears
+   neither the matrix state nor `m_nbest_results` nor `m_constraints`;
+   only `pinyin_reset` (`pinyin.cpp:2693`) does, and the driver never
+   called it. That leak is *why* candidate 0 became an
+   `NBEST_MATCH_CANDIDATE` from the second input onward — it was
+   reading the previous input's n-best results. Correcting the
+   candidate choice alone would have left the harness measuring a
+   stale-state artefact.
+
+Both are fixed by following the consumer rather than reasoning about
+the library alone: the driver now parses, guesses the sentence, and
+*then* lists candidates (ibus's per-keystroke order,
+`PYPFullPinyinEditor::updatePinyin` → `PhoneticEditor::update`,
+`PYPPhoneticEditor.cc:355`), selects `NORMAL_CANDIDATE`s at the
+advancing lookup cursor, trains, remembers, and resets
+(`PYPPhoneticEditor.cc:494-511` and `:341`). ibus itself declines to
+train an n-best selection at index 0 — `if (index != 0) pinyin_train
+(instance, index);`, `PYPLibPinyinCandidates.cc:116` — which is the
+same no-op seen from the consumer's side.
+
+A third defect surfaced while re-measuring: the driver asked for
+candidates with sort option `0` — no ordering at all — where ibus passes
+`SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY`
+(`PYPConfig.cc:151`). Unordered, "the first `NORMAL_CANDIDATE`" is an
+arbitrary rare character (`疒` for `nihao`, not `你好`), and **the grams
+those characters produce segfault the pin's own bigram-export iterator
+on the BerkeleyDB oracle** — the class-(b) use-after-free of
+compatibility-policy row 1: `dump` dies after the `P` rows and before
+any `B` row, while the same profile's `phrases` export walks fine and
+the same driver's rows export cleanly on tkrzw and Kyoto Cabinet. With
+ibus's sort option the rows a real selection produces export cleanly on
+all three DBMs. This is upstream's defect rather than oxpinyin's, and it
+is reachable only because the harness trains grams again — but the
+export surface is evidently not robust to arbitrary gram content, which
+constrains what a future harness may safely select.
+
+Re-measured 2026-09-13, oracles built at `074a2219` per DBM, on the
+script's default inputs (`nihao nisha`):
+
+| oracle DBM | Phases A–C | Phase D |
+|---|---|---|
+| tkrzw | `IDENTICAL`, 3 rows | `READABLE`, 2 phrase rows |
+| Kyoto Cabinet | `IDENTICAL`, 3 rows | `READABLE`, 2 phrase rows |
+| **Berkeley DB** | `IDENTICAL`, 3 rows | `READABLE`, 2 phrase rows |
+
+The `939400c6` driver fails Phase A on all three under the new guard
+("the pin trained no bigram rows"), where before it reached Phase B and
+failed there.
 
 ## Not verified
 
