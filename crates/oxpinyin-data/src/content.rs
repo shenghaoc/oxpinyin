@@ -142,9 +142,17 @@ fn parse_header(data: &[u8]) -> Result<Header, LoadError> {
         return Err(LoadError::TooShort { len: data.len() });
     }
     let data_size = read_u32_le(data, 0);
-    let computed = u32::try_from(data.len())
-        .unwrap_or(u32::MAX)
-        .wrapping_sub(8);
+    // `data.len() - 8` must itself fit the u32 wire field: clamping an
+    // oversized buffer to `u32::MAX` first would let a header claiming
+    // `u32::MAX - 8` pass the equality below (review on #448).
+    let computed = data
+        .len()
+        .checked_sub(8)
+        .and_then(|len| u32::try_from(len).ok())
+        .ok_or(LoadError::DataSizeMismatch {
+            expected: data_size,
+            actual: u32::MAX,
+        })?;
     if data_size != computed {
         return Err(LoadError::DataSizeMismatch {
             expected: data_size,
