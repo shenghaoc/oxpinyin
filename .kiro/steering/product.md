@@ -36,20 +36,22 @@ three gates; the seven-symbol preedit key family is exposed.
 scope, not the export boundary. Since P6 (2026-09-02) there is no compat
 layer: the runtime reads an unmodified libpinyin install's `data/`
 through the same readers it uses for its own output (Kyoto Cabinet,
-tkrzw and Berkeley DB carry libpinyin's file names). Measured drop-in on Fedora rawhide
-(Kyoto Cabinet), Debian testing (tkrzw) and NixOS — 1,571/1,571 rows
-each, sets byte-identical, order-only, the whole divergence attributed
-to R1's defined-order rule (`docs/findings/upstream-divergences.md`).
+tkrzw and Berkeley DB carry libpinyin's file names). Measured drop-in
+on Fedora rawhide (Kyoto Cabinet), Debian testing (tkrzw) and NixOS —
+1,571/1,571 rows each, sets byte-identical, order-only, the whole
+divergence attributed to R1's defined-order rule (`docs/findings/upstream-divergences.md`).
 Task 9 — learned user data read and written in libpinyin's own user-file
 format, seamless with a same-backend libpinyin — landed 2026-09-09
-(`docs/findings/user-store.md` §11). The BerkeleyDB backend is
-SHELVED (`docs/findings/berkeleydb-compat-phase1.md`).
+(`docs/findings/user-store.md` §11). Task 10 — the Berkeley DB backend,
+libpinyin's original DBM — landed 2026-09-12
+(`docs/findings/berkeleydb-backend.md`).
 
-**Storage.** Four backends, compile-time selected, exactly one per
-binary: tkrzw (default since 2026-09-05), Kyoto Cabinet, LMDB (Linux C
-deps), redb (pure-Rust portability fallback for macOS/Windows). Select a
-peer with `--no-default-features --features {kyotocabinet|lmdb|redb}`;
-the feature forwards down the crate chain to store. There is no
+**Storage.** Five backends, compile-time selected, exactly one per
+binary: tkrzw (default since 2026-09-05), Kyoto Cabinet, Berkeley DB
+(2026-09-12; Linux-only C dep), LMDB (Linux C deps), redb (pure-Rust
+portability fallback for macOS/Windows). Select a peer with
+`--no-default-features --features {kyotocabinet|bdb|lmdb|redb}`; the
+feature forwards down the crate chain to store. There is no
 no-backend fallback — `oxpinyin-store` refuses a build with zero or more
 than one backend feature at compile time.
 
