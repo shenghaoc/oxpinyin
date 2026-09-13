@@ -1,6 +1,7 @@
 # Store key-ordering contract — one place for the whole stack
 
-Date: 2026-08-24 (updated 2026-08-25 for the tkrzw backend) · Status:
+Date: 2026-08-24 (updated 2026-08-25 for the tkrzw backend; 2026-09-13
+for the Stage 2 hash/tree note) · Status:
 **audit finding** (verification + tests only; no key encoding changed) ·
 Branch: `audit/store-key-ordering`.
 
@@ -201,3 +202,146 @@ byte order and integer order diverge, so only such a set can tell a correct
 encoding from a broken one. Every ordering test here crosses 256 deliberately;
 a small-id-only fixture is the blind spot that would let an ordering defect
 pass unseen.
+
+## Deferred to Stage 2: the hash/tree split the type system does not carry
+
+Recorded 2026-09-13, noticed while reviewing #445 (the Berkeley DB
+backend). **No code changes with this note** — it queues a trait
+redesign, it does not perform one.
+
+The one rule above is a property of the *container*. Two of the store's
+constructors open a container that does not have it:
+
+- `RawReadStore::open_hash_read_only` (`crates/oxpinyin-store/src/lib.rs:503`)
+- `WriteStore::create_hash` (`crates/oxpinyin-store/src/lib.rs:316`)
+
+Both select a Kyoto Cabinet `HashDB` / Tkrzw `HashDBM` / Berkeley DB
+`DB_HASH`, and both return **`Self`** — the same concrete type
+`ReadStore::open_read_only` and `WriteStore::create` return for the
+ordered tree container. A handle on an unordered container is therefore
+statically indistinguishable from a handle on an ordered one, and the
+whole framed ordered API — `ReadStore::range`, `for_each`, `is_empty`,
+`get` — is in scope on it. Nothing in the type system says the ordered
+walk is unavailable; nothing checks it at the call.
+
+This is a **trait shape, not a backend defect**. `RawReadStore` imposes
+it on every peer that has a hash/tree distinction at all: Kyoto Cabinet
+behind `KcStore`, Tkrzw behind `TkrzwStore`, Berkeley DB behind
+`BdbStore`. redb and LMDB have one container class, so their
+`create_hash` / `open_hash_read_only` defaults delegate to
+`create` / `open_read_only` and the question does not arise for them.
+
+### What the framed tier would do on a hash handle
+
+The three backends fail differently, which is why the shape is worth
+recording rather than patching per backend. The Berkeley DB lines below
+are cited against `feat/berkeleydb-backend` at `689b6940` (#445, not yet
+landed); every other line is against `main` at `4104a960`.
+
+- **Berkeley DB — a loud runtime error.** `BdbStore::walk`
+  (`crates/oxpinyin-store/src/bdb/mod.rs:100`, the body of `range` and
+  `for_each`) and `BdbStore::first_key_of` (`:145`, the body of
+  `is_empty`) position their cursor with `Seek::AtOrAfter`, which maps to
+  `DB_SET_RANGE` (`crates/oxpinyin-store/src/bdb/ffi.rs:499`).
+  `DB_SET_RANGE` is documented Btree-only; on a `DB_HASH` handle libdb
+  returns `EINVAL`, which — being a positive errno — this backend maps
+  to `StoreError::Io` (`bdb/ffi.rs:148-150`), not `StoreError::Backend`.
+  Neither function branches on the container class.
+  `BdbStore::range_raw` (`:263`) *does* — `Db::is_hash()`
+  (`bdb/ffi.rs:268`) routes hash containers to `range_raw_unordered`
+  (`:192`), which collects every row, sorts by key, then applies the
+  bounds — so the raw tier is correct and only the framed tier is not.
+- **Kyoto Cabinet — silently wrong rows.** `KcStore::walk`
+  (`crates/oxpinyin-store/src/kyotocabinet/mod.rs:138`) and
+  `KcStore::is_empty` (`:198`) position with `kccurjumpkey`. The backend's
+  own `range_raw` comment (`:224-230`) already states why that is not an
+  ordered positioning on a hash container: "jump positions at a hash
+  slot, not at the first key at or above a lower bound". `range_raw`
+  collects-and-sorts for exactly this reason; the framed walk does not,
+  so it would read bucket-ordered rows from an arbitrary start and — its
+  stop condition being the first key outside the framed prefix — most
+  likely return a truncated or empty set, with no error at all.
+- **Tkrzw — outside contract, outcome unobserved.** The framed `scan`
+  positions with `tkrzw_dbm_iter_jump`, and the code's own comment
+  (`crates/oxpinyin-store/src/tkrzw/mod.rs:624-630`) records that
+  HashDBM's `Jump` does not behave as the ordered positioning the walk
+  assumes. The precise result of a framed walk on a hash handle has not
+  been observed here and is not claimed.
+
+### Why it is unreachable today
+
+Every hash-constructor call site in the workspace uses only the raw tier
+— `get_raw`, `range_raw`, `count_raw` — and never the framed one:
+
+| Call site | Constructor | Uses |
+|---|---|---|
+| `crates/oxpinyin-data/src/bigram_table.rs:56` | `open_hash_read_only` | wraps in `RawChewingDbm` |
+| `crates/oxpinyin-data/tests/language_model.rs:44` | `create_hash` | `put_raw` |
+| `crates/oxpinyin-datagen/src/write.rs:279` (`get_hash`) | `open_hash_read_only` | `get_raw` |
+| `crates/oxpinyin-datagen/src/write.rs:304` (`count_hash`) | `open_hash_read_only` | `count_raw` |
+| `crates/oxpinyin-datagen/src/write.rs:424` (`write_hash_with`) | `create_hash` | `put_raw` |
+| `crates/oxpinyin-datagen/src/write.rs:443` (`verify_hash`) | `open_hash_read_only` | `get_raw` |
+| `crates/oxpinyin-datagen/tests/libpinyin_parity.rs:146` | `open_hash_read_only` | `get_raw` |
+| `crates/oxpinyin-store/benches/support/mod.rs:88` | `open_hash_read_only` | open cost only |
+| `crates/oxpinyin-user/src/persistence.rs:299` (`load_bigram`) | `open_user_bigram` | `range_raw` (`:332`) |
+
+`RawChewingDbm` (`crates/oxpinyin-data/src/chewing_table.rs:83`) is the
+one wrapper a hash handle is handed to, and it is bounded by
+`RawReadStore` alone: its `get` calls `get_raw` (`:124`) and its `walk`
+calls `range_raw` (`:142`). `WriteStore::write_user_bigram`'s trait
+default (`crates/oxpinyin-store/src/lib.rs:352`) is `create_hash` +
+`put_raw` + `compact` + rename. So no production path reaches a framed
+walk with a hash handle, and the worst outcome if one were added is an
+`EINVAL` on Berkeley DB or wrong rows on Kyoto Cabinet — never unsafety,
+and never a silent corruption of what is written.
+
+### The invariant is unenforced, not absent
+
+"An ordered walk is only ever asked of an ordered container" holds today.
+It holds by **call-site convention**, checked by nothing: not the type,
+not a debug assertion, not a test. A new backend author who adds one
+framed call on a hash handle — or a `RawReadStore` bound that widens to
+`ReadStore` — gets a runtime error on one backend and silent misordering
+on another, with no compile-time signal and no red test until a fixture
+happens to cross a hash bucket boundary in the wrong direction. That is
+the failure mode this note exists to pre-empt.
+
+### Candidate fixes for Stage 2
+
+Not ranked; each has a different blast radius and the redesign picks one.
+
+1. **Separate concrete types.** A distinct hash type per backend
+   (`KcHashStore` beside `KcStore`, and so on), with only the tree type
+   implementing `ReadStore`. Strongest guarantee; changes every
+   `RawReadStore` bound in `oxpinyin-data`, `oxpinyin-datagen` and
+   `oxpinyin-user`, and doubles the per-backend type surface.
+2. **A sealed marker type parameter.** One type carrying the container
+   class in its type — `Store<Tree>` / `Store<Hash>` — with the ordered
+   methods in an `impl` block bounded to the ordered marker. Keeps one
+   type per backend; the marker must be sealed or a downstream crate can
+   assert order the container does not have.
+3. **Move the unordered operations onto their own trait.** Split
+   `RawReadStore`'s unordered half (`get_raw`, `count_raw`, the hash
+   constructors) from its ordered half (`range_raw`), so a hash handle is
+   bounded by a trait on which the ordered API is simply not in scope.
+   Smallest surface change of the three and the only one that needs no
+   new types, but it fixes the raw tier only: the hash constructors must
+   also stop returning `Self` — or return a newtype — or `ReadStore`
+   stays in scope on the value they hand back.
+
+### Where this sits
+
+It joins the store-trait items ruled out of Stage 1 on 2026-09-05 and
+deferred to the Stage 2 trait redesign — #340's "Deferred by ruling": F2
+(point gets return `Vec<u8>` for 4- and 8-byte values because the trait
+signature forces it) and F5 (`mask_out` / `remove_user_phrase`
+materialise whole tables because `&dyn WriteTxn` cannot remove while
+iterating). Those two were recorded in that PR's body and never written
+into a document; this section is the repo-side home for the list, and
+the three of them share one precondition — a `ReadStore` / `WriteStore` /
+`RawReadStore` / `WriteTxn` signature change, which is a STOP until a
+maintainer opens Stage 2.
+
+Not done here, and cheap when #445 lands: a doc comment on
+`BdbStore::walk` and `BdbStore::first_key_of` saying they assume a
+`DB_BTREE` handle and pointing at this section for why that holds.
