@@ -695,22 +695,43 @@ persistence, bridge, e2e); the backend matrix through the
 `oxpinyin-validate` container (Kyoto Cabinet and tkrzw suites, 282 and
 287 tests) plus redb, LMDB and tkrzw on the host; and
 `tools/oracle/user-dir-round-trip.sh` — the seamless claim itself,
-measured against two real pin-built oracles on 2026-09-09:
+measured against three real pin-built oracles on 2026-09-13, on the
+script's default inputs (`nihao nisha`):
 
-| pair | oracle DBM | result |
-|---|---|---|
-| oxpinyin ↔ libpinyin, **Kyoto Cabinet** | `--dbm kc` | **PASSED**, 10/10 export rows byte-identical |
-| oxpinyin ↔ libpinyin, **tkrzw** | `--dbm tkrzw` | **PASSED**, 10/10 export rows byte-identical |
+| pair | oracle DBM | Phase C — the pin re-renders | Phase D — the pin reads |
+|---|---|---|---|
+| oxpinyin ↔ libpinyin, **tkrzw** | `--dbm tkrzw` | **IDENTICAL**, 3/3 export rows byte-identical | **READABLE**, 2 phrase rows, all expected |
+| oxpinyin ↔ libpinyin, **Kyoto Cabinet** | `--dbm kc` | **IDENTICAL**, 3/3 export rows byte-identical | **READABLE**, 2 phrase rows, all expected |
+| oxpinyin ↔ libpinyin, **Berkeley DB** | `--dbm bdb` | **IDENTICAL**, 3/3 export rows byte-identical | **READABLE**, 2 phrase rows, all expected |
 
-Each 10 rows are 2 phrase rows and 8 bigram rows: the driver runs ibus's
+The three rows the pin renders are `P 你好 ni'hao 5`, `P 你沙 ni'sha 5`
+and `B 你好 ni'hao 138` — byte-identical on all three DBMs. The
+three-input set `tools/oracle/docker-user-rt.sh` drives (`nihao nisha
+nihaoa`) was measured on tkrzw the same day: `IDENTICAL` at 6 rows,
+`READABLE` at 3 phrase rows. The driver runs ibus's
 `remember-every-input` path (`pinyin_get_sentence` →
 `pinyin_remember_user_input`) after each train, so the profile is not
-phrase-free and `user.bin` (27 → 115 bytes), `user_phrase_index.bin`
-(7 → 112) and `user_pinyin_index.bin` (7 → 173) all carry real content
+phrase-free and `user.bin` and the two index trees carry real content
 across the round trip. An earlier driver trained without remembering,
 which left those three files at their empty-library sizes and proved
 only the bigram and `.dbin` halves — the user phrases, the most visible
 part of a learned dictionary, were untested against a real libpinyin.
+
+**Correction (2026-09-13).** Until this date the table above read
+"**PASSED**, 10/10 export rows byte-identical" for Kyoto Cabinet and
+tkrzw, dated 2026-09-09. That figure is not reproducible from any
+committed harness. It was introduced by `939400c6` alongside a
+`user_driver.c` that selected candidate 0 — an n-best sentence candidate
+— whose `diff_result(best, best)` installs no `CONSTRAINT_ONESTEP`, so
+`train_result3` stored no user-bigram grams at all; with no grams Phase
+B's `!bigram.is_empty()` assertion fails and Phase C never runs, on
+every backend. The driver was fixed on 2026-09-13: it follows ibus's
+call order and sort option and selects `NORMAL_CANDIDATE`s at the
+advancing lookup cursor, and Phase A now asserts that the pin trained
+bigram rows rather than leaving that to surface two phases later. The
+table is that harness re-measured; `docs/findings/berkeleydb-backend.md`
+recorded the regression and carries the mechanism and two corrections to
+the first account of it.
 
 The script takes oxpinyin's backend from `OX_CARGO_FEATURES`, which must
 match the oracle prefix's `--with-dbm` — the claim is per KV family, so
