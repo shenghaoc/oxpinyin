@@ -1,7 +1,8 @@
 # Store key-ordering contract — one place for the whole stack
 
 Date: 2026-08-24 (updated 2026-08-25 for the tkrzw backend; 2026-09-13
-for the Stage 2 hash/tree note) · Status:
+for the Stage 2 hash/tree note, rechecked against the landed Berkeley DB
+backend) · Status:
 **audit finding** (verification + tests only; no key encoding changed) ·
 Branch: `audit/store-key-ordering`.
 
@@ -206,14 +207,15 @@ pass unseen.
 ## Deferred to Stage 2: the hash/tree split the type system does not carry
 
 Recorded 2026-09-13, noticed while reviewing #445 (the Berkeley DB
-backend). **No code changes with this note** — it queues a trait
-redesign, it does not perform one.
+backend, merged the same day as `33c2e238`). **This note queues a trait
+redesign; it does not perform one** — the only code it carries is a doc
+comment on the two Berkeley DB functions that depend on the invariant.
 
 The one rule above is a property of the *container*. Two of the store's
 constructors open a container that does not have it:
 
-- `RawReadStore::open_hash_read_only` (`crates/oxpinyin-store/src/lib.rs:503`)
-- `WriteStore::create_hash` (`crates/oxpinyin-store/src/lib.rs:316`)
+- `RawReadStore::open_hash_read_only` (`crates/oxpinyin-store/src/lib.rs:510`)
+- `WriteStore::create_hash` (`crates/oxpinyin-store/src/lib.rs:323`)
 
 Both select a Kyoto Cabinet `HashDB` / Tkrzw `HashDBM` / Berkeley DB
 `DB_HASH`, and both return **`Self`** — the same concrete type
@@ -234,22 +236,21 @@ behind `KcStore`, Tkrzw behind `TkrzwStore`, Berkeley DB behind
 ### What the framed tier would do on a hash handle
 
 The three backends fail differently, which is why the shape is worth
-recording rather than patching per backend. The Berkeley DB lines below
-are cited against `feat/berkeleydb-backend` at `689b6940` (#445, not yet
-landed); every other line is against `main` at `4104a960`.
+recording rather than patching per backend. Every line below is cited
+against `main` at `33c2e238`.
 
 - **Berkeley DB — a loud runtime error.** `BdbStore::walk`
-  (`crates/oxpinyin-store/src/bdb/mod.rs:100`, the body of `range` and
-  `for_each`) and `BdbStore::first_key_of` (`:145`, the body of
+  (`crates/oxpinyin-store/src/bdb/mod.rs:110`, the body of `range` and
+  `for_each`) and `BdbStore::first_key_of` (`:158`, the body of
   `is_empty`) position their cursor with `Seek::AtOrAfter`, which maps to
   `DB_SET_RANGE` (`crates/oxpinyin-store/src/bdb/ffi.rs:499`).
   `DB_SET_RANGE` is documented Btree-only; on a `DB_HASH` handle libdb
   returns `EINVAL`, which — being a positive errno — this backend maps
   to `StoreError::Io` (`bdb/ffi.rs:148-150`), not `StoreError::Backend`.
   Neither function branches on the container class.
-  `BdbStore::range_raw` (`:263`) *does* — `Db::is_hash()`
+  `BdbStore::range_raw` (`:276`) *does* — `Db::is_hash()`
   (`bdb/ffi.rs:268`) routes hash containers to `range_raw_unordered`
-  (`:192`), which collects every row, sorts by key, then applies the
+  (`:205`), which collects every row, sorts by key, then applies the
   bounds — so the raw tier is correct and only the framed tier is not.
 - **Kyoto Cabinet — silently wrong rows.** `KcStore::walk`
   (`crates/oxpinyin-store/src/kyotocabinet/mod.rs:138`) and
@@ -277,19 +278,25 @@ Every hash-constructor call site in the workspace uses only the raw tier
 |---|---|---|
 | `crates/oxpinyin-data/src/bigram_table.rs:56` | `open_hash_read_only` | wraps in `RawChewingDbm` |
 | `crates/oxpinyin-data/tests/language_model.rs:44` | `create_hash` | `put_raw` |
-| `crates/oxpinyin-datagen/src/write.rs:279` (`get_hash`) | `open_hash_read_only` | `get_raw` |
-| `crates/oxpinyin-datagen/src/write.rs:304` (`count_hash`) | `open_hash_read_only` | `count_raw` |
-| `crates/oxpinyin-datagen/src/write.rs:424` (`write_hash_with`) | `create_hash` | `put_raw` |
-| `crates/oxpinyin-datagen/src/write.rs:443` (`verify_hash`) | `open_hash_read_only` | `get_raw` |
+| `crates/oxpinyin-datagen/src/write.rs:299` (`get_hash`) | `open_hash_read_only` | `get_raw` |
+| `crates/oxpinyin-datagen/src/write.rs:326` (`count_hash`) | `open_hash_read_only` | `count_raw` |
+| `crates/oxpinyin-datagen/src/write.rs:448` (`write_hash_with`) | `create_hash` | `put_raw` |
+| `crates/oxpinyin-datagen/src/write.rs:467` (`verify_hash`) | `open_hash_read_only` | `get_raw` |
 | `crates/oxpinyin-datagen/tests/libpinyin_parity.rs:146` | `open_hash_read_only` | `get_raw` |
 | `crates/oxpinyin-store/benches/support/mod.rs:88` | `open_hash_read_only` | open cost only |
+| `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs:64` | `open_hash_read_only` | `range_raw` |
+| `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs:94` | `open_hash_read_only` | `count_raw` |
+| `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs:118` | `open_hash_read_only` | `get_raw` |
+| `crates/oxpinyin-store/tests/bdb_libpinyin_files.rs:210` | `open_user_bigram` | `range_raw`, `count_raw` |
 | `crates/oxpinyin-user/src/persistence.rs:299` (`load_bigram`) | `open_user_bigram` | `range_raw` (`:332`) |
+| `crates/oxpinyin-user/src/persistence.rs:1136` (test) | `open_user_bigram` | `get_raw`, `range_raw` |
+| `crates/oxpinyin-user/src/persistence.rs:1346` (test) | `open_user_bigram` | `range_raw` |
 
 `RawChewingDbm` (`crates/oxpinyin-data/src/chewing_table.rs:83`) is the
 one wrapper a hash handle is handed to, and it is bounded by
 `RawReadStore` alone: its `get` calls `get_raw` (`:124`) and its `walk`
 calls `range_raw` (`:142`). `WriteStore::write_user_bigram`'s trait
-default (`crates/oxpinyin-store/src/lib.rs:352`) is `create_hash` +
+default (`crates/oxpinyin-store/src/lib.rs:359`) is `create_hash` +
 `put_raw` + `compact` + rename. So no production path reaches a framed
 walk with a hash handle, and the worst outcome if one were added is an
 `EINVAL` on Berkeley DB or wrong rows on Kyoto Cabinet — never unsafety,
@@ -342,6 +349,8 @@ the three of them share one precondition — a `ReadStore` / `WriteStore` /
 `RawReadStore` / `WriteTxn` signature change, which is a STOP until a
 maintainer opens Stage 2.
 
-Not done here, and cheap when #445 lands: a doc comment on
-`BdbStore::walk` and `BdbStore::first_key_of` saying they assume a
-`DB_BTREE` handle and pointing at this section for why that holds.
+`BdbStore::walk` and `BdbStore::first_key_of` carry a doc comment saying
+they assume a `DB_BTREE` handle, why that holds, and that nothing
+enforces it — the one place a reader is most likely to reach for the
+ordered cursor on a hash container. That comment and this section are
+the whole of the mitigation until the redesign lands.

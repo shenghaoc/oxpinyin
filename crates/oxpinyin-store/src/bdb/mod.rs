@@ -97,6 +97,16 @@ impl BdbStore {
     /// One cursor, positioned once with `DB_SET_RANGE` and advanced with
     /// `DB_NEXT`; the walk stops at the first key outside the table's
     /// framed prefix, so a scan costs the rows it returns and one more.
+    ///
+    /// **Assumes a `DB_BTREE` handle.** `DB_SET_RANGE` is Btree-only —
+    /// libdb answers `EINVAL` on a `DB_HASH` — so unlike
+    /// [`Self::range_raw`] this does not branch on [`ffi::Db::is_hash`].
+    /// That holds because the framed tier is reached only through a
+    /// tree-opened store: every caller of the hash constructors
+    /// (`create_hash` / `open_hash_read_only` / `open_user_bigram`) uses
+    /// the raw tier alone. Nothing in the type system enforces it — the
+    /// hash constructors return the same `Self` the tree ones do. See the
+    /// Stage 2 section of `docs/findings/store-key-ordering.md`.
     fn walk(
         &self,
         table: &str,
@@ -142,6 +152,9 @@ impl BdbStore {
 
     /// Whether `table` has any row at all — one cursor positioning, never
     /// a scan.
+    ///
+    /// Assumes a `DB_BTREE` handle for the same reason [`Self::walk`]
+    /// does, and on the same grounds.
     fn first_key_of(&self, table: &str) -> Result<bool, StoreError> {
         validate_table_name(table)?;
         let table_prefix = prefix(table);
