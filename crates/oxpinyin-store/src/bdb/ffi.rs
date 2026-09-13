@@ -4,11 +4,15 @@
 //! — [`super::BdbStore`] — is safe Rust.
 //!
 //! The generated declarations are `unsafe extern "C"`, which the
-//! workspace's `unsafe_code = "deny"` would otherwise reject; the allow
-//! is scoped to this module, under the same backend waiver the tkrzw
-//! and Kyoto Cabinet shims carry. Waived safety is not waived
-//! correctness: every block below states its invariant, and the shared
-//! read and write suites gate this backend like any other.
+//! workspace's `unsafe_code = "deny"` would otherwise reject; the
+//! `expect` is scoped to this module alone. Every `unsafe` in the
+//! backend lives below, so `super` stays under the workspace `deny` —
+//! the shape the Kyoto Cabinet shim shares, and one the tkrzw and LMDB
+//! backends cannot have. Because the waiver is an `expect` rather than
+//! an `allow`, it fails the build if this module ever stops needing it.
+//! Waived safety is not waived correctness: every block below states
+//! its invariant, and the shared read and write suites gate this
+//! backend like any other.
 //!
 //! # The four hazards, and where each is answered
 //!
@@ -47,7 +51,10 @@
 //! checked: the pointer with an explicit test, the members through
 //! [`method`], which turns a null member into an error rather than a
 //! call through null.
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "FFI over the system libdb; every block carries a SAFETY comment"
+)]
 
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;

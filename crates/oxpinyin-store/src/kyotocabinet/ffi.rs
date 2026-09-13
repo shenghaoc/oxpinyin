@@ -4,11 +4,14 @@
 //! it is safe Rust.
 //!
 //! The generated declarations are `unsafe extern "C"`, which the
-//! workspace's `unsafe_code = "deny"` would otherwise reject; the allow
-//! is scoped to this module and `super`, under the same backend waiver
-//! the tkrzw shim carries. Waived safety is not waived correctness: every
-//! block below states its invariant, and the shared read and write suites
-//! gate this backend like any other.
+//! workspace's `unsafe_code = "deny"` would otherwise reject; the
+//! `expect` is scoped to this module alone. Every `unsafe` in the
+//! backend lives below, so `super` stays under the workspace `deny` —
+//! and because the waiver is an `expect` rather than an `allow`, it
+//! fails the build if this module ever stops needing it. Waived safety
+//! is not waived correctness: every block below states its invariant,
+//! and the shared read and write suites gate this backend like any
+//! other.
 //!
 //! # The four hazards
 //!
@@ -50,7 +53,10 @@
 //! code (`kcdbecode`, named by `kcecodename`). `kcdbnew` and `kcdbcursor`
 //! return `NULL` on allocation failure. All are checked; nothing is
 //! dereferenced unconditionally.
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "FFI over the system libkyotocabinet; every block carries a SAFETY comment"
+)]
 
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
