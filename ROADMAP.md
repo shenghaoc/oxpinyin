@@ -101,10 +101,11 @@ landed 2026-09-09: user files are read and written in libpinyin's own
 formats, seamless in both directions with a same-backend libpinyin per
 the 2026-09-09 maintainer ruling (`docs/findings/compatibility-policy.md`,
 goal amendment), measured by `tools/oracle/user-dir-round-trip.sh`
-against Kyoto Cabinet and tkrzw oracles (`docs/findings/user-store.md`
-§11). *Verification:* one gap open — the differential suite does not yet
-drive all 58 consumer-union symbols, so the uncovered ones are
-unverified rather than compliant; closing it is work
+against tkrzw, Kyoto Cabinet and Berkeley DB oracles, re-measured
+2026-09-13 after the harness's own driver was fixed
+(`docs/findings/user-store.md` §11). *Verification:* one gap open — the
+differential suite does not yet drive all 58 consumer-union symbols, so
+the uncovered ones are unverified rather than compliant; closing it is work
 (`docs/findings/compatibility-policy.md`, §(e) consequence 3), tracked
 here rather than only in the policy. One defect open under the policy:
 row 30, the pinyin facade's chewing batch `FORCE_TONE` seam. `README.md`
@@ -236,7 +237,9 @@ parked.
   store peer — non-default, libdb 5.3 only, verified against a
   `--with-dbm=BerkeleyDB` oracle in Debian and Fedora containers
   (`docs/findings/berkeleydb-backend.md`, which also records the
-  `user_driver.c` regression it found in the round-trip harness). The
+  `user_driver.c` regression it found in the round-trip harness — fixed
+  2026-09-13, and the differential re-measured on all three DBM
+  oracles). The
   spec's design and requirements were brought to the P6 architecture and
   the 79-symbol surface on 2026-09-12.
 
