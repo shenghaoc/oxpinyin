@@ -119,11 +119,19 @@ a tkrzw twin was built for comparison. With
 - **Phases A–C (the pin trains, oxpinyin loads and saves in place, the
   pin re-renders)**: **were blocked by a pre-existing harness
   regression, not by this backend — fixed 2026-09-13.** The `939400c6`
-  `user_driver.c` chose candidate 0 — an n-best candidate whose
-  `diff_result(best, best)` installs no `CONSTRAINT_ONESTEP` — so the
-  pin's `train_result3` stored no user-bigram grams (traced against
-  instrumented oracles: zero `Bigram::store` calls;
-  `ForwardPhoneticConstraints::diff_result` skips equal tokens). The
+  `user_driver.c` chose candidate 0, and the type at that index was a
+  matter of candidate and instance state, not the index alone: the
+  first input listed candidates before any sentence candidate existed
+  (the driver guessed the sentence only after choosing), so index 0
+  held a `LONGER_CANDIDATE` or a `NORMAL_CANDIDATE`; from the second
+  input onward it held an `NBEST_MATCH_CANDIDATE` — the instance was
+  never reset, so the previous input's n-best results survived — whose
+  `diff_result(best, best)` installs no `CONSTRAINT_ONESTEP`. With the
+  harness inputs no selection installed a constraint, so the pin's
+  `train_result3` stored no user-bigram grams (traced against
+  instrumented oracles: zero `Bigram::store` calls; on the n-best leg,
+  `ForwardPhoneticConstraints::diff_result` skips equal tokens;
+  corrections 1–2 below unpack both defects). The
   `a_pin_profile…` test's `!bigram.is_empty()` assertion therefore
   failed against a freshly built tkrzw oracle exactly as it did
   against the BDB one — the differential had been broken for every
@@ -138,7 +146,7 @@ a tkrzw twin was built for comparison. With
   supersedes that probe; its own figures are in
   `docs/findings/user-store.md` §11.
 
-Two corrections to the account above, both read from the pin at
+Two corrections to the first account of it, both read from the pin at
 `074a2219` (`src/pinyin.cpp` blob `f27f7cf7`,
 `src/lookup/phonetic_lookup.cpp` `4205630d`,
 `src/lookup/phonetic_lookup.h` `c092e761`):
