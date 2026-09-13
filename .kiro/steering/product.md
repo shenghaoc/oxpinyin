@@ -35,8 +35,8 @@ three gates; the seven-symbol preedit key family is exposed.
 §6); the measured consumer union of 58 symbols is the differential-probe
 scope, not the export boundary. Since P6 (2026-09-02) there is no compat
 layer: the runtime reads an unmodified libpinyin install's `data/`
-through the same readers it uses for its own output (Kyoto Cabinet and
-tkrzw carry libpinyin's file names). Measured drop-in on Fedora rawhide
+through the same readers it uses for its own output (Kyoto Cabinet,
+tkrzw and Berkeley DB carry libpinyin's file names). Measured drop-in on Fedora rawhide
 (Kyoto Cabinet), Debian testing (tkrzw) and NixOS — 1,571/1,571 rows
 each, sets byte-identical, order-only, the whole divergence attributed
 to R1's defined-order rule (`docs/findings/upstream-divergences.md`).

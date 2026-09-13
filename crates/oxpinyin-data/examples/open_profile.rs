@@ -2,8 +2,8 @@
 //!
 //! Measurement only — not part of the decode path. Drive it with a system
 //! data directory for the compiled-in backend (a libpinyin install's
-//! `data/` on Kyoto Cabinet and tkrzw, an `oxpinyin-datagen compile`
-//! output anywhere):
+//! `data/` on Kyoto Cabinet, tkrzw and Berkeley DB, an
+//! `oxpinyin-datagen compile` output anywhere):
 //!
 //! ```text
 //! PINYIN_EXPORT_DIR=/opt/libpinyin-kc/lib/libpinyin/data \

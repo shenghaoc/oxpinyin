@@ -36,13 +36,13 @@ binary, so the comparison can never go stale against a golden file.
 
 The engine opens a backend-specific system data directory the way
 `pinyin_init` does — a handle plus a point read per file, nothing scanned
-at open. Two kinds of directory exist. On Kyoto Cabinet and tkrzw the
-files are libpinyin's own, so an unmodified libpinyin install's `data/`
-*is* a valid `system_dir` and libpinyin can read what oxpinyin writes; on
-redb and LMDB the same logical tables live in oxpinyin's own containers,
-which no libpinyin build can open. On every backend the directory
-`oxpinyin-datagen compile` writes is valid. A libpinyin installation is
-never *linked*.
+at open. Two kinds of directory exist. On Kyoto Cabinet, tkrzw and
+Berkeley DB the files are libpinyin's own, so an unmodified libpinyin
+install's `data/` *is* a valid `system_dir` and libpinyin can read what
+oxpinyin writes; on redb and LMDB the same logical tables live in
+oxpinyin's own containers, which no libpinyin build can open. On every
+backend the directory `oxpinyin-datagen compile` writes is valid. A
+libpinyin installation is never *linked*.
 
 | File | Required | Purpose |
 |---|---|---|
@@ -291,9 +291,9 @@ candidate computation never depends on writable storage.
 The user directory holds libpinyin's own file set, not a private store
 (drop-in task 9, 2026-09-09; `docs/findings/user-store.md` §11): `user.conf`,
 the user bigram, the two user index DBMs, the `user.bin` phrase chunk and
-the `*.dbin` diff logs, with libpinyin's file names on Kyoto Cabinet and
-tkrzw and `<stem>.<ext>` on redb and LMDB. A same-backend libpinyin reads
-and writes the same profile. Opening runs the pin's `check_format`: a
+the `*.dbin` diff logs, with libpinyin's file names on Kyoto Cabinet,
+tkrzw and Berkeley DB and `<stem>.<ext>` on redb and LMDB. A same-backend
+libpinyin reads and writes the same profile. Opening runs the pin's `check_format`: a
 profile whose `user.conf` names another backend family or model version
 is wiped, exactly as libpinyin does. `save()` writes every file whole to
 a `.tmp` sibling, then renames them one by one with `user.conf` last, as

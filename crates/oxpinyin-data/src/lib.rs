@@ -2,8 +2,8 @@
 //! (`ChewingLargeTable2`, `PhraseLargeTable3`), the mmap'd per-library
 //! phrase-index chunk files (`FacadePhraseIndex`), the bigram (`Bigram`)
 //! and the punctuation table (`PunctTable`) — the same files a libpinyin
-//! install ships on Kyoto Cabinet and tkrzw, and the same records in
-//! redb's or LMDB's own container on those backends.
+//! install ships on Kyoto Cabinet, tkrzw and Berkeley DB, and the same
+//! records in redb's or LMDB's own container on those backends.
 //!
 //! Every reader is lazy: opening a directory costs the DBM handles and
 //! the chunk-file mappings, and each lookup is a point read. Portable: no

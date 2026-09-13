@@ -119,12 +119,12 @@ pub(crate) fn lock_error() -> PyErr {
 /// compiled into the wheel (``oxpinyin._native.__store_ext__`` names it),
 /// and it fixes the DBM file names: libpinyin's own (``pinyin_index.bin``,
 /// ``phrase_index.bin``, ``bigram.db``, the content-table ``.bin`` files)
-/// under Kyoto Cabinet and tkrzw, so an unmodified libpinyin ``data/``
-/// built with the same backend opens as is; ``<stem>.<ext>`` under redb
-/// and LMDB, which only ``oxpinyin-datagen`` writes. A directory written by
-/// another backend is a missing-file or unreadable-container error, not a
-/// misread. The user directory, when given, is read and written in
-/// libpinyin's own user-file set.
+/// under Kyoto Cabinet, tkrzw and Berkeley DB, so an unmodified
+/// libpinyin ``data/`` built with the same backend opens as is;
+/// ``<stem>.<ext>`` under redb and LMDB, which only ``oxpinyin-datagen``
+/// writes. A directory written by another backend is a missing-file or
+/// unreadable-container error, not a misread. The user directory, when
+/// given, is read and written in libpinyin's own user-file set.
 ///
 /// Shareable across threads one call at a time: every call takes an internal
 /// lock, so a single call is atomic, but a *sequence* of calls is not — the

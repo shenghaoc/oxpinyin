@@ -52,12 +52,12 @@ pinyin and phrase DBMs, the per-library `MemoryChunk` files (mmap,
 checksummed), `bigram.db`, `punct.bin`, the addon DBM pair, λ from
 `table.conf` — a handle plus a point read each, nothing scanned at open.
 `oxpinyin-runtime` opens a system directory the way `pinyin_init` does;
-on Kyoto Cabinet and tkrzw that directory can be an unmodified libpinyin
-install's `data/`, and on every backend it is what `oxpinyin-datagen
-compile` writes. The caller supplies the directory (`StoragePaths`); no
-distro layout is auto-detected. A redb or LMDB build reads the same
-records from its own container (`<stem>.<ext>`) and cannot open a
-libpinyin install directly.
+on Kyoto Cabinet, tkrzw and Berkeley DB that directory can be an
+unmodified libpinyin install's `data/`, and on every backend it is what
+`oxpinyin-datagen compile` writes. The caller supplies the directory
+(`StoragePaths`); no distro layout is auto-detected. A redb or LMDB build
+reads the same records from its own container (`<stem>.<ext>`) and cannot
+open a libpinyin install directly.
 
 **Portability seam:** `oxpinyin-engine`'s session API is framework-neutral —
 abstract `KeyInput`, preedit spans + style enum, candidate iteration;
