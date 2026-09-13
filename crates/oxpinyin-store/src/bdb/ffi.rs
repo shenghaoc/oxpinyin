@@ -9,7 +9,10 @@
 //! backend lives below, so `super` stays under the workspace `deny` —
 //! the shape the Kyoto Cabinet shim shares, and one the tkrzw and LMDB
 //! backends cannot have. Because the waiver is an `expect` rather than
-//! an `allow`, it fails the build if this module ever stops needing it.
+//! an `allow`, an unfulfilled one draws
+//! `unfulfilled_lint_expectations` — warn-by-default, an error only
+//! where warnings are denied, and every supported CI check denies them
+//! (`RUSTFLAGS: -D warnings`), so a stale waiver cannot land unnoticed.
 //! Waived safety is not waived correctness: every block below states
 //! its invariant, and the shared read and write suites gate this
 //! backend like any other.
