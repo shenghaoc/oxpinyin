@@ -917,9 +917,9 @@ seen in the same probe is a separate parity defect: issue #356.
   `SYSTEM_PINYIN_INDEX "pinyin_index.bin"`, … `src/pinyin_internal.h`), so a
   Kyoto-Cabinet-built libpinyin still writes `bigram.db`.
 - **oxpinyin behaviour:** the same one-backend-per-binary compile-time
-  selection (the `DefaultStore` cfg chain, precedence
-  kyotocabinet > tkrzw > lmdb > redb), but the file names follow the backend
-  family since P6 (`345af16d`): on Kyoto Cabinet and tkrzw — the two DBMs
+  selection (the `DefaultStore` cfg chain, exactly one backend feature per
+  build), but the file names follow the backend family since P6
+  (`345af16d`): on Kyoto Cabinet, tkrzw and Berkeley DB — the three DBMs
   libpinyin itself builds against — the files carry libpinyin's own
   constants (`pinyin_index.bin`, `bigram.db`, …), so an install is name-
   and byte-compatible; only the oxpinyin-only containers (redb, LMDB)
@@ -927,11 +927,20 @@ seen in the same probe is a separate parity defect: issue #356.
   `DEFAULT_STORE_IS_LIBPINYIN_DBM` (`crates/oxpinyin-store/src/lib.rs`) is
   the switch.
 - **Externally observable:** only in redb and LMDB data directories,
-  which no libpinyin build can open anyway; on Kyoto Cabinet and tkrzw the
-  files are libpinyin's own fixed names (`bigram.db`, `*.bin`), so no
-  libpinyin consumer sees a
-  difference; recorded because the naming intentionally diverges from the
-  pin's constants rather than mirroring them.
+  which no libpinyin build can open anyway; on Kyoto Cabinet, tkrzw and
+  Berkeley DB the files are libpinyin's own fixed names (`bigram.db`,
+  `*.bin`), so no libpinyin consumer sees a difference; recorded because
+  the naming intentionally diverges from the pin's constants rather than
+  mirroring them.
+- **Amendment (2026-09-13, drop-in task 10).** Berkeley DB landed as the
+  fifth peer and the third libpinyin DBM, so "the two DBMs" this entry
+  named is now three and `bdb` sits inside the name-compatible set — it
+  carries libpinyin's own constants, not `<stem>.<ext>`. The precedence
+  chain the entry used to cite (`kyotocabinet > tkrzw > lmdb > redb`) is
+  also gone: an exactly-one-backend `compile_error!` guard refuses any
+  build naming none or more than one backend feature, so no order
+  survives to fall back on, and the default selection has been tkrzw
+  since 2026-09-05. The naming decision itself is unchanged.
 
 ## R1 measured on the drop-in compat paths — order-only, sets identical (2026-08-30)
 

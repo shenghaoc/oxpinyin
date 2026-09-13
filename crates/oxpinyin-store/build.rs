@@ -1,15 +1,15 @@
 //! Generates the C backends' bindings.
 //!
-//! Kyoto Cabinet is the workspace's default selected backend, so a normal
-//! build runs bindgen over `kclangc.h` and links the system
-//! libkyotocabinet. With `--no-default-features` — and with no C backend
-//! feature enabled — this script does nothing: no bindgen, no extra
-//! library. Selecting a peer backend explicitly
-//! (`--features {redb|lmdb|tkrzw}`) skips the C-binding step for the
-//! ones it does not build.
+//! tkrzw is the workspace's default selected backend, so a normal build
+//! runs bindgen over `tkrzw_langc.h` and links the system libtkrzw. With
+//! `--no-default-features` — and with no C backend feature enabled —
+//! this script does nothing: no bindgen, no extra library. Selecting a
+//! peer backend explicitly (`--no-default-features --features
+//! {kyotocabinet|redb|lmdb|bdb}`) skips the C-binding step for the ones
+//! it does not build.
 //!
-//! * `kyotocabinet` — the Kyoto Cabinet C API (`kclangc.h`), on by default.
-//! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`).
+//! * `kyotocabinet` — the Kyoto Cabinet C API (`kclangc.h`).
+//! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`), on by default.
 //! * `lmdb` — the LMDB C API (`lmdb.h`), from the system installation.
 //! * `bdb` — the Berkeley DB C API (`db.h`), from the system libdb.
 
@@ -395,7 +395,7 @@ mod tkrzw {
 /// own artifact: one LMDB per system, patched by the distribution's
 /// security process rather than pinned inside a Rust dependency, and
 /// nothing for a downstream packager to un-vendor. This is the same
-/// arrangement the Kyoto Cabinet and tkrzw backends already have.
+/// arrangement the Kyoto Cabinet, tkrzw and Berkeley DB backends have.
 ///
 /// # Why generated fresh, not checked in
 ///

@@ -359,8 +359,11 @@ impl Db {
         check(code, "DB->del")
     }
 
-    /// Flush to the operating system. This is the commit-visible sync
-    /// `write` ends with and the device-visible sync `compact` calls.
+    /// Flush to stable storage. `DB->sync` is libdb's only flush for a
+    /// handle opened with no environment, and it issues `fdatasync`, so
+    /// this one call serves both roles: the commit-visible sync `write`
+    /// ends with and the device-visible sync `compact` owes. There is no
+    /// softer tier to select.
     pub(crate) fn sync(&self) -> Result<(), StoreError> {
         if self.read_only {
             return Ok(());

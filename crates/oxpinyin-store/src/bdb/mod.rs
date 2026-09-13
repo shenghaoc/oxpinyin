@@ -49,12 +49,18 @@
 //! the closure's puts and removes, answers in-closure reads from that
 //! buffer over the database, and applies the buffer in one pass on `Ok`;
 //! on `Err` the buffer is dropped and nothing is written. A crash
-//! *during* that apply can leave part of a batch on disk. Each commit
-//! ends with `DB->sync`, so once it returns the bytes are in the
-//! operating system's hands and visible to any reader, including after a
-//! process crash — but that is not stable storage against power loss;
-//! [`crate::WriteStore::compact`] is the stable-storage point, as on
-//! every backend.
+//! *during* that apply can leave part of a batch on disk.
+//!
+//! Durability is the other way round: it is *stronger* here, not weaker.
+//! Each commit ends with `DB->sync`, which is the only flush libdb
+//! offers an environment-less handle and which issues `fdatasync`, so
+//! once `write` returns the batch is on the device rather than merely in
+//! the operating system's hands. This backend cannot offer the soft
+//! commit tier Kyoto Cabinet and tkrzw use;
+//! [`crate::WriteStore::compact`] calls the same `DB->sync` and so owes
+//! nothing `write` has not already paid. The sync does not repair the
+//! atomicity: the apply pass writes one record at a time and the sync
+//! follows it, so a crash mid-apply leaves a durable prefix.
 //!
 //! Matching libpinyin here is the point: a transactional environment
 //! would write log and region files beside the user's profile, which
@@ -320,9 +326,13 @@ impl WriteStore for BdbStore {
                 }
             }
         }
-        // Push the batch to the operating system, so a reader — including
-        // the user's own libpinyin — sees a consistent file once `write`
-        // returns.
+        // Push the batch out, so a reader — including the user's own
+        // libpinyin — sees a consistent file once `write` returns.
+        // Without it the pages stay in the private mpool of a handle
+        // opened with no environment, where no other process can reach
+        // them. `DB->sync` is the only flush available here and it goes
+        // all the way to the device, so this commit exceeds the seam's
+        // floor; see `WriteStore::write`'s durability note.
         self.db.sync()?;
         Ok(out)
     }
