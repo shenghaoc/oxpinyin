@@ -69,6 +69,14 @@
 //! (`src/bdb/ffi.rs` carries the audit). Concurrent reads share the
 //! handle the contract's way; the user store's writes go through its
 //! own `Mutex` on top.
+//!
+//! # Unsafe waiver
+//!
+//! This module carries none. Every `unsafe` in the backend — the `DB`
+//! and `DBC` member calls, the `unsafe impl Send`/`Sync` on the handle,
+//! the generated declarations — is confined to `ffi`, whose
+//! `expect(unsafe_code)` is scoped to that module, so the safe wrapper
+//! here stays under the workspace `deny`.
 
 mod ffi;
 

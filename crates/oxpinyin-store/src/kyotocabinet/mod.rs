@@ -54,7 +54,14 @@
 //! also serves as the default selection: the user-store registry holds
 //! `DefaultStore` behind a `static Mutex`, and the runtime compile-asserts
 //! its handles `Send + Sync`.
-#![allow(unsafe_code)]
+//!
+//! # Unsafe waiver
+//!
+//! This module carries none. Every `unsafe` in the backend — the
+//! `kcdb*` calls, the `unsafe impl Send`/`Sync` on the handle, the
+//! generated declarations — is confined to `ffi`, whose
+//! `expect(unsafe_code)` is scoped to that module, so the safe wrapper
+//! here stays under the workspace `deny`.
 
 mod ffi;
 
