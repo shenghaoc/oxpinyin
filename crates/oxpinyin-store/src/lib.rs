@@ -1673,12 +1673,12 @@ mod tests {
     //
     // The workspace policy: the five peer backends (KC, redb, LMDB,
     // tkrzw, BDB) are equal implementations behind the store's trait
-    // surface; KC is the default *selection* (the feature enabled by the
-    // workspace's default set), not a privileged one. These tests catch
-    // any accidental slide back to "redb default" (or any other silent
-    // reordering) — a plain string check on `DEFAULT_STORE_EXT` pinned to
-    // the feature the build is running under, plus a compile-time
-    // type-identity check on `DefaultStore`.
+    // surface; tkrzw is the default *selection* (the feature enabled by
+    // the workspace's default set), not a privileged one. These tests
+    // catch any accidental slide back to "redb default" (or any other
+    // silent reordering) — a plain string check on `DEFAULT_STORE_EXT`
+    // pinned to the feature the build is running under, plus a
+    // compile-time type-identity check on `DefaultStore`.
 
     #[test]
     fn default_store_ext_matches_the_compiled_backend() {
@@ -1711,8 +1711,8 @@ mod tests {
         assert_eq!(&native[dot + 1..], super::DEFAULT_STORE_EXT);
     }
 
-    /// `DefaultStore` resolves to `KcStore` when the Kyoto Cabinet feature
-    /// is enabled — the workspace's default selection. This is a
+    /// `DefaultStore` resolves to `KcStore` on
+    /// `--no-default-features --features kyotocabinet`. This is a
     /// compile-time type identity, so a silent flip in the cfg chain
     /// would fail to build rather than pass silently.
     #[cfg(feature = "kyotocabinet")]
@@ -1754,8 +1754,9 @@ mod tests {
         assert_type_eq::<super::RedbStore>();
     }
 
-    /// `--no-default-features --features tkrzw` resolves `DefaultStore`
-    /// to `TkrzwStore` — the tkrzw peer.
+    /// `DefaultStore` resolves to `TkrzwStore` under the tkrzw feature —
+    /// the workspace's default selection, and equally on
+    /// `--no-default-features --features tkrzw`.
     #[cfg(feature = "tkrzw")]
     #[test]
     fn default_store_is_tkrzw_when_only_tkrzw_is_on() {

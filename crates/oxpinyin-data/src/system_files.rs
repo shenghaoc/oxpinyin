@@ -60,7 +60,8 @@ impl SystemDbm {
     }
 
     /// The file name for the compiled-in backend: libpinyin's own on
-    /// Kyoto Cabinet and tkrzw, `<stem>.<ext>` on redb and LMDB.
+    /// Kyoto Cabinet, tkrzw and Berkeley DB, `<stem>.<ext>` on redb and
+    /// LMDB.
     #[must_use]
     pub fn file_name(self) -> String {
         if DEFAULT_STORE_IS_LIBPINYIN_DBM {

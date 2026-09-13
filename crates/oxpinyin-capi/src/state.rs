@@ -47,9 +47,9 @@ pub struct CapiContext {
 
 impl CapiContext {
     /// Opens a context the way `pinyin_init` does: the system data
-    /// directory (a libpinyin install's own on Kyoto Cabinet and tkrzw)
-    /// plus the optional user dir, seeded with `PINYIN_INCOMPLETE` (the
-    /// pinyin facade's option word).
+    /// directory (a libpinyin install's own on Kyoto Cabinet, tkrzw and
+    /// Berkeley DB) plus the optional user dir, seeded with
+    /// `PINYIN_INCOMPLETE` (the pinyin facade's option word).
     /// Opens a context; the failure is kept for `pinyin_init`'s log line.
     pub(crate) fn try_new(system_dir: &str, user_dir: &str) -> Result<Self, OpenFailure> {
         // W8 fork-bootstrap wiring lives in the shared assembly: the

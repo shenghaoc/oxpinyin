@@ -2378,7 +2378,7 @@ mod tests {
     #[cfg(feature = "bdb")]
     user_store_tests!(bdb, oxpinyin_store::BdbStore, "db");
 
-    // ── Cross-backend equivalence (features `lmdb` / `tkrzw`) ─────
+    // ── Cross-backend equivalence (one peer per build, five in CI) ──
 
     /// Under exactly-one-backend, cross-peer comparisons cannot happen
     /// in-process. Instead each build proves the *current* peer, driven
