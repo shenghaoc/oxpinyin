@@ -370,9 +370,11 @@ impl Db {
     }
 
     /// Flush to stable storage. `DB->sync` is libdb's only flush for a
-    /// handle opened with no environment, and it issues `fdatasync`, so
-    /// this one call serves both roles: the commit-visible sync `write`
-    /// ends with and the device-visible sync `compact` owes. There is no
+    /// handle opened with no environment — which syscall it issues is
+    /// the linked libdb's build-time choice (`__os_fsync` picks one per
+    /// its configure result), not this binding's to claim — so this one
+    /// call serves both roles: the commit-visible sync `write` ends
+    /// with and the device-visible sync `compact` owes. There is no
     /// softer tier to select.
     pub(crate) fn sync(&self) -> Result<(), StoreError> {
         if self.read_only {
