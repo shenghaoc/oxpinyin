@@ -52,7 +52,7 @@
 //! method on a `DB`/`DBC` is a struct member function pointer that
 //! bindgen types as `Option<unsafe extern "C" fn ...>`. Both are
 //! checked: the pointer with an explicit test, the members through
-//! [`method`], which turns a null member into an error rather than a
+//! `method!`, which turns a null member into an error rather than a
 //! call through null.
 #![expect(
     unsafe_code,
