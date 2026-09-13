@@ -721,11 +721,18 @@ part of a learned dictionary, were untested against a real libpinyin.
 "**PASSED**, 10/10 export rows byte-identical" for Kyoto Cabinet and
 tkrzw, dated 2026-09-09. That figure is not reproducible from any
 committed harness. It was introduced by `939400c6` alongside a
-`user_driver.c` that selected candidate 0 — an n-best sentence candidate
-— whose `diff_result(best, best)` installs no `CONSTRAINT_ONESTEP`, so
-`train_result3` stored no user-bigram grams at all; with no grams Phase
-B's `!bigram.is_empty()` assertion fails and Phase C never runs, on
-every backend. The driver was fixed on 2026-09-13: it follows ibus's
+`user_driver.c` whose selections installed no usable constraint — a
+matter of candidate and instance state, not the candidate index alone:
+on the first input index 0 held a `LONGER_CANDIDATE` or a
+`NORMAL_CANDIDATE` (no sentence candidate existed yet — the driver
+listed candidates before guessing the sentence), and from the second
+input onward it held an `NBEST_MATCH_CANDIDATE` reading the previous
+input's n-best results, because the instance was never reset — and
+choosing that candidate runs `diff_result(best, best)`, which installs
+no `CONSTRAINT_ONESTEP`. With those inputs `train_result3` stored no
+user-bigram grams at all; with no grams Phase B's `!bigram.is_empty()`
+assertion fails and Phase C never runs, on every backend. The driver
+was fixed on 2026-09-13: it follows ibus's
 call order and sort option and selects `NORMAL_CANDIDATE`s at the
 advancing lookup cursor, and Phase A now asserts that the pin trained
 bigram rows rather than leaving that to surface two phases later. The
