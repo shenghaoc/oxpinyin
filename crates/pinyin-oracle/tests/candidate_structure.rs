@@ -178,9 +178,7 @@ fn structure_fixture_is_fresh() {
     use pinyin_oracle::corpus;
     use pinyin_oracle::{Oracle, OracleFlags, OraclePrefix};
 
-    let Some(structure) = load(STRUCTURE_FIXTURE) else {
-        panic!("structure fixture missing; cannot check freshness");
-    };
+    let structure = load(STRUCTURE_FIXTURE);
     assert_eq!(
         pin_ref(&structure).expect("pin_ref header"),
         pinyin_oracle::EXPECTED_PIN_REF,
