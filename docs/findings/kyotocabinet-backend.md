@@ -266,10 +266,14 @@ feature.
 
 ## Not done, and why
 
-- **Item 6, the default backend.** Superseded: Kyoto Cabinet is now the
-  DEFAULT backend (`DefaultStore` resolves it at compile time, libpinyin's
-  own one-backend-per-binary model) and redb moved to the pure-Rust
-  portability fallback selected by `--no-default-features`. The
+- **Item 6, the default backend.** Superseded twice, and no longer this
+  backend's story: Kyoto Cabinet was the default from 2026-08-29, then
+  tkrzw took the default on 2026-09-05 (`05688575` — RHEL 10.2 ships
+  `tkrzw-devel` but not `kyotocabinet-devel`, which made the KC default
+  unbuildable from source on the primary development machine); KC is a
+  non-default peer selected with `--no-default-features --features
+  kyotocabinet`, and redb stays the pure-Rust portability fallback
+  selected by `--no-default-features`. The
   Berkeley DB portability lesson applies unchanged — `registry.rs` puts
   `DefaultStore` in a `static Mutex`, so it must be `Send`, and
   `ci.yml`'s `test-portable` job runs `oxpinyin-data` and `oxpinyin-user`

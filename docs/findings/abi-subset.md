@@ -1,6 +1,7 @@
 # Findings — frontend-called libpinyin ABI subset
 
-Date: 2026-08-14 · Source tier: Manual source read; human freeze pending.
+Date: 2026-08-14 · Source tier: Manual source read; recorded — §6 carries
+the 2026-08-30 maintainer close of the 79/79 target.
 
 ## Source identity
 
@@ -17,7 +18,9 @@ Date: 2026-08-14 · Source tier: Manual source read; human freeze pending.
 
 For W8 purposes the bootstrap contract is the live call surface of
 `shenghaoc/ibus-libpinyin`, branch `feat/oxpinyin-backend`, tip `0d71866`
-(Phase-0 characterization: `docs/oxpinyin-switch.md`). That surface is
+(the §1 characterization extended to the fork's live call sites — the
+`docs/oxpinyin-switch.md` this line once cited was never written into
+this repository). That surface is
 **51 symbols**: the 50 tag-1.16.5 symbols in §1 plus
 `pinyin_get_parsed_input_length`, whose live fork call site is
 `src/PYPLibPinyinCandidates.cc:151`. The gap originates in fork commit

@@ -139,3 +139,13 @@ One additive engine accessor — the existing `composition_keys()` keeping
 its spans — unblocks all seven. That is an engine interface change, so
 it is a STOP under the decision's terms rather than something to
 improvise.
+
+> **Superseded 2026-08-30.** All seven landed with the W8 79/79 close:
+> the preedit family (`pinyin_get_pinyin_key`, `_key_rest_length`,
+> `_pinyin_string`, `_pinyin_strings`, `_zhuyin_string`) are real
+> implementations (`crates/oxpinyin-capi/src/cursor.rs`) and the two
+> `key_rest` symbols closed with them
+> (`docs/findings/abi-subset.md` §6;
+> `docs/findings/compatibility-policy.md`, consequence 2). This section
+> and the §3 counts above stay as the 2026-08-28 snapshot they were
+> written at.

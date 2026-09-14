@@ -74,7 +74,10 @@ unchanged and unaware.
 > path (task 10) stays shelved behind its existing consumer-need gate
 > — a BDB revival would bring system and user files at once, on a
 > distro set whose own backend switch already discarded the user
-> data.
+> data. (Amended 2026-09-12: the consumer ask arrived and task 10
+> landed — the Berkeley DB backend is the fifth store peer
+> (`docs/findings/berkeleydb-backend.md`); this paragraph records the
+> pre-landing state.)
 
 That goal sets the default: **oxpinyin reproduces the pin.** Divergence
 is not a design freedom to be exercised where the Rust is nicer. It is
