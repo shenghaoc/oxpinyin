@@ -30,6 +30,16 @@
 # `cargo capi install` leaves cargo-c's incomplete one — the documented
 # silent window (docs/findings/installed-naming.md).
 #
+# On Linux the wrapper then relinks the installed shared object from the
+# staticlib under the crate's .ver script (tools/packaging/relink-versioned.sh)
+# so the shipped library carries upstream's ELF symbol versioning —
+# `pinyin_init@@LIBPINYIN` — instead of the unversioned cdylib cargo-c
+# installs, which every consumer loads with one glibc `no version information
+# available` warning (docs/findings/drop-in-abi-identity.md §2: rustc's
+# anonymous cdylib version script is why the definitions cannot ride the
+# cargo-c link). The relink verifies its own export set, both directions,
+# before replacing anything.
+#
 # Usage: tools/packaging/install.sh <library> --prefix=DIR [--libdir=DIR] [--destdir=DIR]
 #                                   [-- <extra cargo cinstall args>]
 #        <library> is `libpinyin` or `libzhuyin` — required, one per invocation.
@@ -228,21 +238,57 @@ check_companion_headers() {
   done
 }
 
+# The cargo feature list of this build, collected out of the passthrough
+# args in both `--features X` and `--features=X` spellings (possibly
+# repeated), for the relink step's store-backend link flags.
+collect_features() {
+  FEATURES=""
+  local i=0 arg
+  while [ "$i" -lt "${#PASSTHRU[@]}" ]; do
+    arg="${PASSTHRU[$i]}"
+    case "$arg" in
+      --features=*) FEATURES="${FEATURES:+$FEATURES,}${arg#*=}" ;;
+      --features)   i=$((i + 1)); FEATURES="${FEATURES:+$FEATURES,}${PASSTHRU[$i]:-}" ;;
+    esac
+    i=$((i + 1))
+  done
+}
+
 # Install one library: cargo-c builds + installs the crate (its own incomplete
 # .pc lands in <libdir>/pkgconfig and the build (re)generates the crate's
 # build.rs baked template), then the install-time placeholders are filled and
-# the installed .pc overwritten.
+# the installed .pc overwritten; on Linux the installed shared object is then
+# relinked from the staticlib under the crate's version script.
 #   $1 crate directory, $2 baked template name, $3 installed .pc name,
-#   $4.. sed expressions (each already prefixed with -e).
+#   $4 staticlib stem under $QUALIFIED_DIR — cargo-c renames the crate's
+#   artifacts to the capi library name (libpinyin.a / libzhuyin.a; a plain
+#   cargo build would call them libpinyin_capi.a), and this wrapper only
+#   ever drives cargo cinstall,
+#   $5.. sed expressions (each already prefixed with -e).
 install_library() {
-  local crate_dir="$1" baked_name="$2" pc_name="$3"
-  shift 3
+  local crate_dir="$1" baked_name="$2" pc_name="$3" static_stem="$4"
+  shift 4
   ( cd "$crate_dir" && cargo cinstall --prefix="$PREFIX" --libdir="$LIBDIR" --target-dir="$TARGET_DIR" \
       ${DESTDIR:+--destdir="$DESTDIR"} ${PASSTHRU[@]+"${PASSTHRU[@]}"} )
   local baked
   baked="$(locate_baked "$baked_name")"
   sed "$@" "$baked" > "$PC_DIR/$pc_name"
   echo "installed complete pkg-config file: $PC_DIR/$pc_name"
+
+  # ELF symbol versioning — Linux only (no macOS counterpart), and only the
+  # drop-in lane wants it: replace the unversioned cdylib cargo-c installed
+  # with the relinked, versioned object under the same file name, so the
+  # .so / .so.<major> symlinks keep resolving.
+  if [ "$(uname -s)" = "Linux" ]; then
+    local lib_base="${pc_name%.pc}"
+    collect_features
+    "$SCRIPT_DIR/relink-versioned.sh" \
+      --staticlib "$QUALIFIED_DIR/$static_stem.a" \
+      --ver "$crate_dir/$lib_base.ver" \
+      --soname "$lib_base.so.15" \
+      --dest "${DESTDIR}${LIBDIR}/$lib_base.so.15.0.0" \
+      ${FEATURES:+--features "$FEATURES"}
+  fi
 }
 
 check_companion_headers
@@ -259,7 +305,7 @@ case "$LIBRARY" in
   libpinyin)
     # libpinyin: the template hardcodes exec_prefix/includedir off ${prefix}, so
     # only @prefix@ and @libdir@ are install-time.
-    install_library "$PINYIN_CRATE_DIR" libpinyin.pc.in.baked libpinyin.pc \
+    install_library "$PINYIN_CRATE_DIR" libpinyin.pc.in.baked libpinyin.pc libpinyin \
       -e "s#@prefix@#${prefix_esc}#g" -e "s#@libdir@#${libdir_esc}#g"
     ;;
   libzhuyin)
@@ -267,7 +313,7 @@ case "$LIBRARY" in
     # (unlike libpinyin.pc.in's hardcoded ${prefix}/include), so all four are
     # install-time. Mirror the values autoconf substitutes upstream (exec_prefix
     # defaults to ${prefix}, includedir to ${prefix}/include).
-    install_library "$ZHUYIN_CRATE_DIR" libzhuyin.pc.in.baked libzhuyin.pc \
+    install_library "$ZHUYIN_CRATE_DIR" libzhuyin.pc.in.baked libzhuyin.pc libzhuyin \
       -e "s#@prefix@#${prefix_esc}#g" \
       -e "s#@exec_prefix@#\${prefix}#g" \
       -e "s#@libdir@#${libdir_esc}#g" \

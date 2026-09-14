@@ -243,10 +243,16 @@ remain. Its first run found the shipped library one symbol short
 (`pinyin_set_full_pinyin_scheme`, gated out under the retired
 consumer-union scope); nothing in a version script is gated any more.
 
-The version scripts are the record only: the shipped library carries no
-symbol versions (see `crates/oxpinyin-capi/build.rs` for why a
-`--version-script` link would break the drop-in), so the gate compares
-names, not versions.
+The version scripts stopped being the record only on 2026-09-14: on Linux
+`tools/packaging/install.sh` now relinks the installed shared object from
+the staticlib under the crate's `.ver` script
+(`tools/packaging/relink-versioned.sh`), so the shipped library carries
+upstream's symbol versioning — `pinyin_init@@LIBPINYIN` — and consumers
+load it with no glibc version warning. The relink itself verifies the
+export set against the `.ver` list in both directions before replacing
+anything; `check-exports.sh` keeps comparing the cdylib cargo builds
+(names, not versions), which is still the right gate for the development
+artifact the relink then supersedes on install.
 
 ## Release artifacts (`release-packages.yml`)
 
