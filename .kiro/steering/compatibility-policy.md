@@ -41,5 +41,6 @@ is unverified, not compliant.
 **Amendments carried by the canonical policy** (`docs/findings/compatibility-policy.md`):
 the user-data guarantee is per KV backend family (2026-09-09; task 9
 landed the same day), the pin is libpinyin's default-branch tip
-`074a2219` (2026-09-12), and one defect stays open — row 30, the pinyin
-facade's chewing batch `FORCE_TONE` seam.
+`074a2219` (2026-09-12), and the one defect that stayed open — row 30,
+the pinyin facade's chewing batch `FORCE_TONE` seam — closed in code
+2026-09-14 (live differential run owed to a Linux oracle host).

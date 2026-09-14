@@ -13,17 +13,16 @@ use crate::instance::InstanceCore;
 
 /// Which option bits the chewing batch seam forwards into the parser.
 ///
-/// The two facades' pins genuinely differ here, and both are faithful to
-/// their own upstream: the pinyin facade forwards `USE_TONE` and
-/// `ZHUYIN_INCOMPLETE` only — `FORCE_TONE` does not cross its seam (the
-/// open item recorded in `docs/findings/upstream-divergences.md`, out of
-/// every reference consumer's reach per the compatibility policy's
-/// availability class) — while the libzhuyin facade forwards the whole
-/// option word (`zhuyin.cpp:1061` at the pin). The shared skeleton is
-/// identical; this enum is the three-line difference, kept greppable.
+/// Both facades forward the caller's whole option word into
+/// [`ZhuyinParser::parse_with_options`]; the one difference is the
+/// `ZHUYIN_CORRECT_ALL` strip, which the pinyin facade applies
+/// (`pinyin.cpp:1589` at the pin) and the libzhuyin facade does not
+/// (`zhuyin.cpp:1061`). The shared skeleton is identical; this enum is
+/// the difference, kept greppable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToneForwarding {
-    /// The pinyin facade's law: `parse(use_tone, allow_incomplete)`.
+    /// The pinyin facade's law: `parse_with_options(word minus
+    /// ZHUYIN_CORRECT_ALL)`.
     PinFacade,
     /// The libzhuyin facade's law: `parse_with_options(full word)`.
     ZhuyinFacade,
@@ -181,15 +180,13 @@ impl InstanceCore {
         };
         let parser = ZhuyinParser::with_scheme(scheme);
         let parsed = match forwarding {
-            // Upstream passes the caller's option word through after
-            // stripping the parser-owned corrections; `USE_TONE` and
-            // `ZHUYIN_INCOMPLETE` reach the parser, `FORCE_TONE` does not
-            // cross this facade's seam (the recorded open item).
-            ToneForwarding::PinFacade => {
-                let use_tone = self.live.use_tone.load(Ordering::Relaxed);
-                let allow_incomplete = self.options().contains(oxpinyin_core::ZHUYIN_INCOMPLETE);
-                parser.parse(text.as_bytes(), use_tone, allow_incomplete)
-            }
+            // Both facades forward the whole option word; the pinyin
+            // facade strips only `ZHUYIN_CORRECT_ALL`
+            // (`pinyin.cpp:1589` at the pin — the caller's zhuyin
+            // corrections never reach the chewing parser), the libzhuyin
+            // facade strips nothing.
+            ToneForwarding::PinFacade => parser
+                .parse_with_options(text.as_bytes(), self.options().bits() & !ZHUYIN_CORRECT_ALL),
             // The libzhuyin facade forwards the whole word, so the pin's
             // default `USE_TONE | FORCE_TONE` is honoured by the batch
             // law (`zhuyin.cpp:1061` at the pin).

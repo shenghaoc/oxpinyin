@@ -107,8 +107,10 @@ against tkrzw, Kyoto Cabinet and Berkeley DB oracles, re-measured
 differential suite does not yet drive all 58 consumer-union symbols, so
 the uncovered ones are unverified rather than compliant; closing it is work
 (`docs/findings/compatibility-policy.md`, §(e) consequence 3), tracked
-here rather than only in the policy. One defect open under the policy:
-row 30, the pinyin facade's chewing batch `FORCE_TONE` seam. `README.md`
+here rather than only in the policy. The one defect the policy carried —
+row 30, the pinyin facade's chewing batch `FORCE_TONE` seam — closed in
+code 2026-09-14 (register amendment; the live FORCE_TONE differential
+run is owed to a Linux oracle host). `README.md`
 states Stage 1 the same way.
 
 Parked, not open: the W12 live-typing behaviours the parity sequence does
@@ -348,9 +350,11 @@ parked.
   The bopomofo SPEC is frozen as well: the 2026-09-03 draft was frozen
   as drafted by the maintainer's ruling of 2026-09-06 (PR #353; freeze
   record at the bottom of `docs/findings/bopomofo-spec.md`). Its one
-  open implementation item — the pinyin facade's chewing batch seam does
-  not forward `FORCE_TONE` — stays open under the frozen law, carried by
-  the divergence register.
+  open implementation item — the pinyin facade's chewing batch seam's
+  `FORCE_TONE` forward — closed 2026-09-14 per the prescribed shape
+  (seam forward + capi tests + the `chewing-diff.c` FORCE_TONE profile);
+  the register entry carries the closure and the Linux-oracle run that
+  remains owed on it.
 
 - **W14 LANDED (489e94d, PR #113).** Three parts, all delivered: (a) sentence
   candidates emit with real unigrams loaded — up to N n-best rows prepended
