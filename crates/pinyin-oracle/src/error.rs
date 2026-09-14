@@ -108,8 +108,6 @@ pub enum OracleError {
         /// Length of the input actually supplied.
         input_len: usize,
     },
-    /// The harness was built without the `oracle-ffi` feature.
-    FfiNotCompiled,
     /// A capture record omitted a field the reader requires.
     CaptureFieldMissing {
         /// Field name that was absent.
@@ -220,8 +218,6 @@ impl fmt::Display for OracleError {
                 formatter,
                 "oracle reported parsed length {parsed} for a {input_len}-byte input"
             ),
-            Self::FfiNotCompiled => formatter
-                .write_str("pinyin-oracle was built without the `oracle-ffi` cargo feature"),
             Self::CaptureFieldMissing { field } => {
                 write!(formatter, "capture record omits field {field}")
             }
