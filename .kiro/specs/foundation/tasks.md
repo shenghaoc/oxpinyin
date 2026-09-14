@@ -25,7 +25,7 @@ fixtures are human-frozen.
 
 - [x] 4. **[A]** Build the F-A/F-C capture harness and establish the F-E cross-lane evidence register.
   - Done: the harness (`tools/capture/`) and the F-A/F-C freeze
-    (`docs/findings/capture-fixtures.md`, `fixtures/foundation/f-a.txt`,
+    (`docs/testing/capture-fixtures.md`, `fixtures/foundation/f-a.txt`,
     `f-c.txt`).
   - Done: the consolidated F-E register is
     `docs/findings/robustness-evidence.md` — all 14 cases (the 13 below

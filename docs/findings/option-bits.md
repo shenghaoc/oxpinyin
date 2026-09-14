@@ -135,7 +135,14 @@ oxpinyin's equivalent: `RankKey.frequency` is the raw unigram count
 (system + W6-T4 overlay). The bigram increment is omitted when the bit is
 clear. When the bit is set, W6-T4's unigram merge stays; a non-zero
 bigram increment on `RankKey` would be a ranking-model change outside
-W10 (deferred: issue #99). `SharedLm::unigram_freq` stays ungated (the
+W10 (Amended 2026-09-14: the bit-SET fold landed 2026-08-30 as the
+three-gate implementation `217d0c4` — the `λ · bigram_poss · DISCOUNT`
+term folds into the amplified-frequency key, not `RankKey`, at the pin's
+three call sites; issue #99 closed with it, and the C2 isolating
+differential (`uncovered-surface-differentials.md`,
+`PARITY_DYNAMIC_ADJUST` in `tools/bisection/uncovered-surface-diff.c`)
+is its probe. This paragraph describes the pre-`217d0c4`
+tree.) `SharedLm::unigram_freq` stays ungated (the
 phrase-index term). `SharedLm::score` stays ungated (decode, not the
 cited sites).
 
@@ -230,7 +237,10 @@ post-port the lists are bit-identical to the pin at `0x0` (live-oracle
 control, 2026-08-24), and the `run-option-sweep.sh` exclusion list never
 fires.
 
-`DYNAMIC_ADJUST` bit-SET (fold `λ · bigram_poss · DISCOUNT` into `m_freq`) is unreached and deferred: issue #99.
+`DYNAMIC_ADJUST` bit-SET (fold `λ · bigram_poss · DISCOUNT` into the
+amplified frequency) — implemented at the pin's three gates 2026-08-30
+(`217d0c4`, closing issue #99); the C2 isolating differential
+(`uncovered-surface-differentials.md`) is its probe.
 
 ## GSettings → bit mapping in the fork
 

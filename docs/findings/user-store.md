@@ -571,6 +571,12 @@ project memory).
    diff-logger byte layout. redb is the store; only the **values and
    semantics** are the target. This is the headline decision of this finding.
 
+   (Amended 2026-09-14: this non-goal was superseded by §11 — drop-in
+   task 9, landed 2026-09-09, reads and writes libpinyin's own user-file
+   formats on every backend, and the W6-T5 durability deviation it
+   records was reverted with it. The paragraph stays as the record of
+   the W6-era scope this finding was written under.)
+
    **Measured cost of this decision, on Kyoto Cabinet
    ([`rss-attribution-2026-09-09.md`](rss-attribution-2026-09-09.md), Phase 2
    Step 1):** upstream's user bigram is an in-memory `StashDB` opened on

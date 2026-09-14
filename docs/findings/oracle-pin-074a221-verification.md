@@ -132,7 +132,9 @@ the frozen fixtures:
 ## Review follow-up (2026-09-06 UTC, post-rebase)
 
 Rebased onto main `c6b371da` (#356 and #358 now fixed there; #357 remains
-open and blocked on this merge). Results, all from the rebased tree:
+open and blocked on this merge — it has since closed, its Tkrzw
+`set_array_header` finding landed as the kmm no-op mirror). Results, all
+from the rebased tree:
 
 - **Merged `build-oracle.sh`**: diffed against both parents. Kept from
   main: the #358 split-manifest machinery (17-file reproducible gate +

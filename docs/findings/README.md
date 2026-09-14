@@ -36,8 +36,8 @@ series lives in `../perf/`.
 | [`addon-choose-promotion`](addon-choose-promotion.md) | Addon choose-promotion (default nibble 5) — #105 | record (#105) |
 | [`all-off-tails`](all-off-tails.md) | Findings — W12 all-off TEXT-set tails (the six option-sweep residuals) | closed (row 17 parked here) |
 | [`backend-selection-audit`](backend-selection-audit.md) | Backend-selection alignment: libpinyin vs oxpinyin | audit |
-| [`berkeleydb-compat-open-items`](berkeleydb-compat-open-items.md) | BerkeleyDB compat — the open items Phase 2 inherits | historical (obsolete) |
-| [`berkeleydb-compat-phase1`](berkeleydb-compat-phase1.md) | BerkeleyDB compatibility — Phase 1 survey | shelved |
+| [`berkeleydb-compat-open-items`](berkeleydb-compat-open-items.md) | BerkeleyDB compat — the open items Phase 2 inherits | resolved 2026-09-12 (→ `berkeleydb-backend.md`) |
+| [`berkeleydb-compat-phase1`](berkeleydb-compat-phase1.md) | BerkeleyDB compatibility — Phase 1 survey | landed 2026-09-12 (→ `berkeleydb-backend.md`) |
 | [`bigram-punct-format-2026-09-01`](bigram-punct-format-2026-09-01.md) | libpinyin bigram and punctuation formats — P4 source-level findings | verified (P4) |
 | [`bopomofo-spec`](bopomofo-spec.md) | Bopomofo/Zhuyin scheme SPEC | frozen |
 | [`build-flags-audit`](build-flags-audit.md) | build-flags-audit.md — the configure flags the pin exposes vs oxpinyin | audit |

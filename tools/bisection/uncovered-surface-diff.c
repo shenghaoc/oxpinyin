@@ -17,7 +17,9 @@
  *      composition (the parse-length surface).
  *   C. FORCE_TONE (1<<6) and DYNAMIC_ADJUST (1<<9) — the two option-bit
  *      classes the corpus never exercised (option-bits.md: FORCE_TONE
- *      absent from the engine, DYNAMIC_ADJUST bit-SET deferred #99).
+ *      absent from the engine, DYNAMIC_ADJUST bit-SET implemented at
+ *      the pin's three gates since 217d0c4 — this profile is its
+ *      isolating differential).
  *   D. mid-composition cursor moves — the ABI readouts the frontend drives
  *      on Left/Right: pinyin_get_full_pinyin_auxiliary_text at every byte
  *      cursor, pinyin_get_pinyin_offset(cursor), the word-level
@@ -845,7 +847,8 @@ int main(int argc, char **argv) {
             goto fail_inst;
         }
         /* DYNAMIC_ADJUST bit-SET: the bigram term folds into candidate
-         * frequency (option-bits.md, deferred #99 on the engine side). */
+         * frequency (option-bits.md; implemented at the pin's three
+         * gates since 217d0c4 — this is the C2 isolating profile). */
         if (opt_profile_input(&s, ctx, inst, PARITY_DYNAMIC_ADJUST, "nihao", 0) ||
             opt_profile_input(&s, ctx, inst, PARITY_DYNAMIC_ADJUST, "nihao", 2) ||
             opt_profile_input(&s, ctx, inst, PARITY_DYNAMIC_ADJUST, "nihaoshijie", 5))

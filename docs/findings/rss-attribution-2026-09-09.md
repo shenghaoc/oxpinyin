@@ -7,6 +7,12 @@ the `tools/bisection/rss-smaps.py` and `tools/bisection/cg-calls.py`
 readers, and a live/peak-bytes extension to the gated `alloc-count`
 allocator, which is absent from every default and every shipped artifact.
 
+(Tree note, added 2026-09-14: drop-in task 9 — landed later the same
+day, `user-store.md` §11 — replaced the `user_store.<ext>` file set this
+document's Phase 2 Step 1 describes with libpinyin's own user files.
+The measurements below describe the tree as it stood when they were
+taken; the open-cost question they frame is carried unchanged.)
+
 The body below is the investigation in the order it ran, in three parts:
 Phase 1 (where the resident memory sits), Phase 2 Step 1 (the Kyoto
 Cabinet open parameters), and Phase 2 narrowed (the live block count and

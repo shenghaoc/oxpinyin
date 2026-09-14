@@ -173,6 +173,11 @@ Steps 1–3 have landed (`7b7e7610`, `ba7be5be`); the parity gate (step 4)
 and the RSS remeasurement (step 5) are the remaining actions. This
 record's session recorded the mechanism and its measurement only.
 
+(Amended 2026-09-14: issue #403 was closed by #416's merge on
+2026-09-11 although that PR's body stated it does not close the issue —
+the closing PR was the mechanism write-up only. Steps 4–5 have no
+recorded run; the issue was reopened the same day to carry them.)
+
 ## Provenance
 
 - Upstream pin: libpinyin **2.11.92**, commit `074a2219c90feaf962d0d24f034514033ece5f99`, fetched into `/tmp/libpinyin-403` via `git fetch --depth=1`.
