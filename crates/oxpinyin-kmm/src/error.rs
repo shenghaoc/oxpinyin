@@ -32,11 +32,6 @@ pub enum KmmError {
         /// Diagnostic context.
         detail: String,
     },
-    /// A phrase-text table could not be opened (export/import).
-    Lexicon {
-        /// Diagnostic context.
-        detail: String,
-    },
 }
 
 impl fmt::Display for KmmError {
@@ -48,7 +43,6 @@ impl fmt::Display for KmmError {
             Self::Malformed { detail } => write!(formatter, "malformed input: {detail}"),
             Self::Invalid { detail } => write!(formatter, "invalid k mixture model: {detail}"),
             Self::Domain { detail } => write!(formatter, "prune domain error: {detail}"),
-            Self::Lexicon { detail } => write!(formatter, "phrase table: {detail}"),
         }
     }
 }

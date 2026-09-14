@@ -38,7 +38,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 const GBK_DICTIONARY: u32 = 2;
 use std::sync::{Arc, Mutex, RwLock};
 
-use oxpinyin_core::scoring::{ScoringError, key_cost_table};
+use oxpinyin_core::scoring::key_cost_table;
 use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseToken,
     SyllableKey, UserCountDelta,
@@ -127,8 +127,6 @@ pub enum OpenError {
     Dict(DictError),
     /// The language model failed to open or parse.
     Lm(LmError),
-    /// The per-key cost table could not be computed from the opened backends.
-    KeyCosts(ScoringError),
 }
 
 impl core::fmt::Display for OpenError {
@@ -141,7 +139,6 @@ impl core::fmt::Display for OpenError {
             }
             Self::Dict(error) => write!(f, "dictionary error: {error}"),
             Self::Lm(error) => write!(f, "language model error: {error}"),
-            Self::KeyCosts(error) => write!(f, "key-cost table error: {error}"),
         }
     }
 }

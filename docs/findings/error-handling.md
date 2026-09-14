@@ -70,7 +70,7 @@ the W14 / #113 shape: an empty n-best is a successful empty lookup.
 
 | Type | Shape | Callers distinguish? |
 |---|---|---|
-| `EngineError` | `CandidateIndexOutOfRange { index, len }`, `Dictionary(String)`, `LanguageModel(String)`, `UserModel(String)`, `Graph`, `Decode`, `Scoring` | **yes** — `select` on a stale index is F-E-02; tests match `CandidateIndexOutOfRange`. Backend failures stay strings. |
+| `EngineError` | `CandidateIndexOutOfRange { index, len }`, `UserModel(String)`, `Graph`, `Decode`, `Scoring` | **yes** — `select` on a stale index is F-E-02; tests match `CandidateIndexOutOfRange`. Backend failures stay strings. |
 | `ConfigError` | overlay parse/type mismatch | yes for config-merge callers; `Session::new` does not use it (typed getters fall back to defaults) |
 
 `EngineError` already exists and is the right Rust-side enum. Do not

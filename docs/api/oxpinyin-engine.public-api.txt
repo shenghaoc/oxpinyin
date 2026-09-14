@@ -91,9 +91,7 @@ pub oxpinyin_engine::EngineError::CandidateIndexOutOfRange
 pub oxpinyin_engine::EngineError::CandidateIndexOutOfRange::index: usize
 pub oxpinyin_engine::EngineError::CandidateIndexOutOfRange::len: usize
 pub oxpinyin_engine::EngineError::Decode(oxpinyin_core::kbest::DecodeError)
-pub oxpinyin_engine::EngineError::Dictionary(alloc::string::String)
 pub oxpinyin_engine::EngineError::Graph(oxpinyin_core::graph::GraphError)
-pub oxpinyin_engine::EngineError::LanguageModel(alloc::string::String)
 pub oxpinyin_engine::EngineError::LookupOffsetInsideCharacter
 pub oxpinyin_engine::EngineError::LookupOffsetInsideCharacter::len: usize
 pub oxpinyin_engine::EngineError::LookupOffsetInsideCharacter::offset: usize
