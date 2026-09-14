@@ -15,7 +15,9 @@
 //! the symbols) — the same constraint recorded in `oxpinyin-capi`'s
 //! `build.rs:26-41`. Symbol scope is therefore enforced in the SOURCE (only
 //! the 52 `#[unsafe(no_mangle)]` `zhuyin_*` symbols), and the checked-in
-//! `libzhuyin.ver` ships verbatim as the record plus for the packaging step.
+//! `libzhuyin.ver` is consumed by `tools/packaging/relink-versioned.sh`
+//! (run by `tools/packaging/install.sh` on Linux) when it relinks the
+//! installed object from the staticlib under upstream's symbol versioning.
 
 use std::env;
 use std::fs;

@@ -68,14 +68,42 @@ combined with it:
 
 So adding a version script through the normal cdylib build turns a
 working drop-in into a broken one. It is not done here; `build.rs`
-carries the reasoning. **The current artifact is row 1**: it loads, and
-every consumer prints one glibc warning per start.
+carries the reasoning. **The artifact cargo builds is row 1**: it loads,
+and every consumer prints one glibc warning per start — the packaging
+relink below is what moves the installed library to row 2.
 
 Closing that last gap — reaching row 2 — needs the shared object linked
 from the staticlib in a packaging step, where rustc's anonymous script is
 not in the link line. That is a packaging change, not a code change, and
 it is the remaining difference between "works with a warning" and "byte
 -identical interface".
+
+> **Closed 2026-09-14 — the relink step landed.**
+> `tools/packaging/relink-versioned.sh` (run by
+> `tools/packaging/install.sh` on Linux, after `cargo cinstall`) links
+> the installed object from the staticlib with
+> `-Wl,-soname,libpinyin.so.15 -Wl,--version-script=libpinyin.ver` and
+> the whole-archive staticlib, verifies the export set against the `.ver`
+> list in both directions plus the version tag on every export, and only
+> then replaces the installed file (same name, so cargo-c's symlinks keep
+> resolving).
+>
+> Measured same day, Debian bookworm arm64 container (glibc, GNU ld,
+> rustc 1.97.1, the `redb,shipped` build): the relinked object answers
+> `nm -D` with `T pinyin_init@@LIBPINYIN` and defines the `LIBPINYIN`
+> verdef (`readelf -V`); a consumer linked against it records
+> `.gnu.version_r` `File: libpinyin.so.15 → Name: LIBPINYIN` and runs
+> **with no version warning**; the same consumer run against the plain
+> cdylib prints `no version information available (required by …)` —
+> row 1 reproduced as the negative control. The shipped artifact is row
+> 2's shape. The tkrzw and zhuyin lanes were **not** run this day (the
+> verification host lost its Debian-mirror network mid-run); they ride
+> the same script unchanged — the zhuyin twin is the same invocation
+> with `libzhuyin.so.15` / `LIBZHUYIN` / 52 symbols, and the backend
+> link flags resolve through
+> pkg-config (`tkrzw`/`kyotocabinet`/`lmdb`) or the plain `-l` name
+> (`-ldb`; redb needs none), mirroring the crates' `build.rs`
+> precedence — and the release lane exercises them.
 
 ## 3. Symbol scope — the consumer union, enforced in source
 

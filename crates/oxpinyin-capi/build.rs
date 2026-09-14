@@ -34,8 +34,11 @@
 //! So a version script here would turn a working drop-in into a broken one.
 //! Reaching upstream's shape needs the cdylib linked manually from the
 //! staticlib in the packaging step, where rustc's anonymous script is not in
-//! the link line. Until then the shipped library carries no version
-//! definitions and consumers load it with the glibc warning.
+//! the link line. That step exists: `tools/packaging/relink-versioned.sh`,
+//! run by `tools/packaging/install.sh` on Linux after `cargo cinstall`,
+//! replaces the installed object with the versioned relink and verifies the
+//! export set against this crate's `libpinyin.ver` in both directions
+//! (docs/findings/drop-in-abi-identity.md §2 carries the measurement).
 //!
 //! Symbol scope is therefore enforced in the source, by `#[cfg]` on the
 //! exports outside the consumer union, not by a linker script.
