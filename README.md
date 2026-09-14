@@ -9,8 +9,9 @@ measured algorithm upgrades.
 (ORDER-ONLY divergence class); 79/79 exported symbols; drop-in as
 `libpinyin.so.15` verified on Fedora rawhide, Debian testing, and NixOS.
 One verification gap open — the differential suite does not yet drive all
-58 consumer-union symbols — and one open defect, the pinyin facade's
-chewing batch `FORCE_TONE` seam (`docs/findings/compatibility-policy.md`
+58 consumer-union symbols; the one defect the policy carried (row 30, the
+pinyin facade's chewing batch `FORCE_TONE` seam) closed in code 2026-09-14
+(`docs/findings/compatibility-policy.md`
 row 30; `ROADMAP.md`, Stage 1 status). Stage 2 (binary model compilation,
 init/RAM reduction) in progress.
 

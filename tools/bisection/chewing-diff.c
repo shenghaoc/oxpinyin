@@ -49,6 +49,7 @@ typedef int32_t gint;
 #define IS_ZHUYIN         (1u << 2)
 #define ZHUYIN_INCOMPLETE (1u << 4)
 #define USE_TONE          (1u << 5)
+#define FORCE_TONE        (1u << 6)
 #define CHEWING_FLAGS                                                   \
     ((pinyin_option_t)(IS_ZHUYIN | ZHUYIN_INCOMPLETE | USE_TONE))
 #define DEFAULT_SORT ((guint)0x1e)
@@ -1326,6 +1327,18 @@ int main(int argc, char **argv) {
             keystrokes[len] = '\0';
             drive_input(&s, inst, keystrokes);
         }
+    }
+
+    /* Row-30 profile: the caller-set FORCE_TONE word. The batch seam
+     * forwards the whole option word after the ZHUYIN_CORRECT_ALL strip
+     * (pinyin.cpp:1582-1609 at the pin), so a toneless syllable refuses
+     * while a toned one parses — the register's row-30 differential. */
+    s.set_options(ctx, CHEWING_FLAGS | FORCE_TONE);
+    printf("=== profile: FORCE_TONE ===\n");
+    for (size_t i = 0; i < ncorpus; i++) {
+        char keystrokes[16];
+        derive_keystrokes(kb, &corpus[i], keystrokes);
+        drive_input(&s, inst, keystrokes);
     }
 
     s.free_instance(inst);

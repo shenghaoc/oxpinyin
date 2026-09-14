@@ -470,3 +470,12 @@ this record.
   (`docs/findings/upstream-divergences.md`, "pinyin-facade chewing batch
   seam does not forward `FORCE_TONE`"); W13 work proceeds against this
   SPEC as frozen.
+- **Closure note — 2026-09-14.** The one open implementation item the
+  freeze carried is closed, per the fix shape its own record prescribed:
+  the seam forwards the whole option word after the `ZHUYIN_CORRECT_ALL`
+  strip (`pinyin.cpp:1582-1609`), capi tests pin the register's measured
+  shape, and `tools/bisection/chewing-diff.c` gained the FORCE_TONE
+  profile pass. The frozen law itself is unchanged — this is its
+  implementation, not an amendment of it. The profile's live run against
+  the pin remains owed to a Linux oracle host (register amendment,
+  `docs/findings/upstream-divergences.md`).

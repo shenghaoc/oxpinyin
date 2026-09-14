@@ -1836,11 +1836,12 @@ impl ZhuyinParser {
     /// incomplete bits folded in and `FORCE_TONE` honoured per keyboard
     /// family.
     ///
-    /// The existing [`Self::parse`] keeps its three-argument shape (the
-    /// pinyin facade's `pinyin_parse_more_chewings` calls it with
-    /// `force_tone` never set); this is the additive seam the zhuyin facade
-    /// uses so it can forward the pin's default `USE_TONE | FORCE_TONE`
-    /// word.
+    /// The existing [`Self::parse`] keeps its three-argument shape
+    /// (`force_tone` never set) for direct callers; both C facades'
+    /// `*_parse_more_chewings` seams drive this method with their own
+    /// forwarding law — the pinyin facade's word minus
+    /// `ZHUYIN_CORRECT_ALL`, the zhuyin facade's whole word (its pin
+    /// default carries `USE_TONE | FORCE_TONE`).
     #[must_use]
     pub fn parse_with_options(&self, input: &[u8], options: u32) -> ZhuyinParse {
         let bits = OptionBits::from_bits(options);

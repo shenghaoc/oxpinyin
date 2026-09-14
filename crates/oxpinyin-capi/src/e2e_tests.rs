@@ -1725,3 +1725,76 @@ mod parse_termination {
         crate::context::pinyin_fini(context);
     }
 }
+
+/// The chewing batch seam's option forwarding — row 30 of the
+/// compatibility policy: `pinyin_parse_more_chewings` passes the whole
+/// option word through after the `ZHUYIN_CORRECT_ALL` strip
+/// (`pinyin.cpp:1582-1609` at the pin), so a caller-set `FORCE_TONE`
+/// reaches the zhuyin parser's per-keyboard law.
+#[cfg(test)]
+mod chewing_batch_force_tone {
+    use crate::config::pinyin_set_options;
+    use crate::parse::pinyin_parse_more_chewings;
+    use crate::test_support::{TempUserDir, cstr, open};
+
+    const PARITY: u32 = 0x18a;
+    const USE_TONE: u32 = 0x20;
+    const FORCE_TONE: u32 = 0x40;
+
+    fn chewing_len(
+        context: *mut crate::types::PinyinContext,
+        instance: *mut crate::types::PinyinInstance,
+        word: u32,
+        input: &str,
+    ) -> usize {
+        assert!(pinyin_set_options(context, word));
+        let text = cstr(input);
+        pinyin_parse_more_chewings(instance, text.as_ptr())
+    }
+
+    #[test]
+    fn force_tone_crosses_the_pinyin_facade_seam() {
+        // The register's measured row-30 shape: under USE_TONE|FORCE_TONE
+        // the pin consumes 0 on toneless `su` (STANDARD ㄋㄧ) where the
+        // seam-deficient build consumed 2; a toned syllable parses.
+        let user_dir = TempUserDir::new("row30-force");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        let word = PARITY | USE_TONE | FORCE_TONE;
+
+        assert_eq!(
+            chewing_len(context, instance, word, "su"),
+            0,
+            "toneless syllable refuses under FORCE_TONE"
+        );
+        assert_eq!(
+            chewing_len(context, instance, word, "su3"),
+            3,
+            "toned syllable parses under FORCE_TONE"
+        );
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    #[test]
+    fn the_seam_strips_only_the_zhuyin_corrections() {
+        // Without FORCE_TONE the forwarded word parses exactly as the
+        // three-argument law did — the strip changes nothing a caller
+        // can observe on the STANDARD keyboard (its corrections are the
+        // parser's own, re-or'd inside `parse_detailed`), and
+        // FORCE_TONE without USE_TONE stays inert (the nested check).
+        let user_dir = TempUserDir::new("row30-strip");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+        assert_eq!(chewing_len(context, instance, PARITY | USE_TONE, "su"), 2);
+        assert_eq!(chewing_len(context, instance, PARITY | USE_TONE, "su3"), 3);
+        assert_eq!(
+            chewing_len(context, instance, PARITY | FORCE_TONE, "su"),
+            2,
+            "FORCE_TONE is nested inside USE_TONE"
+        );
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+}

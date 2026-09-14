@@ -1580,7 +1580,7 @@ tags.
   Entry kept so a future consumer that sets the bit finds the law already
   analysed.
 
-## pinyin-facade chewing batch seam does not forward `FORCE_TONE` — open (the FORCE_TONE entry's sixth seam)
+## pinyin-facade chewing batch seam does not forward `FORCE_TONE` — CLOSED (the whole word crosses the seam)
 
 Surfaced by the bopomofo SPEC audit (2026-09-03). The FORCE_TONE entry
 above enumerates the full-pinyin batch, the double one-key, the zhuyin
@@ -1622,6 +1622,23 @@ freezes — was never in that enumeration. This entry completes it.
   registered so the bopomofo SPEC freeze can name it as its open
   implementation item rather than stay silent, exactly as the double-pinyin
   freeze carried its batch gate.
+
+  (Amended 2026-09-14: **CLOSED in code.** The `PinFacade` arm of
+  `parse_chewing_more` now forwards `self.options().bits() &
+  !ZHUYIN_CORRECT_ALL` through `ZhuyinParser::parse_with_options` — the
+  pin's exact `pinyin.cpp:1582-1609` law, re-verified against the pin
+  checkout (`src/pinyin.cpp` blob `f27f7cf7` at `074a2219`). The
+  capi-level tests (`chewing_batch_force_tone` in
+  `crates/oxpinyin-capi/src/e2e_tests.rs`) pin the register's measured
+  shape — toneless `su` refuses under `USE_TONE | FORCE_TONE`, `su3`
+  parses, the strip changes nothing observable on STANDARD, and
+  `FORCE_TONE` without `USE_TONE` stays nested-inert — and
+  `tools/bisection/chewing-diff.c` gained the FORCE_TONE profile pass
+  the entry prescribed. The live pin-vs-oxpinyin run of that profile is
+  owed to a Linux oracle host; every existing gate stays IDENTICAL
+  because none sets the bit, so the closure rests on the unit-level law
+  plus the profile, in the same shape the NbestShape closure (row 28)
+  rested on engine tests without a moving gate.)
 
 ### The pinyin index DBMs carry uninitialized struct padding
 

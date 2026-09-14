@@ -21,7 +21,10 @@ backend family — same-backend pairs (Kyoto Cabinet↔Kyoto Cabinet,
 tkrzw↔tkrzw, oxpinyin↔libpinyin either direction) interoperate
 seamlessly, user data included; data loss when the KV database backend
 actually changes is taken for granted (maintainer ruling; recorded in
-place under "The goal this policy serves").
+place under "The goal this policy serves"). **Amended 2026-09-14:** the
+one defect the 2026-09-12 amendment carried — row 30 — is closed in
+code (the table and totals below carry the state; the live FORCE_TONE
+differential run remains owed to a Linux oracle host).
 
 ## The goal this policy serves
 
@@ -296,15 +299,17 @@ revert targets is `revert-plan.md`.
 | 27 | zhuyin multi-syllable candidate construction | **CLOSED** | the divergence was the pinyin string-fill law, not the construction model (amended 2026-08-31) |
 | 28 | zhuyin n-best trellis constants `<1, 1>` vs the engine's `<2, 3>` | **CLOSED** in code (#374) | per-session `NbestShape` (`PINYIN` = `<2, 3>`, `ZHUYIN` = `<1, 1>`), set by both zhuyin facades at instance allocation; not observable through today's libzhuyin candidate surface, so no gate moves |
 | 29 | zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default | **no ABI divergence** | `CapiContext::try_open` seeds the pin's `USE_TONE \| FORCE_TONE`; entry kept as analysis for a future consumer |
-| 30 | pinyin-facade chewing batch seam does not forward `FORCE_TONE` | **OPEN DEFECT** | the register says it: no class fits, a defect to close; `ROADMAP.md` carries it as the bopomofo SPEC's one open implementation item. Observable only under a caller-set `FORCE_TONE` (pin consumes 0 on toneless `su`, oxpinyin 2). Fix shape: forward `inst.options().bits()` through `parse_with_options` plus a `FORCE_TONE` profile in `chewing-diff.c`. Not STOP-gated — the same one-line shape #289 used on the double-pinyin seam |
+| 30 | pinyin-facade chewing batch seam does not forward `FORCE_TONE` | **CLOSED** in code (2026-09-14) | the register says it: no class fits, a defect to close; closed by the prescribed shape — the seam forwards `options().bits() & !ZHUYIN_CORRECT_ALL` through `parse_with_options`, capi tests pin the measured shape (toneless `su` refuses under `USE_TONE \| FORCE_TONE`), and `chewing-diff.c` carries the FORCE_TONE profile; the live differential run is owed to a Linux oracle host (register amendment) |
 | 31 | redb write-side emptiness probe creates the table it probes | **no ABI divergence** | a redb API constraint below the store traits; nothing above them observes it. Stage-2 store-trait note, not a compatibility entry |
 
-Totals at `2a99761a` (2026-09-06, oracle pin 074a2219): **(a)** 2 ·
+Totals at `2a99761a` (2026-09-06, oracle pin 074a2219), amended
+2026-09-14 for row 30's closure: **(a)** 2 ·
 **(b)** 2 · **(c)** 10 · **(d)** 0 (class retired, see below) · **REVERT
-TARGET** 2 (rows 5b, 17) · **OPEN DEFECT** 1 (row 30) · **CLOSED** 13
-(rows 3, 7, 8, 9, 12, 13, 15, 16, 24, 25, 26, 27, 28 — 26 measured
+TARGET** 2 (rows 5b, 17) · **OPEN DEFECT** 0 · **CLOSED** 14
+(rows 3, 7, 8, 9, 12, 13, 15, 16, 24, 25, 26, 27, 28, 30 — 26 measured
 identical on the pin 2026-09-08; 28 in code via #374, not observable
-through today's surface) · **no ABI divergence** 4 rows (2, 23,
+through today's surface; 30 in code 2026-09-14, live profile run owed to
+a Linux oracle host) · **no ABI divergence** 4 rows (2, 23,
 29, 31).
 
 The 2026-08-28 totals were (a) 1 · (b) 2 · (c) 6 · (d) 1 · REVERT
@@ -315,8 +320,10 @@ conditional.
 
 ### What is still owed, in order
 
-1. **Row 30** — the chewing batch seam's `FORCE_TONE` forward. One line
-   plus a differential profile; no ask needed.
+1. **Row 30** — closed in code 2026-09-14 (seam forward + capi tests +
+   the `chewing-diff.c` FORCE_TONE profile); the one remaining piece is
+   the profile's live run against a Linux oracle, which no existing CI
+   lane can do.
 2. **Row 5b** — the double out-of-enum half-mutation. Reproducing a
    half-mutation that lies about success is the (c) boundary case the
    policy singles out; the maintainer named it a revert target and it
@@ -367,7 +374,8 @@ then the zhuyin batch seam (1671954, row 24) and the double-pinyin
 batch seam (#289) were ported anyway, and with (d) retired
 (2026-09-06) the last one, the pinyin facade's chewing batch seam, is
 row 30's open defect. The note is kept as the record of the original
-reasoning; row 16 carries the current status.
+reasoning; row 16 carries the current status. (Row 30 closed in code
+2026-09-14 — see the table.)
 
 **#17 — recorded as a revert target, with the evidence against it
 stated.** Both consumers OR the bits unconditionally before every
