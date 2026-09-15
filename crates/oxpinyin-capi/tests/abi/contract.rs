@@ -48,10 +48,10 @@ fn double_customized_is_rejected_without_disturbing_the_live_scheme() {
     pinyin_capi::pinyin_fini(context);
 }
 
-/// Out-of-enum double values (0, 7-29, 31+): upstream clears
+/// Out-of-enum double values (0, 7–29, 31+): upstream clears
 /// `m_fallback_table` unconditionally (`pinyin_parser2.cpp:580`),
 /// returns `false` from the parser (`pinyin_parser2.cpp:614`), and the
-/// API wrapper answers `true` regardless (`pinyin.cpp:1155-1159`).
+/// API wrapper answers `true` regardless (`pinyin.cpp:1155–1159`).
 /// oxpinyin reproduces the half-mutation: `true`, fallback cleared,
 /// shengmu/yunmu tables unchanged.
 #[test]
