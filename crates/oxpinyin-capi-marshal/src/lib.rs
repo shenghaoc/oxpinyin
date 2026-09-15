@@ -31,6 +31,13 @@
 //! crate-internal Rust helpers those entry points call.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+// Constitution §4, mechanically: library builds may not unwrap, expect,
+// or panic. Inline #[cfg(test)] modules are exempt (see the allow below
+// their declaration); tests/, benches/ and examples/ are separate crates.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
 /// Stamps the opaque-handle marshalling helpers behind a facade's three C
 /// handle types: the context, the instance, and the borrowed lookup
