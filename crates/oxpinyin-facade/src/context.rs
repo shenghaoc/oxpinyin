@@ -40,6 +40,14 @@ impl std::error::Error for OpenFailure {
     }
 }
 
+/// Bit 30 of [`LiveOptions::double_scheme`]: when set, the live
+/// scheme's fallback table is suppressed — upstream's half-mutation
+/// (`pinyin_parser2.cpp:580` + `:614`; `upstream-divergences.md`
+/// row 5b).  A valid-scheme store clears it implicitly (values 1–6
+/// never have bit 30), and the out-of-enum arm sets it with
+/// `fetch_or`.
+pub const FALLBACK_CLEARED_BIT: i32 = 1 << 30;
+
 /// The live option/scheme state a context owns and every instance it
 /// allocates shares: `set_options`/`set_*_scheme` on the context remask
 /// already-allocated instances through these handles.
@@ -50,7 +58,9 @@ impl std::error::Error for OpenFailure {
 pub struct LiveOptions {
     /// Live `PINYIN_INCOMPLETE` bit.
     pub incomplete: Arc<std::sync::atomic::AtomicBool>,
-    /// Live double-pinyin scheme (header discriminant value).
+    /// Live double-pinyin scheme (header discriminant value, bits 0–29)
+    /// with the fallback-cleared flag packed into bit 30
+    /// ([`FALLBACK_CLEARED_BIT`]).
     pub double_scheme: Arc<std::sync::atomic::AtomicI32>,
     /// Live Zhuyin scheme (header discriminant value).
     pub zhuyin_scheme: Arc<std::sync::atomic::AtomicI32>,

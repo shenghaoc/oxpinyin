@@ -671,9 +671,21 @@ fn lookup_pinyin(spelling: &str) -> Option<SyllableKey> {
 }
 
 /// Stateless parser for one double-pinyin scheme.
+///
+/// The optional `suppress_fallback` flag reproduces upstream's
+/// half-mutation state: `DoublePinyinParser2::set_scheme` clears
+/// `m_fallback_table` unconditionally (`pinyin_parser2.cpp:580`) before
+/// checking the discriminant, so an out-of-enum call leaves the shengmu
+/// and yunmu tables intact but the fallback pointer null. The builder
+/// [`Self::with_fallback_suppressed`] creates that state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DoublePinyinParser {
     scheme: DoublePinyinScheme,
+    /// When `true`, the fallback table for schemes that have one
+    /// (ZRM/PYJJ/XHE) is suppressed — the parser behaves as though
+    /// upstream cleared `m_fallback_table` without touching the scheme's
+    /// shengmu/yunmu tables.
+    suppress_fallback: bool,
 }
 
 impl DoublePinyinParser {
@@ -682,23 +694,39 @@ impl DoublePinyinParser {
     pub const fn new() -> Self {
         Self {
             scheme: DoublePinyinScheme::Ms,
+            suppress_fallback: false,
         }
     }
 
     /// A parser for a specific scheme.
     #[must_use]
     pub const fn with_scheme(scheme: DoublePinyinScheme) -> Self {
-        Self { scheme }
+        Self {
+            scheme,
+            suppress_fallback: false,
+        }
+    }
+
+    /// Returns a copy of this parser with the fallback table suppressed,
+    /// reproducing the state upstream enters when `set_scheme` clears
+    /// `m_fallback_table` without assigning a new scheme
+    /// (`pinyin_parser2.cpp:580`).
+    #[must_use]
+    pub const fn with_fallback_suppressed(mut self) -> Self {
+        self.suppress_fallback = true;
+        self
     }
 
     /// Selects a scheme. Returns `false` and keeps the current scheme for
     /// `Customized`, mirroring upstream's lack of a compiled table there
     /// (`src/storage/pinyin_parser2.cpp:610-612`) without the abort.
+    /// A successful switch clears the suppressed-fallback flag.
     pub fn set_scheme(&mut self, scheme: DoublePinyinScheme) -> bool {
         if scheme == DoublePinyinScheme::Customized {
             return false;
         }
         self.scheme = scheme;
+        self.suppress_fallback = false;
         true
     }
 
@@ -735,9 +763,12 @@ impl DoublePinyinParser {
     /// whatever the word carries (`:409, :434-436`).
     #[must_use]
     pub fn parse_with_options(&self, input: &[u8], options: u32) -> DoublePinyinParse {
-        let Some(tables) = self.scheme.tables() else {
+        let Some(mut tables) = self.scheme.tables() else {
             return DoublePinyinParse::default();
         };
+        if self.suppress_fallback {
+            tables.fallback = None;
+        }
         let bits = OptionBits::from_bits(options);
         let use_tone = bits.contains(USE_TONE);
         let force_tone = bits.contains(FORCE_TONE);
@@ -807,7 +838,10 @@ impl DoublePinyinParser {
         if bits.contains(FORCE_TONE) && input.len() != 3 {
             return None;
         }
-        let tables = self.scheme.tables()?;
+        let mut tables = self.scheme.tables()?;
+        if self.suppress_fallback {
+            tables.fallback = None;
+        }
         match input.len() {
             1 => {
                 let syllable =
@@ -3074,6 +3108,29 @@ mod tests {
         assert!(!zhuyin.set_scheme(ZhuyinScheme::StandardDvorak));
         assert_eq!(zhuyin.scheme(), ZhuyinScheme::DachenCp26);
         assert_eq!(zhuyin.parse(b"t", true, false).full_pinyin(), "zhi");
+    }
+
+    /// `with_fallback_suppressed` reproduces upstream's half-mutation
+    /// state: the scheme's shengmu/yunmu tables are active but the
+    /// fallback table is null.
+    #[test]
+    fn with_fallback_suppressed_clears_only_the_fallback() {
+        let zrm = DoublePinyinParser::with_scheme(DoublePinyinScheme::Zrm);
+        // ZRM "aa" goes through the fallback table.
+        assert_eq!(zrm.parse(b"aa", false).consumed(), 2);
+        // ZRM "ni" (n+i) goes through shengmu/yunmu tables.
+        assert_eq!(zrm.parse(b"ni", false).consumed(), 2);
+
+        let suppressed = zrm.with_fallback_suppressed();
+        // Fallback is gone — "aa" no longer resolves.
+        assert_eq!(suppressed.parse(b"aa", false).consumed(), 0);
+        // Shengmu/yunmu are intact — "ni" still works.
+        assert_eq!(suppressed.parse(b"ni", false).consumed(), 2);
+
+        // set_scheme clears the suppressed flag.
+        let mut parser = suppressed;
+        assert!(parser.set_scheme(DoublePinyinScheme::Zrm));
+        assert_eq!(parser.parse(b"aa", false).consumed(), 2);
     }
 
     #[test]
