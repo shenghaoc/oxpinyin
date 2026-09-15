@@ -146,7 +146,7 @@ fn candidate_ptr_ref_round_trip() {
 fn candidate_ptr_into_vec() {
     // Reproduces the real usage pattern: candidates live in a Vec, and
     // `candidate_ptr` hands out pointers into it.
-    let candidates = vec![
+    let candidates = [
         CandidateBacking {
             text: "a".into(),
             score: 1.0,
@@ -192,7 +192,7 @@ oxpinyin_capi_marshal::write_owned_sentence!(test_owned_cstr);
 
 #[test]
 fn sentence_empty_text_returns_false_and_nulls_out() {
-    let mut out: *mut c_char = 0x1 as *mut c_char; // sentinel
+    let mut out: *mut c_char = std::ptr::dangling_mut::<c_char>();
     let ok = write_owned_sentence("", &mut out);
     assert!(!ok);
     assert!(out.is_null(), "out-param must be nulled on empty text");
@@ -227,7 +227,7 @@ fn sentence_valid_text_null_out_param() {
 
 #[test]
 fn sentence_interior_nul_returns_false() {
-    let mut out: *mut c_char = 0x1 as *mut c_char; // sentinel
+    let mut out: *mut c_char = std::ptr::dangling_mut::<c_char>();
     let ok = write_owned_sentence("hel\0lo", &mut out);
     assert!(!ok);
     assert!(out.is_null(), "out-param must be nulled on interior NUL");
