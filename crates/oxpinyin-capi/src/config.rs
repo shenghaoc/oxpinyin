@@ -85,6 +85,12 @@ pub extern "C" fn pinyin_set_full_pinyin_scheme(
 /// (`pinyin_custom2.h:108-117`). `DOUBLE_PINYIN_CUSTOMIZED` (30) has no
 /// compiled table; oxpinyin reports `false` and keeps the previous scheme
 /// rather than aborting like upstream.
+///
+/// **Out-of-enum values** (0, 7-29, 31+) reproduce upstream's
+/// half-mutation (`pinyin_parser2.cpp:580,614`; `pinyin.cpp:1155-1159`):
+/// the live scheme's fallback table is cleared (the unconditional
+/// `m_fallback_table = NULL` at `:580`) and the wrapper returns `true`
+/// (ignoring the parser's `false` at `:614`).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_double_pinyin_scheme(
     context: *mut PinyinContext,
@@ -103,12 +109,31 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
         4 => oxpinyin_core::DoublePinyinScheme::Abc,
         5 => oxpinyin_core::DoublePinyinScheme::Pyjj,
         6 => oxpinyin_core::DoublePinyinScheme::Xhe,
-        _ => return false,
+        // CUSTOMIZED (30): no compiled table, upstream aborts;
+        // oxpinyin reports `false` and leaves the live scheme intact.
+        30 => return false,
+        // Out-of-enum: upstream's unconditional `m_fallback_table = NULL`
+        // (`:580`) fires before the switch falls through to `return false`
+        // (`:614`), and the wrapper ignores that `false` and answers `true`
+        // (`pinyin.cpp:1155-1159`).  Reproduce the half-mutation.
+        _ => {
+            ctx.core
+                .live
+                .double_fallback_cleared
+                .store(true, Ordering::Relaxed);
+            return true;
+        }
     };
     ctx.core
         .live
         .double_scheme
         .store(scheme as i32, Ordering::Relaxed);
+    // A valid scheme restores its own fallback (or lacks one); either way
+    // the cleared flag does not carry across a successful set.
+    ctx.core
+        .live
+        .double_fallback_cleared
+        .store(false, Ordering::Relaxed);
     true
 }
 

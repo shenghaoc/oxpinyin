@@ -1,12 +1,13 @@
-//! Scheme-setter contract tests: the abort / no-op slots of the pinned
-//! oracle, locked as `false` + unchanged state on the oxpinyin side
+//! Scheme-setter contract tests: the abort / no-op / half-mutation
+//! slots of the pinned oracle
 //! (`docs/findings/upstream-divergences.md`, the #109 contract-lock).
 //!
 //! Oracle differentials are impossible for these inputs — the pin-built
 //! `.so` SIGABRTs (double 30, zhuyin 7 and out-of-enum, full-pinyin
 //! out-of-enum) or half-mutates behind an unconditional `true`
-//! (double out-of-enum clears the live scheme's fallback table). These
-//! tests are oxpinyin-side only.
+//! (double out-of-enum clears the live scheme's fallback table —
+//! reproduced here as of the row-5b revert). These tests are
+//! oxpinyin-side only.
 
 use std::os::raw::c_int;
 
@@ -47,34 +48,64 @@ fn double_customized_is_rejected_without_disturbing_the_live_scheme() {
     pinyin_capi::pinyin_fini(context);
 }
 
-/// Out-of-enum double values (0, 7–29, 31+): upstream clears
-/// `m_fallback_table` first (`pinyin_parser2.cpp:582`), returns `false`
-/// from the parser, and the API wrapper still answers `true`
-/// (`pinyin.cpp:1154-1159`) — the caller believes the call failed or
-/// succeeded unreadably while the live scheme silently lost its
-/// fallback. oxpinyin: `false` and the whole scheme state is unchanged.
+/// Out-of-enum double values (0, 7-29, 31+): upstream clears
+/// `m_fallback_table` unconditionally (`pinyin_parser2.cpp:580`),
+/// returns `false` from the parser (`pinyin_parser2.cpp:614`), and the
+/// API wrapper answers `true` regardless (`pinyin.cpp:1155-1159`).
+/// oxpinyin reproduces the half-mutation: `true`, fallback cleared,
+/// shengmu/yunmu tables unchanged.
 #[test]
-fn double_out_of_enum_is_rejected_without_the_fallback_half_mutation() {
+fn double_out_of_enum_reproduces_the_half_mutation() {
     let user_dir = TempUserDir::new("contract-double-enum");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
+    // ZRM is the fallback-bearing scheme: "aa" resolves through its
+    // fallback table ("aa" -> a, parsed_len 2).
     assert!(pinyin_set_double_pinyin_scheme(context, 1));
     let aa = cstr("aa");
     assert_eq!(pinyin_parse_more_double_pinyins(instance, aa.as_ptr()), 2);
 
+    // A non-fallback input still works after the fallback is cleared:
+    // "ni" (n+i) uses the shengmu/yunmu tables, not the fallback.
+    let ni = cstr("ni");
+
     for bad in [0, 7, 29, 31, 100, -1] {
-        assert!(
-            !pinyin_set_double_pinyin_scheme(context, c_int::from(bad)),
-            "double scheme {bad} must be rejected"
-        );
-        // Upstream would have cleared the ZRM fallback here; oxpinyin
-        // keeps parsing through it.
+        // Re-set ZRM so the fallback is live again before each probe.
+        assert!(pinyin_set_double_pinyin_scheme(context, 1));
         assert_eq!(
             pinyin_parse_more_double_pinyins(instance, aa.as_ptr()),
             2,
-            "fallback must survive the rejected double scheme {bad}"
+            "ZRM fallback must be live before the out-of-enum call ({bad})"
+        );
+
+        // The half-mutation: returns `true` (the upstream wrapper's lie).
+        assert!(
+            pinyin_set_double_pinyin_scheme(context, c_int::from(bad)),
+            "double scheme {bad} must answer true (upstream's wrapper lie)"
+        );
+
+        // The fallback is now cleared — "aa" no longer resolves.
+        assert_eq!(
+            pinyin_parse_more_double_pinyins(instance, aa.as_ptr()),
+            0,
+            "fallback must be cleared after out-of-enum {bad}"
+        );
+
+        // The shengmu/yunmu tables are intact — "ni" still parses.
+        assert_eq!(
+            pinyin_parse_more_double_pinyins(instance, ni.as_ptr()),
+            2,
+            "shengmu/yunmu must survive the out-of-enum {bad}"
         );
     }
+
+    // A later valid set restores the fallback.
+    assert!(pinyin_set_double_pinyin_scheme(context, 1));
+    assert_eq!(
+        pinyin_parse_more_double_pinyins(instance, aa.as_ptr()),
+        2,
+        "ZRM fallback must be restored after a valid set"
+    );
 
     pinyin_capi::pinyin_free_instance(instance);
     pinyin_capi::pinyin_fini(context);
