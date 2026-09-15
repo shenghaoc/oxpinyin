@@ -3,23 +3,34 @@
 //! and candidate selection.
 //!
 //! The session is driven through its public API with fixture-backed test
-//! doubles from `oxpinyin-testsupport`. The internal scan matrix and n-best
-//! trellis are exercised indirectly — their types are crate-private, so the
-//! bench exercises the same code path a real consumer does.
+//! doubles from `oxpinyin-testsupport`. The keystroke and composition groups
+//! use [`FrequencyFixtureModel`], which reports `has_real_unigrams() == true`
+//! so the engine takes the production window-scan + frequency-ranking path
+//! (`collect_window_scan`, the three-key order, amplified-frequency ranking)
+//! rather than the pre-frequency k-best fallback. The session-construction
+//! group keeps the plain [`FixtureLanguageModel`] and the empty stubs, where
+//! the measured cost is the `Session::new` call itself.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
 use oxpinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
 use oxpinyin_engine::{EmptyConfigSource, KeyInput, LogicalKey, Session, StoragePaths};
-use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
+use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel, FrequencyFixtureModel};
 
 const MINI_VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
 const MINI_BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");
 
-fn fixture_session() -> Session<FixtureDictionary, FixtureLanguageModel> {
+/// Builds a session with [`FrequencyFixtureModel`], which reports
+/// `has_real_unigrams() == true` and routes the engine through the
+/// production window-scan decode path.
+fn fixture_session() -> Session<FixtureDictionary, FrequencyFixtureModel> {
     let dict = FixtureDictionary::parse(MINI_VOCAB).expect("mini-vocab fixture");
-    let model = FixtureLanguageModel::parse(MINI_VOCAB, MINI_BIGRAM).expect("mini-bigram fixture");
+    let model = FrequencyFixtureModel::parse(MINI_VOCAB, MINI_BIGRAM).expect("mini-bigram fixture");
+    assert!(
+        model.has_real_unigrams(),
+        "the bench model must report real unigrams to exercise the production path"
+    );
     Session::new(
         &EmptyConfigSource,
         StoragePaths::new("/tmp/oxpinyin-bench"),
