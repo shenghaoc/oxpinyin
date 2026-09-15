@@ -105,7 +105,7 @@ impl Settings {
             .unwrap_or(DEFAULT_PAGE_SIZE);
         // The captured parity profile is `PINYIN_INCOMPLETE |
         // USE_DIVIDED_TABLE | USE_RESPLIT_TABLE`, and every reference
-        // consumer (ibus-pinyin `PYLibPinyin.cc:196-198`) ORs the table
+        // consumer (ibus-libpinyin `PYLibPinyin.cc:195-196`) ORs the table
         // bits unconditionally. A source that says nothing gets the parity
         // behaviour. Other option bits arrive through
         // [`Session::set_options`] from the C ABI's raw option word.
