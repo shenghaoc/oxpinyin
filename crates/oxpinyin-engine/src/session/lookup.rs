@@ -214,7 +214,16 @@ where
             collected.dedup_by(|left, right| left.text() == right.text());
         }
 
-        if collected.is_empty() {
+        // Upstream's `if (0 == matrix.size()) return false;`
+        // (`pinyin.cpp:2195`): when the parser placed no key into the
+        // matrix, the candidate list stays empty — no raw-text fallback.
+        // `parsed_prefix == 0` is the oxpinyin equivalent: the
+        // fewest-keys parse consumed nothing from position 0, so the
+        // scan matrix has no selected keys and the scan had nothing to
+        // search. At `0x0` this drops correction aliases whose bit is
+        // clear (`jv` without `PINYIN_CORRECT_V_U`, `zon` without
+        // `PINYIN_CORRECT_ON_ONG`).
+        if collected.is_empty() && parsed_prefix > 0 {
             collected.push(Candidate::new(
                 compact_str::CompactString::from(remaining),
                 CandidateKind::Fallback,
