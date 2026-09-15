@@ -86,11 +86,12 @@ pub extern "C" fn pinyin_set_full_pinyin_scheme(
 /// compiled table; oxpinyin reports `false` and keeps the previous scheme
 /// rather than aborting like upstream.
 ///
-/// **Out-of-enum values** (0, 7-29, 31+) reproduce upstream's
-/// half-mutation (`pinyin_parser2.cpp:580,614`; `pinyin.cpp:1155-1159`):
-/// the live scheme's fallback table is cleared (the unconditional
-/// `m_fallback_table = NULL` at `:580`) and the wrapper returns `true`
-/// (ignoring the parser's `false` at `:614`).
+/// **Out-of-enum values** (negatives, 0, 7–29, 31+) reproduce
+/// upstream's half-mutation (`pinyin_parser2.cpp:580,614`;
+/// `pinyin.cpp:1155–1159`): the live scheme's fallback table is
+/// cleared (the unconditional `m_fallback_table = NULL` at `:580`) and
+/// the wrapper returns `true` (ignoring the parser's `false` at
+/// `:614`).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_set_double_pinyin_scheme(
     context: *mut PinyinContext,
@@ -115,25 +116,21 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
         // Out-of-enum: upstream's unconditional `m_fallback_table = NULL`
         // (`:580`) fires before the switch falls through to `return false`
         // (`:614`), and the wrapper ignores that `false` and answers `true`
-        // (`pinyin.cpp:1155-1159`).  Reproduce the half-mutation.
+        // (`pinyin.cpp:1155-1159`).  Set the packed fallback-cleared bit.
         _ => {
             ctx.core
                 .live
-                .double_fallback_cleared
-                .store(true, Ordering::Relaxed);
+                .double_scheme
+                .fetch_or(oxpinyin_facade::FALLBACK_CLEARED_BIT, Ordering::Relaxed);
             return true;
         }
     };
+    // A valid scheme (1-6) never has bit 30, so this store clears the
+    // fallback-cleared flag implicitly.
     ctx.core
         .live
         .double_scheme
         .store(scheme as i32, Ordering::Relaxed);
-    // A valid scheme restores its own fallback (or lacks one); either way
-    // the cleared flag does not carry across a successful set.
-    ctx.core
-        .live
-        .double_fallback_cleared
-        .store(false, Ordering::Relaxed);
     true
 }
 

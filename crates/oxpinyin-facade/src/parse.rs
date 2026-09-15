@@ -224,13 +224,15 @@ impl InstanceCore {
     pub fn parse_double_more(&mut self, text: &str) -> usize {
         self.begin_parse(text.as_bytes());
 
-        let Some(scheme) = double_scheme(self.live.double_scheme.load(Ordering::Relaxed)) else {
+        let raw = self.live.double_scheme.load(Ordering::Relaxed);
+        let fallback_cleared = raw & crate::context::FALLBACK_CLEARED_BIT != 0;
+        let Some(scheme) = double_scheme(raw & !crate::context::FALLBACK_CLEARED_BIT) else {
             return 0;
         };
         let allow_incomplete = self.live.incomplete.load(Ordering::Relaxed);
         let parser = {
             let p = DoublePinyinParser::with_scheme(scheme);
-            if self.live.double_fallback_cleared.load(Ordering::Relaxed) {
+            if fallback_cleared {
                 p.with_fallback_suppressed()
             } else {
                 p
@@ -281,10 +283,12 @@ impl InstanceCore {
     /// `false`.
     #[must_use]
     pub fn parse_one_double_pinyin(&self, text: &str) -> Option<ChewingKey> {
-        let scheme = double_scheme(self.live.double_scheme.load(Ordering::Relaxed))?;
+        let raw = self.live.double_scheme.load(Ordering::Relaxed);
+        let fallback_cleared = raw & crate::context::FALLBACK_CLEARED_BIT != 0;
+        let scheme = double_scheme(raw & !crate::context::FALLBACK_CLEARED_BIT)?;
         let parser = {
             let p = DoublePinyinParser::with_scheme(scheme);
-            if self.live.double_fallback_cleared.load(Ordering::Relaxed) {
+            if fallback_cleared {
                 p.with_fallback_suppressed()
             } else {
                 p
