@@ -228,7 +228,14 @@ impl InstanceCore {
             return 0;
         };
         let allow_incomplete = self.live.incomplete.load(Ordering::Relaxed);
-        let parser = DoublePinyinParser::with_scheme(scheme);
+        let parser = {
+            let p = DoublePinyinParser::with_scheme(scheme);
+            if self.live.double_fallback_cleared.load(Ordering::Relaxed) {
+                p.with_fallback_suppressed()
+            } else {
+                p
+            }
+        };
         let parsed = parser.parse_with_options(text.as_bytes(), self.options().bits());
 
         if text.is_empty() {
@@ -275,8 +282,15 @@ impl InstanceCore {
     #[must_use]
     pub fn parse_one_double_pinyin(&self, text: &str) -> Option<ChewingKey> {
         let scheme = double_scheme(self.live.double_scheme.load(Ordering::Relaxed))?;
-        DoublePinyinParser::with_scheme(scheme)
-            .parse_one_key(self.options().bits(), text.as_bytes())
+        let parser = {
+            let p = DoublePinyinParser::with_scheme(scheme);
+            if self.live.double_fallback_cleared.load(Ordering::Relaxed) {
+                p.with_fallback_suppressed()
+            } else {
+                p
+            }
+        };
+        parser.parse_one_key(self.options().bits(), text.as_bytes())
     }
 
     /// The one-key chewing probe — the `parse_chewing` law both facades

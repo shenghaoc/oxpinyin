@@ -275,7 +275,7 @@ revert targets is `revert-plan.md`.
 | 3 | HANYU full pinyin ignores tone digits under `USE_TONE` | **CLOSED** | ported; `PARSE_AUX_IDENTICAL` |
 | 4 | Tone digit on an initial-only key aborts the phrase search | **(c)** | pin SIGABRTs on `n4` under `USE_TONE\|PINYIN_INCOMPLETE` (`pinyin_phrase3.h:146-156`) |
 | 5a | Scheme setters — double `CUSTOMIZED` (30) | **(c)** | aborts mid-call (`pinyin_parser2.cpp:611-612`) |
-| 5b | Scheme setters — double out-of-enum (0, 7–29, 31+) | **REVERT TARGET** | **not an abort**: the parser clears the fallback and returns `false`, the wrapper answers `true`. A half-mutation is reproducible; see the (c) boundary above |
+| 5b | Scheme setters — double out-of-enum (0, 7-29, 31+) | **CLOSED** (was REVERT TARGET) | reproduced 2026-09-15: CAPI returns `true`, fallback cleared, shengmu/yunmu intact — the pin's half-mutation |
 | 5c | Scheme setters — zhuyin `STANDARD_DVORAK` (7) | **(c)** | dvorak arm falls through to `abort()` (`zhuyin_parser2.cpp:291-295`) |
 | 5d | Scheme setters — zhuyin / full-pinyin out-of-enum | **(c)** | aborts at `pinyin.cpp:1188` / `pinyin_parser2.cpp:398` |
 | 6 | Constraint-aware train without the consistency assert | **(c)** | `train_result3` asserts and aborts on a stale result |
@@ -308,7 +308,7 @@ revert targets is `revert-plan.md`.
 Totals at `2a99761a` (2026-09-06, oracle pin 074a2219), amended
 2026-09-14 for row 30's closure: **(a)** 2 ·
 **(b)** 2 · **(c)** 10 · **(d)** 0 (class retired, see below) · **REVERT
-TARGET** 2 (rows 5b, 17) · **OPEN DEFECT** 0 · **CLOSED** 14
+TARGET** 1 (row 17) · **OPEN DEFECT** 0 · **CLOSED** 15
 (rows 3, 7, 8, 9, 12, 13, 15, 16, 24, 25, 26, 27, 28, 30 — 26 measured
 identical on the pin 2026-09-08; 28 in code via #374, not observable
 through today's surface; 30 in code 2026-09-14, live profile run owed to
@@ -318,8 +318,8 @@ a Linux oracle host) · **no ABI divergence** 4 rows (2, 23,
 The 2026-08-28 totals were (a) 1 · (b) 2 · (c) 6 · (d) 1 · REVERT
 TARGET 7 · closed or not a divergence 2. Of the seven revert targets,
 five closed by reproduction or proven equivalence (7, 8, 9, 13, 15) and
-one was superseded by P6 (12); 5b and 17 remain, and 17 is no longer
-conditional.
+one was superseded by P6 (12); 5b is closed (2026-09-15); 17 remains
+and is no longer conditional.
 
 ### What is still owed, in order
 
@@ -327,10 +327,9 @@ conditional.
    the `chewing-diff.c` FORCE_TONE profile); the one remaining piece is
    the profile's live run against a Linux oracle, which no existing CI
    lane can do.
-2. **Row 5b** — the double out-of-enum half-mutation. Reproducing a
-   half-mutation that lies about success is the (c) boundary case the
-   policy singles out; the maintainer named it a revert target and it
-   has not moved.
+2. **Row 5b** — the double out-of-enum half-mutation. Closed in code
+   2026-09-15: the CAPI returns `true` and clears the fallback, matching
+   the pin; shengmu/yunmu tables stay intact.
 3. **Row 17** — port the pin's `0x0` gating; unconditional since (d)
    was retired.
 4. **Rows 26 and 28** — landed in code (#374) under the maintainer's

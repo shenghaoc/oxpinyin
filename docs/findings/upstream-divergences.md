@@ -103,8 +103,8 @@ is complete, these notes are collected to report back to libpinyin.
 
 ### Scheme setters abort or half-mutate on the no-op slots
 
-The #109 contract-lock (all rows verified at `0c5e80e1`; oxpinyin
-answers `false` and keeps the previous scheme in every case, pinned by
+The #109 contract-lock (all rows verified at `0c5e80e1`; row 5b
+reverted 2026-09-15; remaining rows pinned by
 `crates/oxpinyin-capi/tests/abi/contract.rs`):
 
 - **double CUSTOMIZED (30)** — upstream aborts mid-call inside
@@ -112,12 +112,14 @@ answers `false` and keeps the previous scheme in every case, pinned by
   after the unconditional fallback clear already ran. The API wrapper
   `pinyin_set_double_pinyin_scheme` (`pinyin.cpp:1154-1159`) never
   returns.
-- **double out-of-enum (0, 7–29, 31+)** — the parser clears
-  `m_fallback_table` first (`pinyin_parser2.cpp:582`), returns `false`;
-  the wrapper ignores the result and answers **`true`**. A live
-  fallback-bearing scheme (ZRM/PYJJ/XHE) silently loses its fallback
-  while the caller is told the call succeeded: a half-mutation.
-  oxpinyin rejects with `false` and the fallback keeps working.
+- **double out-of-enum (0, 7-29, 31+)** — the parser clears
+  `m_fallback_table` first (`pinyin_parser2.cpp:580`), returns `false`;
+  the wrapper ignores the result and answers **`true`**
+  (`pinyin.cpp:1155-1159`). A live fallback-bearing scheme
+  (ZRM/PYJJ/XHE) silently loses its fallback while the caller is told
+  the call succeeded: a half-mutation. **Reproduced 2026-09-15:** the
+  CAPI returns `true` and clears the fallback, matching the pin; the
+  shengmu/yunmu tables stay intact.
 - **zhuyin STANDARD_DVORAK (7)** — the API routes 7 into
   `ZhuyinSimpleParser2::set_scheme`, whose dvorak arm assigns both
   tables and falls through into `default: abort()`
@@ -133,9 +135,13 @@ answers `false` and keeps the previous scheme in every case, pinned by
   wrapper (`pinyin.cpp:1148-1153`) answers `true` unconditionally.
 
 **Externally observable:** only through crash or lied-about state —
-oxpinyin's `false` + unchanged is the non-aborting contract the
-constitution requires; no oracle differential is possible for these
-inputs (the pin-built `.so` SIGABRTs).
+for the remaining abort rows (double 30, zhuyin 7 and out-of-enum,
+full-pinyin out-of-enum) oxpinyin's `false` + unchanged is the
+non-aborting contract the constitution requires; the double
+out-of-enum half-mutation (row 5b) now reproduces the pin's lied
+`true` + cleared fallback. No oracle differential is possible for
+any of these inputs (the pin-built `.so` SIGABRTs on the abort
+rows, and the half-mutation is silent).
 
 ### Constraint-aware train without the consistency assert
 
