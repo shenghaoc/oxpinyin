@@ -112,10 +112,10 @@ reverted 2026-09-15; remaining rows pinned by
   after the unconditional fallback clear already ran. The API wrapper
   `pinyin_set_double_pinyin_scheme` (`pinyin.cpp:1154-1159`) never
   returns.
-- **double out-of-enum (0, 7-29, 31+)** — the parser clears
+- **double out-of-enum (0, 7–29, 31+)** — the parser clears
   `m_fallback_table` first (`pinyin_parser2.cpp:580`), returns `false`;
   the wrapper ignores the result and answers **`true`**
-  (`pinyin.cpp:1155-1159`). A live fallback-bearing scheme
+  (`pinyin.cpp:1155–1159`). A live fallback-bearing scheme
   (ZRM/PYJJ/XHE) silently loses its fallback while the caller is told
   the call succeeded: a half-mutation. **Reproduced 2026-09-15:** the
   CAPI returns `true` and clears the fallback, matching the pin; the
@@ -140,8 +140,9 @@ full-pinyin out-of-enum) oxpinyin's `false` + unchanged is the
 non-aborting contract the constitution requires; the double
 out-of-enum half-mutation (row 5b) now reproduces the pin's lied
 `true` + cleared fallback. No oracle differential is possible for
-any of these inputs (the pin-built `.so` SIGABRTs on the abort
-rows, and the half-mutation is silent).
+the abort rows (the pin-built `.so` SIGABRTs); the half-mutation is
+observable through a following parse that would have used the
+fallback (the contract test's `aa` probe after the out-of-enum call).
 
 ### Constraint-aware train without the consistency assert
 

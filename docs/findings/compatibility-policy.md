@@ -275,7 +275,7 @@ revert targets is `revert-plan.md`.
 | 3 | HANYU full pinyin ignores tone digits under `USE_TONE` | **CLOSED** | ported; `PARSE_AUX_IDENTICAL` |
 | 4 | Tone digit on an initial-only key aborts the phrase search | **(c)** | pin SIGABRTs on `n4` under `USE_TONE\|PINYIN_INCOMPLETE` (`pinyin_phrase3.h:146-156`) |
 | 5a | Scheme setters — double `CUSTOMIZED` (30) | **(c)** | aborts mid-call (`pinyin_parser2.cpp:611-612`) |
-| 5b | Scheme setters — double out-of-enum (0, 7-29, 31+) | **CLOSED** (was REVERT TARGET) | reproduced 2026-09-15: CAPI returns `true`, fallback cleared, shengmu/yunmu intact — the pin's half-mutation |
+| 5b | Scheme setters — double out-of-enum (0, 7–29, 31+) | **CLOSED** in code (2026-09-15) | reproduced: CAPI returns `true`, fallback cleared, shengmu/yunmu intact — the pin's half-mutation; the following-parse probe (`contract.rs::double_out_of_enum_reproduces_the_half_mutation`) confirms the cleared fallback is observable |
 | 5c | Scheme setters — zhuyin `STANDARD_DVORAK` (7) | **(c)** | dvorak arm falls through to `abort()` (`zhuyin_parser2.cpp:291-295`) |
 | 5d | Scheme setters — zhuyin / full-pinyin out-of-enum | **(c)** | aborts at `pinyin.cpp:1188` / `pinyin_parser2.cpp:398` |
 | 6 | Constraint-aware train without the consistency assert | **(c)** | `train_result3` asserts and aborts on a stale result |
@@ -306,14 +306,14 @@ revert targets is `revert-plan.md`.
 | 31 | redb write-side emptiness probe creates the table it probes | **no ABI divergence** | a redb API constraint below the store traits; nothing above them observes it. Stage-2 store-trait note, not a compatibility entry |
 
 Totals at `2a99761a` (2026-09-06, oracle pin 074a2219), amended
-2026-09-14 for row 30's closure: **(a)** 2 ·
+2026-09-15 for row 5b's closure: **(a)** 2 ·
 **(b)** 2 · **(c)** 10 · **(d)** 0 (class retired, see below) · **REVERT
 TARGET** 1 (row 17) · **OPEN DEFECT** 0 · **CLOSED** 15
-(rows 3, 7, 8, 9, 12, 13, 15, 16, 24, 25, 26, 27, 28, 30 — 26 measured
-identical on the pin 2026-09-08; 28 in code via #374, not observable
-through today's surface; 30 in code 2026-09-14, live profile run owed to
-a Linux oracle host) · **no ABI divergence** 4 rows (2, 23,
-29, 31).
+(rows 3, 5b, 7, 8, 9, 12, 13, 15, 16, 24, 25, 26, 27, 28, 30 — 26
+measured identical on the pin 2026-09-08; 28 in code via #374, not
+observable through today's surface; 30 in code 2026-09-14, live profile
+run owed to a Linux oracle host; 5b in code 2026-09-15, following-parse
+probe pinned) · **no ABI divergence** 4 rows (2, 23, 29, 31).
 
 The 2026-08-28 totals were (a) 1 · (b) 2 · (c) 6 · (d) 1 · REVERT
 TARGET 7 · closed or not a divergence 2. Of the seven revert targets,
