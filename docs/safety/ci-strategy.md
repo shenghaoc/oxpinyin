@@ -37,8 +37,9 @@ Doctest step only if nextest lands. Gates: all hard.
   ratchet vs current max 38).
 
 > STATUS (2026-09-08): Tier 2 exists as path filters, not a label. The
-> llvm-cov floor (`coverage.yml`) runs on a PR when core, engine, user
-> or data change, and unconditionally from the nightly through
+> llvm-cov floor (`coverage.yml`) runs on a PR when core, engine, user,
+> data, facade, segment, chewing or capi-marshal change, and
+> unconditionally from the nightly through
 > `workflow_call`. Lizard moved to the Tier 1 lint job. A nightly
 > `public-api` lane diffs the engine's `cargo public-api` snapshot.
 > geiger was retired 2026-09-01.
@@ -107,7 +108,7 @@ libchewing convention), they do not auto-block unless a ratchet exists
 | overflow release lane | | | ✔ | |
 | Kani | | | dropped | |
 | cargo-mutants | | | retired 2026-09-01 | |
-| llvm-cov floor (77% lines) | | ✔ path-filtered (core/engine/user/data) | ✔ | planned (T4 not built) |
+| llvm-cov floor (77% lines) | | ✔ path-filtered (core/engine/user/data/facade/segment/chewing/capi-marshal) | ✔ | planned (T4 not built) |
 | geiger | | planned (T2 not built) | retired 2026-09-01 | |
 | Lizard ratchet | ✔ (lint job) | | | |
 | cargo-public-api snapshot (engine) | | | ✔ | |
