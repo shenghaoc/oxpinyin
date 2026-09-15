@@ -287,6 +287,8 @@ pub(crate) struct Db {
 // added locking, so it neither contradicts this nor exercises it — the
 // guarantee is Kyoto Cabinet's own, cited above.
 unsafe impl Send for Db {}
+// SAFETY: same argument as Send — every KC record operation holds the
+// database's own reader-writer lock, and error accessors are thread-local.
 unsafe impl Sync for Db {}
 
 impl Db {

@@ -434,6 +434,8 @@ impl Db {
 // flag here is one caller-buffer copy per record read, which the
 // `ReadStore` trait (`Vec<u8>` returns) charges anyway.
 unsafe impl Send for Db {}
+// SAFETY: same argument as Send — DB_THREAD makes the handle safe for
+// concurrent use, and every DBT is caller-owned (DB_DBT_USERMEM).
 unsafe impl Sync for Db {}
 
 impl Drop for Db {

@@ -191,14 +191,13 @@ fn last_status() -> (i32, String) {
     // SAFETY: `tkrzw_get_last_status` only reads thread-local state
     // this thread owns and returns the struct by value.
     let status = unsafe { ffi::tkrzw_get_last_status() };
-    // SAFETY: the message pointer is either the empty literal or points
-    // into libtkrzw's thread-local message buffer, NUL-terminated; the
-    // copy below happens before any other tkrzw call on this thread can
-    // overwrite that buffer, and `size_of::<c_char>() == 1` makes the
-    // length arithmetic exact.
     let message = if status.message.is_null() {
         Vec::new()
     } else {
+        // SAFETY: the message pointer is non-null (checked above) and
+        // points into libtkrzw's thread-local NUL-terminated buffer; the
+        // copy below happens before any other tkrzw call on this thread
+        // can overwrite that buffer.
         unsafe { CStr::from_ptr(status.message) }
             .to_bytes()
             .to_vec()
@@ -302,6 +301,8 @@ impl Drop for Db {
 // exclusively. The last-status channel the error mapping reads is
 // thread-local, so calls from other threads cannot interleave with it.
 unsafe impl Send for Db {}
+// SAFETY: same argument as Send — PolyDBM operations (other than Open/Close,
+// which cannot race here) are internally synchronised.
 unsafe impl Sync for Db {}
 
 /// An iterator over one [`Db`], freed when dropped.
