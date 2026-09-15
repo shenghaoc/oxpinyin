@@ -16,7 +16,7 @@ use std::os::raw::c_uint;
 use pinyin_capi::{
     LookupCandidate, PinyinInstance, pinyin_get_candidate, pinyin_get_candidate_string,
     pinyin_get_n_candidate, pinyin_guess_candidates, pinyin_parse_more_chewings,
-    pinyin_parse_more_full_pinyins,
+    pinyin_parse_more_full_pinyins, pinyin_set_options,
 };
 
 use crate::common::{TempUserDir, cstr, open};
@@ -76,6 +76,13 @@ fn zhuyin_keys_are_not_resegmented_by_the_pinyin_inventory() {
     // enumerates the xi+an segmentation as well, so its window carries
     // the xi'an phrases. This pins that the exact seam narrowed the
     // scheme path only — the full-pinyin path policy is untouched.
+    //
+    // The context default is PINYIN_INCOMPLETE (0x8) alone; the divided
+    // pair `xian` -> `xi` + `an` needs USE_DIVIDED_TABLE, so set the
+    // parity word explicitly.
+    assert!(pinyin_set_options(
+        context, 0x188, // PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE
+    ));
     let xian = cstr("xian");
     assert_eq!(pinyin_parse_more_full_pinyins(instance, xian.as_ptr()), 4);
     let full = candidate_texts(instance);

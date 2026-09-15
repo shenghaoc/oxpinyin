@@ -103,12 +103,17 @@ impl Settings {
             .and_then(|value| usize::try_from(value).ok())
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_PAGE_SIZE);
-        // The captured parity profile has PINYIN_INCOMPLETE set, and the
-        // upstream default this engine carries is true; a source that says
-        // nothing gets the parity behaviour. Other option bits arrive through
+        // The captured parity profile is `PINYIN_INCOMPLETE |
+        // USE_DIVIDED_TABLE | USE_RESPLIT_TABLE`, and every reference
+        // consumer (ibus-libpinyin `PYLibPinyin.cc:195-196`) ORs the table
+        // bits unconditionally. A source that says nothing gets the parity
+        // behaviour. Other option bits arrive through
         // [`Session::set_options`] from the C ABI's raw option word.
         let incomplete = config.get_bool(KEY_INCOMPLETE).unwrap_or(true);
-        let options = OptionBits::default().with(oxpinyin_core::PINYIN_INCOMPLETE, incomplete);
+        let options = OptionBits::default()
+            .with(oxpinyin_core::PINYIN_INCOMPLETE, incomplete)
+            .with(oxpinyin_core::USE_DIVIDED_TABLE, true)
+            .with(oxpinyin_core::USE_RESPLIT_TABLE, true);
         Self { page_size, options }
     }
 
@@ -572,8 +577,14 @@ pub fn build_scan_matrix(
     // pin fills a zero key at a separator, so its pairs never span one.
     // A toned key never resplits: upstream matches the full ChewingKey
     // (tone included) against zero-tone table structs.
-    for addition in &resplit_additions(&selected) {
-        columns[addition.from].push(*addition);
+    //
+    // Gated on `USE_RESPLIT_TABLE` — upstream's `resplit_step` checks
+    // `options & USE_RESPLIT_TABLE` (`phonetic_key_matrix.cpp:89`) and
+    // returns false without it. At `0x0` neither table bit is set.
+    if options.has_resplit_table() {
+        for addition in &resplit_additions(&selected) {
+            columns[addition.from].push(*addition);
+        }
     }
 
     // 3. Divided syllables over every key collected so far. The split parts
@@ -582,8 +593,15 @@ pub fn build_scan_matrix(
     // `ti`, whose span covers the apostrophe plus `t` + `i`). A toned key
     // never divides: the divided table's structs are zero-tone and upstream
     // matches the full ChewingKey.
-    for addition in &divided_additions(&columns) {
-        columns[addition.from].push(*addition);
+    //
+    // Gated on `USE_DIVIDED_TABLE` — upstream's `inner_split_step` checks
+    // `options & USE_DIVIDED_TABLE` (`phonetic_key_matrix.cpp:171`) and
+    // returns false without it. At `0x0` the bit is clear, so `xian`'s
+    // divided pairs (`xi` + `an`) are not in the inventory.
+    if options.has_divided_table() {
+        for addition in &divided_additions(&columns) {
+            columns[addition.from].push(*addition);
+        }
     }
 
     // Pre-fuzzy pin: first `SyllableKey` in a column. Fuzzy is off on the
