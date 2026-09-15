@@ -1,8 +1,9 @@
 name: coverage
 
-# Line-coverage floor (ratchet): the PR gate for the crates where the
-# math lives, and the nightly's coverage lane, from one job body. On a
-# pull request it runs only when a library-path crate changes
+# Line-coverage floor (ratchet): the PR gate for the library-path
+# crates the C API facade depends on, and the nightly's coverage lane,
+# from one job body. On a pull request it runs only when a
+# library-path crate changes
 # (docs/safety/ci-strategy.md, Tier 2): a full-workspace llvm-cov run is
 # too slow to gate a docs PR, and these crates are where a dropped
 # branch is a parity risk. verify-nightly.yml calls it unconditionally
@@ -24,6 +25,10 @@ on:
       - crates/oxpinyin-segment/**
       - crates/oxpinyin-chewing/**
       - crates/oxpinyin-capi-marshal/**
+      - crates/oxpinyin-store/**
+      - crates/oxpinyin-runtime/**
+      - crates/oxpinyin-capi/**
+      - crates/oxpinyin-zhuyin-capi/**
       - .github/workflows/coverage.yml
       - .github/actions/**
   workflow_call:
