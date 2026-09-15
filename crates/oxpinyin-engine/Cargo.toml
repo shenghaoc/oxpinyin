@@ -21,6 +21,12 @@ compact_str.workspace = true
 [dev-dependencies]
 # Fixture-backed doubles shared with the other test suites.
 oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
+# Micro-benches (benches/); workspace lock pins 0.8.
+criterion = "0.8"
+
+[[bench]]
+name = "session_keystroke"
+harness = false
 
 [features]
 # Off-by-default gate for the scan-matrix fan-out diagnostic driven by
