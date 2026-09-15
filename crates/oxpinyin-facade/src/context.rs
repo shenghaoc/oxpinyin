@@ -52,6 +52,12 @@ pub struct LiveOptions {
     pub incomplete: Arc<std::sync::atomic::AtomicBool>,
     /// Live double-pinyin scheme (header discriminant value).
     pub double_scheme: Arc<std::sync::atomic::AtomicI32>,
+    /// Whether an out-of-enum `pinyin_set_double_pinyin_scheme` call has
+    /// cleared the live scheme's fallback table, reproducing upstream's
+    /// half-mutation (`pinyin_parser2.cpp:580` + `:614`;
+    /// `upstream-divergences.md` row 5b). Reset to `false` when a valid
+    /// scheme is set.
+    pub double_fallback_cleared: Arc<std::sync::atomic::AtomicBool>,
     /// Live Zhuyin scheme (header discriminant value).
     pub zhuyin_scheme: Arc<std::sync::atomic::AtomicI32>,
     /// Live full-pinyin scheme (header discriminant value).
@@ -82,6 +88,7 @@ impl LiveOptions {
             double_scheme: Arc::new(std::sync::atomic::AtomicI32::new(
                 DoublePinyinScheme::Ms as i32,
             )),
+            double_fallback_cleared: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             zhuyin_scheme: Arc::new(std::sync::atomic::AtomicI32::new(
                 ZhuyinScheme::Standard as i32,
             )),
