@@ -16,8 +16,8 @@
 //! facade's path (`oxpinyin-core`, `-data`, `-store`, `-engine`, `-facade`,
 //! `-runtime`, `-user` and this crate) deny `clippy::unwrap_used`/
 //! `expect_used`/`panic`/`panic_in_result_fn` outside tests —
-//! `oxpinyin-chewing` and the macro-only `oxpinyin-capi-marshal` carry no
-//! such lint and are review-covered — so the engine layer returns
+//! `oxpinyin-chewing` and the macro-only `oxpinyin-capi-marshal` carry the
+//! same lints — so the engine layer returns
 //! `Result` everywhere and the entry-point bodies are panic-free by
 //! construction. Rust (since 1.81) aborts the process when a panic
 //! reaches an `extern "C"` boundary, so if a bug ever produced a panic
