@@ -182,9 +182,15 @@ land with the measurements.
   told the call succeeded. Not an abort, so not class (c): the policy's
   own boundary case (the "(c) covers aborts" paragraph), reproducible.
 - **Probe:** the contract test's `aa` parse after the out-of-enum set
-  pins the cleared fallback as observable; `tools/bisection/run-scheme-diff.sh`
-  extended with the out-of-enum values is the oracle differential owed.
-- **Closed** 2026-09-15.
+  pins the cleared fallback as observable; the
+  `tools/bisection/run-scheme-diff.sh` oracle differential (out-of-enum
+  99 and −1 under ZRM, asserting the setter's return AND the following
+  fallback-dependent parse) ran 2026-09-16 in a debian:testing
+  container: the probe rows are byte-identical on both sides — setter
+  answers `true` throughout, baseline `aa` consumed=2/n=8, after 99 and
+  after −1 consumed=0, guess false, n=0, restored ZRM consumed=2/n=8 —
+  and the whole-log diff is IDENTICAL (exit 0, no SKIP lines).
+- **Closed** 2026-09-15; live differential run 2026-09-16.
 
 ## Order to execute
 
