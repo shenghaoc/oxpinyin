@@ -187,6 +187,130 @@ Note: `pinyin_end_get_bigram_phrases` is also called; see below.
 
 ---
 
+## 1-fcitx. fcitx-libpinyin 0.5.4 — live call sites (frozen 2026-09-16)
+
+The second consumer of the §(d) union, pinned per
+`docs/findings/compatibility-policy.md` §(d) item 2 and the
+2026-09-16 amendment in `docs/testing/oracle-environment.md`.
+
+**Source identity.** Tag `0.5.4` = commit
+`eda25e4ae94b0b600b54df45399823d013a74d8c` (annotated tag object
+`f8c63895371acadb2f22cdf0cbe952c47aa23e7a`; verified 2026-09-16 UTC via
+`git ls-remote --tags` and `git rev-parse refs/tags/0.5.4^{commit}`).
+`src/` is unchanged from `0.5.4` to the default-branch tip `master` @
+`c8eff836293d0780d351720fa84958498592be47` (`git diff --stat
+eda25e4…c8eff83 -- src/` is empty, 2026-09-16 UTC), so this manifest
+also characterises the live default branch.
+
+**Method.** Every `pinyin_*(` call site in `src/*.cpp` / `src/*.h` at
+`eda25e4`, with `#if 0` regions excluded by directive tracking (the
+single block is `eim.cpp:381–392`); each symbol cross-checked against
+the 79 `pinyin_*` exports of `src/libpinyin.ver` at the libpinyin pin
+`074a2219` (blob `964d96e0dc806edfd6e6a3958dc1db04175527e2`, read from
+the host clone at `~/Documents/repos/libpinyin`). fcitx-libpinyin calls
+no `zhuyin_*` symbol: its zhuyin mode is a second `pinyin_context_t`
+driven through the `pinyin_*` API with `IS_ZHUYIN`. Result: **37 live
+symbols**, all 37 among the 79 exports.
+
+### Context lifecycle (4 symbols)
+
+| Symbol | Call sites |
+|--------|-----------|
+| `pinyin_init` | `eim.cpp:337,345` |
+| `pinyin_fini` | `eim.cpp:905,907` |
+| `pinyin_alloc_instance` | `eim.cpp:351,353` |
+| `pinyin_free_instance` | `eim.cpp:771` |
+
+### Configuration (6 symbols)
+
+| Symbol | Call sites |
+|--------|-----------|
+| `pinyin_set_options` | `eim.cpp:965,967` |
+| `pinyin_set_double_pinyin_scheme` | `eim.cpp:930` |
+| `pinyin_set_zhuyin_scheme` | `eim.cpp:919` |
+| `pinyin_load_addon_phrase_library` | `eim.cpp:923,933` |
+| `pinyin_unload_addon_phrase_library` | `eim.cpp:925,935` |
+| `pinyin_save` | `eim.cpp:985,987,1014,1091` |
+
+### Parsing and reset (4 symbols)
+
+| Symbol | Call sites |
+|--------|-----------|
+| `pinyin_reset` | `eim.cpp:148` |
+| `pinyin_parse_more_full_pinyins` | `eim.cpp:156` |
+| `pinyin_parse_more_double_pinyins` | `eim.cpp:158` |
+| `pinyin_parse_more_chewings` | `eim.cpp:160` |
+
+### Sentence / guess (3 symbols)
+
+| Symbol | Call sites |
+|--------|-----------|
+| `pinyin_guess_sentence` | `eim.cpp:638,742` |
+| `pinyin_guess_candidates` | `eim.cpp:654` |
+| `pinyin_get_sentence` | `eim.cpp:575` |
+
+### Candidate access and selection (4 symbols)
+
+| Symbol | Call sites |
+|--------|-----------|
+| `pinyin_get_n_candidate` | `eim.cpp:656,728` |
+| `pinyin_get_candidate` | `eim.cpp:660,732` |
+| `pinyin_get_candidate_string` | `eim.cpp:672,736` |
+| `pinyin_choose_candidate` | `eim.cpp:733` |
+
+### Preedit / key surface (9 symbols)
+
+| Symbol | Call sites |
+|--------|-----------|
+| `pinyin_get_parsed_input_length` | `eim.cpp:200` |
+| `pinyin_get_pinyin_key` | `eim.cpp:422` |
+| `pinyin_get_pinyin_key_rest` | `eim.cpp:425` |
+| `pinyin_get_pinyin_key_rest_positions` | `eim.cpp:428` |
+| `pinyin_get_pinyin_key_rest_length` | `eim.cpp:473,509` |
+| `pinyin_get_pinyin_string` | `eim.cpp:454,497` |
+| `pinyin_get_pinyin_strings` | `eim.cpp:477` |
+| `pinyin_get_zhuyin_string` | `eim.cpp:511` |
+| `pinyin_get_right_pinyin_offset` | `eim.cpp:543` |
+
+### Training / user data (7 symbols)
+
+| Symbol | Call sites |
+|--------|-----------|
+| `pinyin_train` | `eim.cpp:746,1013,1089` |
+| `pinyin_remember_user_input` | `eim.cpp:805` |
+| `pinyin_mask_out` | `eim.cpp:1002,1003,1006,1009,1033` |
+| `pinyin_clear_constraint` | `eim.cpp:262,289` |
+| `pinyin_begin_add_phrases` | `eim.cpp:1035` |
+| `pinyin_iterator_add_phrase` | `eim.cpp:1077` |
+| `pinyin_end_add_phrases` | `eim.cpp:1086` |
+
+**Total: 37 unique live symbols** (all in `eim.cpp`; the remaining
+`src/` files call none).
+
+### `#if 0` dead code (listed separately, not call sites)
+
+| Symbol | Site | Note |
+|--------|------|------|
+| `pinyin_get_raw_full_pinyin` | `eim.cpp:384` (block `eim.cpp:381–392`) | not a `libpinyin.ver` export at the pin — a live call would not link |
+
+### Union recomputation (2026-09-16)
+
+51-symbol W8 contract (§1's 50 plus `pinyin_get_parsed_input_length`)
+∪ the 37 above = **58** — matching the union §(d) of the
+compatibility policy already recorded; no number was adjusted. Of the
+37, **30 are in the 51** and **7 are fcitx-only**:
+`pinyin_clear_constraint`, `pinyin_get_pinyin_key`,
+`pinyin_get_pinyin_key_rest_length`, `pinyin_get_pinyin_string`,
+`pinyin_get_pinyin_strings`, `pinyin_get_zhuyin_string`,
+`pinyin_unload_addon_phrase_library` (`pinyin_get_parsed_input_length`
+is live in both consumers). The ibus live symbol *set* of §1 was
+independently re-extracted at `2d2cdac` and is unchanged; §1's
+`PYLibPinyin.cc` line numbers, by contrast, cite the W8 fork tip
+`0d71866` and drift from the `1.16.5` tag freeze — reported, not
+corrected here (outside this freeze's purpose).
+
+---
+
 ## 2. Per-symbol signatures and ownership/lifetime semantics
 
 Signatures from `libpinyin/src/pinyin.h`. This section is the prose form;

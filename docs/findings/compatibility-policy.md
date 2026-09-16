@@ -186,21 +186,29 @@ touches are out of scope until a new consumer demonstrates a need.
    `pinyin_get_parsed_input_length` from the W8 fork (`2c5baa9`,
    `PYPLibPinyinCandidates.cc:151`), giving the 51-symbol W8 contract.
    The 28-symbol complement is §6 of the same document.
-2. **fcitx-libpinyin** — a `src/` call-site grep, dead code excluded.
-   Source identity is **not yet frozen**: unlike ibus above, no tag or
-   commit is recorded here or in `abi-subset.md`. Pinning that release
-   (tag or commit) and freezing fcitx's per-consumer symbol manifest from
-   it is owed before the union below is reproducible for the fcitx half.
+2. **fcitx-libpinyin 0.5.4** — a `src/` call-site grep, dead code
+   excluded. Source identity **frozen 2026-09-16** (maintainer-approved):
+   tag `0.5.4` = commit `eda25e4ae94b0b600b54df45399823d013a74d8c`,
+   `src/` unchanged from `0.5.4` to the default-branch tip (`master` @
+   `c8eff83`); recorded in `docs/testing/oracle-environment.md`. The
+   frozen per-consumer manifest — 37 live symbols with `eim.cpp`
+   call-site lines, the `#if 0` block listed separately — is
+   `abi-subset.md` §1-fcitx, so the union below is now reproducible for
+   both halves.
 
 **Dead code is not a call site.** Both consumers carry `#if 0` blocks
 naming libpinyin symbols; they do not count. `pinyin_get_pinyin_key`
 and `pinyin_get_pinyin_string` are already recorded that way for ibus
 in `abi-subset.md` §6, and `pinyin_get_raw_full_pinyin` is the fcitx
-case (`eim.cpp:377-391`, inside `#if 0`) — a symbol upstream does not
-export at all, so a live call would not even link.
+case (`eim.cpp:381-392`, inside `#if 0`; the call itself at `:384`. An
+earlier text cited `377-391`, the pre-0.5.4-prefetch lines — corrected
+2026-09-16 against the frozen `eda25e4` tree) — a symbol upstream does
+not export at all, so a live call would not even link.
 
 **The measured union is 58 symbols** (`abi-subset.md` §1 plus the fcitx
-grep). Since W8 closed (2026-08-30) the shipped object exports all 79
+manifest, §1-fcitx; recomputed from both pinned sources 2026-09-16 —
+unchanged: 30 of fcitx's 37 live symbols are already in the
+51-symbol W8 contract, 7 are fcitx-only). Since W8 closed (2026-08-30) the shipped object exports all 79
 `pinyin_*` symbols from `libpinyin.ver` live (`abi-subset.md` §6), so
 the union no longer bounds the *export* set; it bounds the E2E probe
 obligation below and the (d) scope decision. New consumers extend the

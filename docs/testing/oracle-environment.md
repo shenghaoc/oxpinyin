@@ -154,3 +154,26 @@ verification form moves, to match libpinyin's:
   re-serving of it, and unaffected by a moved tag. The model archive
   stays on its SHA-256 because it is a plain file download, not a git
   tree.
+
+## Amendment — fcitx-libpinyin source identity frozen (2026-09-16 UTC)
+
+Append-only; everything above is unchanged. The second consumer named by
+the compatibility policy's §(d) union had no recorded source identity
+("not yet frozen" — §(d) item 2). It is now pinned, in the commit-SHA
+form this file's fetch amendments prescribe:
+
+- **fcitx-libpinyin** tag `0.5.4` = commit
+  `eda25e4ae94b0b600b54df45399823d013a74d8c` (annotated tag object
+  `f8c63895371acadb2f22cdf0cbe952c47aa23e7a`), maintainer-approved pin.
+  Verified 2026-09-16 UTC against `git ls-remote --tags` of
+  `github.com/fcitx/fcitx-libpinyin`.
+- `src/` is byte-identical from `0.5.4` to the default-branch tip
+  `master` @ `c8eff836293d0780d351720fa84958498592be47` (empty
+  `git diff --stat eda25e4…c8eff83 -- src/`), so the frozen per-consumer
+  manifest also characterises the live default branch.
+- The frozen manifest — 37 live symbols with `eim.cpp` call-site lines,
+  the `#if 0` block listed separately, and the recomputed 58-symbol
+  union — is `docs/findings/abi-subset.md` §1-fcitx.
+
+No oracle prefix, pin ref, or build recipe changes: fcitx-libpinyin is a
+consumer-identity record, not a build input.
