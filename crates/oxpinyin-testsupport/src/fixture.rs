@@ -402,6 +402,70 @@ impl LanguageModel for FixtureLanguageModel {
     }
 }
 
+/// A [`FixtureLanguageModel`] wrapper that reports
+/// [`LanguageModel::has_real_unigrams`] `true`, routing the engine through
+/// the production window-scan + frequency-ranking code path instead of the
+/// pre-frequency k-best fallback.
+///
+/// The fixture's authored unigram counts become the real frequency table: each
+/// token's [`LanguageModel::unigram_freq`] is its fixture count and the total
+/// is the fixture's sum. This is enough for the engine to exercise the pinned
+/// construction — the three-key order, the expanding-window scan and the
+/// amplified-frequency ranking — without a full model archive.
+///
+/// Use this in benchmarks and tests that must exercise the production decode
+/// path. [`FixtureLanguageModel`] itself keeps the default (`false`) so the
+/// pre-frequency tests remain stable.
+#[derive(Clone, Debug)]
+pub struct FrequencyFixtureModel {
+    inner: FixtureLanguageModel,
+}
+
+impl FrequencyFixtureModel {
+    /// Wraps an existing [`FixtureLanguageModel`].
+    #[must_use]
+    pub fn new(inner: FixtureLanguageModel) -> Self {
+        Self { inner }
+    }
+
+    /// Reads the same vocabulary and bigram fixtures as
+    /// [`FixtureLanguageModel::parse`], returning a model that reports real
+    /// unigrams.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FixtureError`] for a malformed record.
+    pub fn parse(vocab: &str, bigrams: &str) -> Result<Self, FixtureError> {
+        FixtureLanguageModel::parse(vocab, bigrams).map(Self::new)
+    }
+}
+
+impl LanguageModel for FrequencyFixtureModel {
+    type Error = FixtureError;
+    type Token = PhraseToken;
+
+    fn score(
+        &self,
+        history: &[PhraseToken],
+        token: &PhraseToken,
+        edge_cost: Cost,
+    ) -> Result<Cost, FixtureError> {
+        self.inner.score(history, token, edge_cost)
+    }
+
+    fn has_real_unigrams(&self) -> bool {
+        true
+    }
+
+    fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, FixtureError> {
+        Ok(self.inner.unigrams.get(token).copied())
+    }
+
+    fn unigram_total(&self) -> Result<Option<u64>, FixtureError> {
+        Ok(Some(self.inner.unigram_total))
+    }
+}
+
 fn token_field(
     fields: &[(&str, &str)],
     name: &'static str,
