@@ -207,12 +207,22 @@ tails are two of the closed native rows (`lue`→`lve`,
 `run-option-sweep.sh` W12 exclusion list is provably inert and its
 retirement is the only loose end, a separate gate-policy change.
 
-**Out of scope, parked (observed while re-measuring, 2026-08-24):** at
-the literal `0x0` word on *non-W12* sweep inputs the pin and we differ —
-`jv`/`zon` empty-guess (`n=0` vs our raw-text fallback `n=1`) and
-`xian`/`fanan`/`fangan`/`tian` divided-table inventory (oracle `n=337`
-vs our `n=756` for `xian`; the pin drops `xi'an`-style phrases without
-`USE_DIVIDED_TABLE`). No frontend can produce this word (the fork ORs
-`USE_DIVIDED_TABLE | USE_RESPLIT_TABLE` unconditionally,
-`src/PYLibPinyin.cc:196-198`) and no frozen gate runs it; recorded here
-only so a future option-bits pass knows it exists.
+**Out of scope, parked (observed while re-measuring, 2026-08-24) —
+row 17, now closed:** at the literal `0x0` word on *non-W12* sweep
+inputs the pin and we used to differ — `jv`/`zon` empty-guess and
+`xian`/`fanan`/`fangan`/`tian` divided-table inventory (the pin drops
+`xi'an`-style phrases without `USE_DIVIDED_TABLE`). Both are now
+resolved, measured 2026-09-16 in a `debian:testing` container with the
+pin oracle mounted read-only (both sides tkrzw, capi on a P6-native
+data directory): at `0x0` the C API returns `guess=false, n=0` for
+`jv`/`zon` and `n=337` for `xian` (`cand[0]=县`, no 西安), byte-equal
+with the pin; with `USE_DIVIDED_TABLE` set the inventory is `n=756`
+(`cand[0]=西安`) on both sides. `run-option-sweep.sh`, extended with the
+`all-off` (`0x0`) and divided-contrast (`0x8` vs `0x88`) cases, passes
+24/24 (parse/aux identical; top-10 TEXT/ORDER identical; exit 0, no
+SKIP), and per-word full driver logs at `0x0`, `0x2`, `0x8`, `0x82`,
+`0x88`, `0x188`, `0x18a` are byte-identical between the two sides, the
+`n=` lines the sweep itself does not diff included. No frontend can
+produce the `0x0` word (ibus-libpinyin ORs these bits unconditionally,
+`src/PYLibPinyin.cc:195-196`; fcitx `eim.cpp:941`), and no frozen gate
+runs it.

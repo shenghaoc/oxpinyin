@@ -10,7 +10,7 @@ merged as a document — the reverts landed as their own PRs).
 | --- | --- | --- |
 | 1 | #12 predicted-candidate tie order | superseded by P6 (345af16d): on KC/tkrzw the runtime walks the pin's own DBM and `pred-order-diff` is IDENTICAL; text-ascending stays the defined order on redb/LMDB |
 | 2 | #13 mid-syllable offset | closed — the pin's empty-column law reproduced (C2 residue, 2026-08-29) |
-| 3 | #17 literal `0x0` gating | **open** and unconditional: class (d) was retired 2026-09-06, so the consumer-unreachability question no longer applies |
+| 3 | #17 literal `0x0` gating | **closed in code** (2026-09-16): the pin's `USE_DIVIDED_TABLE`/`USE_RESPLIT_TABLE` gating is ported; `run-option-sweep.sh` with the new all-off (`0x0`) and divided-contrast (`0x8`/`0x88`) cases ran IDENTICAL on all 24 cases inside `debian:testing` (2026-09-16) |
 | 4 | #7 `validate_constraint` | closed as equivalent on model20 (4c2fe02b) |
 | 5 | #8 constraints across re-parse | closed (#217) |
 | 6 | #9 n-best row-choose cursor | closed (eca8d43b) |
@@ -90,19 +90,25 @@ land with the measurements.
 
 - **Site:** the empty-guess fallback (`jv`/`zon`) and the divided-table
   inventory (`xian`/`fanan`/`fangan`/`tian`).
-- **Now:** raw-text fallback gives `n=1` where the pin gives `n=0`; the
-  divided-table inventory is `n=756` for `xian` where the pin gives
-  `n=337` (the pin drops `xi'an`-style phrases without
-  `USE_DIVIDED_TABLE`).
+- **Now (measured 2026-09-16, both sides byte-equal):** at `0x0` (and
+  at `0x2`) `jv` and `zon` return `guess=false, n=0` and `xian` returns
+  `n=337` with `cand[0]=县` (no 西安); with `USE_DIVIDED_TABLE` set
+  (`0x82`, `0x88`, `0x188`, `0x18a`) `xian` returns `n=756` with
+  `cand[0]=西安`. The divided-table and resplit inventories are gated by
+  `USE_DIVIDED_TABLE`/`USE_RESPLIT_TABLE` on both sides alike.
 - **Target:** the pin's gating at a literal `0x0` option word.
-- **Probe:** `run-option-sweep.sh` at the `0x0` word, currently outside
-  its exclusion list because no frozen gate runs that word.
-- **Open question first:** both reference consumers OR
-  `USE_DIVIDED_TABLE | USE_RESPLIT_TABLE` unconditionally
-  (ibus `PYLibPinyin.cc:195-196`, fcitx `eim.cpp:941`), so neither can
-  produce the word. Whether exception (d) covers consumer-unreachable
-  *inputs* as well as uncalled *symbols* decides whether this entry
-  exists at all. One line from the maintainer retires or keeps it.
+- **Probe:** `run-option-sweep.sh` extended with the `all-off` (`0x0`)
+  and divided-contrast (`0x8` vs `0x88`) cases ran 2026-09-16 inside
+  `debian:testing`: 24/24 PASS — parse/aux identical, top-10
+  TEXT/ORDER identical on every case — exit 0, no SKIP line. Per-word
+  full driver logs (the sweep itself does not diff the `n=` lines)
+  captured at `0x0`, `0x2`, `0x8`, `0x82`, `0x88`, `0x188`, `0x18a`
+  are byte-identical between the pin and the capi, the `n=` inventory
+  lines included.
+- **Open question (moot):** class (d) was retired 2026-09-06. The
+  consumer-unreachability argument no longer applies, so the question
+  of whether (d) covers consumer-unreachable *inputs* is moot. The
+  gating is ported unconditionally.
 
 ### 4 — `validate_constraint`'s drop test (register #7)
 
