@@ -1494,10 +1494,14 @@ fn window_scan_emits_system_candidates_before_addon_candidates() {
 #[test]
 fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
     use oxpinyin_core::graph::SegmentGraph;
-    use oxpinyin_core::{OptionBits, PINYIN_AMB_Z_ZH, PINYIN_INCOMPLETE, USE_TONE};
+    use oxpinyin_core::{
+        OptionBits, PINYIN_AMB_Z_ZH, PINYIN_INCOMPLETE, USE_DIVIDED_TABLE, USE_RESPLIT_TABLE,
+        USE_TONE,
+    };
 
-    let incomplete = OptionBits::from_bits(PINYIN_INCOMPLETE);
-    let toned = OptionBits::from_bits(PINYIN_INCOMPLETE | USE_TONE);
+    let tables = USE_DIVIDED_TABLE | USE_RESPLIT_TABLE;
+    let incomplete = OptionBits::from_bits(PINYIN_INCOMPLETE | tables);
+    let toned = OptionBits::from_bits(PINYIN_INCOMPLETE | USE_TONE | tables);
 
     // Fuzzy alternates inherit the tone: upstream copies the whole
     // ChewingKey before swapping the initial
@@ -1505,7 +1509,7 @@ fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
     let graph = SegmentGraph::build_with_options(b"zai4", toned).expect("valid");
     let columns = super::build_scan_matrix(
         &graph,
-        OptionBits::from_bits(PINYIN_INCOMPLETE | USE_TONE | PINYIN_AMB_Z_ZH),
+        OptionBits::from_bits(PINYIN_INCOMPLETE | USE_TONE | PINYIN_AMB_Z_ZH | tables),
         true,
     );
     let column: Vec<_> = columns[0]
@@ -2872,5 +2876,67 @@ fn diagnostic_403_scan_matrix_fanout() {
         probe_seen_3x,
         probe_seen_4x,
         probe_seen_5plus,
+    );
+}
+
+/// Row 17: with `USE_DIVIDED_TABLE` clear the divided split column is
+/// absent — the pin's `inner_split_step` checks
+/// `options & USE_DIVIDED_TABLE` (`phonetic_key_matrix.cpp:171`) and
+/// returns false without it.
+///
+/// `nihaoshijie` normally has a divided split at byte 10 (`ji` + `e`).
+/// Both arms set `PINYIN_INCOMPLETE` so the parse reaches byte 10; the
+/// only difference is `USE_DIVIDED_TABLE`.
+#[test]
+fn divided_table_gate_controls_the_split_column() {
+    use oxpinyin_core::OptionBits;
+
+    // PINYIN_INCOMPLETE in both arms so the parse reaches the divided
+    // column — the arms differ only in USE_DIVIDED_TABLE.
+    let without_divided = OptionBits::from_bits(oxpinyin_core::PINYIN_INCOMPLETE);
+
+    let mut s = session();
+    s.set_options(without_divided)
+        .expect("set_options cannot fail on an empty session");
+    s.type_pinyin("nihaoshijie").expect("typing cannot fail");
+
+    // PINYIN_INCOMPLETE is set so the graph carries incomplete edges,
+    // but byte 10 (the divided e half) must NOT be a live matrix column
+    // because USE_DIVIDED_TABLE is clear.
+    assert!(
+        !s.spans_a_matrix_key(10).expect("byte 10 is in range"),
+        "byte 10 must not be live without USE_DIVIDED_TABLE"
+    );
+
+    // With USE_DIVIDED_TABLE set (same PINYIN_INCOMPLETE base), byte 10
+    // IS live — the contrast that proves the gate matters.
+    let with_divided =
+        OptionBits::from_bits(oxpinyin_core::PINYIN_INCOMPLETE | oxpinyin_core::USE_DIVIDED_TABLE);
+    let mut s2 = session();
+    s2.set_options(with_divided)
+        .expect("set_options cannot fail on an empty session");
+    s2.type_pinyin("nihaoshijie").expect("typing cannot fail");
+    assert!(
+        s2.spans_a_matrix_key(10).expect("byte 10 is in range"),
+        "byte 10 must be live with USE_DIVIDED_TABLE — the ji|e divided pair"
+    );
+}
+
+/// Row 17: the engine default includes `USE_DIVIDED_TABLE |
+/// USE_RESPLIT_TABLE`, matching the parity profile and every reference
+/// consumer's unconditional OR (ibus-libpinyin `PYLibPinyin.cc:195-196`). Verified by
+/// observing that the divided split column IS live on a default session.
+#[test]
+fn engine_default_includes_divided_and_resplit_table_bits() {
+    // "nihaoshijie" at the default options must have byte 10 live —
+    // the divided `jie` → `ji`+`e` pair. If the default lacked
+    // USE_DIVIDED_TABLE the column would be empty.
+    let mut session = session();
+    session
+        .type_pinyin("nihaoshijie")
+        .expect("typing cannot fail");
+    assert!(
+        session.spans_a_matrix_key(10).expect("byte 10 is in range"),
+        "default options must include USE_DIVIDED_TABLE: byte 10 is the divided e column"
     );
 }
