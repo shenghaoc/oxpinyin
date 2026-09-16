@@ -48,7 +48,12 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 
 1. Public APIs return `Result`/`Option` for every fallible operation
    (constitution §4) — enforced by type-system convention + review.
-2. **Library crates** (thirteen crate roots: core/engine/user/data/store/segment, runtime, facade, python, datagen, capi, zhuyin-capi, pinyin-oracle): `unwrap_used`,
+2. **Library crates** (twenty-four crate roots: core/engine/user/data/store/segment,
+   runtime, facade, python, datagen, capi, zhuyin-capi, pinyin-oracle,
+   plus capi-marshal, chewing, corpus, counter, emitter, eval, kmm, lambda,
+   punct, train and word; two workspace members excluded: testsupport — never
+   a dependency of shipping code — and dictool — CLI tool, not a library
+   crate): `unwrap_used`,
    `expect_used`, `panic`, `panic_in_result_fn` denied at crate root;
    `#[cfg(test)]` modules carry a single justified `#![allow]` each. Today
    this passes with **zero** code changes (measured) — it locks the
