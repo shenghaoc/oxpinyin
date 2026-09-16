@@ -156,7 +156,7 @@ mod map {
                     heap: Some(Box::new([])),
                 });
             }
-            // SAFETY (mmap): the platform's own mapping entry point,
+            // SAFETY: the platform's own mmap entry point,
             // declared below verbatim so no dependency is needed. Its
             // invariants hold by construction on entry: `addr` is null
             // and `offset` zero so the kernel places the mapping; `len`
@@ -205,7 +205,7 @@ mod map {
         /// The mapped bytes. The slice borrows `self`, so the mapping
         /// outlives every view taken over it.
         pub(crate) const fn as_slice(&self) -> &[u8] {
-            // SAFETY (slice): `data` is non-null and `len` bytes from it
+            // SAFETY: `data` is non-null and `len` bytes from it
             // are readable for the whole life of `self` — guaranteed by
             // `mmap` (released only in `Drop`, which borrowck keeps
             // after this borrow) or by the heap owner (the `Box` is a
@@ -214,20 +214,22 @@ mod map {
         }
     }
 
-    // SAFETY (Send/Sync): the mapping is immutable read-only memory. No
+    // SAFETY: the mapping is immutable read-only memory. No
     // method writes through `data`; the pointer never escapes except as
     // `&[u8]` borrows tied to `&self`. Moving or sharing the owner
     // across threads is exactly the mmap contract for
     // `PROT_READ | MAP_PRIVATE` pages — the same guarantee libpinyin's
     // MemoryChunk relies on.
     unsafe impl Send for MappedFile {}
+    // SAFETY: same as Send — the mapping is read-only (`PROT_READ | MAP_PRIVATE`),
+    // and no method writes through `data`.
     unsafe impl Sync for MappedFile {}
 
     impl Drop for MappedFile {
         fn drop(&mut self) {
             #[cfg(unix)]
             if self.heap.is_none() {
-                // SAFETY (munmap): the address and length are exactly
+                // SAFETY: the address and length are exactly
                 // what `mmap` returned (never modified in between), and
                 // `Drop` runs only after every `as_slice` borrow has
                 // ended, so no view can outlive the unmap.
