@@ -355,6 +355,81 @@ int main(int argc, char **argv) {
     for (size_t p = 0; p < N_TONE_PROFILES; p++)
         drive_tone_law(&s, inst, ctx, TONE_PROFILES[p]);
 
+    /* Out-of-enum half-mutation probe (revert-plan §8, row 5b).
+     *
+     * With a fallback-bearing scheme active (ZRM = 1), an out-of-enum
+     * value (99, −1) clears the fallback table and returns true (the lie).
+     * A following double-pinyin parse of "aa" — a ZRM fallback entry
+     * ("aa" → "a") — must fail: consumed 0 and n=0.  Restoring ZRM
+     * (scheme 1) brings the fallback back. */
+    printf("=== out-of-enum half-mutation (row 5b) ===\n");
+    s.set_options(ctx, DEFAULT_FLAGS);
+
+    /* Baseline: ZRM with fallback.  "aa" resolves to "a". */
+    bool zrm_ok = s.set_double_scheme(ctx, 1);
+    printf("halfmut|set_scheme(1/ZRM): %s\n", zrm_ok ? "true" : "false");
+    {
+        size_t c = s.parse_double(inst, "aa");
+        printf("halfmut|baseline|consumed=%zu|parsed=%zu\n",
+               c, s.parsed_len(inst));
+        bool gc = s.guess_candidates(inst, 0, DEFAULT_SORT);
+        guint n = 0;
+        if (gc && s.get_n_candidate)
+            s.get_n_candidate(inst, &n);
+        printf("halfmut|baseline|guess=%s|n=%u\n",
+               gc ? "true" : "false", n);
+        s.reset(inst);
+    }
+
+    /* Out-of-enum 99: returns true, clears fallback. */
+    bool ooe_99 = s.set_double_scheme(ctx, 99);
+    printf("halfmut|set_scheme(99): %s\n", ooe_99 ? "true" : "false");
+    {
+        size_t c = s.parse_double(inst, "aa");
+        printf("halfmut|after_99|consumed=%zu|parsed=%zu\n",
+               c, s.parsed_len(inst));
+        bool gc = s.guess_candidates(inst, 0, DEFAULT_SORT);
+        guint n = 0;
+        if (gc && s.get_n_candidate)
+            s.get_n_candidate(inst, &n);
+        printf("halfmut|after_99|guess=%s|n=%u\n",
+               gc ? "true" : "false", n);
+        s.reset(inst);
+    }
+
+    /* Out-of-enum −1: same shape, negative value. */
+    bool ooe_neg = s.set_double_scheme(ctx, -1);
+    printf("halfmut|set_scheme(-1): %s\n", ooe_neg ? "true" : "false");
+    {
+        size_t c = s.parse_double(inst, "aa");
+        printf("halfmut|after_neg1|consumed=%zu|parsed=%zu\n",
+               c, s.parsed_len(inst));
+        bool gc = s.guess_candidates(inst, 0, DEFAULT_SORT);
+        guint n = 0;
+        if (gc && s.get_n_candidate)
+            s.get_n_candidate(inst, &n);
+        printf("halfmut|after_neg1|guess=%s|n=%u\n",
+               gc ? "true" : "false", n);
+        s.reset(inst);
+    }
+
+    /* Restore ZRM: the fallback comes back. */
+    bool restore_ok = s.set_double_scheme(ctx, 1);
+    printf("halfmut|set_scheme(1/restore): %s\n",
+           restore_ok ? "true" : "false");
+    {
+        size_t c = s.parse_double(inst, "aa");
+        printf("halfmut|restored|consumed=%zu|parsed=%zu\n",
+               c, s.parsed_len(inst));
+        bool gc = s.guess_candidates(inst, 0, DEFAULT_SORT);
+        guint n = 0;
+        if (gc && s.get_n_candidate)
+            s.get_n_candidate(inst, &n);
+        printf("halfmut|restored|guess=%s|n=%u\n",
+               gc ? "true" : "false", n);
+        s.reset(inst);
+    }
+
     s.free_instance(inst);
     s.fini(ctx);
     dlclose(handle);
