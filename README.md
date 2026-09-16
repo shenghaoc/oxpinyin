@@ -11,6 +11,7 @@ measured algorithm upgrades.
 One verification gap open — the differential suite does not yet drive all
 58 consumer-union symbols; the one defect the policy carried (row 30, the
 pinyin facade's chewing batch `FORCE_TONE` seam) closed in code 2026-09-14
+and verified live 2026-09-16 — all eight implemented keyboards IDENTICAL
 (`docs/findings/compatibility-policy.md`
 row 30; `ROADMAP.md`, Stage 1 status). Stage 2 (binary model compilation,
 init/RAM reduction) in progress.

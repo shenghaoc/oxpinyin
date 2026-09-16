@@ -24,7 +24,8 @@ actually changes is taken for granted (maintainer ruling; recorded in
 place under "The goal this policy serves"). **Amended 2026-09-14:** the
 one defect the 2026-09-12 amendment carried — row 30 — is closed in
 code (the table and totals below carry the state; the live FORCE_TONE
-differential run remains owed to a Linux oracle host).
+differential ran 2026-09-16 — all eight implemented keyboards
+IDENTICAL, register amendment in `docs/findings/upstream-divergences.md`).
 
 ## The goal this policy serves
 
@@ -302,7 +303,7 @@ revert targets is `revert-plan.md`.
 | 27 | zhuyin multi-syllable candidate construction | **CLOSED** | the divergence was the pinyin string-fill law, not the construction model (amended 2026-08-31) |
 | 28 | zhuyin n-best trellis constants `<1, 1>` vs the engine's `<2, 3>` | **CLOSED** in code (#374) | per-session `NbestShape` (`PINYIN` = `<2, 3>`, `ZHUYIN` = `<1, 1>`), set by both zhuyin facades at instance allocation; not observable through today's libzhuyin candidate surface, so no gate moves |
 | 29 | zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default | **no ABI divergence** | `CapiContext::try_open` seeds the pin's `USE_TONE \| FORCE_TONE`; entry kept as analysis for a future consumer |
-| 30 | pinyin-facade chewing batch seam does not forward `FORCE_TONE` | **CLOSED** in code (2026-09-14) | the register says it: no class fits, a defect to close; closed by the prescribed shape — the seam forwards `options().bits() & !ZHUYIN_CORRECT_ALL` through `parse_with_options`, capi tests pin the measured shape (toneless `su` refuses under `USE_TONE \| FORCE_TONE`), and `chewing-diff.c` carries the FORCE_TONE profile; the live differential run is owed to a Linux oracle host (register amendment) |
+| 30 | pinyin-facade chewing batch seam does not forward `FORCE_TONE` | **CLOSED** in code (2026-09-14) | the register says it: no class fits, a defect to close; closed by the prescribed shape — the seam forwards `options().bits() & !ZHUYIN_CORRECT_ALL` through `parse_with_options`, capi tests pin the measured shape (toneless `su` refuses under `USE_TONE \| FORCE_TONE`), and `chewing-diff.c` carries the FORCE_TONE profile; the live differential ran 2026-09-16 — `run-scheme-diff.sh bopomofo` 1–6, 8, 9 all IDENTICAL in a debian:testing container, non-vacuity shown by the reverted seam exiting 2 (register amendment) |
 | 31 | redb write-side emptiness probe creates the table it probes | **no ABI divergence** | a redb API constraint below the store traits; nothing above them observes it. Stage-2 store-trait note, not a compatibility entry |
 
 Totals at `2a99761a` (2026-09-06, oracle pin 074a2219), amended
