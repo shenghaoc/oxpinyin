@@ -25,6 +25,21 @@ pub const USE_TONE: u32 = 1 << 5;
 /// (`docs/findings/upstream-divergences.md`).
 pub const FORCE_TONE: u32 = 1 << 6;
 
+/// `USE_DIVIDED_TABLE = 1U << 7` (`pinyin_custom2.h:38`).
+///
+/// Gates the divided-syllable alternates that `inner_split_step` adds to
+/// the matrix (`phonetic_key_matrix.cpp:169-171`): without this bit the
+/// divided pairs for `jie` → `ji` + `e`, `xian` → `xi` + `an`, etc. are
+/// not in the lookup inventory.
+pub const USE_DIVIDED_TABLE: u32 = 1 << 7;
+
+/// `USE_RESPLIT_TABLE = 1U << 8` (`pinyin_custom2.h:39`).
+///
+/// Gates the resplit alternates that `resplit_step` adds to the matrix
+/// (`phonetic_key_matrix.cpp:87-89`): without this bit the resplit pairs
+/// for `fangan` → `fang` + `an`, etc. are not in the lookup inventory.
+pub const USE_RESPLIT_TABLE: u32 = 1 << 8;
+
 /// `DYNAMIC_ADJUST = 1U << 9` (`pinyin_custom2.h:40`).
 pub const DYNAMIC_ADJUST: u32 = 1 << 9;
 
@@ -112,6 +127,18 @@ impl OptionBits {
         self.contains(PINYIN_INCOMPLETE)
     }
 
+    /// Whether `USE_DIVIDED_TABLE` is set.
+    #[must_use]
+    pub const fn has_divided_table(self) -> bool {
+        self.contains(USE_DIVIDED_TABLE)
+    }
+
+    /// Whether `USE_RESPLIT_TABLE` is set.
+    #[must_use]
+    pub const fn has_resplit_table(self) -> bool {
+        self.contains(USE_RESPLIT_TABLE)
+    }
+
     /// Whether `DYNAMIC_ADJUST` is set.
     #[must_use]
     pub const fn has_dynamic_adjust(self) -> bool {
@@ -144,13 +171,19 @@ mod tests {
         assert_eq!(ZHUYIN_INCOMPLETE, 0x10);
         assert_eq!(USE_TONE, 0x20);
         assert_eq!(FORCE_TONE, 0x40);
+        assert_eq!(USE_DIVIDED_TABLE, 0x080);
+        assert_eq!(USE_RESPLIT_TABLE, 0x100);
         assert_eq!(DYNAMIC_ADJUST, 0x200);
         assert_eq!(PINYIN_AMB_ALL, 0x3ff << 10);
         assert_eq!(PINYIN_CORRECT_ALL, 0xff << 21);
         assert_eq!(ZHUYIN_CORRECT_SHUFFLE, 0x8000_0000);
         assert_eq!(ZHUYIN_CORRECT_ALL, 0x7 << 29);
         assert_eq!(
-            PINYIN_INCOMPLETE | (1 << 4) | PINYIN_CORRECT_ALL | (1 << 7) | (1 << 8),
+            PINYIN_INCOMPLETE
+                | (1 << 4)
+                | PINYIN_CORRECT_ALL
+                | USE_DIVIDED_TABLE
+                | USE_RESPLIT_TABLE,
             0x1fe0_0198
         );
     }

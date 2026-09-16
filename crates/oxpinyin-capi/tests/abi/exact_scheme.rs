@@ -16,7 +16,7 @@ use std::os::raw::c_uint;
 use pinyin_capi::{
     LookupCandidate, PinyinInstance, pinyin_get_candidate, pinyin_get_candidate_string,
     pinyin_get_n_candidate, pinyin_guess_candidates, pinyin_parse_more_chewings,
-    pinyin_parse_more_full_pinyins,
+    pinyin_parse_more_full_pinyins, pinyin_reset, pinyin_set_options,
 };
 
 use crate::common::{TempUserDir, cstr, open};
@@ -76,6 +76,11 @@ fn zhuyin_keys_are_not_resegmented_by_the_pinyin_inventory() {
     // enumerates the xi+an segmentation as well, so its window carries
     // the xi'an phrases. This pins that the exact seam narrowed the
     // scheme path only — the full-pinyin path policy is untouched.
+    //
+    // The context default is PINYIN_INCOMPLETE (0x8) alone; the divided
+    // pair `xian` -> `xi` + `an` needs USE_DIVIDED_TABLE, so set
+    // PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE (0x188).
+    assert!(pinyin_set_options(context, 0x188));
     let xian = cstr("xian");
     assert_eq!(pinyin_parse_more_full_pinyins(instance, xian.as_ptr()), 4);
     let full = candidate_texts(instance);
@@ -103,6 +108,71 @@ fn zhuyin_only_spellings_do_not_fall_back_to_shorter_pinyin_keys() {
     assert!(
         !texts.iter().any(|text| text == "的" || text == "得"),
         "den re-parsed as de: {texts:?}"
+    );
+
+    pinyin_capi::pinyin_free_instance(instance);
+    pinyin_capi::pinyin_fini(context);
+}
+
+/// Row 17 at `0x0`: `jv` and `zon` are not valid full-pinyin syllables
+/// and the parse yields nothing — the engine test deleted these
+/// expectations during the phase-2 review, and they belong here as a
+/// C-API observable. The divided-table contrast (`xian` with and without
+/// `USE_DIVIDED_TABLE`) tests the option gate the engine implements.
+#[test]
+fn option_gating_jv_zon_and_divided_table() {
+    let user_dir = TempUserDir::new("exact-option-gating");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    // --- jv and zon at option word 0x0 parse nothing ---
+    assert!(pinyin_set_options(context, 0x0));
+
+    let jv = cstr("jv");
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, jv.as_ptr()),
+        0,
+        "jv is not a valid full-pinyin syllable at 0x0"
+    );
+    assert!(!pinyin_guess_candidates(instance, 0, 0x1e));
+    let mut count: c_uint = 0;
+    assert!(pinyin_get_n_candidate(instance, &raw mut count));
+    assert_eq!(count, 0, "jv yields no candidates at 0x0");
+
+    assert!(pinyin_reset(instance));
+
+    let zon = cstr("zon");
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, zon.as_ptr()),
+        0,
+        "zon is not a valid full-pinyin syllable at 0x0"
+    );
+    assert!(!pinyin_guess_candidates(instance, 0, 0x1e));
+    assert!(pinyin_get_n_candidate(instance, &raw mut count));
+    assert_eq!(count, 0, "zon yields no candidates at 0x0");
+
+    assert!(pinyin_reset(instance));
+
+    // --- divided-table contrast on xian ---
+    // Without USE_DIVIDED_TABLE the `xian` -> `xi` + `an` segmentation
+    // does not fire, so the xi'an phrases are absent.
+    assert!(pinyin_set_options(context, 0x8)); // PINYIN_INCOMPLETE only
+    let xian = cstr("xian");
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, xian.as_ptr()), 4);
+    let without = candidate_texts(instance);
+    assert!(
+        !without.iter().any(|text| text == "\u{897f}\u{5b89}"),
+        "without USE_DIVIDED_TABLE, xian must not include \u{897f}\u{5b89}: {without:?}"
+    );
+
+    assert!(pinyin_reset(instance));
+
+    // With USE_DIVIDED_TABLE the segmentation fires and xi'an phrases appear.
+    assert!(pinyin_set_options(context, 0x88)); // PINYIN_INCOMPLETE | USE_DIVIDED_TABLE
+    assert_eq!(pinyin_parse_more_full_pinyins(instance, xian.as_ptr()), 4);
+    let with = candidate_texts(instance);
+    assert!(
+        with.iter().any(|text| text == "\u{897f}\u{5b89}"),
+        "with USE_DIVIDED_TABLE, xian must include \u{897f}\u{5b89}: {with:?}"
     );
 
     pinyin_capi::pinyin_free_instance(instance);
