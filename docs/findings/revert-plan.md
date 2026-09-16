@@ -170,7 +170,7 @@ land with the measurements.
 - **Site:** `pinyin_set_double_pinyin_scheme`'s Rust wrapper
   (`oxpinyin-capi`, the scheme setters; pinned by
   `tests/abi/contract.rs::double_out_of_enum_reproduces_the_half_mutation`).
-- **Now:** an out-of-enum value (0, 7–29, 31+) answers `true` (the
+- **Now:** an out-of-enum value (negatives, 0, 7–29, 31+) answers `true` (the
   upstream wrapper's lie) and clears the fallback table, reproducing
   the pin's half-mutation; the shengmu/yunmu tables stay intact. A
   following parse that would have used the fallback (the `aa` probe)
@@ -181,9 +181,9 @@ land with the measurements.
   ZRM/PYJJ/XHE scheme silently loses its fallback while the caller is
   told the call succeeded. Not an abort, so not class (c): the policy's
   own boundary case (the "(c) covers aborts" paragraph), reproducible.
-- **Probe:** the contract test's following-parse `aa` probe confirms the
-  cleared fallback is observable; `tools/bisection/run-scheme-diff.sh`
-  extended with the out-of-enum values is the live differential owed.
+- **Probe:** the contract test's `aa` parse after the out-of-enum set
+  pins the cleared fallback as observable; `tools/bisection/run-scheme-diff.sh`
+  extended with the out-of-enum values is the oracle differential owed.
 - **Closed** 2026-09-15.
 
 ## Order to execute
