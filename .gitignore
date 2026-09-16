@@ -39,6 +39,7 @@ rustc-ice-*.txt
 /tools/bisection/frontend-import
 /tools/bisection/scheme-diff
 /tools/bisection/chewing-diff
+/tools/bisection/option-sweep
 /tools/bisection/user-candidate-diff
 /tools/bisection/addon-candidate-diff
 /tools/bisection/predict-diff
