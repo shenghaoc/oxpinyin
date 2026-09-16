@@ -307,33 +307,47 @@ revert targets is `revert-plan.md`.
 | 31 | redb write-side emptiness probe creates the table it probes | **no ABI divergence** | a redb API constraint below the store traits; nothing above them observes it. Stage-2 store-trait note, not a compatibility entry |
 
 Totals at `2a99761a` (2026-09-06, oracle pin 074a2219), amended
-2026-09-14 for row 30's closure: **(a)** 2 ·
-**(b)** 2 · **(c)** 10 · **(d)** 0 (class retired, see below) · **REVERT
-TARGET** 2 (rows 5b, 17) · **OPEN DEFECT** 0 · **CLOSED** 14
-(rows 3, 7, 8, 9, 12, 13, 15, 16, 24, 25, 26, 27, 28, 30 — 26 measured
-identical on the pin 2026-09-08; 28 in code via #374, not observable
-through today's surface; 30 in code 2026-09-14, live profile run owed to
-a Linux oracle host) · **no ABI divergence** 4 rows (2, 23,
+2026-09-16 for rows 5b, 17 and 30 — each closed in code, each with its
+live differential run taken 2026-09-16 in a `debian:testing` container
+(the oracle environment `docs/testing/oracle-environment.md` records):
+**(a)** 2 · **(b)** 2 · **(c)** 10 · **(d)** 0 (class retired, see
+below) · **REVERT TARGET** 0 · **OPEN DEFECT** 0 · **CLOSED** 16
+(rows 3, 5b, 7, 8, 9, 12, 13, 15, 16, 17, 24, 25, 26, 27, 28, 30 — 26
+measured identical on the pin 2026-09-08; 28 in code via #374, not
+observable through today's surface; 30 in code 2026-09-14, live
+FORCE_TONE profile run 2026-09-16 — `run-scheme-diff.sh bopomofo` 1–6,
+8, 9 all IDENTICAL; 5b in code 2026-09-15, contract test pinned,
+`run-scheme-diff.sh` oracle differential with out-of-enum values run
+2026-09-16 — IDENTICAL; 17 in code 2026-09-16, `run-option-sweep.sh`
+with the all-off (`0x0`) and divided-contrast (`0x8`/`0x88`) cases run
+2026-09-16 — 24/24 PASS) · **no ABI divergence** 4 rows (2, 23,
 29, 31).
 
 The 2026-08-28 totals were (a) 1 · (b) 2 · (c) 6 · (d) 1 · REVERT
 TARGET 7 · closed or not a divergence 2. Of the seven revert targets,
 five closed by reproduction or proven equivalence (7, 8, 9, 13, 15) and
-one was superseded by P6 (12); 5b and 17 remain, and 17 is no longer
-conditional.
+one was superseded by P6 (12); 5b and 17 closed in code (2026-09-15,
+2026-09-16), their live differential runs taken 2026-09-16.
 
 ### What is still owed, in order
 
 1. **Row 30** — closed in code 2026-09-14 (seam forward + capi tests +
-   the `chewing-diff.c` FORCE_TONE profile); the one remaining piece is
-   the profile's live run against a Linux oracle, which no existing CI
-   lane can do.
-2. **Row 5b** — the double out-of-enum half-mutation. Reproducing a
-   half-mutation that lies about success is the (c) boundary case the
-   policy singles out; the maintainer named it a revert target and it
-   has not moved.
-3. **Row 17** — port the pin's `0x0` gating; unconditional since (d)
-   was retired.
+   the `chewing-diff.c` FORCE_TONE profile); the profile's live run was
+   taken 2026-09-16 — `run-scheme-diff.sh bopomofo` 1–6, 8, 9 all
+   IDENTICAL, non-vacuity shown by the seam-only revert exiting 2
+   (register amendment, `upstream-divergences.md`). Nothing is owed.
+2. **Row 5b** — the double out-of-enum half-mutation, reproduced: the
+   CAPI returns `true` and clears the fallback, matching the pin;
+   shengmu/yunmu tables stay intact (closed in code 2026-09-15). The
+   `run-scheme-diff.sh` oracle differential with out-of-enum values
+   (99, −1 under ZRM) ran 2026-09-16 — IDENTICAL, the twelve `halfmut`
+   probe rows byte-equal on both sides. Nothing is owed.
+3. **Row 17** — the pin's `0x0` gating is ported (closed in code
+   2026-09-16); `run-option-sweep.sh` with the all-off (`0x0`) and
+   divided-contrast (`0x8`/`0x88`) cases ran 2026-09-16 — 24/24 PASS,
+   and per-word driver logs at `0x0`/`0x2`/`0x8`/`0x82`/`0x88`/`0x188`/
+   `0x18a` are byte-identical on both sides, the `n=` inventory lines
+   included (`xian` 337 tables-off / 756 tables-on). Nothing is owed.
 4. **Rows 26 and 28** — landed in code (#374) under the maintainer's
    2026-09-06 approval, copying libpinyin's source; row 26's
    three-input oracle battery ran on 2026-09-08 and is byte-identical.
