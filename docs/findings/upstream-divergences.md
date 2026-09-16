@@ -144,6 +144,15 @@ the abort rows (the pin-built `.so` SIGABRTs); the half-mutation is
 observable through a following parse that would have used the
 fallback (the contract test's `aa` probe after the out-of-enum call).
 
+(Amended 2026-09-16: the `run-scheme-diff.sh` oracle differential with
+the out-of-enum values (99, −1 under ZRM, in `scheme-diff.c`) ran in a
+debian:testing container, both sides on tkrzw, the capi on a P6-native
+data directory: the probe rows are byte-identical on both sides — the
+setter answers `true`, baseline `aa` consumed=2/n=8, after each
+out-of-enum value consumed=0/guess false/n=0, restored ZRM
+consumed=2/n=8 — and the whole-log diff is IDENTICAL, exit 0, no SKIP
+line.)
+
 ### Constraint-aware train without the consistency assert
 
 - **Upstream source cite:** `src/lookup/phonetic_lookup.h:841-935`
