@@ -323,6 +323,17 @@ done
 # Initials then finals compose (phonetic_key_matrix.cpp:238-306).
 run_case "amb-chain" $((BASE | (1 << 10) | (1 << 17)))
 
+# Row-17 closure probe (revert-plan §3, register #17): the literal
+# all-bits-off word, and the divided-table contrast on the incomplete
+# base. The W12 residual inputs are excluded under all-off exactly as
+# in every other case (is_w12_residual); the inventory contrast (xian
+# n=337 tables-off vs n=756 tables-on) rides the driver's n= lines,
+# which this runner does not diff — the closure record cites them from
+# separately captured driver logs.
+run_case "all-off" 0
+run_case "divided-contrast-off" $((0x8))
+run_case "divided-contrast-on" $((0x8 | 0x80))
+
 echo ""
 if [ "$SWEEP_STOP" -ne 0 ]; then
     echo "option-sweep: STOP — candidate TEXT/ORDER diverged beyond a RankKey-1 tie"
