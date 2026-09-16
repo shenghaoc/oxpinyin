@@ -114,7 +114,7 @@ fn entropy_threshold(
             detail: "no dictionary word meets the minimum entropy".to_owned(),
         });
     }
-    entropies.sort_by(|a, b| a.partial_cmp(b).expect("entropies are finite"));
+    entropies.sort_by(|a, b| a.total_cmp(b));
     Ok(entropies[threshold_index(entropies.len(), NEW_WORD_THRESHOLD)])
 }
 
