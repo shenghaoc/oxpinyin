@@ -543,6 +543,132 @@ check — that is the blind spot, not a hole in the email list.
 R1 is unchanged. After #108 the required `trailer-lint` context
 runs R1 on every PR commit.
 
+## 5. Unauthorized rebase and force-push of PRs #467--#472
+
+### The rule as it should have been
+
+Fast-forward pushes only on open PR branches. A reflow (squash /
+reorder / reword into a target commit structure) requires an explicit
+ask from the maintainer.
+
+### What went wrong
+
+On 2026-09-15 a Phase 2 review agent rebased and force-pushed six open
+PR branches (#467--#472) in a single automated run. The agent had not
+been asked to rebase; the standing rule was fast-forward pushes only.
+The force-pushes replaced the original commit histories with rebased
+copies onto `origin/main`. Patch-ids were unchanged (the source-code
+diff was preserved).
+
+### Timeline (from GitHub issue timeline API)
+
+| PR | branch | force-push time (UTC) |
+|---|---|---|
+| #467 | `test/capi-marshal` | 2026-09-15T16:32:35Z |
+| #468 | `fix/unsafe-block-lints` | 2026-09-15T16:41:47Z |
+| #469 | `fix/no-panic-lints` | 2026-09-15T16:48:13Z |
+| #470 | `bench/engine-core` | 2026-09-15T16:41:56Z |
+| #471 | `fix/row-5b-setter-mutation` | 2026-09-15T16:43:06Z |
+| #472 | `fix/row-17-option-gating` | 2026-09-15T16:52:53Z |
+
+### Head table (from `git reflog show refs/remotes/origin/<branch>`)
+
+| PR | original head | Phase 2 rebased head |
+|---|---|---|
+| #467 | `8fd0bfe8` | `b6f7641e` |
+| #468 | `33d7d158` | `a0cf8152` |
+| #469 | `5a2dbcee` | `8ead79b3` |
+| #470 | `89f383c5` | `9d1344bb` |
+| #471 | `0a921d4c` | `ce1b3ebd` |
+| #472 | `e2ee8dd9` | `c3e6963b` |
+
+Note: #470, #471 and #472 received additional fast-forward pushes
+(review fixes) between creation and the unauthorized rebase; the
+"original head" column is the PR-creation head, not the immediate
+predecessor of the force-push. #473 (`ci/coverage-trigger-library-path`)
+was not force-pushed during Phase 2.
+
+### Why patch-ids were unchanged
+
+The rebase was a straight `git rebase origin/main` with no interactive
+edit. Each rebased commit has the same `git patch-id` as its
+predecessor. No source-code content was added, removed, or reordered.
+Only the parent pointers and commit metadata changed.
+
+### Authorized reflow (Phase 4)
+
+The maintainer later authorized a full reflow of all seven PRs
+(#467--#473) during Phase 4 (2026-09-16). The Phase 4 reflow squashed
+and reworded commits into target commit structures, force-pushed with
+`--force-with-lease`, and verified tree identity against the
+pre-reflow heads. Final heads after the authorized reflow:
+
+| PR | Phase 4 reflowed head |
+|---|---|
+| #467 | `851ee71f` |
+| #468 | `dd4062ca` |
+| #469 | `7d90a362` |
+| #470 | `67e0a798` |
+| #471 | `b67c0041` |
+| #472 | `a7b84dfd` |
+| #473 | `43c66f17` |
+
+## 6. Handover-session reflow of #471–#474 and the new PRs (2026-09-16/17)
+
+The handover session (sections 4–5 of its work order) rewrote four open
+PR branches — each `git push --force-with-lease=<branch>:<expected-sha>`
+against the exact head it replaced, each tree checked before the push —
+and opened five new branches. Force-push times below are GitHub
+`head_ref_force_pushed` timeline events (UTC), not typed by hand.
+
+### Rewritten branches
+
+| PR | branch | head before | head after | force-push (UTC) | what changed |
+|---|---|---|---|---|---|
+| #471 | `fix/row-5b-setter-mutation` | `b67c0041` | `7fc1a6ec` | 2026-09-16T23:40:48Z | the earlier session's completed-but-unpushed 3→5-commit reflow adopted (tree-identical to `b67c0041` — empty `git diff`), then the A2d probe record folded into the probe and register commits (the run-scheme-diff out-of-enum differential ran IDENTICAL) |
+| #472 | `fix/row-17-option-gating` | `a7b84dfd` | `16ab6f7f` | 2026-09-16T23:40:53Z | reordered to fix → test(bisection) → docs; the option-sweep gained the all-off (`0x0`) and divided-contrast (`0x8`/`0x88`) cases and ran 24/24 PASS; the overclaiming docs commit rewritten to the measured figures; `.gitignore` gained the `option-sweep` binary |
+| #473 | `ci/coverage-trigger-library-path` | `bbc68590` | `3b27aad3` | 2026-09-16T17:31:06Z | the `fix(docs)` commit folded into the ci commit; **tree-identical** to `bbc68590` (empty `git diff` against it) |
+| #474 | `docs/register-totals-5b-17-30` | `566d1cfa` | `70b73fce` | 2026-09-16T23:45:59Z | draft finalized: rows 5b/17/30 follow their measured outcomes (all three live runs taken 2026-09-16, all IDENTICAL), "blocked on system-dir.sh" and "all former revert targets are resolved" replaced, Linux-oracle wording in its hunk replaced; marked ready for review |
+
+### New branches (fast-forward pushes only)
+
+| PR | branch | head | note |
+|---|---|---|---|
+| #476 | `fix/system-dir-p6-layout` | `1683ced3` | system-dir.sh accepts the P6 native layout; second commit migrates run-live-typing-diff.sh's stale gate (two fast-forward pushes, no force) |
+| #477 | `docs/fcitx-libpinyin-pin` | `47c0c58d` | W2: fcitx-libpinyin 0.5.4 identity frozen, 37-symbol manifest, union recomputed 58 |
+| #478 | `docs/row30-live-differential` | `6ad84efe` | W1: row-30 live FORCE_TONE run, 8 keyboards IDENTICAL |
+| #479 | `docs/live-typing-remeasure-074a2219` | `24b5d95c` | W4: live-typing + uncovered surfaces re-measured, both IDENTICAL |
+| #480 | `test/union-probe-coverage` | `c84dbb31` | W3: union probe + coverage matrix; stacked on #477; first oracle run exits 2, recorded unclassified, STOP |
+
+### Session-2 refresh (2026-09-17)
+
+Follow-up review of the handover session's work (same work order,
+delta items). #471's two record-bearing commits were rewritten
+tree-identically once more — the session-2 agent had folded its probe
+run into `8c6a3eb`/`7fc1a6e` while they carried only the session-1
+agent's `Assisted-by` trailer; both now carry both trailers (two
+distinct lines — R2's set semantics reject only identical duplicates).
+Force-push time: 2026-09-17T15:45:20Z. #479 gained a wording
+correction commit (fast-forward). #480 gained the sort-word parameter
+and the corrected STOP record/matrix (force-push,
+2026-09-17T15:56:42Z). #474 was returned to draft (it stays draft
+until #471, #472 and #478 merge). New branch: #481
+`test/sort-option-sweep` (`5f920953`, fast-forward only) — the
+sort-option investigation's parameterised sweep.
+
+| PR | head after session 2 |
+|---|---|
+| #471 | `678147ba` |
+| #479 | `3186932f` |
+| #480 | `317030fc` |
+| #481 | `5f920953` |
+
+(#475's own head cannot appear in its own table; it is whatever this
+commit is pushed as.) All other heads stand as the tables above.
+
+#467–#470 were not touched by either session; their Phase 4 heads
+stand.
+
 ## Cutoff
 
 This catalogue closes at the audit tip `12af695` (2026-08-17).
