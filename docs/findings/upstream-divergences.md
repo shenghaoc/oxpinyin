@@ -112,7 +112,7 @@ reverted 2026-09-15; remaining rows pinned by
   after the unconditional fallback clear already ran. The API wrapper
   `pinyin_set_double_pinyin_scheme` (`pinyin.cpp:1154-1159`) never
   returns.
-- **double out-of-enum (0, 7–29, 31+)** — the parser clears
+- **double out-of-enum (negatives, 0, 7–29, 31+)** — the parser clears
   `m_fallback_table` first (`pinyin_parser2.cpp:580`), returns `false`;
   the wrapper ignores the result and answers **`true`**
   (`pinyin.cpp:1155–1159`). A live fallback-bearing scheme
