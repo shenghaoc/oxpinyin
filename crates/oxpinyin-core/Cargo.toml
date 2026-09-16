@@ -27,3 +27,9 @@ phf_codegen.workspace = true
 # impls would not unify.
 oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
+# Micro-benches (benches/); workspace lock pins 0.8.
+criterion = "0.8"
+
+[[bench]]
+name = "parse_and_graph"
+harness = false

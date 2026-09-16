@@ -585,6 +585,7 @@ name = "oxpinyin-core"
 version = "0.1.0"
 dependencies = [
  "compact_str",
+ "criterion",
  "oxpinyin-chewing",
  "oxpinyin-testsupport",
  "phf",
