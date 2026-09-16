@@ -28,19 +28,20 @@ clippy invocation exists only if the unsafe-crate lints
 Cargo `[lints]` — then no extra invocation is needed at all (preferred).
 Doctest step only if nextest lands. Gates: all hard.
 
-## Tier 2 — EXTENDED QUALITY (PR-optional label / nightly-lite, ~+5–8 min)
+## Tier 2 — EXTENDED QUALITY (path-filtered / nightly-lite, ~+5–8 min)
 
-- `cargo llvm-cov` report artifact (no threshold; comment on PR when
-  labeled `coverage`).
+- `cargo llvm-cov` report artifact with a 77% line-coverage floor (runs on PR when
+  library-path crates change).
 - `cargo geiger` report artifact (unsafe-in-deps diff vs main). *(Retired 2026-09-01 — see `docs/findings/verify-nightly.md`.)*
 - Lizard report with CCN capped at 40 (`lizard crates/ -l rust -C 40`;
   ratchet vs current max 38).
 
-> STATUS (2026-09-08): Tier 2 exists as path filters, not a label. The
-> llvm-cov floor (`coverage.yml`) runs on a PR when core, engine, user,
-> data, facade, segment, chewing or capi-marshal change, and
-> unconditionally from the nightly through
-> `workflow_call`. Lizard moved to the Tier 1 lint job. A nightly
+> STATUS (2026-09-08; amended 2026-09-15): Tier 2 exists as path
+> filters, not a label. The llvm-cov floor (`coverage.yml`) runs on a
+> PR when core, engine, user, data, facade, segment, chewing,
+> capi-marshal, store, runtime, capi or zhuyin-capi change, and
+> unconditionally from the nightly through `workflow_call`. Lizard
+> moved to the Tier 1 lint job. A nightly
 > `public-api` lane diffs the engine's `cargo public-api` snapshot.
 > geiger was retired 2026-09-01.
 - Windows/macOS keep today's portable test jobs; `store-backends.yml`
@@ -108,7 +109,7 @@ libchewing convention), they do not auto-block unless a ratchet exists
 | overflow release lane | | | ✔ | |
 | Kani | | | dropped | |
 | cargo-mutants | | | retired 2026-09-01 | |
-| llvm-cov floor (77% lines) | | ✔ path-filtered (core/engine/user/data/facade/segment/chewing/capi-marshal) | ✔ | planned (T4 not built) |
+| llvm-cov floor (77% lines) | | ✔ path-filtered (core/engine/user/data/facade/segment/chewing/capi-marshal/store/runtime/capi/zhuyin-capi) | ✔ | planned (T4 not built) |
 | geiger | | planned (T2 not built) | retired 2026-09-01 | |
 | Lizard ratchet | ✔ (lint job) | | | |
 | cargo-public-api snapshot (engine) | | | ✔ | |
@@ -119,8 +120,8 @@ libchewing convention), they do not auto-block unless a ratchet exists
 - Everything interpreting or mutating semantics (the fuzz soak;
   Miri/mutants were scheduled here until their 2026-09-01 retirement)
   is scheduled: high value, too slow per-PR, zero MSRV impact.
-- Tier 2 exists so contributors can *request* deeper signal without
-  making everyone pay for it.
+- Tier 2 runs automatically on the affected paths so contributors get
+  deeper signal without making everyone pay for it.
 - The IME-hosting risk profile (long-lived process, hostile-ish data files,
   C consumers) is what selects `capi-commands` + `dict-loader` as the two
   new fuzz investments — both upstream-precedented
