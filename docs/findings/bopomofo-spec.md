@@ -477,5 +477,6 @@ this record.
   shape, and `tools/bisection/chewing-diff.c` gained the FORCE_TONE
   profile pass. The frozen law itself is unchanged — this is its
   implementation, not an amendment of it. The profile's live run against
-  the pin remains owed to a Linux oracle host (register amendment,
+  the pin was taken 2026-09-16 — all eight implemented keyboards
+  IDENTICAL (register amendment,
   `docs/findings/upstream-divergences.md`).

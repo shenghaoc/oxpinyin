@@ -12,8 +12,9 @@ fine; never replace / succeed / outperform. Scoped measurements only. See
 shared object indistinguishable from libpinyin's own except for the
 established exceptions — the compatibility policy's classes, the
 frozen sentence residual, and the one defect the policy carried (row 30,
-closed in code 2026-09-14; its live FORCE_TONE differential run is owed
-to a Linux oracle host): the same SONAME and exports, the same data and
+closed in code 2026-09-14; its live FORCE_TONE differential ran
+2026-09-16, all eight implemented keyboards IDENTICAL): the same SONAME
+and exports, the same data and
 user files, the same behaviour, measured against the pin. The pin follows
 libpinyin's default-branch tip (`074a2219`, 2.11.92 — the tip on
 2026-09-12, verified). Other programs use oxpinyin through the C ABI

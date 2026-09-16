@@ -1634,11 +1634,38 @@ freezes — was never in that enumeration. This entry completes it.
   parses, the strip changes nothing observable on STANDARD, and
   `FORCE_TONE` without `USE_TONE` stays nested-inert — and
   `tools/bisection/chewing-diff.c` gained the FORCE_TONE profile pass
-  the entry prescribed. The live pin-vs-oxpinyin run of that profile is
-  owed to a Linux oracle host; every existing gate stays IDENTICAL
-  because none sets the bit, so the closure rests on the unit-level law
-  plus the profile, in the same shape the NbestShape closure (row 28)
-  rested on engine tests without a moving gate.)
+  the entry prescribed. The live pin-vs-oxpinyin run of that profile was
+  taken 2026-09-16 (amendment below); every existing gate stays
+  IDENTICAL because none sets the bit, so until that run the closure
+  rested on the unit-level law plus the profile, in the same shape the
+  NbestShape closure (row 28) rested on engine tests without a moving
+  gate.)
+
+  (Amended 2026-09-16: **live differential RUN — IDENTICAL on all eight
+  implemented keyboards.** `run-scheme-diff.sh bopomofo N` for N = 1–6,
+  8, 9 (STANDARD, HSU, IBM, GINYIEH, ETEN, ETEN26, HSU_DVORAK,
+  DACHEN_CP26; 7 STANDARD_DVORAK aborts the pin and is never sent) each
+  exited 0 IDENTICAL with no `SKIP:` line and both sides visibly
+  executed. Environment: a `debian:testing` container (image
+  `docker.io/library/debian@sha256:5056ab8a99336d6d71390d640f72229649f12e3d38e987cf6b24dc8675325d73`,
+  container `a15849ef7dd2`), the pin oracle prefix mounted read-only,
+  both sides on tkrzw — the oracle is the `dbm=tkrzw` parity build and
+  the default `cargo build -p oxpinyin-capi` resolves the tkrzw backend —
+  with the capi on a P6-native data directory (libpinyin-native
+  `.bin`/`.db` naming). The measurement tree was `main` @ `93a462f`
+  overlayed with PR #476's `system-dir.sh` (the native-layout
+  acceptance; these records change no runner or driver). The
+  full both-side driver logs for `bopomofo 1` run 1512 lines each; the
+  FORCE_TONE profile section (log line 889) carries the toneless `su`
+  on STANDARD identically on both sides: `parse_chewing: consumed=0`,
+  `parsed_input_length: 0`, `guess_sentence: false`,
+  `n_candidates: 0`. Non-vacuity: reverting the seam alone in a
+  throwaway worktree (`crates/oxpinyin-facade/src/parse.rs` and
+  `crates/oxpinyin-core/src/scheme.rs` at their pre-`6616fb08` state,
+  the driver's FORCE_TONE profile kept) turns `bopomofo 1` into exit 2
+  with exactly the row-30 hunk — oracle `consumed=0`, reverted capi
+  `consumed=2`, `n_candidates=125`. Logs:
+  `~/.local/share/oxpinyin-evidence/2026-09-16/w1/`.)
 
 ### The pinyin index DBMs carry uninitialized struct padding
 

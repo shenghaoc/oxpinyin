@@ -110,8 +110,8 @@ the uncovered ones are unverified rather than compliant; closing it is work
 here rather than only in the policy. The one defect the policy carried —
 row 30, the pinyin facade's chewing batch `FORCE_TONE` seam — closed in
 code 2026-09-14 (register amendment; the live FORCE_TONE differential
-run is owed to a Linux oracle host). `README.md`
-states Stage 1 the same way.
+ran 2026-09-16 — all eight implemented keyboards IDENTICAL).
+`README.md` states Stage 1 the same way.
 
 Parked, not open: the W12 live-typing behaviours the parity sequence does
 not exercise (`docs/findings/live-typing.md`, no pin gates). The
@@ -353,8 +353,10 @@ parked.
   open implementation item — the pinyin facade's chewing batch seam's
   `FORCE_TONE` forward — closed 2026-09-14 per the prescribed shape
   (seam forward + capi tests + the `chewing-diff.c` FORCE_TONE profile);
-  the register entry carries the closure and the Linux-oracle run that
-  remains owed on it.
+  the register entry carries the closure, and the profile's live run
+  was taken 2026-09-16 — `run-scheme-diff.sh bopomofo` 1-6, 8, 9 all
+  IDENTICAL in a debian:testing container, non-vacuity shown by the
+  seam-only revert exiting 2.
 
 - **W14 LANDED (489e94d, PR #113).** Three parts, all delivered: (a) sentence
   candidates emit with real unigrams loaded — up to N n-best rows prepended
