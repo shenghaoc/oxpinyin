@@ -22,17 +22,22 @@
 #
 # Env-gated on the pin-built oracle like the train diff
 # (PINYIN_ORACLE_PREFIX, default $HOME/.local/opt/pinyin-oracle) and on
-# an oxpinyin-native system directory (LIVETYPING_SYSTEM). The capi side
-# reads that directory through oxpinyin's own peer store backend — Kyoto
-# Cabinet by default (.kct), or one of {redb, lmdb, tkrzw} when the capi
-# was built with the corresponding feature. Rounds: LIVETYPING_ROUNDS
-# (default 3).
+# a system data directory: LIVETYPING_SYSTEM, else OXPINYIN_SYSTEM_DIR,
+# else the conventional build locations (system-dir.sh — an unresolvable
+# directory with a present oracle is FATAL, never a silent mini-fixture
+# run). The capi side reads that directory through its own compiled-in
+# store backend: peer-extension tables (.kct/.tkt/.lmdb/.redb) or, on
+# Kyoto Cabinet and tkrzw builds, the P6 native layout (libpinyin's own
+# file names). interpolation2.text must sit beside the tables. Rounds:
+# LIVETYPING_ROUNDS (default 3).
 #
 # Exit codes: 0 = identical or skipped; 1 = build/run failure;
 # 2 = divergence.
 
 set -euo pipefail
 cd "$(dirname "$0")"
+# shellcheck source=tools/bisection/system-dir.sh
+. ./system-dir.sh
 REPO_ROOT="$(cd ../.. && pwd)"
 
 echo "--- building live-typing-diff driver ---"
@@ -82,29 +87,26 @@ if [[ ! -f "$ORACLE_DATA/bigram.db" ]]; then
     exit 0
 fi
 
-CAPI_SYSTEM="${LIVETYPING_SYSTEM:-}"
-# The tables' extension names the peer backend the capi was compiled
-# against (.kct KC, .redb redb, .lmdb LMDB, .tkt tkrzw). All three tables
-# must share ONE extension: the engine opens every table through the
-# single compiled-in backend, so a dir mixing extensions is
-# half-assembled for each backend and would fail mid-run instead of
-# skipping cleanly here.
-has_all_tables() {
-    local ext=$1 t
-    for t in pinyin_index phrase_index bigram; do
-        [[ -f "$CAPI_SYSTEM/$t.$ext" ]] || return 1
-    done
-}
-if [[ -z "$CAPI_SYSTEM" ]] || ! [[ -f "$CAPI_SYSTEM/interpolation2.text" ]] \
-    || ! { has_all_tables kct || has_all_tables redb || has_all_tables lmdb || has_all_tables tkt; }; then
-    echo "SKIP: LIVETYPING_SYSTEM must name an oxpinyin-native system dir"
-    echo "  (pinyin_index, phrase_index and bigram all in one extension"
-    echo "  matching the capi's compiled backend — .kct / .redb / .lmdb /"
-    echo "  .tkt — plus interpolation2.text)"
+# Resolve or refuse through system-dir.sh: LIVETYPING_SYSTEM first, then
+# OXPINYIN_SYSTEM_DIR, then the conventional build locations; an
+# unresolvable dir with a present oracle is FATAL rather than a silent
+# skip or a mini-fixture run. The pre-P6 gate hard-coded the
+# peer-extension names (.kct/.redb/.lmdb/.tkt) and could never pass on
+# a default (tkrzw) or Kyoto Cabinet build: datagen writes those
+# backends' tables under libpinyin's own names (pinyin_index.bin,
+# bigram.db, ...), which system_dir_detect_ext now accepts as the "bin"
+# layout. interpolation2.text stays required beside the tables — the
+# real-unigram source this runner has always demanded — and its absence
+# remains a clean SKIP.
+CAPI_SYSTEM="$(resolve_system_dir LIVETYPING_SYSTEM live-typing-diff)"
+if [[ ! -f "$CAPI_SYSTEM/interpolation2.text" ]]; then
+    echo "SKIP: $CAPI_SYSTEM lacks interpolation2.text"
+    echo "  (the real-unigram source; copy it from the model cache beside"
+    echo "  the tables, e.g. target/model20/extracted/interpolation2.text)"
     exit 0
 fi
-# The four-file presence check catches half-assembled dirs; it does NOT bind
-# the tables' identity to the oracle pin (a content hash or manifest belongs
+# The presence checks catch half-assembled dirs; they do NOT bind the
+# tables' identity to the oracle pin (a content hash or manifest belongs
 # to the parked oracle-provisioning work, where the dir is assembled
 # mechanically instead of by hand).
 
