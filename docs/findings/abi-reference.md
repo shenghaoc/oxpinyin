@@ -1,193 +1,36 @@
-# Findings — frontend-called libpinyin ABI subset
+# Reference — the exported libpinyin ABI
 
-Date: 2026-08-14 · Source tier: Manual source read; recorded — §6 carries
-the 2026-08-30 maintainer close of the 79/79 target.
+Date: 2026-08-14 · updated 2026-09-17 · Status: living reference.
+
+## Scope
+
+Every symbol the drop-in library exports: the **79 `pinyin_*` symbols
+of `libpinyin.ver`** and, for the libzhuyin drop-in, the 52 `zhuyin_*`
+symbols of `libzhuyin.ver` — in each case the same set the pinned
+libpinyin exports (verified identical 2026-09-17 against pin
+`074a2219`, `src/libpinyin.ver` blob `964d96e0`). Nothing here is
+scoped, counted or bounded by which consumer calls what; named
+consumers' call sites appear only as reachability evidence for specific
+behaviours. The E2E probe obligation over this set is
+`docs/findings/probe-coverage-abi.md`; the compatibility rule itself is
+`compatibility-policy.md` §(e).
 
 ## Source identity
 
-- Frontend caller: **ibus-libpinyin** tag `1.16.5`, commit
-  `2d2cdac0187101aa0cd7ac06694a8340721ddfbb`.
-- Backend API: **libpinyin** tag `2.11.91`, commit
-  `0c5e80e1200f84fab185d1c5bde458b770a0636c`.
-- Header: `libpinyin/src/pinyin.h` (79 exported `pinyin_*` symbols in
-  `libpinyin.ver`).
-- This is the reference freeze for reproducibility (upstream release state
-  as of 2026-07-31).
+- Backend API: **libpinyin** tag `2.11.92`, commit
+  `074a2219c90feaf962d0d24f034514033ece5f99` (the oracle pin;
+  `docs/testing/oracle-environment.md`).
+- Header: `libpinyin/src/pinyin.h` — mirrored at
+  `crates/oxpinyin-capi/pinyin.h`; the export lists are
+  `crates/oxpinyin-capi/libpinyin.ver` and
+  `crates/oxpinyin-zhuyin-capi/libzhuyin.ver`.
+- A historical note for the record: the 2026-08-14 audit enumerated the
+  symbols two reference frontends call, and a 51-symbol bootstrap
+  contract stood until the full 79/79 export target landed 2026-08-30.
+  Those per-consumer enumerations are retired as scope instruments; the
+  per-symbol facts below stand for the whole exported set.
 
-## W8 bootstrap contract — the fork call surface supersedes the tag freeze
-
-For W8 purposes the bootstrap contract is the live call surface of
-`shenghaoc/ibus-libpinyin`, branch `feat/oxpinyin-backend`, tip `0d71866`
-(the §1 characterization extended to the fork's live call sites — the
-`docs/oxpinyin-switch.md` this line once cited was never written into
-this repository). That surface is
-**51 symbols**: the 50 tag-1.16.5 symbols in §1 plus
-`pinyin_get_parsed_input_length`, whose live fork call site is
-`src/PYPLibPinyinCandidates.cc:151`. The gap originates in fork commit
-`2c5baa9` ("Fix LibPinyinCandidates::selectCandidate method"), which changed
-the full-selection test from `lookup_cursor == m_editor->m_text.length()` to
-`lookup_cursor == pinyin_get_parsed_input_length(instance)`.
-
-The tag-1.16.5 freeze remains the historical characterization below; the
-fork surface supersedes it for W8. As the roadmap records, the surface is
-free to evolve after the first oxpinyin release.
-
-## Method
-
-1. Cloned both repos at their pinned tags.
-2. Read every `.cc` file under `ibus-libpinyin/src/` and extracted unique
-   `pinyin_*` call-site identifiers from live (non-`#if 0`) code. (Correction:
-   the first pass included some `#if 0` dead-code hits — chiefly the
-   `PYPPhoneticEditor.cc:467–514` `selectCandidate`/`selectCandidateInPage`
-   block — which §1 drops; see the note after §1l.)
-3. Intersected against the 79 declared exports in `libpinyin.ver`.
-4. Per-symbol signatures copied from `pinyin.h`; ownership inferred from
-   header declarations, consumer usage (free patterns), and doc comments.
-
-The live 1.16.5 consumer calls exactly **50 symbols** out of the 79
-exported (historical; the W8 fork surface above is 51).
-
-Earlier architect capture listed 52; the difference:
-- `pinyin_get_pinyin_key` and `pinyin_get_pinyin_string` appear only inside
-  a `#if 0` dead-code block at `PYPPinyinEditor.cc:296–333`.
-- `pinyin_get_n_pinyin` also only appears in that same dead block.
-- `pinyin_get_parsed_input_length` is not called anywhere in ibus-libpinyin
-  (used only by `tools/capture/capture.c`).
-
-The corrected count: **50 live symbols**.
-
----
-
-## 1. Symbol list with call sites
-
-### 1a. Context lifecycle (4 symbols)
-
-| Symbol | Call sites |
-|--------|-----------|
-| `pinyin_init` | `PYLibPinyin.cc:69,127` |
-| `pinyin_fini` | `PYLibPinyin.cc:224` |
-| `pinyin_alloc_instance` | `PYLibPinyin.cc:234,258` |
-| `pinyin_free_instance` | `PYLibPinyin.cc:281,296` |
-
-### 1b. Configuration (5 symbols)
-
-| Symbol | Call sites |
-|--------|-----------|
-| `pinyin_set_options` | `PYLibPinyin.cc:305` |
-| `pinyin_set_double_pinyin_scheme` | `PYLibPinyin.cc:316` |
-| `pinyin_set_zhuyin_scheme` | `PYLibPinyin.cc:325` |
-| `pinyin_load_addon_phrase_library` | `PYLibPinyin.cc:339` |
-| `pinyin_save` | `PYLibPinyin.cc:353` |
-
-### 1c. Parsing (4 symbols)
-
-| Symbol | Call sites |
-|--------|-----------|
-| `pinyin_parse_more_full_pinyins` | `PYPFullPinyinEditor.cc:37`, `PYLibPinyin.cc:443` |
-| `pinyin_parse_more_double_pinyins` | `PYPDoublePinyinEditor.cc:37` |
-| `pinyin_parse_more_chewings` | `PYPBopomofoEditor.cc:305,311` |
-| `pinyin_in_chewing_keyboard` | `PYPBopomofoEditor.cc:180,330` |
-
-### 1d. Sentence / guess (4 symbols)
-
-| Symbol | Call sites |
-|--------|-----------|
-| `pinyin_guess_sentence` | `PYPFullPinyinEditor.cc:39`, `PYPDoublePinyinEditor.cc:39`, `PYPBopomofoEditor.cc:306,312` |
-| `pinyin_guess_candidates` | `PYPPhoneticEditor.cc:386` |
-| `pinyin_guess_predicted_candidates_with_punctuations` | `PYPSuggestionEditor.cc:277` |
-| `pinyin_reset` | `PYPPhoneticEditor.cc:380` |
-
-### 1e. Candidate access (7 symbols)
-
-| Symbol | Call sites |
-|--------|-----------|
-| `pinyin_get_n_candidate` | `PYPPhoneticEditor.cc:392`, `PYPPinyinEditor.cc:252`, `PYPBopomofoEditor.cc:358`, `PYPSuggestionCandidates.cc:34`, `PYPLibPinyinCandidates.cc:80` |
-| `pinyin_get_candidate` | `PYPPhoneticEditor.cc:459`, `PYPPinyinEditor.cc:271`, `PYPBopomofoEditor.cc:371`, `PYPSuggestionCandidates.cc:38,86`, `PYPLibPinyinCandidates.cc:95,105,128` |
-| `pinyin_get_candidate_type` | `PYPPhoneticEditor.cc:463`, `PYPPinyinEditor.cc:272`, `PYPBopomofoEditor.cc:372`, `PYPSuggestionCandidates.cc:41`, `PYPLibPinyinCandidates.cc:97` |
-| `pinyin_get_candidate_string` | `PYPSuggestionCandidates.cc:58`, `PYPLibPinyinCandidates.cc:56,77` |
-| `pinyin_get_candidate_nbest_index` | `PYPLibPinyinCandidates.cc:113` |
-| `pinyin_is_user_candidate` | `PYPLibPinyinCandidates.cc:63` |
-| `pinyin_remove_user_candidate` | `PYPLibPinyinCandidates.cc:69` |
-
-### 1f. Candidate selection and training (3 symbols)
-
-| Symbol | Call sites |
-|--------|-----------|
-| `pinyin_choose_candidate` | `PYPLibPinyinCandidates.cc:111,132,140,147` |
-| `pinyin_choose_predicted_candidate` | `PYPSuggestionCandidates.cc:87` |
-| `pinyin_train` | `PYPLibPinyinCandidates.cc:117,155` |
-
-### 1g. Sentence retrieval (2 symbols)
-
-| Symbol | Call sites |
-|--------|-----------|
-| `pinyin_get_sentence` | `PYPPinyinEditor.cc:276`, `PYPBopomofoEditor.cc:376`, `PYPLibPinyinCandidates.cc:51,109` |
-| `pinyin_get_character_offset` | `PYPPinyinEditor.cc:290`, `PYPBopomofoEditor.cc:404` |
-
-### 1h. Pinyin key / cursor positioning (5 symbols)
-
-| Symbol | Call sites |
-|--------|-----------|
-| `pinyin_get_pinyin_key_rest` | `PYPLibPinyinCandidates.cc:150` |
-| `pinyin_get_pinyin_key_rest_positions` | `PYPLibPinyinCandidates.cc:153` |
-| `pinyin_get_pinyin_offset` | `PYPPhoneticEditor.cc:395` |
-| `pinyin_get_left_pinyin_offset` | `PYPPhoneticEditor.cc:414` |
-| `pinyin_get_right_pinyin_offset` | `PYPPhoneticEditor.cc:430` |
-
-### 1i. Auxiliary text (3 symbols)
-
-| Symbol | Call sites |
-|--------|-----------|
-| `pinyin_get_full_pinyin_auxiliary_text` | `PYPFullPinyinEditor.cc:84`, `PYPCloudCandidates.cc:704` |
-| `pinyin_get_double_pinyin_auxiliary_text` | `PYPDoublePinyinEditor.cc:84` |
-| `pinyin_get_chewing_auxiliary_text` | `PYPBopomofoEditor.cc:425` |
-
-### 1j. User data / persistence (6 symbols)
-
-| Symbol | Call sites |
-|--------|-----------|
-| `pinyin_mask_out` | `PYLibPinyin.cc:388` |
-| `pinyin_remember_user_input` | `PYLibPinyin.cc:443` |
-| `pinyin_begin_add_phrases` | `PYLibPinyin.cc:408` |
-| `pinyin_iterator_add_phrase` | `PYLibPinyin.cc:421` |
-| `pinyin_end_add_phrases` | `PYLibPinyin.cc:434` |
-| `pinyin_save` | `PYLibPinyin.cc:353` |
-
-### 1k. Phrase / bigram export (7 symbols)
-
-| Symbol | Call sites |
-|--------|-----------|
-| `pinyin_begin_get_phrases` | `PYLibPinyin.cc:463` |
-| `pinyin_iterator_has_next_phrase` | `PYLibPinyin.cc:467,511` |
-| `pinyin_iterator_get_next_phrase` | `PYLibPinyin.cc:471,515` |
-| `pinyin_end_get_phrases` | `PYLibPinyin.cc:494` |
-| `pinyin_begin_get_bigram_phrases` | `PYLibPinyin.cc:507` |
-| `pinyin_bigram_iterator_has_next_phrase` | `PYLibPinyin.cc:542` |
-| `pinyin_bigram_iterator_get_next_phrase` | `PYLibPinyin.cc:546` |
-
-Note: `pinyin_end_get_bigram_phrases` is also called; see below.
-
-### 1l. Bigram export end (1 symbol)
-
-| Symbol | Call sites |
-|--------|-----------|
-| `pinyin_end_get_bigram_phrases` | `PYLibPinyin.cc:564` |
-
-**Total: 50 unique live symbols** (some appear in multiple categories via
-`pinyin_save`; de-duplicated the count is 50).
-
-> **`#if 0` caveat.** The `PYPPhoneticEditor.cc:467–514`
-> `selectCandidate`/`selectCandidateInPage` block is inside `#if 0`; any
-> citation from that range (originally recorded for `pinyin_guess_sentence`,
-> `pinyin_get_candidate`, `pinyin_get_candidate_type`,
-> `pinyin_get_candidate_string`, `pinyin_get_candidate_nbest_index`,
-> `pinyin_choose_candidate`, `pinyin_get_pinyin_key_rest`, and
-> `pinyin_get_pinyin_key_rest_positions`) has been dropped above. The live
-> n-best path is `PYPLibPinyinCandidates.cc` (see §5).
-
----
-
-## 2. Per-symbol signatures and ownership/lifetime semantics
+## 1. Per-symbol signatures and ownership/lifetime semantics
 
 Signatures from `libpinyin/src/pinyin.h`. This section is the prose form;
 the machine-readable one is `crates/oxpinyin-capi/libpinyin.alloc` (and
@@ -294,7 +137,7 @@ bool pinyin_guess_sentence(pinyin_instance_t * instance);
 ```
 Returns: **N/A** (bool success). Populates the instance's internal sentence
 buffer. Called after parsing and, for partial selection, after
-`pinyin_choose_candidate`; the n-best path (§5) calls `pinyin_get_sentence`
+`pinyin_choose_candidate`; the n-best path (§4) calls `pinyin_get_sentence`
 directly without a fresh `pinyin_guess_sentence`.
 
 ```
@@ -333,7 +176,7 @@ Returns: **N/A** (bool success). Out-param `candidate`:
 until the next `pinyin_guess_candidates`/parse/reset/free.
 `pinyin_choose_candidate` mutates sentence/cursor state but does **not**
 invalidate the candidate passed as its argument — the n-best path calls
-`pinyin_get_candidate_nbest_index` after it (see §5).
+`pinyin_get_candidate_nbest_index` after it (see §4).
 
 ```
 bool pinyin_get_candidate_type(pinyin_instance_t * instance,
@@ -581,7 +424,7 @@ Returns: **N/A** — releases the bigram export iterator handle.
 
 ---
 
-## 3. Call ordering and state model
+## 2. Call ordering and state model
 
 ### Opaque types
 
@@ -759,7 +602,7 @@ instance (`allocPinyinInstance`) for the parse, then calls
 
 ---
 
-## 4. Config surface
+## 3. Config surface
 
 All configuration is applied through `pinyin_set_options` using bitmask
 flags. The consumer constructs these from GSettings keys in `PYPConfig.cc`.
@@ -865,7 +708,7 @@ change which libpinyin symbols are called.
 
 ---
 
-## 5. Sentence / n-best path — resolved
+## 4. Sentence / n-best path
 
 **Finding: YES, ibus-libpinyin fully exercises the sentence/n-best path.**
 
@@ -891,7 +734,7 @@ if (NBEST_MATCH_CANDIDATE == type) {
 
 The `lookup_candidate_t` from `pinyin_get_candidate` stays valid through
 `pinyin_choose_candidate` for the following `pinyin_get_candidate_nbest_index`
-call (see §3 ownership).
+call (see §1 ownership).
 
 ### Implication for oxpinyin-capi
 
@@ -904,91 +747,7 @@ index-0-only.
 
 ---
 
-## 6. Out-of-subset symbols — historical complement, superseded by the 79/79 target
-
-Historical complement for the tag freeze, minus the one symbol the W8
-fork added: the sorted 79 `libpinyin.ver` exports minus the 51-symbol W8
-contract (the 50 live 1.16.5 call-site symbols in §1 plus
-`pinyin_get_parsed_input_length`, fork commit `2c5baa9`, call site
-`PYPLibPinyinCandidates.cc:151`).
-
-**Supersession (2026-08-29), CLOSED (2026-08-30).** The ABI boundary is
-no longer the W8 fork call surface: the maintained target is the **full
-live upstream ABI, 79/79** `pinyin_*` symbols, so the produced `.so` is
-functionally indistinguishable from libpinyin regardless of caller —
-and the target is met: **all 79 symbols are implemented live**
-(`pinyin_get_raw_full_pinyin` stays excluded — `#if 0`-declared with no
-implementation and no export in upstream itself). The consumer-union
-surface below remains the provenance record of what frontends actually
-drove. Landed in sequence: `pinyin_clear_constraint` (W8),
-`pinyin_set_full_pinyin_scheme` (#109, W15), the fcitx preedit family
-(#189, 2026-08-28), `pinyin_unload_addon_phrase_library` (fcitx call
-site), the Tier-A remainder (single-key parsers, luoma/secondary
-displays, `pinyin_get_pinyin_is_incomplete`, `pinyin_get_context`), the
-Tier-B sentence/surface family (`pinyin_phrase_segment`,
-`pinyin_get_n_phrase`, `pinyin_get_phrase_token`,
-`pinyin_guess_predicted_candidates`,
-`pinyin_guess_sentence_with_prefix`), and the Tier-C dictionary
-introspection family (`pinyin_lookup_tokens`, `pinyin_token_get_phrase`,
-`pinyin_token_get_n_pronunciation`,
-`pinyin_token_get_nth_pronunciation`,
-`pinyin_token_get_unigram_frequency`,
-`pinyin_token_add_unigram_frequency`, `pinyin_load_phrase_library`,
-`pinyin_unload_phrase_library`).
-
-Complement as it stood at the W8 freeze:
-
-```text
-pinyin_clear_constraint
-pinyin_get_context
-pinyin_get_luoma_pinyin_string
-pinyin_get_n_phrase
-pinyin_get_phrase_token
-pinyin_get_pinyin_is_incomplete
-pinyin_get_pinyin_key
-pinyin_get_pinyin_key_rest_length
-pinyin_get_pinyin_string
-pinyin_get_pinyin_strings
-pinyin_get_secondary_zhuyin_string
-pinyin_get_zhuyin_string
-pinyin_guess_predicted_candidates
-pinyin_guess_sentence_with_prefix
-pinyin_load_phrase_library
-pinyin_lookup_tokens
-pinyin_parse_chewing
-pinyin_parse_double_pinyin
-pinyin_parse_full_pinyin
-pinyin_phrase_segment
-pinyin_set_full_pinyin_scheme
-pinyin_token_add_unigram_frequency
-pinyin_token_get_n_pronunciation
-pinyin_token_get_nth_pronunciation
-pinyin_token_get_phrase
-pinyin_token_get_unigram_frequency
-pinyin_unload_addon_phrase_library
-pinyin_unload_phrase_library
-```
-
-Notes:
-- `pinyin_get_pinyin_key` and `pinyin_get_pinyin_string` appear only in
-  `#if 0` dead code at `PYPPinyinEditor.cc:296–333`; they are in the
-  complement because they are **not** live call sites (they remain
-  exports in `libpinyin.ver`).
-- `pinyin_get_n_pinyin` also appears only in that `#if 0` block, but it is
-  **not** a `libpinyin.ver` export.
-- `pinyin_guess_predicted_candidates` is an older variant superseded by
-  `pinyin_guess_predicted_candidates_with_punctuations`.
-- `pinyin_parse_full_pinyin` / `pinyin_parse_double_pinyin` /
-  `pinyin_parse_chewing` are the single-syllable parsers; ibus-libpinyin
-  uses only the `parse_more_*` (multi-syllable) variants.
-- `pinyin_set_full_pinyin_scheme` moved from complement to the exported
-  surface in the #109 full-scheme PR (W15): HANYU stays the default and
-  the frozen surface; LUOMA/SECONDARY_ZHUYIN parse through their pinned
-  indexes. It remains uncalled by ibus-libpinyin 1.16.5.
-
----
-
-## 7. Error and abort behaviour
+## 5. Error and abort behaviour
 
 ### libpinyin error model
 
@@ -1030,7 +789,7 @@ A Rust implementation should:
 
 ---
 
-## 8. W8 header-completeness additions
+## 6. Header-completeness additions
 
 The fork includes `<pinyin.h>` from C++ translation units, so the generated
 header carries `#ifdef __cplusplus` / `extern "C"` guards (cbindgen
@@ -1102,14 +861,10 @@ surface stays minimal.
 
 ## Boundary notes
 
-For W8 the contract was the fork's 51-symbol live surface (see the note at
-the top of this file); that frontend-called subset was the bootstrap, and
-as of 2026-08-29 the boundary is superseded by the maintained 79/79
-full-live-ABI target (§6) — every exported `pinyin_*` symbol is in scope,
-with the remaining 13 landing in the Tier-B and Tier-C follow-ups and no
-placeholder bodies anywhere.
+Every exported `pinyin_*` symbol is in scope and implemented live —
+the 79/79 target met 2026-08-30, no placeholder bodies anywhere.
 Symbols needed only by the differential harness may be added to
-`pinyin-oracle` without expanding the supported `oxpinyin-capi` surface.
+`pinyin-oracle`; they are not part of the drop-in surface.
 Every C-ABI symbol requires a dedicated task, a `// SAFETY:` argument for
 each unsafe block, NULL/invalid-input coverage, and an oracle-backed
 behavioural test before freeze.

@@ -103,9 +103,7 @@ libpinyin's names so that unmodified consumers link against it and run.
    `include/libpinyin-2.11.91/`. 3. The pkg-config file SHALL ship as
    `libpinyin.pc` exposing `pkgdatadir`, `database_format` and
    `exec_prefix`. 4. The exported surface SHALL be the full live upstream ABI — 79
-   `pinyin_*` symbols (`docs/findings/abi-subset.md` §6) — of which the
-   58-symbol consumer union measured from the two reference consumers
-   (#206, 58/58) is the subset they call.
+   `pinyin_*` symbols (`docs/findings/abi-reference.md`).
 
 ### Requirement R8: Direct read of installed libpinyin data
 
@@ -127,16 +125,15 @@ libpinyin data so that no data conversion ships.
 **User Story:** As a consumer, I want byte-identical output so that
 replacing the library changes nothing observable.
 
-1. For every consumer-union symbol, given the same inputs and state, the
+1. For every exported symbol, given the same inputs and state, the
    whole observable output SHALL be byte-identical to the pinned libpinyin
    2.11.91 — return status, out-parameters and the data they point to,
    written lengths, and handle state transitions. 2. Divergence SHALL be
-   permitted only under the four classes of
+   permitted only under the three classes of
    `docs/findings/compatibility-policy.md`: (a) MATH — platform-dependent
    floating-point accumulation; (b) MEMORY SAFETY — upstream is UB and
    Rust structurally prevents reproduction; (c) AVAILABILITY — upstream
-   aborts on caller input, so oxpinyin returns `false`/`Err`; (d) CONSUMER
-   SCOPE — only what the reference consumers call. 3. One further,
+   aborts on caller input, so oxpinyin returns `false`/`Err`; 3. One further,
    explicitly bounded exception is recorded: the predicted-candidate list
    order follows oxpinyin's defined text-ascending order (register R1,
    maintainer decision 2026-08-25) — predicted rows' content and their

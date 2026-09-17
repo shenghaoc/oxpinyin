@@ -8,8 +8,8 @@ measured algorithm upgrades.
 **Status:** Stage 1 implementation complete — 1,571/1,571 corpus rows
 (ORDER-ONLY divergence class); 79/79 exported symbols; drop-in as
 `libpinyin.so.15` verified on Fedora rawhide, Debian testing, and NixOS.
-One verification gap open — the differential suite does not yet drive all
-58 consumer-union symbols; the one defect the policy carried (row 30, the
+One verification gap open — the differential suite does not yet drive the
+full 79-symbol exported ABI; the one defect the policy carried (row 30, the
 pinyin facade's chewing batch `FORCE_TONE` seam) closed in code 2026-09-14
 and verified live 2026-09-16 — all eight implemented keyboards IDENTICAL
 (`docs/findings/compatibility-policy.md`

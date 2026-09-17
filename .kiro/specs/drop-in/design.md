@@ -48,9 +48,8 @@ tools/packaging/install.sh              — fills @prefix@/@libdir@ into the .pc
   and `exec_prefix`; `build.rs` bakes `@VERSION@`/`@DATABASE_FORMAT@`,
   and `tools/packaging/install.sh` fills `@prefix@`/`@libdir@`.
 - Exported surface: the full live upstream ABI, 79 `pinyin_*` symbols
-  (`docs/findings/abi-subset.md` §6, `tools/abi/check-exports.sh`); the
-  58-symbol consumer union is the subset the two reference consumers
-  call.
+  (`docs/findings/abi-reference.md`, `tools/abi/check-exports.sh`); no
+  symbol is scoped by which consumer calls it.
 
 ### Direct data path (`oxpinyin-runtime`, `oxpinyin-data`)
 

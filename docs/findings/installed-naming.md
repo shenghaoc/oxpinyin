@@ -188,7 +188,7 @@ missing variables would otherwise cause is closed on the wrapper path.
 - **Header completeness is a separate gap.** The real `pinyin.h`
   includes `novel_types.h` and `pinyin_custom2.h`; oxpinyin ships
   neither. A consumer relying on those transitively still breaks, which
-  is an abi-subset §8 matter rather than a naming one.
+  is an abi-reference §6 matter rather than a naming one.
 - **fcitx-libpinyin also probes for libpinyin's utility binaries**
   (`gen_binary_files`, `gen_unigram`, `import_interpolation`) under
   `${LIBPINYIN_EXECPREFIX}/bin`, and sets `LIBPINYIN_TOOLS_FOUND 0` when

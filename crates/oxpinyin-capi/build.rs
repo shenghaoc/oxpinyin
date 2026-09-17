@@ -40,8 +40,11 @@
 //! export set against this crate's `libpinyin.ver` in both directions
 //! (docs/findings/drop-in-abi-identity.md §2 carries the measurement).
 //!
-//! Symbol scope is therefore enforced in the source, by `#[cfg]` on the
-//! exports outside the consumer union, not by a linker script.
+//! Symbol scope is therefore enforced in the source — the shipped
+//! artifact defines every symbol in `libpinyin.ver` and nothing else —
+//! not by a linker script. (Without `--features shipped` the crate also
+//! exports its own test hooks, `oxpinyin_init_for_fixtures` and friends;
+//! they are not part of the drop-in set.)
 //!
 //! # The complete `libpinyin.pc`
 //!

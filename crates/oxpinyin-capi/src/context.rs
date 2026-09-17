@@ -53,10 +53,8 @@ pub extern "C" fn pinyin_init(
 /// (small) data directory with real counts, so there is no separate
 /// fixture mode any more.
 ///
-/// Not in `pinyin.h` and not part of the W8 51-symbol surface. Outside the
-/// consumer union: compiled out of the shipped artifact
-/// (`--features shipped`) so it exports exactly the union, per exception (d)
-/// of `docs/findings/compatibility-policy.md`.
+/// Not in `pinyin.h`: compiled out of the shipped artifact
+/// (`--features shipped`) so it exports exactly the pin's own set.
 #[cfg(not(feature = "shipped"))]
 #[unsafe(no_mangle)]
 #[must_use]
@@ -73,9 +71,8 @@ pub extern "C" fn oxpinyin_init_for_fixtures(
 /// the prediction filter edge (`pinyin.cpp:2311`, `:2349-2350`) cannot be
 /// reached through the C ABI. Looks up `prev` and `cur` in the user
 /// phrase index.
-/// Outside the consumer union: compiled out of the shipped artifact
-/// (`--features shipped`) so it exports exactly the union, per exception (d)
-/// of `docs/findings/compatibility-policy.md`.
+/// Not in `pinyin.h`: compiled out of the shipped artifact
+/// (`--features shipped`) so it exports exactly the pin's own set.
 #[cfg(not(feature = "shipped"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn oxpinyin_test_set_user_bigram(

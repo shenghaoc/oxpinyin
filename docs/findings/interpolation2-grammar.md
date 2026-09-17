@@ -25,7 +25,7 @@ on-disk row layout, so `oxpinyin_data::row_format` does not cover it.
 ## Scope: this is not an ABI-compatibility question
 
 `docs/findings/compatibility-policy.md` and its three exception classes
-govern *"every exported symbol in the consumer union"* of the drop-in
+govern *"every exported symbol"* of the drop-in
 `libpinyin.so.15`. `interpolation2.text` is on neither side of that
 surface:
 

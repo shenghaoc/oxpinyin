@@ -10,8 +10,6 @@ the goal, the mechanisms and the remaining work.
 
 ## Glossary
 
-- **Consumer_union** — the 58 exported symbols the two reference consumers
-  (ibus-libpinyin 1.16.5, fcitx-libpinyin) call.
 - **Direct_data_path** — opening installed libpinyin data in place, through
   the runtime's own readers, without conversion or a compatibility layer
   (P6, 2026-09-02).
@@ -33,8 +31,7 @@ so that unmodified consumers link and run.
 3. THE pkg-config file SHALL ship as `libpinyin.pc` exposing `pkgdatadir`,
    `database_format` and `exec_prefix`.
 4. THE exported surface SHALL be the full live upstream ABI — 79
-   `pinyin_*` symbols (`docs/findings/abi-subset.md` §6) — of which the
-   58-symbol consumer union is the subset the reference consumers call.
+   `pinyin_*` symbols (`docs/findings/abi-reference.md`).
 
 ### Requirement 2: Direct read of installed data
 
@@ -60,7 +57,7 @@ replacement changes nothing observable.
 
 #### Acceptance Criteria
 
-1. FOR every consumer-union symbol, given the same inputs and state, the
+1. FOR every exported symbol, given the same inputs and state, the
    whole observable output SHALL be byte-identical to the pinned libpinyin
    2.11.92 at `074a2219` (the pin since 2026-09-06). State includes the on-disk user state of a same-backend user
    dir (Kyoto Cabinet↔Kyoto Cabinet, tkrzw↔tkrzw); a user dir in
@@ -68,8 +65,9 @@ replacement changes nothing observable.
    loss when the KV database backend changes is taken for granted
    (compatibility policy goal amendment, 2026-09-09).
 2. Divergence SHALL be permitted only under classes (a) MATH, (b) MEMORY
-   SAFETY, (c) AVAILABILITY, (d) CONSUMER SCOPE — see
-   `docs/findings/compatibility-policy.md`.
+   SAFETY, (c) AVAILABILITY — see
+   `docs/findings/compatibility-policy.md` (the retired consumer-scope
+   class is not an exception: every exported symbol is in scope).
 3. THE predicted-candidate list order (the exempt surface: the rows of
    `pinyin_guess_predicted_candidates[_with_punctuations]` /
    `pinyin_choose_predicted_candidate`) SHALL follow the defined

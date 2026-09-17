@@ -18,8 +18,8 @@ public error enums, or change the session / n-best / sentence surface.
    implement `Display` + `std::error::Error`. Callers that must
    distinguish variants already can. Do not add a variant, or a new
    enum, unless a caller has to branch on it.
-2. The C ABI stays bool / NULL / 0 / `-1` shaped (`docs/findings/abi-subset.md`
-   §7; PR #113). `oxpinyin-capi` maps `Result` to that shape at the
+2. The C ABI stays bool / NULL / 0 / `-1` shaped (`docs/findings/abi-reference.md`
+   §5; PR #113). `oxpinyin-capi` maps `Result` to that shape at the
    `extern "C"` boundary. Do not force `Session::sentence_text`, empty
    n-best, or `pinyin_get_sentence` onto `Result`.
 3. Bins may use `anyhow::Result` + `.with_context()` at the process

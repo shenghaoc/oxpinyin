@@ -2,7 +2,7 @@
  * bisect.c — three-subject ABI bisection fixture.
  *
  * Loads a pinyin shared object (libpinyin.so or libpinyin_capi.so) via
- * dlopen, resolves all 51 W8 fork-bootstrap symbols, drives the full-pinyin
+ * dlopen, resolves 51 of the 79 exported pinyin_* symbols, drives the
  * keystroke cycle, then probes the remaining symbol groups (double/chewing
  * parse, predicted, user-candidate, key-rest, aux, mask/remember, iterators,
  * scheme setters, addon load) on valid handles.  Run twice (once per .so)

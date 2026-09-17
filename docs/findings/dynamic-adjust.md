@@ -23,7 +23,7 @@ store:
 **longest** non-`sentence_start` token and takes that if one exists.
 
 `m_prefixes` is populated only by `pinyin_guess_sentence_with_prefix`,
-which **neither reference consumer calls** — it is in `abi-subset.md`'s
+which **neither reference consumer calls** — it was in the retired
 28-symbol complement and absent from fcitx's live set. So for the
 drop-in surface `m_prefixes` is always empty and offset 0 yields exactly
 `sentence_start`, deterministically.
@@ -137,7 +137,7 @@ small.
 
 ## Why it is required, confirmed
 
-- `abi-subset.md:784` — enabled by default, user-togglable via the
+- `abi-reference.md` §3 (config surface) — enabled by default, user-togglable via the
   `dynamic-adjust` GSettings key, part of `PINYIN_DEFAULT_OPTION`.
 - ibus-libpinyin maps the key to the bit (`PYPConfig.cc:219`).
 - **fcitx-libpinyin sets it unconditionally** — `settings |=
