@@ -38,7 +38,7 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
 ///                                    FullPinyinScheme scheme);
 /// ```
 ///
-/// Fork-complement symbol (`docs/findings/abi-subset.md`): exported by
+/// Exported by
 /// libpinyin.ver, never called by ibus-libpinyin 1.16.5, and added to
 /// the oxpinyin surface post-bootstrap. The Rust parameter is `c_int`:
 /// callers may pass any `int`. HANYU (1) is the default and keeps the
@@ -48,7 +48,7 @@ pub extern "C" fn pinyin_set_options(context: *mut PinyinContext, options: Pinyi
 /// out-of-enum contract-lock is a separate workstream).
 ///
 /// Exported in every build: it is in the pin's `libpinyin.ver`. It was
-/// compiled out of the shipped artifact while the consumer-union scope
+/// compiled out of the shipped artifact while the subset scoping
 /// (exception (d), retired 2026-09-06) stood; the export gate
 /// (`tools/abi/check-exports.sh --shipped`) found the packaged library
 /// one symbol short of the version script on 2026-09-08.

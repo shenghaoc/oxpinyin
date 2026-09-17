@@ -58,7 +58,7 @@ same-backend requirement (maintainer ruling;
 | Need | Output |
 |---|---|
 | Pin + recipe | `docs/testing/oracle-environment.md` (recorded) |
-| ABI surface | `docs/findings/abi-subset.md` (recorded: the consumer union, then the full 79/79 export set — §6) |
+| ABI surface | `docs/findings/abi-reference.md` (living reference: the full 79/79 export set) |
 | Upstream schema | `docs/findings/upstream-schema.md` (recorded) |
 | Parser / path-set / scoring SPECs | frozen 2026-08-09: `docs/findings/parser-spec.md`, `parser-path-set.md`, `scoring-spec.md` |
 | Data load route (D3) | decided: oxpinyin-data loads libpinyin-format tables (`.kiro/steering/structure.md`); native production of those tables is W15 |
@@ -104,7 +104,7 @@ goal amendment), measured by `tools/oracle/user-dir-round-trip.sh`
 against tkrzw, Kyoto Cabinet and Berkeley DB oracles, re-measured
 2026-09-13 after the harness's own driver was fixed
 (`docs/findings/user-store.md` §11). *Verification:* one gap open — the
-differential suite does not yet drive all 58 consumer-union symbols, so
+differential suite does not yet drive the full 79-symbol exported ABI, so
 the uncovered ones are unverified rather than compliant; closing it is work
 (`docs/findings/compatibility-policy.md`, §(e) consequence 3), tracked
 here rather than only in the policy. The one defect the policy carried —
@@ -214,7 +214,7 @@ parked.
   work against the data already on the system
   (`docs/findings/compatibility-policy.md`). The spec is
   `.kiro/specs/drop-in/`; the supersession record is
-  `docs/findings/abi-subset.md` §6 (3d918866).
+  `docs/findings/abi-reference.md` (3d918866).
 
   This supersedes the earlier 51-symbol bootstrap contract for the
   maintainer's ibus-libpinyin fork (`feat/oxpinyin-backend`, tip

@@ -33,9 +33,8 @@ inputs — 1-best / n-best distinct-set / ordered;
 three gates; the seven-symbol preedit key family is exposed.
 
 **Drop-in.** The cdylib carries SONAME `libpinyin.so.15` and all 79
-`pinyin_*` exports live (closed 2026-08-30, `docs/findings/abi-subset.md`
-§6); the measured consumer union of 58 symbols is the differential-probe
-scope, not the export boundary. Since P6 (2026-09-02) there is no compat
+`pinyin_*` exports live (closed 2026-08-30, `docs/findings/abi-reference.md`
+boundary notes); every one of them is in the differential-probe scope. Since P6 (2026-09-02) there is no compat
 layer: the runtime reads an unmodified libpinyin install's `data/`
 through the same readers it uses for its own output (Kyoto Cabinet,
 tkrzw and Berkeley DB carry libpinyin's file names). Measured drop-in

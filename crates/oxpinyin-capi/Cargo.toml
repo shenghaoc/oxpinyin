@@ -66,7 +66,7 @@ redb = [
 # the shipped drop-in artifact (`cargo capi install --features shipped`), so
 # every in-tree run-*.sh keeps working untouched. Nothing in libpinyin.ver
 # is gated: `pinyin_set_full_pinyin_scheme` was, under the retired
-# consumer-union scope, until tools/abi/check-exports.sh caught the
+# subset scoping, until tools/abi/check-exports.sh caught the
 # shipped artifact one symbol short (2026-09-08). The gate runs in CI in
 # both modes.
 #

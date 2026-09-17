@@ -240,8 +240,8 @@ development build, where the two `oxpinyin_*` fixture hooks the ABI
 tests drive are the only permitted extras, and with `--features
 shipped`, the packaged artifact, where only the version script's set may
 remain. Its first run found the shipped library one symbol short
-(`pinyin_set_full_pinyin_scheme`, gated out under the retired
-consumer-union scope); nothing in a version script is gated any more.
+(`pinyin_set_full_pinyin_scheme`, gated out under the retired subset
+scoping); nothing in a version script is gated any more.
 
 The version scripts stopped being the record only on 2026-09-14: on Linux
 `tools/packaging/install.sh` now relinks the installed shared object from

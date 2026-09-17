@@ -9,8 +9,8 @@ Canonical text: `docs/findings/compatibility-policy.md` (policy,
 against the data already on the system.
 
 **E2E I/O rule.** For every exported symbol (all 79 `pinyin_*` exports
-are live; the measured consumer union of 58 is the probe-coverage scope),
-given the same inputs and state, oxpinyin MUST return
+are live; all are in the probe-coverage scope), given the same inputs
+and state, oxpinyin MUST return
 byte-identical output to the pinned libpinyin 2.11.92 — return status,
 out-parameters and the data they point to, written lengths, and any state
 transition on the handle. Divergence is permitted only under the four
@@ -29,13 +29,13 @@ covers only cases where reproduction is structurally impossible.
 supply; oxpinyin returns `false`/`Err` and logs the point. Covers aborts,
 not wrong-but-defined answers.
 
-**(d) CONSUMER SCOPE** — **retired 2026-09-06**: written for the
-consumer-union contract, moot since the target is the full ABI with the
+**(d) CONSUMER SCOPE** — **retired 2026-09-06**: moot since the
+target is the full ABI with the
 upstream headers copied verbatim. Every export and option bit is in
 scope; "no consumer calls it" is a priority signal, not an exception.
 
 A stub returning `false` is not compliance — it is a defect. Probe coverage
-is itself a deliverable: a consumer-union symbol with no differential probe
+is itself a deliverable: an exported symbol with no differential probe
 is unverified, not compliant.
 
 **Amendments carried by the canonical policy** (`docs/findings/compatibility-policy.md`):

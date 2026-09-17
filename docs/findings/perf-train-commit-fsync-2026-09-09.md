@@ -279,7 +279,7 @@ the same measurement.
 sentence. There is no batching anywhere on that path, so an N-token
 sentence costs N commits and 2N `msync` calls.
 
-**This is a keystroke, not a timer.** `docs/findings/abi-subset.md` §
+**This is a keystroke, not a timer.** `docs/findings/abi-reference.md` §
 "Phase 3 — Candidate selection" records both consumer paths calling
 `pinyin_train` synchronously on the selection that commits the sentence:
 `pinyin_train(instance, index)` on the n-best path, `pinyin_train(instance, 0)`
@@ -291,7 +291,7 @@ on the normal path once the input is fully consumed. The user waits for it.
 **Against upstream.** libpinyin's user bigram is an in-memory `StashDB`
 opened on `"-"` and snapshotted to disk only at `pinyin_save`, which the
 consumer runs on a 300 s GLib timer (`docs/findings/rss-attribution-2026-09-09.md`;
-`docs/findings/abi-subset.md`, Phase 8). Upstream's per-train disk cost is
+the call-ordering record (`docs/findings/abi-reference.md` §2). Upstream's per-train disk cost is
 therefore **zero**. Two separate oxpinyin decisions stack here, and they
 should not be conflated:
 

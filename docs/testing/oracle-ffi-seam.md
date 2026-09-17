@@ -31,8 +31,8 @@ The authority for the header identity is the `header_sha256` field of
   libpinyin does not generate reproducibly; informational, see
   `docs/findings/oracle-data-reproducibility.md`).
 
-This is the same method `docs/findings/abi-subset.md` used to derive the
-frontend-called subset: derive it from the declared public interface. The
+This is the same method the ABI reference derives its facts with:
+derive them from the declared public interface. The
 parity *behaviour* contract remains the executable oracle plus frozen
 fixtures, per `docs/findings/spec-derivation.md`.
 
@@ -129,10 +129,9 @@ pinyin_token_get_phrase(instance: *mut PinyinInstance, token: u32, len: *mut c_u
 GLib, not libpinyin: `g_free` (owned `gchar*` returns), `g_array_new` /
 `g_array_free` (the token array `pinyin_lookup_tokens` fills).
 
-23 of these carry a row in the live frontend-called list of
-`docs/findings/abi-subset.md` §1 (50 symbols); the other 6
-(`pinyin_get_parsed_input_length`, `pinyin_get_pinyin_key`, `pinyin_get_pinyin_string`, `pinyin_get_pinyin_is_incomplete`, `pinyin_lookup_tokens`, `pinyin_token_get_phrase`) are harness-only, which `abi-subset.md` explicitly permits in
-`pinyin-oracle` without expanding the `oxpinyin-capi` surface.
+Six of the declared
+functions are harness-only, which `abi-reference.md`'s boundary notes
+permit in `pinyin-oracle` without expanding the `oxpinyin-capi` surface.
 
 ## Constants
 

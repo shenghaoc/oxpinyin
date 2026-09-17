@@ -176,36 +176,22 @@ out-of-enum row in the table below, which sits on exactly that line.
 > calls it" remains useful as a *priority* signal, never as an
 > exception.
 
-Only what **ibus-libpinyin 1.16.5** and **fcitx-libpinyin** actually
-call is in scope. Symbols in `libpinyin.ver` that neither consumer
-touches are out of scope until a new consumer demonstrates a need.
+**The scope is every exported symbol**: all 79 `pinyin_*` symbols in
+`libpinyin.ver` and all 52 `zhuyin_*` symbols in `libzhuyin.ver` — the
+same sets the pin exports (verified identical 2026-09-17). Nothing is
+in or out of scope by which consumer calls it, and no count of
+"the symbols consumers call" bounds anything; the shipped object has
+exported the full set live since 2026-08-30.
 
-**The two reference sources, named:**
-
-1. **ibus-libpinyin 1.16.5** — the live call-site set is enumerated in
-   `docs/findings/abi-subset.md` §1 (50 symbols), plus
-   `pinyin_get_parsed_input_length` from the W8 fork (`2c5baa9`,
-   `PYPLibPinyinCandidates.cc:151`), giving the 51-symbol W8 contract.
-   The 28-symbol complement is §6 of the same document.
-2. **fcitx-libpinyin** — a `src/` call-site grep, dead code excluded.
-   Source identity is **not yet frozen**: unlike ibus above, no tag or
-   commit is recorded here or in `abi-subset.md`. Pinning that release
-   (tag or commit) and freezing fcitx's per-consumer symbol manifest from
-   it is owed before the union below is reproducible for the fcitx half.
-
-**Dead code is not a call site.** Both consumers carry `#if 0` blocks
-naming libpinyin symbols; they do not count. `pinyin_get_pinyin_key`
-and `pinyin_get_pinyin_string` are already recorded that way for ibus
-in `abi-subset.md` §6, and `pinyin_get_raw_full_pinyin` is the fcitx
-case (`eim.cpp:377-391`, inside `#if 0`) — a symbol upstream does not
-export at all, so a live call would not even link.
-
-**The measured union is 58 symbols** (`abi-subset.md` §1 plus the fcitx
-grep). Since W8 closed (2026-08-30) the shipped object exports all 79
-`pinyin_*` symbols from `libpinyin.ver` live (`abi-subset.md` §6), so
-the union no longer bounds the *export* set; it bounds the E2E probe
-obligation below and the (d) scope decision. New consumers extend the
-union via a documented PR.
+**Consumer behaviour is reachability evidence, never scope.** A named
+consumer's call sites may be cited to show that one specific behaviour
+is reachable in practice (for example ibus-libpinyin 1.16.5's default
+sort word, `PYPConfig.cc:151`); they never define, count or bound the
+work. Dead code in a consumer is not evidence of anything: it is not
+a call site (`pinyin_get_raw_full_pinyin`, fcitx's `eim.cpp:377-391`
+inside `#if 0`, is not even an upstream export, so a live call would
+not link). The reference for the exported set and per-symbol
+signatures is `docs/findings/abi-reference.md`.
 
 ## (e) The E2E I/O compatibility rule
 
@@ -213,8 +199,8 @@ The four exceptions say when divergence is permitted. This says what
 compliance *means* everywhere else, and it is the rule the other four are
 exceptions to.
 
-> **E2E I/O COMPATIBILITY RULE:** For every exported symbol in the
-> consumer union, given the same inputs and state, oxpinyin MUST return
+> **E2E I/O COMPATIBILITY RULE:** For every exported symbol, given
+> the same inputs and state, oxpinyin MUST return
 > byte-identical outputs to the pinned libpinyin 2.11.92 at `074a2219`
 > (the pin since 2026-09-06; the rule was written at 2.11.91 / `0c5e80e`,
 > against which the candidate surface is byte-identical —
@@ -229,7 +215,7 @@ exceptions to.
 > change, that engine change is mandatory. The engine serves the ABI, not
 > the other way around.
 >
-> **Verification:** every symbol in the consumer union must have a
+> **Verification:** every exported symbol must have a
 > differential probe that drives it with the same input on both libraries
 > and asserts byte-identical output — where *output* is the whole
 > observable surface, not just the scalar return: return status,
@@ -240,21 +226,21 @@ exceptions to.
 Three consequences worth stating, because each is currently unmet
 somewhere:
 
-1. **The version script is not a compliance mechanism.** Exception (d)
-   decides which symbols are *in* the union; this rule decides what they
-   must *do*. A symbol may be legitimately absent (out of union) or
-   legitimately divergent (a named exception). It may not be present and
-   wrong.
+1. **The version script is not a compliance mechanism.** The export
+   list decides which symbols exist; this rule decides what they must
+   *do*. A symbol may be legitimately divergent (a named exception). It
+   may not be present and wrong.
 2. **`pinyin_get_pinyin_key_rest` and `pinyin_get_pinyin_key_rest_positions`
    were defects when this was written** — exported, returning `false`
    unconditionally. Closed with the W8 79/79 work: both are implemented
    against a per-instance key-rest slot
    (`crates/oxpinyin-capi/src/cursor.rs`). The rule they illustrated
    stands: a linker error is a diagnosis and a `false` is not.
-3. **Probe coverage is itself a deliverable.** 58 symbols are in the
-   union; the differential suite does not drive all of them. The
-   uncovered ones are unverified rather than compliant, and closing that
-   gap is work, not bookkeeping.
+3. **Probe coverage is itself a deliverable.** The exported set is
+   79 `pinyin_*` symbols (and 52 `zhuyin_*`); the differential suite
+   does not drive all of them. The uncovered ones are unverified rather
+   than compliant, and closing that gap is work, not bookkeeping. The
+   live matrix is `docs/findings/probe-coverage-abi.md` (PR #480).
 
 ## The classification table
 
