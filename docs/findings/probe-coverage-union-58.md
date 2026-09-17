@@ -1,8 +1,13 @@
 # Findings — probe coverage over the 58-symbol consumer union
 
-Date: 2026-09-16 · Status: recorded; the union probe's first oracle run
-**diverges** — the run is committed unclassified and the work is STOPped
-per the measurement rules (no fix without approval).
+Date: 2026-09-16 · amended 2026-09-17 · Status: recorded; the union
+probe's oracle run **diverges at every sort word measured** — the
+residues are committed unclassified and the work is STOPped per the
+measurement rules (no fix without approval). The 2026-09-16 lead (the
+divergence was "post-import/save state") was wrong: the probe
+hard-coded sort 0, and the sort word caused most of it (measured
+below). The matrix was also reclassified 2026-09-17 under the
+maintainer's stricter coverage rule.
 
 The §(e) rule (`docs/findings/compatibility-policy.md`) wants, for every
 symbol of the 58-symbol consumer union, a probe that asserts its whole
@@ -21,23 +26,31 @@ at `PYPPhoneticEditor.cc:375,654,668` — is **`pinyin_get_pinyin_offset`**.
 The matrix uses the real name; §1h's typo is reported, not edited here
 (§1 is the frozen 1.16.5 characterization).
 
-## Classification rules
+## Classification rules (amended 2026-09-17, maintainer's ruling)
 
+- **COVERED** requires a differential that asserts the symbol's whole
+  observable surface — return status, out-params and the data they
+  point to, written lengths, handle state — **and ran IDENTICAL at the
+  pin in this session** (the debian:testing container below). Rust
+  tests (T) and the leak gates are supporting evidence only, never
+  coverage on their own. The 2026-09-16 draft counted T as coverage;
+  that rule is withdrawn.
 - A call made only as setup counts as **UNCOVERED**.
-- A symbol covered only by `bisect.c` stays **PARTIAL** unless both
-  hold: bisect's log prints every out-param, written length and
-  handle-state change for it, AND `run-bisect.sh`'s differential mode
-  ran IDENTICAL at the pin. The second leg **cannot be satisfied
-  today**: `run-bisect.sh` still resolves the capi data to the pre-split
-  flat `fixtures/w3` layout (`pinyin_index.redb` at the directory root)
-  and exits 1 (`fatal: redb tables not found`) since the fixture moved
-  to per-backend subdirectories — a runner that fails to build or run
-  provides no coverage. Reported, not fixed here (tools, outside this
+- A symbol covered only by `bisect.c` stays **PARTIAL** — bisect's
+  differential mode cannot run today: `run-bisect.sh`, like
+  `run-dynamic-adjust-diff.sh` and `run-train-diff.sh`, still resolves
+  the capi data to the pre-split flat `fixtures/w3` root and exits 1
+  (`missing file: … pinyin_index.bin` / `fatal: redb tables not
+  found`) since the fixture moved to per-backend subdirectories.
+  Three stale runners, reported, not fixed here (tools, outside this
   PR's purpose).
-- A runner that skips provides no coverage.
-- Leak gates (valgrind, the alloc-pairing LSan harness) are handle-state
-  evidence and count for the void destructors, whose whole observable
-  surface is release-without-leak and not crashing.
+- A runner that skips or fails provides no coverage.
+- The void destructors (`pinyin_fini`, `pinyin_free_instance`): whether
+  the leak gates may count as their coverage is **pending the
+  maintainer's ruling** — marked PENDING RULING below, not COVERED.
+- The capture-replay suite (`pinyin-oracle` tests) replays recorded pin
+  captures against the pin-built `.so` — pin-side regression evidence,
+  not an oxpinyin differential; its citations are withdrawn.
 
 ## The new probe
 
@@ -49,10 +62,13 @@ prediction, double (incl. the row-5b out-of-enum probe), chewing,
 export → mask_out → export, teardown — printing one `label=value` row
 per observation: return status, out-param values AND the data they
 point to (texts, packed keys, symbol strvs, begin/end/length), written
-counts, and handle state. `run-union-probe-diff.sh` drives it into
-oxpinyin-capi and the pin and diffs the logs (0 = identical, 1 =
-build/run failure, 2 = divergence), env-gated on the pin oracle and
-resolving its system dir through `system-dir.sh`.
+counts, and handle state. The **sort word is the driver's third
+argument** (`UNION_PROBE_SORT` in the runner, default 0x1e, printed
+into every log): the first run hard-coded 0, and that word — not
+user-store state — caused most of its divergence. `run-union-probe-diff.sh`
+drives it into oxpinyin-capi and the pin and diffs the logs (0 =
+identical, 1 = build/run failure, 2 = divergence), env-gated on the pin
+oracle and resolving its system dir through `system-dir.sh`.
 
 Oracle caller contracts honoured (and three new pin landmines the probe
 documents in-source, all found by crashing exactly once):
@@ -79,141 +95,183 @@ documents in-source, all found by crashing exactly once):
 
 ## Matrix
 
-Coverage columns: **T** = Rust tests on the oxpinyin ABI assert it;
-**D** = a differential driver prints it and that runner ran IDENTICAL at
-the pin (W4's 2026-09-16 runs: live-typing, uncovered surfaces; A1's
-option-sweep; A2d's scheme-diff; W1's chewing runs); **B** = bisect.c
-prints it (PARTIAL per the rule above); **U** = the new union probe
-prints it. Class is the pre-probe state; the union probe's own verdict
-is the STOP record below.
+Evidence codes: **D** = the differentials that ran IDENTICAL at the pin
+this session (2026-09-16/17, the container below) and assert the row's
+surface — option-sweep (21 cases at 0x1e on main + 24 cases on #472's
+tree), scheme-diff double, chewing ×8 keyboards, live-typing (317
+lines), uncovered surfaces (993), key-surface (2131), import (16),
+nbest-train (56), predict (5), punct (17), pred-order (1588),
+addon-candidate (4), user-candidate (1). **T** = Rust tests on the
+oxpinyin ABI — supporting evidence only. Post-probe class: the union
+probe diverges at every sort word measured, so it confers **no**
+coverage — every symbol's post-probe class equals its class here.
 
-| # | Symbol | Class | Evidence | U |
-|---|--------|-------|----------|---|
-| 1 | `pinyin_init` | COVERED | T: context.rs:183,214 (non-null; NULL on missing DBM) · B · D: every runner | ✓ |
-| 2 | `pinyin_fini` | COVERED (void) | leak gates (valgrind run-bisect mode 2, alloc-pairing LSan) · B literal | ✓ |
-| 3 | `pinyin_alloc_instance` | COVERED | T: common.rs:56, pipeline.rs:40, e2e:277 · B | ✓ |
-| 4 | `pinyin_free_instance` | COVERED (void) | leak gates · B literal | ✓ |
-| 5 | `pinyin_set_options` | COVERED | T: config.rs:311-383 (ret + option-word effects), keys.rs:200-241 · D: option-sweep (A1) | ✓ |
-| 6 | `pinyin_set_double_pinyin_scheme` | COVERED | T: contract.rs (ret, half-mutation, restore) · D: scheme-diff incl. the row-5b probe (A2d, IDENTICAL) | ✓ |
-| 7 | `pinyin_set_zhuyin_scheme` | COVERED | T: contract.rs:94-132 · D: chewing-diff (W1, 8 keyboards IDENTICAL) | ✓ |
-| 8 | `pinyin_load_addon_phrase_library` | COVERED | T: union_e2e_tests.rs:69-81 (true/second-false/missing/out-of-range) · D: addon-candidate, union | ✓ |
-| 9 | `pinyin_unload_addon_phrase_library` | COVERED | T: keys.rs:475-483, union_e2e:87-99 · D: key-surface | ✓ |
-| 10 | `pinyin_save` | COVERED | T: e2e:284,485-500,687-735 (dirty/clean lifecycle, file written) · D: import/train/nbest runners | ✓ |
-| 11 | `pinyin_reset` | COVERED | T: pipeline.rs:151,206, parse.rs:259 (length cleared) · D: every driver's reset rows | ✓ |
-| 12 | `pinyin_parse_more_full_pinyins` | COVERED | T: pervasive (consumed lengths) · D: option-sweep, live-typing, uncovered | ✓ |
-| 13 | `pinyin_parse_more_double_pinyins` | COVERED | T: contract.rs:34-76, guess_offset_tests · D: scheme-diff (A2d) | ✓ |
-| 14 | `pinyin_parse_more_chewings` | COVERED | T: contract.rs:96-131, exact_scheme.rs:54,101 · D: chewing-diff (W1) | ✓ |
-| 15 | `pinyin_in_chewing_keyboard` | COVERED | D: chewing-diff table-check per keyboard (W1, all 8 IDENTICAL, symbols printed) · B | ✓ |
-| 16 | `pinyin_guess_sentence` | COVERED | T: pipeline.rs:144-197, e2e (true/false paths) · D: every driver | ✓ |
-| 17 | `pinyin_guess_candidates` | COVERED | T: guess_offset_tests.rs:143-186 (refusal + range law), e2e · D: every driver | ✓ |
-| 18 | `pinyin_guess_predicted_candidates_with_punctuations` | COVERED | T: phrase.rs:210-213, union_e2e:246-401, e2e:1391-1452 (tie order) · D: predict/punct/pred-order/union | ✓ |
-| 19 | `pinyin_get_sentence` | COVERED | T: pipeline.rs:146-181, phrase.rs:233-238, e2e:1001-1092 · D: scheme/chewing/fullpin/live-typing/uncovered | ✓ |
-| 20 | `pinyin_get_character_offset` | COVERED | T: sentence.rs:441-499 ((bool,offset) tuples, untouched out-param on false, NULL phrase) · B prints | ✓ |
-| 21 | `pinyin_get_n_candidate` | COVERED | T: exact_scheme.rs:28, e2e:1657,1718-1722, guess_offset_tests:145 · D: every driver's n= rows | ✓ |
-| 22 | `pinyin_get_candidate` | COVERED | T: exact_scheme.rs:32-35, pipeline.rs:52,203, phrase.rs:172-190 · D: every driver | ✓ |
-| 23 | `pinyin_get_candidate_string` | COVERED | T: exact_scheme.rs:34-42 (exact texts), config.rs:296-302 · D: every driver | ✓ |
-| 24 | `pinyin_get_candidate_type` | COVERED | T: phrase.rs:191-201 (kind law for every row) · D: dict-surface, pred-order, uncovered, live-typing, nbest | ✓ |
-| 25 | `pinyin_get_candidate_nbest_index` | **PARTIAL** | D-only: live-typing/nbest-train/uncovered print nbest for NBEST rows (W4 IDENTICAL); no Rust assertion on the oxpinyin ABI | ✓ |
-| 26 | `pinyin_is_user_candidate` | COVERED | T: e2e:262 (false for system row) · D: union-diff, user-candidate-diff (true rows printed) | ✓ |
-| 27 | `pinyin_remove_user_candidate` | COVERED (false path) | T: e2e:356-358 (NULL, system token) · true path: pin assert-fence (pinyin.cpp:3734,3738) makes the oracle side unmeasurable; user-candidate-diff exercises it capi-side | ✓ (behind is_user) |
-| 28 | `pinyin_choose_candidate` | COVERED | T: e2e/guess_offset_tests (returned cursors, absolute end) · D: live-typing, uncovered, dynamic-adjust | ✓ |
-| 29 | `pinyin_choose_predicted_candidate` | COVERED | T: e2e:229-287 (store deltas, predecessor law, false without store) · B | ✓ |
-| 30 | `pinyin_train` | COVERED | T: e2e:79-115 (store counts), :463 (false, no selection) · D: train/nbest/live-typing (W4 IDENTICAL) | ✓ |
-| 31 | `pinyin_get_pinyin_key_rest` | COVERED | T: cursor.rs:656-704 (true at key starts, false elsewhere) · D: capture replay | ✓ |
-| 32 | `pinyin_get_pinyin_key_rest_positions` | COVERED | T: cursor.rs:662-665 ((begin,end) pairs) · D: capture replay | ✓ |
-| 33 | `pinyin_get_pinyin_offset` | COVERED | T: cursor.rs:437-530 (normalization table, separator run) · D: uncovered cursor phase (W4) | ✓ |
-| 34 | `pinyin_get_left_pinyin_offset` | COVERED | T: cursor.rs:452-536 (pairs, false past end, zero-run) · D: uncovered (safe cursors) | ✓ |
-| 35 | `pinyin_get_right_pinyin_offset` | COVERED | T: cursor.rs:457-543 · D: uncovered (safe cursors; tail assert = pin landmine, upstream 95e3af7) | ✓ |
-| 36 | `pinyin_get_full_pinyin_auxiliary_text` | COVERED | T: pipeline.rs:85-92 (every offset), text.rs:571-577 (exact renders) · D: option-sweep, uncovered | ✓ |
-| 37 | `pinyin_get_double_pinyin_auxiliary_text` | **PARTIAL** | D-only: scheme-diff per-cursor double_aux (A2d IDENTICAL); alloc-pairing leak/false-allocates; no Rust data assertion | ✓ |
-| 38 | `pinyin_get_chewing_auxiliary_text` | COVERED | T: pipeline.rs:109-116 (every offset) · D: chewing-diff per-cursor (W1) | ✓ |
-| 39 | `pinyin_mask_out` | COVERED | T: e2e:293,327-346 (false no store; true + export-empty + unigram_total) · D: train-diff | ✓ |
-| 40 | `pinyin_remember_user_input` | COVERED | T: e2e:132-214 (token, delta, merge, 3 reject shapes) · D: train-diff, user round-trip | ✓ |
-| 41 | `pinyin_begin_add_phrases` | COVERED | T: e2e:628-638 (NULL→NULL, non-null) · D: import-diff | ✓ |
-| 42 | `pinyin_iterator_add_phrase` | COVERED | T: e2e:629-716 (count merge, bad pinyin, system index) · D: import-diff | ✓ |
-| 43 | `pinyin_end_add_phrases` | COVERED (void) | T: e2e:687-736 (m_modified armed only at end) · leak gates | ✓ |
-| 44 | `pinyin_begin_get_phrases` | COVERED | T: e2e:738-774, 839 · D: import/train/nbest/live-typing (W4) | ✓ |
-| 45 | `pinyin_iterator_has_next_phrase` | COVERED | T: e2e:334,588,739-843 · D: same | ✓ |
-| 46 | `pinyin_iterator_get_next_phrase` | COVERED | T: e2e:592-598,763-768 (exact rows, exhaustion NULLs) · D: same | ✓ |
-| 47 | `pinyin_end_get_phrases` | COVERED (void) | leak gates · B literal | ✓ |
-| 48 | `pinyin_begin_get_bigram_phrases` | COVERED | T: e2e:840,879 · D: train/nbest/live-typing (W4) | ✓ |
-| 49 | `pinyin_bigram_iterator_has_next_phrase` | COVERED | T: e2e:606,844-887 · D: same | ✓ |
-| 50 | `pinyin_bigram_iterator_get_next_phrase` | COVERED | T: e2e:610-616,881-884 (exact rows) · D: same | ✓ |
-| 51 | `pinyin_end_get_bigram_phrases` | COVERED (void) | leak gates · B literal | ✓ |
-| 52 | `pinyin_get_parsed_input_length` | COVERED | T: parse.rs:243-265 (fresh/parsed/consumed/reset/NULL) · D: every driver | ✓ |
-| 53 | `pinyin_clear_constraint` | COVERED | T: e2e:1050-1240, guess_offset_tests:240-247,456-461 · D: live-typing cr: rows (W4) | ✓ |
-| 54 | `pinyin_get_pinyin_key` | COVERED | T: cursor.rs:650-653,697-701 (false NULLs the out-param) · D: capture replay | ✓ |
-| 55 | `pinyin_get_pinyin_string` | COVERED | T: keys.rs:115-436 (renders incl. zero-key guard) · D: key-surface | ✓ |
-| 56 | `pinyin_get_pinyin_key_rest_length` | COVERED (thin) | T: cursor.rs:668-671 only (len == end−begin); no driver prints it | ✓ |
-| 57 | `pinyin_get_pinyin_strings` | COVERED | T: keys.rs:397-427 (shengmu/yunmu, NULL out-param, zero-key guard) · D: key-surface | ✓ |
-| 58 | `pinyin_get_zhuyin_string` | COVERED | T: keys.rs:121-442 · D: key-surface | ✓ |
+| # | Symbol | Class | D | T |
+|---|--------|-------|---|---|
+| 1 | `pinyin_init` | COVERED | every runner (non-NULL or the run dies) | context.rs:183,214 |
+| 2 | `pinyin_fini` | **PENDING RULING** (void; leak gates only) | — | — |
+| 3 | `pinyin_alloc_instance` | COVERED | every runner (non-NULL) | common.rs:56 |
+| 4 | `pinyin_free_instance` | **PENDING RULING** (void; leak gates only) | — | — |
+| 5 | `pinyin_set_options` | COVERED | option-sweep (ret + per-bit option law), scheme/chewing/live/uncovered rets | config.rs:311-383 |
+| 6 | `pinyin_set_double_pinyin_scheme` | COVERED | scheme-diff: ret, scheme effect, the row-5b out-of-enum rows byte-equal | contract.rs:32-189 |
+| 7 | `pinyin_set_zhuyin_scheme` | COVERED | chewing-diff ×8: ret, fatal-on-reject | contract.rs:94-189 |
+| 8 | `pinyin_load_addon_phrase_library` | COVERED | addon-candidate-diff: rets + addon rows | union_e2e:69-81 |
+| 9 | `pinyin_unload_addon_phrase_library` | PARTIAL | key-surface: rets per index; the unload effect unobserved by any differential | keys.rs:475-483 |
+| 10 | `pinyin_save` | PARTIAL | import/nbest: rets; the written file never compared | e2e:485-500 |
+| 11 | `pinyin_reset` | COVERED | live-typing/scheme/chewing: ret + parsed-after-reset | pipeline.rs:151,206 |
+| 12 | `pinyin_parse_more_full_pinyins` | COVERED | option-sweep parse rows; live-typing fatal-if-wrong | pervasive |
+| 13 | `pinyin_parse_more_double_pinyins` | COVERED | scheme-diff: consumed + the 5b probe rows | contract.rs:34-76 |
+| 14 | `pinyin_parse_more_chewings` | COVERED | chewing-diff ×8: consumed | exact_scheme.rs:54,101 |
+| 15 | `pinyin_in_chewing_keyboard` | COVERED | chewing-diff table-check ×8: ret + symbol strv per key | — |
+| 16 | `pinyin_guess_sentence` | COVERED | ret + downstream sentence rows in scheme/chewing/live/uncovered/nbest | pipeline.rs:144-197 |
+| 17 | `pinyin_guess_candidates` | **PARTIAL** | rets compared at 0x1e only; the sort-option input diverges at every other word measured (below) — the input dimension is uncovered | guess_offset_tests.rs:143-186 |
+| 18 | `pinyin_guess_predicted_candidates_with_punctuations` | COVERED | predict + punct + pred-order: rets + rows | phrase.rs:210-213 |
+| 19 | `pinyin_get_sentence` | COVERED | scheme/chewing/live/uncovered/nbest: ret + text | pipeline.rs:146-181 |
+| 20 | `pinyin_get_character_offset` | UNCOVERED | nothing this session (bisect stale; the probe prints it but its run diverges) | sentence.rs:441-499 |
+| 21 | `pinyin_get_n_candidate` | COVERED | n= rows in every runner above | e2e:1657-1722 |
+| 22 | `pinyin_get_candidate` | COVERED | candidate rows in every runner above | exact_scheme.rs:32-35 |
+| 23 | `pinyin_get_candidate_string` | COVERED | texts in every runner above | exact_scheme.rs:34-42 |
+| 24 | `pinyin_get_candidate_type` | COVERED | type rows in pred-order/uncovered/live/nbest/dict-surface | phrase.rs:191-201 |
+| 25 | `pinyin_get_candidate_nbest_index` | COVERED | nbest= rows in nbest-train + live-typing + uncovered, all IDENTICAL | — (none on the oxpinyin ABI) |
+| 26 | `pinyin_is_user_candidate` | PARTIAL | user-candidate-diff (1 line): the gated user row; false path implicit; union-diff's is_user rows sit in a DIVERGENT run (below) | e2e:262 |
+| 27 | `pinyin_remove_user_candidate` | **PARTIAL** | no differential; true path pin assert-fenced (pinyin.cpp:3734,3738) | e2e:356-358 (false path) |
+| 28 | `pinyin_choose_candidate` | COVERED | live-typing cursor= rows; uncovered deep/tail-choose cursors | e2e + guess_offset_tests |
+| 29 | `pinyin_choose_predicted_candidate` | UNCOVERED | nothing this session (bisect stale) | e2e:229-287 |
+| 30 | `pinyin_train` | COVERED | live-typing train= + the 你好\|ni'hao\|1242 export matched; nbest-train rows | e2e:79-115 |
+| 31 | `pinyin_get_pinyin_key_rest` | UNCOVERED | nothing this session (bisect stale; capture replay is pin-side) | cursor.rs:656-704 |
+| 32 | `pinyin_get_pinyin_key_rest_positions` | UNCOVERED | same | cursor.rs:662-665 |
+| 33 | `pinyin_get_pinyin_offset` | COVERED | uncovered cursor table: off= per byte cursor | cursor.rs:437-530 |
+| 34 | `pinyin_get_left_pinyin_offset` | COVERED | uncovered left probes (safe cursors) | cursor.rs:452-536 |
+| 35 | `pinyin_get_right_pinyin_offset` | COVERED | uncovered right probes (safe cursors; tail assert = pin landmine, upstream 95e3af7) | cursor.rs:457-543 |
+| 36 | `pinyin_get_full_pinyin_auxiliary_text` | COVERED | option-sweep aux rows; uncovered | pipeline.rs:85-92, text.rs:571-577 |
+| 37 | `pinyin_get_double_pinyin_auxiliary_text` | COVERED | scheme-diff per-cursor double_aux (the A2d run) | — |
+| 38 | `pinyin_get_chewing_auxiliary_text` | COVERED | chewing-diff per-cursor ×8 | pipeline.rs:109-116 |
+| 39 | `pinyin_mask_out` | UNCOVERED | train-diff stale (pre-split fixtures/w3 root, exits 1); no other differential | e2e:293,327-346 |
+| 40 | `pinyin_remember_user_input` | UNCOVERED | same | e2e:132-214 |
+| 41 | `pinyin_begin_add_phrases` | COVERED | import-diff: BEGIN rows + add rets + export rows | e2e:628-638 |
+| 42 | `pinyin_iterator_add_phrase` | COVERED | import-diff: add rets + rows | e2e:629-716 |
+| 43 | `pinyin_end_add_phrases` | COVERED (void) | import-diff: end + save rows downstream | e2e:687-736 |
+| 44 | `pinyin_begin_get_phrases` | COVERED | import-diff | e2e:738-774,839 |
+| 45 | `pinyin_iterator_has_next_phrase` | COVERED | import-diff: rows + exhausted | e2e:334-843 |
+| 46 | `pinyin_iterator_get_next_phrase` | COVERED | import-diff: phrase\|pinyin\|count rows | e2e:592-598 |
+| 47 | `pinyin_end_get_phrases` | COVERED (void) | import-diff | leak gates |
+| 48 | `pinyin_begin_get_bigram_phrases` | COVERED | nbest-train B rows | e2e:840,879 |
+| 49 | `pinyin_bigram_iterator_has_next_phrase` | COVERED | nbest-train | e2e:606,844-887 |
+| 50 | `pinyin_bigram_iterator_get_next_phrase` | COVERED | nbest-train B rows | e2e:610-616,881-884 |
+| 51 | `pinyin_end_get_bigram_phrases` | COVERED (void) | nbest-train | leak gates |
+| 52 | `pinyin_get_parsed_input_length` | COVERED | every runner's parsed rows | parse.rs:243-265 |
+| 53 | `pinyin_clear_constraint` | COVERED | live-typing cr: rows | e2e:1050-1240 |
+| 54 | `pinyin_get_pinyin_key` | UNCOVERED | nothing this session (capture replay is pin-side; bisect stale) | cursor.rs:650-701 |
+| 55 | `pinyin_get_pinyin_string` | COVERED | key-surface render rows | keys.rs:115-436 |
+| 56 | `pinyin_get_pinyin_key_rest_length` | UNCOVERED | no driver prints it, stale or current | cursor.rs:668-671 |
+| 57 | `pinyin_get_pinyin_strings` | COVERED | key-surface | keys.rs:397-427 |
+| 58 | `pinyin_get_zhuyin_string` | COVERED | key-surface | keys.rs:121-442 |
 
-Pre-probe tally: 56 COVERED, 2 PARTIAL (`pinyin_get_candidate_nbest_index`,
-`pinyin_get_double_pinyin_auxiliary_text` — both differential-driver-only),
-0 UNCOVERED, 0 setup-only. The union probe adds a single whole-surface
-differential over all 58; after it runs IDENTICAL the two PARTIAL rows
-gain a T-equivalent differential assertion of their out-params. The
-earlier 38/8/3/7 tally (summing to 56) is superseded by this matrix —
-the two symbols missing from it were `pinyin_in_chewing_keyboard` (15)
-and the §1h name typo's real symbol `pinyin_get_pinyin_offset` (33).
+Tally: **43 COVERED · 5 PARTIAL (rows 9, 10, 17, 26, 27) · 2 PENDING
+RULING (rows 2, 4) · 8 UNCOVERED (rows 20, 29, 31, 32, 39, 40, 54,
+56) — sums to 58.** The 2026-09-16 draft's "56 COVERED" tally is
+superseded: it counted Rust tests as coverage, cited runners that had
+not run in the session (key-surface/import/train/capture among them —
+now re-run or dropped as above), and missed `pinyin_in_chewing_keyboard`
+plus §1h's `pinyin_get_offset`→`pinyin_get_pinyin_offset` name typo.
 
-## The first oracle run — STOP, unclassified
+Three runners could not be re-run and their citations are dropped:
+`run-bisect.sh`, `run-dynamic-adjust-diff.sh` and `run-train-diff.sh`
+all drive the capi against the pre-split flat `fixtures/w3` root and
+exit 1 since the per-backend fixture split — stale, reported. One
+runner of the re-run set diverged: **union-diff**, by one line (a
+`pred: type=4 text=你` row the capi emits after the pin's `你好` under
+its import/choose/train flow — same user-store-state family as the
+probe's residues below, unclassified); the other eleven same-data-dir
+drivers re-ran IDENTICAL.
 
-2026-09-16 UTC, `debian:testing` container `a15849ef7dd2` (image
+## The oracle runs — measured per sort word (STOP)
+
+All runs: 2026-09-17 UTC, `debian:testing` container `a15849ef7dd2`
+(image
 `docker.io/library/debian@sha256:5056ab8a99336d6d71390d640f72229649f12e3d38e987cf6b24dc8675325d73`),
-pin oracle prefix read-only, both sides tkrzw: the oracle on the pin's
-own `lib/libpinyin/data`, the capi on a datagen tkrzw compile
-(`model20-59c68e89`, libpinyin-native names) plus `interpolation2.text`.
-Tree: this branch (oxpinyin at `main` + the W2 docs — #471's row-5b fix
-is NOT in this tree). Both sides completed the whole walk (oracle 197
-log lines, capi 203, no SKIP, no crash); the diff holds **5 hunks / 90
-diverging lines → exit 2**. Logs:
-`~/.local/share/oxpinyin-evidence/2026-09-16/w3/union-probe-{run,oracle,capi}.log`.
+pin oracle prefix read-only, both sides tkrzw (oracle: the pin's own
+`data/`; capi: a datagen tkrzw compile, native names +
+`interpolation2.text`). The 2026-09-16 run was on `main`; every run
+below is on a throwaway stack of **main + #476 + #471 + #472** (the
+probe carried as uncommitted files), so the row-5b out-of-enum rows
+agree by construction. Both sides complete the whole walk at every
+word (197–199 log lines, no SKIP, no crash). Logs:
+`~/.local/share/oxpinyin-evidence/2026-09-17/w3/{sort-runs,sort-runs-extra,perturbed-1e,post-revert-1e}.log`.
 
-Identical surfaces worth recording: the import→export round-trip is
-byte-equal (`你好|ni'hao|5`, `你好世界|ni'hao'shi'jie|9`,
-`测试|ce'shi|3` on both sides, drained to `has_next=false`, and empty
-again after `mask_out` on both sides); every accessor ret/out-param in
-the key/offset/aux/cursor families; `choose(0,row0)=11`,
-`offset(after-choose)=11`, `train(0)=true`, `sentence[nbest=0]=你好世界`,
-`train(nbest=0)=true`, `remember(你好/1)=false`, `choose(ni,row0)=2`;
-`remove_user=skipped(no-user-row)` on both sides (the imported phrases
-never surfaced as user rows in any list, symmetrically).
+| sort word | verdict | shape |
+|---|---|---|
+| `0x1e` (parity; every runner's word) | exit 2 — **21 lines, 2 hunks** | (A) the nbest-row set: the pin's list carries 2 sentence rows (nbest 0, 2 — it prepends ALL nbest rows then dedups by phrase string, `pinyin.cpp:1943-1948` + `:2298-2299`), the capi's carries 3 (nbest 0, 1, 2, incl. an extra 你好是届) — the sides' nbest result sets differ; (B) the train/bigram export: the capi lands `你好世界\|ni'hao'shi'jie\|414`, the pin nothing |
+| `0x1c` (ibus preset 1, the default) | exit 2 — 75 lines, 6 hunks | A + B plus the **longer-candidate hunks**: the pin prepends LONGER(7) rows (`现代`, `阿尔`, `你们`; `pinyin.cpp:2292-2293`) the capi never produces — the sort-option gap below |
+| `0x14` (ibus preset 0) | exit 2 — 75 lines, 6 hunks | same shape; the pin's window differs from 0x1c's (without the 0x8 pinyin-length key `西`/`系` rise — measured), the capi's is unchanged |
+| `0x0` (the first run's word; fcitx5-oxpinyin's) | exit 2 — 73 lines, 6 hunks | same plus the unsorted rare-char tails (the keyless comparator returns 0 for every pair, `pinyin.cpp:1678-1709`) |
+| `0x1f` (ibus preset 2) | exit 2 — 52 lines, 4 hunks | both sides honour the sentence suppression (the capi reads bit 0x1, `sentence.rs:286-287`); the pin surfaces the imported user phrase as an `is_user=true` NORMAL row (你好世界 at [0]) — the capi surfaces no user row; counts 127 vs 126 |
+| `0x16` (fcitx's other word) | exit 2 — 31 lines, 3 hunks | A + the 0x8 window effect + B |
 
-The diverging hunks, **unclassified**:
+**Measured cause of the 2026-09-16 record:** the sort word. The
+pre-registered expectations held in part — at 0x1e the LONGER-row and
+unsorted-tail hunks (the old hunks 2–4 and the rare tails inside hunk
+1) vanish, and they return at 0x1c/0x14/0x0 exactly as the
+longer-candidate gate predicts; the old "post-import/save state"
+argument is withdrawn (it compared a 0x1e runner with a 0 run). What
+does NOT vanish at 0x1e: residue (A) — the nbest-row-set gap, the
+nearest registered neighbour being the sentence-surface §3/§5
+residuals (different decode tie-handling), though its direction (capi
+carrying the extra row) was not previously measured — and residue (B),
+which persists at **every** word measured and is not sort-induced. The
+0x1f user-row surfacing is a third, separate shape. All three stay
+**unclassified**; no fix is included or implied. Non-vacuity: a
+perturbed capi build (sentence rows force-suppressed — one line in
+`sentence.rs`) at 0x1e grows the diff to 56 lines with the NBEST rows
+absent on the capi side; reverted, the baseline re-measures at 21
+(`perturbed-1e.log`, `post-revert-1e.log`).
 
-1. `nihaoshijie` first list (after import+save, before any choose):
-   oracle n=128 with 2 NBEST rows (nbest 0,2) and a rare-char NORMAL
-   tail (疒祢禰妳呢堄逆猊); capi n=129 with 3 NBEST rows (0,1,2 — extra
-   你好是届) and the common tail (你好你尼呢泥妮拟).
-2. `xian` list: oracle n=757 with a LONGER(7) 现代 row at [2] and the
-   rare tail (螅郗咥匚戯扢蔇); capi n=756 with the divided rows
-   (西安西岸锡安) at [2..4] and the common tail (见线先仙贤). The
-   clean-context option-sweep (A1, no import/save) is IDENTICAL at this
-   word — the divergence is post-import/save state, not the word itself.
-3. `aa`@ZRM list: oracle n=9 with LONGER(7) 阿尔 + 锕; capi n=8 without
-   them. The same hunk carries the **row-5b out-of-enum rows**
-   (`set(99)/set(-1)`: oracle true+cleared vs capi false+intact) —
-   expected on this tree: the fix is #471, still open; this hunk must be
-   re-taken after #471 merges.
-4. `su` chewing list: oracle n=126 with LONGER(7) 你们 at [0]; capi
-   n=125 without it.
-5. bigram export after choose+train: capi carries
-   `你好世界|ni'hao'shi'jie|138`; the oracle exports nothing (its
-   `train(0)=true` wrote no user bigram for the whole-row choose —
-   contrast the live-typing flow, where both sides export
-   `你好|ni'hao|1242` IDENTICAL, W4).
+## The sort-option gap (measured; register row DRAFTED, not committed)
 
-Leads for the maintainer, not conclusions: hunks 1–4 share one shape —
-after the user dictionary is written and saved, the pin surfaces
-LONGER(7) rows and a rare-char NORMAL tail while the engine surfaces
-extra NBEST/prefix rows and the common tail; the registered tail-tie
-class (`sentence-surface.md` §3/§5: gfloat accumulation vs fixed-point,
-comparator tie order) and live-typing's L2 window-anchor quote
-(`你好/你/尼/呢/泥/妮, n=128/129`) are the nearest recorded text, but
-neither was measured in this state (clean-context runners are all
-IDENTICAL), so the run is recorded unclassified. Hunk 5 is a
-train-record asymmetry on the whole-row choose flow. Per the measurement
-rules: STOP — no fix lands without approval; the probe is committed so
-the run is reproducible, and its non-vacuity is proven by construction
-(it diverged on the unmodified tree).
+`pinyin_guess_candidates`' `sort_option_t` input, per bit, pin vs
+oxpinyin (source + the measured words above):
+
+| bit | pin | oxpinyin |
+|---|---|---|
+| `0x1` SORT_WITHOUT_SENTENCE_CANDIDATE | set → sentence rows dropped (`pinyin.cpp:2295-2296`) | honoured (`sentence.rs:286-287`; measured at 0x1f: rows gone on both sides) |
+| `0x2` SORT_WITHOUT_LONGER_CANDIDATE | clear → LONGER rows prepended (`:2292-2293`; measured: 现代/阿尔/你们 at 1c/14/0) | **ignored** — no longer-candidate code exists; the rows are never produced at any word |
+| `0x4` SORT_BY_PHRASE_LENGTH | comparator key 1 (`:1683-1688`) | ignored; the engine's own order matched the pin at 0x1e in every probe window |
+| `0x8` SORT_BY_PINYIN_LENGTH | comparator key 2 (`:1690-1695`) | ignored; measured: the pin's window membership changes without it (0x14/0x16 vs 0x1c), the capi's does not |
+| `0x10` SORT_BY_FREQUENCY | comparator key 3 (`:1697-1702`) | ignored |
+
+The `test/sort-option-sweep` branch parameterises `option-sweep.c`
+(`OPTION_SWEEP_SORT`) and measures the corpus: **0x1e PASS 21/21;
+0x1c and 0x14 STOP on every case** (the pin's TEXT sets carry the
+LONGER rows). Consumer reachability, verified in the pinned consumers:
+ibus-libpinyin 1.16.5's presets are 0x14, 0x1c and 0x1f
+(`PYPConfig.cc:225-230`) with **0x1c the default** (`:151`) — presets
+0 and 1 both leave `0x2` clear, so default-settings ibus users see
+LONGER rows on libpinyin that oxpinyin never produces, and ibus maps
+them (`CANDIDATE_LONGER`/`CANDIDATE_LONGER_USER`,
+`PYPLibPinyinCandidates.cc:56-62`). fcitx-libpinyin 0.5.4 passes
+0x16/0x1e (`enummap.cpp:159-166`) — both suppress longer, not exposed.
+fcitx5-oxpinyin passes literal 0 (`src/oxpinyin.cpp:1282`, separate
+repo, report-only): against real libpinyin that word yields an
+unsorted list with sentence AND longer rows; it only "works" today
+because oxpinyin ignores the bits.
+
+Register row **drafted for the maintainer's decision** (not committed):
+> **Sort-option input of `pinyin_guess_candidates`** — oxpinyin
+> honours only `SORT_WITHOUT_SENTENCE_CANDIDATE` (0x1,
+> `sentence.rs:286-287`); `SORT_WITHOUT_LONGER_CANDIDATE` (0x2) and the
+> three sort keys (0x4/0x8/0x10) are ignored, and no longer-candidate
+> row is ever produced. The pin gates both preprends on the word
+> (`pinyin.cpp:2292-2296`) and orders by the keys (`:1678-1709`).
+> Consumer-reachable through ibus-libpinyin's presets 0 (0x14) and 1
+> (0x1c, the GSettings default); ibus maps the LONGER types
+> (`PYPLibPinyinCandidates.cc:56-62`). Measured 2026-09-17: union
+> probe exit 2 at 0x1c/0x14/0x0/0x1f/0x16 (LONGER rows, 0x8 window
+> order, user-row surfacing), 21-line residue at 0x1e; option-sweep
+> STOP on all 21 cases at 0x1c and 0x14. Proposed class: defect to
+> close (no (a)-(c) class fits); the fix shape is a maintainer
+> decision (port the longer-candidate production and the sort keys, or
+> register a scoped divergence).
+
+Also reported (code comment, no change made): `sentence.rs:258` cites
+`pinyin.cpp:2292-2293` as the sentence-candidate gate; the sentence
+gate is `:2295-2296` — `2292-2293` is the longer-candidate gate.
