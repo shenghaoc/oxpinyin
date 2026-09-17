@@ -64,6 +64,17 @@ SYSTEM_DIR_BACKEND_EXTS="kct tkt lmdb redb"
 # for punctuation sees the same directory the operator pointed at.
 SYSTEM_DIR_CORE_STEMS="pinyin_index phrase_index bigram"
 
+# The P6 native layout: since the runtime reads libpinyin's own data
+# files directly (docs/findings/runtime-direct-libpinyin-data-2026-09-02.md),
+# a Kyoto Cabinet or tkrzw build also opens an unmodified libpinyin
+# install's data/ — the core trio under libpinyin's own names
+# (pinyin_index.bin, phrase_index.bin, bigram.db), not peer-extension
+# tables. detect_ext reports this layout as the pseudo-extension "bin";
+# lmdb and redb builds have no native path and never see it. The
+# backend set is the three libpinyin-native DBMs: Kyoto Cabinet, tkrzw
+# and Berkeley DB (the store's bdb feature; datagen's out-dir "db").
+SYSTEM_DIR_NATIVE_CORE="pinyin_index.bin phrase_index.bin bigram.db"
+
 # Names the table extension the built capi opens.
 #
 #   system_dir_capi_ext
@@ -87,7 +98,9 @@ SYSTEM_DIR_CORE_STEMS="pinyin_index phrase_index bigram"
 system_dir_capi_ext() {
 	local repo_root feature ext=
 	if [[ -n ${OXPINYIN_CAPI_BACKEND_EXT:-} ]]; then
-		case " $SYSTEM_DIR_BACKEND_EXTS " in
+		# "db" rides beside the peer extensions: the bdb build's
+		# selector, whose tables live in the native layout.
+		case " $SYSTEM_DIR_BACKEND_EXTS db " in
 		*" $OXPINYIN_CAPI_BACKEND_EXT "*) ;;
 		*)
 			printf 'fatal: OXPINYIN_CAPI_BACKEND_EXT=%q is not one of: %s\n' \
@@ -108,6 +121,7 @@ system_dir_capi_ext() {
 		tkrzw) [[ -z $ext || $ext == lmdb || $ext == redb ]] && ext=tkt ;;
 		lmdb) [[ -z $ext || $ext == redb ]] && ext=lmdb ;;
 		redb) [[ -z $ext ]] && ext=redb ;;
+		bdb) [[ -z $ext ]] && ext=db ;;
 		esac
 	done
 	[[ -n $ext ]] && printf '%s\n' "$ext"
@@ -122,10 +136,19 @@ system_dir_capi_ext() {
 # capi's backend is known (system_dir_capi_ext) only that extension
 # counts: a complete .redb set is no use to a .kct capi. When it is not,
 # the directory is scanned in precedence order and the first complete set
-# wins. Echoes nothing and returns 1 when there is no complete core set.
+# wins. A directory holding both a peer set and the P6 native trio
+# resolves to the peer set. With no peer set, a kct-, tkt- or db-built
+# capi falls back to the native layout ($SYSTEM_DIR_NATIVE_CORE) and
+# the answer is the pseudo-extension "bin"; the fallback needs a known
+# backend because P6 covers the three libpinyin-native DBMs — Kyoto
+# Cabinet, tkrzw and Berkeley DB (the store's bdb feature; datagen's
+# out-dir name: "db") — while lmdb/redb builds cannot open libpinyin's
+# files, and without cargo there is no built capi to speak of. Echoes
+# nothing and returns 1 when there is no complete core set.
 system_dir_detect_ext() {
-	local dir=$1 ext stem exts
+	local dir=$1 ext stem exts capi_ext
 	exts=$(system_dir_capi_ext)
+	capi_ext=$exts
 	[[ -z $exts ]] && exts=$SYSTEM_DIR_BACKEND_EXTS
 	for ext in $exts; do
 		for stem in $SYSTEM_DIR_CORE_STEMS; do
@@ -134,6 +157,15 @@ system_dir_detect_ext() {
 		printf '%s\n' "$ext"
 		return 0
 	done
+	case $capi_ext in
+	kct | tkt | db)
+		for stem in $SYSTEM_DIR_NATIVE_CORE; do
+			[[ -f $dir/$stem ]] || return 1
+		done
+		printf 'bin\n'
+		return 0
+		;;
+	esac
 	return 1
 }
 
@@ -142,17 +174,26 @@ system_dir_detect_ext() {
 #   system_dir_copy_tables <src> <dst>
 #
 # The three core tables in the detected extension, plus punct and every
-# addon_<n>_* table in that extension when present. interpolation2.text
-# is NOT copied: the runners resolve the real-unigram source themselves
-# (an override may replace the directory's own copy). Exits 3 when <src>
-# has no complete core set, which system_dir_require_complete would have
-# reported already on every path that reaches here.
+# addon_<n>_* table in that extension when present. For the P6 native
+# layout ("bin") the whole flat directory travels instead: the chunk
+# libraries (gb_char.bin … merged.bin), table.conf, punct.bin and the
+# addon pair are all files the readers open, and there is no extension
+# to select them by. interpolation2.text is NOT copied: the runners
+# resolve the real-unigram source themselves (an override may replace
+# the directory's own copy). Exits 3 when <src> has no complete core
+# set, which system_dir_require_complete would have reported already on
+# every path that reaches here.
 system_dir_copy_tables() {
 	local src=$1 dst=$2 ext stem file
 	ext=$(system_dir_detect_ext "$src") || {
 		printf 'fatal: %s holds no complete core-table set in one extension\n' "$src" >&2
 		exit 3
 	}
+	if [[ $ext == bin ]]; then
+		find "$src" -mindepth 1 -maxdepth 1 -type f \
+			! -name interpolation2.text -exec cp {} "$dst"/ \;
+		return 0
+	fi
 	for stem in $SYSTEM_DIR_CORE_STEMS; do
 		cp "$src/$stem.$ext" "$dst/"
 	done
@@ -192,6 +233,7 @@ resolve_system_dir() {
 			"$repo_root/target/datagen/tkt" \
 			"$repo_root/target/datagen/lmdb" \
 			"$repo_root/target/datagen/redb" \
+			"$repo_root/target/datagen/db" \
 			/tmp/oxpinyin-export; do
 			if [[ -f $candidate/gb_char.bin ]]; then
 				resolved=$candidate
@@ -226,7 +268,7 @@ resolve_system_dir() {
 		printf 'Looked at, in order:\n'
 		printf '  $%s          (this runner'"'"'s own variable)\n' "$var_name"
 		printf '  $OXPINYIN_SYSTEM_DIR   (set once for a whole sweep)\n'
-		printf '  %s/target/datagen/{kct,tkt,lmdb,redb}\n' "$repo_root"
+		printf '  %s/target/datagen/{kct,tkt,lmdb,redb,db}\n' "$repo_root"
 		printf '  /tmp/oxpinyin-export\n'
 		printf '\n'
 		printf 'A usable directory is a system data directory for the compiled-in\n'
@@ -267,6 +309,21 @@ system_dir_require_complete() {
 		[[ -f $dir/$file ]] && found_index=$file
 	done
 	[[ -n $found_index ]] || missing+=("pinyin_index.{bin,kct,tkt,redb,lmdb}")
+	# The core trio must be complete in ONE layout: an index table whose
+	# siblings are missing is a half-assembled directory, refused here
+	# rather than at the first mid-run open failure. The native trio
+	# carries libpinyin's own bigram name; a peer trio shares the
+	# detected extension.
+	if [[ $found_index == pinyin_index.bin ]]; then
+		[[ -f $dir/phrase_index.bin ]] || missing+=("phrase_index.bin")
+		[[ -f $dir/bigram.db ]] || missing+=("bigram.db")
+	else
+		local peer=${found_index##*.}
+		if [[ -n $peer ]]; then
+			[[ -f $dir/phrase_index.$peer ]] || missing+=("phrase_index.$peer")
+			[[ -f $dir/bigram.$peer ]] || missing+=("bigram.$peer")
+		fi
+	fi
 	((${#missing[@]} == 0)) && return 0
 	{
 		printf 'fatal: %s: the system directory is incomplete.\n' "$label"
