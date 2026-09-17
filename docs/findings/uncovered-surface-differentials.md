@@ -536,3 +536,58 @@ reproduce the pin's column occupancy on every probed input, and the
 corpus-scale pins (candidate fixture freshness 10312 inputs / 97442
 triples, sentence residual 488/385/379, live differential 9976/489)
 re-measured unchanged.
+
+## Amendment (2026-09-16) — re-measured at pin 074a2219: IDENTICAL, zero diverging positions
+
+The 2026-08-24/25 enumeration (836-line oracle log vs 856-line capi
+log, 45 line-aligned change hunks, 161/181 diverging positions) and
+the 2026-08-27/29 amendments — which closed every class but B1's
+`PRED_PREFIX` head order, the standing residual — were measured against
+the former pin (2.11.91 @ `0c5e80e`) and predate the 2026-09-06
+re-pin. Re-measured 2026-09-16 against the current pin (libpinyin
+2.11.92 @ `074a2219c90feaf962d0d24f034514033ece5f99`, `dbm=tkrzw`):
+`run-uncovered-surface-diff.sh` exits **0, IDENTICAL**, no SKIP line,
+both sides executed. The driver's surface has since grown (the full
+log now spans paging + punct + profiles + cursor + raw offsets), and
+the runner's prerequisite step verified **all five phase surfaces
+active on both sides** — the built-in vacuity guard. Captured driver
+logs: 993 lines per side, byte-identical.
+
+Attribution of the zero-divergence result: B1's `PRED_PREFIX` head
+order was the only residual the 2026-08-29 amendment left, and P6
+superseded it — since P6 the runtime reads a libpinyin-format DBM
+directly through its store readers (no eager load, no re-derived
+ordering), so the prediction order is the DBM cursor's library-grouped
+walk. What this run measured is that that order matches the pin's on a
+**datagen-produced** DBM: the capi side read an `oxpinyin-datagen`
+tkrzw compile, not the pin's own `data/` files — the file *format* is
+the pin's, the physical layout is datagen's (compatibility-policy
+row 12, CLOSED as superseded by P6, records the same attribution for
+`pred-order-diff`; its wording says "the pin's own phrase DBM" for
+what is, measured here, a datagen-produced DBM read through the same
+format). The B/C/D
+classes were closed by the fixes the 2026-08-27 and 2026-08-29
+amendments name, under the former pin; this run shows the closures
+hold at `074a2219`. The pin-side re-pin brought no data change to
+these surfaces: the 17 reproducible data files are byte-identical
+between pins (`docs/testing/oracle-environment.md`, 2026-09-06
+amendment).
+
+Environment and layout — the scope of this claim: a `debian:testing`
+container (image
+`docker.io/library/debian@sha256:5056ab8a99336d6d71390d640f72229649f12e3d38e987cf6b24dc8675325d73`,
+container `a15849ef7dd2`), the pin oracle prefix mounted read-only.
+**Backend: tkrzw on both sides.** `UNCOVERED_SYSTEM` named a fresh
+`oxpinyin-datagen` tkrzw compile — libpinyin-native file names (P6
+layout: `pinyin_index.bin`, `bigram.db`, `punct.bin`, …),
+`datagen-manifest.txt` stamped `pin_ref=model20-59c68e89…`,
+`backend=tkt` — with `interpolation2.text` copied beside it; the
+oracle ran on the pin's own `lib/libpinyin/data`. The `target/datagen/
+redb` peer-extension layout the § Reproduction recipe describes was
+NOT re-measured at this pin; the claim is scoped to the tkrzw/native
+layout. The runner's `detect_ext` gate passes that layout through PR
+#476's native-layout acceptance (`punct.bin` included).
+
+The behaviours stay parked; this amendment records a re-measurement,
+not a fix. Logs:
+`~/.local/share/oxpinyin-evidence/2026-09-16/w4/uncovered-{run,oracle,capi}.log`.

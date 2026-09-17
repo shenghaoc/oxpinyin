@@ -220,3 +220,48 @@ differential's subject. And `pinyin_get_sentence` asserts
 `index < results.size()` on a non-empty set (`pinyin.cpp:1474`) — the
 probe asks only the indices the candidate list proves, the frontend's
 own caller contract; the assert is logged in `upstream-divergences.md`.
+
+## Amendment (2026-09-16) — re-measured at pin 074a2219: IDENTICAL
+
+The original enumeration (2026-08-22) was measured against the former
+pin (libpinyin 2.11.91 @ `0c5e80e`) and predates the 2026-09-06 re-pin.
+Re-measured 2026-09-16 against the current pin oracle (libpinyin
+2.11.92 @ `074a2219c90feaf962d0d24f034514033ece5f99`, `dbm=tkrzw`):
+**exit 0, IDENTICAL**, no SKIP line, both sides executed, the runner's
+vacuity guard satisfied ("post-choose surface active on both sides")
+and the training export line present (`bigram: 你好|ni'hao|1242`).
+Captured driver logs: 317 lines per side, byte-identical.
+
+Environment and layout — the scope of this claim: a `debian:testing`
+container (image
+`docker.io/library/debian@sha256:5056ab8a99336d6d71390d640f72229649f12e3d38e987cf6b24dc8675325d73`,
+container `a15849ef7dd2`), the pin oracle prefix mounted read-only.
+**Backend: tkrzw on both sides** — the oracle is the `dbm=tkrzw`
+parity build; the capi is the default `cargo build -p oxpinyin-capi`,
+whose feature resolution selects tkrzw. **Data layout: libpinyin-native
+file names (P6)** — the capi ran on a fresh `oxpinyin-datagen` tkrzw
+compile (`target/datagen/tkt`, `datagen-manifest.txt` stamped
+`pin_ref=model20-59c68e89…`, `backend=tkt`) with `interpolation2.text`
+copied beside it; the oracle ran on the pin's own `lib/libpinyin/data`.
+The peer-extension redb layout of the 2026-08-22 reproduction was NOT
+re-measured at this pin; the claim is scoped to the tkrzw/native
+layout.
+
+Attribution of the zero-divergence result: L1–L3 were closed by the
+constraint port (§ Closure, 2026-08-22) and the backspace-after-choose
+class by `fix/constraint-shrink-survival` (§ Backspace-after-choose) —
+both under the former pin; this run shows the closures hold at
+`074a2219`. The pin-side re-pin brought no data change to the surfaces
+this driver walks: the 17 reproducible data files are byte-identical
+between pins (`docs/testing/oracle-environment.md`, 2026-09-06
+amendment). The behaviours stay parked; this amendment records a
+re-measurement, not a fix.
+
+Tooling precondition: the run required `run-live-typing-diff.sh`'s gate
+migration to `system-dir.sh` (PR #476). The old gate hard-coded the
+peer-extension table names (`.kct/.redb/.lmdb/.tkt`), which a default
+tkrzw build can never satisfy — datagen writes that backend's tables
+under libpinyin's own names — so the runner had been skipping forever,
+and a skipped run provides no coverage.
+
+Logs: `~/.local/share/oxpinyin-evidence/2026-09-16/w4/live-typing-{run,oracle,capi}.log`.
