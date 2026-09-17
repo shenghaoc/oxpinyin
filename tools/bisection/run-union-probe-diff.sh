@@ -14,6 +14,11 @@
 # Env-gated on the pin-built oracle exactly like the other differentials:
 # PINYIN_ORACLE_PREFIX (default $HOME/.local/opt/pinyin-oracle).
 #
+# UNION_PROBE_SORT is the sort_option_t word both sides guess with
+# (hex, default 1e — the parity word every other differential passes).
+# 1c and 14 are ibus-libpinyin's presets, 0 the raw word; see the
+# driver header for why the word matters.
+#
 # The capi system directory resolves through system-dir.sh:
 # UNION_PROBE_SYSTEM first, then OXPINYIN_SYSTEM_DIR, then the
 # conventional build locations; an unresolvable directory with a present
@@ -68,7 +73,9 @@ SYSTEM="$(resolve_system_dir UNION_PROBE_SYSTEM union-probe)"
 echo "--- capi side ---"
 CAPI_LOG="$(mktemp)"
 CAPI_ERR="$(mktemp)"
-if ! ./union-probe-diff "$CAPI_SO" "$SYSTEM" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
+SORT_WORD="${UNION_PROBE_SORT:-1e}"
+echo "sort word: 0x$SORT_WORD"
+if ! ./union-probe-diff "$CAPI_SO" "$SYSTEM" "$SORT_WORD" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
     echo "FAIL: union-probe-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     echo "--- driver diagnostics (stderr) ---"
@@ -81,7 +88,7 @@ echo "oxpinyin-capi: ok ($(wc -l < "$CAPI_LOG") log lines)"
 echo "--- oracle side ---"
 ORACLE_LOG="$(mktemp)"
 ORACLE_ERR="$(mktemp)"
-if ! ./union-probe-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
+if ! ./union-probe-diff "$ORACLE_SO" "$ORACLE_DATA" "$SORT_WORD" > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
     echo "FAIL: union-probe-diff crashed against the oracle"
     cat "$ORACLE_LOG"
     echo "--- driver diagnostics (stderr) ---"

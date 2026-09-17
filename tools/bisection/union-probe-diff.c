@@ -25,7 +25,18 @@
  *     crash;
  *   - pinyin_guess_sentence runs before pinyin_train.
  *
- * Usage: ./union-probe-diff <path-to-so> <systemdir>
+ * Usage: ./union-probe-diff <path-to-so> <systemdir> <sort-hex>
+ *
+ * <sort-hex> is the sort_option_t word every pinyin_guess_candidates
+ * call uses (hex, e.g. 1e). The first run of this probe hard-coded 0
+ * and its divergence was caused by exactly that: with no sort bits the
+ * pin prepends longer AND sentence candidates (pinyin.cpp:2292-2296)
+ * and its comparator has no keys (:1678-1709), so the list is unsorted
+ * — a word no runner had ever driven. The default parity word is 0x1e
+ * (longer suppressed, sentence kept, all three keys), the word every
+ * other differential passes; the ibus presets 0x14/0x1c and the raw 0
+ * are the consumer-reachable words the sort-option investigation
+ * drives.
  *
  * Exit codes: 0 = the walk completed; 1 = a symbol is missing, a
  * handle could not be created, or an accessor failed where the walk
@@ -268,10 +279,12 @@ static void dump_rows(const struct api *s, pinyin_instance_t *inst,
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "usage: %s <so> <systemdir>\n", argv[0]);
+    if (argc != 4) {
+        fprintf(stderr, "usage: %s <so> <systemdir> <sort-hex>\n", argv[0]);
         return 1;
     }
+    guint sort_word = (guint)strtoul(argv[3], NULL, 16);
+    printf("sort=0x%02x\n", sort_word);
     void *handle = dlopen(argv[1], RTLD_NOW);
     if (!handle) {
         fprintf(stderr, "dlopen: %s\n", dlerror());
@@ -428,7 +441,7 @@ int main(int argc, char **argv) {
         if (sent)
             g_free_fn(sent);
         printf("guess_candidates(%s,0)=%s\n", in,
-               yesno(s.guess_candidates(inst, 0, 0)));
+               yesno(s.guess_candidates(inst, 0, sort_word)));
         char tag[64];
         snprintf(tag, sizeof(tag), "full(%s)", in);
         dump_rows(&s, inst, tag, 10);
@@ -510,7 +523,7 @@ int main(int argc, char **argv) {
     size_t consumed = s.parse_full(inst, "nihaoshijie");
     (void)consumed;
     s.guess_sentence(inst);
-    s.guess_candidates(inst, 0, 0);
+    s.guess_candidates(inst, 0, sort_word);
     lookup_candidate_t *first = NULL;
     guint8 proved_nbest = 0;
     bool have_nbest = false;
@@ -577,7 +590,7 @@ int main(int argc, char **argv) {
     printf("=== phase: predict ===\n");
     s.parse_full(inst, "ni");
     s.guess_sentence(inst);
-    s.guess_candidates(inst, 0, 0);
+    s.guess_candidates(inst, 0, sort_word);
     lookup_candidate_t *ni0 = NULL;
     if (s.get_cand(inst, 0, &ni0) && ni0) {
         int type = -1;
@@ -622,7 +635,7 @@ int main(int argc, char **argv) {
                 g_free_fn(aux);
         }
         printf("double_guess(aa@ZRM)=%s\n",
-               yesno(s.guess_candidates(inst, 0, 0)));
+               yesno(s.guess_candidates(inst, 0, sort_word)));
         dump_rows(&s, inst, "double(aa@ZRM)", 5);
     }
     printf("set_double_scheme(99/out-of-enum)=%s\n", yesno(s.set_double(ctx, 99)));
@@ -631,7 +644,7 @@ int main(int argc, char **argv) {
         printf("double(aa@99): consumed=%zu parsed=%zu\n", c,
                s.parsed_len(inst));
         printf("double_guess(aa@99)=%s\n",
-               yesno(s.guess_candidates(inst, 0, 0)));
+               yesno(s.guess_candidates(inst, 0, sort_word)));
         dump_rows(&s, inst, "double(aa@99)", 5);
     }
     printf("set_double_scheme(-1/out-of-enum)=%s\n", yesno(s.set_double(ctx, -1)));
@@ -646,7 +659,7 @@ int main(int argc, char **argv) {
         printf("double(aa@restored): consumed=%zu parsed=%zu\n", c,
                s.parsed_len(inst));
         printf("double_guess(aa@restored)=%s\n",
-               yesno(s.guess_candidates(inst, 0, 0)));
+               yesno(s.guess_candidates(inst, 0, sort_word)));
         dump_rows(&s, inst, "double(aa@restored)", 5);
     }
     printf("reset(double)=%s\n", yesno(s.reset(inst)));
@@ -677,7 +690,7 @@ int main(int argc, char **argv) {
                 g_free_fn(aux);
         }
         printf("chewing_guess(su)=%s\n",
-               yesno(s.guess_candidates(inst, 0, 0)));
+               yesno(s.guess_candidates(inst, 0, sort_word)));
         dump_rows(&s, inst, "chewing(su)", 5);
         printf("reset(chewing)=%s\n", yesno(s.reset(inst)));
     }
