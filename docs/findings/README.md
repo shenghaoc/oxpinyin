@@ -100,6 +100,7 @@ series lives in `../perf/`.
 | [`pin-refreeze-2026-08`](pin-refreeze-2026-08.md) | Pin re-freeze — phonetic-initial incomplete expansion (2026-08) | approved (pin freeze) |
 | [`pinyin-dbm-format-2026-09-01`](pinyin-dbm-format-2026-09-01.md) | libpinyin pinyin-index DBM format — P2 source-level findings | verified (P2) |
 | [`prediction-punct`](prediction-punct.md) | Prediction punctuation — Option A | record (#104) |
+| [`probe-coverage-abi`](probe-coverage-abi.md) | Findings — probe coverage over the full exported ABI (79 symbols, four unclassified residues) | open |
 | [`preedit-key-accessor-phase1`](preedit-key-accessor-phase1.md) | The preedit key family — Phase 1 explain-back | record (Phase 1 explain-back; Phase 2 landed with the 79/79 work, `crates/oxpinyin-capi/src/cursor.rs`) |
 | [`residual-after-construction-freeze`](residual-after-construction-freeze.md) | Residual characterisation after the construction freeze | record |
 | [`revert-plan`](revert-plan.md) | Revert plan — the seven incompatible divergences | open (work order) |
