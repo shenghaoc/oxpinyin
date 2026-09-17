@@ -28,7 +28,13 @@ typedef uint32_t pinyin_option_t;
 typedef uint32_t guint;
 typedef char gchar;
 
-#define DEFAULT_SORT ((guint)0x1e)
+/* The sort word is an env-parameterised input of this sweep:
+ * OPTION_SWEEP_SORT (hex, default 1e — the parity word every runner
+ * passes). The ibus-libpinyin presets 0x14 and 0x1c leave
+ * SORT_WITHOUT_LONGER_CANDIDATE (0x2) clear, so on the pin they carry
+ * longer-candidate rows; the capi ignores every bit but 0x1 today.
+ * This sweep is the instrument that measures that gap per word. */
+static guint g_sort_word = (guint)0x1e;
 #define CANDIDATE_DEPTH 10u
 
 typedef pinyin_context_t *(*fn_init)(const char *, const char *);
@@ -124,7 +130,7 @@ static void drive(const struct syms *s, pinyin_instance_t *inst,
     if (aux)
         g_free_fn(aux);
 
-    if (!s->guess(inst, 0, DEFAULT_SORT)) {
+    if (!s->guess(inst, 0, g_sort_word)) {
         printf("guess=false n=0\n");
         s->reset(inst);
         return;
@@ -148,6 +154,23 @@ static void drive(const struct syms *s, pinyin_instance_t *inst,
 }
 
 int main(int argc, char **argv) {
+    const char *sort_env = getenv("OPTION_SWEEP_SORT");
+    if (sort_env && *sort_env) {
+        /* Reject malformed words outright: strtoul silently accepts a
+         * valid prefix ("1x" -> 1) and answers 0 for digit-less input,
+         * and a sort word that is not what the operator typed would
+         * score the sweep at the wrong word with no visible sign. */
+        char *end = NULL;
+        unsigned long parsed = strtoul(sort_env, &end, 16);
+        if (end == sort_env || *end != '\0') {
+            fprintf(stderr,
+                    "OPTION_SWEEP_SORT=%s is not a hex word\n",
+                    sort_env);
+            return 1;
+        }
+        g_sort_word = (guint)parsed;
+    }
+    printf("sort=0x%02x\n", g_sort_word);
     if (argc != 5) {
         fprintf(stderr,
                 "Usage: %s <so> <systemdir> <case> <options-hex>\n",
