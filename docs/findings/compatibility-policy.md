@@ -291,13 +291,15 @@ revert targets is `revert-plan.md`.
 | 29 | zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default | **no ABI divergence** | `CapiContext::try_open` seeds the pin's `USE_TONE \| FORCE_TONE`; entry kept as analysis for a future consumer |
 | 30 | pinyin-facade chewing batch seam does not forward `FORCE_TONE` | **CLOSED** in code (2026-09-14) | the register says it: no class fits, a defect to close; closed by the prescribed shape — the seam forwards `options().bits() & !ZHUYIN_CORRECT_ALL` through `parse_with_options`, capi tests pin the measured shape (toneless `su` refuses under `USE_TONE \| FORCE_TONE`), and `chewing-diff.c` carries the FORCE_TONE profile; the live differential ran 2026-09-16 — `run-scheme-diff.sh bopomofo` 1–6, 8, 9 all IDENTICAL in a debian:testing container, non-vacuity shown by the reverted seam exiting 2 (register amendment) |
 | 31 | redb write-side emptiness probe creates the table it probes | **no ABI divergence** | a redb API constraint below the store traits; nothing above them observes it. Stage-2 store-trait note, not a compatibility entry |
+| 32 | Sort-option input of `pinyin_guess_candidates` | **REVERT TARGET** | no exception class fits, a defect to close; oxpinyin honours only `SORT_WITHOUT_SENTENCE_CANDIDATE` (0x1, `sentence.rs:286-287`); `SORT_WITHOUT_LONGER_CANDIDATE` (0x2) and the three sort keys (`SORT_BY_PHRASE_LENGTH` 0x4, `SORT_BY_PINYIN_LENGTH` 0x8, `SORT_BY_FREQUENCY` 0x10) are ignored, and no longer-candidate row is ever produced. The pin gates both candidate prepends on the word (`pinyin.cpp:2292-2296`) and orders the list by the three keys (`:1678-1709`). Consumer-reachable: ibus-libpinyin 1.16.5's presets 0 (0x14) and 1 (0x1c, the GSettings default, `PYPConfig.cc:151`) both leave 0x2 clear, and ibus maps the LONGER types (`PYPLibPinyinCandidates.cc:56-62`); fcitx-libpinyin passes 0x16/0x1e (not exposed); fcitx5-oxpinyin passes literal 0 (`src/oxpinyin.cpp:1282`, separate repository). Measured 2026-09-17 (debian:testing container `a15849ef7dd2`, image `sha256:5056ab8a…5d73`, pin oracle read-only): the ABI probe diverges at 0x1c/0x14/0x0/0x1f/0x16 (LONGER rows, 0x8 window order, user-row surfacing) with a 26-line residue at 0x1e; the parameterised option-sweep (`8bc31196`) stops on all 21 cases at 0x1c and 0x14 and passes 21/21 at 0x1e. Bits 0x2/0x4/0x8/0x10 only — the 0x1f user-row shape is a separate residue (`probe-coverage-abi.md` C), not part of this row |
 
 Totals at `2a99761a` (2026-09-06, oracle pin 074a2219), amended
 2026-09-16 for rows 5b, 17 and 30 — each closed in code, each with its
 live differential run taken 2026-09-16 in a `debian:testing` container
 (the oracle environment `docs/testing/oracle-environment.md` records):
 **(a)** 2 · **(b)** 2 · **(c)** 10 · **(d)** 0 (class retired, see
-below) · **REVERT TARGET** 0 · **OPEN DEFECT** 0 · **CLOSED** 16
+below) · **REVERT TARGET** 1 (row 32, the sort-option input) ·
+**OPEN DEFECT** 0 · **CLOSED** 16
 (rows 3, 5b, 7, 8, 9, 12, 13, 15, 16, 17, 24, 25, 26, 27, 28, 30 — 26
 measured identical on the pin 2026-09-08; 28 in code via #374, not
 observable through today's surface; 30 in code 2026-09-14, live
@@ -338,6 +340,13 @@ one was superseded by P6 (12); 5b and 17 closed in code (2026-09-15,
    2026-09-06 approval, copying libpinyin's source; row 26's
    three-input oracle battery ran on 2026-09-08 and is byte-identical.
    Nothing is owed on either.
+5. **Row 32** — the sort-option input of `pinyin_guess_candidates`
+   (bits 0x2/0x4/0x8/0x10; row text above). The port owes the pin's
+   longer-candidate production and the three sort keys, pre-registered
+   against the option-sweep at 0x1c and 0x14 (STOP → PASS) and the ABI
+   probe at 0x1c/0x14 (down to the 0x1e residues), plus a
+   choose-a-LONGER-row flow; the 0x1f user-row shape stays a separate
+   residue. Registered 2026-09-18.
 
 ### Notes on the three entries whose class was not obvious
 
@@ -427,3 +436,17 @@ it lands. Entry #12's extra step — establishing Kyoto Cabinet's physical
 hash walk experimentally — was overtaken by P6: reading the pin's own
 DBM reproduces the pin's own walk, and `pred-order-diff` is IDENTICAL on
 KC without any order having been modelled.
+
+## Amendment — row 32 registered (2026-09-18 UTC)
+
+The sort-option input of `pinyin_guess_candidates` is registered as row
+32, class **REVERT TARGET** (no exception class fits — a defect to
+close, the row-30 shape): oxpinyin honours only bit 0x1; bits
+0x2/0x4/0x8/0x10 are ignored and no longer-candidate row is ever
+produced, while default-settings ibus users see longer candidates on
+the pin. The row carries the full measurement identity (the 2026-09-17
+`debian:testing` runs, container `a15849ef7dd2`, image
+`docker.io/library/debian@sha256:5056ab8a…5d73`). The totals move
+REVERT TARGET 0 → 1; CLOSED stays 16. The 0x1f user-row shape is a
+separate residue (`docs/findings/probe-coverage-abi.md`), not part of
+the row.
