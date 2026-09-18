@@ -1,4 +1,4 @@
-# Revert plan — the seven incompatible divergences
+# Revert plan — the incompatible divergences
 
 Date: 2026-08-28 · Status: **work order** · Branch:
 `claude/pr5-revert-incompatible-divergences` (#209; the work order
@@ -16,10 +16,12 @@ merged as a document — the reverts landed as their own PRs).
 | 6 | #9 n-best row-choose cursor | closed (eca8d43b) |
 | 7 | #15 apostrophe-only consumption | closed (678f3259, 2026-08-26 — predates this plan; the register entry was not updated until 2026-09-06) |
 | 8 | #5b double out-of-enum scheme setter | closed in code (2026-09-15) — half-mutation reproduced: CAPI returns `true`, fallback cleared, shengmu/yunmu intact; contract test pinned |
+| 9 | #32 sort-option input of `pinyin_guess_candidates` | **open** — registered 2026-09-18: bits 0x2/0x4/0x8/0x10 ignored, no longer-candidate row produced; the port owes the pin's longer-candidate production and the three sort keys (§9) |
 
 The sections below are the 2026-08-28 text, kept as the record of what
 each revert had to prove, plus section 8 for the target the original
-list omitted.
+list omitted and section 9 for the one the register added afterwards
+(row 32, 2026-09-18).
 
 Driven by the classification table in
 `docs/findings/compatibility-policy.md`. Every entry that table marks
@@ -44,7 +46,7 @@ seven unverified behaviour changes against that gate is the one outcome
 worse than landing none, so this PR is the work order and the reverts
 land with the measurements.
 
-## The seven
+## The targets
 
 ### 1 — Predicted-candidate tie order (register #12)
 
@@ -198,9 +200,50 @@ land with the measurements.
   and the whole-log diff is IDENTICAL (exit 0, no SKIP lines).
 - **Closed** 2026-09-15; live differential run 2026-09-16.
 
+### 9 — Sort-option input of `pinyin_guess_candidates` (register #32)
+
+- **Site:** `pinyin_guess_candidates`'s sort-option word
+  (`crates/oxpinyin-capi/src/sentence.rs:286-287` reads only
+  `SORT_WITHOUT_SENTENCE_CANDIDATE`; the three sort keys and the
+  longer-candidate gate reach no code).
+- **Now:** bits `0x2` (`SORT_WITHOUT_LONGER_CANDIDATE`), `0x4`
+  (`SORT_BY_PHRASE_LENGTH`), `0x8` (`SORT_BY_PINYIN_LENGTH`) and `0x10`
+  (`SORT_BY_FREQUENCY`) are ignored, and no longer-candidate row is
+  ever produced: the engine's own candidate order answers at every
+  word. Measured 2026-09-17 in a `debian:testing` container (pin oracle
+  read-only, both sides tkrzw): the ABI probe diverges at
+  `0x1c`/`0x14`/`0x0`/`0x1f`/`0x16` — the pin prepends LONGER rows
+  (`pinyin.cpp:2292-2293`) and orders by the three keys
+  (`:1678-1709`), so its windows move where the capi's do not — with a
+  26-line residue at `0x1e` that is the separate residues, not this
+  row; the parameterised option-sweep (`8bc31196`) stops on all 21
+  cases at `0x1c` and `0x14` and passes 21/21 at `0x1e`.
+- **Target:** the pin's law for the whole word — sentence candidates
+  gated on `0x1` (`:2295-2296`), longer candidates prepended when
+  `0x2` is clear with the LONGER/LONGER_USER typing ibus maps
+  (`PYPLibPinyinCandidates.cc:56-62`), and the list ordered by the
+  three enabled keys. Consumer-reachable through ibus-libpinyin's
+  presets 0 (`0x14`) and 1 (`0x1c`, the GSettings default,
+  `PYPConfig.cc:151`); fcitx passes `0x16`/`0x1e` (not exposed);
+  fcitx5-oxpinyin passes literal 0 (`src/oxpinyin.cpp:1282`, separate
+  repository).
+- **Probe:** the option-sweep at `0x1c` and `0x14` must flip from STOP
+  on every case to PASS; the ABI probe at `0x1c`/`0x14` must drop to
+  the `0x1e` residue set; and a choose-a-LONGER-row flow (surface a
+  LONGER row, `pinyin_choose_candidate` it, assert the cursor, then
+  `pinyin_train` with the user stores dumped on both sides) must run
+  IDENTICAL — the special-candidate unigram training whose call site
+  `crates/oxpinyin-capi/src/candidates.rs:295-296` records as
+  unreachable today becomes reachable with the port and must be measured.
+- **Blocked on:** nothing — the port is unstarted work, not waiting on
+  an ask. The `0x1f` user-row shape is residue C
+  (`docs/findings/probe-coverage-abi.md`), separate from this row.
+
 ## Order to execute
 
 6, 7, 4, 5, 3, 2, 1 — smallest blast radius first, and 1 last because it
 alone waits on the BDB path. Each lands with its own differential
 flipped to IDENTICAL and the frozen pins re-measured, per the standing
-gate.
+gate. Section 9 is the only target still open; every earlier section
+has closed, so it executes alone, first among equals of one — the
+ordering question is moot until another target is registered.
