@@ -4,11 +4,12 @@ Date: 2026-09-17 · Status: recorded; **amended 2026-09-19** with
 classes for residues B/C/D (B/C registered as rows 33–34; D no ABI
 divergence). Residue A is **one specific absent path** on the
 `nihaoshijie` dump — the pin's rank-0 user-phrase tail, which
-oxpinyin's language model never prices (characterised 2026-09-19; the
+oxpinyin's language model never prices, an instance of the wider
+refusal of every user-library token (characterised 2026-09-19; the
 common-root experiment against B/C refutes a shared cause) —
-classification pending, REVERT TARGET proposed. The union probe's
-oracle run **diverges at every sort word measured**; the measured
-causes per word and the four residues are recorded below.
+registered as row 35, REVERT TARGET (ruled 2026-09-19). The union
+probe's oracle run **diverges at every sort word measured**; the
+measured causes per word and the residues are recorded below.
 
 The §(e) rule (`docs/findings/compatibility-policy.md`) wants, for
 every exported symbol, a probe that asserts its
@@ -347,7 +348,7 @@ gate is `:2295-2296` — `2292-2293` is the longer-candidate gate.
 
 Diagnosis recorded; classes ruled 2026-09-19 (A by the settling
 measurement below, sharpened the same day to the one missing tail and
-a proposed class awaiting ruling; B/C/D by maintainer ruling). No
+ruled REVERT TARGET as row 35; B/C/D by maintainer ruling). No
 shipped-crate behaviour change in this amendment. Pin cites are from the checkout
 at `074a2219` (blob tree read 2026-09-19). Mechanism probe:
 `tools/bisection/residue-mechanism-diff.c` +
@@ -412,7 +413,7 @@ moves the fallback's pair to `sentence_start → 你好世界`, which the
 export never renders, so the export line goes empty while the fallback
 still writes. `residue-a-tail-diff` phase B prints both observables.
 
-### A — the missing user-phrase tail (**one specific absent path**; classification pending, REVERT TARGET proposed)
+### A — the missing user-phrase tail (**REVERT TARGET**, register row 35)
 
 **Amended 2026-09-19 UTC (characterisation).** The earlier text below
 the alignment table stands as the record of the settling measurement;
@@ -562,8 +563,12 @@ ABI probe (`residue-a-tail-diff.c`, phases X/B/D):
   texts give `n = 129` with ranks 0, 1, 2 — the `n=` line of every
   window at `0x1e` in this state.
 
-**Class (proposed; not ruled — no register row, totals unchanged).**
-**REVERT TARGET.** The pin's behaviour is reproducible: the missing
+**Class.** **REVERT TARGET** — registered as compatibility-policy
+row 35 (maintainer ruling 2026-09-19); work order `revert-plan.md`
+§12, executing first. At its true width: every user-library token is
+refused an n-best step cost, so no imported or learned phrase can
+enter a sentence path; the `nihaoshijie` tail is one instance. The
+pin's behaviour is reproducible: the missing
 step's price is `log(27 / 51051882 · 0.6873010)`, a basic-ops ratio the
 fixed-point scale already reproduces for system tokens (the
 counterfactual build below lands it at 14.827804 nats against the
@@ -800,14 +805,14 @@ after both trains), which `residue-a-tail-diff` phase B prints. Row 34
 (C) survives unchanged: its `0x1f` probe has the same outcome with or
 without A.
 
-**Consequence for the work order (`revert-plan.md` §9/§10/§11), for
-ruling, not applied here.** B-before-C stands on its own ground (B
-corrupts stored state). A slots after B and is independent of C in
-outcome; landing A before C leaves C's final differential running
-against pin-shaped n-best rows (two texts, ranks 0 and 2) — the
-cleaner end state — but either order measures the same C symptom. The
-one hard constraint the experiment adds: whichever of A and B lands
-first, §10's gate reads the unigram, or B's closure is unverified.
+**Consequence for the work order (`revert-plan.md`).** Ruled
+2026-09-19: A executes first (§12), then 10, 11, 9 — a one-line
+ordering fix inside an invariant the same function already documents
+for the bigram path, blocking a whole feature rather than perturbing
+presentation, and B's corrected gate is easier to write once the
+unigram observable is live. The order is safe exactly because of the
+finding above: §10's gate reads the unigram, never the old export-only
+line, once A has landed; §10 cross-references this section.
 
 ### D — system token unigram 161 vs 1610 (**no ABI divergence**)
 
