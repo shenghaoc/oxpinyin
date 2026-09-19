@@ -594,5 +594,6 @@ neither residue rides on those three scripts' intended surfaces.
 ### ROADMAP Stage 1 line
 
 Applied 2026-09-19. `ROADMAP.md` Stage 1 now records the corpus claim
-together with the open ABI/user-store residues (B/C, register row 32)
-under the frozen sentence-trellis exception (A / row 11).
+together with the open ABI/user-store residues (B/C as rows 33–34,
+register row 32) under the frozen sentence-trellis exception (A /
+row 11).
