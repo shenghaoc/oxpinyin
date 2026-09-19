@@ -928,6 +928,40 @@ same-dir on the pin's `data/`: `E2-0-1f:n=127` on both sides with
 `E1-5-1e` phrase rows 301; `E1-11-1e` and `E2-5-1e` unchanged. With
 row 35 landed, phase E IDENTICAL in full.
 
+### F — bigram export iterator, last-row return value (**REVERT TARGET**, register row 36)
+
+**Mechanism.** The pin's `pinyin_bigram_iterator_get_next_phrase`
+fills the out-params, advances the pinyin index, and returns
+`pinyin_bigram_iterator_has_next_phrase(iter)` (`pinyin.cpp:896-911`):
+`false` on the last row. Oxpinyin's returns `true` whenever a row was
+fetched and `false` only once exhausted
+(`crates/oxpinyin-capi/src/iterators.rs:373-410`). The unigram export
+iterator is not in this row — the pin's `pinyin_iterator_get_next_phrase`
+returns `true` on every row (`:698-769`), as oxpinyin's does.
+
+**Measured (2026-09-19 UTC).** `residue-a-tail-diff` phase X2, same-dir
+on the pin's `data/`, container `7cfeefdaf53f`: after the constrained
+train one row is exported on both sides and the line reads
+`X2-train1:bigram[0]=false 你好时节|ni'hao'shi'jie|138` on the pin,
+`true` on oxpinyin (`04-baseline/`). The union probe could not see it:
+the pin's export was empty in every probed state (row 33).
+
+**User-visible consequence.** ibus-libpinyin 1.16.5 wraps the call in
+`check_result` (`PYLibPinyin.cc:321`), which is `assert` outside
+`NDEBUG`/`G_DISABLE_ASSERT` builds (`PYUtil.h:49-53`): a debug ibus
+exporting a user dictionary with at least one bigram row aborts on the
+pin's last row and completes on oxpinyin. Release builds discard the
+value; the export contents are identical.
+
+**Class.** **REVERT TARGET** — a plain ABI return-value divergence;
+not (a)/(b)/(c). Registered as compatibility-policy row 36; work order
+`revert-plan.md` §13.
+
+**Fix shape (do not implement).** Return `handle.index <
+handle.rows.len()` after the increment. Pre-registered differential:
+phase X2's `bigram[0]` line identical, plus a two-row export (import
+two pairs, train each) asserting `true` then `false` on both sides.
+
 ### D — system token unigram 161 vs 1610 (**no ABI divergence**)
 
 **Units/scale first.** No deliberate ×10 / ÷10 on either read path.

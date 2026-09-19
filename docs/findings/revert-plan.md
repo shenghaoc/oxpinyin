@@ -5,7 +5,7 @@ Date: 2026-08-28 · Status: **work order** · Branch:
 merged as a document — the reverts landed as their own PRs).
 
 **Status at `87f25055` (2026-09-06), amended 2026-09-19 for rows 33–34
-and again for row 35:**
+and again for rows 35–36:**
 
 | # | Register | Disposition |
 | --- | --- | --- |
@@ -21,11 +21,13 @@ and again for row 35:**
 | 10 | #33 whole-row NBEST choose + train | **open** — registered 2026-09-19 (probe residue B): history fallback trains when no OneStep is present; pin `train_result3` writes nothing (§10) |
 | 11 | #34 imported user phrase after `guess_sentence` | **open** — registered 2026-09-19 (probe residue C): nbest cleared on parse; NBEST-wins dedup before `SORT_WITHOUT_SENTENCE` (§11) |
 | 12 | #35 user-library tokens refused an n-best step cost | **open** — registered 2026-09-19 (probe residue A): `nbest_step_costs_with_user_delta` returns no cost for a token without a system item, so no imported or learned phrase enters a sentence path (§12); executes first |
+| 13 | #36 bigram export iterator's last-row return value | **open** — registered 2026-09-19 (probe side observation (i)): the pin returns `has_next_phrase` after advancing, oxpinyin returns `true` for every fetched row (§13); independent of the sequence |
 
 The sections below are the 2026-08-28 text, kept as the record of what
 each revert had to prove, plus section 8 for the target the original
 list omitted, section 9 for row 32 (2026-09-18), sections 10–11 for
-rows 33–34 (2026-09-19), and section 12 for row 35 (2026-09-19).
+rows 33–34 (2026-09-19), section 12 for row 35 and section 13 for
+row 36 (2026-09-19).
 
 Driven by the classification table in
 `docs/findings/compatibility-policy.md`. Every entry that table marks
@@ -350,6 +352,32 @@ land with the measurements.
 - **Blocked on:** nothing — the port is unstarted work. Executes
   first (see the order below).
 
+### 13 — Bigram export iterator's last-row return value (register #36)
+
+- **Site:** `pinyin_bigram_iterator_get_next_phrase`
+  (`crates/oxpinyin-capi/src/iterators.rs:373-410`): returns `true`
+  whenever a row was fetched, `false` only once exhausted.
+- **Now:** on the last exported row the capi answers `true` where the
+  pin answers `false`. Measured 2026-09-19 (`residue-a-tail-diff`
+  phase X2, one bigram row exported on both sides):
+  `bigram[0]=false` on the pin, `true` on oxpinyin.
+- **Target:** the pin fills the out-params, advances, and returns
+  `pinyin_bigram_iterator_has_next_phrase(iter)` (`pinyin.cpp:896-911`)
+  — whether another row follows. The unigram export iterator is out of
+  scope: the pin's `pinyin_iterator_get_next_phrase` returns `true` on
+  every row (`:698-769`), as oxpinyin's does. Return
+  `handle.index < handle.rows.len()` after the increment.
+- **Probe:** phase X2 of `run-residue-a-tail-diff.sh` — the
+  `X2-train1:bigram[0]` line identical — plus a two-row export (import
+  two pairs, train each) asserting `true` then `false` on both sides,
+  which the ABI probe's export phase gains when this lands.
+- **Blocked on:** nothing — a two-line change, independent of the
+  12 → 10 → 11 → 9 sequence; lands whenever. Consumer note: ibus's
+  `check_result` wrapper (`PYLibPinyin.cc:321`) asserts on the value in
+  non-`NDEBUG` builds, so a debug ibus that completes an export on
+  oxpinyin today aborts on the pin's last row — reproducing the pin
+  reproduces that too; the release build discards the value.
+
 ## Order to execute
 
 Closed sections stay historical (6, 7, 4, 5, 3, 2, 1, 8). Among the
@@ -364,6 +392,6 @@ corrupts stored state while C is sequence-dependent presentation. The
 order is safe because the common-root experiment showed A's fix
 changes B's export symptom without touching B's defect: §10 reads the
 unigram, never the old export-only gate, once §12 has landed. Row 32
-(§9) is independent of the other three and may land in parallel once
-they are scheduled. Each lands with its own differential flipped to
+(§9) and row 36 (§13) are independent of the other three and may land
+in parallel once they are scheduled. Each lands with its own differential flipped to
 IDENTICAL and the frozen pins re-measured, per the standing gate.
