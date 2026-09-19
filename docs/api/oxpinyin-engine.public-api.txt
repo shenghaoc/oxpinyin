@@ -555,7 +555,7 @@ pub fn oxpinyin_engine::Session<D, L>::reset_composition(&mut self)
 pub const fn oxpinyin_engine::Session<D, L>::scoring_config(&self) -> &oxpinyin_core::scoring::ScoringConfig
 pub const fn oxpinyin_engine::Session<D, L>::sentence_lookup_active(&self) -> bool
 pub fn oxpinyin_engine::Session<D, L>::sentence_text(&self, u8) -> core::option::Option<&str>
-pub fn oxpinyin_engine::Session<D, L>::set_collapse_sentence_rows_to_best(&mut self, bool)
+pub const fn oxpinyin_engine::Session<D, L>::set_collapse_sentence_rows_to_best(&mut self, bool)
 pub fn oxpinyin_engine::Session<D, L>::set_incomplete_pinyin(&mut self, bool) -> core::result::Result<(), oxpinyin_engine::EngineError>
 pub const fn oxpinyin_engine::Session<D, L>::set_nbest_shape(&mut self, oxpinyin_engine::NbestShape)
 pub fn oxpinyin_engine::Session<D, L>::set_options(&mut self, oxpinyin_core::options::OptionBits) -> core::result::Result<(), oxpinyin_engine::EngineError>
