@@ -19,11 +19,15 @@
 # PINYIN_GEN_NGRAM gates: PINYIN_ORACLE_PREFIX (default
 # $HOME/.local/opt/pinyin-oracle) must hold the pin-verified prefix from
 # tools/oracle/build-oracle.sh. Absent → skip with a diagnostic, exit 0.
+# The capi system directory resolves through system-dir.sh
+# (TRAINDIFF_SYSTEM or OXPINYIN_SYSTEM_DIR), like the residue probes.
 #
 # Exit codes: 0 = identical or skipped; 1 = build/run failure; 2 = divergence.
 
 set -euo pipefail
 cd "$(dirname "$0")"
+# shellcheck source=tools/bisection/system-dir.sh
+. ./system-dir.sh
 REPO_ROOT="$(cd ../.. && pwd)"
 
 # ── Build the driver ────────────────────────────────────────────────────
@@ -68,14 +72,20 @@ echo "oracle: $ORACLE_SO"
 echo "data:   $ORACLE_DATA"
 echo ""
 
-# ── Drive both engines: one fresh process per round count ───────────────
+# ── Resolve the capi system data directory (after the oracle gate) ─────────
+
+SYSTEM="$(resolve_system_dir TRAINDIFF_SYSTEM train-diff)"
+echo "capi system dir: $SYSTEM"
+echo ""
+
+# ── Drive both engines: one fresh process per round count ─────────────────
 
 fail=0
 for rounds in 1 2 3 4 5 6 7 8; do
     echo "--- rounds=$rounds ---"
     CAPI_LOG="$(mktemp)"
     ORACLE_LOG="$(mktemp)"
-    if ! TRAINDIFF_ROUNDS=$rounds ./train-diff "$CAPI_SO" "$REPO_ROOT/fixtures/w3" \
+    if ! TRAINDIFF_ROUNDS=$rounds ./train-diff "$CAPI_SO" "$SYSTEM" \
         > "$CAPI_LOG" 2>/dev/null; then
         echo "FAIL: train-diff crashed against oxpinyin-capi (rounds=$rounds)"
         cat "$CAPI_LOG"
@@ -107,7 +117,7 @@ for mask in user all; do
     CAPI_LOG="$(mktemp)"
     ORACLE_LOG="$(mktemp)"
     if ! TRAINDIFF_ROUNDS=8 TRAINDIFF_MASK=$mask ./train-diff "$CAPI_SO" \
-        "$REPO_ROOT/fixtures/w3" > "$CAPI_LOG" 2>/dev/null; then
+        "$SYSTEM" > "$CAPI_LOG" 2>/dev/null; then
         echo "FAIL: train-diff crashed against oxpinyin-capi (mask=$mask)"
         cat "$CAPI_LOG"
         exit 1
