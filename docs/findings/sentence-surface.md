@@ -623,6 +623,15 @@ only). The residual is **hypothesis selection**, not display order: port and
 pin keep *different* 1st/2nd/3rd survivors in the top-3, the 8 row-0 misses
 being a different global best (`跑錶` vs `炮表`, `杂拴帕清` vs `杂树安帕清`).
 
+**`tuihui` note (2026-09-19 UTC).** The example above is this section's
+`sentence_tail` configuration: exported model20 tables
+(`PINYIN_EXPORT_DIR`) against `fixtures/w4/oracle-sentence-surface.txt`.
+On P6 native pin `data/` (same-dir ABI dump, `probe-coverage-abi.md` A)
+the port emits `[退回, 退回, 退会]`, matching the pin — the duplicate-
+text path is among the survivors. Two table configurations, two
+survivor sets; the §12 numbers and the 6 distinct-same invariant are
+unchanged.
+
 **Why it is not portable — the Phase-1 gate, now confirmed by the dump.** The
 selection runs on `gfloat m_poss`, accumulated `m_poss += log(...)` per step
 with a round-to-`f32` at every node (`$S/src/lookup/phonetic_lookup.h:663,
