@@ -9,7 +9,7 @@ The two criterion targets landed with PR #470
 (`oxpinyin-core --bench parse_and_graph`,
 `oxpinyin-engine --bench session_keystroke`) and had never been executed
 before this record. Every other criterion target in the workspace already
-had a `docs/perf/` or `docs/findings/perf-*` note; these did not.
+had a `docs/perf/` or `docs/findings/` note; these did not.
 
 ## Environment
 
@@ -190,7 +190,7 @@ target below its own resolution; every ID below has a recorded figure.
 | `engine_incremental_typing/zhongguoren_11_keystrokes` | 201.54 µs | 201.07 µs | 0.2% | window-scan |
 | `engine_backspace/erase_last_of_nihao` | 4.2920 µs | 4.0643 µs | 5.4% | window-scan |
 
-Across all 52 IDs: median run-to-run spread **4.9%**, mean **5.4%**.
+Across all 52 IDs: median run-to-run spread **4.5%**, mean **5.4%**.
 Engine window-scan IDs alone: mean spread **3.6%**, max **8.9%**.
 Several sub-µs core IDs land above 10% spread (worst
 `core_parse_with_options/options/long_nihaoshijie` at 18.6%).
