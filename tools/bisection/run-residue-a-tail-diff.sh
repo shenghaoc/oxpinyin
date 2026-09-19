@@ -145,6 +145,9 @@ if diff -u "$ORACLE_LOG" "$CAPI_LOG"; then
     [[ "$CLEAN_OUT" == 1 ]] && rm -rf "$OUT_DIR"
     exit 0
 fi
-echo "DIVERGENT (expected while residue A remains open)"
+echo "DIVERGENT (expected while rows 33/34/36/37 — residues B, C, X2, E —"
+echo "remain open; residue A itself is closed: register #35, landed with"
+echo "fix/nbest-step-cost-user-token. An A, X or D line in the diff above"
+echo "is a regression of that fix, not an open-residue artifact.)"
 echo "logs: $ORACLE_LOG  $CAPI_LOG"
 exit 2

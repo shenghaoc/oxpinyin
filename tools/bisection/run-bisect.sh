@@ -35,13 +35,39 @@ if [ ! -f "$CAPI_SO" ]; then
 fi
 echo "capi: $CAPI_SO"
 
-# ── Locate system data (redb tables for oxpinyin-capi) ─────────────────────
+# ── Locate system data (the committed W3 tables, per backend) ──────────────
+#
+# The committed W3 fixture holds one per-backend data directory
+# (fixtures/w3/<kct|redb|tkt|lmdb>), each a complete system data directory
+# the compiled-in backend opens as is. OXPINYIN_CAPI_BACKEND_EXT pins the
+# backend for capi builds that select one explicitly (e.g. --features
+# kyotocabinet); unset, the plain `cargo build -p oxpinyin-capi` above
+# compiles the default (tkrzw) and tkt is preferred — the same selection
+# run-cpp-smoke.sh makes (this harness runs it right below).
 
-CAPI_DATA="$REPO_ROOT/fixtures/w3"
-if [ ! -f "$CAPI_DATA/pinyin_index.redb" ]; then
-    echo "fatal: redb tables not found at $CAPI_DATA"
+FIX_ROOT="$REPO_ROOT/fixtures/w3"
+if [ -n "${OXPINYIN_CAPI_BACKEND_EXT:-}" ]; then
+    case "$OXPINYIN_CAPI_BACKEND_EXT" in
+        kct|redb|tkt|lmdb) SYS_EXT=$OXPINYIN_CAPI_BACKEND_EXT ;;
+        *)
+            echo "fatal: OXPINYIN_CAPI_BACKEND_EXT='$OXPINYIN_CAPI_BACKEND_EXT' is not one of: kct redb tkt lmdb"
+            exit 1
+            ;;
+    esac
+else
+    SYS_EXT=""
+    for ext in tkt kct redb lmdb; do
+        if [ -d "$FIX_ROOT/$ext" ]; then
+            SYS_EXT=$ext
+            break
+        fi
+    done
+fi
+if [ -z "$SYS_EXT" ] || [ ! -d "$FIX_ROOT/$SYS_EXT" ]; then
+    echo "fatal: no per-backend fixture directory under $FIX_ROOT"
     exit 1
 fi
+CAPI_DATA="$FIX_ROOT/$SYS_EXT"
 echo "data: $CAPI_DATA"
 echo ""
 
