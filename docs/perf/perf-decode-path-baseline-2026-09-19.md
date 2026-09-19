@@ -215,10 +215,12 @@ host only:
 - **Yes, loosely:** `engine_incremental_typing/zhongguoren_11_keystrokes`
   (~201 µs, 0.2% spread) and `engine_full_composition/compose/short_ni`
   (~21 µs, 0.7% spread) are the quietest window-scan IDs here.
-- **No, for a hard threshold:** core sub-µs IDs and
-  `engine_process_key/completing_nihao` already move 9–19% run-to-run on
-  a quiet machine — inside the 9–11% whole-session offset the proposal
-  cites from the cross-host steady-cycle record.
+- **No, for a hard threshold:** two sub-µs core IDs
+  (`core_parse/parse/short_ni` 16.9%, `core_parse/parse/separated` 17.0%)
+  move further run-to-run on a quiet machine than the 9–11% whole-session
+  offset the proposal cites from the cross-host steady-cycle record;
+  `engine_process_key/completing_nihao` at 8.9% sits just inside it. The
+  other core sub-µs IDs are quiet — it is these IDs, not the class.
 
 Cost of making any of them a ratchet later: a second measurement lane
 (or extending `tools/perf-gate/snapshot.sh`) that pins image-by-digest
