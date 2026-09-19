@@ -32,6 +32,12 @@
  * Phase D (adjust):  context at 0x38a (DYNAMIC_ADJUST on), guess, then
  *                    guess_candidates(5, 0x1e): the window whose bigram
  *                    term reads result[0]'s token at offset 5.
+ * Phase E (behind):  the window at an offset BEHIND the composition
+ *                    offset a choose advanced to. (E1) whole-composition
+ *                    NBEST choose + re-guess, then guess_candidates at
+ *                    0/0x1e, 0/0x1f, 5/0x1e and 11/0x1e; (E2) a NORMAL
+ *                    你好 choose (cursor 5), then guess_candidates at
+ *                    0/0x1e, 0/0x1f and 5/0x1e.
  *
  * Usage:
  *   ./residue-a-tail-diff <path-to-so> <systemdir>
@@ -541,6 +547,68 @@ int main(int argc, char **argv) {
     s.free_inst(inst);
     s.fini(ctx);
     rm_rf(userdir_d);
+
+    /* ── Phase E: windows behind the composition offset ── */
+    printf("=== phase: E-behind ===\n");
+    char userdir_e[64];
+    ctx = import_context(&s, argv[2], PARITY_WORD, userdir_e);
+    if (!ctx)
+        return 1;
+    /* E1: whole-composition NBEST choose (cursor 11), re-guess, windows. */
+    inst = s.alloc(ctx);
+    printf("E1:parse(nihaoshijie)=%zu\n", s.parse(inst, "nihaoshijie"));
+    printf("E1:guess_sentence=%s\n", yesno(s.guess_sentence(inst)));
+    printf("E1:guess_candidates(0,0x1e)=%s\n", yesno(s.guess_cands(inst, 0, 0x1e)));
+    lookup_candidate_t *erow = NULL;
+    n = 0;
+    s.getn(inst, &n);
+    if (n > 0 && s.getc(inst, 0, &erow) && erow) {
+        printf("E1:choose(0,row0)=%d\n", s.choose(inst, 0, erow));
+        printf("E1:guess_sentence(again)=%s\n", yesno(s.guess_sentence(inst)));
+        printf("E1:guess_candidates(0,0x1e)=%s\n", yesno(s.guess_cands(inst, 0, 0x1e)));
+        dump_rows(&s, inst, "E1-0-1e", 4);
+        printf("E1:guess_candidates(0,0x1f)=%s\n", yesno(s.guess_cands(inst, 0, 0x1f)));
+        dump_rows(&s, inst, "E1-0-1f", 4);
+        printf("E1:guess_candidates(5,0x1e)=%s\n", yesno(s.guess_cands(inst, 5, 0x1e)));
+        dump_rows(&s, inst, "E1-5-1e", 4);
+        printf("E1:guess_candidates(11,0x1e)=%s\n", yesno(s.guess_cands(inst, 11, 0x1e)));
+        dump_rows(&s, inst, "E1-11-1e", 4);
+    }
+    s.free_inst(inst);
+    /* E2: a NORMAL 你好 choose (cursor 5), then the windows at 0 and 5. */
+    inst = s.alloc(ctx);
+    printf("E2:parse(nihaoshijie)=%zu\n", s.parse(inst, "nihaoshijie"));
+    printf("E2:guess_sentence=%s\n", yesno(s.guess_sentence(inst)));
+    printf("E2:guess_candidates(0,0x1e)=%s\n", yesno(s.guess_cands(inst, 0, 0x1e)));
+    n = 0;
+    s.getn(inst, &n);
+    lookup_candidate_t *nrow = NULL;
+    guint ni = 0;
+    for (guint i = 0; i < n; i++) {
+        lookup_candidate_t *c = NULL;
+        int type = -1;
+        const char *t = NULL;
+        if (s.getc(inst, i, &c) && c && s.gettype(inst, c, &type) && type == 2 &&
+            s.getstr(inst, c, &t) && t && strcmp(t, "你好") == 0 && !s.is_user(inst, c)) {
+            nrow = c;
+            ni = i;
+            break;
+        }
+    }
+    printf("E2:row(NORMAL 你好)=%s at %u\n", nrow ? "found" : "absent", ni);
+    if (nrow) {
+        printf("E2:choose(0,row)=%d\n", s.choose(inst, 0, nrow));
+        printf("E2:guess_sentence(again)=%s\n", yesno(s.guess_sentence(inst)));
+        printf("E2:guess_candidates(0,0x1e)=%s\n", yesno(s.guess_cands(inst, 0, 0x1e)));
+        dump_rows(&s, inst, "E2-0-1e", 4);
+        printf("E2:guess_candidates(0,0x1f)=%s\n", yesno(s.guess_cands(inst, 0, 0x1f)));
+        dump_rows(&s, inst, "E2-0-1f", 4);
+        printf("E2:guess_candidates(5,0x1e)=%s\n", yesno(s.guess_cands(inst, 5, 0x1e)));
+        dump_rows(&s, inst, "E2-5-1e", 4);
+    }
+    s.free_inst(inst);
+    s.fini(ctx);
+    rm_rf(userdir_e);
 
     dlclose(handle);
     return 0;
