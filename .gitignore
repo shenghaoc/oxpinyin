@@ -48,6 +48,8 @@ rustc-ice-*.txt
 /tools/bisection/union-edge-diff
 /tools/bisection/plant-oracle-bigram
 /tools/bisection/abi-probe-diff
+/tools/bisection/residue-mechanism-diff
+/tools/bisection/residue-a-tail-diff
 
 # macOS
 .DS_Store

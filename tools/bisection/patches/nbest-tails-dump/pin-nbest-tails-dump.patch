@@ -1,0 +1,59 @@
+diff --git a/src/lookup/phonetic_lookup.h b/src/lookup/phonetic_lookup.h
+index c092e76..70036db 100644
+--- a/src/lookup/phonetic_lookup.h
++++ b/src/lookup/phonetic_lookup.h
+@@ -24,6 +24,8 @@
+ 
+ #include <limits.h>
+ #include <math.h>
++#include <stdio.h>
++#include <stdlib.h>
+ #include "novel_types.h"
+ #include "pinyin_utils.h"
+ #include "phonetic_key_matrix.h"
+@@ -661,6 +663,11 @@ protected:
+         next_step.m_handles[0] = cur_step->m_handles[1]; next_step.m_handles[1] = token;
+         next_step.m_sentence_length = cur_step->m_sentence_length + phrase_length;
+         next_step.m_poss = cur_step->m_poss + log(elem_poss * pinyin_poss * unigram_lambda);
++        if (7 == PHRASE_INDEX_LIBRARY_INDEX(token) && NULL != getenv("OXPINYIN_DUMP_TAILS"))
++            fprintf(stderr, "unigram_step: start=%d end=%d token=0x%08x unigram=%u total=%u elem_poss=%.10g pinyin_poss=%.7f cur_poss=%.7f next_poss=%.7f\n",
++                    start, end, token, m_cached_phrase_item.get_unigram_frequency(),
++                    m_phrase_index->get_phrase_index_total_freq(), elem_poss,
++                    pinyin_poss, cur_step->m_poss, next_step.m_poss);
+         next_step.m_last_step = start;
+         next_step.m_sub_index = cur_step->m_current_index;
+ 
+@@ -752,6 +759,13 @@ public:
+ 
+         m_trellis.fill_prefixes(prefixes);
+ 
++        /* diagnosis dump (oxpinyin residue A): env-gated, stderr only. */
++        const bool dump_tails = NULL != getenv("OXPINYIN_DUMP_TAILS");
++        if (dump_tails)
++            fprintf(stderr, "nbest: nstep=%d total_freq=%u bigram_lambda=%.7f unigram_lambda=%.7f\n",
++                    nstep, m_phrase_index->get_phrase_index_total_freq(),
++                    bigram_lambda, unigram_lambda);
++
+         PhraseIndexRanges ranges;
+         memset(ranges, 0, sizeof(PhraseIndexRanges));
+         m_phrase_index->prepare_ranges(ranges);
+@@ -833,6 +847,19 @@ public:
+ 
+             check_result(extract_result<nstore>(&m_trellis, tail, result));
+             results->add_result(result);
++
++            if (dump_tails) {
++                fprintf(stderr, "tail[%zu] m_poss=%.7f m_sentence_length=%d m_last_step=%d m_sub_index=%d handles=0x%08x,0x%08x result:",
++                        i, tail->m_poss, tail->m_sentence_length,
++                        tail->m_last_step, tail->m_sub_index,
++                        tail->m_handles[0], tail->m_handles[1]);
++                for (size_t k = 0; k < result->len; ++k) {
++                    phrase_token_t t = g_array_index(result, phrase_token_t, k);
++                    if (null_token != t)
++                        fprintf(stderr, " %zu:0x%08x", k, t);
++                }
++                fprintf(stderr, "\n");
++            }
+         }
+ 
+         g_array_free(result, TRUE);
