@@ -7,7 +7,9 @@ divergence). Residue A is **one specific absent path** on the
 oxpinyin's language model never prices, an instance of the wider
 refusal of every user-library token (characterised 2026-09-19; the
 common-root experiment against B/C refutes a shared cause) —
-registered as row 35, REVERT TARGET (ruled 2026-09-19). Residue E —
+registered as row 35, **closed in code 2026-09-19** (the gate now
+prices user-file tokens from their user delta; ruled REVERT TARGET
+2026-09-19). Residue E —
 the candidate window behind the composition offset, an empty list at
 its worst — is row 37; the export iterator's last-row return is row
 36. The union probe's oracle run **diverges at every sort word
@@ -416,11 +418,12 @@ moves the fallback's pair to `sentence_start → 你好世界`, which the
 export never renders, so the export line goes empty while the fallback
 still writes. `residue-a-tail-diff` phase B prints both observables.
 
-### A — the missing user-phrase tail (**REVERT TARGET**, register row 35)
+### A — the missing user-phrase tail (**closed in code 2026-09-19**, register row 35)
 
-**Amended 2026-09-19 UTC (characterisation).** The earlier text below
-the alignment table stands as the record of the settling measurement;
-what follows names the one tail it left unnamed.
+**Amended 2026-09-19 UTC (characterisation); closed 2026-09-19 UTC
+(branch `fix/nbest-step-cost-user-token`, "Landed" paragraph below).**
+The earlier text below the alignment table stands as the record of the
+settling measurement; what follows names the one tail it left unnamed.
 
 **Alignment, verified.** Same-dir on the pin's `data/` inside
 `debian:testing` container
@@ -568,8 +571,9 @@ ABI probe (`residue-a-tail-diff.c`, phases X/B/D):
 
 **Class.** **REVERT TARGET** — registered as compatibility-policy
 row 35 (maintainer ruling 2026-09-19); work order `revert-plan.md`
-§12, executing first. At its true width: every user-library token is
-refused an n-best step cost, so no imported or learned phrase can
+§12, **executed and closed 2026-09-19**. At its true width: every
+user-library token was
+refused an n-best step cost, so no imported or learned phrase could
 enter a sentence path; the `nihaoshijie` tail is one instance. The
 pin's behaviour is reproducible: the missing
 step's price is `log(27 / 51051882 · 0.6873010)`, a basic-ops ratio the
@@ -602,6 +606,28 @@ unigram=Some(21392)` and rows 14.828 / 24.715 nats with
 of A's gate: the experiment below shows B's export line going empty
 under an A fix while B's defect stands, so a B gate must read the
 user token's unigram, not the export.
+
+**Landed (2026-09-19 UTC).** The fix shape above is now the shipped
+gate in `BigramLanguageModel::nbest_step_costs_with_user_delta`
+(`crates/oxpinyin-data/src/lm/mod.rs`, branch
+`fix/nbest-step-cost-user-token`): `unigram_count`'s `None` splits
+three ways — a visible `USER_FILE` nibble (5/6/7) passes with
+`count = 0` and prices from `user.unigram_delta`; a masked library's
+token and a loaded library's missing item keep the default answer, as
+the pin's failing `get_phrase_item` (`ERROR_NO_SUB_PHRASE_INDEX` /
+`ERROR_NO_ITEM`) does. The pre-registered differential ran IDENTICAL
+on its gate: same-dir on the pin's `data/` inside `debian:testing`
+(image `sha256:dab11cdb…`), pin oracle tkrzw at
+`/inputs/oracle-tkrzw/prefix`, phase A byte-equal
+(`A-1e:n=128`, ranks 0 and 2, `sentence[0..2]` 你好世界 / 你好世界 /
+你好时节), phase X byte-equal (`clear_constraint(0)=true`, 你好时节
+at nbest index 2, 你好 161 → 644 after the train), `D-5:n=303`; the
+runtime probe prints
+`step_costs(sentence_start → 0x07000002): unigram=Some(21392 =
+14.827804 nats)` with rows `21392 = 14.827804487` /
+`35656 = 24.714855870` nats and `sentence_text(1)` the duplicate
+text. The whole-log diff's residue is exactly B, C, X2 and E (rows
+33, 34, 36, 37) — no A, X or D line remains. Row 35 is closed.
 
 **Side observations (not A, B or C).** (i)
 `pinyin_bigram_iterator_get_next_phrase` on the last export row answers
