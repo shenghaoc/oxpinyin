@@ -4,7 +4,8 @@ Date: 2026-08-28 · Status: **work order** · Branch:
 `claude/pr5-revert-incompatible-divergences` (#209; the work order
 merged as a document — the reverts landed as their own PRs).
 
-**Status at `87f25055` (2026-09-06), amended 2026-09-19 for rows 33–34:**
+**Status at `87f25055` (2026-09-06), amended 2026-09-19 for rows 33–34
+and again for row 35:**
 
 | # | Register | Disposition |
 | --- | --- | --- |
@@ -19,11 +20,12 @@ merged as a document — the reverts landed as their own PRs).
 | 9 | #32 sort-option input of `pinyin_guess_candidates` | **open** — registered 2026-09-18: bits 0x2/0x4/0x8/0x10 ignored, no longer-candidate row produced; the port owes the pin's longer-candidate production and the three sort keys (§9) |
 | 10 | #33 whole-row NBEST choose + train | **open** — registered 2026-09-19 (probe residue B): history fallback trains when no OneStep is present; pin `train_result3` writes nothing (§10) |
 | 11 | #34 imported user phrase after `guess_sentence` | **open** — registered 2026-09-19 (probe residue C): nbest cleared on parse; NBEST-wins dedup before `SORT_WITHOUT_SENTENCE` (§11) |
+| 12 | #35 user-library tokens refused an n-best step cost | **open** — registered 2026-09-19 (probe residue A): `nbest_step_costs_with_user_delta` returns no cost for a token without a system item, so no imported or learned phrase enters a sentence path (§12); executes first |
 
 The sections below are the 2026-08-28 text, kept as the record of what
 each revert had to prove, plus section 8 for the target the original
-list omitted, section 9 for row 32 (2026-09-18), and sections 10–11 for
-rows 33–34 (2026-09-19).
+list omitted, section 9 for row 32 (2026-09-18), sections 10–11 for
+rows 33–34 (2026-09-19), and section 12 for row 35 (2026-09-19).
 
 Driven by the classification table in
 `docs/findings/compatibility-policy.md`. Every entry that table marks
@@ -261,9 +263,18 @@ land with the measurements.
 - **Probe:** phase B of `tools/bisection/residue-mechanism-diff.c` /
   `run-residue-mechanism-diff.sh` must print empty bigram rows on both
   sides after `train(0)` and `train(0)again` (same-dir on the pin's
-  `data/`).
-- **Blocked on:** nothing — the port is unstarted work. Executes before
-  §11: this residue corrupts stored user state and compounds with use.
+  `data/`) — **and** the user 你好世界 token's unigram must stay 27 on
+  both sides after both trains (phase B of
+  `tools/bisection/residue-a-tail-diff.c` prints it). The export line
+  alone is not a gate once §12 has landed: the common-root experiment
+  (`probe-coverage-abi.md`, "A — common-root experiment") showed that
+  an A fix alone moves the fallback's trained pair to
+  `sentence_start → 你好世界`, which no export renders, so the old gate
+  passes with the fallback still writing. Do not re-run the old gate
+  after §12; read the unigram.
+- **Blocked on:** nothing — the port is unstarted work. Executes after
+  §12 and before §11: this residue corrupts stored user state and
+  compounds with use.
 
 ### 11 — Imported user phrase after `guess_sentence` (register #34)
 
@@ -296,11 +307,63 @@ land with the measurements.
 - **Blocked on:** nothing — the port is unstarted work. Sequence-
   dependent presentation only; executes after §10.
 
+### 12 — User-library tokens refused an n-best step cost (register #35)
+
+- **Site:** `BigramLanguageModel::nbest_step_costs_with_user_delta`
+  (`crates/oxpinyin-data/src/lm/mod.rs:532-548`): the first gate
+  (`:540-543`) destructures `self.unigram_count(token)` — the system
+  chunk libraries only (`:340`; `PhraseLibraries::unigram_count`,
+  `phrase_libraries.rs:179`) — and returns the default when it is
+  `None`, before the user delta is merged at `:545`.
+- **Now:** every USER_DICTIONARY (7) / NETWORK_DICTIONARY (6) token
+  answers `NbestStepCosts { unigram: None, blended: None }`, so
+  `crate::nbest::expand_entry` (`oxpinyin-engine/src/nbest.rs:677`)
+  pushes nothing for it: no imported or learned phrase can enter a
+  sentence path. Measured same-dir on the pin's `data/` 2026-09-19
+  (`probe-coverage-abi.md` A): after importing 你好世界/9, the pin's
+  rank-0 tail for `nihaoshijie` is that single token
+  (`m_poss = −14.8274994`, `last_step = 0`); oxpinyin's n-best is the
+  pin's shifted up by one, `step_costs(sentence_start → 0x07000002)`
+  `None/None`, every `0x1e` window one row longer (129 vs 128).
+- **Target:** the pin prices any loaded sub-index's item
+  (`unigram_gen_next_step`, `phonetic_lookup.h:643-668`, over
+  `get_phrase_item`; the import wrote `count × 3` into the phrase
+  index, `pinyin.cpp:604-605`). Price a token whose library owns no
+  system item from its user delta alone — `count = 0 +
+  user.unigram_delta` — for the user-file libraries and the promoted
+  addon nibble, keeping `None` for an unloaded (masked) library's
+  token; `unigram_total` already carries the user delta. A one-line
+  ordering fix inside an invariant the same function already documents
+  for the bigram path ("the bigram merge happens *before* the count > 0
+  presence gate").
+- **Probe:** `tools/bisection/run-residue-a-tail-diff.sh` same-dir on
+  the pin's `data/`: phase A IDENTICAL — `sentence[0..2]` = 你好世界 /
+  你好世界 / 你好时节, `A-1e:n=128`, NBEST ranks 0 and 2; phase X
+  IDENTICAL — `clear_constraint(0)=true`, the 你好时节 row at nbest
+  index 2, unigram 你好 161 → 644 after the train; phase D `n=303`;
+  the runtime probe (`crates/oxpinyin-runtime/examples/nbest_tail_probe`)
+  prints `step_costs(sentence_start → 0x07000002): unigram=Some(21392)`
+  and rows 14.828 / 24.715 nats with `sentence_text(1)` the duplicate
+  text (the counterfactual build measured exactly this,
+  `probe-coverage-abi.md` "A — common-root experiment"). Phases B and C
+  are not this row's gate.
+- **Blocked on:** nothing — the port is unstarted work. Executes
+  first (see the order below).
+
 ## Order to execute
 
 Closed sections stay historical (6, 7, 4, 5, 3, 2, 1, 8). Among the
-open targets: **10, then 11, then 9** — B before C because B corrupts
-stored state while C is sequence-dependent presentation; row 32 (§9)
-is independent of either and may land in parallel once 10/11 are
-scheduled. Each lands with its own differential flipped to IDENTICAL
-and the frozen pins re-measured, per the standing gate.
+open targets: **12, then 10, then 11, then 9** (maintainer ruling
+2026-09-19). A (§12) goes first: it is a one-line ordering fix inside
+an invariant the same function already documents for the bigram path,
+it blocks a whole feature — no imported or learned phrase can enter a
+sentence path — rather than perturbing presentation, and B's corrected
+gate (§10: the user token's unigram, not the export line) is easier to
+write once the unigram observable is live. B before C because B
+corrupts stored state while C is sequence-dependent presentation. The
+order is safe because the common-root experiment showed A's fix
+changes B's export symptom without touching B's defect: §10 reads the
+unigram, never the old export-only gate, once §12 has landed. Row 32
+(§9) is independent of the other three and may land in parallel once
+they are scheduled. Each lands with its own differential flipped to
+IDENTICAL and the frozen pins re-measured, per the standing gate.
