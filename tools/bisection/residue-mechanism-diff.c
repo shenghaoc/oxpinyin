@@ -219,9 +219,9 @@ int main(int argc, char **argv) {
         perror("mkdtemp");
         return 1;
     }
-    printf("so=%s\n", argv[1]);
-    printf("systemdir=%s\n", argv[2]);
-    printf("userdir=%s\n", userdir);
+    fprintf(stderr, "so=%s\n", argv[1]);
+    fprintf(stderr, "systemdir=%s\n", argv[2]);
+    fprintf(stderr, "userdir=%s\n", userdir);
 
     /* ── Phase D: fresh context, no import ─────────────────────────── */
     printf("=== phase: D-system-unigram ===\n");
@@ -263,7 +263,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("=== phase: B-whole-row-train ===\n");
-    printf("userdir_b=%s\n", userdir_b);
+    fprintf(stderr, "userdir_b=%s\n", userdir_b);
     pinyin_context_t *ctx = s.init(argv[2], userdir_b);
     if (!ctx) {
         fprintf(stderr, "init failed for phase B\n");
