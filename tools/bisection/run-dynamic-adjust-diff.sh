@@ -16,13 +16,17 @@
 # Env-gated on the pin-built oracle, mirroring the other differentials:
 # PINYIN_ORACLE_PREFIX (default $HOME/.local/opt/pinyin-oracle) must hold the
 # pin-verified prefix from tools/oracle/build-oracle.sh. Absent -> skip with
-# a diagnostic, exit 0.
+# a diagnostic, exit 0. The capi system directory resolves through
+# system-dir.sh (DYNAMIC_ADJUST_SYSTEM or OXPINYIN_SYSTEM_DIR), like the
+# residue probes.
 #
 # Exit codes: 0 = identical or skipped; 1 = build/run failure;
 #             2 = divergence; 3 = probe is vacuous.
 
 set -euo pipefail
 cd "$(dirname "$0")"
+# shellcheck source=tools/bisection/system-dir.sh
+. ./system-dir.sh
 REPO_ROOT="$(cd ../.. && pwd)"
 
 echo "--- building dynamic-adjust-diff driver ---"
@@ -33,7 +37,6 @@ gcc -Wall -Wextra -Werror -O2 -o "$DRIVER" dynamic-adjust-diff.c -ldl
 echo "--- building oxpinyin-capi ---"
 cargo build -p oxpinyin-capi --locked --manifest-path "$REPO_ROOT/Cargo.toml"
 OX_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
-OX_DATA="$REPO_ROOT/fixtures/w3"
 [ -f "$OX_SO" ] || { echo "fatal: $OX_SO not found"; exit 1; }
 
 PREFIX="${PINYIN_ORACLE_PREFIX:-$HOME/.local/opt/pinyin-oracle}"
@@ -52,6 +55,9 @@ if [ ! -f "$PREFIX/oracle-pin.txt" ] || [ ! -f "$ORACLE_SO" ]; then
     echo "  about whether the bit matches upstream."
     exit 0
 fi
+
+OX_DATA="$(resolve_system_dir DYNAMIC_ADJUST_SYSTEM dynamic-adjust)"
+echo "capi system dir: $OX_DATA"
 
 OUT="$(mktemp -d)"
 trap 'rm -rf "$(dirname "$DRIVER")" "$OUT"' EXIT
