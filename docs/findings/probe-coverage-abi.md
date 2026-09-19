@@ -1,9 +1,10 @@
 # Findings — probe coverage over the full exported pinyin ABI
 
-Date: 2026-09-17 · Status: recorded. The union probe's oracle run
-**diverges at every sort word measured**; the measured causes per word
-and the four open residues are recorded below. Classification of the
-residues is the maintainer's; none is fixed here.
+Date: 2026-09-17 · Status: recorded; **amended 2026-09-19** with
+proposed classes for the four residues (maintainer rules; none fixed).
+The union probe's oracle run **diverges at every sort word measured**;
+the measured causes per word and the four open residues are recorded
+below.
 
 The §(e) rule (`docs/findings/compatibility-policy.md`) wants, for
 every exported symbol, a probe that asserts its
@@ -337,3 +338,215 @@ only works today because oxpinyin ignores the bits.
 Also reported (code comment, no change made): `sentence.rs:258` cites
 `pinyin.cpp:2292-2293` as the sentence-candidate gate; the sentence
 gate is `:2295-2296` — `2292-2293` is the longer-candidate gate.
+
+## Amendment — residue classification (2026-09-19 UTC)
+
+Diagnosis only. No shipped-crate behaviour change. Proposed classes are
+for the maintainer; none is ruled here. Pin cites are from the checkout
+at `074a2219` (blob tree read 2026-09-19). Mechanism probe:
+`tools/bisection/residue-mechanism-diff.c` +
+`run-residue-mechanism-diff.sh`. Measurement environment:
+`debian:testing` container
+`fd969584d8c60edcdfbc22fea20a0682aa4db90874ce35915b8b14866ed0e8a1`,
+image
+`docker.io/library/debian@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9`,
+pin oracle tkrzw at `/work/oracle/prefix` (pin_ref
+`libpinyin-2.11.92-074a2219…+dbm-tkrzw`), durable logs
+`~/.local/share/oxpinyin-evidence/2026-09-19/residue-classify/`
+(same-dir phase B/D under `same-dir/`).
+
+### B — whole-row choose + train (proposed: **REVERT TARGET**)
+
+**Mechanism.** A row-0 `NBEST_MATCH_CANDIDATE` choose runs
+`diff_result(best, best)` and installs no `CONSTRAINT_ONESTEP` —
+pin `pinyin.cpp:2515-2520` / `phonetic_lookup.cpp:172-205`; oxpinyin
+`constraint.rs:193-214` and `selection.rs:221-241` (comments there
+already state the empty-store law). Pin `pinyin_train` always delegates
+to `train_result3` (`pinyin.cpp:2670-2690`;
+`phonetic_lookup.h:844-936`), which trains a phrase only when
+`train_next || constraint.m_type == CONSTRAINT_ONESTEP` (`:866`). With
+no OneStep cells the loop writes nothing to the user bigram. Oxpinyin's
+`Session::train` (`selection.rs:298-338`) takes that constrained walk
+only when some `last_result` span sits on a OneStep cell (`:314-318`);
+otherwise it falls through to the selection-history record that the
+row choose still filled (`:197-218`, `:333-337`). That fallback is the
+divergence — not a different notion of "constrained run", and not a
+deliberate class-(a)/(b)/(c) exception: it is a missing guard that
+"no OneStep ⇒ observe nothing", matching `train_result3`.
+
+**Re-measured (same-dir, 2026-09-19).** After import 你好世界 / parse
+`nihaoshijie` / `guess_sentence` / choose row 0:
+`clear_constraint(0)=false` on both sides (no OneStep). Pin bigram
+export stays empty through two `train(0)` calls. Capi records
+`你好世界|ni'hao'shi'jie|138` after the first train and `|414` after
+the second — the export's stored-count×2 rendering of seeds 69 then
+138 (`run-train-diff.sh` header; `user-store.md` §2.1). Logs:
+`same-dir/{oracle,capi}.log`.
+
+**User-visible consequence.** After N sessions of the same whole-row
+accept + train (the ibus shape that commits the 1-best sentence
+candidate), the pin's user bigram is unchanged for that pair; oxpinyin
+accumulates `sentence_start → 你好世界` (exported counts 138, 414,
+1242, …). DYNAMIC_ADJUST / prediction then boosts that phrase on
+oxpinyin and not on the pin. This is the only residue that corrupts
+stored user state and compounds with use.
+
+**Fix shape (do not implement).** Drop the history fallback whenever
+no OneStep cell is present — `Session::train` observes nothing, as
+`train_result3` does. Pre-registered differential: phase B of
+`residue-mechanism-diff` must print empty bigram rows on both sides
+after `train(0)` and `train(0)again`.
+
+### A — nbest paths vs texts (proposed: **(a) MATH**, already frozen)
+
+**Mechanism.** The pin's k-best keeps up to three trellis *tails* with
+no text dedup inside the search (`phonetic_lookup.h:736-836`,
+`get_tails` `:330-340`); `pinyin_get_sentence` converts each
+`MatchResult` by index (`pinyin.cpp:1464-1481`), so two paths can
+share a display string. Candidate-list dedup
+(`_remove_duplicated_items_by_phrase_string`, `:2298-2299`) is a later,
+separate pass. Oxpinyin likewise does not text-dedup inside the
+trellis (`nbest.rs:301-333`, `:508-535`; span expand only skips
+duplicate *tokens* on the same span, `:601-622`). It simply never
+places the pin's duplicate-text second path among the top-3 survivors
+— a different third text appears instead. Candidate-list
+`prepend_nbest_rows` + `dedup_by_text_keep_first`
+(`lookup.rs:558-580`) is the same late pass as the pin's, not the
+cause of the `get_sentence` gap.
+
+**Which defect.** "Never produce the duplicate path" (hypothesis /
+survivor selection), **not** search-time text dedup.
+
+**Reachability without user import.** Yes — system-only `tuihui` is
+the documented distinct-same case: pin `[退回, 退回, 退会]` vs port
+`[退回, 退会]` (`sentence-surface.md:617-624`). The import-boosted
+`nihaoshijie` shape is the same class, not a new mechanism.
+
+**Corpus-tier coverage.** `sentence_tail` /
+`sentence_surface_parity` already gate the ordered `get_sentence`
+lists and the distinct-same bucket. Default candidate-corpus pins do
+not assert ordered nbest texts; they could not have caught this as a
+*candidate*-surface miss. The gap is therefore a sentence-surface
+residual already under the frozen Stage-1 sentence gate, not an
+uncovered corpus hole.
+
+**User-visible consequence.** `get_sentence(0/1/2)` can repeat a text
+on the pin and shows three distinct strings on oxpinyin (with a
+different third). After `guess_candidates`, the pin's list may drop
+the duplicate NBEST string; oxpinyin's list already carried three
+distinct NBEST texts (same-dir probe: `n_candidate` 128 vs 129).
+
+**Class.** **(a) MATH** — the same frozen register row 11
+(`gfloat` `log` trellis; maintainer ruling 2026-09-02). Not a separate
+REVERT TARGET.
+
+### D — system token unigram 161 vs 1610 (proposed: **no ABI divergence**)
+
+**Units/scale first.** No deliberate ×10 / ÷10 on either read path.
+Pin: `pinyin_token_get_unigram_frequency` →
+`PhraseItem::get_unigram_frequency()` (`pinyin.cpp:2821-2833`;
+`phrase_index.h:124-126`) — the chunk `u32` field. Oxpinyin: same ABI
+→ `RuntimeLm::unigram_freq` → `PhraseLibraries` item field
+(`oxpinyin-capi/src/dict.rs:276-344`;
+`oxpinyin-runtime/src/lib.rs:780-789`;
+`phrase_library.rs:305-311`). `amplified_frequency` is sort-only
+(`lookup.rs:640-657`), never this getter. Committed fixtures store
+你好 unigram **161** (`fixtures/w3/*/gb_char.bin`).
+
+**Isolation.** dict-surface's add-then-read flows remain IDENTICAL.
+The original probe opened the oracle on `ORACLE_DATA` and the capi on
+`resolve_system_dir` — different trees. Same-dir re-measure
+(2026-09-19): both `.so` files on the pin's `data/` answer
+`token_unigram=true/161` for token `0x01006205` / 你好
+(`same-dir/{oracle,capi}.log`). The 1610 figure is therefore a
+harness/data mismatch from the split-dir walk, not a reader scale bug.
+
+**User-visible consequence.** None on a shared system directory. A
+consumer that pointed each library at different compiled tables would
+see different raw unigrams by construction.
+
+**Class.** **no ABI divergence** (harness/data). Settled by the
+same-dir probe. If a future same-dir run ever regenerates the 10× gap,
+re-open as an OPEN DEFECT in whoever writes the chunk field — not in
+the ABI getter.
+
+### C — imported phrase as a user row (proposed: **REVERT TARGET**)
+
+**Mechanism — what the second guess changes.**
+
+Fresh window (parse → `guess_candidates` only): both sides surface
+imported 你好世界 as NORMAL with `is_user` true — symmetric
+(`pinyin.cpp:3712-3723`; `oxpinyin-capi/src/candidates.rs:194-205`).
+
+After `guess_sentence` + `guess_candidates`:
+
+- **Pin.** `guess_sentence` fills `m_nbest_results` only
+  (`pinyin.cpp:1372-1386`). A later parse does **not** clear nbest —
+  only `pinyin_reset` does (`:2693-2704` vs parse at `:1497-1524`).
+  Each `guess_candidates` rebuilds from scratch (`:2184-2300`). At
+  `0x1e` the live nbest prepend zombies the same-text user NORMAL
+  (NBEST wins, `:2102-2125`). At `0x1f`
+  `SORT_WITHOUT_SENTENCE_CANDIDATE` skips the prepend (`:2295-2296`),
+  so the user NORMAL remains.
+- **Oxpinyin.** `guess_sentence` → `refresh()` →
+  `prepend_nbest_rows` + `dedup_by_text_keep_first` drops the
+  same-text user phrase from the session cache (`guess.rs:45-103`;
+  `lookup.rs:558-580`). Every `begin_parse` calls
+  `reset_parse_state` → `reset_composition` → `sentence.reset()`
+  (`oxpinyin-facade/src/instance.rs:145-194`;
+  `session/state.rs:170-172`) — unlike the pin. `guess_candidates`
+  then mostly filters that already-deduped cache
+  (`sentence.rs:264-389`), so at `0x1f` the user row is gone with the
+  sentences, and after a re-parse at `0x1e` the nbest rows themselves
+  are gone.
+
+**User-visible consequence.** Sequence-dependent: after a sentence
+guess, ibus-style `0x1f` still offers the imported user phrase on the
+pin and may not on oxpinyin; after re-parse + `0x1e` the pin can still
+show live sentence rows and oxpinyin rebuilds phrase-only.
+
+**Class.** **REVERT TARGET** — nbest lifetime and candidate-rebuild
+mismatch; not (a)/(b)/(c).
+
+**Fix shape (do not implement).** (1) Keep nbest across parse; clear
+only on full reset / a new `guess_sentence`, matching the pin.
+(2) When `SORT_WITHOUT_SENTENCE` is set, rebuild the phrase window
+without the prior NBEST-wins dedup (or rebuild from scratch every
+`guess_candidates` as the pin does). Pre-registered differential:
+import 你好世界 → parse → `guess_sentence` →
+`guess_candidates(0, 0x1f)` → assert NORMAL + `is_user` on both;
+then re-parse → `guess_candidates(0, 0x1e)` → assert nbest rows still
+present on both.
+
+### Stale runners — would they have caught B or D?
+
+| Runner | Would have caught B? | Would have caught D? |
+|---|---|---|
+| `run-train-diff.sh` | **No.** Drives NORMAL chooses of 你 then 好 (installs OneStep); `train_result3` trains on both sides. Never exercises whole-row NBEST choose. | **No.** No `token_get_unigram_frequency` of a fresh system token. |
+| `run-bisect.sh` | **Unreliable.** Chooses candidate[0] after guess and trains, but does not export the user bigram; a whole-row empty-train would look like success (`train: true`). | **No.** |
+| `run-dynamic-adjust-diff.sh` | **No.** Compares post-choose candidate windows under DYNAMIC_ADJUST, not the bigram export after a constraint-free train. | **No.** |
+
+Repairing the three runners' pre-split `fixtures/w3` paths remains
+useful for their own gates; it is **not** higher priority for B or D
+than the residue-mechanism probe (B) or same-dir dict reads (D) —
+neither residue rides on those three scripts' intended surfaces.
+
+### ROADMAP Stage 1 line (report only; change nothing)
+
+`ROADMAP.md` still reads:
+
+> Exact-output parity with the pin-built libpinyin oracle (differential
+> testing) — complete: candidate surface bit-identical on all 10,190
+> corpus rows (`docs/testing/corpus-tail.md`)
+
+That line is contradicted by residues B and C (and by register row 32's
+sort-option gap) as *ABI / stored-state* gaps outside the candidate-
+corpus pin. Quote of the wording this diagnosis would replace it with
+(not applied):
+
+> Exact-output parity with the pin-built libpinyin oracle (differential
+> testing) — candidate surface bit-identical on all 10,190 corpus rows
+> (`docs/testing/corpus-tail.md`); full exported ABI and user-store
+> surfaces still carry open residues (`docs/findings/probe-coverage-abi.md`
+> B/C, register row 32) under the frozen sentence-trellis exception (A /
+> row 11).
