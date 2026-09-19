@@ -1,10 +1,11 @@
 # Findings — probe coverage over the full exported pinyin ABI
 
 Date: 2026-09-17 · Status: recorded; **amended 2026-09-19** with
-proposed classes for the four residues (maintainer rules; none fixed).
-The union probe's oracle run **diverges at every sort word measured**;
-the measured causes per word and the four open residues are recorded
-below.
+classes for residues B/C/D (B/C registered as rows 33–34; D no ABI
+divergence). Residue A is **structural, not (a)** on the
+`nihaoshijie` dump — classification pending. The union probe's oracle
+run **diverges at every sort word measured**; the measured causes per
+word and the four residues are recorded below.
 
 The §(e) rule (`docs/findings/compatibility-policy.md`) wants, for
 every exported symbol, a probe that asserts its
@@ -341,8 +342,9 @@ gate is `:2295-2296` — `2292-2293` is the longer-candidate gate.
 
 ## Amendment — residue classification (2026-09-19 UTC)
 
-Diagnosis only. No shipped-crate behaviour change. Proposed classes are
-for the maintainer; none is ruled here. Pin cites are from the checkout
+Diagnosis recorded; classes ruled 2026-09-19 (A by the settling
+measurement below; B/C/D by maintainer ruling). No shipped-crate
+behaviour change in this amendment. Pin cites are from the checkout
 at `074a2219` (blob tree read 2026-09-19). Mechanism probe:
 `tools/bisection/residue-mechanism-diff.c` +
 `run-residue-mechanism-diff.sh`. Measurement environment:
@@ -355,7 +357,7 @@ pin oracle tkrzw at `/work/oracle/prefix` (pin_ref
 `~/.local/share/oxpinyin-evidence/2026-09-19/residue-classify/`
 (same-dir phase B/D under `same-dir/`).
 
-### B — whole-row choose + train (proposed: **REVERT TARGET**)
+### B — whole-row choose + train (**REVERT TARGET**, register row 33)
 
 **Mechanism.** A row-0 `NBEST_MATCH_CANDIDATE` choose runs
 `diff_result(best, best)` and installs no `CONSTRAINT_ONESTEP` —
@@ -391,13 +393,17 @@ accumulates `sentence_start → 你好世界` (exported counts 138, 414,
 oxpinyin and not on the pin. This is the only residue that corrupts
 stored user state and compounds with use.
 
+**Class.** **REVERT TARGET** — missing "no OneStep ⇒ observe nothing"
+guard; not (a)/(b)/(c). Registered as compatibility-policy row 33;
+work order `revert-plan.md` §10.
+
 **Fix shape (do not implement).** Drop the history fallback whenever
 no OneStep cell is present — `Session::train` observes nothing, as
 `train_result3` does. Pre-registered differential: phase B of
 `residue-mechanism-diff` must print empty bigram rows on both sides
 after `train(0)` and `train(0)again`.
 
-### A — nbest paths vs texts (proposed: **(a) MATH**, already frozen)
+### A — nbest paths vs texts (**structural, not (a)**; classification pending)
 
 **Mechanism.** The pin's k-best keeps up to three trellis *tails* with
 no text dedup inside the search (`phonetic_lookup.h:736-836`,
@@ -407,40 +413,93 @@ share a display string. Candidate-list dedup
 (`_remove_duplicated_items_by_phrase_string`, `:2298-2299`) is a later,
 separate pass. Oxpinyin likewise does not text-dedup inside the
 trellis (`nbest.rs:301-333`, `:508-535`; span expand only skips
-duplicate *tokens* on the same span, `:601-622`). It simply never
-places the pin's duplicate-text second path among the top-3 survivors
-— a different third text appears instead. Candidate-list
+duplicate *tokens* on the same span, `:601-622`). Candidate-list
 `prepend_nbest_rows` + `dedup_by_text_keep_first`
-(`lookup.rs:558-580`) is the same late pass as the pin's, not the
-cause of the `get_sentence` gap.
+(`lookup.rs:558-580`) is the same late pass as the pin's. The ABI
+probe's `nihaoshijie` gap (pin two paths / one text vs oxpinyin three
+texts) is survivor selection under that search, not search-time text
+dedup.
 
-**Which defect.** "Never produce the duplicate path" (hypothesis /
-survivor selection), **not** search-time text dedup.
+**Which defect.** Survivor selection — **not** search-time text dedup.
+The settling dump below is a wide score gap, so this is not the
+float/`gfloat` unresolved band.
 
-**Reachability without user import.** Yes — system-only `tuihui` is
-the documented distinct-same case: pin `[退回, 退回, 退会]` vs port
-`[退回, 退会]` (`sentence-surface.md:617-624`). The import-boosted
-`nihaoshijie` shape is the same class, not a new mechanism.
+**Band measurement (2026-09-19 UTC) — `tuihui`, system-only, not the
+settling input.** Same-dir on the pin's `data/` inside `debian:testing`
+container `fd969584d8c6` (image
+`docker.io/library/debian@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9`);
+logs
+`~/.local/share/oxpinyin-evidence/2026-09-19/residue-classify/tuihui-a/`.
+Both sides emit the same three texts; this table is the comparator
+band only.
+
+| rank | pin text | pin `m_poss` | ox text | ox cost | ox nats |
+|---|---|---|---|---|---|
+| 0 | 退回 | −12.5262127 | 退回 | 18072 | 12.526555847 |
+| 1 | 退回 | −13.0863819 | 退回 | 18880 | 13.086618769 |
+| 2 | 退会 | −13.0903454 | 退会 | 18885 | 13.090084505 |
+
+Pin `|m_poss[1] − m_poss[2]| = 0.0039635` nats. The pin's final tail
+sort (`trellis_value_compare`, `phonetic_lookup.h:174-178`) truncates
+the float possibility difference to `gint`, so two tails with
+`|Δm_poss| < 1.0` compare equal and keep heap-pop order. That
+**1.0 nat** threshold is what the pin's own ordering of survivors can
+resolve. A near-tie on an input where the two sides agree does not
+explain a different input where they do not.
+
+**`tuihui` vs `sentence-surface.md`.** The §12 example (oracle
+`[退回, 退回, 退会]` vs port `[退回, 退会]`) is the
+`sentence_tail` / `sentence_surface_parity` configuration: exported
+model20 tables (`PINYIN_EXPORT_DIR`) against
+`fixtures/w4/oracle-sentence-surface.txt` (fixture line: `tuihui`
+sentences `退回 / 退回 / 退会`). On P6 native pin `data/` (this
+same-dir dump) the port emits all three texts, matching the pin. Not
+a stale record and not a search-time text-dedup: two table
+configurations, two survivor sets. The claim that oxpinyin never
+places the duplicate-text path among the survivors is false on pin
+`data/`; it remains a possible outcome of `sentence_tail` over the
+exported tables, where the frozen gate still holds 6 distinct-same.
+
+**Settling measurement (2026-09-19 UTC) — `nihaoshijie`, ABI-probe
+state.** Same container/image. Sequence: `set_options(0x18a)`, import
+你好/5, 你好世界/9, 测试/3, `save`, parse `nihaoshijie`,
+`guess_sentence`. Logs
+`~/.local/share/oxpinyin-evidence/2026-09-19/residue-classify/nihaoshijie-a/`.
+Pin tails from instrumented `get_nbest_match` (`m_poss`); oxpinyin
+rows from the session n-best cost field (nats = `cost/1000 · ln 2`).
+C-ABI `get_sentence` texts on both `.so` files match the table.
+
+| rank | pin text | pin `m_poss` | ox text | ox cost | ox nats |
+|---|---|---|---|---|---|
+| 0 | 你好世界 | −14.8274994 | 你好世界 | 28341 | 19.644484244 |
+| 1 | 你好世界 | −19.6447334 | 你好时节 | 35656 | 24.714855870 |
+| 2 | 你好时节 | −24.7148857 | 你好是届 | 35822 | 24.829918302 |
+
+Pin rank-1 is the duplicate-text path. The ox row that displaced it is
+rank-2 你好是届. Margin `|24.829918302 − 19.6447334| = 5.185` nats,
+far above the 1.0 nat `gint` band. Pin's own `|m_poss[1] − m_poss[2]|
+= 5.070` nats is the same wide gap. Ox rank-0 nats `19.644` matches
+pin `|m_poss[1]|`, not pin `|m_poss[0]| = 14.827` (the
+`last_step=0` user-phrase tail).
+
+**(a) does not hold.** The gap is structural, not float accumulation
+inside the unresolved band. Classification is the maintainer's — no
+new register row here.
 
 **Corpus-tier coverage.** `sentence_tail` /
-`sentence_surface_parity` already gate the ordered `get_sentence`
-lists and the distinct-same bucket. Default candidate-corpus pins do
-not assert ordered nbest texts; they could not have caught this as a
-*candidate*-surface miss. The gap is therefore a sentence-surface
-residual already under the frozen Stage-1 sentence gate, not an
-uncovered corpus hole.
+`sentence_surface_parity` gate the ordered `get_sentence` lists and
+the distinct-same bucket on exported tables. They do not cover this
+import-boosted ABI-probe shape.
 
-**User-visible consequence.** `get_sentence(0/1/2)` can repeat a text
-on the pin and shows three distinct strings on oxpinyin (with a
-different third). After `guess_candidates`, the pin's list may drop
-the duplicate NBEST string; oxpinyin's list already carried three
-distinct NBEST texts (same-dir probe: `n_candidate` 128 vs 129).
+**User-visible consequence.** After import + `guess_sentence` on
+`nihaoshijie`, `get_sentence(0/1/2)` repeats 你好世界 on the pin
+(two paths) and shows three distinct strings on oxpinyin, with a
+different third.
 
-**Class.** **(a) MATH** — the same frozen register row 11
-(`gfloat` `log` trellis; maintainer ruling 2026-09-02). Not a separate
-REVERT TARGET.
+**Class.** **structural, not (a)** — does not fold into register row
+11. Pending re-classification.
 
-### D — system token unigram 161 vs 1610 (proposed: **no ABI divergence**)
+### D — system token unigram 161 vs 1610 (**no ABI divergence**)
 
 **Units/scale first.** No deliberate ×10 / ÷10 on either read path.
 Pin: `pinyin_token_get_unigram_frequency` →
@@ -470,7 +529,7 @@ same-dir probe. If a future same-dir run ever regenerates the 10× gap,
 re-open as an OPEN DEFECT in whoever writes the chunk field — not in
 the ABI getter.
 
-### C — imported phrase as a user row (proposed: **REVERT TARGET**)
+### C — imported phrase as a user row (**REVERT TARGET**, register row 34)
 
 **Mechanism — what the second guess changes.**
 
@@ -506,7 +565,8 @@ pin and may not on oxpinyin; after re-parse + `0x1e` the pin can still
 show live sentence rows and oxpinyin rebuilds phrase-only.
 
 **Class.** **REVERT TARGET** — nbest lifetime and candidate-rebuild
-mismatch; not (a)/(b)/(c).
+mismatch; not (a)/(b)/(c). Registered as compatibility-policy row 34;
+work order `revert-plan.md` §11.
 
 **Fix shape (do not implement).** (1) Keep nbest across parse; clear
 only on full reset / a new `guess_sentence`, matching the pin.
@@ -531,22 +591,8 @@ useful for their own gates; it is **not** higher priority for B or D
 than the residue-mechanism probe (B) or same-dir dict reads (D) —
 neither residue rides on those three scripts' intended surfaces.
 
-### ROADMAP Stage 1 line (report only; change nothing)
+### ROADMAP Stage 1 line
 
-`ROADMAP.md` still reads:
-
-> Exact-output parity with the pin-built libpinyin oracle (differential
-> testing) — complete: candidate surface bit-identical on all 10,190
-> corpus rows (`docs/testing/corpus-tail.md`)
-
-That line is contradicted by residues B and C (and by register row 32's
-sort-option gap) as *ABI / stored-state* gaps outside the candidate-
-corpus pin. Quote of the wording this diagnosis would replace it with
-(not applied):
-
-> Exact-output parity with the pin-built libpinyin oracle (differential
-> testing) — candidate surface bit-identical on all 10,190 corpus rows
-> (`docs/testing/corpus-tail.md`); full exported ABI and user-store
-> surfaces still carry open residues (`docs/findings/probe-coverage-abi.md`
-> B/C, register row 32) under the frozen sentence-trellis exception (A /
-> row 11).
+Applied 2026-09-19. `ROADMAP.md` Stage 1 now records the corpus claim
+together with the open ABI/user-store residues (B/C, register row 32)
+under the frozen sentence-trellis exception (A / row 11).
