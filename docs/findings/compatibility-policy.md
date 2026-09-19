@@ -270,7 +270,7 @@ revert targets is `revert-plan.md`.
 | 8 | Constraints survive every re-parse except the selection-committed one | **CLOSED** (was REVERT TARGET) | #217 (`fix/revert-r5-constraint-reset`): constraints survive a selection-committed re-parse; frozen pins bit-identical |
 | 9 | The n-best row-choose cursor is the row's own end | **CLOSED** (was REVERT TARGET) | eca8d43b: every `NBEST_MATCH_CANDIDATE` choose answers `parsed_len` — upstream's `matrix.size()-1` in the active parse mode's coordinates |
 | 10 | `pinyin_get_sentence` asserts a past-the-rows index | **(c)** | SIGABRTs on a non-empty result set (`pinyin.cpp:1463-1482`) |
-| 11 | N-best trellis accumulates `gfloat` log costs | **(a)** | `log()` per step into a `gfloat`; ties decided at the ULP. **FROZEN** as a permanent Stage-1 divergence (maintainer ruling 2026-09-02, re-frozen 2026-09-04 at 491/396/390 of 496) |
+| 11 | N-best trellis accumulates `gfloat` log costs | **(a)** | `log()` per step into a `gfloat`; ties decided at the ULP. **FROZEN** as a permanent Stage-1 divergence (maintainer ruling 2026-09-02, re-frozen 2026-09-04 at 491/396/390 of 496). Probe residue A does **not** fold here: the 2026-09-19 `nihaoshijie` ABI-probe dump (import + guess) has pin duplicate-text rank-1 vs ox displacing 你好是届 at **5.185 nats**, above the 1.0 nat `trellis_value_compare` gint band; A is structural, classification pending (`probe-coverage-abi.md` A). The `tuihui` dump is the comparator-band illustration only (both sides agree, `|Δm_poss| ≈ 0.004`) |
 | 12 | Predicted-candidate tie order | **CLOSED** (was REVERT TARGET) | superseded by P6 (345af16d, 2026-09-02): on KC and tkrzw the runtime walks the pin's own phrase DBM, so `pred-order-diff` is IDENTICAL on the pin's `data/` (1588 lines, 0 mismatches) — the KC hash-walk experiment the original row asked for is moot. On redb/LMDB the text-ascending *defined* order stands (maintainer decision 2026-08-25); those containers are not the pin's and are outside the drop-in surface. `ROADMAP.md` records the same disposition |
 | 13 | Mid-syllable candidate-lookup offset | **CLOSED** (was REVERT TARGET) | the pin's empty-column law is reproduced (register entry re-titled "closed"; the C2 residue closed 2026-08-29 per `uncovered-surface-differentials.md` phase E) |
 | 14 | Cursor helpers' `_check_offset` aborts answer `false` | **(c)** | pin SIGABRTs at `pinyin.cpp:2175` |
@@ -291,14 +291,17 @@ revert targets is `revert-plan.md`.
 | 29 | zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default | **no ABI divergence** | `CapiContext::try_open` seeds the pin's `USE_TONE \| FORCE_TONE`; entry kept as analysis for a future consumer |
 | 30 | pinyin-facade chewing batch seam does not forward `FORCE_TONE` | **CLOSED** in code (2026-09-14) | the register says it: no class fits, a defect to close; closed by the prescribed shape — the seam forwards `options().bits() & !ZHUYIN_CORRECT_ALL` through `parse_with_options`, capi tests pin the measured shape (toneless `su` refuses under `USE_TONE \| FORCE_TONE`), and `chewing-diff.c` carries the FORCE_TONE profile; the live differential ran 2026-09-16 — `run-scheme-diff.sh bopomofo` 1–6, 8, 9 all IDENTICAL in a debian:testing container, non-vacuity shown by the reverted seam exiting 2 (register amendment) |
 | 31 | redb write-side emptiness probe creates the table it probes | **no ABI divergence** | a redb API constraint below the store traits; nothing above them observes it. Stage-2 store-trait note, not a compatibility entry |
-| 32 | Sort-option input of `pinyin_guess_candidates` | **REVERT TARGET** | no exception class fits, a defect to close; oxpinyin honours only `SORT_WITHOUT_SENTENCE_CANDIDATE` (0x1, `sentence.rs:286-287`); `SORT_WITHOUT_LONGER_CANDIDATE` (0x2) and the three sort keys (`SORT_BY_PHRASE_LENGTH` 0x4, `SORT_BY_PINYIN_LENGTH` 0x8, `SORT_BY_FREQUENCY` 0x10) are ignored, and no longer-candidate row is ever produced. The pin gates both candidate prepends on the word (`pinyin.cpp:2292-2296`) and orders the list by the three keys (`:1678-1709`). Consumer-reachable: ibus-libpinyin 1.16.5's presets 0 (0x14) and 1 (0x1c, the GSettings default, `PYPConfig.cc:151`) both leave 0x2 clear, and ibus maps the LONGER types (`PYPLibPinyinCandidates.cc:56-62`); fcitx-libpinyin passes 0x16/0x1e (not exposed); fcitx5-oxpinyin passes literal 0 (`src/oxpinyin.cpp:1282`, separate repository). Measured 2026-09-17 (debian:testing container `a15849ef7dd2`, image `sha256:5056ab8a…5d73`, pin oracle read-only): the ABI probe diverges at 0x1c/0x14/0x0/0x1f/0x16 (LONGER rows, 0x8 window order, user-row surfacing) with a 26-line residue at 0x1e; the parameterised option-sweep (`8bc31196`) stops on all 21 cases at 0x1c and 0x14 and passes 21/21 at 0x1e. Bits 0x2/0x4/0x8/0x10 only — the 0x1f user-row shape is a separate residue (`probe-coverage-abi.md` C), not part of this row |
+| 32 | Sort-option input of `pinyin_guess_candidates` | **REVERT TARGET** | no exception class fits, a defect to close; oxpinyin honours only `SORT_WITHOUT_SENTENCE_CANDIDATE` (0x1, `sentence.rs:286-287`); `SORT_WITHOUT_LONGER_CANDIDATE` (0x2) and the three sort keys (`SORT_BY_PHRASE_LENGTH` 0x4, `SORT_BY_PINYIN_LENGTH` 0x8, `SORT_BY_FREQUENCY` 0x10) are ignored, and no longer-candidate row is ever produced. The pin gates both candidate prepends on the word (`pinyin.cpp:2292-2296`) and orders the list by the three keys (`:1678-1709`). Consumer-reachable: ibus-libpinyin 1.16.5's presets 0 (0x14) and 1 (0x1c, the GSettings default, `PYPConfig.cc:151`) both leave 0x2 clear, and ibus maps the LONGER types (`PYPLibPinyinCandidates.cc:56-62`); fcitx-libpinyin passes 0x16/0x1e (not exposed); fcitx5-oxpinyin passes literal 0 (`src/oxpinyin.cpp:1282`, separate repository). Measured 2026-09-17 (debian:testing container `a15849ef7dd2`, image `sha256:5056ab8a…5d73`, pin oracle read-only): the ABI probe diverges at 0x1c/0x14/0x0/0x1f/0x16 (LONGER rows, 0x8 window order, user-row surfacing) with a 26-line residue at 0x1e; the parameterised option-sweep (`8bc31196`) stops on all 21 cases at 0x1c and 0x14 and passes 21/21 at 0x1e. Bits 0x2/0x4/0x8/0x10 only — the 0x1f user-row shape is row 34, not part of this row |
+| 33 | Whole-row NBEST choose + train writes the user bigram | **REVERT TARGET** | no exception class fits; a row-0 `NBEST_MATCH_CANDIDATE` choose runs `diff_result(best, best)` and installs no `CONSTRAINT_ONESTEP` (pin `pinyin.cpp:2515-2520` / `phonetic_lookup.cpp:172-205`; oxpinyin `constraint.rs:193-214`, `selection.rs:221-241`). Pin `pinyin_train` → `train_result3` trains only when `train_next` or `constraint.m_type == CONSTRAINT_ONESTEP` (`phonetic_lookup.h:866`), so a constraint-free whole-row train writes nothing. Oxpinyin's `Session::train` (`selection.rs:298-338`) falls through to the selection-history record when no OneStep cell is present (`:314-318`, `:333-337`) and seeds `sentence_start → phrase`. Same-dir re-measure 2026-09-19 (`probe-coverage-abi.md` B): pin bigram export stays empty through two `train(0)` calls; capi exports counts 138 then 414 for `你好世界` / `ni'hao'shi'jie`. User-visible: DYNAMIC_ADJUST / prediction boost the phrase on oxpinyin and not on the pin; the only residue that corrupts stored user state and compounds with use |
+| 34 | Imported user phrase lost after `guess_sentence` | **REVERT TARGET** | no exception class fits; pin keeps `m_nbest_results` across parse (cleared only by `pinyin_reset`, `pinyin.cpp:2693-2704` vs `:1497-1524`) and rebuilds candidates from scratch each `guess_candidates` (`:2184-2300`), so at `0x1f` (`SORT_WITHOUT_SENTENCE_CANDIDATE`) the imported user NORMAL remains when the NBEST prepend is skipped (`:2295-2296`). Oxpinyin clears nbest on every `begin_parse` (`reset_parse_state` → `sentence.reset()`, `instance.rs:145-194`; `state.rs:170-172`) and applies NBEST-wins text dedup before the `0x1` filter (`guess.rs:45-103`; `lookup.rs:558-580`; `sentence.rs:264-389`), so at `0x1f` the user row is gone with the sentences. User-visible: sequence-dependent presentation — after a sentence guess, ibus-style `0x1f` still offers the imported phrase on the pin and may not on oxpinyin (`probe-coverage-abi.md` C) |
 
 Totals at `2a99761a` (2026-09-06, oracle pin 074a2219), amended
 2026-09-16 for rows 5b, 17 and 30 — each closed in code, each with its
 live differential run taken 2026-09-16 in a `debian:testing` container
-(the oracle environment `docs/testing/oracle-environment.md` records):
+(the oracle environment `docs/testing/oracle-environment.md` records);
+amended 2026-09-18 for row 32; amended 2026-09-19 for rows 33–34:
 **(a)** 2 · **(b)** 2 · **(c)** 10 · **(d)** 0 (class retired, see
-below) · **REVERT TARGET** 1 (row 32, the sort-option input) ·
+below) · **REVERT TARGET** 3 (rows 32, 33, 34) ·
 **OPEN DEFECT** 0 · **CLOSED** 16
 (rows 3, 5b, 7, 8, 9, 12, 13, 15, 16, 17, 24, 25, 26, 27, 28, 30 — 26
 measured identical on the pin 2026-09-08; 28 in code via #374, not
@@ -345,8 +348,21 @@ one was superseded by P6 (12); 5b and 17 closed in code (2026-09-15,
    longer-candidate production and the three sort keys, pre-registered
    against the option-sweep at 0x1c and 0x14 (STOP → PASS) and the ABI
    probe at 0x1c/0x14 (down to the 0x1e residues), plus a
-   choose-a-LONGER-row flow; the 0x1f user-row shape stays a separate
-   residue. Registered 2026-09-18.
+   choose-a-LONGER-row flow; the 0x1f user-row shape is row 34.
+   Registered 2026-09-18.
+6. **Row 33** — whole-row NBEST choose + train (probe residue B). Drop
+   the history fallback whenever no OneStep cell is present so
+   `Session::train` observes nothing, matching `train_result3`. Probe:
+   phase B of `residue-mechanism-diff` must print empty bigram rows on
+   both sides after `train(0)` and `train(0)again`. Registered
+   2026-09-19; executes before row 34 (corrupts stored state).
+7. **Row 34** — imported user phrase after `guess_sentence` (probe
+   residue C). Keep nbest across parse; when `SORT_WITHOUT_SENTENCE` is
+   set, rebuild the phrase window without the prior NBEST-wins dedup (or
+   rebuild from scratch every `guess_candidates`). Probe: import 你好世界
+   → parse → `guess_sentence` → `guess_candidates(0, 0x1f)` → assert
+   NORMAL + `is_user` on both; then re-parse → `guess_candidates(0, 0x1e)`
+   → assert nbest rows still present on both. Registered 2026-09-19.
 
 ### Notes on the three entries whose class was not obvious
 
@@ -450,3 +466,25 @@ the pin. The row carries the full measurement identity (the 2026-09-17
 REVERT TARGET 0 → 1; CLOSED stays 16. The 0x1f user-row shape is a
 separate residue (`docs/findings/probe-coverage-abi.md`), not part of
 the row.
+
+## Amendment — rows 33–34 registered; residue A does not fold into row 11 (2026-09-19 UTC)
+
+Probe residues B and C from `docs/findings/probe-coverage-abi.md` are
+registered as rows 33 and 34, class **REVERT TARGET** each (no
+exception class fits):
+
+- **Row 33 (B)** — whole-row NBEST choose installs no OneStep; pin
+  `train_result3` writes nothing; oxpinyin's history fallback trains
+  `sentence_start → phrase` (exported counts 138, 414, …). Corrupts
+  stored user state and compounds with use.
+- **Row 34 (C)** — nbest cleared on every parse and NBEST-wins dedup
+  applied before the `SORT_WITHOUT_SENTENCE` filter; sequence-dependent
+  loss of an imported user NORMAL at `0x1f`.
+
+Residue **A** does **not** fold into row 11 (basis updated): the
+settling `nihaoshijie` dump is a 5.185 nat gap, structural rather than
+the 1.0 nat `gfloat` band; classification pending, no new row in this
+amendment. The `tuihui` dump stays as the band illustration (both
+sides agree). Residue **D** needs no register row (same-dir
+retraction stays in the probe record). Totals move REVERT TARGET 1 →
+3; CLOSED stays 16.

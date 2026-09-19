@@ -4,7 +4,7 @@ Date: 2026-08-28 · Status: **work order** · Branch:
 `claude/pr5-revert-incompatible-divergences` (#209; the work order
 merged as a document — the reverts landed as their own PRs).
 
-**Status at `87f25055` (2026-09-06):**
+**Status at `87f25055` (2026-09-06), amended 2026-09-19 for rows 33–34:**
 
 | # | Register | Disposition |
 | --- | --- | --- |
@@ -17,11 +17,13 @@ merged as a document — the reverts landed as their own PRs).
 | 7 | #15 apostrophe-only consumption | closed (678f3259, 2026-08-26 — predates this plan; the register entry was not updated until 2026-09-06) |
 | 8 | #5b double out-of-enum scheme setter | closed in code (2026-09-15) — half-mutation reproduced: CAPI returns `true`, fallback cleared, shengmu/yunmu intact; contract test pinned |
 | 9 | #32 sort-option input of `pinyin_guess_candidates` | **open** — registered 2026-09-18: bits 0x2/0x4/0x8/0x10 ignored, no longer-candidate row produced; the port owes the pin's longer-candidate production and the three sort keys (§9) |
+| 10 | #33 whole-row NBEST choose + train | **open** — registered 2026-09-19 (probe residue B): history fallback trains when no OneStep is present; pin `train_result3` writes nothing (§10) |
+| 11 | #34 imported user phrase after `guess_sentence` | **open** — registered 2026-09-19 (probe residue C): nbest cleared on parse; NBEST-wins dedup before `SORT_WITHOUT_SENTENCE` (§11) |
 
 The sections below are the 2026-08-28 text, kept as the record of what
 each revert had to prove, plus section 8 for the target the original
-list omitted and section 9 for the one the register added afterwards
-(row 32, 2026-09-18).
+list omitted, section 9 for row 32 (2026-09-18), and sections 10–11 for
+rows 33–34 (2026-09-19).
 
 Driven by the classification table in
 `docs/findings/compatibility-policy.md`. Every entry that table marks
@@ -236,14 +238,69 @@ land with the measurements.
   `crates/oxpinyin-capi/src/candidates.rs:295-296` records as
   unreachable today becomes reachable with the port and must be measured.
 - **Blocked on:** nothing — the port is unstarted work, not waiting on
-  an ask. The `0x1f` user-row shape is residue C
-  (`docs/findings/probe-coverage-abi.md`), separate from this row.
+  an ask. The `0x1f` user-row shape is register #34 / §11, separate
+  from this row.
+
+### 10 — Whole-row NBEST choose + train (register #33)
+
+- **Site:** `Session::train` history fallback
+  (`crates/oxpinyin-engine/src/session/selection.rs:298-338`,
+  especially `:314-318` and `:333-337`); reached after a row-0
+  `NBEST_MATCH_CANDIDATE` choose that installs no `CONSTRAINT_ONESTEP`
+  (`constraint.rs:193-214`, `selection.rs:221-241`).
+- **Now:** a whole-row choose fills the selection-history record; with
+  no OneStep cell, `Session::train` falls through to that history and
+  seeds `sentence_start → phrase` (same-dir 2026-09-19: exported
+  counts 138 then 414 for 你好世界 / `ni'hao'shi'jie`).
+- **Target:** pin `train_result3` (`phonetic_lookup.h:844-936`) trains
+  a phrase only when `train_next` or
+  `constraint.m_type == CONSTRAINT_ONESTEP` (`:866`); a
+  constraint-free whole-row train writes nothing to the user bigram.
+  Drop the history fallback whenever no OneStep cell is present —
+  `Session::train` observes nothing.
+- **Probe:** phase B of `tools/bisection/residue-mechanism-diff.c` /
+  `run-residue-mechanism-diff.sh` must print empty bigram rows on both
+  sides after `train(0)` and `train(0)again` (same-dir on the pin's
+  `data/`).
+- **Blocked on:** nothing — the port is unstarted work. Executes before
+  §11: this residue corrupts stored user state and compounds with use.
+
+### 11 — Imported user phrase after `guess_sentence` (register #34)
+
+- **Site:** nbest lifetime across parse
+  (`crates/oxpinyin-facade/src/instance.rs:145-194` —
+  `reset_parse_state` → `reset_composition` → `sentence.reset()` at
+  `session/state.rs:170-172`) and candidate rebuild
+  (`oxpinyin-engine/src/session/guess.rs:45-103`;
+  `lookup.rs:558-580` NBEST-wins dedup; `sentence.rs:264-389`
+  `SORT_WITHOUT_SENTENCE` filter).
+- **Now:** every `begin_parse` clears nbest; `guess_sentence` then
+  `prepend_nbest_rows` + `dedup_by_text_keep_first` drops the
+  same-text user NORMAL from the session cache, so at `0x1f` the
+  imported user row is gone with the sentences; after re-parse at
+  `0x1e` the nbest rows themselves are gone.
+- **Target:** pin keeps `m_nbest_results` across parse (cleared only by
+  `pinyin_reset`, `pinyin.cpp:2693-2704` vs parse at `:1497-1524`) and
+  rebuilds candidates from scratch each `guess_candidates`
+  (`:2184-2300`); at `0x1f` the NBEST prepend is skipped
+  (`:2295-2296`) and the user NORMAL remains. (1) Keep nbest across
+  parse; clear only on full reset / a new `guess_sentence`. (2) When
+  `SORT_WITHOUT_SENTENCE` is set, rebuild the phrase window without the
+  prior NBEST-wins dedup (or rebuild from scratch every
+  `guess_candidates`).
+- **Probe:** import 你好世界 → parse → `guess_sentence` →
+  `guess_candidates(0, 0x1f)` → assert NORMAL + `is_user` on both;
+  then re-parse → `guess_candidates(0, 0x1e)` → assert nbest rows
+  still present on both (phase C of `residue-mechanism-diff`, or the
+  ABI probe at those words).
+- **Blocked on:** nothing — the port is unstarted work. Sequence-
+  dependent presentation only; executes after §10.
 
 ## Order to execute
 
-6, 7, 4, 5, 3, 2, 1 — smallest blast radius first, and 1 last because it
-alone waits on the BDB path. Each lands with its own differential
-flipped to IDENTICAL and the frozen pins re-measured, per the standing
-gate. Section 9 is the only target still open; every earlier section
-has closed, so it executes alone, first among equals of one — the
-ordering question is moot until another target is registered.
+Closed sections stay historical (6, 7, 4, 5, 3, 2, 1, 8). Among the
+open targets: **10, then 11, then 9** — B before C because B corrupts
+stored state while C is sequence-dependent presentation; row 32 (§9)
+is independent of either and may land in parallel once 10/11 are
+scheduled. Each lands with its own differential flipped to IDENTICAL
+and the frozen pins re-measured, per the standing gate.
