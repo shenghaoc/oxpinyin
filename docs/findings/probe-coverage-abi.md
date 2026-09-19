@@ -7,9 +7,12 @@ divergence). Residue A is **one specific absent path** on the
 oxpinyin's language model never prices, an instance of the wider
 refusal of every user-library token (characterised 2026-09-19; the
 common-root experiment against B/C refutes a shared cause) —
-registered as row 35, REVERT TARGET (ruled 2026-09-19). The union
-probe's oracle run **diverges at every sort word measured**; the
-measured causes per word and the residues are recorded below.
+registered as row 35, REVERT TARGET (ruled 2026-09-19). Residue E —
+the candidate window behind the composition offset, an empty list at
+its worst — is row 37; the export iterator's last-row return is row
+36. The union probe's oracle run **diverges at every sort word
+measured**; the measured causes per word and the residues are
+recorded below.
 
 The §(e) rule (`docs/findings/compatibility-policy.md`) wants, for
 every exported symbol, a probe that asserts its
@@ -608,7 +611,8 @@ the union probe could not see while the pin's export was empty in
 every probed state (registered as row 36, section F below). (ii) After
 a whole-composition NBEST choose and re-guess, `guess_candidates(0,
 0x1e)` answers `n = 1` (the n-best row only) on oxpinyin and `n = 128`
-on the pin (phase X2) — diagnosed as residue E below.
+on the pin (phase X2) — diagnosed as residue E below, registered as
+row 37.
 
 **Earlier text (2026-09-19, the settling measurement), kept as
 recorded.**
@@ -814,7 +818,7 @@ unigram observable is live. The order is safe exactly because of the
 finding above: §10's gate reads the unigram, never the old export-only
 line, once A has landed; §10 cross-references this section.
 
-### E — the candidate window behind the composition offset (**REVERT TARGET proposed**; not registered)
+### E — the candidate window behind the composition offset (**REVERT TARGET**, register row 37)
 
 **Symptom.** After a choose, `pinyin_guess_candidates(offset, …)` at an
 offset at or behind the offset the choose advanced to answers the
@@ -898,11 +902,16 @@ only: an NBEST choose commits at once in ibus (`:485-491`). Where it
 is reached, a frontend offers the wrong window — the remaining
 input's phrases, or one candidate where libpinyin offers 128.
 
-**Class (proposed; not ruled — no register row, totals unchanged).**
-**REVERT TARGET.** Reproducible: the engine already builds the pin's
-window at any offset (`candidates_at`), and the pin's law is a plain
-`start = offset` re-scan; no language mechanism, no abort, no float.
-The cached-list rule was a design choice guarding the *choose* leg's
+**Class.** **REVERT TARGET** — registered as compatibility-policy
+row 37 (maintainer ruling 2026-09-19); work order `revert-plan.md`
+§14, executing second. At its worst measured point: `(0, 0x1f)` after
+a whole-composition choose answers 127 candidates on the pin and 0 —
+an empty list — on oxpinyin; at the ordinary partial choose oxpinyin
+answers the offset-5 list where the pin answers the offset-0 one.
+Reproducible: the engine already builds the pin's window at any
+offset (`candidates_at`), and the pin's law is a plain `start =
+offset` re-scan; no language mechanism, no abort, no float. The
+cached-list rule was a design choice guarding the *choose* leg's
 composition regression, extended to the display leg where the pin has
 no such notion.
 
@@ -922,11 +931,17 @@ cursor 2, constraint 你@0..2 replacing 你好) is to be added as a phase
 E3 when the fix lands.
 
 **Pre-registered differential.** `run-residue-a-tail-diff.sh` phase E,
-same-dir on the pin's `data/`: `E2-0-1f:n=127` on both sides with
-`cand[0]` the imported user 你好世界 and `cand[1..3]` 你好 / 你 / 尼;
-`E2-0-1e` phrase rows 126 (`n − nbest_rows`); `E1-0-1f:n=127`;
-`E1-5-1e` phrase rows 301; `E1-11-1e` and `E2-5-1e` unchanged. With
-row 35 landed, phase E IDENTICAL in full.
+same-dir on the pin's `data/`, must match the pin at **every row of
+the E1/E2 table** — after the whole-composition choose: `(0, 0x1e)`
+`n=128` with NBEST ranks 0 and 2, `(0, 0x1f)` `n=127` with `cand[0]`
+the imported user 你好世界, `(5, 0x1e)` `n=303`, `(11, 0x1e)` `n=2`;
+after the partial 你好 choose: `(0, 0x1e)` `n=129`, `(0, 0x1f)` `n=127`
+with `cand[0..3]` 你好世界(user) / 你好 / 你 / 尼, `(5, 0x1e)` `n=304`
+— not only the offsets at or past the composition. Row 35 (§12) lands
+first, so the n-best counts in those rows are the pin's by then and
+the whole phase runs IDENTICAL; the phase's phrase-row counts (126 at
+offset 0, 301 at offset 5) are the A-independent half of the same
+gate.
 
 ### F — bigram export iterator, last-row return value (**REVERT TARGET**, register row 36)
 
