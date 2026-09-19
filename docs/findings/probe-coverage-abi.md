@@ -600,15 +600,15 @@ of A's gate: the experiment below shows B's export line going empty
 under an A fix while B's defect stands, so a B gate must read the
 user token's unigram, not the export.
 
-**Side observations (not A, B or C; measured, not registered).** (i)
+**Side observations (not A, B or C).** (i)
 `pinyin_bigram_iterator_get_next_phrase` on the last export row answers
 `false` on the pin (it returns `has_next_phrase`, `pinyin.cpp:910`)
 and `true` on oxpinyin (row fetched) — an ABI return-value divergence
 the union probe could not see while the pin's export was empty in
-every probed state. (ii) After a whole-composition NBEST choose and
-re-guess, `guess_candidates(0, 0x1e)` answers `n = 1` (the n-best row
-only) on oxpinyin and `n = 128` on the pin (phase X2). Both need their
-own rows; neither is opened here.
+every probed state (registered as row 36, section F below). (ii) After
+a whole-composition NBEST choose and re-guess, `guess_candidates(0,
+0x1e)` answers `n = 1` (the n-best row only) on oxpinyin and `n = 128`
+on the pin (phase X2) — diagnosed as residue E below.
 
 **Earlier text (2026-09-19, the settling measurement), kept as
 recorded.**
@@ -813,6 +813,120 @@ presentation, and B's corrected gate is easier to write once the
 unigram observable is live. The order is safe exactly because of the
 finding above: §10's gate reads the unigram, never the old export-only
 line, once A has landed; §10 cross-references this section.
+
+### E — the candidate window behind the composition offset (**REVERT TARGET proposed**; not registered)
+
+**Symptom.** After a choose, `pinyin_guess_candidates(offset, …)` at an
+offset at or behind the offset the choose advanced to answers the
+cached, composition-anchored list on oxpinyin and a freshly built
+window at the caller's offset on the pin. Whole-composition shape
+(residue-a-tail-diff phase X2/E1): 1 row on oxpinyin against 128 on
+the pin. Partial shape (phase E2): the remaining input's phrases
+against the pin's offset-0 phrases.
+
+**Measured (2026-09-19 UTC).** Container `70d00b22eee3` (same image
+`docker.io/library/debian@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9`
+as above), same-dir on the pin's `data/`, logs
+`~/.local/share/oxpinyin-evidence/2026-09-19/residue-a-root/09-phaseE-baseline/`
+and `09-phaseE-cf/` (the counterfactual build of the experiment
+above). Import state as before; `n` is `pinyin_get_n_candidate`.
+
+| step | window | pin | ox baseline | ox counterfactual (A neutralised) |
+|---|---|---|---|---|
+| E1: NBEST row 0 chosen (cursor 11), re-guess | `(0, 0x1e)` | 128 (NBEST 0, 2 + 126 phrases: 你好 你 尼 …) | 3 (its NBEST rows only) | 2 |
+| | `(0, 0x1f)` | 127 (你好世界 user NORMAL first) | **0** | **0** |
+| | `(5, 0x1e)` | 303 (NBEST + 世界 时节 …) | 3 | 2 |
+| | `(11, 0x1e)` | 2 (NBEST only; nothing starts at the end) | 3 | 2 — identical |
+| E2: NORMAL 你好 chosen (cursor 5), re-guess | `(0, 0x1e)` | 129 (NBEST 0,1,2 + 你好 你 …) | 304 (NBEST + 世界 时节 …: the offset-5 list) | 304 |
+| | `(0, 0x1f)` | 127 (你好世界 user NORMAL first) | 301 (世界 时节 使节 视界 …) | 301 |
+| | `(5, 0x1e)` | 304 | 304 — identical | 304 |
+
+At the offset the choose advanced to (E1 at 11, E2 at 5) the two sides
+agree, up to A's extra n-best text. Behind it they do not: oxpinyin
+answers the same list for every offset at or below the composition
+offset.
+
+**Mechanism — pin.** `pinyin_guess_candidates` frees the list and
+rebuilds it from `start = offset` over the whole-composition matrix on
+every call (`pinyin.cpp:2184-2262`; `_check_offset` `:2163-2180`
+refuses only the lone-apostrophe column). The instance carries no
+composition offset: `pinyin_choose_candidate` writes a constraint and
+answers a cursor (`:2501-2590`), nothing else, so a window behind an
+earlier choose is the ordinary window at that offset with the n-best
+rows of the constrained re-guess prepended.
+
+**Mechanism — oxpinyin.** Three sites. (1) `Session::select_inner`
+advances the composition offset to the chosen span's end
+(`crates/oxpinyin-engine/src/session/selection.rs:229`, `:252`,
+`set_consumed(constraint_end)`). (2) The cached list is rebuilt at
+that offset — `refresh` → `scan_window(anchor = consumed)`
+(`session/lookup.rs:102-110`) — and a fully-consumed anchor yields the
+n-best rows alone, which is the `n = 1` (or 3) of E1. (3) The C ABI's
+`pinyin_guess_candidates` re-anchors only for a normalized offset
+strictly past the composition offset
+(`crates/oxpinyin-capi/src/sentence.rs:319-339`): an offset at or
+below it is the "stale cursor behind the selection" branch and is
+served the cached list. `Session::candidates_at(offset)` already
+builds the pin's whole-matrix window at any offset without disturbing
+the cached list (`lookup.rs:283-312`); it is simply never called for
+an offset behind the composition. The closed mid-syllable entry
+(`upstream-divergences.md`, "Mid-syllable candidate-lookup offset")
+ported the pin's `start = offset` law only for offsets past the
+composition offset.
+
+**Not A, not row 34 — independent.** Under the counterfactual build
+the counts behind the composition are unchanged (the table's last
+column; only A's n-best text disappears, and `(11, 0x1e)` becomes
+identical). Row 34's mechanism (`reset_parse_state` on parse, the
+NBEST-wins dedup ahead of the `0x1f` filter) never runs here: no parse
+happens between the choose and the guess, and the n-best rows are
+present on both sides in every row of the table — the missing rows are
+phrases, not sentences.
+
+**User-visible consequence, and reachability.** ibus-libpinyin 1.16.5
+`PhoneticEditor::update` (`PYPPhoneticEditor.cc:346-358`) passes
+`lookup_cursor = 0` whenever the sort option carries
+`SORT_WITHOUT_SENTENCE_CANDIDATE` — preset 2, `0x1f` — so under that
+preset every partial choose is followed by the offset-0 window: E2's
+`(0, 0x1f)`, 127 rows headed by the imported user phrase on the pin
+against 301 rows of the remaining input's phrases on oxpinyin. Under
+every preset `moveCursorLeft` (`:595-604`) lowers `m_cursor` freely
+and `getLookupCursor` (`:380-390`) snaps it through
+`pinyin_get_pinyin_offset`, so one cursor key after a choose asks for
+a window behind it. The whole-composition shape E1 is ABI-reachable
+only: an NBEST choose commits at once in ibus (`:485-491`). Where it
+is reached, a frontend offers the wrong window — the remaining
+input's phrases, or one candidate where libpinyin offers 128.
+
+**Class (proposed; not ruled — no register row, totals unchanged).**
+**REVERT TARGET.** Reproducible: the engine already builds the pin's
+window at any offset (`candidates_at`), and the pin's law is a plain
+`start = offset` re-scan; no language mechanism, no abort, no float.
+The cached-list rule was a design choice guarding the *choose* leg's
+composition regression, extended to the display leg where the pin has
+no such notion.
+
+**Fix shape (do not implement).** Display leg: in
+`pinyin_guess_candidates`, re-anchor whenever `normalized !=
+composition_offset()` — both directions — through
+`Session::candidates_at(normalized)`, leaving the composition offset
+untouched. Choose leg, which the fix must carry with it: a choose from
+a behind-window starts before the composition offset, which
+`select_inner` refuses (`SelectionAnchorBeforeComposition`,
+`selection.rs:157-167`); the pin's `add_constraint` clears the
+overlapped forcings and the answered cursor moves back
+(`phonetic_lookup.cpp:61-86`), so the record must re-anchor to the
+earlier span rather than refuse. Not measured here — the choose leg's
+probe (choose 你 from the offset-0 window after 你好 was chosen: pin
+cursor 2, constraint 你@0..2 replacing 你好) is to be added as a phase
+E3 when the fix lands.
+
+**Pre-registered differential.** `run-residue-a-tail-diff.sh` phase E,
+same-dir on the pin's `data/`: `E2-0-1f:n=127` on both sides with
+`cand[0]` the imported user 你好世界 and `cand[1..3]` 你好 / 你 / 尼;
+`E2-0-1e` phrase rows 126 (`n − nbest_rows`); `E1-0-1f:n=127`;
+`E1-5-1e` phrase rows 301; `E1-11-1e` and `E2-5-1e` unchanged. With
+row 35 landed, phase E IDENTICAL in full.
 
 ### D — system token unigram 161 vs 1610 (**no ABI divergence**)
 
