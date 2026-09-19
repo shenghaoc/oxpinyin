@@ -192,8 +192,10 @@ target below its own resolution; every ID below has a recorded figure.
 
 Across all 52 IDs: median run-to-run spread **4.5%**, mean **5.4%**.
 Engine window-scan IDs alone: mean spread **3.6%**, max **8.9%**.
-Several sub-µs core IDs land above 10% spread (worst
-`core_parse_with_options/options/long_nihaoshijie` at 18.6%).
+Two sub-µs core IDs land above 10% spread:
+`core_parse/parse/short_ni` (16.9%) and `core_parse/parse/separated`
+(17.0%). The largest overall spread is
+`core_parse_with_options/options/long_nihaoshijie` at 18.6%.
 
 ## Ratchet fit (report only — nothing wired)
 
