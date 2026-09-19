@@ -5,7 +5,7 @@ Date: 2026-08-28 · Status: **work order** · Branch:
 merged as a document — the reverts landed as their own PRs).
 
 **Status at `87f25055` (2026-09-06), amended 2026-09-19 for rows 33–34
-and again for rows 35–36:**
+and again for rows 35–37:**
 
 | # | Register | Disposition |
 | --- | --- | --- |
@@ -22,12 +22,13 @@ and again for rows 35–36:**
 | 11 | #34 imported user phrase after `guess_sentence` | **open** — registered 2026-09-19 (probe residue C): nbest cleared on parse; NBEST-wins dedup before `SORT_WITHOUT_SENTENCE` (§11) |
 | 12 | #35 user-library tokens refused an n-best step cost | **open** — registered 2026-09-19 (probe residue A): `nbest_step_costs_with_user_delta` returns no cost for a token without a system item, so no imported or learned phrase enters a sentence path (§12); executes first |
 | 13 | #36 bigram export iterator's last-row return value | **open** — registered 2026-09-19 (probe side observation (i)): the pin returns `has_next_phrase` after advancing, oxpinyin returns `true` for every fetched row (§13); independent of the sequence |
+| 14 | #37 candidate window behind the composition offset | **open** — registered 2026-09-19 (probe residue E): the C ABI serves the composition-anchored cached list for any lookup offset at or behind a choose; an empty list at `(0, 0x1f)` after a whole-composition choose (§14); executes second |
 
 The sections below are the 2026-08-28 text, kept as the record of what
 each revert had to prove, plus section 8 for the target the original
 list omitted, section 9 for row 32 (2026-09-18), sections 10–11 for
-rows 33–34 (2026-09-19), section 12 for row 35 and section 13 for
-row 36 (2026-09-19).
+rows 33–34 (2026-09-19), section 12 for row 35, section 13 for row 36
+and section 14 for row 37 (2026-09-19).
 
 Driven by the classification table in
 `docs/findings/compatibility-policy.md`. Every entry that table marks
@@ -378,20 +379,82 @@ land with the measurements.
   oxpinyin today aborts on the pin's last row — reproducing the pin
   reproduces that too; the release build discards the value.
 
+### 14 — Candidate window behind the composition offset (register #37)
+
+- **Site:** the C ABI's `pinyin_guess_candidates` re-anchor rule
+  (`crates/oxpinyin-capi/src/sentence.rs:319-339`): a normalized
+  lookup offset strictly past the composition offset builds
+  `Session::candidates_at(normalized)`; one at or below it is served
+  the composition-anchored cached list (`session/lookup.rs:32-41`
+  `refresh` → `scan_window(anchor = consumed)`, `:102-110`), which the
+  choose advanced (`session/selection.rs:229,252`).
+- **Now (measured 2026-09-19, `probe-coverage-abi.md` E):** after a
+  whole-composition NBEST choose and re-guess, `guess_candidates(0,
+  0x1f)` answers **0 rows** where the pin answers 127 headed by the
+  imported user phrase, and `(0, 0x1e)` the n-best rows alone where
+  the pin answers 128; after an ordinary partial choose (你好, cursor
+  5), `(0, 0x1e)`/`(0, 0x1f)` answer the offset-5 list (304/301) where
+  the pin answers the offset-0 one (129/127). At the choose's own
+  offset both sides agree. Consumer routes: ibus-libpinyin under
+  preset 2 forces `lookup_cursor = 0` and calls `guess_candidates(0,
+  0x1f)` after every partial choose (`PYPPhoneticEditor.cc:352-355`);
+  `moveCursorLeft` (`:595-604`) reaches an offset behind a choose
+  under every preset.
+- **Target:** the pin rebuilds the window from `start = offset` over
+  the whole-composition matrix on every call (`pinyin.cpp:2184-2262`)
+  and keeps no composition offset. Display leg: re-anchor whenever
+  `normalized != composition_offset()`, in both directions, through
+  `Session::candidates_at(normalized)` — the target behaviour already
+  exists there (`session/lookup.rs:283-312`; `scan_window` is a pure
+  function of `(raw, anchor)` that touches neither the cached list nor
+  the composition state), so the display leg is plausibly a routing
+  change at `sentence.rs:319-339`, not decoder work, and the cache
+  needs no rebuild. **Scoping caveat, stated rather than forced:** the
+  choose leg is not a routing change. A choose from a behind-window
+  reaches `select_anchored` → `select_inner`, which refuses a span
+  starting before the composition offset
+  (`SelectionAnchorBeforeComposition`, `session/selection.rs:157-167`)
+  by a documented session-API decision; the pin's `add_constraint`
+  clears the overlapped forcings and the cursor moves back
+  (`phonetic_lookup.cpp:61-86`), so parity there needs the selection
+  record to regress — consumed offset, selected text, token history and
+  overlapping forcings truncated to the new span — a contract change
+  to the record, small but not routing. The display leg alone closes
+  every row of the measured table; the choose leg is to be scoped with
+  its own probe (phase E3) when this section is executed.
+- **Probe:** phase E of `tools/bisection/residue-a-tail-diff.c` /
+  `run-residue-a-tail-diff.sh`, same-dir on the pin's `data/`, must
+  match the pin at **every row of the E1/E2 table** — `(0, 0x1e)`,
+  `(0, 0x1f)`, `(5, 0x1e)` and `(11, 0x1e)` after the whole-composition
+  choose; `(0, 0x1e)`, `(0, 0x1f)` and `(5, 0x1e)` after the partial
+  choose — not only the offsets at or past the composition. §12 lands
+  first, so the n-best count in those rows is the pin's by then and
+  the whole phase runs IDENTICAL.
+- **Blocked on:** nothing — the display leg is unstarted work.
+  Executes second (see the order below).
+
 ## Order to execute
 
 Closed sections stay historical (6, 7, 4, 5, 3, 2, 1, 8). Among the
-open targets: **12, then 10, then 11, then 9** (maintainer ruling
-2026-09-19). A (§12) goes first: it is a one-line ordering fix inside
-an invariant the same function already documents for the bigram path,
-it blocks a whole feature — no imported or learned phrase can enter a
-sentence path — rather than perturbing presentation, and B's corrected
-gate (§10: the user token's unigram, not the export line) is easier to
-write once the unigram observable is live. B before C because B
-corrupts stored state while C is sequence-dependent presentation. The
-order is safe because the common-root experiment showed A's fix
-changes B's export symptom without touching B's defect: §10 reads the
-unigram, never the old export-only gate, once §12 has landed. Row 32
-(§9) and row 36 (§13) are independent of the other three and may land
-in parallel once they are scheduled. Each lands with its own differential flipped to
+open targets: **12, then 14, then 10, then 11, then 9** (maintainer
+rulings 2026-09-19). A (§12) goes first: it is a one-line ordering fix
+inside an invariant the same function already documents for the
+bigram path, it blocks a whole feature — no imported or learned phrase
+can enter a sentence path — rather than perturbing presentation, and
+B's corrected gate (§10: the user token's unigram, not the export
+line) is easier to write once the unigram observable is live. E (§14)
+goes second, ahead of 10 and 11, on two grounds: it is
+consumer-reachable on a default-adjacent preset's ordinary flow
+(ibus preset 2 asks for offset 0 after every partial choose) and can
+present an empty candidate list; and the target behaviour already
+exists in `Session::candidates_at` (`session/lookup.rs:283-312`), so
+the display leg is plausibly a routing change at
+`sentence.rs:319-339` rather than new decoder work — the choose leg's
+record regression is the one part that is not (§14's caveat). B
+before C because B corrupts stored state while C is sequence-dependent
+presentation. The order is safe because the common-root experiment
+showed A's fix changes B's export symptom without touching B's defect:
+§10 reads the unigram, never the old export-only gate, once §12 has
+landed. Row 32 (§9) and row 36 (§13) are independent of the other
+four and may land in parallel once they are scheduled. Each lands with its own differential flipped to
 IDENTICAL and the frozen pins re-measured, per the standing gate.
