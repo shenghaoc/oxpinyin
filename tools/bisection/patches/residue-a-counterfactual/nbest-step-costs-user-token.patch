@@ -1,0 +1,32 @@
+Counterfactual for the residue-A common-root experiment
+(docs/findings/probe-coverage-abi.md, "A — common-root experiment").
+NEVER part of the shipped tree: applied to a scratch build only
+(`git apply`), measured, reverted. It neutralises A's mechanism — the
+n-best step cost that answers nothing for a token without a system
+item — by pricing such a token from its user delta alone, the way the
+pin's `get_phrase_item` reads the loaded USER_DICTIONARY sub-index.
+It is a probe of A's *consequences* for B and C, not the fix shape:
+the fix must keep the unloaded-library semantics explicit.
+
+--- a/crates/oxpinyin-data/src/lm/mod.rs
++++ b/crates/oxpinyin-data/src/lm/mod.rs
+@@ -534,13 +534,12 @@
+         token: &PhraseToken,
+         user: UserCountDelta,
+     ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
+-        // No installed unigram table is the seam's default answer: no n-best
+-        // cost data, no rows.
+-        let (Some(count), unigram_total) =
+-            (self.unigram_count(token.value()), self.unigram_total())
+-        else {
+-            return Ok(oxpinyin_core::NbestStepCosts::default());
+-        };
++        // COUNTERFACTUAL (residue A experiment, never shipped): a token
++        // with no system item — every user-file token — is priced from
++        // its user delta alone, as the pin's get_phrase_item over the
++        // loaded USER_DICTIONARY sub-index does.
++        let count = self.unigram_count(token.value()).unwrap_or(0);
++        let unigram_total = self.unigram_total();
+         let count = merge_counts(count, user.unigram_delta);
+         let unigram_total = merge_counts(unigram_total, user.unigram_total_delta);
+         if unigram_total == 0 {

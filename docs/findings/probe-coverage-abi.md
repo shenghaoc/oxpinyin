@@ -405,7 +405,12 @@ work order `revert-plan.md` §10.
 no OneStep cell is present — `Session::train` observes nothing, as
 `train_result3` does. Pre-registered differential: phase B of
 `residue-mechanism-diff` must print empty bigram rows on both sides
-after `train(0)` and `train(0)again`.
+after `train(0)` and `train(0)again` — **and** (amended 2026-09-19,
+from the common-root experiment under A) the user 你好世界 token's
+unigram must stay 27 on both sides after both trains: an A fix alone
+moves the fallback's pair to `sentence_start → 你好世界`, which the
+export never renders, so the export line goes empty while the fallback
+still writes. `residue-a-tail-diff` phase B prints both observables.
 
 ### A — the missing user-phrase tail (**one specific absent path**; classification pending, REVERT TARGET proposed)
 
@@ -702,6 +707,107 @@ string in the list. Same display string at rank 0; different token
 path underneath: a row choose constrains fewer phrases, a train after a
 non-best choose touches fewer unigrams, and every candidate window
 carries one sentence row more.
+
+### A — common-root experiment against B and C (2026-09-19 UTC)
+
+**Question.** A (the user-phrase tail never enters the trellis), B
+(whole-row choose trains through the history fallback) and C (the
+imported NORMAL leaves the window after `guess_sentence`) all turn on
+one imported user phrase. One defect with three symptoms, or three
+defects?
+
+**Design.** Neutralise A's mechanism alone and re-measure B and C in
+the same state. The counterfactual is a scratch build of
+oxpinyin-capi with
+`tools/bisection/patches/residue-a-counterfactual/nbest-step-costs-user-token.patch`
+applied — the first gate of `nbest_step_costs_with_user_delta`
+replaced by `unwrap_or(0)`, so a token without a system item is priced
+from its user delta — and nothing else changed. Never part of the
+shipped tree: applied with `patch -p1` in the container, built into
+`target/cf`, run, reverted (`patch -R`); the worktree carries no
+counterfactual line. Both builds are driven through the same ABI
+probe (`residue-a-tail-diff.c`, phases A/C/B/X/D) and the same
+runtime probe, same-dir on the pin's `data/`, against the same pin.
+The B observable is widened beyond the bigram export on purpose:
+the export skips `sentence_start` pairs on both sides
+(`pinyin.cpp:804`, `iterators.rs:323`), and the user token's unigram
+is read before and after each train.
+
+**Pre-registered outcomes** (written before the counterfactual ran):
+
+- *One root (A ⇒ B, C):* the counterfactual makes phase A IDENTICAL
+  **and** phase B's export empty with every unigram matching the pin
+  **and** phase C's `0x1f` window keeps the user NORMAL.
+- *Three defects:* the counterfactual makes phase A IDENTICAL and
+  changes nothing in C; in B the export line goes empty (row 0 is now
+  the single user token, and the only pair the fallback trains is
+  `sentence_start → 0x07000002`, which no export renders) **while the
+  user token's unigram climbs 27 → 510 → 1476** (seed 69 × 7, then
+  138 × 7) on oxpinyin and stays 27 on the pin — the fallback still
+  trains, only its target moved.
+- *Mixed:* any other pattern; recorded as measured.
+
+**Run.** Container `7cfeefdaf53f` (image
+`docker.io/library/debian@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9`),
+pin oracle tkrzw at `/inputs/oracle-tkrzw/prefix`; logs
+`~/.local/share/oxpinyin-evidence/2026-09-19/residue-a-root/05-counterfactual/`
+(ABI logs + `ox-probe.log`), driver log `05-experiment-driver.log`
+(patch applied, `target/cf` built — sha256
+`0d2a49d9…dcc849` against the baseline `846d0614…36ab` — probe run,
+patch reverted). Baseline: `04-baseline/`. Command:
+`RESIDUE_A_CAPI_SO=target/cf/debug/libpinyin_capi.so
+RESIDUE_A_SAME_DIR=1 RESIDUE_A_OUT=… run-residue-a-tail-diff.sh`, then
+`target/cf/debug/examples/nbest_tail_probe <data> <tmp>`.
+
+**Result.**
+
+| phase | observable | pin | ox baseline | ox counterfactual |
+|---|---|---|---|---|
+| A | `sentence[0..2]` | 你好世界 / 你好世界 / 你好时节 | 你好世界 / 你好时节 / 你好是届 | 你好世界 / 你好世界 / 你好时节 — **IDENTICAL** |
+| A | `A-1e:n`, NBEST ranks | 128; 0, 2 | 129; 0, 1, 2 | 128; 0, 2 — IDENTICAL |
+| A | row 0 cost (runtime probe) | −14.8274994 | 19.644484 nats (pair) | 14.827804 nats (`0x07000002`, 21392 millibits) |
+| A | `step_costs(sentence_start → 0x07000002)` | priced (`unigram_step` line) | None / None | unigram Some(21392) |
+| C | user NORMAL 你好世界 at `0x1f` after guess | present (`n=127`) | absent (`n=126`) | absent (`n=126`) — **unchanged** |
+| C | n-best rows after re-parse at `0x1e` | 2 rows (`n=128`) | 0 rows (`n=127`) | 0 rows (`n=127`) — unchanged |
+| B | bigram export after `train(0)` / again | empty / empty | `你好世界\|…\|138` / `414` | **empty / empty** |
+| B | unigram user 你好世界 (`0x07000002`) | 27 / 27 | 27 / 27 | **510 / 1476** |
+| B | unigram system 你好 / 世界 | 161 / 41710 | 644→1610 / 42193→43159 | 161 / 41710 (matches pin) |
+| X | `clear_constraint(0)` after choosing 你好时节 | true | false | true — IDENTICAL |
+| X | that row's `nbest` index; 你好 unigram after train | 2; 644 | 1; 161 | 2; 644 — IDENTICAL |
+| D | `guess_candidates(5, 0x1e)` at `0x38a` | `n=303`, order | `n=304`, same order | `n=303` — IDENTICAL |
+
+**Verdict: refuted — no shared root.** The counterfactual closes A and
+every consequence that flows from the absent path (the choose
+constraints, the post-choose train, the window counts, the offset-5
+window), and leaves C byte-for-byte where it was. B's *export symptom*
+disappears exactly as pre-registered for the three-defects outcome —
+because the fallback's trained pair moved from 你好→世界 to
+`sentence_start → 你好世界`, which no export renders — while the
+fallback itself keeps writing (user unigram 27 → 510 → 1476; the pin's
+stays 27). Three independent defects: A is the language-model gate on
+user-file tokens (`lm/mod.rs:540-543`); B is the history fallback in
+`Session::train` (`selection.rs:333-337`); C is the n-best lifetime
+across parse plus the NBEST-wins dedup ahead of the `0x1f` filter
+(`instance.rs:145-155`, `state.rs:170-172`, `lookup.rs:558-580`).
+
+**Which of rows 33/34 and A a single A fix would close.** A only.
+Row 33 (B) survives, with its symptom moved: after an A fix the
+bigram export reads empty on both sides, so **§10's pre-registered
+differential ("empty bigram rows on both sides after `train(0)` and
+`train(0)again`") passes without the defect being fixed** — the gate
+must also read the user 你好世界 token's unigram (27 on both sides
+after both trains), which `residue-a-tail-diff` phase B prints. Row 34
+(C) survives unchanged: its `0x1f` probe has the same outcome with or
+without A.
+
+**Consequence for the work order (`revert-plan.md` §9/§10/§11), for
+ruling, not applied here.** B-before-C stands on its own ground (B
+corrupts stored state). A slots after B and is independent of C in
+outcome; landing A before C leaves C's final differential running
+against pin-shaped n-best rows (two texts, ranks 0 and 2) — the
+cleaner end state — but either order measures the same C symptom. The
+one hard constraint the experiment adds: whichever of A and B lands
+first, §10's gate reads the unigram, or B's closure is unverified.
 
 ### D — system token unigram 161 vs 1610 (**no ABI divergence**)
 
