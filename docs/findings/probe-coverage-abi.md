@@ -2,10 +2,13 @@
 
 Date: 2026-09-17 · Status: recorded; **amended 2026-09-19** with
 classes for residues B/C/D (B/C registered as rows 33–34; D no ABI
-divergence). Residue A is **structural, not (a)** on the
-`nihaoshijie` dump — classification pending. The union probe's oracle
-run **diverges at every sort word measured**; the measured causes per
-word and the four residues are recorded below.
+divergence). Residue A is **one specific absent path** on the
+`nihaoshijie` dump — the pin's rank-0 user-phrase tail, which
+oxpinyin's language model never prices (characterised 2026-09-19; the
+common-root experiment against B/C refutes a shared cause) —
+classification pending, REVERT TARGET proposed. The union probe's
+oracle run **diverges at every sort word measured**; the measured
+causes per word and the four residues are recorded below.
 
 The §(e) rule (`docs/findings/compatibility-policy.md`) wants, for
 every exported symbol, a probe that asserts its
@@ -343,8 +346,9 @@ gate is `:2295-2296` — `2292-2293` is the longer-candidate gate.
 ## Amendment — residue classification (2026-09-19 UTC)
 
 Diagnosis recorded; classes ruled 2026-09-19 (A by the settling
-measurement below; B/C/D by maintainer ruling). No shipped-crate
-behaviour change in this amendment. Pin cites are from the checkout
+measurement below, sharpened the same day to the one missing tail and
+a proposed class awaiting ruling; B/C/D by maintainer ruling). No
+shipped-crate behaviour change in this amendment. Pin cites are from the checkout
 at `074a2219` (blob tree read 2026-09-19). Mechanism probe:
 `tools/bisection/residue-mechanism-diff.c` +
 `run-residue-mechanism-diff.sh`. Measurement environment:
@@ -403,7 +407,201 @@ no OneStep cell is present — `Session::train` observes nothing, as
 `residue-mechanism-diff` must print empty bigram rows on both sides
 after `train(0)` and `train(0)again`.
 
-### A — nbest paths vs texts (**structural, not (a)**; classification pending)
+### A — the missing user-phrase tail (**one specific absent path**; classification pending, REVERT TARGET proposed)
+
+**Amended 2026-09-19 UTC (characterisation).** The earlier text below
+the alignment table stands as the record of the settling measurement;
+what follows names the one tail it left unnamed.
+
+**Alignment, verified.** Same-dir on the pin's `data/` inside
+`debian:testing` container
+`7cfeefdaf53f0809dac9f74ea800ecfa173a2ad481024d2b5a3eab3838874e06`
+(image
+`docker.io/library/debian@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9`),
+pin oracle tkrzw at `/inputs/oracle-tkrzw/prefix` (pin_ref
+`libpinyin-2.11.92-074a2219…+dbm-tkrzw`), durable logs
+`~/.local/share/oxpinyin-evidence/2026-09-19/residue-a-root/`
+(`04-baseline/`). Import state as before (`set_options(0x18a)`, 你好/5,
+你好世界/9, 测试/3, `save`), parse `nihaoshijie`, `guess_sentence`. Pin
+tails from a second oracle prefix built with
+`--apply-patches tools/bisection/patches/nbest-tails-dump` (an
+env-gated `stderr` dump inside `get_nbest_match`; its stdout is
+byte-identical to the unpatched pin's — the runner checks), oxpinyin
+rows from `crates/oxpinyin-runtime/examples/nbest_tail_probe` (nats =
+`cost / 1000 · ln 2`). Runner:
+`tools/bisection/run-residue-a-tail-diff.sh` with
+`RESIDUE_A_SAME_DIR=1 RESIDUE_A_DUMP_PREFIX=… RESIDUE_A_PROBE=1`.
+
+| rank | pin tail: `m_poss`, `m_last_step`, result tokens | ox row: text, cost, nats |
+|---|---|---|
+| 0 | 你好世界 −14.8274994, `last_step=0`, `{0: 0x07000002}` | 你好世界 28341 = 19.644484 (`0x01006205`@0 + `0x01007a03`@5) |
+| 1 | 你好世界 −19.6447334, `last_step=5`, `{0: 0x01006205, 5: 0x01007a03}` | 你好时节 35656 = 24.714856 |
+| 2 | 你好时节 −24.7148857, `last_step=5`, `{0: 0x01006205, 5: 0x01007a09}` | 你好是届 35822 = 24.829918 |
+
+ox[0] ≡ pin[1] (`|Δ| = 0.00025` nats) and ox[1] ≡ pin[2]
+(`|Δ| = 0.00003` nats): oxpinyin's list is the pin's shifted up by one.
+Exactly one tail — the pin's rank 0 — is absent, and the third row is
+backfilled from below (你好是届; the pin's dump prints its three tails
+only, so that this path sits fourth in the pin's own heap is inferred
+from the aligned costs, not measured). The residual `|Δ|` of the two aligned pairs is
+row 11's float band; it is not this residue.
+
+**What the missing tail is.** One phrase step: the imported user token
+`0x07000002` (你好世界, USER_DICTIONARY nibble 7) covering columns
+0..11 from the `sentence_start` seed — `m_handles = {0x00000001,
+0x07000002}`, `m_last_step = 0`, `m_sub_index = 0`,
+`m_sentence_length = 4`. `m_last_step` is the column the tail's last
+phrase starts at (`trellis_value_t`, `phonetic_lookup.h:46-49`);
+`extract_result` walks it back to the seed (`:370-393`), so
+`last_step = 0` on a whole-input tail says the sentence is one phrase.
+The instrumented pin shows it created by `unigram_gen_next_step(start
+= 0, end = 11, token = 0x07000002)` (`:643-668`) inside the free
+widening loop at `i = 0` (`:794-812`): `elem_poss = 27 / 51051882 =
+5.2887e-07`, `pinyin_poss = 1.0`, `m_poss = log(elem_poss · 1.0 ·
+unigram_lambda 0.6873010) = −14.8274994`. The user 你好 token
+`0x07000001` (unigram 15) enters the same way at 0..5 (`m_poss
+−15.4152861`) and dies at step 5 — the unigram branch expands only
+the beam head (`search_unigram2`, `:540-547`) and no merged gram
+exists for a user token — so the pin's three tails are exactly: the
+user single-token path, system 你好+世界, system 你好+时节.
+
+Why the import creates it: `_add_phrase` (`pinyin.cpp:514-610`) writes
+the phrase into the phrase table, the pinyin table (`:597-599`, so
+`search_matrix` spells it) **and** the phrase index with
+`add_unigram_frequency(token, count × unigram_factor 3)` (`:604-605`,
+so `get_phrase_item` prices it) — an imported phrase is a first-class
+trellis token. Both sides agree on that state: `lookup_tokens` answers
+`0x07000002` with unigram 27 (and `0x07000001` 你好 with 15) on the pin
+and on oxpinyin alike; the facade total is 51051882 on both.
+
+**Where oxpinyin would generate it, and what prevents it.** The
+counterpart is the free widening from position 0 in
+`crate::nbest::nbest_sentences_with_seeds`
+(`crates/oxpinyin-engine/src/nbest.rs:423`, `widen_free_span` `:558`).
+The runtime-side probe shows the walk gets all the way there:
+`phrase_prefix_exists` is true at `ni`, `ni'hao`, `ni'hao'shi` and
+`ni'hao'shi'jie` (the user reverse index answers the widen probe,
+`RuntimeDict::phrase_prefix_exists`,
+`crates/oxpinyin-runtime/src/lib.rs:617`), and
+`dictionary.lookup(ni'hao'shi'jie)` returns exactly one entry — token
+`0x07000002`, text 你好世界, `pronunciation = None` (possibility 1,
+so the `Some((0, _))` skip at `nbest.rs:711` does not fire). The seed
+exists, the span is searched, the token is returned. The entry dies in
+`expand_entry` (`nbest.rs:677`): `model.nbest_step_costs(sentence_start,
+0x07000002)` answers `NbestStepCosts { unigram: None, blended: None }`,
+so neither branch pushes a value. That answer is
+`BigramLanguageModel::nbest_step_costs_with_user_delta`
+(`crates/oxpinyin-data/src/lm/mod.rs:532-548`): its first gate
+(`:540-543`) destructures `self.unigram_count(token)` and returns the
+default when it is `None`, and `unigram_count` (`:340`;
+`PhraseLibraries::unigram_count`, `phrase_libraries.rs:179`) reads the
+*system* chunk libraries only, where a nibble-7 token owns no item. The
+user delta the same function merges one line later (`:545`; the store
+carries 27 for this token and the total already includes it) is never
+reached. The gate's comment says it stands in for "no installed unigram
+table"; on a runtime with real unigrams it fires for exactly the tokens
+the pin prices from a user-file sub-index — every USER_DICTIONARY (7)
+and NETWORK_DICTIONARY (6) token. Not a seed never expanded, not a span
+the expander skips, not a dictionary miss: the language model refuses
+to price a token that has no system item.
+
+Probe output (baseline, `04-baseline/ox-probe.log`):
+
+| entry | lib | unigram_freq | `step_costs(sentence_start → token)` |
+|---|---|---|---|
+| `0x01006205` 你好 | 1 | 161 | unigram 18816 (13.042 nats), blended 17543 (12.160 nats) |
+| `0x07000001` 你好 | 7 | 15 | **None / None** |
+| `0x07000002` 你好世界 | 7 | 27 | **None / None** |
+
+**What consumes the path rather than the text — measured.** Same-dir
+ABI probe (`residue-a-tail-diff.c`, phases X/B/D):
+
+- **Choose cursors and constraints.** `pinyin_choose_candidate` of an
+  NBEST row runs `diff_result(best, other)` (`pinyin.cpp:2513-2519`;
+  `phonetic_lookup.cpp:172-207`) and forces every phrase where the row
+  differs from result 0. Choosing the 你好时节 row (visible on both
+  sides): the pin forces both phrases — `clear_constraint(0) = true`,
+  `clear_constraint(5) = true`, because its 1-best is one whole-input
+  token and 你好 differs from it — where oxpinyin forces only 时节
+  (`clear_constraint(0) = false`). The row's own `nbest` index differs
+  as well (2 on the pin, rank 1 being the zombied duplicate text; 1 on
+  oxpinyin). The cursor is `matrix.size() − 1 = 11` on both —
+  unaffected.
+- **Training after that choose** (re-guess first, the ibus shape): pin
+  `train_result3` trains `sentence_start → 你好` and `你好 → 时节`,
+  moving unigram 你好 161 → 644 and 时节 262 → 745; oxpinyin's
+  constrained walk trains only `你好 → 时节` (时节 262 → 745, 你好
+  stays 161). The bigram export is identical
+  (`你好时节|ni'hao'shi'jie|138`) — the export skips `sentence_start`
+  pairs on both sides — so the absent path shows in the unigram, not
+  in the export.
+- **Whole-row choose + train** (residue B's shape): the pin's
+  `diff_result(best, best)` installs nothing and trains nothing;
+  oxpinyin's record holds row 0's tokens 你好+世界 and the history
+  fallback trains that pair (export `你好世界|…|138` then `414`,
+  unigram 你好 161 → 644 → 1610, 世界 41710 → 42193 → 43159; the user
+  token stays 27 on both). What differs is B's fallback, not A — but
+  the tokens it trains are the pair the missing tail displaced (see
+  the common-root experiment below).
+- **DYNAMIC_ADJUST** (`_get_previous_token`, `pinyin.cpp:1711-1767`):
+  at offset 5 the pin's result 0 holds no token at 5 (one phrase spans
+  0..11), so no previous token and no bigram term; oxpinyin's result 0
+  holds 世界@5, so previous 你好 and bigram-adjusted keys. Measured at
+  `0x38a`, the full window at offset 5 (303 rows on the pin, 304 on
+  oxpinyin) orders identically after the n-best rows; the extra row
+  is the third n-best text. No observable consequence on this input —
+  recorded as measured, not as impossible.
+- **Every candidate window.** The pin's three tails carry two texts, so
+  `_remove_duplicated_items_by_phrase_string` (`pinyin.cpp:2300`)
+  leaves NBEST ranks 0 and 2 and `n = 128`; oxpinyin's three distinct
+  texts give `n = 129` with ranks 0, 1, 2 — the `n=` line of every
+  window at `0x1e` in this state.
+
+**Class (proposed; not ruled — no register row, totals unchanged).**
+**REVERT TARGET.** The pin's behaviour is reproducible: the missing
+step's price is `log(27 / 51051882 · 0.6873010)`, a basic-ops ratio the
+fixed-point scale already reproduces for system tokens (the
+counterfactual build below lands it at 14.827804 nats against the
+pin's 14.8274994 — `|Δ| = 0.0003`, row 11's band). No language
+mechanism is involved and no blocker was found: the step-cost seam
+already holds the user delta it needs. Not (a) — the 4.8-nat gap is an
+absent step, not accumulation. Not (b), not (c).
+
+**Fix shape (do not implement).** In
+`nbest_step_costs_with_user_delta`, price a token whose library owns
+no system item from its user delta alone — `count = 0 +
+user.unigram_delta` — for the user-file libraries (nibbles 6 and 7)
+and the promoted addon nibble, keeping `None` for a token of an
+unloaded (masked) library as `get_phrase_item` failing does;
+`unigram_total` already carries the user delta. Expected oxpinyin
+rows: 你好世界 at `surprisal(0.6873010 × 27, 51051882)` = 21392
+millibits (14.8278 nats), 你好世界 (the system pair, 19.644), 你好时节
+(24.715) — the candidate windows then dedup the second to `n = 128`.
+
+**Pre-registered differential.** `run-residue-a-tail-diff.sh` same-dir
+on the pin's `data/`: phase A IDENTICAL — `sentence[0..2]` = 你好世界 /
+你好世界 / 你好时节, `A-1e:n=128`, NBEST ranks 0 and 2; phase X
+IDENTICAL — `clear_constraint(0)=true`, the 你好时节 row at nbest
+index 2, unigram 你好 161 → 644 after the train; phase D `n=303`. The
+runtime probe must print `step_costs(sentence_start → 0x07000002):
+unigram=Some(21392)` and rows 14.828 / 24.715 nats with
+`sentence_text(1)` the duplicate text. Phases B and C are **not** part
+of A's gate: the experiment below shows B's export line going empty
+under an A fix while B's defect stands, so a B gate must read the
+user token's unigram, not the export.
+
+**Side observations (not A, B or C; measured, not registered).** (i)
+`pinyin_bigram_iterator_get_next_phrase` on the last export row answers
+`false` on the pin (it returns `has_next_phrase`, `pinyin.cpp:910`)
+and `true` on oxpinyin (row fetched) — an ABI return-value divergence
+the union probe could not see while the pin's export was empty in
+every probed state. (ii) After a whole-composition NBEST choose and
+re-guess, `guess_candidates(0, 0x1e)` answers `n = 1` (the n-best row
+only) on oxpinyin and `n = 128` on the pin (phase X2). Both need their
+own rows; neither is opened here.
+
+**Earlier text (2026-09-19, the settling measurement), kept as
+recorded.**
 
 **Mechanism.** The pin's k-best keeps up to three trellis *tails* with
 no text dedup inside the search (`phonetic_lookup.h:736-836`,
@@ -422,7 +620,10 @@ dedup.
 
 **Which defect.** Survivor selection — **not** search-time text dedup.
 The settling dump below is a wide score gap, so this is not the
-float/`gfloat` unresolved band.
+float/`gfloat` unresolved band. (Sharpened above: the survivor the pin
+selects and oxpinyin lacks is one specific tail, and it is absent from
+the trellis rather than out-selected — the step that would create it
+is never priced.)
 
 **Band measurement (2026-09-19 UTC) — `tuihui`, system-only, not the
 settling input.** Same-dir on the pin's `data/` inside `debian:testing`
@@ -461,9 +662,9 @@ places the duplicate-text path among the survivors is false on pin
 exported tables, where the frozen gate still holds 6 distinct-same.
 
 **Settling measurement (2026-09-19 UTC) — `nihaoshijie`, ABI-probe
-state.** Same container/image. Sequence: `set_options(0x18a)`, import
-你好/5, 你好世界/9, 测试/3, `save`, parse `nihaoshijie`,
-`guess_sentence`. Logs
+state.** Container `fd969584d8c6`, same image. Sequence:
+`set_options(0x18a)`, import 你好/5, 你好世界/9, 测试/3, `save`, parse
+`nihaoshijie`, `guess_sentence`. Logs
 `~/.local/share/oxpinyin-evidence/2026-09-19/residue-classify/nihaoshijie-a/`.
 Pin tails from instrumented `get_nbest_match` (`m_poss`); oxpinyin
 rows from the session n-best cost field (nats = `cost/1000 · ln 2`).
@@ -480,7 +681,9 @@ rank-2 你好是届. Margin `|24.829918302 − 19.6447334| = 5.185` nats,
 far above the 1.0 nat `gint` band. Pin's own `|m_poss[1] − m_poss[2]|
 = 5.070` nats is the same wide gap. Ox rank-0 nats `19.644` matches
 pin `|m_poss[1]|`, not pin `|m_poss[0]| = 14.827` (the
-`last_step=0` user-phrase tail).
+`last_step=0` user-phrase tail). Re-measured 2026-09-19 in container
+`7cfeefdaf53f` with identical figures (the alignment table at the top
+of this section).
 
 **(a) does not hold.** The gap is structural, not float accumulation
 inside the unresolved band. Classification is the maintainer's — no
@@ -491,13 +694,14 @@ new register row here.
 the distinct-same bucket on exported tables. They do not cover this
 import-boosted ABI-probe shape.
 
-**User-visible consequence.** After import + `guess_sentence` on
-`nihaoshijie`, `get_sentence(0/1/2)` repeats 你好世界 on the pin
-(two paths) and shows three distinct strings on oxpinyin, with a
-different third.
-
-**Class.** **structural, not (a)** — does not fold into register row
-11. Pending re-classification.
+**User-visible consequence.** After an import, the pin's 1-best for
+the imported phrase's pinyin is the imported phrase itself — one
+token — and its rank-1 the same text assembled from system phrases;
+oxpinyin's 1-best is only the assembled text, with a third, different
+string in the list. Same display string at rank 0; different token
+path underneath: a row choose constrains fewer phrases, a train after a
+non-best choose touches fewer unigrams, and every candidate window
+carries one sentence row more.
 
 ### D — system token unigram 161 vs 1610 (**no ABI divergence**)
 

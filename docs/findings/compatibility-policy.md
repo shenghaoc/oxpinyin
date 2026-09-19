@@ -270,7 +270,7 @@ revert targets is `revert-plan.md`.
 | 8 | Constraints survive every re-parse except the selection-committed one | **CLOSED** (was REVERT TARGET) | #217 (`fix/revert-r5-constraint-reset`): constraints survive a selection-committed re-parse; frozen pins bit-identical |
 | 9 | The n-best row-choose cursor is the row's own end | **CLOSED** (was REVERT TARGET) | eca8d43b: every `NBEST_MATCH_CANDIDATE` choose answers `parsed_len` — upstream's `matrix.size()-1` in the active parse mode's coordinates |
 | 10 | `pinyin_get_sentence` asserts a past-the-rows index | **(c)** | SIGABRTs on a non-empty result set (`pinyin.cpp:1463-1482`) |
-| 11 | N-best trellis accumulates `gfloat` log costs | **(a)** | `log()` per step into a `gfloat`; ties decided at the ULP. **FROZEN** as a permanent Stage-1 divergence (maintainer ruling 2026-09-02, re-frozen 2026-09-04 at 491/396/390 of 496). Probe residue A does **not** fold here: the 2026-09-19 `nihaoshijie` ABI-probe dump (import + guess) has pin duplicate-text rank-1 vs ox displacing 你好是届 at **5.185 nats**, above the 1.0 nat `trellis_value_compare` gint band; A is structural, classification pending (`probe-coverage-abi.md` A). The `tuihui` dump is the comparator-band illustration only (both sides agree, `\|Δm_poss\| ≈ 0.004`) |
+| 11 | N-best trellis accumulates `gfloat` log costs | **(a)** | `log()` per step into a `gfloat`; ties decided at the ULP. **FROZEN** as a permanent Stage-1 divergence (maintainer ruling 2026-09-02, re-frozen 2026-09-04 at 491/396/390 of 496). Probe residue A does **not** fold here: the 2026-09-19 `nihaoshijie` ABI-probe dump (import + guess) has pin duplicate-text rank-1 vs ox displacing 你好是届 at **5.185 nats**, above the 1.0 nat `trellis_value_compare` gint band; A is one specific absent tail — the imported user phrase's single-token path, which `nbest_step_costs` never prices because the token has no system item — classification pending, REVERT TARGET proposed (`probe-coverage-abi.md` A, characterised 2026-09-19). The `tuihui` dump is the comparator-band illustration only (both sides agree, `\|Δm_poss\| ≈ 0.004`) |
 | 12 | Predicted-candidate tie order | **CLOSED** (was REVERT TARGET) | superseded by P6 (345af16d, 2026-09-02): on KC and tkrzw the runtime walks the pin's own phrase DBM, so `pred-order-diff` is IDENTICAL on the pin's `data/` (1588 lines, 0 mismatches) — the KC hash-walk experiment the original row asked for is moot. On redb/LMDB the text-ascending *defined* order stands (maintainer decision 2026-08-25); those containers are not the pin's and are outside the drop-in surface. `ROADMAP.md` records the same disposition |
 | 13 | Mid-syllable candidate-lookup offset | **CLOSED** (was REVERT TARGET) | the pin's empty-column law is reproduced (register entry re-titled "closed"; the C2 residue closed 2026-08-29 per `uncovered-surface-differentials.md` phase E) |
 | 14 | Cursor helpers' `_check_offset` aborts answer `false` | **(c)** | pin SIGABRTs at `pinyin.cpp:2175` |
@@ -484,7 +484,11 @@ exception class fits):
 Residue **A** does **not** fold into row 11 (basis updated): the
 settling `nihaoshijie` dump is a 5.185 nat gap, structural rather than
 the 1.0 nat `gfloat` band; classification pending, no new row in this
-amendment. The `tuihui` dump stays as the band illustration (both
+amendment. (Characterised later the same day: the gap is exactly one
+absent tail — the pin's rank-0 single-token user-phrase path — and the
+common-root experiment finds no shared cause with rows 33/34;
+`probe-coverage-abi.md` A carries the proposed class and the
+pre-registered differential, pending ruling.) The `tuihui` dump stays as the band illustration (both
 sides agree). Residue **D** needs no register row (same-dir
 retraction stays in the probe record). Totals move REVERT TARGET 1 →
 3; CLOSED stays 16.
