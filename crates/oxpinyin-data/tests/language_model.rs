@@ -155,3 +155,102 @@ fn scoring_blends_bigram_and_unigram_over_the_corpus_counts() {
     assert!(step.blended.is_some());
     assert!(step.unigram.is_some());
 }
+
+/// The §12 presence gate (revert-plan.md §12, register #35): the pin's
+/// `unigram_gen_next_step` prices any *loaded* sub-index's item
+/// (`get_phrase_item`), and the three `USER_FILE` sub-indexes (nibbles
+/// 5/6/7 — promoted addon, network, user) live in the default facade
+/// with their counts in the user directory, so their tokens are priced
+/// from the user delta alone — while a masked library's token, a loaded
+/// library's missing item and a non-existent library keep the default
+/// answer (`ERROR_NO_SUB_PHRASE_INDEX` / `ERROR_NO_ITEM`).
+#[test]
+fn user_file_tokens_are_priced_from_their_user_delta_alone() {
+    let fix = Fixture::new();
+    let (lm, _) = fix.open();
+    let start = PhraseToken::new(1);
+
+    // A zero delta answers the default: no phantom rows for a user-file
+    // token the store does not carry.
+    let zero = lm
+        .nbest_step_costs_with_user_delta(
+            &start,
+            &PhraseToken::new(0x0700_0002),
+            UserCountDelta::ZERO,
+        )
+        .unwrap();
+    assert_eq!(zero, oxpinyin_core::NbestStepCosts::default());
+
+    // A carried delta prices the step — the same additive merge a system
+    // item takes, over `0 + delta`.
+    let delta = UserCountDelta {
+        unigram_delta: 27,
+        unigram_total_delta: 27,
+        ..UserCountDelta::ZERO
+    };
+    let priced = lm
+        .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), delta)
+        .unwrap();
+    assert!(priced.unigram.is_some(), "a carried delta must price");
+    assert!(priced.blended.is_none(), "no bigram row involves it");
+    // A larger delta is cheaper (more frequent), and the three user-file
+    // libraries price identically — the promoted addon nibble is not
+    // special.
+    let bigger = lm
+        .nbest_step_costs_with_user_delta(
+            &start,
+            &PhraseToken::new(0x0700_0002),
+            UserCountDelta {
+                unigram_delta: 270,
+                unigram_total_delta: 270,
+                ..UserCountDelta::ZERO
+            },
+        )
+        .unwrap();
+    assert!(bigger.unigram.unwrap() < priced.unigram.unwrap());
+    for token in [0x0500_0001_u32, 0x0600_0001, 0x0700_0002] {
+        let step = lm
+            .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(token), delta)
+            .unwrap();
+        assert_eq!(step, priced, "nibble {} prices like nibble 7", token >> 24);
+    }
+
+    // A user bigram takes the blended branch over the merged counts — the
+    // merge-before-gate invariant extended to user-file tokens.
+    let with_bigram = lm
+        .nbest_step_costs_with_user_delta(
+            &PhraseToken::new(NI),
+            &PhraseToken::new(0x0700_0002),
+            UserCountDelta {
+                bigram_count: 5,
+                bigram_total: 5,
+                unigram_delta: 27,
+                unigram_total_delta: 27,
+            },
+        )
+        .unwrap();
+    assert!(with_bigram.blended.is_some());
+
+    // The gate keeps its refusals: a masked user library, a loaded
+    // library's missing item and a non-existent library answer the
+    // default however large the delta — the counterfactual's
+    // `unwrap_or(0)` would have priced all three (register #35).
+    let (lm2, mask) = fix.open();
+    mask.store(1 << 7, Ordering::SeqCst);
+    let masked = lm2
+        .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(0x0700_0002), delta)
+        .unwrap();
+    assert_eq!(masked, oxpinyin_core::NbestStepCosts::default());
+    let (lm3, _) = fix.open();
+    for token in [0x0100_0050_u32, 0x0300_0001, 0x0400_0001, 0x0800_0001] {
+        let step = lm3
+            .nbest_step_costs_with_user_delta(&start, &PhraseToken::new(token), delta)
+            .unwrap();
+        assert_eq!(
+            step,
+            oxpinyin_core::NbestStepCosts::default(),
+            "nibble {} without an item keeps the default answer",
+            token >> 24
+        );
+    }
+}
