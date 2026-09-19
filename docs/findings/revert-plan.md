@@ -20,7 +20,7 @@ and again for rows 35–37:**
 | 9 | #32 sort-option input of `pinyin_guess_candidates` | **open** — registered 2026-09-18: bits 0x2/0x4/0x8/0x10 ignored, no longer-candidate row produced; the port owes the pin's longer-candidate production and the three sort keys (§9) |
 | 10 | #33 whole-row NBEST choose + train | **open** — registered 2026-09-19 (probe residue B): history fallback trains when no OneStep is present; pin `train_result3` writes nothing (§10) |
 | 11 | #34 imported user phrase after `guess_sentence` | **open** — registered 2026-09-19 (probe residue C): nbest cleared on parse; NBEST-wins dedup before `SORT_WITHOUT_SENTENCE` (§11) |
-| 12 | #35 user-library tokens refused an n-best step cost | **open** — registered 2026-09-19 (probe residue A): `nbest_step_costs_with_user_delta` returns no cost for a token without a system item, so no imported or learned phrase enters a sentence path (§12); executes first |
+| 12 | #35 user-library tokens refused an n-best step cost | **closed in code** (2026-09-19): the presence gate mirrors the pin's `get_phrase_item` over the loaded sub-index — user-file tokens (nibbles 5/6/7) priced from their user delta alone, masked libraries and missing items still refused; phase A/X/D IDENTICAL, the runtime probe's `Some(21392)` measured (§12) |
 | 13 | #36 bigram export iterator's last-row return value | **open** — registered 2026-09-19 (probe side observation (i)): the pin returns `has_next_phrase` after advancing, oxpinyin returns `true` for every fetched row (§13); independent of the sequence |
 | 14 | #37 candidate window behind the composition offset | **open** — registered 2026-09-19 (probe residue E): the C ABI serves the composition-anchored cached list for any lookup offset at or behind a choose; an empty list at `(0, 0x1f)` after a whole-composition choose (§14); executes second |
 
@@ -312,33 +312,38 @@ land with the measurements.
 
 ### 12 — User-library tokens refused an n-best step cost (register #35)
 
+- **Status:** **closed in code** (2026-09-19) — the port landed on
+  `fix/nbest-step-cost-user-token`.
 - **Site:** `BigramLanguageModel::nbest_step_costs_with_user_delta`
-  (`crates/oxpinyin-data/src/lm/mod.rs:532-548`): the first gate
-  (`:540-543`) destructures `self.unigram_count(token)` — the system
-  chunk libraries only (`:340`; `PhraseLibraries::unigram_count`,
-  `phrase_libraries.rs:179`) — and returns the default when it is
-  `None`, before the user delta is merged at `:545`.
-- **Now:** every USER_DICTIONARY (7) / NETWORK_DICTIONARY (6) token
-  answers `NbestStepCosts { unigram: None, blended: None }`, so
+  (`crates/oxpinyin-data/src/lm/mod.rs`): the first gate destructured
+  `self.unigram_count(token)` — the system chunk libraries only
+  (`PhraseLibraries::unigram_count`, `phrase_libraries.rs`) — and
+  returned the default when it was `None`, before the user delta
+  merged.
+- **Was:** every USER_DICTIONARY (7) / NETWORK_DICTIONARY (6) token
+  answered `NbestStepCosts { unigram: None, blended: None }`, so
   `crate::nbest::expand_entry` (`oxpinyin-engine/src/nbest.rs:677`)
-  pushes nothing for it: no imported or learned phrase can enter a
+  pushed nothing for it: no imported or learned phrase could enter a
   sentence path. Measured same-dir on the pin's `data/` 2026-09-19
   (`probe-coverage-abi.md` A): after importing 你好世界/9, the pin's
-  rank-0 tail for `nihaoshijie` is that single token
-  (`m_poss = −14.8274994`, `last_step = 0`); oxpinyin's n-best is the
+  rank-0 tail for `nihaoshijie` was that single token
+  (`m_poss = −14.8274994`, `last_step = 0`); oxpinyin's n-best was the
   pin's shifted up by one, `step_costs(sentence_start → 0x07000002)`
   `None/None`, every `0x1e` window one row longer (129 vs 128).
-- **Target:** the pin prices any loaded sub-index's item
-  (`unigram_gen_next_step`, `phonetic_lookup.h:643-668`, over
-  `get_phrase_item`; the import wrote `count × 3` into the phrase
-  index, `pinyin.cpp:604-605`). Price a token whose library owns no
-  system item from its user delta alone — `count = 0 +
-  user.unigram_delta` — for the user-file libraries and the promoted
-  addon nibble, keeping `None` for an unloaded (masked) library's
-  token; `unigram_total` already carries the user delta. A one-line
-  ordering fix inside an invariant the same function already documents
-  for the bigram path ("the bigram merge happens *before* the count > 0
-  presence gate").
+- **Landed fix:** the gate now mirrors the pin's
+  `unigram_gen_next_step` presence test (`get_phrase_item` over the
+  token's *loaded* sub-index, `phonetic_lookup.h:643-668`):
+  `unigram_count`'s `None` is split three ways — a token of one of the
+  default facade's three `USER_FILE` sub-indexes (the promoted addon
+  nibble 5, network 6, user 7; `novel_types.h:159-161`) passes with
+  `count = 0` and prices from `user.unigram_delta` alone (the
+  frequency field the import or choose-promotion wrote,
+  `pinyin.cpp:604-605`), while a masked (unloaded) library's token and
+  a loaded library's missing item keep the default answer, exactly as
+  the pin's failing `get_phrase_item` does. `unigram_total` already
+  carries the user delta. A one-line ordering fix inside the invariant
+  the same function already documents for the bigram path ("the bigram
+  merge happens *before* the count > 0 presence gate").
 - **Probe:** `tools/bisection/run-residue-a-tail-diff.sh` same-dir on
   the pin's `data/`: phase A IDENTICAL — `sentence[0..2]` = 你好世界 /
   你好世界 / 你好时节, `A-1e:n=128`, NBEST ranks 0 and 2; phase X
@@ -347,11 +352,18 @@ land with the measurements.
   the runtime probe (`crates/oxpinyin-runtime/examples/nbest_tail_probe`)
   prints `step_costs(sentence_start → 0x07000002): unigram=Some(21392)`
   and rows 14.828 / 24.715 nats with `sentence_text(1)` the duplicate
-  text (the counterfactual build measured exactly this,
-  `probe-coverage-abi.md` "A — common-root experiment"). Phases B and C
-  are not this row's gate.
-- **Blocked on:** nothing — the port is unstarted work. Executes
-  first (see the order below).
+  text. **Ran IDENTICAL 2026-09-19 UTC** on phases A, X and D
+  (container `debian@sha256:dab11cdb…`, pin oracle tkrzw; the diff's
+  residue is exactly B/C/X2/E — rows 33, 34, 36, 37 — no A/X/D line
+  remains): `A-1e:n=128` with ranks 0 and 2, `A:sentence[0..2]` the
+  pin's, `X:clear_constraint(0)=true` with 你好时节 at nbest index 2
+  and 你好 161 → 644 after the train, `D-5:n_cand n=303`; the probe
+  prints `unigram=Some(21392 = 14.827804 nats)`, rows
+  `21392 = 14.827804487` / `35656 = 24.714855870` nats,
+  `sentence_text(1)` the duplicate text. Phases B and C are not this
+  row's gate and remain divergent (rows 33–34).
+- **Blocked on:** nothing — closed. Executed first (see the order
+  below).
 
 ### 13 — Bigram export iterator's last-row return value (register #36)
 
