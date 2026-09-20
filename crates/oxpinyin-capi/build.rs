@@ -139,15 +139,20 @@ fn bake_pkg_config_template() {
 /// The `@DATABASE_FORMAT@` value. An explicit `LIBPINYIN_DATABASE_FORMAT`
 /// wins — a packager shipping data in another engine's format sets it so
 /// fcitx's cmake probe reads the right backend. Otherwise, the token of
-/// the peer backend feature this crate has enabled: tkrzw under the
-/// default features (the default since 2026-09-05, before that Kyoto
-/// Cabinet), kyotocabinet or bdb when their `--no-default-features
-/// --features <peer>` is selected. The chain below is a fixed precedence
-/// over the arms as written; it is not `oxpinyin_store::DefaultStore`'s
-/// `#[cfg]` order, and does not need to be — the store's
-/// exactly-one-backend guard refuses any build that enables two of these
-/// features, so more than one arm can never be live. The tokens are
-/// upstream's own (`BerkeleyDB` / `KyotoCabinet` / `Tkrzw`).
+/// the peer backend feature this crate has enabled. Berkeley DB under
+/// the default features — the same default a bare libpinyin
+/// `./configure` picks, whose `configure.ac` leaves `DBM` at
+/// `BerkeleyDB` when `--with-dbm` is absent (the cargo default became
+/// bdb on 2026-09-20; before that tkrzw, since 2026-09-05) — or
+/// kyotocabinet / tkrzw when their `--no-default-features --features
+/// <peer>` is selected. The chain below is a fixed precedence over the
+/// arms as written; it is not `oxpinyin_store::DefaultStore`'s `#[cfg]`
+/// order, and does not need to be — the store's exactly-one-backend
+/// guard refuses any build that enables two of these features, so more
+/// than one arm can never be live. The tokens are upstream's own
+/// (`BerkeleyDB` / `KyotoCabinet` / `Tkrzw`). The else arm is BerkeleyDB
+/// because that is the default feature, not because the arms are a
+/// tie-break.
 fn database_format() -> String {
     if let Ok(explicit) = env::var("LIBPINYIN_DATABASE_FORMAT")
         && !explicit.trim().is_empty()

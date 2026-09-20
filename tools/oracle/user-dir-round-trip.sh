@@ -12,9 +12,11 @@
 #   user-dir-round-trip.sh <oracle-prefix> [input ...]
 #
 #   <oracle-prefix>  a prefix built by tools/oracle/build-oracle.sh
-#                    (default DBM tkrzw — build oxpinyin with the
-#                    matching backend feature; the script uses the
-#                    workspace default).
+#                    (DBM tkrzw — build oxpinyin with
+#                    --no-default-features --features tkrzw, which this
+#                    script now does itself; the pin-built oracle is
+#                    tkrzw and the workspace default moved to Berkeley
+#                    DB on 2026-09-20).
 #   input            pinyin strings to train on (default: nihao nisha).
 #
 # Requires: cc, pkg-config, glib-2.0 dev files, and the rust toolchain.
@@ -73,11 +75,13 @@ printf '== Phase B: oxpinyin loads the pin profile and saves it back in place ==
 # OX_CARGO_FEATURES selects oxpinyin's store backend and MUST match the
 # oracle prefix's `--with-dbm` (the seamless claim is per KV backend):
 # a KyotoCabinet-built libpinyin pairs with `--no-default-features
-# --features kyotocabinet`, tkrzw with the workspace default. The default
-# here is empty — the workspace default (tkrzw) — matching the default
-# `build-oracle.sh --dbm`.
+# --features kyotocabinet`, tkrzw with `--no-default-features --features
+# tkrzw` (the workspace default moved from tkrzw to Berkeley DB on
+# 2026-09-20, so the default `build-oracle.sh --dbm` no longer matches an
+# empty selection). The default here is therefore tkrzw explicitly —
+# matching that oracle — and OX_CARGO_FEATURES overrides it.
 # shellcheck disable=SC2206
-feature_flags=(${OX_CARGO_FEATURES:-})
+feature_flags=(${OX_CARGO_FEATURES:---no-default-features --features tkrzw})
 OX_SYSTEM_DIR="$data_dir" \
 OX_PIN_DIR="$work/pin" \
 cargo test --locked --manifest-path "$root/Cargo.toml" -p oxpinyin-runtime \

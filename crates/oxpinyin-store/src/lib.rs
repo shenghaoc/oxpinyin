@@ -9,8 +9,9 @@
 //! All are first-class and interchangeable: any oxpinyin binary
 //! picks exactly one at compile time via the cargo features and calls it
 //! through the same trait surface, and a table produced by any of them
-//! satisfies the same logical contract as the others. Tkrzw is the
-//! default *selection* (the feature enabled when no other is named), not
+//! satisfies the same logical contract as the others. Berkeley DB is the
+//! default *selection* (the feature enabled when no other is named — the
+//! same default a bare libpinyin `./configure` picks), not
 //! a privileged implementation. Consumers depend on the narrowest tier
 //! they need; the concrete backend the current build resolves to is the
 //! [`DefaultStore`] alias.
@@ -46,7 +47,7 @@
 // implementations behind the store's trait surface, and every oxpinyin
 // build has exactly one of them. Cargo features are additive under
 // unification, so a plausible-looking `cargo build --features kyotocabinet`
-// silently combines kyotocabinet with the default tkrzw feature — precisely the
+// silently combines kyotocabinet with the default bdb feature — precisely the
 // slide these guards refuse. Every consumer crate forwards its own
 // `{kyotocabinet, tkrzw, bdb}` features onto this crate, so
 // this one guard suffices for the whole workspace.
@@ -59,9 +60,10 @@
 #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb",)))]
 compile_error!(
     "oxpinyin-store: no store backend selected. Enable exactly one of \
-     `tkrzw` (the default), `kyotocabinet`, or `bdb`. On the \
-     command line: `cargo build` for the default (tkrzw), or \
-     `cargo build --no-default-features --features {kyotocabinet|bdb}` \
+     `bdb` (the default, as in a bare libpinyin `./configure`), \
+     `kyotocabinet`, or `tkrzw`. On the \
+     command line: `cargo build` for the default (BDB), or \
+     `cargo build --no-default-features --features {kyotocabinet|tkrzw}` \
      for a peer."
 );
 
@@ -72,10 +74,10 @@ compile_error!(
 ))]
 compile_error!(
     "oxpinyin-store: more than one store backend selected. Exactly one \
-     of `tkrzw`, `kyotocabinet`, `bdb` may be enabled per \
+     of `bdb`, `kyotocabinet`, `tkrzw` may be enabled per \
      build. A build that names an alternate peer must also disable the \
      workspace's default feature set: \
-     `cargo build --no-default-features --features {kyotocabinet|bdb}`."
+     `cargo build --no-default-features --features {kyotocabinet|tkrzw}`."
 );
 
 use std::fmt;
@@ -585,8 +587,8 @@ pub const RAW_TABLE: &str = "data";
 // exactly that selection: it picks the enabled backend feature; a
 // multi-feature build resolves deterministically along the chain order
 // (kyotocabinet > tkrzw > bdb). The chain order is a
-// tie-break for the additive unification, not a hierarchy — Tkrzw is
-// only the enabled feature that the workspace's default set carries,
+// tie-break for the additive unification, not a hierarchy — Berkeley DB
+// is only the enabled feature that the workspace's default set carries,
 // and any single `--features <backend>` on `--no-default-features`
 // selects that backend's peer implementation instead.
 
@@ -600,13 +602,14 @@ pub const RAW_TABLE: &str = "data";
 #[cfg(feature = "kyotocabinet")]
 pub type DefaultStore = KcStore;
 
-/// The default store backend — tkrzw, the feature enabled in the
-/// workspace's default set.
+/// The default store backend — tkrzw, on
+/// `--no-default-features --features tkrzw`.
 #[cfg(feature = "tkrzw")]
 pub type DefaultStore = TkrzwStore;
 
-/// The default store backend — Berkeley DB, on
-/// `--no-default-features --features bdb`.
+/// The default store backend — Berkeley DB, the feature enabled in the
+/// workspace's default set (the analogue of a bare libpinyin
+/// `./configure`, whose `configure.ac` defaults `DBM` to `BerkeleyDB`).
 #[cfg(feature = "bdb")]
 pub type DefaultStore = BdbStore;
 
@@ -1307,8 +1310,8 @@ mod tests {
     //
     // The workspace policy: the peer backends (KC,
     // tkrzw, BDB) are equal implementations behind the store's trait
-    // surface; tkrzw is the default *selection* (the feature enabled by
-    // the workspace's default set), not a privileged one. These tests
+    // surface; Berkeley DB is the default *selection* (the feature
+    // enabled by the workspace's default set), not a privileged one. These tests
     // catch any accidental slide back to another default (or any other
     // silent reordering) — a plain string check on `DEFAULT_STORE_EXT`
     // pinned to the feature the build is running under, plus a
@@ -1362,8 +1365,7 @@ mod tests {
         assert_type_eq::<super::KcStore>();
     }
 
-    /// `DefaultStore` resolves to `TkrzwStore` under the tkrzw feature —
-    /// the workspace's default selection, and equally on
+    /// `DefaultStore` resolves to `TkrzwStore` on
     /// `--no-default-features --features tkrzw`.
     #[cfg(feature = "tkrzw")]
     #[test]

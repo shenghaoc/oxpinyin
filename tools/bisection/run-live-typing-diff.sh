@@ -92,7 +92,7 @@ fi
 # unresolvable dir with a present oracle is FATAL rather than a silent
 # skip or a mini-fixture run. The pre-P6 gate hard-coded the
 # peer-extension names (.kct/.tkt) and could never pass on
-# a default (tkrzw) or Kyoto Cabinet build: datagen writes those
+# a KC, tkrzw or BDB build: datagen writes those
 # backends' tables under libpinyin's own names (pinyin_index.bin,
 # bigram.db, ...), which system_dir_detect_ext now accepts as the "bin"
 # layout. interpolation2.text stays required beside the tables — the

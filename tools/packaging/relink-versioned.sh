@@ -27,7 +27,7 @@
 #   --features  the cargo feature list of the build that produced the
 #               staticlib, for the store-backend link flags (same precedence
 #               as the crates: tkrzw > kyotocabinet > bdb;
-#               default tkrzw, the workspace default)
+#               default bdb, the workspace default)
 #
 # Linux + GNU ld only: the ELF versioning this implements has no macOS
 # counterpart (the cdylib as built is correct there). Exits 0 on success,
@@ -90,7 +90,7 @@ done
 # must resolve; prefer pkg-config (it drags the backend's own dependencies,
 # e.g. tkrzw's -llzma) and fall back to the plain -l name build.rs uses when
 # pkg-config cannot help (libdb ships no .pc on Debian).
-BACKEND="tkrzw"
+BACKEND="bdb"
 for feature in $(echo "$FEATURES" | tr ',' ' '); do
   case "$feature" in
     tkrzw|kyotocabinet|bdb) BACKEND="$feature" ;;

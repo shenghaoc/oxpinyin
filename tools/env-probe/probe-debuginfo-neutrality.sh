@@ -8,8 +8,9 @@
 #
 #   bash tools/env-probe/probe-debuginfo-neutrality.sh [backend-feature]
 #
-# Default backend is tkrzw (since 2026-09-05), so the probe runs on a
-# host with no DBM development packages installed.
+# Default backend is Berkeley DB (since 2026-09-20; tkrzw 2026-09-05 to
+# then), which needs libdb-dev; pass a peer feature to probe another
+# backend (e.g. tkrzw on a host with only libtkrzw).
 #
 # The comparison itself (full normalized instruction text for the
 # multiset; hash-stripped symbol identity plus instruction-body pairing
@@ -44,7 +45,7 @@
 
 set -euo pipefail
 
-BACKEND=${1:-tkrzw}
+BACKEND=${1:-bdb}
 PKG=${PKG:-oxpinyin-capi}
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 LIB="$REPO/tools/bisection/debuginfo-neutrality-lib.sh"

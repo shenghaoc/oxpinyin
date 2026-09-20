@@ -8,13 +8,14 @@ the workspace default. The crate map (`.kiro/steering/structure.md`) and
 ## Selecting a backend
 
 ```sh
-cargo test --locked --workspace                                                    # tkrzw (default)
+cargo test --locked --workspace                                                    # Berkeley DB (the default, as in a bare libpinyin ./configure)
 cargo test --locked --workspace --no-default-features --features kyotocabinet
-cargo test --locked --workspace --no-default-features --features bdb                # Berkeley DB, libpinyin's original DBM
+cargo test --locked --workspace --no-default-features --features tkrzw
 ```
 
 `--no-default-features` is required for a peer: the default set already
-selects tkrzw, and two backends at once is refused.
+selects Berkeley DB (since 2026-09-20; tkrzw was the default 2026-09-05 →
+then), and two backends at once is refused.
 
 ## System libraries
 
@@ -22,7 +23,7 @@ selects tkrzw, and two backends at once is refused.
 | --- | --- | --- |
 | tkrzw | `libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libclang-dev pkg-config` | `tkrzw`, and `export LIBRARY_PATH="$(brew --prefix)/lib"` (see README: `cargo test` links lz4/zstd from there, `cargo check`/`clippy` never link and are not evidence) |
 | kyotocabinet | `libkyotocabinet-dev libclang-dev pkg-config` | `kyoto-cabinet`; the keg ships `kyotocabinet.pc`, pkg-config resolves it, and the store suite passes (verified on 1.2.80, 2026-09-13). The old "the KC dylib does not dlopen on macOS" note does not reproduce on today's bottled formula — the dylib dlopens by absolute path, and the backend links at link time, so bare-name lookup never enters the picture |
-| bdb | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5` — 5.3.28 under the Sleepycat license, the surveyed version; the default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg ships no `.pc`, so point the overrides at it: `OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix)/opt/berkeley-db@5/include"` and `OXPINYIN_BDB_LIB_DIR="$(brew --prefix)/opt/berkeley-db@5/lib"` (the build's rpath flag lets the test binaries find the dylib). Clippy and the full suite pass with the same counts as Linux — 36/0/4 (verified 2026-09-13) |
+| bdb (the default) | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5` — 5.3.28 under the Sleepycat license, the surveyed version; the default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg ships no `.pc`, so point the overrides at it: `OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix)/opt/berkeley-db@5/include"` and `OXPINYIN_BDB_LIB_DIR="$(brew --prefix)/opt/berkeley-db@5/lib"` (the build's rpath flag lets the test binaries find the dylib). Clippy and the full suite pass with the same counts as Linux — 36/0/4 (verified 2026-09-13) |
 
 Every backend binds a **system** C library through its own header.
 oxpinyin vendors none of them: there
@@ -98,4 +99,9 @@ not conform is wiped on open exactly as libpinyin's `check_format` does;
 the DBM files carry libpinyin's names on Kyoto Cabinet, tkrzw and
 Berkeley DB. This
 matches what distributions do for libpinyin's own backend switches
-(`ROADMAP.md`, "tkrzw is the default selected backend").
+(`ROADMAP.md`, the dated default-backend notes). Swapping the default
+from tkrzw to Berkeley DB (2026-09-20) is one such transition for
+from-source builds: a user store written by a pre-2026-09-20
+default-features build is wiped on open under the same rule, and its
+family line changes `Tkrzw` → `BerkeleyDB` (see
+`docs/findings/compatibility-policy.md`).

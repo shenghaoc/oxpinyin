@@ -32,29 +32,30 @@ pub use oxpinyin_data::SystemDbm as DbmFile;
 ///
 /// The variants are peers behind the same `WriteStore`; the same
 /// compiled row stream reads back identically under each. [`Self::DEFAULT`]
-/// resolves to the peer whose feature the build carries — tkrzw under the
-/// workspace's default feature set — matching `oxpinyin_store::DefaultStore`;
-/// it names the selected backend, not a privileged implementation.
+/// resolves to the peer whose feature the build carries — Berkeley DB
+/// under the workspace's default feature set — matching
+/// `oxpinyin_store::DefaultStore`; it names the selected backend, not a
+/// privileged implementation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Backend {
     /// Tkrzw — libpinyin's `--with-dbm=Tkrzw` files. Requires the `tkrzw`
-    /// cargo feature (on by default — tkrzw is the workspace's default
-    /// selection).
+    /// cargo feature.
     Tkrzw,
     /// Kyoto Cabinet — libpinyin's `--with-dbm=KyotoCabinet` files.
     /// Requires the `kyotocabinet` cargo feature.
     KyotoCabinet,
     /// Berkeley DB — libpinyin's `--with-dbm=BerkeleyDB` files (its
     /// original DBM and the configure default). Requires the `bdb` cargo
-    /// feature.
+    /// feature (on by default — Berkeley DB is the workspace's default
+    /// selection, matching a bare libpinyin `./configure`).
     BerkeleyDb,
 }
 
 impl Backend {
     /// The default selected backend for a normal `oxpinyin-datagen
-    /// compile` run — matches `oxpinyin_store::DefaultStore` under the
-    /// workspace's default feature set (tkrzw there). Kept as a
+    /// compile` run — matches `oxpinyin_store::DefaultStore` under a
+    /// `--no-default-features --features kyotocabinet` build. Kept as a
     /// per-feature constant so the binary's `Options::default()` and the
     /// workspace runtime cannot silently diverge on which peer backend
     /// the default selection is.
@@ -62,13 +63,15 @@ impl Backend {
     pub const DEFAULT: Self = Self::KyotoCabinet;
 
     /// The default selected backend for a normal `oxpinyin-datagen
-    /// compile` run — matches `oxpinyin_store::DefaultStore`.
+    /// compile` run — matches `oxpinyin_store::DefaultStore` under the
+    /// workspace's default feature set (Berkeley DB, the analogue of a
+    /// bare libpinyin `./configure`).
     #[cfg(feature = "bdb")]
     pub const DEFAULT: Self = Self::BerkeleyDb;
 
     /// The default selected backend for a normal `oxpinyin-datagen
-    /// compile` run — matches `oxpinyin_store::DefaultStore` (tkrzw under
-    /// the workspace's default feature set).
+    /// compile` run — matches `oxpinyin_store::DefaultStore` under a
+    /// `--no-default-features --features tkrzw` build.
     #[cfg(feature = "tkrzw")]
     pub const DEFAULT: Self = Self::Tkrzw;
 

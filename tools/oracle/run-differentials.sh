@@ -9,8 +9,11 @@ set -uo pipefail
 # run-differentials.sh — run the oxpinyin↔libpinyin oracle differentials
 # against a built pinned oracle (libpinyin 2.11.92, Tkrzw backend, verified
 # model20 data). Wires the PINYIN_* env vars the env-gated differential tests
-# read, then runs them with the default tkrzw backend (the host's
-# libtkrzw through pkg-config).
+# read, then runs them with the tkrzw backend EXPLICITLY — the flavour the
+# pin-built oracle itself is (the workspace default moved to Berkeley DB on
+# 2026-09-20, so this is now a pin, not a ride). Every side of these
+# differentials is tkrzw: the oracle, the oxpinyin export below, and the
+# backend-forwarding crates.
 #
 # Prerequisites (see docs/testing/oracle-environment.md and the build recipe
 # below):
@@ -29,7 +32,8 @@ set -uo pipefail
 #      token space — e.g. the pin's own `ngseg` over raw text) in that dir;
 #      without them the evaluator gate is reported as skipped, not failed.
 #   3. The oxpinyin-format model export (tkrzw), produced by:
-#        cargo run -p oxpinyin-datagen -- compile \
+#        cargo run -p oxpinyin-datagen --no-default-features --features tkrzw -- \
+#            compile --backend tkrzw \
 #            --model-dir <model20 dir> --out-dir <export dir>
 #
 # Usage:
@@ -108,6 +112,14 @@ need_file "$data/table.conf" "system table.conf"
 need_file "$data/phrase_index.bin" "gen_binary_files output"
 need_file "$data/pinyin_index.bin" "gen_binary_files output"
 need_file "$export_dir/datagen-manifest.txt" "oxpinyin-datagen compile"
+# Flavour assertion: KC, tkrzw and BDB all name their tables identically
+# (pinyin_index.bin, bigram.db, ...), so a wrong-flavour export would NOT
+# announce itself as a missing file — it would open as nonsense. The
+# manifest's backend token is the only thing that names the container.
+if ! grep -q "^backend=tkt$" "$export_dir/datagen-manifest.txt"; then
+	echo "fatal: --export holds a $(sed -n 's/^backend=//p' "$export_dir/datagen-manifest.txt") export; this runner's oracle is tkrzw. Rebuild the export with --features tkrzw (see the header recipe)." >&2
+	exit 2
+fi
 [[ -n $model ]] && need_file "$model/interpolation2.text" "model20 export"
 
 # Segment utils.
@@ -168,9 +180,9 @@ if [[ -f $data/bigram.db && -f $data/evals2.text ]]; then
 fi
 
 # ---- the suites -------------------------------------------------------------
-# The backend-forwarding crates run with the default tkrzw selection;
+# The backend-forwarding crates run tkrzw explicitly, matching the pin;
 # oxpinyin-kmm is backend-agnostic (no features).
-feat=()
+feat=(--no-default-features --features tkrzw)
 report() {
 	grep -E "live parity|parity:|value-identical|skipping|test result|diverges|stale|panicked|assertion|left:|right:" || true
 }

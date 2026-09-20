@@ -50,9 +50,12 @@
 # (kyotocabinet > tkrzw > bdb; see "Native data-file naming under
 # the compile-time backend" in docs/findings/upstream-divergences.md). The
 # order matters only when one directory holds complete sets in several
-# extensions (the old fixtures/w3 flat layout did): the first match is then
-# the default build's backend.
-SYSTEM_DIR_BACKEND_EXTS="kct tkt db"
+# extensions (the old fixtures/w3 flat layout did): the first match wins.
+# Since 2026-09-20 the workspace default is bdb, so `db` leads — a
+# default-built capi opens BDB containers, and all three flavours name
+# their tables identically, so a wrong pick is silent nonsense rather
+# than a missing file.
+SYSTEM_DIR_BACKEND_EXTS="db kct tkt"
 
 # The peer-backend table stems the capi opens from a system directory.
 # The first three are mandatory and must share one extension: the engine
@@ -301,8 +304,21 @@ system_dir_require_complete() {
 		[[ -f $dir/$file ]] || missing+=("$file")
 	done
 	local found_index=
-	for file in pinyin_index.bin pinyin_index.kct pinyin_index.tkt pinyin_index.db; do
-		[[ -f $dir/$file ]] && found_index=$file
+	# `db` first: the default build is Berkeley DB since 2026-09-20.
+	# FIRST match wins, hence the break — without it the last match would
+	# win and the effective precedence would be the reverse of this list.
+	# A directory holding several complete sets (the pre-split flat
+	# fixtures/w3 layout) therefore resolves to `db`: the peer trio
+	# pinyin_index.db / phrase_index.db / bigram.db. Note the collision
+	# that shape has on this backend: its bigram is spelled `bigram.db`,
+	# the same name the native layout uses on every backend, so the two
+	# are indistinguishable by name — the check accepts either, and on
+	# Berkeley DB both open through the same backend.
+	for file in pinyin_index.db pinyin_index.bin pinyin_index.kct pinyin_index.tkt; do
+		if [[ -f $dir/$file ]]; then
+			found_index=$file
+			break
+		fi
 	done
 	[[ -n $found_index ]] || missing+=("pinyin_index.{bin,kct,tkt,db}")
 	# The core trio must be complete in ONE layout: an index table whose

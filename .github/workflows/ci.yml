@@ -165,12 +165,12 @@ jobs:
           rust-cache-key: lint-job
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
-        # Tkrzw is the default store backend; bindgen (libclang) reads
-        # tkrzw_langc.h at build time, and Debian's libtkrzw build demands
-        # the compression -dev packages at link time. test-macos installs
-        # its own Homebrew tkrzw and test-windows links vcpkg Berkeley DB,
-        # so neither of those jobs uses this apt line.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
+        # Berkeley DB is the default store backend (the analogue of a
+        # bare libpinyin ./configure); bindgen (libclang) reads the
+        # system db.h at build time. test-macos installs its own
+        # Homebrew tkrzw and test-windows links vcpkg Berkeley DB, so
+        # neither of those jobs uses this apt line.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libglib2.0-dev
       - run: cargo fmt --all --check
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
       # Placement gate for crate-level `#![cfg(...)]`. A gate that
@@ -228,12 +228,12 @@ jobs:
           rust-cache-key: test-job
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
-        # Tkrzw is the default store backend; bindgen (libclang) reads
-        # tkrzw_langc.h at build time, and Debian's libtkrzw build demands
-        # the compression -dev packages at link time. test-macos installs
-        # its own Homebrew tkrzw and test-windows links vcpkg Berkeley DB,
-        # so neither of those jobs uses this apt line.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
+        # Berkeley DB is the default store backend (the analogue of a
+        # bare libpinyin ./configure); bindgen (libclang) reads the
+        # system db.h at build time. test-macos installs its own
+        # Homebrew tkrzw and test-windows links vcpkg Berkeley DB, so
+        # neither of those jobs uses this apt line.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libglib2.0-dev
       - run: cargo test --locked --workspace
       - name: C++ pinyin.h smoke gate
         run: tools/bisection/run-cpp-smoke.sh
@@ -267,12 +267,11 @@ jobs:
       - name: Live-typing differential
         run: tools/bisection/run-live-typing-diff.sh
 
-  # macOS and Windows each link a C store backend. #501 deletes redb,
-  # and these two jobs were the only lanes still selecting it, so without
-  # a backend here they cannot build once that lands. macOS links Homebrew
-  # tkrzw — the path README.md documents for that OS. Windows links
-  # vcpkg's Berkeley DB 4.8, the Sleepycat line. Both jobs keep the
-  # exclude set these jobs already have on main: the two C-ABI crates
+  # macOS and Windows each link a C store backend. #501 removed redb.
+  # macOS links Homebrew tkrzw — the path README.md documents — and pins
+  # it explicitly, because the workspace default is Berkeley DB. Windows
+  # links vcpkg's Berkeley DB 4.8 and rides that default. Both jobs keep
+  # the exclude set these jobs already have on main: the two C-ABI crates
   # (glib and cargo-c, Linux-only) and the seven backend-independent
   # training crates (corpus, counter, emitter, kmm, lambda, punct, word),
   # which run once per PR in the Linux `test` job. oxpinyin-dictool stays
@@ -298,12 +297,11 @@ jobs:
       - run: rustup show active-toolchain
       # Homebrew tkrzw, exactly as README.md documents it (`brew install
       # tkrzw glib pkgconf`, then LIBRARY_PATH so the test link finds
-      # lz4/lzma/zstd — tkrzw.pc names them, and the store build script
-      # emits only tkrzw's own -L directory). The lane names tkrzw
-      # explicitly: macOS tests that documented path, which is the
-      # default today and stays this path if the default moves.
-      # `--no-default-features` also keeps pinyin-oracle's Linux-only
-      # `oracle-ffi` off even if it ever became a default feature.
+      # lz4/lzma/zstd). Pinned with `--features tkrzw` rather than riding
+      # the workspace default, which is Berkeley DB: this lane is the CI
+      # for the path macOS users are told to follow, and the default
+      # build is covered on Linux. `--no-default-features` also keeps
+      # pinyin-oracle's Linux-only `oracle-ffi` off.
       - name: Install the store backend (Homebrew tkrzw)
         run: |
           brew install tkrzw glib pkgconf
@@ -369,11 +367,11 @@ jobs:
           echo "OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION=1" >> "$GITHUB_ENV"
           echo 'LIBCLANG_PATH=C:\Program Files\LLVM\bin' >> "$GITHUB_ENV"
           echo "$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\bin" >> "$GITHUB_PATH"
-      # bdb, one peer, so the exactly-one-backend guard is satisfied.
-      # Same exclusions as the macOS job, and the same set main's
-      # test-windows already uses.
+      # The workspace default is Berkeley DB, so this lane no longer
+      # passes `--features bdb`. The vcpkg provisioning above is what
+      # makes that default link. Same exclusions as the macOS job.
       - run: >
-          cargo test --locked --workspace --no-default-features --features bdb
+          cargo test --locked --workspace
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-counter --exclude oxpinyin-emitter
           --exclude oxpinyin-kmm --exclude oxpinyin-lambda --exclude oxpinyin-punct
@@ -471,11 +469,10 @@ jobs:
           safe-directory: 'true'
           rustup: 'true'
       - name: Install build dependencies (apt)
-        # The fuzz targets ride the workspace default (tkrzw): bindgen
-        # (libclang) reads tkrzw_langc.h at build time, and Debian's
-        # libtkrzw build demands the compression -dev packages at link
+        # The fuzz targets ride the workspace default (Berkeley DB, the
+        # Q1 ruling): bindgen (libclang) reads the system db.h at build
         # time.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libglib2.0-dev
       - name: Install pinned nightly with Rust sources
         run: rustup toolchain install nightly-2026-08-01 --profile minimal --component rust-src
       - name: Install pinned cargo-fuzz

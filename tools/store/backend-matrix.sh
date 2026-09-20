@@ -38,7 +38,7 @@ for peer in "" \
     "--no-default-features --features kyotocabinet" \
     "--no-default-features --features tkrzw" \
     "--no-default-features --features bdb"; do
-    label=${peer:-default (tkrzw)}
+    label=${peer:-default (bdb)}
     printf '── valid: %s\n' "$label"
     if cargo check --locked -p oxpinyin-store $peer >"$LOG" 2>&1; then
         printf '   PASS\n'

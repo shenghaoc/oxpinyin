@@ -15,9 +15,9 @@ workspace = true
 # Backend selection, forwarded through the training-crate chain (one
 # backend per binary; see oxpinyin-store's [features] for the model): the
 # λ estimator reads `phrase_index.<ext>` in the compiled-in backend's
-# format. The peer backends match the store's; Tkrzw is the
+# format. The peer backends match the store's; Berkeley DB is the
 # default selection.
-default = ["tkrzw"]
+default = ["bdb"]
 kyotocabinet = ["oxpinyin-segment/kyotocabinet", "oxpinyin-counter/kyotocabinet"]
 bdb = ["oxpinyin-segment/bdb", "oxpinyin-counter/bdb"]
 tkrzw = ["oxpinyin-segment/tkrzw", "oxpinyin-counter/tkrzw"]

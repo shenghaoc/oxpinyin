@@ -22,8 +22,9 @@ config). Graphs use index-based arenas.
 
 **Backend selection:** compile-time only, exactly one backend per binary
 — `DefaultStore` is a `#[cfg]` alias for whichever backend feature is
-enabled (tkrzw in the default set; `--no-default-features --features
-{kyotocabinet|bdb}` for a peer), following libpinyin's own
+enabled (Berkeley DB in the default set since 2026-09-20;
+`--no-default-features --features {kyotocabinet|tkrzw}` for a peer),
+following libpinyin's own
 `--with-dbm` model. No runtime dispatch and no fallback: `oxpinyin-store`
 emits a `compile_error!` when zero or more than one backend is enabled.
 
