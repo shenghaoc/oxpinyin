@@ -62,8 +62,8 @@ fi
 
 if [[ -z "$RUST_DATA" || ! -d "$RUST_DATA" ]]; then
     echo "SKIP: ZHUYIN_RUST_DATA is unset or not a directory" >&2
-    echo "  point it at an oxpinyin-native converted systemdir (pinyin_index.tkt," >&2
-    echo "  phrase_index.tkt, bigram.tkt, punct.tkt + interpolation2.text)." >&2
+    echo "  point it at an oxpinyin-native converted systemdir (pinyin_index.bin," >&2
+    echo "  phrase_index.bin, bigram.db, punct.bin + interpolation2.text)." >&2
     exit 3
 fi
 
