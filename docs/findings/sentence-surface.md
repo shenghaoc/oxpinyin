@@ -15,6 +15,9 @@ and from a live probe over the model20 tables.
 
 ## 1. Where the rows come from
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The `sentence_tail::measure` re-measure (tip `4eb72efd`) and the `PINYIN_EXPORT_DIR=<exported redb>` provisioning ran on redb; the sentence-surface laws they pin are backend-independent. The figures stand as measured at the recorded tip.
+
+
 There is no `collect_sentence` upstream. The sentence surface is the n-best
 lookup plus two passes at the end of `pinyin_guess_candidates`:
 

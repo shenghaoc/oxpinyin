@@ -27,7 +27,6 @@ oracle-ffi = ["dep:glib-sys"]
 kyotocabinet = ["oxpinyin-data/kyotocabinet"]
 bdb = ["oxpinyin-data/bdb"]
 tkrzw = ["oxpinyin-data/tkrzw"]
-redb = ["oxpinyin-data/redb"]
 
 [lints.rust]
 unsafe_code = "allow" # FFI to the real libpinyin; // SAFETY: on every block

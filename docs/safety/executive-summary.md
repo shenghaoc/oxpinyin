@@ -166,8 +166,10 @@ class; libchewing `trieloader` precedent) > `scheme`/`codec` (landed since as `d
 ## N. Highest-value Miri tests
 
 core parser/scheme corpus replay (pure functions) · user codec roundtrip ·
-store tests under `--no-default-features --features redb` (the pure-Rust
-peer backend; Miri covers this one, not the C-backed peers) · graph/kbest
+store tests under the store-backends matrix, one lane per C-backed
+peer (the pure-Rust peer this sentence named was removed 2026-09-20
+with its backend, and the Miri lane it referenced was retired
+2026-09-01) · graph/kbest
 invariants. Not applicable: libpinyin/kyotocabinet/tkrzw/LMDB C sides.
 
 ## O. Highest-value Kani harnesses

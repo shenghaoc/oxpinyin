@@ -5,7 +5,7 @@
 //! `NETWORK_DICTIONARY` sub-index. Token allocation is "max token in the
 //! sub-index + 1" (`range.m_range_end`, bumped past the reserved zero id).
 //! This module names those constants and the value types the store records;
-//! it does not talk to redb.
+//! it does not talk to the store.
 
 use oxpinyin_core::SyllableKey;
 
@@ -139,7 +139,7 @@ pub(crate) fn next_user_token_after(token: Token) -> Option<Token> {
     next_library_token_after(USER_DICTIONARY, token)
 }
 
-/// Little-endian `u16` packing of a key sequence. redb stores this as `&[u8]`.
+/// Little-endian `u16` packing of a key sequence, stored as `&[u8]`.
 #[must_use]
 pub(crate) fn encode_keys(keys: &[PinyinKey]) -> Vec<u8> {
     let mut out = Vec::with_capacity(keys.len().saturating_mul(2));
@@ -220,7 +220,7 @@ impl UserPhrase {
         &self.text
     }
 
-    /// Pronunciations in key-sequence order (redb composite-key order).
+    /// Pronunciations in key-sequence order (the store's composite-key order).
     #[must_use]
     pub fn pronunciations(&self) -> &[UserPronunciation] {
         &self.pronunciations

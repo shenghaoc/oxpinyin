@@ -3,7 +3,7 @@
 //! Every type that appears in a user-store table definition has an `encode_*`
 //! / `decode_*` pair here.  Integers are big-endian so that byte order is
 //! numeric order under every backend's `memcmp`-style key comparison
-//! (the store seam orders keys by raw bytes; this also matches what redb's
+//! (the store seam orders keys by raw bytes; this also matches what the
 //! typed `Key::compare` would produce).  Composite keys concatenate their
 //! fixed-width prefix with the variable tail — no length prefix needed
 //! because the fixed half exactly delimits the split point.
@@ -410,138 +410,6 @@ mod tests {
                 let (dec_t, dec_b) = decode_token_bytes(&enc).unwrap();
                 prop_assert_eq!(dec_t, token);
                 prop_assert_eq!(dec_b, tail.as_slice());
-            }
-        }
-    }
-
-    // ── order-equivalence tests ────────────────────────────────────
-
-    mod order {
-        use super::*;
-        use proptest::prelude::*;
-        use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
-
-        /// Insert `keys` into a redb typed table, read them back in walk
-        /// order, encode each with `enc`, and verify that the encoded
-        /// sequence is sorted by `[u8]::cmp` (memcmp).
-        fn assert_order_matches_redb<K, E>(
-            table_name: &str,
-            keys: &[K],
-            insert: impl Fn(&Database, &str, &[K]),
-            walk: impl Fn(&Database, &str) -> Vec<K>,
-            enc: impl Fn(&K) -> E,
-        ) where
-            E: AsRef<[u8]>,
-        {
-            let path = std::env::temp_dir().join(format!(
-                "oxpinyin-codec-order-{table_name}-{}.redb",
-                std::process::id(),
-            ));
-            let _ = std::fs::remove_file(&path);
-            let db = Database::create(&path).unwrap();
-            insert(&db, table_name, keys);
-            let walked = walk(&db, table_name);
-            drop(db);
-            let _ = std::fs::remove_file(&path);
-
-            let encoded: Vec<Vec<u8>> = walked.iter().map(|k| enc(k).as_ref().to_vec()).collect();
-            for pair in encoded.windows(2) {
-                assert!(
-                    pair[0] <= pair[1],
-                    "encoded order violated: {:?} > {:?}",
-                    pair[0],
-                    pair[1],
-                );
-            }
-        }
-
-        // ── (Token, Token) ────────────────────────────────────────
-
-        fn insert_token_pairs(db: &Database, name: &str, keys: &[(Token, Token)]) {
-            let def: TableDefinition<(Token, Token), u64> = TableDefinition::new(name);
-            let txn = db.begin_write().unwrap();
-            {
-                let mut table = txn.open_table(def).unwrap();
-                for &(a, b) in keys {
-                    table.insert((a, b), 0u64).unwrap();
-                }
-            }
-            txn.commit().unwrap();
-        }
-
-        fn walk_token_pairs(db: &Database, name: &str) -> Vec<(Token, Token)> {
-            let def: TableDefinition<(Token, Token), u64> = TableDefinition::new(name);
-            let txn = db.begin_read().unwrap();
-            let table = txn.open_table(def).unwrap();
-            table
-                .iter()
-                .unwrap()
-                .map(|item| {
-                    let (k, _) = item.unwrap();
-                    k.value()
-                })
-                .collect()
-        }
-
-        proptest! {
-            #[test]
-            fn token_pair_order(
-                keys in proptest::collection::vec((any::<u32>(), any::<u32>()), 2..32)
-            ) {
-                assert_order_matches_redb(
-                    "test_bigram",
-                    &keys,
-                    insert_token_pairs,
-                    walk_token_pairs,
-                    |&(a, b)| encode_token_pair(a, b),
-                );
-            }
-        }
-
-        // ── (Token, &[u8]) ────────────────────────────────────────
-
-        fn insert_token_bytes_keys(db: &Database, name: &str, keys: &[(Token, Vec<u8>)]) {
-            let def: TableDefinition<(Token, &[u8]), u64> = TableDefinition::new(name);
-            let txn = db.begin_write().unwrap();
-            {
-                let mut table = txn.open_table(def).unwrap();
-                for (token, tail) in keys {
-                    table.insert((*token, tail.as_slice()), 0u64).unwrap();
-                }
-            }
-            txn.commit().unwrap();
-        }
-
-        fn walk_token_bytes_keys(db: &Database, name: &str) -> Vec<(Token, Vec<u8>)> {
-            let def: TableDefinition<(Token, &[u8]), u64> = TableDefinition::new(name);
-            let txn = db.begin_read().unwrap();
-            let table = txn.open_table(def).unwrap();
-            table
-                .iter()
-                .unwrap()
-                .map(|item| {
-                    let (k, _) = item.unwrap();
-                    let (token, bytes) = k.value();
-                    (token, bytes.to_vec())
-                })
-                .collect()
-        }
-
-        proptest! {
-            #[test]
-            fn token_bytes_order(
-                keys in proptest::collection::vec(
-                    (any::<u32>(), proptest::collection::vec(any::<u8>(), 0..16)),
-                    2..32,
-                )
-            ) {
-                assert_order_matches_redb(
-                    "test_pronunciation",
-                    &keys,
-                    insert_token_bytes_keys,
-                    walk_token_bytes_keys,
-                    |(token, tail)| encode_token_bytes(*token, tail),
-                );
             }
         }
     }

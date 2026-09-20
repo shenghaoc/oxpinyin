@@ -13,7 +13,7 @@
 //! tier uses — so `cargo test --workspace` stays green on a runner without
 //! them; it asserts on any runner (or maintainer) that has them.
 //!
-//! Provisioning: `PINYIN_EXPORT_DIR` → the exported redb tables,
+//! Provisioning: `PINYIN_EXPORT_DIR` → the exported tables,
 //! `PINYIN_MODEL_DIR` → a **complete** extracted model20 directory (all 18
 //! files; the partial 4-file `~/.cache/oxpinyin-data` is rejected).
 //!

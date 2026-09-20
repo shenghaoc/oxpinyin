@@ -22,8 +22,6 @@ missing_safety_doc = "deny"
 must_use_candidate = "warn"
 
 [dependencies]
-redb = { workspace = true, optional = true }
-
 [dev-dependencies]
 # Backend micro-benches (benches/); workspace lock pins 0.8.
 criterion = "0.8"
@@ -32,17 +30,17 @@ criterion = "0.8"
 bindgen = { workspace = true, optional = true }
 
 [features]
-# The backends (kyotocabinet, redb, tkrzw, bdb) are peer
+# The backends (kyotocabinet, tkrzw, bdb) are peer
 # implementations behind the store's `ReadStore`/`WriteStore` traits.
 # **Exactly one** is compiled in per build; a `compile_error!` in
 # `src/lib.rs` refuses builds that enable zero or two-or-more. The
 # corresponding implementation is the only one compiled, so an
-# unselected peer's dependency (redb, bindgen) is not pulled in
+# unselected peer's dependency (bindgen) is not pulled in
 # either.
 #
 # `tkrzw` is the enabled feature in the workspace's default set,
 # which is what "default" means here — select any peer explicitly with
-# `--no-default-features --features {kyotocabinet|redb|tkrzw|bdb}`.
+# `--no-default-features --features {kyotocabinet|tkrzw|bdb}`.
 default = ["tkrzw"]
 tkrzw = ["dep:bindgen"]
 # Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);
@@ -54,10 +52,6 @@ kyotocabinet = ["dep:bindgen"]
 # libdb 5.3 the distro already ships (Debian libdb-dev, Fedora
 # libdb-devel), the same library that wrote the files it must read.
 bdb = ["dep:bindgen"]
-# redb, the pure-Rust peer. The `redb` crate itself is optional: no other
-# peer depends on it, so a KC/tkrzw/BDB build carries none of redb's
-# code or its transitive dependencies.
-redb = ["dep:redb"]
 # `bench-internal` — exposes hidden test/bench-only helpers that would
 # otherwise be `pub(crate)`. Off by default; not part of `default`, not
 # reached by any shipping build. Currently just widens the Kyoto Cabinet
@@ -66,22 +60,10 @@ redb = ["dep:redb"]
 # depends on this widening. Never enable this on an artifact that ships.
 bench-internal = []
 
-[[bench]]
-name = "redb_is_empty"
-harness = false
-# redb is the peer's optional dependency, so `--all-targets` builds of
-# the other backends skip this target instead of failing to resolve it.
-required-features = ["redb"]
-
 # backend_matrix: one target per backend (b8aff564 convention), all driving
 # the same benches/support/mod.rs over the store-tier traits. Exactly one is
 # built per `--no-default-features --features <backend>` invocation, matching
 # the crate's one-backend-per-binary compile_error! rule.
-[[bench]]
-name = "backend_matrix_redb"
-harness = false
-required-features = ["redb"]
-
 [[bench]]
 name = "backend_matrix_tkrzw"
 harness = false

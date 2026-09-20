@@ -10,7 +10,6 @@ the workspace default. The crate map (`.kiro/steering/structure.md`) and
 ```sh
 cargo test --locked --workspace                                                    # tkrzw (default)
 cargo test --locked --workspace --no-default-features --features kyotocabinet
-cargo test --locked --workspace --no-default-features --features redb              # pure Rust, macOS/Windows
 cargo test --locked --workspace --no-default-features --features bdb                # Berkeley DB, libpinyin's original DBM
 ```
 
@@ -24,10 +23,9 @@ selects tkrzw, and two backends at once is refused.
 | tkrzw | `libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libclang-dev pkg-config` | `tkrzw`, and `export LIBRARY_PATH="$(brew --prefix)/lib"` (see README: `cargo test` links lz4/zstd from there, `cargo check`/`clippy` never link and are not evidence) |
 | kyotocabinet | `libkyotocabinet-dev libclang-dev pkg-config` | `kyoto-cabinet`; the keg ships `kyotocabinet.pc`, pkg-config resolves it, and the store suite passes (verified on 1.2.80, 2026-09-13). The old "the KC dylib does not dlopen on macOS" note does not reproduce on today's bottled formula — the dylib dlopens by absolute path, and the backend links at link time, so bare-name lookup never enters the picture |
 | bdb | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5` — 5.3.28 under the Sleepycat license, the surveyed version; the default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg ships no `.pc`, so point the overrides at it: `OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix)/opt/berkeley-db@5/include"` and `OXPINYIN_BDB_LIB_DIR="$(brew --prefix)/opt/berkeley-db@5/lib"` (the build's rpath flag lets the test binaries find the dylib). Clippy and the full suite pass with the same counts as Linux — 36/0/4 (verified 2026-09-13) |
-| redb | none | none |
 
-All but redb bind a **system** C library through its own header, and
-only redb is pure Rust. oxpinyin vendors none of them: there
+Every backend binds a **system** C library through its own header.
+oxpinyin vendors none of them: there
 is no copy of Kyoto Cabinet, of tkrzw or of Berkeley DB
 compiled into any oxpinyin artifact, so each library is the one the
 distribution ships and patches. A build with the development package missing fails at
@@ -86,7 +84,7 @@ on every store-affecting change (`store-backends.yml`, `backend-matrix`).
 
 ## Fixtures per backend
 
-`fixtures/w3/<kct|tkt|db|redb>/` is the committed mini data set, one
+`fixtures/w3/<kct|tkt>/` is the committed mini data set, one
 directory per backend, with libpinyin's own file names on KC, tkrzw and
 Berkeley DB.
 Regenerate with `oxpinyin-datagen compile --mini` from the model20 cache
@@ -98,6 +96,6 @@ A user dir written by one backend is not opened by another: `user.conf`'s
 `database format` line names the backend family, and a profile that does
 not conform is wiped on open exactly as libpinyin's `check_format` does;
 the DBM files carry libpinyin's names on Kyoto Cabinet, tkrzw and
-Berkeley DB, and `<stem>.<ext>` on redb. This
+Berkeley DB. This
 matches what distributions do for libpinyin's own backend switches
 (`ROADMAP.md`, "tkrzw is the default selected backend").

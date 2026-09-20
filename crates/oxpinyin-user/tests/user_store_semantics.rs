@@ -23,7 +23,7 @@ use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, UserPhrase, UserStore, Use
 
 fn temp_path(tag: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
-        "oxpinyin-user-port-{tag}-{}.redb",
+        "oxpinyin-user-port-{tag}-{}.store",
         std::process::id()
     ));
     let _ = std::fs::remove_file(&path);

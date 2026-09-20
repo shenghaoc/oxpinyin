@@ -55,7 +55,7 @@ mod tests {
 
     fn temp_path(tag: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!(
-            "oxpinyin-user-model-{tag}-{}.redb",
+            "oxpinyin-user-model-{tag}-{}.store",
             std::process::id()
         ));
         let _ = std::fs::remove_file(&path);

@@ -1,7 +1,7 @@
 name: Store backends
 
 # Backend coverage for the peer store backends on a rolling
-# toolchain. The peers (Kyoto Cabinet, redb, tkrzw, Berkeley
+# toolchain. The peers (Kyoto Cabinet, tkrzw, Berkeley
 # DB) are equal implementations behind the store's trait surface; tkrzw
 # is the workspace's default selection. Exactly one peer is compiled per
 # build — the exactly-one-backend invariant is enforced at compile
@@ -24,7 +24,7 @@ name: Store backends
 #     matrix, so it schedules concurrently with all the backend children.
 #     It runs `tools/store/backend-matrix.sh`, which proves the valid
 #     peer selections each `cargo check --workspace` cleanly AND that
-#     every one of the six pairwise combinations plus a three-way
+#     every one of the pairwise combinations plus the three-way
 #     combination plus the zero-backend build is refused by the
 #     exactly-one-backend `compile_error!` guards. This is what replaced
 #     the old "cross-backend conformance in one binary" job, which is
@@ -32,11 +32,12 @@ name: Store backends
 #   - store-backends-gate is the stable aggregate status check. It runs no
 #     tests; it only fails unless every backend child, the backend-matrix
 #     job AND both sanitizer jobs succeeded. Its display name tracks the
-#     peer set — it gained "/ bdb" with the fifth peer — which it is free
-#     to do because main's required-status-check contexts are
-#     `ci-aggregate`, `trailer-lint`, and `trailer-test`; before
-#     2026-09-08 the name was held fixed because branch protection named
-#     this job directly.
+#     peer set. It gained "/ bdb" when Berkeley DB landed and dropped
+#     the pure-Rust peer when redb was removed (2026-09-20). The name is
+#     free to track the set because main's required-status-check
+#     contexts are `ci-aggregate`, `trailer-lint`, and `trailer-test`;
+#     before 2026-09-08 the name was held fixed because branch protection
+#     named this job directly.
 #   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan and UBSan,
 #     on a date-pinned nightly, and gates the merge (since 2026-09-08; it
 #     had been continue-on-error and outside the gate, so a finding on the
@@ -144,7 +145,6 @@ jobs:
       matrix:
         backend:
           - kyotocabinet
-          - redb
           - tkrzw
           - bdb
 
@@ -180,7 +180,7 @@ jobs:
         # self-contained regardless of scheduling order; the marginal apt
         # cost is deliberate (correctness over shaving install seconds).
         # libtkrzw-dev: the tkrzw child builds against the distro library
-        # through pkg-config. Only redb is pure Rust.
+        # through pkg-config.
         # libclang-dev: bindgen's runtime dependency for generating the
         # tkrzw and Kyoto Cabinet FFI declarations from their headers.
         # Debian's libtkrzw-dev builds tkrzw with compression, so tkrzw.pc
@@ -232,8 +232,8 @@ jobs:
           # bare passthrough (`--features oxpinyin-store/<peer>`) does
           # NOT — cargo features do not back-propagate — and would
           # leave each consumer's own `#[cfg(feature = "<peer>")]`
-          # code (e.g. `user_store_tests!(redb, ...)` in
-          # oxpinyin-user, the `Backend::Redb::write()` arm in
+          # code (e.g. `user_store_tests!(<peer>, ...)` in
+          # oxpinyin-user, the `Backend::<Peer>::write()` arm in
           # oxpinyin-datagen) skipped even while `DefaultStore`
           # resolves to the peer. The bare-name form here is the
           # documented public interface — see
@@ -243,10 +243,6 @@ jobs:
           kyotocabinet)
             echo "--- kyotocabinet (explicit) ---"
             cargo test --locked --workspace --no-default-features --features kyotocabinet "${excludes[@]}"
-            ;;
-          redb)
-            echo "--- redb (workspace, pure-Rust peer) ---"
-            cargo test --locked --workspace --no-default-features --features redb "${excludes[@]}"
             ;;
           tkrzw)
             echo "--- tkrzw (the default) ---"
@@ -327,8 +323,8 @@ jobs:
         # turn, so it needs every peer's build-time C dependencies:
         # libkyotocabinet-dev + libtkrzw-dev (+ its compression -dev
         # packages) + libdb-dev, and libclang-dev for
-        # bindgen, which generates the three C backends' declarations;
-        # only redb is pure Rust. libglib2.0-dev is a Tier-C
+        # bindgen, which generates the C backends' declarations.
+        # libglib2.0-dev is a Tier-C
         # requirement: `pinyin_lookup_tokens` /
         # `pinyin_token_get_nth_pronunciation` delegate to
         # `g_array_append_vals` / `g_array_set_size`, so the shipped
@@ -374,7 +370,7 @@ jobs:
     # failure if any child failed — so this gate is red unless every
     # peer build, the exactly-one-backend gate and both sanitizer jobs
     # are green.
-    name: store backends (kyotocabinet / redb / tkrzw / bdb)
+    name: store backends (kyotocabinet / tkrzw / bdb)
     runs-on: ubuntu-latest
     if: ${{ always() }}
     needs:

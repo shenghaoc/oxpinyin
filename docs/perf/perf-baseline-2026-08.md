@@ -31,6 +31,9 @@ does not enter the decode measurement.
 
 ## Method per axis
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The baseline's oxpinyin side ran on redb tables (the 44.18 MiB runtime-data figure is the three redb tables); the oracle side is backend-independent. The figures stand as measured at the recorded pin.
+
+
 - **Speed.** Alternating oracle/oxpinyin processes, back-to-back, each pinned
   to the same CPU with `taskset`. Each process measures `pinyin_init` on its
   own, allocates one instance, then runs 8 cycles. Cycle 0 is reported as

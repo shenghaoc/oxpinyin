@@ -3,7 +3,7 @@
 //! phrase-index chunk files (`FacadePhraseIndex`), the bigram (`Bigram`)
 //! and the punctuation table (`PunctTable`) — the same files a libpinyin
 //! install ships on Kyoto Cabinet, tkrzw and Berkeley DB, and the same
-//! records in redb's own container on that backend.
+//! records in the backend's own container.
 //!
 //! Every reader is lazy: opening a directory costs the DBM handles and
 //! the chunk-file mappings, and each lookup is a point read. Portable: no

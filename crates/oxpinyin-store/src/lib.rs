@@ -4,9 +4,9 @@
 //! capability tiers — [`ReadStore`] (point get, ranged scan, full scan,
 //! emptiness check) and [`WriteStore`] (creation, atomic multi-table
 //! writes, compaction) — and provides the peer implementations behind
-//! it: [`KcStore`] on Kyoto Cabinet, [`RedbStore`] on redb,
-//! [`TkrzwStore`] on tkrzw, and [`BdbStore`] on Berkeley DB.
-//! All four are first-class and interchangeable: any oxpinyin binary
+//! it: [`KcStore`] on Kyoto Cabinet, [`TkrzwStore`] on tkrzw, and
+//! [`BdbStore`] on Berkeley DB.
+//! All are first-class and interchangeable: any oxpinyin binary
 //! picks exactly one at compile time via the cargo features and calls it
 //! through the same trait surface, and a table produced by any of them
 //! satisfies the same logical contract as the others. Tkrzw is the
@@ -19,8 +19,8 @@
 //!
 //! Keys are ordered by ascending **byte** order (`memcmp` on the raw stored
 //! key bytes) and nothing else — the store never decodes a key, so it has no
-//! notion of integer order.  Every backend satisfies exactly this: redb's
-//! `Key for &[u8]` is a byte compare; the tkrzw backend installs no comparator, so `TreeDBM` uses its default
+//! notion of integer order.  Every backend satisfies exactly this: the
+//! tkrzw backend installs no comparator, so `TreeDBM` uses its default
 //! `LexicalKeyComparator` (plain unsigned byte order); and the Kyoto Cabinet
 //! backend opens `TreeDB` with no `rcomp` tuning parameter, exactly as
 //! libpinyin does, so Kyoto Cabinet's default `LEXICALCOMP` applies — again
@@ -42,13 +42,13 @@
 
 // ── Exactly-one-backend invariant, enforced at compile time ────────────
 //
-// The store backends (kyotocabinet, redb, tkrzw, bdb) are peer
+// The store backends (kyotocabinet, tkrzw, bdb) are peer
 // implementations behind the store's trait surface, and every oxpinyin
 // build has exactly one of them. Cargo features are additive under
-// unification, so a plausible-looking `cargo build --features redb`
-// silently combines redb with the default tkrzw feature — precisely the
+// unification, so a plausible-looking `cargo build --features kyotocabinet`
+// silently combines kyotocabinet with the default tkrzw feature — precisely the
 // slide these guards refuse. Every consumer crate forwards its own
-// `{kyotocabinet, redb, tkrzw, bdb}` features onto this crate, so
+// `{kyotocabinet, tkrzw, bdb}` features onto this crate, so
 // this one guard suffices for the whole workspace.
 
 // The zero-backend case is refused too — a build with no backend has no
@@ -56,42 +56,31 @@
 // "unresolved type" error a downstream consumer would hit is a worse
 // diagnostic than saying "select a backend" here.
 
-#[cfg(not(any(
-    feature = "kyotocabinet",
-    feature = "redb",
-    feature = "tkrzw",
-    feature = "bdb",
-)))]
+#[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb",)))]
 compile_error!(
     "oxpinyin-store: no store backend selected. Enable exactly one of \
-     `tkrzw` (the default), `kyotocabinet`, `redb`, or `bdb`. On the \
+     `tkrzw` (the default), `kyotocabinet`, or `bdb`. On the \
      command line: `cargo build` for the default (tkrzw), or \
-     `cargo build --no-default-features --features {kyotocabinet|redb|bdb}` \
+     `cargo build --no-default-features --features {kyotocabinet|bdb}` \
      for a peer."
 );
 
 #[cfg(any(
-    all(feature = "kyotocabinet", feature = "redb"),
     all(feature = "kyotocabinet", feature = "tkrzw"),
     all(feature = "kyotocabinet", feature = "bdb"),
-    all(feature = "redb", feature = "tkrzw"),
-    all(feature = "redb", feature = "bdb"),
     all(feature = "tkrzw", feature = "bdb"),
 ))]
 compile_error!(
     "oxpinyin-store: more than one store backend selected. Exactly one \
-     of `tkrzw`, `kyotocabinet`, `redb`, `bdb` may be enabled per \
+     of `tkrzw`, `kyotocabinet`, `bdb` may be enabled per \
      build. A build that names an alternate peer must also disable the \
      workspace's default feature set: \
-     `cargo build --no-default-features --features {kyotocabinet|redb|bdb}`."
+     `cargo build --no-default-features --features {kyotocabinet|bdb}`."
 );
 
 use std::fmt;
 use std::ops::Bound;
 use std::path::Path;
-
-#[cfg(feature = "redb")]
-use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata};
 
 /// Errors that can occur when opening or scanning a store.
 ///
@@ -167,10 +156,10 @@ pub trait WriteTxn {
     /// `get_raw` / [`RawReadStore::range_raw`] read back on the same
     /// backend, with no table-name framing.
     ///
-    /// Backends without a flat keyspace (redb) delegate to the
+    /// Backends without a flat keyspace would delegate to the
     /// well-known [`RAW_TABLE`], the same delegation the raw reads use,
-    /// so the round trip holds on every backend. KC and Tkrzw override
-    /// this to write the file's bare keyspace — what libpinyin's own
+    /// so the round trip holds on every backend. KC, Tkrzw and BDB
+    /// override this to write the file's bare keyspace — what libpinyin's own
     /// DBMs store and what datagen's libpinyin-format writers emit.
     ///
     /// # Errors
@@ -296,7 +285,7 @@ pub trait WriteStore: ReadStore {
     /// while its other DBMs are tree containers; datagen writes the
     /// bigram through this constructor so the reader's hash open finds a
     /// hash file. The default implementation delegates to
-    /// [`WriteStore::create`] (correct for redb, which has no
+    /// [`WriteStore::create`] (correct for a backend with no
     /// hash/tree distinction). KC and Tkrzw override this to select the
     /// hash container class.
     ///
@@ -317,9 +306,9 @@ pub trait WriteStore: ReadStore {
     /// Cabinet user bigram is a snapshot stream, produced by filling an
     /// in-memory `StashDB` and calling `dump_snapshot`
     /// (`ngram_kyotodb.cpp:82-101`), not by creating a hash file at the
-    /// path. tkrzw and redb both write a genuine container there, so
-    /// the default is [`Self::create_hash`] plus a raw write — what those
-    /// two already did correctly.
+    /// path. tkrzw writes a genuine container there, so
+    /// the default is [`Self::create_hash`] plus a raw write — what that
+    /// backend already did correctly.
     ///
     /// Rows arrive already sorted by key; the container's own order is
     /// what matters on read.
@@ -349,15 +338,15 @@ pub trait WriteStore: ReadStore {
         // The hard sync sits with this `compact`, and only one of
         // this default's users still owes it there: tkrzw's `write`
         // reaches the operating system and its `compact` the device,
-        // so the device sync must land before the rename. redb
-        // and Berkeley DB already reach stable storage in `write`;
-        // their `compact` here is compaction work, not durability.
+        // so the device sync must land before the rename.
+        // Berkeley DB already reaches stable storage in `write`;
+        // its `compact` here is compaction work, not durability.
         store.compact()?;
         drop(store);
         std::fs::rename(&tmp, path).map_err(StoreError::Io)?;
         // The backend may have left a lock sidecar beside the *temporary*
-        // (tkrzw creates `<file>-lock` for a writable session; redb keeps
-        // none); it is stale once the handle drops and the rename moved
+        // (tkrzw creates `<file>-lock` for a writable session); it is
+        // stale once the handle drops and the rename moved
         // only the data file.
         if let (Some(name), Some(dir)) = (tmp.file_name().and_then(|n| n.to_str()), tmp.parent()) {
             for suffix in ["-lock", "-shm"] {
@@ -382,9 +371,8 @@ pub trait WriteStore: ReadStore {
     /// this one.** The Kyoto Cabinet and tkrzw backends commit with a
     /// soft `kcdbsync` / `Synchronize` and hard-sync in `compact`;
     /// `UserStore::save` calls `compact`, so `pinyin_save` is where the
-    /// user's data reaches the device. redb and Berkeley DB exceed
-    /// the floor: redb fsyncs inside its own (WAL) commit, and Berkeley
-    /// DB has no softer primitive to
+    /// user's data reaches the device. Berkeley DB exceeds
+    /// the floor: it has no softer primitive to
     /// offer — `DB->sync` is the only flush libdb gives an
     /// environment-less handle, while skipping it would strand the
     /// batch in a private mpool no other process can read. Callers must
@@ -402,8 +390,7 @@ pub trait WriteStore: ReadStore {
     ///
     /// One residual difference, documented per backend: a crash
     /// *during* the commit call itself can tear the batch on KC, tkrzw
-    /// and Berkeley DB (no write-ahead log), where redb rolls a torn
-    /// commit back on the next open. Berkeley DB reaching the
+    /// and Berkeley DB (no write-ahead log). Berkeley DB reaching the
     /// device on every commit does not buy atomicity back: it applies
     /// the buffered rows one at a time and syncs after, so a crash
     /// mid-apply leaves part of the batch applied — and a crash that
@@ -424,7 +411,7 @@ pub trait WriteStore: ReadStore {
     /// Perform backend-dependent compaction work, and put the store on
     /// **stable storage**.
     ///
-    /// redb rewrites the file and reclaims free pages. Berkeley DB syncs
+    /// Berkeley DB syncs
     /// instead — `DB->compact` wants a transaction this backend never
     /// opens — and the file does not shrink. Kyoto Cabinet and tkrzw hard-sync here —
     /// see [`WriteStore::write`]'s durability note, which explains why
@@ -452,10 +439,10 @@ pub trait WriteStore: ReadStore {
 /// Read-only access to a store file with raw (unframed) keys.
 ///
 /// Extends [`ReadStore`] with methods that bypass table-name framing,
-/// matching libpinyin's single-keyspace DBM layout. KC and Tkrzw
-/// backends implement this by calling the underlying library with the
-/// caller's key verbatim; redb delegates to a well-known table
-/// name since that backend does not have a flat-keyspace concept.
+/// matching libpinyin's single-keyspace DBM layout. The KC, Tkrzw and
+/// BDB backends implement this by calling the underlying library with the
+/// caller's key verbatim; a backend without a flat-keyspace concept
+/// would delegate to a well-known table name instead.
 pub trait RawReadStore: ReadStore {
     /// Read a single raw key. Returns `None` if absent.
     ///
@@ -470,9 +457,9 @@ pub trait RawReadStore: ReadStore {
     /// exactly this for its `search_suggestion` continuation walk
     /// (`phrase_large_table3_tkrzwdb.cpp:155-190`).
     ///
-    /// Backends without a flat keyspace (redb) delegate to the
+    /// Backends without a flat keyspace would delegate to the
     /// well-known [`RAW_TABLE`], the same delegation [`Self::get_raw`]
-    /// uses; KC and Tkrzw walk the file's real keyspace.
+    /// uses; KC, Tkrzw and BDB walk the file's real keyspace.
     ///
     /// # Errors
     ///
@@ -514,7 +501,7 @@ pub trait RawReadStore: ReadStore {
     /// libpinyin's `bigram.db` uses KC **`HashDB`** / Tkrzw **`HashDBM`**,
     /// while the other DBM files use TreeDB/TreeDBM. The default
     /// implementation delegates to [`ReadStore::open_read_only`] (correct
-    /// for redb, which has no hash/tree distinction). KC and
+    /// for a backend with no hash/tree distinction). KC and
     /// Tkrzw override this to select the hash container class.
     ///
     /// # Errors
@@ -537,9 +524,8 @@ pub trait RawReadStore: ReadStore {
     /// in-memory `StashDB` (`load_db`'s `load_snapshot`,
     /// `ngram_kyotodb.cpp:54-64`) — magic `KCSS`, which a hash open
     /// rejects with "missing magic data of the file". On tkrzw both are
-    /// genuine hash files (`ngram_tkrzwdb.cpp:48-63`), and redb has
-    /// no hash/tree/snapshot distinction, so the default — the hash
-    /// container — is correct for both.
+    /// genuine hash files (`ngram_tkrzwdb.cpp:48-63`), so the default —
+    /// the hash container — is correct for both.
     ///
     /// # Errors
     ///
@@ -578,296 +564,27 @@ pub(crate) fn validate_table_name(table: &str) -> Result<(), StoreError> {
     Ok(())
 }
 
-// ── redb backend ───────────────────────────────────────────────────
-
-#[cfg(feature = "redb")]
-enum RedbInner {
-    ReadOnly(redb::ReadOnlyDatabase),
-    ReadWrite(redb::Database),
-}
-
-/// A redb-backed store implementing both capability tiers.
-#[cfg(feature = "redb")]
-pub struct RedbStore {
-    inner: RedbInner,
-}
-
-#[cfg(feature = "redb")]
-fn table_def<'a>(
-    table: &'a str,
-) -> Result<redb::TableDefinition<'a, &'static [u8], &'static [u8]>, StoreError> {
-    validate_table_name(table)?;
-    Ok(redb::TableDefinition::new(table))
-}
-
-#[cfg(feature = "redb")]
-impl RedbStore {
-    fn begin_read(&self) -> Result<redb::ReadTransaction, StoreError> {
-        match &self.inner {
-            RedbInner::ReadOnly(db) => db.begin_read().map_err(map_transaction_error),
-            RedbInner::ReadWrite(db) => db.begin_read().map_err(map_transaction_error),
-        }
-    }
-}
-
-// ── redb shared read helpers ───────────────────────────────────────
-
-/// An absent table is treated as empty (`None`).
-#[cfg(feature = "redb")]
-fn read_get(
-    txn: &redb::ReadTransaction,
-    table: &str,
-    key: &[u8],
-) -> Result<Option<Vec<u8>>, StoreError> {
-    let def = table_def(table)?;
-    match txn.open_table(def) {
-        Ok(tbl) => Ok(tbl
-            .get(key)
-            .map_err(map_storage_error)?
-            .map(|g| g.value().to_vec())),
-        Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
-        Err(e) => Err(map_table_error(e)),
-    }
-}
-
-/// An absent table is treated as empty (no visits).
-#[cfg(feature = "redb")]
-fn read_range(
-    txn: &redb::ReadTransaction,
-    table: &str,
-    lo: Bound<&[u8]>,
-    hi: Bound<&[u8]>,
-    visit: &mut Visitor<'_>,
-) -> Result<(), StoreError> {
-    let def = table_def(table)?;
-    match txn.open_table(def) {
-        Ok(tbl) => {
-            for item in tbl.range::<&[u8]>((lo, hi)).map_err(map_storage_error)? {
-                let (key, value) = item.map_err(map_storage_error)?;
-                visit(key.value(), value.value())?;
-            }
-            Ok(())
-        }
-        Err(redb::TableError::TableDoesNotExist(_)) => Ok(()),
-        Err(e) => Err(map_table_error(e)),
-    }
-}
-
-/// An absent table is treated as empty (no visits).
-#[cfg(feature = "redb")]
-fn read_for_each(
-    txn: &redb::ReadTransaction,
-    table: &str,
-    visit: &mut Visitor<'_>,
-) -> Result<(), StoreError> {
-    let def = table_def(table)?;
-    match txn.open_table(def) {
-        Ok(tbl) => {
-            for item in tbl.iter().map_err(map_storage_error)? {
-                let (key, value) = item.map_err(map_storage_error)?;
-                visit(key.value(), value.value())?;
-            }
-            Ok(())
-        }
-        Err(redb::TableError::TableDoesNotExist(_)) => Ok(()),
-        Err(e) => Err(map_table_error(e)),
-    }
-}
-
-/// An absent table counts as empty.
-#[cfg(feature = "redb")]
-fn read_is_empty(txn: &redb::ReadTransaction, table: &str) -> Result<bool, StoreError> {
-    let def = table_def(table)?;
-    match txn.open_table(def) {
-        Ok(tbl) => tbl.is_empty().map_err(map_storage_error),
-        Err(redb::TableError::TableDoesNotExist(_)) => Ok(true),
-        Err(e) => Err(map_table_error(e)),
-    }
-}
-
-#[cfg(feature = "redb")]
-impl ReadStore for RedbStore {
-    fn open_read_only(path: &Path) -> Result<Self, StoreError> {
-        let db = redb::Builder::new()
-            .open_read_only(path)
-            .map_err(map_database_error)?;
-        Ok(Self {
-            inner: RedbInner::ReadOnly(db),
-        })
-    }
-
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let txn = self.begin_read()?;
-        read_get(&txn, table, key)
-    }
-
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-        let txn = self.begin_read()?;
-        read_for_each(&txn, table, visit)
-    }
-
-    fn range(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
-    ) -> Result<(), StoreError> {
-        let txn = self.begin_read()?;
-        read_range(&txn, table, lo, hi, visit)
-    }
-
-    fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
-        let txn = self.begin_read()?;
-        read_is_empty(&txn, table)
-    }
-}
-
-/// The well-known table name raw reads use on table-oriented backends.
+/// The well-known table name the default raw-path delegations use.
 ///
-/// redb has no flat keyspace: [`RawReadStore::get_raw`]
-/// delegates to this table name so test fixtures written through
-/// `WriteStore::write(|txn| txn.put(RAW_TABLE, key, value))` are
+/// Every backend in the tree has a flat keyspace and overrides the raw
+/// path with the file's real keyspace; this table exists for a
+/// hypothetical table-oriented backend, whose
+/// [`RawReadStore::get_raw`] / [`WriteTxn::put_raw`] defaults would
+/// delegate to it so fixtures written through
+/// `WriteStore::write(|txn| txn.put(RAW_TABLE, key, value))` stay
 /// readable by the raw path.
 pub const RAW_TABLE: &str = "data";
-
-#[cfg(feature = "redb")]
-impl RawReadStore for RedbStore {
-    fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let txn = self.begin_read()?;
-        read_get(&txn, RAW_TABLE, key)
-    }
-}
-
-#[cfg(feature = "redb")]
-impl WriteStore for RedbStore {
-    fn create(path: &Path) -> Result<Self, StoreError> {
-        let db = redb::Database::create(path).map_err(map_database_error)?;
-        Ok(Self {
-            inner: RedbInner::ReadWrite(db),
-        })
-    }
-
-    fn write<R>(
-        &self,
-        f: impl FnOnce(&mut dyn WriteTxn) -> Result<R, StoreError>,
-    ) -> Result<R, StoreError> {
-        let txn = match &self.inner {
-            RedbInner::ReadWrite(db) => db.begin_write().map_err(map_transaction_error)?,
-            RedbInner::ReadOnly(_) => return Err(StoreError::ReadOnly),
-        };
-        let result = {
-            let mut wtxn = RedbWriteTxn { txn: &txn };
-            f(&mut wtxn)
-        };
-        match result {
-            Ok(result) => {
-                txn.commit().map_err(map_commit_error)?;
-                Ok(result)
-            }
-            Err(error) => {
-                let _ = txn.abort();
-                Err(error)
-            }
-        }
-    }
-
-    fn compact(&mut self) -> Result<(), StoreError> {
-        match &mut self.inner {
-            RedbInner::ReadWrite(db) => {
-                let _ = db.compact().map_err(map_compaction_error)?;
-                Ok(())
-            }
-            RedbInner::ReadOnly(_) => Err(StoreError::ReadOnly),
-        }
-    }
-}
-
-// ── redb write-transaction wrapper ─────────────────────────────────
-
-#[cfg(feature = "redb")]
-struct RedbWriteTxn<'txn> {
-    txn: &'txn redb::WriteTransaction,
-}
-
-#[cfg(feature = "redb")]
-impl WriteTxn for RedbWriteTxn<'_> {
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let def = table_def(table)?;
-        let tbl = self.txn.open_table(def).map_err(map_table_error)?;
-        Ok(tbl
-            .get(key)
-            .map_err(map_storage_error)?
-            .map(|g| g.value().to_vec()))
-    }
-
-    fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        let def = table_def(table)?;
-        let mut tbl = self.txn.open_table(def).map_err(map_table_error)?;
-        tbl.insert(key, value).map_err(map_storage_error)?;
-        Ok(())
-    }
-
-    fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
-        let def = table_def(table)?;
-        let mut tbl = self.txn.open_table(def).map_err(map_table_error)?;
-        tbl.remove(key).map_err(map_storage_error)?;
-        Ok(())
-    }
-
-    fn range(
-        &self,
-        table: &str,
-        lo: Bound<&[u8]>,
-        hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
-    ) -> Result<(), StoreError> {
-        let def = table_def(table)?;
-        let tbl = self.txn.open_table(def).map_err(map_table_error)?;
-        for item in tbl.range::<&[u8]>((lo, hi)).map_err(map_storage_error)? {
-            let (key, value) = item.map_err(map_storage_error)?;
-            visit(key.value(), value.value())?;
-        }
-        Ok(())
-    }
-
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-        // Write-transaction table opens create the table when absent, so
-        // `TableDoesNotExist` cannot occur here (see the trait docs).
-        let def = table_def(table)?;
-        let tbl = self.txn.open_table(def).map_err(map_table_error)?;
-        for item in tbl.iter().map_err(map_storage_error)? {
-            let (key, value) = item.map_err(map_storage_error)?;
-            visit(key.value(), value.value())?;
-        }
-        Ok(())
-    }
-
-    fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
-        // Opening the table inside the write transaction creates it when
-        // absent, the same create-on-open every read-side method here has
-        // (see the trait docs), and a fresh table has no root, so the probe
-        // answers `true` straight from the header. redb has no existence
-        // check short of `list_tables`, which builds an owned name for
-        // every table on each call; the former probe-then-open shape paid
-        // that on every emptiness check to keep an absent table absent, a
-        // distinction nothing above the trait can observe.
-        let def = table_def(table)?;
-        let tbl = self.txn.open_table(def).map_err(map_table_error)?;
-        tbl.is_empty().map_err(map_storage_error)
-    }
-}
 
 // ── The default backend: compile-time selection ───────────────────────
 //
 // One backend per oxpinyin binary. The backend implementations
-// (Kyoto Cabinet, redb, tkrzw, Berkeley DB) are peers behind the
+// (Kyoto Cabinet, tkrzw, Berkeley DB) are peers behind the
 // store's trait interface, so `DefaultStore` resolves to a single
 // concrete type at compile time and everything above it is already
 // generic over `ReadStore` / `WriteStore`. The cfg chain below is
 // exactly that selection: it picks the enabled backend feature; a
 // multi-feature build resolves deterministically along the chain order
-// (kyotocabinet > tkrzw > redb > bdb). The chain order is a
+// (kyotocabinet > tkrzw > bdb). The chain order is a
 // tie-break for the additive unification, not a hierarchy — Tkrzw is
 // only the enabled feature that the workspace's default set carries,
 // and any single `--features <backend>` on `--no-default-features`
@@ -888,11 +605,6 @@ pub type DefaultStore = KcStore;
 #[cfg(feature = "tkrzw")]
 pub type DefaultStore = TkrzwStore;
 
-/// The default store backend — redb, on
-/// `--no-default-features --features redb`.
-#[cfg(feature = "redb")]
-pub type DefaultStore = RedbStore;
-
 /// The default store backend — Berkeley DB, on
 /// `--no-default-features --features bdb`.
 #[cfg(feature = "bdb")]
@@ -906,9 +618,6 @@ pub const DEFAULT_STORE_EXT: &str = "kct";
 /// File extension for [`DefaultStore`]'s native tables (tkrzw `TreeDBM`).
 #[cfg(feature = "tkrzw")]
 pub const DEFAULT_STORE_EXT: &str = "tkt";
-/// File extension for [`DefaultStore`]'s native tables (redb).
-#[cfg(feature = "redb")]
-pub const DEFAULT_STORE_EXT: &str = "redb";
 /// File extension for [`DefaultStore`]'s native tables (Berkeley DB).
 /// The DBM files libpinyin itself uses carry its own names
 /// (`bigram.db`, `pinyin_index.bin`, …); this extension names this
@@ -927,34 +636,27 @@ pub fn default_store_file(stem: &str) -> String {
 /// itself builds against (`--with-dbm=BerkeleyDB`,
 /// `--with-dbm=KyotoCabinet` / `--with-dbm=Tkrzw`).
 ///
-/// For these three, a libpinyin install's data directory *is* this
-/// backend's file set — same container library, same records, same
-/// file names (`pinyin_index.bin`, `bigram.db`, …) — so the runtime opens
-/// it unchanged, and `oxpinyin-datagen` writes the same names. redb
-/// holds the same records in its own container under its own
-/// extension; no libpinyin build can open it, and none needs to.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
+/// For every one of them, a libpinyin install's data directory *is*
+/// this backend's file set — same container library, same records,
+/// same file names (`pinyin_index.bin`, `bigram.db`, …) — so the
+/// runtime opens it unchanged, and `oxpinyin-datagen` writes the same
+/// names. Always `true` since the redb removal (2026-09-20 UTC,
+/// `refactor/drop-redb-backend`): redb, the one non-libpinyin-DBM
+/// peer this const's `false` arm existed for, held the same records
+/// in its own container under its own extension, and no libpinyin
+/// build could open it.
 pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = true;
-/// See the Berkeley DB / Kyoto Cabinet / tkrzw definition: redb is an
-/// oxpinyin-only container.
-#[cfg(feature = "redb")]
-pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = false;
 
 /// The backend's `database format:` token — the string `user.conf`'s
 /// conformance check compares (`table_info.cpp`'s
 /// `to/from_table_database_format_type`: exactly `BerkeleyDB`,
 /// `KyotoCabinet`, `Tkrzw` upstream), so a same-backend pair stays
-/// conform and every cross-backend pair answers non-conform. The redb
-/// token is ours — libpinyin has no such build, which is the
-/// point: nothing it ships can read it.
+/// conform and every cross-backend pair answers non-conform.
 #[cfg(feature = "kyotocabinet")]
 pub const DEFAULT_STORE_DB_FORMAT: &str = "KyotoCabinet";
 /// See the Kyoto Cabinet definition: tkrzw is upstream's third token.
 #[cfg(feature = "tkrzw")]
 pub const DEFAULT_STORE_DB_FORMAT: &str = "Tkrzw";
-/// See the Kyoto Cabinet definition: redb's token is oxpinyin-only.
-#[cfg(feature = "redb")]
-pub const DEFAULT_STORE_DB_FORMAT: &str = "Redb";
 /// See the Kyoto Cabinet definition: Berkeley DB is upstream's original
 /// token — the DBM a bare `./configure` libpinyin builds against.
 #[cfg(feature = "bdb")]
@@ -980,56 +682,6 @@ pub mod kyotocabinet;
 #[cfg(feature = "kyotocabinet")]
 pub use kyotocabinet::KcStore;
 
-// ── redb error mapping ─────────────────────────────────────────────
-
-#[cfg(feature = "redb")]
-fn map_database_error(e: redb::DatabaseError) -> StoreError {
-    match e {
-        redb::DatabaseError::Storage(redb::StorageError::Io(io)) => StoreError::Io(io),
-        other => StoreError::Backend(Box::new(other)),
-    }
-}
-
-#[cfg(feature = "redb")]
-fn map_transaction_error(e: redb::TransactionError) -> StoreError {
-    match e {
-        redb::TransactionError::Storage(redb::StorageError::Io(io)) => StoreError::Io(io),
-        other => StoreError::Backend(Box::new(other)),
-    }
-}
-
-#[cfg(feature = "redb")]
-fn map_table_error(e: redb::TableError) -> StoreError {
-    match e {
-        redb::TableError::Storage(redb::StorageError::Io(io)) => StoreError::Io(io),
-        other => StoreError::Backend(Box::new(other)),
-    }
-}
-
-#[cfg(feature = "redb")]
-fn map_storage_error(e: redb::StorageError) -> StoreError {
-    match e {
-        redb::StorageError::Io(io) => StoreError::Io(io),
-        other => StoreError::Backend(Box::new(other)),
-    }
-}
-
-#[cfg(feature = "redb")]
-fn map_commit_error(e: redb::CommitError) -> StoreError {
-    match e {
-        redb::CommitError::Storage(redb::StorageError::Io(io)) => StoreError::Io(io),
-        other => StoreError::Backend(Box::new(other)),
-    }
-}
-
-#[cfg(feature = "redb")]
-fn map_compaction_error(e: redb::CompactionError) -> StoreError {
-    match e {
-        redb::CompactionError::Storage(redb::StorageError::Io(io)) => StoreError::Io(io),
-        other => StoreError::Backend(Box::new(other)),
-    }
-}
-
 // ── tests ──────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1047,7 +699,7 @@ mod tests {
     use super::StoreError;
     #[cfg(feature = "tkrzw")]
     use super::TkrzwStore;
-    #[cfg(any(feature = "redb", feature = "tkrzw"))]
+    #[cfg(feature = "tkrzw")]
     use super::WriteStore;
 
     /// Emits the temp-path plumbing every tier group needs.
@@ -1472,9 +1124,8 @@ mod tests {
                     let path = temp_path("wtxn-empty");
                     let store = <$store>::create(&path).unwrap();
                     // An absent table counts as empty. Whether the probe
-                    // leaves the table behind is the backend's business
-                    // (redb's write-transaction open creates it); the
-                    // contract is only the answer.
+                    // leaves the table behind is the backend's business;
+                    // the contract is only the answer.
                     assert!(store.write(|txn| txn.is_empty("t")).unwrap());
                     store
                         .write(|txn| {
@@ -1623,11 +1274,6 @@ mod tests {
     // `store_read_tests!`. Each group is gated by the peer's feature —
     // the exactly-one-backend guards refuse combined builds, so at most
     // one of these groups is ever compiled.
-    #[cfg(feature = "redb")]
-    store_read_tests!(redb_read, RedbStore, RedbStore, "redb");
-    #[cfg(feature = "redb")]
-    store_write_tests!(redb_write, RedbStore, "redb");
-
     #[cfg(feature = "tkrzw")]
     store_read_tests!(tkrzw_read, TkrzwStore, TkrzwStore, "tkrzw");
     #[cfg(feature = "tkrzw")]
@@ -1657,28 +1303,13 @@ mod tests {
     #[cfg(feature = "bdb")]
     store_write_tests!(bdb_write, BdbStore, "db");
 
-    /// Removes the borrowed path on drop, so a panicking test leaves no
-    /// file behind in `std::env::temp_dir()`. redb keeps no `-lock`
-    /// sidecar, so the single data file is all that needs removing;
-    /// tkrzw sidecars are cleaned up separately by their own tests.
-    /// Used by the redb probe.
-    #[cfg(feature = "redb")]
-    struct RemoveOnDrop<'a>(&'a std::path::Path);
-
-    #[cfg(feature = "redb")]
-    impl Drop for RemoveOnDrop<'_> {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(self.0);
-        }
-    }
-
     // ── Default-backend policy: mechanical invariants ──────────────────
     //
-    // The workspace policy: the peer backends (KC, redb,
+    // The workspace policy: the peer backends (KC,
     // tkrzw, BDB) are equal implementations behind the store's trait
     // surface; tkrzw is the default *selection* (the feature enabled by
     // the workspace's default set), not a privileged one. These tests
-    // catch any accidental slide back to "redb default" (or any other
+    // catch any accidental slide back to another default (or any other
     // silent reordering) — a plain string check on `DEFAULT_STORE_EXT`
     // pinned to the feature the build is running under, plus a
     // compile-time type-identity check on `DefaultStore`.
@@ -1693,8 +1324,6 @@ mod tests {
         assert_eq!(super::DEFAULT_STORE_EXT, "kct");
         #[cfg(feature = "tkrzw")]
         assert_eq!(super::DEFAULT_STORE_EXT, "tkt");
-        #[cfg(feature = "redb")]
-        assert_eq!(super::DEFAULT_STORE_EXT, "redb");
         #[cfg(feature = "bdb")]
         assert_eq!(super::DEFAULT_STORE_EXT, "db");
     }
@@ -1733,28 +1362,6 @@ mod tests {
         assert_type_eq::<super::KcStore>();
     }
 
-    /// `--no-default-features --features redb` resolves `DefaultStore`
-    /// to `RedbStore` — the pure-Rust peer. The exactly-one-backend
-    /// guards at the top of `lib.rs` refuse a build that combines
-    /// `redb` with any of the C peers, so the cfg here only names the
-    /// redb feature.
-    #[cfg(feature = "redb")]
-    #[test]
-    fn default_store_is_redb_when_only_redb_is_on() {
-        fn assert_type_eq<T>()
-        where
-            T: 'static,
-            super::DefaultStore: 'static,
-        {
-            assert_eq!(
-                std::any::TypeId::of::<super::DefaultStore>(),
-                std::any::TypeId::of::<T>(),
-                "DefaultStore must resolve to the expected concrete backend"
-            );
-        }
-        assert_type_eq::<super::RedbStore>();
-    }
-
     /// `DefaultStore` resolves to `TkrzwStore` under the tkrzw feature —
     /// the workspace's default selection, and equally on
     /// `--no-default-features --features tkrzw`.
@@ -1778,52 +1385,6 @@ mod tests {
     /// `--no-default-features --features bdb` resolves `DefaultStore`
     /// to `BdbStore` — the Berkeley DB peer, libpinyin's original DBM.
     /// The type is `Send` and `Sync` under the `DB_THREAD` +
-    /// `DB_DBT_USERMEM` configuration `src/bdb/ffi.rs` documents.
-    #[cfg(feature = "bdb")]
-    #[test]
-    fn default_store_is_bdb_when_only_bdb_is_on() {
-        fn assert_type_eq<T>()
-        where
-            T: 'static,
-            super::DefaultStore: 'static,
-        {
-            assert_eq!(
-                std::any::TypeId::of::<super::DefaultStore>(),
-                std::any::TypeId::of::<T>(),
-                "DefaultStore must resolve to the expected concrete backend"
-            );
-        }
-        assert_type_eq::<super::BdbStore>();
-    }
-
-    #[cfg(feature = "redb")]
-    #[test]
-    fn redb_is_empty_probe_opens_the_table_it_probes() {
-        use ::redb::ReadableDatabase;
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-store-wtxn-probe-{}.redb",
-            std::process::id(),
-        ));
-        let _ = std::fs::remove_file(&path);
-        let _cleanup = RemoveOnDrop(&path);
-        let store = crate::RedbStore::create(&path).unwrap();
-        assert!(store.write(|txn| txn.is_empty("t")).unwrap());
-        // The probe opens the table through the write transaction, which
-        // creates it, so the committed database carries exactly the probed
-        // table, empty. Through the store traits an empty table and an
-        // absent one read identically, so the read tier's answers are
-        // unchanged; assert both faces. (`::redb` names the crate
-        // unambiguously alongside the generated per-tier test modules.)
-        assert!(crate::ReadStore::is_empty(&store, "t").unwrap());
-        assert_eq!(crate::ReadStore::get(&store, "t", b"k").unwrap(), None);
-        drop(store);
-        let db = ::redb::ReadOnlyDatabase::open(&path).unwrap();
-        let txn = db.begin_read().unwrap();
-        assert_eq!(txn.list_tables().unwrap().count(), 1);
-        drop(txn);
-        drop(db);
-    }
-
     /// Removes a tkrzw store file and its `-lock` sidecar on drop, so a
     /// panicking test leaves nothing behind in `std::env::temp_dir()`.
     #[cfg(feature = "tkrzw")]
@@ -1845,7 +1406,7 @@ mod tests {
         // The backend installs no custom comparator, so TreeDBM sorts by
         // its default LexicalKeyComparator. That has to be plain
         // *unsigned* byte order for oxpinyin's big-endian key codec to
-        // keep the order it has under redb — a signed-char
+        // keep the byte-order contract — a signed-char
         // comparison would sort 0x80.. before 0x00.., silently reversing
         // every high-token range scan. ASCII fixtures cannot tell the
         // two apart, so probe the high half explicitly.
@@ -2060,8 +1621,8 @@ mod tests {
     // boundary. Under the exactly-one-backend invariant the tests
     // cannot cross-compare two peers in one process, so each build
     // runs them against its own `DefaultStore`. Running every peer
-    // build (KC / redb / Tkrzw / BDB) through CI gives the same
-    // coverage the earlier in-process three-way check gave: each peer
+    // build (KC / Tkrzw / BDB) through CI gives the same
+    // coverage the earlier in-process cross-peer check gave: each peer
     // independently satisfies the byte-order contract, and the
     // expected walk order is computed mathematically (sort the keys)
     // rather than borrowed from a reference peer's output.
@@ -2093,7 +1654,7 @@ mod tests {
         type Rows = Vec<(Vec<u8>, Vec<u8>)>;
 
         /// Owns a temp store path; removes the data file and any `-lock`
-        /// sidecar (redb keeps none; tkrzw does) on drop, so a
+        /// sidecar (tkrzw leaves one) on drop, so a
         /// panicking test leaves nothing behind.
         struct TempPath(std::path::PathBuf);
 
@@ -2287,7 +1848,7 @@ mod tests {
         // Under exactly-one-backend, cross-peer equivalence cannot be
         // proven in one process. Instead each build proves *its* peer
         // matches the mathematical byte-ordered sequence; running every
-        // peer build through CI proves the four-way equivalence.
+        // peer build through CI proves the cross-peer equivalence.
 
         #[test]
         fn for_each_matches_the_byte_ordered_sequence_le_keys() {

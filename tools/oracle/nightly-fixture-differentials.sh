@@ -13,7 +13,7 @@
 #   GREEN, toned tier (pin-built data from fixtures/datagen-toned):
 #     - segment ngseg live parity (pin ngseg vs the Rust segmenter over
 #       the same raw text; bit-identical token sequences).
-#   GREEN, w3 tier (committed fixtures/w3/{tkt,redb}; the KMM/spseg
+#   GREEN, w3 tier (committed fixtures/w3/tkt; the KMM/spseg
 #   corpora live in the w3 token space, so the tables must be w3's):
 #     - KMM gen+export, to-interpolation, merge, validate.
 #     - spseg live parity.
@@ -119,12 +119,12 @@ for f in table.conf phrase_index.bin pinyin_index.bin bigram.db; do
 done
 export LD_LIBRARY_PATH="$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-# ── 2. the oxpinyin redb export of the SAME model ─────────────────────────
-export_dir=$work/export-redb
+# ── 2. the oxpinyin tkrzw export of the SAME model ────────────────────────
+export_dir=$work/export-tkrzw
 cd "$repo"
 if [[ ! -f $export_dir/datagen-manifest.txt ]]; then
-	cargo run --locked -q -p oxpinyin-datagen --no-default-features --features redb -- \
-		compile --backend redb --model-dir "$model" --out-dir "$export_dir"
+	cargo run --locked -q -p oxpinyin-datagen -- \
+		compile --model-dir "$model" --out-dir "$export_dir"
 fi
 
 # ── 3. the gates ────────────────────────────────────────────────────────────
@@ -132,7 +132,7 @@ fi
 # tool comes from the build tree, the same paths run-differentials.sh
 # wires for the developer runs.
 L=$src
-feat=(--no-default-features --features redb)
+feat=()
 
 status=0
 run_suite() {
@@ -158,11 +158,11 @@ run_suite "segment ngseg live parity (toned tables)" \
 	--include-ignored rust_matches_live_ngseg
 
 # w3 tier: the KMM and spseg corpora are w3-token-space, so the tables
-# and the Rust-side export are the committed w3 pair (tkt for the pin —
-# it is the Tkrzw container format this build opens; redb for us).
+# and the Rust-side export are the committed tkrzw tables (the same
+# Tkrzw container format this build and the pin both open).
 w3=$repo/fixtures/w3
 export PINYIN_GEN_NGRAM_DATA="$w3/tkt"
-export PINYIN_EXPORT_DIR="$w3/redb"
+export PINYIN_EXPORT_DIR="$w3/tkt"
 export PINYIN_SPSEG="$L/utils/segment/spseg"
 export PINYIN_NGSEG_DATA="$w3/tkt"
 export PINYIN_GEN_KMM="$L/utils/training/gen_k_mixture_model"

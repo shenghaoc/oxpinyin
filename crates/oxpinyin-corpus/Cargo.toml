@@ -16,11 +16,11 @@ name = "oxpinyin-corpus"
 path = "src/bin/oxpinyin-corpus.rs"
 
 [dev-dependencies]
-# default-features = false so a workspace `--no-default-features` sweep
-# stays on the redb selection: these edges must not re-default the
-# training crates' Kyoto Cabinet selection. A standalone
-# `cargo test -p oxpinyin-corpus` runs the same tests over redb; the
-# committed per-backend fixture tables serve each peer selection.
+# default-features = false so these edges must not re-default the
+# backend selection a workspace sweep has made. A standalone
+# `cargo test -p oxpinyin-corpus` runs the same tests over the store's
+# selected peer; the committed per-backend fixture tables serve each
+# peer selection.
 oxpinyin-segment = { path = "../oxpinyin-segment", default-features = false }
 oxpinyin-counter = { path = "../oxpinyin-counter", default-features = false }
 oxpinyin-lambda = { path = "../oxpinyin-lambda", default-features = false }

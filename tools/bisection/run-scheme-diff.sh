@@ -19,7 +19,7 @@
 # The capi side is built from the workspace. To compare candidate lists
 # against real model data, set W13_CAPI_SYSTEM to a directory containing
 # pinyin_index/phrase_index/bigram in the extension of the capi's compiled
-# backend (.kct by default; .tkt/.redb) and interpolation2.text;
+# backend (.kct by default; .tkt) and interpolation2.text;
 # otherwise resolution falls to OXPINYIN_SYSTEM_DIR and the conventional
 # build locations, and an unresolvable dir is FATAL rather than a silent
 # mini-fixture run (system-dir.sh). Historically the mini tables were used

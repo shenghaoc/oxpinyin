@@ -32,7 +32,7 @@ fn run() -> Result<(), String> {
     let Some(mut session) = sentence_tail::open_session_from_env()? else {
         return Err(
             "exported tables or model cache absent; set PINYIN_EXPORT_DIR to the \
-                    exported redb and PINYIN_MODEL_DIR to a complete extracted model20 dir"
+                    exported tables and PINYIN_MODEL_DIR to a complete extracted model20 dir"
                 .to_owned(),
         );
     };

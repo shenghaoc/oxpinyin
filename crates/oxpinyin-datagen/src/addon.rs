@@ -39,7 +39,7 @@ pub enum Subset {
     /// Every addon library.
     Full,
     /// Only art, restricted to [`MINI_ART_KEYS`] — the reproducible recipe
-    /// for `fixtures/w3/addon_4_*.redb`.
+    /// for `fixtures/w3/addon_4_*`.
     MiniFixture,
 }
 

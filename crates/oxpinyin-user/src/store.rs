@@ -11,7 +11,7 @@
 //! session and the C ABI (in `oxpinyin-engine` / `oxpinyin-capi`). T4 exposes
 //! the counts as a [`oxpinyin_core::UserCountDelta`] for the decode-time
 //! additive merge. T5 adds the save cycle: the §4 `m_modified` gate and the
-//! redb-backed persistence point behind `pinyin_save`.
+//! persistence point behind `pinyin_save`.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -357,12 +357,12 @@ pub struct GenericUserStore<S: WriteStore> {
 }
 
 /// Default user store backed by [`DefaultStore`] — whichever peer
-/// backend (Kyoto Cabinet, redb, tkrzw, Berkeley DB) the build was
+/// backend (Kyoto Cabinet, tkrzw, Berkeley DB) the build was
 /// compiled against.
 ///
 /// tkrzw is the default selection under the workspace's default feature
 /// set; the others are selected with `--no-default-features
-/// --features {kyotocabinet|redb|bdb}`.
+/// --features {kyotocabinet|bdb}`.
 pub type UserStore = GenericUserStore<DefaultStore>;
 
 impl<S: WriteStore> GenericUserStore<S> {
@@ -2369,8 +2369,6 @@ mod tests {
     // combined builds, so at most one of these peer test suites
     // is compiled per build; each peer's own suite exercises the
     // generic user store's contract over that peer.
-    #[cfg(feature = "redb")]
-    user_store_tests!(redb, oxpinyin_store::RedbStore, "redb");
     #[cfg(feature = "tkrzw")]
     user_store_tests!(tkrzw, oxpinyin_store::TkrzwStore, "tkrzw");
     #[cfg(feature = "kyotocabinet")]
@@ -2384,7 +2382,7 @@ mod tests {
     /// in-process. Instead each build proves the *current* peer, driven
     /// through the generic user store, produces bigram walks and
     /// successor scans in ascending (prev, cur) integer order — the
-    /// big-endian key property. Running every peer build (KC / redb
+    /// big-endian key property. Running every peer build (KC
     /// / Tkrzw / BDB) through CI gives the same four-way equivalence
     /// coverage the earlier in-process check gave.
     #[test]
@@ -2450,7 +2448,7 @@ mod tests {
 
     fn temp_path(tag: &str) -> std::path::PathBuf {
         let path =
-            std::env::temp_dir().join(format!("oxpinyin-user-{tag}-{}.redb", std::process::id()));
+            std::env::temp_dir().join(format!("oxpinyin-user-{tag}-{}.store", std::process::id()));
         let _ = std::fs::remove_file(&path);
         path
     }

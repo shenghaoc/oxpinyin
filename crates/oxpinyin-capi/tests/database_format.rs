@@ -12,24 +12,10 @@
 //! — the same value the runtime writes into `user.conf`/`table.conf`.
 //! Asserting against it (rather than against a literal) is what makes the
 //! test non-vacuous: removing a feature arm makes the `.pc` disagree with
-//! the token every other artefact of this build carries. The one backend
-//! excluded is redb, whose spelling is oxpinyin-only by design — see the
-//! `cfg` on the test.
+//! the token every other artefact of this build carries.
 
-// redb's `database format:` token is oxpinyin-only and deliberately
-// unknown upstream (`user_files.rs`'s `UPSTREAM_DB_FORMATS` excludes both
-// spellings, and its test pins `"Redb"` as known to no upstream build), so
-// the `.pc` reports an unknown format to a consumer's probe whichever
-// spelling it carries — and the backend is removed in the next stack
-// member, so pinning its `.pc` spelling buys nothing. #501 drops this
-// `cfg` when redb goes.
-#[cfg(not(feature = "redb"))]
 #[test]
 fn baked_pc_database_format_matches_the_compiled_backend() {
-    // The parse lives in the test body rather than in a file-scope helper:
-    // under the redb gate below there is no test left to use a helper, and
-    // this crate's lanes carry `RUSTFLAGS: -D warnings`, so a dead
-    // `fn` would be a hard error on the one lane the gate excludes.
     fn database_format_from_pc(pc: &str) -> &str {
         pc.lines()
             .find_map(|line| line.strip_prefix("database_format="))

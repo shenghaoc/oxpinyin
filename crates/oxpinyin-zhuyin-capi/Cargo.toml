@@ -45,12 +45,6 @@ tkrzw = [
     "oxpinyin-user/tkrzw",
     "oxpinyin-facade/tkrzw",
 ]
-redb = [
-    "oxpinyin-runtime/redb",
-    "oxpinyin-data/redb",
-    "oxpinyin-user/redb",
-    "oxpinyin-facade/redb",
-]
 
 [lints.rust]
 unsafe_code = "allow" # FFI + glib marshalling only; // SAFETY: on every block

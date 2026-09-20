@@ -4,6 +4,9 @@ Date: 2026-08-27 · Status: **recorded / implemented** (`crates/oxpinyin-datagen
 
 ## The invariant
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The pipeline diagram and per-backend outputs below include the redb producer, removed with its backend; the KC/tkrzw/BDB producers are unaffected.
+
+
 > The canonical linguistic source is the source of truth. No oxpinyin
 > backend may require libpinyin-generated runtime data as its input.
 

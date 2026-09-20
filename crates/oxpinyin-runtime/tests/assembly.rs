@@ -192,7 +192,7 @@ fn regular_file_as_user_dir_degrades_to_no_user_state() {
 #[test]
 fn empty_user_path_means_no_user_state_not_a_cwd_file() {
     // capi contract: an empty user dir string disables learning; the
-    // merged runtime must not fall back to creating `user_store.redb`
+    // merged runtime must not fall back to creating the user store file
     // in the process's working directory.
     let runtime = Runtime::open(&w3_dir(), Some(Path::new(""))).expect("open");
     assert!(runtime.user_store().is_none());

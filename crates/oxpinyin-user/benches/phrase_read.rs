@@ -55,7 +55,7 @@ fn seed(store: &mut UserStore) -> Vec<Token> {
 // Canary for the phrase-read path: calls UserStore::phrase (the public
 // path over pronunciation_range), a point-get plus a range scan.
 // This bench cannot resolve sub-µs allocation changes (F1/F3 in
-// #340): the dominant cost is the redb read-txn + cursor open
+// #340): the dominant cost is the read-txn + cursor open
 // (~2.4 µs), which swamps the removed 4-byte Vec allocations.
 // Its value is as a regression detector, not an improvement signal.
 fn bench_phrase_read(c: &mut Criterion) {

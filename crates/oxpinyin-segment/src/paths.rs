@@ -137,7 +137,7 @@ fn dir_has(dir: &Path, names: &[&str]) -> bool {
 
 /// `dir_has` over DBMs: the checked name of each is its compiled-in
 /// backend's form (`bigram.db` on Kyoto Cabinet, tkrzw and Berkeley DB,
-/// `bigram.redb`, …).
+/// the bigram table, …).
 fn dir_has_tables(dir: &Path, dbms: &[SystemDbm]) -> bool {
     dir.is_dir()
         && dir.join("gb_char.bin").is_file()

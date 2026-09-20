@@ -1,43 +1,42 @@
-//! redb vs tkrzw on the raw store tier traits — identical workloads.
+//! The compiled-in store backend on the raw store tier traits.
 //!
 //! Measurement only; consumes public APIs and touches no parity code.
-//! Run in release:
+//! Run in release against the default (tkrzw):
 //!
 //! ```text
-//! cargo run -p oxpinyin-store --release --example backend_bench --features redb
+//! cargo run -p oxpinyin-store --release --example backend_bench
 //! ```
 //!
-//! The tkrzw column needs a working libtkrzw with its C API header
-//! (`tkrzw_langc.h`), discoverable via `pkg-config`:
+//! A peer build swaps the compiled-in backend, not a column of this run
+//! (the store's exactly-one-backend guard refuses two peers in one
+//! binary, so the old two-column comparison mode of this example was
+//! dead long before the backend it contrasted was removed —
+//! cross-backend comparison happens across CI builds, not in one
+//! process):
 //!
 //! ```text
-//! PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig \
-//!   cargo run -p oxpinyin-store --release --example backend_bench \
-//!   --features "redb tkrzw"
+//! cargo run -p oxpinyin-store --release --example backend_bench \
+//!   --no-default-features --features kyotocabinet
 //! ```
 //!
-//! Without the tkrzw feature the example runs redb only and prints a note.
-//! Each (backend, scenario) pair runs in a child process (a re-exec of this
-//! binary), so `/proc/self/status` `VmHWM` measures that pair alone rather
-//! than a process-monotonic high-water mark; the child baseline (runtime
-//! plus binary) is common to both backends, so the redb-vs-tkrzw delta is
-//! the signal.  Workload rows derive deterministically from the seed, and
-//! every scenario body is one generic function over its tier —
-//! both backends see identical keys, values, and operation order.  Before
-//! printing each block the parent verifies that both children reported the
-//! same metric set and agrees on every non-measurement metric (counts and
-//! data checksums); a mismatch aborts instead of printing a comparison.
+//! Each scenario runs in a child process (a re-exec of this binary), so
+//! `/proc/self/status` `VmHWM` measures that scenario alone rather than a
+//! process-monotonic high-water mark.  Workload rows derive
+//! deterministically from the seed, and every scenario body is one
+//! generic function over its tier — identical keys, values, and
+//! operation order on every backend, which is what makes cross-build
+//! comparisons of the printed figures meaningful.
 //!
 //! Sizes via env vars (defaults in parentheses): `BACKEND_BENCH_N`
 //! (`100_000` bigram rows; pron = N/2, phrase = N/4), `BACKEND_BENCH_GETS`
 //! (`50_000`), `BACKEND_BENCH_PREFIXES` (128), `BACKEND_BENCH_READONLY`
 //! (`400_000`), `BACKEND_BENCH_SEED`.
 //!
-//! Compaction is backend-dependent and best-effort: redb rewrites the file
-//! and reclaims pages, and tkrzw rebuilds the `TreeDBM` into a fresh file,
-//! so it reclaims like redb but pays a full rewrite for it. The `save_compact` scenario reports timings
-//! and sizes for every backend; the numbers are not measuring the same
-//! operation, which is the point of reporting them side by side.
+//! Compaction is backend-dependent and best-effort: tkrzw rebuilds the
+//! `TreeDBM` into a fresh file, reclaiming space at the price of a full
+//! rewrite. The `save_compact` scenario reports timings and sizes; across
+//! backends the numbers do not measure the same operation, which is the
+//! point of comparing them across builds.
 //!
 //! On Unix, on-disk sizes report both apparent length (`st_size`) and
 //! allocated blocks (`st_blocks` × 512) of the data file only; allocated is
@@ -53,8 +52,6 @@ use std::time::{Duration, Instant};
 use oxpinyin_store::BdbStore;
 #[cfg(feature = "kyotocabinet")]
 use oxpinyin_store::KcStore;
-#[cfg(feature = "redb")]
-use oxpinyin_store::RedbStore;
 #[cfg(feature = "tkrzw")]
 use oxpinyin_store::TkrzwStore;
 use oxpinyin_store::{ReadStore, WriteStore};
@@ -92,103 +89,42 @@ fn main() {
     }
 }
 
-// ── parent: spawn children, print the comparison table ────────────
+// ── parent: spawn one child per scenario, print the metric table ────
 
-/// One backend's column: the header label, and the rows its child
-/// reported — `None` when the build lacks that backend's feature and the
-/// column prints as `-`.
-struct Column {
-    name: &'static str,
-    rows: Option<Vec<(String, String)>>,
-}
-
-/// The comparison columns after redb, in print order.
-///
-/// The tkrzw column is only there under its feature, so builds without
-/// it print the redb column alone.
-fn comparison_columns(scenario: &str) -> Vec<Column> {
-    let mut columns = Vec::new();
-    if cfg!(feature = "tkrzw") {
-        columns.push(Column {
-            name: "tkrzw",
-            rows: Some(spawn_child("tkrzw", scenario)),
-        });
+/// The compiled-in backend's label, from the feature the store's
+/// exactly-one-backend guard leaves enabled.
+fn compiled_backend() -> &'static str {
+    if cfg!(feature = "kyotocabinet") {
+        "kyotocabinet"
+    } else if cfg!(feature = "tkrzw") {
+        "tkrzw"
+    } else if cfg!(feature = "bdb") {
+        "bdb"
+    } else {
+        "the compiled-in backend"
     }
-    columns
 }
 
 fn parent() {
     let cfg = config();
-    if cfg!(feature = "tkrzw") {
-        println!("backend_bench — redb vs tkrzw on the store tier traits");
-    } else {
-        println!("backend_bench — redb on the store tier traits");
-    }
+    println!(
+        "backend_bench — {} on the store tier traits",
+        compiled_backend()
+    );
     println!(
         "n={} (pron {}/2, phrase {}/4)  gets={}  prefixes={}  readonly={}  seed={:#x}",
         cfg.n, cfg.n, cfg.n, cfg.gets, cfg.prefixes, cfg.readonly, cfg.seed
     );
-    println!("one fresh process per (backend, scenario); VmHWM per pair");
-    if cfg!(feature = "tkrzw") {
-        println!("backends: redb, tkrzw");
-    } else {
-        println!("backends: redb only — rebuild with --features tkrzw for the comparison");
-    }
+    println!("one fresh process per scenario; VmHWM per scenario");
+    println!("compare across builds: the workload is a pure function of the seed");
     println!();
 
     for scenario in SCENARIOS {
-        let redb = spawn_child("redb", scenario);
-        let columns = comparison_columns(scenario);
-        for column in &columns {
-            if let Some(rows) = &column.rows {
-                verify_parity(scenario, column.name, &redb, rows);
-            }
-        }
-        print_block(scenario, &redb, &columns);
+        let rows = spawn_child(compiled_backend(), scenario);
+        print_block(scenario, compiled_backend(), &rows);
     }
 }
 
-// Metrics allowed to differ across backends: timings, memory, and on-disk
-// sizes.  Everything else — workload counts and data checksums — must agree
-// exactly, since both children run the same deterministic workload.
-fn is_measurement(key: &str) -> bool {
-    key.ends_with("_ms")
-        || key.starts_with("us_per_")
-        || key.ends_with("_bytes")
-        || key == "size_live"
-        || key == "vmhwm_kib"
-}
-
-fn lookup<'a>(rows: &'a [(String, String)], key: &str) -> Option<&'a str> {
-    rows.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
-}
-
-fn verify_parity(
-    scenario: &str,
-    name: &str,
-    redb: &[(String, String)],
-    other: &[(String, String)],
-) {
-    for (key, redb_value) in redb {
-        match lookup(other, key) {
-            None => {
-                eprintln!("{scenario}: {name} missing metric {key:?}");
-                std::process::exit(1);
-            }
-            Some(value) if !is_measurement(key) && value != redb_value => {
-                eprintln!("{scenario}: {key} disagrees — redb {redb_value}, {name} {value}");
-                std::process::exit(1);
-            }
-            Some(_) => {}
-        }
-    }
-    for (key, _) in other {
-        if lookup(redb, key).is_none() {
-            eprintln!("{scenario}: unexpected {name} metric {key:?}");
-            std::process::exit(1);
-        }
-    }
-}
 
 fn spawn_child(backend: &str, scenario: &str) -> Vec<(String, String)> {
     let exe = std::env::current_exe().expect("current exe");
@@ -210,24 +146,11 @@ fn spawn_child(backend: &str, scenario: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn print_block(scenario: &str, redb: &[(String, String)], columns: &[Column]) {
+fn print_block(scenario: &str, backend: &str, rows: &[(String, String)]) {
     println!("── {scenario} ──");
-    print!("  {:<26} {:>14}", "metric", "redb");
-    for column in columns {
-        print!(" {:>14}", column.name);
-    }
-    println!();
-    for (key, value) in redb {
-        print!("  {key:<26} {value:>14}");
-        for column in columns {
-            let cell = column
-                .rows
-                .as_deref()
-                .and_then(|rows| lookup(rows, key))
-                .unwrap_or("-");
-            print!(" {cell:>14}");
-        }
-        println!();
+    println!("  {:<26} {:>14}", "metric", backend);
+    for (key, value) in rows {
+        println!("  {key:<26} {value:>14}");
     }
     println!();
 }
@@ -238,8 +161,6 @@ fn run_child(backend: &str, scenario: &str) {
     match backend {
         #[cfg(feature = "kyotocabinet")]
         "kc" | "kyotocabinet" => dispatch::<KcStore>(scenario),
-        #[cfg(feature = "redb")]
-        "redb" => dispatch::<RedbStore>(scenario),
         #[cfg(feature = "tkrzw")]
         "tkrzw" => dispatch::<TkrzwStore>(scenario),
         #[cfg(feature = "bdb")]

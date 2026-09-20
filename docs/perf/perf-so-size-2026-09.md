@@ -29,6 +29,9 @@ before the change and shared by both runs).
 
 ## ARM64/KC re-measurement (2026-09-04)
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The before/after figures below are x86_64/redb (built `--no-default-features --features redb`, per the host note); that backend no longer exists at HEAD, so the exact byte figures are not reproducible as written. The size deltas the section argues for are the record's, not a forward-looking measurement.
+
+
 The merge notes asked the next perf-container pass to re-measure this
 change on the canonical ARM64/KC build. Done, in the ARM64
 `oxpinyin-validate` container (Apple Silicon, linux/arm64, Debian

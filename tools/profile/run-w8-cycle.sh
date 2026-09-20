@@ -14,7 +14,7 @@
 #   - cargo-c (`cargo cinstall --profile profiling`)
 #
 # Environment:
-#   PINYIN_EXPORT_DIR   redb export (default /tmp/oxpinyin-export)
+#   PINYIN_EXPORT_DIR   tkrzw export (default /tmp/oxpinyin-export)
 #   PINYIN_MODEL_DIR    extracted model20 (default target/model20/extracted)
 #   PERF_CYCLES         bisect cycles (default 32; drown pinyin_init)
 #   PERF_CPU            taskset CPU (optional)
@@ -99,7 +99,7 @@ mkdir -p "$PROFILE_DIR"
 
 # ── Inputs ──────────────────────────────────────────────────────────────
 
-for name in pinyin_index.redb phrase_index.redb bigram.redb; do
+for name in pinyin_index.bin phrase_index.bin bigram.db; do
     if [ ! -f "$EXPORT_DIR/$name" ]; then
         echo "fatal: exported table missing at $EXPORT_DIR/$name" >&2
         exit 1
@@ -137,9 +137,9 @@ CAPI_DATA="$STAGE/usr/share/oxpinyin"
 
 # cargo-c does not install data files; this is the documented packager step.
 mkdir -p "$CAPI_DATA"
-cp -L "$EXPORT_DIR/pinyin_index.redb" \
-      "$EXPORT_DIR/phrase_index.redb" \
-      "$EXPORT_DIR/bigram.redb" "$CAPI_DATA/"
+cp -L "$EXPORT_DIR/pinyin_index.bin" \
+      "$EXPORT_DIR/phrase_index.bin" \
+      "$EXPORT_DIR/bigram.db" "$CAPI_DATA/"
 cp -L "$MODEL_DIR/interpolation2.text" "$CAPI_DATA/interpolation2.text"
 echo "installed capi .so:  $CAPI_SO"
 echo "installed capi data: $CAPI_DATA"

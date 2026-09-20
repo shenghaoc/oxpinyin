@@ -174,7 +174,7 @@ pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: 
 ///                                       guint8 index);
 /// ```
 ///
-/// Loads addon library `index` from `addon_{index}_*.redb` next to the
+/// Loads addon library `index` from `addon_{index}_*` next to the
 /// system tables. Returns `false` when the context is null, the library is
 /// already loaded, or the exported tables are missing
 /// (`docs/findings/phrase-union.md` §3.5).

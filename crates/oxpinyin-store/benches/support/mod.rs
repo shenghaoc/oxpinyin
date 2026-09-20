@@ -1,4 +1,4 @@
-//! Shared implementation for the four `backend_matrix_*` criterion benches.
+//! Shared implementation for the `backend_matrix_*` criterion benches.
 //!
 //! One bench target per backend (`required-features` per the b8aff564
 //! convention), all driving this module over the store-tier traits, so the
@@ -52,7 +52,7 @@ pub const UNIGRAM_TOTAL: &str = "user_unigram_total";
 
 /// (stem, libpinyin file name, is-hash) for the six system DBMs — the same
 /// naming `oxpinyin-data`'s `SystemDbm` applies: libpinyin's own names on
-/// the libpinyin DBM backends, `<stem>.<ext>` on redb.
+/// the libpinyin DBM backends.
 const SYSTEM_DBMS: [(&str, &str, bool); 6] = [
     ("pinyin_index", "pinyin_index.bin", false),
     ("phrase_index", "phrase_index.bin", false),
@@ -63,7 +63,7 @@ const SYSTEM_DBMS: [(&str, &str, bool); 6] = [
 ];
 
 /// The w3 fixture directory for the compiled-in backend; the directory is
-/// named by the store extension (`kct`, `tkt`, `redb`).
+/// named by the store extension (`kct`, `tkt`, `db`).
 pub fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/w3")

@@ -94,16 +94,16 @@ mod tests {
     fn manifest_renders_every_field() {
         // The `Backend` enum variants are always defined (the
         // exactly-one-backend gate lives on the *implementations*, not
-        // on the enum variants), so `Backend::Redb` is a valid fixture
-        // value here without pulling redb's writer in. The rendered
+        // on the enum variants), so any backend value works here
+        // without pulling that writer in. The rendered
         // manifest for any peer has the same shape with the peer's own
         // extension.
         let manifest = Manifest {
-            backend: Backend::Redb,
+            backend: Backend::KyotoCabinet,
             model_sha256: "59c68e89".to_owned(),
             producer_version: "0.1.0".to_owned(),
             tables: vec![TableRecord {
-                file: "pinyin_index.redb".to_owned(),
+                file: "pinyin_index.bin".to_owned(),
                 records: 93_349,
                 fnv1a64: 0x0123_4567_89ab_cdef,
             }],
@@ -111,8 +111,8 @@ mod tests {
         let text = manifest.render();
         assert!(text.starts_with("oxpinyin-datagen-manifest-v1\n"));
         assert!(text.contains("pin_ref=model20-59c68e89\n"));
-        assert!(text.contains("backend=redb\n"));
+        assert!(text.contains("backend=kct\n"));
         assert!(text.contains("producer=oxpinyin-datagen@0.1.0\n"));
-        assert!(text.contains("table=pinyin_index.redb records=93349 fnv1a64=0123456789abcdef\n"));
+        assert!(text.contains("table=pinyin_index.bin records=93349 fnv1a64=0123456789abcdef\n"));
     }
 }

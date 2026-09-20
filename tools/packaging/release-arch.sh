@@ -75,7 +75,6 @@ SOARCH=64
 case "$BACKEND" in
   kyotocabinet) EXTRA_DEPS="kyotocabinet" ;;
   tkrzw)        EXTRA_DEPS="tkrzw" ;;
-  redb)         EXTRA_DEPS="" ;;
   *) echo "error: unknown backend '$BACKEND'" >&2; exit 2 ;;
 esac
 

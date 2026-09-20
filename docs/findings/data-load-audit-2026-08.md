@@ -31,6 +31,9 @@ modes: `inventory`, `isolated`, `cumulative`, `dict`, `pinyin`, `phrase`,
 
 ## 1. Where init time actually goes
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The load-cost attribution below was measured with redb as the store; the parse-vs-materialize split it establishes is the record's. The figures stand as measured.
+
+
 W8 attributed 586 ms of `pinyin_init` to "parsing the 83 MB
 `interpolation2.text` and slurping the redb tables." That pairing is
 misleading. The parser **stops at the `\2-gram` header** and never reads

@@ -17,6 +17,9 @@ construction (they are design, not upstream fact).
 
 ## Source set
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The user-store semantics were developed against redb as the store (the §10 note names it); the value-level semantics are backend-independent and survive.
+
+
 - libpinyin: pinned tag `2.11.91` (sha `0c5e80e1…`), on disk at
   `/tmp/libpinyin-2.11.91`. Paths below beginning `src/` are relative to that
   root. (A byte-identical second copy sits under

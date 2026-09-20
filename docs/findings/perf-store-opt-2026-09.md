@@ -70,6 +70,8 @@ the bench is for.
 > #341) is backend-agnostic in `oxpinyin-user` and survives; only the
 > measurement vehicle is gone. The figures stand as measured at
 > `ab56dc79`/`a81570d6`.
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The F1/F3 `phrase_read` and F4 `is_empty` entries were measured on redb (PR #340's allocation-trim subject); the mechanisms are backend-agnostic in `oxpinyin-user` and survive. The figures stand as measured.
+
 
 | Bench ID | Baseline `ab56dc79` | After `a81570d6` | Δ | criterion verdict | stddev / mean |
 |---|---:|---:|---:|---|---|

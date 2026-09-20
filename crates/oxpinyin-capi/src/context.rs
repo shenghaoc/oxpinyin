@@ -114,7 +114,7 @@ pub extern "C" fn oxpinyin_test_set_user_bigram(
 /// saves nothing either). The shutdown decision is recorded in
 /// `docs/findings/user-store.md` §6: oxpinyin reproduces the call pattern,
 /// and the upstream sub-timer data-loss window does not exist here because
-/// every training update is a durable redb commit.
+/// every training update is a durable commit.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     if context.is_null() {
@@ -138,8 +138,8 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
 /// The §4 semantics: `false` when there is no user directory (upstream
 /// `pinyin.cpp:1133`) or nothing changed since the last save (`:1136` — the
 /// unmodified deliberate no-op); `true` after a dirty save. The save
-/// compacts the redb store and clears `m_modified`; durability itself is
-/// redb's per-commit guarantee, so training writes are crash-safe before
+/// compacts the store and clears `m_modified`; durability itself is
+/// the backend's per-commit guarantee, so training writes are crash-safe before
 /// any save is issued (`docs/findings/user-store.md` §4).
 pub fn save_context(context: *mut PinyinContext) -> bool {
     if context.is_null() {

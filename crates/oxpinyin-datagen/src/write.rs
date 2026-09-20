@@ -8,7 +8,7 @@
 //! a file is only reported written after it reads back identical.
 //!
 //! On Kyoto Cabinet, tkrzw and Berkeley DB the files carry libpinyin's own
-//! names and are the drop-in set; on redb the same records live in that
+//! names and are the drop-in set
 //! backend's container under `<stem>.<ext>`.
 
 use std::fs;
@@ -31,7 +31,7 @@ pub use oxpinyin_data::SystemDbm as DbmFile;
 
 /// A storage backend with a producer.
 ///
-/// The four variants are peers behind the same `WriteStore`; the same
+/// The variants are peers behind the same `WriteStore`; the same
 /// compiled row stream reads back identically under each. [`Self::DEFAULT`]
 /// resolves to the peer whose feature the build carries — tkrzw under the
 /// workspace's default feature set — matching `oxpinyin_store::DefaultStore`;
@@ -39,9 +39,6 @@ pub use oxpinyin_data::SystemDbm as DbmFile;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Backend {
-    /// redb (`.redb` files). Requires the `redb` cargo feature; select
-    /// it with `--no-default-features --features redb`.
-    Redb,
     /// Tkrzw — libpinyin's `--with-dbm=Tkrzw` files. Requires the `tkrzw`
     /// cargo feature (on by default — tkrzw is the workspace's default
     /// selection).
@@ -76,11 +73,6 @@ impl Backend {
     #[cfg(feature = "tkrzw")]
     pub const DEFAULT: Self = Self::Tkrzw;
 
-    /// The default selected backend for a normal `oxpinyin-datagen
-    /// compile` run — matches `oxpinyin_store::DefaultStore`.
-    #[cfg(feature = "redb")]
-    pub const DEFAULT: Self = Self::Redb;
-
     /// Parses a `--backend` argument.
     ///
     /// # Errors
@@ -88,12 +80,11 @@ impl Backend {
     /// Unknown backend names.
     pub fn parse(name: &str) -> Result<Self, DatagenError> {
         match name {
-            "redb" => Ok(Self::Redb),
             "tkrzw" => Ok(Self::Tkrzw),
             "kyotocabinet" => Ok(Self::KyotoCabinet),
             "bdb" | "berkeleydb" => Ok(Self::BerkeleyDb),
             other => Err(DatagenError::Consistency(format!(
-                "unknown backend {other:?} (expected redb, tkrzw, kyotocabinet, or bdb)"
+                "unknown backend {other:?} (expected tkrzw, kyotocabinet, or bdb)"
             ))),
         }
     }
@@ -102,20 +93,18 @@ impl Backend {
     #[must_use]
     pub const fn available(self) -> bool {
         match self {
-            Self::Redb => cfg!(feature = "redb"),
             Self::Tkrzw => cfg!(feature = "tkrzw"),
             Self::KyotoCabinet => cfg!(feature = "kyotocabinet"),
             Self::BerkeleyDb => cfg!(feature = "bdb"),
         }
     }
 
-    /// File extension of this backend's containers on redb
+    /// File extension of this backend's containers
     /// (`oxpinyin_store::DEFAULT_STORE_EXT` for the same selection); on
     /// the drop-in backends the files carry libpinyin's names instead.
     #[must_use]
     pub const fn extension(self) -> &'static str {
         match self {
-            Self::Redb => "redb",
             Self::Tkrzw => "tkt",
             Self::KyotoCabinet => "kct",
             Self::BerkeleyDb => "db",
@@ -127,7 +116,6 @@ impl Backend {
     #[must_use]
     pub const fn feature(self) -> &'static str {
         match self {
-            Self::Redb => "redb",
             Self::Tkrzw => "tkrzw",
             Self::KyotoCabinet => "kyotocabinet",
             Self::BerkeleyDb => "bdb",
@@ -153,7 +141,6 @@ impl Backend {
             Self::KyotoCabinet => "KyotoCabinet",
             Self::Tkrzw => "Tkrzw",
             Self::BerkeleyDb => "BerkeleyDB",
-            Self::Redb => "redb",
         }
     }
 
@@ -204,8 +191,6 @@ impl Backend {
     /// verification failure.
     pub fn write_raw(self, path: &Path, entries: &Entries) -> Result<(), DatagenError> {
         match self {
-            #[cfg(feature = "redb")]
-            Self::Redb => write_raw_with::<oxpinyin_store::RedbStore>(path, entries),
             #[cfg(feature = "tkrzw")]
             Self::Tkrzw => write_raw_with::<oxpinyin_store::TkrzwStore>(path, entries),
             #[cfg(feature = "kyotocabinet")]
@@ -225,8 +210,6 @@ impl Backend {
     /// verification failure.
     pub fn write_hash(self, path: &Path, entries: &Entries) -> Result<(), DatagenError> {
         match self {
-            #[cfg(feature = "redb")]
-            Self::Redb => write_hash_with::<oxpinyin_store::RedbStore>(path, entries),
             #[cfg(feature = "tkrzw")]
             Self::Tkrzw => write_hash_with::<oxpinyin_store::TkrzwStore>(path, entries),
             #[cfg(feature = "kyotocabinet")]
@@ -258,8 +241,6 @@ impl Backend {
             Ok(rows)
         }
         match self {
-            #[cfg(feature = "redb")]
-            Self::Redb => collect::<oxpinyin_store::RedbStore>(path),
             #[cfg(feature = "kyotocabinet")]
             Self::KyotoCabinet => collect::<oxpinyin_store::KcStore>(path),
             #[cfg(feature = "bdb")]
@@ -281,8 +262,6 @@ impl Backend {
             Ok(store.get_raw(key)?)
         }
         match self {
-            #[cfg(feature = "redb")]
-            Self::Redb => get::<oxpinyin_store::RedbStore>(path, key),
             #[cfg(feature = "kyotocabinet")]
             Self::KyotoCabinet => get::<oxpinyin_store::KcStore>(path, key),
             #[cfg(feature = "tkrzw")]
@@ -306,8 +285,6 @@ impl Backend {
             Ok(store.count_raw()?)
         }
         match self {
-            #[cfg(feature = "redb")]
-            Self::Redb => count::<oxpinyin_store::RedbStore>(path),
             #[cfg(feature = "kyotocabinet")]
             Self::KyotoCabinet => count::<oxpinyin_store::KcStore>(path),
             #[cfg(feature = "tkrzw")]
@@ -342,7 +319,7 @@ fn replace_file(path: &Path) -> Result<(), DatagenError> {
 ///
 /// KC and Tkrzw
 /// write the file's bare keyspace (their `RawReadStore` reads read it
-/// back unchanged); redb delegates to the well-known raw table,
+/// back unchanged)
 /// the same delegation the raw reads use.
 ///
 /// An existing file at `path` is replaced.
@@ -364,7 +341,7 @@ pub fn write_raw_with<S: WriteStore + RawReadStore>(
             Ok(())
         })?;
     }
-    // Drop the writer before verifying: redb locks the file per process.
+    // Drop the writer before verifying: the backend may lock the file per process.
     verify_raw::<S>(path, entries)
 }
 
@@ -376,7 +353,7 @@ pub fn write_raw_with<S: WriteStore + RawReadStore>(
 /// Store or verification failures; verification compares every raw row.
 fn verify_raw<S: RawReadStore>(path: &Path, entries: &Entries) -> Result<(), DatagenError> {
     // `range_raw` walks the raw keyspace in ascending key-byte order on
-    // every backend (KC/Tkrzw natively; redb through the well-known
+    // every backend (KC/Tkrzw natively
     // raw table), which is exactly the sorted expectation.
     let read_only = S::open_read_only(path)?;
     let mut rows = Vec::new();
@@ -392,8 +369,7 @@ fn verify_raw<S: RawReadStore>(path: &Path, entries: &Entries) -> Result<(), Dat
 }
 
 /// Writes rows into a fresh **hash** container at `path` (libpinyin's
-/// `bigram.db` container class — KC `HashDB` / Tkrzw `HashDBM`; redb
-/// has one container class and opens it either way).
+/// `bigram.db` container class — KC `HashDB` / Tkrzw `HashDBM`).
 ///
 /// Then verifies every raw row reads back by point read (a KC `HashDB`
 /// cursor cannot be positioned from the empty key).

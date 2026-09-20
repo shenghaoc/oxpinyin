@@ -22,6 +22,9 @@ after = this branch, same day, same shared host. rustc 1.97.1, valgrind
 
 ## Why: the profile named exactly those two
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** This record timed the init path over redb tables; the `interpolation2.text` parse it also measures is backend-independent. The figures stand as measured at the recorded pin.
+
+
 Full capi-shaped init, Callgrind on `load_profile full` (release), before:
 PROGRAM TOTALS **1,164.3e6 Ir**. Inclusive attribution by init component:
 
