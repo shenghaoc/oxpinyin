@@ -2,7 +2,7 @@
 //!
 //! One bench target per backend (`required-features` per the b8aff564
 //! convention), all driving this module over the store-tier traits, so the
-//! four runs measure identical work over identical bytes. Operations mirror
+//! `backend_matrix_*` runs measure identical work over identical bytes. Operations mirror
 //! `pinyin-oracle`'s `dbm_bench` where the store API allows, so the two
 //! reports' rows align:
 //!

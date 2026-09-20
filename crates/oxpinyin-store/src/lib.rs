@@ -1385,6 +1385,24 @@ mod tests {
     /// `--no-default-features --features bdb` resolves `DefaultStore`
     /// to `BdbStore` — the Berkeley DB peer, libpinyin's original DBM.
     /// The type is `Send` and `Sync` under the `DB_THREAD` +
+    /// `DB_DBT_USERMEM` configuration `src/bdb/ffi.rs` documents.
+    #[cfg(feature = "bdb")]
+    #[test]
+    fn default_store_is_bdb_when_only_bdb_is_on() {
+        fn assert_type_eq<T>()
+        where
+            T: 'static,
+            super::DefaultStore: 'static,
+        {
+            assert_eq!(
+                std::any::TypeId::of::<super::DefaultStore>(),
+                std::any::TypeId::of::<T>(),
+                "DefaultStore must resolve to the expected concrete backend"
+            );
+        }
+        assert_type_eq::<super::BdbStore>();
+    }
+
     /// Removes a tkrzw store file and its `-lock` sidecar on drop, so a
     /// panicking test leaves nothing behind in `std::env::temp_dir()`.
     #[cfg(feature = "tkrzw")]

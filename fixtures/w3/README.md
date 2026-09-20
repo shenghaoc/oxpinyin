@@ -1,18 +1,18 @@
 # W3 mini fixtures
 
-Two data directories, one per storage backend, plus the content `.bin`
+Three data directories, one per storage backend, plus the content `.bin`
 files at this level:
 
-- **`kct/`, `tkt/`** — the `--mini` compile of the
+- **`kct/`, `tkt/`, `db/`** — the `--mini` compile of the
   pinned model20 (`oxpinyin-datagen compile --mini --backend <peer>
   --out-dir fixtures/w3/<ext>`), one directory per compiled-in backend,
   each a complete system data directory the runtime opens as is:
   `pinyin_index`, `phrase_index`, `bigram`, `punct`, the `addon_*` pair
-  (libpinyin's own file names on `kct/` and `tkt/` — Kyoto Cabinet and
-  tkrzw are the DBMs libpinyin builds against),
+  (libpinyin's own file names on all three — Kyoto Cabinet, tkrzw and
+  Berkeley DB are the DBMs libpinyin builds against),
   the five per-library chunk files the `--mini` subset reaches
   (`gb_char.bin`, `gbk_char.bin`, `opengram.bin`, `merged.bin`, `art.bin`,
-  byte-identical across the four), `table.conf`, and the
+  byte-identical across all three), `table.conf`, and the
   producer's `datagen-manifest.txt`. The subset is `system::MINI_KEYS`
   and `addon::MINI_ART_KEYS`: the phrases those spellings reference, with
   their real `\1-gram` counts and bigram rows restricted to the

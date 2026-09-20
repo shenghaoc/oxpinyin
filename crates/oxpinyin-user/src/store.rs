@@ -2383,7 +2383,7 @@ mod tests {
     /// through the generic user store, produces bigram walks and
     /// successor scans in ascending (prev, cur) integer order — the
     /// big-endian key property. Running every peer build (KC
-    /// / Tkrzw / BDB) through CI gives the same four-way equivalence
+    /// / Tkrzw / BDB) through CI gives the same equivalence
     /// coverage the earlier in-process check gave.
     #[test]
     fn bigram_walks_and_successors_follow_be_integer_order() {
